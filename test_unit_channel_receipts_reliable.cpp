@@ -123,10 +123,10 @@ static void reliable_fixture_create( reliable_receipt_fixture_t * f, int type, i
     rocketnet_unit_check( f->client != NULL );
     if ( allocation_snapshot )
         *allocation_snapshot = reliable_receipt_allocations;
-    rocketnet_unit_check( rocketnet_message_client_update( f->client, 1.0 ) == ROCKETNET_MESSAGE_OK );
+    rocketnet_unit_check( rocketnet_message_client_update( f->client, 1.0 ) == ROCKETNET_UPDATE_OK );
     rocketnet_message_client_send_packets( f->client );                            // the connection's CONFIG goes first and is acked (CHANNELS.md 10.3)
     f->transport.ack_packet = f->transport.sent_packets[0];
-    rocketnet_unit_check( rocketnet_message_client_update( f->client, 1.0 ) == ROCKETNET_MESSAGE_OK );
+    rocketnet_unit_check( rocketnet_message_client_update( f->client, 1.0 ) == ROCKETNET_UPDATE_OK );
     f->transport.sent_count = 0;
     uint8_t * payload = rocketnet_message_client_start( f->client, 0, type, bytes );
     rocketnet_unit_check( payload != NULL );
@@ -144,7 +144,7 @@ static void reliable_fixture_create( reliable_receipt_fixture_t * f, int type, i
         rocketnet_unit_check( rocketnet_message_reader_begin( &reader, f->transport.sent_payloads[i], f->transport.sent_bytes[i],
                                                               &connection->ordered.limits ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
         rocketnet_unit_check( rocketnet_message_reader_next( &reader, &record ) );
-        rocketnet_unit_check( record.code == ( type == ROCKETNET_RELIABLE_WITH_ACK_RECEIPT ?
+        rocketnet_unit_check( record.code == ( type == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT ?
                                                 ROCKETNET_MESSAGE_CODE_RELIABLE : ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED ) );
     }
 }
@@ -152,7 +152,7 @@ static void reliable_fixture_create( reliable_receipt_fixture_t * f, int type, i
 static void reliable_fixture_ack( reliable_receipt_fixture_t * f, int packet, double now )
 {
     f->transport.ack_packet = f->transport.sent_packets[packet];
-    rocketnet_unit_check( rocketnet_message_client_update( f->client, now ) == ROCKETNET_MESSAGE_OK );
+    rocketnet_unit_check( rocketnet_message_client_update( f->client, now ) == ROCKETNET_UPDATE_OK );
 }
 
 static int reliable_fixture_receipts( reliable_receipt_fixture_t * f, rocketnet_message_receipt_t * out )
@@ -172,13 +172,13 @@ static void reliable_receipt_acked_never_loss()
     rocketnet_unit_check( ROCKETNET_CHANNEL_RECEIPT_BASE( ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED_WITH_RECEIPT ) ==
                           ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED );
     reliable_receipt_fixture_t f;
-    reliable_fixture_create( &f, ROCKETNET_RELIABLE_WITH_ACK_RECEIPT, 3 );
+    reliable_fixture_create( &f, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, 3 );
     rocketnet_unit_check( f.transport.sent_count == 1 );
     rocketnet_message_receipt_t out[16];
     rocketnet_unit_check( reliable_fixture_receipts( &f, out ) == 0 );
     reliable_fixture_ack( &f, 0, 1.01 );
     rocketnet_unit_check( reliable_fixture_receipts( &f, out ) == 1 );
-    rocketnet_unit_check( out[0].serial == f.serial && out[0].status == ROCKETNET_RECEIPT_ACKED );
+    rocketnet_unit_check( out[0].serial == f.serial && out[0].status == ROCKETNET_RECEIPT_STATUS_ACKED );
     reliable_fixture_ack( &f, 0, 1.02 );
     rocketnet_unit_check( reliable_fixture_receipts( &f, out ) == 0 );
     rn_window_ack_receipt_sweep( &f.client->object.connections[0].ordered.ack, 10.0 );
@@ -189,7 +189,7 @@ static void reliable_receipt_acked_never_loss()
 static void ordered_receipt_after_all_chunks()
 {
     reliable_receipt_fixture_t f;
-    reliable_fixture_create( &f, ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 2 * ROCKETNET_MESSAGE_FRAGMENT_BYTES + 17 );
+    reliable_fixture_create( &f, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 2 * ROCKETNET_MESSAGE_FRAGMENT_BYTES + 17 );
     rocketnet_unit_check( f.transport.sent_count == 3 );
     rocketnet_message_receipt_t out[16];
     reliable_fixture_ack( &f, 2, 1.01 );
@@ -198,14 +198,14 @@ static void ordered_receipt_after_all_chunks()
     rocketnet_unit_check( reliable_fixture_receipts( &f, out ) == 0 );
     reliable_fixture_ack( &f, 1, 1.03 );
     rocketnet_unit_check( reliable_fixture_receipts( &f, out ) == 1 );
-    rocketnet_unit_check( out[0].serial == f.serial && out[0].status == ROCKETNET_RECEIPT_ACKED );
+    rocketnet_unit_check( out[0].serial == f.serial && out[0].status == ROCKETNET_RECEIPT_STATUS_ACKED );
     reliable_fixture_destroy( &f );
 }
 
 static void reliable_receipt_waits_for_every_number()
 {
     reliable_receipt_fixture_t f;
-    reliable_fixture_create( &f, ROCKETNET_RELIABLE_WITH_ACK_RECEIPT, 1412 );
+    reliable_fixture_create( &f, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, 1412 );
     rocketnet_unit_check( f.transport.sent_count == 2 );
     rocketnet_message_receipt_t out[16];
     reliable_fixture_ack( &f, 1, 1.01 );
@@ -214,7 +214,7 @@ static void reliable_receipt_waits_for_every_number()
     rocketnet_unit_check( reliable_fixture_receipts( &f, out ) == 0 );
     // The first packet's ACK is lost. Its number is resent with a new
     // transport packet id, and only that ACK completes the receipt.
-    rocketnet_unit_check( rocketnet_message_client_update( f.client, 1.50 ) == ROCKETNET_MESSAGE_OK );
+    rocketnet_unit_check( rocketnet_message_client_update( f.client, 1.50 ) == ROCKETNET_UPDATE_OK );
     rocketnet_message_client_send_packets( f.client );
     rocketnet_unit_check( f.transport.sent_count >= 3 );
     rocketnet_message_reader_t first_reader, retry_reader;
@@ -231,7 +231,7 @@ static void reliable_receipt_waits_for_every_number()
     rocketnet_unit_check( reliable_fixture_receipts( &f, out ) == 0 );
     reliable_fixture_ack( &f, 2, 1.51 );
     rocketnet_unit_check( reliable_fixture_receipts( &f, out ) == 1 );
-    rocketnet_unit_check( out[0].serial == f.serial && out[0].status == ROCKETNET_RECEIPT_ACKED );
+    rocketnet_unit_check( out[0].serial == f.serial && out[0].status == ROCKETNET_RECEIPT_STATUS_ACKED );
     reliable_fixture_destroy( &f );
 }
 
@@ -240,7 +240,7 @@ static void rnreceipts_reliable_witness_replays()
     // BrokenLastIndexAck and BrokenReliableLoss: neither a last-index ACK nor
     // an RTO sweep completes or loses a still-incomplete reliable block.
     reliable_receipt_fixture_t f;
-    reliable_fixture_create( &f, ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 1412 );
+    reliable_fixture_create( &f, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 1412 );
     rocketnet_unit_check( f.transport.sent_count == 2 );
     rocketnet_message_receipt_t out[16];
     reliable_fixture_ack( &f, 1, 1.01 );
@@ -249,7 +249,7 @@ static void rnreceipts_reliable_witness_replays()
     rocketnet_unit_check( f.client->object.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS] == 0 );
     reliable_fixture_ack( &f, 0, 1.02 );
     rocketnet_unit_check( reliable_fixture_receipts( &f, out ) == 1 );
-    rocketnet_unit_check( out[0].serial == f.serial && out[0].status == ROCKETNET_RECEIPT_ACKED );
+    rocketnet_unit_check( out[0].serial == f.serial && out[0].status == ROCKETNET_RECEIPT_STATUS_ACKED );
     reliable_fixture_destroy( &f );
 }
 
@@ -267,12 +267,12 @@ static void reliable_receipt_free( void *, void * pointer )
 static void no_allocation_after_create_reliable_receipts()
 {
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_allocator( reliable_receipt_malloc, reliable_receipt_free ) );
-    rocketnet_unit_check( rocketnet_init( NULL ) );
+    rocketnet_unit_check( rocketnet_set_allocator( reliable_receipt_malloc, reliable_receipt_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     reliable_receipt_fixture_t f;
     uint64_t after_create = 0;
-    reliable_fixture_create( &f, ROCKETNET_RELIABLE_WITH_ACK_RECEIPT, 3, &after_create );
+    reliable_fixture_create( &f, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, 3, &after_create );
     reliable_fixture_ack( &f, 0, 1.01 );
     rocketnet_message_receipt_t out[16];
     rocketnet_unit_check( reliable_fixture_receipts( &f, out ) == 1 );
@@ -280,8 +280,8 @@ static void no_allocation_after_create_reliable_receipts()
     reliable_fixture_destroy( &f );
 
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
-    rocketnet_unit_check( rocketnet_init( NULL ) );
+    rocketnet_unit_check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
 REGISTER_UNIT_TEST( reliable_receipt_acked_never_loss );

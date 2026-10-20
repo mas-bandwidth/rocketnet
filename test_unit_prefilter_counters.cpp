@@ -34,6 +34,8 @@ static const int prefilter_kernel_counters[ROCKETNET_SERVER_XDP_NUM_COUNTERS] =
     ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_WRONG_EPOCH,
     ROCKETNET_COUNTER_XDP_KERNEL_PASSED_IPV6_EXTENSION,
     ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_REPLAYED,
+    ROCKETNET_COUNTER_XDP_KERNEL_PASSED_FRAGMENT,
+    ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_FIRST_FRAGMENT,
 };
 
 static void prefilter_counters_map_each_kernel_counter()
@@ -66,7 +68,7 @@ static void prefilter_counters_are_assigned_not_added()
 
     const uint64_t prefilter[ROCKETNET_SERVER_XDP_NUM_COUNTERS] =
     {
-        5, 6, 7, 8, 9, 10, 11, 12,
+        5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
     };
     rocketnet_counters_apply_prefilter( &counters, prefilter );
     rocketnet_counters_apply_prefilter( &counters, prefilter );
@@ -75,7 +77,7 @@ static void prefilter_counters_are_assigned_not_added()
 
     const uint64_t smaller[ROCKETNET_SERVER_XDP_NUM_COUNTERS] =
     {
-        1, 2, 3, 4, 5, 6, 7, 8,
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
     };
     rocketnet_counters_apply_prefilter( &counters, smaller );
     for ( int i = 0; i < ROCKETNET_SERVER_XDP_NUM_COUNTERS; i++ )
@@ -164,8 +166,8 @@ static void pcapng_free( void * context, void * p )
 static void pcapng_allocator_install()
 {
     rocketnet_term();
-    check( rocketnet_allocator( pcapng_malloc, pcapng_free ) );
-    check( rocketnet_init( NULL ) );
+    check( rocketnet_set_allocator( pcapng_malloc, pcapng_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
     pcapng_live_bytes = 0;
     pcapng_peak_bytes = 0;
 }
@@ -173,8 +175,8 @@ static void pcapng_allocator_install()
 static void pcapng_allocator_restore()
 {
     rocketnet_term();
-    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
-    check( rocketnet_init( NULL ) );
+    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
 static std::string pcapng_directory()

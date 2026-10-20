@@ -211,6 +211,39 @@ uint16_t rocketnet_platform_preferred_client_port();
  */
 bool rocketnet_platform_client_dual_stack();
 
+/**
+ * @brief Reports whether this host can create an IPv6 UDP socket.
+ *
+ * A host with IPv6 disabled (for example ipv6.disable=1 or a container with
+ * no IPv6 stack) refuses socket(AF_INET6) with EAFNOSUPPORT. The client reads
+ * this before choosing its bind family so an IPv4 server stays reachable.
+ * @return true when an IPv6 socket can be created; otherwise false.
+ */
+bool rocketnet_platform_client_ipv6_available();
+
+/**
+ * @brief Overrides the IPv6 availability probe for tests.
+ *
+ * Off unless a test sets it. With false, socket creation for an IPv6 address
+ * fails as it would on a host with no IPv6 stack, so the client bind-family
+ * choice is exercised on any build host.
+ * @param available true to probe the host normally; false to report no IPv6.
+ * @return None.
+ */
+void rocketnet_platform_set_ipv6_socket_available_for_testing( bool available );
+
+/**
+ * @brief Chooses the client bind family from the server family and platform.
+ *
+ * @param server_address_type ROCKETNET_ADDRESS_IPV4 or ROCKETNET_ADDRESS_IPV6.
+ * @param ipv6_available Whether an IPv6 socket can be created on this host.
+ * @param dual_stack Whether IPv6 sockets also carry IPv4-mapped peers.
+ * @return IPv6 when the server needs it or an IPv4 server can use dual stack;
+ * IPv4 when only IPv4 is possible; ROCKETNET_ADDRESS_NONE when the server is
+ * IPv6 and this host has no IPv6 stack.
+ */
+int rocketnet_platform_client_bind_family( int server_address_type, bool ipv6_available, bool dual_stack );
+
 #ifdef __cplusplus
 }
 #endif
@@ -376,6 +409,45 @@ void rocketnet_platform_socket_send_packets( struct rocketnet_platform_socket_t 
  */
 int rocketnet_platform_socket_receive_packets( struct rocketnet_platform_socket_t * socket, struct rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets );
 
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+/**
+ * @brief Counts the datagrams this socket's sends dropped.
+ *
+ * Every sendto, sendmmsg and per-packet tail of a sendmsg_x batch that
+ * answers -1 drops its datagram and increments the count, including the test
+ * seam's injected errors. Monotonic for the socket's life.
+ * @param socket Live socket; must be non-NULL.
+ * @return Number of dropped datagrams since the socket was created.
+ */
+uint64_t rocketnet_platform_socket_send_failures( struct rocketnet_platform_socket_t * socket );
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+/**
+ * @brief Test-only seam: makes the next sends on one socket report an error.
+ *
+ * Compiled into the development library only. The next count calls to sendto
+ * and sendmsg_x on the socket return -1 with error set, without reaching the
+ * kernel. A non-positive count clears the seam.
+ * @param socket Live socket; must be non-NULL.
+ * @param count Number of send calls to fail.
+ * @param error errno value each failed call reports.
+ * @return None.
+ */
+void rocketnet_platform_socket_fail_next_sends( struct rocketnet_platform_socket_t * socket, int count, int error );
+
+/**
+ * @brief Test-only: the live sockets, oldest first.
+ *
+ * Development builds only. Lets a functional case find the socket a
+ * transport created.
+ * @param sockets Caller-owned output array.
+ * @param max_sockets Capacity of sockets.
+ * @return Number of sockets written.
+ */
+int rocketnet_platform_sockets_for_testing( struct rocketnet_platform_socket_t ** sockets, int max_sockets );
+#endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
 // the name of the pump path live behind the seam ("portable", "msgx"), for
 // logging and for tests that pin the degradation contract
 
@@ -413,11 +485,10 @@ void rocketnet_platform_socket_send_packets_mmsg( struct rocketnet_platform_sock
 /**
  * @brief Receives a batch with Linux recvmmsg on the caller's I/O thread.
  *
- * This internal Linux entry point follows socket_receive_packets layout,
- * except that recvmmsg-truncated datagrams are skipped and produce no output
- * entry. The generic socket_receive_packets path may instead report an
- * oversized datagram with packet_bytes greater than packet_stride and store
- * only its prefix.
+ * This internal Linux entry point follows socket_receive_packets layout: an
+ * oversized datagram is reported with its true size in packet_bytes, greater
+ * than packet_stride, and only its prefix is stored. Zero-length datagrams
+ * produce no output entry.
  * @param socket Live socket.
  * @param from Output source-address array.
  * @param packet_data Output storage with packet_stride bytes per slot.
@@ -437,10 +508,10 @@ int rocketnet_platform_socket_receive_packets_mmsg( struct rocketnet_platform_so
 // runs makes the next wait return at once. Platforms that define
 // ROCKETNET_PLATFORM_HAS_WAKE implement it; elsewhere create returns NULL.
 // Linux builds the eventfd wake; macOS and iOS build the kqueue wake
-// (docs/CLIENT-IO.md "The wake" and its macOS and iOS card), so the msgx
+// (docs/CLIENT-IO.md "The wake"), so the msgx
 // client runs on the I/O thread there. Windows builds the event wake,
 // WSAEventSelect FD_READ beside a manual-reset event (docs/CLIENT-IO.md
-// "The wake" and its Windows card), so the portable client runs on the I/O
+// "The wake"), so the portable client runs on the I/O
 // thread there.
 #if ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined(__linux__) ) || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #define ROCKETNET_PLATFORM_HAS_WAKE 1
@@ -528,6 +599,33 @@ void rocketnet_platform_thread_join( struct rocketnet_platform_thread_t * thread
 void rocketnet_platform_thread_destroy( struct rocketnet_platform_thread_t * thread );
 
 /**
+ * @brief Waits on the calling thread's wake for at most the given duration.
+ *
+ * Returns when the duration passes or when rocketnet_platform_thread_wake has
+ * been called for the calling thread; once woken, every later wait returns at
+ * once. The wake is an explicit signal, so a woken thread does not depend on
+ * its wait's timeout firing. POSIX waits on a condition variable, macOS and
+ * iOS on a mach semaphore (the primitive usleep waits on there, so the
+ * per-wait cost matches usleep). Windows sleeps for the duration and its wake
+ * is a no-op, so a Windows thread observes a quit flag within one wait. Called
+ * on a thread that thread_create did not start, it sleeps for the duration.
+ * @param time Requested seconds; must be positive.
+ * @return None.
+ */
+void rocketnet_platform_thread_wait( double time );
+
+/**
+ * @brief Wakes a live thread's current thread_wait and every later one.
+ *
+ * Any thread may call it, before or during the target's wait. A thread that
+ * polls a quit flag between waits stores the flag first, then wakes, then
+ * joins.
+ * @param thread Live thread handle; must be non-NULL.
+ * @return None.
+ */
+void rocketnet_platform_thread_wake( struct rocketnet_platform_thread_t * thread );
+
+/**
  * @brief Requests the platform's client-thread scheduling priority.
  *
  * Call on a live thread. Operating-system permissions can prevent the request;
@@ -546,6 +644,91 @@ void rocketnet_platform_client_thread_priority( struct rocketnet_platform_thread
  * @return None.
  */
 void rocketnet_platform_server_thread_priority( struct rocketnet_platform_thread_t * thread );
+
+/**
+ * @brief The operating-system calls behind the network-thread priority.
+ *
+ * Each platform fills the table with the real calls; a unit test replaces it
+ * with a recording fake through rocketnet_platform_set_priority_calls_for_testing.
+ * An entry a platform does not use is a stub that does nothing.
+ */
+struct rocketnet_platform_priority_calls_t
+{
+    /** @brief POSIX: pthread_setschedparam on the thread with the policy and priority; 0 or an errno. */
+    int ( *set_sched )( struct rocketnet_platform_thread_t * thread, int policy, int priority );
+    /** @brief Windows: SetThreadPriority on the thread; nonzero on success, as the call returns. */
+    int ( *set_thread_priority )( struct rocketnet_platform_thread_t * thread, int priority );
+    /** @brief Windows: timeBeginPeriod; 0 (TIMERR_NOERROR) on success. */
+    unsigned int ( *time_begin_period )( unsigned int period );
+    /** @brief Windows: timeEndPeriod; 0 (TIMERR_NOERROR) on success. */
+    unsigned int ( *time_end_period )( unsigned int period );
+    /** @brief Windows: QueryPerformanceFrequency into the LARGE_INTEGER the argument points at. */
+    void ( *timer_frequency )( void * frequency );
+};
+
+/**
+ * @brief The real call table of this platform.
+ * @return The table the library uses when no test has replaced it; never NULL.
+ */
+const struct rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls_real( void );
+
+/**
+ * @brief Replaces the priority call table, for unit tests only.
+ * @param calls The table to use; NULL restores the real table.
+ * @return None.
+ */
+void rocketnet_platform_set_priority_calls_for_testing( const struct rocketnet_platform_priority_calls_t * calls );
+
+/**
+ * @brief Forgets which call kinds have logged their one refusal line, for unit tests only.
+ * @return None.
+ */
+void rocketnet_platform_thread_priority_reset_logged_for_testing( void );
+
+/** @brief The call kinds a refusal is counted and logged under, one line each. */
+enum
+{
+    ROCKETNET_PLATFORM_PRIORITY_CALL_SET_SCHED = 0,
+    ROCKETNET_PLATFORM_PRIORITY_CALL_SET_AFFINITY,
+    ROCKETNET_PLATFORM_PRIORITY_CALL_SET_THREAD_PRIORITY,
+    ROCKETNET_PLATFORM_PRIORITY_CALL_TIME_BEGIN_PERIOD,
+    ROCKETNET_PLATFORM_PRIORITY_CALL_TIME_END_PERIOD,
+    ROCKETNET_PLATFORM_PRIORITY_CALL_COUNT
+};
+
+/**
+ * @brief Sets whether the library makes its priority and timer period calls.
+ * @param enabled true (the default) makes them; false makes none.
+ * @return None.
+ */
+void rocketnet_platform_set_thread_priority_enabled( bool enabled );
+
+/**
+ * @brief Reads whether the library makes its priority and timer period calls.
+ * @return true when enabled.
+ */
+bool rocketnet_platform_thread_priority_enabled( void );
+
+/**
+ * @brief Counts one refused priority, affinity or timer period call.
+ *
+ * Adds one to the process-wide refusal count and, the first time for the call
+ * kind only, logs one warning: "<prefix>: <call> refused (<reason>); <effect>".
+ * Safe from any thread.
+ * @param kind One of the ROCKETNET_PLATFORM_PRIORITY_CALL_* kinds.
+ * @param prefix "thread priority", "thread affinity" or "timer period".
+ * @param call The call and its arguments, for example "pthread_setschedparam SCHED_RR 1".
+ * @param reason Why the operating system refused it.
+ * @param effect What runs instead, for example "the thread runs at its default priority".
+ * @return None.
+ */
+void rocketnet_platform_thread_priority_refused( int kind, const char * prefix, const char * call, const char * reason, const char * effect );
+
+/**
+ * @brief The process-wide count of refused priority, affinity and timer period calls.
+ * @return The count since the process started.
+ */
+uint64_t rocketnet_platform_thread_priority_refusals( void );
 
 // ----------------------------------------------------------------
 
@@ -684,6 +867,8 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
         bool ipv6;
         /** @brief Native socket descriptor owned by this object. */
         rocketnet_platform_socket_handle_t handle;
+        /** @brief Datagrams a failed send dropped; atomic, monotonic. */
+        uint64_t send_failures;
     };
 
     /** @brief Holds a native thread and its allocator context. */
@@ -693,6 +878,12 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
         void * context;
         /** @brief Native thread handle. */
         pthread_t handle;
+        /** @brief Guards woken for thread_wait and thread_wake. */
+        pthread_mutex_t wake_mutex;
+        /** @brief Signalled by thread_wake; waited on by thread_wait. */
+        pthread_cond_t wake_cond;
+        /** @brief Set once by thread_wake; never cleared. */
+        bool woken;
     };
 
     /** @brief Stores a POSIX mutex and whether its initialization succeeded. */
@@ -710,6 +901,7 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
 
     #include <pthread.h>
     #include <unistd.h>
+    #include <mach/mach_types.h>
 
     typedef int rocketnet_platform_socket_handle_t;
 
@@ -720,12 +912,15 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
         bool msgx;                  // the batched sendmsg_x/recvmsg_x pump is eligible (probed at create, macOS only)
         double msgx_down_until;     // a hard refusal pauses the msgx pump until this time; the next batch call after it is the re-probe
         rocketnet_platform_socket_handle_t handle;
+        uint64_t send_failures;     // datagrams a failed send dropped; atomic, monotonic
     };
 
     struct rocketnet_platform_thread_t
     {
         void * context;
         pthread_t handle;
+        mach_port_t wake_semaphore;     // a mach semaphore: thread_wait waits on it, thread_wake signals it
+        int woken;                      // set once by thread_wake (atomic store), never cleared
     };
 
     struct rocketnet_platform_mutex_t

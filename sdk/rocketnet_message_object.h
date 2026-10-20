@@ -59,6 +59,16 @@ struct rn_message_link_t
     // The client's link leaves *client_index NULL.
     int (*acked)( void * transport, const int ** client_index, const uint64_t ** packet_ids );
 
+    // the connection entry k of the update's payload batch (payload_connection)
+    // or acked batch (acked_connection) was received for (P9b), which
+    // rn_message_admit hands to rn_slots_admit. The server's link reads
+    // rocketnet_server_transport_payload_connection_ids and
+    // rocketnet_server_transport_acked_connection_ids; the client's link
+    // answers 1, the id of its one connection, for every entry. NULL (the
+    // unit suite's untagged fakes): rn_message_admit tags the entry itself.
+    uint64_t (*payload_connection)( void * transport, int k );
+    uint64_t (*acked_connection)( void * transport, int k );
+
     // The configured payload limit, after transport defaults. A large
     // unreliable record is refused before enqueue if it cannot fit an arena.
     int (*max_payload_bytes)( void * transport );
@@ -68,7 +78,10 @@ struct rn_message_link_t
     void (*send_packets)( void * transport );
 
     // the connection in the slot now: a nonzero id, or 0 when none (RNSlots
-    // Observe). The client's link answers 1 while it is CONNECTED.
+    // Observe). The server's link answers
+    // rocketnet_server_transport_client_connection_id, which differs for every
+    // connection a slot holds (P9a). The client's link answers 1 while it is
+    // CONNECTED.
     uint64_t (*connection)( void * transport, int client_index );
 
     void (*disconnect)( void * transport, int client_index );
@@ -76,6 +89,11 @@ struct rn_message_link_t
     // the transport's state, ROCKETNET_CLIENT_TRANSPORT_STATE_* or
     // ROCKETNET_SERVER_TRANSPORT_*
     int (*state)( void * transport );
+
+    // the reason the client's transport ended its connection with, a
+    // ROCKETNET_DISCONNECT_REASON_*, read once the transport is terminal.
+    // NULL (the server's link, the unit suite's): the transport names none.
+    int (*end_reason)( void * transport );
 
     // NULL: the object does not own the transport
     void (*destroy)( void * transport );
@@ -114,7 +132,7 @@ struct rn_message_link_t
 #define RN_MESSAGE_CONNECTION_LAYOUT_FIELDS( X ) \
     X( connection_id, uint64_t connection_id ) /* RNSlots: the connection this slot is bound to, 0 when free */          \
     X( state, int state ) /* RN_MESSAGE_CONNECTION_* */                                                                  \
-    X( disconnect_reason, int disconnect_reason ) /* ROCKETNET_MESSAGE_ERROR_* of the last connection that ended here */ \
+    X( disconnect_reason, int disconnect_reason ) /* ROCKETNET_DISCONNECT_REASON_* of the last connection that ended here */ \
     /* the receive bookkeeping (RNSlots Release): one state per delivery entry, */                                       \
     /* one cursor per channel, and the views held now */                                                                 \
     X( views, uint8_t * views ) /* region->delivery_entries */                                                           \
@@ -192,7 +210,7 @@ bool rn_message_object_send_kbps_env_valid( int is_server );
 void rn_message_object_destroy( struct rn_message_object_t * object );
 
 // The update, RNSlots BeginUpdate to EndUpdate. ROCKETNET_OK, or
-// ROCKETNET_ERROR_MESSAGE_NOT_RELEASED when a received message was held.
+// ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED when a received message was held.
 int rn_message_object_update( struct rn_message_object_t * object, double time );
 
 void rn_message_object_send_packets( struct rn_message_object_t * object );

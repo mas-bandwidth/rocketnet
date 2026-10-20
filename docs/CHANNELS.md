@@ -296,12 +296,12 @@ takes a store chunk of the smallest class that fits. A message above one chunk
   one thing the regions share, and they add atomically.
 - **Exhaustion kicks.** An operation that cannot get room sets the region's
   sticky exhausted state with the reason
-  `ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED` (`rn_region_exhaust`),
+  `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED` (`rn_region_exhaust`),
   and counts `MESSAGE_MEMORY_EXHAUSTED` once beside the refusal's own counter.
   `rn_region_send_alloc` does this on both of its refusals (store and
   descriptor pool). The owner reads `rn_connection_memory_decide` every
   update: a pure function of the region that returns the reason to end the
-  connection with, or `ROCKETNET_MESSAGE_ERROR_NONE`. On the server the owner
+  connection with, or `ROCKETNET_DISCONNECT_REASON_NONE`. On the server the owner
   then disconnects that slot (`rocketnet_server_disconnect_client`),
   records the reason, frees the slot and resets the region. A client
   disconnects itself (`rocketnet_client_disconnect`) with the same
@@ -640,7 +640,8 @@ corruption.
   per payload byte (1.89 copies per chunk) with chunks on the 100 ms cap and
   1.15 (1.11 copies) on the RTO; the block completes in 0.68 s on the cap
   and 0.87 s on the RTO, a lost chunk waiting one RTO instead of 100 ms. At
-  the defaults (4 packets per update, 1000 kbps), where the first sends take
+  the former defaults (4 packets per update, 1000 kbps; measured before the
+  default became 256), where the first sends take
   the budget for two seconds, it is 1.24 on the cap and 1.16 on the RTO,
   completing in 2.53 s and 2.58 s. The single-packet rows above are
   unchanged.
@@ -705,7 +706,7 @@ details explicit:
   `rn_window_ack_resend` checks
   `rn_window_ack_check_timeout` first (if any unacked number has
   `now - first_send >= reliable_timeout`, `ack->error` becomes
-  `ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT` and resending stops), then walks
+  `ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT` and resending stops), then walks
   from `resend_head` while `now >= last_send + rn_window_ack_resend_delay(ack)`
   (`min(rto, resend_interval)`) and from `chunk_head` while
   `now >= last_send + rn_window_ack_chunk_resend_delay(ack)`, each walk
@@ -1258,23 +1259,23 @@ It owns:
 
 After update returns, the application reads deliveries, receipts and events.
 They stay valid until the next update, the same lifetime as the transport's
-batch (U:68-81). It then sends with `rocketnet_server_start`, writes, and finishes. On the
+batch (U:68-81). It then sends with `rocketnet_server_start_message`, writes, and finishes. On the
 main thread, after every message for the frame is queued,
 `rocketnet_server_send_packets( server )` sends them all, last in the frame.
 
 ### 11.2 The zero-copy send
 
 ```c
-uint8_t * room = rocketnet_server_start( server, client_index, channel, ROCKETNET_UNRELIABLE, request_bytes );
+uint8_t * room = rocketnet_server_start_message( server, client_index, channel, ROCKETNET_RELIABILITY_UNRELIABLE, request_bytes );
 /* write the message at room */
 (void) room;
-uint32_t serial = rocketnet_server_finish( server, client_index, message_bytes );
+uint32_t serial = rocketnet_server_finish_message( server, client_index, message_bytes );
 (void) serial;
 /* or give the room back */
-rocketnet_server_abort( server, client_index );
+rocketnet_server_abort_message( server, client_index );
 ```
 
-- `rocketnet_server_start` takes a request and returns a pointer into the connection's region. When
+- `rocketnet_server_start_message` takes a request and returns a pointer into the connection's region. When
   `request_bytes <= 1415` that is a real wire frame, with no copy at all.
   Larger requests leave this path: they are promoted to the reliable twin at
   the send call (L2.3), not fragmented, and take the reliable send path with
@@ -1290,9 +1291,13 @@ rocketnet_server_abort( server, client_index );
 The client is the same shape with one endpoint. That endpoint is reset at
 create, because the client receives payloads from state 3 on (P8), and it is
 never reset again. The client transport accepts sends only in state 4
-(`sdk/rocketnet_client_protocol.cpp:1056-1057`). Sends before CONNECTED wait in the queue
-without being numbered. One client object makes one connection, like the
-transport. The client receives with `rocketnet_client_receive`, modelled on the
+(`sdk/rocketnet_client_protocol.cpp:1056-1057`). An application send before CONNECTED is
+dropped at start message: `NULL`, counted once in `MESSAGE_SEND_NOT_CONNECTED`
+(`ROCKETNET_CLIENT_COUNTER_NOT_CONNECTED_DROPS`), and never sent (RN-2 m1.5,
+tla/ClientSession.tla DropSend); the server drops a send to a slot that is not
+CONNECTED the same way. Only the CONFIG control record, announced at create, is
+held, unnumbered, until CONNECTED. One client object makes one connection, like the
+transport. The client receives with `rocketnet_client_receive_message`, modelled on the
 transport's receive. CONNECTED is emitted
 when the transport first reports state 4. DISCONNECTED is emitted when the
 transport leaves state 4, or when the endpoint errors, in which case the
@@ -1302,8 +1307,9 @@ object calls `rocketnet_client_disconnect`.
 
 The objects do not own serialization (CLAUDE.md), broadcast, or flows.
 
-- **Broadcast** is `rocketnet_server_broadcast`, the copy RakNet makes per target
-  (study §5.1).
+- **Broadcast** is a loop over connected clients with start and finish, the
+  copy RakNet makes per target (study §5.1). A later send to a flow id
+  (`ROCKETNET_FLOW_ID_BIT` set) uses the same start and finish.
 - **Flows** (REQUIREMENTS.md) belong to a later layer above this API: a flow
   send is a loop over subscribers. Nothing here forecloses that.
 - **The game's own clock:** time is always passed in (`sdk/rocketnet.h:542-544`).
@@ -1319,16 +1325,16 @@ header; the internal transport and message layers are in
   `rocketnet_client_required_memory` or `rocketnet_server_required_memory` bytes, 64-aligned): the object, its
   connections, each connection's receive bookkeeping and the arena of regions.
   Nothing is allocated after create (R2).
-- **The send.** `rocketnet_client_start` or `rocketnet_server_start` returns a pointer into
+- **The send.** `rocketnet_client_start_message` or `rocketnet_server_start_message` returns a pointer into
   the connection's region; the application writes the message there once;
-  `rocketnet_client_finish` or `rocketnet_server_finish` queues it and returns
+  `rocketnet_client_finish_message` or `rocketnet_server_finish_message` queues it and returns
   its receipt serial, nonzero. `abort` gives the room back, and `send` is the
   copying convenience. The one
   copy on the path is THE COPIES (a), record to frame, in layer 6's writer.
-- **The receive.** `rocketnet_client_receive` or `rocketnet_server_receive` hands out the update's next message on
-  the channel as a const view and a length; `rocketnet_client_release` or `rocketnet_server_release` gives it back. Every view
+- **The receive.** `rocketnet_client_receive_message` or `rocketnet_server_receive_message` hands out the update's next message on
+  the channel as a const view and a length; `rocketnet_client_release_message` or `rocketnet_server_release_message` gives it back. Every view
   is released before the next update: update with one held asserts in a debug
-  build and returns `ROCKETNET_ERROR_MESSAGE_NOT_RELEASED` in a release build,
+  build and returns `ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED` in a release build,
   counted as `MESSAGE_NOT_RELEASED` (tla/RNSlots.tla, RejectUnreleasedUpdate).
   The views are taken back either way, so memory never grows from a held view.
 - **UNRELIABLE.** A code 0 record carries no channel (13.2), so an unreliable
@@ -1347,17 +1353,28 @@ header; the internal transport and message layers are in
   packets one frame at a time from the transport's `start_packet`, ordered
   progress and retransmits first, then unreliable, and calls the transport's
   `send_packets`.
-- **Admission.** The transport's batches carry a client index but no
-  connection tag. An entry is admitted only for a slot bound before this
-  update's transport update and still bound to the same connection after it;
-  a slot bound or dropped by this update discards its entries, counted as
-  `MESSAGE_STALE_CONNECTION_ENTRY`. The connection id is the transport's
-  `client_id` for the slot, so a reconnect of the same client id into the same
-  slot inside one transport update is not told apart; a per-entry connection
-  tag from the transport (P9b) closes it.
+- **Admission.** Observe reads each slot's connection from
+  `rocketnet_server_transport_client_connection_id` (P9a;
+  `rn_server_link_connection`, `sdk/rocketnet_message_server.cpp:972`), which
+  differs for every connection a slot holds, so a reconnect of the same client
+  id into the same slot inside one transport update resets the slot and
+  announces its CONFIG (`sdk/rocketnet_message_server.cpp:517`). Each entry of
+  the payload and acked batches carries the connection it was received for
+  (P9b): the server's link reads
+  `rocketnet_server_transport_payload_connection_ids` and
+  `rocketnet_server_transport_acked_connection_ids`
+  (`sdk/rocketnet_message_server.cpp:979`, `:986`), and the client's link
+  tags every entry with 1, the id its object binds its one connection to at
+  create (`sdk/rocketnet_message_client.cpp:75`,
+  `sdk/rocketnet_message_server.cpp:301`). `rn_message_admit`
+  (`sdk/rocketnet_message_server.cpp:407`) hands the entry's id to
+  `rn_slots_admit`, which applies it only when that id is the slot's binding
+  (`sdk/rocketnet_slots.cpp:54`): an entry of another connection, or for a
+  free slot, is discarded and counted as `MESSAGE_STALE_CONNECTION_ENTRY`, and
+  a slot bound in this update keeps its own first entries.
 - **Exhaustion** (R5). A start the region has no room for, or a record the
   receive side cannot place, ends the connection with
-  `ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED`: the server disconnects
+  `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED`: the server disconnects
   the slot, the client disconnects itself. The region is reset at the next
   update, before the transport can hand the slot to another client.
 - **Budgets** (R6) are per connection, in kbps, and are configuration: the
@@ -1398,26 +1415,26 @@ for ( ;; )                                                /* 2. receive and rele
 {
     const uint8_t * view = NULL;
     int view_bytes = 0;
-    if ( !rocketnet_client_receive( client, channel, &view, &view_bytes ) )
+    if ( !rocketnet_client_receive_message( client, channel, &view, &view_bytes ) )
         break;
     /* process view */
-    rocketnet_client_release( client, view );
+    rocketnet_client_release_message( client, view );
 }
 /* 3. run the game simulation for this frame */
-uint8_t * out = rocketnet_client_start( client, channel, ROCKETNET_UNRELIABLE, (int) bytes ); /* 4. queue */
+uint8_t * out = rocketnet_client_start_message( client, channel, ROCKETNET_RELIABILITY_UNRELIABLE, (int) bytes ); /* 4. queue */
 if ( out )
 {
     memcpy( out, data, bytes );
-    uint32_t serial = rocketnet_client_finish( client, (int) bytes ); /* the receipt serial */
+    uint32_t serial = rocketnet_client_finish_message( client, (int) bytes ); /* the receipt serial */
     (void) serial;
 }
 rocketnet_client_send_packets( client );                  /* 5. last: this frame's messages leave this frame */
 ```
 
 The server is the same loop with a `client_index` on receive, send, and
-release, and `rocketnet_server_broadcast` for every connected client. The
-zero-copy form is `rocketnet_client_start`, write, `rocketnet_client_finish`
-(or `rocketnet_client_abort`), and the server form takes `client_index`.
+release, and a loop over connected clients for a send to every one. The
+zero-copy form is `rocketnet_client_start_message`, write, `rocketnet_client_finish_message`
+(or `rocketnet_client_abort_message`), and the server form takes `client_index`.
 Receipts are read with `rocketnet_client_receipts` and
 `rocketnet_server_receipts`. Counters and stats use the client and server
 accessors. Config defaults and validation use
@@ -1436,13 +1453,23 @@ internal (`sdk/rocketnet_layers.h`). The counters this document names are `MESSA
 `MESSAGE_MEMORY_EXHAUSTED`, plus one
 counter for each violation in section 13.3.
 
+Why a connection ended is read with `rocketnet_client_disconnect_reason` and
+`rocketnet_server_disconnect_reason`, an `enum rocketnet_disconnect_reason_t`
+(`sdk/rocketnet.h:316-324`): `NONE`, `CONFIG_MISMATCH`,
+`PROTOCOL_VIOLATION`, `RELIABLE_TIMEOUT`, `MESSAGE_MEMORY_EXHAUSTED`, and, on
+the client only, `SERVER_DISCONNECTED`: the client accepted the server's
+disconnect packet (`rocketnet_server_disconnect_client`, `rocketnet_server_stop`
+or `rocketnet_server_destroy`), recorded by the client terminal check in
+`rn_message_object_update` (`sdk/rocketnet_message_server.cpp:477-478`). A
+deliberate `rocketnet_client_disconnect` and a connection timeout read `NONE`.
+
 **Consumer adapter boundary.** The RakNet-style adapter discussed in the
 study's §13 is outside RocketNet's library deliverable. The native C API
 covers the following protocol needs:
 
-- RakNet's `Send` maps to `rocketnet_client_start`/`rocketnet_client_finish`, or the server forms, which return a nonzero serial.
-- `Receive` and `DeallocatePacket` become `rocketnet_client_receive` and
-  `rocketnet_client_release`, or the server forms with a `client_index`.
+- RakNet's `Send` maps to `rocketnet_client_start_message`/`rocketnet_client_finish_message`, or the server forms, which return a nonzero serial.
+- `Receive` and `DeallocatePacket` become `rocketnet_client_receive_message` and
+  `rocketnet_client_release_message`, or the server forms with a `client_index`.
 - Receipts and connection notices are lists. A consumer adapter can merge them into
   RakNet's single stream, so the interleaving I17 describes is reproduced above
   this layer.
@@ -1569,7 +1596,7 @@ offset  size  field
 ```
 
 The receiver compares every field with its own values. Any difference is
-`ERROR_CONFIG_MISMATCH`. A version the receiver does not know is a mismatch
+`DISCONNECT_REASON_CONFIG_MISMATCH`. A version the receiver does not know is a mismatch
 too. Kinds other than 1 are reserved; they are `MESSAGE_BAD_CONTROL` until a
 version defines them.
 
@@ -1747,12 +1774,15 @@ region follows.
   (`AcksLand`): without it TLC finds a lasso in which every ack names an
   evicted id (`tla/README-RNWindow.md`). The packets a connection writes in
   one RTT are at most `max_packets_per_update` times the updates in one RTT,
-  resends included, because resends share the update's packet limit. At the
-  defaults and RTT 200 ms on a 60 Hz update that is 4 × 12 = 48 packets
-  against `P = 256`, a margin of 5.3×; the 100 ms resend delay changes what
-  fills those packets, not how many there are. `P` holds up to an RTT of
-  about 1 s at 60 Hz (256 / (4 × 60) = 1.07 s), and `MESSAGE_SENT_MAP_EVICTED`
-  counts a shortfall so it shows.
+  resends included, because resends share the update's packet limit, and at
+  most what the send budget pays for. At the defaults (`max_packets_per_update`
+  256, 1 .. 1024, so the send budget is the throttle) and RTT 200 ms, the
+  client's 1000 kbps pays for about 17 packets of 1452 bytes in one RTT and
+  the server's 10000 kbps per client about 172, both inside `P = 256`; the
+  100 ms resend delay changes what fills those packets, not how many there
+  are. A connection whose budget (or an uncapped one) lets it write more than
+  `P` packets in one RTT evicts, and `MESSAGE_SENT_MAP_EVICTED` counts the
+  shortfall so it shows.
 - **Validation at create** refuses any of these:
   - `max_message_bytes > B`;
   - `ceil(max_message_bytes / F) > W`;

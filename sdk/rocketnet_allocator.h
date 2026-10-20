@@ -30,7 +30,7 @@
 // Exhaustion is a counted refusal (MESSAGE_SEND_STORE_FULL,
 // MESSAGE_SEND_QUEUE_FULL), never growth, and it ends the connection: the
 // region takes a sticky exhausted state with the reason
-// ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED, the owner's update reads
+// ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED, the owner's update reads
 // rn_connection_memory_decide and disconnects that connection (a server
 // kicks the slot, a client disconnects itself), and rn_region_reset gives
 // the slot's next client a fresh region (tla/RNConnectionMemory.tla).
@@ -246,8 +246,6 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
 
 const char * rn_region_part_name( int part );
 
-const char * rn_region_part_formula( int part );
-
 // the message table's field descriptors, as the transports' (rocketnet_config.h)
 struct rocketnet_config_field_t;
 const struct rocketnet_config_field_t * rocketnet_message_config_fields( int * num_fields );
@@ -361,7 +359,9 @@ struct rn_region_t
     uint32_t descriptors_free;
 
     uint32_t exhausted;                 // sticky until reset: an operation found no room (RNConnectionMemory Exhaust)
-    int32_t exhausted_reason;           // ROCKETNET_MESSAGE_ERROR_*: NONE, or MESSAGE_MEMORY_EXHAUSTED
+    int32_t exhausted_reason;           // ROCKETNET_DISCONNECT_REASON_*: NONE, or MESSAGE_MEMORY_EXHAUSTED
+
+    uint32_t send_room_armed;           // 1 until the send room watch reports a crossing, 1 again below half (rn_region_send_room_watch)
 };
 
 // at connect: every table back to its empty state, every free list
@@ -390,18 +390,75 @@ void rn_region_exhaust( rn_region_t * region );
 
 bool rn_region_exhausted( const rn_region_t * region );
 
-int rn_region_exhausted_reason( const rn_region_t * region );     // ROCKETNET_MESSAGE_ERROR_*
+int rn_region_exhausted_reason( const rn_region_t * region );     // ROCKETNET_DISCONNECT_REASON_*
 
 // RNConnectionMemory Kick, the decision: pure, allocation-free, called by the
-// owner every update. ROCKETNET_MESSAGE_ERROR_NONE, or the reason to end
+// owner every update. ROCKETNET_DISCONNECT_REASON_NONE, or the reason to end
 // this connection with: a server disconnects the slot
 // (rocketnet_server_transport_disconnect_client) and resets its region; a
 // client disconnects itself (rocketnet_client_transport_disconnect). An
-// exhausted connection does nothing else: no further send, delivery or
-// release is taken from its region before the kick.
+// exhausted connection takes no further room before the kick: both send
+// allocators refuse (rn_region_send_alloc, rocketnet_allocator.cpp:524;
+// rn_region_send_alloc_span, :696) and a payload is taken no further
+// (rn_ordered_receive, rocketnet_channel.cpp:1316). Room can still come back:
+// an ack (rn_endpoint_on_acked, rocketnet_endpoint.cpp:587) or an abort frees
+// through rn_region_send_free, and nothing takes that room again before the
+// reset (RNConnectionMemory Release, allowed while exhausted).
 int rn_connection_memory_decide( const rn_region_t * region );
 
 void rn_region_send_free( rn_region_t * region, uint32_t descriptor );
+
+// ----------------------------------------------------------------
+//                      the send room watch
+// ----------------------------------------------------------------
+
+// The send room is five pools a start message takes from: the send queue's
+// descriptors (send_queue_messages), each of the store's three chunk classes
+// (send_buffer_bytes), and the send spans (receive_ring_bytes). A pool fills
+// as start messages take room and empties as the peer acks them. Running one
+// out ends the connection (R5), so a debug build warns before it does.
+
+#define RN_SEND_ROOM_WARN_PERMILLE      750     // a crossing: the fullest pool reaches 75%
+#define RN_SEND_ROOM_REARM_PERMILLE     500     // the watch rearms once every pool is below 50%
+
+#define RN_SEND_ROOM_NONE               0
+#define RN_SEND_ROOM_CROSSED            1
+
+struct rn_send_room_t
+{
+    uint64_t store_used_bytes;          // the store's chunks in use, in bytes
+    uint64_t store_bytes;               // all of the store's chunks, in bytes
+    uint64_t span_used_bytes;           // the send spans from the oldest live span to the tail, padding included
+    uint64_t span_bytes;                // SR
+    uint32_t used_messages;             // the send queue's descriptors in use
+    uint32_t messages;                  // Q
+    uint32_t permille;                  // the fullest pool's use, in thousandths
+};
+
+// the region's send room now; pure, allocation-free
+void rn_region_send_room( const rn_region_t * region, rn_send_room_t * room );
+
+// 1 when a start message of `bytes` bytes would be given room now, so it
+// would not exhaust the region; pure. The pool it would take from (the
+// store class for up to one block stride, the send spans above it): its free
+// bytes and its size, and the free descriptors; each out pointer may be NULL.
+int rn_region_send_fits( const rn_region_t * region, int bytes, uint64_t * free_bytes, uint64_t * pool_bytes, uint32_t * free_messages );
+
+// The watch's decision, called around every start message:
+// RN_SEND_ROOM_CROSSED once when the fullest pool first reaches
+// RN_SEND_ROOM_WARN_PERMILLE, then RN_SEND_ROOM_NONE until every pool is
+// below RN_SEND_ROOM_REARM_PERMILLE again. A connection that stays above the
+// warning crosses once.
+int rn_region_send_room_watch( rn_region_t * region );
+
+// The debug-build warnings, through the log sink at ROCKETNET_LOG_LEVEL_WARN:
+// a crossing (rn_region_send_room_watch) and an exhaustion just before the
+// kick, each naming the client or the server slot, the room used against its
+// limits and the config fields to raise. A release build compiles both to
+// nothing; rn_send_room_warnings is 1 when they are compiled in.
+extern const int rn_send_room_warnings;
+void rn_region_send_room_note( rn_region_t * region, int is_server, int index );
+void rn_region_send_room_exhausted( const rn_region_t * region, int is_server, int index );
 
 // The largest message that takes a store chunk is one block stride, 1152 bytes.
 // A message above it takes a contiguous span (rn_region_send_alloc_span): the

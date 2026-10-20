@@ -4,9 +4,9 @@
 */
 
 // The public client and server (rocketnet.h) over the SDK's layers: a public
-// client is a message client and a public server is a message server, the
-// same object under its public name, so every call here is a guard, a
-// conversion and one call down. The configs are resolved here: the public
+// client is a session object holding one message client per connection, and
+// a public server a lifecycle object holding one message server per run, so
+// every call here is a guard, a state check and one call down. The configs are resolved here: the public
 // struct is split into the transport config and the message config the
 // layers take, the message fields and the send budget take their environment
 // overrides here, and the transport fields take theirs at the transport's
@@ -17,6 +17,9 @@
 #include "rocketnet_counters.h"
 #include "rocketnet_message_object.h"
 #include "rocketnet_send_budget.h"
+#include "rocketnet_connection_reset.h"
+
+#include <sodium.h>
 
 #include <limits.h>
 #include <string.h>
@@ -61,7 +64,8 @@ uint32_t rocketnet_version( void )
     X( sequenced_holds ) X( receipt_ring ) X( rto_initial_ms ) X( rto_min_ms ) X( rto_max_ms ) X( reliable_timeout_ms )
 
 // the send budget fields: one int each, read under the endpoint's env name.
-// 0 or less removes the budget; the ceiling is the budget's own.
+// 0 or less sets the budget to its ceiling, ROCKETNET_SEND_BUDGET_MAX_KBPS
+// (rn_budget_kbps); above the ceiling is refused.
 
 static const struct rocketnet_config_field_t rn_client_budget_fields[] =
 {
@@ -136,7 +140,7 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
         return false;
     transport->state_change_callback = config->state_change_callback;
     transport->time_callback = config->time_callback;
-    transport->step_driven = config->step_driven;
+    transport->step_driven = config->step_driven ? 1 : 0;
     transport->simulated_loss_percent = config->simulated_loss_percent;
     transport->simulated_latency_ms = config->simulated_latency_ms;
     transport->simulated_jitter_ms = config->simulated_jitter_ms;
@@ -231,9 +235,65 @@ bool rocketnet_server_config_resolve( const struct rocketnet_server_config_t * c
 //                              client
 // ---------------------------------------------------------------
 
-static inline struct rocketnet_message_client_t * rn_client( const struct rocketnet_client_t * client )
+// The public client is a session object (tla/ClientSession.tla): it holds
+// the resolved config, one memory block made at create, the lifetime
+// counters and the last disconnect reason (the model's `kept` and `reason`),
+// and, between rocketnet_client_connect and rocketnet_client_disconnect, one
+// connection: a message client over its own client transport, created in the
+// block by connect (the model's Connect) and ended by disconnect, destroy, or
+// the next connect after the server ended it (End, then Reset). Every end
+// runs the connection reset of sdk/rocketnet_connection_reset.h (the
+// protocol's at the terminal transition, the message object's here), then
+// destroys the connection, so the
+// next connect starts from a block in which nothing of the last connection
+// remains.
+//
+// The socket and the I/O thread are per connection: the token decides the
+// server's address family, and the socket binds to that family after the
+// token parses, so a client that connects to an IPv4 server and then an IPv6
+// one needs a socket of each.
+
+struct rocketnet_client_t
 {
-    return (struct rocketnet_message_client_t *) client;
+    void * context;
+    struct rocketnet_client_transport_config_t transport;
+    struct rocketnet_message_config_t message;
+    uint32_t kbps;
+    int owns_block;                                     // 1: this struct and the block are one rocketnet_malloc
+    uint8_t * block;                                    // the connection's memory, ROCKETNET_ALLOCATION_ALIGNMENT aligned
+    uint64_t block_bytes;
+    struct rocketnet_message_client_t * connection;     // NULL while DISCONNECTED or after a refused connect
+    int refused_state;                                  // the error state a refused connect left, 0 otherwise
+    int last_reason;                                    // the reason the last connection ended with, kept until the next one is established
+    uint64_t lifetime[ROCKETNET_CLIENT_COUNTER_COUNT];  // the counters of every ended connection
+};
+
+static inline uint64_t rn_round_up_alignment( uint64_t bytes )
+{
+    return ( bytes + ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) / ROCKETNET_ALLOCATION_ALIGNMENT * ROCKETNET_ALLOCATION_ALIGNMENT;
+}
+
+static const uint64_t rn_client_header_bytes = rn_round_up_alignment( sizeof( struct rocketnet_client_t ) );
+
+struct rocketnet_message_client_t * rocketnet_client_message_client( struct rocketnet_client_t * client )
+{
+    return client ? client->connection : NULL;
+}
+
+struct rocketnet_client_t * rocketnet_client_adopt( void * context, struct rocketnet_message_client_t * connection )
+{
+    if ( !rocketnet_api_null_guard( connection ) )
+        return NULL;
+    struct rocketnet_client_t * client = (struct rocketnet_client_t *) rocketnet_malloc( context, sizeof( struct rocketnet_client_t ) );
+    if ( !client )
+        return NULL;
+    memset( client, 0, sizeof( *client ) );
+    client->context = context;
+    rocketnet_client_transport_default_config( &client->transport );
+    rocketnet_message_default_config( &client->message );
+    client->owns_block = 1;
+    client->connection = connection;
+    return client;
 }
 
 static void rn_client_default_config_current( struct rocketnet_client_config_t * config )
@@ -249,7 +309,7 @@ static void rn_client_default_config_current( struct rocketnet_client_config_t *
     config->transport = NULL;
     config->state_change_callback = transport.state_change_callback;
     config->time_callback = transport.time_callback;
-    config->step_driven = transport.step_driven;
+    config->step_driven = transport.step_driven != 0;
     config->simulated_loss_percent = transport.simulated_loss_percent;
     config->simulated_latency_ms = transport.simulated_latency_ms;
     config->simulated_jitter_ms = transport.simulated_jitter_ms;
@@ -262,13 +322,14 @@ static void rn_client_default_config_current( struct rocketnet_client_config_t *
 #undef RN_COPY
 }
 
-void rocketnet_client_default_config( struct rocketnet_client_config_t * config )
+enum rocketnet_status_t rocketnet_client_default_config( struct rocketnet_client_config_t * config )
 {
     if ( !rocketnet_api_null_guard( config ) )
-        return;
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
     struct rocketnet_client_config_t defaults;
     rn_client_default_config_current( &defaults );
     memcpy( config, &defaults, ROCKETNET_CLIENT_CONFIG_BYTES_1 );
+    return ROCKETNET_STATUS_OK;
 }
 
 static const size_t rn_client_config_known_bytes[] = { ROCKETNET_CLIENT_CONFIG_KNOWN_BYTES };
@@ -288,16 +349,16 @@ static bool rn_public_config_size_known( const char * endpoint, const char * typ
 #define RN_CLIENT_CONFIG_SIZE_KNOWN( bytes ) rn_public_config_size_known( "client", "rocketnet_client_config_t", (bytes), rn_client_config_known_bytes, (int) ( sizeof(rn_client_config_known_bytes) / sizeof(rn_client_config_known_bytes[0]) ), sizeof(struct rocketnet_client_config_t) )
 #define RN_SERVER_CONFIG_SIZE_KNOWN( bytes ) rn_public_config_size_known( "server", "rocketnet_server_config_t", (bytes), rn_server_config_known_bytes, (int) ( sizeof(rn_server_config_known_bytes) / sizeof(rn_server_config_known_bytes[0]) ), sizeof(struct rocketnet_server_config_t) )
 
-int rocketnet_client_default_config_sized( struct rocketnet_client_config_t * config, size_t config_bytes )
+enum rocketnet_status_t rocketnet_client_default_config_sized( struct rocketnet_client_config_t * config, size_t config_bytes )
 {
     if ( !rocketnet_api_null_guard( config ) )
-        return 0;
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
     if ( !RN_CLIENT_CONFIG_SIZE_KNOWN( config_bytes ) )
-        return 0;
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
     struct rocketnet_client_config_t defaults;
     rn_client_default_config_current( &defaults );
     memcpy( config, &defaults, config_bytes );
-    return 1;
+    return ROCKETNET_STATUS_OK;
 }
 
 static const rocketnet_client_config_t * rn_client_config_read( rocketnet_client_config_t * current,
@@ -311,6 +372,27 @@ static const rocketnet_client_config_t * rn_client_config_read( rocketnet_client
     return current;
 }
 
+// The one validation behind validate_config and create: the transport table's
+// ranges, the public link simulator's posture and the transport list's parse,
+// each the check connect runs on the same values
+// (sdk/rocketnet_client_transport.cpp:593, :600 and :639),
+// then the message config's rules. Each refusal logs the rule it broke.
+static bool rn_client_config_valid( const struct rocketnet_client_transport_config_t * transport, const struct rocketnet_message_config_t * message )
+{
+    int num_fields = 0;
+    const struct rocketnet_config_field_t * fields = rocketnet_client_transport_config_fields( &num_fields );
+    if ( !rocketnet_config_validate( "client", transport, fields, num_fields ) )
+        return false;
+    if ( !rocketnet_config_validate_public_link_simulator( "client", transport, fields, num_fields, rocketnet_public_link_simulator_development() ) )
+        return false;
+    int num_available = 0;
+    const int * available = rocketnet_client_driver_availability( &num_available );
+    struct rocketnet_driver_ladder_t ladder;
+    if ( !rocketnet_driver_ladder_parse( transport->driver, available, num_available, &ladder ) )
+        return false;
+    return rocketnet_message_validate_config( message ) != 0;
+}
+
 static int rn_client_validate_config_current( const struct rocketnet_client_config_t * config )
 
 {
@@ -319,28 +401,24 @@ static int rn_client_validate_config_current( const struct rocketnet_client_conf
     uint32_t kbps = 0;
     if ( !rn_client_split( config, false, &transport, &message, &kbps ) )
         return 0;
-    int num_fields = 0;
-    const struct rocketnet_config_field_t * fields = rocketnet_client_transport_config_fields( &num_fields );
-    if ( !rocketnet_config_validate( "client", &transport, fields, num_fields ) )
-        return 0;
-    return rocketnet_message_validate_config( &message );
+    return rn_client_config_valid( &transport, &message ) ? 1 : 0;
 }
 
-int rocketnet_client_validate_config( const struct rocketnet_client_config_t * config )
+enum rocketnet_status_t rocketnet_client_validate_config( const struct rocketnet_client_config_t * config )
 {
     struct rocketnet_client_config_t current;
-    return rn_client_validate_config_current( rn_client_config_read( &current, config, ROCKETNET_CLIENT_CONFIG_BYTES_1 ) );
+    return rn_client_validate_config_current( rn_client_config_read( &current, config, ROCKETNET_CLIENT_CONFIG_BYTES_1 ) ) ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
 }
 
-int rocketnet_client_validate_config_sized( const struct rocketnet_client_config_t * config, size_t config_bytes )
+enum rocketnet_status_t rocketnet_client_validate_config_sized( const struct rocketnet_client_config_t * config, size_t config_bytes )
 {
     if ( config && !RN_CLIENT_CONFIG_SIZE_KNOWN( config_bytes ) )
-        return 0;
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
     struct rocketnet_client_config_t current;
-    return rn_client_validate_config_current( rn_client_config_read( &current, config, config_bytes ) );
+    return rn_client_validate_config_current( rn_client_config_read( &current, config, config_bytes ) ) ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
 }
 
-static uint64_t rn_client_required_memory_current( const struct rocketnet_client_config_t * config )
+static size_t rn_client_required_memory_current( const struct rocketnet_client_config_t * config )
 
 {
     struct rocketnet_client_transport_config_t transport;
@@ -348,16 +426,18 @@ static uint64_t rn_client_required_memory_current( const struct rocketnet_client
     uint32_t kbps = 0;
     if ( !rn_client_split( config, true, &transport, &message, &kbps ) )
         return 0;
-    return rocketnet_message_client_required_memory( &message );
+    const uint64_t connection_bytes = rocketnet_message_client_required_memory( &message );
+    const uint64_t total = connection_bytes == 0 ? 0 : rn_client_header_bytes + connection_bytes;
+    return total > (uint64_t) SIZE_MAX ? 0 : (size_t) total;
 }
 
-uint64_t rocketnet_client_required_memory( const struct rocketnet_client_config_t * config )
+size_t rocketnet_client_required_memory( const struct rocketnet_client_config_t * config )
 {
     struct rocketnet_client_config_t current;
     return rn_client_required_memory_current( rn_client_config_read( &current, config, ROCKETNET_CLIENT_CONFIG_BYTES_1 ) );
 }
 
-uint64_t rocketnet_client_required_memory_sized( const struct rocketnet_client_config_t * config, size_t config_bytes )
+size_t rocketnet_client_required_memory_sized( const struct rocketnet_client_config_t * config, size_t config_bytes )
 {
     if ( config && !RN_CLIENT_CONFIG_SIZE_KNOWN( config_bytes ) )
         return 0;
@@ -365,56 +445,180 @@ uint64_t rocketnet_client_required_memory_sized( const struct rocketnet_client_c
     return rn_client_required_memory_current( rn_client_config_read( &current, config, config_bytes ) );
 }
 
-static struct rocketnet_client_t * rn_client_create_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_config_t * config, void * memory, uint64_t memory_bytes )
+static struct rocketnet_client_t * rn_client_create_current( void * context, const struct rocketnet_client_config_t * config, void * memory, size_t memory_bytes )
 {
-    if ( !rocketnet_api_null_guard( connect_token ) )
+    // the lifecycle state is read once here, before any allocation; a create
+    // before rocketnet_init is refused, logged and counted, as the transport
+    // create refuses it at connect (sdk/rocketnet_client_transport.cpp:561)
+    if ( !rocketnet_library_initialized() )
+    {
+        rocketnet_error( "rocketnet_client_create: rocketnet_init must be called first" );
+        rocketnet_api_misuse_record();
         return NULL;
+    }
     struct rocketnet_client_transport_config_t transport;
     struct rocketnet_message_config_t message;
     uint32_t kbps = 0;
     if ( !rn_client_split( config, true, &transport, &message, &kbps ) )
         return NULL;
-    return (struct rocketnet_client_t *) rocketnet_message_client_create( context, connect_token, &transport, &message, memory, memory_bytes, kbps );
+    if ( !rn_client_config_valid( &transport, &message ) )
+        return NULL;
+    const uint64_t connection_bytes = rocketnet_message_client_required_memory( &message );
+    if ( connection_bytes == 0 )
+        return NULL;
+    const uint64_t total = rn_client_header_bytes + connection_bytes;
+    uint8_t * base = (uint8_t *) memory;
+    if ( base )
+    {
+        if ( memory_bytes < total || ( (uintptr_t) base % ROCKETNET_ALLOCATION_ALIGNMENT ) != 0 )
+        {
+            rocketnet_error( "client create refused: the memory block is short or not %d-aligned", ROCKETNET_ALLOCATION_ALIGNMENT );
+            return NULL;
+        }
+    }
+    else
+    {
+        base = (uint8_t *) rocketnet_malloc( context, (size_t) total );
+        if ( !base )
+            return NULL;
+    }
+    struct rocketnet_client_t * client = (struct rocketnet_client_t *) base;
+    memset( client, 0, sizeof( *client ) );
+    client->context = context;
+    client->transport = transport;
+    client->message = message;
+    client->kbps = kbps;
+    client->owns_block = memory ? 0 : 1;
+    client->block = base + rn_client_header_bytes;
+    client->block_bytes = connection_bytes;
+    client->last_reason = ROCKETNET_DISCONNECT_REASON_NONE;
+    return client;
 }
 
-struct rocketnet_client_t * rocketnet_client_create( void * context, const uint8_t * connect_token, const struct rocketnet_client_config_t * config, void * memory, uint64_t memory_bytes )
+struct rocketnet_client_t * rocketnet_client_create( void * context, const struct rocketnet_client_config_t * config, void * memory, size_t memory_bytes )
 {
     struct rocketnet_client_config_t current;
-    return rn_client_create_current( context, connect_token,
+    return rn_client_create_current( context,
         rn_client_config_read( &current, config, ROCKETNET_CLIENT_CONFIG_BYTES_1 ), memory, memory_bytes );
 }
 
-struct rocketnet_client_t * rocketnet_client_create_sized( void * context, const uint8_t * connect_token, const struct rocketnet_client_config_t * config, size_t config_bytes, void * memory, uint64_t memory_bytes )
+struct rocketnet_client_t * rocketnet_client_create_sized( void * context, const struct rocketnet_client_config_t * config, size_t config_bytes, void * memory, size_t memory_bytes )
 {
     if ( config && !RN_CLIENT_CONFIG_SIZE_KNOWN( config_bytes ) )
         return NULL;
     if ( !config || config_bytes == sizeof( struct rocketnet_client_config_t ) )
-        return rn_client_create_current( context, connect_token, config, memory, memory_bytes );
+        return rn_client_create_current( context, config, memory, memory_bytes );
     struct rocketnet_client_config_t current;
     rn_client_default_config_current( &current );
     memcpy( &current, config, config_bytes );
-    return rn_client_create_current( context, connect_token, &current, memory, memory_bytes );
+    return rn_client_create_current( context, &current, memory, memory_bytes );
+}
+
+static uint64_t rn_client_connection_counter( struct rocketnet_message_client_t * message_client, int counter );
+
+// End then Reset (tla/ClientSession.tla): the connection's counters move into
+// the lifetime counters, its reason is kept, and its destroy -- which sends
+// the redundant disconnects from a live state and runs the connection reset
+// -- leaves the block holding nothing of it.
+static void rn_client_end_connection( struct rocketnet_client_t * client )
+{
+    if ( !client->connection )
+        return;
+
+    // From a handshake state or CONNECTED the message connection ends first:
+    // its link performs the transport disconnect synchronously (the redundant
+    // disconnect packets), preserving that transition's callback order.
+    if ( rocketnet_message_client_state( client->connection ) > ROCKETNET_CLIENT_STATE_DISCONNECTED )
+        rn_message_object_kick( &client->connection->object, 0, ROCKETNET_DISCONNECT_REASON_NONE );
+    for ( int i = 0; i < ROCKETNET_CLIENT_COUNTER_COUNT; i++ )
+        client->lifetime[i] += rn_client_connection_counter( client->connection, i );
+    const int reason = rocketnet_message_client_disconnect_reason( client->connection );
+    if ( reason != ROCKETNET_DISCONNECT_REASON_NONE || rocketnet_message_client_state( client->connection ) == ROCKETNET_CLIENT_STATE_CONNECTED )
+        client->last_reason = reason;
+    // the connection reset (sdk/rocketnet_connection_reset.h) on every end:
+    // the protocol's runs on every terminal transition
+    // (rocketnet_client_set_state, and the disconnect burst), the message
+    // object's runs here; the transport's own reset is left to its destroy,
+    // because run here it would drop the staged disconnect burst before the
+    // destroy sends it
+    rocketnet_client_connection_reset( &client->connection->object );
+    rocketnet_message_client_destroy( client->connection );
+    client->connection = NULL;
+}
+
+static int rn_client_state( const struct rocketnet_client_t * client )
+{
+    if ( client->connection )
+        return rocketnet_message_client_state( client->connection );
+    return client->refused_state;
+}
+
+enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * client, const uint8_t * connect_token )
+{
+    if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( connect_token ) )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    // connect reads no clock: the connection's clock starts at its first
+    // update, as create's always has (documented in rocketnet.h)
+
+    // a connection the server ended (or a kick) is DISCONNECTED while its
+    // object still exists: end it first, so its counters and reason are kept
+    // and nothing of it survives into the new one
+    if ( client->connection && rocketnet_message_client_state( client->connection ) == ROCKETNET_CLIENT_STATE_DISCONNECTED )
+        rn_client_end_connection( client );
+
+    if ( rn_client_state( client ) != ROCKETNET_CLIENT_STATE_DISCONNECTED )
+    {
+        rocketnet_api_misuse_record();
+        rocketnet_error( "client connect refused: the client is not disconnected" );
+        return ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED;
+    }
+    int status = ROCKETNET_STATUS_OK;
+    client->connection = rocketnet_message_client_create_ex( client->context, connect_token, &client->transport, &client->message,
+                                                              client->block, client->block_bytes, client->kbps, &status );
+    if ( client->connection )
+        return ROCKETNET_STATUS_OK;
+    if ( status == ROCKETNET_STATUS_INVALID_CONNECT_TOKEN )
+        client->refused_state = ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN;
+    else if ( status == ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED )
+        client->refused_state = ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED;
+    return status == ROCKETNET_STATUS_OK ? ROCKETNET_STATUS_INVALID_ARGUMENT : (enum rocketnet_status_t) status;
 }
 
 void rocketnet_client_destroy( struct rocketnet_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return;
-    rocketnet_message_client_destroy( rn_client( client ) );
+    rn_client_end_connection( client );
+    if ( client->owns_block )
+    {
+        void * context = client->context;
+        rocketnet_free( context, client );
+    }
+    else
+    {
+        memset( client, 0, sizeof( *client ) );
+    }
 }
 
-int rocketnet_client_update( struct rocketnet_client_t * client, double time )
+enum rocketnet_update_result_t rocketnet_client_update( struct rocketnet_client_t * client, double time )
 {
     if ( !rocketnet_api_null_guard( client ) )
-        return ROCKETNET_MESSAGE_OK;
-    return rocketnet_message_client_update( rn_client( client ), time );
+        return ROCKETNET_UPDATE_OK;
+    if ( !client->connection )
+        return ROCKETNET_UPDATE_OK;
+    const int result = rocketnet_message_client_update( client->connection, time );
+    if ( rocketnet_message_client_state( client->connection ) == ROCKETNET_CLIENT_STATE_CONNECTED )
+        client->last_reason = ROCKETNET_DISCONNECT_REASON_NONE;
+    return (enum rocketnet_update_result_t) result;
 }
 
 void rocketnet_client_send_packets( struct rocketnet_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return;
-    rocketnet_message_client_send_packets( rn_client( client ) );
+    if ( !client->connection )
+        return;
+    rocketnet_message_client_send_packets( client->connection );
 }
 
 void rocketnet_client_disconnect( struct rocketnet_client_t * client )
@@ -422,93 +626,166 @@ void rocketnet_client_disconnect( struct rocketnet_client_t * client )
     if ( !rocketnet_api_null_guard( client ) )
         return;
 
-    // End the message connection first. Its link performs the transport
-    // disconnect synchronously, preserving that transition's callback order;
-    // the next update releases every channel/region allocation through the
-    // centralized client message reset.
-    rn_message_object_kick( &rn_client( client )->object, 0, ROCKETNET_MESSAGE_ERROR_NONE );
+    // the disconnect packets from a live state, then the connection is torn
+    // down and the client is DISCONNECTED again (rn_client_end_connection)
+    rn_client_end_connection( client );
+    client->refused_state = ROCKETNET_CLIENT_STATE_DISCONNECTED;
 }
 
 enum rocketnet_client_state_t rocketnet_client_state( const struct rocketnet_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
-        return ROCKETNET_CLIENT_STATE_DISCONNECTED;
-    return (enum rocketnet_client_state_t) rocketnet_message_client_state( rn_client( client ) );
+    {
+        rocketnet_error( "rocketnet_client_state: the client is NULL" );
+        return ROCKETNET_CLIENT_STATE_INVALID;
+    }
+    return (enum rocketnet_client_state_t) rn_client_state( client );
 }
 
-const char * rocketnet_client_state_name( int state )
+const char * rocketnet_client_state_name( enum rocketnet_client_state_t state )
 {
-    return rocketnet_client_transport_state_name( state );
+    const int value = (int) state;
+    if ( value == ROCKETNET_CLIENT_STATE_INVALID )
+        return "invalid";
+    if ( value < ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED || value > ROCKETNET_CLIENT_STATE_CONNECTED )
+        return "unknown";
+    return rocketnet_client_transport_state_name( value );
 }
 
-int rocketnet_client_disconnect_reason( const struct rocketnet_client_t * client )
+const char * rocketnet_disconnect_reason_name( enum rocketnet_disconnect_reason_t reason )
+{
+    switch ( (int) reason )
+    {
+        case ROCKETNET_DISCONNECT_REASON_NONE:                      return "none";
+        case ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH:           return "config mismatch";
+        case ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION:        return "protocol violation";
+        case ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT:          return "reliable timeout";
+        case ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED:  return "message memory exhausted";
+        case ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED:       return "server disconnected";
+        default:                                                    return "unknown";
+    }
+}
+
+enum rocketnet_disconnect_reason_t rocketnet_client_disconnect_reason( const struct rocketnet_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
-        return ROCKETNET_MESSAGE_ERROR_NONE;
-    return rocketnet_message_client_disconnect_reason( rn_client( client ) );
+        return ROCKETNET_DISCONNECT_REASON_NONE;
+    if ( client->connection )
+    {
+        const int reason = rocketnet_message_client_disconnect_reason( client->connection );
+        if ( reason != ROCKETNET_DISCONNECT_REASON_NONE || rocketnet_message_client_state( client->connection ) == ROCKETNET_CLIENT_STATE_CONNECTED )
+            return (enum rocketnet_disconnect_reason_t) reason;
+    }
+    return (enum rocketnet_disconnect_reason_t) client->last_reason;
 }
 
-int rocketnet_client_index( const struct rocketnet_client_t * client )
+uint64_t rocketnet_client_index( const struct rocketnet_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return 0;
-    return rocketnet_client_transport_client_index( rocketnet_message_client_transport( rn_client( client ) ) );
+    if ( !client->connection )
+        return 0;
+    const uint64_t index = (uint64_t) rocketnet_client_transport_client_index( rocketnet_message_client_transport( client->connection ) );
+    rocketnet_assert( ( index & ROCKETNET_FLOW_ID_BIT ) == 0 );      // a client index is never a flow id
+    return index;
 }
 
 const char * rocketnet_client_transport_name( const struct rocketnet_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return NULL;
-    return rocketnet_client_transport_driver( rocketnet_message_client_transport( rn_client( client ) ) );
+    if ( !client->connection )
+        return NULL;
+    return rocketnet_client_transport_driver( rocketnet_message_client_transport( client->connection ) );
 }
 
-uint8_t * rocketnet_client_start( struct rocketnet_client_t * client, int channel, int reliability, int bytes )
+// A message is sent only while the client is CONNECTED (standard/MESSAGES.md
+// m1.5; tla/ClientSession.tla DropSend). In every other state a start is
+// dropped: NULL, no log, not misuse, nothing held for later, counted once in
+// NOT_CONNECTED_DROPS. With no connection object the count goes straight to
+// the lifetime counters; with one, the message layer drops it and counts
+// MESSAGE_SEND_NOT_CONNECTED, which the public counter reads.
+uint8_t * rocketnet_client_start_message( struct rocketnet_client_t * client, int channel, enum rocketnet_reliability_t reliability, int bytes )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return NULL;
-    return rocketnet_message_client_start( rn_client( client ), channel, reliability, bytes );
+    if ( !client->connection )
+    {
+        client->lifetime[ROCKETNET_CLIENT_COUNTER_NOT_CONNECTED_DROPS]++;
+        return NULL;
+    }
+    return rocketnet_message_client_start( client->connection, channel, (int) reliability, bytes );
 }
 
-uint32_t rocketnet_client_finish( struct rocketnet_client_t * client, int bytes_written )
+// a finish with no start pending (a dropped start included) returns 0,
+// counted nowhere
+uint32_t rocketnet_client_finish_message( struct rocketnet_client_t * client, int bytes_written )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return 0;
-    return rocketnet_message_client_finish( rn_client( client ), bytes_written );
+    if ( !client->connection )
+        return 0;
+    return rocketnet_message_client_finish( client->connection, bytes_written );
 }
 
-void rocketnet_client_abort( struct rocketnet_client_t * client )
+void rocketnet_client_abort_message( struct rocketnet_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return;
-    rocketnet_message_client_abort( rn_client( client ) );
+    if ( !client->connection )
+        return;
+    rocketnet_message_client_abort( client->connection );
 }
 
-int rocketnet_client_receive( struct rocketnet_client_t * client, int channel, const uint8_t ** data, int * bytes )
+int rocketnet_client_receive_message( struct rocketnet_client_t * client, int channel, const uint8_t ** data, int * bytes )
 {
     if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( data ) || !rocketnet_api_null_guard( bytes ) )
         return 0;
-    return rocketnet_message_client_receive( rn_client( client ), channel, data, bytes );
+    if ( !client->connection )
+        return 0;
+    return rocketnet_message_client_receive( client->connection, channel, data, bytes );
 }
 
-void rocketnet_client_release( struct rocketnet_client_t * client, const uint8_t * data )
+void rocketnet_client_release_message( struct rocketnet_client_t * client, const uint8_t * data )
 {
     if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( data ) )
         return;
-    rocketnet_message_client_release( rn_client( client ), data );
+    if ( !client->connection )
+    {
+        rocketnet_api_misuse_record();
+        return;
+    }
+    rocketnet_message_client_release( client->connection, data );
 }
 
 int rocketnet_client_receipts( struct rocketnet_client_t * client, struct rocketnet_receipt_t * out, int capacity )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return 0;
-    return rocketnet_message_client_receipts( rn_client( client ), (struct rocketnet_message_receipt_t *) out, capacity );
+    if ( !client->connection )
+        return 0;
+    return rocketnet_message_client_receipts( client->connection, (struct rocketnet_message_receipt_t *) out, capacity );
 }
 
-int rocketnet_client_set_send_kbps( struct rocketnet_client_t * client, int kbps )
+// a rate above the ceiling is out of range; a connection that is not
+// CONNECTED has no budget to set (the config's rate is its starting rate)
+static bool rn_send_kbps_in_range( const char * endpoint, int kbps )
+{
+    if ( kbps <= ROCKETNET_SEND_BUDGET_MAX_KBPS )
+        return true;
+    rocketnet_error( "%s set_send_kbps refused: %d kbps is above the %d kbps ceiling", endpoint, kbps, ROCKETNET_SEND_BUDGET_MAX_KBPS );
+    return false;
+}
+
+enum rocketnet_status_t rocketnet_client_set_send_kbps( struct rocketnet_client_t * client, int kbps )
 {
     if ( !rocketnet_api_null_guard( client ) )
-        return 0;
-    return rocketnet_message_client_set_send_kbps( rn_client( client ), rn_budget_kbps( kbps ) );
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    if ( !rn_send_kbps_in_range( "client", kbps ) )
+        return ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+    if ( rn_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    return rocketnet_message_client_set_send_kbps( client->connection, rn_budget_kbps( kbps ) ) ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_INVALID_ARGUMENT;
 }
 
 static uint64_t rn_counter_sum( const struct rocketnet_counters_t * a, const struct rocketnet_counters_t * b, int counter )
@@ -516,11 +793,8 @@ static uint64_t rn_counter_sum( const struct rocketnet_counters_t * a, const str
     return ( a ? rocketnet_counter_value( a, counter ) : 0 ) + ( b ? rocketnet_counter_value( b, counter ) : 0 );
 }
 
-uint64_t rocketnet_client_counter( const struct rocketnet_client_t * client, enum rocketnet_client_counter_t counter )
+static uint64_t rn_client_connection_counter( struct rocketnet_message_client_t * message_client, int counter )
 {
-    if ( !rocketnet_api_null_guard( client ) )
-        return 0;
-    struct rocketnet_message_client_t * message_client = rn_client( client );
     struct rocketnet_client_transport_t * transport = rocketnet_message_client_transport( message_client );
     const struct rocketnet_counters_t * transport_counters = rocketnet_client_transport_counters( transport );
     const struct rocketnet_counters_t * message_counters = rocketnet_message_client_counters( message_client );
@@ -541,17 +815,29 @@ uint64_t rocketnet_client_counter( const struct rocketnet_client_t * client, enu
         case ROCKETNET_CLIENT_COUNTER_BUDGET_DROPS:         return rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET );
         case ROCKETNET_CLIENT_COUNTER_SEND_DEFERRED:        return rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED );
         case ROCKETNET_CLIENT_COUNTER_MESSAGES_NOT_RELEASED: return rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_NOT_RELEASED );
+        case ROCKETNET_CLIENT_COUNTER_NOT_CONNECTED_DROPS:  return rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED );
         default:                                            return 0;
     }
+}
+
+uint64_t rocketnet_client_counter( const struct rocketnet_client_t * client, enum rocketnet_client_counter_t counter )
+{
+    if ( !rocketnet_api_null_guard( client ) )
+        return 0;
+    if ( (int) counter < 0 || (int) counter >= ROCKETNET_CLIENT_COUNTER_COUNT )
+        return 0;
+    return client->lifetime[counter] + ( client->connection ? rn_client_connection_counter( client->connection, (int) counter ) : 0 );
 }
 
 double rocketnet_client_stat( const struct rocketnet_client_t * client, enum rocketnet_client_stat_t stat )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return 0.0;
+    if ( !client->connection )
+        return 0.0;
     struct rocketnet_client_transport_stats_t stats;
     memset( &stats, 0, sizeof( stats ) );
-    rocketnet_client_transport_stats( rocketnet_message_client_transport( rn_client( client ) ), &stats );
+    rocketnet_client_transport_stats( rocketnet_message_client_transport( client->connection ), &stats );
     switch ( stat )
     {
         case ROCKETNET_CLIENT_STAT_RTT:                         return stats.rtt;
@@ -569,14 +855,83 @@ double rocketnet_client_stat( const struct rocketnet_client_t * client, enum roc
 //                              server
 // ---------------------------------------------------------------
 
+// The public server is a lifecycle object (tla/ServerSession.tla): create
+// validates the config and makes the one memory block, binding nothing;
+// rocketnet_server_start creates the running server -- a message server over
+// its own server transport, bound at the address -- in that block;
+// rocketnet_server_stop disconnects every client (the redundant disconnect
+// packets, then the per-slot connection reset of
+// sdk/rocketnet_connection_reset.h, the model's EndClient) and releases the
+// transport, leaving the server stopped and able to start again. The server's
+// counters are kept across starts.
+
+struct rocketnet_server_t
+{
+    void * context;
+    char address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    struct rocketnet_server_transport_config_t transport;   // holds the secret key: wiped at destroy
+    struct rocketnet_message_config_t message;
+    uint32_t kbps;
+    int max_clients;
+    int owns_block;
+    uint8_t * block;
+    uint64_t block_bytes;
+    struct rocketnet_message_server_t * running;            // NULL while stopped
+    uint64_t lifetime[ROCKETNET_SERVER_COUNTER_COUNT];      // the counters of every earlier run
+};
+
+static const uint64_t rn_server_header_bytes = rn_round_up_alignment( sizeof( struct rocketnet_server_t ) );
+
 static inline struct rocketnet_message_server_t * rn_server( const struct rocketnet_server_t * server )
 {
-    return (struct rocketnet_message_server_t *) server;
+    return server->running;
 }
 
 static inline struct rocketnet_server_transport_t * rn_server_transport( const struct rocketnet_server_t * server )
 {
-    return rocketnet_message_server_transport( rn_server( server ) );
+    return server->running ? rocketnet_message_server_transport( server->running ) : NULL;
+}
+
+struct rocketnet_message_server_t * rocketnet_server_message_server( struct rocketnet_server_t * server )
+{
+    return server ? server->running : NULL;
+}
+
+struct rocketnet_server_t * rocketnet_server_adopt( void * context, struct rocketnet_message_server_t * running )
+{
+    if ( !rocketnet_api_null_guard( running ) )
+        return NULL;
+    struct rocketnet_server_t * server = (struct rocketnet_server_t *) rocketnet_malloc( context, sizeof( struct rocketnet_server_t ) );
+    if ( !server )
+        return NULL;
+    memset( server, 0, sizeof( *server ) );
+    server->context = context;
+    rocketnet_server_transport_default_config( &server->transport );
+    rocketnet_message_default_config( &server->message );
+    server->max_clients = ( (const struct rn_message_object_t *) running )->num_connections;
+    server->owns_block = 1;
+    server->running = running;
+    return server;
+}
+
+// A destination id with ROCKETNET_FLOW_ID_BIT set is a flow id: reserved,
+// refused and counted until flows exist (ROCKETNET_STATUS_FLOW_ID_RESERVED).
+static bool rn_server_destination_refused( uint64_t destination_id )
+{
+    if ( ( destination_id & ROCKETNET_FLOW_ID_BIT ) == 0 )
+        return false;
+    rocketnet_api_misuse_record();
+    rocketnet_error( "server send refused: %s (destination id has the flow bit set)", rocketnet_status_name( ROCKETNET_STATUS_FLOW_ID_RESERVED ) );
+    return true;
+}
+
+// a slot index for a client index: in range of max_clients while running
+static bool rn_server_slot( const struct rocketnet_server_t * server, uint64_t client_index, int * slot )
+{
+    if ( !server->running || client_index >= (uint64_t) server->max_clients )
+        return false;
+    *slot = (int) client_index;
+    return true;
 }
 
 static void rn_server_config_from_transport_current( struct rocketnet_server_config_t * config, const struct rocketnet_server_transport_config_t * transport )
@@ -617,25 +972,26 @@ static void rn_server_default_config_current( struct rocketnet_server_config_t *
     rn_server_config_from_transport_current( config, &transport );
 }
 
-void rocketnet_server_default_config( struct rocketnet_server_config_t * config )
+enum rocketnet_status_t rocketnet_server_default_config( struct rocketnet_server_config_t * config )
 {
     if ( !rocketnet_api_null_guard( config ) )
-        return;
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
     struct rocketnet_server_config_t defaults;
     rn_server_default_config_current( &defaults );
     memcpy( config, &defaults, ROCKETNET_SERVER_CONFIG_BYTES_1 );
+    return ROCKETNET_STATUS_OK;
 }
 
-int rocketnet_server_default_config_sized( struct rocketnet_server_config_t * config, size_t config_bytes )
+enum rocketnet_status_t rocketnet_server_default_config_sized( struct rocketnet_server_config_t * config, size_t config_bytes )
 {
     if ( !rocketnet_api_null_guard( config ) )
-        return 0;
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
     if ( !RN_SERVER_CONFIG_SIZE_KNOWN( config_bytes ) )
-        return 0;
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
     struct rocketnet_server_config_t defaults;
     rn_server_default_config_current( &defaults );
     memcpy( config, &defaults, config_bytes );
-    return 1;
+    return ROCKETNET_STATUS_OK;
 }
 
 static void rn_server_dev_config_current( struct rocketnet_server_config_t * config )
@@ -648,25 +1004,26 @@ static void rn_server_dev_config_current( struct rocketnet_server_config_t * con
     rn_server_config_from_transport_current( config, &transport );
 }
 
-void rocketnet_server_dev_config( struct rocketnet_server_config_t * config )
+enum rocketnet_status_t rocketnet_server_dev_config( struct rocketnet_server_config_t * config )
 {
     if ( !rocketnet_api_null_guard( config ) )
-        return;
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
     struct rocketnet_server_config_t current;
     rn_server_dev_config_current( &current );
     memcpy( config, &current, ROCKETNET_SERVER_CONFIG_BYTES_1 );
+    return ROCKETNET_STATUS_OK;
 }
 
-int rocketnet_server_dev_config_sized( struct rocketnet_server_config_t * config, size_t config_bytes )
+enum rocketnet_status_t rocketnet_server_dev_config_sized( struct rocketnet_server_config_t * config, size_t config_bytes )
 {
     if ( !rocketnet_api_null_guard( config ) )
-        return 0;
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
     if ( !RN_SERVER_CONFIG_SIZE_KNOWN( config_bytes ) )
-        return 0;
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
     struct rocketnet_server_config_t current;
     rn_server_dev_config_current( &current );
     memcpy( config, &current, config_bytes );
-    return 1;
+    return ROCKETNET_STATUS_OK;
 }
 
 static const rocketnet_server_config_t * rn_server_config_read( rocketnet_server_config_t * current,
@@ -680,6 +1037,28 @@ static const rocketnet_server_config_t * rn_server_config_read( rocketnet_server
     return current;
 }
 
+// The one validation behind validate_config and create: the transport table's
+// ranges, the public link simulator's posture and the transport list's parse,
+// each the check start runs on the same values
+// (sdk/rocketnet_server_transport.cpp:977, :984 and :1080),
+// then the message config's rules. The keys are not checked here; start
+// refuses a config with none. Each refusal logs the rule it broke.
+static bool rn_server_config_valid( const struct rocketnet_server_transport_config_t * transport, const struct rocketnet_message_config_t * message )
+{
+    int num_fields = 0;
+    const struct rocketnet_config_field_t * fields = rocketnet_server_transport_config_fields( &num_fields );
+    if ( !rocketnet_config_validate( "server", transport, fields, num_fields ) )
+        return false;
+    if ( !rocketnet_config_validate_public_link_simulator( "server", transport, fields, num_fields, rocketnet_public_link_simulator_development() ) )
+        return false;
+    int num_available = 0;
+    const int * available = rocketnet_server_driver_availability( &num_available );
+    struct rocketnet_driver_ladder_t ladder;
+    if ( !rocketnet_driver_ladder_parse( transport->driver, available, num_available, &ladder ) )
+        return false;
+    return rocketnet_message_validate_config( message ) != 0;
+}
+
 static int rn_server_validate_config_current( const struct rocketnet_server_config_t * config )
 
 {
@@ -687,73 +1066,155 @@ static int rn_server_validate_config_current( const struct rocketnet_server_conf
     struct rocketnet_message_config_t message;
     uint32_t kbps = 0;
     if ( !rn_server_split( config, false, &transport, &message, &kbps ) )
+    {
+        sodium_memzero( &transport, sizeof( transport ) );
         return 0;
-    int num_fields = 0;
-    const struct rocketnet_config_field_t * fields = rocketnet_server_transport_config_fields( &num_fields );
-    if ( !rocketnet_config_validate( "server", &transport, fields, num_fields ) )
-        return 0;
-    return rocketnet_message_validate_config( &message );
+    }
+    const bool valid = rn_server_config_valid( &transport, &message );
+    sodium_memzero( &transport, sizeof( transport ) );
+    return valid ? 1 : 0;
 }
 
-int rocketnet_server_validate_config( const struct rocketnet_server_config_t * config )
+enum rocketnet_status_t rocketnet_server_validate_config( const struct rocketnet_server_config_t * config )
 {
     struct rocketnet_server_config_t current;
-    return rn_server_validate_config_current( rn_server_config_read( &current, config, ROCKETNET_SERVER_CONFIG_BYTES_1 ) );
+    const int result = rn_server_validate_config_current( rn_server_config_read( &current, config, ROCKETNET_SERVER_CONFIG_BYTES_1 ) );
+
+    sodium_memzero( &current, sizeof( current ) );
+
+    return result ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
 }
 
-int rocketnet_server_validate_config_sized( const struct rocketnet_server_config_t * config, size_t config_bytes )
+enum rocketnet_status_t rocketnet_server_validate_config_sized( const struct rocketnet_server_config_t * config, size_t config_bytes )
 {
     if ( config && !RN_SERVER_CONFIG_SIZE_KNOWN( config_bytes ) )
-        return 0;
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
     struct rocketnet_server_config_t current;
-    return rn_server_validate_config_current( rn_server_config_read( &current, config, config_bytes ) );
+    const int result = rn_server_validate_config_current( rn_server_config_read( &current, config, config_bytes ) );
+
+    sodium_memzero( &current, sizeof( current ) );
+
+    return result ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
 }
 
-static uint64_t rn_server_required_memory_current( const struct rocketnet_server_config_t * config )
+static size_t rn_server_required_memory_current( const struct rocketnet_server_config_t * config )
 
 {
     struct rocketnet_server_transport_config_t transport;
     struct rocketnet_message_config_t message;
     uint32_t kbps = 0;
     if ( !rn_server_split( config, true, &transport, &message, &kbps ) )
+    {
+        sodium_memzero( &transport, sizeof( transport ) );
         return 0;
-    return rocketnet_message_server_required_memory( &transport, &message );
+    }
+    const uint64_t running_bytes = rocketnet_message_server_required_memory( &transport, &message );
+    sodium_memzero( &transport, sizeof( transport ) );
+    const uint64_t total = running_bytes == 0 ? 0 : rn_server_header_bytes + running_bytes;
+    return total > (uint64_t) SIZE_MAX ? 0 : (size_t) total;
 }
 
-uint64_t rocketnet_server_required_memory( const struct rocketnet_server_config_t * config )
+size_t rocketnet_server_required_memory( const struct rocketnet_server_config_t * config )
 {
     struct rocketnet_server_config_t current;
-    return rn_server_required_memory_current( rn_server_config_read( &current, config, ROCKETNET_SERVER_CONFIG_BYTES_1 ) );
+    size_t result = rn_server_required_memory_current( rn_server_config_read( &current, config, ROCKETNET_SERVER_CONFIG_BYTES_1 ) );
+
+    sodium_memzero( &current, sizeof( current ) );
+
+    return result;
 }
 
-uint64_t rocketnet_server_required_memory_sized( const struct rocketnet_server_config_t * config, size_t config_bytes )
+size_t rocketnet_server_required_memory_sized( const struct rocketnet_server_config_t * config, size_t config_bytes )
 {
     if ( config && !RN_SERVER_CONFIG_SIZE_KNOWN( config_bytes ) )
         return 0;
     struct rocketnet_server_config_t current;
-    return rn_server_required_memory_current( rn_server_config_read( &current, config, config_bytes ) );
+    size_t result = rn_server_required_memory_current( rn_server_config_read( &current, config, config_bytes ) );
+
+    sodium_memzero( &current, sizeof( current ) );
+
+    return result;
 }
 
-static struct rocketnet_server_t * rn_server_create_current( void * context, const char * address, const struct rocketnet_server_config_t * config, void * memory, uint64_t memory_bytes )
+static struct rocketnet_server_t * rn_server_create_current( void * context, const char * address, const struct rocketnet_server_config_t * config, void * memory, size_t memory_bytes )
 {
+    // the lifecycle state is read once here, before any allocation; a create
+    // before rocketnet_init is refused, logged and counted, as the transport
+    // create refuses it at start (sdk/rocketnet_server_transport.cpp:917)
+    if ( !rocketnet_library_initialized() )
+    {
+        rocketnet_error( "rocketnet_server_create: rocketnet_init must be called first" );
+        rocketnet_api_misuse_record();
+        return NULL;
+    }
     if ( !rocketnet_api_null_guard( address ) )
         return NULL;
+    if ( strlen( address ) >= ROCKETNET_MAX_ADDRESS_STRING_LENGTH )
+    {
+        rocketnet_error( "server create refused: the address is too long" );
+        return NULL;
+    }
     struct rocketnet_server_transport_config_t transport;
     struct rocketnet_message_config_t message;
     uint32_t kbps = 0;
-    if ( !rn_server_split( config, true, &transport, &message, &kbps ) )
+    if ( !rn_server_split( config, true, &transport, &message, &kbps ) || !rn_server_config_valid( &transport, &message ) )
+    {
+        sodium_memzero( &transport, sizeof( transport ) );
         return NULL;
-    return (struct rocketnet_server_t *) rocketnet_message_server_create( context, address, &transport, &message, memory, memory_bytes, kbps );
+    }
+    const uint64_t running_bytes = rocketnet_message_server_required_memory( &transport, &message );
+    if ( running_bytes == 0 )
+    {
+        sodium_memzero( &transport, sizeof( transport ) );
+        return NULL;
+    }
+    const uint64_t total = rn_server_header_bytes + running_bytes;
+    uint8_t * base = (uint8_t *) memory;
+    if ( base )
+    {
+        if ( memory_bytes < total || ( (uintptr_t) base % ROCKETNET_ALLOCATION_ALIGNMENT ) != 0 )
+        {
+            rocketnet_error( "server create refused: the memory block is short or not %d-aligned", ROCKETNET_ALLOCATION_ALIGNMENT );
+            sodium_memzero( &transport, sizeof( transport ) );
+            return NULL;
+        }
+    }
+    else
+    {
+        base = (uint8_t *) rocketnet_malloc( context, (size_t) total );
+        if ( !base )
+        {
+            sodium_memzero( &transport, sizeof( transport ) );
+            return NULL;
+        }
+    }
+    struct rocketnet_server_t * server = (struct rocketnet_server_t *) base;
+    memset( server, 0, sizeof( *server ) );
+    server->context = context;
+    strncpy( server->address, address, sizeof( server->address ) - 1 );
+    server->transport = transport;
+    server->message = message;
+    server->kbps = kbps;
+    server->max_clients = transport.max_clients;
+    server->owns_block = memory ? 0 : 1;
+    server->block = base + rn_server_header_bytes;
+    server->block_bytes = running_bytes;
+    sodium_memzero( &transport, sizeof( transport ) );
+    return server;
 }
 
-struct rocketnet_server_t * rocketnet_server_create( void * context, const char * address, const struct rocketnet_server_config_t * config, void * memory, uint64_t memory_bytes )
+struct rocketnet_server_t * rocketnet_server_create( void * context, const char * address, const struct rocketnet_server_config_t * config, void * memory, size_t memory_bytes )
 {
     struct rocketnet_server_config_t current;
-    return rn_server_create_current( context, address,
+    struct rocketnet_server_t * result = rn_server_create_current( context, address,
         rn_server_config_read( &current, config, ROCKETNET_SERVER_CONFIG_BYTES_1 ), memory, memory_bytes );
+
+    sodium_memzero( &current, sizeof( current ) );
+
+    return result;
 }
 
-struct rocketnet_server_t * rocketnet_server_create_sized( void * context, const char * address, const struct rocketnet_server_config_t * config, size_t config_bytes, void * memory, uint64_t memory_bytes )
+struct rocketnet_server_t * rocketnet_server_create_sized( void * context, const char * address, const struct rocketnet_server_config_t * config, size_t config_bytes, void * memory, size_t memory_bytes )
 {
     if ( config && !RN_SERVER_CONFIG_SIZE_KNOWN( config_bytes ) )
         return NULL;
@@ -762,33 +1223,114 @@ struct rocketnet_server_t * rocketnet_server_create_sized( void * context, const
     struct rocketnet_server_config_t current;
     rn_server_default_config_current( &current );
     memcpy( &current, config, config_bytes );
-    return rn_server_create_current( context, address, &current, memory, memory_bytes );
+    struct rocketnet_server_t * result = rn_server_create_current( context, address, &current, memory, memory_bytes );
+
+    sodium_memzero( &current, sizeof( current ) );
+
+    return result;
+}
+
+enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * server )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    if ( server->running )
+    {
+        rocketnet_api_misuse_record();
+        rocketnet_error( "server start refused: the server is already running" );
+        return ROCKETNET_STATUS_SERVER_NOT_STOPPED;
+    }
+    int status = ROCKETNET_STATUS_OK;
+    server->running = rocketnet_message_server_create_ex( server->context, server->address, &server->transport, &server->message,
+                                                          server->block, server->block_bytes, server->kbps, &status );
+    if ( server->running )
+        return ROCKETNET_STATUS_OK;
+    return status == ROCKETNET_STATUS_OK ? ROCKETNET_STATUS_INVALID_ARGUMENT : (enum rocketnet_status_t) status;
+}
+
+static uint64_t rn_server_running_counter( const struct rocketnet_server_t * server, int counter );
+
+void rocketnet_server_disconnect_all_clients( struct rocketnet_server_t * server )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+        return;
+    struct rocketnet_server_transport_t * transport = rn_server_transport( server );
+    if ( !transport )
+        return;
+    for ( int i = 0; i < server->max_clients; i++ )
+    {
+        if ( rocketnet_server_transport_is_client_connected( transport, i ) )
+            rocketnet_server_transport_disconnect_client( transport, i );
+    }
+}
+
+void rocketnet_server_stop( struct rocketnet_server_t * server )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+        return;
+    if ( !server->running )
+        return;
+    // every slot: the redundant disconnects and the slot's reset (EndClient);
+    // the disconnect packets are staged, so flush them before the transport
+    // goes
+    rocketnet_server_disconnect_all_clients( server );
+    rocketnet_message_server_send_packets( server->running );
+    for ( int i = 0; i < server->max_clients; i++ )
+        rocketnet_server_connection_reset( &server->running->object, i );
+    for ( int i = 0; i < ROCKETNET_SERVER_COUNTER_COUNT; i++ )
+        server->lifetime[i] += rn_server_running_counter( server, i );
+    rocketnet_message_server_destroy( server->running );
+    server->running = NULL;
+}
+
+bool rocketnet_server_running( const struct rocketnet_server_t * server )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+        return false;
+    return server->running != NULL;
 }
 
 void rocketnet_server_destroy( struct rocketnet_server_t * server )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return;
-    rocketnet_message_server_destroy( rn_server( server ) );
+    rocketnet_server_stop( server );
+    void * context = server->context;
+    const int owns_block = server->owns_block;
+    sodium_memzero( server, sizeof( *server ) );
+    if ( owns_block )
+        rocketnet_free( context, server );
 }
 
-int rocketnet_server_update( struct rocketnet_server_t * server, double time )
+enum rocketnet_update_result_t rocketnet_server_update( struct rocketnet_server_t * server, double time )
 {
     if ( !rocketnet_api_null_guard( server ) )
-        return ROCKETNET_MESSAGE_OK;
-    return rocketnet_message_server_update( rn_server( server ), time );
+        return ROCKETNET_UPDATE_OK;
+    if ( !server->running )
+    {
+        rocketnet_api_misuse_record();
+        return ROCKETNET_UPDATE_OK;
+    }
+    return (enum rocketnet_update_result_t) rocketnet_message_server_update( server->running, time );
 }
 
 void rocketnet_server_send_packets( struct rocketnet_server_t * server )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return;
-    rocketnet_message_server_send_packets( rn_server( server ) );
+    if ( !server->running )
+    {
+        rocketnet_api_misuse_record();
+        return;
+    }
+    rocketnet_message_server_send_packets( server->running );
 }
 
 uint16_t rocketnet_server_port( const struct rocketnet_server_t * server )
 {
     if ( !rocketnet_api_null_guard( server ) )
+        return 0;
+    if ( !server->running )
         return 0;
     return rocketnet_server_transport_port( rn_server_transport( server ) );
 }
@@ -797,6 +1339,8 @@ const char * rocketnet_server_transport_name( const struct rocketnet_server_t * 
 {
     if ( !rocketnet_api_null_guard( server ) )
         return NULL;
+    if ( !server->running )
+        return NULL;
     return rocketnet_server_transport_driver( rn_server_transport( server ) );
 }
 
@@ -804,114 +1348,169 @@ int rocketnet_server_max_clients( const struct rocketnet_server_t * server )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return 0;
-    return ( (const struct rn_message_object_t *) server )->num_connections;
+    return server->max_clients;
 }
 
 int rocketnet_server_num_connected_clients( const struct rocketnet_server_t * server )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return 0;
+    if ( !server->running )
+        return 0;
     return rocketnet_server_transport_num_connected_clients( rn_server_transport( server ) );
 }
 
-static bool rn_server_slot_in_range( const struct rocketnet_server_t * server, int client_index )
+bool rocketnet_server_client_connected( const struct rocketnet_server_t * server, uint64_t client_index )
 {
-    return client_index >= 0 && client_index < ( (const struct rn_message_object_t *) server )->num_connections;
+    if ( !rocketnet_api_null_guard( server ) )
+        return false;
+    int slot;
+    if ( !rn_server_slot( server, client_index, &slot ) )
+        return false;
+    return rocketnet_message_server_client_connected( rn_server( server ), slot ) != 0;
 }
 
-int rocketnet_server_client_connected( const struct rocketnet_server_t * server, int client_index )
+uint64_t rocketnet_server_client_id( const struct rocketnet_server_t * server, uint64_t client_index )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return 0;
-    return rocketnet_message_server_client_connected( rn_server( server ), client_index );
+    int slot;
+    if ( !rn_server_slot( server, client_index, &slot ) )
+        return 0;
+    return rocketnet_server_transport_client_id( rn_server_transport( server ), slot );
 }
 
-uint64_t rocketnet_server_client_id( const struct rocketnet_server_t * server, int client_index )
-{
-    if ( !rocketnet_api_null_guard( server ) )
-        return 0;
-    if ( !rn_server_slot_in_range( server, client_index ) )
-        return 0;
-    return rocketnet_server_transport_client_id( rn_server_transport( server ), client_index );
-}
-
-void rocketnet_server_disconnect_client( struct rocketnet_server_t * server, int client_index )
+void rocketnet_server_disconnect_client( struct rocketnet_server_t * server, uint64_t client_index )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return;
-    if ( !rn_server_slot_in_range( server, client_index ) )
+    int slot;
+    if ( !rn_server_slot( server, client_index, &slot ) )
         return;
-    rocketnet_server_transport_disconnect_client( rn_server_transport( server ), client_index );
+    rocketnet_server_transport_disconnect_client( rn_server_transport( server ), slot );
 }
 
-int rocketnet_server_disconnect_reason( const struct rocketnet_server_t * server, int client_index )
+enum rocketnet_disconnect_reason_t rocketnet_server_disconnect_reason( const struct rocketnet_server_t * server, uint64_t client_index )
 {
     if ( !rocketnet_api_null_guard( server ) )
-        return ROCKETNET_MESSAGE_ERROR_NONE;
-    return rocketnet_message_server_disconnect_reason( rn_server( server ), client_index );
+        return ROCKETNET_DISCONNECT_REASON_NONE;
+    int slot;
+    if ( !rn_server_slot( server, client_index, &slot ) )
+        return ROCKETNET_DISCONNECT_REASON_NONE;
+    return (enum rocketnet_disconnect_reason_t) rocketnet_message_server_disconnect_reason( rn_server( server ), slot );
 }
 
-uint8_t * rocketnet_server_start( struct rocketnet_server_t * server, int client_index, int channel, int reliability, int bytes )
+// A message is sent only to a CONNECTED client (standard/MESSAGES.md m1.5;
+// tla/ServerSession.tla ServerDropSend). An index below max_clients with no
+// CONNECTED client is dropped: NULL, not misuse, nothing held for later,
+// counted once in NOT_CONNECTED_DROPS (the message layer's
+// MESSAGE_SEND_NOT_CONNECTED while running, the lifetime counters while
+// stopped). An index at or past max_clients is misuse.
+uint8_t * rocketnet_server_start_message( struct rocketnet_server_t * server, uint64_t destination_id, int channel, enum rocketnet_reliability_t reliability, int bytes )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return NULL;
-    return rocketnet_message_server_start( rn_server( server ), client_index, channel, reliability, bytes );
+    if ( rn_server_destination_refused( destination_id ) )
+        return NULL;
+    if ( destination_id >= (uint64_t) server->max_clients )
+    {
+        rocketnet_api_misuse_record();
+        return NULL;
+    }
+    if ( !server->running )
+    {
+        server->lifetime[ROCKETNET_SERVER_COUNTER_NOT_CONNECTED_DROPS]++;
+        return NULL;
+    }
+    return rocketnet_message_server_start( rn_server( server ), (int) destination_id, channel, reliability, bytes );
 }
 
-uint32_t rocketnet_server_finish( struct rocketnet_server_t * server, int client_index, int bytes_written )
+// a finish with no start pending (a dropped start included) returns 0,
+// counted nowhere; an index at or past max_clients is misuse
+uint32_t rocketnet_server_finish_message( struct rocketnet_server_t * server, uint64_t destination_id, int bytes_written )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return 0;
-    return rocketnet_message_server_finish( rn_server( server ), client_index, bytes_written );
+    if ( rn_server_destination_refused( destination_id ) )
+        return 0;
+    if ( destination_id >= (uint64_t) server->max_clients )
+    {
+        rocketnet_api_misuse_record();
+        return 0;
+    }
+    if ( !server->running )
+        return 0;
+    return rocketnet_message_server_finish( rn_server( server ), (int) destination_id, bytes_written );
 }
 
-void rocketnet_server_abort( struct rocketnet_server_t * server, int client_index )
+void rocketnet_server_abort_message( struct rocketnet_server_t * server, uint64_t destination_id )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return;
-    rocketnet_message_server_abort( rn_server( server ), client_index );
+    if ( rn_server_destination_refused( destination_id ) )
+        return;
+    int slot;
+    if ( !rn_server_slot( server, destination_id, &slot ) )
+        return;
+    rocketnet_message_server_abort( rn_server( server ), slot );
 }
 
-int rocketnet_server_broadcast( struct rocketnet_server_t * server, int channel, int reliability, const uint8_t * data, int bytes )
-{
-    if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( data ) )
-        return 0;
-    return rocketnet_message_server_broadcast( rn_server( server ), channel, reliability, data, bytes );
-}
-
-int rocketnet_server_receive( struct rocketnet_server_t * server, int client_index, int channel, const uint8_t ** data, int * bytes )
+int rocketnet_server_receive_message( struct rocketnet_server_t * server, uint64_t client_index, int channel, const uint8_t ** data, int * bytes )
 {
     if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( data ) || !rocketnet_api_null_guard( bytes ) )
         return 0;
-    return rocketnet_message_server_receive( rn_server( server ), client_index, channel, data, bytes );
+    int slot;
+    if ( !rn_server_slot( server, client_index, &slot ) )
+        return 0;
+    return rocketnet_message_server_receive( rn_server( server ), slot, channel, data, bytes );
 }
 
-void rocketnet_server_release( struct rocketnet_server_t * server, int client_index, const uint8_t * data )
+void rocketnet_server_release_message( struct rocketnet_server_t * server, uint64_t client_index, const uint8_t * data )
 {
     if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( data ) )
         return;
-    rocketnet_message_server_release( rn_server( server ), client_index, data );
+    int slot;
+    if ( !rn_server_slot( server, client_index, &slot ) )
+    {
+        rocketnet_api_misuse_record();
+        return;
+    }
+    rocketnet_message_server_release( rn_server( server ), slot, data );
 }
 
-int rocketnet_server_receipts( struct rocketnet_server_t * server, int client_index, struct rocketnet_receipt_t * out, int capacity )
+int rocketnet_server_receipts( struct rocketnet_server_t * server, uint64_t client_index, struct rocketnet_receipt_t * out, int capacity )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return 0;
-    return rocketnet_message_server_receipts( rn_server( server ), client_index, (struct rocketnet_message_receipt_t *) out, capacity );
+    int slot;
+    if ( !rn_server_slot( server, client_index, &slot ) )
+        return 0;
+    return rocketnet_message_server_receipts( rn_server( server ), slot, (struct rocketnet_message_receipt_t *) out, capacity );
 }
 
-int rocketnet_server_set_send_kbps( struct rocketnet_server_t * server, int client_index, int kbps )
+enum rocketnet_status_t rocketnet_server_set_send_kbps( struct rocketnet_server_t * server, uint64_t client_index, int kbps )
 {
     if ( !rocketnet_api_null_guard( server ) )
-        return 0;
-    return rocketnet_message_server_set_send_kbps( rn_server( server ), client_index, rn_budget_kbps( kbps ) );
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    if ( rn_server_destination_refused( client_index ) )
+        return ROCKETNET_STATUS_FLOW_ID_RESERVED;
+    if ( !rn_send_kbps_in_range( "server", kbps ) )
+        return ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+    int slot;
+    if ( !rn_server_slot( server, client_index, &slot ) )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    // a slot with no CONNECTED client has no budget to set: the slot's reset
+    // starts each connection at the config's rate
+    if ( !rocketnet_message_server_client_connected( rn_server( server ), slot ) )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    return rocketnet_message_server_set_send_kbps( rn_server( server ), slot, rn_budget_kbps( kbps ) ) ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_INVALID_ARGUMENT;
 }
 
-uint64_t rocketnet_server_counter( const struct rocketnet_server_t * server, enum rocketnet_server_counter_t counter )
+static uint64_t rn_server_running_counter( const struct rocketnet_server_t * server, int counter )
 {
-    if ( !rocketnet_api_null_guard( server ) )
-        return 0;
     struct rocketnet_server_transport_t * transport = rn_server_transport( server );
+    if ( !transport )
+        return 0;
     const struct rocketnet_counters_t * transport_counters = rocketnet_server_transport_counters( transport );
     const struct rocketnet_counters_t * message_counters = rocketnet_message_server_counters( rn_server( server ) );
     struct rocketnet_server_transport_stats_t stats;
@@ -934,13 +1533,25 @@ uint64_t rocketnet_server_counter( const struct rocketnet_server_t * server, enu
         case ROCKETNET_SERVER_COUNTER_RECEIPTS_LOST:            return rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS );
         case ROCKETNET_SERVER_COUNTER_BUDGET_DROPS:             return rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET );
         case ROCKETNET_SERVER_COUNTER_MESSAGES_NOT_RELEASED:    return rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_NOT_RELEASED );
+        case ROCKETNET_SERVER_COUNTER_NOT_CONNECTED_DROPS:      return rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED );
         default:                                                return 0;
     }
+}
+
+uint64_t rocketnet_server_counter( const struct rocketnet_server_t * server, enum rocketnet_server_counter_t counter )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+        return 0;
+    if ( (int) counter < 0 || (int) counter >= ROCKETNET_SERVER_COUNTER_COUNT )
+        return 0;
+    return server->lifetime[counter] + rn_server_running_counter( server, (int) counter );
 }
 
 double rocketnet_server_stat( const struct rocketnet_server_t * server, enum rocketnet_server_stat_t stat )
 {
     if ( !rocketnet_api_null_guard( server ) )
+        return 0.0;
+    if ( !server->running )
         return 0.0;
     struct rocketnet_server_transport_stats_t stats;
     memset( &stats, 0, sizeof( stats ) );
@@ -955,19 +1566,20 @@ double rocketnet_server_stat( const struct rocketnet_server_t * server, enum roc
     }
 }
 
-static bool rn_server_client_stats( const struct rocketnet_server_t * server, int client_index, struct rocketnet_server_transport_client_stats_t * stats )
+static bool rn_server_client_stats( const struct rocketnet_server_t * server, uint64_t client_index, struct rocketnet_server_transport_client_stats_t * stats )
 {
     memset( stats, 0, sizeof( *stats ) );
-    if ( !rn_server_slot_in_range( server, client_index ) )
+    int slot;
+    if ( !rn_server_slot( server, client_index, &slot ) )
         return false;
     struct rocketnet_server_transport_t * transport = rn_server_transport( server );
-    if ( !rocketnet_server_transport_is_client_connected( transport, client_index ) )
+    if ( !rocketnet_server_transport_is_client_connected( transport, slot ) )
         return false;
-    rocketnet_server_transport_client_stats( transport, client_index, stats );
+    rocketnet_server_transport_client_stats( transport, slot, stats );
     return true;
 }
 
-uint64_t rocketnet_server_client_counter( const struct rocketnet_server_t * server, int client_index, enum rocketnet_server_client_counter_t counter )
+uint64_t rocketnet_server_client_counter( const struct rocketnet_server_t * server, uint64_t client_index, enum rocketnet_server_client_counter_t counter )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return 0;
@@ -984,7 +1596,7 @@ uint64_t rocketnet_server_client_counter( const struct rocketnet_server_t * serv
     }
 }
 
-double rocketnet_server_client_stat( const struct rocketnet_server_t * server, int client_index, enum rocketnet_server_client_stat_t stat )
+double rocketnet_server_client_stat( const struct rocketnet_server_t * server, uint64_t client_index, enum rocketnet_server_client_stat_t stat )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return 0.0;

@@ -37,7 +37,9 @@ Init ==
              phase |-> "application", batch |-> {}, deferred |-> {}, todo |-> {},
              requested |-> {}, delivered |-> {}, released |-> {}, acked |-> {},
              opened |-> {}, packetMap |-> {}, applied |-> {}, dropped |-> {},
-             badKick |-> FALSE, badLifetime |-> FALSE, error |-> "NONE"]
+             changed |-> [s \in Slots |-> FALSE],
+             badKick |-> FALSE, badLifetime |-> FALSE, error |-> "NONE",
+             pending |-> 0, pendingConn |-> 0]
 
 \* Transport connection ids never repeat in the bounded lifetime. Several
 \* connect/disconnect steps may precede a single Observe.
@@ -97,6 +99,22 @@ TransportAck(p, defer) ==
                   !.deferred = IF defer THEN @ \cup {e} ELSE @]
     /\ UNCHANGED <<wire, sent, pulse>>
 
+\* The identity Observe compares. The "clientid" mutant takes the client id
+\* for the connection id (sdk/rocketnet_message_server.cpp before the link
+\* read the transport's P9a id): a reconnect keeps its client id, so only a
+\* slot going from free to held or back looks changed.
+SeenChange(s) == IF "clientid" \in Broken
+                 THEN (st.owner[s] = 0) # (st.bound[s] = 0)
+                 ELSE st.owner[s] # st.bound[s]
+
+\* ResetCancel (sdk/rocketnet_message_server.cpp, rn_message_object_update:
+\* rn_message_connection_cancel_at_reset before each connection reset): a
+\* start pending on a slot the update resets is cancelled with that reset.
+\* "pendingacrossreset" removes the cancel, the defect it fixes.
+CancelsPending(owner) ==
+    /\ st.pending # 0 /\ owner[st.pending] # st.bound[st.pending]
+    /\ "pendingacrossreset" \notin Broken
+
 \* Observe the final owner, reset on identity change, then admit each entry
 \* against this binding. The transport cannot churn during the apply phase.
 Observe ==
@@ -108,16 +126,24 @@ Observe ==
           !.state = [s \in Slots |-> IF st.owner[s] = 0 THEN "Free" ELSE "Connected"],
           !.reason = [s \in Slots |-> "NONE"],
           !.badLifetime = @ \/ (\E s \in Slots : st.held[s] # {}),
-          !.received = [s \in Slots |-> IF st.owner[s] # st.bound[s] /\ "noreset" \notin Broken THEN {} ELSE st.received[s]],
-          !.region = [s \in Slots |-> IF st.owner[s] # st.bound[s] /\ "noreset" \notin Broken THEN {} ELSE st.region[s]],
-          !.held = [s \in Slots |-> IF st.owner[s] # st.bound[s] /\ "noreset" \notin Broken THEN {} ELSE st.held[s]],
+          !.received = [s \in Slots |-> IF SeenChange(s) /\ "noreset" \notin Broken THEN {} ELSE st.received[s]],
+          !.region = [s \in Slots |-> IF SeenChange(s) /\ "noreset" \notin Broken THEN {} ELSE st.region[s]],
+          !.held = [s \in Slots |-> IF SeenChange(s) /\ "noreset" \notin Broken THEN {} ELSE st.held[s]],
           !.packetMap = {p \in st.packetMap : p.conn = st.owner[p.slot]},
+          !.changed = [s \in Slots |-> "clientid" \in Broken /\ SeenChange(s)],
+          !.pending = IF CancelsPending(st.owner) THEN 0 ELSE @,
+          !.pendingConn = IF CancelsPending(st.owner) THEN 0 ELSE @,
           !.todo = st.batch \cup ready, !.batch = {},
           !.deferred = @ \ ready, !.phase = "apply"]
     /\ UNCHANGED <<wire, sent, pulse>>
 
+\* The "clientid" mutant tags each entry by the slot's state, not by the
+\* connection it was received for: none (discarded) when this update's
+\* Observe changed the slot, else the slot's binding.
 Admits(e) == LET s == e.packet.slot
-            IN st.bound[s] # 0 /\ ("byslot" \in Broken \/ e.packet.conn = st.bound[s])
+            IN st.bound[s] # 0 /\
+               IF "clientid" \in Broken THEN ~st.changed[s]
+               ELSE ("byslot" \in Broken \/ e.packet.conn = st.bound[s])
 
 Admit(e) ==
     /\ st.phase = "apply" /\ e \in st.todo
@@ -140,10 +166,13 @@ Admit(e) ==
 
 \* An exhaustion cannot return to the caller as an ignorable error. Next
 \* gives Kick exclusive priority, including over the other slot's work.
+\* Kick cancels a start pending on its slot (rn_message_object_kick).
 Kick(s) ==
     /\ st.state[s] = "Exhausted"
     /\ st' = [st EXCEPT !.state[s] = "Disconnected", !.owner[s] = 0,
-          !.bound[s] = 0, !.reason[s] = "MESSAGE_MEMORY_EXHAUSTED"]
+          !.bound[s] = 0, !.reason[s] = "MESSAGE_MEMORY_EXHAUSTED",
+          !.pending = IF @ = s THEN 0 ELSE @,
+          !.pendingConn = IF st.pending = s THEN 0 ELSE @]
     /\ UNCHANGED <<wire, sent, pulse>>
 
 CarryOn(s) ==
@@ -153,7 +182,24 @@ CarryOn(s) ==
 
 ResetFree(s) ==
     /\ st.state[s] = "Disconnected"
-    /\ st' = [st EXCEPT !.state[s] = "Free", !.region[s] = {}, !.held[s] = {}, !.received[s] = {}]
+    /\ LET cancel == st.pending = s /\ "pendingacrossreset" \notin Broken
+       IN st' = [st EXCEPT !.state[s] = "Free", !.region[s] = {}, !.held[s] = {}, !.received[s] = {},
+                 !.pending = IF cancel THEN 0 ELSE @,
+                 !.pendingConn = IF cancel THEN 0 ELSE @]
+    /\ UNCHANGED <<wire, sent, pulse>>
+
+\* The application's queued-path send (rn_message_object_start, finish and
+\* abort): one start pending per object, on a connected slot; a start while
+\* one is pending is refused (no step). The pending start outlives an update
+\* unless that update resets its slot (ResetCancel, Kick).
+StartPending(s) ==
+    /\ st.phase = "application" /\ st.state[s] = "Connected" /\ st.pending = 0
+    /\ st' = [st EXCEPT !.pending = s, !.pendingConn = st.bound[s]]
+    /\ UNCHANGED <<wire, sent, pulse>>
+
+FinishPending(s) ==
+    /\ st.phase = "application" /\ st.pending = s
+    /\ st' = [st EXCEPT !.pending = 0, !.pendingConn = 0]
     /\ UNCHANGED <<wire, sent, pulse>>
 
 Release(s, r) ==
@@ -183,7 +229,7 @@ BeginUpdate ==
 RejectUnreleasedUpdate ==
     /\ ~Stable /\ "updatewithheld" \notin Broken
     /\ st.phase = "application" /\ (\E s \in Slots : st.held[s] # {})
-    /\ st' = [st EXCEPT !.error = "ROCKETNET_ERROR_MESSAGE_NOT_RELEASED"]
+    /\ st' = [st EXCEPT !.error = "ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED"]
     /\ UNCHANGED <<wire, sent, pulse>>
 
 Environment == Data!Environment /\ UNCHANGED st
@@ -192,6 +238,7 @@ Next == IF st.error # "NONE" THEN FALSE
         ELSE IF Exhausted # {}
         THEN \E s \in Exhausted : Kick(s) \/ CarryOn(s)
         ELSE \/ \E s \in Slots : Connect(s) \/ Disconnect(s) \/ ResetFree(s)
+                    \/ StartPending(s) \/ FinishPending(s)
              \/ \E s \in Slots, m \in 1..MaxMessages : Request(s, m)
              \/ \E p \in Packets : Send(p) \/ TransportOpen(p)
                     \/ TransportAck(p, TRUE) \/ TransportAck(p, FALSE)
@@ -228,8 +275,10 @@ TypeOK ==
     /\ st.requested \subseteq Records /\ st.delivered \subseteq Records
     /\ st.released \subseteq Records /\ st.acked \subseteq Records
     /\ st.applied \subseteq Audit /\ st.dropped \subseteq Audit
+    /\ st.changed \in [Slots -> BOOLEAN]
     /\ st.badKick \in BOOLEAN /\ st.badLifetime \in BOOLEAN
-    /\ st.error \in {"NONE", "ROCKETNET_ERROR_MESSAGE_NOT_RELEASED"}
+    /\ st.error \in {"NONE", "ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED"}
+    /\ st.pending \in 0..SlotCount /\ st.pendingConn \in 0..MaxConn
 
 NoCrossConnectionApply == \A a \in st.applied : a.from = a.to
 NoOwnEntryDropped == \A d \in st.dropped : d.from # d.to
@@ -244,5 +293,10 @@ ExhaustionOnlyLeadsToDisconnect ==
     [][\A s \in Slots : st.state[s] = "Exhausted" =>
          st'.state[s] = "Disconnected" /\ st'.reason[s] = "MESSAGE_MEMORY_EXHAUSTED"]_vars
 UpdateRequiresReleasedViews == ~st.badLifetime
+\* No start stays pending across a reset of its slot: a pending start belongs
+\* to the connection its slot is bound to, so no start on any slot is refused
+\* by one whose connection is gone.
+NoPendingAcrossReset ==
+    st.pending # 0 => st.pendingConn # 0 /\ st.bound[st.pending] = st.pendingConn
 EveryReliableDelivered == \A r \in Records : (r \in st.requested) ~> (r \in st.delivered)
 =============================================================================

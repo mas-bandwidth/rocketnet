@@ -45,6 +45,7 @@ struct mo_packet_t
 {
     uint64_t id;
     int slot;
+    uint64_t connection;                            // the slot's connection when the packet was sent (P9b)
     int bytes;
     alignas( 16 ) uint8_t data[ROCKETNET_MAX_PAYLOAD_BYTES];
 };
@@ -69,12 +70,15 @@ struct mo_endpoint_t
     std::vector<uint8_t *> batch_data;
     std::vector<int> batch_bytes;
     std::vector<int> batch_slot;
+    std::vector<uint64_t> batch_connection;
 
     // acks: ids this endpoint opened, reported to the sender at its next update
     std::vector<uint64_t> acks_inbox;               // ids the peer opened of this endpoint's sends
     std::vector<int> acks_inbox_slot;
+    std::vector<uint64_t> acks_inbox_connection;
     std::vector<uint64_t> acked;                    // this update's acked batch
     std::vector<int> acked_slot;
+    std::vector<uint64_t> acked_connection;
 
     // what this endpoint finished, for the pointer-identity checks
     std::vector<mo_packet_t> sent_log;
@@ -169,10 +173,12 @@ static void mo_update( void * transport, double time )
     // the transport's acked packet ids: what the peer opened since the last update
     e->acked.clear();
     e->acked_slot.clear();
+    e->acked_connection.clear();
     if ( !net->hold_acks )
     {
         e->acked.swap( e->acks_inbox );
         e->acked_slot.swap( e->acks_inbox_slot );
+        e->acked_connection.swap( e->acks_inbox_connection );
     }
 
     // the batch: the last one is gone, the wire's packets are opened once each
@@ -180,6 +186,7 @@ static void mo_update( void * transport, double time )
     e->batch_data.clear();
     e->batch_bytes.clear();
     e->batch_slot.clear();
+    e->batch_connection.clear();
     e->batch.reserve( e->inbound.size() );
     for ( size_t i = 0; i < e->inbound.size(); i++ )
     {
@@ -195,6 +202,7 @@ static void mo_update( void * transport, double time )
         {
             sender->acks_inbox.push_back( p.id );
             sender->acks_inbox_slot.push_back( p.slot );
+            sender->acks_inbox_connection.push_back( p.connection );
         }
     }
     e->inbound.clear();
@@ -203,6 +211,7 @@ static void mo_update( void * transport, double time )
         e->batch_data.push_back( e->batch[i].data );
         e->batch_bytes.push_back( e->batch[i].bytes );
         e->batch_slot.push_back( e->batch[i].slot );
+        e->batch_connection.push_back( e->batch[i].connection );
     }
 }
 
@@ -273,6 +282,7 @@ static int mo_finish_packet( void * transport, rocketnet_packet_context_t * cont
     mo_packet_t packet;
     packet.id = e->frame_id[f];
     packet.slot = e->frame_slot[f];
+    packet.connection = e->net->slot_connection[packet.slot];
     packet.bytes = payload_bytes;
     memcpy( packet.data, e->frames[f] + MO_PAYLOAD_INDEX, (size_t) payload_bytes );         // the wire: the transport's own business
     if ( e->net->keep_log )
@@ -317,6 +327,21 @@ static uint64_t mo_connection( void * transport, int client_index )
     return e->connected ? 1 : 0;
 }
 
+// the connection each batch entry was received for (P9b): the server's are
+// the slot's connection when the packet was sent; the client holds one
+// connection, which its object binds as 1
+static uint64_t mo_payload_connection( void * transport, int k )
+{
+    mo_endpoint_t * e = (mo_endpoint_t *) transport;
+    return e->is_server ? e->batch_connection[(size_t) k] : 1;
+}
+
+static uint64_t mo_acked_connection( void * transport, int k )
+{
+    mo_endpoint_t * e = (mo_endpoint_t *) transport;
+    return e->is_server ? e->acked_connection[(size_t) k] : 1;
+}
+
 static void mo_disconnect( void * transport, int client_index )
 {
     mo_endpoint_t * e = (mo_endpoint_t *) transport;
@@ -343,6 +368,8 @@ static rn_message_link_t mo_link( mo_endpoint_t * e )
     link.update = mo_update;
     link.payloads = mo_payloads;
     link.acked = mo_acked;
+    link.payload_connection = mo_payload_connection;
+    link.acked_connection = mo_acked_connection;
     link.start_packet = mo_start_packet;
     link.finish_packet = mo_finish_packet;
     link.abort_packet = mo_abort_packet;
@@ -498,9 +525,9 @@ static void mo_drain_client( rocketnet_message_client_t * client, std::vector<mo
 static void mo_step( mo_pair_t * pair, std::vector<mo_received_t> * server_got = NULL, std::vector<mo_received_t> * client_got = NULL, double dt = 0.01 )
 {
     pair->time += dt;
-    check( rocketnet_message_server_update( pair->server, pair->time ) == ROCKETNET_MESSAGE_OK );
+    check( rocketnet_message_server_update( pair->server, pair->time ) == ROCKETNET_UPDATE_OK );
     for ( int i = 0; i < pair->num_clients; i++ )
-        check( rocketnet_message_client_update( pair->clients[i], pair->time ) == ROCKETNET_MESSAGE_OK );
+        check( rocketnet_message_client_update( pair->clients[i], pair->time ) == ROCKETNET_UPDATE_OK );
     mo_drain_server( pair, server_got );
     for ( int i = 0; i < pair->num_clients; i++ )
         mo_drain_client( pair->clients[i], client_got );
@@ -547,15 +574,15 @@ static void message_send_refused_counts_bad_arguments()
     mo_step( &pair );
 
     const uint64_t before = mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
-    check( rocketnet_message_server_start( pair.server, 0, -1, ROCKETNET_RELIABLE_ORDERED, 1 ) == NULL );
-    check( rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABLE_ORDERED, 0 ) == NULL );
+    check( rocketnet_message_server_start( pair.server, 0, -1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1 ) == NULL );
+    check( rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 0 ) == NULL );
     check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == before + 2 );
 
-    uint8_t * valid = rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABLE_ORDERED, 1 );
+    uint8_t * valid = rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1 );
     check( valid != NULL );
     valid[0] = 42;
     check( rocketnet_message_server_finish( pair.server, 0, 1 ) != 0 );
-    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
     mo_pair_teardown( &pair );
 }
 
@@ -566,6 +593,74 @@ static void message_send_refused_counts_bad_arguments()
 // copy on the send path. A fitting unreliable message written in place is
 // test_unit_unreliable_in_place.cpp's.
 // ---------------------------------------------------------------------------
+
+// A client start before its transport is CONNECTED is dropped and counted
+// once in MESSAGE_SEND_NOT_CONNECTED (standard/MESSAGES.md m1.5,
+// tla/ClientSession.tla DropSend): NULL, never queued, never a fallback, and
+// nothing of it arrives once the transport connects.
+static void message_client_start_dropped_before_transport_connected()
+{
+    rocketnet_message_config_t config;
+    mo_config( &config );
+    mo_pair_t pair;
+    memset( &pair, 0, sizeof( pair ) );
+    pair.net = mo_net_new();
+    pair.num_clients = 1;
+    pair.server = mo_server_create( pair.net, &config, MO_MAX_SLOTS, ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS );
+    pair.clients[0] = mo_client_create( pair.net, 0, &config, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS );
+    check( pair.server && pair.clients[0] );
+    pair.time = MO_T0;
+    const rocketnet_counters_t * counters = rocketnet_message_client_counters( pair.clients[0] );
+
+    const int modes[] = { ROCKETNET_RELIABILITY_RELIABLE_ORDERED, ROCKETNET_RELIABILITY_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, ROCKETNET_RELIABILITY_RELIABLE };
+    const int num_modes = (int) ( sizeof( modes ) / sizeof( modes[0] ) );
+    for ( int i = 0; i < num_modes; i++ )
+    {
+        const uint64_t before = mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED );
+        uint8_t * p = rocketnet_message_client_start( pair.clients[0], 0, modes[i], 100 );
+        check( p == NULL );
+        if ( p )
+            mo_fill( p, 900 + (uint32_t) i, 100 );
+        check( rocketnet_message_client_finish( pair.clients[0], 100 ) == 0 );
+        check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED ) == before + 1 );
+    }
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED ) == (uint64_t) num_modes );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == 0 );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK ) == 0 );
+    check( pair.net->clients[0]->finishes == 0 );
+
+    // the transport connects: nothing of the dropped sends arrives, and the
+    // first send after CONNECTED does
+    mo_net_connect( pair.net, 0 );
+    std::vector<mo_received_t> server_got;
+    for ( int i = 0; i < 20; i++ )
+        mo_step( &pair, &server_got, NULL );
+    check( server_got.empty() );
+    uint8_t * p = rocketnet_message_client_start( pair.clients[0], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 );
+    check( p != NULL );
+    if ( p )
+    {
+        mo_fill( p, 7, 100 );
+        check( rocketnet_message_client_finish( pair.clients[0], 100 ) != 0 );
+    }
+    for ( int i = 0; i < 20; i++ )
+        mo_step( &pair, &server_got, NULL );
+    check( server_got.size() == 1 );
+    uint32_t id = 0;
+    check( server_got.size() == 1 && mo_verify( server_got[0].bytes, &id ) && id == 7 );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED ) == (uint64_t) num_modes );
+
+    // a server slot with no connection: the same drop, on the server's counters
+    const rocketnet_counters_t * server_counters = rocketnet_message_server_counters( pair.server );
+    const uint64_t server_before = mo_counter( server_counters, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED );
+    const uint64_t refused_before = mo_counter( server_counters, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
+    check( rocketnet_message_server_start( pair.server, 1, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 10 ) == NULL );
+    check( rocketnet_message_server_finish( pair.server, 1, 10 ) == 0 );
+    check( mo_counter( server_counters, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED ) == server_before + 1 );
+    check( mo_counter( server_counters, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == refused_before );
+    mo_pair_teardown( &pair );
+}
+REGISTER_UNIT_TEST( message_client_start_dropped_before_transport_connected );
 
 static const uint8_t * mo_find( const uint8_t * haystack, int haystack_bytes, const uint8_t * needle, int needle_bytes )
 {
@@ -584,11 +679,11 @@ static void start_finish_pointer_reaches_the_frame()
     rocketnet_message_client_t * client = pair.clients[0];
     rn_message_connection_t * connection = mo_client_connection( client );
 
-    const int reliabilities[2] = { ROCKETNET_RELIABLE_ORDERED, ROCKETNET_UNRELIABLE };
+    const int reliabilities[2] = { ROCKETNET_RELIABILITY_RELIABLE_ORDERED, ROCKETNET_RELIABILITY_UNRELIABLE };
     for ( int r = 0; r < 2; r++ )
     {
         const int bytes = 300;
-        pair.net->refuse_start = reliabilities[r] == ROCKETNET_UNRELIABLE;           // no frame at start: the queued path
+        pair.net->refuse_start = reliabilities[r] == ROCKETNET_RELIABILITY_UNRELIABLE;           // no frame at start: the queued path
         uint8_t * p = rocketnet_message_client_start( client, 1, reliabilities[r], bytes );
         pair.net->refuse_start = false;
         check( p != NULL );
@@ -611,7 +706,7 @@ static void start_finish_pointer_reaches_the_frame()
         check( memcmp( in_frame, expected, sizeof( expected ) ) == 0 );
         check( in_frame != p );                                  // the one named copy: record to frame
 
-        if ( reliabilities[r] == ROCKETNET_RELIABLE_ORDERED )
+        if ( reliabilities[r] == ROCKETNET_RELIABILITY_RELIABLE_ORDERED )
         {
             // the record outlives the frame until a transport ack: the bytes
             // are still at p, for a resend
@@ -655,7 +750,7 @@ static void receive_view_is_the_record()
     mo_pair_setup( &pair, 1 );
     mo_step( &pair );
 
-    const int reliabilities[2] = { ROCKETNET_RELIABLE_ORDERED, ROCKETNET_UNRELIABLE };
+    const int reliabilities[2] = { ROCKETNET_RELIABILITY_RELIABLE_ORDERED, ROCKETNET_RELIABILITY_UNRELIABLE };
     for ( int r = 0; r < 2; r++ )
     {
         uint8_t message[200];
@@ -664,9 +759,9 @@ static void receive_view_is_the_record()
         rocketnet_message_client_send_packets( pair.clients[0] );
 
         pair.time += 0.01;
-        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_MESSAGE_OK );
+        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
 
-        const int channel = reliabilities[r] == ROCKETNET_UNRELIABLE ? 0 : 2;       // unreliable carries no channel: channel 0
+        const int channel = reliabilities[r] == ROCKETNET_RELIABILITY_UNRELIABLE ? 0 : 2;       // unreliable carries no channel: channel 0
         const uint8_t * data = NULL;
         int bytes = 0;
         check( rocketnet_message_server_receive( pair.server, 0, channel, &data, &bytes ) == 1 );
@@ -712,10 +807,10 @@ static void release_returns_room()
     {
         uint8_t message[64];
         mo_fill( message, 1, sizeof( message ) );
-        check( rocketnet_message_client_send( pair.clients[0], 1, ROCKETNET_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
+        check( rocketnet_message_client_send( pair.clients[0], 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
         rocketnet_message_client_send_packets( pair.clients[0] );
         pair.time += 0.01;
-        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_MESSAGE_OK );
+        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
         const uint8_t * data = NULL;
         int bytes = 0;
         check( rocketnet_message_server_receive( pair.server, 0, 1, &data, &bytes ) == 1 );
@@ -727,7 +822,7 @@ static void release_returns_room()
         rocketnet_message_server_release( pair.server, 0, data );
         check( slot->held == 0 );
         pair.time += 0.01;
-        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_MESSAGE_OK );
+        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
         live = 0;
         for ( uint32_t i = 0; i < region->window; i++ )
             live += region->receive_descriptors[i].live;
@@ -744,8 +839,8 @@ static void release_returns_room()
 
     // update with a held view: the named error, the assert in a debug build,
     // and the views are taken back so nothing grows
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
-    rocketnet_assert_function( mo_assert_hook );
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+    rocketnet_set_assert_callback( mo_assert_hook );
     mo_asserts = 0;
 
     // the server's CONFIG (CHANNELS.md 10.3) is acked first, so the room counted below is the application's alone
@@ -756,13 +851,13 @@ static void release_returns_room()
     {
         uint8_t message[64];
         mo_fill( message, 100 + (uint32_t) round, sizeof( message ) );
-        check( rocketnet_message_client_send( pair.clients[0], 1, ROCKETNET_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
+        check( rocketnet_message_client_send( pair.clients[0], 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
         rocketnet_message_client_send_packets( pair.clients[0] );
         pair.time += 0.01;
         const int result = rocketnet_message_server_update( pair.server, pair.time );
-        check( result == ( round == 0 ? ROCKETNET_MESSAGE_OK : ROCKETNET_ERROR_MESSAGE_NOT_RELEASED ) );
+        check( result == ( round == 0 ? ROCKETNET_UPDATE_OK : ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED ) );
         rocketnet_message_server_send_packets( pair.server );
-        check( rocketnet_message_client_update( pair.clients[0], pair.time ) == ROCKETNET_MESSAGE_OK );
+        check( rocketnet_message_client_update( pair.clients[0], pair.time ) == ROCKETNET_UPDATE_OK );
         const uint8_t * data = NULL;
         int bytes = 0;
         check( rocketnet_message_server_receive( pair.server, 0, 1, &data, &bytes ) == 1 );    // held, never released
@@ -781,7 +876,7 @@ static void release_returns_room()
     check( mo_asserts == 0 );
 #endif
     check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_NOT_RELEASED ) == (uint64_t) ( 3 * region->window - 1 ) );
-    rocketnet_assert_function( saved_assert );
+    rocketnet_set_assert_callback( saved_assert );
 
     mo_pair_teardown( &pair );
 }
@@ -821,7 +916,7 @@ static void mo_end_to_end_up()
                 const uint32_t id = next_id++;
 
                 // the client writes in place
-                uint8_t * p = rocketnet_message_client_start( pair.clients[c], channel, ROCKETNET_RELIABLE_ORDERED, (int) bytes );
+                uint8_t * p = rocketnet_message_client_start( pair.clients[c], channel, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) bytes );
                 check( p );
                 if ( bytes >= 4 )
                     mo_fill( p, id, bytes );
@@ -833,7 +928,7 @@ static void mo_end_to_end_up()
 
                 // the server sends down
                 const uint32_t down_id = next_id++;
-                uint8_t * q = rocketnet_message_server_start( pair.server, c, channel, ROCKETNET_RELIABLE_ORDERED, 600 );
+                uint8_t * q = rocketnet_message_server_start( pair.server, c, channel, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 600 );
                 check( q );
                 mo_fill( q, down_id, 600 );
                 check( rocketnet_message_server_finish( pair.server, c, 600 ) != 0 );
@@ -841,7 +936,7 @@ static void mo_end_to_end_up()
                 // and an unreliable one
                 uint8_t u[100];
                 mo_fill( u, 900000 + next_id++, sizeof( u ) );
-                check( rocketnet_message_client_send( pair.clients[c], channel, ROCKETNET_UNRELIABLE, u, (int) sizeof( u ) ) != 0 );
+                check( rocketnet_message_client_send( pair.clients[c], channel, ROCKETNET_RELIABILITY_UNRELIABLE, u, (int) sizeof( u ) ) != 0 );
                 unreliable_sent++;
             }
         }
@@ -909,18 +1004,18 @@ static void mo_ordered_down_in_order()
                 const int channel = round % 4;
                 const uint32_t bytes = round % 3 == 0 ? 2500u : 300u;
                 const uint32_t id = next_id++;
-                uint8_t * q = rocketnet_message_server_start( pair.server, c, channel, ROCKETNET_RELIABLE_ORDERED, (int) bytes );
+                uint8_t * q = rocketnet_message_server_start( pair.server, c, channel, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) bytes );
                 check( q );
                 mo_fill( q, id, bytes );
                 check( rocketnet_message_server_finish( pair.server, c, (int) bytes ) != 0 );
                 sent[c][channel].push_back( id );
             }
         pair.time += 0.02;
-        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_MESSAGE_OK );
+        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
         mo_drain_server( &pair, NULL );
         for ( int c = 0; c < 2; c++ )
         {
-            check( rocketnet_message_client_update( pair.clients[c], pair.time ) == ROCKETNET_MESSAGE_OK );
+            check( rocketnet_message_client_update( pair.clients[c], pair.time ) == ROCKETNET_UPDATE_OK );
             std::vector<mo_received_t> g;
             mo_drain_client( pair.clients[c], &g );
             for ( size_t i = 0; i < g.size(); i++ )
@@ -972,7 +1067,7 @@ static void server_kicks_exhausted_client_others_unaffected()
     int started = 0;
     for ( ;; )
     {
-        uint8_t * q = rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABLE_ORDERED, 100 );
+        uint8_t * q = rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 );
         if ( !q )
             break;
         mo_fill( q, (uint32_t) started, 100 );
@@ -985,9 +1080,9 @@ static void server_kicks_exhausted_client_others_unaffected()
     // kicked at once: the transport disconnected the slot, with the reason
     check( pair.net->server->disconnects == 1 );
     check( pair.net->slot_connection[0] == 0 );
-    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
     check( rocketnet_message_server_client_connected( pair.server, 0 ) == 0 );
-    check( rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABLE_ORDERED, 100 ) == NULL );
+    check( rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 ) == NULL );
     check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED ) == 1 );
 
     // slot 1 is unaffected: a full exchange both ways
@@ -999,8 +1094,8 @@ static void server_kicks_exhausted_client_others_unaffected()
         {
             uint8_t message[300];
             mo_fill( message, id, sizeof( message ) );
-            check( rocketnet_message_client_send( pair.clients[1], 1, ROCKETNET_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
-            check( rocketnet_message_server_send( pair.server, 1, 1, ROCKETNET_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
+            check( rocketnet_message_client_send( pair.clients[1], 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
+            check( rocketnet_message_server_send( pair.server, 1, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
             sent.push_back( id++ );
         }
         std::vector<mo_received_t> server_got;
@@ -1015,7 +1110,7 @@ static void server_kicks_exhausted_client_others_unaffected()
     }
     check( got_up == sent );
     check( rocketnet_message_server_client_connected( pair.server, 1 ) == 1 );
-    check( rocketnet_message_server_disconnect_reason( pair.server, 1 ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( rocketnet_message_server_disconnect_reason( pair.server, 1 ) == ROCKETNET_DISCONNECT_REASON_NONE );
     check( pair.net->server->disconnects == 1 );
 
     mo_pair_teardown( &pair );
@@ -1038,7 +1133,7 @@ static void client_disconnects_itself_on_exhaustion()
     int started = 0;
     for ( ;; )
     {
-        uint8_t * p = rocketnet_message_client_start( client, 0, ROCKETNET_RELIABLE_ORDERED, 900 );
+        uint8_t * p = rocketnet_message_client_start( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 900 );
         if ( !p )
             break;
         mo_fill( p, (uint32_t) started, 900 );
@@ -1050,18 +1145,18 @@ static void client_disconnects_itself_on_exhaustion()
 
     check( pair.net->clients[0]->disconnects == 1 );
     check( !pair.net->clients[0]->connected );
-    check( rocketnet_message_client_disconnect_reason( client ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+    check( rocketnet_message_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
     check( rocketnet_message_client_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
     check( mo_counter( rocketnet_message_client_counters( client ), ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED ) == 1 );
 
     // nothing more: no start, no send, no partial packet
-    check( rocketnet_message_client_start( client, 0, ROCKETNET_UNRELIABLE, 10 ) == NULL );
+    check( rocketnet_message_client_start( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 10 ) == NULL );
     const int finishes = pair.net->clients[0]->finishes;
     pair.time += 0.01;
-    check( rocketnet_message_client_update( client, pair.time ) == ROCKETNET_MESSAGE_OK );
+    check( rocketnet_message_client_update( client, pair.time ) == ROCKETNET_UPDATE_OK );
     rocketnet_message_client_send_packets( client );
     check( pair.net->clients[0]->finishes == finishes );
-    check( rocketnet_message_client_disconnect_reason( client ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+    check( rocketnet_message_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
 
     // the region was reset at that update: nothing of the connection is left
     rn_message_connection_t * connection = mo_client_connection( client );
@@ -1094,7 +1189,7 @@ static void slot_reuse_starts_clean()
     {
         uint8_t message[100];
         mo_fill( message, (uint32_t) i, sizeof( message ) );
-        check( rocketnet_message_client_send( pair.clients[0], 0, ROCKETNET_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
+        check( rocketnet_message_client_send( pair.clients[0], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
         mo_step( &pair );
     }
     mo_step( &pair );
@@ -1103,13 +1198,13 @@ static void slot_reuse_starts_clean()
     check( slot->budget.kbps == 500 );
     check( rocketnet_message_server_set_send_kbps( pair.server, 0, -1 ) == 1 );
     check( slot->send_budget_enabled == 0 );
-    while ( rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABLE_ORDERED, 100 ) )
+    while ( rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 ) )
         check( rocketnet_message_server_finish( pair.server, 0, 100 ) != 0 );
-    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
 
     // the next update resets the region before the transport can reuse the slot
     pair.time += 0.01;
-    check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_MESSAGE_OK );
+    check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
     check( slot->state == RN_MESSAGE_CONNECTION_FREE );
     check( slot->region->carves == carves + 1 );
     check( !rn_region_exhausted( slot->region ) );
@@ -1125,7 +1220,7 @@ static void slot_reuse_starts_clean()
 
     check( slot->state == RN_MESSAGE_CONNECTION_CONNECTED );
     check( slot->connection_id == pair.net->slot_connection[0] );
-    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
     check( slot->region->descriptors_free == slot->region->queue - 1 );          // the new connection's CONFIG, in flight (10.3)
     check( slot->region->channel_receive[0].ordered_read == 0 );
     check( slot->region->channel_send[0].ordered_write == 0 );
@@ -1141,7 +1236,7 @@ static void slot_reuse_starts_clean()
     // and the new connection's first message is ordering 0, delivered
     uint8_t message[100];
     mo_fill( message, 77, sizeof( message ) );
-    check( rocketnet_message_client_send( pair.clients[0], 0, ROCKETNET_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
+    check( rocketnet_message_client_send( pair.clients[0], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
     std::vector<mo_received_t> got;
     mo_step( &pair );
     mo_step( &pair, &got );
@@ -1169,7 +1264,7 @@ static void acks_only_from_transport_acked_packets()
     pair.net->hold_acks = true;
     uint8_t message[500];
     mo_fill( message, 9, sizeof( message ) );
-    check( rocketnet_message_client_send( pair.clients[0], 3, ROCKETNET_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
+    check( rocketnet_message_client_send( pair.clients[0], 3, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
 
     int delivered = 0;
     for ( int i = 0; i < 60; i++ )
@@ -1192,7 +1287,7 @@ static void acks_only_from_transport_acked_packets()
 
     // an acked id this connection never sent changes nothing
     mo_endpoint_t * e = pair.net->clients[0];
-    check( rocketnet_message_client_send( pair.clients[0], 3, ROCKETNET_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
+    check( rocketnet_message_client_send( pair.clients[0], 3, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
     pair.net->drop_to_server = true;
     mo_step( &pair );
     check( region->descriptors_free == region->queue - 1 );
@@ -1254,11 +1349,11 @@ static void budget_set_at_create_and_runtime()
         {
             uint8_t message[1000];
             mo_fill( message, (uint32_t) round + 1, sizeof( message ) );
-            check( rocketnet_message_client_send( client, 0, ROCKETNET_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
+            check( rocketnet_message_client_send( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
             sent.push_back( (uint32_t) round + 1 );
             uint8_t u[1000];
             mo_fill( u, 900000 + (uint32_t) round, sizeof( u ) );
-            check( rocketnet_message_client_send( client, 1, ROCKETNET_UNRELIABLE, u, (int) sizeof( u ) ) );
+            check( rocketnet_message_client_send( client, 1, ROCKETNET_RELIABILITY_UNRELIABLE, u, (int) sizeof( u ) ) );
         }
         std::vector<mo_received_t> server_got;
         mo_step( &pair, &server_got, NULL, 0.05 );
@@ -1289,7 +1384,7 @@ static void budget_set_at_create_and_runtime()
     {
         uint8_t u[1000];
         mo_fill( u, 950000 + (uint32_t) round, sizeof( u ) );
-        check( rocketnet_message_client_send( client, 1, ROCKETNET_UNRELIABLE, u, (int) sizeof( u ) ) );
+        check( rocketnet_message_client_send( client, 1, ROCKETNET_RELIABILITY_UNRELIABLE, u, (int) sizeof( u ) ) );
         mo_step( &pair, NULL, NULL, 0.05 );
     }
     check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET ) == dropped );
@@ -1361,14 +1456,14 @@ static void send_budget_configured_value_honoured()
     {
         uint8_t message[1000];
         mo_fill( message, (uint32_t) i + 1, sizeof( message ) );
-        check( rocketnet_message_client_send( client, 0, ROCKETNET_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
+        check( rocketnet_message_client_send( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
         reliable_sent.push_back( (uint32_t) i + 1 );
     }
     for ( int i = 0; i < 8; i++ )
     {
         uint8_t u[1000];
         mo_fill( u, 900000 + (uint32_t) i, sizeof( u ) );
-        check( rocketnet_message_client_send( client, 1, ROCKETNET_UNRELIABLE, u, (int) sizeof( u ) ) );
+        check( rocketnet_message_client_send( client, 1, ROCKETNET_RELIABILITY_UNRELIABLE, u, (int) sizeof( u ) ) );
     }
 
     std::vector<mo_received_t> got;
@@ -1426,16 +1521,16 @@ static void mo_uncapped_case( int client_kbps, int server_kbps )
     {
         uint8_t message[1000];
         mo_fill( message, (uint32_t) round + 1, sizeof( message ) );
-        check( rocketnet_message_client_send( pair.clients[0], 0, ROCKETNET_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
+        check( rocketnet_message_client_send( pair.clients[0], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
         sent.push_back( (uint32_t) round + 1 );
-        check( rocketnet_message_server_send( pair.server, 0, 0, ROCKETNET_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
+        check( rocketnet_message_server_send( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
 
         for ( int i = 0; i < 7; i++ )
         {
             uint8_t u[1000];
             mo_fill( u, 900000 + (uint32_t) ( round * 10 + i ), sizeof( u ) );
-            check( rocketnet_message_client_send( pair.clients[0], 1, ROCKETNET_UNRELIABLE, u, (int) sizeof( u ) ) );
-            check( rocketnet_message_server_send( pair.server, 0, 1, ROCKETNET_UNRELIABLE, u, (int) sizeof( u ) ) );
+            check( rocketnet_message_client_send( pair.clients[0], 1, ROCKETNET_RELIABILITY_UNRELIABLE, u, (int) sizeof( u ) ) );
+            check( rocketnet_message_server_send( pair.server, 0, 1, ROCKETNET_RELIABILITY_UNRELIABLE, u, (int) sizeof( u ) ) );
         }
 
         std::vector<mo_received_t> server_got, client_got;
@@ -1566,8 +1661,8 @@ static void mo_free( void * context, void * p )
 static void message_objects_no_allocation_after_create()
 {
     rocketnet_term();
-    check( rocketnet_allocator( mo_malloc, mo_free ) );
-    check( rocketnet_init( NULL ) );
+    check( rocketnet_set_allocator( mo_malloc, mo_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     {
         rocketnet_message_config_t config;
@@ -1607,25 +1702,25 @@ static void message_objects_no_allocation_after_create()
             if ( round < 40 )
                 for ( int c = 0; c < 2; c++ )
                 {
-                    uint8_t * p = rocketnet_message_client_start( pair.clients[c], round % 4, ROCKETNET_RELIABLE_ORDERED, round % 2 ? 3000 : 200 );
+                    uint8_t * p = rocketnet_message_client_start( pair.clients[c], round % 4, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, round % 2 ? 3000 : 200 );
                     check( p );
                     mo_fill( p, (uint32_t) round, round % 2 ? 3000 : 200 );
                     check( rocketnet_message_client_finish( pair.clients[c], round % 2 ? 3000 : 200 ) );
                     uint8_t u[64];
                     mo_fill( u, (uint32_t) round, sizeof( u ) );
-                    check( rocketnet_message_client_send( pair.clients[c], 0, ROCKETNET_UNRELIABLE, u, (int) sizeof( u ) ) );
-                    check( rocketnet_message_server_send( pair.server, c, 1, ROCKETNET_RELIABLE_ORDERED, u, (int) sizeof( u ) ) );
-                    uint8_t * a = rocketnet_message_client_start( pair.clients[c], 2, ROCKETNET_RELIABLE_ORDERED, 50 );
+                    check( rocketnet_message_client_send( pair.clients[c], 0, ROCKETNET_RELIABILITY_UNRELIABLE, u, (int) sizeof( u ) ) );
+                    check( rocketnet_message_server_send( pair.server, c, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, u, (int) sizeof( u ) ) );
+                    uint8_t * a = rocketnet_message_client_start( pair.clients[c], 2, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 50 );
                     check( a );
                     rocketnet_message_client_abort( pair.clients[c] );
                 }
             mo_step( &pair, NULL, NULL, 0.03 );
         }
         // a kick and a reset, still allocation free
-        while ( rocketnet_message_server_start( pair.server, 1, 0, ROCKETNET_RELIABLE_ORDERED, 1000 ) )
+        while ( rocketnet_message_server_start( pair.server, 1, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1000 ) )
             check( rocketnet_message_server_finish( pair.server, 1, 1000 ) );
         pair.time += 0.01;
-        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_MESSAGE_OK );
+        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
         check( mo_mallocs + mo_frees == calls );
 
         mo_pair_teardown( &pair );
@@ -1634,8 +1729,8 @@ static void message_objects_no_allocation_after_create()
     }
 
     rocketnet_term();
-    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
-    check( rocketnet_init( NULL ) );
+    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
 // ---------------------------------------------------------------------------
@@ -1648,7 +1743,7 @@ static void mo_send_up( mo_pair_t * pair, int c, int channel, uint32_t id, int b
 {
     uint8_t message[2000];
     mo_fill( message, id, (uint32_t) bytes );
-    check( rocketnet_message_client_send( pair->clients[c], channel, ROCKETNET_RELIABLE_ORDERED, message, bytes ) );
+    check( rocketnet_message_client_send( pair->clients[c], channel, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, bytes ) );
     rocketnet_message_client_send_packets( pair->clients[c] );
 }
 
@@ -1671,7 +1766,7 @@ static void rnslots_witness_replays()
         check( pair.net->slot_connection[0] != a );
         pair.net->clients[0]->connected = true;
         pair.time += 0.01;
-        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_MESSAGE_OK );
+        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
         const uint8_t * data = NULL;
         int bytes = 0;
         check( rocketnet_message_server_receive( pair.server, 0, 0, &data, &bytes ) == 0 );
@@ -1720,7 +1815,7 @@ static void rnslots_witness_replays()
         mo_send_up( &pair, 0, 0, 1 );
         mo_send_up( &pair, 0, 0, 2 );
         pair.time += 0.01;
-        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_MESSAGE_OK );
+        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
         const uint8_t * first = NULL;
         const uint8_t * second = NULL;
         int bytes = 0;
@@ -1729,17 +1824,17 @@ static void rnslots_witness_replays()
 
         rn_message_connection_t * slot = mo_server_slot( &pair, 0 );
         int started = 0;
-        while ( rocketnet_message_server_start( pair.server, 0, 1, ROCKETNET_RELIABLE_ORDERED, 100 ) )
+        while ( rocketnet_message_server_start( pair.server, 0, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 ) )
         {
             check( rocketnet_message_server_finish( pair.server, 0, 100 ) );
             started++;
         }
         check( started > 0 );
         check( slot->state == RN_MESSAGE_CONNECTION_KICKED );
-        check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+        check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
         check( pair.net->slot_connection[0] == 0 );
         check( rocketnet_message_server_client_connected( pair.server, 0 ) == 0 );
-        check( rocketnet_message_server_start( pair.server, 0, 1, ROCKETNET_UNRELIABLE, 10 ) == NULL );
+        check( rocketnet_message_server_start( pair.server, 0, 1, ROCKETNET_RELIABILITY_UNRELIABLE, 10 ) == NULL );
         const int finishes = pair.net->server->finishes;
         rocketnet_message_server_send_packets( pair.server );
         check( pair.net->server->finishes == finishes );                            // nothing sent from an exhausted region
@@ -1747,11 +1842,11 @@ static void rnslots_witness_replays()
         rocketnet_message_server_release( pair.server, 0, first );
         rocketnet_message_server_release( pair.server, 0, second );
         pair.time += 0.01;
-        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_MESSAGE_OK );
+        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
         check( slot->state == RN_MESSAGE_CONNECTION_FREE );
         check( !rn_region_exhausted( slot->region ) );
         check( slot->region->descriptors_free == slot->region->queue );
-        check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+        check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
         mo_pair_teardown( &pair );
     }
 
@@ -1794,25 +1889,25 @@ static void rnslots_witness_replays()
         mo_step( &pair );
         mo_send_up( &pair, 0, 0, 1 );
         pair.time += 0.01;
-        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_MESSAGE_OK );
+        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
         const uint8_t * data = NULL;
         int bytes = 0;
         check( rocketnet_message_server_receive( pair.server, 0, 0, &data, &bytes ) == 1 );
-        void (*saved_assert)( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
-        rocketnet_assert_function( mo_assert_hook );
+        void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+        rocketnet_set_assert_callback( mo_assert_hook );
         mo_asserts = 0;
         pair.time += 0.01;
-        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_ERROR_MESSAGE_NOT_RELEASED );
+        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED );
 #if ROCKETNET_ASSERTS
         check( mo_asserts == 1 );
 #else
         check( mo_asserts == 0 );
 #endif
-        rocketnet_assert_function( saved_assert );
+        rocketnet_set_assert_callback( saved_assert );
         check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_NOT_RELEASED ) == 1 );
         // the following update, with nothing held, is fine
         pair.time += 0.01;
-        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_MESSAGE_OK );
+        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
         mo_pair_teardown( &pair );
     }
 }
@@ -1852,19 +1947,19 @@ static void message_objects_client_clock_starts_at_first_update()
     }
 
     double time = MO_T0;
-    check( rocketnet_message_server_update( server, time ) == ROCKETNET_MESSAGE_OK );
-    check( rocketnet_message_client_update( client, time ) == ROCKETNET_MESSAGE_OK );
+    check( rocketnet_message_server_update( server, time ) == ROCKETNET_UPDATE_OK );
+    check( rocketnet_message_client_update( client, time ) == ROCKETNET_UPDATE_OK );
     check( e->time == 0.0 );                                    // the client transport's first update is its 0.0
     check( net->server->time == MO_T0 );                        // the server transport reads the game's time
     check( client->object.time == MO_T0 );                      // the object's own clock is the game's time
     check( server->object.time == MO_T0 );
 
     // a reliable message each way still flows, from T=1000.0 on
-    uint8_t * up = rocketnet_message_client_start( client, 1, ROCKETNET_RELIABLE_ORDERED, 16 );
+    uint8_t * up = rocketnet_message_client_start( client, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 16 );
     check( up != NULL );
     mo_fill( up, 7, 16 );
     check( rocketnet_message_client_finish( client, 16 ) != 0 );
-    uint8_t * down = rocketnet_message_server_start( server, 0, 1, ROCKETNET_RELIABLE_ORDERED, 16 );
+    uint8_t * down = rocketnet_message_server_start( server, 0, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 16 );
     check( down != NULL );
     mo_fill( down, 9, 16 );
     check( rocketnet_message_server_finish( server, 0, 16 ) != 0 );
@@ -1876,8 +1971,8 @@ static void message_objects_client_clock_starts_at_first_update()
     for ( int step = 1; step <= 20 && !( server_got && client_got ); step++ )
     {
         time = MO_T0 + 0.25 * step;
-        check( rocketnet_message_server_update( server, time ) == ROCKETNET_MESSAGE_OK );
-        check( rocketnet_message_client_update( client, time ) == ROCKETNET_MESSAGE_OK );
+        check( rocketnet_message_server_update( server, time ) == ROCKETNET_UPDATE_OK );
+        check( rocketnet_message_client_update( client, time ) == ROCKETNET_UPDATE_OK );
         check( e->time == 0.25 * step );                        // elapsed since the first update
         check( net->server->time == time );
 
@@ -1904,8 +1999,8 @@ static void message_objects_client_clock_starts_at_first_update()
     }
     check( server_got );
     check( client_got );
-    check( rocketnet_message_client_disconnect_reason( client ) == ROCKETNET_MESSAGE_ERROR_NONE );
-    check( rocketnet_message_server_disconnect_reason( server, 0 ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( rocketnet_message_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rocketnet_message_server_disconnect_reason( server, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
     rocketnet_message_client_destroy( client );
     rocketnet_message_server_destroy( server );
@@ -1934,7 +2029,7 @@ static void unreliable_store_full_exhausts_and_kicks()
     pair.net->refuse_start = true;                              // no frame at start: every send takes the queued path
     for ( ;; )
     {
-        uint8_t * p = rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_UNRELIABLE, 16 );
+        uint8_t * p = rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 16 );
         if ( !p )
             break;
         memset( p, 0xAB, 16 );
@@ -1948,12 +2043,12 @@ static void unreliable_store_full_exhausts_and_kicks()
     const rocketnet_counters_t * counters = rocketnet_message_server_counters( pair.server );
     check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 1 );
     check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED ) == 1 );
-    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
     check( rocketnet_message_server_client_connected( pair.server, 0 ) == 0 );
     check( pair.net->server->disconnects == 1 );
 
     // sticky: the kicked connection takes no further send
-    check( rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_UNRELIABLE, 16 ) == NULL );
+    check( rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 16 ) == NULL );
     check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 1 );
 
     mo_pair_teardown( &pair );
@@ -1975,26 +2070,26 @@ static void unreliable_past_limit_promotes_counted_and_not_wedged()
 
     static uint8_t message[16384];
     mo_fill( message, 1, (uint32_t) limit );
-    check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, message, limit ) != 0 );
+    check( rocketnet_message_client_send( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, message, limit ) != 0 );
     check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) == 0 );
     check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE ) == 0 );
 
     // past the limit, and the largest the config allows: both promoted
     mo_fill( message, 2, (uint32_t) limit + 1 );
-    check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, message, limit + 1 ) != 0 );
+    check( rocketnet_message_client_send( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, message, limit + 1 ) != 0 );
     check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE ) == 1 );
     mo_fill( message, 3, 16384 );
-    check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, message, 16384 ) != 0 );
+    check( rocketnet_message_client_send( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, message, 16384 ) != 0 );
     check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE ) == 2 );
 
     // a promotion is not a refusal or a store-full drop, and the connection stays up
     check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) == 0 );
     check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 0 );
-    check( rocketnet_message_client_disconnect_reason( client ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( rocketnet_message_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
     // not wedged: a valid message behind the promoted ones is sent
     mo_fill( message, 4, 50 );
-    check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, message, 50 ) != 0 );
+    check( rocketnet_message_client_send( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, message, 50 ) != 0 );
     check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE ) == 2 );
 
     std::vector<mo_received_t> got;
@@ -2037,7 +2132,7 @@ static void unreliable_failed_packet_drops_and_counts_each_record()
     {
         uint8_t message[16];
         mo_fill( message, 10 + i, sizeof( message ) );
-        check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, message, (int) sizeof( message ) ) != 0 );
+        check( rocketnet_message_client_send( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, message, (int) sizeof( message ) ) != 0 );
     }
     pair.net->refuse_start = false;
 
@@ -2056,7 +2151,7 @@ static void unreliable_failed_packet_drops_and_counts_each_record()
 
     uint8_t message[16];
     mo_fill( message, 99, sizeof( message ) );
-    check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, message, (int) sizeof( message ) ) != 0 );
+    check( rocketnet_message_client_send( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, message, (int) sizeof( message ) ) != 0 );
     for ( int i = 0; i < 3; i++ )
         mo_step( &pair, &got );
     check( got.size() == 1 );
@@ -2083,8 +2178,8 @@ static void unreliable_chunks_freed_when_written()
     mo_fill( small, 20, sizeof( small ) );
     mo_fill( medium, 21, sizeof( medium ) );
     pair.net->refuse_start = true;                              // no frame at start: the queued path holds store chunks
-    check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, small, (int) sizeof( small ) ) != 0 );
-    check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, medium, (int) sizeof( medium ) ) != 0 );
+    check( rocketnet_message_client_send( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, small, (int) sizeof( small ) ) != 0 );
+    check( rocketnet_message_client_send( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, medium, (int) sizeof( medium ) ) != 0 );
     pair.net->refuse_start = false;
 
     uint32_t used = 0;
@@ -2124,7 +2219,7 @@ static void unreliable_over_a_lossy_link_arrives_intact_at_most_once()
             {
                 uint8_t message[100];
                 mo_fill( message, next_id, sizeof( message ) );
-                check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, message, (int) sizeof( message ) ) != 0 );
+                check( rocketnet_message_client_send( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, message, (int) sizeof( message ) ) != 0 );
                 next_id++;
                 sent++;
             }
@@ -2154,6 +2249,261 @@ static void unreliable_over_a_lossy_link_arrives_intact_at_most_once()
 
         mo_pair_teardown( &pair );
     }
+}
+
+// ---------------------------------------------------------------------------
+// the send room watch: a debug build warns once when the fullest send pool
+// crosses 75%, again only after it fell below 50%, and when the region is
+// exhausted, just before the kick; a release build says nothing
+// ---------------------------------------------------------------------------
+
+// the decision itself, on one region: 16 descriptors are the fullest pool
+// for 100-byte sends (the small class holds 31), so the 12th send crosses
+static void send_room_watch_crosses_once_and_rearms_below_half()
+{
+    rocketnet_message_config_t config;
+    mo_small_config( &config );
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    check( region->queue == 16 );
+
+    uint32_t taken[16];
+    int crossings = 0;
+    int crossed_at = -1;
+    check( rn_region_send_room_watch( region ) == RN_SEND_ROOM_NONE );
+    for ( int i = 0; i < 15; i++ )
+    {
+        uint32_t free_messages = 0;
+        check( rn_region_send_fits( region, 100, NULL, NULL, &free_messages ) == 1 );
+        check( free_messages == (uint32_t) ( 16 - i ) );
+        taken[i] = rn_region_send_alloc( region, 100 );
+        check( taken[i] != RN_DESCRIPTOR_NONE );
+        if ( rn_region_send_room_watch( region ) == RN_SEND_ROOM_CROSSED )
+        {
+            crossings++;
+            crossed_at = i + 1;
+        }
+    }
+    check( crossings == 1 );                                    // a connection sitting above 75% crosses once
+    check( crossed_at == 12 );                                  // 12 of 16 is 75%
+
+    rn_send_room_t room;
+    rn_region_send_room( region, &room );
+    check( room.used_messages == 15 && room.messages == 16 );
+    check( room.permille == 937 );
+    check( room.store_used_bytes == 15 * RN_STORE_SMALL_BYTES );
+
+    // down to 9 of 16 (56%): not below half, so no rearm, and back up is quiet
+    for ( int i = 14; i >= 9; i-- )
+    {
+        rn_region_send_free( region, taken[i] );
+        check( rn_region_send_room_watch( region ) == RN_SEND_ROOM_NONE );
+    }
+    for ( int i = 9; i < 13; i++ )
+    {
+        taken[i] = rn_region_send_alloc( region, 100 );
+        check( rn_region_send_room_watch( region ) == RN_SEND_ROOM_NONE );
+    }
+
+    // down to 7 of 16 (43%) rearms; back up to 12 crosses once more
+    for ( int i = 12; i >= 7; i-- )
+        rn_region_send_free( region, taken[i] );
+    check( rn_region_send_room_watch( region ) == RN_SEND_ROOM_NONE );
+    crossings = 0;
+    for ( int i = 7; i < 13; i++ )
+    {
+        taken[i] = rn_region_send_alloc( region, 100 );
+        crossings += rn_region_send_room_watch( region ) == RN_SEND_ROOM_CROSSED;
+    }
+    check( crossings == 1 );
+
+    // the last descriptor: fits; then none, and the send that finds none exhausts
+    for ( int i = 13; i < 16; i++ )
+        taken[i] = rn_region_send_alloc( region, 100 );
+    check( rn_region_send_fits( region, 100, NULL, NULL, NULL ) == 0 );
+    check( rn_region_send_alloc( region, 100 ) == RN_DESCRIPTOR_NONE );
+    check( rn_region_exhausted( region ) );
+
+    // a reset carve rearms
+    rn_region_reset( region );
+    check( region->send_room_armed == 1 );
+    check( rn_region_send_fits( region, 100, NULL, NULL, NULL ) == 1 );
+
+    rn_arena_destroy( arena );
+}
+
+static int mo_room_lines = 0;
+static int mo_room_crossings = 0;
+static int mo_room_exhausted = 0;
+static int mo_room_named = 0;
+static const char * mo_room_name = "client";
+
+static void mo_room_capture( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
+{
+    (void) context;
+    char line[1024];
+    const size_t n = length < sizeof( line ) - 1 ? length : sizeof( line ) - 1;
+    memcpy( line, message, n );
+    line[n] = '\0';
+    if ( strstr( line, "send room" ) == NULL )
+        return;
+    check( level == ROCKETNET_LOG_LEVEL_WARN );
+    mo_room_lines++;
+    if ( strstr( line, "over 75% full" ) )
+        mo_room_crossings++;
+    if ( strstr( line, "exhausted" ) )
+        mo_room_exhausted++;
+    if ( strstr( line, mo_room_name ) && strstr( line, "send_buffer_bytes" ) && strstr( line, "send_queue_messages" ) && strstr( line, " of " ) )
+        mo_room_named++;
+}
+
+static uint32_t mo_room_permille( rn_message_connection_t * connection )
+{
+    rn_send_room_t room;
+    rn_region_send_room( connection->region, &room );
+    return room.permille;
+}
+
+// through the client and server objects, with the log captured: one line at
+// the crossing, none while the connection sits above it, one more after acks
+// took it below half and it crossed again, one at exhaustion; none at all in
+// a release build
+static void send_room_warns_in_debug_builds_only()
+{
+    rocketnet_message_config_t config;
+    mo_small_config( &config );
+    mo_pair_t pair;
+    mo_pair_setup( &pair, 1, &config );
+    mo_step( &pair );
+    mo_step( &pair );
+
+    check( rn_send_room_warnings == ( ROCKETNET_ASSERTS ? 1 : 0 ) );     // compiled in exactly when the debug macro is on
+    mo_room_lines = mo_room_crossings = mo_room_exhausted = mo_room_named = 0;
+    mo_room_name = "client";
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_SPAM );
+    rocketnet_set_log_callback( mo_room_capture, NULL );
+
+    rocketnet_message_client_t * client = pair.clients[0];
+    rn_message_connection_t * connection = mo_client_connection( client );
+    uint8_t message[100];
+    mo_fill( message, 1, sizeof( message ) );
+
+    // up past 75%, and on to 87%: one crossing
+    int sends = 0;
+    while ( mo_room_permille( connection ) < 870 )
+    {
+        check( rocketnet_message_client_send( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
+        check( ++sends < 100 );
+    }
+    check( mo_room_crossings == ( rn_send_room_warnings ? 1 : 0 ) );
+
+    // the acks take it below half; the next sends rearm and cross again
+    for ( int step = 0; step < 50 && mo_room_permille( connection ) >= 500; step++ )
+        mo_step( &pair );
+    check( mo_room_permille( connection ) < 500 );
+    while ( mo_room_permille( connection ) < 750 )
+    {
+        check( rocketnet_message_client_send( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
+        check( ++sends < 200 );
+    }
+    check( mo_room_crossings == ( rn_send_room_warnings ? 2 : 0 ) );
+    check( mo_room_exhausted == 0 );
+
+    // on to exhaustion: one line just before the kick, naming the client
+    while ( rocketnet_message_client_send( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) )
+        check( ++sends < 300 );
+    check( rocketnet_message_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
+    check( mo_room_crossings == ( rn_send_room_warnings ? 2 : 0 ) );
+    check( mo_room_exhausted == ( rn_send_room_warnings ? 1 : 0 ) );
+    check( mo_room_lines == ( rn_send_room_warnings ? 3 : 0 ) );
+    check( mo_room_named == mo_room_lines );
+
+    // a server names the slot
+    mo_pair_teardown( &pair );
+    mo_pair_setup( &pair, 1, &config );
+    mo_step( &pair );
+    mo_step( &pair );
+    check( rocketnet_message_server_client_connected( pair.server, 0 ) == 1 );
+    mo_room_lines = mo_room_crossings = mo_room_exhausted = mo_room_named = 0;
+    mo_room_name = "server slot 0";
+    while ( rocketnet_message_server_send( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) )
+        check( ++sends < 400 );
+    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
+    check( mo_room_crossings == ( rn_send_room_warnings ? 1 : 0 ) );
+    check( mo_room_exhausted == ( rn_send_room_warnings ? 1 : 0 ) );
+    check( mo_room_named == mo_room_lines );
+
+    rocketnet_set_log_callback( NULL, NULL );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    mo_pair_teardown( &pair );
+}
+
+// ---------------------------------------------------------------------------
+// A queued-path (region) start left pending across an update whose reset hits
+// its slot is cancelled by that reset (sdk/rocketnet_message_server.cpp,
+// rn_message_object_update: rn_message_connection_cancel_pending before each
+// connection reset; tla/RNSlots.tla NoPendingAcrossReset): the finish after
+// it is a no-op that returns 0, the cancelled start is counted in
+// MESSAGE_SEND_REFUSED, nothing lands in the recarved region, and a later
+// start on every slot is accepted.
+// ---------------------------------------------------------------------------
+
+static void pending_start_cancelled_by_slot_reset()
+{
+    mo_pair_t pair;
+    mo_pair_setup( &pair, MO_MAX_SLOTS );
+    mo_step( &pair );
+    mo_step( &pair );
+    mo_step( &pair );
+
+    // a region-path start on slot 0, written by the application, not finished
+    uint8_t * pointer = rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 );
+    check( pointer != NULL );
+    mo_fill( pointer, 7, 100 );
+    const uint64_t refused = mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
+
+    // the transport gives slot 0 to a new connection: Observe resets the slot
+    rn_message_connection_t * slot = mo_server_slot( &pair, 0 );
+    const uint64_t carves = slot->region->carves;
+    mo_net_drop_slot( pair.net, 0 );
+    mo_net_connect( pair.net, 0 );
+    pair.time += 0.01;
+    check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
+    check( slot->region->carves == carves + 1 );
+    check( slot->state == RN_MESSAGE_CONNECTION_CONNECTED );
+    check( pair.server->object.pending_connection == -1 );
+    check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == refused + 1 );
+
+    // the finish after the reset is a no-op: nothing joins the new connection's queue
+    const uint32_t descriptors_free = slot->region->descriptors_free;
+    check( rocketnet_message_server_finish( pair.server, 0, 100 ) == 0 );
+    check( slot->region->descriptors_free == descriptors_free );
+    check( slot->region->channel_send[0].ordered_write == 0 );
+
+    // and every slot takes a later start
+    for ( int i = 0; i < MO_MAX_SLOTS; i++ )
+    {
+        uint8_t * next = rocketnet_message_server_start( pair.server, i, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 );
+        check( next != NULL );
+        mo_fill( next, (uint32_t) ( 100 + i ), 100 );
+        check( rocketnet_message_server_finish( pair.server, i, 100 ) != 0 );
+    }
+
+    // the client: a start pending across the update that ends its transport is
+    // cancelled by that update's reset, and its finish is a no-op
+    uint8_t * up = rocketnet_message_client_start( pair.clients[1], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 );
+    check( up != NULL );
+    mo_fill( up, 9, 100 );
+    mo_net_drop_slot( pair.net, 1 );
+    check( rocketnet_message_client_update( pair.clients[1], pair.time + 0.01 ) == ROCKETNET_UPDATE_OK );
+    check( mo_client_connection( pair.clients[1] )->state == RN_MESSAGE_CONNECTION_FREE );
+    check( pair.clients[1]->object.pending_connection == -1 );
+    check( rocketnet_message_client_finish( pair.clients[1], 100 ) == 0 );
+
+    mo_pair_teardown( &pair );
 }
 
 REGISTER_UNIT_TEST( start_finish_pointer_reaches_the_frame );
@@ -2200,10 +2550,17 @@ static void send_budget_env_overrides_config()
         mo_pair_teardown( &pair );
     }
     {
-        // a value that does not parse, or one above the maximum, refuses the create
+        // a value that does not parse, or one above the maximum, refuses the create.
+        // The refused create returns before its one allocation (sdk/rocketnet_message_server.cpp:218), and the harness
+        // link has no destroy (mo_link, line 353), so the endpoint mo_net_client made stays
+        // the harness's: it is freed here before slot 0 is used again, because
+        // mo_net_client overwrites net->clients[slot] (line 133) and mo_net_free frees only
+        // the endpoint left in each slot.
         mo_net_t * net = mo_net_new();
         mo_setenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS", "fast" );
         check( mo_client_create( net, 0, &config, 0 ) == NULL );
+        delete net->clients[0];
+        net->clients[0] = NULL;
         mo_setenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS", "10000001" );
         check( mo_client_create( net, 0, &config, 0 ) == NULL );
         mo_net_free( net );
@@ -2244,6 +2601,271 @@ static void send_budget_env_refused_before_the_socket()
     check( rn_message_object_send_kbps_env_valid( 1 ) );
 }
 
+// ---------------------------------------------------------------------------
+// slots are keyed on the transport's connection id (P9a), and each batch entry
+// is admitted by the connection it was received for (P9b): tla/RNSlots.tla
+// NoCrossConnectionApply, NoOwnEntryDropped, ReusedSlotStartsClean, and the
+// reversed witness tla/MCRNSlotsBrokenClientIdAsConnection.cfg
+// ---------------------------------------------------------------------------
+
+// A slot bound in this update keeps its own first entries (NoOwnEntryDropped):
+// the client's first packet is on the wire before the server's update that
+// observes its connection, and the record in it is delivered in that update.
+static void slot_bound_this_update_keeps_its_first_payload()
+{
+    rocketnet_message_config_t config;
+    mo_config( &config );
+    mo_pair_t pair;
+    mo_pair_setup( &pair, 1, &config );                                         // the slot's connection is up; the server has not updated
+    pair.time += 0.01;
+    check( rocketnet_message_client_update( pair.clients[0], pair.time ) == ROCKETNET_UPDATE_OK );
+    mo_send_up( &pair, 0, 0, 7 );
+    check( pair.net->server->inbound.size() >= 1 );
+    const uint64_t stale = mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY );
+    check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
+    check( mo_server_slot( &pair, 0 )->connection_id == pair.net->slot_connection[0] );
+    const uint8_t * data = NULL;
+    int bytes = 0;
+    check( rocketnet_message_server_receive( pair.server, 0, 0, &data, &bytes ) == 1 );
+    uint32_t id = 0;
+    check( data && mo_verify( std::vector<uint8_t>( data, data + bytes ), &id ) && id == 7 );
+    rocketnet_message_server_release( pair.server, 0, data );
+    check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY ) == stale );
+    mo_pair_teardown( &pair );
+}
+
+// An entry stamped with a previous connection's id is dropped and counted
+// (NoCrossConnectionApply), in an update after the one that observed the new
+// connection: connection A's payload, and the transport's ack of a packet the
+// server sent to A, each reach the batch one update after B took the slot.
+static void previous_connection_payload_dropped_after_reconnect()
+{
+    rocketnet_message_config_t config;
+    mo_config( &config );
+    {
+        mo_pair_t pair;
+        mo_pair_setup( &pair, 1, &config );
+        mo_step( &pair );
+        mo_step( &pair );
+        const uint64_t a = pair.net->slot_connection[0];
+        mo_send_up( &pair, 0, 0, 1 );                                           // A's record, on the wire
+        std::vector<mo_packet_t> late;
+        late.swap( pair.net->server->inbound );                                 // held past B's connect
+        check( late.size() >= 1 && late[0].connection == a );
+        mo_net_connect( pair.net, 0 );                                          // B takes the slot
+        check( pair.net->slot_connection[0] != a );
+        pair.time += 0.01;
+        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );     // Observe binds B
+        check( mo_server_slot( &pair, 0 )->connection_id == pair.net->slot_connection[0] );
+        const uint64_t stale = mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY );
+        pair.net->server->inbound.swap( late );
+        pair.time += 0.01;
+        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
+        const uint8_t * data = NULL;
+        int bytes = 0;
+        check( rocketnet_message_server_receive( pair.server, 0, 0, &data, &bytes ) == 0 );          // never applied to B
+        check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY ) == stale + 1 );
+        mo_pair_teardown( &pair );
+    }
+}
+
+static void previous_connection_ack_dropped_after_reconnect()
+{
+    rocketnet_message_config_t config;
+    mo_config( &config );
+    {
+        mo_pair_t pair;
+        mo_pair_setup( &pair, 1, &config );
+        mo_step( &pair );
+        mo_step( &pair );
+        const uint64_t a = pair.net->slot_connection[0];
+        uint8_t message[100];
+        mo_fill( message, 9, sizeof( message ) );
+        check( rocketnet_message_server_send( pair.server, 0, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
+        rocketnet_message_server_send_packets( pair.server );
+        pair.net->hold_acks = true;                                             // A's ack is deferred past B's connect
+        pair.time += 0.01;
+        check( rocketnet_message_client_update( pair.clients[0], pair.time ) == ROCKETNET_UPDATE_OK );     // A opens it
+        const size_t held = pair.net->server->acks_inbox.size();               // this packet's ack, and any of A's earlier ones
+        check( held >= 1 );
+        for ( size_t i = 0; i < held; i++ )
+            check( pair.net->server->acks_inbox_connection[i] == a );
+        mo_net_connect( pair.net, 0 );                                          // B takes the slot
+        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );     // Observe binds B
+        check( mo_server_slot( &pair, 0 )->connection_id == pair.net->slot_connection[0] );
+        const uint64_t stale = mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY );
+        pair.net->hold_acks = false;
+        pair.time += 0.01;
+        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );     // A's acks in the batch
+        check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY ) == stale + held );
+        mo_pair_teardown( &pair );
+    }
+}
+
+// A client disconnects and a new connection with the same client id takes the
+// same slot inside one server update (ReusedSlotStartsClean): the public
+// server and clients over the in-memory loopback transport, step driven, time
+// from 1000.0. The server's slot is reset for the new connection and announces
+// its CONFIG to it, so the two exchange messages from a fresh start.
+
+#define RECONNECT_PROTOCOL 0x7A11C1C1E5EED0A1ULL
+#define RECONNECT_CLIENT_ID 0x5107ULL
+
+static double reconnect_now = 1000.0;
+static double reconnect_clock( void * ) { return reconnect_now; }
+
+struct reconnect_world_t
+{
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    rocketnet_server_t * server;
+    rocketnet_client_t * clients[2];
+    double time;
+};
+
+static void reconnect_pump( reconnect_world_t * world, double dt = 0.01 )
+{
+    reconnect_now = world->time;
+    for ( int i = 0; i < 2; i++ )
+    {
+        check( rocketnet_client_update( world->clients[i], world->time ) == ROCKETNET_UPDATE_OK );
+        rocketnet_client_send_packets( world->clients[i] );
+    }
+    check( rocketnet_server_update( world->server, world->time ) == ROCKETNET_UPDATE_OK );
+    rocketnet_server_send_packets( world->server );
+    world->time += dt;
+}
+
+static void reconnect_connect( reconnect_world_t * world, int client )
+{
+    char address[64];
+    snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) rocketnet_server_port( world->server ) );
+    const char * addresses[] = { address };
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    check( rocketnet_write_production_connect_token( world->backend_secret, world->server_public,
+        RECONNECT_PROTOCOL, addresses, 1, RECONNECT_CLIENT_ID, 1000, 1ULL << 40, 300, NULL,
+        token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_client_connect( world->clients[client], token ) == ROCKETNET_STATUS_OK );
+}
+
+// Both directions on channel 0, values counted from 0 in order: a slot that
+// kept the last connection's sequence state, or a client that never received
+// the server's CONFIG, does not deliver them.
+static int reconnect_exchange( reconnect_world_t * world, int client, uint8_t tag, int want )
+{
+    rocketnet_client_t * c = world->clients[client];
+    for ( int i = 0; i < want; i++ )
+    {
+        uint8_t * up = rocketnet_client_start_message( c, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 2 );
+        check( up != NULL );
+        if ( up ) { up[0] = tag; up[1] = (uint8_t) i; check( rocketnet_client_finish_message( c, 2 ) != 0 ); }
+        uint8_t * down = rocketnet_server_start_message( world->server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 2 );
+        check( down != NULL );
+        if ( down ) { down[0] = tag; down[1] = (uint8_t) i; check( rocketnet_server_finish_message( world->server, 0, 2 ) != 0 ); }
+    }
+    int at_server = 0, at_client = 0;
+    for ( int step = 0; step < 300 && ( at_server < want || at_client < want ); step++ )
+    {
+        reconnect_pump( world );
+        const uint8_t * data = NULL;
+        int bytes = 0;
+        while ( rocketnet_server_receive_message( world->server, 0, 0, &data, &bytes ) )
+        {
+            check( bytes == 2 && data[0] == tag && data[1] == (uint8_t) at_server );
+            rocketnet_server_release_message( world->server, 0, data );
+            at_server++;
+        }
+        while ( rocketnet_client_receive_message( c, 0, &data, &bytes ) )
+        {
+            check( bytes == 2 && data[0] == tag && data[1] == (uint8_t) at_client );
+            rocketnet_client_release_message( c, data );
+            at_client++;
+        }
+    }
+    return at_server == want && at_client == want;
+}
+
+static void same_client_id_reconnect_in_one_update_resets_the_slot()
+{
+    reconnect_world_t world;
+    memset( &world, 0, sizeof( world ) );
+    rocketnet_set_quiet( 1 );
+    world.time = 1000.0;
+    reconnect_now = world.time;
+    uint8_t seed[32];
+    for ( int i = 0; i < 32; i++ )
+        seed[i] = (uint8_t) ( 0x5A ^ i );
+    check( rocketnet_generate_backend_keypair_from_seed( seed, world.backend_public, world.backend_secret ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_generate_server_keypair( world.server_public, world.server_secret ) == ROCKETNET_STATUS_OK );
+
+    rocketnet_server_config_t server_config;
+    rocketnet_server_default_config( &server_config );
+    server_config.protocol_id = RECONNECT_PROTOCOL;
+    server_config.max_clients = 1;                                              // the new connection can only take slot 0
+    memcpy( server_config.backend_public_key, world.backend_public, sizeof( server_config.backend_public_key ) );
+    memcpy( server_config.server_public_key, world.server_public, sizeof( server_config.server_public_key ) );
+    memcpy( server_config.server_secret_key, world.server_secret, sizeof( server_config.server_secret_key ) );
+    server_config.transport = "loopback";
+    world.server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    check( world.server != NULL );
+    check( rocketnet_server_start( world.server ) == ROCKETNET_STATUS_OK );
+    for ( int i = 0; i < 2; i++ )
+    {
+        rocketnet_client_config_t client_config;
+        rocketnet_client_default_config( &client_config );
+        client_config.transport = "loopback";
+        client_config.step_driven = true;
+        client_config.time_callback = reconnect_clock;
+        world.clients[i] = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+        check( world.clients[i] != NULL );
+    }
+
+    // A and B hold tokens for one client id. Both are challenged; A's
+    // response connects first, and B's responses are ignored while A holds
+    // that id, so B waits in its response state.
+    reconnect_connect( &world, 0 );
+    reconnect_connect( &world, 1 );
+    for ( int i = 0; i < 400 && rocketnet_client_state( world.clients[0] ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
+        reconnect_pump( &world );
+    check( rocketnet_client_state( world.clients[0] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    check( rocketnet_client_index( world.clients[0] ) == 0 );
+    check( rocketnet_server_client_id( world.server, 0 ) == RECONNECT_CLIENT_ID );
+    check( reconnect_exchange( &world, 0, 0xA1, 3 ) );
+    check( rocketnet_client_state( world.clients[1] ) == ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE );
+    check( rocketnet_server_counter( world.server, ROCKETNET_SERVER_COUNTER_CLIENTS_CONNECTED ) == 1 );
+
+    // A disconnects; in the next server update its disconnect is processed
+    // and then B's response, which takes slot 0 with the same client id. B's
+    // response is due (its resend interval has passed) in that same pump.
+    world.time += 0.25;
+    rocketnet_client_disconnect( world.clients[0] );
+    reconnect_pump( &world );
+    check( rocketnet_server_counter( world.server, ROCKETNET_SERVER_COUNTER_CLIENTS_CONNECTED ) == 2 );
+    check( rocketnet_server_client_connected( world.server, 0 ) != 0 );
+    check( rocketnet_server_client_id( world.server, 0 ) == RECONNECT_CLIENT_ID );
+
+    for ( int i = 0; i < 400 && rocketnet_client_state( world.clients[1] ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
+        reconnect_pump( &world );
+    check( rocketnet_client_state( world.clients[1] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    check( rocketnet_client_index( world.clients[1] ) == 0 );
+
+    // the slot started clean and B received the server's CONFIG: the exchange
+    // runs from 0 in order, and B is still connected after the CONFIG wait
+    check( reconnect_exchange( &world, 1, 0xB2, 3 ) );
+    const double until = world.time + (double) server_config.reliable_timeout_ms / 1000.0 + 1.0;
+    while ( world.time < until && rocketnet_client_state( world.clients[1] ) == ROCKETNET_CLIENT_STATE_CONNECTED )
+        reconnect_pump( &world, 0.05 );
+    check( rocketnet_client_state( world.clients[1] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    check( rocketnet_client_disconnect_reason( world.clients[1] ) == ROCKETNET_DISCONNECT_REASON_NONE );
+
+    for ( int i = 0; i < 2; i++ )
+        rocketnet_client_destroy( world.clients[i] );
+    rocketnet_server_destroy( world.server );
+}
+
+
 REGISTER_UNIT_TEST( ordered_and_unreliable_end_to_end_in_memory );
 REGISTER_UNIT_TEST( server_kicks_exhausted_client_others_unaffected );
 REGISTER_UNIT_TEST( client_disconnects_itself_on_exhaustion );
@@ -2265,3 +2887,10 @@ REGISTER_UNIT_TEST( unreliable_past_limit_promotes_counted_and_not_wedged );
 REGISTER_UNIT_TEST( unreliable_failed_packet_drops_and_counts_each_record );
 REGISTER_UNIT_TEST( unreliable_chunks_freed_when_written );
 REGISTER_UNIT_TEST( unreliable_over_a_lossy_link_arrives_intact_at_most_once );
+REGISTER_UNIT_TEST( send_room_watch_crosses_once_and_rearms_below_half );
+REGISTER_UNIT_TEST( send_room_warns_in_debug_builds_only );
+REGISTER_UNIT_TEST( pending_start_cancelled_by_slot_reset );
+REGISTER_UNIT_TEST( slot_bound_this_update_keeps_its_first_payload );
+REGISTER_UNIT_TEST( previous_connection_payload_dropped_after_reconnect );
+REGISTER_UNIT_TEST( previous_connection_ack_dropped_after_reconnect );
+REGISTER_UNIT_TEST( same_client_id_reconnect_in_one_update_resets_the_slot );

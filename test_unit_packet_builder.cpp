@@ -221,10 +221,11 @@ static void builder_obeys_budget_and_class_order()
 // created, the builder and the dispatch run, and the allocator is not called
 // again after create.
 
-static void no_allocation_after_create()
+static void packet_builder_no_allocation_after_create()
 {
-    rocketnet_unit_check( rocketnet_allocator( builder_malloc, builder_free ) );
-    rocketnet_unit_check( rocketnet_init( NULL ) );
+    rocketnet_term();                                           // the allocator is replaced only before init
+    rocketnet_unit_check( rocketnet_set_allocator( builder_malloc, builder_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     builder_allocs = 0;
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );
@@ -245,12 +246,15 @@ static void no_allocation_after_create()
     static uint8_t data[2][16];
 
     struct rn_packet_item_t items[2];
-    for ( int i = 0; i < 2; i++ )
-        builder_item( &items[i], (uint16_t) i, ROCKETNET_MESSAGE_CODE_UNRELIABLE, ROCKETNET_SEND_CLASS_UNRELIABLE, data[i], 16 );
 
-    // the hot path: write packets, dispatch records, feed acks, end the update
+    // the hot path: write packets, dispatch records, feed acks, end the update.
+    // each update queues its items afresh: the builder skips an item it marked
+    // taken (rn_builder_writable, sdk/rocketnet_packet_builder.cpp:131).
     for ( int update = 0; update < 8; update++ )
     {
+        for ( int i = 0; i < 2; i++ )
+            builder_item( &items[i], (uint16_t) i, ROCKETNET_MESSAGE_CODE_UNRELIABLE, ROCKETNET_SEND_CLASS_UNRELIABLE, data[i], 16 );
+
         rocketnet_unit_check( rn_packet_builder_write( &builder, items, 2, frames, 4 ) == 1 );
 
         struct rocketnet_message_record_t record;
@@ -273,7 +277,9 @@ static void no_allocation_after_create()
     rocketnet_unit_check( builder_allocs == after_create );
 
     rn_arena_destroy( arena );
-    rocketnet_unit_check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
+    rocketnet_term();
+    rocketnet_unit_check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
 // rocketnet_message_record_valid (sdk/rocketnet_message.cpp) is the writer's
@@ -434,5 +440,5 @@ static void message_record_valid_refuses_each_shape()
 
 REGISTER_UNIT_TEST( small_records_packed_several_per_packet );
 REGISTER_UNIT_TEST( builder_obeys_budget_and_class_order );
-REGISTER_UNIT_TEST( no_allocation_after_create );
+REGISTER_UNIT_TEST( packet_builder_no_allocation_after_create );
 REGISTER_UNIT_TEST( message_record_valid_refuses_each_shape );

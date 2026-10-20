@@ -34,8 +34,7 @@
 // 7.5 admits a type; a disabled type is refused on send
 // (ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED) and counted as a violation
 // on receive (ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED). Each later type's
-// case lives in its own file so its card runs
-// without touching this one:
+// case lives in its own file:
 //
 //   sdk/rocketnet_channel_reliable.cpp    code 2
 //   sdk/rocketnet_channel_sequenced.cpp   codes 1 and 4
@@ -64,7 +63,7 @@
 
 // what a dispatch did with one record (docs/CHANNELS.md 7.2)
 
-#define ROCKETNET_CHANNEL_DISPATCH_NONE                         0   // nothing: refused, counted, or held by a later card
+#define ROCKETNET_CHANNEL_DISPATCH_NONE                         0   // nothing: refused or counted
 #define ROCKETNET_CHANNEL_DISPATCH_DELIVERED                    1   // a view into the batch, or a delivery from the ring
 #define ROCKETNET_CHANNEL_DISPATCH_HELD                         2   // kept ahead of its turn, live (7.2, 7.3)
 #define ROCKETNET_CHANNEL_DISPATCH_STALE                        3   // dropped, counted (7.3)
@@ -88,7 +87,7 @@ struct rn_channels_t
     uint32_t delivery_capacity;       // W + Du, the region's delivery table
     uint32_t violations;              // records refused on receive this update
     uint32_t payload_capacity;        // the payload bytes a frame holds: a message is small when its record fits one (8)
-    int error;                        // sticky: ROCKETNET_MESSAGE_ERROR_NONE, or ERROR_PROTOCOL_VIOLATION after a wire violation (17.3 item 11)
+    int error;                        // sticky: ROCKETNET_DISCONNECT_REASON_NONE, or ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION after a wire violation (17.3 item 11)
     uint32_t pending;                 // the send descriptor between start and finish, or RN_DESCRIPTOR_NONE
     uint32_t pending_bytes;           // what the pending start reserved
     uint32_t pending_channel;
@@ -260,8 +259,6 @@ void rn_channels_end_update_sequenced( struct rn_channels_t * channels );
 // types 6 or 7, and -1 for every other type. No wire receipt code is sent.
 int rn_channels_reliable_receipt_base( int type );
 
-int rn_channels_dispatch_receipt( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out );
-
 // Counts one receive violation on the owner's counters, once per record:
 // ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED for a code its mask does not
 // admit (7.5), the given counter for anything else.
@@ -383,7 +380,7 @@ bool rn_ordered_announce_config( struct rn_ordered_t * ordered, const struct roc
 // field by field with this end's body. Equal: config_received is set. A
 // different field, or a version this end does not know, logs one error line
 // naming the first differing field and both values and sets the sticky error
-// ROCKETNET_MESSAGE_ERROR_CONFIG_MISMATCH (rn_ordered_decide). A body layer 2
+// ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH (rn_ordered_decide). A body layer 2
 // refuses (MESSAGE_BAD_CONTROL) is a wire violation. rn_ordered_receive calls
 // it for each new control record; returns the error it set, or NONE.
 
@@ -397,7 +394,7 @@ uint32_t rn_ordered_deliveries( const struct rn_ordered_t * ordered );
 
 void rn_ordered_end_update( struct rn_ordered_t * ordered );
 
-// What to end the connection with, or ROCKETNET_MESSAGE_ERROR_NONE: the region's
+// What to end the connection with, or ROCKETNET_DISCONNECT_REASON_NONE: the region's
 // exhaustion first (tla/RNConnectionMemory.tla Kick), then a wire violation,
 // then an unacked reliable message past its timeout (6.4). The owner reads it
 // every update.

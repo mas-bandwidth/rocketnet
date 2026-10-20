@@ -427,8 +427,8 @@ static void small_leg( float loss, float duplicate, uint64_t seed )
 
     // nothing was a violation, and nothing is left in flight or unfreed
     check( a->violations == 0 && b->violations == 0 );
-    check( rn_ordered_decide( &a->ordered ) == ROCKETNET_MESSAGE_ERROR_NONE );
-    check( rn_ordered_decide( &b->ordered ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( rn_ordered_decide( &a->ordered ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rn_ordered_decide( &b->ordered ) == ROCKETNET_DISCONNECT_REASON_NONE );
     check( a->region->descriptors_free == a->region->queue );
     check( b->region->descriptors_free == b->region->queue );
     check( counter( b, ROCKETNET_COUNTER_MESSAGE_ORDERING_BEHIND ) == 0 );
@@ -564,11 +564,11 @@ static void small_packed_and_resent_until_packet_acked()
         check( send_message( c, 0, 64 ) != 0 );
         wire_packet_t sent[4];
         check( write_packets( c, 1.0, sent, 4 ) == 1 );
-        check( rn_ordered_decide( &c->ordered ) == ROCKETNET_MESSAGE_ERROR_NONE );
+        check( rn_ordered_decide( &c->ordered ) == ROCKETNET_DISCONNECT_REASON_NONE );
         check( write_packets( c, 1.6, sent, 4 ) >= 0 );                  // resent, still inside the timeout
-        check( rn_ordered_decide( &c->ordered ) == ROCKETNET_MESSAGE_ERROR_NONE );
+        check( rn_ordered_decide( &c->ordered ) == ROCKETNET_DISCONNECT_REASON_NONE );
         check( write_packets( c, 2.5, sent, 4 ) == 0 );                  // past it: nothing more is sent
-        check( rn_ordered_decide( &c->ordered ) == ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT );
+        check( rn_ordered_decide( &c->ordered ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
         node_free( c );
     }
 
@@ -757,7 +757,7 @@ static void large_between_small_leg( float loss, float duplicate, uint64_t seed 
     sim_drain( &sim, nodes, 900.0 );
     check_ordered_exactly_once( a, b, true );
     check( a->violations == 0 && b->violations == 0 );
-    check( rn_ordered_decide( &b->ordered ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( rn_ordered_decide( &b->ordered ) == ROCKETNET_DISCONNECT_REASON_NONE );
     check( a->region->descriptors_free == a->region->queue );
     check( a->region->span_first == RN_DESCRIPTOR_NONE );
     // nothing held is left
@@ -1013,8 +1013,8 @@ static void chunk_record( rocketnet_message_record_t * record, uint32_t number, 
 
 static void expect_kick( node_t * node, int counter_id, uint64_t before )
 {
-    check( node->ordered.channels.error == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
-    check( rn_ordered_decide( &node->ordered ) == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
+    check( node->ordered.channels.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
+    check( rn_ordered_decide( &node->ordered ) == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
     check( counter( node, counter_id ) == before + 1 );
     check( counter( node, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION ) >= 1 );
     check( node->ordered.channels.deliveries == 0 );
@@ -1035,7 +1035,7 @@ static void hostile_chunk_count_or_index_kicks()
         node_t * b = node_new( &config, 4 );
         chunk_record( &record, 0, 0, 0, 3, 0, chunk, (int) F );                 // 4 chunks
         check( rn_channels_dispatch( &b->ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
-        check( b->ordered.channels.error == ROCKETNET_MESSAGE_ERROR_NONE );
+        check( b->ordered.channels.error == ROCKETNET_DISCONNECT_REASON_NONE );
         const uint64_t before = counter( b, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
         chunk_record( &record, 1, 0, 1, 4, 72, chunk, (int) F );                // claims 5
         check( rn_channels_dispatch( &b->ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
@@ -1071,7 +1071,7 @@ static void hostile_chunk_count_or_index_kicks()
         check( rocketnet_message_writer_add( &writer, &record ) );
         const int payload_bytes = rocketnet_message_writer_finish( &writer );
         check( rn_ordered_receive( &b->ordered, payload, payload_bytes ) == ROCKETNET_MESSAGE_VIOLATION_BAD_BLOCK );
-        check( rn_ordered_decide( &b->ordered ) == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
+        check( rn_ordered_decide( &b->ordered ) == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
         check( b->ordered.channels.deliveries == 0 );
         node_free( b );
     }
@@ -1141,11 +1141,11 @@ static void hostile_chunk_count_or_index_kicks()
         check( rn_channels_dispatch( &b->ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
         chunk_record( &record, 1, 0, 1, 9, 72, chunk, (int) F );
         rn_channels_dispatch( &b->ordered.channels, &record, &out );
-        check( rn_ordered_decide( &b->ordered ) == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
+        check( rn_ordered_decide( &b->ordered ) == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
 
         rn_region_reset( b->region );
         check( rn_ordered_init( &b->ordered, b->region, &config, NULL, 4, ROCKETNET_MESSAGE_SINGLE_BYTES ) );
-        check( rn_ordered_decide( &b->ordered ) == ROCKETNET_MESSAGE_ERROR_NONE );
+        check( rn_ordered_decide( &b->ordered ) == ROCKETNET_DISCONNECT_REASON_NONE );
         for ( uint32_t i = 0; i < b->region->held_entries; i++ )
             check( b->region->held_index[i].used == 0 );
         for ( uint32_t i = 0; i < b->region->window; i++ )
@@ -1258,7 +1258,7 @@ static void hostile_small_at_held_ordering_is_refused()
     // chunk 0 of a 4-chunk block at ordering 0 is held, still collecting chunks
     chunk_record( &record, 0, 0, 0, 3, 0, chunk, (int) F );
     check( rn_channels_dispatch( &b->ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
-    check( b->ordered.channels.error == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( b->ordered.channels.error == ROCKETNET_DISCONNECT_REASON_NONE );
 
     uint32_t held_before = 0;
     for ( uint32_t i = 0; i < b->region->held_entries; i++ )
@@ -1275,8 +1275,8 @@ static void hostile_small_at_held_ordering_is_refused()
     record.data = chunk;
     record.bytes = 16;
     check( rn_channels_dispatch( &b->ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
-    check( b->ordered.channels.error == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
-    check( rn_ordered_decide( &b->ordered ) == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
+    check( b->ordered.channels.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
+    check( rn_ordered_decide( &b->ordered ) == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
     check( counter( b, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION ) == before + 1 );
     check( b->ordered.channels.deliveries == 0 );
 
@@ -1367,7 +1367,7 @@ static void hostile_small_at_held_ordering_is_refused_sim()
     check( b->ordered.channels.deliveries == 0 );
     check( b->delivered.size() == 0 );
     check( b->got[0].size() == 0 );
-    check( rn_ordered_decide( &b->ordered ) == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
+    check( rn_ordered_decide( &b->ordered ) == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
 
     // no held entry was leaked: only the block's own entry remains
     uint32_t held_after = 0;
@@ -1580,15 +1580,15 @@ static void cm_free( void * context, void * p )
 static void cm_install()
 {
     rocketnet_term();
-    check( rocketnet_allocator( cm_malloc, cm_free ) );
-    check( rocketnet_init( NULL ) );
+    check( rocketnet_set_allocator( cm_malloc, cm_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
 static void cm_restore()
 {
     rocketnet_term();
-    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
-    check( rocketnet_init( NULL ) );
+    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
 static uint64_t cm_calls()
@@ -1596,11 +1596,9 @@ static uint64_t cm_calls()
     return cm_mallocs + cm_frees;
 }
 
-// The card names this test no_allocation_after_create. Three other unit files
-// register that name already (test_unit_connection_memory.cpp,
-// test_unit_send_budget.cpp, test_unit_packet_builder.cpp), and the registry
-// runs the first test it finds by name, so only one test of that name ever runs
-// in the suite. This test is registered under its own name as well, so it runs.
+// Registered as ordered_no_allocation_after_create: unit test names are unique
+// across the suite, and the registrar aborts on a duplicate
+// (test_unit_registry.h, rocketnet_unit_file_registrar_t).
 
 static void ordered_no_allocation_after_create()
 {
@@ -1680,14 +1678,14 @@ static void ordered_no_allocation_after_create()
     check( accepted == 2 );                                             // two spans of 100,000 fit 262,144; the third does not
     check( counter( c, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED ) == 1 );
     check( counter( c, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) >= 1 );
-    check( rn_ordered_decide( &c->ordered ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+    check( rn_ordered_decide( &c->ordered ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
     check( send_message( c, 0, 16 ) == 0 );                             // nothing more is taken
     wire_packet_t none[4];
     check( write_packets( c, now, none, 4 ) == 0 );                     // and nothing is sent: it is kicked
     // the slot is freed and its region reset for the next client
     rn_region_reset( c->region );
     check( rn_ordered_init( &c->ordered, c->region, &config, NULL, 8, ROCKETNET_MESSAGE_SINGLE_BYTES ) );
-    check( rn_ordered_decide( &c->ordered ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( rn_ordered_decide( &c->ordered ) == ROCKETNET_DISCONNECT_REASON_NONE );
     check( send_message( c, 0, 100000 ) != 0 );
 
     // the queue bound (Q) is the same rule
@@ -1697,7 +1695,7 @@ static void ordered_no_allocation_after_create()
         queued++;
     check( queued == 64 );
     check( counter( d, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL ) == 1 );
-    check( rn_ordered_decide( &d->ordered ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+    check( rn_ordered_decide( &d->ordered ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
 
     // and not one allocator call came from any of it
     const uint64_t creates = 2;                                         // node c and node d: their arenas, made after the mark
@@ -2076,11 +2074,5 @@ REGISTER_UNIT_TEST( hostile_reliable_chunks_are_refused );
 REGISTER_UNIT_TEST( hostile_small_at_held_ordering_is_refused );
 REGISTER_UNIT_TEST( hostile_small_at_held_ordering_is_refused_sim );
 REGISTER_UNIT_TEST( start_pointer_is_the_frame_source );
-static void no_allocation_after_create()
-{
-    ordered_no_allocation_after_create();
-}
-
 REGISTER_UNIT_TEST( ordered_no_allocation_after_create );
-REGISTER_UNIT_TEST( no_allocation_after_create );
 REGISTER_UNIT_TEST( rnchannel_witness_replays_ordered );

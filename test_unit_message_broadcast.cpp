@@ -440,9 +440,9 @@ static void mb_step( mb_pair_t * pair, std::vector<mb_received_t> * got = NULL, 
     for ( int s = 0; s < steps; s++ )
     {
         pair->time += 0.01;
-        check( rocketnet_message_server_update( pair->server, pair->time ) == ROCKETNET_MESSAGE_OK );
+        check( rocketnet_message_server_update( pair->server, pair->time ) == ROCKETNET_UPDATE_OK );
         for ( int i = 0; i < pair->num_clients; i++ )
-            check( rocketnet_message_client_update( pair->clients[i], pair->time ) == ROCKETNET_MESSAGE_OK );
+            check( rocketnet_message_client_update( pair->clients[i], pair->time ) == ROCKETNET_UPDATE_OK );
         if ( got )
             for ( int i = 0; i < pair->num_clients; i++ )
                 mb_drain_client( pair->clients[i], &got[i] );
@@ -476,7 +476,7 @@ static void message_server_broadcast_reaches_every_connected()
     mb_fill( message, (int) sizeof( message ), 4100 );
 
     // one broadcast, the copying convenience per connected connection
-    check( rocketnet_message_server_broadcast( pair.server, 2, ROCKETNET_RELIABLE_ORDERED, message, (int) sizeof( message ) ) == 3 );
+    check( rocketnet_message_server_broadcast( pair.server, 2, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) == 3 );
 
     std::vector<mb_received_t> got[MB_MAX_SLOTS];
     mb_step( &pair, got, 6 );
@@ -520,7 +520,7 @@ static void message_server_broadcast_skips_free_and_exhausted()
     int started = 0;
     for ( ;; )
     {
-        uint8_t * q = rocketnet_message_server_start( pair.server, 2, 0, ROCKETNET_RELIABLE_ORDERED, 100 );
+        uint8_t * q = rocketnet_message_server_start( pair.server, 2, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 );
         if ( !q )
             break;
         mb_fill( q, 100, (uint32_t) started );
@@ -530,18 +530,18 @@ static void message_server_broadcast_skips_free_and_exhausted()
     }
     check( started > 0 );
     check( rocketnet_message_server_client_connected( pair.server, 2 ) == 0 );
-    check( rocketnet_message_server_disconnect_reason( pair.server, 2 ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+    check( rocketnet_message_server_disconnect_reason( pair.server, 2 ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
     check( pair.net->slot_connection[2] == 0 );
 
-    const uint64_t refusals = rocketnet_counter_value( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
+    const uint64_t drops = rocketnet_counter_value( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED );
 
     uint8_t message[64];
     mb_fill( message, (int) sizeof( message ), 4200 );
 
     // only slot 0 is connected; slots 1 (free), 2 (exhausted) and 3 (free) are
-    // skipped, each refusing through the same send path that counts it
-    check( rocketnet_message_server_broadcast( pair.server, 1, ROCKETNET_RELIABLE_ORDERED, message, (int) sizeof( message ) ) == 1 );
-    check( rocketnet_counter_value( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == refusals + 3 );
+    // skipped, each dropped through the same send path that counts it
+    check( rocketnet_message_server_broadcast( pair.server, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) == 1 );
+    check( rocketnet_counter_value( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED ) == drops + 3 );
 
     std::vector<mb_received_t> got[MB_MAX_SLOTS];
     mb_step( &pair, got, 6 );
@@ -590,8 +590,8 @@ static void mcr_free( void * context, void * p )
 static void message_client_create_refuses_budget_and_config()
 {
     rocketnet_term();
-    check( rocketnet_allocator( mcr_malloc, mcr_free ) );
-    check( rocketnet_init( NULL ) );
+    check( rocketnet_set_allocator( mcr_malloc, mcr_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     // a config whose required memory is zero: num_channels = 0 fails
     // rocketnet_message_validate_config (1..ROCKETNET_MAX_CHANNELS), so
@@ -614,8 +614,8 @@ static void message_client_create_refuses_budget_and_config()
     check( mcr_mallocs == before );
 
     rocketnet_term();
-    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
-    check( rocketnet_init( NULL ) );
+    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
 // ---------------------------------------------------------------------------
@@ -628,8 +628,8 @@ static void message_client_create_refuses_budget_and_config()
 static void message_server_create_refuses_budget_and_config()
 {
     rocketnet_term();
-    check( rocketnet_allocator( mcr_malloc, mcr_free ) );
-    check( rocketnet_init( NULL ) );
+    check( rocketnet_set_allocator( mcr_malloc, mcr_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     rocketnet_message_config_t bad;
     rocketnet_message_default_config( &bad );
@@ -646,8 +646,8 @@ static void message_server_create_refuses_budget_and_config()
     check( mcr_mallocs == before );
 
     rocketnet_term();
-    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
-    check( rocketnet_init( NULL ) );
+    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
 REGISTER_UNIT_TEST( message_client_create_refuses_budget_and_config );

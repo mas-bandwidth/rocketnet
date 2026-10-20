@@ -2460,7 +2460,7 @@ The response of step 4 MUST be retransmitted byte for byte; a later challenge MU
 <a id="t11.3"></a>
 ### t11.3. Session processing before connected
 
-A session packet opens under the session keys from sending connection response (3) on. Every opened session packet MUST refresh the last-received time and MUST have its ack block applied. A keep-alive received in sending connection response (3) MUST store the client index and the slot count it carries and MUST move the client to connected (4). A payload received in sending connection response (3) MUST be delivered to the application. A disconnect received in sending connection response (3) MUST release the connection state and MUST move the client to disconnected (0).
+A session packet opens under the session keys from sending connection response (3) on. Every opened session packet MUST refresh the last-received time and MUST have its ack block applied. A keep-alive received in sending connection response (3) MUST store the client index and the slot count it carries and MUST move the client to connected (4). A payload received in sending connection response (3) MUST be delivered to the application. A disconnect received in sending connection response (3) MUST release the connection state and MUST move the client to disconnected (0). An application message the client sends before connected (4) is dropped and counted, as [RN-2 m1.5 Sending on a connection that is not connected](MESSAGES.md#m1.5) states.
 
 | State | Event | Guard | Action | Next state |
 |---|---|---|---|---|
@@ -2671,6 +2671,8 @@ The server turns a connection request into an encryption mapping, and a connecti
 10. A server MUST generate a fresh session nonce and ephemeral keypair for each mapping, MUST derive the connection keys, MUST erase the ephemeral secret, and MUST store the connection challenge in the mapping so that a repeat is byte-identical.
 11. A connection response MUST be processed only after it has opened under the mapping's handshake client-to-server key. A server MUST bind the token identifier to the source address at that point, MUST ignore a response when the source address or the client id already holds a slot, MUST deny one that finds no free slot, and otherwise MUST assign a slot, mark the client unconfirmed, and send the first keep-alive.
 12. A mapping without a connected slot MUST be removed at its handshake deadline, which is fixed at creation and is never refreshed, or at the half-open idle deadline, which traffic refreshes; whichever comes first. A connected slot MUST be removed at its idle timeout. A server MUST count these removals apart.
+
+An application message the server sends to a slot that is not connected is dropped and counted, as [RN-2 m1.5 Sending on a connection that is not connected](MESSAGES.md#m1.5) states.
 
 The policy values of this section are below. A value of `0` for the maximum token lifetime selects no limit.
 
@@ -3895,7 +3897,6 @@ The registry of counters, in index order, is:
 | `MESSAGE_RECEIPT_ACKED` | `expected` | `none` |
 | `MESSAGE_RECEIPT_LOSS` | `path_loss` | `none` |
 | `CONNECTION_RESPONSE_INTERNAL_ERROR` | `refusal` | `CONNECTION_RESPONSE_RECEIVED` |
-| `CONNECTION_REQUEST_MAPPING_SALT_MISMATCH` | `refusal` | `CONNECTION_REQUEST_RECEIVED` |
 | `SEND_HISTORY_LOST` | `path_loss` | `none` |
 | `MESSAGE_BAD_CHANNEL` | `refusal` | `none` |
 | `MESSAGE_BAD_BLOCK` | `refusal` | `none` |
@@ -3912,7 +3913,6 @@ The registry of counters, in index order, is:
 | `XDP_KERNEL_DROPPED_INVALID_TYPE` | `refusal` | `none` |
 | `XDP_KERNEL_DROPPED_WRONG_EPOCH` | `refusal` | `none` |
 | `XDP_KERNEL_PASSED_IPV6_EXTENSION` | `expected` | `none` |
-| `CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED` | `refusal` | `CONNECTION_RESPONSE_RECEIVED` |
 | `CLIENT_SEND_DEFERRED` | `expected` | `none` |
 | `XDP_KERNEL_DROPPED_REPLAYED` | `refusal` | `none` |
 | `CLIENT_CHALLENGE_WRONG_SIZE` | `refusal` | `CLIENT_CHALLENGE_RECEIVED` |
@@ -3924,6 +3924,10 @@ The registry of counters, in index order, is:
 | `MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED` | `expected` | `none` |
 | `MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT` | `expected` | `none` |
 | `MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK` | `expected` | `none` |
+| `SEND_FAILED` | `refusal` | `none` |
+| `XDP_KERNEL_PASSED_FRAGMENT` | `expected` | `none` |
+| `XDP_KERNEL_DROPPED_FIRST_FRAGMENT` | `refusal` | `none` |
+| `MESSAGE_SEND_NOT_CONNECTED` | `expected` | `none` |
 
 The vector below encodes the registry in index order. For each counter it holds
 the little-endian u32 FNV-1a hash of the ASCII name, the class as one byte
@@ -4027,20 +4031,21 @@ c9 35 a9 56 00 00 00 95 84 42 e9 00 4a 00 87 ed
 d2 8a a7 48 00 00 00 fe a3 8f b7 02 00 00 fd 92
 bd 5f 02 00 00 bc 11 09 05 00 00 00 2a 62 77 0c
 00 00 00 28 65 77 12 01 00 00 9f ad 65 96 02 00
-00 c2 2f db 2c 00 21 00 30 f6 52 fc 00 08 00 6b
-c6 a4 41 02 00 00 88 ed b1 56 00 00 00 d6 92 db
-95 00 00 00 d7 6a 4d f9 00 00 00 eb 03 7f 49 00
-00 00 11 1a 37 e1 00 00 00 9c 47 5e e7 00 00 00
-8c 5c 05 26 01 00 00 44 5b fe 0f 00 00 00 ff 64
-f7 fa 01 00 00 75 4f 7d 3a 00 00 00 b1 eb 07 8c
-00 00 00 e9 53 9e 77 00 00 00 b9 17 2c 07 00 00
-00 34 b4 85 d8 00 00 00 b0 cb 42 af 01 00 00 00
-d9 df bc 00 21 00 bd b0 38 5c 01 00 00 9f 8d 1d
-fd 00 00 00 be a9 a8 b8 00 4e 00 22 20 3f b1 00
-54 00 6a c0 70 be 00 08 00 17 6f 7f 78 00 08 00
-8b 6d 57 dc 00 00 00 bf 7a 1a af 01 00 00 9b 86
-1b 95 01 00 00 79 87 fe 4c 01 00 00 f9 84 f0 6e
-01 00 00
+00 c2 2f db 2c 00 21 00 6b c6 a4 41 02 00 00 88
+ed b1 56 00 00 00 d6 92 db 95 00 00 00 d7 6a 4d
+f9 00 00 00 eb 03 7f 49 00 00 00 11 1a 37 e1 00
+00 00 9c 47 5e e7 00 00 00 8c 5c 05 26 01 00 00
+44 5b fe 0f 00 00 00 ff 64 f7 fa 01 00 00 75 4f
+7d 3a 00 00 00 b1 eb 07 8c 00 00 00 e9 53 9e 77
+00 00 00 b9 17 2c 07 00 00 00 34 b4 85 d8 00 00
+00 b0 cb 42 af 01 00 00 bd b0 38 5c 01 00 00 9f
+8d 1d fd 00 00 00 be a9 a8 b8 00 4e 00 22 20 3f
+b1 00 54 00 6a c0 70 be 00 08 00 17 6f 7f 78 00
+08 00 8b 6d 57 dc 00 00 00 bf 7a 1a af 01 00 00
+9b 86 1b 95 01 00 00 79 87 fe 4c 01 00 00 f9 84
+f0 6e 01 00 00 25 11 95 dc 00 00 00 df ff a1 97
+01 00 00 7e 01 4f a1 00 00 00 1d 39 f1 61 01 00
+00
 ```
 <a id="t19"></a>
 ## t19. Security considerations
@@ -4242,6 +4247,17 @@ userspace path still performs the checks on what survives. Traffic the kernel
 does not see is not counted there, so the transport imports the kernel
 counters beside its own. See [t10 Receive processing](#t10) and
 [t14 Replay protection](#t14).
+
+A server assumes a path MTU of at least 1500 bytes and no packet it accepts
+needs IP fragmentation, so an IP fragment addressed to it is hostile or
+misconfigured. A kernel path that sees IP fragments drops the first fragment
+of a datagram addressed to the server's address and port (the fragment at
+offset zero with more fragments to follow, carrying the UDP header) and counts
+it in `XDP_KERNEL_DROPPED_FIRST_FRAGMENT`, before any size, epoch, filter or
+replay check. Every other fragment, and every fragment whose UDP header it
+cannot read, it hands to the host stack and counts in
+`XDP_KERNEL_PASSED_FRAGMENT`: without its first fragment the host never
+reassembles the datagram, and fragments for other services are untouched.
 
 ### Check placement
 

@@ -190,7 +190,7 @@ bool rn_channels_init( struct rn_channels_t * channels, struct rn_region_t * reg
     channels->enabled_codes = rocketnet_message_enabled_codes( channels->enabled_types );
     channels->delivery_capacity = region->delivery_entries;
     channels->payload_capacity = ROCKETNET_MESSAGE_SINGLE_BYTES;
-    channels->error = ROCKETNET_MESSAGE_ERROR_NONE;
+    channels->error = ROCKETNET_DISCONNECT_REASON_NONE;
     channels->pending = RN_DESCRIPTOR_NONE;
     channels->ready_head = RN_DESCRIPTOR_NONE;
     channels->ready_tail = RN_DESCRIPTOR_NONE;
@@ -244,8 +244,8 @@ uint32_t rn_channels_send_ordered( struct rn_channels_t * channels, uint32_t cha
 
     // RNChannel!Enqueue: ordered_write' = ordered_write + 1, and
     // sequenced_write' = 0 on the same channel. The reset runs although no
-    // sequenced type is enabled (7.1), so a later sequenced card changes no
-    // ordered trace.
+    // sequenced type is enabled (7.1), so enabling a sequenced type changes
+    // no ordered trace.
     rn_channel_send_t * send = channels->region->channel_send + channel;
     const uint32_t ordering = send->ordered_write;
     send->ordered_write = ordering + 1;
@@ -313,9 +313,9 @@ void rn_channels_count_violation( struct rn_channels_t * channels, int counter )
 
     // 17.3 item 11: a wire violation ends the connection. The owner reads
     // rn_ordered_decide and disconnects the peer; counted once per connection.
-    if ( channels->error == ROCKETNET_MESSAGE_ERROR_NONE )
+    if ( channels->error == ROCKETNET_DISCONNECT_REASON_NONE )
     {
-        channels->error = ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION;
+        channels->error = ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION;
         rn_channels_count( channels->region->counters, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
     }
 }
@@ -965,7 +965,7 @@ bool rn_ordered_announce_config( struct rn_ordered_t * ordered, const struct roc
 int rn_ordered_take_config( struct rn_ordered_t * ordered, const struct rocketnet_message_record_t * record )
 {
     if ( !ordered || !record )
-        return ROCKETNET_MESSAGE_ERROR_NONE;
+        return ROCKETNET_DISCONNECT_REASON_NONE;
 
     rn_channels_t * channels = &ordered->channels;
 
@@ -993,16 +993,16 @@ int rn_ordered_take_config( struct rn_ordered_t * ordered, const struct rocketne
     {
         if ( fields[i].own == fields[i].peer )
             continue;
-        if ( channels->error == ROCKETNET_MESSAGE_ERROR_NONE )
+        if ( channels->error == ROCKETNET_DISCONNECT_REASON_NONE )
         {
             rocketnet_error( "message CONFIG mismatch: %s is %u here and %u at the peer", fields[i].name, fields[i].own, fields[i].peer );
-            channels->error = ROCKETNET_MESSAGE_ERROR_CONFIG_MISMATCH;
+            channels->error = ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH;
         }
         return channels->error;
     }
 
     ordered->config_received = 1;
-    return ROCKETNET_MESSAGE_ERROR_NONE;
+    return ROCKETNET_DISCONNECT_REASON_NONE;
 }
 
 // ---------------------------------------------------------------
@@ -1173,7 +1173,7 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
 
     // an exhausted or ended connection does nothing but be kicked (R5), and a
     // reliable message past its timeout ends it (6.4 "Giving up")
-    if ( rn_region_exhausted( region ) || channels->error != ROCKETNET_MESSAGE_ERROR_NONE || rn_window_ack_check_timeout( ack, now ) )
+    if ( rn_region_exhausted( region ) || channels->error != ROCKETNET_DISCONNECT_REASON_NONE || rn_window_ack_check_timeout( ack, now ) )
         return 0;
 
     if ( ordered->budget )
@@ -1313,7 +1313,7 @@ int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, 
     rn_channels_t * channels = &ordered->channels;
 
     // an ended or exhausted connection takes nothing more
-    if ( channels->error != ROCKETNET_MESSAGE_ERROR_NONE || rn_region_exhausted( channels->region ) )
+    if ( channels->error != ROCKETNET_DISCONNECT_REASON_NONE || rn_region_exhausted( channels->region ) )
         return ROCKETNET_MESSAGE_VIOLATION_NONE;
 
     struct rocketnet_message_reader_t reader;
@@ -1351,7 +1351,7 @@ int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, 
         // (10.3); its number is already released by the dispatch
         if ( record.control && record.code == ROCKETNET_MESSAGE_CODE_RELIABLE )
             rn_ordered_take_config( ordered, &record );
-        if ( channels->error != ROCKETNET_MESSAGE_ERROR_NONE )
+        if ( channels->error != ROCKETNET_DISCONNECT_REASON_NONE )
             return ROCKETNET_CHANNEL_VIOLATION;
         if ( rn_region_exhausted( channels->region ) )
             return ROCKETNET_MESSAGE_VIOLATION_NONE;
@@ -1374,14 +1374,14 @@ void rn_ordered_end_update( struct rn_ordered_t * ordered )
 int rn_ordered_decide( const struct rn_ordered_t * ordered )
 {
     if ( !ordered || !ordered->channels.region )
-        return ROCKETNET_MESSAGE_ERROR_NONE;
+        return ROCKETNET_DISCONNECT_REASON_NONE;
 
     // tla/RNConnectionMemory.tla, Kick: exhaustion first; then the peer broke
     // the wire (17.3 item 11); then a reliable message went unacked too long
     const int memory = rn_connection_memory_decide( ordered->channels.region );
-    if ( memory != ROCKETNET_MESSAGE_ERROR_NONE )
+    if ( memory != ROCKETNET_DISCONNECT_REASON_NONE )
         return memory;
-    if ( ordered->channels.error != ROCKETNET_MESSAGE_ERROR_NONE )
+    if ( ordered->channels.error != ROCKETNET_DISCONNECT_REASON_NONE )
         return ordered->channels.error;
     return ordered->ack.error;
 }

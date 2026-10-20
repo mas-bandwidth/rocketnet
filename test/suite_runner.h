@@ -5,7 +5,12 @@
     Parallel suite runner. Each test is a process. A test over 60s prints a
     warning. A test over 120s is killed and fails the suite (a Debug or
     sanitizer build scales the 120s: test/time_scale.h). The ten slowest
-    are printed at the end. strict_names keeps every line inside the
+    are printed at the end. Each case's peak resident set (wait4 ru_maxrss on
+    POSIX, PeakWorkingSetSize on Windows) is printed at the end as
+    `<case> peak_rss_mb=<n> bound_mb=<b>`, and a case over the bound fails the
+    suite (ROCKETNET_TEST_MAX_CASE_RSS_MB, overridable by that environment
+    variable; a sanitizer build prints the peaks and does not enforce the bound
+    unless the environment variable sets one). strict_names keeps every line inside the
     names-only shape tools/check_test_environment.py accepts, because that
     checker merges stderr into stdout and is not ours to change.
 */
@@ -33,15 +38,24 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <psapi.h>
 #include "resource_file.h"
 #else
 #include <errno.h>
 #include <signal.h>
 #include <spawn.h>
+#include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
 extern char **environ;
 #endif
+
+// The largest peak resident set one case process may reach, in MiB: the larger
+// of 256 and 1.5 times the largest case measured on a Linux Release build
+// (465 MiB, test_server_driver_pin_gso, 2026-10-19), so 698; never over 1024.
+// A case over it fails the suite. The environment variable of the same name
+// overrides it with a positive value.
+#define ROCKETNET_TEST_MAX_CASE_RSS_MB 698
 
 struct suite_exec
 {
@@ -65,7 +79,36 @@ struct suite_result
     bool skipped;
     bool failed;
     std::string detail;
+    long peak_rss_mb; // -1: not measured
 };
+
+// The bound in MiB, or 0 when it is not enforced (a sanitizer build with no
+// environment override: sanitizer shadow memory is not the case's footprint).
+inline long suite_max_case_rss_mb()
+{
+    if ( const char * env = std::getenv( "ROCKETNET_TEST_MAX_CASE_RSS_MB" ) )
+    {
+        const long requested = std::atol( env );
+        if ( requested > 0 )
+            return requested;
+    }
+#if defined(ROCKETNET_FUNCTIONAL_SANITIZED)
+    return 0;
+#else
+    return ROCKETNET_TEST_MAX_CASE_RSS_MB;
+#endif
+}
+
+// Fails a finished case whose peak is over the bound, naming both.
+inline void suite_check_rss( suite_result & result, long bound_mb )
+{
+    if ( result.failed || bound_mb <= 0 || result.peak_rss_mb <= bound_mb )
+        return;
+    char text[96];
+    snprintf( text, sizeof( text ), " peak_rss_mb=%ld bound_mb=%ld", result.peak_rss_mb, bound_mb );
+    result.failed = true;
+    result.detail = result.name + text;
+}
 
 inline std::string suite_executable_path()
 {
@@ -158,6 +201,26 @@ inline void suite_print_summary( const std::vector<suite_result> & results, bool
         else
             printf( "  %8.3fs  %s\n", ran[i].seconds, ran[i].name.c_str() );
     }
+    std::vector<suite_result> by_rss = ran;
+    std::sort( by_rss.begin(), by_rss.end(), []( const suite_result & a, const suite_result & b ) {
+        return a.peak_rss_mb > b.peak_rss_mb;
+    } );
+    const long bound_mb = suite_max_case_rss_mb();
+    if ( !strict_names )
+        printf( "peak rss, largest first:\n" );
+    for ( size_t i = 0; i < by_rss.size(); i++ )
+    {
+        if ( by_rss[i].peak_rss_mb < 0 )
+            continue;
+        if ( strict_names )
+        {
+            if ( i >= 10 )
+                break;
+            printf( "test_timing_rss_%02d [SKIPPED %s peak_rss_mb=%ld bound_mb=%ld]\n", (int) i + 1, by_rss[i].name.c_str(), by_rss[i].peak_rss_mb, bound_mb );
+        }
+        else
+            printf( "%s peak_rss_mb=%ld bound_mb=%ld\n", by_rss[i].name.c_str(), by_rss[i].peak_rss_mb, bound_mb );
+    }
     int warnings = 0;
     int fails = 0;
     for ( size_t i = 0; i < ran.size(); i++ )
@@ -182,6 +245,12 @@ inline void suite_print_summary( const std::vector<suite_result> & results, bool
     fflush( stdout );
 }
 
+inline int suite_usage( char ** argv )
+{
+    fprintf( stderr, "usage: %s [--run <case>]\n", argv[0] );
+    return 2;
+}
+
 #if !defined(_WIN32)
 
 inline int suite_main( int argc, char ** argv,
@@ -192,8 +261,18 @@ inline int suite_main( int argc, char ** argv,
     const char ** skip_lines, int nskips,
     bool strict_names )
 {
-    if ( argc >= 3 && std::strcmp( argv[1], "--run" ) == 0 )
+    if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
+    {
+        if ( argc < 3 || argv[2][0] == '-' )
+            return suite_usage( argv );
+        for ( int i = 3; i < argc; i++ )
+            if ( argv[i][0] == '-' )
+                return suite_usage( argv );
         return worker( argv[2] );
+    }
+    for ( int i = 1; i < argc; i++ )
+        if ( argv[i][0] == '-' )
+            return suite_usage( argv );
 
     const std::string self = suite_executable_path();
     if ( self.empty() )
@@ -263,6 +342,7 @@ inline int suite_main( int argc, char ** argv,
                 result.seconds = 0;
                 result.skipped = true;
                 result.failed = false;
+                result.peak_rss_mb = -1;
                 results.push_back( result );
                 continue;
             }
@@ -303,6 +383,7 @@ inline int suite_main( int argc, char ** argv,
                 result.seconds = 0;
                 result.skipped = false;
                 result.failed = true;
+                result.peak_rss_mb = -1;
                 result.detail = item.name + " failed to spawn";
                 results.push_back( result );
                 failures++;
@@ -319,7 +400,9 @@ inline int suite_main( int argc, char ** argv,
         for ( size_t i = 0; i < running.size(); )
         {
             int status = 0;
-            const pid_t got = waitpid( running[i].pid, &status, WNOHANG );
+            struct rusage usage;
+            std::memset( &usage, 0, sizeof( usage ) );
+            const pid_t got = wait4( running[i].pid, &status, WNOHANG, &usage );
             const double seconds = std::chrono::duration<double>( std::chrono::steady_clock::now() - running[i].start ).count();
             if ( got == 0 )
             {
@@ -337,6 +420,11 @@ inline int suite_main( int argc, char ** argv,
             result.seconds = seconds;
             result.skipped = false;
             result.failed = false;
+#if defined(__APPLE__)
+            result.peak_rss_mb = got > 0 ? (long) ( usage.ru_maxrss / ( 1024 * 1024 ) ) : -1; // bytes on macOS
+#else
+            result.peak_rss_mb = got > 0 ? (long) ( usage.ru_maxrss / 1024 ) : -1; // kilobytes on Linux
+#endif
             if ( got < 0 )
             {
                 result.failed = true;
@@ -366,6 +454,7 @@ inline int suite_main( int argc, char ** argv,
                 snprintf( buf, sizeof( buf ), " signal %d", WIFSIGNALED( status ) ? WTERMSIG( status ) : 0 );
                 result.detail = running[i].name + buf;
             }
+            suite_check_rss( result, suite_max_case_rss_mb() );
             if ( result.failed )
                 failures++;
             results.push_back( result );
@@ -390,8 +479,18 @@ inline int suite_main( int argc, char ** argv,
     const char ** skip_lines, int nskips,
     bool strict_names )
 {
-    if ( argc >= 3 && std::strcmp( argv[1], "--run" ) == 0 )
+    if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
+    {
+        if ( argc < 3 || argv[2][0] == '-' )
+            return suite_usage( argv );
+        for ( int i = 3; i < argc; i++ )
+            if ( argv[i][0] == '-' )
+                return suite_usage( argv );
         return worker( argv[2] );
+    }
+    for ( int i = 1; i < argc; i++ )
+        if ( argv[i][0] == '-' )
+            return suite_usage( argv );
 
     const std::string self = suite_executable_path();
     if ( self.empty() )
@@ -460,6 +559,7 @@ inline int suite_main( int argc, char ** argv,
                 result.seconds = 0;
                 result.skipped = true;
                 result.failed = false;
+                result.peak_rss_mb = -1;
                 results.push_back( result );
                 continue;
             }
@@ -482,6 +582,7 @@ inline int suite_main( int argc, char ** argv,
                 result.seconds = 0;
                 result.skipped = false;
                 result.failed = true;
+                result.peak_rss_mb = -1;
                 result.detail = item.name + " failed to spawn";
                 results.push_back( result );
                 failures++;
@@ -521,12 +622,17 @@ inline int suite_main( int argc, char ** argv,
             }
             DWORD code = 1;
             GetExitCodeProcess( running[i].process, &code );
+            PROCESS_MEMORY_COUNTERS memory;
+            std::memset( &memory, 0, sizeof( memory ) );
+            memory.cb = sizeof( memory );
+            const bool measured = GetProcessMemoryInfo( running[i].process, &memory, sizeof( memory ) ) != 0;
             CloseHandle( running[i].process );
             suite_result result;
             result.name = running[i].name;
             result.seconds = seconds;
             result.skipped = false;
             result.failed = false;
+            result.peak_rss_mb = measured ? (long) ( memory.PeakWorkingSetSize / ( 1024 * 1024 ) ) : -1;
             if ( running[i].killed || seconds > limit_s )
             {
                 result.failed = true;
@@ -544,6 +650,7 @@ inline int suite_main( int argc, char ** argv,
                 snprintf( buf, sizeof( buf ), " exit %lu", (unsigned long) code );
                 result.detail = running[i].name + buf;
             }
+            suite_check_rss( result, suite_max_case_rss_mb() );
             if ( result.failed )
                 failures++;
             results.push_back( result );
