@@ -892,7 +892,37 @@
     /* create to CONNECTED take it. Counted on the owner's counters, once */ \
     /* per dropped start. appended: indices are the contract. */ \
     /** @brief ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED: Counts application message starts dropped because the connection was not CONNECTED; one count per dropped start, on the owner's counters. Unit: messages. Class: expected; family: none. */ \
-    X( MESSAGE_SEND_NOT_CONNECTED, EXPECTED, NONE )
+    X( MESSAGE_SEND_NOT_CONNECTED, EXPECTED, NONE ) \
+    \
+    /* The remaining wire-check violations (STANDARD.md _Messages_, the check */ \
+    /* order; sdk/rocketnet_message.h ROCKETNET_MESSAGE_VIOLATION_*), each with */ \
+    /* its own counter: a malformed payload (check 1), a record truncated below */ \
+    /* its header (check 2), flag bits a correct sender never writes (check 3), */ \
+    /* a length outside the record (check 4), a reliable or CONTROL record on a */ \
+    /* fragmented payload (check 9), a CONTROL record with an invalid body */ \
+    /* (check 12), the layer-3 window refusals NUMBER_OUTSIDE_WINDOW and */ \
+    /* SLOT_COLLISION (check 10), and a second ordered record with one channel's */ \
+    /* ordering index (DUPLICATE_ORDERING). Every violation also moves */ \
+    /* MESSAGE_PROTOCOL_VIOLATION once for the connection it ends. REFUSAL: a */ \
+    /* clean peer never sends any. appended: indices are the contract. */ \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_BAD_FORM: Counts records refused because their payload has no valid form byte. Unit: occurrences. Class: refusal; family: none. */ \
+    X( MESSAGE_BAD_FORM, REFUSAL, NONE ) \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_TRUNCATED: Counts records refused because a record is shorter than its header. Unit: occurrences. Class: refusal; family: none. */ \
+    X( MESSAGE_TRUNCATED, REFUSAL, NONE ) \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_BAD_FLAGS: Counts records refused because their flag bits are invalid. Unit: occurrences. Class: refusal; family: none. */ \
+    X( MESSAGE_BAD_FLAGS, REFUSAL, NONE ) \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_BAD_LENGTH: Counts records refused because their length lies outside the record. Unit: occurrences. Class: refusal; family: none. */ \
+    X( MESSAGE_BAD_LENGTH, REFUSAL, NONE ) \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_BAD_SIZE: Counts records refused because a reliable or CONTROL record rides a fragmented payload. Unit: occurrences. Class: refusal; family: none. */ \
+    X( MESSAGE_BAD_SIZE, REFUSAL, NONE ) \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_BAD_CONTROL: Counts CONTROL records refused because their body is invalid. Unit: occurrences. Class: refusal; family: none. */ \
+    X( MESSAGE_BAD_CONTROL, REFUSAL, NONE ) \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_NUMBER_OUTSIDE_WINDOW: Counts reliable records refused because their number is outside the receive window. Unit: occurrences. Class: refusal; family: none. */ \
+    X( MESSAGE_NUMBER_OUTSIDE_WINDOW, REFUSAL, NONE ) \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION: Counts reliable records refused because their receive descriptor slot is occupied by another number. Unit: occurrences. Class: refusal; family: none. */ \
+    X( MESSAGE_SLOT_COLLISION, REFUSAL, NONE ) \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_DUPLICATE_ORDERING: Counts reliable ordered records refused because another record with the same channel and ordering index is already held. Unit: occurrences. Class: refusal; family: none. */ \
+    X( MESSAGE_DUPLICATE_ORDERING, REFUSAL, NONE )
 
 /**
  * @brief Integer indices for the cumulative protocol counters.

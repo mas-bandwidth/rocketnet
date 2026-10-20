@@ -145,18 +145,12 @@ static api_polish_dev_writer_t api_polish_dev_writer()
 {
     api_polish_dev_writer_t writer = NULL;
 #if defined(_WIN32)
-    HMODULE library = LoadLibraryA( "rocketnet_dev.dll" );
-    if ( library == NULL )
-        library = LoadLibraryA( "bin\\rocketnet_dev.dll" );
+    HMODULE library = LoadLibraryA( ROCKETNET_DEV_LIBRARY_PATH );
     check( library != NULL );
     writer = (api_polish_dev_writer_t) (void *) GetProcAddress( library, "rocketnet_write_dev_connect_token" );
     api_polish_dev_set_log = (api_polish_dev_set_log_t) (void *) GetProcAddress( library, "rocketnet_set_log_callback" );
 #else
-    const char * names[] = { "bin/librocketnet_dev.so", "librocketnet_dev.so",
-                             "bin/librocketnet_dev.dylib", "librocketnet_dev.dylib" };
-    void * library = NULL;
-    for ( size_t i = 0; i < sizeof( names ) / sizeof( names[0] ) && library == NULL; i++ )
-        library = dlopen( names[i], RTLD_NOW | RTLD_LOCAL );
+    void * library = dlopen( ROCKETNET_DEV_LIBRARY_PATH, RTLD_NOW | RTLD_LOCAL );
     check( library != NULL );
     writer = (api_polish_dev_writer_t) dlsym( library, "rocketnet_write_dev_connect_token" );
     api_polish_dev_set_log = (api_polish_dev_set_log_t) dlsym( library, "rocketnet_set_log_callback" );
