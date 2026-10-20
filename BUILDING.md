@@ -67,10 +67,14 @@ of a universal library can share. Override it with `-D` for another minimum.
 To build a universal (arm64 and x86_64) library and the suites:
 
     cmake -B build-universal -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_BUILD_TYPE=Release
-    cmake --build build-universal --parallel 4
+    cmake --build build-universal --clean-first --parallel 4
     lipo -info build-universal/librocketnet.a bin/librocketnet.dylib
 
-Both `lipo -info` lines name `x86_64 arm64`. To read the deployment target on
+Both `lipo -info` lines name `x86_64 arm64`. The libraries and executables of
+every build tree land in the checkout's `bin/`, so `--clean-first` relinks
+them against the universal objects when a native build ran first; without it
+CMake sees the newer native files and skips the link. To read the deployment
+target on
 each slice:
 
     otool -l -arch arm64 bin/librocketnet.dylib | grep -A4 LC_BUILD_VERSION
