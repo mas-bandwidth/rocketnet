@@ -82,11 +82,6 @@ const char * rn_region_part_name( int part )
     return part >= 0 && part < RN_NUM_PARTS ? rn_part_names[part] : NULL;
 }
 
-const char * rn_region_part_formula( int part )
-{
-    return part >= 0 && part < RN_NUM_PARTS ? rn_part_formulas[part] : NULL;
-}
-
 // Section 14: each part is its formula's term exactly, at a 64-aligned offset
 // (4: ROCKETNET_ALLOCATION_ALIGNMENT), so the ring base is 16-aligned and the
 // exact region is the formula plus at most 63 bytes per part.

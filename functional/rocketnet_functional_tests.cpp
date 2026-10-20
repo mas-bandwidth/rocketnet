@@ -4957,52 +4957,18 @@ void rocketnet_test_driver_all_skipped_uses_auto()
     rocketnet_test_env_restore( &driver_guard );
 }
 
-// the deprecated env aliases (the pre-#106 spellings): honored where the
-// successor is unset, logged loudly naming the successor, yielding loudly
-// beside it -- and the public address alias feeds the one resolved
-// address create uses everywhere
+// the public address env override feeds the one resolved address create
+// uses everywhere, scoped to the first create in the process
 
 void rocketnet_test_config_env_aliases()
 {
-    struct rocketnet_test_env_guard_t alias_guard;
-    rocketnet_test_env_save( &alias_guard, "ROCKETNET_SERVER_NUM_QUEUES" );
-
-    struct rocketnet_test_env_guard_t successor_guard;
-    rocketnet_test_env_save( &successor_guard, "ROCKETNET_SERVER_NUM_XDP_QUEUES" );
-
     struct rocketnet_test_env_guard_t driver_guard;
     rocketnet_test_env_clear( &driver_guard, "ROCKETNET_SERVER_TRANSPORT" );
 
-    // the alias is honored where the successor is unset...
-
-    unsetenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES" );
-    setenv( "ROCKETNET_SERVER_NUM_QUEUES", "3", 1 );
-
     struct rocketnet_server_transport_config_t config;
-    rocketnet_server_transport_dev_config( &config );
-    snprintf( config.driver, sizeof(config.driver), "portable" );
+    struct rocketnet_server_transport_t * server;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
-    rocketnet_check( server );
-    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
-
-    // ...parsed strictly...
-
-    setenv( "ROCKETNET_SERVER_NUM_QUEUES", "3x", 1 );
-    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config) == NULL );
-
-    // ...and yields to the successor when both are set
-
-    setenv( "ROCKETNET_SERVER_NUM_QUEUES", "not-even-a-number", 1 );
-    setenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES", "2", 1 );
-    server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
-    rocketnet_check( server );
-    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
-
-    rocketnet_test_env_restore( &alias_guard );
-    rocketnet_test_env_restore( &successor_guard );
-
-    // the public address rides the table now, scoped first-create-consumes
+    // the public address rides the table, scoped first-create-consumes
     // for the env layer. proven deterministically, no fixed port: the
     // create PARAMETER is unparseable, so the create succeeds if and only
     // if the env override displaced it -- and the second create proves the

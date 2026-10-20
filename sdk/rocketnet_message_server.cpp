@@ -380,8 +380,8 @@ void rn_message_object_kick( struct rn_message_object_t * object, int index, int
 // ---------------------------------------------------------------
 
 // RNSlots Admit: an entry is applied only to the connection it was received
-// for. The transport tags no batch entry with its connection (P9b is a later
-// card), so the entry id is the slot's client id as the transport reports it.
+// for. The transport tags no batch entry with its connection (P9b), so the
+// entry id is the slot's client id as the transport reports it.
 // A slot bound or dropped by this update cannot identify its entries: they
 // are presented with no tag (0, which no connection carries) and discarded
 // (CHANNELS 10.2, 11.5).

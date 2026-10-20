@@ -82,9 +82,7 @@ static int read_hex( FILE * file, const char * label, uint8_t * bytes, int count
 }
 static const char * reason_name( int reason )
 {
-    static const char * names[] = { "none", "config mismatch", "config timeout", "protocol violation",
-                                    "reliable timeout", "message memory exhausted" };
-    return reason >= 0 && reason < 6 ? names[reason] : "unknown";
+    return rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) reason );
 }
 static void state_changed( void * context, enum rocketnet_client_state_t previous, enum rocketnet_client_state_t current )
 {
