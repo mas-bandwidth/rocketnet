@@ -286,21 +286,27 @@ static const char * posix_server_address( rocketnet_server_transport_t * server,
     return buffer;
 }
 
-static bool posix_wait_connected( rocketnet_server_transport_t * server, rocketnet_client_transport_t * client, double seconds )
+static bool posix_wait_connected( rocketnet_server_transport_t * server, rocketnet_client_transport_t * client, double seconds,
+                                  const posix_cell_t * cell, int iteration )
 {
-    const double deadline = rocketnet_platform_time() + seconds;
+    const double start = rocketnet_platform_time();
+    const double deadline = start + seconds;
+    int state = rocketnet_client_transport_state( client );
     while ( rocketnet_platform_time() < deadline )
     {
         rocketnet_client_transport_update( client, rocketnet_platform_time() );
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( server );
-        const int state = rocketnet_client_transport_state( client );
+        state = rocketnet_client_transport_state( client );
         if ( state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
             return true;
         if ( state < ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
-            return false;
+            break;
         rocketnet_platform_sleep( 0.0002 );
     }
+    printf( "connect [%s] iteration %d: client state %d after %.3fs, server has %d connected\n", cell->name, iteration, state,
+            rocketnet_platform_time() - start, rocketnet_server_transport_num_connected_clients( server ) );
+    fflush( stdout );
     return false;
 }
 
@@ -442,7 +448,7 @@ void rocketnet_test_posix_server_restart_same_port_100()
             char server_address[64];
             posix_server_address( server, server_address, sizeof( server_address ) );
             rocketnet_client_transport_t * client = posix_client_create( cell, server_address );
-            posix_check( posix_wait_connected( server, client, 5.0 ) );
+            posix_check( posix_wait_connected( server, client, 5.0, cell, i ) );
             rocketnet_client_transport_destroy( client );
             rocketnet_server_transport_destroy( server );
         }
@@ -474,7 +480,7 @@ void rocketnet_test_posix_connect_disconnect_1000()
         for ( int i = 0; i < 1000; i++ )
         {
             rocketnet_client_transport_t * client = posix_client_create( cell, server_address );
-            posix_check( posix_wait_connected( server, client, 5.0 ) );
+            posix_check( posix_wait_connected( server, client, 5.0, cell, i ) );
             rocketnet_client_transport_disconnect( client );
             posix_check( posix_wait_server_empty( server, 5.0 ) );
             rocketnet_client_transport_destroy( client );
@@ -528,7 +534,7 @@ void rocketnet_test_posix_destroy_under_traffic_100()
             for ( int i = 0; i < client_count; i++ )
             {
                 clients[i] = posix_client_create( cell, server_address );
-                posix_check( posix_wait_connected( server, clients[i], 5.0 ) );
+                posix_check( posix_wait_connected( server, clients[i], 5.0, cell, iteration * client_count + i ) );
             }
 
             std::atomic<bool> running( true );
