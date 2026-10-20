@@ -342,7 +342,7 @@ stdin, because the server stops when its stdin reaches end of file
 (server.c:150-165) and a guest run without a terminal starts there:
 
 ```sh
-vng --run ~/vm-kernels/vmlinuz-$(uname -r) --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir <job> -- sudo ./bin/test_xdp_filter -v
+vng --run ~/vm-kernels/vmlinuz-$(uname -r) --memory 1536M --cpus 3 --append "irqaffinity=0 isolcpus=1-2 nohz_full=1-2" --rwdir <job> -- sudo ./bin/test_xdp_filter -v
 ```
 
 A reply frame's destination MAC is the source MAC of the newest packet from

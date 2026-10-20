@@ -299,14 +299,15 @@ kernel, never on the host (`.github/workflows/ci.yml:290-295`, `:335-349`;
 older and newer `vng` releases pass it to the guest shell alike:
 
 ```sh
-vng --run "$HOME/vm-kernels/vmlinuz-$(uname -r)" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- "sudo ./bin/functional --run xdp_max_size_both_ways_ipv4 && sudo ./bin/functional --run xdp_max_size_both_ways_ipv6"
-vng --run "$HOME/vm-kernels/vmlinuz-$(uname -r)" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- "sudo ./bin/test_xdp_filter -v"
+vng --run "$HOME/vm-kernels/vmlinuz-$(uname -r)" --memory 1536M --cpus 3 --append "irqaffinity=0 isolcpus=1-2 nohz_full=1-2" --rwdir "$PWD" -- "sudo ./bin/functional --run xdp_max_size_both_ways_ipv4 && sudo ./bin/functional --run xdp_max_size_both_ways_ipv6"
+vng --run "$HOME/vm-kernels/vmlinuz-$(uname -r)" --memory 1536M --cpus 3 --append "irqaffinity=0 isolcpus=1-2 nohz_full=1-2" --rwdir "$PWD" -- "sudo ./bin/test_xdp_filter -v"
 ```
 
 `test_xdp_filter` judges the BPF program with the kernel's verifier and
 `BPF_PROG_TEST_RUN` (`DRIVERS.md:256-261`), on the same `server_xdp.o` the
-library embeds. In a 1536M guest with no clang on `PATH`, its 16 cases each
-print `ok`, `xdp_on_link_reply_reaches_the_peer` among them.
+library embeds. In a 1536M guest with two isolated CPUs and no clang on
+`PATH`, all 17 cases print `ok`, including `xdp_on_link_reply_reaches_the_peer`
+and `xdp_create_fails_part_way_tears_down`.
 
 ## 7. Socket errors and ICMP
 
