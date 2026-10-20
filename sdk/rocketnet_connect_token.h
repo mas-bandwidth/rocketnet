@@ -67,12 +67,18 @@
 /** Data sealed to the server inside a connect token. Keys and user data are sensitive. */
 struct rocketnet_connect_token_private_t
 {
-    uint64_t client_id; ///< Application-assigned client identifier.
-    uint64_t protocol_id; ///< Protocol identifier shared by client and server.
-    uint64_t expire_timestamp; ///< Unix expiry time in seconds.
-    uint8_t client_to_server_key[ROCKETNET_KEY_BYTES]; ///< Private client-to-server session key.
-    uint8_t server_to_client_key[ROCKETNET_KEY_BYTES]; ///< Private server-to-client session key.
-    uint8_t user_data[ROCKETNET_USER_DATA_BYTES]; ///< Opaque bytes owned by the application; this API does not interpret them.
+    /** @brief Application-assigned client identifier. */
+    uint64_t client_id;
+    /** @brief Protocol identifier shared by client and server. */
+    uint64_t protocol_id;
+    /** @brief Unix expiry time in seconds. */
+    uint64_t expire_timestamp;
+    /** @brief Private client-to-server session key. */
+    uint8_t client_to_server_key[ROCKETNET_KEY_BYTES];
+    /** @brief Private server-to-client session key. */
+    uint8_t server_to_client_key[ROCKETNET_KEY_BYTES];
+    /** @brief Opaque bytes owned by the application; this API does not interpret them. */
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
 };
 
 /** @brief Serialize private fields into the fixed-size private block.
@@ -95,16 +101,26 @@ void rocketnet_read_connect_token_private( struct rocketnet_connect_token_privat
 /** Data the backend signs and the client carries verbatim in each connect request. */
 struct rocketnet_signed_connect_data_t
 {
-    uint32_t version; ///< Token format version.
-    uint64_t protocol_id; ///< Protocol identifier shared by client and server.
-    uint64_t create_timestamp; ///< Unix creation time in seconds.
-    uint64_t expire_timestamp; ///< Unix expiry time in seconds.
-    int32_t timeout_seconds; ///< Connection timeout in seconds.
-    uint8_t address_flags; ///< Bitmask of ROCKETNET_ADDRESS_FLAG_IPV4 and ROCKETNET_ADDRESS_FLAG_IPV6.
-    uint8_t ipv4_address[6];                        ///< Four IPv4 octets and a little-endian port.
-    uint8_t ipv6_address[18];                       ///< Eight little-endian IPv6 groups and a little-endian port.
-    uint8_t server_public_key[ROCKETNET_KEY_BYTES]; ///< Public key to which the private block is sealed.
-    uint8_t sealed_private_block[ROCKETNET_SEALED_BLOCK_BYTES]; ///< Sealed private block for this server.
+    /** @brief Token format version. */
+    uint32_t version;
+    /** @brief Protocol identifier shared by client and server. */
+    uint64_t protocol_id;
+    /** @brief Unix creation time in seconds. */
+    uint64_t create_timestamp;
+    /** @brief Unix expiry time in seconds. */
+    uint64_t expire_timestamp;
+    /** @brief Connection timeout in seconds. */
+    int32_t timeout_seconds;
+    /** @brief Bitmask of ROCKETNET_ADDRESS_FLAG_IPV4 and ROCKETNET_ADDRESS_FLAG_IPV6. */
+    uint8_t address_flags;
+    /** @brief Four IPv4 octets and a little-endian port. */
+    uint8_t ipv4_address[6];                        // a,b,c,d octets + port little-endian
+    /** @brief Eight little-endian IPv6 groups and a little-endian port. */
+    uint8_t ipv6_address[18];                       // 8 x uint16 groups little-endian + port little-endian
+    /** @brief Public key to which the private block is sealed. */
+    uint8_t server_public_key[ROCKETNET_KEY_BYTES];
+    /** @brief Sealed private block for this server. */
+    uint8_t sealed_private_block[ROCKETNET_SEALED_BLOCK_BYTES];
 };
 
 /** @brief Serialize signed fields into the fixed-size signed-data region.
@@ -171,10 +187,14 @@ int rocketnet_write_connect_token_deterministic( const struct rocketnet_signed_c
 /** The regions of a complete connect token, split without validation. */
 struct rocketnet_connect_token_t
 {
-    uint8_t signed_connect_data[ROCKETNET_SIGNED_CONNECT_DATA_BYTES]; ///< Signed fields.
-    uint8_t signature[ROCKETNET_SIGNATURE_BYTES]; ///< Signature over signed_connect_data.
-    uint8_t client_to_server_key[ROCKETNET_KEY_BYTES]; ///< Clear client-to-server session key.
-    uint8_t server_to_client_key[ROCKETNET_KEY_BYTES]; ///< Clear server-to-client session key.
+    /** @brief Signed fields. */
+    uint8_t signed_connect_data[ROCKETNET_SIGNED_CONNECT_DATA_BYTES];
+    /** @brief Signature over signed_connect_data. */
+    uint8_t signature[ROCKETNET_SIGNATURE_BYTES];
+    /** @brief Clear client-to-server session key. */
+    uint8_t client_to_server_key[ROCKETNET_KEY_BYTES];
+    /** @brief Clear server-to-client session key. */
+    uint8_t server_to_client_key[ROCKETNET_KEY_BYTES];
 };
 
 /** @brief Split a fixed-size token into its four byte regions.

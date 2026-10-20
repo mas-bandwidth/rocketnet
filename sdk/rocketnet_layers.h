@@ -34,9 +34,9 @@ extern "C" {
  */
 #define ROCKETNET_DRIVER_STRING_LENGTH                     64
 
-/** @brief The connect token is outside its valid time interval. */
+/** @brief The connect token expired: its expire time was not after the current Unix time when the connect began, or its lifetime (expire minus create) ran out before the handshake reached CONNECTED. */
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED         -7
-/** @brief The connect token is malformed or fails cryptographic validation. */
+/** @brief The connect token failed the client's checks at connect: no or unknown address flags, a create time after its expire time, or a wrong format version. The client does not verify the token's signature; the server does. */
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN         -6
 /** @brief The established connection has timed out. */
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT          -5
@@ -527,7 +527,14 @@ const char * rocketnet_client_transport_driver( struct rocketnet_client_transpor
 int rocketnet_client_transport_client_index( struct rocketnet_client_transport_t * client_transport );
 
 // a NULL client_transport is a counted no-op.
-/** @brief Begin a client disconnect and stage its disconnect packets.
+/** @brief Disconnect the client now and return it to DISCONNECTED.
+ * When the session keys exist (SENDING_CONNECTION_RESPONSE or CONNECTED), seals
+ * a redundant burst of disconnect packets; earlier states simply reset. The
+ * connection is reset and the state change is reported to the state-change
+ * callback within this call. Without an I/O thread, and outside update, the
+ * burst is sent within this call; otherwise it is handed to the I/O thread,
+ * retried by the next update when the other send ring is busy, and handed off
+ * by destroy at the latest.
  * @param client_transport [in,out] Created transport; NULL is a counted no-op.
  * @return Nothing. Call on the main thread, never during a packet-fill phase.
  */
@@ -592,8 +599,9 @@ int rocketnet_client_transport_acked_packets( struct rocketnet_client_transport_
 // ROCKETNET_SERVER_ADMISSION_DROP to drop it before any crypto work runs.
 // A mapped source (an in-flight handshake or an established connection)
 // bypasses the gate: it has already cleared the connect ladder, and this gate
-// is about admission, not session policing. The callback runs on the receive
-// thread and must be fast and thread-safe.
+// is about admission, not session policing. The callback runs synchronously
+// inside rocketnet_server_transport_update, on the thread that calls update,
+// and must be fast.
 
 // The packet source an admission callback reads: type is ROCKETNET_ADDRESS_IPV4
 // or ROCKETNET_ADDRESS_IPV6; an IPv4 address is data.ipv4[0..3] in dotted
@@ -605,9 +613,12 @@ int rocketnet_client_transport_acked_packets( struct rocketnet_client_transport_
  */
 struct rocketnet_address_t
 {
-    union { uint32_t ip; uint8_t ipv4[4]; uint16_t ipv6[8]; } data; ///< Address bytes or groups selected by type.
-    uint16_t port; ///< Port from 0 through 65535; zero means no explicit port.
-    uint8_t type; ///< ROCKETNET_ADDRESS_NONE, ROCKETNET_ADDRESS_IPV4, or ROCKETNET_ADDRESS_IPV6.
+    /** @brief Address bytes or groups selected by type. */
+    union { uint32_t ip; uint8_t ipv4[4]; uint16_t ipv6[8]; } data;
+    /** @brief Port from 0 through 65535; zero means no explicit port. */
+    uint16_t port;
+    /** @brief ROCKETNET_ADDRESS_NONE, ROCKETNET_ADDRESS_IPV4, or ROCKETNET_ADDRESS_IPV6. */
+    uint8_t type;
 };
 
 /** @brief Filters packets from sources without an encryption mapping. @param context Application context supplied at registration. @param from Borrowed source address, valid during the callback. @param packet_data Borrowed packet bytes, valid during the callback. @param packet_bytes Packet length in bytes. @return ROCKETNET_SERVER_ADMISSION_ADMIT or ROCKETNET_SERVER_ADMISSION_DROP. Runs synchronously inside rocketnet_server_transport_update on the caller's thread, before any protocol or crypto work, for unmapped sources only, and must be fast. */
@@ -1088,9 +1099,14 @@ void rocketnet_server_transport_send_packet( struct rocketnet_server_transport_t
 
 // a NULL server_transport is a counted no-op.
 /** @brief Disconnect a connected client and release its slot.
+ * The slot frees within this call. The redundant disconnect burst is queued for
+ * the client's address and leaves on the next rocketnet_server_transport_send_packets
+ * or rocketnet_server_transport_update, whichever comes first; a buffered driver
+ * may send a full batch during this call. When send staging is full the rest of
+ * the burst is dropped, and the slot is still released.
  * @param server_transport [in,out] Created server transport; NULL is a counted no-op.
  * @param client_index [in] Slot index from 0 through max_clients - 1. A free or out-of-range slot is ignored.
- * @return Nothing. Runs on the main thread, never during packet fill; staged disconnects leave on the next send_packets flush.
+ * @return Nothing. Main thread only, never while a fill phase is open.
  */
 void rocketnet_server_transport_disconnect_client( struct rocketnet_server_transport_t * server_transport, int client_index );
 
