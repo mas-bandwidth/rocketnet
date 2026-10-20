@@ -303,6 +303,57 @@ bool rn_channels_deliver_sequenced( struct rn_channels_t * channels, uint32_t ch
     return true;
 }
 
+// The counter a reader or window violation (ROCKETNET_MESSAGE_VIOLATION_*,
+// sdk/rocketnet_message.h) moves besides MESSAGE_PROTOCOL_VIOLATION: every
+// check has its own counter, the same ones the dispatch moves, and a violation
+// with no counter of its own (an unknown value) returns
+// MESSAGE_PROTOCOL_VIOLATION, which rn_channels_count_violation counts once.
+static_assert( ROCKETNET_MESSAGE_NUM_VIOLATIONS == 13, "a new message violation is mapped in rn_violation_counter" );
+
+// Each violation is tied to the counter it moves; the function is constexpr so
+// the tie is checked at compile time.
+static constexpr int rn_violation_counter( int violation )
+{
+    return violation == ROCKETNET_MESSAGE_VIOLATION_BAD_FORM ? ROCKETNET_COUNTER_MESSAGE_BAD_FORM :
+           violation == ROCKETNET_MESSAGE_VIOLATION_TRUNCATED ? ROCKETNET_COUNTER_MESSAGE_TRUNCATED :
+           violation == ROCKETNET_MESSAGE_VIOLATION_BAD_FLAGS ? ROCKETNET_COUNTER_MESSAGE_BAD_FLAGS :
+           violation == ROCKETNET_MESSAGE_VIOLATION_BAD_LENGTH ? ROCKETNET_COUNTER_MESSAGE_BAD_LENGTH :
+           violation == ROCKETNET_MESSAGE_VIOLATION_BAD_CHANNEL ? ROCKETNET_COUNTER_MESSAGE_BAD_CHANNEL :
+           violation == ROCKETNET_MESSAGE_VIOLATION_TYPE_NOT_ENABLED ? ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED :
+           violation == ROCKETNET_MESSAGE_VIOLATION_BAD_BLOCK ? ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK :
+           violation == ROCKETNET_MESSAGE_VIOLATION_BAD_RING ? ROCKETNET_COUNTER_MESSAGE_BAD_RING :
+           violation == ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE ? ROCKETNET_COUNTER_MESSAGE_BAD_SIZE :
+           violation == ROCKETNET_MESSAGE_VIOLATION_BAD_CONTROL ? ROCKETNET_COUNTER_MESSAGE_BAD_CONTROL :
+           violation == ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW ? ROCKETNET_COUNTER_MESSAGE_NUMBER_OUTSIDE_WINDOW :
+           violation == ROCKETNET_MESSAGE_VIOLATION_SLOT_COLLISION ? ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION :
+           ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION;
+}
+
+static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_BAD_FORM ) == ROCKETNET_COUNTER_MESSAGE_BAD_FORM,
+               "BAD_FORM moves MESSAGE_BAD_FORM" );
+static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_TRUNCATED ) == ROCKETNET_COUNTER_MESSAGE_TRUNCATED,
+               "TRUNCATED moves MESSAGE_TRUNCATED" );
+static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_BAD_FLAGS ) == ROCKETNET_COUNTER_MESSAGE_BAD_FLAGS,
+               "BAD_FLAGS moves MESSAGE_BAD_FLAGS" );
+static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_BAD_LENGTH ) == ROCKETNET_COUNTER_MESSAGE_BAD_LENGTH,
+               "BAD_LENGTH moves MESSAGE_BAD_LENGTH" );
+static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_BAD_CHANNEL ) == ROCKETNET_COUNTER_MESSAGE_BAD_CHANNEL,
+               "BAD_CHANNEL moves MESSAGE_BAD_CHANNEL" );
+static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_TYPE_NOT_ENABLED ) == ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED,
+               "TYPE_NOT_ENABLED moves MESSAGE_TYPE_NOT_ENABLED" );
+static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_BAD_BLOCK ) == ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK,
+               "BAD_BLOCK moves MESSAGE_BAD_BLOCK" );
+static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_BAD_RING ) == ROCKETNET_COUNTER_MESSAGE_BAD_RING,
+               "BAD_RING moves MESSAGE_BAD_RING" );
+static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE ) == ROCKETNET_COUNTER_MESSAGE_BAD_SIZE,
+               "BAD_SIZE moves MESSAGE_BAD_SIZE" );
+static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_BAD_CONTROL ) == ROCKETNET_COUNTER_MESSAGE_BAD_CONTROL,
+               "BAD_CONTROL moves MESSAGE_BAD_CONTROL" );
+static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW ) == ROCKETNET_COUNTER_MESSAGE_NUMBER_OUTSIDE_WINDOW,
+               "NUMBER_OUTSIDE_WINDOW moves MESSAGE_NUMBER_OUTSIDE_WINDOW" );
+static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_SLOT_COLLISION ) == ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION,
+               "SLOT_COLLISION moves MESSAGE_SLOT_COLLISION" );
+
 void rn_channels_count_violation( struct rn_channels_t * channels, int counter )
 {
     if ( !channels )
@@ -330,6 +381,17 @@ int rn_channels_dispatch( struct rn_channels_t * channels, const struct rocketne
     // 7 is a violation and a receipt type is dispatched under its base
     // (7.2's last line).
     const int code = record->code;
+
+    // 7.5: an application record whose wire code the mask does not admit is
+    // refused here, once for every code (rocketnet_message_enabled_codes,
+    // sdk/rocketnet_message.cpp:289, maps
+    // a receipt type to the base code it travels as). A control record is
+    // the layer's own and is never refused by the mask, as in the reader.
+    if ( code >= 0 && code < ROCKETNET_MESSAGE_NUM_CODES && !record->control && ( channels->enabled_codes & ( 1u << code ) ) == 0 )
+    {
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED );
+        return ROCKETNET_CHANNEL_DISPATCH_NONE;
+    }
 
     switch ( code )
     {
@@ -474,7 +536,8 @@ int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct 
     rn_receive_descriptor_t * descriptor = rn_channels_descriptor( channels, record, &slot );
     if ( !descriptor )
     {
-        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+        // the slot is live for another number (check 10, SLOT_COLLISION)
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION );
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
@@ -484,7 +547,7 @@ int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct 
         // with one ordering index, as on the held path below.
         if ( rn_held_find( region, rn_held_key( record->channel, ordering ) ) != RN_DESCRIPTOR_NONE )
         {
-            rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+            rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_DUPLICATE_ORDERING );
             return ROCKETNET_CHANNEL_DISPATCH_NONE;
         }
 
@@ -522,7 +585,7 @@ int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct 
     const uint64_t key = rn_held_key( record->channel, ordering );
     if ( rn_held_find( region, key ) != RN_DESCRIPTOR_NONE )
     {
-        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );     // two messages with one ordering index
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_DUPLICATE_ORDERING );     // two messages with one ordering index
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
@@ -586,7 +649,8 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
     rn_receive_descriptor_t * descriptor = rn_channels_descriptor( channels, record, &slot );
     if ( !descriptor )
     {
-        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+        // the slot is live for another number (check 10, SLOT_COLLISION)
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION );
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
@@ -857,8 +921,16 @@ bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
     // (RNBlocks!NumberMessage, Count: k = ceil(bytes / F)).
     const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     descriptor->bytes = bytes;
+    // A code-4 record's header is 15 bytes, 16 with the WIDE channel field
+    // on a channel of 256 or more (rocketnet_message_flags_header_bytes,
+    // sdk/rocketnet_message.cpp:52); the form byte follows it.
+    struct rocketnet_message_record_t sequenced_shape;
+    memset( &sequenced_shape, 0, sizeof( sequenced_shape ) );
+    sequenced_shape.code = ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED;
+    sequenced_shape.channel = channel;
     const uint32_t small_limit = type == ROCKETNET_CHANNEL_TYPE_RELIABLE ? channels->payload_capacity - 7 :
-        type == ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED ? channels->payload_capacity - 16 : rn_channels_small_limit( channels );
+        type == ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED ? channels->payload_capacity - 1 - (uint32_t) rocketnet_message_record_header_bytes( &sequenced_shape ) :
+        rn_channels_small_limit( channels );
     descriptor->fragments = (uint16_t) ( bytes <= small_limit ? 1 : ( bytes + F - 1 ) / F );
     descriptor->channel = (uint16_t) channel;
     descriptor->priority = ROCKETNET_PRIORITY_MEDIUM;
@@ -971,9 +1043,10 @@ int rn_ordered_take_config( struct rn_ordered_t * ordered, const struct rocketne
 
     struct rocketnet_message_config_body_t peer;
     memset( &peer, 0, sizeof( peer ) );
-    if ( rocketnet_message_read_config_body( record->data, record->bytes, &peer ) != ROCKETNET_MESSAGE_VIOLATION_NONE )
+    const int body_violation = rocketnet_message_read_config_body( record->data, record->bytes, &peer );
+    if ( body_violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
     {
-        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+        rn_channels_count_violation( channels, rn_violation_counter( body_violation ) );
         return channels->error;
     }
 
@@ -1320,7 +1393,7 @@ int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, 
     const int violation = rocketnet_message_reader_begin( &reader, payload, bytes, &ordered->limits );
     if ( violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
     {
-        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+        rn_channels_count_violation( channels, rn_violation_counter( violation ) );
         return violation;
     }
 
@@ -1338,7 +1411,7 @@ int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, 
                 continue;                                       // counted by layer 3; normal after a resend
             if ( accepted == RN_WINDOW_RECEIVE_VIOLATION )
             {
-                rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+                rn_channels_count_violation( channels, rn_violation_counter( ordered->receive.violation ) );
                 return ordered->receive.violation;
             }
         }
