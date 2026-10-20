@@ -875,7 +875,11 @@
     /* it is dropped and counts MESSAGE_SEND_NOT_CONNECTED. Counted on the */ \
     /* owner's counters, once per message. appended: indices are the */ \
     /* contract. */ \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK: Counts fitting unreliable messages that took the queued path instead of being written in place in a packet buffer; one count per message, on the owner's counters. Unit: messages. Class: expected; family: none. */ \
     X( MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK, EXPECTED, NONE ) \
+    \
+    /** @brief ROCKETNET_COUNTER_SEND_FAILED: Counts datagrams the transport's socket dropped because the send call failed (ENOBUFS from a full interface queue, EAGAIN from a full send buffer, a refused destination); the socket counts each one (sdk/rocketnet_platform.cpp:80) and the transport reads the driver's send_failures into this counter when the counters are read (sdk/rocketnet_client_transport.cpp:2020, sdk/rocketnet_server_transport.cpp:2764); a driver without send_failures leaves it zero. Appended: indices are the contract. Unit: datagrams. Class: refusal; family: none. */ \
+    X( SEND_FAILED, REFUSAL, NONE ) \
     \
     /* An application send on a connection that is not CONNECTED: a client */ \
     /* whose transport has not reached CONNECTED or has left it, a server */ \
@@ -885,6 +889,7 @@
     /* later send. EXPECTED: a game sends every frame, so its sends from */ \
     /* create to CONNECTED take it. Counted on the owner's counters, once */ \
     /* per dropped start. appended: indices are the contract. */ \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED: Counts application message starts dropped because the connection was not CONNECTED; one count per dropped start, on the owner's counters. Unit: messages. Class: expected; family: none. */ \
     X( MESSAGE_SEND_NOT_CONNECTED, EXPECTED, NONE )
 
 /**

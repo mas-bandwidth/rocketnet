@@ -34,7 +34,7 @@ EXTENDS Naturals, FiniteSets
 CONSTANTS SlotCount, MaxSessions, MaxTokens, MaxStarts, MaxCreates, Defect, UnresetField
 
 ASSUME Defect \in {"none", "unresetslot", "stopleavesclient", "touchesotherslot",
-                   "resetclearshistory", "sendbeforeconnected"}
+                   "resetclearshistory", "sendbeforeconnected", "destroysilent"}
 ASSUME SlotCount \in Nat \ {0} /\ MaxSessions \in Nat \ {0}
 
 \* One field per row of the per-connection reset inventory; on the server
@@ -144,8 +144,9 @@ Destroy ==
     /\ state # "NONE"
     /\ state' = "NONE" /\ slot' = FreshSlots /\ kept' = NoKept /\ draining' = FALSE
     /\ lastEnd' = [i \in Slots |-> "NONE"] /\ established' = 0 /\ estTokens' = {}
+    /\ silentEnd' = (silentEnd \/ (\E i \in Slots : slot[i].st = "CONNECTED" /\ Defect = "destroysilent"))
     /\ priorTokens' = {}
-    /\ UNCHANGED <<env, doubleTok, observed, crossDelivered, collateral, silentEnd, startFrom, queuedIn,
+    /\ UNCHANGED <<env, doubleTok, observed, crossDelivered, collateral, startFrom, queuedIn,
                    readmitted>>
 
 \* start: refused with a status code unless STOPPED (a stutter). A start

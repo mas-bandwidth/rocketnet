@@ -307,6 +307,7 @@ static const char * const counters_appended_names[] =
     "MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED",
     "MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT",
     "MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK",
+    "SEND_FAILED",
     "MESSAGE_SEND_NOT_CONNECTED",
 };
 
@@ -414,6 +415,7 @@ static void counters_every_counter_has_a_class()
     check( rocketnet_counter_class( ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED ) == ROCKETNET_COUNTER_CLASS_EXPECTED );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED ) == ROCKETNET_COUNTER_CLASS_EXPECTED );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
+    check( rocketnet_counter_class( ROCKETNET_COUNTER_SEND_FAILED ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
 }
 
 REGISTER_UNIT_TEST( counters_every_counter_has_a_class );
