@@ -5627,6 +5627,14 @@ static bool rocketnet_test_server_uring_skipped( const char * test_name )
     return true;
 }
 
+#if defined( __GNUC__ ) || defined( __clang__ )
+__attribute__((noinline))
+#endif
+static struct rocketnet_server_uring_t * rocketnet_test_server_uring_create_stalled( rocketnet_address_t * address )
+{
+    return rocketnet_server_uring_create( NULL, address, 2 );
+}
+
 void rocketnet_test_server_uring_probe()
 {
     if ( rocketnet_test_server_uring_skipped( "test_server_uring_probe" ) )
@@ -5682,7 +5690,7 @@ void rocketnet_test_server_uring_probe()
 
     rocketnet_address_t stall_address;
     rocketnet_check( rocketnet_address_parse( &stall_address, "127.0.0.1" ) );
-    struct rocketnet_server_uring_t * stalled = rocketnet_server_uring_create( NULL, &stall_address, 2 );
+    struct rocketnet_server_uring_t * stalled = rocketnet_test_server_uring_create_stalled( &stall_address );
     rocketnet_check( stalled );
     const uint16_t stall_port = stall_address.port;
 
@@ -5817,7 +5825,10 @@ static void rocketnet_test_server_uring_wire_exchange( const char * bind_string,
 
     rocketnet_server_uring_send_packets( uring );
 
-    // send_packets reaps every send of its own before it returns
+    // send_packets reaps within its fixed completion budget
+    // (ROCKETNET_URING_SEND_BUDGET) and returns even if sends remain, deferred
+    // to a later call and counted SEND_DEFERRED; this batch is small enough
+    // that every send completes before the call returns
 
     uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
     rocketnet_server_uring_counters( uring, counters );
