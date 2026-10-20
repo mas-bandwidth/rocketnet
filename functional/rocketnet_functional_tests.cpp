@@ -8675,19 +8675,34 @@ void rocketnet_functional_prepare()
         rocketnet_functional_environment = new rocketnet_test_environment_t();
 }
 
-int rocketnet_functional_test_count()
+// the hard-killed peer and ICMP-error cases (functional/posix_hard_killed_peer.cpp)
+// are a generated table of their own, one case per transport cell, after the
+// static table
+
+int rocketnet_posix_hard_killed_peer_test_count();
+const char * rocketnet_posix_hard_killed_peer_test_name( int index );
+void rocketnet_posix_hard_killed_peer_test_run( int index );
+
+static int rocketnet_functional_static_test_count()
 {
     return (int) ( sizeof( rocketnet_functional_tests ) / sizeof( rocketnet_functional_tests[0] ) );
 }
 
+int rocketnet_functional_test_count()
+{
+    return rocketnet_functional_static_test_count() + rocketnet_posix_hard_killed_peer_test_count();
+}
+
 const char * rocketnet_functional_test_name( int index )
 {
+    if ( index >= rocketnet_functional_static_test_count() )
+        return rocketnet_posix_hard_killed_peer_test_name( index - rocketnet_functional_static_test_count() );
     return rocketnet_functional_tests[index].name;
 }
 
 int rocketnet_functional_run_named( const char * name )
 {
-    for ( int i = 0; i < rocketnet_functional_test_count(); i++ )
+    for ( int i = 0; i < rocketnet_functional_static_test_count(); i++ )
     {
         if ( strcmp( rocketnet_functional_tests[i].name, name ) != 0 )
             continue;
@@ -8695,6 +8710,16 @@ int rocketnet_functional_run_named( const char * name )
         rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s", name );
         fflush( stdout );
         rocketnet_functional_tests[i].function();
+        return 0;
+    }
+    for ( int i = 0; i < rocketnet_posix_hard_killed_peer_test_count(); i++ )
+    {
+        if ( strcmp( rocketnet_posix_hard_killed_peer_test_name( i ), name ) != 0 )
+            continue;
+        rocketnet_test_log_ring_clear();
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s", name );
+        fflush( stdout );
+        rocketnet_posix_hard_killed_peer_test_run( i );
         return 0;
     }
     fprintf( stderr, "unknown functional test %s\n", name );

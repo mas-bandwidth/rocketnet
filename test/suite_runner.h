@@ -70,6 +70,7 @@ struct suite_case
     std::string exec_path; // empty: re-exec this binary with --run name
     bool skipped;
     std::string skip_line;
+    int group; // suite_main's group_of: cases of different groups never run at once
 };
 
 struct suite_result
@@ -259,7 +260,8 @@ inline int suite_main( int argc, char ** argv,
     const char * ( *name_at )( int ),
     const suite_exec * execs, int nexecs,
     const char ** skip_lines, int nskips,
-    bool strict_names )
+    bool strict_names,
+    int ( *group_of )( const char * name ) = NULL )
 {
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
@@ -308,6 +310,16 @@ inline int suite_main( int argc, char ** argv,
         pending.push_back( item );
     }
 
+    // group_of (NULL: every case is group 0) keeps cases that measure wall
+    // time apart from cases that load the host: the cases run in ascending
+    // group order, and a case starts only while every running case is of its
+    // own group, so a group runs in parallel within itself and alone
+    for ( size_t i = 0; i < pending.size(); i++ )
+        pending[i].group = group_of ? group_of( pending[i].name.c_str() ) : 0;
+    std::stable_sort( pending.begin(), pending.end(), []( const suite_case & a, const suite_case & b ) {
+        return a.group < b.group;
+    } );
+
     for ( int i = 0; i < nskips; i++ )
     {
         printf( "%s\n", skip_lines[i] );
@@ -322,6 +334,7 @@ inline int suite_main( int argc, char ** argv,
         pid_t pid;
         std::chrono::steady_clock::time_point start;
         bool killed;
+        int group;
     };
     std::vector<running_t> running;
     std::vector<suite_result> results;
@@ -330,7 +343,7 @@ inline int suite_main( int argc, char ** argv,
 
     while ( next < pending.size() || !running.empty() )
     {
-        while ( (int) running.size() < jobs && next < pending.size() )
+        while ( (int) running.size() < jobs && next < pending.size() && ( running.empty() || running[0].group == pending[next].group ) )
         {
             const suite_case item = pending[next++];
             if ( item.skipped )
@@ -394,6 +407,7 @@ inline int suite_main( int argc, char ** argv,
             child.pid = pid;
             child.start = std::chrono::steady_clock::now();
             child.killed = false;
+            child.group = item.group;
             running.push_back( child );
         }
 
@@ -477,7 +491,8 @@ inline int suite_main( int argc, char ** argv,
     const char * ( *name_at )( int ),
     const suite_exec * execs, int nexecs,
     const char ** skip_lines, int nskips,
-    bool strict_names )
+    bool strict_names,
+    int ( *group_of )( const char * name ) = NULL )
 {
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
@@ -525,6 +540,16 @@ inline int suite_main( int argc, char ** argv,
         }
         pending.push_back( item );
     }
+    // group_of (NULL: every case is group 0) keeps cases that measure wall
+    // time apart from cases that load the host: the cases run in ascending
+    // group order, and a case starts only while every running case is of its
+    // own group, so a group runs in parallel within itself and alone
+    for ( size_t i = 0; i < pending.size(); i++ )
+        pending[i].group = group_of ? group_of( pending[i].name.c_str() ) : 0;
+    std::stable_sort( pending.begin(), pending.end(), []( const suite_case & a, const suite_case & b ) {
+        return a.group < b.group;
+    } );
+
     for ( int i = 0; i < nskips; i++ )
     {
         printf( "%s\n", skip_lines[i] );
@@ -539,6 +564,7 @@ inline int suite_main( int argc, char ** argv,
         HANDLE process;
         std::chrono::steady_clock::time_point start;
         bool killed;
+        int group;
     };
     std::vector<running_t> running;
     std::vector<suite_result> results;
@@ -547,7 +573,7 @@ inline int suite_main( int argc, char ** argv,
 
     while ( next < pending.size() || !running.empty() )
     {
-        while ( (int) running.size() < jobs && next < pending.size() )
+        while ( (int) running.size() < jobs && next < pending.size() && ( running.empty() || running[0].group == pending[next].group ) )
         {
             const suite_case item = pending[next++];
             if ( item.skipped )
@@ -594,6 +620,7 @@ inline int suite_main( int argc, char ** argv,
             child.process = info.hProcess;
             child.start = std::chrono::steady_clock::now();
             child.killed = false;
+            child.group = item.group;
             running.push_back( child );
         }
 

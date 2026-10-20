@@ -63,8 +63,17 @@ static int rocketnet_functional_worker( const char * name )
     return result;
 }
 
+int rocketnet_posix_hard_killed_child_main( int argc, char ** argv );
+int rocketnet_posix_hard_killed_peer_test_group( const char * name );
+
 int main( int argc, char ** argv )
 {
+    // the child client of the hard-killed peer cases
+    // (functional/posix_hard_killed_peer.cpp), started by posix_spawn and
+    // ended by the case with SIGKILL
+    if ( argc >= 2 && strcmp( argv[1], "--posix-hard-killed-child" ) == 0 )
+        return rocketnet_posix_hard_killed_child_main( argc, argv );
+
 #if defined(_WIN32)
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize", true },
@@ -82,7 +91,7 @@ int main( int argc, char ** argv )
         { "test_transport_control", "test_transport_control", true },
         { "test_msgx", "test_msgx", true },
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3, NULL, 0, false );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3, NULL, 0, false, rocketnet_posix_hard_killed_peer_test_group );
 #elif defined(__linux__)
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize", true },
