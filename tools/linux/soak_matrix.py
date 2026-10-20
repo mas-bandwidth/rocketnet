@@ -190,7 +190,7 @@ def guest_xdp(args):
         # the far end is the server's gateway: every client is behind it. With
         # no gateway a reply goes only to a peer whose MAC the driver learned or
         # to the frame it answers in place (rocketnet_server_socket_start_packet,
-        # sdk/rocketnet_server_socket_linux.cpp:2105); the server's link
+        # sdk/rocketnet_server_socket_linux.cpp:2193); the server's link
         # simulator hands each packet on later from its own copy, so no reply is
         # in place and every cookie answer counts SEND_NO_LINK_ADDRESS.
         global GATEWAY_MAC
