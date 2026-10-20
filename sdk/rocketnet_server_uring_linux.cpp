@@ -160,6 +160,10 @@ struct rocketnet_server_uring_t
 
     uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
 
+    // the part of RECEIVE_DROPPED_SIZE above the receive ceiling or truncated
+    // in its buffer; the rest is below the smallest packet a server reads
+    uint64_t receive_dropped_too_large;
+
     struct rocketnet_server_uring_send_buffer_t send;
 
     struct rocketnet_server_uring_bank_t banks[2];
@@ -630,6 +634,8 @@ static void rocketnet_server_uring_receive_cqe( struct rocketnet_server_uring_t 
     else if ( verdict != ROCKETNET_URING_RECV_OK )
     {
         uring->counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SIZE]++;
+        if ( verdict == ROCKETNET_URING_RECV_PAYLOAD_TRUNCATED )
+            uring->receive_dropped_too_large++;
     }
     else
     {
@@ -645,6 +651,8 @@ static void rocketnet_server_uring_receive_cqe( struct rocketnet_server_uring_t 
         else if ( payload_bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES || payload_bytes > ROCKETNET_RECEIVE_CEILING )
         {
             uring->counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SIZE]++;
+            if ( payload_bytes > ROCKETNET_RECEIVE_CEILING )
+                uring->receive_dropped_too_large++;
         }
         else
         {
@@ -1208,6 +1216,19 @@ void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, u
     memcpy( counters, uring->counters, sizeof(uring->counters) );
 }
 
+// the builtin driver's receive_drops hook: the size
+// drops (:636-638, :653-655), split at the receive ceiling; main thread, where the
+// CQEs are reaped
+
+void rocketnet_server_uring_receive_drops( struct rocketnet_server_uring_t * uring, uint64_t * too_short, uint64_t * too_large )
+{
+    rocketnet_assert( uring );
+    rocketnet_assert( too_short );
+    rocketnet_assert( too_large );
+    *too_large = uring->receive_dropped_too_large;
+    *too_short = uring->counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SIZE] - uring->receive_dropped_too_large;
+}
+
 // ---------------------------------------------------------------------------
 // send
 // ---------------------------------------------------------------------------
@@ -1546,6 +1567,13 @@ void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, u
     (void) uring;
     if ( counters )
         memset( counters, 0, ROCKETNET_SERVER_URING_NUM_COUNTERS * sizeof(uint64_t) );
+}
+
+void rocketnet_server_uring_receive_drops( struct rocketnet_server_uring_t * uring, uint64_t * too_short, uint64_t * too_large )
+{
+    (void) uring;
+    *too_short = 0;
+    *too_large = 0;
 }
 
 uint8_t * rocketnet_server_uring_start_packet( struct rocketnet_server_uring_t * uring, const struct rocketnet_address_t * to, uint64_t * packet_id )
