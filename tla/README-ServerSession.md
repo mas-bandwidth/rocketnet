@@ -24,8 +24,13 @@ change).
 | `slot[i].reason` | `rocketnet_server_disconnect_reason` (`sdk/rocketnet_api.cpp:1393-1401` at `4e1be4e8`), over `rocketnet_message_server_disconnect_reason` | per run: kept through the reset, cleared to NONE when the slot's next client is established, NONE while STOPPED (`rn_server_slot` refuses with no running block, `sdk/rocketnet_api.cpp:931`) and NONE at each start (the new message server zeroes its block and sets each reason to NONE, `sdk/rocketnet_message_server.cpp:246`, `:285`) |
 | `kept.used` | the used-token history, `rocketnet_used_token_history_check` and `_record` (`sdk/rocketnet_token_tables.cpp:229`, `:241`), held at `sdk/rocketnet_server_protocol.h:63` | server-wide, never per slot; per run: fresh at each start (a start builds a new server transport, which creates the history), kept across slot resets and the stop within the run (standard/TRANSPORT.md t13.4) |
 | `kept.keys`, `kept.config`, `kept.lifetime` | the cookie key and server keys (rotation at `sdk/rocketnet_server_protocol.cpp:382`), the config, the lifetime counters (`sdk/rocketnet.h:1687-1690`) | kept across slots, stops and starts; fresh only at create |
-| `draining` | `disconnect_all_clients` in progress | no client is accepted until every slot is free |
 | `link` | the path from the clients | the session tags of client packets in flight (lossy: `Lose`) |
+
+The public `disconnect_all_clients` is one call too (`rocketnet_server_disconnect_all_clients`,
+`sdk/rocketnet_api.cpp:1253-1265`): every slot the transport holds connected is disconnected
+in the same step, and a slot still in the handshake (not transport-connected) is left as it
+is. The model's one `DisconnectAll` action does the same; there is no draining flag and no
+later update that finishes the call.
 
 The public `stop` is one call (`rocketnet_server_stop`, `sdk/rocketnet_api.cpp:1267-1284` at
 `4e1be4e8`): each connected client is sent its disconnect burst and the burst is flushed
@@ -49,7 +54,7 @@ inventory each field below stands for, citing this model.
 | `ClientConnects(i, t)` (the mapping is created) | `token_state` (the slot's challenge, cookie and token state), `client_id`, `user_data`, `timeouts`, `session_keys` |
 | `ServerSend(i)` | `packet_sequence`, `message_sequence`, `sent_packets`, `reliable_send_queue`, `ordering_indices`, `send_budget`, `connection_counters`, `ack_receipt_ring` |
 | `Deliver(s)` (a client packet opens) | `received_packets`, `reliable_receive_queue`, `ack_bits`, `replay_window`, `fragment_reassembly`, `rtt_estimator`, `loss_estimator`, `connection_counters` |
-| `DisconnectClient(i)`, `DrainStep(i)` | `pending_disconnect` (the disconnect burst) |
+| `DisconnectClient(i)`, `DisconnectAll` | `pending_disconnect` (the disconnect burst) |
 
 **The used-token history is per run.** standard/TRANSPORT.md t13.4 (Slot reset): a slot
 reset keeps the used-token history, and a server that starts again begins with a fresh one.
@@ -79,7 +84,7 @@ outstanding cookies, which no slot record holds, so no property here depends on 
 | `Create`, `Destroy` | create (STOPPED, fresh object); destroy from any state (client packets in flight outlive it) |
 | `Start` | start: refused with a status code unless STOPPED; every slot's reason is NONE |
 | `Stop` | stop, one step: each connected slot is sent its disconnect, every slot is reset with reason NONE, STOPPED |
-| `DisconnectAll`, `DrainStep(i)`, `DrainDone` | `disconnect_all_clients`: every occupied slot is disconnected and reset before another client is accepted |
+| `DisconnectAll` | `disconnect_all_clients`, one step: every CONNECTED slot is sent its disconnect and reset with reason SERVER_DISCONNECTED; a slot still in HANDSHAKE is left as it is |
 | `ClientConnects(i, t)` | a request with token `t` opens a mapping into free slot `i`, a new session; a token in the used-token history is refused (each request comes from its own address, so a used token is a replay) |
 | `Establish(i)` | the response opens: the token is recorded in the history, the slot is CONNECTED, its reason cleared |
 | `Deny(i)`, `SlotTimeout(i)`, `ClientLeaves(i)`, `DisconnectClient(i)` | a denial during the handshake; the slot's timeout; the client's own disconnect; `disconnect_client(i)` with its burst |
@@ -103,6 +108,7 @@ reset `Clean`: `EndSlot` applies it through `Reset(i)`, and `Stop` applies it to
 | `SlotReuseObservesNothing` | invariant | per slot, no packet of session s opens in another session, and no step reads a field another session wrote (a stale ack, a stale fragment, a replay-window false reject) |
 | `NoClientWhileStopped` | invariant | no slot is occupied while STOPPED (or with no object) |
 | `StopDisconnectsAll` | invariant | after a stop every slot is free and Init, and every connected client the server ended was sent its disconnect (the second part is structural: every server-initiated end passes the burst, and no witness breaks it) |
+| `DisconnectAllIsAtomic` | invariant | after a `DisconnectAll` step no slot is CONNECTED, every slot it found CONNECTED is FREE with reason SERVER_DISCONNECTED, and every slot it found in HANDSHAKE still holds that HANDSHAKE and session |
 | `ReasonKeptWithinRun` | invariant | a slot's reason equals the one its last ended connection of this run set until its next client is established, where it is NONE; it is NONE after a stop and at each start (the ghost `lastEnd` is cleared by `Stop` and `Start` whatever the defect) |
 | `ResetTouchesOnlyItsSlot` | invariant | `Reset(i)` leaves every slot `j # i` unchanged |
 | `TokenAdmitsOnce` | invariant | a token admits one connection per run: the history is kept across slot resets and fresh at each start |
@@ -114,11 +120,24 @@ reset `Clean`: `EndSlot` applies it through `Reset(i)`, and `Stop` applies it to
 |---|---|---|---|
 | `MCServerSessionUnresetSlot.cfg` | `Defect = "unresetslot"`, `UnresetField = "replay_window"`: `Reset(i)` skips the replay window | `SlotReuseObservesNothing`, exit 12 | 12 states: create, start, session 1 connects into slot 1 and is established, its packet opens (`replay_window = 1`), the slot times out (the reset leaves `replay_window = 1`), session 2 connects into slot 1 and is established, its first packet opens: `slot[1].sess = 2`, `observed = {[slot \|-> 1, field \|-> "replay_window"]}`, the new client's first sequence checked against the old client's window |
 | `MCServerSessionStopLeavesClient.cfg` | `Defect = "stopleavesclient"`: stop skips the last slot | `NoClientWhileStopped`, exit 12 | 5 states: create, start, session 1 opens a mapping into slot 2, stop: `state = "STOPPED"`, `slot[2].st = "HANDSHAKE"`, `slot[2].sess = 1`. The code resets every slot in stop (`sdk/rocketnet_api.cpp:1278-1279`) |
+| `MCServerSessionDisconnectAllLeavesClient.cfg` | `Defect = "disconnectallleavesclient"`: `DisconnectAll` leaves slot 1 connected | `DisconnectAllIsAtomic`, exit 12 | 6 states: create, start, session 1 opens a mapping into slot 1 and is established, `DisconnectAll`: `slot[1].st = "CONNECTED"`, `slot[1].sess = 1`, `lastEnd[1] = "NONE"`, `allBefore` holds slot 1 CONNECTED. The code disconnects it in the same call (`sdk/rocketnet_api.cpp:1253-1265`) |
 | `MCServerSessionTouchesOtherSlot.cfg` | `Defect = "touchesotherslot"`: `Reset(i)` also clears slot i+1 | `ResetTouchesOnlyItsSlot`, exit 12 | 6 states: create, start, sessions 1 and 2 open mappings into slots 1 and 2, slot 1 is denied: both slots `FREE`, slot 1's reason `DENIED`, `collateral = {2}`: session 2 vanished with no reason and no reset path of its own |
 | `MCServerSessionResetClearsHistory.cfg` | `Defect = "resetclearshistory"`: `Reset(i)` empties the used-token history | `TokenAdmitsOnce`, exit 12 | 8 states: create, start, session 1 connects with token 1 and is established (`kept.used = {1}`), the slot times out and the reset empties the history, session 2 connects with token 1 and is established: `doubleTok = TRUE`, one token admitted twice in one run |
 | `MCServerSessionReadmitAfterStart.cfg` | `Defect = "none"`, `MaxStarts = 2`; invariant `NoReadmitAfterStart` (a reachability witness) | `NoReadmitAfterStart`, exit 12 | 9 states: create, start, session 1 established with token 1, stop (STOPPED in one step), start (`kept.used = {}`, `priorTokens = {1}`), session 2 connects with token 1 and is established: `readmitted = TRUE`, the fresh history at start reached |
 | `MCServerSessionSendBeforeConnected.cfg` | `Defect = "sendbeforeconnected"`: `ServerSend(i)` also runs for a slot that is not CONNECTED | `NoSendUnlessConnected`, exit 12 | 4 states: create, start, a send to a free slot: every slot `FREE`, `queuedIn = {"FREE"}`. In the code that is `rocketnet_server_start_message` to an index below max_clients with no client, which the message layer drops (`ServerDropSend`) |
 | `MCServerSessionBrokenReasonAcrossRestart.cfg` | `Defect = "reasonacrossrestart"`, `MaxStarts = 2`: stop writes SERVER_STOPPED into each occupied slot and keeps a free slot's reason, and start keeps every reason (the rule this model held before it followed the code) | `ReasonKeptWithinRun`, exit 12 | 5 states: create, start, session 1 opens a mapping into slot 1, stop: `state = "STOPPED"`, `slot[1].reason = "SERVER_STOPPED"`, `lastEnd[1] = "NONE"`. In the code `rocketnet_server_disconnect_reason` returns NONE once stop has destroyed the running block (`sdk/rocketnet_api.cpp:931`, `:1282-1283`) |
+
+The DisconnectAllLeavesClient trace, step by step against `sdk/rocketnet_api.cpp:1253-1265`:
+state 1 is Init (NONE, every slot FREE), state 2 is Create (STOPPED), state 3 is Start
+(RUNNING), state 4 is `ClientConnects(1, 1)` (slot 1 HANDSHAKE, session 1), and state 5 is
+`Establish(1)` (slot 1 CONNECTED, token 1 in `kept.used`). State 6 is `DisconnectAll`: the
+defect leaves slot 1 CONNECTED with session 1 and `lastEnd[1] = "NONE"`, while `allBefore`
+holds the pre-state (slot 1 CONNECTED, slot 2 FREE). The code instead loops over every index
+below `max_clients`, kicks each slot the message layer holds and, when
+`rocketnet_server_transport_is_client_connected` is true
+(`sdk/rocketnet_server_transport.cpp:2696`), disconnects it at the transport in the same call,
+so slot 1 would be FREE with reason SERVER_DISCONNECTED. A slot still in the handshake makes
+that predicate false and is left as it is, which is the HANDSHAKE part of the invariant.
 
 Each trace was read step by step against the defect its constant names. With the UnresetSlot
 instance and `INVARIANT ResetIsInit` instead, TLC fails `ResetIsInit` at the first reset (8
@@ -134,15 +153,16 @@ case, one for witnesses, 110-second cap per case):
 
 | cfg | Result | Generated | Distinct | Seconds | Exit |
 |---|---|---:|---:|---:|---:|
-| `MCServerSession.cfg` | pass | 542,288 | 56,702 | 9.304 | 0 |
-| `MCServerSessionUnresetSlot.cfg` | `SlotReuseObservesNothing` violated | 131,826 | 21,408 | 1.676 | 12 |
-| `MCServerSessionStopLeavesClient.cfg` | `NoClientWhileStopped` violated | 45 | 37 | 0.621 | 12 |
-| `MCServerSessionTouchesOtherSlot.cfg` | `ResetTouchesOnlyItsSlot` violated | 124 | 92 | 0.621 | 12 |
-| `MCServerSessionDestroySilent.cfg` | `StopDisconnectsAll` violated | 91 | 68 | 0.628 | 12 |
-| `MCServerSessionResetClearsHistory.cfg` | `TokenAdmitsOnce` violated | 2,604 | 1,089 | 0.680 | 12 |
-| `MCServerSessionReadmitAfterStart.cfg` | `NoReadmitAfterStart` violated | 13,055 | 4,455 | 0.877 | 12 |
-| `MCServerSessionSendBeforeConnected.cfg` | `NoSendUnlessConnected` violated | 9 | 8 | 0.622 | 12 |
-| `MCServerSessionBrokenReasonAcrossRestart.cfg` | `ReasonKeptWithinRun` violated | 24 | 16 | 0.620 | 12 |
+| `MCServerSession.cfg` | pass | 269,808 | 29,054 | 10.912 | 0 |
+| `MCServerSessionUnresetSlot.cfg` | `SlotReuseObservesNothing` violated | 87,891 | 13,695 | 3.670 | 12 |
+| `MCServerSessionStopLeavesClient.cfg` | `NoClientWhileStopped` violated | 45 | 37 | 1.432 | 12 |
+| `MCServerSessionDisconnectAllLeavesClient.cfg` | `DisconnectAllIsAtomic` violated | 91 | 69 | 1.699 | 12 |
+| `MCServerSessionTouchesOtherSlot.cfg` | `ResetTouchesOnlyItsSlot` violated | 113 | 85 | 1.510 | 12 |
+| `MCServerSessionDestroySilent.cfg` | `StopDisconnectsAll` violated | 82 | 61 | 1.849 | 12 |
+| `MCServerSessionResetClearsHistory.cfg` | `TokenAdmitsOnce` violated | 2,353 | 986 | 1.664 | 12 |
+| `MCServerSessionReadmitAfterStart.cfg` | `NoReadmitAfterStart` violated | 11,875 | 3,806 | 2.368 | 12 |
+| `MCServerSessionSendBeforeConnected.cfg` | `NoSendUnlessConnected` violated | 9 | 8 | 1.642 | 12 |
+| `MCServerSessionBrokenReasonAcrossRestart.cfg` | `ReasonKeptWithinRun` violated | 24 | 16 | 1.683 | 12 |
 
 ## Bounds
 
