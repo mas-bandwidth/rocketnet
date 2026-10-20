@@ -552,8 +552,8 @@ timed out, the counters at that moment and a 50-line log excerpt:
 - any denial;
 - any disconnect other than the scheduled clean disconnect or silent drop
   (a `rocketnet_client_disconnect_reason` or
-  `rocketnet_server_disconnect_reason` other than NONE, `sdk/rocketnet.h`,
-  `:978`; a timeout on a live connection; a kick).
+  `rocketnet_server_disconnect_reason` other than NONE, `sdk/rocketnet.h`;
+  a timeout on a live connection; a kick).
 
 **The pass rule.** The run passes only when every row holds, for the whole
 run, on every bench:
