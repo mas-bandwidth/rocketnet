@@ -95,7 +95,7 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
             out[n++] = (uint8_t) rn_window_ack_check_timeout( &f.ack, t0 + 9.999 );
             out[n++] = (uint8_t) rn_window_ack_check_timeout( &f.ack, t0 + 10.000 );
             out[n++] = (uint8_t) f.ack.error;
-            check( f.ack.error == ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT );
+            check( f.ack.error == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
             resend_trace_close( &f );
         }
 
@@ -169,7 +169,7 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
             out[n++] = (uint8_t) rn_endpoint_set_send_kbps( &endpoint, 0, 1000.0 );
             check( endpoint.send_budget_enabled == 0 );
             const int bytes = 13000;
-            uint8_t * p = rn_endpoint_start( &endpoint, 0, ROCKETNET_UNRELIABLE_SEQUENCED, bytes, endpoint_config.max_payload_bytes );
+            uint8_t * p = rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, bytes, endpoint_config.max_payload_bytes );
             check( p != NULL );
             if ( p )
                 memset( p, 0x5a, (size_t) bytes );

@@ -65,9 +65,9 @@ void rocketnet_test_lifecycle_driver()
     rocketnet_term();
 
     allocator_state state;
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
-    rocketnet_allocator( allocate, release );
-    check( rocketnet_init( &state ) );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_set_allocator( allocate, release );
+    check( rocketnet_init( &state ) == ROCKETNET_STATUS_OK );
     rocketnet_forbid_xdp_commit();
     const int baseline = state.live;
 
@@ -99,7 +99,7 @@ void rocketnet_test_lifecycle_driver()
     check( state.live == baseline );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    check( rocketnet_write_dev_connect_token( "127.0.0.1:40000", 1, (uint64_t) time(NULL), token ) );
+    check( rocketnet_write_dev_connect_token( "127.0.0.1:40000", 1, (uint64_t) time(NULL), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
     strcpy( client_config.driver, "portable" );

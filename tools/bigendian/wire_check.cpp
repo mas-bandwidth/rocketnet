@@ -365,9 +365,9 @@ static void check_base64_and_config()
 
 int main()
 {
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
-    if ( !rocketnet_init( NULL ) )
+    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;

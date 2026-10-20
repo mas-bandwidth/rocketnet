@@ -83,12 +83,12 @@ void unreliable_dropped_while_reliable_waits_never_arrives()
     const uint64_t before = drops_over_budget( &h );
     const uint64_t budget_dropped_before = h.message_client->object.connections[0].budget.unreliable_dropped;
     const uint64_t budget_dropped_bytes_before = h.message_client->object.connections[0].budget.unreliable_dropped_bytes;
-    drops_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABLE_ORDERED, reliable[0], DROPS_RELIABLE_BYTES ) != 0, "send reliable 0" );
-    drops_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABLE_ORDERED, reliable[1], DROPS_RELIABLE_BYTES ) != 0, "send reliable 1" );
+    drops_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, reliable[0], DROPS_RELIABLE_BYTES ) != 0, "send reliable 0" );
+    drops_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, reliable[1], DROPS_RELIABLE_BYTES ) != 0, "send reliable 1" );
     for ( int i = 0; i < 4; i++ )
     {
         drops_fill( unreliable[i], DROPS_UNRELIABLE_BYTES, (uint8_t) ( 0x10 + i ) );
-        drops_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_UNRELIABLE, unreliable[i], DROPS_UNRELIABLE_BYTES ) != 0, "send unreliable" );
+        drops_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, unreliable[i], DROPS_UNRELIABLE_BYTES ) != 0, "send unreliable" );
     }
 
     // the update that finds the reliable packet waiting counts every
@@ -153,7 +153,7 @@ void unreliable_dropped_when_builder_out_of_budget_never_arrives()
     for ( int i = 0; i < sent; i++ )
     {
         drops_fill( message, DROPS_BUILDER_BYTES, (uint8_t) ( 0x20 + i ) );
-        drops_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_UNRELIABLE, message, DROPS_BUILDER_BYTES ) != 0, "send" );
+        drops_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, message, DROPS_BUILDER_BYTES ) != 0, "send" );
     }
 
     // the update's packets carry the messages that fit, the earliest ones, and
