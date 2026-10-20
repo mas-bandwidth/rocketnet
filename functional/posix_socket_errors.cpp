@@ -1474,8 +1474,13 @@ void rocketnet_test_linux_uring_send_cqe_errors()
 // refusal is the kernel filter's, so the counters are the XDP_KERNEL ones:
 // runts and zero-length datagrams are too small, the storm dies on its epoch
 // or its filter value, and the oversize datagram crosses the link as IP
-// fragments, which the program passes to the kernel stack counted in
-// PASSED_FRAGMENT before any epoch or filter check. Root inside a
+// fragments: the first, which carries the UDP header to the server's port,
+// the program drops counted in DROPPED_FIRST_FRAGMENT, and every other one
+// passes to the kernel stack counted in PASSED_FRAGMENT, before any epoch or
+// filter check; the kernel never reassembles the datagram without its first
+// fragment. A fragmented datagram to another port passes whole to a kernel
+// UDP socket bound on that port in this namespace, every fragment counted in
+// PASSED_FRAGMENT. Root inside a
 // virtme-ng guest only (DRIVERS.md has the vng line); anywhere else a
 // named skip. Everything it makes is removed on every exit path.
 
@@ -1490,6 +1495,8 @@ void rocketnet_test_linux_uring_send_cqe_errors()
 #define POSIX_XDP_NEAR          "rnxdpwx0"
 #define POSIX_XDP_FAR           "rnxdpwx1"
 #define POSIX_XDP_PORT          40412
+#define POSIX_XDP_OTHER_PORT    40413
+#define POSIX_XDP_OTHER_BYTES   4000    // larger than the MTU: fragmented
 #define POSIX_XDP_MTU           1500
 
 static struct rocketnet_server_transport_t * posix_xdp_server = NULL;
@@ -1598,6 +1605,7 @@ struct posix_xdp_expect_t
     uint64_t wrong_filter;
     uint64_t invalid_type;
     uint64_t fragment;
+    uint64_t first_fragment;
 };
 
 static void posix_xdp_read( struct rocketnet_server_transport_t * server, struct posix_xdp_expect_t * out )
@@ -1609,23 +1617,26 @@ static void posix_xdp_read( struct rocketnet_server_transport_t * server, struct
     out->wrong_filter = rocketnet_counter_value( counters, ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_WRONG_FILTER );
     out->invalid_type = rocketnet_counter_value( counters, ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_INVALID_TYPE );
     out->fragment = rocketnet_counter_value( counters, ROCKETNET_COUNTER_XDP_KERNEL_PASSED_FRAGMENT );
+    out->first_fragment = rocketnet_counter_value( counters, ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_FIRST_FRAGMENT );
 }
 
 static bool posix_xdp_equal( const struct posix_xdp_expect_t * a, const struct posix_xdp_expect_t * b )
 {
     return a->too_small == b->too_small && a->too_large == b->too_large && a->wrong_epoch == b->wrong_epoch &&
-           a->wrong_filter == b->wrong_filter && a->invalid_type == b->invalid_type && a->fragment == b->fragment;
+           a->wrong_filter == b->wrong_filter && a->invalid_type == b->invalid_type && a->fragment == b->fragment &&
+           a->first_fragment == b->first_fragment;
 }
 
 static void posix_xdp_print( const char * what, const struct posix_xdp_expect_t * now, const struct posix_xdp_expect_t * want )
 {
-    printf( "%s: too_small %llu/%llu too_large %llu/%llu wrong_epoch %llu/%llu wrong_filter %llu/%llu invalid_type %llu/%llu fragment %llu/%llu\n", what,
+    printf( "%s: too_small %llu/%llu too_large %llu/%llu wrong_epoch %llu/%llu wrong_filter %llu/%llu invalid_type %llu/%llu fragment %llu/%llu first_fragment %llu/%llu\n", what,
             (unsigned long long) now->too_small, (unsigned long long) want->too_small,
             (unsigned long long) now->too_large, (unsigned long long) want->too_large,
             (unsigned long long) now->wrong_epoch, (unsigned long long) want->wrong_epoch,
             (unsigned long long) now->wrong_filter, (unsigned long long) want->wrong_filter,
             (unsigned long long) now->invalid_type, (unsigned long long) want->invalid_type,
-            (unsigned long long) now->fragment, (unsigned long long) want->fragment );
+            (unsigned long long) now->fragment, (unsigned long long) want->fragment,
+            (unsigned long long) now->first_fragment, (unsigned long long) want->first_fragment );
     fflush( stdout );
 }
 
@@ -1715,6 +1726,35 @@ static void posix_xdp_weather( int ipv6 )
     posix_check( server != NULL );
     posix_check( strcmp( rocketnet_server_transport_driver( server ), "xdp" ) == 0 );
 
+    // a kernel UDP socket on another port of the near end, in this
+    // namespace: the fragmented datagram to it must arrive whole
+
+    const int other_receiver = socket( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    posix_check( other_receiver >= 0 );
+    {
+        struct sockaddr_storage bind_to;
+        memset( &bind_to, 0, sizeof(bind_to) );
+        socklen_t bind_bytes;
+        if ( ipv6 )
+        {
+            struct sockaddr_in6 * address = (struct sockaddr_in6*) &bind_to;
+            address->sin6_family = AF_INET6;
+            address->sin6_port = htons( POSIX_XDP_OTHER_PORT );
+            posix_check( inet_pton( AF_INET6, server_host, &address->sin6_addr ) == 1 );
+            bind_bytes = sizeof(struct sockaddr_in6);
+        }
+        else
+        {
+            struct sockaddr_in * address = (struct sockaddr_in*) &bind_to;
+            address->sin_family = AF_INET;
+            address->sin_port = htons( POSIX_XDP_OTHER_PORT );
+            posix_check( inet_pton( AF_INET, server_host, &address->sin_addr ) == 1 );
+            bind_bytes = sizeof(struct sockaddr_in);
+        }
+        posix_check( bind( other_receiver, (struct sockaddr*) &bind_to, bind_bytes ) == 0 );
+        posix_check( fcntl( other_receiver, F_SETFL, fcntl( other_receiver, F_GETFL ) | O_NONBLOCK ) == 0 );
+    }
+
     // the client and the raw sender: their sockets opened in the far
     // namespace
 
@@ -1770,6 +1810,11 @@ static void posix_xdp_weather( int ipv6 )
         posix_check( inet_pton( AF_INET, server_host, &address->sin_addr ) == 1 );
         to_bytes = sizeof(struct sockaddr_in);
     }
+    struct sockaddr_storage to_other = to;
+    if ( ipv6 )
+        ( (struct sockaddr_in6*) &to_other )->sin6_port = htons( POSIX_XDP_OTHER_PORT );
+    else
+        ( (struct sockaddr_in*) &to_other )->sin_port = htons( POSIX_XDP_OTHER_PORT );
 
     // the largest datagram this link carries whole, and the fragments the
     // oversize datagram makes: the IP payload (UDP header and data) in
@@ -1780,6 +1825,8 @@ static void posix_xdp_weather( int ipv6 )
     const int piece = ( ( POSIX_XDP_MTU - ( ipv6 ? 40 + 8 : 20 ) ) / 8 ) * 8;
     const int oversize = 65507;
     const uint64_t expect_fragments = (uint64_t) ( ( oversize + 8 + piece - 1 ) / piece );
+    const uint64_t expect_other_fragments = (uint64_t) ( ( POSIX_XDP_OTHER_BYTES + 8 + piece - 1 ) / piece );
+    posix_check( expect_other_fragments > 1 );
 
     struct posix_xdp_expect_t expect;
     posix_xdp_read( server, &expect );
@@ -1791,7 +1838,11 @@ static void posix_xdp_weather( int ipv6 )
     int valid_sent = 0;
     int valid_seen = 0;
     uint64_t frag_creates = 0;
+    uint64_t other_frag_creates = 0;
     uint64_t fragments_counted = 0;
+    static uint8_t other_sent[POSIX_XDP_OTHER_BYTES];
+    static uint8_t other_received[POSIX_XDP_OTHER_BYTES + 1];
+    int other_received_bytes = -1;
 
     for ( int round = 0; round < POSIX_WEATHER_ROUNDS; round++ )
     {
@@ -1807,17 +1858,30 @@ static void posix_xdp_weather( int ipv6 )
 
         if ( round == 0 )
         {
-            // the oversize datagram alone first: only the fragment counter
-            // moves, by the fragment count, and nothing reaches the server
+            // the oversize datagram to the server's port: its first
+            // fragment drops counted DROPPED_FIRST_FRAGMENT, the other N-1
+            // pass counted PASSED_FRAGMENT, and nothing reaches the server
 
             for ( int i = 0; i < oversize; i++ )
                 buffer[i] = (uint8_t) ( 0x11 + i );
             const uint64_t creates_before = posix_xdp_frag_creates( ipv6 );
             posix_set_dont_fragment( sender, ipv6, 0 );
             posix_send_datagram( sender, &to, to_bytes, buffer, oversize, NULL );
-            posix_set_dont_fragment( sender, ipv6, 1 );
             frag_creates = posix_xdp_frag_creates( ipv6 ) - creates_before;
-            expect.fragment += expect_fragments;
+            expect.first_fragment += 1;
+            expect.fragment += expect_fragments - 1;
+
+            // a fragmented datagram to another port: every fragment passes
+            // counted PASSED_FRAGMENT, none is dropped, and the kernel
+            // reassembles it for the socket bound there
+
+            for ( int i = 0; i < POSIX_XDP_OTHER_BYTES; i++ )
+                other_sent[i] = (uint8_t) ( 0xa5 ^ ( i * 7 ) ^ ( i >> 8 ) );
+            const uint64_t other_creates_before = posix_xdp_frag_creates( ipv6 );
+            posix_send_datagram( sender, &to_other, to_bytes, other_sent, POSIX_XDP_OTHER_BYTES, NULL );
+            other_frag_creates = posix_xdp_frag_creates( ipv6 ) - other_creates_before;
+            posix_set_dont_fragment( sender, ipv6, 1 );
+            expect.fragment += expect_other_fragments;
 
             buffer[0] = 0x40;
             posix_send_datagram( sender, &to, to_bytes, buffer, 1, NULL );
@@ -1862,12 +1926,18 @@ static void posix_xdp_weather( int ipv6 )
             posix_xdp_read( server, &now );
             if ( round == 0 && fragments_counted == 0 )
                 fragments_counted = now.fragment - start.fragment;
-            if ( posix_xdp_equal( &now, &expect ) && valid_seen == valid_sent )
+            if ( round == 0 && other_received_bytes < 0 )
+            {
+                const ssize_t got = recv( other_receiver, other_received, sizeof(other_received), 0 );
+                if ( got >= 0 )
+                    other_received_bytes = (int) got;
+            }
+            if ( posix_xdp_equal( &now, &expect ) && valid_seen == valid_sent && ( round != 0 || other_received_bytes >= 0 ) )
                 break;
             if ( rocketnet_platform_time() >= deadline )
             {
                 char what[64];
-                snprintf( what, sizeof(what), "round %d still short (valid %d/%d)", round, valid_seen, valid_sent );
+                snprintf( what, sizeof(what), "round %d still short (valid %d/%d, other port %d bytes)", round, valid_seen, valid_sent, other_received_bytes );
                 posix_xdp_print( what, &now, &expect );
                 posix_check( rocketnet_platform_time() < deadline );
             }
@@ -1895,21 +1965,39 @@ static void posix_xdp_weather( int ipv6 )
     if ( frag_creates != expect_fragments )
         printf( "%s: the far stack made %llu fragments, the case expects %llu\n", case_name, (unsigned long long) frag_creates, (unsigned long long) expect_fragments );
     posix_check( frag_creates == expect_fragments );
-    posix_check( final_counts.fragment - start.fragment == expect_fragments );
+    if ( other_frag_creates != expect_other_fragments )
+        printf( "%s: the far stack made %llu fragments to the other port, the case expects %llu\n", case_name, (unsigned long long) other_frag_creates, (unsigned long long) expect_other_fragments );
+    posix_check( other_frag_creates == expect_other_fragments );
+    posix_check( final_counts.first_fragment - start.first_fragment == 1 );
+    posix_check( final_counts.fragment - start.fragment == ( expect_fragments - 1 ) + expect_other_fragments );
+    if ( other_received_bytes != POSIX_XDP_OTHER_BYTES )
+        printf( "%s: the other port's socket read %d bytes, want %d\n", case_name, other_received_bytes, POSIX_XDP_OTHER_BYTES );
+    posix_check( other_received_bytes == POSIX_XDP_OTHER_BYTES );
+    posix_check( memcmp( other_received, other_sent, POSIX_XDP_OTHER_BYTES ) == 0 );
+    {
+        // exactly one datagram reached the other port
+        const ssize_t more = recv( other_receiver, other_received, sizeof(other_received), 0 );
+        posix_check( more < 0 );
+    }
     posix_check( garbage_sent == POSIX_WEATHER_GARBAGE );
     posix_check( valid_seen == POSIX_WEATHER_ROUNDS );
 
-    printf( "  server-cell %s server=xdp client=portable: veth mtu %d, oversize %d bytes as %llu fragments (far stack made %llu), fragment +%llu too_small +%llu too_large +%llu wrong_epoch +%llu wrong_filter +%llu invalid_type +%llu valid %d\n",
+    printf( "  server-cell %s server=xdp client=portable: veth mtu %d, oversize %d bytes to our port as N=%llu fragments (far stack made %llu): first_fragment +%llu; %d bytes to port %d as %llu fragments (far stack made %llu), delivered whole %d bytes byte-exact; fragment +%llu (want N-1+%llu = %llu) too_small +%llu too_large +%llu wrong_epoch +%llu wrong_filter +%llu invalid_type +%llu valid %d/%d connected\n",
             ipv6 ? "ipv6" : "ipv4", POSIX_XDP_MTU, oversize, (unsigned long long) expect_fragments, (unsigned long long) frag_creates,
+            (unsigned long long) ( final_counts.first_fragment - start.first_fragment ),
+            POSIX_XDP_OTHER_BYTES, POSIX_XDP_OTHER_PORT, (unsigned long long) expect_other_fragments, (unsigned long long) other_frag_creates,
+            other_received_bytes,
             (unsigned long long) ( final_counts.fragment - start.fragment ),
+            (unsigned long long) expect_other_fragments, (unsigned long long) ( expect_fragments - 1 + expect_other_fragments ),
             (unsigned long long) ( final_counts.too_small - start.too_small ),
             (unsigned long long) ( final_counts.too_large - start.too_large ),
             (unsigned long long) ( final_counts.wrong_epoch - start.wrong_epoch ),
             (unsigned long long) ( final_counts.wrong_filter - start.wrong_filter ),
-            (unsigned long long) ( final_counts.invalid_type - start.invalid_type ), valid_seen );
+            (unsigned long long) ( final_counts.invalid_type - start.invalid_type ), valid_seen, POSIX_WEATHER_ROUNDS );
     fflush( stdout );
 
     close( sender );
+    close( other_receiver );
     posix_xdp_teardown();
 }
 
