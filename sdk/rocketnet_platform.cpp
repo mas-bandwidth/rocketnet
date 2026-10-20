@@ -341,8 +341,6 @@ uint64_t rocketnet_platform_socket_send_failures( rocketnet_platform_socket_t * 
     return rocketnet_platform_atomic_load_u64( &socket->send_failures );
 }
 
-#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
-
 // Test-only receive seam, compiled into the unit suite's hook library only
 // (CMakeLists.txt, rocketnet_test_hooks). While a hook is set for one socket,
 // the single-packet receive path on that socket takes each datagram from the
