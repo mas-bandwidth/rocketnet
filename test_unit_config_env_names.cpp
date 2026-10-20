@@ -302,15 +302,19 @@ static std::vector<std::string> env_names_documented()
     while ( ( bytes = fread( buffer, 1, sizeof( buffer ), file ) ) > 0 )
         text.append( buffer, bytes );
     fclose( file );
-    const std::string marker = "///< ROCKETNET_";
+    const std::string markers[] = { "///< ROCKETNET_", "/// Environment: ROCKETNET_" };
+    for ( int m = 0; m < 2; m++ )
+    {
+        const std::string & marker = markers[m];
     for ( size_t at = text.find( marker ); at != std::string::npos; at = text.find( marker, at + 1 ) )
     {
-        size_t begin = at + strlen( "///< " );
+        size_t begin = at + marker.size() - strlen( "ROCKETNET_" );
         size_t end = begin;
         while ( end < text.size() && ( ( text[end] >= 'A' && text[end] <= 'Z' ) || ( text[end] >= '0' && text[end] <= '9' ) || text[end] == '_' ) )
             end++;
         if ( end > begin )
             names.push_back( text.substr( begin, end - begin ) );
+    }
     }
     return names;
 }
@@ -393,6 +397,25 @@ static std::vector<std::string> env_names_set_candidates()
     env_names_setenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS", "127.0.0.1:0" );
     set.push_back( "ROCKETNET_SERVER_PUBLIC_ADDRESS" );
 
+    // public link simulator fields (documented in sdk/rocketnet.h)
+    env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT", "0" );
+    set.push_back( "ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT" );
+    env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_LATENCY_MS", "0" );
+    set.push_back( "ROCKETNET_CLIENT_SIMULATED_LATENCY_MS" );
+    env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_JITTER_MS", "0" );
+    set.push_back( "ROCKETNET_CLIENT_SIMULATED_JITTER_MS" );
+    env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT", "0" );
+    set.push_back( "ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT" );
+
+    env_names_setenv( "ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT", "0" );
+    set.push_back( "ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT" );
+    env_names_setenv( "ROCKETNET_SERVER_SIMULATED_LATENCY_MS", "0" );
+    set.push_back( "ROCKETNET_SERVER_SIMULATED_LATENCY_MS" );
+    env_names_setenv( "ROCKETNET_SERVER_SIMULATED_JITTER_MS", "0" );
+    set.push_back( "ROCKETNET_SERVER_SIMULATED_JITTER_MS" );
+    env_names_setenv( "ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT", "0" );
+    set.push_back( "ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT" );
+
     return set;
 }
 
@@ -463,11 +486,29 @@ static void config_env_every_name_read_is_documented()
     check( env_names_contains( overrides, "ROCKETNET_SERVER_SERVER_PUBLIC_KEY" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_TRANSPORT" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_PUBLIC_ADDRESS" ) );
+    check( documented.size() == 60 );
+    check( env_names_contains( documented, "ROCKETNET_LOG_LEVEL" ) );
+    check( env_names_contains( documented, "ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT" ) );
+    check( env_names_contains( documented, "ROCKETNET_CLIENT_SIMULATED_LATENCY_MS" ) );
+    check( env_names_contains( documented, "ROCKETNET_CLIENT_SIMULATED_JITTER_MS" ) );
+    check( env_names_contains( documented, "ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT" ) );
+    check( env_names_contains( documented, "ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT" ) );
+    check( env_names_contains( documented, "ROCKETNET_SERVER_SIMULATED_LATENCY_MS" ) );
+    check( env_names_contains( documented, "ROCKETNET_SERVER_SIMULATED_JITTER_MS" ) );
+    check( env_names_contains( documented, "ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT" ) );
     for ( size_t i = 0; i < overrides.size(); i++ )
     {
         if ( !env_names_contains( documented, overrides[i].c_str() ) )
             printf( "read but not documented in sdk/rocketnet.h: %s\n", overrides[i].c_str() );
         check( env_names_contains( documented, overrides[i].c_str() ) );
+    }
+    for ( size_t i = 0; i < documented.size(); i++ )
+    {
+        if ( documented[i] == "ROCKETNET_LOG_LEVEL" )
+            continue; // read before init, checked in config_env_log_level_applies_before_init_logs
+        if ( !env_names_contains( overrides, documented[i].c_str() ) )
+            printf( "documented in sdk/rocketnet.h but not read by any pass: %s\n", documented[i].c_str() );
+        check( env_names_contains( overrides, documented[i].c_str() ) );
     }
 }
 REGISTER_UNIT_TEST( config_env_every_name_read_is_documented );

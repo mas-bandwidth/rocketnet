@@ -519,6 +519,7 @@ ROCKETNET_EXPORT size_t rocketnet_abi_field_size( const char * type, const char 
 /// library is initialized or transitioning; ROCKETNET_STATUS_PLATFORM_INIT_FAILED
 /// or ROCKETNET_STATUS_CRYPTO_INIT_FAILED when that layer does not start.
 /// Call before creating a client or a server; do not race an init or term transition.
+/// Environment: ROCKETNET_LOG_LEVEL overrides the maximum emitted log level before init logs.
 /// @code
 /// if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK ) {
 ///     // handle failure
@@ -759,10 +760,10 @@ struct rocketnet_client_config_t
     int rto_min_ms;                                 ///< ROCKETNET_CLIENT_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
     int rto_max_ms;                                 ///< ROCKETNET_CLIENT_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
     int reliable_timeout_ms;                        ///< ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
-    int simulated_loss_percent;                     ///< Development only: outgoing loss 0..100; 0 is off
-    int simulated_latency_ms;                       ///< Development only: outgoing latency in milliseconds; 0 is off
-    int simulated_jitter_ms;                        ///< Development only: outgoing jitter in milliseconds; 0 is off
-    int simulated_duplicate_percent;                ///< Development only: outgoing duplication 0..100; 0 is off
+    int simulated_loss_percent;                     ///< ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT: development only: outgoing loss 0..100; 0 is off
+    int simulated_latency_ms;                       ///< ROCKETNET_CLIENT_SIMULATED_LATENCY_MS: development only: outgoing latency in milliseconds; 0 is off
+    int simulated_jitter_ms;                        ///< ROCKETNET_CLIENT_SIMULATED_JITTER_MS: development only: outgoing jitter in milliseconds; 0 is off
+    int simulated_duplicate_percent;                ///< ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT: development only: outgoing duplication 0..100; 0 is off
 };
 
 #define ROCKETNET_CLIENT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, reliable_timeout_ms ) + sizeof( int ), sizeof( void * ) )
@@ -788,7 +789,7 @@ struct rocketnet_server_config_t
     int max_clients;                                ///< ROCKETNET_SERVER_MAX_CLIENTS: 1 .. ROCKETNET_MAX_CLIENTS; default 1000
     uint8_t filter_value[4];                        ///< ROCKETNET_SERVER_FILTER_VALUE: the per-title packet filter, as the clients'
     uint8_t backend_public_key[32];                 ///< ROCKETNET_SERVER_BACKEND_PUBLIC_KEY: verifies connect token signatures
-    uint8_t server_public_key[32];                  ///< ROCKETNET_SERVER_SERVER_PUBLIC_KEY
+    uint8_t server_public_key[32];                  ///< ROCKETNET_SERVER_SERVER_PUBLIC_KEY: title server public key
     uint8_t server_secret_key[32];                  ///< ROCKETNET_SERVER_SERVER_SECRET_KEY: secret, logged redacted
     int num_xdp_queues;                             ///< ROCKETNET_SERVER_NUM_XDP_QUEUES: xdp and gso only; 1 .. 1024; 0 is the transport default
     int num_os_cpus;                                ///< ROCKETNET_SERVER_NUM_OS_CPUS: xdp only, the cores left to the OS; 1 .. 256; 0 is the transport default
@@ -816,10 +817,10 @@ struct rocketnet_server_config_t
     int rto_min_ms;                                 ///< ROCKETNET_SERVER_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
     int rto_max_ms;                                 ///< ROCKETNET_SERVER_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
     int reliable_timeout_ms;                        ///< ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
-    int simulated_loss_percent;                     ///< Development only: outgoing loss 0..100; 0 is off
-    int simulated_latency_ms;                       ///< Development only: outgoing latency in milliseconds; 0 is off
-    int simulated_jitter_ms;                        ///< Development only: outgoing jitter in milliseconds; 0 is off
-    int simulated_duplicate_percent;                ///< Development only: outgoing duplication 0..100; 0 is off
+    int simulated_loss_percent;                     ///< ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT: development only: outgoing loss 0..100; 0 is off
+    int simulated_latency_ms;                       ///< ROCKETNET_SERVER_SIMULATED_LATENCY_MS: development only: outgoing latency in milliseconds; 0 is off
+    int simulated_jitter_ms;                        ///< ROCKETNET_SERVER_SIMULATED_JITTER_MS: development only: outgoing jitter in milliseconds; 0 is off
+    int simulated_duplicate_percent;                ///< ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT: development only: outgoing duplication 0..100; 0 is off
 };
 
 #define ROCKETNET_SERVER_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, reliable_timeout_ms ) + sizeof( int ), sizeof( void * ) )
