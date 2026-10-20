@@ -166,6 +166,7 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
         return false;
     if ( !read_env && !rocketnet_config_validate( "client", &send_kbps, rn_client_budget_fields, 1 ) )
         return false;
+    message->client_send_kbps = send_kbps;
     *kbps = rn_budget_kbps( send_kbps );
     return true;
 }
@@ -225,6 +226,7 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
         return false;
     if ( !read_env && !rocketnet_config_validate( "server", &send_kbps, rn_server_budget_fields, 1 ) )
         return false;
+    message->server_send_kbps = send_kbps;
     *kbps = rn_budget_kbps( send_kbps );
     return true;
 }
@@ -584,7 +586,7 @@ enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * cl
     }
     int status = ROCKETNET_STATUS_OK;
     client->connection = rocketnet_message_client_create_ex( client->context, connect_token, &client->transport, &client->message,
-                                                              client->block, client->block_bytes, client->kbps, &status );
+                                                              client->block, client->block_bytes, client->kbps, &status, client->message.client_send_kbps <= 0 );
     if ( client->connection )
         return ROCKETNET_STATUS_OK;
     if ( status == ROCKETNET_STATUS_INVALID_CONNECT_TOKEN )
@@ -1252,7 +1254,7 @@ enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * serv
     }
     int status = ROCKETNET_STATUS_OK;
     server->running = rocketnet_message_server_create_ex( server->context, server->address, &server->transport, &server->message,
-                                                          server->block, server->block_bytes, server->kbps, &status );
+                                                          server->block, server->block_bytes, server->kbps, &status, server->message.server_send_kbps <= 0 );
     if ( server->running )
         return ROCKETNET_STATUS_OK;
     return status == ROCKETNET_STATUS_OK ? ROCKETNET_STATUS_INVALID_ARGUMENT : (enum rocketnet_status_t) status;
