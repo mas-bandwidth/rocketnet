@@ -364,14 +364,23 @@ void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_regi
     ack->rto_initial = (double) config->rto_initial_ms / 1000.0;
     ack->rto_min = (double) config->rto_min_ms / 1000.0;
     ack->rto_max = (double) config->rto_max_ms / 1000.0;
+    // The resend rto never exceeds the receipt deadline
+    // (RN_RECEIPT_DEADLINE_S): the receipt deadline is a fixed constant and is
+    // never below the resend rto, so a receipt is never reported lost before
+    // the connection's own resend timeout would have fired. The order of the
+    // three bounds is kept: rto_min <= rto_initial <= rto_max.
+    if ( ack->rto_min > RN_RECEIPT_DEADLINE_S )
+        ack->rto_min = RN_RECEIPT_DEADLINE_S;
+    if ( ack->rto_max > RN_RECEIPT_DEADLINE_S )
+        ack->rto_max = RN_RECEIPT_DEADLINE_S;
+    if ( ack->rto_initial > RN_RECEIPT_DEADLINE_S )
+        ack->rto_initial = RN_RECEIPT_DEADLINE_S;
     ack->reliable_timeout = (double) config->reliable_timeout_ms / 1000.0;
     ack->resend_interval = (double) ROCKETNET_MESSAGE_RESEND_INTERVAL_MS / 1000.0;
     ack->rto_scale = (double) ROCKETNET_MESSAGE_RTO_SCALE_PERCENT / 100.0;
 
     ack->srtt = 0.0;
     ack->rttvar = 0.0;
-    ack->rsrtt = 0.0;
-    ack->rdev = 0.0;
     ack->rto = ack->rto_initial;                // tla/RNResendTiming.tla Init: rto = RtoInitial
     ack->has_rtt = 0;
     ack->has_oldest = 0;
@@ -605,20 +614,6 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
 
     // 1. One unambiguous RTT sample per acked packet_id (RFC 6298, CHANNELS 6.4).
     const double rtt = now >= entry->send_time ? ( now - entry->send_time ) : 0.0;
-    // RakNet's estimate and deviation, each 5% toward this sample, the
-    // deviation against the estimate before it moves (CC.cpp:210-222); the
-    // first sample sets them, as at CC.cpp:210. They feed its rto and nothing
-    // else: the resend rto below is the RFC 6298 one of CHANNELS 6.4.
-    if ( !ack->has_rtt )
-    {
-        ack->rsrtt = rtt;
-        ack->rdev = rtt * 0.5;
-    }
-    else
-    {
-        ack->rdev += ( fabs( ack->rsrtt - rtt ) - ack->rdev ) * 0.05;
-        ack->rsrtt += ( rtt - ack->rsrtt ) * 0.05;
-    }
     if ( !ack->has_rtt )
     {
         ack->srtt = rtt;
@@ -716,9 +711,9 @@ void rn_window_ack_receipt_sweep( rn_window_ack_t * ack, double now )
     rocketnet_assert( ack );
     // RNReceipts SweepLoss: sent order makes the first unexpired entry the
     // stopping point. An entry expires at its send time plus the receipt
-    // deadline (rn_window_ack_receipt_loss_delay), RakNet's rto, which is its
-    // own deadline and not the resend delay. Reliable references remain in the
-    // map for late ACKs.
+    // deadline (rn_window_ack_receipt_loss_delay), the fixed constant
+    // RN_RECEIPT_DEADLINE_S, which is its own deadline and not the resend
+    // timer. Reliable references remain in the map for late ACKs.
     if ( ack->receipt_sweep < ack->pkt_head )
         ack->receipt_sweep = ack->pkt_head;
     while ( ack->receipt_sweep < ack->pkt_tail )

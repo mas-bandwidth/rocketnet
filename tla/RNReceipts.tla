@@ -22,17 +22,17 @@ EXTENDS Naturals, Sequences, FiniteSets
 \* Fragments have independent numbers but share their message's serial.
 \* Outcomes are ghost emission history; ring is the bounded application queue.
 \* Dropping its oldest event is counted and never permits a second emission.
-\* ReceiptRTO is RakNet's RTO in Tick units (2 s while the RTT is unknown,
-\* else min( 2 * estimated RTT + 4 * deviation + 30 ms, 2 s ); a type-5
-\* receipt's deadline is that RTO, never below the resend RTO and independent
-\* of the resend timer (rn_window_ack_receipt_loss_delay,
-\* sdk/rocketnet_window_ack.h). BrokenLossAtRto is the reversed witness:
-\* LOSS at the resend RTO alone.
-CONSTANTS MaxPid, MapCapacity, ReceiptCapacity, RTO, ReceiptRTO, ReliableTimeout,
+\* ReceiptDeadline is the receipt deadline of a type-5 message in Tick units:
+\* one fixed constant, RN_RECEIPT_DEADLINE_S (2 s), the same for every send
+\* and every path, independent of the resend RTO and never below it
+\* (rn_window_ack_receipt_loss_delay, sdk/rocketnet_window_ack.h). RakNet
+\* reports the loss of such a message on its own timeout rather than on the
+\* resend timer (docs/RAKNET-RELIABILITY.md 9 "RTO"). BrokenLossAtRto is the
+\* reversed witness: LOSS at the resend RTO alone.
+CONSTANTS MaxPid, MapCapacity, ReceiptCapacity, RTO, ReceiptDeadline, ReliableTimeout,
           BrokenLastIndexAck, BrokenTwoOutcomes, BrokenReliableLoss, BrokenLossAtRto
 
 Serials == 1..3
-ReceiptDeadline == IF ReceiptRTO > RTO THEN ReceiptRTO ELSE RTO
 LossAge == IF BrokenLossAtRto THEN RTO ELSE ReceiptDeadline
 ReceiptSerials == 2..3
 Pids == 0..MaxPid
@@ -216,6 +216,7 @@ Next == (\E t \in 0..7 : Send(t)) \/ Tick \/ EvictMap \/ TakeReceipt \/ Disconne
 
 TypeOK ==
  /\ receiptType \in {5,6,7} /\ fragmentCount \in 1..2
+ /\ ReceiptDeadline >= RTO
  /\ nextSerial \in 1..4 /\ live \in BOOLEAN
  /\ sentNums \subseteq Nums /\ acked \subseteq sentNums
  /\ smap \in Seq([id:Pids, nums:Loads, unrel:BOOLEAN]) /\ Len(smap) <= MapCapacity
@@ -229,8 +230,9 @@ TypeOK ==
 ExactlyOneOutcomePerReceiptSerial == \A s \in Serials :
  Len(outcomes[s]) <= 1 /\ (outcomes[s] # <<>> => s \in Issued \cap ReceiptSerials)
 LossOnlyForUnreliableReceipt == \A s \in ReceiptSerials : Has(s,"LOSS") => EffectiveKind(s) = 5
-\* A type-5 LOSS by sweep comes only at the receipt deadline, never at the
-\* resend RTO alone; map eviction is the other LOSS source. age only grows.
+\* A type-5 LOSS by sweep comes only at the receipt deadline, the fixed
+\* constant, never at the resend RTO alone; map eviction is the other LOSS
+\* source. age only grows.
 LossOnlyAfterReceiptDeadline == \A s \in ReceiptSerials :
     Has(s,"LOSS") => (s \in evicted \/ age[<<s,0>>] >= ReceiptDeadline)
 PromotedIsTwin == \A s \in ReceiptSerials :

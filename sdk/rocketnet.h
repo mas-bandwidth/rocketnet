@@ -173,14 +173,17 @@
 
 #define ROCKETNET_MESSAGE_SINGLE_BYTES          ( ROCKETNET_MAX_PAYLOAD_BYTES - 1 )      ///< 1415
 
-/// The receipt deadline of UNRELIABLE_WITH_ACK_RECEIPT is RakNet's rto
-/// (docs/RAKNET-RELIABILITY.md 9 "RTO"), measured from the send: 2000 ms
-/// while the round-trip time is unknown, and otherwise the smaller of
-/// 2 x estimated round-trip time + 4 x its deviation + 30 ms and 2000 ms,
-/// with the estimate and the deviation moving 5% toward every acknowledged
-/// sample and no back-off (rn_window_ack_receipt_loss_delay,
-/// sdk/rocketnet_window_ack.h). It is never below the resend retransmit
-/// timeout. It adapts to the path and is not a fixed deadline.
+/// The receipt deadline of UNRELIABLE_WITH_ACK_RECEIPT is a fixed constant,
+/// 2000 ms after the send (RN_RECEIPT_DEADLINE_S,
+/// sdk/rocketnet_window_ack.h). It is independent of the resend retransmit
+/// timeout and never below it: the resend timeout is capped at the receipt
+/// deadline, so a receipt is never reported lost before the connection's own
+/// resend timeout would have fired. RakNet reports the loss of such a message
+/// on its own timeout rather than on the resend timer
+/// (docs/RAKNET-RELIABILITY.md 9 "RTO" and 10
+/// "UNRELIABLE_WITH_ACK_RECEIPT"), and this is that timeout as one constant,
+/// the same for every send and every path. An acknowledgement that arrives
+/// before the deadline reports ACKED, however late it is.
 
 /// Send budgets are kilobits per second of wire bytes (1 kbps = 1000 bit/s),
 /// per connection: the defaults of the config's send_kbps and
@@ -294,7 +297,7 @@ enum rocketnet_reliability_t
     /// Send once and report whether the carrying packet is acknowledged. A
     /// larger message is sent as a reliable block and can report ACKED only. A
     /// single-packet message can report ACKED or LOSS: LOSS when no
-    /// acknowledgement arrives by its receipt deadline, RakNet's rto as
+    /// acknowledgement arrives by its receipt deadline, the fixed 2000 ms
     /// described above.
     ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT           = 5,
     /// Resend until acknowledged and report an ACKED receipt. Delivery is
@@ -313,9 +316,10 @@ enum rocketnet_receipt_status_t
     /// peer application read the message.
     ROCKETNET_RECEIPT_STATUS_ACKED                              = 1,
     /// An unreliable receipt packet was not acknowledged by its receipt
-    /// deadline (RakNet's rto, never below the resend retransmit timeout), the
-    /// sender evicted it from its sent map, or the send budget refused it. The
-    /// message is not resent; reliable receipt modes do not produce LOSS.
+    /// deadline (the fixed 2000 ms, never below the resend retransmit
+    /// timeout), the sender evicted it from its sent map, or the send budget
+    /// refused it. The message is not resent; reliable receipt modes do not
+    /// produce LOSS.
     ROCKETNET_RECEIPT_STATUS_LOSS                               = 2
 };
 
@@ -770,7 +774,7 @@ struct rocketnet_client_config_t
     int receipt_ring;                               ///< ROCKETNET_CLIENT_RECEIPT_RING: send receipts kept until read; a full ring drops its oldest; 16 .. 1 << 16; default 256
     int rto_initial_ms;                             ///< ROCKETNET_CLIENT_RTO_INITIAL_MS: the retransmit timeout before an rtt sample, milliseconds; 10 .. 60000; default 100
     int rto_min_ms;                                 ///< ROCKETNET_CLIENT_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
-    int rto_max_ms;                                 ///< ROCKETNET_CLIENT_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
+    int rto_max_ms;                                 ///< ROCKETNET_CLIENT_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250; capped at the receipt deadline (2000 ms)
     int reliable_timeout_ms;                        ///< ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
     int simulated_loss_percent;                     ///< Development only: outgoing loss 0..100; 0 is off
     int simulated_latency_ms;                       ///< Development only: outgoing latency in milliseconds; 0 is off
@@ -827,7 +831,7 @@ struct rocketnet_server_config_t
     int receipt_ring;                               ///< ROCKETNET_SERVER_RECEIPT_RING: send receipts kept until read; a full ring drops its oldest; 16 .. 1 << 16; default 256
     int rto_initial_ms;                             ///< ROCKETNET_SERVER_RTO_INITIAL_MS: the retransmit timeout before an rtt sample, milliseconds; 10 .. 60000; default 100
     int rto_min_ms;                                 ///< ROCKETNET_SERVER_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
-    int rto_max_ms;                                 ///< ROCKETNET_SERVER_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
+    int rto_max_ms;                                 ///< ROCKETNET_SERVER_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250; capped at the receipt deadline (2000 ms)
     int reliable_timeout_ms;                        ///< ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
     int simulated_loss_percent;                     ///< Development only: outgoing loss 0..100; 0 is off
     int simulated_latency_ms;                       ///< Development only: outgoing latency in milliseconds; 0 is off

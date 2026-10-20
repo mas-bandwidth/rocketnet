@@ -1466,8 +1466,8 @@ struct rocketnet_message_config_t
     int rto_initial_ms;                 // 10 .. 60000; default 100
     /** @brief Minimum retransmit timeout in milliseconds; 1 through 60000, default 10. */
     int rto_min_ms;                     // 1 .. 60000; default 10
-    /** @brief Maximum retransmit timeout in milliseconds; 10 through 60000, default 250. */
-    int rto_max_ms;                     // 10 .. 60000; default 250
+    /** @brief Maximum retransmit timeout in milliseconds; 10 through 60000, default 250; capped at the receipt deadline (2000 ms). */
+    int rto_max_ms;                     // 10 .. 60000; default 250; capped at RN_RECEIPT_DEADLINE_S
     /** @brief Reliable-message lifetime in milliseconds; 1000 through 600000, default 10000. */
     int reliable_timeout_ms;            // 1000 .. 600000; default 10000
     /** @brief Default client send budget in kilobits per second; zero or less is uncapped, positive values may not exceed ROCKETNET_SEND_BUDGET_MAX_KBPS. */
