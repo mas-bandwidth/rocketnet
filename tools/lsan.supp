@@ -18,3 +18,9 @@ leak:TestSlotlessPacketNeverMovesTheSessionWindow
 # allocates the server handshake fixture via rocketnet_handshake_server_setup
 # and longjmps on the expected failure before rocketnet_handshake_server_teardown.
 leak:TestOneConnectionPerTokenAfterHistoryFlush
+
+# functional/rocketnet_functional_tests.cpp: rocketnet_test_server_uring_create_stalled
+# is the one noinline frame that creates the driver the probe deliberately
+# stalls destroying, so this suppresses only that driver's abandoned memory,
+# not every allocation made anywhere under the probe.
+leak:rocketnet_test_server_uring_create_stalled

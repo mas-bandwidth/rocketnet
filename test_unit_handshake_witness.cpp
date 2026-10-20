@@ -11,12 +11,13 @@
 //
 // The four witnesses:
 //   F4  EphemeralErasedOutsideHandshake (ClientConnection): an attempt that
-//       fails from a waiting state leaves the client's ephemeral secret key
-//       and token scratch zeroed (S:1089-1092). Reversed: the failure exits
-//       in check_deadlines and process_denied never sodium_memzero them.
-//   F8  TerminalAbsorbing (ClientConnection): only connect leaves a terminal
-//       state (-7..-1); disconnect() from one leaves it alone (S:2042-2047).
-//       Reversed: disconnect rewrites every non-zero state to 0.
+//       fails from a waiting state leaves the client's ephemeral secret and
+//       the token keys zero. set_state of a state <= DISCONNECTED resets
+//       them. The four failure modes are denial and the three handshake
+//       timeouts.
+//   F8  TerminalAbsorbing (ClientConnection): a terminal state leaves only
+//       by connect (to 1) or by disconnect (to 0). disconnect() from a
+//       terminal state returns the client to DISCONNECTED.
 //   One client id, one live connection (ServerConnection F9, History
 //       "none"): two handshakes, each with its own token for one client id;
 //       the client-id check at the response refuses the second while the
@@ -28,10 +29,9 @@
 //       These two are the reversed witnesses; the code's behaviour is
 //       RepeatKeepAlive = TRUE, KeepAliveClock = "keepalive".
 //
-// F4, F8 and OneConnectionPerToken are still open on main, so each is
-// registered with the expected-fail marker naming its fix card and fails at
-// BASE. RepeatKeepAlive and KeepAliveClock assert the code's own behaviour
-// and pass today.
+// F4 and F8 assert the code's behaviour and are ordinary cases.
+// RepeatKeepAlive and KeepAliveClock assert the code's own behaviour and
+// pass today.
 
 #include "test_unit_registry.h"
 
@@ -500,22 +500,20 @@ static int rocketnet_handshake_ephemeral_and_token_scratch_zero( const struct ro
     return 1;
 }
 
-static int rocketnet_handshake_disconnect_preserves( struct rocketnet_client_protocol_t * client )
+static int rocketnet_handshake_disconnect_returns_disconnected( struct rocketnet_client_protocol_t * client )
 {
     uint8_t burst[ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
     int burst_count = 0;
     int burst_bytes = 0;
-    int before = client->state;
     rocketnet_client_protocol_disconnect( client, burst, &burst_count, &burst_bytes );
-    return client->state == before;
+    return client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
 }
 
 // ---------------------------------------------------------------------------
-// F4, EphemeralErasedOutsideHandshake (ClientConnection.tla). still open on
-// main: the failure exits leave the ephemeral secret and the token scratch in
-// memory. each of the four failure modes -- denial, request timeout, challenge
-// timeout and response timeout -- is a Tick (TimeoutPairing) or a
-// ClientRecvDenied that sets the state and nothing else.
+// F4, EphemeralErasedOutsideHandshake (ClientConnection.tla). a denial or a
+// handshake timeout is set_state of a state <= DISCONNECTED, which zeroes
+// the ephemeral secret and the token keys. the four failure modes are
+// denial, request timeout, challenge timeout and response timeout.
 // ---------------------------------------------------------------------------
 
 static void TestClientEphemeralErasedOutsideHandshake()
@@ -542,10 +540,9 @@ static void TestClientEphemeralErasedOutsideHandshake()
 }
 
 // ---------------------------------------------------------------------------
-// F8, TerminalAbsorbing (ClientConnection.tla). still open on main:
-// disconnect() rewrites a terminal state (-7..-1) to 0 (S:2042-2047, the only
-// way out of a terminal state is a fresh connect). the witness drives each
-// terminal state and asserts disconnect leaves it alone.
+// F8, TerminalAbsorbing (ClientConnection.tla). a terminal state leaves
+// only by connect or by disconnect. disconnect() from each terminal state
+// returns DISCONNECTED.
 // ---------------------------------------------------------------------------
 
 static void TestDisconnectAbsorbsTerminalState()
@@ -560,18 +557,18 @@ static void TestDisconnectAbsorbsTerminalState()
         ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED,                 // -1
     };
 
-    int absorbing = 0;
+    int returned = 0;
     for ( int i = 0; i < 7; i++ )
     {
         struct rocketnet_client_protocol_t client;
         struct rocketnet_counters_t counters;
         rocketnet_handshake_prepare_terminal( &client, &counters, terminal_states[i] );
-        if ( rocketnet_handshake_disconnect_preserves( &client ) )
-            absorbing++;
+        if ( rocketnet_handshake_disconnect_returns_disconnected( &client ) )
+            returned++;
         rocketnet_counters_assert_conserved( &counters );
     }
 
-    rocketnet_unit_check( absorbing == 7 );
+    rocketnet_unit_check( returned == 7 );
 }
 
 // ---------------------------------------------------------------------------
@@ -848,7 +845,7 @@ REGISTER_UNIT_TEST( TestClientEphemeralErasedOutsideHandshake );
 REGISTER_UNIT_TEST( token_created_past_skew_is_refused );
 REGISTER_UNIT_TEST( token_created_within_skew_passes_the_rung );
 REGISTER_UNIT_TEST( token_create_skew_unchecked_without_lifetime_cap );
-REGISTER_UNIT_TEST_EXPECTED_FAIL( TestDisconnectAbsorbsTerminalState, "rnfix-client-terminal-state-absorbing" );
+REGISTER_UNIT_TEST( TestDisconnectAbsorbsTerminalState );
 REGISTER_UNIT_TEST( TestOneConnectionPerTokenAfterHistoryFlush );
 REGISTER_UNIT_TEST( TestServerRepeatsKeepAliveWhileIdle );
 REGISTER_UNIT_TEST( TestKeepAliveClockCountsOnlyKeepAlives );
