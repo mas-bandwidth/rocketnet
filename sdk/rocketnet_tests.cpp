@@ -60,6 +60,34 @@
 #include <dlfcn.h>
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+static void * swarm_rss_malloc( void *, size_t bytes )
+{
+    return HeapAlloc( GetProcessHeap(), 0, bytes );
+}
+
+static void swarm_rss_free( void *, void * memory )
+{
+    if ( memory )
+        HeapFree( GetProcessHeap(), 0, memory );
+}
+
+// rocketnet_test_swarm initializes used state; HeapAlloc avoids filling unused ACK history in the Debug CRT.
+static void swarm_rss_allocator_begin()
+{
+    rocketnet_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_allocator_ex( swarm_rss_malloc, swarm_rss_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+}
+
+static void swarm_rss_allocator_end()
+{
+    rocketnet_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+}
+#endif
+
 #include <limits.h>
 #include <math.h>
 #include <stdarg.h>
@@ -6246,6 +6274,9 @@ void rocketnet_test_client_server_lossy_wire()
 
 void rocketnet_test_swarm()
 {
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    swarm_rss_allocator_begin();
+#endif
     // ALWAYS BE LOADED: a thousand real clients against one server, in
     // memory on a direct wire, with churn -- most connect and stay, some
     // connect and leave, some abandon mid-handshake so the deadline reclaim
@@ -6508,6 +6539,9 @@ void rocketnet_test_swarm()
     rocketnet_free( NULL, clients );
     rocketnet_free( NULL, addresses );
     rocketnet_test_server_teardown( &test );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    swarm_rss_allocator_end();
+#endif
     rocketnet_counters_assert_conserved( &client_counters );
 }
 
