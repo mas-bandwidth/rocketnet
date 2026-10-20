@@ -116,8 +116,8 @@
 #define ROCKETNET_LOOPBACK_MAX_ENDPOINTS          ( ROCKETNET_MAX_CLIENTS + 1 )
 
 // The packet size: the UDP payload of one datagram on a 1500-byte MTU link,
-// the number every other size limit derives from (standard/TRANSPORT.md
-// t8.11). Over IPv4 it is 1500 - 20 - 8 = 1472 bytes, the receive ceiling;
+// the number every other size limit derives from (standard/TRANSPORT.md t8.11, _Packet
+// sizes_). Over IPv4 it is 1500 - 20 - 8 = 1472 bytes, the receive ceiling;
 // over IPv6 it is 1500 - 40 - 8 = 1452 bytes, the send budget, so a maximum
 // packet crosses a 1500-MTU path unfragmented on either family.
 
