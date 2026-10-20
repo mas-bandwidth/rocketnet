@@ -21,7 +21,8 @@
 //     takes 0 or 1 only
 //   - every variable those passes apply is named in sdk/rocketnet.h
 //   - transport env passes (sdk/rocketnet_client_transport.cpp:583-586,652-653
-//     and sdk/rocketnet_server_transport.cpp:924,1065) are fully inventoried,
+//     and sdk/rocketnet_server_transport.cpp rocketnet_config_apply_env,
+//     rocketnet_config_apply_env_uint64) are fully inventoried,
 //     including public fields, simulator/internal rows and legacy refusals
 
 #include <stdio.h>
@@ -529,7 +530,7 @@ static void config_env_every_name_read_is_documented()
     struct rn_message_object_t * server = env_names_object_create( 1, 0 );
     struct rn_message_object_t * client = env_names_object_create( 0, 0 );
 
-    // transport public env passes (sdk/rocketnet_client_transport.cpp:583-586 and sdk/rocketnet_server_transport.cpp:924)
+    // transport public env passes (sdk/rocketnet_client_transport.cpp:583-586 and sdk/rocketnet_server_transport.cpp rocketnet_config_apply_env)
     int num_client_fields = 0;
     const struct rocketnet_config_field_t * client_fields = rocketnet_client_transport_config_fields( &num_client_fields );
     struct rocketnet_client_transport_config_t client_transport_apply;
@@ -606,7 +607,8 @@ REGISTER_UNIT_TEST( config_env_every_name_read_is_documented );
 // ---------------------------------------------------------------------------
 // (4) transport passes also exercise development, internal and operator rows:
 // SIMULATED_*, GAME_CLOCK_EPOCH, and MEMORY_BUDGET_BYTES (sdk/rocketnet_client_transport.cpp:583-586,652-653
-// and sdk/rocketnet_server_transport.cpp:924,1065), and refuse legacy names
+// and sdk/rocketnet_server_transport.cpp rocketnet_config_apply_env,
+// rocketnet_config_apply_env_uint64), and refuse legacy names
 // ---------------------------------------------------------------------------
 
 static void config_env_transport_passes_exercise_all_rows()
