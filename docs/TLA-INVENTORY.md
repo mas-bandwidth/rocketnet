@@ -796,7 +796,7 @@ or `Pending` (user, awaiting a fill reservation). Each send frame is in one of `
   keeps the batch (`:2334-2355`).
 - Main thread: `send_packets` publishes a non-empty filling generation and acquires the
   next (`:1883-1897`). A fill thread may acquire on the slow path when both are queued
-  (`:1766-1775`). The handoff's reopen (`send_handoff.h:43`) returns the newest queued
+  (`:1766-1775`). The handoff's reopen (`send_handoff.h:45`) returns the newest queued
   generation and never the front; `tla/SendHandoff.tla` checks the reopen rules. The
   socket's acquire helper (`:2282-2308`) calls acquire first and, when every generation
   is queued, reopen, marking the reopened generation's finish_base at the count it
@@ -810,9 +810,9 @@ or `Pending` (user, awaiting a fill reservation). Each send frame is in one of `
   reopen returns the newest queued generation, never the front; a queued generation is
   never overwritten or duplicated (`send_handoff.h:22-49`, `tla/SendHandoff.tla`).
 - `INV ReopenedPrivate`: the generation reopen hands back is no longer queued and is
-  never the one in flight (`send_handoff.h:43`, `tla/SendHandoff.tla`).
+  never the one in flight (`send_handoff.h:45`, `tla/SendHandoff.tla`).
 - `INV FrontNeverReopened`: reopen takes the newest queued generation, never the front
-  the worker may be draining (`send_handoff.h:43`, `tla/SendHandoff.tla`).
+  the worker may be draining (`send_handoff.h:45`, `tla/SendHandoff.tla`).
 - `INV PublishedPacketsStable`: a finish through a pointer from before a reopen does
   not rewrite a packet already published (`tla/SendHandoff.tla`).
 - `LIVE EveryQueuedGenerationCompletes`: under fairness of publish, take and retire,
