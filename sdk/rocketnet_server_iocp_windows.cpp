@@ -353,6 +353,18 @@ static void rocketnet_iocp_worker( void * argument )
 
             rocketnet_address_t from;
             const bool running = !iocp->stopping.load( std::memory_order_acquire );
+            if ( !success && running && entries[i].Internal != 0 )
+            {
+                // a receive completed with an ICMP report of an earlier send
+                // (port, host or network unreachable): counted, dropped and
+                // reposted below like every failed receive, never the end of
+                // the worker (windows-udp-connreset audit, iocp and URO completion)
+                DWORD transferred = 0;
+                DWORD completion_flags = 0;
+                if ( !WSAGetOverlappedResult( iocp->socket, &op->overlapped, &transferred, FALSE, &completion_flags ) &&
+                     rocketnet_platform_receive_status_is_reset( WSAGetLastError() ) )
+                    rocketnet_platform_count_receive_reset();
+            }
             if ( op->uro_data )
             {
                 if ( running )
@@ -464,8 +476,16 @@ uint64_t rocketnet_server_iocp_allocation_bytes(int workers)
     return bytes <= SIZE_MAX ? bytes : 0;
 }
 
+static std::atomic<int> rocketnet_iocp_test_forced_flags{0};
+
+void rocketnet_server_iocp_test_force_flags( int flags )
+{
+    rocketnet_iocp_test_forced_flags.store( flags, std::memory_order_relaxed );
+}
+
 rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketnet_address_t * bind_address, int num_workers, int fail_stage, int flags )
 {
+    flags |= rocketnet_iocp_test_forced_flags.load( std::memory_order_relaxed );
     if ( !bind_address || ( bind_address->type != ROCKETNET_ADDRESS_IPV4 && bind_address->type != ROCKETNET_ADDRESS_IPV6 ) ) return NULL;
     if ( num_workers == 0 ) num_workers = ROCKETNET_IOCP_DEFAULT_WORKERS;
     if ( num_workers < 1 || num_workers > ROCKETNET_IOCP_MAX_WORKERS )
@@ -488,7 +508,6 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     DWORD returned_bytes = 0;
     BOOL enabled = TRUE;
     DWORD v6_only = FALSE;
-    BOOL connection_reset = FALSE;
 
     iocp->workers = (rocketnet_iocp_worker_t*) rocketnet_malloc( context, sizeof(rocketnet_iocp_worker_t) * num_workers );
     if ( !iocp->workers ) goto failed;
@@ -514,7 +533,9 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     if ( setsockopt( iocp->socket, SOL_SOCKET, SO_RCVBUF, (const char*) &buffer_bytes, sizeof(buffer_bytes) ) == SOCKET_ERROR ) goto failed;
     buffer_bytes = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
     if ( setsockopt( iocp->socket, SOL_SOCKET, SO_SNDBUF, (const char*) &buffer_bytes, sizeof(buffer_bytes) ) == SOCKET_ERROR ) goto failed;
-    if ( WSAIoctl( iocp->socket, SIO_UDP_CONNRESET, &connection_reset, sizeof(connection_reset), NULL, 0, &returned_bytes, NULL, NULL ) == SOCKET_ERROR ) goto failed;
+    // windows-udp-connreset audit, iocp socket: both ICMP reset reports off;
+    // a refusal is logged once and the receive paths skip the statuses
+    rocketnet_platform_socket_disable_udp_resets( (uintptr_t) iocp->socket );
     if ( bind( iocp->socket, (sockaddr*) &address, address_bytes ) == SOCKET_ERROR ) goto failed;
     address_bytes = sizeof(address);
     if ( getsockname( iocp->socket, (sockaddr*) &address, &address_bytes ) == SOCKET_ERROR ) goto failed;

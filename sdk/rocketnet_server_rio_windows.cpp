@@ -465,10 +465,8 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     SOCKADDR_INET address;
     int address_bytes = 0;
     int buffer_bytes = ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE;
-    DWORD returned_bytes = 0;
     BOOL enabled = TRUE;
     DWORD v6_only = FALSE;
-    BOOL connection_reset = FALSE;
 
     rio->slot_bytes = (int*) rocketnet_malloc( context, sizeof(int) * ROCKETNET_RIO_SEND_FRAMES );
     if ( !rio->slot_bytes ) goto failed;
@@ -489,7 +487,9 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     if ( setsockopt( rio->socket, SOL_SOCKET, SO_RCVBUF, (const char*) &buffer_bytes, sizeof(buffer_bytes) ) == SOCKET_ERROR ) goto failed;
     buffer_bytes = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
     if ( setsockopt( rio->socket, SOL_SOCKET, SO_SNDBUF, (const char*) &buffer_bytes, sizeof(buffer_bytes) ) == SOCKET_ERROR ) goto failed;
-    if ( WSAIoctl( rio->socket, SIO_UDP_CONNRESET, &connection_reset, sizeof(connection_reset), NULL, 0, &returned_bytes, NULL, NULL ) == SOCKET_ERROR ) goto failed;
+    // windows-udp-connreset audit, rio socket: both ICMP reset reports off;
+    // a refusal is logged once and the receive path skips the statuses
+    rocketnet_platform_socket_disable_udp_resets( (uintptr_t) rio->socket );
     if ( bind( rio->socket, (sockaddr*) &address, address_bytes ) == SOCKET_ERROR ) goto failed;
     address_bytes = sizeof(address);
     if ( getsockname( rio->socket, (sockaddr*) &address, &address_bytes ) == SOCKET_ERROR ) goto failed;
@@ -687,6 +687,11 @@ static void rocketnet_rio_complete_receive( rocketnet_server_rio_t * rio, const 
     int injected = 0;
     if ( ROCKETNET_RIO_TEST_FAULT( rio, ROCKETNET_RIO_TEST_FAULT_RECEIVE_COMPLETION, &injected ) )
         status = (LONG) injected;
+    // an ICMP report of an earlier send (port, host or network unreachable)
+    // is counted with the failed receives and the slice is re-posted below,
+    // never the end of the drain (windows-udp-connreset audit, rio completion)
+    if ( rocketnet_platform_receive_status_is_reset( (int) status ) )
+        rocketnet_platform_count_receive_reset();
     if ( status == WSAEMSGSIZE )
         rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE );     // past the slice: oversize
     else if ( status != 0 )

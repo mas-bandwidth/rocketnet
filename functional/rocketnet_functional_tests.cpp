@@ -8088,6 +8088,26 @@ extern void windows_server_drops_runt_and_garbage_rio_ipv4();
 extern void windows_server_drops_runt_and_garbage_rio_ipv6();
 extern void windows_client_drops_oversize_and_garbage_ipv4();
 extern void windows_client_drops_oversize_and_garbage_ipv6();
+// a hard-killed client never stalls a Windows receive (functional/windows_connreset.cpp)
+extern void windows_connreset_hard_killed_client_portable_ipv4();
+extern void windows_connreset_hard_killed_client_portable_ipv6();
+extern void windows_connreset_hard_killed_client_iocp_ipv4();
+extern void windows_connreset_hard_killed_client_iocp_ipv6();
+extern void windows_connreset_hard_killed_client_iocp_plain_ipv4();
+extern void windows_connreset_hard_killed_client_iocp_plain_ipv6();
+extern void windows_connreset_hard_killed_client_rio_ipv4();
+extern void windows_connreset_hard_killed_client_rio_ipv6();
+extern void windows_connreset_send_to_closed_port_portable_ipv4();
+extern void windows_connreset_send_to_closed_port_portable_ipv6();
+extern void windows_connreset_send_to_closed_port_iocp_ipv4();
+extern void windows_connreset_send_to_closed_port_iocp_ipv6();
+extern void windows_connreset_send_to_closed_port_iocp_plain_ipv4();
+extern void windows_connreset_send_to_closed_port_iocp_plain_ipv6();
+extern void windows_connreset_send_to_closed_port_rio_ipv4();
+extern void windows_connreset_send_to_closed_port_rio_ipv6();
+extern void windows_client_connreset_server_gone_ipv4();
+extern void windows_client_connreset_server_gone_ipv6();
+extern void windows_connreset_child_client();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 // A destroyed client's receive thread always exits: destroy stores quit and
@@ -8407,6 +8427,25 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "windows_server_drops_runt_and_garbage_rio_ipv6", windows_server_drops_runt_and_garbage_rio_ipv6 },
     { "windows_client_drops_oversize_and_garbage_ipv4", windows_client_drops_oversize_and_garbage_ipv4 },
     { "windows_client_drops_oversize_and_garbage_ipv6", windows_client_drops_oversize_and_garbage_ipv6 },
+    { "windows_connreset_hard_killed_client_portable_ipv4", windows_connreset_hard_killed_client_portable_ipv4 },
+    { "windows_connreset_hard_killed_client_portable_ipv6", windows_connreset_hard_killed_client_portable_ipv6 },
+    { "windows_connreset_hard_killed_client_iocp_ipv4", windows_connreset_hard_killed_client_iocp_ipv4 },
+    { "windows_connreset_hard_killed_client_iocp_ipv6", windows_connreset_hard_killed_client_iocp_ipv6 },
+    { "windows_connreset_hard_killed_client_iocp_plain_ipv4", windows_connreset_hard_killed_client_iocp_plain_ipv4 },
+    { "windows_connreset_hard_killed_client_iocp_plain_ipv6", windows_connreset_hard_killed_client_iocp_plain_ipv6 },
+    { "windows_connreset_hard_killed_client_rio_ipv4", windows_connreset_hard_killed_client_rio_ipv4 },
+    { "windows_connreset_hard_killed_client_rio_ipv6", windows_connreset_hard_killed_client_rio_ipv6 },
+    { "windows_connreset_send_to_closed_port_portable_ipv4", windows_connreset_send_to_closed_port_portable_ipv4 },
+    { "windows_connreset_send_to_closed_port_portable_ipv6", windows_connreset_send_to_closed_port_portable_ipv6 },
+    { "windows_connreset_send_to_closed_port_iocp_ipv4", windows_connreset_send_to_closed_port_iocp_ipv4 },
+    { "windows_connreset_send_to_closed_port_iocp_ipv6", windows_connreset_send_to_closed_port_iocp_ipv6 },
+    { "windows_connreset_send_to_closed_port_iocp_plain_ipv4", windows_connreset_send_to_closed_port_iocp_plain_ipv4 },
+    { "windows_connreset_send_to_closed_port_iocp_plain_ipv6", windows_connreset_send_to_closed_port_iocp_plain_ipv6 },
+    { "windows_connreset_send_to_closed_port_rio_ipv4", windows_connreset_send_to_closed_port_rio_ipv4 },
+    { "windows_connreset_send_to_closed_port_rio_ipv6", windows_connreset_send_to_closed_port_rio_ipv6 },
+    { "windows_client_connreset_server_gone_ipv4", windows_client_connreset_server_gone_ipv4 },
+    { "windows_client_connreset_server_gone_ipv6", windows_client_connreset_server_gone_ipv6 },
+    { "windows_connreset_child_client", windows_connreset_child_client },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 };
 
