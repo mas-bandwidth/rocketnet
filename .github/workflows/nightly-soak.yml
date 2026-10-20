@@ -193,7 +193,7 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          if [ "$RUNNER_OS" = "macOS" ]; then
+          if [ "${RUNNER_OS:-}" = "macOS" ] || [ "$(uname -s)" = "Darwin" ]; then
             # darwin has no libbpf, libxdp or liburing; libsodium is the independent parity reference check_sodium.py loads
             for tool in cmake clang c++ xxd python3; do
               if ! command -v "$tool" >/dev/null 2>&1; then
