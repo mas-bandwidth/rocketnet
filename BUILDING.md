@@ -154,7 +154,10 @@ It is empty by default, so the Makefile and the existing jobs are unchanged.
 LeakSanitizer has no Apple runtime, so on macOS leaks are checked with the
 system `leaks` tool on a Release build without sanitizers. The script sets
 `MallocStackLogging=1` and runs each binary through
-`/usr/bin/leaks --atExit --`, failing on any leak with its stack. It runs the
+`/usr/bin/leaks --atExit --`, failing on any leak with its stack. leaks
+returns its own status, not the target's, so each binary first runs once on
+its own with the same environment and fails the check when it exits non-zero
+(`run_leaks_quiet`, tools/macos/leaks_run.py:139). It runs the
 lifecycle and functional suites and a 100000 iteration soak under every
 transport pin, and `--self-test` proves that a scratch binary leaking one
 allocation turns the check red:
@@ -166,22 +169,26 @@ allocation turns the check red:
 
 `leaks --atExit` needs Developer Mode. The script prints
 `DevToolsSecurity -status` first and exits 2 when it reports disabled
-(`check_developer_mode`, tools/macos/leaks_run.py:81). Each leaks call runs in
+(`check_developer_mode`, tools/macos/leaks_run.py:87). Each leaks call runs in
 its own process group and is killed with its target after `--timeout` seconds,
-120 by default (`run_leaks_quiet`, tools/macos/leaks_run.py:118). The pins are
+120 by default (`run_group`, tools/macos/leaks_run.py:124). The pins are
 the four transport pairs and both ends on auto with `ROCKETNET_PUMP=portable`
-(`PINS`, tools/macos/leaks_run.py:53).
+(`PINS`, tools/macos/leaks_run.py:58).
 
 leaks reads a target's writable memory and prints allocation stacks only when
 the target is debuggable, so the script ad-hoc signs each binary with the
 `com.apple.security.get-task-allow` entitlement before it runs it
-(`make_debuggable`, tools/macos/leaks_run.py:98), and a run whose output says
-the process is not debuggable fails (tools/macos/leaks_run.py:142).
+(`make_debuggable`, tools/macos/leaks_run.py:104), and a run whose output says
+the process is not debuggable fails (tools/macos/leaks_run.py:169).
 `./bin/functional` runs each case in a child process that leaks does not see,
 so the matrix runs every case of the `rocketnet_functional_tests` table on its
 own as `./bin/functional --run <case>` under leaks, `--jobs` at a time, 8 by
 default (`functional_cases` and `run_functional`,
-tools/macos/leaks_run.py:168 and :185). The soak takes longer than the default
+tools/macos/leaks_run.py:195 and :212). The table holds rows for other
+platforms behind `#if`; a case this build does not hold answers
+`unknown functional test` with exit 2 on its plain run
+(functional/rocketnet_functional_tests.cpp:8689), and the matrix lists
+it as SKIP with no leaks run. The soak takes longer than the default
 timeout, so the matrix runs with `--timeout 600`.
 
 The `ROCKETNET_SANITIZE` option builds and the unit suite passes green under

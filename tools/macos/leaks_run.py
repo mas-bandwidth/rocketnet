@@ -4,8 +4,10 @@
 LeakSanitizer has no Apple runtime, so leaks are checked on a Release build
 without sanitizers: every run sets MallocStackLogging=1 and goes through
     /usr/bin/leaks --atExit -- <binary> [args...]
-A run fails when leaks reports a non-zero leak count or the binary exits
-non-zero; the report carries the stacks leaks printed.
+leaks --atExit returns its own status, not the target's, so each binary is
+first run once on its own with the same environment and arguments: a run
+fails when that plain run exits non-zero or leaks reports a non-zero leak
+count; the report carries the stacks leaks printed.
 
 leaks --atExit stops the target at exit and attaches to it, which needs
 Developer Mode: with it disabled, leaks waits for an authorization a
@@ -24,7 +26,11 @@ run whose output says the process "is not debuggable" fails.
 process it launched, so the matrix runs every functional case on its own as
 ./bin/functional --run <case> under leaks, --jobs at a time (default 8, the
 suite runner's own cap). The case names are read from the
-rocketnet_functional_tests table in functional/rocketnet_functional_tests.cpp.
+rocketnet_functional_tests table in functional/rocketnet_functional_tests.cpp;
+the table holds rows for other platforms behind #if, and a case this build
+does not hold answers "unknown functional test" with exit 2 on its plain run
+(functional/rocketnet_functional_tests.cpp:8689),
+so the matrix lists it as SKIP and runs no leaks on it.
 
 Modes:
   --binary PATH [-- arg...]   run one binary once
@@ -63,6 +69,7 @@ DEFAULT_JOBS = 8
 FUNCTIONAL_TABLE = REPO_ROOT / "functional" / "rocketnet_functional_tests.cpp"
 CASE_ROW = re.compile(r'^\s*\{\s*"([A-Za-z0-9_]+)"\s*,\s*[A-Za-z0-9_]+\s*\},')
 NOT_DEBUGGABLE = "is not debuggable"
+UNKNOWN_CASE = "unknown functional test"
 ENTITLEMENTS = (
     '<?xml version="1.0" encoding="UTF-8"?>\n'
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
@@ -115,30 +122,51 @@ def run_leaks(binary, args, env_extra, timeout):
     return ok
 
 
-def run_leaks_quiet(binary, args, env_extra, timeout, lines):
+def run_group(command, env, timeout):
+    # its own process group, so a timeout kills the command and every process it started
+    proc = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+    try:
+        raw, _ = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        raw, _ = proc.communicate()
+        return None, raw.decode("utf-8", "replace")
+    return proc.returncode, raw.decode("utf-8", "replace")
+
+
+def run_leaks_quiet(binary, args, env_extra, timeout, lines, skip_unknown=False):
     def say(text):
         lines.append(text if text.endswith("\n") else text + "\n")
     env = dict(os.environ)
     for name in PIN_VARIABLES:
         env.pop(name, None)
-    env["MallocStackLogging"] = "1"
     env.update(env_extra)
-    command = [LEAKS, "--atExit", "--", str(binary)] + list(args)
     name = " ".join([str(binary)] + list(args))
     say("leaks_run.py: %s" % " ".join("%s=%s" % item for item in env_extra.items()))
+    # leaks returns its own status, so the target status comes from a plain run first
+    status, output = run_group([str(binary)] + list(args), env, timeout)
+    if status is None:
+        say(output)
+        say("leaks_run.py: FAIL %s: the plain run did not return within %.0f s; killed it" % (name, timeout))
+        return False
+    if skip_unknown and status == 2 and UNKNOWN_CASE in output:
+        say("leaks_run.py: SKIP %s: this build holds no such case" % name)
+        return True
+    if status != 0:
+        say(output)
+        say("leaks_run.py: FAIL %s: binary exited %d on its plain run" % (name, status))
+        return False
+    env["MallocStackLogging"] = "1"
+    command = [LEAKS, "--atExit", "--", str(binary)] + list(args)
     say("leaks_run.py: %s" % " ".join(command))
-    # its own process group, so a timeout kills leaks and the target it stopped
-    proc = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
-    try:
-        raw, _ = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
-        raw, _ = proc.communicate()
-        say(raw.decode("utf-8", "replace"))
+    status, output = run_group(command, env, timeout)
+    say(output)
+    if status is None:
         say("leaks_run.py: FAIL %s: leaks did not return within %.0f s; killed it and its target" % (name, timeout))
         return False
-    output = raw.decode("utf-8", "replace")
-    say(output)
     if NOT_DEBUGGABLE in output:
         say("leaks_run.py: FAIL %s: the target is not debuggable, so leaks could not read its memory" % name)
         return False
@@ -150,8 +178,8 @@ def run_leaks_quiet(binary, args, env_extra, timeout, lines):
     if leaked:
         say("leaks_run.py: FAIL %s: %d leak(s) across %d process report(s)" % (name, leaked, len(counts)))
         return False
-    if proc.returncode != 0:
-        say("leaks_run.py: FAIL %s: binary exited %d" % (name, proc.returncode))
+    if status != 0:
+        say("leaks_run.py: FAIL %s: leaks exited %d" % (name, status))
         return False
     say("leaks_run.py: PASS %s: 0 leaks" % name)
     return True
@@ -190,11 +218,11 @@ def run_functional(binary, pin, timeout, jobs):
         futures = {}
         for case in cases:
             lines = []
-            futures[pool.submit(run_leaks_quiet, binary, ["--run", case], pin, timeout, lines)] = (case, lines)
+            futures[pool.submit(run_leaks_quiet, binary, ["--run", case], pin, timeout, lines, True)] = (case, lines)
         for future in concurrent.futures.as_completed(futures):
             case, lines = futures[future]
             if future.result():
-                print("leaks_run.py: PASS functional --run %s: 0 leaks" % case, flush=True)
+                print(lines[-1].rstrip("\n"), flush=True)
             else:
                 sys.stdout.write("".join(lines))
                 sys.stdout.flush()
