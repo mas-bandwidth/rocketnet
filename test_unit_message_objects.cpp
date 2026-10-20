@@ -391,9 +391,8 @@ static void mo_config( rocketnet_message_config_t * config )
 {
     rocketnet_message_default_config( config );
     config->num_channels = 4;
-    // A 16 KiB block can wait an honest adaptive RTO; 256 numbers and a 256 KiB ring keep the loss walk unblocked.
-    config->window_messages = 256;
-    config->receive_ring_bytes = 262144;
+    config->window_messages = 64;
+    config->receive_ring_bytes = 65536;
     config->max_message_bytes = 16384;
     config->send_buffer_bytes = 65536;
     config->send_queue_messages = 64;
@@ -906,10 +905,9 @@ static void mo_end_to_end_up()
 
     for ( int round = 0; round < 120; round++ )
     {
-        // loss: every fifth round drops to the server, every eleventh to the client;
-        // neither period resonates with the adaptive RTO's ~7-step delay.
+        // loss: every fifth round drops everything one way
         pair.net->drop_to_server = ( round % 5 ) == 2;
-        pair.net->drop_to_client = ( round % 11 ) == 3;
+        pair.net->drop_to_client = ( round % 7 ) == 3;
 
         if ( round < 60 )
         {
