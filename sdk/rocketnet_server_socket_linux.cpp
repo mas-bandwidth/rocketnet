@@ -2694,20 +2694,15 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
             rocketnet_server_socket_receive_buffer_t * __restrict__ receive_buffer = &socket->receive_buffer[on_index];
 
-            // receive packets
-
-            // How many descriptors this pass actually took. The loop below can
-            // stop early when the staging buffer fills, and everything after
-            // this point -- the release, the refill, the pending-return spill --
-            // must cover exactly that many, not the number peeked. Releasing
-            // more would hand the kernel uninitialized stack as umem addresses:
-            // rejected (leaking the frame forever) or in range and aliasing a
-            // LIVE frame, which is the packet corruption the shouty comment at
-            // rocketnet_constants.h:22 warns about.
-            //
-            // Descriptors left unconsumed stay in the ring and come back on the
-            // next peek, which is the correct AF_XDP behaviour when a consumer
-            // cannot keep up.
+            // receive packets. num_consumed is how many descriptors this pass
+            // takes. The loop stops when the staging buffer is full, so a peek
+            // can cover more descriptors than the pass consumes.
+            // xsk_ring_cons__peek has already added that whole peek to
+            // cached_cons. Cancel subtracts the unconsumed tail from
+            // cached_cons before release, and release adds only num_consumed
+            // to the consumer index. The tail stays in the ring and the next
+            // peek reads it. The refill below returns only the frames in
+            // frame[0 .. num_consumed). Model: tla/RNXdpReceiveRing.tla.
             uint32_t num_consumed = 0;
 
             uint64_t frame[ROCKETNET_XDP_RECV_QUEUE_SIZE];
@@ -2753,6 +2748,9 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
             }
 
             rocketnet_platform_mutex_release( &socket->receive_mutex );
+
+            if ( num_packets > num_consumed )
+                xsk_ring_cons__cancel( &socket->receive_queue, num_packets - num_consumed );
 
             xsk_ring_cons__release( &socket->receive_queue, num_consumed );
 
