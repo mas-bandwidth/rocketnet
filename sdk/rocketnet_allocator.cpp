@@ -12,7 +12,7 @@
 #include <inttypes.h>
 #include <stddef.h>
 
-// Layer 1, the region: docs/CHANNELS.md section 4, sized by section 14, the
+// Layer 1, the region: sdk/rocketnet_allocator.cpp, sized by section 14, the
 // send store checked by the section 4 tests.
 
 // ----------------------------------------------------------------
@@ -1255,7 +1255,7 @@ int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t
         num_connections = 0;
 
     rn_text_t text = { buffer, buffer_size, 0 };
-    rn_text_append( &text, "message connection sizing (docs/CHANNELS.md section 14)\n" );
+    rn_text_append( &text, "message connection sizing (standard/MESSAGES.md m5.4)\n" );
     rn_text_append( &text, "connection_bytes = 48C + 104.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq + SR, SR = B\n" );
     rn_text_append( &text, "C=%d W=%d B=%d S=%d Q=%d P=%d Du=%d Ru=%d Rq=%d\n",
                     config->num_channels, config->window_messages, config->receive_ring_bytes, config->send_buffer_bytes,

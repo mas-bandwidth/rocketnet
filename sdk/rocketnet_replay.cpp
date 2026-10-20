@@ -57,7 +57,7 @@ void rocketnet_replay_advance( struct rocketnet_replay_protection_t * replay, ui
         uint64_t skipped = sequence - replay->highest_opened;
         if ( skipped >= ROCKETNET_REPLAY_WINDOW_BITS )
         {
-            // STANDARD.md Replay Protection and tla/ReplayWindow.tla (Cleared):
+            // standard/TRANSPORT.md Replay Protection and tla/ReplayWindow.tla (Cleared):
             // a full-window skip clears the whole ring (ClearedWords = Words).
             memset( replay->window, 0, sizeof( replay->window ) );
         }

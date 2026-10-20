@@ -2,8 +2,7 @@
     RocketNet. Copyright 2026 Mas Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    The deterministic simulation harness core (docs/DST.md sections 1, 2 and
-    6): the world lifted from soak_sim, the N-client rn_message_link_t seam,
+    The deterministic simulation harness core: the world lifted from soak_sim, the N-client rn_message_link_t seam,
     the named substreams, the payload scheme, the trace hash and the seeded
     single-process run. Time is an argument that starts at 1000.0 and is
     computed from the step; nothing here reads a clock, opens a socket or

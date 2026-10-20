@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include "rocketnet_internal.h"
 
-// The two send rings' state machine (docs/CLIENT-IO.md). Frames fill one ring
+// The two send rings' state machine. Frames fill one ring
 // while the other is held by the I/O path; a ring is reused only after SENT.
 
 enum { ROCKETNET_CLIENT_RING_FILLING = 0, ROCKETNET_CLIENT_RING_HANDED_OFF = 1,

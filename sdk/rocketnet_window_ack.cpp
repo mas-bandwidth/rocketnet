@@ -10,7 +10,7 @@
 #include <string.h>
 
 // Layer 3 of the message layer: the sent-packet map, the resend FIFO, RTT,
-// RTO, resend delay, failed-send recovery, and reliable timeout (docs/CHANNELS.md
+// RTO, resend delay, failed-send recovery, and reliable timeout (standard/MESSAGES.md
 // section 6.4; TLA+ actions Init, WritePacket, WriteOldest, ReceiveAck and
 // invariants TablesBounded and EveryReliableAckedAndDelivered in
 // tla/RNWindow.tla).
@@ -343,7 +343,7 @@ static void rn_window_ack_record_first_send( rn_window_ack_t * ack, rn_send_numb
 // ----------------------------------------------------------------
 
 // Initializes the sent-packet map, resend FIFO, and RFC 6298 estimator
-// (docs/CHANNELS.md 6.4; tla/RNWindow.tla Init).
+// (standard/MESSAGES.md m9.3; tla/RNWindow.tla Init).
 void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_region_t * region, const rocketnet_message_config_t * config )
 {
     rocketnet_assert( ack );
@@ -444,7 +444,7 @@ static void rn_window_ack_gaps_measure( rn_window_ack_t * ack, uint32_t slot_ind
 
 // Commits a sent packet and its referenced reliable message numbers into the
 // P-entry sent-packet ring, 16P reference ring, 2P open-addressed sent_index,
-// and W-entry resend FIFO (docs/CHANNELS.md 6.4 "On send" and "Eviction";
+// and W-entry resend FIFO (standard/MESSAGES.md m9.3 "On send" and "Eviction";
 // tla/RNWindow.tla WritePacket, WriteOldest, TablesBounded).
 // RNReceipts EmitAck/SweepLoss: an outcome is an accounting event, not a
 // message-level ACK. A full ring discards its oldest event, never its history.
@@ -524,7 +524,7 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
 
     // 2. Reclaim any already-acked entries at the head of the sent-packet ring,
     //    then evict the oldest live entries while either the P-entry packet ring
-    //    or the 16P-entry reference ring needs room (docs/CHANNELS.md 6.4
+    //    or the 16P-entry reference ring needs room (standard/MESSAGES.md m9.3
     //    "Eviction": numbers stay in the resend FIFO, MESSAGE_SENT_MAP_EVICTED
     //    is incremented once per evicted packet entry).
     rn_window_ack_reclaim_head( ack );
@@ -582,7 +582,7 @@ void rn_window_ack_commit_receipt_packet( rn_window_ack_t * ack, uint64_t packet
 }
 
 // Processes one acked transport sequence `packet_id` at time `now`
-// (docs/CHANNELS.md 6.4 "Ack" and "RTO"; tla/RNWindow.tla ReceiveAck,
+// (standard/MESSAGES.md m9.3 "Ack" and "RTO"; tla/RNWindow.tla ReceiveAck,
 // tla/RNResendTiming.tla Sample).
 int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now )
 {
@@ -749,7 +749,7 @@ uint32_t rn_window_ack_on_acks( rn_window_ack_t * ack, const uint64_t * packet_i
 }
 
 // Recovers reliable numbers from a packet refused by finish_packet
-// (docs/CHANNELS.md 6.4 "Failed send").
+// (standard/MESSAGES.md m9.3 "Failed send").
 void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * numbers, uint32_t count, double now )
 {
     rocketnet_assert( ack );
@@ -776,7 +776,7 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
     }
 }
 
-// Checks the per-connection reliable timeout (docs/CHANNELS.md 6.4 "Giving up").
+// Checks the per-connection reliable timeout (standard/MESSAGES.md m9.3 "Giving up").
 int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now )
 {
     rocketnet_assert( ack );
@@ -797,7 +797,7 @@ int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now )
 }
 
 // Walks the small-record FIFO and then the chunk FIFO, each from its head
-// while due at its own delay (docs/CHANNELS.md 6.4 "Resend"; tla/RNWindow.tla
+// while due at its own delay (standard/MESSAGES.md m9.3 "Resend"; tla/RNWindow.tla
 // WriteOldest, tla/RNResendTiming.tla Walk with OneFifo = FALSE and
 // SmallNeverHeldByChunk: the same delay every pass, no back-off, and a chunk
 // not yet due never holds a due small record behind it).

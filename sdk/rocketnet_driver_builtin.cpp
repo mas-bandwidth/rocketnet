@@ -31,14 +31,14 @@ static const rocketnet_server_driver_operations_t portable_server_operations =
 #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 // The portable client on a platform with the client I/O wake: an eight-callback
 // table over the socket and its wake, so the transport runs the I/O thread of
-// docs/CLIENT-IO.md (RNClientIo) instead of the BASE receive thread.
+// (RNClientIo) instead of the BASE receive thread.
 struct portable_io_client_t
 {
     rocketnet_platform_socket_t * socket;
     rocketnet_platform_wake_t * wake;
     void * context;
 };
-// RNClientIo initial / Stop and destroy order (docs/CLIENT-IO.md): create owns
+// RNClientIo initial / Stop and destroy order: create owns
 // the socket and the wake beside it; any failure releases what it opened.
 static void * portable_io_client_create( void * context, const rocketnet_client_driver_config_t * config, rocketnet_address_t * bind )
 {
@@ -61,7 +61,7 @@ static void * portable_io_client_create( void * context, const rocketnet_client_
     client->context = context;
     return client;
 }
-// RNClientIo Stop and destroy order (docs/CLIENT-IO.md): the transport joins
+// RNClientIo Stop and destroy order: the transport joins
 // the I/O thread before closing the driver, so the wake goes, then the socket.
 static void portable_io_client_destroy( void * driver )
 {
@@ -72,13 +72,13 @@ static void portable_io_client_destroy( void * driver )
     rocketnet_platform_socket_destroy( client->socket );
     rocketnet_free( client->context, client );
 }
-// RNClientIo IoSend / IoReceive (docs/CLIENT-IO.md The I/O step): the
+// RNClientIo IoSend / IoReceive: the
 // per-packet platform functions on the instance's socket.
 static void portable_io_client_send( void * driver, const rocketnet_address_t * to, const uint8_t * data, int bytes )
 { struct portable_io_client_t * client = (struct portable_io_client_t*) driver; rocketnet_platform_socket_send_packet( client->socket, to, data, bytes ); }
 static int portable_io_client_receive( void * driver, rocketnet_address_t * from, uint8_t * data, int capacity )
 { struct portable_io_client_t * client = (struct portable_io_client_t*) driver; return rocketnet_platform_socket_receive_packet( client->socket, from, data, capacity ); }
-// RNClientIo IoSend / IoReceive batches (docs/CLIENT-IO.md The I/O step): the
+// RNClientIo IoSend / IoReceive batches: the
 // batch pump seam; on Linux it is sendmmsg/recvmmsg (#client-io-linux-mmsg),
 // otherwise the seam's portable loop. Still off the main thread.
 static void portable_io_client_send_batch( void * driver, const rocketnet_platform_send_t * sends, int num_packets )
@@ -99,7 +99,7 @@ static int portable_io_client_receive_batch( void * driver, rocketnet_address_t 
     return rocketnet_platform_socket_receive_packets( client->socket, from, packet_data, packet_stride, packet_bytes, max_packets );
 #endif
 }
-// RNClientIo IoWait / waitReadable and the wake (docs/CLIENT-IO.md The wake):
+// RNClientIo IoWait / waitReadable and the wake:
 // readable passes through, so with it false the socket is not polled and a
 // full receive buffer waits on the eventfd alone.
 static bool portable_io_client_wait( void * driver, bool readable, double timeout_seconds )

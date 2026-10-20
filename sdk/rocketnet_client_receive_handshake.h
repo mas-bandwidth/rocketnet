@@ -12,7 +12,7 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_constants.h"
 
-// The receive handoff of docs/CLIENT-IO.md _The receive path_ and the receive
+// The receive handoff and the receive
 // actions of tla/RNClientIo.tla. The I/O thread fills one of two buffers and
 // publishes it Fill to Ready; update exposes a Ready buffer and returns it
 // Exposed to Free at the end of every frame. Each buffer's state has one

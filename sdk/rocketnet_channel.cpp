@@ -9,7 +9,7 @@
 
 #include "rocketnet_platform.h"
 
-// Layer 4's dispatch (docs/CHANNELS.md 7). The spec is tla/RNChannel.tla; each
+// Layer 4's dispatch (standard/MESSAGES.md m7). The spec is tla/RNChannel.tla; each
 // function names the action it implements. Nothing here allocates, locks or
 // reads a clock (owner rules R2 and R7).
 
@@ -29,7 +29,7 @@ static inline uint64_t rn_round16( uint64_t bytes )
     return ( bytes + 15 ) & ~(uint64_t) 15;
 }
 
-// The delivery table (CHANNELS.md 10.1): every delivery of the update, this
+// The delivery table (tla/README-RNEndpoint.md): every delivery of the update, this
 // record's or one released from a hold, appended in order. The caller checked
 // there is room.
 
@@ -539,7 +539,7 @@ int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct 
     return ROCKETNET_CHANNEL_DISPATCH_HELD;
 }
 
-// A chunk of a large message (CHANNELS.md 8): placed by index, counted, and the
+// A chunk of a large message (standard/MESSAGES.md m8): placed by index, counted, and the
 // whole message dispatched as one only when every chunk is in. tla/RNBlocks.tla:
 // RNBlocks!Receive (the anchor by b = n - index, the copy to ring + index * F)
 // and RNBlocks!Deliver (complete at its turn: one view, one ordering slot).
@@ -895,7 +895,7 @@ bool rn_channels_cancel( struct rn_channels_t * channels )
 }
 
 // ---------------------------------------------------------------
-//        CONFIG, the one announcement (CHANNELS.md 10.3, 13.4)
+//        CONFIG, the one announcement (standard/MESSAGES.md m11)
 // ---------------------------------------------------------------
 
 // tla/RNEndpoint.tla Reset: relQ = <<CONFIG>>, so CONFIG is the first record

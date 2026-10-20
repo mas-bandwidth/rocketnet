@@ -97,8 +97,8 @@ struct rocketnet_client_driver_config_t
     const rocketnet_client_transport_config_t * transport;
 };
 
-// A backend with wait and wake runs the client I/O thread design of
-// docs/CLIENT-IO.md; a backend without them keeps the receive thread and
+// A backend with wait and wake runs the client I/O thread design;
+// a backend without them keeps the receive thread and
 // per-packet main-thread sends.
 struct rocketnet_client_driver_operations_t
 {

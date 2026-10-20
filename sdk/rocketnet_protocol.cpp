@@ -27,7 +27,7 @@ void rocketnet_write_prefilter_header( uint8_t ** p, uint8_t packet_type, const 
 // maps a refusal code to its counter, so both receive paths attribute the
 // reason identically and neither invents its own mapping
 
-// The keyed filter value, from STANDARD.md "The keyed filter value":
+// The keyed filter value, from standard/TRANSPORT.md "The keyed filter value":
 // SipHash-2-4 under the 16-byte magic over the 7-byte input of packet type,
 // packet length as a little-endian uint16, then the four bytes following the
 // prefilter header; the low 4 bytes of the 64-bit result, little-endian, are
