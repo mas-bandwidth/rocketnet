@@ -94,7 +94,7 @@ two-slot interaction with two wire copies exceeds the 110-second budget and
 remains an unexplored larger bound. The failed measurement is preserved in
 the job evidence; it is not reported as a pass.
 
-The five counterexamples below are replayed from the measured TLC traces.
+The six counterexamples below are replayed from the measured TLC traces.
 `BeginUpdate` precedes transport actions and `EndUpdate` returns to the
 application. Message numbers in a liveness trace are arbitrary record
 identifiers, not an ordering protocol.
@@ -105,6 +105,13 @@ identifiers, not an ordering protocol.
   1 to 2, violating `NoCrossConnectionApply` at state 10. The same invariant
   also covers the transport ack entries; the shortest recorded witness uses
   a payload. This is the same-batch stale-entry hazard in section 10.2.
+- **Reconnect keeps its client id:** connect connection 1, open its record,
+  then disconnect 1 and connect connection 2 with the same client id before
+  `Observe`. The `"clientid"` mutant compares client ids, sees no change,
+  and leaves the slot bound with 1's residue; entries are tagged by slot
+  state and admitted to 2, violating `ReusedSlotStartsClean` at state 13.
+  This is the same-client-id-reconnect hazard the transport's per-connection
+  id removes (P9a/P9b).
 - **Omit reset:** deliver connection 1's record, return its view, then release
   it. Region storage is empty, but receive/dedup state still belongs to 1.
   Begin another update, disconnect 1, and observe the free slot. The mutant
@@ -136,16 +143,17 @@ controls check the full safety set; `Live` also checks
 `RUNS.tsv`. Earlier semantic-error and timeout attempts are retained in the
 job evidence, not substituted for final completed measurements.
 
-All nine cases match their expected result with up to two workers, a 110-second
+All ten cases match their expected result with up to two workers, a 110-second
 per-case budget and the pinned runner/JAR from `README.md`. The measured
-totals across separate configurations are 8,913,585 generated and 2,328,289
-distinct states in 38.831 seconds; these totals are not one combined state
+totals across separate configurations are 8,915,107 generated and 2,329,260
+distinct states in 40.362 seconds; these totals are not one combined state
 space. The exact table follows.
 
 | Configuration | Generated | Distinct | Seconds | Expected result |
 |---|---:|---:|---:|---|
 | `MCRNSlots.cfg` | 72,386 | 38,716 | 1.333 | pass - |
 | `MCRNSlotsBrokenApplyBySlot.cfg` | 287 | 201 | 0.676 | invariant NoCrossConnectionApply |
+| `MCRNSlotsBrokenClientIdAsConnection.cfg` | 1,522 | 971 | 1.531 | invariant ReusedSlotStartsClean |
 | `MCRNSlotsBrokenKickCarriesOn.cfg` | 18,459 | 8,016 | 0.996 | action ExhaustionOnlyLeadsToDisconnect |
 | `MCRNSlotsBrokenNoResetOnReuse.cfg` | 1,007 | 643 | 0.696 | invariant ReusedSlotStartsClean |
 | `MCRNSlotsBrokenReleaseIgnored.cfg` | 1,056 | 689 | 0.998 | temporal EveryReliableDelivered |

@@ -52,12 +52,10 @@ in the report; the reference column matches that run.
   its handshake driven through response open as far as the server lets it.
   It is refused at the request ladder with `TOKEN_ALREADY_USED`: the first
   response open bound the token to the first address. The reason class
-  `replay` is read from `CONNECTION_REQUEST_TOKEN_ALREADY_USED`,
-  `CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED` or
-  `CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED`, whichever fired (the two
-  `TOKEN_ALREADY_CONNECTED` counters are retired with the admitted-token set
-  and read zero; the reader keeps them so a record from an older build
-  still classifies). The second
+  `replay` is read from `CONNECTION_REQUEST_TOKEN_ALREADY_USED` or
+  `CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED`, whichever fired
+  (`CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED` is a retired slot that reads
+  zero; tools/differential/netcode_decisions.cpp reads both). The second
   client holds the token keys, so it is at least as strong as an attacker
   replaying the captured request, which cannot open the challenge.
 

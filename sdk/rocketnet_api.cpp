@@ -372,6 +372,27 @@ static const rocketnet_client_config_t * rn_client_config_read( rocketnet_client
     return current;
 }
 
+// The one validation behind validate_config and create: the transport table's
+// ranges, the public link simulator's posture and the transport list's parse,
+// each the check connect runs on the same values
+// (sdk/rocketnet_client_transport.cpp:593, :600 and :639),
+// then the message config's rules. Each refusal logs the rule it broke.
+static bool rn_client_config_valid( const struct rocketnet_client_transport_config_t * transport, const struct rocketnet_message_config_t * message )
+{
+    int num_fields = 0;
+    const struct rocketnet_config_field_t * fields = rocketnet_client_transport_config_fields( &num_fields );
+    if ( !rocketnet_config_validate( "client", transport, fields, num_fields ) )
+        return false;
+    if ( !rocketnet_config_validate_public_link_simulator( "client", transport, fields, num_fields, rocketnet_public_link_simulator_development() ) )
+        return false;
+    int num_available = 0;
+    const int * available = rocketnet_client_driver_availability( &num_available );
+    struct rocketnet_driver_ladder_t ladder;
+    if ( !rocketnet_driver_ladder_parse( transport->driver, available, num_available, &ladder ) )
+        return false;
+    return rocketnet_message_validate_config( message ) != 0;
+}
+
 static int rn_client_validate_config_current( const struct rocketnet_client_config_t * config )
 
 {
@@ -380,11 +401,7 @@ static int rn_client_validate_config_current( const struct rocketnet_client_conf
     uint32_t kbps = 0;
     if ( !rn_client_split( config, false, &transport, &message, &kbps ) )
         return 0;
-    int num_fields = 0;
-    const struct rocketnet_config_field_t * fields = rocketnet_client_transport_config_fields( &num_fields );
-    if ( !rocketnet_config_validate( "client", &transport, fields, num_fields ) )
-        return 0;
-    return rocketnet_message_validate_config( &message );
+    return rn_client_config_valid( &transport, &message ) ? 1 : 0;
 }
 
 enum rocketnet_status_t rocketnet_client_validate_config( const struct rocketnet_client_config_t * config )
@@ -430,10 +447,21 @@ size_t rocketnet_client_required_memory_sized( const struct rocketnet_client_con
 
 static struct rocketnet_client_t * rn_client_create_current( void * context, const struct rocketnet_client_config_t * config, void * memory, size_t memory_bytes )
 {
+    // the lifecycle state is read once here, before any allocation; a create
+    // before rocketnet_init is refused, logged and counted, as the transport
+    // create refuses it at connect (sdk/rocketnet_client_transport.cpp:561)
+    if ( !rocketnet_library_initialized() )
+    {
+        rocketnet_error( "rocketnet_client_create: rocketnet_init must be called first" );
+        rocketnet_api_misuse_record();
+        return NULL;
+    }
     struct rocketnet_client_transport_config_t transport;
     struct rocketnet_message_config_t message;
     uint32_t kbps = 0;
     if ( !rn_client_split( config, true, &transport, &message, &kbps ) )
+        return NULL;
+    if ( !rn_client_config_valid( &transport, &message ) )
         return NULL;
     const uint64_t connection_bytes = rocketnet_message_client_required_memory( &message );
     if ( connection_bytes == 0 )
@@ -630,7 +658,6 @@ const char * rocketnet_disconnect_reason_name( enum rocketnet_disconnect_reason_
     {
         case ROCKETNET_DISCONNECT_REASON_NONE:                      return "none";
         case ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH:           return "config mismatch";
-        case ROCKETNET_DISCONNECT_REASON_CONFIG_TIMEOUT:            return "config timeout";
         case ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION:        return "protocol violation";
         case ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT:          return "reliable timeout";
         case ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED:  return "message memory exhausted";
@@ -1010,6 +1037,28 @@ static const rocketnet_server_config_t * rn_server_config_read( rocketnet_server
     return current;
 }
 
+// The one validation behind validate_config and create: the transport table's
+// ranges, the public link simulator's posture and the transport list's parse,
+// each the check start runs on the same values
+// (sdk/rocketnet_server_transport.cpp:977, :984 and :1080),
+// then the message config's rules. The keys are not checked here; start
+// refuses a config with none. Each refusal logs the rule it broke.
+static bool rn_server_config_valid( const struct rocketnet_server_transport_config_t * transport, const struct rocketnet_message_config_t * message )
+{
+    int num_fields = 0;
+    const struct rocketnet_config_field_t * fields = rocketnet_server_transport_config_fields( &num_fields );
+    if ( !rocketnet_config_validate( "server", transport, fields, num_fields ) )
+        return false;
+    if ( !rocketnet_config_validate_public_link_simulator( "server", transport, fields, num_fields, rocketnet_public_link_simulator_development() ) )
+        return false;
+    int num_available = 0;
+    const int * available = rocketnet_server_driver_availability( &num_available );
+    struct rocketnet_driver_ladder_t ladder;
+    if ( !rocketnet_driver_ladder_parse( transport->driver, available, num_available, &ladder ) )
+        return false;
+    return rocketnet_message_validate_config( message ) != 0;
+}
+
 static int rn_server_validate_config_current( const struct rocketnet_server_config_t * config )
 
 {
@@ -1021,13 +1070,9 @@ static int rn_server_validate_config_current( const struct rocketnet_server_conf
         sodium_memzero( &transport, sizeof( transport ) );
         return 0;
     }
-    int num_fields = 0;
-    const struct rocketnet_config_field_t * fields = rocketnet_server_transport_config_fields( &num_fields );
-    const bool transport_valid = rocketnet_config_validate( "server", &transport, fields, num_fields );
+    const bool valid = rn_server_config_valid( &transport, &message );
     sodium_memzero( &transport, sizeof( transport ) );
-    if ( !transport_valid )
-        return 0;
-    return rocketnet_message_validate_config( &message );
+    return valid ? 1 : 0;
 }
 
 enum rocketnet_status_t rocketnet_server_validate_config( const struct rocketnet_server_config_t * config )
@@ -1093,6 +1138,15 @@ size_t rocketnet_server_required_memory_sized( const struct rocketnet_server_con
 
 static struct rocketnet_server_t * rn_server_create_current( void * context, const char * address, const struct rocketnet_server_config_t * config, void * memory, size_t memory_bytes )
 {
+    // the lifecycle state is read once here, before any allocation; a create
+    // before rocketnet_init is refused, logged and counted, as the transport
+    // create refuses it at start (sdk/rocketnet_server_transport.cpp:917)
+    if ( !rocketnet_library_initialized() )
+    {
+        rocketnet_error( "rocketnet_server_create: rocketnet_init must be called first" );
+        rocketnet_api_misuse_record();
+        return NULL;
+    }
     if ( !rocketnet_api_null_guard( address ) )
         return NULL;
     if ( strlen( address ) >= ROCKETNET_MAX_ADDRESS_STRING_LENGTH )
@@ -1103,7 +1157,7 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
     struct rocketnet_server_transport_config_t transport;
     struct rocketnet_message_config_t message;
     uint32_t kbps = 0;
-    if ( !rn_server_split( config, true, &transport, &message, &kbps ) )
+    if ( !rn_server_split( config, true, &transport, &message, &kbps ) || !rn_server_config_valid( &transport, &message ) )
     {
         sodium_memzero( &transport, sizeof( transport ) );
         return NULL;
@@ -1196,6 +1250,13 @@ enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * serv
 
 static uint64_t rn_server_running_counter( const struct rocketnet_server_t * server, int counter );
 
+// Every slot as rocketnet_server_disconnect_client ends one: a slot the
+// message layer holds CONNECTED is kicked (rn_message_object_kick,
+// sdk/rocketnet_message_server.cpp:373), which cancels its open in-place start,
+// marks it KICKED with reason NONE and disconnects it at the transport through
+// the link; a slot the transport holds connected that the message layer has
+// not yet observed is disconnected at the transport (tla/RNSlots.tla
+// PublicDisconnect).
 void rocketnet_server_disconnect_all_clients( struct rocketnet_server_t * server )
 {
     if ( !rocketnet_api_null_guard( server ) )
@@ -1205,6 +1266,7 @@ void rocketnet_server_disconnect_all_clients( struct rocketnet_server_t * server
         return;
     for ( int i = 0; i < server->max_clients; i++ )
     {
+        rn_message_object_kick( &server->running->object, i, ROCKETNET_DISCONNECT_REASON_NONE );
         if ( rocketnet_server_transport_is_client_connected( transport, i ) )
             rocketnet_server_transport_disconnect_client( transport, i );
     }
@@ -1216,9 +1278,9 @@ void rocketnet_server_stop( struct rocketnet_server_t * server )
         return;
     if ( !server->running )
         return;
-    // every slot: the redundant disconnects and the slot's reset (EndClient);
-    // the disconnect packets are staged, so flush them before the transport
-    // goes
+    // one step, RUNNING to STOPPED (tla/ServerSession.tla Stop): each connected
+    // client gets the redundant disconnects, flushed before the transport
+    // goes, and every slot its reset (EndClient)
     rocketnet_server_disconnect_all_clients( server );
     rocketnet_message_server_send_packets( server->running );
     for ( int i = 0; i < server->max_clients; i++ )
@@ -1326,6 +1388,16 @@ uint64_t rocketnet_server_client_id( const struct rocketnet_server_t * server, u
     return rocketnet_server_transport_client_id( rn_server_transport( server ), slot );
 }
 
+// The slot ends at once, before the next update, in every query and send: a
+// slot the message layer holds CONNECTED is kicked (rn_message_object_kick,
+// sdk/rocketnet_message_server.cpp:373), which cancels its open in-place start,
+// marks it KICKED with reason NONE, so rocketnet_server_client_connected reads
+// false and a start drops as not connected, and disconnects it at the
+// transport through the link; a slot the transport holds connected that the
+// message layer has not yet observed is disconnected at the transport, which
+// returns at once for a slot it does not hold
+// (sdk/rocketnet_server_transport.cpp:2649; tla/RNSlots.tla
+// PublicDisconnect).
 void rocketnet_server_disconnect_client( struct rocketnet_server_t * server, uint64_t client_index )
 {
     if ( !rocketnet_api_null_guard( server ) )
@@ -1333,6 +1405,7 @@ void rocketnet_server_disconnect_client( struct rocketnet_server_t * server, uin
     int slot;
     if ( !rn_server_slot( server, client_index, &slot ) )
         return;
+    rn_message_object_kick( &server->running->object, slot, ROCKETNET_DISCONNECT_REASON_NONE );
     rocketnet_server_transport_disconnect_client( rn_server_transport( server ), slot );
 }
 
