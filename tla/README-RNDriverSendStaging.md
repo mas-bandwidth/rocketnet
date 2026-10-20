@@ -33,11 +33,15 @@ one generation; publish queues it; start stages the second; publish queues
 that too and leaves `xdpFilling = FALSE`; the next start sets
 `xdpRefused = TRUE`. No worker retirement occurs in this trace.
 
-Checked against the code by hand: restoring unconditional publication in
-`rocketnet_send_handoff_t::publish` permits both queued indexes; the second
-`rocketnet_server_socket_send_packets` clears `send_flow_index` and cannot
-acquire replacement storage, so `rocketnet_server_socket_start_packet_internal`
-returns NULL on the next send. The deterministic unit check
+Checked against the code by hand: in the pre-reopen implementation, restoring
+unconditional publication in `rocketnet_send_handoff_t::publish` permits both
+queued indexes; the second `rocketnet_server_socket_send_packets` clears
+`send_flow_index` and cannot acquire replacement storage, so
+`rocketnet_server_socket_start_packet_internal` returns NULL on the next send.
+The merged socket also has a defensive `reopen` recovery for an already fully
+queued state, so reproducing this code-level refusal now requires disabling
+both retention and that recovery. The bounded witness isolates the retention
+rule; the separate `SendHandoff` model checks reopen. The deterministic unit check
 `xdp_send_staging_retains_producer` fails at `!handoff.publish()` for
 that schedule (the second publish queues instead of retaining), and
 `check_send_handoff` in `test_lifecycle.cpp` fails at its `!queue.publish()`. With retention enabled, the second publish leaves its filling
