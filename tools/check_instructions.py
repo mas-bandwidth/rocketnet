@@ -9,7 +9,9 @@ bench/instruction_baseline.json.
 
 Exit codes:
   0: PASS (all regions <= +2.0% over baseline; prints NOTE if < -2.0% under)
-  1: FAIL (any region > +2.0% over baseline, toolchain mismatch, or runner error)
+  1: FAIL (any region > +2.0% over baseline, build_type mismatch, or runner error)
+  2: NOT COMPARABLE (compiler_id or valgrind_version differs from baseline;
+     outputs 'not comparable: <local> vs <pinned>')
 """
 
 import argparse
@@ -117,6 +119,24 @@ def get_git_head_commit() -> str:
     return proc.stdout.strip() or "unknown"
 
 
+def check_toolchain_comparable(
+    baseline: Dict[str, Any],
+    compiler_id: str,
+    valgrind_version: str,
+) -> Optional[str]:
+    """
+    Return 'not comparable: <local> vs <pinned>' when compiler_id or
+    valgrind_version differs from the pinned baseline, or None when comparable.
+    """
+    pinned_compiler = str(baseline.get("compiler_id", ""))
+    pinned_valgrind = str(baseline.get("valgrind_version", ""))
+    if compiler_id != pinned_compiler or valgrind_version != pinned_valgrind:
+        local = f"{compiler_id}/{valgrind_version}"
+        pinned = f"{pinned_compiler}/{pinned_valgrind}"
+        return f"not comparable: {local} vs {pinned}"
+    return None
+
+
 def evaluate_instructions(
     baseline: Dict[str, Any],
     measured: Dict[str, Dict[str, Any]],
@@ -143,7 +163,9 @@ def evaluate_instructions(
 
     if mismatches:
         mismatch_str = "; ".join(mismatches)
-        lines.append(f"toolchain mismatch: {mismatch_str} verdict=FAIL")
+        not_comp = check_toolchain_comparable(baseline, compiler_id, valgrind_version)
+        prefix = f"{not_comp}; " if not_comp else ""
+        lines.append(f"{prefix}toolchain mismatch: {mismatch_str} verdict=FAIL")
         return 1, "\n".join(lines)
 
     limit_pct = float(
@@ -398,6 +420,15 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 1
         with open(args.baseline, "r", encoding="utf-8") as f:
             baseline = json.load(f)
+
+    not_comparable = check_toolchain_comparable(
+        baseline=baseline,
+        compiler_id=compiler_id,
+        valgrind_version=valgrind_version,
+    )
+    if not_comparable is not None:
+        print(not_comparable)
+        return 2
 
     code, report = evaluate_instructions(
         baseline=baseline,
