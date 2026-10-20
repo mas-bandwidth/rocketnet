@@ -98,7 +98,7 @@ One loop thread updates every client in slices of 100 with a server update after
 
 ### Dual-stack client ports
 
-Darwin lets a dual-stack socket (`[::]:0`) take an ephemeral port an IPv4 socket on the host already holds, and delivers IPv4 datagrams for that port to the IPv4 socket, so a dual-stack client of an IPv4 server sends but never hears the server and sits in `requesting cookie` until its deadline. On macOS the client of an IPv4 server binds an IPv4 socket (`sdk/rocketnet_client_transport.cpp:790-799`), and an IPv4 socket's ephemeral port is never one another IPv4 socket holds. `load` connects its clients to `127.0.0.1` unless `LOAD_SERVER_ADDRESS` names another host (`load.c:524-545`), so every load client takes that IPv4 bind.
+Darwin lets a dual-stack socket (`[::]:0`) take an ephemeral port an IPv4 socket on the host already holds, and delivers IPv4 datagrams for that port to the IPv4 socket, so a dual-stack client of an IPv4 server sends but never hears the server and sits in `requesting cookie` until its deadline. On macOS the client of an IPv4 server binds an IPv4 socket (`sdk/rocketnet_client_transport.cpp:855-864`), and an IPv4 socket's ephemeral port is never one another IPv4 socket holds. `load` connects its clients to `127.0.0.1` unless `LOAD_SERVER_ADDRESS` names another host (`load.c:524-545`), so every load client takes that IPv4 bind.
 
 ### Server cells
 
