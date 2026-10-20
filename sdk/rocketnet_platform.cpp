@@ -1938,28 +1938,37 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
 // already holds -- an explicit bind and the port-0 ephemeral pick alike --
 // and delivers IPv4 datagrams for that port to the IPv4 socket. A client
 // socket on such a port sends to an IPv4 server and never hears an answer:
-// every reply lands in the other socket. A port-0 dual-stack bind is
-// therefore checked against IPv4: a probe IPv4 socket binds the wildcard
-// address at the granted port, and EADDRINUSE names the port as held. The
-// socket on a held port stays open, so the next pick cannot return that
-// port; a fresh socket is bound, and the kept sockets close once a free port
-// is found. A fixed-port bind is the caller's choice and is never re-picked.
+// every reply lands in the other socket. A port-0 dual-stack bind therefore
+// takes its port from the IPv4 side: a probe IPv4 socket binds the wildcard
+// address at port 0, so the kernel picks a port no IPv4 socket holds, the
+// dual-stack socket binds that port explicitly while the probe still holds
+// it, and the probe closes after (an IPv4 bind to a port a dual-stack socket
+// holds is refused with EADDRINUSE, so the port stays clear). A port the IPv6
+// side already holds refuses the bind; the probe stays open so the next pick
+// cannot return it, and a fresh probe picks again. A fixed-port bind is the
+// caller's choice and is never re-picked.
 
 #define ROCKETNET_PLATFORM_DUAL_STACK_PICKS 16
 
-static bool rocketnet_platform_ipv4_port_held( uint16_t port )
+static int rocketnet_platform_ipv4_probe_port( uint16_t * port )
 {
     int probe = ::socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
     if ( probe < 0 )
-        return false;
+        return -1;
     sockaddr_in probe_address;
     memset( &probe_address, 0, sizeof( probe_address ) );
     probe_address.sin_family = AF_INET;
     probe_address.sin_addr.s_addr = htonl( INADDR_ANY );
-    probe_address.sin_port = rocketnet_platform_htons( port );
-    const bool held = bind( probe, (sockaddr*) &probe_address, sizeof( probe_address ) ) < 0 && errno == EADDRINUSE;
-    close( probe );
-    return held;
+    probe_address.sin_port = 0;
+    socklen_t length = sizeof( probe_address );
+    if ( bind( probe, (sockaddr*) &probe_address, sizeof( probe_address ) ) < 0 ||
+         getsockname( probe, (sockaddr*) &probe_address, &length ) < 0 )
+    {
+        close( probe );
+        return -1;
+    }
+    *port = rocketnet_platform_ntohs( probe_address.sin_port );
+    return probe;
 }
 
 static rocketnet_platform_socket_t * rocketnet_platform_socket_create_unshadowed( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, int pump_mode )
@@ -1967,33 +1976,32 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_unshadowed
     if ( address->type != ROCKETNET_ADDRESS_IPV6 || address->port != 0 )
         return rocketnet_platform_socket_create_internal( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size, pump_mode );
 
-    rocketnet_platform_socket_t * held[ROCKETNET_PLATFORM_DUAL_STACK_PICKS];
-    int num_held = 0;
+    int probes[ROCKETNET_PLATFORM_DUAL_STACK_PICKS];
+    int num_probes = 0;
     rocketnet_platform_socket_t * socket = NULL;
-    rocketnet_address_t picked = *address;
 
-    while ( num_held < ROCKETNET_PLATFORM_DUAL_STACK_PICKS )
+    while ( !socket && num_probes < ROCKETNET_PLATFORM_DUAL_STACK_PICKS )
     {
-        picked = *address;
-        socket = rocketnet_platform_socket_create_internal( context, &picked, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size, pump_mode );
-        if ( !socket || !rocketnet_platform_ipv4_port_held( picked.port ) )
+        uint16_t port = 0;
+        const int probe = rocketnet_platform_ipv4_probe_port( &port );
+        if ( probe < 0 )
             break;
-        rocketnet_debug( "dual-stack socket port %d is held by an ipv4 socket. picking another port", picked.port );
-        held[num_held++] = socket;
-        socket = NULL;
+        probes[num_probes++] = probe;
+        rocketnet_address_t picked = *address;
+        picked.port = port;
+        socket = rocketnet_platform_socket_create_internal( context, &picked, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size, pump_mode );
+        if ( socket )
+            *address = picked;
     }
 
-    for ( int i = 0; i < num_held; i++ )
-        rocketnet_platform_socket_destroy( held[i] );
+    for ( int i = 0; i < num_probes; i++ )
+        close( probes[i] );
 
-    if ( !socket )
-    {
-        if ( num_held == ROCKETNET_PLATFORM_DUAL_STACK_PICKS )
-            rocketnet_error( "failed to bind socket (ipv6): %d ports in a row are held by ipv4 sockets", num_held );
-        return NULL;
-    }
+    // no IPv4 probe socket on this host: the dual-stack socket takes the
+    // kernel's own pick, as before
+    if ( !socket && num_probes == 0 )
+        return rocketnet_platform_socket_create_internal( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size, pump_mode );
 
-    *address = picked;
     return socket;
 }
 
