@@ -142,7 +142,7 @@ static void client_transport_create_ex_reports_every_status()
 
     // C1: a NULL connect_token even INVALID_ARGUMENT, counted
 #if ROCKETNET_ASSERTS
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
     client_create_ex_expected_null_asserts = 0;
     rocketnet_set_assert_callback( client_create_ex_expected_null_assert );
 #endif

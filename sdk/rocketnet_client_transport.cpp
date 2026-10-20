@@ -2030,6 +2030,10 @@ const struct rocketnet_counters_t * rocketnet_client_transport_counters( rocketn
     if ( !rocketnet_api_null_guard( client_transport ) )
         return NULL;
     rocketnet_assert( client_transport );
+    // SEND_FAILED is the driver's own cumulative count, assigned on read; the
+    // driver's count is atomic, so the I/O thread may be sending meanwhile
+    if ( client_transport->io.operations && client_transport->io.operations->send_failures )
+        client_transport->counters.values[ROCKETNET_COUNTER_SEND_FAILED] = client_transport->io.operations->send_failures( client_transport->io.instance );
     return &client_transport->counters;
 }
 
