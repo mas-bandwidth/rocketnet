@@ -140,14 +140,18 @@ static int test_unset_environment( const char * name )
 static void dev_keys_warn_on_every_start()
 {
     // the server, development keys: a warning on create, and in a release
-    // build (the unit suite's build) the published keys are refused
+    // build (the unit suite's build) the published keys are refused. The
+    // warning is raised ahead of the driver ladder
+    // (sdk/rocketnet_server_transport.cpp:1176-1191), so the in-memory
+    // loopback driver on port 0 reaches it and no socket opens in either
+    // build.
     {
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_dev_config( &config );
-        strcpy( config.driver, "portable" );
+        strcpy( config.driver, "loopback" );
         int status = -1;
         start_capture();
-        void * srv = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status );
+        void * srv = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status );
         check( g_dev_warn_lines == 1 );
         check( g_dev_warn_level == ROCKETNET_LOG_LEVEL_WARN );
         check( strstr( g_dev_warn_buf, DEV_KEY_WARN_PHRASE ) != NULL );
@@ -173,7 +177,7 @@ static void dev_keys_warn_on_every_start()
         check( test_set_environment( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", "1" ) == 0 );
         int status = -1;
         start_capture();
-        void * srv = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status );
+        void * srv = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status );
         stop_capture();
         check( srv == NULL );
         check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
