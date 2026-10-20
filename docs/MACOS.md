@@ -185,11 +185,17 @@ On macOS the platform layer builds the kqueue wake (`sdk/rocketnet_platform.h`,
 (`sdk/rocketnet_client_transport.cpp`): a kqueue holds the socket's `EVFILT_READ` and
 an `EVFILT_USER` trigger (`sdk/rocketnet_platform.cpp`, the kqueue wake). The
 thread is a plain `pthread_create` with default attributes
-(`rocketnet_platform_thread_create`). The SDK sets no QoS class on it and makes
-no App Nap call: a search of `sdk/` for `qos_class`, `NSProcessInfo` and
-`LSAppNapIsDisabled` finds nothing. The only scheduling policy the SDK sets is
-the Mach time-constraint policy on the thread that waits in frame sync, put
-back to the standard policy afterwards (`sdk/rocketnet_frame_sync.cpp`).
+(`rocketnet_platform_thread_create`). Right after the create, the creating
+thread makes one call on it, the flow library's setting, unchanged: `pthread_setschedparam( thread, SCHED_RR, { sched_get_priority_min( SCHED_RR ) } )`
+(`rocketnet_platform_client_thread_priority`, `sdk/rocketnet_platform.cpp:3135`).
+That is the only thing the library sets on its macOS network threads: no QoS
+class, no `THREAD_TIME_CONSTRAINT_POLICY`, no pinning, and no App Nap call (a
+search of `sdk/` for `qos_class`, `NSProcessInfo` and `LSAppNapIsDisabled`
+finds nothing). `rocketnet_set_thread_priority( false )` turns the call off
+(`docs/CLIENT-IO.md`, Thread priority). Apart from it, the only scheduling
+policy the SDK sets is the Mach time-constraint policy on the thread that waits
+in frame sync, put back to the standard policy afterwards
+(`sdk/rocketnet_frame_sync.cpp:180`).
 
 A game that wants the client's I/O on a thread it owns sets `step_driven = 1`
 in `rocketnet_client_config_t` (or `ROCKETNET_CLIENT_STEP_DRIVEN=1`): the

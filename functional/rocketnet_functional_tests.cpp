@@ -8123,6 +8123,9 @@ extern void rocketnet_test_posix_destroy_under_traffic_100_xdp();
 // the channel harness smoke cases (functional/channel_smoke.cpp, picked up by
 // the functional/channel_*.cpp glob)
 extern void harness_one_message_each_way_lossless();
+extern void thread_priority_timing_receive_gaps();
+extern void thread_priority_timing_taskpolicy_background();
+extern void thread_priority_windows_readback();
 extern void harness_one_message_each_way_lossy();
 extern void harness_lossy_100_percent_negative_control();
 extern void harness_no_allocation_after_create();
@@ -8360,6 +8363,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config },
     { "server_receive_keeps_up_with_max_clients", rocketnet_test_server_receive_keeps_up_with_max_clients },
+    { "thread_priority_timing_receive_gaps", thread_priority_timing_receive_gaps },
+    { "thread_priority_timing_taskpolicy_background", thread_priority_timing_taskpolicy_background },
+    { "thread_priority_windows_readback", thread_priority_windows_readback },
     { "macos_client_timing_default_qos", macos_client_timing_default_qos },
     { "macos_client_timing_taskpolicy_background", macos_client_timing_taskpolicy_background },
     { "macos_client_timing_background_thread_qos", macos_client_timing_background_thread_qos },
