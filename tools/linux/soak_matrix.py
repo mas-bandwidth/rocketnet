@@ -76,6 +76,7 @@ NEAR = "rnsoak0"
 FAR = "rnsoak1"
 SERVER_HOST = "10.77.3.1"
 SERVER_PORT = "40413"
+GATEWAY_MAC = None
 
 
 def cell_env(cell):
@@ -96,6 +97,8 @@ def cell_env(cell):
         env["ROCKETNET_SOAK_SERVER_HOST"] = SERVER_HOST
         env["ROCKETNET_SOAK_SERVER_PORT"] = SERVER_PORT
         env["ROCKETNET_SOAK_CLIENT_NETNS"] = "/var/run/netns/" + NETNS
+        if GATEWAY_MAC:
+            env["ROCKETNET_GATEWAY_ETHERNET_ADDRESS"] = GATEWAY_MAC
     return server, env
 
 
@@ -178,6 +181,15 @@ def guest_xdp(args):
         sh("ip -n %s link set %s up" % (NETNS, FAR))
         if shutil.which("ethtool"):
             sh("ip netns exec %s ethtool -K %s tx off >/dev/null" % (NETNS, FAR))
+        # the far end is the server's gateway: every client is behind it. With
+        # no gateway a reply goes only to a peer whose MAC the driver learned or
+        # to the frame it answers in place (rocketnet_server_socket_start_packet,
+        # sdk/rocketnet_server_socket_linux.cpp:2077); the server's link
+        # simulator hands each packet on later from its own copy, so no reply is
+        # in place and every cookie answer counts SEND_NO_LINK_ADDRESS.
+        global GATEWAY_MAC
+        GATEWAY_MAC = subprocess.check_output(["ip", "netns", "exec", NETNS, "cat",
+                                               "/sys/class/net/%s/address" % FAR]).decode().strip()
         code, wall, log_path = run_local(args.cells[0], args)
         with open(os.path.join(args.out, args.cells[0] + ".rc"), "w") as rc:
             rc.write("%d %.0f\n" % (code, wall))
@@ -199,7 +211,10 @@ def run_xdp(cell, args):
     inner = [sys.executable, "-I", os.path.abspath(__file__), "--guest-xdp", "--cells", cell,
              "--seconds", str(args.seconds), "--interval", str(args.interval),
              "--soak", args.soak, "--out", args.out] + (["--sanitized"] if args.sanitized else [])
-    command = ["timeout", str(args.seconds + 600), "vng", "--run", vm_kernel, "--memory", "2048M", "--cpus", "2",
+    # 3072M: a guest given exactly --memory 2048M never reaches its command on
+    # this vng and qemu (2047M, 2049M and 3072M boot in seconds), and the run
+    # then only ends at the timeout below with an empty log.
+    command = ["timeout", str(args.seconds + 600), "vng", "--run", vm_kernel, "--memory", "3072M", "--cpus", "2",
                "--append", "irqaffinity=0 isolcpus=1 nohz_full=1", "--rwdir", ROOT, "--rwdir", args.out, "--", "sudo"] + inner
     start = time.monotonic()
     with open(os.path.join(args.out, cell + ".vm.log"), "w") as vm_log:
