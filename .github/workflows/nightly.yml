@@ -192,10 +192,10 @@ jobs:
   # fleet runner. Configured via -DROCKETNET_SANITIZE_ADDRESS=ON (adds
   # /fsanitize=address /Zi and link /DEBUG /INCREMENTAL:NO on every target and
   # stages clang_rt.asan_dynamic-x86_64.dll beside the built executables).
-  # Measured on the Windows fleet member, one suite at a time: configure 12 s,
-  # Release build from a clean tree about 140 s, test.exe 39 s,
-  # test_lifecycle.exe under 1 s, test_iocp.exe 3 s, functional.exe 13 s
-  # (default), 15 s (iocp) and 12 s (rio): about 4 minutes end to end.
+  # Measured on the Windows fleet member, one suite at a time: configure 16 s,
+  # Release build from a clean tree 124 s, test.exe 49 s,
+  # test_lifecycle.exe 1 s, test_iocp.exe 2 s, functional.exe 17 s
+  # (default), 14 s (iocp) and 17 s (rio): about 4 minutes end to end.
   build-and-test-windows-asan:
     name: windows / Release ASan
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
