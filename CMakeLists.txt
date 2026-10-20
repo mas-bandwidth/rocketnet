@@ -539,6 +539,14 @@ if(ROCKETNET_BUILD_TESTS)
     # bare soname when its rooted name misses; the executable's RUNPATH lets
     # that fallback resolve from any working directory.
     set_property(TARGET test APPEND PROPERTY BUILD_RPATH "$<TARGET_FILE_DIR:rocketnet_shared>")
+    # Functional-tier binaries (BUILDING.md, "Test binaries and their tiers"):
+    # test_lifecycle, test_driver, test_serialize, test_transport_control,
+    # test_xdp, test_xdp_filter, test_msgx and test_iocp open real sockets,
+    # start threads, sleep or read the wall clock, so none of them is a unit
+    # test. ./bin/functional runs test_serialize, test_transport_control and
+    # the platform's driver binary (the execs table in functional/main.cpp's
+    # main); CI runs test_lifecycle and test_driver in steps named
+    # "Functional: ...".
     foreach(test_target test_lifecycle test_driver)
         add_executable(${test_target} ${test_target}.cpp)
         target_include_directories(${test_target} PRIVATE test)
@@ -574,10 +582,23 @@ if(ROCKETNET_BUILD_TESTS)
         if(ROCKETNET_CLANG)
             execute_process(COMMAND "${CMAKE_C_COMPILER}" -dumpmachine
                 OUTPUT_VARIABLE ROCKETNET_MULTIARCH OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+            # -dumpmachine names the compiler's target triple, which for clang is
+            # x86_64-pc-linux-gnu while the distribution's asm headers sit under
+            # the multiarch directory (x86_64-linux-gnu). Use the triple's
+            # directory when it exists, otherwise the implicit include directory
+            # that actually carries asm/types.h.
+            set(ROCKETNET_MULTIARCH_INCLUDE "/usr/include/${ROCKETNET_MULTIARCH}")
+            if(NOT EXISTS "${ROCKETNET_MULTIARCH_INCLUDE}")
+                find_path(ROCKETNET_MULTIARCH_ASM_DIR asm/types.h
+                    PATHS ${CMAKE_C_IMPLICIT_INCLUDE_DIRECTORIES} NO_DEFAULT_PATH)
+                if(ROCKETNET_MULTIARCH_ASM_DIR)
+                    set(ROCKETNET_MULTIARCH_INCLUDE "${ROCKETNET_MULTIARCH_ASM_DIR}")
+                endif()
+            endif()
             set(ROCKETNET_XDP_FILTER_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/server_xdp_filter_test.o")
             add_custom_command(OUTPUT "${ROCKETNET_XDP_FILTER_OBJECT}"
                 COMMAND "${ROCKETNET_CLANG}" -D__linux__ -D__BPF__ -ffreestanding -O2 -g
-                    "-I/usr/include/${ROCKETNET_MULTIARCH}" "-I${CMAKE_CURRENT_SOURCE_DIR}/sdk"
+                    "-I${ROCKETNET_MULTIARCH_INCLUDE}" "-I${CMAKE_CURRENT_SOURCE_DIR}/sdk"
                     -target bpf -c "${CMAKE_CURRENT_SOURCE_DIR}/server_xdp/server_xdp.c"
                     -o "${ROCKETNET_XDP_FILTER_OBJECT}"
                 DEPENDS ${ROCKETNET_XDP_SOURCES}
@@ -624,12 +645,14 @@ if(ROCKETNET_BUILD_TESTS)
     add_executable(functional
         functional/main.cpp
         functional/rocketnet_functional_tests.cpp
+        functional/platform_primitives.cpp
         functional/server_receive_backlog.cpp
         functional/thread_priority_timing.cpp
         functional/macos_client_timing.cpp
         functional/lifecycle_driver.cpp
         functional/cpp_transports.cpp
         functional/live_matrix.cpp
+        functional/posix_hard_killed_peer.cpp
         functional/posix_lifecycle_stress.cpp
         functional/posix_socket_errors.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})

@@ -1612,7 +1612,7 @@ int rocketnet_server_protocol_write_ack_if_due( struct rocketnet_server_protocol
     if ( !mapping )
         return 0;
 
-    if ( server->acks->endpoints[client_index].ack_debt < ROCKETNET_ACK_DEBT_THRESHOLD )
+    if ( server->acks->endpoints[client_index].ack_debt == 0 )
         return 0;
 
     int bytes = rocketnet_server_write_session_packet( server, mapping, client_index,

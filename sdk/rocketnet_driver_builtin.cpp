@@ -36,18 +36,13 @@ static int portable_receive( void * driver, rocketnet_address_t * from, uint8_t 
 {
     return rocketnet_platform_socket_receive_packets( (rocketnet_platform_socket_t*) driver, from, data, stride, bytes, count );
 }
-#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 static uint64_t portable_send_failures( void * driver )
 { return rocketnet_platform_socket_send_failures( (rocketnet_platform_socket_t*) driver ); }
-#define ROCKETNET_PORTABLE_SEND_FAILURES portable_send_failures
-#else
-#define ROCKETNET_PORTABLE_SEND_FAILURES NULL
-#endif
 static const rocketnet_server_driver_operations_t portable_server_operations =
 {
     ROCKETNET_DRIVER_FLUSH_ON_UPDATE, portable_create, portable_destroy, synchronous_stop,
     NULL, NULL, NULL, NULL, NULL, portable_send, portable_receive,
-    NULL, NULL, NULL, NULL, NULL, ROCKETNET_PORTABLE_SEND_FAILURES
+    NULL, NULL, NULL, NULL, NULL, portable_send_failures
 };
 #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 // The portable client on a platform with the client I/O wake: an eight-callback
@@ -127,18 +122,13 @@ static bool portable_io_client_wait( void * driver, bool readable, double timeou
 { struct portable_io_client_t * client = (struct portable_io_client_t*) driver; return rocketnet_platform_wake_wait( client->wake, readable, timeout_seconds ); }
 static void portable_io_client_wake( void * driver )
 { struct portable_io_client_t * client = (struct portable_io_client_t*) driver; rocketnet_platform_wake_set( client->wake ); }
-#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 static uint64_t portable_io_client_send_failures( void * driver )
 { struct portable_io_client_t * client = (struct portable_io_client_t*) driver; return rocketnet_platform_socket_send_failures( client->socket ); }
-#define ROCKETNET_PORTABLE_IO_CLIENT_SEND_FAILURES portable_io_client_send_failures
-#else
-#define ROCKETNET_PORTABLE_IO_CLIENT_SEND_FAILURES NULL
-#endif
 static const rocketnet_client_driver_operations_t portable_client_operations =
 {
     portable_io_client_create, portable_io_client_destroy, portable_io_client_send, portable_io_client_receive,
     portable_io_client_send_batch, portable_io_client_receive_batch, portable_io_client_wait, portable_io_client_wake,
-    ROCKETNET_PORTABLE_IO_CLIENT_SEND_FAILURES
+    portable_io_client_send_failures
 };
 #else // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 static void * portable_client_create( void * context, const rocketnet_client_driver_config_t * config, rocketnet_address_t * bind )
@@ -160,7 +150,7 @@ static const rocketnet_client_driver_operations_t portable_client_operations =
 #else
   NULL, NULL,
 #endif
-  NULL, NULL, ROCKETNET_PORTABLE_SEND_FAILURES
+  NULL, NULL, portable_send_failures
 };
 #endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 extern const rocketnet_driver_backend_t rocketnet_portable_driver = { &portable_server_operations, &portable_client_operations };
@@ -323,11 +313,20 @@ static bool iocp_stop( void * driver )
     return rocketnet_server_iocp_stopped( (rocketnet_server_iocp_t*) driver );
 }
 ROCKETNET_STAGED_ADAPTER(iocp, rocketnet_server_iocp_t, rocketnet_server_iocp)
+// SEND_FAILED: the driver's own count of datagrams a refused post or a failed
+// send completion dropped (ROCKETNET_IOCP_SEND_FAILED)
+static uint64_t iocp_send_failures( void * driver )
+{
+    uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS];
+    rocketnet_server_iocp_counters( (rocketnet_server_iocp_t*) driver, counters );
+    return counters[ROCKETNET_IOCP_SEND_FAILED];
+}
 static const rocketnet_server_driver_operations_t iocp_operations =
 {
     ROCKETNET_DRIVER_STAGED | ROCKETNET_DRIVER_FLUSH_ON_UPDATE,
     iocp_create, iocp_destroy, iocp_stop,
-    iocp_start, iocp_finish, iocp_abort, iocp_flush, iocp_receive, NULL, NULL
+    iocp_start, iocp_finish, iocp_abort, iocp_flush, iocp_receive, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, iocp_send_failures
 };
 extern const rocketnet_driver_backend_t rocketnet_iocp_driver = { &iocp_operations, NULL };
 
@@ -341,11 +340,20 @@ static bool rio_stop( void * driver )
     return rocketnet_server_rio_stopped( (rocketnet_server_rio_t*) driver );
 }
 ROCKETNET_STAGED_ADAPTER(rio, rocketnet_server_rio_t, rocketnet_server_rio)
+// SEND_FAILED: the driver's own count of datagrams a refused post or a failed
+// send completion dropped (ROCKETNET_RIO_COUNTER_SEND_FAILED)
+static uint64_t rio_send_failures( void * driver )
+{
+    uint64_t counters[ROCKETNET_RIO_NUM_COUNTERS];
+    rocketnet_server_rio_counters( (rocketnet_server_rio_t*) driver, counters );
+    return counters[ROCKETNET_RIO_COUNTER_SEND_FAILED];
+}
 static const rocketnet_server_driver_operations_t rio_operations =
 {
     ROCKETNET_DRIVER_STAGED | ROCKETNET_DRIVER_FLUSH_ON_UPDATE,
     rio_create, rio_destroy, rio_stop,
-    rio_start, rio_finish, rio_abort, rio_flush, rio_receive, NULL, NULL
+    rio_start, rio_finish, rio_abort, rio_flush, rio_receive, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, rio_send_failures
 };
 extern const rocketnet_driver_backend_t rocketnet_rio_driver = { &rio_operations, NULL };
 #endif
@@ -368,7 +376,7 @@ bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_confi
     {
         plan.driver_bytes = rocketnet_platform_socket_allocation_bytes(); plan.sockets = 1;
     }
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     else if (strcmp(driver, "msgx") == 0)
     {
         plan.driver_bytes = rocketnet_platform_socket_allocation_bytes(); plan.sockets = 1;

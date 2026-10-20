@@ -40,11 +40,17 @@ A refusal reads nothing from the caller's struct and writes nothing to it. A
 `NULL` config keeps its unsized meaning (the defaults), whatever size rides
 with it.
 
-The unsized entry points stay, unchanged, and are pinned to revision 1: when a
-config struct grows, the unsized forms keep reading and writing exactly the
-revision 1 prefix (so a binary built before the sized forms existed keeps
-working against a newer library), and a caller that wants a later field uses
-the sized forms.
+The unsized entry points are the sized ones at revision 1. Revision 1 is the
+whole of today's struct, so `rocketnet_client_default_config`,
+`rocketnet_server_default_config` and `rocketnet_server_dev_config` write every
+field, and the unsized creates, validations and required-memory queries read
+every field, the four `simulated_*` controls included
+(`rocketnet_client_default_config`, `rocketnet_client_create`,
+`rocketnet_server_default_config`, `rocketnet_server_dev_config` and
+`rocketnet_server_create` in `sdk/rocketnet_api.cpp`). When a config struct grows past revision 1, the unsized forms
+keep reading and writing exactly the revision 1 bytes (so a binary built
+against revision 1 keeps working against a newer library), and a caller that
+wants a later field uses the sized forms.
 
 This document names public client and server types and entry points from
 `sdk/rocketnet.h`. Where it refers to internal transport or message-layer
@@ -99,8 +105,11 @@ return `enum rocketnet_status_t` (`ROCKETNET_STATUS_OK` on success, or
 `ROCKETNET_STATUS_INVALID_ARGUMENT` when `config` is `NULL` or `config_bytes`
 is not a known revision size).
 
-The known sizes are in the internal layer header, oldest first, so the library
-and a caller read one list. Each revision's size is written as the
+The public client and server configs each have one known size,
+`ROCKETNET_CLIENT_CONFIG_BYTES_1` and `ROCKETNET_SERVER_CONFIG_BYTES_1`
+(both in `sdk/rocketnet.h`; checked by `rn_public_config_size_known` in `sdk/rocketnet_api.cpp`).
+The internal transport and message configs keep oldest-first known-size lists
+in the internal layer header, so the library and a caller read one list. Each revision's size is written as the
 end of that revision's last field rounded up to that revision's alignment
 (`ROCKETNET_CONFIG_REVISION_BYTES`), never as `sizeof`, so the entry for an old
 revision keeps its value when the struct grows past it.
@@ -124,23 +133,25 @@ macOS arm64, Windows x86_64; `docs/PLATFORMS.md`). On any target,
 
 The client and server configs carry the message fields directly. A field added
 to one goes at the end of the struct; a caller compiled against an older header
-keeps the old size and reads the old prefix. The frozen sizes per revision and oldest-first known-size lists are in the
+keeps the old size and reads the old prefix. The size of each revision is in the
 public header and in `rocketnet_abi_type_size`, which is the
 authority for a given build; this document does not repeat the numbers.
 
-Revision 2 appends the four development link-simulator controls to both the
-client and server configs. Their `BYTES_2` formulas end at
-`simulated_duplicate_percent` and remain frozen when later revisions grow.
-
-Revision 3 appends `second_public_address` to the server config only.
-`ROCKETNET_SERVER_CONFIG_BYTES_3` ends at that pointer. `BYTES_2` stays frozen
-at `simulated_duplicate_percent`. `ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED`
-is appended immediately before `ROCKETNET_STATUS_COUNT`.
+The client and server configs have one revision. Revision 1 is the whole
+struct: the client config through the four development link-simulator
+controls, the server config through `second_public_address`, which follows
+them. `ROCKETNET_CLIENT_CONFIG_BYTES_1` ends at `simulated_duplicate_percent`
+and `ROCKETNET_SERVER_CONFIG_BYTES_1` ends at `second_public_address` (both in
+`sdk/rocketnet.h`). A `static_assert` requires each to equal the struct's
+`sizeof` (`sdk/rocketnet_abi.cpp:6-7`).
+`ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED` is appended immediately
+before `ROCKETNET_STATUS_COUNT`.
 
 Revision 1 is the layout of the first release that carries the sized entry
-points. `time_callback` joins the client config before that release, so it is
-part of revision 1, not a revision of its own; a revision is added only for a
-layout that a release has already shipped with the sized entry points.
+points. `time_callback`, the `simulated_*` controls and `second_public_address`
+join the configs before that release, so they are part of revision 1, not
+revisions of their own; a revision is added only for a layout that a release
+has already shipped with the sized entry points.
 
 The structs marked "no" have no sized entry points, so their revision 1 layout
 is frozen: a field added to one of them is an incompatible change until its
@@ -157,10 +168,15 @@ does not grow.
 sizes taken from the compiler. A binding compares them against its own
 declarations before its first call. They pin this rule three ways:
 
-- `static_assert`s in `sdk/rocketnet_abi.cpp` require the latest revision's
-  size formula to equal the compiler's `sizeof` (revision 3 for the server
-  config, revision 2 for the client config), so a formula wrong for a target
-  fails the build there.
+- `static_assert`s in `sdk/rocketnet_abi.cpp` require each config's revision 1
+  size formula to equal the compiler's `sizeof`, so a formula wrong for a
+  target fails the build there (`sdk/rocketnet_abi.cpp:6-7` for the public
+  client and server configs).
+- `public_config_default_fills_every_field` and
+  `public_config_plain_create_applies_simulation` (`test_unit_sized_config.cpp`)
+  require the unsized defaults to write the same whole struct as the sized
+  defaults at `sizeof`, and the unsized creates to carry the `simulated_*`
+  controls to the transport.
 - `sized_config_accepts_every_known_size` (`test_unit_sized_config.cpp`)
   requires each known-size list to be strictly growing and to end at the size
   `rocketnet_abi_type_size` reports, so a revision added without its size, or
@@ -176,8 +192,9 @@ declarations before its first call. They pin this rule three ways:
 
 1. Add the field at the end of the struct (section 4 for the client config),
    with a default that equals the old behaviour.
-2. Add `ROCKETNET_<STRUCT>_BYTES_<N>` for the new revision and append it to
-   `ROCKETNET_<STRUCT>_KNOWN_BYTES`; the earlier entries keep their formulas.
+2. Add `ROCKETNET_<STRUCT>_BYTES_<N>` for the new revision and add it to the
+   struct's known sizes (for the public configs, the one-entry lists at
+   `rn_client_config_known_bytes` and `rn_server_config_known_bytes` in `sdk/rocketnet_api.cpp`); the earlier entries keep their formulas.
 3. Keep the unsized entry points on the revision 1 prefix: they copy the
    caller's revision 1 bytes over the defaults, as the sized read does for
    that size.
@@ -188,8 +205,8 @@ declarations before its first call. They pin this rule three ways:
 ## 7. Sized Queries
 
 The config-reading queries have sized forms alongside their revision-1
-unsized forms. The sized validation and required-memory calls accept each
-entry in the config's known-size list and refuse every other non-NULL size
+unsized forms. The sized validation and required-memory calls accept the
+config's known size and refuse every other non-NULL size
 with the standard size-mismatch log. `rocketnet_server_dev_config_sized`
 applies the same rule before writing. A NULL config retains each call's
 existing default or counted-no-op behavior.
@@ -256,10 +273,6 @@ before 1.0.0; no earlier ABI was released, so the release starts at 1:
   naming, and the status count is `ROCKETNET_STATUS_COUNT`, like every other
   `_COUNT`. Removing and renaming these exports before the first release keeps
   ABI 1: no released binary was ever linked against the old names.
-
-No public struct's layout changes, so every config revision and known-size
-list above is unchanged.
-
 ## 10. Public enums are int-sized, and zero is a named receipt status
 
 The library and its callers are built without `-fshort-enums`. Every public

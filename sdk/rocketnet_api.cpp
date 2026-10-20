@@ -166,6 +166,7 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
         return false;
     if ( !read_env && !rocketnet_config_validate( "client", &send_kbps, rn_client_budget_fields, 1 ) )
         return false;
+    message->client_send_kbps = send_kbps;
     *kbps = rn_budget_kbps( send_kbps );
     return true;
 }
@@ -227,6 +228,7 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
         return false;
     if ( !read_env && !rocketnet_config_validate( "server", &send_kbps, rn_server_budget_fields, 1 ) )
         return false;
+    message->server_send_kbps = send_kbps;
     *kbps = rn_budget_kbps( send_kbps );
     return true;
 }
@@ -344,8 +346,8 @@ enum rocketnet_status_t rocketnet_client_default_config( struct rocketnet_client
     return ROCKETNET_STATUS_OK;
 }
 
-static const size_t rn_client_config_known_bytes[] = { ROCKETNET_CLIENT_CONFIG_KNOWN_BYTES };
-static const size_t rn_server_config_known_bytes[] = { ROCKETNET_SERVER_CONFIG_KNOWN_BYTES };
+static const size_t rn_client_config_known_bytes[] = { ROCKETNET_CLIENT_CONFIG_BYTES_1 };
+static const size_t rn_server_config_known_bytes[] = { ROCKETNET_SERVER_CONFIG_BYTES_1 };
 
 static bool rn_public_config_size_known( const char * endpoint, const char * type_name, size_t bytes,
                                          const size_t * known, int known_count, size_t current )
@@ -586,7 +588,7 @@ enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * cl
     }
     int status = ROCKETNET_STATUS_OK;
     client->connection = rocketnet_message_client_create_ex( client->context, connect_token, &client->transport, &client->message,
-                                                              client->block, client->block_bytes, client->kbps, &status );
+                                                              client->block, client->block_bytes, client->kbps, &status, client->message.client_send_kbps <= 0 );
     if ( client->connection )
         return ROCKETNET_STATUS_OK;
     if ( status == ROCKETNET_STATUS_INVALID_CONNECT_TOKEN )
@@ -696,6 +698,10 @@ uint64_t rocketnet_client_index( const struct rocketnet_client_t * client )
     if ( !rocketnet_api_null_guard( client ) )
         return 0;
     if ( !client->connection )
+        return 0;
+    // only a CONNECTED client holds a server slot: before then the transport's
+    // index is -1 (rocketnet_client_protocol_init), which as a uint64_t carries ROCKETNET_FLOW_ID_BIT
+    if ( rocketnet_message_client_state( client->connection ) != ROCKETNET_CLIENT_STATE_CONNECTED )
         return 0;
     const uint64_t index = (uint64_t) rocketnet_client_transport_client_index( rocketnet_message_client_transport( client->connection ) );
     rocketnet_assert( ( index & ROCKETNET_FLOW_ID_BIT ) == 0 );      // a client index is never a flow id
@@ -1255,7 +1261,7 @@ enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * serv
     }
     int status = ROCKETNET_STATUS_OK;
     server->running = rocketnet_message_server_create_ex( server->context, server->address, &server->transport, &server->message,
-                                                          server->block, server->block_bytes, server->kbps, &status );
+                                                          server->block, server->block_bytes, server->kbps, &status, server->message.server_send_kbps <= 0 );
     if ( server->running )
         return ROCKETNET_STATUS_OK;
     return status == ROCKETNET_STATUS_OK ? ROCKETNET_STATUS_INVALID_ARGUMENT : (enum rocketnet_status_t) status;
