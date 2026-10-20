@@ -70,6 +70,50 @@ bool rocketnet_platform_sleep_tail_yields( double remaining )
     return remaining > 0.0 && remaining <= ROCKETNET_PLATFORM_SLEEP_TAIL_SECONDS;
 }
 
+// The buffer loop of the Windows connection-type query (get_connection_type,
+// below), over a query callback so it is unit-tested with a refusing allocator
+// and a fake query (test_unit_driver_create_out_of_memory.cpp); compiled on
+// every platform. Each attempt asks rocketnet_malloc for bytes and runs the
+// query on the buffer. A refused allocation ends the fetch at once: the query
+// never sees a NULL buffer. An overflow answer, with bytes set to the size the
+// query needs, retries; ROCKETNET_PLATFORM_ADAPTERS_ATTEMPTS bounds the
+// attempts in all, so the loop ends whatever the allocator and the query
+// answer. Every end but success frees the buffer and returns NULL; a refusal
+// and running out of attempts are logged.
+
+extern void * rocketnet_malloc( void * context, size_t bytes );
+extern void rocketnet_free( void * context, void * p );
+
+#define ROCKETNET_PLATFORM_ADAPTERS_ATTEMPTS 3
+
+enum
+{
+    ROCKETNET_PLATFORM_ADAPTERS_OK,
+    ROCKETNET_PLATFORM_ADAPTERS_OVERFLOW,
+    ROCKETNET_PLATFORM_ADAPTERS_ERROR,
+};
+
+void * rocketnet_platform_adapters_fetch( void * context, unsigned long bytes, int (*query)( void * buffer, unsigned long * bytes ) )
+{
+    for ( int attempt = 0; attempt < ROCKETNET_PLATFORM_ADAPTERS_ATTEMPTS; ++attempt )
+    {
+        void * buffer = rocketnet_malloc( context, bytes );
+        if ( !buffer )
+        {
+            rocketnet_warn( "connection type: allocation of %lu bytes refused; the connection type is unknown", bytes );
+            return NULL;
+        }
+        const int answer = query( buffer, &bytes );
+        if ( answer == ROCKETNET_PLATFORM_ADAPTERS_OK )
+            return buffer;
+        rocketnet_free( context, buffer );
+        if ( answer != ROCKETNET_PLATFORM_ADAPTERS_OVERFLOW )
+            return NULL;
+    }
+    rocketnet_warn( "connection type: buffer still too small after %d attempts; the connection type is unknown", ROCKETNET_PLATFORM_ADAPTERS_ATTEMPTS );
+    return NULL;
+}
+
 // test seam for the client bind-family choice: true unless a test turns it
 // off, in which case an IPv6 socket create behaves as it does on a host with
 // no IPv6 stack. the client's availability probe reads the same flag.
@@ -4155,35 +4199,28 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
 
 extern void * rocketnet_global_context;
 
+// GetAdaptersAddresses as the fetch's query: on ERROR_BUFFER_OVERFLOW it
+// sets the size it needs, which the fetch's next attempt allocates
+static int get_connection_type_query( void * buffer, unsigned long * bytes )
+{
+    ULONG size = *bytes;
+    const ULONG return_code = GetAdaptersAddresses( AF_INET, 0, NULL, (IP_ADAPTER_ADDRESSES*) buffer, &size );
+    *bytes = size;
+    if ( return_code == NO_ERROR )
+        return ROCKETNET_PLATFORM_ADAPTERS_OK;
+    if ( return_code == ERROR_BUFFER_OVERFLOW )
+        return ROCKETNET_PLATFORM_ADAPTERS_OVERFLOW;
+    return ROCKETNET_PLATFORM_ADAPTERS_ERROR;
+}
+
 static int get_connection_type()
 {
-    IP_ADAPTER_ADDRESSES * addresses;
-    ULONG buffer_size = 15000;
-
-    do
-    {
-        addresses = (IP_ADAPTER_ADDRESSES *)( rocketnet_malloc( rocketnet_global_context, buffer_size ) );
-
-        ULONG return_code = GetAdaptersAddresses( AF_INET, 0, NULL, addresses, &buffer_size );
-
-        if ( return_code == NO_ERROR )
-        {
-            // success!
-            break;
-        }
-        else if ( return_code == ERROR_BUFFER_OVERFLOW )
-        {
-            rocketnet_free( rocketnet_global_context, addresses );
-            continue;
-        }
-        else
-        {
-            // error
-            rocketnet_free( rocketnet_global_context, addresses );
-            return ROCKETNET_CONNECTION_TYPE_UNKNOWN;
-        }
-    }
-    while ( true );
+    // a refused allocation, an error, or ROCKETNET_PLATFORM_ADAPTERS_ATTEMPTS
+    // overflows in a row end rocketnet_platform_adapters_fetch with NULL
+    // (above), and the connection type is unknown
+    IP_ADAPTER_ADDRESSES * addresses = (IP_ADAPTER_ADDRESSES*) rocketnet_platform_adapters_fetch( rocketnet_global_context, 15000, get_connection_type_query );
+    if ( !addresses )
+        return ROCKETNET_CONNECTION_TYPE_UNKNOWN;
 
     int result = ROCKETNET_CONNECTION_TYPE_UNKNOWN;
     

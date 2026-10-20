@@ -16,7 +16,15 @@
 //     driver under rocketnet_server_transport_create_ex, pinned and as the
 //     first of two candidates;
 //   * driver_create_client_ladder_stops_on_out_of_memory: the same for
-//     rocketnet_client_transport_create_ex.
+//     rocketnet_client_transport_create_ex;
+//   * platform_adapters_fetch_is_bounded: the buffer loop of the Windows
+//     connection-type query (rocketnet_platform_adapters_fetch,
+//     sdk/rocketnet_platform.cpp), over a fake query on every platform, asks
+//     the allocator no more than its bound when it refuses, and runs the
+//     query no more than its bound when the query keeps overflowing;
+//   * platform_init_survives_a_refusing_allocator: rocketnet_init_ex under an
+//     allocator that refuses every request completes, and platform init asks
+//     no more than the bound; on Windows this walks get_connection_type.
 //
 // The socket drivers (portable, msgx, gso, iocp) and the kernel-object
 // drivers (xdp, io_uring, rio) open a socket or a kernel object in their
@@ -80,13 +88,14 @@ struct driver_oom_allocator_t
     int live;
     int calls;
     int fail_at;
+    int refuse_through;
 };
 
 static void * driver_oom_allocate( void * context, size_t bytes )
 {
     driver_oom_allocator_t * state = (driver_oom_allocator_t*) context;
     const int call = ++state->calls;
-    if ( state->fail_at == call )
+    if ( state->fail_at == call || call <= state->refuse_through )
         return NULL;
     void * base = malloc( bytes + 128 );
     if ( !base )
@@ -400,6 +409,145 @@ static void driver_create_client_ladder_stops_on_out_of_memory()
     printf( "driver_create_client_ladder_stops_on_out_of_memory\n" );
 }
 
+// ---- the connection-type buffer loop -----------------------------------------
+
+// rocketnet_platform_adapters_fetch and its answers and bound
+// (sdk/rocketnet_platform.cpp, after rocketnet_platform_sleep_tail_yields)
+enum
+{
+    DRIVER_OOM_ADAPTERS_OK,
+    DRIVER_OOM_ADAPTERS_OVERFLOW,
+    DRIVER_OOM_ADAPTERS_ERROR,
+};
+enum { DRIVER_OOM_ADAPTERS_ATTEMPTS = 3 };
+extern void * rocketnet_platform_adapters_fetch( void * context, unsigned long bytes, int (*query)( void * buffer, unsigned long * bytes ) );
+
+// a refusing allocator gives way after this many refusals, so a loop with no
+// bound ends and its count is read, rather than hanging the suite
+enum { DRIVER_OOM_GIVE_WAY = 64 };
+
+// the fake query: a NULL buffer is answered with overflow, as
+// GetAdaptersAddresses answers a NULL buffer; otherwise the scripted answer,
+// with the size it asks for on overflow
+static int driver_oom_query_calls = 0;
+static int driver_oom_query_answer = DRIVER_OOM_ADAPTERS_OK;
+static int driver_oom_query_overflows = 0;
+static unsigned long driver_oom_query_needs = 0;
+
+static int driver_oom_query( void * buffer, unsigned long * bytes )
+{
+    ++driver_oom_query_calls;
+    if ( !buffer || driver_oom_query_overflows > 0 )
+    {
+        if ( buffer )
+            --driver_oom_query_overflows;
+        *bytes = driver_oom_query_needs;
+        return DRIVER_OOM_ADAPTERS_OVERFLOW;
+    }
+    return driver_oom_query_answer;
+}
+
+static void driver_oom_query_script( int answer, int overflows, unsigned long needs )
+{
+    driver_oom_query_calls = 0;
+    driver_oom_query_answer = answer;
+    driver_oom_query_overflows = overflows;
+    driver_oom_query_needs = needs;
+}
+
+static void platform_adapters_fetch_is_bounded()
+{
+    driver_oom_allocator_t state;
+    driver_oom_begin( &state );
+
+    // an allocator that refuses: the fetch ends at the first refusal, with
+    // nothing live and the query never run
+    {
+        driver_oom_query_script( DRIVER_OOM_ADAPTERS_OK, 0, 15000 );
+        const int before = state.calls;
+        state.refuse_through = before + DRIVER_OOM_GIVE_WAY;
+        void * buffer = rocketnet_platform_adapters_fetch( &state, 15000, driver_oom_query );
+        const int asked = state.calls - before;
+        state.refuse_through = 0;
+        if ( asked > DRIVER_OOM_ADAPTERS_ATTEMPTS )
+            printf( "platform_adapters_fetch_is_bounded: a refusing allocator was asked %d times (bound %d)\n", asked, DRIVER_OOM_ADAPTERS_ATTEMPTS );
+        check( asked <= DRIVER_OOM_ADAPTERS_ATTEMPTS );
+        if ( buffer )
+            rocketnet_free( &state, buffer );
+        check( buffer == NULL );
+        check( driver_oom_query_calls == 0 );
+        check( state.live == 0 );
+    }
+
+    // a query that keeps overflowing: the bound ends the retry, every
+    // buffer freed
+    {
+        driver_oom_query_script( DRIVER_OOM_ADAPTERS_OK, DRIVER_OOM_GIVE_WAY, 256 );
+        const int before = state.calls;
+        void * buffer = rocketnet_platform_adapters_fetch( &state, 128, driver_oom_query );
+        if ( buffer )
+            rocketnet_free( &state, buffer );
+        check( buffer == NULL );
+        check( driver_oom_query_calls == DRIVER_OOM_ADAPTERS_ATTEMPTS );
+        check( state.calls - before == DRIVER_OOM_ADAPTERS_ATTEMPTS );
+        check( state.live == 0 );
+    }
+
+    // one overflow, then success at the size the query asked for
+    {
+        driver_oom_query_script( DRIVER_OOM_ADAPTERS_OK, 1, 256 );
+        void * buffer = rocketnet_platform_adapters_fetch( &state, 128, driver_oom_query );
+        check( buffer != NULL );
+        check( driver_oom_query_calls == 2 );
+        check( state.live == 1 );
+        memset( buffer, 0, 256 );
+        rocketnet_free( &state, buffer );
+        check( state.live == 0 );
+    }
+
+    // an error answer ends the fetch with nothing live
+    {
+        driver_oom_query_script( DRIVER_OOM_ADAPTERS_ERROR, 0, 128 );
+        void * buffer = rocketnet_platform_adapters_fetch( &state, 128, driver_oom_query );
+        check( buffer == NULL );
+        check( driver_oom_query_calls == 1 );
+        check( state.live == 0 );
+    }
+
+    driver_oom_end( &state );
+    printf( "platform_adapters_fetch_is_bounded\n" );
+}
+
+// platform init under an allocator that refuses every request (until it gives
+// way): init completes, and platform discovery asks no more than the bound. On
+// Windows that is get_connection_type, and the connection type is unknown;
+// elsewhere discovery stops at its first refused allocation.
+static void platform_init_survives_a_refusing_allocator()
+{
+    driver_oom_allocator_t state;
+    memset( &state, 0, sizeof(state) );
+    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator_ex( driver_oom_allocate, driver_oom_release ) == ROCKETNET_STATUS_OK );
+    state.refuse_through = DRIVER_OOM_GIVE_WAY;
+    int status = -1;
+    const bool initialized = rocketnet_init_ex( &state, &status );
+    const int asked = state.calls;
+    state.refuse_through = 0;
+    check( initialized );
+    check( status == ROCKETNET_STATUS_OK );
+    if ( asked > DRIVER_OOM_ADAPTERS_ATTEMPTS )
+        printf( "platform_init_survives_a_refusing_allocator: platform init asked a refusing allocator %d times (bound %d)\n", asked, DRIVER_OOM_ADAPTERS_ATTEMPTS );
+    check( asked <= DRIVER_OOM_ADAPTERS_ATTEMPTS );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    check( asked == 1 );
+    check( rocketnet_platform_connection_type() == ROCKETNET_CONNECTION_TYPE_UNKNOWN );
+#endif
+    driver_oom_end( &state );
+    printf( "platform_init_survives_a_refusing_allocator\n" );
+}
+
 REGISTER_UNIT_TEST( driver_open_reports_out_of_memory );
 REGISTER_UNIT_TEST( driver_create_server_ladder_stops_on_out_of_memory );
 REGISTER_UNIT_TEST( driver_create_client_ladder_stops_on_out_of_memory );
+REGISTER_UNIT_TEST( platform_adapters_fetch_is_bounded );
+REGISTER_UNIT_TEST( platform_init_survives_a_refusing_allocator );
