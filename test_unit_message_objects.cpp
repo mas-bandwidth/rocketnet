@@ -2531,9 +2531,12 @@ REGISTER_UNIT_TEST( start_finish_pointer_reaches_the_frame );
 REGISTER_UNIT_TEST( receive_view_is_the_record );
 REGISTER_UNIT_TEST( release_returns_room );
 
-// the operator's environment overrides the config field and the create
-// argument, loudly: DEFAULT < STRUCT < ENV (docs/CHANNELS.md 11.5). Windows
-// has no setenv or unsetenv: _putenv_s sets, and an empty value removes.
+// the message object reads no environment (sdk/rocketnet_message_server.cpp:146):
+// the public budget variables are
+// ROCKETNET_CLIENT_SEND_KBPS and ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS, read by
+// the public creates (sdk/rocketnet_api.cpp:135 and :173).
+// A ROCKETNET_MESSAGE_* budget variable changes nothing and refuses nothing.
+// Windows has no setenv or unsetenv: _putenv_s sets, and an empty value removes.
 
 #if defined( _WIN32 )
 static void mo_setenv( const char * name, const char * value ) { _putenv_s( name, value ); }
@@ -2543,53 +2546,16 @@ static void mo_setenv( const char * name, const char * value ) { setenv( name, v
 static void mo_unsetenv( const char * name ) { unsetenv( name ); }
 #endif
 
-static void send_budget_env_overrides_config()
+static void send_budget_message_env_is_not_read()
 {
     rocketnet_message_config_t config;
     mo_config( &config );
     config.client_send_kbps = 250;
     config.server_send_kbps = 4000;
 
-    mo_setenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS", "300" );
+    mo_setenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS", "fast" );
     mo_setenv( "ROCKETNET_MESSAGE_SERVER_SEND_KBPS", "-1" );
     {
-        // over the config field: the client takes 300, every server slot is uncapped
-        mo_pair_t pair;
-        mo_pair_setup( &pair, 1, &config, 0, 0 );
-        check( mo_client_connection( pair.clients[0] )->budget.kbps == 300 );
-        check( mo_client_connection( pair.clients[0] )->send_budget_enabled == 1 );
-        check( mo_server_slot( &pair, 0 )->send_budget_enabled == 0 );
-        check( mo_server_slot( &pair, 1 )->send_budget_enabled == 0 );
-        mo_pair_teardown( &pair );
-    }
-    {
-        // and over a positive create argument
-        mo_pair_t pair;
-        mo_pair_setup( &pair, 1, &config, 500, 5000 );
-        check( mo_client_connection( pair.clients[0] )->budget.kbps == 300 );
-        check( mo_server_slot( &pair, 0 )->send_budget_enabled == 0 );
-        mo_pair_teardown( &pair );
-    }
-    {
-        // a value that does not parse, or one above the maximum, refuses the create.
-        // The refused create returns before its one allocation (sdk/rocketnet_message_server.cpp:218), and the harness
-        // link has no destroy (mo_link, line 353), so the endpoint mo_net_client made stays
-        // the harness's: it is freed here before slot 0 is used again, because
-        // mo_net_client overwrites net->clients[slot] (line 133) and mo_net_free frees only
-        // the endpoint left in each slot.
-        mo_net_t * net = mo_net_new();
-        mo_setenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS", "fast" );
-        check( mo_client_create( net, 0, &config, 0 ) == NULL );
-        delete net->clients[0];
-        net->clients[0] = NULL;
-        mo_setenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS", "10000001" );
-        check( mo_client_create( net, 0, &config, 0 ) == NULL );
-        mo_net_free( net );
-    }
-    mo_unsetenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS" );
-    mo_unsetenv( "ROCKETNET_MESSAGE_SERVER_SEND_KBPS" );
-    {
-        // unset: the config fields again
         mo_pair_t pair;
         mo_pair_setup( &pair, 1, &config, 0, 0 );
         check( mo_client_connection( pair.clients[0] )->budget.kbps == 250 );
@@ -2597,29 +2563,8 @@ static void send_budget_env_overrides_config()
         check( mo_server_slot( &pair, 0 )->send_budget_enabled == 1 );
         mo_pair_teardown( &pair );
     }
-}
-
-// the pre-check rocketnet_message_client_create and rocketnet_message_server_create
-// run before their transport opens a socket: a budget variable that does not
-// parse or is above the maximum is refused, per direction; 0 or lower is valid
-// (uncapped). The creates themselves are not called here, so a regression can
-// never open a socket in the unit suite.
-static void send_budget_env_refused_before_the_socket()
-{
-    check( rn_message_object_send_kbps_env_valid( 0 ) );
-    check( rn_message_object_send_kbps_env_valid( 1 ) );
-
-    mo_setenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS", "fast" );
-    check( !rn_message_object_send_kbps_env_valid( 0 ) );
-    check( rn_message_object_send_kbps_env_valid( 1 ) );                // each direction its own variable
-    mo_setenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS", "-5" );
-    check( rn_message_object_send_kbps_env_valid( 0 ) );                // 0 or lower uncaps: valid
     mo_unsetenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS" );
-
-    mo_setenv( "ROCKETNET_MESSAGE_SERVER_SEND_KBPS", "10000001" );
-    check( !rn_message_object_send_kbps_env_valid( 1 ) );
     mo_unsetenv( "ROCKETNET_MESSAGE_SERVER_SEND_KBPS" );
-    check( rn_message_object_send_kbps_env_valid( 1 ) );
 }
 
 // ---------------------------------------------------------------------------
@@ -3079,8 +3024,7 @@ REGISTER_UNIT_TEST( send_budget_defaults_from_config );
 REGISTER_UNIT_TEST( send_budget_configured_value_honoured );
 REGISTER_UNIT_TEST( send_budget_zero_or_negative_is_uncapped );
 REGISTER_UNIT_TEST( set_send_kbps_zero_or_negative_uncaps );
-REGISTER_UNIT_TEST( send_budget_env_overrides_config );
-REGISTER_UNIT_TEST( send_budget_env_refused_before_the_socket );
+REGISTER_UNIT_TEST( send_budget_message_env_is_not_read );
 REGISTER_UNIT_TEST( message_objects_no_allocation_after_create );
 REGISTER_UNIT_TEST( rnslots_witness_replays );
 REGISTER_UNIT_TEST( message_objects_client_clock_starts_at_first_update );
