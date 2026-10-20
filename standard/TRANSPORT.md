@@ -3593,9 +3593,13 @@ an input ([t1.4 Conventions](#t1.4)).
    has elapsed since the last matching connection request from its address,
    unless the handshake deadline elapses first. A connection request whose
    connection salt matches the mapping refreshes the idle deadline.
-5. A client MUST abandon an attempt when the connect token's expire timestamp
-   has passed. An attempt MUST NOT run past that timestamp, whether or not its
-   own lifetime has elapsed.
+5. A client MUST NOT begin an attempt with a token whose expire timestamp is
+   not later than its current time, and MUST send no packet for it. In
+   requesting cookie (1), sending connection request (2) and sending connection
+   response (3) the client MUST abandon the attempt for connect token expired
+   (-7) once the token's lifetime, its expire timestamp less its create
+   timestamp, has elapsed on the client's clock since the attempt began. The
+   check does not apply in connected (4).
 6. An endpoint MUST end an established connection when the connection timeout
    has elapsed with no packet received from the peer. The connection timeout is
    the timeout seconds field of the connect token
