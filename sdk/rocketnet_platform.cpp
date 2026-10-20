@@ -2425,16 +2425,15 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
 // are unconnected (no connect() anywhere in this file), so the kernel does
 // not route ICMP errors to them at all; this is the contract that keeps an
 // error harmless if one ever arrives. EAGAIN/EWOULDBLOCK stays the drain's
-// end: it means the queue is empty. the bound keeps a socket that reports
-// weather forever from spinning a drain.
+// end: it means the queue is empty. each weather return is a one-shot
+// report (a pending socket error is cleared as it is returned), so a drain
+// always reaches a datagram or EAGAIN.
 
 static bool rocketnet_platform_receive_weather( int error )
 {
     return error == ECONNREFUSED || error == EHOSTUNREACH || error == ENETUNREACH ||
            error == EHOSTDOWN || error == ENETDOWN || error == ENOBUFS || error == EINTR;
 }
-
-#define ROCKETNET_RECEIVE_WEATHER_LIMIT 64
 
 #if ROCKETNET_DEVELOPMENT
 
@@ -2488,7 +2487,6 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     iov[1].iov_len = sizeof(overflow);
 
     int result;
-    int weather = 0;
     for ( ;; )
     {
         struct msghdr msg;
@@ -2507,7 +2505,7 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
             // ICMP-class and buffer weather: skip it and read on, the
             // datagrams behind it are still queued (DRIVERS.md, ICMP errors)
 
-            if ( rocketnet_platform_receive_weather( error ) && ++weather < ROCKETNET_RECEIVE_WEATHER_LIMIT )
+            if ( rocketnet_platform_receive_weather( error ) )
                 continue;
 
             if ( error != EAGAIN && error != EWOULDBLOCK && error != EINTR )
@@ -2856,7 +2854,6 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
     // may overlap: none are read after this synchronous syscall returns.
     uint8_t overflow[65535];
     int total = 0;
-    int weather = 0;
 
     if ( !rocketnet_msgx_active( socket ) )
         goto per_packet;
@@ -2904,16 +2901,11 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
                 return total;
 
             // ICMP-class and buffer weather (and EINTR): skip it and keep
-            // draining on the batch pump -- never a pause (DRIVERS.md, ICMP
-            // errors). the bound ends a drain the kernel answers with
-            // weather forever; the next call drains on.
+            // draining on the batch pump until EAGAIN -- never a pause and
+            // never the end of a drain (DRIVERS.md, ICMP errors).
 
             if ( rocketnet_platform_receive_weather( error ) )
-            {
-                if ( ++weather < ROCKETNET_RECEIVE_WEATHER_LIMIT )
-                    continue;
-                return total;
-            }
+                continue;
 
             // outside ordinary weather: pause the pump and finish this
             // call per-packet -- what earlier chunks drained is already
