@@ -2,19 +2,19 @@
   "compiler_id": "GNU-15.2.0",
   "valgrind_version": "valgrind-3.26.0",
   "build_type": "Release",
-  "commit": "601c39749b20b72b144330da94dab092292fccf5",
-  "reason": "initial baseline pin",
+  "commit": "790a1c2265a14833e5b1131e7842a40ef2a0c466",
+  "reason": "repin for member gcc-15.2.0/valgrind-3.26.0",
   "threshold_pct": 2.0,
   "regions": {
     "client_frame": {
-      "ir": 700044,
+      "ir": 718092,
       "units": 64,
-      "per_unit": 10938.19
+      "per_unit": 11220.19
     },
     "server_tick": {
-      "ir": 106576152,
+      "ir": 98347160,
       "units": 64,
-      "per_unit": 1665252.38
+      "per_unit": 1536674.38
     }
   }
 }
