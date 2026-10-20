@@ -589,15 +589,15 @@ void rocketnet_client_destroy( struct rocketnet_client_t * client )
     if ( !rocketnet_api_null_guard( client ) )
         return;
     rn_client_end_connection( client );
-    if ( client->owns_block )
-    {
-        void * context = client->context;
+    // the header and the connection block after it hold the last
+    // connection's message bytes: all of it is wiped, then freed or given
+    // back (an adopted client is the header alone)
+    void * context = client->context;
+    const int owns_block = client->owns_block;
+    const size_t bytes = client->block ? (size_t) ( rn_client_header_bytes + client->block_bytes ) : sizeof( *client );
+    sodium_memzero( client, bytes );
+    if ( owns_block )
         rocketnet_free( context, client );
-    }
-    else
-    {
-        memset( client, 0, sizeof( *client ) );
-    }
 }
 
 enum rocketnet_update_result_t rocketnet_client_update( struct rocketnet_client_t * client, double time )
@@ -1303,9 +1303,13 @@ void rocketnet_server_destroy( struct rocketnet_server_t * server )
     if ( !rocketnet_api_null_guard( server ) )
         return;
     rocketnet_server_stop( server );
+    // the header, keys included, and the running block after it, which held
+    // every connection's message bytes: all of it is wiped, then freed or
+    // given back (an adopted server is the header alone)
     void * context = server->context;
     const int owns_block = server->owns_block;
-    sodium_memzero( server, sizeof( *server ) );
+    const size_t bytes = server->block ? (size_t) ( rn_server_header_bytes + server->block_bytes ) : sizeof( *server );
+    sodium_memzero( server, bytes );
     if ( owns_block )
         rocketnet_free( context, server );
 }
