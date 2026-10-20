@@ -528,8 +528,13 @@ if(ROCKETNET_BUILD_TESTS)
         functional/lifecycle_driver.cpp
         functional/cpp_transports.cpp
         functional/live_matrix.cpp
-        functional/posix_socket_errors.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
+    # the POSIX socket weather cells include <sys/socket.h> and <unistd.h>;
+    # functional/rocketnet_functional_tests.cpp:8295 and :8380 call them only
+    # under !_WIN32, so Windows builds the suite without them
+    if(NOT WIN32)
+        target_sources(functional PRIVATE functional/posix_socket_errors.cpp)
+    endif()
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     target_compile_definitions(functional PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
     target_compile_features(functional PRIVATE cxx_std_11)
