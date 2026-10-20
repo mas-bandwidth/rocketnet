@@ -44,7 +44,7 @@ int main( void ) {
     for ( int m = 0; m < NUM_MODES; m++ ) stats[m].monotonic = stats[m].strict = 1;
 
     CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
-    CHECK( (rocketnet_server_dev_config)( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
+    CHECK( rocketnet_server_dev_config( &server_config ) == ROCKETNET_STATUS_OK );
     server_config.transport = "loopback"; server_config.num_channels = NUM_MODES;
     server_config.simulated_loss_percent = 25; server_config.simulated_latency_ms = 20; server_config.simulated_jitter_ms = 35;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
@@ -60,7 +60,7 @@ int main( void ) {
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
     CHECK( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    CHECK( (rocketnet_client_default_config)( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
+    CHECK( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
     client_config.transport = "loopback"; client_config.num_channels = NUM_MODES; client_config.step_driven = true;
     client_config.simulated_loss_percent = 25; client_config.simulated_latency_ms = 20; client_config.simulated_jitter_ms = 35;
     enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
