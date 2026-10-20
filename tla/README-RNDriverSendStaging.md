@@ -19,15 +19,16 @@ checks eventual publication under weak fairness of publication and retirement.
 The transport and XDP submodels interleave independently; this is a bounded
 abstraction of generation ownership, not a proof of the C++ memory model.
 
-The control sets `RetainProducer = TRUE` and checks both new invariants and
-the publication liveness property. All three cases run through `tlacheck run
+The control uses `PublishWith(TRUE)` and checks both new invariants and the
+publication liveness property. All three cases run through `tlacheck run
 --group rndriversendstaging`; `tlacheck merge --keep tla/RUNS.tsv` writes the
 measured records. The frame and burst instance sizes remain unchanged.
 
 ### Reversed no-refusal witness
 
-`MCRNDriverSendStagingBrokenRefusesSend.cfg` sets `RetainProducer = FALSE`.
-TLC rejects exactly `NoRefusedSend` at depth 6: initial state; start stages
+`MCRNDriverSendStagingBrokenRefusesSend.cfg` selects `SpecBrokenRefuses`, whose
+publish action is `PublishWith(FALSE)`. TLC rejects exactly `NoRefusedSend` at
+depth 6: initial state; start stages
 one generation; publish queues it; start stages the second; publish queues
 that too and leaves `xdpFilling = FALSE`; the next start sets
 `xdpRefused = TRUE`. No worker retirement occurs in this trace.
@@ -49,23 +50,16 @@ The refreshed control generates 109,743 states, with 13,178 distinct states;
 the no-refusal witness generates 20,895 states, with 4,113 distinct states.
 The existing disconnect witness still rejects `StagedDisconnectFlushed`.
 
-### Reversed no-retry witness
+### Equal-counter retry proof
 
-(`send_staged != send_flushed`, or the XDP re-flush), and a flush that runs
-leaves the counters equal. TLC rejects exactly `RetryFlushPublishes`:
-a start stages a generation and advances the counters; a flush queues it and
-leaves the counters equal; a second start stages the retained generation; a
-flush runs with the counters equal, queues nothing, and leaves
-`xdpStaged = TRUE` with `xdpQueue = 0` after the worker retires, so the flush
-that ran with work ready publishes nothing.
-
-Checked against the code by hand: removing the
+The earlier exploratory no-retry TLC trace was removed from the committed
+case set. The production retry remains checked directly against the code:
+removing the
 `driver == ROCKETNET_DRIVER_XDP` disjunct in
 `rocketnet_server_transport_send_packets` leaves the retained generation
 unpublished once `send_flushed` catches up to `send_staged`, until an
 unrelated commit advances the staged counter. The unit check
-`xdp_send_staging_reflushes_without_commit` fails for that schedule. The
-witness generates 37,363 states, with 6,461 distinct states.
+`xdp_send_staging_reflushes_without_commit` fails for that schedule.
 
 ## Transport model and historical disconnect witness
 
@@ -131,6 +125,7 @@ On a Linux bench with TLC 2.19 or later, from `tla/`:
 ```sh
 java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -cleanup -config MCRNDriverSendStaging.cfg MCRNDriverSendStaging
 java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -cleanup -config MCRNDriverSendStagingBrokenDisconnect.cfg MCRNDriverSendStaging
+java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -cleanup -config MCRNDriverSendStagingBrokenRefusesSend.cfg MCRNDriverSendStaging
 ```
 
 The small instance:
