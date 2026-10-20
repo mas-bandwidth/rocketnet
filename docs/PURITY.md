@@ -101,7 +101,7 @@ remove the mapping" is written out at four sites (`:802`/`:805`, `:1140`/`:1141`
 `tla/ServerConnection.tla` already names that pair as one action, `Release(a)`. PUR-4
 moves it into one function.
 
-The request's signature-verify budget (`:23-99`) is pure: state in
+The request's signature-verify budget (`:36-110`) is pure: state in
 `rocketnet_signature_verify_budget_t`, time as `current_timestamp`.
 
 After PUR-3, PUR-4 and PUR-6, M2 is pure-but-tangled.
@@ -199,8 +199,8 @@ writes are outputs.
 - **F-P2, the budget the model names.** `tla/RNSecurityTables.tla` counts `verifies` per
   `Request` and resets it in `Tick`: the budget check at `:108`, the increment `verifies' = verifies + 1` at `:110`, the reset `verifies' = 0` at `:163`. Its header says the
   failed-verify budget (`rocketnet_server.h`), but the code's failed-verify budget
-  resets by window (`rocketnet_server_protocol.cpp:23-31`), not per update. A reset per
-  update is the handshake budget's shape (`:439`, `:1267`). PUR-3 cites the model's
+  resets by window (`rocketnet_server_protocol.cpp:40-49`), not per update. A reset per
+  update is the handshake budget's shape (`:471`, `:1311`). PUR-3 cites the model's
   `Request` and `Tick`, and its reader confirms which budget `verifies` is.
 
 ## THE CARDS
