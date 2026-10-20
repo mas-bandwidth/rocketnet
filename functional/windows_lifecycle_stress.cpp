@@ -92,20 +92,25 @@ static windows_process_counts_t windows_record_counts()
     return counts;
 }
 
+// A handle leak is a difference either way: the handle check fails when the count moves
+// by more than the tolerance in either direction. A thread leak is growth only: the thread
+// check fails when the count grows past the baseline plus the tolerance, and never when it
+// shrinks, because the process thread count also holds Windows-owned thread-pool workers
+// that are alive when the baseline is taken and exit on their own during a case.
 static void windows_assert_counts_within( const char * label, windows_process_counts_t before, windows_process_counts_t after, long tolerance )
 {
     const long handle_diff = (long) after.handles - (long) before.handles;
     const long thread_diff = (long) after.threads - (long) before.threads;
-    if ( labs( handle_diff ) > tolerance || labs( thread_diff ) > tolerance )
+    if ( labs( handle_diff ) > tolerance || thread_diff > tolerance )
     {
-        printf( "%s count mismatch: handles before=%lu after=%lu (diff=%+ld, limit=+/-%ld), threads before=%lu after=%lu (diff=%+ld, limit=+/-%ld)\n",
+        printf( "%s count mismatch: handles before=%lu after=%lu (diff=%+ld, limit=+/-%ld), threads before=%lu after=%lu (diff=%+ld, limit=+%ld)\n",
                 label,
                 (unsigned long) before.handles, (unsigned long) after.handles, handle_diff, tolerance,
                 (unsigned long) before.threads, (unsigned long) after.threads, thread_diff, tolerance );
         fflush( stdout );
     }
     rocketnet_check( labs( handle_diff ) <= tolerance );
-    rocketnet_check( labs( thread_diff ) <= tolerance );
+    rocketnet_check( thread_diff <= tolerance );
 }
 
 class windows_transport_env_guard_t
@@ -437,6 +442,9 @@ void windows_server_restart_same_port()
 }
 
 // 4. windows_client_connect_disconnect_cycles
+// The thread check counts growth only (windows_assert_counts_within): the baseline is
+// taken while Windows-owned thread-pool workers are alive, and they may exit during the
+// 200 cycles, so a thread count below the baseline is not a leak.
 void windows_client_connect_disconnect_cycles()
 {
     windows_transport_env_guard_t env_guard;
