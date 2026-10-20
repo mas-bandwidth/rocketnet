@@ -679,10 +679,12 @@ int main( int argc, char ** argv )
 
     uint64_t c2s_sent_total = 0;
     uint64_t c2s_received_total = 0;
+    uint64_t light_send_refusals = 0;
     double next_resource_sample = rocketnet_time();
 
     /* Step 1: Connect all clients within 10s */
     const double start_time = rocketnet_time();
+    double next_connect_tick = start_time;
     while ( !quit )
     {
         const double now = rocketnet_time();
@@ -705,7 +707,7 @@ int main( int argc, char ** argv )
                 unexpected_disconnects++;
             }
 
-            if ( ( ( i + 1 ) & 63 ) == 0 || i + 1 == num_clients )
+            if ( !light && ( ( ( i + 1 ) & 63 ) == 0 || i + 1 == num_clients ) )
             {
                 const double t0 = rocketnet_time();
                 rocketnet_server_update( server, t0 );
@@ -714,6 +716,16 @@ int main( int argc, char ** argv )
                     update_us[update_count++] = (uint64_t) ( ( t1 - t0 ) * 1e6 );
                 rocketnet_server_send_packets( server );
             }
+        }
+
+        if ( light )
+        {
+            const double t0 = rocketnet_time();
+            rocketnet_server_update( server, t0 );
+            const double t1 = rocketnet_time();
+            if ( update_count < update_cap )
+                update_us[update_count++] = (uint64_t) ( ( t1 - t0 ) * 1e6 );
+            rocketnet_server_send_packets( server );
         }
 
         if ( connected_count == num_clients &&
@@ -764,7 +776,19 @@ int main( int argc, char ** argv )
             sample_resources( &fds_peak, &threads_peak );
             next_resource_sample = sample_now + 0.25;
         }
-        rocketnet_sleep( 0.001 );
+        if ( light )
+        {
+            next_connect_tick += 0.100;
+            const double left = next_connect_tick - rocketnet_time();
+            if ( left > 0.0 )
+                rocketnet_sleep( left );
+            else
+                next_connect_tick = rocketnet_time();
+        }
+        else
+        {
+            rocketnet_sleep( 0.001 );
+        }
     }
 
     /* Step 2: Drive traffic for <seconds>, then 3.0s drain for in-flight delivery */
@@ -866,6 +890,14 @@ int main( int argc, char ** argv )
                                 cst->sent_count = next_seq;
                                 c2s_sent_total++;
                             }
+                            else if ( light )
+                            {
+                                light_send_refusals++;
+                            }
+                        }
+                        else if ( light )
+                        {
+                            light_send_refusals++;
                         }
                     }
 
@@ -884,6 +916,14 @@ int main( int argc, char ** argv )
                             {
                                 sv_st->sent_count = next_seq;
                             }
+                            else if ( light )
+                            {
+                                light_send_refusals++;
+                            }
+                        }
+                        else if ( light )
+                        {
+                            light_send_refusals++;
                         }
                     }
                 }
@@ -1060,7 +1100,7 @@ int main( int argc, char ** argv )
     const int light_all_connect = crit1_connect_within_10s;
     const int light_every_client_receives = ( light_all_connect && silent_clients == 0 ) ? 1 : 0;
     const int light_no_disconnect = crit2_no_unexpected_disconnect;
-    const int light_reliable_in_order = ( reliable_errors == 0 &&
+    const int light_reliable_in_order = ( reliable_errors == 0 && light_send_refusals == 0 &&
         c2s_sent_total > 0 && s2c_sent_total > 0 &&
         c2s_sent_total == c2s_received_total && s2c_sent_total == s2c_received_total ) ? 1 : 0;
 
@@ -1188,7 +1228,7 @@ int main( int argc, char ** argv )
     {
         printf( "load: mode=light clients=%d hz=10 seconds=%.0f connected=%d connect_s=%.3f connect_max_s=%.3f "
                 "all_connect=%s every_client_receives=%s no_disconnect=%s reliable_in_order=%s "
-                "c2s_sent=%" PRIu64 " c2s_received=%" PRIu64 " s2c_sent=%" PRIu64 " s2c_received=%" PRIu64 " "
+                "c2s_sent=%" PRIu64 " c2s_received=%" PRIu64 " s2c_sent=%" PRIu64 " s2c_received=%" PRIu64 " send_refusals=%" PRIu64 " "
                 "server_driver=%s client_driver=%s "
                 "fd_limit_soft=%s fd_limit_hard=%s fds_start=%ld fds_peak=%ld fds_end=%ld "
                 "threads_start=%ld threads_peak=%ld threads_end=%ld failed_criterion=%s verdict=%s\n",
@@ -1197,7 +1237,7 @@ int main( int argc, char ** argv )
                 light_every_client_receives ? "PASS" : "FAIL",
                 light_no_disconnect ? "PASS" : "FAIL",
                 light_reliable_in_order ? "PASS" : "FAIL",
-                c2s_sent_total, c2s_received_total, s2c_sent_total, s2c_received_total,
+                c2s_sent_total, c2s_received_total, s2c_sent_total, s2c_received_total, light_send_refusals,
                 server_driver, client_driver,
                 fd_limit_soft_text, fd_limit_hard_text,
                 fds_start, fds_peak, fds_end,
