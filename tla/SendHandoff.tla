@@ -1,6 +1,6 @@
 ------------------------------ MODULE SendHandoff ------------------------------
 (***************************************************************************)
-(* The transport-owned send handoff generations of                        *)
+(* The driver-owned send handoff generations of                        *)
 (* sdk/rocketnet_send_handoff.h: acquire, publish, reopen and retire.  *)
 (*                                                                      *)
 (* The producer acquires a free generation, fills its packets, and      *)

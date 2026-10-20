@@ -17,13 +17,17 @@
 // mutex.
 
 #include "rocketnet.h"
+#include "rocketnet_constants.h"
 
 #include <stdint.h>
 
 enum
 {
-    ROCKETNET_LOOPBACK_QUEUE_PACKETS = 1024
+    ROCKETNET_LOOPBACK_QUEUE_PACKETS = 2048
 };
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_LOOPBACK_QUEUE_PACKETS >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS,
+                         "receive budget twice send: loopback queue holds at least twice the send batch" );
 
 // A bound endpoint's count of datagrams dropped by the backend: over the
 // queue ceiling on send, or larger than the receive buffer on drain.

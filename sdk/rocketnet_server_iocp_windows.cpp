@@ -761,14 +761,12 @@ void rocketnet_server_iocp_send_packets( rocketnet_server_iocp_t * iocp )
     {
         for ( uint64_t i = 0; i < count; ++i )
         {
-            const bool staged = iocp->staged[i] >= 0;
-            iocp->run_bytes[i] = staged ? iocp->sends[iocp->staged[i]].packet_bytes : 0;
-            if ( staged ) iocp->run_to[i] = iocp->sends[iocp->staged[i]].to;
+            iocp->run_bytes[i] = iocp->sends[iocp->staged[i]].packet_bytes;
+            iocp->run_to[i] = iocp->sends[iocp->staged[i]].to;
         }
     }
     for ( uint64_t i = 0; i < count; ++i )
     {
-        if ( iocp->staged[i] < 0 ) continue;
         rocketnet_iocp_operation_t * op = &iocp->sends[iocp->staged[i]];
         if ( op->packet_bytes == 0 || iocp->stopping.load( std::memory_order_acquire ) )
         {

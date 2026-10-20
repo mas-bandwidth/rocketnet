@@ -28,7 +28,7 @@ extern "C" {
 /** @brief Address-family value for IPv6. */
 #define ROCKETNET_ADDRESS_IPV6                             2
 
-/** @brief Sets the storage capacity for a transport transport candidate list.
+/** @brief Sets the storage capacity for a transport candidate list.
  *
  * The value includes the terminating NUL byte; a configured string must fit
  * within this many bytes.
@@ -85,16 +85,10 @@ extern "C" {
 
 #define ROCKETNET_MESSAGE_FRAGMENT_BYTES                             1152
 
-// The reliable resend schedule (docs/CHANNELS.md 6.4). Every resend of a
-// record waits min( rto, ROCKETNET_MESSAGE_RESEND_INTERVAL_MS ), with no
-// back-off, and rto = clamp( srtt x ROCKETNET_MESSAGE_RTO_SCALE_PERCENT / 100
-// + 2 rttvar, rto_min_ms, rto_max_ms ). Validation refuses reliable_timeout_ms
-// below ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS times
-// max( ROCKETNET_MESSAGE_RESEND_INTERVAL_MS, rto_initial_ms ), the sends that
-// must fit before reliable_timeout gives up on a record.
+// The reliable resend schedule follows RakNet's adaptive RTO, with no
+// per-resend back-off. The timeout uses 2*srtt + 4*rttvar + 30 ms and is
+// capped at 2 s. Validation reserves four sends of the configured initial RTO.
 
-#define ROCKETNET_MESSAGE_RESEND_INTERVAL_MS                         100
-#define ROCKETNET_MESSAGE_RTO_SCALE_PERCENT                          125
 #define ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS                        4
 
 // What a clean run shows of a counter. Every counter has exactly one class.
@@ -302,7 +296,7 @@ void rocketnet_client_transport_default_config( struct rocketnet_client_transpor
 // means invalid geometry, overflow, unknown/custom transport, or transport not built
 // for this platform. Query each candidate separately: "auto" and transport lists
 // are not concrete plans.
-/** @brief Measure SDK allocator bytes for one client transport transport.
+/** @brief Measure SDK allocator bytes for one client transport.
  * @param[in] config Numeric settings to measure, or NULL for defaults. Environment overrides are not applied.
  * @param[in] transport One concrete built-in transport name; `auto` and comma-separated candidate lists are not plans.
  * @return The planned SDK allocator bytes, including its alignment and ownership overhead, or 0 for invalid geometry, overflow, an unknown/custom transport, or a transport not built for this platform.
@@ -346,7 +340,7 @@ struct rocketnet_client_transport_t * rocketnet_client_transport_create( void * 
  * @param config [in] Optional full config; NULL selects defaults.
  * @param time [in] Finite, monotonic time in seconds for the initial update clock.
  * @param status [out] Optional status destination; receives OK on success or the specific failure code on every failure.
- * @return A caller-owned transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, INVALID_TRANSPORT_LIST, INVALID_CONNECT_TOKEN, CONNECT_TOKEN_EXPIRED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, MUTEX_CREATE_FAILED, or THREAD_CREATE_FAILED. A transport transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate (sdk/rocketnet_client_transport.cpp:882); nothing the create allocated stays live. Call rocketnet_init first and correct the reported cause before retrying.
+ * @return A caller-owned transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, INVALID_TRANSPORT_LIST, INVALID_CONNECT_TOKEN, CONNECT_TOKEN_EXPIRED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, MUTEX_CREATE_FAILED, or THREAD_CREATE_FAILED. A transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate (sdk/rocketnet_client_transport.cpp:882); nothing the create allocated stays live. Call rocketnet_init first and correct the reported cause before retrying.
  * @code
  * // token, context, config, time, and status are supplied by the game.
  * rocketnet_init(NULL);
@@ -772,7 +766,7 @@ void rocketnet_server_transport_dev_config( struct rocketnet_server_transport_co
 // overlay, key validation, socket probe or budget refusal. Zero means invalid
 // geometry, overflow, unknown/custom transport, or transport not built for this platform.
 // Query each candidate separately: "auto" and transport lists are not concrete plans.
-/** @brief Measure SDK allocator bytes for one server transport transport.
+/** @brief Measure SDK allocator bytes for one server transport.
  * @param[in] config Numeric server settings to measure, or NULL for defaults. Environment overrides are not applied.
  * @param[in] transport One concrete built-in transport name; `auto` and candidate lists are not plans.
  * @return The planned SDK allocator bytes, including XDP UMEM where applicable, or 0 for invalid geometry, overflow, an unknown/custom transport, or a transport not built for this platform.
@@ -826,7 +820,7 @@ struct rocketnet_host_memory_estimate_t
     const char * exclusions[ROCKETNET_HOST_MEMORY_MAX_EXCLUSIONS];
 };
 
-/** @brief Estimate memory requests made by one server transport transport.
+/** @brief Estimate memory requests made by one server transport.
  * @param[in] config Numeric server settings, or NULL for defaults; environment overrides are not applied.
  * @param[in] transport One concrete built-in transport name; NULL or an unsupported transport makes the call fail.
  * @param[out] estimate Receives the estimate; NULL is counted misuse and returns false. On failure the struct remains zeroed.
@@ -857,7 +851,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
  * @param config [in] Optional full server configuration; NULL selects defaults, which require application keys.
  * @param time [in] Finite monotonic initial time in seconds.
  * @param status [out] Optional status destination; receives OK or the specific refusal code.
- * @return A caller-owned server transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, MISSING_KEYS, INVALID_PROTOCOL_ID, DEV_KEYS_IN_RELEASE, INVALID_TRANSPORT_LIST, INVALID_ADDRESS, TRANSPORT_PORT_ZERO_UNSUPPORTED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, or MUTEX_CREATE_FAILED. A transport transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate (sdk/rocketnet_server_transport.cpp:1299); nothing the create allocated stays live. Correct the reported cause before retrying. Every failure logs an error line except two: when a simulated loss, latency, jitter, or duplicate setting is non-zero, a failed link-simulator allocation (OUT_OF_MEMORY) or a failed link-simulator mutex creation (MUTEX_CREATE_FAILED) returns without logging.
+ * @return A caller-owned server transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, MISSING_KEYS, INVALID_PROTOCOL_ID, DEV_KEYS_IN_RELEASE, INVALID_TRANSPORT_LIST, INVALID_ADDRESS, TRANSPORT_PORT_ZERO_UNSUPPORTED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, or MUTEX_CREATE_FAILED. A transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate (sdk/rocketnet_server_transport.cpp:1299); nothing the create allocated stays live. Correct the reported cause before retrying. Every failure logs an error line except two: when a simulated loss, latency, jitter, or duplicate setting is non-zero, a failed link-simulator allocation (OUT_OF_MEMORY) or a failed link-simulator mutex creation (MUTEX_CREATE_FAILED) returns without logging.
  * @code
  * // context, address, config, status, time, and dt are supplied by the game.
  * rocketnet_init(NULL);
@@ -1472,12 +1466,12 @@ struct rocketnet_message_config_t
     int sequenced_holds;                // 0 .. 4096; default 16
     /** @brief Receipt history entries; 16 through 1<<16, default 256; a full ring drops its oldest. */
     int receipt_ring;                   // 16 .. 1 << 16; default 256
-    /** @brief Initial retransmit timeout in milliseconds; 10 through 60000, default 100. */
-    int rto_initial_ms;                 // 10 .. 60000; default 100
-    /** @brief Minimum retransmit timeout in milliseconds; 1 through 60000, default 10. */
-    int rto_min_ms;                     // 1 .. 60000; default 10
-    /** @brief Maximum retransmit timeout in milliseconds; 10 through 60000, default 250. */
-    int rto_max_ms;                     // 10 .. 60000; default 250
+    /** @brief Initial retransmit timeout in milliseconds; 10 through 60000, default 2000. */
+    int rto_initial_ms;                 // 10 .. 60000; default 2000
+    /** @brief Optional sampled RTO floor in milliseconds; 0 disables it. 0 through 60000, default 0. */
+    int rto_min_ms;                     // optional RTO floor; 0 disables; 0 .. 60000; default 0
+    /** @brief Maximum retransmit timeout in milliseconds; 10 through 60000, default 2000. */
+    int rto_max_ms;                     // 10 .. 60000; default 2000
     /** @brief Reliable-message lifetime in milliseconds; 1000 through 600000, default 10000. */
     int reliable_timeout_ms;            // 1000 .. 600000; default 10000
     /** @brief Default client send budget in kilobits per second; zero or less is uncapped, positive values may not exceed ROCKETNET_SEND_BUDGET_MAX_KBPS. */
@@ -1626,10 +1620,12 @@ struct rocketnet_message_client_t * rocketnet_message_client_create( void * cont
 // code (INVALID_CONNECT_TOKEN, CONNECT_TOKEN_EXPIRED, a socket or thread
 // failure), CONFIG_OUT_OF_RANGE for a refused message config or budget,
 // OUT_OF_MEMORY when the object's block is refused.
+// reserve_unlimited is for the public zero-budget setting: keep its runtime
+// ceiling while omitting a finite create-time payload reserve.
 struct rocketnet_message_client_t * rocketnet_message_client_create_ex( void * context, const uint8_t * connect_token,
                                                                         const struct rocketnet_client_transport_config_t * transport_config,
                                                                         const struct rocketnet_message_config_t * message_config,
-                                                                        void * memory, uint64_t memory_bytes, uint32_t send_kbps, int * status );
+                                                                        void * memory, uint64_t memory_bytes, uint32_t send_kbps, int * status, int reserve_unlimited );
 
 // create with configs transport_config_bytes and message_config_bytes long: each
 // known size is read over its defaults and created as above; an unknown size is
@@ -1728,10 +1724,12 @@ struct rocketnet_message_server_t * rocketnet_message_server_create( void * cont
 // code for a transport that does not start (rocketnet_server_transport_create_ex),
 // CONFIG_OUT_OF_RANGE for a refused message config or budget, OUT_OF_MEMORY
 // when the object's block is refused.
+// reserve_unlimited preserves the public unlimited-budget runtime ceiling
+// without sizing a finite payload reserve for that sentinel.
 struct rocketnet_message_server_t * rocketnet_message_server_create_ex( void * context, const char * address,
                                                                         const struct rocketnet_server_transport_config_t * transport_config,
                                                                         const struct rocketnet_message_config_t * message_config,
-                                                                        void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status );
+                                                                        void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status, int reserve_unlimited );
 
 // create with configs transport_config_bytes and message_config_bytes long: each
 // known size is read over its defaults and created as above; an unknown size is

@@ -29,6 +29,12 @@
 #include <atomic>
 #include <sodium.h>
 
+// sdk/rocketnet_client_protocol.cpp: the server address a token selects on a
+// host with or without IPv6
+void rocketnet_client_protocol_pick_server_address( const struct rocketnet_signed_connect_data_t * signed_fields,
+                                                    bool ipv6_available,
+                                                    struct rocketnet_address_t * address );
+
 // counts the client's calls of rocketnet_ack_endpoint_update_stats, for the
 // functional test
 unsigned long long g_client_ack_stats_count = 0;
@@ -843,14 +849,18 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     if ( memcmp( client_transport->protocol.signed_fields.server_public_key, rocketnet_dev_server_public_key, ROCKETNET_KEY_BYTES ) == 0 )
         rocketnet_warn( "development keys are public and not for production" );
 
-    char string_buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-    rocketnet_info( "client connecting to %s", rocketnet_address_to_string( &client_transport->protocol.server_address, string_buffer ) );
-
     // the socket binds after the token parse so the bind family can follow
-    // the server and the host's IPv6 capability
+    // the server and the host's IPv6 capability. A token naming both
+    // families selects its IPv4 address on a host with no IPv6.
 
     const bool dual_stack = rocketnet_platform_client_dual_stack();
     const bool ipv6_available = rocketnet_platform_client_ipv6_available();
+
+    rocketnet_client_protocol_pick_server_address( &client_transport->protocol.signed_fields, ipv6_available,
+                                                   &client_transport->protocol.server_address );
+
+    char string_buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    rocketnet_info( "client connecting to %s", rocketnet_address_to_string( &client_transport->protocol.server_address, string_buffer ) );
 
     // on macOS an IPv4 server's client binds IPv4. Darwin picks the ephemeral
     // port of a dual stack IPv6 socket without regard to the IPv4 sockets
@@ -1137,6 +1147,8 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
             { &client_transport->receive_buffer[0], &client_transport->receive_buffer[1] };
         rocketnet_client_io_init( &client_transport->client_io, &client_transport->io, &views[0], &views[1], buffers,
                                   client_transport->time_callback, client_transport->context );
+        client_transport->client_io.prefilter_too_large =
+            &client_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE];
 
         // tla/RNClientIoDecrypt.tla PublishKeys and RetireKeys: the protocol
         // publishes the open copy at the challenge and retires it at every
@@ -1189,13 +1201,11 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     return client_transport;
 }
 
-// the destination of the Filling ring's committed slots: the protocol's
-// server address while it holds one; once the reset in
-// rocketnet_client_transport_disconnect has erased it, the address that
-// disconnect's deferred hand-off of its burst recorded with the ring
-// (rocketnet_client_io_hand_off, sdk/rocketnet_client_io.h:299). A later
-// hand-off by update, send_packets or destroy then sends the burst, and any
-// payload deferred ahead of it, to the server they were sealed for.
+// The destination of the Filling ring's committed slots: the protocol's
+// server address while it holds one; after disconnect resets it, the address
+// recorded on the ring by the deferred hand-off. Retrying during update,
+// send_packets or destroy therefore sends the burst to the server for which
+// it was sealed.
 static const rocketnet_address_t * rocketnet_client_transport_fill_destination( rocketnet_client_transport_t * client_transport )
 {
     if ( client_transport->protocol.server_address.type != ROCKETNET_ADDRESS_NONE )
@@ -1392,6 +1402,9 @@ static void rocketnet_client_transport_io_hand_off( rocketnet_client_transport_t
     uint64_t committed = ring->num_packets;
     if ( committed > ROCKETNET_CLIENT_PAYLOAD_RING_SIZE )
         committed = ROCKETNET_CLIENT_PAYLOAD_RING_SIZE;
+
+    if ( !destination )
+        destination = rocketnet_client_transport_fill_destination( client_transport );
 
     const int stats_index = client_transport->current_stats_index;
     const rocketnet_address_t * to = destination ? destination : rocketnet_client_transport_fill_destination( client_transport );
@@ -2299,12 +2312,16 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
         const int packet_bytes = client_transport->io.operations->receive( client_transport->io.instance, &from, scratch, ROCKETNET_MAX_PACKET_BYTES );
         if ( packet_bytes == 0 )
             break;
+        if ( packet_bytes < 0 || packet_bytes > 65535 )
+        {
+            client_transport->client_io.transport_faults++;
+            break;
+        }
 
-        // a cheap size sanity on the receive thread; the full checks and
-        // their counters run on the update thread
-
-        if ( packet_bytes < ROCKETNET_PREFILTER_BYTES || packet_bytes > ROCKETNET_RECEIVE_CEILING )
-            continue;
+        // Keep the true datagram length for the update-thread prefilter's
+        // short and oversized counters. The receive buffer stores only the
+        // prefix that fits in its packet stride.
+        const int copy_bytes = packet_bytes < ROCKETNET_MAX_PACKET_BYTES ? packet_bytes : ROCKETNET_MAX_PACKET_BYTES;
 
         const double receive_time = client_transport->step_in_update
             ? client_transport->time
@@ -2322,7 +2339,7 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
         {
             const int index = receive_buffer->num_packets;
 
-            memcpy( receive_buffer->data + index * ROCKETNET_FRAME_SIZE, scratch, packet_bytes );
+            memcpy( receive_buffer->data + index * ROCKETNET_FRAME_SIZE, scratch, copy_bytes );
 
             receive_buffer->from[index] = from;
             receive_buffer->receive_time[index] = receive_time;
