@@ -1196,6 +1196,13 @@ enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * serv
 
 static uint64_t rn_server_running_counter( const struct rocketnet_server_t * server, int counter );
 
+// Every slot as rocketnet_server_disconnect_client ends one: a slot the
+// message layer holds CONNECTED is kicked (rn_message_object_kick,
+// sdk/rocketnet_message_server.cpp:358), which cancels its open in-place start,
+// marks it KICKED with reason NONE and disconnects it at the transport through
+// the link; a slot the transport holds connected that the message layer has
+// not yet observed is disconnected at the transport (tla/RNSlots.tla
+// PublicDisconnect).
 void rocketnet_server_disconnect_all_clients( struct rocketnet_server_t * server )
 {
     if ( !rocketnet_api_null_guard( server ) )
@@ -1205,6 +1212,7 @@ void rocketnet_server_disconnect_all_clients( struct rocketnet_server_t * server
         return;
     for ( int i = 0; i < server->max_clients; i++ )
     {
+        rn_message_object_kick( &server->running->object, i, ROCKETNET_DISCONNECT_REASON_NONE );
         if ( rocketnet_server_transport_is_client_connected( transport, i ) )
             rocketnet_server_transport_disconnect_client( transport, i );
     }
@@ -1326,6 +1334,16 @@ uint64_t rocketnet_server_client_id( const struct rocketnet_server_t * server, u
     return rocketnet_server_transport_client_id( rn_server_transport( server ), slot );
 }
 
+// The slot ends at once, before the next update, in every query and send: a
+// slot the message layer holds CONNECTED is kicked (rn_message_object_kick,
+// sdk/rocketnet_message_server.cpp:358), which cancels its open in-place start,
+// marks it KICKED with reason NONE, so rocketnet_server_client_connected reads
+// false and a start drops as not connected, and disconnects it at the
+// transport through the link; a slot the transport holds connected that the
+// message layer has not yet observed is disconnected at the transport, which
+// returns at once for a slot it does not hold
+// (sdk/rocketnet_server_transport.cpp:2701; tla/RNSlots.tla
+// PublicDisconnect).
 void rocketnet_server_disconnect_client( struct rocketnet_server_t * server, uint64_t client_index )
 {
     if ( !rocketnet_api_null_guard( server ) )
@@ -1333,6 +1351,7 @@ void rocketnet_server_disconnect_client( struct rocketnet_server_t * server, uin
     int slot;
     if ( !rn_server_slot( server, client_index, &slot ) )
         return;
+    rn_message_object_kick( &server->running->object, slot, ROCKETNET_DISCONNECT_REASON_NONE );
     rocketnet_server_transport_disconnect_client( rn_server_transport( server ), slot );
 }
 
