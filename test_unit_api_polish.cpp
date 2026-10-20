@@ -144,18 +144,12 @@ static api_polish_dev_writer_t api_polish_dev_writer()
 {
     api_polish_dev_writer_t writer = NULL;
 #if defined(_WIN32)
-    HMODULE library = LoadLibraryA( "rocketnet_dev.dll" );
-    if ( library == NULL )
-        library = LoadLibraryA( "bin\\rocketnet_dev.dll" );
+    HMODULE library = LoadLibraryA( ROCKETNET_DEV_LIBRARY_PATH );
     check( library != NULL );
     writer = (api_polish_dev_writer_t) (void *) GetProcAddress( library, "rocketnet_write_dev_connect_token" );
     api_polish_dev_set_log = (api_polish_dev_set_log_t) (void *) GetProcAddress( library, "rocketnet_set_log_callback" );
 #else
-    const char * names[] = { "bin/librocketnet_dev.so", "librocketnet_dev.so",
-                             "bin/librocketnet_dev.dylib", "librocketnet_dev.dylib" };
-    void * library = NULL;
-    for ( size_t i = 0; i < sizeof( names ) / sizeof( names[0] ) && library == NULL; i++ )
-        library = dlopen( names[i], RTLD_NOW | RTLD_LOCAL );
+    void * library = dlopen( ROCKETNET_DEV_LIBRARY_PATH, RTLD_NOW | RTLD_LOCAL );
     check( library != NULL );
     writer = (api_polish_dev_writer_t) dlsym( library, "rocketnet_write_dev_connect_token" );
     api_polish_dev_set_log = (api_polish_dev_set_log_t) dlsym( library, "rocketnet_set_log_callback" );
@@ -187,11 +181,11 @@ static_assert( ROCKETNET_RELIABILITY_UNRELIABLE == 0 && ROCKETNET_RELIABILITY_UN
                ROCKETNET_RELIABILITY_RELIABLE == 2 && ROCKETNET_RELIABILITY_RELIABLE_ORDERED == 3 &&
                ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED == 4 && ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT == 5 &&
                ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT == 6 && ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT == 7, "ruling 3: reliability values" );
-static_assert( ROCKETNET_RECEIPT_STATUS_ACKED == 1 && ROCKETNET_RECEIPT_STATUS_LOSS == 2, "ruling 3: receipt values" );
+static_assert( ROCKETNET_RECEIPT_STATUS_NONE == 0 && ROCKETNET_RECEIPT_STATUS_ACKED == 1 && ROCKETNET_RECEIPT_STATUS_LOSS == 2, "ruling 3: receipt values" );
 static_assert( ROCKETNET_DISCONNECT_REASON_NONE == 0 && ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH == 1 &&
                ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION == 3 &&
                ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT == 4 && ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED == 5 &&
-               ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED == 6, "ruling 3: disconnect reason values" );
+               ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED == 6, "ruling 3: disconnect reason values, 2 reserved" );
 static_assert( ROCKETNET_UPDATE_OK == 0 && ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED == -1, "ruling 3: update values" );
 static_assert( rn_same<decltype( rocketnet_client_update( NULL, 1000.0 ) ), rocketnet_update_result_t>::value, "ruling 3: client update" );
 static_assert( rn_same<decltype( rocketnet_server_update( NULL, 1000.0 ) ), rocketnet_update_result_t>::value, "ruling 3: server update" );
@@ -295,6 +289,66 @@ static void api_polish_lookups_say_unknown()
 }
 REGISTER_UNIT_TEST( api_polish_lookups_say_unknown );
 
+// A zero-filled receipt names NONE. Value 2 is reserved and is not a
+// disconnect reason. Every name lookup names every value of its enum.
+static void api_polish_zero_receipt_and_dense_reasons()
+{
+    struct rocketnet_receipt_t receipt;
+    memset( &receipt, 0, sizeof( receipt ) );
+    check( receipt.status == (uint32_t) ROCKETNET_RECEIPT_STATUS_NONE );
+
+    const enum rocketnet_disconnect_reason_t reasons[] =
+    {
+        ROCKETNET_DISCONNECT_REASON_NONE,
+        ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH,
+        ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION,
+        ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT,
+        ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED,
+        ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED,
+    };
+    const int reason_values[] = { 0, 1, 3, 4, 5, 6 };
+    for ( int i = 0; i < (int) ( sizeof( reasons ) / sizeof( reasons[0] ) ); i++ )
+    {
+        check( (int) reasons[i] == reason_values[i] );
+        const char * name = rocketnet_disconnect_reason_name( reasons[i] );
+        check( name != NULL && name[0] != '\0' && strcmp( name, "unknown" ) != 0 );
+    }
+    check( strcmp( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) 2 ), "unknown" ) == 0 );
+    check( strcmp( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) 7 ), "unknown" ) == 0 );
+
+    for ( int status = 0; status < (int) ROCKETNET_STATUS_COUNT; status++ )
+    {
+        const char * name = rocketnet_status_name( (enum rocketnet_status_t) status );
+        check( name != NULL && strcmp( name, "unknown" ) != 0 );
+    }
+    for ( int level = (int) ROCKETNET_LOG_LEVEL_NONE; level <= (int) ROCKETNET_LOG_LEVEL_SPAM; level++ )
+    {
+        const char * name = rocketnet_log_level_name( (enum rocketnet_log_level_t) level );
+        check( name != NULL && strcmp( name, "unknown" ) != 0 );
+    }
+    check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_INVALID ), "unknown" ) != 0 );
+    for ( int state = (int) ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED; state <= (int) ROCKETNET_CLIENT_STATE_CONNECTED; state++ )
+    {
+        const char * name = rocketnet_client_state_name( (enum rocketnet_client_state_t) state );
+        check( name != NULL && strcmp( name, "unknown" ) != 0 && strcmp( name, "???" ) != 0 );
+    }
+
+    check( sizeof( enum rocketnet_status_t ) == sizeof( int ) );
+    check( sizeof( enum rocketnet_log_level_t ) == sizeof( int ) );
+    check( sizeof( enum rocketnet_reliability_t ) == sizeof( int ) );
+    check( sizeof( enum rocketnet_receipt_status_t ) == sizeof( int ) );
+    check( sizeof( enum rocketnet_disconnect_reason_t ) == sizeof( int ) );
+    check( sizeof( enum rocketnet_update_result_t ) == sizeof( int ) );
+    check( sizeof( enum rocketnet_client_state_t ) == sizeof( int ) );
+    check( sizeof( enum rocketnet_client_counter_t ) == sizeof( int ) );
+    check( sizeof( enum rocketnet_client_stat_t ) == sizeof( int ) );
+    check( sizeof( enum rocketnet_server_counter_t ) == sizeof( int ) );
+    check( sizeof( enum rocketnet_server_stat_t ) == sizeof( int ) );
+    check( sizeof( enum rocketnet_server_client_counter_t ) == sizeof( int ) );
+    check( sizeof( enum rocketnet_server_client_stat_t ) == sizeof( int ) );
+}
+REGISTER_UNIT_TEST( api_polish_zero_receipt_and_dense_reasons );
+
 // --- ruling 8: sizes are size_t ------------------------------------------------
 
 static_assert( rn_same<decltype( rocketnet_client_required_memory( NULL ) ), size_t>::value, "ruling 8: client required memory" );
@@ -323,6 +377,64 @@ static void api_polish_null_client_state_is_invalid()
     rocketnet_set_assert_callback( NULL );
 }
 REGISTER_UNIT_TEST( api_polish_null_client_state_is_invalid );
+
+// --- ruling 10: enumeration and queries describe the same ABI types -----------
+
+static void api_polish_abi_layouts()
+{
+    const char * expected[] =
+    {
+        "rocketnet_client_config_t", "rocketnet_server_config_t", "rocketnet_receipt_t",
+        "rocketnet_address_type_t", "rocketnet_client_transport_config_t",
+        "rocketnet_server_transport_config_t", "rocketnet_client_transport_stats_t",
+        "rocketnet_server_transport_stats_t", "rocketnet_server_transport_client_stats_t",
+        "rocketnet_packet_context_t", "rocketnet_frame_sync_stats_t", "rocketnet_message_config_t"
+    };
+    const size_t count = sizeof(expected) / sizeof(expected[0]);
+    bool seen[sizeof(expected) / sizeof(expected[0])] = {};
+    for ( size_t i = 0; i < count; ++i )
+    {
+        const char * name = rocketnet_abi_layouts( i );
+        check( name != NULL );
+        size_t j = 0;
+        while ( j < count && strcmp( name, expected[j] ) != 0 )
+            ++j;
+        check( j < count );
+        check( !seen[j] );
+        seen[j] = true;
+        check( rocketnet_abi_type_size( name ) != SIZE_MAX );
+        check( rocketnet_abi_field_count( name ) >= 0 );
+    }
+    check( rocketnet_abi_layouts( count ) == NULL );
+    check( rocketnet_abi_layouts( SIZE_MAX ) == NULL );
+    check( rocketnet_abi_type_size( "rocketnet_address_type_t" ) == sizeof( enum rocketnet_address_type_t ) );
+    check( rocketnet_abi_field_count( "rocketnet_address_type_t" ) == 0 );
+    check( rocketnet_abi_field_offset( "rocketnet_address_type_t", "value" ) == SIZE_MAX );
+    check( rocketnet_abi_field_size( "rocketnet_address_type_t", "value" ) == SIZE_MAX );
+}
+REGISTER_UNIT_TEST( api_polish_abi_layouts );
+
+// --- ruling 11: server abort_message past max_clients counts misuse ------------
+
+static void api_polish_server_abort_message_misuse()
+{
+    rocketnet_server_config_t config;
+    check( rocketnet_server_dev_config( &config ) == ROCKETNET_STATUS_OK );
+    config.max_clients = 16;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0 );
+    check( server != NULL );
+
+    rocketnet_set_assert_callback( api_polish_quiet_assert );
+    const uint64_t before = rocketnet_api_misuse_count();
+    rocketnet_server_abort_message( server, 16 );
+    check( rocketnet_api_misuse_count() == before + 1 );
+    rocketnet_server_abort_message( server, 100 );
+    check( rocketnet_api_misuse_count() == before + 2 );
+    rocketnet_set_assert_callback( NULL );
+
+    rocketnet_server_destroy( server );
+}
+REGISTER_UNIT_TEST( api_polish_server_abort_message_misuse );
 
 // --- the production minter refuses a token no peer accepts ---------------------
 

@@ -259,8 +259,10 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
                 counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_ALREADY_CONNECTED]++;
                 return ROCKETNET_SERVER_PROCESS_IGNORED;
             }
-            // STANDARD.md: a mapping answers every request from its address with its stored challenge, whatever the request's salt.
-            mapping->last_receive_time = current_time;     // STANDARD.md _Half-open state_: traffic refreshes the idle deadline
+            // standard/TRANSPORT.md t12 rule 3: a mapping answers every request from its address with its stored challenge, whatever the request's salt.
+            // t12 rule 3 and t17 rule 4: only a request whose salt matches the mapping's refreshes the half-open idle deadline.
+            if ( sodium_memcmp( connection_salt, mapping->connection_salt, ROCKETNET_CONNECTION_SALT_BYTES ) == 0 )
+                mapping->last_receive_time = current_time;
             memcpy( response_packet, mapping->challenge_packet, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
             *response_bytes = ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES;
             rocketnet_debug( "server resent stored connection challenge" );
@@ -837,6 +839,33 @@ static void rocketnet_server_integrity_failure( struct rocketnet_server_protocol
     counters[ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED]++;
 }
 
+// The server's payload copy: type_data_bytes into out_payload only when the
+// caller's buffer is large enough. Above the capacity the payload is refused
+// whole, never truncated, and counted as RECEIVE_CURSOR_TOO_SMALL; a copy
+// that fits is counted as PAYLOAD_DELIVERED. The transport sizes the buffer,
+// so a caller that passes a smaller one is refused instead of overrun.
+
+int rocketnet_server_payload_copy( uint8_t * out_payload, int out_payload_capacity,
+                                   const uint8_t * type_data, int type_data_bytes,
+                                   int * out_payload_bytes, uint64_t * counters )
+{
+    rocketnet_assert( out_payload );
+    rocketnet_assert( type_data );
+    rocketnet_assert( out_payload_bytes );
+
+    if ( type_data_bytes > out_payload_capacity )
+    {
+        rocketnet_spam( "server refused payload. %d bytes into a %d-byte buffer", type_data_bytes, out_payload_capacity );
+        counters[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL]++;
+        return 0;
+    }
+
+    memcpy( out_payload, type_data, (size_t) type_data_bytes );
+    *out_payload_bytes = type_data_bytes;
+    counters[ROCKETNET_COUNTER_PAYLOAD_DELIVERED]++;
+    return 1;
+}
+
 struct rocketnet_sealed_type_counters_t
 {
     int received;
@@ -860,6 +889,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
                                                    uint8_t * response_packet,
                                                    int * response_bytes,
                                                    uint8_t * out_payload,
+                                                   int out_payload_capacity,
                                                    int * out_payload_bytes,
                                                    int * out_payload_client_index )
 {
@@ -1117,9 +1147,8 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     if ( packet_type == ROCKETNET_CONNECTION_PAYLOAD_PACKET )
     {
         rocketnet_spam( "server received payload from client %d (%d bytes)", client_index, type_data_bytes );
-        counters[ROCKETNET_COUNTER_PAYLOAD_DELIVERED]++;
-        memcpy( out_payload, type_data, (size_t) type_data_bytes );
-        *out_payload_bytes = type_data_bytes;
+        if ( !rocketnet_server_payload_copy( out_payload, out_payload_capacity, type_data, type_data_bytes, out_payload_bytes, counters ) )
+            return ROCKETNET_SERVER_PROCESS_IGNORED;
         *out_payload_client_index = client_index;
         server->payload_connection_id = rocketnet_server_protocol_connection_id( server, client_index );     // P9b
         return ROCKETNET_SERVER_PROCESS_ACCEPTED;
@@ -1184,7 +1213,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     return ROCKETNET_SERVER_PROCESS_ACCEPTED;
 }
 
-int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t * server,
+int rocketnet_server_protocol_process_packet_capacity( struct rocketnet_server_protocol_t * server,
                                      const struct rocketnet_address_t * from,
                                      const uint8_t * packet_data,
                                      int packet_bytes,
@@ -1193,6 +1222,7 @@ int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t
                                      uint8_t * response_packet,
                                      int * response_bytes,
                                      uint8_t * out_payload,
+                                     int out_payload_capacity,
                                      int * out_payload_bytes,
                                      int * out_payload_client_index )
 {
@@ -1258,7 +1288,26 @@ int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t
     return rocketnet_server_process_sealed_packet( server, from, (uint8_t) packet_type, packet_data, packet_bytes,
                                                    current_timestamp, current_time,
                                                    response_packet, response_bytes,
-                                                   out_payload, out_payload_bytes, out_payload_client_index );
+                                                   out_payload, out_payload_capacity, out_payload_bytes, out_payload_client_index );
+}
+
+int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t * server,
+                                     const struct rocketnet_address_t * from,
+                                     const uint8_t * packet_data,
+                                     int packet_bytes,
+                                     uint64_t current_timestamp,
+                                     double current_time,
+                                     uint8_t * response_packet,
+                                     int * response_bytes,
+                                     uint8_t * out_payload,
+                                     int * out_payload_bytes,
+                                     int * out_payload_client_index )
+{
+    return rocketnet_server_protocol_process_packet_capacity( server, from, packet_data, packet_bytes,
+                                                              current_timestamp, current_time,
+                                                              response_packet, response_bytes,
+                                                              out_payload, ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES,
+                                                              out_payload_bytes, out_payload_client_index );
 }
 
 // Cookie key rotation: modelled by Tick, LiveGens, PreviousBoundedToOnePeriod

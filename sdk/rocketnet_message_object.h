@@ -77,6 +77,14 @@ struct rn_message_link_t
     void (*abort_packet)( void * transport, struct rocketnet_packet_context_t * context );
     void (*send_packets)( void * transport );
 
+    // How many payload frames the transport may still start this update.
+    // NULL (the client's link, the unit suite's fakes): no transport-side
+    // cap. The server's link reads it so a rotation advances only over
+    // clients that had a chance to send.
+    int (*send_capacity_available)( void * transport );
+    // Connected peers whose next send round must remain available.
+    int (*send_connected_count)( void * transport );
+
     // the connection in the slot now: a nonzero id, or 0 when none (RNSlots
     // Observe). The server's link answers
     // rocketnet_server_transport_client_connection_id, which differs for every
@@ -168,6 +176,11 @@ struct rn_message_object_t
     int clock_started;                          // 1 from the first update on
     int pending_connection;                     // the connection with a start pending, or -1
 
+    // The send pass's rotation: the first connection to offer a frame next
+    // update. A cap below the client count then serves every client in turn
+    // instead of always serving the low indices.
+    int send_next_connection;
+
     // the in-place unreliable send (docs/OUTGOING-BUILD.md, tla/RNOutgoingBuild.tla):
     // the pending start is written in this transport frame
     int in_place;                               // 1 while the pending start holds a frame
@@ -198,14 +211,6 @@ uint64_t rn_message_object_required_bytes( const struct rocketnet_message_config
 struct rn_message_object_t * rn_message_object_create( void * context, const struct rn_message_link_t * link, int is_server, int num_connections,
                                                        const struct rocketnet_message_config_t * config, void * memory, uint64_t memory_bytes,
                                                        int32_t default_kbps, double time );
-
-// R6 (docs/CHANNELS.md 11.5): false when ROCKETNET_MESSAGE_CLIENT_SEND_KBPS
-// (is_server 0) or ROCKETNET_MESSAGE_SERVER_SEND_KBPS (1) is set to a value
-// that does not parse or is above ROCKETNET_SEND_BUDGET_MAX_KBPS, logged with
-// the variable and its value. The public creates refuse on it before the
-// transport opens a socket; rn_message_object_create applies a valid value,
-// logged with the value it displaces.
-bool rn_message_object_send_kbps_env_valid( int is_server );
 
 void rn_message_object_destroy( struct rn_message_object_t * object );
 
