@@ -17,6 +17,8 @@
 #include <errno.h>
 #include <inttypes.h>
 
+#include <sodium.h>
+
 // ----------------------------------------------------------------
 //              the tables, expanded into everything derived
 // ----------------------------------------------------------------
@@ -529,6 +531,18 @@ static void rocketnet_config_refuse_driver_names( const char * transport_name, c
     }
 }
 
+// The decode staging seam, compiled into the unit suite's hook library only
+// (ROCKETNET_SECRET_WIPE_TEST_HOOKS): the BYTES case below hands its base64
+// staging to the hook on both of its exits, after the staging is done with,
+// so a unit case reads what a secret field's staging still holds
+// (test_unit_secrets_wiped.cpp).
+#if defined(ROCKETNET_SECRET_WIPE_TEST_HOOKS)
+void (*rocketnet_config_decode_staging_hook)( const uint8_t * staging, int bytes ) = NULL;
+#define ROCKETNET_CONFIG_DECODE_STAGING_SEEN( staging, bytes ) do { if ( rocketnet_config_decode_staging_hook ) rocketnet_config_decode_staging_hook( staging, bytes ); } while ( 0 )
+#else
+#define ROCKETNET_CONFIG_DECODE_STAGING_SEEN( staging, bytes ) do {} while ( 0 )
+#endif
+
 bool rocketnet_config_apply_env( const char * transport_name, void * config, const struct rocketnet_config_field_t * fields, int num_fields )
 {
     rocketnet_assert( transport_name );
@@ -625,12 +639,19 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
                     return false;
                 }
                 const int decoded_bytes = rocketnet_base64_decode_data( value, decoded, (size_t) field->size );
-                if ( decoded_bytes != field->size )
+                const bool decoded_whole = decoded_bytes == field->size;
+                if ( decoded_whole )
+                    memcpy( base, decoded, (size_t) field->size );
+                // the staging holds the decoded bytes, a secret key's among
+                // them, on the parse and on a refused decode alike: wiped
+                // before either exit
+                sodium_memzero( decoded, sizeof(decoded) );
+                ROCKETNET_CONFIG_DECODE_STAGING_SEEN( decoded, field->size );
+                if ( !decoded_whole )
                 {
                     rocketnet_error( "%s config could not parse %s as base64 of exactly %d bytes", transport_name, env_name, field->size );
                     return false;
                 }
-                memcpy( base, decoded, (size_t) field->size );
             }
             break;
 
