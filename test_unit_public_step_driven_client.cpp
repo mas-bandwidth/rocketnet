@@ -311,3 +311,48 @@ static void public_step_driven_client_env_selects_the_mode()
     else check( public_step_unsetenv( "ROCKETNET_CLIENT_STEP_DRIVEN" ) == 0 );
 }
 REGISTER_UNIT_TEST( public_step_driven_client_env_selects_the_mode );
+
+static void public_step_driven_client_loss_100_drops_everything()
+{
+    rocketnet_public_link_simulator_test_development( 1 );
+    public_step_identity_t identity;
+    public_step_identity( &identity );
+
+    rocketnet_set_quiet( 1 );
+    rocketnet_server_config_t server_config;
+    public_step_server_config( &server_config, &identity );
+    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    check( server != NULL );
+    check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    public_step_token( rocketnet_server_port( server ), &identity, token );
+
+    rocketnet_client_config_t client_config;
+    memset( &client_config, 0, sizeof( client_config ) );
+    public_step_client_config( &client_config );
+    client_config.simulated_loss_percent = 100;
+
+    rocketnet_client_t * client = rocketnet_client_create_sized( NULL, &client_config, sizeof(client_config), NULL, 0 );
+    check( client != NULL );
+    check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
+
+    double now = 1000.0;
+    for ( int i = 0; i < 50; i++ )
+    {
+        public_step_now = now;
+        check( rocketnet_client_update( client, now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_client_send_packets( client );
+        check( rocketnet_server_update( server, now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_server_send_packets( server );
+        now += 0.01;
+    }
+
+    const uint64_t packets_received = rocketnet_client_counter( client, ROCKETNET_CLIENT_COUNTER_PACKETS_RECEIVED );
+    check( packets_received == 0 );
+
+    rocketnet_client_destroy( client );
+    rocketnet_server_destroy( server );
+    rocketnet_public_link_simulator_test_development( 0 );
+}
+REGISTER_UNIT_TEST( public_step_driven_client_loss_100_drops_everything );

@@ -1402,10 +1402,11 @@ header; the internal transport and message layers are in
   direction's budget (not recommended, because without one there is no
   defined behaviour when a sender outruns its path or its peer), and
   `set_send_kbps` follows the same rule at runtime. A reused slot starts at
-  the server's configured value. `ROCKETNET_MESSAGE_CLIENT_SEND_KBPS` and
-  `ROCKETNET_MESSAGE_SERVER_SEND_KBPS` override the field and the create
-  argument at create (default < struct < environment), each override logged
-  with the value it displaces.
+  the server's configured value. The message object reads no environment
+  (sdk/rocketnet_message_server.cpp:146); the public
+  creates read the budget from `ROCKETNET_CLIENT_SEND_KBPS` and
+  `ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS` (sdk/rocketnet_api.cpp:135
+  and :173) and pass it as the create argument.
 - **Time.** Create takes no time. The object's clock is the game's time from
   the first update on. The client's transport is seeded at 0.0 at create and
   is handed the time since the first update, so its connect timers and the

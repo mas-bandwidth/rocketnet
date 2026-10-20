@@ -63,6 +63,11 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double
 #define LIVE_MATRIX_PASS_SECONDS            ( 10.0 * ROCKETNET_FUNCTIONAL_TIME_SCALE )
 #define LIVE_MATRIX_MAX_FAIL_LINES          24
 
+// a passing run prints its name only: the per-window lines, the table and
+// the summary print under ROCKETNET_TEST_VERBOSE, and the window lines,
+// table and summary also print once the run has failed
+static int live_matrix_verbose;
+
 static void live_matrix_check_failed( const char * condition, const char * function, const char * file, int line )
 {
     printf( "check failed: ( %s ), function %s, file %s, line %d\n", condition, function, file, line );
@@ -669,7 +674,8 @@ static void live_matrix_over_maximum( struct live_matrix_t * m, int direction )
                 uint8_t * q = direction == 0 ? rocketnet_message_client_start( m->client, channel, mode, (int) over )
                                              : rocketnet_message_server_start( m->server, 0, channel, mode, (int) over );
                 const uint64_t failed_delta = live_matrix_counter( live_matrix_sender_counters( m, direction ), ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) - failed_before;
-                printf( "promoted %d %d %u start=%d\n", mode, channel, over, q != NULL );
+                if ( live_matrix_verbose )
+                    printf( "promoted %d %d %u start=%d\n", mode, channel, over, q != NULL );
                 if ( q == NULL || failed_delta != 0 )
                     live_matrix_fail( m, "over", direction, mode, channel, -1, "promotion-refused", (int) over );
                 if ( q )
@@ -688,7 +694,8 @@ static void live_matrix_over_maximum( struct live_matrix_t * m, int direction )
                                          : rocketnet_message_server_start( m->server, 0, channel, mode, (int) over );
             const uint64_t delta = live_matrix_counter( live_matrix_sender_counters( m, direction ), counter ) - before;
             const uint64_t delta_other = live_matrix_counter( live_matrix_sender_counters( m, direction ), other ) - before_other;
-            printf( "refused %d %d %u %s %llu\n", mode, channel, over, rocketnet_counter_name( counter ), (unsigned long long) delta );
+            if ( live_matrix_verbose )
+                printf( "refused %d %d %u %s %llu\n", mode, channel, over, rocketnet_counter_name( counter ), (unsigned long long) delta );
             if ( p != NULL || delta != 1 || delta_other != 0 )
             {
                 live_matrix_fail( m, "over", direction, mode, channel, -1, p ? "start-succeeded" : "wrong-counter", (int) over );
@@ -818,7 +825,7 @@ static void live_matrix_edge_probes( struct live_matrix_t * m )
                     m->failures--;
                     m->edge_failures++;
                 }
-                else if ( arrived )
+                else if ( arrived && live_matrix_verbose )
                     printf( "edge %d %d %u arrived on channel %d\n", direction, mode, lengths[i], live_matrix_carries_channel( mode ) ? channel : 0 );
             }
         }
@@ -998,7 +1005,8 @@ static void live_matrix_window( struct live_matrix_t * m, double deadline )
                 sent += d->streams[mode][channel].sent;
                 received += d->streams[mode][channel].received;
             }
-            printf( "delivery %u %d %d %lld/%lld\n", m->cycle, direction, mode, (long long) received, (long long) sent );
+            if ( live_matrix_verbose )
+                printf( "delivery %u %d %d %lld/%lld\n", m->cycle, direction, mode, (long long) received, (long long) sent );
             if ( sent > 0 && received == 0 )
                 live_matrix_fail( m, "delivery", direction, mode, -1, -1, "nothing-delivered", 0 );
         }
@@ -1017,6 +1025,9 @@ static void live_matrix_window( struct live_matrix_t * m, double deadline )
             m->failures++;
         }
     }
+
+    if ( !live_matrix_verbose && m->failures == 0 && m->edge_failures == 0 )
+        return;
 
     printf( "window %u: %.3f s, %llu iterations, c2s %llu messages %llu bytes, s2c %llu messages %llu bytes, receipts c2s %u acked %u lost, s2c %u acked %u lost, sequenced stale %llu superseded %llu, sends held back for room c2s %llu s2c %llu\n",
             m->cycle, rocketnet_platform_time() - window_start, (unsigned long long) iterations,
@@ -1079,6 +1090,7 @@ void live_message_matrix_loopback()
     static struct live_matrix_t matrix;
     struct live_matrix_t * m = &matrix;
     memset( m, 0, sizeof( *m ) );
+    live_matrix_verbose = getenv( "ROCKETNET_TEST_VERBOSE" ) != NULL;
     memset( live_matrix_table_sent, 0, sizeof( live_matrix_table_sent ) );
     memset( live_matrix_table_received, 0, sizeof( live_matrix_table_received ) );
 
@@ -1135,11 +1147,14 @@ void live_message_matrix_loopback()
 
     const double elapsed = rocketnet_platform_time() - m->cpu_start;
 
-    live_matrix_print_table();
-    printf( "live_message_matrix_loopback: verified=%llu failures=%llu edge_failures=%llu not_delivered_0_1_4=%llu refusals=%llu elapsed=%.3f s (bound %.0f s)\n",
-            (unsigned long long) m->verified, (unsigned long long) m->failures, (unsigned long long) m->edge_failures, (unsigned long long) m->not_delivered,
-            (unsigned long long) m->refusals, elapsed, LIVE_MATRIX_PASS_SECONDS );
-    fflush( stdout );
+    if ( live_matrix_verbose || m->failures != 0 || m->edge_failures != 0 || elapsed >= LIVE_MATRIX_PASS_SECONDS )
+    {
+        live_matrix_print_table();
+        printf( "live_message_matrix_loopback: verified=%llu failures=%llu edge_failures=%llu not_delivered_0_1_4=%llu refusals=%llu elapsed=%.3f s (bound %.0f s)\n",
+                (unsigned long long) m->verified, (unsigned long long) m->failures, (unsigned long long) m->edge_failures, (unsigned long long) m->not_delivered,
+                (unsigned long long) m->refusals, elapsed, LIVE_MATRIX_PASS_SECONDS );
+        fflush( stdout );
+    }
 
     struct rocketnet_server_transport_t * server_transport = rocketnet_message_server_transport( m->server );
     rocketnet_server_transport_stop( server_transport );

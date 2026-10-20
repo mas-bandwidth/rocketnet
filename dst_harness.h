@@ -1388,7 +1388,8 @@ static inline void rocketnet_dst_format_failure( const struct rocketnet_dst_resu
                                                  const struct rocketnet_dst_options_t * options,
                                                  char * out, size_t out_bytes )
 {
-    char replay[512];
+    // "./bin/dst --seeds " (18) + two u64 and a dash (41) + flags[256] (255) = 314
+    char replay[320];
     rocketnet_dst_replay_command( result->seed, options, replay, sizeof(replay) );
     snprintf( out, out_bytes, "FAIL seed=%llu step=%llu check=%s what=%s\nreplay: %s",
               (unsigned long long) result->seed, (unsigned long long) result->step,

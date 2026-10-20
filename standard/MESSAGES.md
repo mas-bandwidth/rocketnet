@@ -1667,27 +1667,27 @@ The constants this section names are:
 | payload capacity | `1416` | bytes | the largest payload a sender emits in one packet |
 
 1. The payload MUST be at least 2 bytes, and its last byte MUST be 0 for
-   SINGLE or 1 for RECORDS. Counter: `MESSAGE_PROTOCOL_VIOLATION`.
+   SINGLE or 1 for RECORDS. Counter: `MESSAGE_BAD_FORM`.
 2. In RECORDS form, at least the row `record fixed bytes` MUST remain for a record,
    and every field the flags name MUST lie inside the body. Counter:
-   `MESSAGE_PROTOCOL_VIOLATION`.
+   `MESSAGE_TRUNCATED`.
 3. A record MUST NOT carry a code at or above `message code count`, a set bit
    in the two high flag bits, BLOCK on code 0 or 1, WIDE on a code without a
    channel field, or CONTROL on a code other than 2 or together with BLOCK.
-   Counter: `MESSAGE_PROTOCOL_VIOLATION`.
+   Counter: `MESSAGE_BAD_FLAGS`.
 4. A record's length MUST be at least 1, and its data MUST lie inside the
-   body. Counter: `MESSAGE_PROTOCOL_VIOLATION`.
+   body. Counter: `MESSAGE_BAD_LENGTH`.
  5. A record with a channel field MUST carry a channel below C, and a WIDE
     record MUST carry a channel at or above `wide channel threshold`. Counter:
-    `MESSAGE_PROTOCOL_VIOLATION`.
+    `MESSAGE_BAD_CHANNEL`.
  6. An application record MUST carry a code present in the receiver's enabled
-    mask. A CONTROL record is exempt. Counter: `MESSAGE_PROTOCOL_VIOLATION`.
+    mask. A CONTROL record is exempt. Counter: `MESSAGE_TYPE_NOT_ENABLED`.
  7. In the whole-payload scan, a block record MUST satisfy all of: its
     fragment count is at least 1; its fragment index is at most its fragment
     count; its fragment count plus one is at most W; its fragment count plus
     one, times `message fragment bytes`, is at most the maximum message size
     plus `message fragment bytes` minus 1; every fragment but the last is
-    exactly `message fragment bytes` long; the last is at most `message fragment bytes` long. Counter: `MESSAGE_PROTOCOL_VIOLATION`. When the
+    exactly `message fragment bytes` long; the last is at most `message fragment bytes` long. Counter: `MESSAGE_BAD_BLOCK`. When the
     record is applied, a block record's ring base, the ring less the fragment
     index times `message fragment bytes` divided by 16, MUST agree with a live
     block descriptor for the same block. Counter: `MESSAGE_BAD_BLOCK`.
@@ -1696,74 +1696,75 @@ The constants this section names are:
    span of a block runs from its base, the ring value less the fragment index
    times `message fragment bytes` divided by 16, to the end of its last
     fragment; a fragment that is not the last is measured as the shortest block
-    it could belong to. Counter: `MESSAGE_PROTOCOL_VIOLATION`.
+    it could belong to. Counter: `MESSAGE_BAD_RING`.
 9. A reliable or CONTROL record MUST NOT lie in a payload longer than
-   `payload capacity`. Counter: `MESSAGE_PROTOCOL_VIOLATION`.
+   `payload capacity`. Counter: `MESSAGE_BAD_SIZE`.
 10. A reliable record MUST have a number less than W ahead of the receiver's
-     next number. A record whose receive slot is live for a different number
-     MUST be refused. Counter: `MESSAGE_PROTOCOL_VIOLATION`.
+     next number. Counter: `MESSAGE_NUMBER_OUTSIDE_WINDOW`. A record whose
+     receive slot is live for a different number MUST be refused. Counter:
+     `MESSAGE_SLOT_COLLISION`.
 11. A code 3 record MUST NOT carry an ordering index behind its channel's read
     index, modulo `message number modulus`, and MUST NOT carry one W or more
     ahead of it. Counters: `MESSAGE_ORDERING_BEHIND` and
     `MESSAGE_ORDERING_AHEAD`.
 12. A CONTROL record MUST carry a recognised kind, a body of exactly
      `config body bytes` bytes for kind 1, and zero reserved bytes for a known
-     version. Counter: `MESSAGE_PROTOCOL_VIOLATION`.
+     version. Counter: `MESSAGE_BAD_CONTROL`.
 
 The vectors below freeze one malformed payload for each check and the counter
 it produces.
 
 ```vector m4.check-1-bad-form
 input: one payload byte whose form value is 2
-counter: MESSAGE_PROTOCOL_VIOLATION
+counter: `MESSAGE_BAD_FORM`
 02
 ```
 
 ```vector m4.check-2-truncated
 input: a RECORDS payload whose body is one byte
-counter: MESSAGE_PROTOCOL_VIOLATION
+counter: `MESSAGE_TRUNCATED`
 00 01
 ```
 
 ```vector m4.check-3-bad-flags
 input: a record whose code is 5
-counter: MESSAGE_PROTOCOL_VIOLATION
+counter: `MESSAGE_BAD_FLAGS`
 05 01 00 aa 01
 ```
 
 ```vector m4.check-4-bad-length
 input: a code 0 record whose length is zero
-counter: MESSAGE_PROTOCOL_VIOLATION
+counter: `MESSAGE_BAD_LENGTH`
 00 00 00 01
 ```
 
 ```vector m4.check-5-bad-channel
 input: a code 1 record on channel 4, the receiver channel count
-counter: MESSAGE_PROTOCOL_VIOLATION
+counter: `MESSAGE_BAD_CHANNEL`
 01 01 00 00 00 00 00 00 00 04 aa 01
 ```
 
 ```vector m4.check-6-type-not-enabled
 input: a code 2 record whose code is absent from the enabled mask
-counter: MESSAGE_PROTOCOL_VIOLATION
+counter: `MESSAGE_TYPE_NOT_ENABLED`
 02 01 00 00 00 00 aa 01
 ```
 
 ```vector m4.check-7-bad-block
 input: a block fragment whose fragment count is zero
-counter: MESSAGE_PROTOCOL_VIOLATION
+counter: `MESSAGE_BAD_BLOCK`
 0a 01 00 00 00 00 00 00 00 00 00 00 aa 01
 ```
 
 ```vector m4.check-8-bad-ring
 input: a code 3 record at ring 65535 in a 65536-byte ring
-counter: MESSAGE_PROTOCOL_VIOLATION
+counter: `MESSAGE_BAD_RING`
 03 01 00 00 00 00 ff ff 00 00 00 00 aa 01
 ```
 
 ```vector m4.check-9-bad-size
 input: a code 2 record that makes the payload 1417 bytes
-counter: MESSAGE_PROTOCOL_VIOLATION
+counter: `MESSAGE_BAD_SIZE`
 02 82 05 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
@@ -1857,7 +1858,7 @@ counter: MESSAGE_PROTOCOL_VIOLATION
 
 ```vector m4.check-10-number-outside-window
 input: a code 2 record numbered one window above the next number
-counter: MESSAGE_PROTOCOL_VIOLATION
+counter: MESSAGE_NUMBER_OUTSIDE_WINDOW
 02 01 00 00 04 00 aa 01
 ```
 
@@ -1869,7 +1870,7 @@ counter: MESSAGE_ORDERING_BEHIND
 
 ```vector m4.check-12-bad-control
 input: a CONTROL record whose body is 27 bytes
-counter: MESSAGE_PROTOCOL_VIOLATION
+counter: MESSAGE_BAD_CONTROL
 22 1b 00 00 00 00 01 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 01
@@ -2149,7 +2150,9 @@ duplicate; it is never delivered and is not a violation.
    window count, the receiver MUST hold the record whole, copy it once into
    the receive ring at the ring offset the sender chose, and keep its number
    live until it is delivered. The receiver MUST key the held record by the
-   channel and the ordering index.
+   channel and the ordering index. A record whose channel and ordering index
+   are already held by another record is a violation and MUST be refused with
+   `MESSAGE_DUPLICATE_ORDERING`.
 3. An ordering index ahead of the next index by the window count or more is a
    violation, because a correct sender numbers fewer than the window count of
    records at once.
