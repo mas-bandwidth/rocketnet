@@ -89,6 +89,11 @@ void rocketnet_encryption_map_destroy( struct rocketnet_encryption_map_t * map )
 
 int rocketnet_encryption_map_find( const struct rocketnet_encryption_map_t * map, const struct rocketnet_address_t * address );
 
+// 1 when no free mapping slot remains. A full map is refused on the request
+// path before any signature, seal or keypair work.
+
+int rocketnet_encryption_map_full( const struct rocketnet_encryption_map_t * map );
+
 // Adds a mapping for this address, zero-initialized except the sending
 // sequences, which start at one, and the client index, which starts at -1.
 // Returns the index, or -1 when the table is full -- mappings are never
