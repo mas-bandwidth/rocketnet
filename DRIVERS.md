@@ -85,14 +85,14 @@ The server process batch `ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS`
 
 | Driver | Send budget | Receive capacity |
 | --- | --- | --- |
-| portable | `ROCKETNET_SERVER_MAX_SEND_PACKETS` 1000 (`sdk/rocketnet_constants.h`) | `ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE` 16000 per update (`sdk/rocketnet_constants.h`) |
-| msgx | portable batch up to1000 (`sdk/rocketnet_constants.h`) | per-update 16000 (`sdk/rocketnet_constants.h`) |
-| loopback | portable batch up to1000 (`sdk/rocketnet_constants.h`) | `ROCKETNET_LOOPBACK_QUEUE_PACKETS` 2048 per endpoint (`sdk/rocketnet_driver_loopback.h`) |
-| gso | `ROCKETNET_GSO_SEND_QUEUE_SIZE` 4096 (`sdk/rocketnet_server_gso.h`) | `ROCKETNET_GSO_RECV_QUEUE_SIZE` 8192 per queue (`sdk/rocketnet_server_gso.h`) |
-| io_uring | `ROCKETNET_URING_SEND_QUEUE_SIZE` 2048, reap `ROCKETNET_URING_SEND_BUDGET` 10240 (`sdk/rocketnet_server_uring.h`) | `ROCKETNET_URING_RECV_BUFFERS` 4096 per queue and bank 16000 (`sdk/rocketnet_server_uring.h`) |
-| xdp | `ROCKETNET_XDP_SEND_QUEUE_SIZE` 4096 (`sdk/rocketnet_constants.h`) | `ROCKETNET_XDP_RECV_QUEUE_SIZE` 16384 (`sdk/rocketnet_constants.h`) |
-| iocp | `ROCKETNET_IOCP_SEND_QUEUE_SIZE` 2048 (`sdk/rocketnet_server_iocp.h`) | `ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE` 4096 (`sdk/rocketnet_server_iocp.h`) |
-| rio | `ROCKETNET_RIO_SEND_QUEUE_SIZE` 2048 per phase (`sdk/rocketnet_server_rio.h`) | `ROCKETNET_RIO_RECEIVES` 4096 (`sdk/rocketnet_server_rio.h`) |
+| portable | 256–1000, max `ROCKETNET_SERVER_MAX_SEND_PACKETS` (`sdk/rocketnet_constants.h:87`) | 16000 per update (`sdk/rocketnet_constants.h:81`) |
+| msgx | portable batch256–1000 (`sdk/rocketnet_constants.h:87`) | 16000 per update (`sdk/rocketnet_constants.h:81`) |
+| loopback | portable batch256–1000 (`sdk/rocketnet_constants.h:87`) | 2048 per endpoint (`sdk/rocketnet_driver_loopback.h:26`) |
+| gso | 4096 (`sdk/rocketnet_server_gso.h:49`) | 8192 per queue (`sdk/rocketnet_server_gso.h:57`) |
+| io_uring | 2048 staged;10240 completion reap (`sdk/rocketnet_server_uring.h:49`,`sdk/rocketnet_server_uring.h:70`) | 4096 receive buffers per queue;16000 bank (`sdk/rocketnet_server_uring.h:55`,`sdk/rocketnet_server_uring.h:69`) |
+| xdp | 4096 (`sdk/rocketnet_constants.h:57`) | 16384 staging (`sdk/rocketnet_constants.h:58`) |
+| iocp | 2048 (`sdk/rocketnet_server_iocp.h:22`) | 4096 queue (`sdk/rocketnet_server_iocp.h:24`) |
+| rio | 2048 per phase (`sdk/rocketnet_server_rio.h:34`) | 4096 posted receives (`sdk/rocketnet_server_rio.h:35`) |
 
 ## UDP coalescing
 
