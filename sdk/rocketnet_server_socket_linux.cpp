@@ -693,11 +693,6 @@ void rocketnet_server_socket_allow_commit()
     rocketnet_server_socket_commit_forbidden_flag.store( false );
 }
 
-bool rocketnet_server_socket_commit_forbidden()
-{
-    return rocketnet_server_socket_commit_forbidden_flag.load();
-}
-
 // cpu list helpers for the boot-tier checks: "1-7,9" style lists as
 // /sys/devices/system/cpu/isolated and /proc/irq/N/smp_affinity_list
 // print them
@@ -2016,12 +2011,6 @@ int rocketnet_server_socket_state( rocketnet_server_socket_t * server_socket )
 {
     rocketnet_assert( server_socket );
     return server_socket->state;
-}
-
-uint64_t rocketnet_server_socket_id( rocketnet_server_socket_t * server_socket )
-{
-    rocketnet_assert( server_socket );
-    return server_socket->server_id;
 }
 
 static void rocketnet_server_socket_acquire_send_buffer( rocketnet_server_xdp_socket_t * socket );
