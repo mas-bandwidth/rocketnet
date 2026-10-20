@@ -651,17 +651,18 @@ static void matrix_arrival( struct rocketnet_message_server_t * server, struct s
     c->verified++;
 }
 
-static void matrix_receive( struct rocketnet_message_server_t * server, struct server_client_t * c, int client_index )
+// the server's one receive queue across every client: each message names its
+// sender's slot, and the channel it was delivered on
+static void matrix_receive( struct rocketnet_message_server_t * server, struct server_client_t * clients )
 {
-    for ( int channel = 0; channel < ROCKETNET_LIVE_NUM_CHANNELS; channel++ )
+    const uint8_t * data = NULL;
+    int bytes = 0;
+    int client_index = 0;
+    int channel = 0;
+    while ( rocketnet_message_server_receive( server, &client_index, &channel, &data, &bytes ) )
     {
-        const uint8_t * data = NULL;
-        int bytes = 0;
-        while ( rocketnet_message_server_receive( server, client_index, channel, &data, &bytes ) )
-        {
-            matrix_arrival( server, c, client_index, channel, data, bytes );
-            rocketnet_message_server_release( server, client_index, data );
-        }
+        matrix_arrival( server, &clients[client_index], client_index, channel, data, bytes );
+        rocketnet_message_server_release( server, data );
     }
 }
 
@@ -680,8 +681,9 @@ static uint32_t matrix_send_one( struct rocketnet_message_server_t * server, int
     return rocketnet_message_server_finish( server, client_index, written );
 }
 
-static void matrix_client_window( struct rocketnet_message_server_t * server, int client_index, struct server_client_t * c )
+static void matrix_client_window( struct rocketnet_message_server_t * server, int client_index, struct server_client_t * clients )
 {
+    struct server_client_t * c = &clients[client_index];
     client_streams_reset( &g_live, c );
     matrix_over_maximum( server, c, client_index, &g_live );
 
@@ -689,7 +691,7 @@ static void matrix_client_window( struct rocketnet_message_server_t * server, in
     while ( !all_done && !quit )
     {
         rocketnet_message_server_update( server, rocketnet_time() );
-        matrix_receive( server, c, client_index );
+        matrix_receive( server, clients );
         matrix_send_progress( server, client_index, c, rocketnet_time() );
         all_done = 1;
         for ( int mode = 0; mode < ROCKETNET_LIVE_NUM_MODES && all_done; mode++ )
@@ -1027,14 +1029,14 @@ int main( int argc, char ** argv )
         {
             rocketnet_message_server_update( server, rocketnet_time() );
             rocketnet_message_server_send_packets( server );
+            matrix_receive( server, clients );
             for ( int i = 0; i < max_clients; i++ )
             {
                 if ( !rocketnet_message_server_client_connected( server, i ) )
                     continue;
-                matrix_receive( server, &clients[i], i );
                 if ( !clients[i].window_done )
                 {
-                    matrix_client_window( server, i, &clients[i] );
+                    matrix_client_window( server, i, clients );
                     clients[i].window_done = 1;
                 }
                 matrix_send_progress( server, i, &clients[i], rocketnet_time() );

@@ -50,21 +50,32 @@ static int run_connect_and_traffic( struct rocketnet_server_t * server, struct r
         {
             const uint8_t * data = NULL;
             int bytes = 0;
-            while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
-                rocketnet_client_release_message( client, data );
-            for ( int i = 0; i < max_clients; i++ )
+            struct rocketnet_message_batch_t batch;
+            while ( rocketnet_client_receive_messages( client, &batch ) )
             {
-                if ( !rocketnet_server_client_connected( server, i ) )
-                    continue;
-                while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
+                for ( int i = 0; i < batch.num_messages; i++ )
                 {
-                    uint8_t * out = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
-                    if ( out )
+                    data = batch.data[i];
+                    bytes = batch.bytes[i];
+                }
+            }
+            {
+                uint64_t i = 0;
+                struct rocketnet_message_batch_t incoming;
+                while ( rocketnet_server_receive_messages( server, &incoming ) )
+                {
+                    for ( int j = 0; j < incoming.num_messages; j++ )
                     {
-                        memcpy( out, data, (size_t) bytes );
-                        rocketnet_server_finish_message( server, i, bytes );
+                        data = incoming.data[j];
+                        bytes = incoming.bytes[j];
+                        i = incoming.client_index[j];
+                        uint8_t * out = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
+                        if ( out )
+                        {
+                            memcpy( out, data, (size_t) bytes );
+                            rocketnet_server_finish_message( server, i, bytes );
+                        }
                     }
-                    rocketnet_server_release_message( server, i, data );
                 }
             }
         }

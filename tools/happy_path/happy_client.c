@@ -109,8 +109,15 @@ int main( int argc, char ** argv )
         // (2) receive and process every received message for this update
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
-            rocketnet_client_release_message( client, data );
+        struct rocketnet_message_batch_t batch;
+        while ( rocketnet_client_receive_messages( client, &batch ) )
+        {
+            for ( int i = 0; i < batch.num_messages; i++ )
+            {
+                data = batch.data[i];
+                bytes = batch.bytes[i];
+            }
+        }
 
         const int state = rocketnet_client_state( client );
         if ( state < 0 )

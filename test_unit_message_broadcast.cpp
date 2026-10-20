@@ -417,11 +417,11 @@ struct mb_received_t
 
 static void mb_drain_client( rocketnet_message_client_t * client, std::vector<mb_received_t> * out )
 {
-    for ( int channel = 0; channel < 4; channel++ )
     {
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_message_client_receive( client, channel, &data, &bytes ) )
+        int channel = 0;
+        while ( rocketnet_message_client_receive( client, &channel, &data, &bytes ) )
         {
             mb_received_t r;
             r.channel = channel;

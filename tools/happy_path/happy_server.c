@@ -85,26 +85,32 @@ int main( int argc, char ** argv )
         rocketnet_server_update( server, now );
 
         // (2) receive and process every received message for this update
-        const int max_clients = rocketnet_server_max_clients( server );
-        for ( int i = 0; i < max_clients; i++ )
+        // from one queue across every client, each message naming its sender
         {
             const uint8_t * data = NULL;
             int bytes = 0;
-            while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
+            uint64_t sender = 0;
+            struct rocketnet_message_batch_t batch;
+            while ( rocketnet_server_receive_messages( server, &batch ) )
             {
-                const int mode = bytes > 0 ? data[0] : -1;
-                const int ok = mode >= 0 && mode < 8 &&
-                               bytes == payload_bytes &&
-                               memcmp( data + 1, happy_pattern, pattern_bytes ) == 0;
-                if ( ok )
-                    printf( "received mode %d %s ok\n", mode, reliability_names[mode] );
-                else
+                for ( int i = 0; i < batch.num_messages; i++ )
                 {
-                    printf( "received mode %d BAD\n", mode );
-                    bad = 1;
+                    data = batch.data[i];
+                    bytes = batch.bytes[i];
+                    sender = batch.client_index[i];
+                    const int mode = bytes > 0 ? data[0] : -1;
+                    const int ok = mode >= 0 && mode < 8 &&
+                                   bytes == payload_bytes &&
+                                   memcmp( data + 1, happy_pattern, pattern_bytes ) == 0;
+                    if ( ok )
+                        printf( "received mode %d %s ok\n", mode, reliability_names[mode] );
+                    else
+                    {
+                        printf( "received mode %d BAD\n", mode );
+                        bad = 1;
+                    }
+                    fflush( stdout );
                 }
-                fflush( stdout );
-                rocketnet_server_release_message( server, i, data );
             }
         }
 

@@ -479,14 +479,14 @@ static void loopback_reliable_ordered_survives_loss_and_reorder()
 
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rn_message_object_receive( server, 0, 0, &data, &bytes ) )
+        while ( rn_message_object_receive( server, NULL, NULL, &data, &bytes ) )
         {
             check( bytes == 4 );
             uint32_t seq = 0;
             memcpy( &seq, data, sizeof( seq ) );
             check( (int) seq == received );
             received++;
-            rn_message_object_release( server, 0, data );
+            rn_message_object_release( server, data );
         }
 
         rn_message_object_send_packets( server );

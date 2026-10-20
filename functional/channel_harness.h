@@ -1003,16 +1003,20 @@ static inline int rocketnet_channel_harness_pump( rocketnet_channel_harness_t * 
          rocketnet_message_server_update( h->message_server, h->now ) != ROCKETNET_UPDATE_OK )
         return 0;
 
-    for ( int channel = 0; channel < h->message_config.num_channels; channel++ )
     {
+        // each end's one receive queue: each message names the channel it was
+        // delivered on, and on the server its sender's slot
         const uint8_t * data;
         int bytes;
-        while ( rocketnet_message_server_receive( h->message_server, h->client_slot, channel, &data, &bytes ) )
+        int slot = -1;
+        int channel = 0;
+        while ( rocketnet_message_server_receive( h->message_server, &slot, &channel, &data, &bytes ) )
         {
-            rocketnet_channel_delivery_ring_push( h, &h->to_server, channel, data, bytes );
-            rocketnet_message_server_release( h->message_server, h->client_slot, data );
+            if ( slot == h->client_slot )
+                rocketnet_channel_delivery_ring_push( h, &h->to_server, channel, data, bytes );
+            rocketnet_message_server_release( h->message_server, data );
         }
-        while ( rocketnet_message_client_receive( h->message_client, channel, &data, &bytes ) )
+        while ( rocketnet_message_client_receive( h->message_client, &channel, &data, &bytes ) )
         {
             rocketnet_channel_delivery_ring_push( h, &h->to_client, channel, data, bytes );
             rocketnet_message_client_release( h->message_client, data );

@@ -391,6 +391,8 @@ static rn_message_connection_t * rn_message_admit( rn_message_object_t * object,
     return connection;
 }
 
+static void rn_message_object_release_batch( struct rn_message_object_t * object );
+
 int rn_message_object_update( struct rn_message_object_t * object, double time )
 {
     int result = ROCKETNET_UPDATE_OK;
@@ -400,6 +402,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
     // application's error: it asserts in a debug build and returns the named
     // error in release. The views die with the transport's batch either way,
     // so they are taken back here and memory never grows from a held view.
+    rn_message_object_release_batch( object );            // a batch is released by the update that follows it
     uint32_t held = 0;
     for ( int i = 0; i < object->num_connections; i++ )
         held += object->connections[i].held;
@@ -454,6 +457,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         }
     }
 
+    object->receive_connection = 0;                     // the receive queue starts again at the first connection
     object->link.update( object->link.transport, time - object->clock_origin );
 
     // The client message connection is bound before the handshake so its
@@ -574,6 +578,14 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
     // once, in place (R3)
     if ( index < 0 || index >= object->num_connections )
         return NULL;
+
+    // the channel is RakNet's ordering channel: the types that are neither
+    // ordered nor sequenced ignore it (ReliabilityLayer::Send sets no
+    // orderingChannel for them) and travel with none (codes 0 and 2), so any
+    // value is accepted for them, never refused, and taken as 0
+    if ( reliability == ROCKETNET_RELIABILITY_UNRELIABLE || reliability == ROCKETNET_RELIABILITY_RELIABLE ||
+         reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT || reliability == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT )
+        channel = 0;
 
     rn_message_connection_t * connection = &object->connections[index];
 
@@ -845,12 +857,75 @@ flush:
 //                          receive and release
 // ---------------------------------------------------------------
 
-int rn_message_object_receive( struct rn_message_object_t * object, int index, int channel, const uint8_t ** data, int * bytes )
+// RakPeer::Receive pops one return queue across every remote system. The
+// object's queue is the update's deliveries, connection by connection in index
+// order and each connection's in the order its channels delivered them
+// (rn_delivery_t entries are appended in dispatch order, the drain of an
+// ordered hold included), whatever channel they carry: a message is never
+// filtered by channel, so an unordered type delivered on channel 0
+// (standard/MESSAGES.md, code 0 and code 2 carry no channel) is seen like
+// every other. Ordered and sequenced order holds within each channel of each
+// connection, as RakNet's ordering channels do per remote system.
+
+static const rn_delivery_t * rn_message_object_next( struct rn_message_object_t * object, int * out_index, uint32_t * out_entry )
+{
+    for ( int i = object->receive_connection; i < object->num_connections; i++ )
+    {
+        rn_message_connection_t * connection = &object->connections[i];
+        if ( connection->state == RN_MESSAGE_CONNECTION_CONNECTED )
+        {
+            const uint32_t deliveries = connection->ordered.channels.deliveries;
+            const rn_delivery_t * table = connection->region->deliveries;
+            for ( uint32_t k = connection->cursors[0]; k < deliveries; k++ )
+            {
+                if ( connection->views[k] != RN_MESSAGE_VIEW_WAITING )
+                    continue;
+                connection->views[k] = RN_MESSAGE_VIEW_HELD;
+                connection->held++;
+                connection->cursors[0] = k + 1;
+                object->receive_connection = i;
+                *out_index = i;
+                *out_entry = k;
+                return &table[k];
+            }
+            connection->cursors[0] = deliveries;
+        }
+        object->receive_connection = i + 1;
+    }
+    return NULL;
+}
+
+int rn_message_object_receive( struct rn_message_object_t * object, int * index, int * channel, const uint8_t ** data, int * bytes )
 {
     // RNSlots EndUpdate: the update's deliveries go to the application, each a
     // view -- into the transport's batch, or into the receive ring for a
     // message held ahead of its turn -- valid until the next update and held
     // until released
+    *data = NULL;
+    *bytes = 0;
+    if ( index )
+        *index = 0;
+    if ( channel )
+        *channel = 0;
+
+    int connection_index = 0;
+    uint32_t entry = 0;
+    const rn_delivery_t * delivery = rn_message_object_next( object, &connection_index, &entry );
+    if ( !delivery )
+        return 0;
+    if ( index )
+        *index = connection_index;
+    if ( channel )
+        *channel = delivery->channel;
+    *data = delivery->data;
+    *bytes = delivery->bytes;
+    return 1;
+}
+
+int rn_message_object_receive_channel( struct rn_message_object_t * object, int index, int channel, const uint8_t ** data, int * bytes )
+{
+    // the per-channel cursor the unit suite's pre-batch cases still use; the
+    // public one queue passes through rn_message_object_receive instead
     *data = NULL;
     *bytes = 0;
     if ( index < 0 || index >= object->num_connections || channel < 0 || channel >= object->config.num_channels )
@@ -877,14 +952,10 @@ int rn_message_object_receive( struct rn_message_object_t * object, int index, i
     return 0;
 }
 
-void rn_message_object_release( struct rn_message_object_t * object, int index, const uint8_t * data )
+static bool rn_message_connection_release_view( rn_message_connection_t * connection, const uint8_t * data )
 {
-    // RNSlots Release: the view goes back, and with it the region's charge for
-    // the message at the next update's EndUpdate
-    if ( index < 0 || index >= object->num_connections || !data )
-        return;
-
-    rn_message_connection_t * connection = &object->connections[index];
+    if ( connection->held == 0 )
+        return false;
     const uint32_t deliveries = connection->ordered.channels.deliveries;
     const rn_delivery_t * table = connection->region->deliveries;
     for ( uint32_t k = 0; k < deliveries; k++ )
@@ -893,12 +964,78 @@ void rn_message_object_release( struct rn_message_object_t * object, int index, 
         {
             connection->views[k] = RN_MESSAGE_VIEW_RELEASED;
             connection->held--;
-            return;
+            return true;
         }
     }
+    return false;
+}
 
-    // not a held view of this connection: the caller's error, counted
+void rn_message_object_release( struct rn_message_object_t * object, const uint8_t * data )
+{
+    // RNSlots Release: the view goes back, and with it the region's charge for
+    // the message at the next update's EndUpdate. RakNet's release takes the
+    // received message alone; the view is looked for in the connection the
+    // queue is at first, then in every connection that holds one
+    if ( !data )
+        return;
+
+    const int at = object->receive_connection < object->num_connections ? object->receive_connection : object->num_connections - 1;
+    if ( rn_message_connection_release_view( &object->connections[at], data ) )
+        return;
+    for ( int i = 0; i < object->num_connections; i++ )
+    {
+        if ( i != at && rn_message_connection_release_view( &object->connections[i], data ) )
+            return;
+    }
+
+    // not a held view of any connection: the caller's error, counted
     rocketnet_api_misuse_record();
+}
+
+// The batch's views go back together: each entry still HELD (a connection
+// reset since the batch cleared its views already) is released.
+static void rn_message_object_release_batch( struct rn_message_object_t * object )
+{
+    for ( int n = 0; n < object->batch_count; n++ )
+    {
+        rn_message_connection_t * connection = &object->connections[object->batch_connection[n]];
+        const uint32_t k = object->batch_entry[n];
+        if ( k < connection->region->delivery_entries && connection->views[k] == RN_MESSAGE_VIEW_HELD )
+        {
+            connection->views[k] = RN_MESSAGE_VIEW_RELEASED;
+            connection->held--;
+        }
+    }
+    object->batch_count = 0;
+}
+
+int rn_message_object_receive_messages( struct rn_message_object_t * object, struct rocketnet_message_batch_t * out )
+{
+    // the pumped receive of the one queue (flow's batch handoff to the game):
+    // the last call's entries are released, then out is filled with up to
+    // ROCKETNET_RECEIVE_BATCH_MESSAGES next deliveries, in the order
+    // rn_message_object_receive hands them out. The views point into the
+    // transport's batch or the receive ring, never copied
+    rn_message_object_release_batch( object );
+    out->num_messages = 0;
+    while ( out->num_messages < ROCKETNET_RECEIVE_BATCH_MESSAGES )
+    {
+        int connection_index = 0;
+        uint32_t entry = 0;
+        const rn_delivery_t * delivery = rn_message_object_next( object, &connection_index, &entry );
+        if ( !delivery )
+            break;
+        const int n = out->num_messages++;
+        object->batch_connection[n] = connection_index;
+        object->batch_entry[n] = entry;
+        object->batch_count = out->num_messages;
+        out->client_index[n] = connection_index;
+        out->channel[n] = delivery->channel;
+        out->reliability[n] = (enum rocketnet_reliability_t) delivery->code;
+        out->bytes[n] = delivery->bytes;
+        out->data[n] = delivery->data;
+    }
+    return out->num_messages;
 }
 
 bool rn_message_object_set_send_kbps( struct rn_message_object_t * object, int index, int32_t kbps )
@@ -1200,7 +1337,7 @@ int rocketnet_message_server_broadcast( struct rocketnet_message_server_t * serv
     return queued;
 }
 
-int rocketnet_message_server_receive( struct rocketnet_message_server_t * server, int client_index, int channel, const uint8_t ** data, int * bytes )
+int rocketnet_message_server_receive( struct rocketnet_message_server_t * server, int * client_index, int * channel, const uint8_t ** data, int * bytes )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return 0;
@@ -1209,6 +1346,24 @@ int rocketnet_message_server_receive( struct rocketnet_message_server_t * server
     if ( !rocketnet_api_null_guard( bytes ) )
         return 0;
     return rn_message_object_receive( &server->object, client_index, channel, data, bytes );
+}
+
+int rocketnet_message_server_receive_channel( struct rocketnet_message_server_t * server, int client_index, int channel, const uint8_t ** data, int * bytes )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+        return 0;
+    if ( !rocketnet_api_null_guard( data ) )
+        return 0;
+    if ( !rocketnet_api_null_guard( bytes ) )
+        return 0;
+    return rn_message_object_receive_channel( &server->object, client_index, channel, data, bytes );
+}
+
+int rocketnet_message_server_receive_messages( struct rocketnet_message_server_t * server, struct rocketnet_message_batch_t * messages )
+{
+    if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( messages ) )
+        return 0;
+    return rn_message_object_receive_messages( &server->object, messages );
 }
 
 int rocketnet_message_server_receipts( struct rocketnet_message_server_t * server, int client_index, struct rocketnet_message_receipt_t * out, int capacity )
@@ -1221,13 +1376,13 @@ int rocketnet_message_server_receipts( struct rocketnet_message_server_t * serve
     return rn_endpoint_take_receipts( connection, out, capacity );
 }
 
-void rocketnet_message_server_release( struct rocketnet_message_server_t * server, int client_index, const uint8_t * data )
+void rocketnet_message_server_release( struct rocketnet_message_server_t * server, const uint8_t * data )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return;
     if ( !rocketnet_api_null_guard( data ) )
         return;
-    rn_message_object_release( &server->object, client_index, data );
+    rn_message_object_release( &server->object, data );
 }
 
 int rocketnet_message_server_set_send_kbps( struct rocketnet_message_server_t * server, int client_index, int32_t kbps )
