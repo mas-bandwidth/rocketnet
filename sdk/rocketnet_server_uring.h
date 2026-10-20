@@ -64,7 +64,8 @@ struct rocketnet_server_uring_t;
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SOURCE                6      // source address the boundary could not convert
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_NO_BUFFERS                    7      // the multishot ended because the buffer ring was empty (ENOBUFS)
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS                        8      // multishot receives armed again after a CQE without F_MORE
-#define ROCKETNET_SERVER_URING_NUM_COUNTERS                                  9
+#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARM_FAILED                  9      // a re-arm found no submission entry (queue left disarmed)
+#define ROCKETNET_SERVER_URING_NUM_COUNTERS                                10
 
 // true when the library was built with liburing and this kernel accepts the
 // ring, the opcodes and the provided buffer ring the driver needs. the probe
