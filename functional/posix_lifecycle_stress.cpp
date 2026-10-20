@@ -582,16 +582,11 @@ static const char * posix_server_address( const posix_cell_t * cell, rocketnet_s
     return buffer;
 }
 
-// how long the wait lets a sent packet go unanswered before it skips the
-// client's clock ahead anyway, so the next update sends again
-#define POSIX_CLIENT_RESEND_WAIT 0.01
-
 static bool posix_wait_connected( rocketnet_server_transport_t * server, rocketnet_client_transport_t * client,
                                   posix_client_clock_t * clock, double seconds )
 {
     const double deadline = rocketnet_platform_time() + seconds;
     int previous_state = rocketnet_client_transport_state( client );
-    double quiet_since = rocketnet_platform_time();
     while ( rocketnet_platform_time() < deadline )
     {
         rocketnet_client_transport_update( client, posix_client_clock_now( clock ) );
@@ -602,12 +597,12 @@ static bool posix_wait_connected( rocketnet_server_transport_t * server, rocketn
             return true;
         if ( state < ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
             return false;
-        if ( state != previous_state || rocketnet_platform_time() - quiet_since > POSIX_CLIENT_RESEND_WAIT )
+        if ( state != previous_state )
         {
-            // the state moved, or the last send went unanswered: the next
-            // update sends without waiting out the interval
+            // the state moved: the next update sends without waiting out the
+            // interval. A send that goes unanswered is resent on the client's
+            // own schedule, so its timeouts run at the platform clock's pace.
             previous_state = state;
-            quiet_since = rocketnet_platform_time();
             posix_client_clock_skip( clock );
             continue;
         }
