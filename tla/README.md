@@ -91,47 +91,55 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 
 ## Case inventory
 
-The table below is generated from `CASES.tsv`: 227 declared cases in 37 groups.
+The table below is generated from `CASES.tsv`: 231 declared cases in 37 groups,
+213 required and 18 `bench` debt cases. A `bench` case has not finished
+inside the 110-second budget: its `debt` column in `CASES.tsv` names the reason, and its
+record in `RUNS.tsv` is an exit-124 measurement, so the case is unverified, not a completed
+check. Regenerate the rows from the checkout root with:
 
-| Group | Cases | Scope |
-|---|---:|---|
-| `clientconnection` | 23 | Declared configurations in `CASES.tsv` |
-| `clientsession` | 5 | Declared configurations in `CASES.tsv` |
-| `fragmentsandacks` | 24 | Declared configurations in `CASES.tsv` |
-| `link` | 19 | Declared configurations in `CASES.tsv` |
-| `receiveorder` | 4 | Declared configurations in `CASES.tsv` |
-| `replaywindow` | 2 | Declared configurations in `CASES.tsv` |
-| `rnblocks` | 2 | Declared configurations in `CASES.tsv` |
-| `rnchannel` | 8 | Declared configurations in `CASES.tsv` |
-| `rnchanneltypes` | 11 | Declared configurations in `CASES.tsv` |
-| `rnclientio` | 8 | Declared configurations in `CASES.tsv` |
-| `rnclientiodecrypt` | 5 | Declared configurations in `CASES.tsv` |
-| `rnclientreceivequit` | 5 | Declared configurations in `CASES.tsv` |
-| `rnconnectionmemory` | 3 | Declared configurations in `CASES.tsv` |
-| `rndriversendstaging` | 2 | Declared configurations in `CASES.tsv` |
-| `rnendpoint` | 7 | Declared configurations in `CASES.tsv` |
-| `rnfilterepochs` | 3 | Declared configurations in `CASES.tsv` |
-| `rnflows` | 2 | Declared configurations in `CASES.tsv` |
-| `rnlivefleetrun` | 3 | Declared configurations in `CASES.tsv` |
-| `rnoutgoingbuild` | 4 | Declared configurations in `CASES.tsv` |
-| `rnreceipts` | 4 | Declared configurations in `CASES.tsv` |
-| `rnresendtiming` | 3 | Declared configurations in `CASES.tsv` |
-| `rnring` | 5 | Declared configurations in `CASES.tsv` |
-| `rnriodriver` | 4 | Declared configurations in `CASES.tsv` |
-| `rnscheduler` | 3 | Declared configurations in `CASES.tsv` |
-| `rnsecuritytables` | 13 | Declared configurations in `CASES.tsv` |
-| `rnsendbudget` | 4 | Declared configurations in `CASES.tsv` |
-| `rnsendspans` | 3 | Declared configurations in `CASES.tsv` |
-| `rnsendstore` | 1 | Declared configurations in `CASES.tsv` |
-| `rnsenthistory` | 3 | Declared configurations in `CASES.tsv` |
-| `rnsimfaults` | 3 | Declared configurations in `CASES.tsv` |
-| `rnslots` | 12 | Declared configurations in `CASES.tsv` |
-| `rnuringdriver` | 4 | Declared configurations in `CASES.tsv` |
-| `rnwindow` | 7 | Declared configurations in `CASES.tsv` |
-| `rnxdpreceivering` | 2 | Declared configurations in `CASES.tsv` |
-| `rnxdpreplay` | 3 | Declared configurations in `CASES.tsv` |
-| `serverconnection` | 4 | Declared configurations in `CASES.tsv` |
-| `serversession` | 9 | Declared configurations in `CASES.tsv` |
+```sh
+awk -F'\t' 'NR>1 {n[$6]++; if ($7=="bench") b[$6]++} END {for (g in n) printf "| `%s` | %d | %d |\n", g, n[g], b[g]+0 | "sort"}' tla/CASES.tsv
+```
+
+| Group | Cases | Bench debt |
+|---|---:|---:|
+| `clientconnection` | 23 | 9 |
+| `clientsession` | 5 | 0 |
+| `fragmentsandacks` | 24 | 6 |
+| `link` | 19 | 0 |
+| `receiveorder` | 4 | 0 |
+| `replaywindow` | 3 | 1 |
+| `rnblocks` | 2 | 0 |
+| `rnchannel` | 9 | 0 |
+| `rnchanneltypes` | 11 | 0 |
+| `rnclientio` | 8 | 0 |
+| `rnclientiodecrypt` | 5 | 0 |
+| `rnclientreceivequit` | 5 | 0 |
+| `rnconnectionmemory` | 3 | 0 |
+| `rndriversendstaging` | 2 | 0 |
+| `rnendpoint` | 7 | 2 |
+| `rnfilterepochs` | 3 | 0 |
+| `rnflows` | 2 | 0 |
+| `rnlivefleetrun` | 3 | 0 |
+| `rnoutgoingbuild` | 4 | 0 |
+| `rnreceipts` | 5 | 0 |
+| `rnresendtiming` | 3 | 0 |
+| `rnring` | 5 | 0 |
+| `rnriodriver` | 4 | 0 |
+| `rnscheduler` | 3 | 0 |
+| `rnsecuritytables` | 13 | 0 |
+| `rnsendbudget` | 4 | 0 |
+| `rnsendspans` | 3 | 0 |
+| `rnsendstore` | 1 | 0 |
+| `rnsenthistory` | 3 | 0 |
+| `rnsimfaults` | 3 | 0 |
+| `rnslots` | 12 | 0 |
+| `rnuringdriver` | 4 | 0 |
+| `rnwindow` | 7 | 0 |
+| `rnxdpreceivering` | 2 | 0 |
+| `rnxdpreplay` | 3 | 0 |
+| `serverconnection` | 5 | 0 |
+| `serversession` | 9 | 0 |
 
 ## Initial migration measurements
 
