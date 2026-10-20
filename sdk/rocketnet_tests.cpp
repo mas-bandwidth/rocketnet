@@ -9216,9 +9216,10 @@ void rocketnet_test_ack_debt()
     int payload_client_index = -1;
 
     double time = 200.0;
+    test.server.acks->endpoints[0].ack_debt = 0;
 
     // --- the server side: eliciting packets received with nothing sent
-    // back arm the debt, and the threshold fires exactly one type 8 ---
+    // back arm the debt, and one eliciting packet makes exactly one type 8 due ---
 
     const uint8_t data[4] = { 1, 2, 3, 4 };
 
@@ -9232,10 +9233,10 @@ void rocketnet_test_ack_debt()
                                                           payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
     }
 
-    // one below the threshold: not due
+    // no eliciting packet: not due
     rocketnet_check( rocketnet_server_protocol_write_ack_if_due( &test.server, 0, time, packet ) == 0 );
 
-    // the threshold: the standalone ack goes out, and the debt resets
+    // one eliciting packet: the standalone ack goes out, and the debt resets
     time += 0.001;
     int bytes = rocketnet_client_protocol_write_payload( &client, data, 4, time, packet );
     rocketnet_check( rocketnet_server_protocol_process_packet( &test.server, &test.client_address, packet, bytes,
@@ -9270,12 +9271,11 @@ void rocketnet_test_ack_debt()
     rocketnet_check( rocketnet_server_protocol_process_packet( &test.server, &test.client_address, packet, bytes,
                                                       ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
                                                       payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
-    rocketnet_check( rocketnet_server_protocol_write_ack_if_due( &test.server, 0, time, packet ) == 0 );
+    uint8_t reset_ack[ROCKETNET_RECEIVE_CEILING];
+    rocketnet_check( rocketnet_server_protocol_write_ack_if_due( &test.server, 0, time, reset_ack ) >= ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES );
 
-    // --- the client side: keep-alives received with nothing sent back arm
-    // the client's debt, and its update emits the type 8 outside the send
-    // rate -- that is what removes the coupling between ack capacity and
-    // return-traffic cadence ---
+    // --- the client side: one keep-alive makes an ack due on the next
+    // protocol update, outside the scheduled send rate ---
 
     double client_time = client.last_send_time + 0.02;      // inside the rate gate: no scheduled send is due
 
@@ -9316,6 +9316,8 @@ void rocketnet_test_ack_non_elicitation()
     struct rocketnet_counters_t client_counters;
     struct rocketnet_client_protocol_t client;
     rocketnet_test_ack_connect( &test, &client, &client_counters, 0xE11C17ULL );
+    client.ack.ack_debt = 0;
+    test.server.acks->endpoints[0].ack_debt = 0;
 
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
@@ -9324,10 +9326,8 @@ void rocketnet_test_ack_non_elicitation()
     int payload_bytes = 0;
     int payload_client_index = -1;
 
-    // type 8 never elicits: a flood of standalone acks -- twice the debt
-    // threshold -- adds nothing to the client's debt, so its update emits no
-    // ack back and the conversation terminates. two quiet peers each
-    // obliged to acknowledge acknowledgments would exchange them forever.
+    // Type 8 never elicits. Even when an ack is due after one other packet,
+    // a flood of type 8 packets adds no debt and cannot start an ack loop.
 
     struct rocketnet_encryption_mapping_t * mapping =
         rocketnet_encryption_map_entry( test.server.encryption_map,
@@ -9352,8 +9352,7 @@ void rocketnet_test_ack_non_elicitation()
     rocketnet_client_protocol_update( &client, client_time, packet, &out_bytes );
     rocketnet_check( out_bytes == 0 );
 
-    // the mirror at the server: hand it a flood of type 8s and its own
-    // standalone ack never becomes due
+    // The mirror at the server: type 8 packets never create server ack debt.
     for ( int i = 0; i < 2 * ROCKETNET_ACK_DEBT_THRESHOLD; i++ )
     {
         int bytes = rocketnet_test_write_session_packet_salted( packet, ROCKETNET_CONNECTION_ACK_PACKET,
@@ -9367,9 +9366,10 @@ void rocketnet_test_ack_non_elicitation()
     client.send_sequence_session += (uint64_t) ( 2 * ROCKETNET_ACK_DEBT_THRESHOLD );        // the hand-built packets spent these
     rocketnet_check( rocketnet_server_protocol_write_ack_if_due( &test.server, 0, client_time, packet ) == 0 );
 
-    // and a balanced idle connection exchanges no type 8 at all: both ends
-    // at their scheduled rates for thirty simulated seconds, every packet a
-    // keep-alive. time continues from the connection's own clock so neither
+    // and a balanced idle connection sends no ack in response to an ack: both
+    // ends exchange keep-alives, and each eliciting keep-alive may receive one
+    // standalone ack on the next update. Time continues from the connection's
+    // own clock so neither
     // end's idle timeout fires.
     double time = client_time;
     for ( int step = 0; step < 3000; step++ )
@@ -9379,7 +9379,7 @@ void rocketnet_test_ack_non_elicitation()
         rocketnet_client_protocol_update( &client, time, packet, &bytes );
         if ( bytes > 0 )
         {
-            rocketnet_check( packet[0] == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET );
+            rocketnet_check( packet[0] == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET || packet[0] == ROCKETNET_CONNECTION_ACK_PACKET );
             rocketnet_check( rocketnet_server_protocol_process_packet( &test.server, &test.client_address, packet, bytes,
                                                               ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
                                                               payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
@@ -9389,7 +9389,7 @@ void rocketnet_test_ack_non_elicitation()
             bytes = rocketnet_server_protocol_write_ack_if_due( &test.server, 0, time, packet );
         if ( bytes > 0 )
         {
-            rocketnet_check( packet[0] == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET );
+            rocketnet_check( packet[0] == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET || packet[0] == ROCKETNET_CONNECTION_ACK_PACKET );
             rocketnet_check( rocketnet_client_protocol_process_packet( &client, packet, bytes, time, payload, sizeof(payload), &payload_bytes ) );
         }
     }

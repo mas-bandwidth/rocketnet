@@ -2559,27 +2559,31 @@ second time.
 
 ### m9.2. Round-trip estimate and retransmission timeout
 
-The sender MUST estimate the round-trip time with the algorithm of RFC 6298
-over the samples of the acknowledgement mapping. The retransmission timeout
-MUST be
+The sender MUST estimate the round-trip time as RakNet does. On the first
+sample, it MUST set both the smoothed round-trip time and deviation to the
+sample. On every later sample, each estimate MUST move 5 percent toward the
+new sample. The retransmission timeout is
 
-    clamp( srtt x rto_scale_percent / 100 + 2 x rttvar, rto_min_ms, rto_max_ms )
+    clamp( 2 x srtt + 4 x deviation + 30 ms, rto_min_ms, rto_max_ms )
 
-where srtt is the smoothed round-trip time and rttvar is its variation, both
-in seconds. Before the first sample the timeout MUST be rto_initial_ms. The
-timeout MUST NOT back off after a resend: every pass uses the same function of
-the samples, so a record that is never acknowledged is resent at the same
-delay until the reliable timeout ends the connection.
+where srtt and deviation are in seconds. The timeout MUST be 2 seconds before
+the first sample by default. The minimum defaults to 0, which applies no floor
+and matches RakNet; a caller may configure a nonzero minimum. The maximum
+defaults to 2 seconds. The source behavior is documented in
+docs/RAKNET-RELIABILITY.md:667-668, 686-695, with RakNet source
+CCRakNetSlidingWindow.cpp:210-222, 288-314. RakNet's commented 100 ms
+minimum is not active (CCRakNetSlidingWindow.cpp:294, 298). The timeout MUST
+NOT back off after a resend: every pass uses the same function of the
+estimates, so a record that is never acknowledged is resent at that delay
+until the reliable timeout ends the connection.
 
 | Name | Value | Unit | Meaning |
 |---|---|---|---|
-| `rto_initial_ms` | `100` | ms | the timeout before the first round-trip sample |
-| `rto_min_ms` | `10` | ms | the smallest timeout the estimate may take |
-| `rto_max_ms` | `250` | ms | the largest timeout the estimate may take |
-| `rto_scale_percent` | `125` | percent | the srtt weight in the timeout |
-| `reliable_timeout_ms` | `10000` | ms | how long the oldest unacknowledged number may stand |
-| `resend_interval_ms` | `100` | ms | the cap on the resend delay of a single-packet record |
-| `min_resend_attempts` | `4` | count | the sends that fit before the reliable timeout |
+| rto_initial_ms | 2000 | ms | the timeout before the first round-trip sample |
+| rto_min_ms | 0 | ms | optional floor for the sampled RTO; zero disables it |
+| rto_max_ms | 2000 | ms | the configured largest timeout |
+| reliable_timeout_ms | 10000 | ms | how long the oldest unacknowledged number may stand |
+| min_resend_attempts | 4 | count | the sends that fit before the reliable timeout |
 
 ### m9.3. Resend classes and the reliable timeout
 
@@ -2587,9 +2591,8 @@ A sender MUST keep two resend queues. A single-packet reliable record is in the
 small-record queue; a fragment of a block is in the chunk queue. A number MUST
 be in at most one queue.
 
-The resend delay of a single-packet record MUST be min( rto,
-resend_interval_ms ). The resend delay of a chunk MUST be min( rto,
-reliable_timeout_ms / min_resend_attempts ). A sender MUST resend a due number
+The resend delay of a single-packet record MUST be rto. The resend delay of
+a chunk MUST be min( rto, reliable_timeout_ms / min_resend_attempts ). A sender MUST resend a due number
 at the first update whose time is at least the number's last send plus its
 resend delay, and MUST NOT resend it before then. A resend MUST use a fresh
 connection layer sequence and MUST move the number to the tail of its queue.
@@ -2658,8 +2661,8 @@ depth. The budget change is visible when the setter returns success.
 
 ```vector m9.resend-trace
 clock: 1000.0
-trace: short path: a 20 ms sample, resend passes at 0.040, 0.046, 0.090 and 0.091 seconds, reliable timeout checks at 9.999 and 10.000 seconds; long path: a 400 ms sample, resend passes at 0.400, 0.499 and 0.501 seconds
-00 01 00 01 00 01 04 01 00 01
+trace: short path: a 20 ms sample, resend passes at 0.040, 0.109, 0.111 and 0.221 seconds, reliable timeout checks at 9.999 and 10.000 seconds; long path: a 400 ms sample, resend passes at 0.400, 1.629, 1.631 and 2.001 seconds
+00 00 00 01 00 01 04 00 00 00 01
 ```
 
 The first seven bytes are the short path's resend counts at its four passes,

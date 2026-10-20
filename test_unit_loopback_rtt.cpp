@@ -12,32 +12,17 @@
 // (finish_packet) and the time its ack reaches the layer (acked), so every
 // RTT sample the window takes (sdk/rocketnet_window_ack.cpp:605) is seen.
 //
-// The bound. A packet the sender writes at step time t reaches the peer's
-// update at t + dt. The peer's transport has no payload to carry the ack: it
-// sends on its scheduled rate alone, a keep-alive once now - last_send >=
-// 1 / send_rate (sdk/rocketnet_client_protocol.cpp:296,
-// sdk/rocketnet_server_protocol.cpp:1611; send_rate 10 at
-// sdk/rocketnet_client_protocol.cpp:88 and sdk/rocketnet_server_transport.cpp:6),
-// or a standalone ack at ROCKETNET_ACK_DEBT_THRESHOLD (64) unacked packets,
-// which one packet per step never reaches inside one send interval. That
-// packet reaches the sender's next update, at most dt later. So every sample
-// lies in [ dt, 1 / send_rate + 2 dt ] = [ 10, 120 ] ms here, and the smoothed
-// RTT, an average of samples, lies there too. The 80-100 ms the RTT reads on
-// this link is the transport's 10 Hz ack cadence, not the test's 10 ms step.
+// Each step updates both peers at times separated by LOOPBACK_RTT_DT. The
+// sender writes after both updates, the receiver consumes it on the next
+// step, and the receiver emits the ack on its next update and it reaches the sender on the
+// following step. Thus the sample bound is [dt, 3*dt] = [10, 30] ms; this follows
+// from the test's update cadence,
+// not the transport's keep-alive rate (sdk/rocketnet_client_protocol.cpp:296,
+// sdk/rocketnet_server_protocol.cpp:1611).
 //
-// The resends. The link loses nothing, so every resend is of a message
-// already delivered. A single-packet record is resent after
-// min( rto, ROCKETNET_MESSAGE_RESEND_INTERVAL_MS ) = min( rto, 100 ms )
-// (sdk/rocketnet_window_ack.h:126-129), and an ack can take up to
-// 1 / send_rate + 2 dt = 120 ms, so the case asserts none. pair->time sums
-// 0.01 steps in floating point, and ten summed steps stay below
-// last_send + 0.1, so a record first counts as due 11 steps (110 ms) after its
-// send, after that update's acks. With the server sending, the client updates
-// after the server in each step, samples reach 120 ms, and the server resends
-// delivered messages: that case fails at its resend check and is registered
-// expected-fail under the card that owns the defect. With the client sending,
-// samples reach 110 ms, each ack lands before its record is due, and no
-// resend is seen.
+// The link loses nothing. A delivered message must not be resent. The resend
+// delay is the adaptive RTO, and the peer's ack arrives by 3*dt, so both update
+// orders assert zero resends.
 
 #include "test_unit_registry.h"
 
@@ -56,7 +41,6 @@
 #include <string.h>
 
 #define LOOPBACK_RTT_DT 0.01
-#define LOOPBACK_RTT_SEND_RATE 10.0         // the transports' send rate, sdk/rocketnet_client_protocol.cpp:88, sdk/rocketnet_server_transport.cpp:6
 #define LOOPBACK_RTT_ROUNDS 40
 #define LOOPBACK_RTT_SETTLE 60
 #define LOOPBACK_RTT_MAX_PACKETS 1024
@@ -284,9 +268,9 @@ static void loopback_rtt_check( int side )
     rocketnet_unit_check( m.received == m.sent );
     rocketnet_unit_check( m.in_order == 1 );
 
-    // the bound: every sample, and so the smoothed RTT, in [ dt, 1 / send_rate + 2 dt ]
+    // Every sample and its smoothed value follow the two-step loopback cadence.
     const double low = LOOPBACK_RTT_DT - 1e-9;
-    const double high = 1.0 / LOOPBACK_RTT_SEND_RATE + 2.0 * LOOPBACK_RTT_DT + 1e-9;
+    const double high = 3.0 * LOOPBACK_RTT_DT + 1e-9;
     rocketnet_unit_check( loopback_rtt_seam.samples > 0 );
     rocketnet_unit_check( loopback_rtt_seam.sample_min >= low );
     rocketnet_unit_check( loopback_rtt_seam.sample_max <= high );
@@ -300,5 +284,5 @@ static void loopback_rtt_check( int side )
 static void loopback_rtt_server_sends( void ) { loopback_rtt_check( LOOPBACK_RTT_SERVER ); }
 static void loopback_rtt_client_sends( void ) { loopback_rtt_check( LOOPBACK_RTT_CLIENT ); }
 
-REGISTER_UNIT_TEST_EXPECTED_FAIL( loopback_rtt_server_sends, "rocketnet-r1-loopback-rtt-and-spurious-resends" );
+REGISTER_UNIT_TEST( loopback_rtt_server_sends );
 REGISTER_UNIT_TEST( loopback_rtt_client_sends );

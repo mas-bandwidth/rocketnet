@@ -286,12 +286,8 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
     if ( client->state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
         return;
 
-    // one sending rule: the scheduled rate, nothing sent because a packet
-    // arrived, no immediate-send case for any transition. the standalone
-    // ack alone rides outside the rate: when the ack debt reaches the
-    // threshold between scheduled sends, a type 8 goes out now -- that is
-    // what keeps notification latency flat when inbound outruns outbound,
-    // and it never ping-pongs because a received type 8 adds no debt.
+    // An owed ack goes out on this update, outside the scheduled send rate.
+    // Type 8 does not add debt, so the ack cannot ping-pong.
 
     if ( current_time - client->last_send_time < 1.0 / client->send_rate )
     {
