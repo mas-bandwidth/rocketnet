@@ -88,7 +88,7 @@ To build a universal (arm64 and x86_64) library and the suites:
     lipo -info build-universal/librocketnet.a bin/librocketnet.dylib
 
 Both `lipo -info` lines name `x86_64 arm64`. The libraries and executables of
-every build tree land in the checkout's `bin/` (`CMakeLists.txt:49-54`), so `--clean-first` relinks
+every build tree land in the checkout's `bin/` (`CMakeLists.txt:59-64`), so `--clean-first` relinks
 them against the universal objects when a native build ran first; without it
 CMake sees the newer native files and skips the link. To read the deployment
 target on
@@ -103,7 +103,7 @@ architecture in its own clang pass, so the vendored sodium builds its x86 asm
 into the x86_64 slice and its ARM path into the arm64 slice; the XDP archive
 is embedded once with the host `xxd` and the generated header is
 architecture-neutral. The `-fcf-protection` hardening option is x86-only, so
-the compiler-flag check (`CMakeLists.txt:189`, `CMakeLists.txt:192`) drops it for a fat compile while the stack protector
+the compiler-flag check (`CMakeLists.txt:210`, `CMakeLists.txt:213`) drops it for a fat compile while the stack protector
 and the other Release flags stay on both slices.
 
 Against a universal build, `tools/check_package.py build-universal` passes the
@@ -122,20 +122,16 @@ for one command without changing `xcode-select`:
     export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
     cmake -B build-xcode -G Xcode
     cmake --build build-xcode --config Release --parallel 4
-    DYLD_LIBRARY_PATH=bin/Release ./bin/Release/test
+    ./bin/Release/test
 
-`CMakeLists.txt:49-54` sets the output directories to `bin/` with no
+`CMakeLists.txt:59-64` sets the output directories to `bin/` with no
 configuration in the path, and a multi-config generator such as Xcode appends
 the configuration to them, so its executables and libraries land in
-`bin/Release/`. The unit suite opens the shared libraries by the paths
-`bin/librocketnet.dylib` and `bin/librocketnet_dev.dylib` relative to the
-working directory, then by the bare names (`sdk/rocketnet_tests.cpp:14680-14681`,
-`test_unit_api_polish.cpp:154-155`, `test_unit_connect_token_vectors.cpp:651-652`);
-`DYLD_LIBRARY_PATH` is where `dlopen` looks for a bare name, so it points
-those lookups at `bin/Release/`. Set it on the suite's own command line:
-macOS drops `DYLD_` variables when it launches a system binary such as
-`/bin/bash` or `/usr/bin/nice`, so a wrapper script in between loses it, and
-`env DYLD_LIBRARY_PATH=bin/Release ./bin/Release/test` keeps it.
+`bin/Release/`. The unit suite opens the development library by its absolute
+build path (`CMakeLists.txt:533-534`), and the release library by
+`bin/librocketnet.dylib`, then by the bare name
+(`sdk/rocketnet_tests.cpp:14691-14692`), which the executable's run path
+resolves in `bin/Release/` (`CMakeLists.txt:538`).
 
 Windows has no Makefile path; CMake is driven directly, and the binaries land
 under `bin\<config>\`. It needs, installed once:

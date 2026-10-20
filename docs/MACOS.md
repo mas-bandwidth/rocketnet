@@ -22,8 +22,11 @@ row (`.github/workflows/ci.yml`, the `macos-15` entries of the
 `self-hosted, macOS, ARM64, rocketnet-macos`). The same runner carries the
 macOS nightly rows: soak, frame budget and examples
 (`docs/PLATFORMS.md`; `.github/workflows/nightly-soak.yml`,
-`nightly-frame-budget.yml`, `nightly-examples.yml`). macOS on x86_64 is an
-unsupported row (`docs/PLATFORMS.md`).
+`nightly-frame-budget.yml`, `nightly-examples.yml`). macOS on x86_64 is a
+nightly row: the examples nightly builds the library and the suites universal
+(arm64 and x86_64) and runs the x86_64 slice under Rosetta 2
+(`docs/PLATFORMS.md`; `nightly-examples.yml`, the step "Build universal and
+run the x86_64 slice under Rosetta 2"; the recipe is in `BUILDING.md`).
 
 ## Build
 
