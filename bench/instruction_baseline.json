@@ -3,7 +3,7 @@
   "valgrind_version": "valgrind-3.26.0",
   "build_type": "Release",
   "commit": "fc0da7dad4e7c52b57945a22c7b7ca5c27b1f03a",
-  "reason": "repin to GNU-15.2.0/valgrind-3.26.0 from 601c39749b20: client_frame +2.58% (700044->718092 Ir, +18048 Ir) from 905f0c0c1389 rocketnet_wire_header_bytes (+8768 Ir), dd6b2d2351e0 loopback_sender_address dual-stack check (+8192 Ir), a827829b3119 state_before reset check (+896 Ir), 7e10f5326b08 rocketnet_client_link_patterns check (+384 Ir), and 25cfc59aa072 rocketnet_client_io_step prefilter removal (-192 Ir); server_tick -7.72% (106576152->98347160 Ir, -8228992 Ir) from aa2c1fad7653 defining HAVE_EXPLICIT_BZERO=1 on sodium/sodium.c so sodium_memzero uses glibc explicit_bzero",
+  "reason": "client_frame +2.58% (700044->718092 Ir, +18048 Ir) from correctness changes 90431735 per-connection-reset (+896 Ir, +0.13%), 39d2b7fc wire-bytes-per-family (+8768 Ir, +1.25%), and 61c89055 loopback-dual-stack (+8192 Ir, +1.17%, crosses 2%; plus 252550ee +384 Ir and 8cddddad -192 Ir); server_tick -7.72% (106576152->98347160 Ir, -8228992 Ir) from 16bdb2dc HAVE_EXPLICIT_BZERO=1 on sodium/sodium.c",
   "threshold_pct": 2.0,
   "regions": {
     "client_frame": {
