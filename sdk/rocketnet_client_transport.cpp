@@ -1127,12 +1127,17 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
 static void rocketnet_client_process_packet( rocketnet_client_transport_t * client_transport, rocketnet_address_t * from, uint8_t * packet_data, int packet_bytes, double current_time, double receive_time,
                                              uint8_t verdict, uint64_t sequence )
 {
-    // only the dialed server is listened to; everything else is junk, and
-    // every dropped datagram is counted
+    // only the dialed server is listened to; everything else is junk. While
+    // the attempt holds a server address every such drop is counted. Once a
+    // terminal state ends the attempt, the reset clears the address
+    // (sdk/rocketnet_client_protocol.cpp:56-57,
+    // sdk/rocketnet_connection_reset.cpp:42), and the server's own
+    // redundant disconnect packets still in flight are dropped uncounted.
 
     if ( !rocketnet_address_equal( from, &client_transport->protocol.server_address ) )
     {
-        client_transport->counters.values[ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE]++;
+        if ( client_transport->protocol.server_address.type != ROCKETNET_ADDRESS_NONE )
+            client_transport->counters.values[ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE]++;
         return;
     }
 

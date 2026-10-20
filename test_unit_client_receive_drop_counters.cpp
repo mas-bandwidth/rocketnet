@@ -10,12 +10,12 @@
 // datagrams from a source other than the dialed server. The I/O step drops
 // nothing (sdk/rocketnet_client_io.h:390-396): on update, a datagram from
 // another source counts CLIENT_RECEIVE_FOREIGN_SOURCE before any protocol
-// check (sdk/rocketnet_client_transport.cpp:1133-1137), whatever its size,
+// check (sdk/rocketnet_client_transport.cpp:1137-1142), whatever its size,
 // and one from the server reaches the prefilter
 // (sdk/rocketnet_client_protocol.cpp:1248-1253), which counts
 // PREFILTER_TOO_SHORT or PREFILTER_TOO_LARGE; per-packet and batch. With a
 // link pattern configured the client runs no I/O core and update receives
-// from the driver itself (sdk/rocketnet_client_transport.cpp:1406-1407); that
+// from the driver itself (sdk/rocketnet_client_transport.cpp:1411-1412); that
 // receive keeps every datagram too, so the same counters count the same drops.
 
 #include "test_unit_registry.h"
@@ -201,7 +201,7 @@ static void drop_counters_run( bool batch )
 
 // a step-driven client with a link pattern configured: no I/O core, so update
 // receives from the driver on the caller's thread
-// (sdk/rocketnet_client_transport.cpp:1406-1407). The create reads the whole
+// (sdk/rocketnet_client_transport.cpp:1411-1412). The create reads the whole
 // current config (rocketnet_client_transport_create_step_driven_current), as
 // rocketnet_client_transport_create_step_driven reads only the fields before
 // the link simulator's and would leave simulated_drop_every_nth unread and the
@@ -251,6 +251,38 @@ static void client_receive_counts_prefilter_drops_without_io_core()
 }
 
 REGISTER_UNIT_TEST( client_receive_counts_prefilter_drops_without_io_core );
+
+// after the client disconnects, the reset clears the dialed address
+// (sdk/rocketnet_connection_reset.cpp:42), and the former server's redundant
+// disconnect packets still arrive: dropped as before, never counted as a
+// foreign source (sdk/rocketnet_client_transport.cpp:1137-1142)
+static void client_receive_foreign_source_not_counted_after_disconnect()
+{
+    rocketnet_client_driver_operations_t operations = rocketnet_fake_client_operations_io;
+    operations.receive = drop_counters_receive;
+
+    drop_counters_driver_t * driver = new drop_counters_driver_t();
+    drop_counters_clock_t clock = { 1000.0 };
+    rocketnet_client_transport_t * transport = drop_counters_create( driver, &operations, &clock );
+    rocketnet_client_io_t * io = rocketnet_client_transport_client_io( transport );
+
+    rocketnet_client_transport_disconnect( transport );
+    check( rocketnet_client_transport_state( transport ) <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
+
+    drop_counters_push( driver, "127.0.0.1:40000", 33 );
+    drop_counters_push( driver, "127.0.0.1:40000", 33 );
+    rocketnet_client_io_step( io, false );
+    check( driver->head == driver->count );
+
+    clock.now = 1000.1;
+    rocketnet_client_transport_update( transport, clock.now );
+    check( drop_counters_value( transport, ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE ) == 0 );
+
+    rocketnet_client_transport_destroy( transport );
+    delete driver;
+}
+
+REGISTER_UNIT_TEST( client_receive_foreign_source_not_counted_after_disconnect );
 
 static void client_receive_counts_prefilter_and_foreign_source_drops_per_packet()
 {
