@@ -34,13 +34,13 @@
 4. **`unreliable_integrity`**: Every unreliable message delivered (`ROCKETNET_RELIABILITY_UNRELIABLE`, `ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED`, `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT`) is pattern-verified (never corrupted) and never duplicated (each sequence number per client and reliability mode is observed at most once, and strictly increasing for `ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED`).
 5. **`counters_agree`**: The total messages sent by all clients equals the total messages received by the server plus counted drops (`sent == received + drops`).
 
-When `counters_agree` fails, `load` prints to stderr every nonzero counter of the server transport and the message server, the sums of every nonzero counter over the client transports and the message clients (`load: counters_agree ... <COUNTER>=<n>`), and each combo's client-to-server sent and received counts (`load: counters_agree combo=<n> sent=<n> received=<n>`), so the run names where the uncounted messages went (`load.c:948`).
+When `counters_agree` fails, `load` prints to stderr every nonzero counter of the server transport and the message server, the sums of every nonzero counter over the client transports and the message clients (`load: counters_agree ... <COUNTER>=<n>`), and each combo's client-to-server sent and received counts (`load: counters_agree combo=<n> sent=<n> received=<n>`), so the run names where the uncounted messages went (`load.c:1033`).
 
 ## Diagnostic Telemetry (Recorded Without Gating)
 
 At the end of every run, the single summary line records:
 - `connect_s`: wall time from the start of the connect phase until every client and the server report the full client count connected.
-- `connect_p50_s` and `connect_max_s`: 50th percentile and maximum per-client connect time (in seconds), each read from the clock when `load` first sees that client in `ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED` (`load.c:575`), not from the connect loop's per-pass time, which every client of one pass shares. With three or more clients connected, a `connect_p50_s` equal to `connect_max_s` means the stamps share one value: `load` then prints `load: connect_stamps ...` to stderr and fails the run with `failed_criterion=connect_stamps` (`load.c:1019`).
+- `connect_p50_s` and `connect_max_s`: 50th percentile and maximum per-client connect time (in seconds), each read from the clock when `load` first sees that client in `ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED` (`load.c:660`), not from the connect loop's per-pass time, which every client of one pass shares. With three or more clients connected, a `connect_p50_s` equal to `connect_max_s` means the stamps share one value: `load` then prints `load: connect_stamps ...` to stderr and fails the run with `failed_criterion=connect_stamps` (`load.c:1104`).
 - `server_update_p50_us` and `server_update_p99_us`: 50th and 99th percentile durations (in microseconds) of `rocketnet_message_server_update`.
 - `rss_mb`: process resident set size (in MiB) at the end of the run.
 - `server_driver` and `client_driver`: the transport the ladder granted to the server and to client `0`.
@@ -71,7 +71,7 @@ ulimit -n 65536
 
 ### Connect-deadline diagnostics
 
-When the connect phase reaches its 10-second deadline with a client short of `CONNECTED`, `bin/load` names up to eight such clients on stderr before the summary line (`load.c:601-637`): each one's transport state, its driver, the wire datagrams it has sent and received, and its nonzero transport counters, then the server's connected count and every nonzero server transport counter:
+When the connect phase reaches its 10-second deadline with a client short of `CONNECTED`, `bin/load` names up to eight such clients on stderr before the summary line (`load.c:688-722`): each one's transport state, its driver, the wire datagrams it has sent and received, and its nonzero transport counters, then the server's connected count and every nonzero server transport counter:
 
 ```
 load: client 481 not connected at the deadline: state=1 requesting cookie
@@ -82,7 +82,7 @@ load: server counter CONNECTION_REQUEST_NO_COOKIE=1035
 
 ### Traffic-phase disconnect diagnostics
 
-For each of the first eight clients that leave `CONNECTED` during traffic, `bin/load` prints, after the line naming the client and its disconnect reason, when that client was last updated, the longest gap between two of its updates, and the longest single server update with its time into traffic (`load.c:742-745`, `load.c:785-787`, `load.c:798-802`):
+For each of the first eight clients that leave `CONNECTED` during traffic, `bin/load` prints, after the line naming the client and its disconnect reason, when that client was last updated, the longest gap between two of its updates, and the longest single server update with its time into traffic (`load.c:827-831`, `load.c:867-874`, `load.c:883-887`):
 
 ```
 load: client 432 left CONNECTED at t=6.496: state=0 disconnected reason=server disconnected
@@ -93,7 +93,7 @@ One loop thread updates every client in slices of 100 with a server update after
 
 ### Dual-stack client ports
 
-Darwin lets a dual-stack socket (`[::]:0`) take an ephemeral port an IPv4 socket on the host already holds, and delivers IPv4 datagrams for that port to the IPv4 socket, so a dual-stack client of an IPv4 server sends but never hears the server and sits in `requesting cookie` until its deadline. On macOS the client of an IPv4 server binds an IPv4 socket (`sdk/rocketnet_client_transport.cpp:790-799`), and an IPv4 socket's ephemeral port is never one another IPv4 socket holds. `load` connects its clients to `127.0.0.1` (`load.c:501`), so every load client takes that IPv4 bind.
+Darwin lets a dual-stack socket (`[::]:0`) take an ephemeral port an IPv4 socket on the host already holds, and delivers IPv4 datagrams for that port to the IPv4 socket, so a dual-stack client of an IPv4 server sends but never hears the server and sits in `requesting cookie` until its deadline. On macOS the client of an IPv4 server binds an IPv4 socket (`sdk/rocketnet_client_transport.cpp:790-799`), and an IPv4 socket's ephemeral port is never one another IPv4 socket holds. `load` connects its clients to `127.0.0.1` unless `LOAD_SERVER_ADDRESS` names another host (`load.c:524-545`), so every load client takes that IPv4 bind.
 
 ### Server cells
 
