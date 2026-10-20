@@ -905,7 +905,7 @@ crypto_verify_64_bytes(void)
 
 #if defined(HAVE_EMMINTRIN_H) && defined(__SSE2__)
 
-# ifdef __GNUC__
+# if defined(__GNUC__) && !defined(__clang__)
 #  pragma GCC target("sse2")
 # endif
 # include <emmintrin.h>
@@ -11750,23 +11750,6 @@ ge25519_p3_to_cached(ge25519_cached *r, const ge25519_p3 *p)
     fe25519_mul(r->T2d, p->T, d2);
 }
 
-static void
-ge25519_p3_to_precomp(ge25519_precomp *pi, const ge25519_p3 *p)
-{
-    fe25519 recip;
-    fe25519 x;
-    fe25519 y;
-    fe25519 xy;
-
-    fe25519_invert(recip, p->Z);
-    fe25519_mul(x, p->X, recip);
-    fe25519_mul(y, p->Y, recip);
-    fe25519_add(pi->yplusx, y, x);
-    fe25519_sub(pi->yminusx, y, x);
-    fe25519_mul(xy, x, y);
-    fe25519_mul(pi->xy2d, xy, d2);
-}
-
 /*
  r = p
  */
@@ -15086,7 +15069,7 @@ int
 ge25519_is_canonical(const unsigned char *s)
 {
     unsigned char c;
-    unsigned char d;
+    unsigned char d_;
     unsigned int  i;
 
     c = (s[31] & 0x7f) ^ 0x7f;
@@ -15094,9 +15077,9 @@ ge25519_is_canonical(const unsigned char *s)
         c |= s[i] ^ 0xff;
     }
     c = (((unsigned int) c) - 1U) >> 8;
-    d = (0xed - 1U - (unsigned int) s[0]) >> 8;
+    d_ = (0xed - 1U - (unsigned int) s[0]) >> 8;
 
-    return 1 - (c & d & 1);
+    return 1 - (c & d_ & 1);
 }
 
 int
@@ -16713,7 +16696,7 @@ static int
 ristretto255_is_canonical(const unsigned char *s)
 {
     unsigned char c;
-    unsigned char d;
+    unsigned char d_;
     unsigned char e;
     unsigned int  i;
 
@@ -16722,10 +16705,10 @@ ristretto255_is_canonical(const unsigned char *s)
         c |= s[i] ^ 0xff;
     }
     c = (((unsigned int) c) - 1U) >> 8;
-    d = (0xed - 1U - (unsigned int) s[0]) >> 8;
+    d_ = (0xed - 1U - (unsigned int) s[0]) >> 8;
     e = ((s[31] >> 5) ^ optblocker_u8) >> 2;
 
-    return 1 - (((c & d) | e | s[0]) & 1);
+    return 1 - (((c & d_) | e | s[0]) & 1);
 }
 
 int
@@ -19993,14 +19976,6 @@ int blake2b_compress_avx2(blake2b_state *S,
 # define STORE(p, r) STOREU(p, r)
 #endif
 
-static inline uint64_t
-LOADU64(const void *p)
-{
-    uint64_t v;
-    memcpy(&v, p, sizeof v);
-    return v;
-}
-
 #define ROTATE16                                                              \
     _mm256_setr_epi8(2, 3, 4, 5, 6, 7, 0, 1, 10, 11, 12, 13, 14, 15, 8, 9, 2, \
                      3, 4, 5, 6, 7, 0, 1, 10, 11, 12, 13, 14, 15, 8, 9)
@@ -20849,7 +20824,7 @@ static const uint64_t blake2b_IV[8] = {
 static inline int
 blake2b_set_lastnode(blake2b_state *S)
 {
-    S->f[1] = -1;
+    S->f[1] = (uint64_t) -1;
     return 0;
 }
 /* LCOV_EXCL_STOP */
@@ -20866,7 +20841,7 @@ blake2b_set_lastblock(blake2b_state *S)
     if (S->last_node) {
         blake2b_set_lastnode(S); /* LCOV_EXCL_LINE */
     }
-    S->f[0] = -1;
+    S->f[0] = (uint64_t) -1;
     return 0;
 }
 
@@ -24293,6 +24268,7 @@ struct crypto_scalarmult_curve25519_implementation
 
 
 #define implementation rn_crypto_scalarmult_curve25519_scalarmult_curve25519_c_implementation
+#define d rn_crypto_scalarmult_curve25519_scalarmult_curve25519_c_d
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC push_options
 #endif
@@ -24543,6 +24519,7 @@ _crypto_scalarmult_curve25519_pick_best_implementation(void)
 #pragma GCC pop_options
 #endif
 
+#undef d
 #undef implementation
 
 #if defined(__GNUC__) && !defined(__clang__)

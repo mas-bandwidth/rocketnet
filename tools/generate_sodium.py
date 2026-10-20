@@ -19,6 +19,77 @@ INCLUDE = re.compile(r'^\s*#\s*include\s+"([^"]+)"[^\n]*$', re.M)
 DEFINE = re.compile(r'^\s*#\s*define\s+(\w+)', re.M)
 
 
+# Warning adaptations (sodium/README.md, "Warning adaptations"). The SDK
+# builds this source with warnings as errors at -Wall -Wextra -Wpedantic and
+# /W4, as every target in the tree is built, so each warning the pinned
+# inputs raise is fixed here, at the input, by one exact replacement that must
+# match once. None touches cryptographic arithmetic: each removes code the
+# subset never calls, spells an existing value explicitly, renames a local
+# that shadows a file-scope name, or marks a compiler extension as one.
+BASELINE_ADAPTATIONS = {
+    'sodium.h': [
+        # -Wpedantic: __int128 is a GCC/Clang extension; __extension__ is the
+        # compilers' own marker for a deliberate one.
+        ('typedef unsigned __int128 uint128_t;',
+         '__extension__ typedef unsigned __int128 uint128_t;'),
+    ],
+    'sodium.c': [
+        # -Wunknown-pragmas (clang): clang defines __GNUC__ but has no GCC
+        # target pragma. The block is compiled only when __SSE2__ is already
+        # defined, so the pragma is GCC's alone.
+        ('# ifdef __GNUC__\n#  pragma GCC target("sse2")\n# endif\n# include <emmintrin.h>\n\nstatic inline int\ncrypto_verify_n(',
+         '# if defined(__GNUC__) && !defined(__clang__)\n#  pragma GCC target("sse2")\n# endif\n# include <emmintrin.h>\n\nstatic inline int\ncrypto_verify_n('),
+    ],
+}
+UPSTREAM_ADAPTATIONS = {
+    'crypto_core/ed25519/ref10/ed25519_ref10.c': [
+        # -Wunused-function: the subset never converts a point to precomp.
+        ('static void\nge25519_p3_to_precomp(ge25519_precomp *pi, const ge25519_p3 *p)\n{\n'
+         '    fe25519 recip;\n    fe25519 x;\n    fe25519 y;\n    fe25519 xy;\n\n'
+         '    fe25519_invert(recip, p->Z);\n    fe25519_mul(x, p->X, recip);\n    fe25519_mul(y, p->Y, recip);\n'
+         '    fe25519_add(pi->yplusx, y, x);\n    fe25519_sub(pi->yminusx, y, x);\n    fe25519_mul(xy, x, y);\n'
+         '    fe25519_mul(pi->xy2d, xy, d2);\n}\n\n', ''),
+        # C4459: the local d of the two canonical checks hides the file-scope
+        # curve constant d (fe_*/constants.h); the local is renamed d_.
+        ('    unsigned char c;\n    unsigned char d;\n    unsigned int  i;\n\n'
+         '    c = (s[31] & 0x7f) ^ 0x7f;\n    for (i = 30; i > 0; i--) {\n        c |= s[i] ^ 0xff;\n    }\n'
+         '    c = (((unsigned int) c) - 1U) >> 8;\n    d = (0xed - 1U - (unsigned int) s[0]) >> 8;\n\n'
+         '    return 1 - (c & d & 1);\n',
+         '    unsigned char c;\n    unsigned char d_;\n    unsigned int  i;\n\n'
+         '    c = (s[31] & 0x7f) ^ 0x7f;\n    for (i = 30; i > 0; i--) {\n        c |= s[i] ^ 0xff;\n    }\n'
+         '    c = (((unsigned int) c) - 1U) >> 8;\n    d_ = (0xed - 1U - (unsigned int) s[0]) >> 8;\n\n'
+         '    return 1 - (c & d_ & 1);\n'),
+        ('    unsigned char c;\n    unsigned char d;\n    unsigned char e;\n    unsigned int  i;\n\n'
+         '    c = (s[31] & 0x7f) ^ 0x7f;\n    for (i = 30; i > 0; i--) {\n        c |= s[i] ^ 0xff;\n    }\n'
+         '    c = (((unsigned int) c) - 1U) >> 8;\n    d = (0xed - 1U - (unsigned int) s[0]) >> 8;\n'
+         '    e = ((s[31] >> 5) ^ optblocker_u8) >> 2;\n\n'
+         '    return 1 - (((c & d) | e | s[0]) & 1);\n',
+         '    unsigned char c;\n    unsigned char d_;\n    unsigned char e;\n    unsigned int  i;\n\n'
+         '    c = (s[31] & 0x7f) ^ 0x7f;\n    for (i = 30; i > 0; i--) {\n        c |= s[i] ^ 0xff;\n    }\n'
+         '    c = (((unsigned int) c) - 1U) >> 8;\n    d_ = (0xed - 1U - (unsigned int) s[0]) >> 8;\n'
+         '    e = ((s[31] >> 5) ^ optblocker_u8) >> 2;\n\n'
+         '    return 1 - (((c & d_) | e | s[0]) & 1);\n'),
+    ],
+    'crypto_generichash/blake2b/ref/blake2b-compress-avx2.h': [
+        # -Wunused-function: the AVX2 compressor loads through LOADU, never LOADU64.
+        ('static inline uint64_t\nLOADU64(const void *p)\n{\n    uint64_t v;\n    memcpy(&v, p, sizeof v);\n    return v;\n}\n\n', ''),
+    ],
+    'crypto_generichash/blake2b/ref/blake2b-ref.c': [
+        # C4245: f[] is uint64_t; the all-ones flag is spelled as one.
+        ('    S->f[1] = -1;\n', '    S->f[1] = (uint64_t) -1;\n'),
+        ('    S->f[0] = -1;\n', '    S->f[0] = (uint64_t) -1;\n'),
+    ],
+}
+
+
+def adapt(text, replacements, where):
+    for old, new in replacements:
+        if text.count(old) != 1:
+            raise SystemExit(f"warning adaptation does not match once in {where}: {old[:60]!r}")
+        text = text.replace(old, new)
+    return text
+
+
 def checked(path, digest):
     data = path.read_bytes()
     if hashlib.sha256(data).hexdigest() != digest:
@@ -58,6 +129,10 @@ def main():
     with tarfile.open(fileobj=io.BytesIO(archive), mode='r:gz') as tar:
         files = {m.name[len(prefix):]: tar.extractfile(m).read().decode()
                  for m in tar.getmembers() if m.isfile() and m.name.startswith(prefix)}
+    for path, replacements in UPSTREAM_ADAPTATIONS.items():
+        files[path] = adapt(files[path], replacements, path)
+    for name, replacements in BASELINE_ADAPTATIONS.items():
+        baseline[name] = adapt(baseline[name], replacements, name)
     baseline_guards = set(re.findall(r'^#ifndef (\w+)', baseline['sodium.h'], re.M))
     public_root = 'include/sodium/'
     used = set()

@@ -34,6 +34,31 @@ notice remain in the generated files. Installing the SDK installs the sodium
 license too. The private symbol prefix prevents collisions when an application
 also links its own libsodium; the SDK shared library exports no sodium symbols.
 
+## Warning adaptations
+
+The SDK builds `sodium.c` with the rest of the tree, with warnings as errors
+at `-Wall -Wextra -Wpedantic` (GCC, Clang) and `/W4` (MSVC), and no flag or
+pragma is added for it. Each warning the pinned inputs raised there is fixed
+at its input by the generator (`BASELINE_ADAPTATIONS`, `UPSTREAM_ADAPTATIONS`
+and the manifest's `renames` in `tools/generate_sodium.py`); every
+replacement must match exactly once, so a re-vendor that changes the text
+fails loudly and the edit is reviewed again:
+
+| Input | Warning | Edit |
+| --- | --- | --- |
+| baseline `sodium.h` (`uint128_t`) | `-Wpedantic` (`__int128` is an extension) | `__extension__ typedef` |
+| baseline `sodium_verify.c` | `-Wunknown-pragmas` (Clang: no GCC target pragma) | the SSE2 target pragma is GCC-only; the block already requires `__SSE2__` |
+| `crypto_core/ed25519/ref10/ed25519_ref10.c` | `-Wunused-function` | `ge25519_p3_to_precomp`, never called by the subset, removed |
+| `crypto_core/ed25519/ref10/ed25519_ref10.c` | C4459 (local `d` hides the curve constant `d`) | the local in `ge25519_is_canonical` and `ristretto255_is_canonical` is `d_` |
+| `crypto_scalarmult/curve25519/scalarmult_curve25519.c` | C4459 (amalgamation: the local `d` hides ed25519's file-scope `d`) | `d` added to the file's `renames` |
+| `crypto_generichash/blake2b/ref/blake2b-compress-avx2.h` | `-Wunused-function` | `LOADU64`, never called, removed |
+| `crypto_generichash/blake2b/ref/blake2b-ref.c` | C4245 (`int` -1 into `uint64_t`) | `(uint64_t) -1`, the same value |
+
+None changes cryptographic arithmetic; `test_sodium` and the oracle check
+below cover the result. The upstream MSVC `#pragma warning(disable:...)`
+lines in `sodium_private_common.h` and upstream's `-Wlong-long` pragmas are
+the inputs' own and are kept as written.
+
 ## Reproduce
 
 From the repository root:

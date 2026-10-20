@@ -444,7 +444,6 @@
 #define ge25519_p3_dbl rocketnet_sodium_ge25519_p3_dbl
 #define ge25519_p3_to_cached rocketnet_sodium_ge25519_p3_to_cached
 #define ge25519_p3_to_p2 rocketnet_sodium_ge25519_p3_to_p2
-#define ge25519_p3_to_precomp rocketnet_sodium_ge25519_p3_to_precomp
 #define ge25519_p3_tobytes rocketnet_sodium_ge25519_p3_tobytes
 #define ge25519_precomp rocketnet_sodium_ge25519_precomp
 #define ge25519_precomp_0 rocketnet_sodium_ge25519_precomp_0
@@ -1338,7 +1337,7 @@ int crypto_stream_chacha20_ietf_ext_xor_ic(unsigned char *c, const unsigned char
 
 #ifdef HAVE_TI_MODE
 # if defined(__SIZEOF_INT128__)
-typedef unsigned __int128 uint128_t;
+__extension__ typedef unsigned __int128 uint128_t;
 # else
 typedef unsigned uint128_t __attribute__((mode(TI)));
 # endif
