@@ -27,19 +27,21 @@
 
     soak exits 1 on any payload verify failure, any counter conservation
     failure and any disconnect that is not its own planned reconnect, naming
-    which. ROCKETNET_SOAK_FAULT_VERIFY=1 (off by default) corrupts the first
+    which. Every REFUSAL counter must read 0, with two exceptions (the xdp one
+    follows below). When the
+    link simulator duplicates packets (ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT
+    or ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT nonzero), the duplicates
+    it plants are refused as already received, so every <FAMILY>_ALREADY_RECEIVED
+    refusal (payload, keep-alive, ack, fragment and disconnect, on the client
+    and the server) is counted and printed, not failed.
+    ROCKETNET_SOAK_FAULT_VERIFY=1 (off by default) corrupts the first
     received payload: the planted verify failure scripts/soak-args-selftest
     uses as its negative control.
 
     The link simulator is driven by the transports' own env overlay
     (ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT, _LATENCY_MS, _JITTER_MS,
-    _DUPLICATE_PERCENT and the same four for ROCKETNET_CLIENT_). A duplicate
-    the simulator injects is refused by the receiver as one of the
-    *_ALREADY_RECEIVED counters (PAYLOAD_ALREADY_RECEIVED, KEEP_ALIVE_ and the
-    client's CLIENT_ forms); when the sending end's SIMULATED_DUPLICATE_PERCENT
-    is non-zero those refusals at the receiving end are the expected outcome of
-    the injection and are reported, not failed. On the xdp server the kernel
-    replay window drops a session packet 16 or more sequences behind the
+    _DUPLICATE_PERCENT and the same four for ROCKETNET_CLIENT_). On the xdp
+    server the kernel replay window drops a session packet 16 or more sequences behind the
     newest from its source (ROCKETNET_XDP_REPLAY_WINDOW,
     sdk/rocketnet_xdp_limits.h:8; server_xdp/server_xdp.c:291): a duplicate
     the simulator holds back, or a packet its jitter reorders that far, is
@@ -146,10 +148,40 @@ static void soak_accumulate_counters( uint64_t * totals, const struct rocketnet_
         totals[i] += rocketnet_counter_value( counters, i );
 }
 
+// Whether the link simulator duplicates packets on either end, read from the
+// same env overlay the transports apply at create.
+
+static int soak_duplicates_planted( void )
+{
+    const char * names[] = { "ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT", "ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT" };
+    for ( int i = 0; i < 2; i++ )
+    {
+        const char * value = getenv( names[i] );
+        if ( value && value[0] != '\0' && strtol( value, NULL, 10 ) != 0 )
+            return 1;
+    }
+    return 0;
+}
+
+// a planted duplicate of any sealed packet (payload, keep-alive, ack,
+// fragment, disconnect) is refused as already received, counted by the
+// family's <FAMILY>_ALREADY_RECEIVED refusal; only those refusals are
+// expected, and only when the simulator plants duplicates
+
+static int soak_refusal_planted_by_duplicates( const char * counter_name )
+{
+    const char suffix[] = "_ALREADY_RECEIVED";
+    const size_t length = strlen( counter_name );
+    const size_t suffix_length = sizeof(suffix) - 1;
+    return length > suffix_length && strcmp( counter_name + length - suffix_length, suffix ) == 0;
+}
+
 // The counter discipline, computed from the counter list. Conservation: every
-// family balances, RECEIVED == the sum of its outcomes. Clean run: this is
-// loopback with no injected fault, so every REFUSAL counter reads 0. Returns
-// the number of violations, each printed by counter name.
+// family balances, RECEIVED == the sum of its outcomes. Refusals: this is
+// loopback with no injected fault, so every REFUSAL counter reads 0, except
+// the already-received refusal of the duplicates the link simulator plants
+// and, when reorders_injected, the xdp server's kernel replay-window drop.
+// Returns the number of violations, each printed by counter name.
 
 static int soak_env_nonzero( const char * name )
 {
@@ -157,8 +189,9 @@ static int soak_env_nonzero( const char * name )
     return value && value[0] != '\0' && strcmp( value, "0" ) != 0;
 }
 
-static int soak_check_counters( const char * name, const struct rocketnet_counters_t * counters, int duplicates_injected, int reorders_injected )
+static int soak_check_counters( const char * name, const struct rocketnet_counters_t * counters, int reorders_injected )
 {
+    const int duplicates_planted = soak_duplicates_planted();
     int violations = 0;
 
     char report[256];
@@ -172,19 +205,15 @@ static int soak_check_counters( const char * name, const struct rocketnet_counte
     {
         if ( rocketnet_counter_class( i ) == ROCKETNET_COUNTER_CLASS_REFUSAL && rocketnet_counter_value( counters, i ) != 0 )
         {
-            const char * counter = rocketnet_counter_name( i );
-            const size_t length = strlen( counter );
-            const char * suffix = "_ALREADY_RECEIVED";
-            const size_t suffix_length = strlen( suffix );
-            if ( duplicates_injected && length >= suffix_length && strcmp( counter + length - suffix_length, suffix ) == 0 )
+            if ( reorders_injected && strcmp( rocketnet_counter_name( i ), "XDP_KERNEL_DROPPED_REPLAYED" ) == 0 )
             {
-                printf( "soak: expected refusal of injected duplicates at %s: %s = %llu\n", name, counter,
+                printf( "soak: expected refusal of injected duplicates and reorders at %s: %s = %llu\n", name, rocketnet_counter_name( i ),
                         (unsigned long long) rocketnet_counter_value( counters, i ) );
                 continue;
             }
-            if ( reorders_injected && strcmp( counter, "XDP_KERNEL_DROPPED_REPLAYED" ) == 0 )
+            if ( duplicates_planted && soak_refusal_planted_by_duplicates( rocketnet_counter_name( i ) ) )
             {
-                printf( "soak: expected refusal of injected duplicates and reorders at %s: %s = %llu\n", name, counter,
+                printf( "soak: planted duplicates refused at %s: %s = %llu\n", name, rocketnet_counter_name( i ),
                         (unsigned long long) rocketnet_counter_value( counters, i ) );
                 continue;
             }
@@ -264,8 +293,6 @@ int main( int argc, char ** argv )
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 16;
 
-    // a duplicate injected on the way to an end is refused at that end
-    const int duplicates_to_client = soak_env_nonzero( "ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT" );
     const int duplicates_to_server = soak_env_nonzero( "ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT" );
     // a held-back duplicate or a jitter reorder toward the xdp server can fall
     // behind its kernel replay window
@@ -352,7 +379,7 @@ int main( int argc, char ** argv )
                 soak_record_disconnect( disconnect_counts, rocketnet_client_transport_state( client ) );
                 rocketnet_sleep( 0.05 );
                 rocketnet_server_transport_update( server, rocketnet_time() );
-                counter_violations += soak_check_counters( "client", rocketnet_client_transport_counters( client ), duplicates_to_client, 0 );
+                counter_violations += soak_check_counters( "client", rocketnet_client_transport_counters( client ), 0 );
                 soak_accumulate_counters( client_counters, rocketnet_client_transport_counters( client ) );
                 rocketnet_client_transport_destroy( client );
                 client = NULL;
@@ -534,10 +561,10 @@ int main( int argc, char ** argv )
         }
         rocketnet_sleep( 0.05 );
         rocketnet_server_transport_update( server, rocketnet_time() );
-        counter_violations += soak_check_counters( "client", rocketnet_client_transport_counters( client ), duplicates_to_client, 0 );
+        counter_violations += soak_check_counters( "client", rocketnet_client_transport_counters( client ), 0 );
         soak_accumulate_counters( client_counters, rocketnet_client_transport_counters( client ) );
     }
-    counter_violations += soak_check_counters( "server", rocketnet_server_transport_counters( server ), duplicates_to_server, reorders_to_server );
+    counter_violations += soak_check_counters( "server", rocketnet_server_transport_counters( server ), reorders_to_server );
     if ( counter_violations )
         failures += (uint64_t) counter_violations;
     else
