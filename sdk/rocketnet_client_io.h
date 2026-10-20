@@ -43,8 +43,7 @@ void rocketnet_client_io_wipe( void * data, size_t bytes );
 // rocketnet_client_io_hand_off and rocketnet_client_io_return below). The model's IoGuard
 // (tla/RNClientIo.tla) has no fairness and every liveness property, WakeEndsWait among them,
 // holds without it, so the timeout only bounds the stall of a missed event wake. At 1 ms each
-// idle client woke 1000 times a second at user-interactive class (docs/CLIENT-IO.md, macOS
-// timing and App Nap).
+// idle client woke 1000 times a second (docs/CLIENT-IO.md, macOS timing and App Nap).
 #define ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS 0.100
 #define ROCKETNET_CLIENT_IO_NUM_BUFFERS 2      // two receive buffers, no third (the design's receive path)
 

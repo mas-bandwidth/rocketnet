@@ -236,8 +236,9 @@ jobs:
       - name: UDP loopback soak
         run: ./bin/soak 200000
 
-      # One 1000-client light-profile run (10 Hz updates, one reliable-ordered
-      # message each way per update) per server cell: portable and msgx are pins; msgx-degraded
+      # One 1000-client light-profile run (10 Hz updates; on each, one client
+      # message rotating through the eight reliability modes and one reliable-ordered
+      # server message) per server cell: portable and msgx are pins; msgx-degraded
       # is the auto ladder under ROCKETNET_PUMP=portable, where the msgx rung refuses
       # and the ladder falls to portable (a pinned msgx under that override refuses
       # to create, by design). Each run must pass, name the expected granted driver,

@@ -354,10 +354,10 @@ Reached: total_us_p99 P=32 head 51.272 target 100 gap -48.728.
 macOS throttles a backgrounded or occluded app (App Nap) and coalesces timers
 for threads at a low quality-of-service class. The client I/O thread's wait is
 a guard, not a cadence: `ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS` (100 ms,
-`sdk/rocketnet_client_io.h:48`), a kevent timeout on the driver wait
-(`sdk/rocketnet_client_io.h:496`). The wait ends at once on a readable socket
+`sdk/rocketnet_client_io.h:47`), a kevent timeout on the driver wait
+(`sdk/rocketnet_client_io.h:495`). The wait ends at once on a readable socket
 or on the wake, which a key retire, stop, a hand-off and an owed return set
-(`sdk/rocketnet_client_io.h:182`, `:297`, `:310`, `:327`); the timeout only
+(`sdk/rocketnet_client_io.h:181`, `:296`, `:309`, `:326`); the timeout only
 bounds the stall of a missed wake. `tla/RNClientIo.tla` models it as
 `IoGuard` with no fairness, and every liveness property of
 `MCRNClientIo.cfg`, `WakeEndsWait` among them, holds without it, so no wake
@@ -480,20 +480,20 @@ checks (`functional/macos_client_timing.cpp:411`). Its numbers are a report
 of what a throttled process sees, never a pass or a fail.
 
 The receive lag gate's red proof: the I/O wait planted to pass `readable`
-false (`sdk/rocketnet_client_io.h:496`), so a datagram ends the wait only
+false (`sdk/rocketnet_client_io.h:495`), so a datagram ends the wait only
 through the guard, fails the default-class case at its own check
 (`check failed: lag_within`) with lag p99 100.2 ms, the guard;
 restored, lag p99 is 0.22 to 0.27 ms at the default class and 0.23 ms with a
 background game thread, on a lightly loaded Mac Studio.
 
 The wake rate gate's red proof: the guard planted back at 1 ms
-(`ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS 0.001`, `sdk/rocketnet_client_io.h:48`)
+(`ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS 0.001`, `sdk/rocketnet_client_io.h:47`)
 fails the default-class case at its own check (`check failed: wake_rate_within
 at line 417`) with 49002 wakes, 813.3 a second against the bound of 320;
 restored to 100 ms, 9078 wakes, 150.7 a second, and the case passes, on a Mac
 mini (Apple silicon) shared with other suites. A 1 ms guard is a cadence: each
-idle client wakes about 1000 times a second at user-interactive class (the
-1000-client load measurement above).
+idle client wakes about 1000 times a second (the 1000-client load measurement
+above).
 
 There is no planted-class red proof. The I/O thread's bounded wait is a
 kevent timeout (`sdk/rocketnet_platform.cpp:3302`), and its wakes are not
