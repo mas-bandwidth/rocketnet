@@ -89,11 +89,11 @@ named functional, never as a unit step.
 | Binary | Tier | Why | Where it runs |
 | --- | --- | --- | --- |
 | `test` | unit | state machines and the in-memory simulator | CI `Run unit tests` |
-| `test_wide` | unit | `test.cpp` built with 512 channels (CMakeLists.txt:450) | by hand |
+| `test_wide` | unit | `test.cpp` built with 512 channels (the `test_wide` target in CMakeLists.txt) | by hand |
 | `test_sodium` | unit | known-answer vectors | CI `Sodium known answers` |
-| `fuzz_replay_*` | unit | corpus replay, no init (CMakeLists.txt:701) | CI `Replay the fuzz corpora without libFuzzer` |
+| `fuzz_replay_*` | unit | corpus replay, no init (the `fuzz_replay_${harness}` targets in CMakeLists.txt) | CI `Replay the fuzz corpora without libFuzzer` |
 | `functional` | functional | real sockets and transports | CI `Run functional suite` |
-| `test_serialize` | functional | sleep-wait loops (test_serialize.cpp:58) | `./bin/functional` (functional/main.cpp:66-105) |
+| `test_serialize` | functional | sleep-wait loops (test_serialize.cpp:58) | `./bin/functional` (the `execs` tables in `main`, functional/main.cpp) |
 | `test_transport_control` | functional | creates a server transport on a loopback socket and reads `rocketnet_time()` (test_transport_control.cpp:172,217) | `./bin/functional` |
 | `test_xdp` | functional | the AF_XDP driver | `./bin/functional` on Linux |
 | `test_xdp_filter` | functional | loads the XDP program with BPF_PROG_TEST_RUN; root | by hand |
