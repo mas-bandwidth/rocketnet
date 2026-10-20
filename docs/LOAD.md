@@ -90,8 +90,8 @@ load: server counter CONNECTION_REQUEST_NO_COOKIE=1035
 For each of the first eight clients that leave `CONNECTED` during traffic, `bin/load` prints, after the line naming the client and its disconnect reason, when that client was last updated, the longest gap between two of its updates, and the longest single server update with its time into traffic (`load.c:793-796`, `load.c:877-882`, `load.c:896-900`):
 
 ```
-load: client 432 left CONNECTED at t=6.496: state=0 disconnected reason=server disconnected
-load: client 432 last updated 0.000 s ago, longest update gap 2.127 s; longest server update 0.291 s at t=4.003
+load: client <i> (slot <s>) left CONNECTED at t=<seconds>: state=<n> <state name> client_reason=<reason> server_reason=<reason>
+load: client <i> last updated <seconds> s ago, longest update gap <seconds> s; longest server update <seconds> s at t=<seconds>
 ```
 
 One loop thread updates every client in slices of 100 with a server update after each slice, so an update gap near the 3-second reliable timeout means the loop starved the client of updates; a short gap means the client timed out while it was updated on time.
@@ -114,7 +114,7 @@ The msgx-degraded cell runs the auto ladder (`msgx,portable`) under the `ROCKETN
 
 ### Gate runs
 
-The macOS gate runs the light profile (`LOAD_PROFILE=light`): 1000 clients, each updating at 10 Hz and sending one reliable-ordered message per update, and each sent one by the server. It is three consecutive runs of each server cell, nine runs in all, with `LOAD_PROFILE=light` in the environment of every command below. Each summary line must say `verdict=PASS`, `fds_end` must equal `fds_start`, `threads_end` must equal `threads_start`, and `connect_p50_s` and `connect_max_s` are recorded for the run table:
+The macOS gate runs the light profile (`LOAD_PROFILE=light`): 1000 clients, each updating at 10 Hz and sending one message per update, rotating through the eight reliability modes, and each sent one reliable-ordered message by the server per update. It is three consecutive runs of each server cell, nine runs in all, with `LOAD_PROFILE=light` in the environment of every command below. Each summary line must say `verdict=PASS`, `fds_end` must equal `fds_start`, `threads_end` must equal `threads_start`, and `connect_p50_s` and `connect_max_s` are recorded for the run table:
 
 ```
 for cell in portable msgx msgx-degraded; do

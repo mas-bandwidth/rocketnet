@@ -354,23 +354,24 @@ Reached: total_us_p99 P=32 head 51.272 target 100 gap -48.728.
 macOS throttles a backgrounded or occluded app (App Nap) and coalesces timers
 for threads at a low quality-of-service class. The client I/O thread's wait is
 a guard, not a cadence: `ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS` (100 ms,
-`sdk/rocketnet_client_io.h:47`), a kevent timeout on the driver wait
-(`sdk/rocketnet_client_io.h:495`). The wait ends at once on a readable socket
+`sdk/rocketnet_client_io.h:48`), a kevent timeout on the driver wait
+(`sdk/rocketnet_client_io.h:496`). The wait ends at once on a readable socket
 or on the wake, which a key retire, stop, a hand-off and an owed return set
-(`sdk/rocketnet_client_io.h:181`, `:296`, `:309`, `:326`); the timeout only
+(`sdk/rocketnet_client_io.h:182`, `:297`, `:310`, `:327`); the timeout only
 bounds the stall of a missed wake. `tla/RNClientIo.tla` models it as
 `IoGuard` with no fairness, and every liveness property of
 `MCRNClientIo.cfg`, `WakeEndsWait` among them, holds without it, so no wake
 is lost for any guard length.
 
-The guard was 1 ms. Measured with `bin/load 1000 60` (`docs/LOAD.md`) on an
-Apple-silicon Mac mini: at 1 ms each idle client's I/O thread woke 1000 times
+A 1 ms guard is a cadence, not a guard. Measured with `bin/load 1000 60`
+(`docs/LOAD.md`) on an Apple-silicon Mac mini: at 1 ms each idle client's I/O
+thread woke 1000 times
 a second at `QOS_CLASS_USER_INTERACTIVE` (the class the measured build requested on its
 threads), about 1.7% of a core per client
 (the load process at 1681% CPU in `ps -M`), the server's update p99 was about
 190 ms, and 4 of 12 portable-server runs lost clients to the reliable
 timeout; at 100 ms the process ran at 74% CPU, the server update p99 was
-4.7 ms, and the runs passed. On a 32-core Apple-silicon Mac Studio the same
+4.7 ms, and the runs passed. On a 32-core Apple-silicon Mac the same
 portable-server run at 1 ms held 2849% and 2910% CPU, and both runs failed
 `connect_within_10s` (clients connected, then dropped), with server update
 p99 19.8 ms and 19.1 ms; at 100 ms it held 57% CPU, server update p99 2.0 ms,
@@ -480,14 +481,14 @@ checks (`functional/macos_client_timing.cpp:411`). Its numbers are a report
 of what a throttled process sees, never a pass or a fail.
 
 The receive lag gate's red proof: the I/O wait planted to pass `readable`
-false (`sdk/rocketnet_client_io.h:495`), so a datagram ends the wait only
+false (`sdk/rocketnet_client_io.h:496`), so a datagram ends the wait only
 through the guard, fails the default-class case at its own check
 (`check failed: lag_within`) with lag p99 100.2 ms, the guard;
 restored, lag p99 is 0.22 to 0.27 ms at the default class and 0.23 ms with a
 background game thread, on a lightly loaded Mac Studio.
 
 The wake rate gate's red proof: the guard planted back at 1 ms
-(`ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS 0.001`, `sdk/rocketnet_client_io.h:47`)
+(`ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS 0.001`, `sdk/rocketnet_client_io.h:48`)
 fails the default-class case at its own check (`check failed: wake_rate_within
 at line 417`) with 49002 wakes, 813.3 a second against the bound of 320;
 restored to 100 ms, 9078 wakes, 150.7 a second, and the case passes, on a Mac
@@ -496,7 +497,7 @@ idle client wakes about 1000 times a second (the 1000-client load measurement
 above).
 
 There is no planted-class red proof. The I/O thread's bounded wait is a
-kevent timeout (`sdk/rocketnet_platform.cpp:3302`), and its wakes are not
+kevent timeout (`sdk/rocketnet_platform.cpp:3295`), and its wakes are not
 coalesced by the thread's own class: with the I/O thread planted at
 `QOS_CLASS_BACKGROUND` the wake p99 stays at 1.33 to 1.74 ms and the gate stays
 green (the planted rows above and below; measured with the 1 ms guard and the
@@ -727,10 +728,9 @@ datagram that arrives reaches update). The guard timeout is `IoGuard`: it
 ends a wait and consumes nothing, and `SpecFair` gives it no fairness, so
 these properties hold with the wait ended only by the wake or a readable
 socket, for any guard length. `SpecMissedWake` drops the wake's fairness (a
-wake the wait misses): TLC then finds a behaviour that stays blocked with the
-wake set and violates `WakeEndsWait`; `SpecMissedWakeGuarded` adds the
-guard's fairness back and every property holds again, so the guard is what
-bounds that stall. Neither has a committed configuration. The five reversed witnesses,
+wake the wait misses) and `SpecMissedWakeGuarded` adds the guard's fairness
+back; neither has a committed configuration or a row in `tla/RUNS.tsv`, so no
+checked result stands for either. The five reversed witnesses,
 `MCRNClientIoBrokenReuseBeforeSent.cfg`,
 `MCRNClientIoBrokenSwapWhileReading.cfg`,
 `MCRNClientIoBrokenReceiveStall.cfg`,
