@@ -8218,6 +8218,23 @@ extern void macos_client_timing_taskpolicy_background();
 extern void macos_client_timing_background_thread_qos();
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+// oversize, runt and garbage datagrams at every Windows receive path (functional/windows_socket_errors.cpp)
+extern void windows_server_drops_oversize_datagram_portable_ipv4();
+extern void windows_server_drops_oversize_datagram_portable_ipv6();
+extern void windows_server_drops_oversize_datagram_iocp_ipv4();
+extern void windows_server_drops_oversize_datagram_iocp_ipv6();
+extern void windows_server_drops_oversize_datagram_rio_ipv4();
+extern void windows_server_drops_oversize_datagram_rio_ipv6();
+extern void windows_server_drops_runt_and_garbage_portable_ipv4();
+extern void windows_server_drops_runt_and_garbage_portable_ipv6();
+extern void windows_server_drops_runt_and_garbage_iocp_ipv4();
+extern void windows_server_drops_runt_and_garbage_iocp_ipv6();
+extern void windows_server_drops_runt_and_garbage_rio_ipv4();
+extern void windows_server_drops_runt_and_garbage_rio_ipv6();
+extern void windows_client_drops_oversize_and_garbage_ipv4();
+extern void windows_client_drops_oversize_and_garbage_ipv6();
+extern void windows_per_packet_receive_counts_empty_datagram_ipv4();
+extern void windows_per_packet_receive_counts_empty_datagram_ipv6();
 // a hard-killed client never stalls a Windows receive (functional/windows_connreset.cpp)
 extern void windows_connreset_hard_killed_client_portable_ipv4();
 extern void windows_connreset_hard_killed_client_portable_ipv6();
@@ -8861,6 +8878,22 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_transport_wire_bytes_per_family", test_transport_wire_bytes_per_family },
     { "live_message_matrix_loopback", live_message_matrix_loopback },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "windows_server_drops_oversize_datagram_portable_ipv4", windows_server_drops_oversize_datagram_portable_ipv4 },
+    { "windows_server_drops_oversize_datagram_portable_ipv6", windows_server_drops_oversize_datagram_portable_ipv6 },
+    { "windows_server_drops_oversize_datagram_iocp_ipv4", windows_server_drops_oversize_datagram_iocp_ipv4 },
+    { "windows_server_drops_oversize_datagram_iocp_ipv6", windows_server_drops_oversize_datagram_iocp_ipv6 },
+    { "windows_server_drops_oversize_datagram_rio_ipv4", windows_server_drops_oversize_datagram_rio_ipv4 },
+    { "windows_server_drops_oversize_datagram_rio_ipv6", windows_server_drops_oversize_datagram_rio_ipv6 },
+    { "windows_server_drops_runt_and_garbage_portable_ipv4", windows_server_drops_runt_and_garbage_portable_ipv4 },
+    { "windows_server_drops_runt_and_garbage_portable_ipv6", windows_server_drops_runt_and_garbage_portable_ipv6 },
+    { "windows_server_drops_runt_and_garbage_iocp_ipv4", windows_server_drops_runt_and_garbage_iocp_ipv4 },
+    { "windows_server_drops_runt_and_garbage_iocp_ipv6", windows_server_drops_runt_and_garbage_iocp_ipv6 },
+    { "windows_server_drops_runt_and_garbage_rio_ipv4", windows_server_drops_runt_and_garbage_rio_ipv4 },
+    { "windows_server_drops_runt_and_garbage_rio_ipv6", windows_server_drops_runt_and_garbage_rio_ipv6 },
+    { "windows_client_drops_oversize_and_garbage_ipv4", windows_client_drops_oversize_and_garbage_ipv4 },
+    { "windows_client_drops_oversize_and_garbage_ipv6", windows_client_drops_oversize_and_garbage_ipv6 },
+    { "windows_per_packet_receive_counts_empty_datagram_ipv4", windows_per_packet_receive_counts_empty_datagram_ipv4 },
+    { "windows_per_packet_receive_counts_empty_datagram_ipv6", windows_per_packet_receive_counts_empty_datagram_ipv6 },
     { "windows_connreset_hard_killed_client_portable_ipv4", windows_connreset_hard_killed_client_portable_ipv4 },
     { "windows_connreset_hard_killed_client_portable_ipv6", windows_connreset_hard_killed_client_portable_ipv6 },
     { "windows_connreset_hard_killed_client_iocp_ipv4", windows_connreset_hard_killed_client_iocp_ipv4 },

@@ -1317,10 +1317,19 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
 static void rocketnet_client_process_packet( rocketnet_client_transport_t * client_transport, rocketnet_address_t * from, uint8_t * packet_data, int packet_bytes, double current_time, double receive_time,
                                              uint8_t verdict, uint64_t sequence )
 {
-    // only the dialed server is listened to; everything else is junk
+    // only the dialed server is listened to; everything else is junk. While
+    // the attempt holds a server address every such drop is counted. Once a
+    // terminal state ends the attempt, the reset clears the address
+    // (sdk/rocketnet_client_protocol.cpp:56-57,
+    // sdk/rocketnet_connection_reset.cpp:42), and the server's own
+    // redundant disconnect packets still in flight are dropped uncounted.
 
     if ( !rocketnet_address_equal( from, &client_transport->protocol.server_address ) )
+    {
+        if ( client_transport->protocol.server_address.type != ROCKETNET_ADDRESS_NONE )
+            client_transport->counters.values[ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE]++;
         return;
+    }
 
     struct rocketnet_client_received_packets_t * received = &client_transport->received_packets;
 
@@ -2231,6 +2240,13 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
     rocketnet_client_link_flush( client_transport );
 }
 
+// test seam: the port the client socket is bound to, so a functional test
+// sends datagrams at it
+uint16_t rocketnet_client_transport_test_bound_port( rocketnet_client_transport_t * client_transport )
+{
+    return client_transport ? client_transport->bound_port : 0;
+}
+
 const struct rocketnet_counters_t * rocketnet_client_transport_counters( rocketnet_client_transport_t * client_transport )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
@@ -2319,15 +2335,19 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
         const int packet_bytes = client_transport->io.operations->receive( client_transport->io.instance, &from, scratch, ROCKETNET_MAX_PACKET_BYTES );
         if ( packet_bytes == 0 )
             break;
-        if ( packet_bytes < 0 || packet_bytes > 65535 )
+        if ( packet_bytes < 0 || packet_bytes > ROCKETNET_DRIVER_MAX_DATAGRAM_BYTES )
         {
             client_transport->client_io.driver_faults++;
             break;
         }
 
-        // Keep the true datagram length for the update-thread prefilter's
-        // short and oversized counters. The receive buffer stores only the
-        // prefix that fits in its packet stride.
+        // every datagram is kept with its true size, a runt or an oversize
+        // one too, as the I/O core keeps it (sdk/rocketnet_client_io.h:390-396):
+        // the update thread's prefilter refuses it and counts
+        // PREFILTER_TOO_SHORT or PREFILTER_TOO_LARGE
+        // (sdk/rocketnet_protocol.cpp:176-180). An oversize datagram's bytes
+        // past scratch were never written, so only scratch's prefix is copied.
+
         const int copy_bytes = packet_bytes < ROCKETNET_MAX_PACKET_BYTES ? packet_bytes : ROCKETNET_MAX_PACKET_BYTES;
 
         const double receive_time = client_transport->step_in_update
@@ -2346,7 +2366,7 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
         {
             const int index = receive_buffer->num_packets;
 
-            memcpy( receive_buffer->data + index * ROCKETNET_FRAME_SIZE, scratch, copy_bytes );
+            memcpy( receive_buffer->data + index * ROCKETNET_FRAME_SIZE, scratch, (size_t) copy_bytes );
 
             receive_buffer->from[index] = from;
             receive_buffer->receive_time[index] = receive_time;

@@ -450,6 +450,13 @@ bool rocketnet_platform_receive_status_is_reset( int status );
 void rocketnet_platform_count_receive_reset();
 uint64_t rocketnet_platform_receive_resets();
 
+// the process-wide count of zero-length datagrams the per-packet receive
+// (rocketnet_platform_socket_receive_packet) skipped: its 0 return means the
+// socket is drained, so a zero-length datagram is read past and counted here.
+// The batch receive hands one to the transport at 0 bytes instead, where the
+// prefilter counts it.
+uint64_t rocketnet_platform_receive_empties();
+
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 /**

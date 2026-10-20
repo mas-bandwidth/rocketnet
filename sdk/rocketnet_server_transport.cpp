@@ -1946,18 +1946,9 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             struct rocketnet_address_t from = receive_buffer->from[i];
             uint8_t * receive_frame = receive_buffer->data + i * ROCKETNET_RECEIVE_CEILING;
             const int packet_bytes = receive_buffer->packet_bytes[i];
-            if ( packet_bytes < 0 )
+            if ( packet_bytes < 0 || packet_bytes > ROCKETNET_DRIVER_MAX_DATAGRAM_BYTES )
             {
                 server_transport->driver_faults++;
-                continue;
-            }
-            if ( packet_bytes > ROCKETNET_RECEIVE_CEILING )
-            {
-                // An oversize datagram is rejected by the driver-results
-                // size/stride check, but it still counts PREFILTER_TOO_LARGE
-                // exactly once.
-                server_transport->driver_faults++;
-                server_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE]++;
                 continue;
             }
 
@@ -1966,6 +1957,16 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
             const int wire_client_before = rocketnet_server_wire_client_index( server_transport, &from );
             rocketnet_server_wire_totals_add_received( server_transport, wire_client_before, &from, packet_bytes );
+
+            // A truncated datagram retains its original length for accounting,
+            // but the admission callback may read every byte it is given. Reject
+            // an oversize report before handing it that shorter stored prefix.
+            if ( packet_bytes > ROCKETNET_RECEIVE_CEILING )
+            {
+                server_transport->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED]++;
+                server_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE]++;
+                continue;
+            }
 
             // the admission gate: an unmapped source goes through the application's
             // callback before any send frame is reserved or protocol work runs, so

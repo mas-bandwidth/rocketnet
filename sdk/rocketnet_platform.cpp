@@ -4106,6 +4106,7 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * );
 
 static volatile LONG rocketnet_platform_udp_reset_refusal_logged = 0;
 static volatile LONG64 rocketnet_platform_receive_reset_count = 0;
+static volatile LONG64 rocketnet_platform_receive_empty_count = 0;
 
 // windows-udp-connreset audit: every socket rocketnet creates on Windows
 // (portable server and client, iocp, rio) turns both ICMP reset reports off
@@ -4159,6 +4160,11 @@ uint64_t rocketnet_platform_receive_resets()
     return (uint64_t) InterlockedCompareExchange64( &rocketnet_platform_receive_reset_count, 0, 0 );
 }
 
+uint64_t rocketnet_platform_receive_empties()
+{
+    return (uint64_t) InterlockedCompareExchange64( &rocketnet_platform_receive_empty_count, 0, 0 );
+}
+
 rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size )
 {
     rocketnet_platform_socket_t * s = (rocketnet_platform_socket_t *) rocketnet_malloc( context, sizeof( rocketnet_platform_socket_t ) );
@@ -4196,6 +4202,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
     // reset reports for this socket, otherwise a receive errors out after a peer
     // disconnects hard and its ICMP port unreachable comes back
     rocketnet_platform_socket_disable_udp_resets( (uintptr_t) s->handle );
+
     // own the port exclusively: without SO_EXCLUSIVEADDRUSE another local
     // process binds the same port with SO_REUSEADDR and takes its datagrams.
     // set before bind, as the IOCP and RIO drivers do.
@@ -4421,7 +4428,13 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
     }
 }
 
-int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * socket, rocketnet_address_t * from, void * packet_data, int max_packet_size )
+// one datagram from a Windows socket: its bytes (past max_packet_size for an
+// oversize one), or -1 when the socket is drained or the receive failed. A
+// zero-length datagram returns 0 when keep_empty is set, so a batch hands it
+// to the transport's prefilter and it is counted there (PREFILTER_TOO_SHORT);
+// otherwise it is skipped, since 0 from the per-packet call reads as drained,
+// and counted (rocketnet_platform_receive_empties)
+static int rocketnet_platform_socket_receive_datagram( rocketnet_platform_socket_t * socket, rocketnet_address_t * from, void * packet_data, int max_packet_size, bool keep_empty )
 {
     rocketnet_assert( socket );
     rocketnet_assert( from );
@@ -4489,18 +4502,21 @@ receive_again:
             {
                 rocketnet_debug( "WSARecvFrom failed with error %d", error );
             }
-            return 0;
+            return -1;
         }
 
         result = (int) bytes_received;
 
-        if ( result == 0 )
+        if ( result == 0 && !keep_empty )
         {
             // a zero-length datagram is legal UDP carrying nothing the
             // protocol admits -- and returning 0 here would read as
             // "socket drained", letting byte-less chaff cap an entire
             // drain at one packet (#100's review). skip it, keep reading:
-            // both pumps share this semantic.
+            // both pumps share this semantic. The skip is counted
+            // process-wide (rocketnet_platform_receive_empties), so no
+            // dropped datagram goes uncounted.
+            InterlockedIncrement64( &rocketnet_platform_receive_empty_count );
             continue;
         }
 
@@ -4527,12 +4543,18 @@ receive_again:
     else
     {
         rocketnet_assert( 0 );
-        return 0;
+        return -1;
     }
   
     rocketnet_assert( result >= 0 );
 
     return result;
+}
+
+int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * socket, rocketnet_address_t * from, void * packet_data, int max_packet_size )
+{
+    const int result = rocketnet_platform_socket_receive_datagram( socket, from, packet_data, max_packet_size, false );
+    return result < 0 ? 0 : result;
 }
 
 extern void * rocketnet_global_context;
@@ -4815,9 +4837,18 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
     int num_packets = 0;
     while ( num_packets < max_packets )
     {
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        // a zero-length datagram joins the batch at 0 bytes, so the
+        // transport's prefilter counts it (PREFILTER_TOO_SHORT) rather than
+        // it vanishing here
+        int bytes = rocketnet_platform_socket_receive_datagram( socket, &from[num_packets], packet_data + (size_t) num_packets * (size_t) packet_stride, packet_stride, true );
+        if ( bytes < 0 )
+            break;
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         int bytes = rocketnet_platform_socket_receive_packet( socket, &from[num_packets], packet_data + (size_t) num_packets * (size_t) packet_stride, packet_stride );
         if ( bytes == 0 )
             break;
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         packet_bytes[num_packets] = bytes;
         num_packets++;
     }

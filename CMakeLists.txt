@@ -654,6 +654,7 @@ if(ROCKETNET_BUILD_TESTS)
         functional/lifecycle_driver.cpp
         functional/cpp_transports.cpp
         functional/live_matrix.cpp
+        functional/windows_socket_errors.cpp
         functional/windows_connreset.cpp
         functional/posix_hard_killed_peer.cpp
         functional/posix_lifecycle_stress.cpp
