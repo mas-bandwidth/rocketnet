@@ -46,12 +46,13 @@ Two I/O shapes preserve the existing implementations:
   The transport does not allocate, recycle or schedule those backend frames.
 
 On a buffered driver one update stages at most `payload_ring_capacity` payload
-packets, read at create: the larger of `ROCKETNET_SERVER_MAX_SEND_PACKETS` (256)
-and the configured `max_clients` (`sdk/rocketnet_server_transport.cpp:1144`),
-within a ring of `ROCKETNET_SERVER_PAYLOAD_RING_SIZE`, 1024, at least
-`ROCKETNET_MAX_CLIENTS` (`sdk/rocketnet_server_transport.cpp:110`). A start past
-it returns NULL and counts `SEND_RING_FULL`
-(`sdk/rocketnet_server_transport.cpp:2189`, `:2325`).
+packets. At create the server allocates that many ring slots; the default is
+the larger of `ROCKETNET_SERVER_MAX_SEND_PACKETS` (256) and the configured
+`max_clients` (`sdk/rocketnet_server_transport.cpp:1154`). The allocation holds
+the slot metadata and frames together, with a 64-aligned metadata start and
+16-aligned frame roots (`sdk/rocketnet_server_transport.cpp:1479`). A start
+past the capacity returns NULL and counts `SEND_RING_FULL`
+(`sdk/rocketnet_server_transport.cpp:2209`, `:2345`).
 `rocketnet_server_transport_send_capacity` reports the value. The message
 layer shares a shortage fairly (`tla/RNServerSendFair.tla`):
 `rn_message_object_send_packets` (`sdk/rocketnet_message_server.cpp:864`) offers
@@ -59,8 +60,10 @@ every connection one packet, in rotation from the first connection refused in
 the previous update, before any connection takes a second, and a refusal holds
 back in-place unreliable starts for the next update
 (`sdk/rocketnet_message_server.cpp:648`, `:895`). A refused packet writes
-nothing and its reliable messages stay due, so a capacity below the client
-count slows each client down and disconnects none.
+nothing and its reliable messages stay due
+(`sdk/rocketnet_message_server.cpp:811`). The walk serves a waiting connection
+within `ceil(N / K)` updates; in-place starts add at most the initial update
+before the first refusal constrains them (`tla/RNServerSendFair.tla:108`).
 
 The staged callbacks are start, finish, abort, flush and receive. Start returns
 a `ROCKETNET_FRAME_STRIDE` root; the wire starts at `ROCKETNET_FRAME_WIRE_OFFSET`.
