@@ -421,8 +421,10 @@ static void api_polish_server_abort_message_misuse()
     rocketnet_server_config_t config;
     check( rocketnet_server_dev_config( &config ) == ROCKETNET_STATUS_OK );
     config.max_clients = 16;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0 );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0, &create_status );
     check( server != NULL );
+    check( create_status == ROCKETNET_STATUS_OK );
 
     rocketnet_set_assert_callback( api_polish_quiet_assert );
     const uint64_t before = rocketnet_api_misuse_count();
