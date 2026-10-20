@@ -20,7 +20,7 @@ leak:TestSlotlessPacketNeverMovesTheSessionWindow
 leak:TestOneConnectionPerTokenAfterHistoryFlush
 
 # functional/rocketnet_functional_tests.cpp: rocketnet_test_server_uring_create_stalled
-# is the one noinline frame that creates the driver the probe deliberately
-# stalls destroying, so this suppresses only that driver's abandoned memory,
+# is the one noinline frame that creates the transport the probe deliberately
+# stalls destroying, so this suppresses only that transport's abandoned memory,
 # not every allocation made anywhere under the probe.
 leak:rocketnet_test_server_uring_create_stalled

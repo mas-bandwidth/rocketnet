@@ -9,14 +9,14 @@ payloads of 200 bytes with `rocketnet_client_transport_start_packet` and
 `rocketnet_client_transport_finish_packet`, and times two calls with
 `std::chrono::steady_clock`:
 
-- `rocketnet_client_transport_send_packets`, the driver send walk;
+- `rocketnet_client_transport_send_packets`, the transport send walk;
 - `rocketnet_client_transport_update`, the per-frame receive and protocol work.
 
 The payload writes are outside both timers. After the timed calls, each frame
 runs in lockstep: the server loops, each pass updating, draining what arrived,
 sending one 200-byte reply per received payload and flushing, until the frame's
 P payloads have arrived or a 0.5 s deadline passes, sleeping 0.1 ms between
-passes. The pacing exists because on a driver with the client I/O thread,
+passes. The pacing exists because on a transport with the client I/O thread,
 `send_packets` is a hand-off and the I/O thread sends asynchronously; an
 unpaced loop refills the Filling ring faster than one ring can be sent, and
 `start_packet` then refuses on a full ring, as designed. The client then drains
@@ -41,10 +41,10 @@ P = 32, where the send walk itself is near 100 us.
   runs, and treat overlapping ranges as tied.
 - Received count is diagnostic. UDP may drop in the OS or receiver, so it is
   not the denominator.
-- On a driver with the I/O thread, the meter waits for each frame's payloads
+- On a transport with the I/O thread, the meter waits for each frame's payloads
   to reach the server, so it measures per-frame cost, not a producer running
   faster than the I/O thread drains.
-- The driver argument selects the server and client driver. The BASE numbers
+- The transport argument selects the server and client transport. The BASE numbers
   use `portable`.
 
 ## Commands
@@ -62,7 +62,7 @@ make
 One line is printed:
 
 ```
-client_main_thread_cost driver=<d> packets_per_frame=<P> frames=<F> send_us_p50=<> send_us_p99=<> send_us_max=<> update_us_p50=<> update_us_p99=<> update_us_max=<> total_us_p50=<> total_us_p99=<> total_us_max=<> received=<n>
+client_main_thread_cost transport=<d> packets_per_frame=<P> frames=<F> send_us_p50=<> send_us_p99=<> send_us_max=<> update_us_p50=<> update_us_p99=<> update_us_max=<> total_us_p50=<> total_us_p99=<> total_us_max=<> received=<n>
 ```
 
 Any `CHECK` failure exits 1 and names the failed line.
@@ -72,7 +72,7 @@ Any `CHECK` failure exits 1 and names the failed line.
 Measured on Linux kernel `7.0.0-38-generic` with g++ 15.2.0, Release build,
 from the tree at commit `8985b00fcf7d2062ec32dde8a533a03fc823a124` (BASE) with
 this bench added; the card does not change the SDK. Medians of three runs,
-2000 frames each, portable driver.
+2000 frames each, portable transport.
 
 | P | plant | send p50 | send p99 | send max | update p50 | update p99 | update max | total p50 | total p99 | total max |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |

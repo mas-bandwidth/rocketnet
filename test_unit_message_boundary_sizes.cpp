@@ -138,8 +138,8 @@ struct boundary_pair_t { boundary_net_t * net; rocketnet_message_server_t * serv
 struct boundary_received_t { int channel; std::vector<uint8_t> data; };
 static void boundary_config(rocketnet_message_config_t * c) {
     rocketnet_message_default_config(c); c->num_channels=4; c->window_messages=64; c->receive_ring_bytes=65536; c->max_message_bytes=16384;
-    c->send_buffer_bytes=65536; c->send_queue_messages=64; c->packets_in_flight=64; c->max_packets_per_update=8; c->unreliable_deliveries=64;
-    c->rto_initial_ms=100; c->rto_min_ms=20; c->rto_max_ms=400; c->reliable_timeout_ms=120000;
+    c->send_buffer_bytes=65536; c->send_queue_messages=64; c->packets_in_flight=64; c->packets_per_update=8; c->unreliable_deliveries=64;
+    c->resend_delay_initial_ms=100; c->resend_delay_min_ms=20; c->resend_delay_max_ms=400; c->reliable_timeout_ms=120000;
 }
 static void boundary_setup(boundary_pair_t * pair) {
     rocketnet_message_config_t config; boundary_config(&config); pair->net=new boundary_net_t(); pair->net->slot_connection=100; pair->net->next_packet_id=1000; pair->net->next_payload_id=1; memset(pair->net->fragment_counters,0,sizeof(pair->net->fragment_counters));
@@ -159,11 +159,14 @@ static void boundary_teardown(boundary_pair_t * pair) {
     rocketnet_reassembly_set_destroy(pair->net->reassembly); delete pair->net->server; delete pair->net->client; delete pair->net;
 }
 static void boundary_drain(boundary_pair_t * pair,std::vector<boundary_received_t> * got) {
-    for(int channel=0;channel<4;++channel) {
-        const uint8_t * data=NULL; int bytes=0;
-        while(rocketnet_message_server_receive(pair->server,0,channel,&data,&bytes)) {
-            boundary_received_t r; r.channel=channel; r.data.assign(data,data+bytes); got->push_back(r);
-            rocketnet_message_server_release(pair->server,0,data);
+    // the one receive queue, in batches: each entry names the channel it was delivered on
+    for(;;) {
+        rocketnet_message_batch_t batch;
+        const int count = rocketnet_message_server_receive_messages( pair->server, &batch );
+        if( count == 0 ) break;
+        for(int i=0;i<batch.num_messages;++i) {
+            check(batch.client_index[i]==0);
+            boundary_received_t r; r.channel=batch.channel[i]; r.data.assign(batch.data[i],batch.data[i]+batch.bytes[i]); got->push_back(r);
         }
     }
 }

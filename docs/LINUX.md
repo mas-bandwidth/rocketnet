@@ -222,8 +222,9 @@ stay in the completion queue for a later call and are counted
 The create line is
 `io_uring transport: <n> queue reuseport group on port <p>, 4096 entry ring, 4096 receive buffers per queue`
 (`sdk/rocketnet_server_uring_linux.cpp:782-783`); a kernel without
-`IORING_FEAT_NODROP` adds a warning that it drops completions on overflow
-(`sdk/rocketnet_server_uring_linux.cpp:745-746`).
+`IORING_FEAT_NODROP` is refused: `rocketnet_server_uring_create` logs an
+error, destroys what it built and returns NULL, since a ring that drops
+completions on overflow would lose receives and sends without a count.
 
 ## 6. xdp and the provisioning script
 
@@ -275,8 +276,12 @@ boot tier is verified, never performed (`scripts/rocketnet-provision:25`).
   seven queues are 1,879,048,192 bytes of UMEM inside a plan of roughly 4.2 GiB
   (`BUILDING.md:232-233`, `:282`), within the 4096 MiB `ROCKETNET_XDP_MEMORY_MIB`
   budget (`BUILDING.md:225-229`, `sdk/rocketnet_server_socket_linux.cpp:894-901`).
-- One family per interface: a server serves the family of its public address,
-  and one interface takes one XDP program (`TRANSPORTS.md:237-243`).
+- Both families on one interface: `second_public_address` names the other
+  family on the same port, and `xdp` carries both destinations when both
+  addresses are on that interface (`sdk/rocketnet_server_socket_linux.cpp:1848`).
+  Two interfaces refuse with `TRANSPORT_FAMILIES_UNSUPPORTED`
+  (`sdk/rocketnet_server_socket_linux.cpp:1479`). One interface takes one
+  XDP program.
 
 Checks that need no root, as CI runs them
 (`.github/workflows/ci.yml:475-480`, `:492-494`):

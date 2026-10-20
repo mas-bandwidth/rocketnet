@@ -2560,13 +2560,13 @@ round-trip sample equal to the time between the send and the acknowledgement.
 A number that was already acknowledged MUST NOT be acknowledged or sampled a
 second time.
 
-### m9.2. Round-trip estimate and retransmission timeout
+### m9.2. Round-trip estimate and resend delay
 
 The sender MUST estimate the round-trip time as RakNet does. On the first
 sample, it MUST set both the smoothed round-trip time and deviation to the
 sample. On every later sample, the deviation MUST move 5 percent toward
 the absolute difference between the prior smoothed RTT and the new sample;
-the smoothed RTT MUST then move 5 percent toward the new sample. The retransmission timeout is
+the smoothed RTT MUST then move 5 percent toward the new sample. The resend delay is
 
     clamp( 2 x srtt + 4 x deviation + 30 ms, resend_delay_min_ms, resend_delay_max_ms )
 
@@ -2581,7 +2581,7 @@ until the reliable timeout ends the connection.
 | Name | Value | Unit | Meaning |
 |---|---|---|---|
 | resend_delay_initial_ms | 2000 | ms | the timeout before the first round-trip sample |
-| resend_delay_min_ms | 0 | ms | optional floor for the sampled RTO; zero disables it |
+| resend_delay_min_ms | 0 | ms | optional floor for the sampled resend delay; zero disables it |
 | resend_delay_max_ms | 2000 | ms | the configured largest timeout |
 | reliable_timeout_ms | 10000 | ms | how long the oldest unacknowledged number may stand |
 | min_resend_attempts | 4 | count | the sends that fit before the reliable timeout |
@@ -2592,8 +2592,8 @@ A sender MUST keep two resend queues. A single-packet reliable record is in the
 small-record queue; a fragment of a block is in the chunk queue. A number MUST
 be in at most one queue.
 
-The resend delay of a single-packet record MUST be rto. The resend delay of
-a chunk MUST be min( rto, reliable_timeout_ms / min_resend_attempts ). A sender MUST resend a due number
+The resend delay of a single-packet record MUST be resend_delay. The resend delay of
+a chunk MUST be min( resend_delay, reliable_timeout_ms / min_resend_attempts ). A sender MUST resend a due number
 at the first update whose time is at least the number's last send plus its
 resend delay, and MUST NOT resend it before then. A resend MUST use a fresh
 connection layer sequence and MUST move the number to the tail of its queue.
@@ -2698,10 +2698,15 @@ wire representation.
 1. An implementation MUST set its build-specific maximum channel count to a
    value from 1 through 65,536, inclusive. The default build-specific maximum
    MUST be 32. A connection MUST set num_channels from 1 through its
-   implementation build-specific maximum. For every message send, a sender
-   MUST select a channel from zero through one less than that connection's
-   num_channels, and a message endpoint MUST refuse a send with a channel
-   outside that range.
+   implementation build-specific maximum. The channel of a send is its
+   ordering channel. For a send of reliability 1, 3, 4 or 7, a sender MUST
+   select a channel from zero through one less than that connection's
+   num_channels, and a message endpoint MUST refuse such a send with a channel
+   outside that range. A send of reliability 0, 2, 5 or 6 is neither ordered
+   nor sequenced: a message endpoint MUST ignore its channel, MUST NOT refuse
+   it for its channel, and sends it with no channel field (rule 2), as RakNet's
+   ordering channel is ignored by its unordered reliabilities
+   (`rn_message_object_start` in `sdk/rocketnet_message_server.cpp`).
 2. A record with code 1, 3 or 4 MUST carry the channel field in
    [m3 Record format](#m3). Receipt types use their base codes from
    [m1.3 Reliability types](#m1.3): type 7 uses code 3 and carries a channel;
@@ -2711,6 +2716,14 @@ wire representation.
    encode a larger channel as a little-endian u16 and MUST set WIDE if and only
    if it uses that u16 encoding. A receiver MUST reject WIDE when the channel
    fits in u8.
+4. A receiver MUST hand the application its connection's deliveries as one
+   queue in the update's delivery order, every channel's together, and MUST
+   NOT filter them by channel. A server MUST hand them as one queue across all
+   its connections, each message naming the connection it arrived on. Order
+   holds within a channel of a connection as rules [m6](#m6) and [m7](#m7)
+   state it; the queue makes no order between channels or between
+   connections. The SDK's queue is each connection's deliveries in turn, in
+   connection index order (`sdk/rocketnet_message_server.cpp:870-896`).
 
 The diagrams show the channel field alone. Its position in a record is the
 position defined by its code in [m3 Record format](#m3).

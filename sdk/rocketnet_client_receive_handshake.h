@@ -19,7 +19,7 @@
 // owner per transition: the I/O thread loads Free with acquire before it
 // stores Fill, publishes with a release store, update loads Ready with
 // acquire before it stores Exposed, and update returns with a seq_cst store.
-// The handshake holds no datagrams and makes no driver call; counts are the
+// The handshake holds no datagrams and makes no transport call; counts are the
 // caller's per-buffer datagram counts, written and read only across one of
 // those state transitions.
 //
@@ -110,7 +110,7 @@ inline bool rocketnet_client_receive_handshake_io_owe( rocketnet_client_receive_
     return true;
 }
 
-// RNClientIo.tla IoWait (I/O thread): the readable argument for the driver's
+// RNClientIo.tla IoWait (I/O thread): the readable argument for the transport's
 // wait. True while the filled buffer has room; false while it is full, so a
 // full buffer leaves datagrams in the socket and waits on the wake alone.
 inline bool rocketnet_client_receive_handshake_io_wait( rocketnet_client_receive_handshake_t * handshake )

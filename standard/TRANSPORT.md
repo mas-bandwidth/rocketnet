@@ -2663,10 +2663,10 @@ The server turns a connection request into an encryption mapping, and a connecti
 3. A server MUST then ignore a request from a source address that is already connected, counting `CONNECTION_REQUEST_ALREADY_CONNECTED`. A request from a source address that holds a mapping without a connected slot MUST be answered with that mapping's stored connection challenge packet, byte-identical, regardless of the request's connection salt, counting `CONNECTION_REQUEST_CHALLENGE_RESENT`, and it MUST NOT create a second mapping or derive new keys for that address. Only a request whose connection salt matches the mapping's refreshes the mapping's half-open idle deadline ([t17 Timing and defaults](#t17) rule 4).
 4. A server MUST then ignore a request whose version is not the protocol version, and then one whose protocol id is not the server's.
 5. A server MUST then refuse a token whose expire timestamp is not later than the server's current time, counting `CONNECTION_REQUEST_TOKEN_EXPIRED`. When the configured maximum token lifetime is positive, it MUST also refuse a token whose create timestamp is more than the creation skew after the server's current time, counting `CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE`, and one whose lifetime exceeds the configured maximum token lifetime, counting `CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG`. Such a token MUST NOT be answered.
-6. A server MUST then ignore a request whose timeout is zero or negative without permission, then one whose address flags name no family or set a bit above bit 1, then one whose flagged addresses name none this server serves (a token naming both families is accepted when either address is one this server serves), and then one whose server public key is not this server's. It MUST NOT answer a request that rules 2, 4, 5 or 6 refuse.
+6. A server MUST then ignore a request whose timeout is zero or negative without permission, then one whose address flags name no family or set a bit above bit 1, then one whose token address of the family the request arrived on (a v4-mapped source is IPv4) is not one this server serves, the token's other-family address unread, and then one whose server public key is not this server's. It MUST NOT answer a request that rules 2, 4, 5 or 6 refuse.
 7. A server MUST require a valid return cookie before any asymmetric work, and MUST answer a request without one, with a forged one, or with an expired one with a fresh connection cookie packet.
 8. A server MUST refuse, unanswered, a request whose cookie is valid when the per-update handshake work budget is spent, counting `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`.
-9. A server MUST refuse, unanswered, a request whose token identifier is bound to a different source address, and, once the failed-signature budget of the current window is spent, a request from a source with a recorded failure in that window, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`. A source with no recorded failure in the window is not refused by that budget ([t17 Timing and defaults](#t17) item 11).
+9. A server MUST refuse, unanswered, a request whose token identifier is bound to a different source address, and a request whose token identifier carries a live request claim held by a different source address, counting `CONNECTION_REQUEST_TOKEN_ALREADY_USED`. The first valid request records the claim for its source address before any signature, seal or keypair work; the claim ends at the handshake deadline or when a response binds the token ([t17 Timing and defaults](#t17) item 12). A server MUST also refuse, unanswered, a request that finds no free encryption mapping slot before the signature, seal and keypair rungs run, counting `CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING` and `MAPPING_TABLE_FULL`. Once the failed-signature budget of the current window is spent, a server MUST refuse a request from a source with a recorded failure in that window, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`. A source with no recorded failure in the window is not refused by that budget ([t17 Timing and defaults](#t17) item 11).
 10. A server MUST verify the signed connect data before opening the sealed private block, MUST open it only with the keypair its public key names, and MUST ignore a request whose sealed fields disagree with the signed fields or whose client id already holds a slot.
 11. A server MUST deny, with a connection denied packet sealed under the handshake server-to-client key, a request that finds no free slot, and MUST NOT create a mapping for it.
 12. A server MUST generate a fresh session nonce and ephemeral keypair for each mapping, MUST derive the connection keys, MUST erase the ephemeral secret, and MUST store the connection challenge in the mapping so that a repeat is byte-identical.
@@ -2703,6 +2703,8 @@ list is ignored in that state.
 | no mapping | request | cookie absent, forged or expired | send a fresh cookie packet | no mapping |
 | no mapping | request | handshake work budget spent | ignore, count | no mapping |
 | no mapping | request | token used from another address | ignore, count | no mapping |
+| no mapping | request | token claimed from another address until the handshake deadline | ignore, count | no mapping |
+| no mapping | request | encryption mapping table full | ignore, count | no mapping |
 | no mapping | request | failed-signature budget spent and the source has a recorded failure in the window | ignore, count | no mapping |
 | no mapping | request | signature, seal or sealed-field check fails | ignore, count | no mapping |
 | no mapping | request | client id connected | ignore, count | no mapping |
@@ -3618,16 +3620,16 @@ an input ([t1.4 Conventions](#t1.4)).
    ack debt is nonzero, using a standalone ack if no other session packet
    carries it, and MUST NOT wait for a packet threshold or keep-alive cadence.
 10. A reliable-message sender MUST retransmit an unacknowledged message only
-    when its adaptive retransmission timeout (RTO) expires. Before any RTT
-    sample, the RTO is 2 seconds by default. For the first RTT sample, the
+    when its adaptive resend delay expires. Before any RTT
+    sample, the resend delay is 2 seconds by default. For the first RTT sample, the
     sender MUST set both its smoothed RTT and deviation to that sample. For
     each later sample, deviation MUST move 5 percent toward the absolute
     difference between the prior smoothed RTT and the sample, then smoothed
     RTT MUST move 5 percent toward the sample.
-    The RTO is 2 * smoothed_RTT + 4 * deviation + 30 ms, capped by the
+    The resend delay is 2 * smoothed_RTT + 4 * deviation + 30 ms, capped by the
     configured maximum (2 seconds by default) and raised to the configured
     minimum (0 by default). A nonzero minimum is an implementation option.
-    The sender MUST NOT back off the RTO after retransmission.
+    The sender MUST NOT back off the resend delay after retransmission.
 11. A server SHOULD enforce the handshake work budget after the cookie of a
     connection request validates and before any asymmetric operation. When it
     does, a request past the budget MUST be refused with no reply and counted
@@ -3640,6 +3642,15 @@ an input ([t1.4 Conventions](#t1.4)).
     the budget is spent and the server can record no further sources; the
     verifications such requests cost are bounded by the handshake work budget
     of item 10.
+ 12. A server SHOULD refuse a request whose token identifier is claimed by a
+     different source address, and MUST refuse one that finds no free
+     encryption mapping slot, before any signature, seal or keypair work. The
+     first valid request for a token records its claim for the source address;
+     the claim ends at the handshake deadline or when a response binds the
+     token. A full mapping table refuses with no reply and is counted as a
+     refusal. The request-claim table and the response-binding table are
+     independent capacities: claim pressure cannot consume or evict a still
+     live response binding.
 
 The values this section introduces are:
 
@@ -3959,6 +3970,8 @@ The registry of counters, in index order, is:
 | `MESSAGE_NUMBER_OUTSIDE_WINDOW` | `refusal` | `none` |
 | `MESSAGE_SLOT_COLLISION` | `refusal` | `none` |
 | `MESSAGE_DUPLICATE_ORDERING` | `refusal` | `none` |
+| `XDP_KERNEL_DROPPED_NO_SOCKET` | `refusal` | `none` |
+| `CLIENT_RECEIVE_FOREIGN_SOURCE` | `refusal` | `none` |
 
 The vector below encodes the registry in index order. For each counter it holds
 the little-endian u32 FNV-1a hash of the ASCII name, the class as one byte
@@ -4080,6 +4093,8 @@ f0 6e 01 00 00 25 11 95 dc 00 00 00 df ff a1 97
 b6 0b 73 00 00 00 f9 25 ca 24 00 00 00 50 9a 50
 f5 00 00 00 0a 04 26 b7 00 00 00 dd 1a 04 77 00
 00 00 ee 4e 50 1b 00 00 00 37 af 52 db 00 00 00
+7a 31 93 22 00 00 00
+79 b8 15 e7 00 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations
@@ -4244,7 +4259,7 @@ requirements; each difference is specified by the section named in its row.
 | Backend trust | The backend and every server share a secret that authenticates connect tokens. | The backend holds an Ed25519 signing keypair and every server holds its public key; a server holds no secret shared with the backend ([t2.2 Key inventory](#t2.2)). |
 | Token authenticity | A connect token carries an AEAD authenticator computed under the shared secret. | The token carries an Ed25519 signature over its signed connect data, and its private block is sealed to the server's X25519 public key ([t6 Connect token](#t6)). |
 | Token scope | A token names a list of candidate servers. | A token names one server at one IPv4 address and one IPv6 address, each optional ([t2 Architecture and key inventory](#t2)). |
-| Token binding | A token is bound to a server address and an expiry. | A token is also bound to the source address whose connection response first opened under it, and admits one live connection ([t12 Handshake: server](#t12)). |
+| Token binding | A token is bound to a server address and an expiry. | A token is also bound to the first source address that presents a valid request, until the handshake deadline, and then to the source address whose connection response first opened under it; it admits one live connection ([t12 Handshake: server](#t12)). |
 | Packet keys | The session keys minted into the token are the packet keys. | The token keys key a derivation only; each attempt derives separate handshake and session keys from a client salt, a server session nonce and an ephemeral X25519 exchange ([t7 Key schedule](#t7)). |
 | Forward secrecy | Recovering a token recovers the traffic sealed with its keys. | Recovering a token after a connection has ended does not recover that connection's traffic ([t7 Key schedule](#t7)). |
 | IPv6 | Added after the first release. | Dual stack from the first release, with one address normalization rule ([t2 Architecture and key inventory](#t2)). |
@@ -4323,7 +4338,7 @@ by differencing two snapshots and a zero still means that the event never
 happened. See [t18 Error handling and counters](#t18).
 
 
-### Create-time maximum-RTO message reserve
+### Create-time maximum-resend delay message reserve
 
 Each connection adds a local payload reserve to its configured message-region
 headroom at CREATE. Let `R = ceil(send_kbps * 125 * resend_delay_max_ms / 1000)` bytes.
@@ -4344,5 +4359,5 @@ the corresponding fixed pools, or larger messages in the span arena. Arbitrarily
 tiny records can exhaust bounded descriptors or padding capacity; they retain
 MESSAGE_MEMORY_EXHAUSTED and disconnect behavior. Raising the runtime send budget
 after CREATE does not enlarge this allocation; configure the intended maximum
-budget before creation. The full-budget regression retains one maximum RTO of
+budget before creation. The full-budget regression retains one maximum resend delay of
 payload without acknowledgments at both default client and server budgets.

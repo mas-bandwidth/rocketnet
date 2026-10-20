@@ -1,5 +1,5 @@
 /*
-    rocketnet driver bench: kqueue readiness + nonblocking recvfrom (#100)
+    rocketnet transport bench: kqueue readiness + nonblocking recvfrom (#100)
 
     Darwin candidate 2, the portable-plus baseline: kevent readiness
     gating a drain loop of per-packet recvfroms. The probe measured

@@ -8,8 +8,8 @@
 #include "rocketnet_packet_batch.h"
 #include "rocketnet_wire.h"
 
-// Windows server driver. The public transport API is unchanged. Fill threads
-// acquire and seal directly into driver-owned frames. Flush posts overlapped
+// Windows server transport. The public transport API is unchanged. Fill threads
+// acquire and seal directly into transport-owned frames. Flush posts overlapped
 // UDP sends; only their completions return those frames to the free pool.
 // Receive workers dequeue completions in batches and publish private double
 // buffers, following the existing GSO/XDP receive ownership contract.
@@ -89,6 +89,11 @@ int rocketnet_server_iocp_pending( rocketnet_server_iocp_t * iocp );
 // The ROCKETNET_IOCP_FEATURE_* bits in use now. USO clears itself when a live
 // segmented send is refused.
 int rocketnet_server_iocp_features( rocketnet_server_iocp_t * iocp );
+
+// A test control: flags every later create ORs into its own (the
+// ROCKETNET_IOCP_DISABLE_* bits), so a functional case can run the whole server
+// transport on the per-datagram path. Zero, the default, changes nothing.
+void rocketnet_server_iocp_test_force_flags( int flags );
 
 #if defined(ROCKETNET_IOCP_TESTS)
 // Hold/release must be paired on the same thread. Do not call stop there while

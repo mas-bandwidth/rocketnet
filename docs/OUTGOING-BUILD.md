@@ -22,7 +22,7 @@ included, is at most one wire frame (`ROCKETNET_MAX_PAYLOAD_BYTES`, 1416):
 
 For a fitting message the pointer start returns lies inside the frame the
 transport later seals and sends. The copies inside a transport stay: the
-arena path for a request over one frame, the loopback driver's queue, the
+arena path for a request over one frame, the loopback transport's queue, the
 XDP UMEM copy. The reliable path keeps its record copy into the frame,
 because a reliable record outlives the frame for its resends.
 

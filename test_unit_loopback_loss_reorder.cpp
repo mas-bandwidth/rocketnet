@@ -9,7 +9,7 @@
 // datagrams is delivered in reverse, the window flushed whole at the end of
 // each send_packets). Both count from the endpoint's first send and use no
 // random draw (tla/Link.tla "everynth" and ReverseWindow). The cases run on
-// the loopback driver, with time passed as an argument from 1000.0, no socket.
+// the loopback transport, with time passed as an argument from 1000.0, no socket.
 //
 // loopback_patterns_off_same_trace compares a fixed run, with both fields zero
 // and with the link simulator on and off, against counters recorded at the base
@@ -83,7 +83,7 @@ static bool loopback_transport_pair_setup( struct loopback_transport_pair_t * pa
     memcpy( server_config.backend_public_key, backend_public_key, sizeof( server_config.backend_public_key ) );
     memcpy( server_config.server_public_key, server_public_key, sizeof( server_config.server_public_key ) );
     memcpy( server_config.server_secret_key, server_secret_key, sizeof( server_config.server_secret_key ) );
-    snprintf( server_config.driver, sizeof( server_config.driver ), "%s", "loopback" );
+    snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
     server_config.simulated_latency_ms = server_pattern.latency_ms;
     server_config.simulated_drop_every_nth = server_pattern.drop_every_nth;
     server_config.simulated_reverse_window = server_pattern.reverse_window;
@@ -104,7 +104,7 @@ static bool loopback_transport_pair_setup( struct loopback_transport_pair_t * pa
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config_current( &client_config );
-    snprintf( client_config.driver, sizeof( client_config.driver ), "%s", "loopback" );
+    snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
     client_config.step_driven = 1;
     client_config.time_callback = loopback_loss_reorder_time_callback;
     client_config.simulated_latency_ms = client_pattern.latency_ms;
@@ -254,10 +254,11 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
 
 // Repinned because every eliciting packet now gets a standalone ACK on the next update;
 // simulator latency adds two connected steps (24 without it, 26 with it).
+// Hashes include the appended, zero-valued XDP_KERNEL_DROPPED_NO_SOCKET and CLIENT_RECEIVE_FOREIGN_SOURCE counters.
 static const struct loopback_trace_t loopback_base_trace_simulator_off =
-    { 67, 66, 5954, 4320, 67, 66, 4389, 5889, UINT64_C( 0xa8da9261b1f204a7 ), UINT64_C( 0x5004c4f6d4f35505 ), 24 };
+    { 67, 66, 5954, 4320, 67, 66, 4389, 5889, UINT64_C( 0xfe983827a595d667 ), UINT64_C( 0x72c482d03a2a0e45 ), 24 };
 static const struct loopback_trace_t loopback_base_trace_simulator_on =
-    { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0x5cddcfdb9c7304e7 ), UINT64_C( 0x5004c4f6d4f35505 ), 26 };
+    { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0xa1e383b20d9ce6a7 ), UINT64_C( 0x72c482d03a2a0e45 ), 26 };
 
 static void loopback_patterns_off_same_trace()
 {
@@ -431,11 +432,11 @@ static void loopback_reliable_ordered_survives_loss_and_reorder()
     message_config.send_buffer_bytes = 65536;
     message_config.send_queue_messages = 1024;
     message_config.packets_in_flight = 64;
-    message_config.max_packets_per_update = 8;
+    message_config.packets_per_update = 8;
     message_config.unreliable_deliveries = 64;
-    message_config.rto_initial_ms = 100;
-    message_config.rto_min_ms = 20;
-    message_config.rto_max_ms = 400;
+    message_config.resend_delay_initial_ms = 100;
+    message_config.resend_delay_min_ms = 20;
+    message_config.resend_delay_max_ms = 400;
     message_config.reliable_timeout_ms = 120000;
 
     struct rn_message_link_t server_link;
@@ -478,14 +479,14 @@ static void loopback_reliable_ordered_survives_loss_and_reorder()
 
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rn_message_object_receive( server, 0, 0, &data, &bytes ) )
+        while ( rn_message_object_receive( server, NULL, NULL, &data, &bytes ) )
         {
             check( bytes == 4 );
             uint32_t seq = 0;
             memcpy( &seq, data, sizeof( seq ) );
             check( (int) seq == received );
             received++;
-            rn_message_object_release( server, 0, data );
+            rn_message_object_release( server, data );
         }
 
         rn_message_object_send_packets( server );
@@ -650,7 +651,7 @@ static void loopback_loss_reorder_production_refusal()
     // the env both
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     loopback_signed_token( token );
-    snprintf( client_config.driver, sizeof( client_config.driver ), "%s", "loopback" );
+    snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
     rocketnet_public_link_simulator_test_development( 0 );
 
     client_config.simulated_reverse_window = 4;
@@ -670,7 +671,7 @@ static void loopback_loss_reorder_production_refusal()
     check( loopback_unsetenv( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH" ) == 0 );
 
     server_config.protocol_id = 1;
-    snprintf( server_config.driver, sizeof( server_config.driver ), "%s", "loopback" );
+    snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
     check( loopback_setenv( "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW", "4" ) == 0 );
     status = ROCKETNET_STATUS_OK;
     loopback_error_begin( "simulated_reverse_window" );

@@ -5,7 +5,7 @@
 
 // The message layer's RTT and reliable resends on a zero-latency link.
 //
-// A message server and client on the in-memory loopback driver, no socket,
+// A message server and client on the in-memory loopback transport, no socket,
 // time from 1000.0, both sides updated every step of LOOPBACK_RTT_DT. One side
 // sends one small reliable message per step; the other side sends nothing of
 // its own. The sender's link seam records each packet's send time
@@ -21,7 +21,7 @@
 // sdk/rocketnet_server_protocol.cpp:1611).
 //
 // The link loses nothing. A delivered message must not be resent. The resend
-// delay is the adaptive RTO, and the peer's ack arrives by 3*dt, so both update
+// delay is the adaptive resend delay, and the peer's ack arrives by 3*dt, so both update
 // orders assert zero resends.
 
 #include "test_unit_registry.h"
@@ -127,7 +127,7 @@ static bool loopback_rtt_pair_setup( struct loopback_rtt_pair_t * pair )
     memcpy( server_config.backend_public_key, backend_public_key, sizeof( server_config.backend_public_key ) );
     memcpy( server_config.server_public_key, server_public_key, sizeof( server_config.server_public_key ) );
     memcpy( server_config.server_secret_key, server_secret_key, sizeof( server_config.server_secret_key ) );
-    snprintf( server_config.driver, sizeof( server_config.driver ), "%s", "loopback" );
+    snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
 
     pair->server = rocketnet_message_server_create( NULL, "127.0.0.1:0", &server_config, NULL, NULL, 0, 0 );
     rocketnet_unit_check( pair->server != NULL );
@@ -146,7 +146,7 @@ static bool loopback_rtt_pair_setup( struct loopback_rtt_pair_t * pair )
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config_current( &client_config );
-    snprintf( client_config.driver, sizeof( client_config.driver ), "%s", "loopback" );
+    snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
     client_config.step_driven = 1;
     client_config.time_callback = loopback_rtt_time_callback;
 
@@ -163,7 +163,7 @@ struct loopback_rtt_measures_t
     uint64_t resent;                // MESSAGE_RESENT on the sender
     uint64_t duplicate;             // MESSAGE_DUPLICATE on the receiver
     double srtt;
-    double rto;
+    double resend_delay;
 };
 
 // one step: both sides update at the step's time, the receiver drains, the
@@ -196,7 +196,7 @@ static void loopback_rtt_step( struct loopback_rtt_pair_t * pair, int side, bool
             if ( side == LOOPBACK_RTT_SERVER )
                 rocketnet_message_client_release( pair->client, data );
             else
-                rocketnet_message_server_release( pair->server, 0, data );
+                rocketnet_message_server_release( pair->server, data );
         }
     }
 
@@ -246,14 +246,14 @@ static void loopback_rtt_run( int side, struct loopback_rtt_measures_t * m )
     m->resent = sender->counters.values[ROCKETNET_COUNTER_MESSAGE_RESENT];
     m->duplicate = receiver->counters.values[ROCKETNET_COUNTER_MESSAGE_DUPLICATE];
     m->srtt = sender->connections[0].ordered.ack.srtt;
-    m->rto = sender->connections[0].ordered.ack.rto;
+    m->resend_delay = sender->connections[0].ordered.ack.resend_delay;
 
     if ( getenv( "ROCKETNET_LOOPBACK_RTT_PRINT" ) != NULL )
         printf( "LOOPBACK_RTT %s sent=%d received=%d in_order=%d packets=%d samples=%d sample_min=%.6f sample_max=%.6f "
-                "srtt=%.6f rto=%.6f resent=%llu duplicate=%llu\n",
+                "srtt=%.6f resend_delay=%.6f resent=%llu duplicate=%llu\n",
                 side == LOOPBACK_RTT_SERVER ? "server" : "client", m->sent, m->received, m->in_order,
                 loopback_rtt_seam.packets, loopback_rtt_seam.samples, loopback_rtt_seam.sample_min, loopback_rtt_seam.sample_max,
-                m->srtt, m->rto, (unsigned long long) m->resent, (unsigned long long) m->duplicate );
+                m->srtt, m->resend_delay, (unsigned long long) m->resent, (unsigned long long) m->duplicate );
 
     rocketnet_message_client_destroy( pair.client );
     rocketnet_message_server_destroy( pair.server );
@@ -288,9 +288,9 @@ static void loopback_rtt_client_sends( void ) { loopback_rtt_check( LOOPBACK_RTT
 REGISTER_UNIT_TEST( loopback_rtt_server_sends );
 REGISTER_UNIT_TEST( loopback_rtt_client_sends );
 
-// Retain a full max-RTO payload budget without acknowledging any record.
+// Retain a full maximum resend delay payload budget without acknowledging any record.
 // Exercise each documented typical fixed-pool size and the large-span path.
-static void max_rto_payload_reserve_without_acks()
+static void max_resend_delay_payload_reserve_without_acks()
 {
     const int budgets[] = { 1000, 10000 };
     const int payloads[] = { 128, 512, 1024, 1153, 16384 };
@@ -304,7 +304,7 @@ static void max_rto_payload_reserve_without_acks()
         rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
         rocketnet_unit_check( arena != NULL );
         rn_region_t * region = rn_arena_region( arena, 0 );
-        const uint64_t budget = (uint64_t) budgets[side] * 125 * config.rto_max_ms / 1000;
+        const uint64_t budget = (uint64_t) budgets[side] * 125 * config.resend_delay_max_ms / 1000;
         for ( int p = 0; p < 5; ++p )
         {
             rn_region_carve( region );
@@ -318,11 +318,11 @@ static void max_rto_payload_reserve_without_acks()
             }
             rocketnet_unit_check( !rn_region_exhausted( region ) );
         }
-        printf( "max-RTO reserve: %d kbps, %llu payload bytes, %llu bytes/connection, %llu bytes/1000\n",
+        printf( "maximum resend delay reserve: %d kbps, %llu payload bytes, %llu bytes/connection, %llu bytes/1000\n",
                 budgets[side], (unsigned long long) budget,
                 (unsigned long long) rocketnet_message_connection_bytes( &config ),
                 (unsigned long long) rocketnet_message_connection_bytes( &config ) * 1000 );
         rn_arena_destroy( arena );
     }
 }
-REGISTER_UNIT_TEST( max_rto_payload_reserve_without_acks );
+REGISTER_UNIT_TEST( max_resend_delay_payload_reserve_without_acks );

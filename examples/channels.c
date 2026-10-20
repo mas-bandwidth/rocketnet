@@ -39,9 +39,11 @@ int main( void )
     CHECK( rocketnet_server_dev_config_sized( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
     server_config.max_clients = 1;
     server_config.transport = "loopback";
-    server_config.rto_initial_ms = 120;
-    server_config.rto_min_ms = 120;
-    server = rocketnet_server_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ), NULL, 0 );
+    server_config.resend_delay_initial_ms = 120;
+    server_config.resend_delay_min_ms = 120;
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    server = rocketnet_server_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ), NULL, 0, &create_status );
+    if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -55,9 +57,11 @@ int main( void )
     CHECK( rocketnet_client_default_config_sized( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
     client_config.transport = "loopback";
     client_config.simulated_loss_percent = 35;
-    client_config.rto_initial_ms = 120;
-    client_config.rto_min_ms = 120;
-    client = rocketnet_client_create_sized( NULL, &client_config, sizeof( client_config ), NULL, 0 );
+    client_config.resend_delay_initial_ms = 120;
+    client_config.resend_delay_min_ms = 120;
+    enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
+    client = rocketnet_client_create_sized( NULL, &client_config, sizeof( client_config ), NULL, 0, &create_status_2 );
+    if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
@@ -81,32 +85,49 @@ int main( void )
         // (2) receive and release every received message on both channels
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive_message( client, CHAT_CHANNEL, &data, &bytes ) )
-            rocketnet_client_release_message( client, data );
+        struct rocketnet_message_batch_t incoming;
+        while ( rocketnet_client_receive_messages( client, &incoming ) )
+        {
+            for ( int i = 0; i < incoming.num_messages; i++ )
+            {
+                data = incoming.data[i];
+                bytes = incoming.bytes[i];
+            }
+        }
 
         uint32_t chat_this_frame = 0, pos_this_frame = 0;
         if ( rocketnet_server_client_connected( server, 0 ) )
         {
-            while ( rocketnet_server_receive_message( server, 0, CHAT_CHANNEL, &data, &bytes ) )
+            // the server's one queue, in batches: each entry names its sender
+            // and the channel it was delivered on, and order holds within a
+            // channel; the next batch call or update releases a batch
+            struct rocketnet_message_batch_t batch;
+            while ( rocketnet_server_receive_messages( server, &batch ) )
             {
-                uint32_t seq = 0;
-                CHECK( bytes == (int) sizeof( seq ) );
-                memcpy( &seq, data, sizeof( seq ) );
-                rocketnet_server_release_message( server, 0, data );
-                CHECK( seq == chat_received + 1 );
-                chat_received = seq;
-                chat_this_frame++;
-            }
-            while ( rocketnet_server_receive_message( server, 0, POSITION_CHANNEL, &data, &bytes ) )
-            {
-                uint32_t pos = 0;
-                CHECK( bytes == (int) sizeof( pos ) );
-                memcpy( &pos, data, sizeof( pos ) );
-                rocketnet_server_release_message( server, 0, data );
-                CHECK( pos > last_pos );
-                last_pos = pos;
-                positions_received++;
-                pos_this_frame++;
+                for ( int i = 0; i < batch.num_messages; i++ )
+                {
+                    CHECK( batch.client_index[i] == 0 );
+                    if ( batch.channel[i] == CHAT_CHANNEL )
+                    {
+                        uint32_t seq = 0;
+                        CHECK( batch.bytes[i] == (int) sizeof( seq ) );
+                        memcpy( &seq, batch.data[i], sizeof( seq ) );
+                        CHECK( seq == chat_received + 1 );
+                        chat_received = seq;
+                        chat_this_frame++;
+                    }
+                    else
+                    {
+                        CHECK( batch.channel[i] == POSITION_CHANNEL );
+                        uint32_t pos = 0;
+                        CHECK( batch.bytes[i] == (int) sizeof( pos ) );
+                        memcpy( &pos, batch.data[i], sizeof( pos ) );
+                        CHECK( pos > last_pos );
+                        last_pos = pos;
+                        positions_received++;
+                        pos_this_frame++;
+                    }
+                }
             }
         }
 

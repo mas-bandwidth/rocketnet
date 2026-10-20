@@ -7,13 +7,13 @@ import sys
 
 binary = Path(sys.argv[1] if len(sys.argv) > 1 else 'bin/transport_memory').resolve()
 profiles = [(1, 1416, 1), (2, 1416, 1), (1000, 1416, 1), (1000, 1416, 16), (1000, 4096, 16)]
-drivers = ['portable']
+transports = ['portable']
 if sys.platform == 'darwin':
-    drivers.append('msgx')
+    transports.append('msgx')
 elif sys.platform == 'win32':
-    drivers.append('iocp')
+    transports.append('iocp')
 elif sys.platform.startswith('linux'):
-    drivers.append('gso')
+    transports.append('gso')
 
 
 def run(*arguments):
@@ -28,16 +28,16 @@ def run(*arguments):
     return [json.loads(line) for line in result.stdout.splitlines()]
 
 
-for driver in drivers:
-    for profile in profiles if driver == 'portable' else [profiles[0]]:
-        plan, observed = run(*profile, driver, 1)
+for transport in transports:
+    for profile in profiles if transport == 'portable' else [profiles[0]]:
+        plan, observed = run(*profile, transport, 1)
         assert plan['umem_bytes'] == 0
         assert observed['peak_allocator_bytes'] <= plan['planned_bytes'], (
-            driver, profile, 'planned_bytes', plan['planned_bytes'],
+            transport, profile, 'planned_bytes', plan['planned_bytes'],
             'peak_allocator_bytes', observed['peak_allocator_bytes'])
         if plan['worker_threads'] == 0:
             assert observed['live_allocator_bytes'] == plan['planned_bytes'], (
-                driver, profile, 'planned_bytes', plan['planned_bytes'],
+                transport, profile, 'planned_bytes', plan['planned_bytes'],
                 'live_allocator_bytes', observed['live_allocator_bytes'])
         assert plan['os_and_application_bytes'] is None
 # This legal field combination is deliberately too large for the default

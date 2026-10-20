@@ -90,7 +90,7 @@ static int rocketnet_unit_worker( const char * name )
 #endif
 
     // init reads this before the suite installs its config isolation. The
-    // unit suite must never run against a pin-selected real-socket driver, so
+    // unit suite must never run against a pin-selected real-socket transport, so
     // both transport pins are cleared for every case, like LOG_LEVEL above.
 #if defined(_WIN32)
     const int cleared = _putenv_s( "ROCKETNET_LOG_LEVEL", "" );
@@ -222,7 +222,7 @@ int main( int argc, char ** argv )
     if ( test_fp_contract_off() )
         return 1;
 
-    // The unit suite runs over the loopback driver with no sockets, so a
+    // The unit suite runs over the loopback transport with no sockets, so a
     // transport pin in the environment must not reach it: both pins are
     // cleared for the whole run and restored on exit, the way
     // posix_pair_create lifts them around its creates

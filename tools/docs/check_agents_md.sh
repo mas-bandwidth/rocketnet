@@ -74,7 +74,7 @@ run_example() {
     if [ "$OS" = "Linux" ]; then
         LIBS="-lbpf -lxdp -luring -lstdc++ -lpthread -lm"
     elif [ "$OS" = "Darwin" ]; then
-        LIBS="-lc++ -lpthread -lm"
+        LIBS="-lc++ -lpthread -lm -framework CoreFoundation -framework SystemConfiguration"
     else
         LIBS="-lstdc++ -lpthread -lm"
     fi

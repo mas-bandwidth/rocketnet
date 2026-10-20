@@ -3,11 +3,11 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The AF_XDP driver's bounds (sdk/rocketnet_xdp_frame.h, DRIVER BOUNDS), over
+// The AF_XDP transport's bounds (sdk/rocketnet_xdp_frame.h, TRANSPORT BOUNDS), over
 // plain heap buffers sized exactly to a model UMEM, with no AF_XDP socket. A
 // send length is checked before the copy into its frame, a receive
 // descriptor before its frame is read, a cpu before CPU_SET and the possible
-// cpu count before the stats read. Each case follows the driver's own order
+// cpu count before the stats read. Each case follows the transport's own order
 // (sdk/rocketnet_server_socket_linux.cpp, the xdp thread's send and receive
 // loops): with a check removed, the copy that follows runs past the buffer,
 // which ASan reports.
@@ -49,7 +49,7 @@ static void xdp_send_copy_refuses_bad_lengths()
 
     uint64_t refused = 0;
 
-    // a negative int length as the driver stores it (packet_info.packet_bytes is a size_t)
+    // a negative int length as the transport stores it (packet_info.packet_bytes is a size_t)
     rocketnet_unit_check( bounds_send( frame, staged, (size_t) (int) -1, &refused ) == -1 );
     rocketnet_unit_check( refused == 1 );
 
@@ -97,17 +97,27 @@ static int bounds_receive( const uint8_t * umem, uint64_t addr, uint32_t len, st
     return payload_bytes;
 }
 
-// writes an IPv4 server-bound frame at umem + addr, so the codec takes it
-// and the copy runs to whatever length the descriptor names
+// writes an IPv4 server-bound frame at umem + addr whose IP and UDP lengths
+// name payload_bytes of payload, so the codec takes it and the copy runs to
+// the end of those bytes (the frame is built at the smallest server packet
+// and its length fields are then set, since rocketnet_xdp_frame_build stops
+// at the path MTU)
 
-static void bounds_write_frame( uint8_t * umem, uint64_t addr )
+static void bounds_write_frame( uint8_t * umem, uint64_t addr, int payload_bytes )
 {
     rocketnet_address_t source, destination;
     rocketnet_address_parse( &source, "192.168.1.20:40001" );
     rocketnet_address_parse( &destination, "192.168.1.10:40000" );
     const int header_bytes = rocketnet_xdp_frame_header_bytes( ROCKETNET_ADDRESS_IPV4 );
-    memset( umem + addr + header_bytes, 0x3C, ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
-    rocketnet_xdp_frame_build( umem + addr, ROCKETNET_XDP_FRAME_SIZE - ( addr % ROCKETNET_XDP_FRAME_SIZE ), bounds_gateway_mac, bounds_server_mac, &source, &destination, ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
+    memset( umem + addr + header_bytes, 0x3C, (size_t) payload_bytes );
+    rocketnet_unit_check( rocketnet_xdp_frame_build( umem + addr, ROCKETNET_XDP_FRAME_SIZE - ( addr % ROCKETNET_XDP_FRAME_SIZE ), bounds_gateway_mac, bounds_server_mac, &source, &destination, ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES ) == header_bytes + ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
+    const int ip_bytes = 20 + 8 + payload_bytes;
+    const int udp_bytes = 8 + payload_bytes;
+    uint8_t * f = umem + addr;
+    f[16] = (uint8_t) ( ip_bytes >> 8 );
+    f[17] = (uint8_t) ip_bytes;
+    f[header_bytes - 4] = (uint8_t) ( udp_bytes >> 8 );
+    f[header_bytes - 3] = (uint8_t) udp_bytes;
 }
 
 static void xdp_receive_descriptor_refuses_bad_descriptors()
@@ -123,13 +133,13 @@ static void xdp_receive_descriptor_refuses_bad_descriptors()
     const int header_bytes = rocketnet_xdp_frame_header_bytes( ROCKETNET_ADDRESS_IPV4 );
 
     // longer than a frame, at the frame boundary
-    bounds_write_frame( umem, BOUNDS_REGION_BEGIN );
+    bounds_write_frame( umem, BOUNDS_REGION_BEGIN, ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
     rocketnet_unit_check( bounds_receive( umem, BOUNDS_REGION_BEGIN, ROCKETNET_XDP_FRAME_SIZE + 1, &drops, slot ) == -1 );
     rocketnet_unit_check( drops.descriptor == 1 );
 
     // within a frame's length, but at an offset that carries it past its frame's end
     const uint64_t offset_addr = BOUNDS_REGION_BEGIN + 256;
-    bounds_write_frame( umem, offset_addr );
+    bounds_write_frame( umem, offset_addr, ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
     rocketnet_unit_check( bounds_receive( umem, offset_addr, ROCKETNET_XDP_FRAME_SIZE - 100, &drops, slot ) == -1 );
     rocketnet_unit_check( drops.descriptor == 2 );
 
@@ -141,13 +151,16 @@ static void xdp_receive_descriptor_refuses_bad_descriptors()
 
     rocketnet_unit_check( drops.not_ip == 0 && drops.ipv6_extension == 0 && drops.other_family == 0 && drops.malformed == 0 );
 
-    // the same headroom offset with a length ending exactly at its frame's end is taken
+    // the same headroom offset with a length ending exactly at its frame's end
+    // is taken, and the copy runs to the frame's last byte (the frame's UDP
+    // length names every byte up to it)
     const uint32_t fitting = (uint32_t) ( ROCKETNET_XDP_FRAME_SIZE - 256 );
+    bounds_write_frame( umem, offset_addr, (int) fitting - header_bytes );
     rocketnet_unit_check( bounds_receive( umem, offset_addr, fitting, &drops, slot ) == (int) fitting - header_bytes );
     rocketnet_unit_check( drops.descriptor == 4 );
 
     // and a whole frame at its boundary
-    bounds_write_frame( umem, BOUNDS_REGION_BEGIN );
+    bounds_write_frame( umem, BOUNDS_REGION_BEGIN, ROCKETNET_XDP_FRAME_SIZE - header_bytes );
     rocketnet_unit_check( bounds_receive( umem, BOUNDS_REGION_BEGIN, ROCKETNET_XDP_FRAME_SIZE, &drops, slot ) == ROCKETNET_XDP_FRAME_SIZE - header_bytes );
     rocketnet_unit_check( drops.descriptor == 4 && drops.malformed == 0 );
 

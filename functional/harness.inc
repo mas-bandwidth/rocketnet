@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 
     Shared by the functional suite only. The unit suite does not include this.
-    These tests open sockets or start a real driver. The same rules, where a
+    These tests open sockets or start a real transport. The same rules, where a
     state machine or the in-memory simulator can reach them, stay in
     sdk/rocketnet_tests.cpp.
 */
@@ -207,15 +207,9 @@ public:
                 clear(name);
             }
         }
-        clear("ROCKETNET_PUBLIC_ADDRESS");
         clear("ROCKETNET_SERVER_PUBLIC_ADDRESS");
         clear("ROCKETNET_SERVER_NUM_OS_CPUS");
         clear("ROCKETNET_GATEWAY_ETHERNET_ADDRESS");
-        clear("ROCKETNET_PUMP");
-        clear("ROCKETNET_DRIVER");
-        clear("ROCKETNET_TRANSPORT");
-        clear("ROCKETNET_SERVER_DRIVER");
-        clear("ROCKETNET_CLIENT_DRIVER");
     }
     ~rocketnet_test_environment_t()
     {

@@ -1,5 +1,5 @@
 /*
-    rocketnet driver bench: sendmsg_x/recvmsg_x batching (#100)
+    rocketnet transport bench: sendmsg_x/recvmsg_x batching (#100)
 
     Darwin candidate 1: the private-but-stable batch UDP syscalls, one
     syscall per seam batch of 32 in each direction. The send side uses the
@@ -11,7 +11,7 @@
     bench_msgx send <ip> <port> <seconds> [drop-half] [pace=<pps>]
 
     Darwin only. The harness refuses to run if the syscalls are absent --
-    the driver degrades, a measurement instrument reports.
+    the transport degrades, a measurement instrument reports.
 */
 
 #include "bench_common.h"

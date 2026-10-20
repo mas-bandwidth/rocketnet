@@ -224,6 +224,7 @@ static const char * const rocketnet_status_names[] =
     "CLIENT_NOT_DISCONNECTED",
     "SERVER_NOT_STOPPED",
     "FLOW_ID_RESERVED",
+    "TRANSPORT_FAMILIES_UNSUPPORTED",
 };
 
 static_assert( sizeof( rocketnet_status_names ) / sizeof( rocketnet_status_names[0] ) == ROCKETNET_STATUS_COUNT,
@@ -376,7 +377,7 @@ void rocketnet_default_free_function( void * context, void * p )
 static void * (*rocketnet_malloc_function)( void * context, size_t bytes ) = rocketnet_default_malloc_function;
 
 // the allocations rocketnet_malloc has refused on this thread, ever: a size
-// past the header overhead or a NULL from the installed allocator. A driver
+// past the header overhead or a NULL from the installed allocator. A transport
 // open reads it before and after a create (sdk/rocketnet_driver.cpp), so a
 // create that returned NULL after a refusal reports OUT_OF_MEMORY
 static thread_local uint64_t rocketnet_allocation_refusals_on_this_thread = 0;
@@ -387,7 +388,7 @@ uint64_t rocketnet_allocation_refusals()
 }
 
 // counts a failed allocation made outside rocketnet_malloc (a page-aligned
-// buffer a driver registers with the kernel) as a refusal on this thread
+// buffer a transport registers with the kernel) as a refusal on this thread
 void rocketnet_allocation_refused()
 {
     ++rocketnet_allocation_refusals_on_this_thread;

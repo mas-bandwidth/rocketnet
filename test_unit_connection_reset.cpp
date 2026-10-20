@@ -24,9 +24,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-// The loopback pair names the in-memory loopback driver in its transport configs;
+// The loopback pair names the in-memory loopback transport in its transport configs;
 // a caller's ROCKETNET_SERVER_TRANSPORT / ROCKETNET_CLIENT_TRANSPORT pin wins over
-// the struct by design, so a CI leg pinned to a real driver would replace it. Each
+// the struct by design, so a CI leg pinned to a real transport would replace it. Each
 // create sets its pin aside and puts it back, as test_unit_status_server_transport_create_ex.cpp does.
 struct reset_env_pin_t
 {
@@ -299,7 +299,7 @@ static void connection_reset_inventory_covers_every_field()
 }
 REGISTER_UNIT_TEST( connection_reset_inventory_covers_every_field );
 
-extern const rocketnet_driver_backend_t rocketnet_loopback_driver;
+extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
 enum { RESET_LOOPBACK_MAX_CLIENTS = 2 };
 
@@ -346,7 +346,7 @@ static rocketnet_message_server_t * reset_loopback_server_create( double now, co
     memcpy( config.backend_public_key, keys->backend_public, sizeof(config.backend_public_key) );
     memcpy( config.server_public_key, keys->server_public, sizeof(config.server_public_key) );
     memcpy( config.server_secret_key, keys->server_secret, sizeof(config.server_secret_key) );
-    snprintf( config.driver, sizeof(config.driver), "%s", "loopback" );
+    snprintf( config.transport, sizeof(config.transport), "%s", "loopback" );
     int status = -1;
     reset_env_pin_t pin;
     reset_env_pin_set_aside( &pin, "ROCKETNET_SERVER_TRANSPORT" );
@@ -376,12 +376,12 @@ static rocketnet_message_client_t * reset_loopback_client_create( rocketnet_mess
                                                      token, sizeof(token) ) == ROCKETNET_STATUS_OK );
     rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
-    snprintf( config.driver, sizeof(config.driver), "%s", "loopback" );
+    snprintf( config.transport, sizeof(config.transport), "%s", "loopback" );
     config.step_driven = 1;
     reset_env_pin_t pin;
     reset_env_pin_set_aside( &pin, "ROCKETNET_CLIENT_TRANSPORT" );
     rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_at_timestamp(
-        NULL, token, &config, 0.0, 1000, rocketnet_loopback_driver.client, NULL );
+        NULL, token, &config, 0.0, 1000, rocketnet_loopback_transport.client, NULL );
     reset_env_pin_put_back( &pin );
     check( transport );
     rn_message_link_t link;
@@ -505,9 +505,8 @@ static void reset_loopback_slot_reuse_scenario()
     check( b_stats.bytes_received != 0xA5A5A5A5A5A5A5A5ULL );
     const uint8_t * stale = NULL;
     int stale_bytes = 0;
-    check( !rocketnet_message_server_receive( f.server, b_slot, 0, &stale, &stale_bytes ) );
-    check( !rocketnet_message_server_receive( f.server, b_slot, 1, &stale, &stale_bytes ) );
-    check( !rocketnet_message_client_receive( f.clients[1], 0, &stale, &stale_bytes ) );
+    check( !rocketnet_message_server_receive( f.server, NULL, NULL, &stale, &stale_bytes ) );
+    check( !rocketnet_message_client_receive( f.clients[1], NULL, &stale, &stale_bytes ) );
     rocketnet_message_receipt_t stale_receipts[8];
     check( rocketnet_message_client_receipts( f.clients[1], stale_receipts, 8 ) == 0 );
 
@@ -525,14 +524,18 @@ static void reset_loopback_slot_reuse_scenario()
         reset_loopback_step( &f );
         const uint8_t * data = NULL;
         int bytes = 0;
-        if ( rocketnet_message_server_receive( f.server, b_slot, 0, &data, &bytes ) )
+        int from = -1;
+        int channel = -1;
+        if ( rocketnet_message_server_receive( f.server, &from, &channel, &data, &bytes ) )
         {
+            check( from == b_slot && channel == 0 );
             check( bytes == (int) sizeof(c2s) && memcmp( data, c2s, sizeof(c2s) ) == 0 );
-            rocketnet_message_server_release( f.server, b_slot, data );
+            rocketnet_message_server_release( f.server, data );
             got_c2s = 1;
         }
-        if ( rocketnet_message_client_receive( f.clients[1], 1, &data, &bytes ) )
+        if ( rocketnet_message_client_receive( f.clients[1], &channel, &data, &bytes ) )
         {
+            check( channel == 1 );
             check( bytes == (int) sizeof(s2c) && memcmp( data, s2c, sizeof(s2c) ) == 0 );
             rocketnet_message_client_release( f.clients[1], data );
             got_s2c = 1;
@@ -570,10 +573,13 @@ static void reset_loopback_other_slot_scenario()
         reset_loopback_step( &f );
         const uint8_t * data = NULL;
         int bytes = 0;
-        if ( rocketnet_message_server_receive( f.server, b, 2, &data, &bytes ) )
+        int from = -1;
+        int channel = -1;
+        if ( rocketnet_message_server_receive( f.server, &from, &channel, &data, &bytes ) )
         {
+            check( from == b && channel == 2 );
             check( bytes == (int) sizeof(payload) && memcmp( data, payload, sizeof(payload) ) == 0 );
-            rocketnet_message_server_release( f.server, b, data );
+            rocketnet_message_server_release( f.server, data );
             delivered = 1;
         }
     }
@@ -699,15 +705,17 @@ static void reset_loopback_server_sweep_timeout_scenario()
         reset_loopback_step( &f );
         const uint8_t * data = NULL;
         int bytes = 0;
-        for ( int channel = 0; channel < 2; channel++ )
         {
-            if ( rocketnet_message_server_receive( f.server, b_slot, channel, &data, &bytes ) )
+            int from = -1;
+            int channel = -1;
+            if ( rocketnet_message_server_receive( f.server, &from, &channel, &data, &bytes ) )
             {
+                check( from == b_slot );
                 check( channel == 1 && bytes == (int) sizeof(c2s) && memcmp( data, c2s, sizeof(c2s) ) == 0 );
-                rocketnet_message_server_release( f.server, b_slot, data );
+                rocketnet_message_server_release( f.server, data );
                 got_c2s = 1;
             }
-            if ( rocketnet_message_client_receive( f.clients[1], channel, &data, &bytes ) )
+            if ( rocketnet_message_client_receive( f.clients[1], &channel, &data, &bytes ) )
             {
                 check( channel == 1 && bytes == (int) sizeof(s2c) && memcmp( data, s2c, sizeof(s2c) ) == 0 );
                 rocketnet_message_client_release( f.clients[1], data );
@@ -1070,8 +1078,8 @@ static void connection_reset_disconnect_reason_kept_until_next_connection()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.rto_initial_ms = 100;
-    config.rto_max_ms = 1000;
+    config.resend_delay_initial_ms = 100;
+    config.resend_delay_max_ms = 1000;
     config.reliable_timeout_ms = 1000;
     reset_loopback_explicit_server_disconnect_reason_scenario();
     reset_loopback_server_reliable_timeout_reason_scenario( &config );

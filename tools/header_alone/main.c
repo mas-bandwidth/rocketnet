@@ -41,12 +41,35 @@ int main( void )
     CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
     rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
+    // a NULL config through the convenience macros: the defaults (create,
+    // validate and required_memory). The counted no-op default_config(NULL)
+    // form is covered in test_unit_create_reports_status.cpp, where the
+    // assert callback is quieted.
+    // This file builds as C99 and as C++11 under -pedantic -Werror
+    // (tools/check_public_header.py), so the macros must compile with a
+    // NULL config in both languages.
+    {
+        enum rocketnet_status_t null_status = ROCKETNET_STATUS_OK;
+        struct rocketnet_client_t * null_client = rocketnet_client_create( NULL, NULL, NULL, 0, &null_status );
+        CHECK( null_client != NULL && null_status == ROCKETNET_STATUS_OK );
+        rocketnet_client_destroy( null_client );
+        struct rocketnet_server_t * null_server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, NULL, 0, &null_status );
+        CHECK( null_server != NULL && null_status == ROCKETNET_STATUS_OK );
+        rocketnet_server_destroy( null_server );
+        CHECK( rocketnet_client_validate_config( NULL ) == ROCKETNET_STATUS_OK );
+        CHECK( rocketnet_server_validate_config( NULL ) == ROCKETNET_STATUS_OK );
+        CHECK( rocketnet_client_required_memory( NULL ) > 0 );
+        CHECK( rocketnet_server_required_memory( NULL ) > 0 );
+    }
+
     struct rocketnet_server_config_t server_config;
     rocketnet_server_dev_config( &server_config );
     server_config.max_clients = 1;
     server_config.transport = "portable";
 
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, &create_status );
+    if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -66,7 +89,9 @@ int main( void )
     rocketnet_client_default_config( &client_config );
     client_config.transport = "portable";
 
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0, &create_status_2 );
+    if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
@@ -103,11 +128,20 @@ int main( void )
         const uint8_t * data = NULL;
         int bytes = 0;
 
-        while ( rocketnet_server_receive_message( server, 0, 0, &data, &bytes ) )
+        uint64_t sender = 1;
+        struct rocketnet_message_batch_t batch;
+        while ( rocketnet_server_receive_messages( server, &batch ) )
         {
-            CHECK( bytes == (int) sizeof( client_message ) && memcmp( data, client_message, sizeof( client_message ) ) == 0 );
-            rocketnet_server_release_message( server, 0, data );
-            server_got = 1;
+            for ( int i = 0; i < batch.num_messages; i++ )
+            {
+                data = batch.data[i];
+                bytes = batch.bytes[i];
+                sender = batch.client_index[i];
+                CHECK( sender == 0 );
+                CHECK( bytes == (int) sizeof( client_message ) && memcmp( data, client_message, sizeof( client_message ) ) == 0 );
+
+                server_got = 1;
+            }
         }
 
         if ( server_got && !server_sent )
@@ -119,11 +153,17 @@ int main( void )
             server_sent = 1;
         }
 
-        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+        struct rocketnet_message_batch_t incoming;
+        while ( rocketnet_client_receive_messages( client, &incoming ) )
         {
-            CHECK( bytes == (int) sizeof( server_message ) && memcmp( data, server_message, sizeof( server_message ) ) == 0 );
-            rocketnet_client_release_message( client, data );
-            client_got = 1;
+            for ( int i = 0; i < incoming.num_messages; i++ )
+            {
+                data = incoming.data[i];
+                bytes = incoming.bytes[i];
+                CHECK( bytes == (int) sizeof( server_message ) && memcmp( data, server_message, sizeof( server_message ) ) == 0 );
+
+                client_got = 1;
+            }
         }
 
         rocketnet_client_send_packets( client );

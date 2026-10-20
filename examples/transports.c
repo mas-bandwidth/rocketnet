@@ -34,10 +34,12 @@ static int exchange( struct rocketnet_server_t * server, const char * server_add
     int received = 0;
     int ok = 0;
     rocketnet_client_default_config( &config );
-    config.transport = "portable";   // the client side is portable; the server may be any driver
+    config.transport = "portable";   // the client side is portable; the server may be any transport
     if ( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
         return 0;
-    client = rocketnet_client_create( NULL, &config, NULL, 0 );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    client = rocketnet_client_create( NULL, &config, NULL, 0, &create_status );
+    if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
@@ -56,16 +58,25 @@ static int exchange( struct rocketnet_server_t * server, const char * server_add
         // (2) receive and release every received message
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
-            rocketnet_client_release_message( client, data );
-        for ( int i = 0; i < max_clients; i++ )
+        struct rocketnet_message_batch_t batch;
+        while ( rocketnet_client_receive_messages( client, &batch ) )
         {
-            if ( !rocketnet_server_client_connected( server, i ) )
-                continue;
-            while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
+            for ( int i = 0; i < batch.num_messages; i++ )
             {
+                data = batch.data[i];
+                bytes = batch.bytes[i];
+            }
+        }
+        uint64_t sender = 0;
+        struct rocketnet_message_batch_t incoming;
+        while ( rocketnet_server_receive_messages( server, &incoming ) )
+        {
+            for ( int i = 0; i < incoming.num_messages; i++ )
+            {
+                data = incoming.data[i];
+                bytes = incoming.bytes[i];
+                sender = incoming.client_index[i];
                 received++;
-                rocketnet_server_release_message( server, i, data );
             }
         }
         // (3) run the game simulation for the frame: nothing to simulate here
@@ -109,7 +120,9 @@ static int create_and_prove( const char * label, const char * transport )
     rocketnet_server_dev_config( &config );
     config.max_clients = 2;
     config.transport = transport;
-    server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0 );
+    enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0, &create_status_2 );
+    if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -147,7 +160,9 @@ int main( void )
     config.max_clients = 2;
     config.transport = "not-a-transport";
     {
-        struct rocketnet_server_t * refused = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0 );
+        enum rocketnet_status_t create_status_3 = ROCKETNET_STATUS_OK;
+        struct rocketnet_server_t * refused = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0, &create_status_3 );
+        if ( !refused ) printf( "create refused: %s\n", rocketnet_status_name( create_status_3 ) );
         const int started = refused ? (int) rocketnet_server_start( refused ) : -1;
         if ( refused )
             rocketnet_server_destroy( refused );

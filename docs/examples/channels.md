@@ -7,7 +7,7 @@ Games put different traffic on different channels so a lost reliable message
 ## What it shows
 
 1. Configure a server and client over the in-memory `loopback` transport with
-   `simulated_loss_percent = 35` on the client and a 120 ms retransmit timeout.
+   `simulated_loss_percent = 35` on the client and a 120 ms resend delay.
 2. Send eight `ROCKETNET_RELIABILITY_RELIABLE_ORDERED` chat messages on channel 0 while
    sending `ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED` position updates every frame on
    channel 1.

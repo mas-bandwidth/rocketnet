@@ -121,8 +121,15 @@ the create log line names each feature as yes or no.
 
 Start/finish/abort may run on concurrent fill threads, with one producer per
 frame. Join them before update, receive, flush, stop or destroy. Flush is called
-once for a staging generation; the backend retains ownership until it can
-safely reuse that storage. None
+for staged work; the backend retains ownership until it can safely reuse
+that storage. XDP retries a flush on each `send_packets` call, including when
+no new commit advances the transport counter. With two staging buffers,
+`rocketnet_send_handoff_t::publish` queues at most one and keeps the other
+for producers until the worker retires the queued generation. The next flush
+publishes the retained work. `RNDriverSendStaging.Publish`, `WorkerRetire`
+and `RetryFlushPublishes` model this rule. Packet-slot capacity is still
+`ROCKETNET_XDP_SEND_QUEUE_SIZE` per buffer; retaining producer storage does
+not permit an unbounded backlog. None
 of these rules sets a frame, packet-send or ACK rate.
 
 ## Creation and shutdown
@@ -234,7 +241,7 @@ validation belong in the factory; the public transport configuration is unchange
 
 `test/driver_extension` is an executable example: an external row and backend
 serve both ends of an encrypted handshake and payload exchange through only
-the public transport API. `tools/check_transport_extension.py build` builds and
+the public transport API. `tools/check_driver_extension.py build` builds and
 runs it independently. `test_transport` checks registry ordering, factory refusal,
 address isolation, lifecycle and buffered I/O. Existing GSO/IOCP and complete
 transport tests cover the real staged paths; hosted tests do not replace XDP
@@ -254,6 +261,37 @@ never chooses it ahead of IOCP; pin `rio` to select it directly. Its
 `ROCKETNET_RIO_COUNTER_*` counters report sent and received packets, full send
 slots, failed sends, waits for a send phase, failed receives, dropped-size and
 dropped-overflow receives, failed receive reposts, and RIO commit calls. Its send phase swap and one-bank receive limit are implemented in `rocketnet_server_rio_send_packets` and `rocketnet_server_rio_receive_packets` in `sdk/rocketnet_server_rio_windows.cpp`; its receive banks are modelled in `tla/RNRioDriver.tla`.
+
+## Windows connection reset
+
+When a UDP send reaches a port no socket holds, the peer's stack answers with
+an ICMP port unreachable. Winsock, unlike other stacks, reports that answer to
+the sending socket's next receive as `WSAECONNRESET` (or `WSAENETRESET` for a
+network unreachable), and an overlapped or registered receive completes with
+the matching unreachable status. A client that dies without closing its socket
+makes the server see one such report for every send to it, so a receive loop
+that stops at the first error, or a completion that is not posted again, stops
+serving every other client. Every socket rocketnet creates on Windows (the
+portable server and client sockets, `iocp` with and without USO and URO, and
+`rio`, IPv4 and IPv6) turns off `SIO_UDP_CONNRESET` and `SIO_UDP_NETRESET` at
+create through `rocketnet_platform_socket_disable_udp_resets`, which checks each
+`WSAIoctl` and logs a refusal once without failing the create. Every receive
+path still skips the reset and unreachable statuses and keeps draining: the
+portable receive reads on, an `iocp` re-post refused with one waits on the
+retry list for the worker's next wakeup, a failed `iocp` completion is
+reposted, and a `rio` slice whose re-post fails waits on a retry list for the
+next `receive_packets`. `rocketnet_platform_receive_resets` counts the reset
+statuses the portable receive skips and the `iocp` and `rio` completions and
+refused posts carry. The functional
+cases in `functional/windows_connreset.cpp` prove it for each server transport
+and family: `windows_connreset_hard_killed_client_*` ends one of four clients
+with `TerminateProcess` while the server keeps sending to it, and the other
+three see no receive gap past one update interval plus 50 ms, the dead client
+times out by the normal timeout and a fifth client connects;
+`windows_connreset_send_to_closed_port_*` sends 1000 datagrams to the closed
+port with exact receive counts on the live clients; and
+`windows_client_connreset_server_gone_*` connects a client whose requests first
+went to a closed port.
 
 ## The io_uring server transport
 
@@ -286,7 +324,8 @@ submit syscalls, send drops, receive drops for size, bank overflow and
 unconvertible source, receives ended for want of buffers, multishot
 re-arms, calls that left completions for the next call (`REAP_DEFERRED`), and
 send calls that returned with sends still owned by the kernel
-(`SEND_DEFERRED`). A destroy that gives up waiting for outstanding completions leaks the
+(`SEND_DEFERRED`), and receive completions that named no provided buffer
+(`RECEIVE_DROPPED_NO_BUFFER`). A destroy that gives up waiting for outstanding completions leaks the
 kernel-visible memory rather than freeing it and counts it in
 `rocketnet_server_uring_leaked_bytes()` and `rocketnet_server_uring_leaked_transports()`.
 The send staging, the two receive banks, the per-call completion budget and
@@ -299,7 +338,10 @@ before (a 20-byte header, UDP). IPv6 is parsed as the fixed 40-byte header with
 UDP directly behind it. Both families then run one shared function: the
 destination port and address against the config map, the wire size bounds, the
 filter epoch and value, `ROCKETNET_WIRE_SERVER_PACKET_VALID`, and the redirect
-into the XSKMAP for the receive queue. The counters are the same for both
+into the XSKMAP for the receive queue. A packet that passes every check but
+whose receive queue has no socket in the XSKMAP is dropped and increments
+`ROCKETNET_SERVER_XDP_COUNTER_DROPPED_NO_SOCKET` (surfaced as
+`XDP_KERNEL_DROPPED_NO_SOCKET`). The counters are the same for both
 families. The IPv6 destination is `public_address_ipv6` in
 `rocketnet_server_xdp_config_t`; all zero accepts any destination, as a zero
 `public_address` does for IPv4.
@@ -331,30 +373,57 @@ an extension chain and never drops one. Every other non-UDP next header,
 ICMPv6 (neighbor discovery) above all, passes uncounted, as non-UDP IPv4
 does.
 
-The AF_XDP transport serves IPv4 and IPv6 end to end. A server serves the
-family of its public address, IPv4 or IPv6, and the ladder offers `xdp` for
-either. The receive loop dispatches each frame on its ethertype through
-`rocketnet_xdp_frame_receive` (`sdk/rocketnet_xdp_frame.h`): IPv4 at its
-offsets, IPv6 at the 40-byte fixed header, and the from-address carries the
-family it read. A frame it does not take is dropped and counted by reason:
-another ethertype (`not_ip`), an IPv6 extension header (`ipv6_extension`,
-never parsed at the UDP offsets), the family the server does not serve
-(`other_family`), or a frame the parse refuses or too short for any server
-packet (`malformed`). The flush builds each reply with the server's own
-address as the source, and an IPv6 reply carries the UDP checksum computed in
-software. Create and the pre-flight find the interface carrying the address
-over `AF_INET` or `AF_INET6` and refuse an IPv6 link-local address (fe80::/10)
-by name. The IPv6 gateway MAC comes from `ip -6 route show default dev <if>`
-and `ip -6 neigh show dev <if>`, the twin of the IPv4 discovery;
-`ROCKETNET_GATEWAY_ETHERNET_ADDRESS` overrides either.
+The AF_XDP transport serves IPv4 and IPv6 end to end. A server serves one
+family, or both when `second_public_address` names the other family on the
+same port (`ServedFamilies`). The ladder offers `xdp` for one family, and for
+both when the two addresses are on one interface. The receive loop dispatches
+each frame on its ethertype through `rocketnet_xdp_frame_receive`
+(`sdk/rocketnet_xdp_frame.h`): IPv4 at its offsets, IPv6 at the 40-byte fixed
+header, and the from-address carries the family it read. A frame it does not
+take is dropped and counted by reason: another ethertype (`not_ip`), an IPv6
+extension header (`ipv6_extension`, never parsed at the UDP offsets), the
+family the server does not serve (`other_family`), or a frame the parse
+refuses or too short for any server packet (`malformed`). The flush builds
+each reply with the server address of the destination's family as the source,
+and an IPv6 reply carries the UDP checksum computed in software. Create and
+the pre-flight find the interface carrying each address over `AF_INET` or
+`AF_INET6` and refuse an IPv6 link-local address (fe80::/10) by name. Each
+family's gateway MAC comes from that family's default route and neighbour
+table; `ROCKETNET_GATEWAY_ETHERNET_ADDRESS` overrides both.
 
-Dual stack: one server owns one public address, so one family. The config map
-holds the server's address in its family's slot and that family's loopback
-address in the other slot (zero would accept any destination), so the program
-redirects only the server's family and passes the other to the kernel. One
-interface takes one XDP program, so a machine that serves both families on
-one interface runs `xdp` for one family and another transport (`gso`,
-`io_uring` or `portable`) for the other.
+`second_public_address` NULL or empty serves the public address's family. A
+second address of that family, on another port, or that does not parse is one
+log line and `INVALID_ADDRESS` (`sdk/rocketnet_server_transport.cpp:1059-1079`).
+The two addresses share the IPv6 wildcard on the one port, with `IPV6_V6ONLY`
+off (`sdk/rocketnet_server_transport.cpp:1086`). `portable`
+(`sdk/rocketnet_platform.cpp:585`), `msgx` through that same socket, `gso`
+(`sdk/rocketnet_server_gso_linux.cpp:334`), `io_uring`
+(`sdk/rocketnet_server_uring_linux.cpp:230`), `iocp`
+(`sdk/rocketnet_server_iocp_windows.cpp:513`) and `rio`
+(`sdk/rocketnet_server_rio_windows.cpp:489`) serve both from that bind. Port 0
+writes the granted port onto both addresses
+(`sdk/rocketnet_server_transport.cpp:1406`). The protocol advertises the named
+IPv4 and the named IPv6 (`sdk/rocketnet_server_transport.cpp:1460`).
+`TokenAddressAdvertised` accepts a request when the token's address of the
+arrival family is one of those (`sdk/rocketnet_server_protocol.cpp:177`). A
+v4-mapped source is canonicalised to IPv4 first. The token's other-family
+address is not consulted.
+
+`portable` on OpenBSD cannot clear `IPV6_V6ONLY` and refuses both families
+with `TRANSPORT_FAMILIES_UNSUPPORTED` (`sdk/rocketnet_driver_builtin.cpp:20`).
+The ladder falls through. Start returns that status when every candidate that
+opened refused for that reason (`sdk/rocketnet_server_transport.cpp:1375`).
+
+`xdp` serves both from one program when both addresses are on one interface.
+The config map carries both destinations and no loopback placeholder
+(`sdk/rocketnet_server_socket_linux.cpp:1848`). Each family keeps its own
+gateway MAC (`sdk/rocketnet_server_socket_linux.cpp:1524`,
+`sdk/rocketnet_xdp_frame.h:524`). The receive loop accepts either family
+(`sdk/rocketnet_server_socket_linux.cpp:2858`, `sdk/rocketnet_xdp_frame.h:359`).
+Each reply's source is the server address of the destination's family
+(`sdk/rocketnet_server_socket_linux.cpp:2975`). Addresses on two interfaces
+refuse with `TRANSPORT_FAMILIES_UNSUPPORTED`
+(`sdk/rocketnet_server_socket_linux.cpp:1479`).
 
 The kernel filter's counters surface on the transport counter surface as
 `ROCKETNET_COUNTER_XDP_KERNEL_*`, assigned from the kernel's cumulative
@@ -486,3 +555,16 @@ for the next update. In-place unreliable writes use only surplus capacity above
 a complete round of connected peers; otherwise they join the queue so application call order cannot
 starve another connection or that connection's reliable work. Control packets
 use the transport's separate send path.
+
+## Receive lengths and truncated datagrams
+
+Buffered drivers write at most the supplied capacity or per-packet stride,
+but return each datagram's original length, up to 65535 bytes. A larger byte
+count does not grant access to bytes beyond that buffer. Client batch
+compaction copies only the stored prefix; the prefilter counts oversized
+reports without reading that prefix. The buffered server counts oversized
+reports before invoking an application admission callback, so that callback
+never sees a claimed length beyond its available storage. Negative lengths,
+lengths beyond 65535, and returned packet counts outside the requested range
+remain driver faults. A zero byte count in a batch is a received empty
+datagram; zero from a single-packet receive means drained.

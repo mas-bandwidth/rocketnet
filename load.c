@@ -27,7 +27,7 @@
 
     Linux. ROCKETNET_SERVER_TRANSPORT pins the server transport and
     ROCKETNET_CLIENT_TRANSPORT=portable the clients; the summary line's
-    server_driver= names the transport granted, and fds_end and threads_end
+    server_transport_io= names the transport granted, and fds_end and threads_end
     equal fds_start and threads_start on a clean run. The server cells:
       portable   ROCKETNET_SERVER_TRANSPORT=portable
       gso        ROCKETNET_SERVER_TRANSPORT=gso
@@ -552,12 +552,18 @@ int main( int argc, char ** argv )
     snprintf( server_host, sizeof( server_host ), "%s", server_bind );
     server_host[strcspn( server_host, ":" )] = 0;
 
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, server_bind, &server_config, NULL, 0 );
-    if ( !server || rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, server_bind, &server_config, NULL, 0, &create_status );
+    if ( !server )
     {
-        fprintf( stderr, "load: failed to create or start server\n" );
-        if ( server )
-            rocketnet_server_destroy( server );
+        fprintf( stderr, "load: failed to create server: %s\n", rocketnet_status_name( create_status ) );
+        rocketnet_term();
+        return 1;
+    }
+    if ( rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        fprintf( stderr, "load: failed to start server\n" );
+        rocketnet_server_destroy( server );
         rocketnet_term();
         return 1;
     }
@@ -625,10 +631,16 @@ int main( int argc, char ** argv )
             fprintf( stderr, "load: failed to create dev connect token for client %d\n", i );
             return 1;
         }
-        clients[i] = rocketnet_client_create( NULL, &client_config, NULL, 0 );
-        if ( !clients[i] || rocketnet_client_connect( clients[i], connect_token ) != ROCKETNET_STATUS_OK )
+        create_status = ROCKETNET_STATUS_OK;
+        clients[i] = rocketnet_client_create( NULL, &client_config, NULL, 0, &create_status );
+        if ( !clients[i] )
         {
-            fprintf( stderr, "load: failed to create or connect client %d\n", i );
+            fprintf( stderr, "load: failed to create client %d: %s\n", i, rocketnet_status_name( create_status ) );
+            return 1;
+        }
+        if ( rocketnet_client_connect( clients[i], connect_token ) != ROCKETNET_STATUS_OK )
+        {
+            fprintf( stderr, "load: failed to connect client %d\n", i );
             return 1;
         }
 #if defined(__linux__)
@@ -716,7 +728,7 @@ int main( int argc, char ** argv )
                 {
                     fprintf( stderr, "load: client %d not connected at the deadline: state=%d %s\n",
                              i, (int) st, rocketnet_client_state_name( st ) );
-                    fprintf( stderr, "load: client %d driver=%s packets_sent=%llu packets_received=%llu\n", i,
+                    fprintf( stderr, "load: client %d transport=%s packets_sent=%llu packets_received=%llu\n", i,
                              rocketnet_client_transport_name( clients[i] ),
                              (unsigned long long) rocketnet_client_counter( clients[i], ROCKETNET_CLIENT_COUNTER_PACKETS_SENT ),
                              (unsigned long long) rocketnet_client_counter( clients[i], ROCKETNET_CLIENT_COUNTER_PACKETS_RECEIVED ) );
@@ -796,26 +808,28 @@ int main( int argc, char ** argv )
                 client_last_update[i] = update_time;
                 rocketnet_client_update( clients[i], update_time );
 
-                /* Receive server -> client reliable-ordered messages on channel 3 */
-                const uint8_t * data = NULL;
-                int bytes = 0;
-                while ( rocketnet_client_receive_message( clients[i], (int) ROCKETNET_RELIABILITY_RELIABLE_ORDERED, &data, &bytes ) )
+                struct rocketnet_message_batch_t batch;
+                while ( rocketnet_client_receive_messages( clients[i], &batch ) )
                 {
-                    uint32_t msg_client = 0, msg_combo = 0, msg_seq = 0;
-                    if ( !verify_message( data, bytes, LOAD_MAGIC_SV_TO_CLIENT, &msg_client, &msg_combo, &msg_seq ) ||
-                         msg_client != (uint32_t) i || msg_combo != ROCKETNET_RELIABILITY_RELIABLE_ORDERED )
+                    for ( int j = 0; j < batch.num_messages; j++ )
                     {
-                        reliable_errors++;
-                    }
-                    else
-                    {
-                        struct load_stream_state_t * sv_st = &s2c_streams[i];
-                        if ( msg_seq != sv_st->recv_count + 1 || stream_seen_test_and_set( sv_st, msg_seq ) != 0 )
+                        uint32_t msg_client = 0, msg_combo = 0, msg_seq = 0;
+                        if ( batch.client_index[j] != 0 ||
+                             !verify_message( batch.data[j], batch.bytes[j], LOAD_MAGIC_SV_TO_CLIENT, &msg_client, &msg_combo, &msg_seq ) ||
+                             msg_client != (uint32_t) i || msg_combo != ROCKETNET_RELIABILITY_RELIABLE_ORDERED ||
+                             batch.channel[j] != ROCKETNET_RELIABILITY_RELIABLE_ORDERED )
+                        {
                             reliable_errors++;
-                        sv_st->recv_count++;
-                        sv_st->max_seq_seen = msg_seq;
+                        }
+                        else
+                        {
+                            struct load_stream_state_t * sv_st = &s2c_streams[i];
+                            if ( msg_seq != sv_st->recv_count + 1 || stream_seen_test_and_set( sv_st, msg_seq ) != 0 )
+                                reliable_errors++;
+                            sv_st->recv_count++;
+                            sv_st->max_seq_seen = msg_seq;
+                        }
                     }
-                    rocketnet_client_release_message( clients[i], data );
                 }
 
                 struct rocketnet_receipt_t receipts[16];
@@ -899,70 +913,64 @@ int main( int argc, char ** argv )
                     max_server_update_at = t0 - traffic_start;
                 }
 
-                for ( int s = 0; s < num_clients; s++ )
+                struct rocketnet_message_batch_t batch;
+                while ( rocketnet_server_receive_messages( server, &batch ) )
                 {
-                    if ( !rocketnet_server_client_connected( server, (uint64_t) s ) )
-                        continue;
-                    for ( int ch = 0; ch < LOAD_NUM_COMBOS; ch++ )
+                    for ( int j = 0; j < batch.num_messages; j++ )
                     {
-                        const uint8_t * sdata = NULL;
-                        int sbytes = 0;
-                        while ( rocketnet_server_receive_message( server, (uint64_t) s, ch, &sdata, &sbytes ) )
+                        c2s_received_total++;
+                        uint32_t msg_client = 0, msg_combo = 0, msg_seq = 0;
+                        if ( !verify_message( batch.data[j], batch.bytes[j], LOAD_MAGIC_CLIENT_TO_SV, &msg_client, &msg_combo, &msg_seq ) ||
+                             msg_client >= (uint32_t) num_clients || msg_combo >= LOAD_NUM_COMBOS ||
+                             batch.client_index[j] != client_slot[msg_client] )
                         {
-                            c2s_received_total++;
-                            uint32_t msg_client = 0, msg_combo = 0, msg_seq = 0;
-                            if ( !verify_message( sdata, sbytes, LOAD_MAGIC_CLIENT_TO_SV, &msg_client, &msg_combo, &msg_seq ) ||
-                                 msg_client >= (uint32_t) num_clients || msg_combo >= LOAD_NUM_COMBOS )
-                            {
-                                reliable_errors++;
-                                unreliable_errors++;
-                            }
-                            else
-                            {
-                                const int expected_rx_ch = ( msg_combo == ROCKETNET_RELIABILITY_UNRELIABLE ||
-                                                             msg_combo == ROCKETNET_RELIABILITY_RELIABLE ||
-                                                             msg_combo == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT ||
-                                                             msg_combo == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT ) ? 0 : (int) msg_combo;
-                                struct load_stream_state_t * cst = &c2s_streams[(size_t) msg_client * LOAD_NUM_COMBOS + msg_combo];
-                                const int dup = stream_seen_test_and_set( cst, msg_seq );
+                            reliable_errors++;
+                            unreliable_errors++;
+                        }
+                        else
+                        {
+                            const int expected_rx_ch = ( msg_combo == ROCKETNET_RELIABILITY_UNRELIABLE ||
+                                                         msg_combo == ROCKETNET_RELIABILITY_RELIABLE ||
+                                                         msg_combo == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT ||
+                                                         msg_combo == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT ) ? 0 : (int) msg_combo;
+                            struct load_stream_state_t * cst = &c2s_streams[(size_t) msg_client * LOAD_NUM_COMBOS + msg_combo];
+                            const int dup = stream_seen_test_and_set( cst, msg_seq );
 
-                                if ( ch != expected_rx_ch )
-                                {
-                                    if ( combo_is_unreliable_family( msg_combo ) )
-                                        unreliable_errors++;
-                                    else
-                                        reliable_errors++;
-                                }
-                                else if ( combo_is_unreliable_family( msg_combo ) )
-                                {
-                                    if ( dup != 0 )
-                                        unreliable_errors++;
-                                    if ( msg_combo == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED && msg_seq <= cst->max_seq_seen )
-                                        unreliable_errors++;
-                                    if ( msg_seq > cst->max_seq_seen )
-                                        cst->max_seq_seen = msg_seq;
-                                    cst->recv_count++;
-                                }
-                                else if ( msg_combo == ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED )
-                                {
-                                    if ( dup != 0 || msg_seq <= cst->max_seq_seen )
-                                        reliable_errors++;
-                                    else
-                                        cst->max_seq_seen = msg_seq;
-                                    cst->recv_count++;
-                                }
-                                else if ( combo_is_reliable_every( msg_combo ) )
-                                {
-                                    if ( dup != 0 )
-                                        reliable_errors++;
-                                    if ( combo_is_ordered( msg_combo ) && msg_seq != cst->recv_count + 1 )
-                                        reliable_errors++;
-                                    if ( msg_seq > cst->max_seq_seen )
-                                        cst->max_seq_seen = msg_seq;
-                                    cst->recv_count++;
-                                }
+                            if ( batch.channel[j] != expected_rx_ch )
+                            {
+                                if ( combo_is_unreliable_family( msg_combo ) )
+                                    unreliable_errors++;
+                                else
+                                    reliable_errors++;
                             }
-                            rocketnet_server_release_message( server, (uint64_t) s, sdata );
+                            else if ( combo_is_unreliable_family( msg_combo ) )
+                            {
+                                if ( dup != 0 )
+                                    unreliable_errors++;
+                                if ( msg_combo == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED && msg_seq <= cst->max_seq_seen )
+                                    unreliable_errors++;
+                                if ( msg_seq > cst->max_seq_seen )
+                                    cst->max_seq_seen = msg_seq;
+                                cst->recv_count++;
+                            }
+                            else if ( msg_combo == ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED )
+                            {
+                                if ( dup != 0 || msg_seq <= cst->max_seq_seen )
+                                    reliable_errors++;
+                                else
+                                    cst->max_seq_seen = msg_seq;
+                                cst->recv_count++;
+                            }
+                            else if ( combo_is_reliable_every( msg_combo ) )
+                            {
+                                if ( dup != 0 )
+                                    reliable_errors++;
+                                if ( combo_is_ordered( msg_combo ) && msg_seq != cst->recv_count + 1 )
+                                    reliable_errors++;
+                                if ( msg_seq > cst->max_seq_seen )
+                                    cst->max_seq_seen = msg_seq;
+                                cst->recv_count++;
+                            }
                         }
                     }
                 }
@@ -1109,13 +1117,13 @@ int main( int argc, char ** argv )
                      crit5_counters_agree &&
                      !quit;
 
-    char server_driver[32];
-    char client_driver[32];
+    char server_transport_io[32];
+    char client_transport_io[32];
     {
         const char * sd = rocketnet_server_transport_name( server );
         const char * cd = clients[0] ? rocketnet_client_transport_name( clients[0] ) : NULL;
-        snprintf( server_driver, sizeof( server_driver ), "%s", sd ? sd : "none" );
-        snprintf( client_driver, sizeof( client_driver ), "%s", cd ? cd : "none" );
+        snprintf( server_transport_io, sizeof( server_transport_io ), "%s", sd ? sd : "none" );
+        snprintf( client_transport_io, sizeof( client_transport_io ), "%s", cd ? cd : "none" );
     }
 
     for ( int i = 0; i < num_clients; i++ )
@@ -1146,13 +1154,13 @@ int main( int argc, char ** argv )
                 "reliable_delivery=PASS unreliable_integrity=PASS counters_agree=PASS "
                 "sent=%" PRIu64 " received=%" PRIu64 " drops=%" PRIu64 " "
                 "server_update_p50_us=%" PRIu64 " server_update_p99_us=%" PRIu64 " rss_mb=%.2f "
-                "server_driver=%s client_driver=%s "
+                "server_transport_io=%s client_transport_io=%s "
                 "fd_limit_soft=%s fd_limit_hard=%s fds_start=%ld fds_peak=%ld fds_end=%ld "
                 "threads_start=%ld threads_peak=%ld threads_end=%ld verdict=PASS\n",
                 connected_count, connect_elapsed, connect_p50_s, connect_max_s,
                 c2s_sent_total, c2s_received_total, total_counted_drops,
                 p50_us, p99_us, rss_mb,
-                server_driver, client_driver,
+                server_transport_io, client_transport_io,
                 fd_limit_soft_text, fd_limit_hard_text,
                 fds_start, fds_peak, fds_end,
                 threads_start, threads_peak, threads_end );
@@ -1164,7 +1172,7 @@ int main( int argc, char ** argv )
                 "reliable_delivery=%s unreliable_integrity=%s counters_agree=%s "
                 "sent=%" PRIu64 " received=%" PRIu64 " drops=%" PRIu64 " "
                 "server_update_p50_us=%" PRIu64 " server_update_p99_us=%" PRIu64 " rss_mb=%.2f "
-                "server_driver=%s client_driver=%s "
+                "server_transport_io=%s client_transport_io=%s "
                 "fd_limit_soft=%s fd_limit_hard=%s fds_start=%ld fds_peak=%ld fds_end=%ld "
                 "threads_start=%ld threads_peak=%ld threads_end=%ld "
                 "failed_criterion=%s verdict=FAIL\n",
@@ -1176,7 +1184,7 @@ int main( int argc, char ** argv )
                 crit5_counters_agree ? "PASS" : "FAIL",
                 c2s_sent_total, c2s_received_total, total_counted_drops,
                 p50_us, p99_us, rss_mb,
-                server_driver, client_driver,
+                server_transport_io, client_transport_io,
                 fd_limit_soft_text, fd_limit_hard_text,
                 fds_start, fds_peak, fds_end,
                 threads_start, threads_peak, threads_end,

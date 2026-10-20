@@ -1,5 +1,5 @@
 #!/bin/sh
-# rocketnet driver bench runner (#81): one sender/receiver pair over loopback,
+# rocketnet transport bench runner (#81): one sender/receiver pair over loopback,
 # per the bench discipline -- 30 s warm-up discarded, five 60 s windows.
 #
 #   ./run_pair.sh <binary> <port> <recv_core> <send_core> [sender-extra-arg]

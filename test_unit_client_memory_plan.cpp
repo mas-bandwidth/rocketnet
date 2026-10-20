@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// Client memory plan accounts for driver socket, wake, I/O client block and
+// Client memory plan accounts for transport socket, wake, I/O client block and
 // worker thread allocations across non-step-driven and step-driven modes.
 
 #include "test_unit_registry.h"
@@ -85,7 +85,7 @@ static void client_memory_plan_non_step_driven()
 
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
-    snprintf( config.driver, sizeof(config.driver), "%s", "portable" );
+    snprintf( config.transport, sizeof(config.transport), "%s", "portable" );
     config.step_driven = 0;
 
     const uint64_t plan_bytes = rocketnet_client_transport_required_memory( &config, "portable" );
@@ -97,6 +97,12 @@ static void client_memory_plan_non_step_driven()
     int status = -1;
     check( rocketnet_init_ex( &state, &status ) );
     check( status == ROCKETNET_STATUS_OK );
+
+    // rocketnet_init_ex runs platform discovery through this context before
+    // create (on Windows, get_connection_type fetches the adapter list with
+    // rocketnet_platform_adapters_fetch and frees it); the plan covers create
+    // alone, so the count starts here
+    state.total_bytes = 0;
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_ex(
         &state, token, &config, 1000.0, &status );
@@ -125,7 +131,7 @@ static void client_memory_plan_step_driven()
 
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
-    snprintf( config.driver, sizeof(config.driver), "%s", "portable" );
+    snprintf( config.transport, sizeof(config.transport), "%s", "portable" );
     config.step_driven = 1;
 
     const uint64_t plan_bytes = rocketnet_client_transport_required_memory( &config, "portable" );
@@ -137,6 +143,12 @@ static void client_memory_plan_step_driven()
     int status = -1;
     check( rocketnet_init_ex( &state, &status ) );
     check( status == ROCKETNET_STATUS_OK );
+
+    // rocketnet_init_ex runs platform discovery through this context before
+    // create (on Windows, get_connection_type fetches the adapter list with
+    // rocketnet_platform_adapters_fetch and frees it); the plan covers create
+    // alone, so the count starts here
+    state.total_bytes = 0;
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_ex(
         &state, token, &config, 1000.0, &status );

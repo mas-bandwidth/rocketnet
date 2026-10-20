@@ -23,7 +23,7 @@ if sys.platform == 'darwin':
 else:
     libs += ['-lbpf', '-lxdp']
     # Link what CMake linked: cmake/RocketNetDependencies.cmake records the
-    # optional io_uring driver's library it resolved in the build cache.
+    # optional io_uring transport's library it resolved in the build cache.
     uring = next((line.split('=', 1)[1] for line in cache.splitlines()
                   if line.startswith('ROCKETNET_Uring_LIBRARY:')), '')
     if uring and not uring.endswith('-NOTFOUND'):

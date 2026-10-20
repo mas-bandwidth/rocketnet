@@ -60,7 +60,9 @@ int main( void )
     rocketnet_server_dev_config( &server_config );
     server_config.max_clients = 2;
     server_config.transport = "loopback";
-    server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, &create_status );
+    if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -76,7 +78,9 @@ int main( void )
     client_config.send_kbps = CLIENT_SEND_KBPS;
     printf( "client send budget from config at create: %d kbps\n", client_config.send_kbps );
 
-    client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
+    client = rocketnet_client_create( NULL, &client_config, NULL, 0, &create_status_2 );
+    if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
@@ -101,20 +105,20 @@ int main( void )
             goto cleanup;
 
         // (2) receive and release every message; count the reliable ones,
-        // sent on channel 1, so the example checks none was lost
-        const uint8_t * data = NULL;
-        int bytes = 0;
-        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
-            rocketnet_client_release_message( client, data );
-        if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
+        // sent on channel 1, so the example checks none was lost. The server
+        // takes its one queue in batches, each entry naming its channel; the
+        // next batch call or update releases a batch
+        struct rocketnet_message_batch_t incoming;
+        while ( rocketnet_client_receive_messages( client, &incoming ) )
+            ;
+        const int slot = rocketnet_client_index( client );
+        struct rocketnet_message_batch_t batch;
+        while ( rocketnet_server_receive_messages( server, &batch ) )
         {
-            const int slot = rocketnet_client_index( client );
-            while ( rocketnet_server_receive_message( server, slot, 0, &data, &bytes ) )
-                rocketnet_server_release_message( server, slot, data );
-            while ( rocketnet_server_receive_message( server, slot, 1, &data, &bytes ) )
+            for ( int i = 0; i < batch.num_messages; i++ )
             {
-                reliable_received++;
-                rocketnet_server_release_message( server, slot, data );
+                if ( batch.client_index[i] == (uint64_t) slot && batch.channel[i] == 1 )
+                    reliable_received++;
             }
         }
 

@@ -8,7 +8,7 @@
 
 #include <string.h>
 
-// The loopback driver backend carries datagrams between endpoints of the same
+// The loopback transport backend carries datagrams between endpoints of the same
 // process through memory, with no socket and no system network call. A
 // process-wide table holds the endpoints; one platform mutex guards it, so the
 // client transport's receive thread and the main thread can both call in.
@@ -131,6 +131,24 @@ static rocketnet_loopback_endpoint_t * loopback_find_destination( rocketnet_loop
     return NULL;
 }
 
+// The next queue slot, or NULL after counting a drop at the fixed ceiling.
+// All queue storage is allocated at create; traffic never allocates.
+
+static rocketnet_loopback_packet_t * loopback_queue_tail( rocketnet_loopback_endpoint_t * dst )
+{
+    if ( dst->count >= ROCKETNET_LOOPBACK_QUEUE_PACKETS )
+    {
+        ++dst->dropped;
+        return NULL;
+    }
+    return &dst->packets[dst->tail % ROCKETNET_LOOPBACK_QUEUE_PACKETS];
+}
+
+size_t rocketnet_loopback_queue_bytes( int packets )
+{
+    return sizeof( rocketnet_loopback_packet_t ) * (size_t) packets;
+}
+
 static void * loopback_create( void * context, rocketnet_address_t * bind )
 {
     if ( bind->type != ROCKETNET_ADDRESS_IPV4 && bind->type != ROCKETNET_ADDRESS_IPV6 )
@@ -187,7 +205,7 @@ static void * loopback_create( void * context, rocketnet_address_t * bind )
 
     rocketnet_loopback_endpoint_t * ep = &state.endpoints[slot];
     ep->packets = (rocketnet_loopback_packet_t*) rocketnet_malloc( context,
-        sizeof( rocketnet_loopback_packet_t ) * ROCKETNET_LOOPBACK_QUEUE_PACKETS );
+        rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) );
     if ( !ep->packets )
         return NULL;
     ep->context = context;
@@ -200,19 +218,19 @@ static void * loopback_create( void * context, rocketnet_address_t * bind )
     return ep;
 }
 
-static void * loopback_server_create( void * context, const rocketnet_server_driver_config_t *, rocketnet_address_t * bind )
+static void * loopback_server_create( void * context, const rocketnet_server_transport_io_config_t *, rocketnet_address_t * bind )
 {
     return loopback_create( context, bind );
 }
 
-static void * loopback_client_create( void * context, const rocketnet_client_driver_config_t *, rocketnet_address_t * bind )
+static void * loopback_client_create( void * context, const rocketnet_client_transport_io_config_t *, rocketnet_address_t * bind )
 {
     return loopback_create( context, bind );
 }
 
-static void loopback_destroy( void * driver )
+static void loopback_destroy( void * transport )
 {
-    rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t*) driver;
+    rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t*) transport;
     rocketnet_loopback_state_t & state = loopback_state();
     rocketnet_platform_mutex_guard( &state.mutex );
     rocketnet_free( ep->context, ep->packets );
@@ -224,22 +242,19 @@ static bool loopback_stop( void * )
     return true;
 }
 
-static void loopback_send( void * driver, const rocketnet_address_t * to, const uint8_t * data, int bytes )
+static void loopback_send( void * transport, const rocketnet_address_t * to, const uint8_t * data, int bytes )
 {
     if ( bytes <= 0 || bytes > ROCKETNET_RECEIVE_CEILING )
         return;
-    rocketnet_loopback_endpoint_t * sender = (rocketnet_loopback_endpoint_t*) driver;
+    rocketnet_loopback_endpoint_t * sender = (rocketnet_loopback_endpoint_t*) transport;
     rocketnet_loopback_state_t & state = loopback_state();
     rocketnet_platform_mutex_guard( &state.mutex );
     rocketnet_loopback_endpoint_t * dst = loopback_find_destination( state, *to );
     if ( !dst )
         return;
-    if ( dst->count >= ROCKETNET_LOOPBACK_QUEUE_PACKETS )
-    {
-        ++dst->dropped;
+    rocketnet_loopback_packet_t * packet = loopback_queue_tail( dst );
+    if ( !packet )
         return;
-    }
-    rocketnet_loopback_packet_t * packet = &dst->packets[dst->tail % ROCKETNET_LOOPBACK_QUEUE_PACKETS];
     packet->bytes = bytes;
     packet->from = loopback_sender_address( sender->bind, *to );
     memcpy( packet->data, data, (size_t) bytes );
@@ -247,9 +262,9 @@ static void loopback_send( void * driver, const rocketnet_address_t * to, const 
     ++dst->count;
 }
 
-static void loopback_server_send_batch( void * driver, const rocketnet_platform_send_t * packets, int count )
+static void loopback_server_send_batch( void * transport, const rocketnet_platform_send_t * packets, int count )
 {
-    rocketnet_loopback_endpoint_t * sender = (rocketnet_loopback_endpoint_t*) driver;
+    rocketnet_loopback_endpoint_t * sender = (rocketnet_loopback_endpoint_t*) transport;
     rocketnet_loopback_state_t & state = loopback_state();
     rocketnet_platform_mutex_guard( &state.mutex );
     for ( int i = 0; i < count; ++i )
@@ -260,12 +275,9 @@ static void loopback_server_send_batch( void * driver, const rocketnet_platform_
         rocketnet_loopback_endpoint_t * dst = loopback_find_destination( state, *packet.to );
         if ( !dst )
             continue;
-        if ( dst->count >= ROCKETNET_LOOPBACK_QUEUE_PACKETS )
-        {
-            ++dst->dropped;
+        rocketnet_loopback_packet_t * slot = loopback_queue_tail( dst );
+        if ( !slot )
             continue;
-        }
-        rocketnet_loopback_packet_t * slot = &dst->packets[dst->tail % ROCKETNET_LOOPBACK_QUEUE_PACKETS];
         slot->bytes = packet.packet_bytes;
         slot->from = loopback_sender_address( sender->bind, *packet.to );
         memcpy( slot->data, packet.packet_data, (size_t) packet.packet_bytes );
@@ -274,9 +286,9 @@ static void loopback_server_send_batch( void * driver, const rocketnet_platform_
     }
 }
 
-static int loopback_server_receive_batch( void * driver, rocketnet_address_t * from, uint8_t * data, int stride, int * bytes, int count )
+static int loopback_server_receive_batch( void * transport, rocketnet_address_t * from, uint8_t * data, int stride, int * bytes, int count )
 {
-    rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t*) driver;
+    rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t*) transport;
     rocketnet_loopback_state_t & state = loopback_state();
     rocketnet_platform_mutex_guard( &state.mutex );
     int received = 0;
@@ -300,9 +312,9 @@ static int loopback_server_receive_batch( void * driver, rocketnet_address_t * f
     return received;
 }
 
-static int loopback_client_receive( void * driver, rocketnet_address_t * from, uint8_t * data, int capacity )
+static int loopback_client_receive( void * transport, rocketnet_address_t * from, uint8_t * data, int capacity )
 {
-    rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t*) driver;
+    rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t*) transport;
     rocketnet_loopback_state_t & state = loopback_state();
     rocketnet_platform_mutex_guard( &state.mutex );
     if ( ep->count == 0 )
@@ -323,16 +335,16 @@ static int loopback_client_receive( void * driver, rocketnet_address_t * from, u
     return bytes;
 }
 
-static const rocketnet_server_driver_operations_t loopback_server_operations =
+static const rocketnet_server_transport_io_operations_t loopback_server_operations =
 {
-    ROCKETNET_DRIVER_FLUSH_ON_UPDATE, loopback_server_create, loopback_destroy, loopback_stop,
+    ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE, loopback_server_create, loopback_destroy, loopback_stop,
     NULL, NULL, NULL, NULL, NULL, loopback_server_send_batch, loopback_server_receive_batch
 };
 
-static const rocketnet_client_driver_operations_t loopback_client_operations =
+static const rocketnet_client_transport_io_operations_t loopback_client_operations =
 { loopback_client_create, loopback_destroy, loopback_send, loopback_client_receive };
 
-extern const rocketnet_driver_backend_t rocketnet_loopback_driver = { &loopback_server_operations, &loopback_client_operations };
+extern const rocketnet_transport_backend_t rocketnet_loopback_transport = { &loopback_server_operations, &loopback_client_operations };
 
 uint64_t rocketnet_loopback_endpoint_dropped( void * instance )
 {

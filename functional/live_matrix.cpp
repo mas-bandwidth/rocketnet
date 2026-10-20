@@ -49,8 +49,11 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double
 #define LIVE_MATRIX_MAX_SEQUENCES           256
 #define LIVE_MATRIX_TINY                    ROCKETNET_LIVE_HEADER_BYTES
 #define LIVE_MATRIX_TOKEN_TIMEOUT           10.0            // the development connect token's timeout_seconds
+// Use the unlimited create-time reserve policy with this same runtime ceiling.
+// The matrix pays its working storage explicitly; it does not need two seconds
+// of payload reserve at the ceiling in every size class.
 #define LIVE_MATRIX_SEND_KBPS               10000000        // ROCKETNET_SEND_BUDGET_MAX_KBPS: the wire, not the budget, is the limit
-// Each send_packets writes at most max_packets_per_update packets, reliable
+// Each send_packets writes at most packets_per_update packets, reliable
 // first (sdk/rocketnet_endpoint.cpp rn_endpoint_next_packet_bytes): the
 // matrix queues about forty packets of reliable bytes and twenty-four of
 // unreliable bytes per update, so the reliable path never starves the
@@ -408,14 +411,14 @@ static void live_matrix_receive( struct live_matrix_t * m )
 {
     const uint8_t * data = NULL;
     int bytes = 0;
-    for ( int channel = 0; channel < LIVE_MATRIX_CHANNELS; channel++ )
+    int channel = 0;
     {
-        while ( rocketnet_message_server_receive( m->server, 0, channel, &data, &bytes ) )
+        while ( rocketnet_message_server_receive( m->server, NULL, &channel, &data, &bytes ) )
         {
             live_matrix_arrival( m, 0, channel, data, bytes );
-            rocketnet_message_server_release( m->server, 0, data );
+            rocketnet_message_server_release( m->server, data );
         }
-        while ( rocketnet_message_client_receive( m->client, channel, &data, &bytes ) )
+        while ( rocketnet_message_client_receive( m->client, &channel, &data, &bytes ) )
         {
             live_matrix_arrival( m, 1, channel, data, bytes );
             rocketnet_message_client_release( m->client, data );
@@ -630,7 +633,7 @@ static void live_matrix_connect( struct live_matrix_t * m )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     live_matrix_check( rocketnet_write_dev_connect_token( m->server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( 0, live_matrix_now( m ) ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
-    m->client = rocketnet_message_client_create( NULL, token, NULL, &m->message_config, NULL, 0, LIVE_MATRIX_SEND_KBPS );
+    m->client = rocketnet_message_client_create_ex( NULL, token, NULL, &m->message_config, NULL, 0, LIVE_MATRIX_SEND_KBPS, NULL, 1 );
     live_matrix_check( m->client );
 
     const double start = rocketnet_platform_time();
@@ -759,11 +762,11 @@ static int live_matrix_probe_one( struct live_matrix_t * m, int direction, int m
         live_matrix_flush( m );
         live_matrix_pump( m );
         live_matrix_check( live_matrix_up( m ) );
-        for ( int c = 0; c < LIVE_MATRIX_CHANNELS; c++ )
         {
             const uint8_t * data = NULL;
             int bytes = 0;
-            while ( direction == 0 ? rocketnet_message_server_receive( m->server, 0, c, &data, &bytes ) : rocketnet_message_client_receive( m->client, c, &data, &bytes ) )
+            int c = 0;
+            while ( direction == 0 ? rocketnet_message_server_receive( m->server, NULL, &c, &data, &bytes ) : rocketnet_message_client_receive( m->client, &c, &data, &bytes ) )
             {
                 const int result = rocketnet_live_check( &m->live, data, bytes, direction, mode, channel, m->cycle, -1, NULL );
                 if ( result != ROCKETNET_LIVE_OK || rocketnet_live_sequence( data, bytes ) != sequence )
@@ -772,7 +775,7 @@ static int live_matrix_probe_one( struct live_matrix_t * m, int direction, int m
                     live_matrix_fail( m, "edge", direction, mode, channel, sequence, "receive-channel", bytes );
                 else
                     arrived = 1;
-                if ( direction == 0 ) rocketnet_message_server_release( m->server, 0, data ); else rocketnet_message_client_release( m->client, data );
+                if ( direction == 0 ) rocketnet_message_server_release( m->server, data ); else rocketnet_message_client_release( m->client, data );
             }
         }
         live_matrix_take_receipts( m, 0 );
@@ -1103,7 +1106,7 @@ void live_message_matrix_loopback()
     m->message_config.send_buffer_bytes = 128 * 1024 * 1024;
     m->message_config.send_queue_messages = 16384;
     m->message_config.packets_in_flight = 2048;
-    m->message_config.max_packets_per_update = 64;
+    m->message_config.packets_per_update = 64;
     m->message_config.unreliable_deliveries = 8192;
     m->message_config.receipt_ring = 4096;
     m->message_config.window_messages = 4096;
@@ -1117,7 +1120,7 @@ void live_message_matrix_loopback()
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 1;
 
-    m->server = rocketnet_message_server_create( NULL, "127.0.0.1", &server_config, &m->message_config, NULL, 0, LIVE_MATRIX_SEND_KBPS );
+    m->server = rocketnet_message_server_create_ex( NULL, "127.0.0.1", &server_config, &m->message_config, NULL, 0, LIVE_MATRIX_SEND_KBPS, NULL, 1 );
     live_matrix_check( m->server );
     snprintf( m->server_address, sizeof( m->server_address ), "127.0.0.1:%d", rocketnet_server_transport_port( rocketnet_message_server_transport( m->server ) ) );
 

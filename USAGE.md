@@ -24,7 +24,7 @@ Call `rocketnet_init` once before creating a client or a server, and check its
 result. Every call that can fail returns `enum rocketnet_status_t`, and
 `ROCKETNET_STATUS_OK` (0) is success; `rocketnet_status_name` names a code. A
 second init returns `ROCKETNET_STATUS_ALREADY_INITIALIZED` without disturbing
-the live library. A create before init returns NULL and allocates nothing. Call
+the live library. A create before init returns NULL, allocates nothing, and writes `ROCKETNET_STATUS_NOT_INITIALIZED` through its status out-parameter. Call
 `rocketnet_term` after every client and server is destroyed; termination with
 live allocations is refused with `ROCKETNET_STATUS_LIVE_ALLOCATIONS` and
 logged, and a repeated termination returns `ROCKETNET_STATUS_NOT_INITIALIZED`. Startup,
@@ -88,9 +88,7 @@ with a log line.
 
 A value that does not parse, or is out of range, **refuses the create with one
 error line; nothing is ever clamped**. A secret key logs redacted, on both the
-old and the new value. The `_sized` create and default calls accept a struct
-size so a program built against an older header keeps working; an unknown size
-is refused before anything is read or written.
+old and the new value. The `_sized` create, default and validate calls each take the struct size (`config_bytes`) so a program built against an older header keeps working; the unsized calls use the revision-1 size. An unknown size is refused before anything is read or written. Each of the four creates takes a final status out-parameter (NULL is accepted): it holds `ROCKETNET_STATUS_OK` with a non-NULL result, or the refusal's code with NULL (`sdk/rocketnet.h:1081`, `sdk/rocketnet.h:1086`, `sdk/rocketnet.h:1272`, `sdk/rocketnet.h:1277`; `sdk/rocketnet_api.cpp:561`, `sdk/rocketnet_api.cpp:1302`).
 
 ```c
 #include "rocketnet.h"
@@ -119,13 +117,20 @@ known name this endpoint does not have is skipped with one log line; a name
 that is no transport anywhere is a typo and fails loudly. The accessor on each
 end reports the transport that won.
 
-A server can advertise one IPv4 address, one IPv6 address, or one of each.
-`public_address` displaces the address passed to create;
-`second_public_address` adds the other address family. The selected server
-transport must serve every configured family or create returns
-`ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED`. Connect tokens are checked
-against the advertised address for the family on which the request arrived.
-The environment forms apply to the first server create in the process only.
+Every transport serves IPv4, IPv6, or both. `second_public_address` NULL or
+empty serves the family of the public address. When it names the other family
+on the same port (both 0, or equal), the server binds the IPv6 wildcard on
+that port with `IPV6_V6ONLY` off and advertises both named addresses.
+`"auto"` tries `xdp` first when both addresses are on one interface. `xdp` on
+two interfaces, and `portable` where `IPV6_V6ONLY` cannot be cleared, refuse
+with `TRANSPORT_FAMILIES_UNSUPPORTED` and the ladder continues. A connect
+token is accepted when its address of the arrival family is one the server
+advertises (`TokenAddressAdvertised`).
+
+`public_address` on the server displaces the address passed to create.
+`second_public_address` is the other family on that same port.
+`ROCKETNET_SERVER_PUBLIC_ADDRESS` and `ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS`
+apply together to the first server start in the process only.
 
 ### Environment overrides
 
@@ -197,6 +202,7 @@ row per field of both public structs.
 | simulated_latency_ms | ROCKETNET_SERVER_SIMULATED_LATENCY_MS | int | `0` | refuses the create unless `0..60000`; development only, and a production library refuses any nonzero value |
 | simulated_jitter_ms | ROCKETNET_SERVER_SIMULATED_JITTER_MS | int | `0` | refuses the create unless `0..60000`; development only, and a production library refuses any nonzero value |
 | simulated_duplicate_percent | ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT | int | `0` | refuses the create unless `0..100`; development only, and a production library refuses any nonzero value |
+| second_public_address | ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS | const char * | `NULL` | empty serves one family; the same family, a different port, or a string that does not parse: refuses the create |
 
 The message fields marked WIRE must be identical on both ends; the connection
 verifies them. The cross rules are in [docs/CHANNELS.md](docs/CHANNELS.md)
@@ -285,9 +291,14 @@ and `delta: 1595776` on this SDK revision.
 ```c
 #include "rocketnet.h"
 
+#include <stdio.h>
+
 struct rocketnet_client_t * start_client( const uint8_t * token, const struct rocketnet_client_config_t * config )
 {
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, config, NULL, 0 );
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, config, NULL, 0, &status );
+    if ( !client )
+        printf( "create refused: %s\n", rocketnet_status_name( status ) );
     if ( client && rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
@@ -298,7 +309,10 @@ struct rocketnet_client_t * start_client( const uint8_t * token, const struct ro
 
 struct rocketnet_server_t * start_server( const struct rocketnet_server_config_t * config )
 {
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "0.0.0.0:40000", config, NULL, 0 );
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "0.0.0.0:40000", config, NULL, 0, &status );
+    if ( !server )
+        printf( "create refused: %s\n", rocketnet_status_name( status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -407,6 +421,14 @@ above 1,411 bytes it promotes to its reliable twin (`ROCKETNET_RELIABILITY_RELIA
 which fragments across packets transparently up to `max_message_bytes`, as RakNet's
 reliability layer does.
 
+The channel is RakNet's ordering channel. RELIABLE_ORDERED,
+RELIABLE_ORDERED_WITH_ACK_RECEIPT and the two SEQUENCED types are ordered or
+sequenced within it, independently of every other channel, and a channel at or
+past the config's `num_channels` refuses them. UNRELIABLE, RELIABLE and the
+other two receipt types ignore it, as RakNet's `ReliabilityLayer::Send` does:
+any channel is accepted for them, never refused, and they travel with no
+channel (`rn_message_object_start` in `sdk/rocketnet_message_server.cpp`).
+
 A send the connection's region has no room for ends the connection with
 `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED`: the server disconnects that
 client, and the client disconnects itself. The send budget governs the wire,
@@ -470,7 +492,7 @@ there is no release call.
 ```c
 #include "rocketnet.h"
 
-void server_frame( struct rocketnet_server_t * server, int client_index, int channel, double time )
+void server_frame( struct rocketnet_server_t * server, uint64_t client_index, int channel, double time )
 {
     /* 1. pump the transport and take in what arrived */
     rocketnet_server_update( server, time );

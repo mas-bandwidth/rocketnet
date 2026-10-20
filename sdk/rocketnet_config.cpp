@@ -261,28 +261,28 @@ int rocketnet_message_validate_config_ex( const struct rocketnet_message_config_
         return 0;
     }
 
-    // The initial timeout must sit inside the configured RTO range.
-    if ( config->rto_min_ms > config->rto_max_ms )
+    // The initial timeout must sit inside the configured resend delay range.
+    if ( config->resend_delay_min_ms > config->resend_delay_max_ms )
     {
-        rocketnet_error( "message config rto_min_ms %d is above rto_max_ms %d", config->rto_min_ms, config->rto_max_ms );
+        rocketnet_error( "message config resend_delay_min_ms %d is above resend_delay_max_ms %d", config->resend_delay_min_ms, config->resend_delay_max_ms );
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;
     }
-    if ( config->rto_initial_ms < config->rto_min_ms || config->rto_initial_ms > config->rto_max_ms )
+    if ( config->resend_delay_initial_ms < config->resend_delay_min_ms || config->resend_delay_initial_ms > config->resend_delay_max_ms )
     {
-        rocketnet_error( "message config rto_initial_ms %d is outside rto_min_ms %d to rto_max_ms %d", config->rto_initial_ms, config->rto_min_ms, config->rto_max_ms );
+        rocketnet_error( "message config resend_delay_initial_ms %d is outside resend_delay_min_ms %d to resend_delay_max_ms %d", config->resend_delay_initial_ms, config->resend_delay_min_ms, config->resend_delay_max_ms );
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;
     }
 
-    // Reserve four initial RTOs before reliable_timeout_ms.
-    const int first_delay_ms = config->rto_initial_ms;
+    // Reserve four initial resend delays before reliable_timeout_ms.
+    const int first_delay_ms = config->resend_delay_initial_ms;
     if ( (int64_t) config->reliable_timeout_ms < (int64_t) ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS * (int64_t) first_delay_ms )
     {
-        rocketnet_error( "message config reliable_timeout_ms %d fits fewer than %d sends of rto_initial_ms %d",
-                         config->reliable_timeout_ms, ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS, config->rto_initial_ms );
+        rocketnet_error( "message config reliable_timeout_ms %d fits fewer than %d sends of resend_delay_initial_ms %d",
+                         config->reliable_timeout_ms, ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS, config->resend_delay_initial_ms );
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;
@@ -311,13 +311,11 @@ const struct rocketnet_config_field_t * rocketnet_server_transport_config_fields
 //                          the env engine
 // ----------------------------------------------------------------
 
-// the public name of a config field's env var: the table row "driver" is
-// the public config's "transport" (the candidate list), so its variable is
-// ROCKETNET_<ENDPOINT>_TRANSPORT. every other row is its own name.
+// the public name of a config field's env var: every row is its own name.
 
 static const char * rocketnet_config_env_field_name( const char * field_name )
 {
-    return strcmp( field_name, "driver" ) == 0 ? "transport" : field_name;
+    return field_name;
 }
 
 bool rocketnet_config_env_var_name( const char * field_name, char * buffer, int buffer_size )
@@ -501,34 +499,6 @@ bool rocketnet_config_apply_env_uint64( const char * transport_name, const char 
     return true;
 }
 
-// the environment names the transport, never the driver, with no alias. the table row
-// "driver" is read only as ROCKETNET_<ENDPOINT>_TRANSPORT. the old driver
-// spellings, process-wide ROCKETNET_DRIVER and per-endpoint
-// ROCKETNET_<ENDPOINT>_DRIVER, are refused aloud, naming the variable to use
-// now, and their values are never applied. (the process-wide
-// ROCKETNET_TRANSPORT is refused by the general process-wide rule in
-// rocketnet_config_apply_env.)
-
-static void rocketnet_config_refuse_driver_names( const char * transport_name, const char * env_name )
-{
-    char endpoint_driver[128];
-    const int written = snprintf( endpoint_driver, sizeof(endpoint_driver), "ROCKETNET_%s_DRIVER", transport_name );
-    if ( written <= 0 || written >= (int) sizeof(endpoint_driver) )
-        endpoint_driver[0] = '\0';
-    for ( int i = 0; endpoint_driver[i] != '\0'; i++ )
-        endpoint_driver[i] = (char) toupper( (unsigned char) endpoint_driver[i] );
-
-    const char * old_names[2] = { "ROCKETNET_DRIVER", endpoint_driver };
-    for ( int i = 0; i < 2; i++ )
-    {
-        if ( old_names[i][0] == '\0' )
-            continue;
-        const char * value = rocketnet_platform_getenv( old_names[i] );
-        if ( value && value[0] != '\0' )
-            rocketnet_error( "%s config refuses %s: the transport is chosen by %s (transport, never driver)", transport_name, old_names[i], env_name );
-    }
-}
-
 // The decode staging seam, compiled into the unit suite's hook library only
 // (ROCKETNET_SECRET_WIPE_TEST_HOOKS): the BYTES case below hands its base64
 // staging to the hook on both of its exits, after the staging is done with,
@@ -557,25 +527,6 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
             rocketnet_error( "%s config field name \"%s\" does not fit an env var name", transport_name, field->name );
             return false;
         }
-
-        // the old process-wide spelling is refused aloud, naming its
-        // per-endpoint replacement, once per create: an operator who still
-        // exports ROCKETNET_<FIELD> is never silently ignored -- their value
-        // is NOT applied, and the error tells them the name to use now.
-
-        char process_wide_name[128];
-        if ( !rocketnet_config_env_var_name( field->name, process_wide_name, sizeof(process_wide_name) ) )
-        {
-            rocketnet_error( "%s config field name \"%s\" does not fit an env var name", transport_name, field->name );
-            return false;
-        }
-
-        const char * process_wide_value = rocketnet_platform_getenv( process_wide_name );
-        if ( process_wide_value && process_wide_value[0] != '\0' )
-            rocketnet_error( "%s config ignores the process-wide %s: use the per-endpoint %s instead", transport_name, process_wide_name, env_name );
-
-        if ( strcmp( field->name, "driver" ) == 0 )
-            rocketnet_config_refuse_driver_names( transport_name, env_name );
 
         const char * value = rocketnet_platform_getenv( env_name );
         if ( !value )
@@ -832,27 +783,27 @@ bool rocketnet_config_validate_public_link_simulator( const char * transport_nam
 }
 
 // ----------------------------------------------------------------
-//                        the driver ladder
+//                        the transport ladder
 // ----------------------------------------------------------------
 
-static int rocketnet_driver_id_from_name( const char * name, int name_length )
+static int rocketnet_transport_id_from_name( const char * name, int name_length )
 {
-    for ( int i = 0; i < ROCKETNET_NUM_DRIVERS; i++ )
+    for ( int i = 0; i < ROCKETNET_NUM_TRANSPORTS; i++ )
     {
-        if ( (int) strlen( rocketnet_driver_name( i ) ) == name_length && memcmp( rocketnet_driver_name( i ), name, (size_t) name_length ) == 0 )
+        if ( (int) strlen( rocketnet_transport_name( i ) ) == name_length && memcmp( rocketnet_transport_name( i ), name, (size_t) name_length ) == 0 )
             return i;
     }
     return -1;
 }
 
-bool rocketnet_driver_ladder_parse( const char * value, const int * available, int num_available, struct rocketnet_driver_ladder_t * ladder )
+bool rocketnet_transport_ladder_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_ladder_t * ladder )
 {
     rocketnet_assert( available );
     rocketnet_assert( num_available > 0 );
-    rocketnet_assert( num_available <= ROCKETNET_MAX_DRIVER_CANDIDATES );
+    rocketnet_assert( num_available <= ROCKETNET_MAX_TRANSPORT_CANDIDATES );
     rocketnet_assert( ladder );
 
-    memset( ladder, 0, sizeof(struct rocketnet_driver_ladder_t) );
+    memset( ladder, 0, sizeof(struct rocketnet_transport_ladder_t) );
 
     // auto -- explicitly, or as the zero value -- expands to the
     // platform's recommended order for this endpoint
@@ -873,9 +824,9 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
 
     if ( is_auto )
     {
-        // Pin-only drivers are never chosen by auto; a pin selects them.
+        // Pin-only transports are never chosen by auto; a pin selects them.
         for ( int i = 0; i < num_available; i++ )
-            if ( !rocketnet_driver_pin_only( available[i] ) )
+            if ( !rocketnet_transport_pin_only( available[i] ) )
                 ladder->candidates[ladder->num_candidates++] = available[i];
         return true;
     }
@@ -898,7 +849,7 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
 
         if ( name_length == 0 )
         {
-            rocketnet_error( "empty transport name in transport list \"%s\" (valid names: %s)", value, rocketnet_driver_names() );
+            rocketnet_error( "empty transport name in transport list \"%s\" (valid names: %s)", value, rocketnet_transport_names() );
             return false;
         }
 
@@ -908,31 +859,31 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
             return false;
         }
 
-        const int driver = rocketnet_driver_id_from_name( name, name_length );
-        if ( driver < 0 )
+        const int transport = rocketnet_transport_id_from_name( name, name_length );
+        if ( transport < 0 )
         {
-            rocketnet_error( "unknown transport \"%.*s\" in transport list \"%s\" (valid names: %s)", name_length, name, value, rocketnet_driver_names() );
+            rocketnet_error( "unknown transport \"%.*s\" in transport list \"%s\" (valid names: %s)", name_length, name, value, rocketnet_transport_names() );
             return false;
         }
 
-        bool driver_available = false;
+        bool transport_available = false;
         for ( int i = 0; i < num_available; i++ )
         {
-            if ( available[i] == driver )
+            if ( available[i] == transport )
             {
-                driver_available = true;
+                transport_available = true;
                 break;
             }
         }
 
-        if ( driver_available )
+        if ( transport_available )
         {
-            if ( ladder->num_candidates >= ROCKETNET_MAX_DRIVER_CANDIDATES )
+            if ( ladder->num_candidates >= ROCKETNET_MAX_TRANSPORT_CANDIDATES )
             {
-                rocketnet_error( "transport list \"%s\" has too many candidates (%d maximum)", value, ROCKETNET_MAX_DRIVER_CANDIDATES );
+                rocketnet_error( "transport list \"%s\" has too many candidates (%d maximum)", value, ROCKETNET_MAX_TRANSPORT_CANDIDATES );
                 return false;
             }
-            ladder->candidates[ladder->num_candidates++] = driver;
+            ladder->candidates[ladder->num_candidates++] = transport;
         }
         else
         {
@@ -941,12 +892,12 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
             // skip list is bounded like the candidate list -- overflowing
             // it silently would under-name the exhausted report.
 
-            if ( ladder->num_skipped >= ROCKETNET_MAX_DRIVER_CANDIDATES )
+            if ( ladder->num_skipped >= ROCKETNET_MAX_TRANSPORT_CANDIDATES )
             {
-                rocketnet_error( "transport list \"%s\" has too many skipped names (%d maximum)", value, ROCKETNET_MAX_DRIVER_CANDIDATES );
+                rocketnet_error( "transport list \"%s\" has too many skipped names (%d maximum)", value, ROCKETNET_MAX_TRANSPORT_CANDIDATES );
                 return false;
             }
-            ladder->skipped[ladder->num_skipped++] = driver;
+            ladder->skipped[ladder->num_skipped++] = transport;
             rocketnet_info( "transport %.*s is not available here. skipped", name_length, name );
         }
 
@@ -956,7 +907,7 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
         cursor = comma + 1;
     }
 
-    // a list whose every name was skipped names no driver for this endpoint
+    // a list whose every name was skipped names no transport for this endpoint
     // at all -- a fleet-wide line read by an endpoint it was not addressing
     // (ROCKETNET_SERVER_TRANSPORT=gso and ROCKETNET_CLIENT_TRANSPORT=gso on a box that also runs a client). bricking
     // that endpoint would break the one-line-deploys-everywhere guarantee
@@ -971,16 +922,16 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
         auto_names[0] = '\0';
         for ( int i = 0; i < num_available; i++ )
         {
-            if ( rocketnet_driver_pin_only( available[i] ) ) continue;
+            if ( rocketnet_transport_pin_only( available[i] ) ) continue;
             const size_t used = strlen( auto_names );
-            snprintf( auto_names + used, sizeof(auto_names) - used, "%s%s", used > 0 ? "," : "", rocketnet_driver_name( available[i] ) );
+            snprintf( auto_names + used, sizeof(auto_names) - used, "%s%s", used > 0 ? "," : "", rocketnet_transport_name( available[i] ) );
         }
 
         rocketnet_warn( "transport list \"%s\" names no transport for this endpoint on this platform. using auto (%s)", value, auto_names );
 
-        // Pin-only drivers are never chosen by auto; a pin selects them.
+        // Pin-only transports are never chosen by auto; a pin selects them.
         for ( int i = 0; i < num_available; i++ )
-            if ( !rocketnet_driver_pin_only( available[i] ) )
+            if ( !rocketnet_transport_pin_only( available[i] ) )
                 ladder->candidates[ladder->num_candidates++] = available[i];
     }
 

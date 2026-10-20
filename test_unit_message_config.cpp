@@ -366,11 +366,11 @@ static void mc_config( rocketnet_message_config_t * config )
     config->send_buffer_bytes = 65536;
     config->send_queue_messages = 64;
     config->packets_in_flight = 64;
-    config->max_packets_per_update = 8;
+    config->packets_per_update = 8;
     config->unreliable_deliveries = 64;
-    config->rto_initial_ms = 100;
-    config->rto_min_ms = 20;
-    config->rto_max_ms = 400;
+    config->resend_delay_initial_ms = 100;
+    config->resend_delay_min_ms = 20;
+    config->resend_delay_max_ms = 400;
     config->reliable_timeout_ms = 120000;
 }
 
@@ -453,31 +453,32 @@ struct mc_received_t
 
 static void mc_drain_server( mc_pair_t * pair, std::vector<mc_received_t> * out )
 {
-    for ( int slot = 0; slot < MC_MAX_SLOTS; slot++ )
-        for ( int channel = 0; channel < 4; channel++ )
-        {
-            const uint8_t * data = NULL;
-            int bytes = 0;
-            while ( rocketnet_message_server_receive( pair->server, slot, channel, &data, &bytes ) )
-            {
-                mc_received_t r;
-                r.slot = slot;
-                r.channel = channel;
-                r.bytes.assign( data, data + bytes );
-                if ( out )
-                    out->push_back( r );
-                rocketnet_message_server_release( pair->server, slot, data );
-            }
-        }
+    // the server's one receive queue across every slot: each message names
+    // its sender's slot and the channel it was delivered on
+    const uint8_t * data = NULL;
+    int bytes = 0;
+    int slot = 0;
+    int channel = 0;
+    while ( rocketnet_message_server_receive( pair->server, &slot, &channel, &data, &bytes ) )
+    {
+        check( slot >= 0 && slot < MC_MAX_SLOTS );
+        mc_received_t r;
+        r.slot = slot;
+        r.channel = channel;
+        r.bytes.assign( data, data + bytes );
+        if ( out )
+            out->push_back( r );
+        rocketnet_message_server_release( pair->server, data );
+    }
 }
 
 static void mc_drain_client( rocketnet_message_client_t * client, std::vector<mc_received_t> * out )
 {
-    for ( int channel = 0; channel < 4; channel++ )
     {
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_message_client_receive( client, channel, &data, &bytes ) )
+        int channel = 0;
+        while ( rocketnet_message_client_receive( client, &channel, &data, &bytes ) )
         {
             mc_received_t r;
             r.slot = 0;
@@ -839,9 +840,9 @@ static void config_vector_is_library_default()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    check( config.rto_initial_ms == 2000 );
-    check( config.rto_min_ms == 0 );
-    check( config.rto_max_ms == 2000 );
+    check( config.resend_delay_initial_ms == 2000 );
+    check( config.resend_delay_min_ms == 0 );
+    check( config.resend_delay_max_ms == 2000 );
 
     // the body rn_ordered_announce_config writes for a NULL/default config
     struct rocketnet_message_config_body_t body;

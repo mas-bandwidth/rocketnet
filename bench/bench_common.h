@@ -1,9 +1,9 @@
 /*
-    rocketnet driver bench: shared measurement scaffolding (#81)
+    rocketnet transport bench: shared measurement scaffolding (#81)
 
     The harnesses are minimal datagram-level sender/receiver pairs at game
     shape: 1000 logical flows, seam-sized batches of 32, a deterministic
-    cycle of game-like packet sizes. They measure the driver, not the
+    cycle of game-like packet sizes. They measure the transport, not the
     protocol -- no rocketnet machinery is linked.
 
     Discipline (per the #81 plan): 30 s warm-up discarded, five 60 s
@@ -142,7 +142,7 @@ static inline void bench_fatal( const char * call, const char * detail )
     Anything else -- ENOTCONN, EBADF, ENOBUFS on the receive side, a
     kernel that does not implement the call -- means the receiver is not
     receiving, and a receiver that is not receiving reports pps=0, which
-    reads exactly like a slow driver. It aborts instead.
+    reads exactly like a slow transport. It aborts instead.
 */
 
 /* called after EVERY receive that yielded no data, with EAGAIN standing for
@@ -177,7 +177,7 @@ static inline void bench_receive_refused_or_empty( const char * call, int error 
     control always has. Anything else is the kernel refusing the shape of
     the call -- EINVAL from a host with no UDP_SEGMENT is the case #98
     names -- and a run that meets a long unbroken string of those is not
-    measuring a slow driver, it is measuring an absent one.
+    measuring a slow transport, it is measuring an absent one.
 */
 
 #define BENCH_SEND_REFUSAL_LIMIT 64
@@ -219,7 +219,7 @@ static inline int bench_send_observe( struct bench_send_health_t * health, const
         return 0;
     char detail[224];
     snprintf( detail, sizeof(detail),
-              "%llu sends in a row refused with errno %d (%s) -- this host cannot do what this harness measures, and a silent spin here reports pps=0 as if the driver were merely slow",
+              "%llu sends in a row refused with errno %d (%s) -- this host cannot do what this harness measures, and a silent spin here reports pps=0 as if the transport were merely slow",
               (unsigned long long) health->consecutive_refusals, error, strerror( error ) );
     bench_fatal( call, detail );
     return 0;

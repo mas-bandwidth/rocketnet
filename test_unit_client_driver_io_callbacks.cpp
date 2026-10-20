@@ -12,7 +12,7 @@ int g_create_calls = 0;
 int g_destroy_calls = 0;
 int g_fake_instance = 0;
 
-void * fake_create( void *, const rocketnet_client_driver_config_t *, rocketnet_address_t * )
+void * fake_create( void *, const rocketnet_client_transport_io_config_t *, rocketnet_address_t * )
 {
     ++g_create_calls;
     return &g_fake_instance;
@@ -41,9 +41,9 @@ void fake_wake( void * )
 {
 }
 
-rocketnet_client_driver_operations_t base_table()
+rocketnet_client_transport_io_operations_t base_table()
 {
-    rocketnet_client_driver_operations_t ops = {};
+    rocketnet_client_transport_io_operations_t ops = {};
     ops.create = fake_create;
     ops.destroy = fake_destroy;
     ops.send = fake_send;
@@ -52,70 +52,70 @@ rocketnet_client_driver_operations_t base_table()
 }
 }
 
-static void client_driver_open_refuses_wait_without_wake()
+static void client_transport_io_open_refuses_wait_without_wake()
 {
     g_create_calls = 0;
     g_destroy_calls = 0;
-    rocketnet_client_driver_operations_t ops = base_table();
+    rocketnet_client_transport_io_operations_t ops = base_table();
     ops.wait = fake_wait;
-    const rocketnet_client_driver_config_t config = { "fake", NULL };
+    const rocketnet_client_transport_io_config_t config = { "fake", NULL };
     rocketnet_address_t bind = {};
-    rocketnet_client_driver_t driver = {};
-    rocketnet_unit_check(!rocketnet_client_driver_open(&ops, NULL, &config, &bind, &driver));
+    rocketnet_client_transport_io_t transport = {};
+    rocketnet_unit_check(!rocketnet_client_transport_io_open(&ops, NULL, &config, &bind, &transport));
     rocketnet_unit_check(g_create_calls == 0);
-    rocketnet_unit_check(driver.instance == NULL);
-    rocketnet_unit_check(driver.operations == NULL);
+    rocketnet_unit_check(transport.instance == NULL);
+    rocketnet_unit_check(transport.operations == NULL);
 }
-REGISTER_UNIT_TEST(client_driver_open_refuses_wait_without_wake);
+REGISTER_UNIT_TEST(client_transport_io_open_refuses_wait_without_wake);
 
-static void client_driver_open_refuses_wake_without_wait()
+static void client_transport_io_open_refuses_wake_without_wait()
 {
     g_create_calls = 0;
     g_destroy_calls = 0;
-    rocketnet_client_driver_operations_t ops = base_table();
+    rocketnet_client_transport_io_operations_t ops = base_table();
     ops.wake = fake_wake;
-    const rocketnet_client_driver_config_t config = { "fake", NULL };
+    const rocketnet_client_transport_io_config_t config = { "fake", NULL };
     rocketnet_address_t bind = {};
-    rocketnet_client_driver_t driver = {};
-    rocketnet_unit_check(!rocketnet_client_driver_open(&ops, NULL, &config, &bind, &driver));
+    rocketnet_client_transport_io_t transport = {};
+    rocketnet_unit_check(!rocketnet_client_transport_io_open(&ops, NULL, &config, &bind, &transport));
     rocketnet_unit_check(g_create_calls == 0);
-    rocketnet_unit_check(driver.instance == NULL);
-    rocketnet_unit_check(driver.operations == NULL);
+    rocketnet_unit_check(transport.instance == NULL);
+    rocketnet_unit_check(transport.operations == NULL);
 }
-REGISTER_UNIT_TEST(client_driver_open_refuses_wake_without_wait);
+REGISTER_UNIT_TEST(client_transport_io_open_refuses_wake_without_wait);
 
-static void client_driver_open_accepts_wait_and_wake()
+static void client_transport_io_open_accepts_wait_and_wake()
 {
     g_create_calls = 0;
     g_destroy_calls = 0;
-    rocketnet_client_driver_operations_t ops = base_table();
+    rocketnet_client_transport_io_operations_t ops = base_table();
     ops.wait = fake_wait;
     ops.wake = fake_wake;
-    const rocketnet_client_driver_config_t config = { "fake", NULL };
+    const rocketnet_client_transport_io_config_t config = { "fake", NULL };
     rocketnet_address_t bind = {};
-    rocketnet_client_driver_t driver = {};
-    rocketnet_unit_check(rocketnet_client_driver_open(&ops, NULL, &config, &bind, &driver));
+    rocketnet_client_transport_io_t transport = {};
+    rocketnet_unit_check(rocketnet_client_transport_io_open(&ops, NULL, &config, &bind, &transport));
     rocketnet_unit_check(g_create_calls == 1);
-    rocketnet_unit_check(driver.instance == &g_fake_instance);
-    rocketnet_client_driver_close(&driver);
+    rocketnet_unit_check(transport.instance == &g_fake_instance);
+    rocketnet_client_transport_io_close(&transport);
     rocketnet_unit_check(g_destroy_calls == 1);
-    rocketnet_unit_check(driver.instance == NULL);
+    rocketnet_unit_check(transport.instance == NULL);
 }
-REGISTER_UNIT_TEST(client_driver_open_accepts_wait_and_wake);
+REGISTER_UNIT_TEST(client_transport_io_open_accepts_wait_and_wake);
 
-static void client_driver_open_accepts_base_four()
+static void client_transport_io_open_accepts_base_four()
 {
     g_create_calls = 0;
     g_destroy_calls = 0;
-    rocketnet_client_driver_operations_t ops = base_table();
-    const rocketnet_client_driver_config_t config = { "fake", NULL };
+    rocketnet_client_transport_io_operations_t ops = base_table();
+    const rocketnet_client_transport_io_config_t config = { "fake", NULL };
     rocketnet_address_t bind = {};
-    rocketnet_client_driver_t driver = {};
-    rocketnet_unit_check(rocketnet_client_driver_open(&ops, NULL, &config, &bind, &driver));
+    rocketnet_client_transport_io_t transport = {};
+    rocketnet_unit_check(rocketnet_client_transport_io_open(&ops, NULL, &config, &bind, &transport));
     rocketnet_unit_check(g_create_calls == 1);
-    rocketnet_unit_check(driver.instance == &g_fake_instance);
-    rocketnet_client_driver_close(&driver);
+    rocketnet_unit_check(transport.instance == &g_fake_instance);
+    rocketnet_client_transport_io_close(&transport);
     rocketnet_unit_check(g_destroy_calls == 1);
-    rocketnet_unit_check(driver.instance == NULL);
+    rocketnet_unit_check(transport.instance == NULL);
 }
-REGISTER_UNIT_TEST(client_driver_open_accepts_base_four);
+REGISTER_UNIT_TEST(client_transport_io_open_accepts_base_four);

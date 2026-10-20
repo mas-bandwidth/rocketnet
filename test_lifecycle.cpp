@@ -318,9 +318,12 @@ static void check_send_handoff()
     check(second >= 0 && second != first);
     for (int i = 0; i < 100; ++i) packets[second][i] = i + 101;
     copied[first] = 32;
-    queue.publish();
+    // rocketnet_send_handoff_t::publish keeps the producer generation while
+    // the worker owns the other one, so the second flush queues nothing and
+    // the producer keeps the same storage, never a queued buffer.
+    check(!queue.publish());
     for (int i = 0; i < 10000; ++i)
-        check(queue.acquire() == -1 && queue.front() == first);
+        check(queue.acquire() == second && queue.front() == first && queue.count == 1);
     int expected = 33;
     while (queue.front() >= 0)
     {
@@ -334,6 +337,11 @@ static void check_send_handoff()
             queue.retire();
             if (index == first)
             {
+                // rocketnet_server_transport_send_packets retries XDP
+                // publication on every call; that next flush publishes the
+                // retained generation once the first is retired.
+                check(queue.front() == -1 && queue.acquire() == second);
+                check(queue.publish());
                 check(queue.front() == second);
                 check(queue.acquire() == first);
                 memset(packets[first], 0, sizeof(packets[first]));
@@ -418,11 +426,13 @@ static void check_component_create_sweeps( allocator_state & state )
         [&]() { return rocketnet_encryption_map_create( &state, 16 ); },
         []( rocketnet_encryption_map_t * m ) { rocketnet_encryption_map_destroy( m ); } ) == 6 );
 
-    // 2. rocketnet_used_token_history_create: 7 allocations (fail N=1..7, succeed N=8).
+    // 2. rocketnet_used_token_history_create: 17 allocations (fail N=1..17, succeed N=18).
+    //    the history holder plus two independent eight-allocation tables, the
+    //    response-binding table and the request-claim table.
     check( sweep_component_create<rocketnet_used_token_history_t>(
         state,
         [&]() { return rocketnet_used_token_history_create( &state, 16 ); },
-        []( rocketnet_used_token_history_t * h ) { rocketnet_used_token_history_destroy( h ); } ) == 7 );
+        []( rocketnet_used_token_history_t * h ) { rocketnet_used_token_history_destroy( h ); } ) == 17 );
 
     // 4. rocketnet_client_slots_create: 9 allocations (fail N=1..9, succeed N=10).
     check( sweep_component_create<rocketnet_client_slots_t>(
@@ -571,7 +581,7 @@ static void check_server_memory_budget( allocator_state & state )
     memset( config.server_secret_key, 0xCD, 32 );
     memset( config.backend_public_key, 0xEF, 32 );
     config.protocol_id = 1;
-    strcpy( config.driver, "portable" );
+    strcpy( config.transport, "portable" );
     const uint64_t plan = rocketnet_server_transport_required_memory( &config, "portable" );
     check( plan > 0 );
 
@@ -649,7 +659,7 @@ int main()
     check(host_estimate.total_bytes >= rocketnet_server_transport_required_memory(NULL, "portable"));
     check(rocketnet_server_transport_host_memory_estimate(&memory_config, "portable", &host_estimate));
 
-    // The client transport's plan: defaults, unknown/NULL/auto drivers and an
+    // The client transport's plan: defaults, unknown/NULL/auto transports and an
     // overflowing geometry all refuse to 0, a larger max payload plans larger,
     // and planning allocates nothing. A create-time counting-allocator match
     // needs a live socket, so it is left to bench/transport_memory.cpp.

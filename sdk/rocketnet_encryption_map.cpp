@@ -127,6 +127,12 @@ int rocketnet_encryption_map_find( const struct rocketnet_encryption_map_t * map
     return -1;
 }
 
+int rocketnet_encryption_map_full( const struct rocketnet_encryption_map_t * map )
+{
+    rocketnet_assert( map );
+    return map->free_head == -1;
+}
+
 int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,
                                   const struct rocketnet_address_t * address,
                                   double handshake_deadline )

@@ -48,7 +48,9 @@ int main( void )
     // the example states the size it needs rather than relying on that default
     server_config.max_message_bytes = LIMIT_BYTES;
     server_config.receive_ring_bytes = LIMIT_BYTES;
-    server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, &create_status );
+    if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -63,7 +65,9 @@ int main( void )
     // the token names the server and carries the keys; this development token
     // expires thirty seconds after its timestamp, so it uses one far ahead
     CHECK( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
-    client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
+    client = rocketnet_client_create( NULL, &client_config, NULL, 0, &create_status_2 );
+    if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
@@ -83,14 +87,24 @@ int main( void )
         // (2) receive and release every received message, checking each byte
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
-            rocketnet_client_release_message( client, data );
-        for ( int i = 0; i < max_clients; i++ )
+        struct rocketnet_message_batch_t batch;
+        while ( rocketnet_client_receive_messages( client, &batch ) )
         {
-            if ( !rocketnet_server_client_connected( server, i ) )
-                continue;
-            while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
+            for ( int i = 0; i < batch.num_messages; i++ )
             {
+                data = batch.data[i];
+                bytes = batch.bytes[i];
+            }
+        }
+        uint64_t sender = 0;
+        struct rocketnet_message_batch_t incoming;
+        while ( rocketnet_server_receive_messages( server, &incoming ) )
+        {
+            for ( int i = 0; i < incoming.num_messages; i++ )
+            {
+                data = incoming.data[i];
+                bytes = incoming.bytes[i];
+                sender = incoming.client_index[i];
                 if ( bytes == BIG_BYTES )
                 {
                     CHECK( memcmp( data, expected, BIG_BYTES ) == 0 );
@@ -98,7 +112,6 @@ int main( void )
                     printf( "server received the %d-byte reliable message intact after %.3f s\n",
                             bytes, rocketnet_time() - start - big_sent_at );
                 }
-                rocketnet_server_release_message( server, i, data );
             }
         }
         // (3) run the game simulation for the frame: nothing to simulate here

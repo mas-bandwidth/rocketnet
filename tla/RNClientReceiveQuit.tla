@@ -2,7 +2,7 @@
 (***************************************************************************)
 (* The client receive thread's quit-and-wake handshake with destroy, as   *)
 (* rocketnet-client-destroy-joins-receive-thread built it.  This is the   *)
-(* thread that create starts when the granted driver has no wait and wake *)
+(* thread that create starts when the granted transport has no wait and wake *)
 (* (sdk/rocketnet_client_transport.cpp:973); the I/O thread of the other  *)
 (* branch is RNClientIo's.                                                *)
 (*                                                                         *)

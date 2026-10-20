@@ -138,7 +138,7 @@ struct rocketnet_server_t * rocketnet_server_adopt( void * context, struct rocke
     #endif
 #elif defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
     // the BSDs verified per #81 ("Free, open. Net."): one platform bucket,
-    // pure POSIX, portable driver only -- the linux bucket keeps netlink,
+    // pure POSIX, portable transport only -- the linux bucket keeps netlink,
     // GSO and XDP, none of which exist here.
     #define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_BSD
 #else
@@ -390,7 +390,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES - ROCKETNET_MAX_PAY
 // declared ONCE, in a table below: field name, type, default, valid range.
 // Everything else derives from the table mechanically -- the struct field,
 // the environment variable name (ROCKETNET_ prefix plus the endpoint and
-// field name uppercased: cfg.driver -> ROCKETNET_SERVER_TRANSPORT or
+// field name uppercased: cfg.transport -> ROCKETNET_SERVER_TRANSPORT or
 // ROCKETNET_CLIENT_TRANSPORT), the parse, the validation,
 // and the field descriptors a test walks to prove every field round-trips
 // from environment. Adding a field here IS adding it everywhere; there is
@@ -416,7 +416,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES - ROCKETNET_MAX_PAY
 #define ROCKETNET_CONFIG_ZERO_BYTES             {0}
 
 // The client transport config table: filter value, fragmentation shape
-// (zero means the defaults above), and the driver candidate list.
+// (zero means the defaults above), and the transport candidate list.
 //
 //   INT_FIELD( name, default, min, max, flags )
 //   UINT64_FIELD( name, default, flags )
@@ -428,7 +428,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES - ROCKETNET_MAX_PAY
     INT_FIELD(    max_payload_bytes,     0,                              ROCKETNET_MAX_PAYLOAD_BYTES,                                                       \
                                                                          ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     INT_FIELD(    num_reassembly_slots,  0,                              1, ROCKETNET_MAX_FRAGMENTS,                            ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
-    STRING_FIELD( driver,                ROCKETNET_DRIVER_STRING_LENGTH, "auto",                                               0 )                          \
+    STRING_FIELD( transport,                ROCKETNET_TRANSPORT_STRING_LENGTH, "auto",                                               0 )                          \
     UINT64_FIELD( game_clock_epoch,      0,                                                                                    0 )
 
 #define ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V2( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                    \
@@ -487,7 +487,7 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 
 // The server transport config table -- the single declaration everything
 // derives from, per the config system comment above. num_xdp_queues' range
-// here is structural; the tighter bounds are per driver, enforced at the
+// here is structural; the tighter bounds are per transport, enforced at the
 // ladder rung (ROCKETNET_GSO_MAX_QUEUES).
 
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                       \
@@ -502,7 +502,7 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
     INT_FIELD(    max_payload_bytes,     0,                              ROCKETNET_MAX_PAYLOAD_BYTES,                                                       \
                                                                          ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     INT_FIELD(    num_reassembly_slots,  0,                              1, ROCKETNET_MAX_FRAGMENTS,                            ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
-    STRING_FIELD( driver,                ROCKETNET_DRIVER_STRING_LENGTH, "auto",                                               0 )                          \
+    STRING_FIELD( transport,                ROCKETNET_TRANSPORT_STRING_LENGTH, "auto",                                               0 )                          \
     STRING_FIELD( public_address,        ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              0 )                          \
     INT_FIELD(    max_timeout_seconds,   60,                             1, 3600,                                              0 )                          \
     INT_FIELD(    handshake_deadline_seconds, 5,                         1, 60,                                                0 )                          \
@@ -512,7 +512,8 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
     INT_FIELD(    simulated_jitter_ms,         0,                         0, 60000,                                            0 )                          \
     INT_FIELD(    simulated_duplicate_percent, 0,                         0, 100,                                              0 )                          \
     INT_FIELD(    simulated_drop_every_nth,    0,                         2, 1000000,                                          ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
-    INT_FIELD(    simulated_reverse_window,    0,                         2, 64,                                               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT )
+    INT_FIELD(    simulated_reverse_window,    0,                         2, 64,                                               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
+    STRING_FIELD( second_public_address, ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              0 )
 
 /** @brief Size in bytes of the server transport config before game_clock_epoch. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, handshake_deadline_seconds ) + sizeof( int ), sizeof( uint64_t ) )
@@ -520,10 +521,12 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, game_clock_epoch ) + sizeof( uint64_t ), sizeof( uint64_t ) )
 /** @brief Size in bytes of the server transport config with the public link simulator fields, before the deterministic drop and reverse patterns. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2_PRE_PATTERNS ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, simulated_duplicate_percent ) + sizeof( int ), sizeof( uint64_t ) )
-/** @brief Current known server transport config size, in bytes: the deterministic drop and reverse patterns. */
+/** @brief Server transport config revision 2, in bytes: the deterministic drop and reverse patterns. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, simulated_reverse_window ) + sizeof( int ), sizeof( uint64_t ) )
-/** @brief Current known server transport config size, in bytes. */
-#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2_PRE_PATTERNS, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2
+/** @brief Server transport config revision 3, in bytes: the other family's public address, appended. */
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, second_public_address ) + ROCKETNET_MAX_ADDRESS_STRING_LENGTH, sizeof( uint64_t ) )
+/** @brief Known server transport config sizes, in bytes. */
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2_PRE_PATTERNS, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3
 
 #if ROCKETNET_MAX_CHANNELS < 1 || ROCKETNET_MAX_CHANNELS > 65536
 #error ROCKETNET_MAX_CHANNELS must be between 1 and 65536
@@ -549,13 +552,13 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
     INT_FIELD( send_buffer_bytes,      800000,  12288, 1 << 28,                0 )                                         \
     INT_FIELD( send_queue_messages,      1024,     16, 1 << 20,                0 )                                         \
     INT_FIELD( packets_in_flight,         256,     16, 1 << 16,                0 )                                         \
-    INT_FIELD( max_packets_per_update,    256,      1, 1024,                   0 )                                         \
+    INT_FIELD( packets_per_update,    256,      1, 1024,                   0 )                                         \
     INT_FIELD( unreliable_deliveries,     256,      1, 1 << 16,                0 )   /* per connection per update */       \
     INT_FIELD( sequenced_holds,            16,      0, 4096,                   0 )                                         \
     INT_FIELD( receipt_ring,              256,     16, 1 << 16,                0 )                                         \
-    INT_FIELD( rto_initial_ms,           2000,     10, 60000,                  0 )                                         \
-    INT_FIELD( rto_min_ms,                  0,      0, 60000,                  0 )                                         \
-    INT_FIELD( rto_max_ms,               2000,     10, 60000,                  0 )                                         \
+    INT_FIELD( resend_delay_initial_ms,           2000,     10, 60000,                  0 )                                         \
+    INT_FIELD( resend_delay_min_ms,                  0,      0, 60000,                  0 )                                         \
+    INT_FIELD( resend_delay_max_ms,               2000,     10, 60000,                  0 )                                         \
     INT_FIELD( reliable_timeout_ms,     10000,   1000, 600000,                 0 )                                         \
     INT_FIELD( client_send_kbps,         ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, INT32_MIN, ROCKETNET_SEND_BUDGET_MAX_KBPS, 0 ) \
     INT_FIELD( server_send_kbps,         ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, INT32_MIN, ROCKETNET_SEND_BUDGET_MAX_KBPS, 0 )

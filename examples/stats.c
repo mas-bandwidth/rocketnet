@@ -50,21 +50,32 @@ static int run_connect_and_traffic( struct rocketnet_server_t * server, struct r
         {
             const uint8_t * data = NULL;
             int bytes = 0;
-            while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
-                rocketnet_client_release_message( client, data );
-            for ( int i = 0; i < max_clients; i++ )
+            struct rocketnet_message_batch_t batch;
+            while ( rocketnet_client_receive_messages( client, &batch ) )
             {
-                if ( !rocketnet_server_client_connected( server, i ) )
-                    continue;
-                while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
+                for ( int i = 0; i < batch.num_messages; i++ )
                 {
-                    uint8_t * out = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
-                    if ( out )
+                    data = batch.data[i];
+                    bytes = batch.bytes[i];
+                }
+            }
+            {
+                uint64_t i = 0;
+                struct rocketnet_message_batch_t incoming;
+                while ( rocketnet_server_receive_messages( server, &incoming ) )
+                {
+                    for ( int j = 0; j < incoming.num_messages; j++ )
                     {
-                        memcpy( out, data, (size_t) bytes );
-                        rocketnet_server_finish_message( server, i, bytes );
+                        data = incoming.data[j];
+                        bytes = incoming.bytes[j];
+                        i = incoming.client_index[j];
+                        uint8_t * out = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
+                        if ( out )
+                        {
+                            memcpy( out, data, (size_t) bytes );
+                            rocketnet_server_finish_message( server, i, bytes );
+                        }
                     }
-                    rocketnet_server_release_message( server, i, data );
                 }
             }
         }
@@ -108,7 +119,9 @@ int main( void )
     rocketnet_server_dev_config( &server_config );
     server_config.max_clients = 2;
     server_config.transport = "loopback";
-    server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, &create_status );
+    if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -119,7 +132,9 @@ int main( void )
     CHECK( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     rocketnet_client_default_config( &client_config );
     client_config.transport = "loopback";
-    client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
+    client = rocketnet_client_create( NULL, &client_config, NULL, 0, &create_status_2 );
+    if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );

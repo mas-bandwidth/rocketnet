@@ -138,7 +138,7 @@ jobs:
           # transport-matrix socket cases, as .github/workflows/ci.yml:322-373 does
           for transport in portable msgx; do
             for case in test_transport_udp_loopback test_transport_ipv6_loopback \
-                        test_transport_dual_stack_ipv4_client driver_env_pin_is_honoured; do
+                        test_transport_dual_stack_ipv4_client transport_env_pin_is_honoured; do
               env ROCKETNET_SERVER_TRANSPORT=$transport ROCKETNET_CLIENT_TRANSPORT=$transport \
                 arch -x86_64 ./bin/functional --run "$case"
             done

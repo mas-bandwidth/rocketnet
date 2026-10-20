@@ -70,14 +70,14 @@ base64_plus="+"
 base64_slash="/"
 base64_key_32="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
-# --- the config parses (sdk/rocketnet_config.cpp driver table) ---
+# --- the config parses (sdk/rocketnet_config.cpp transport table) ---
 
-driver_auto="auto"
-driver_portable="portable"
-driver_gso="gso"
-driver_xdp="xdp"
-driver_msgx="msgx"
-driver_ladder="xdp,gso,portable"
+transport_auto="auto"
+transport_portable="portable"
+transport_gso="gso"
+transport_xdp="xdp"
+transport_msgx="msgx"
+transport_ladder="xdp,gso,portable"
 
 # --- message records (sdk/rocketnet_message.h, STANDARD.md _Messages_) ---
 

@@ -501,6 +501,83 @@ ACK/keepalive clients while the buffered transport accepts only 256 controls per
 batch. Its elapsed time is a diagnostic for that synthetic workload, not a packet
 rate or a frame/send/ACK cadence requirement.
 
+## Runtime environment inventory
+
+These are the environment variables read by the SDK. Each setting has one name;
+the client and server forms are separate settings. The unit inventory checks this
+list in both directions against the SDK reads and the public header.
+
+* Environment: ROCKETNET_CLIENT_FILTER_VALUE
+* Environment: ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES
+* Environment: ROCKETNET_CLIENT_NUM_REASSEMBLY_SLOTS
+* Environment: ROCKETNET_CLIENT_STEP_DRIVEN
+* Environment: ROCKETNET_CLIENT_TRANSPORT
+* Environment: ROCKETNET_CLIENT_SEND_KBPS
+* Environment: ROCKETNET_CLIENT_NUM_CHANNELS
+* Environment: ROCKETNET_CLIENT_WINDOW_MESSAGES
+* Environment: ROCKETNET_CLIENT_RECEIVE_RING_BYTES
+* Environment: ROCKETNET_CLIENT_MAX_MESSAGE_BYTES
+* Environment: ROCKETNET_CLIENT_SEND_BUFFER_BYTES
+* Environment: ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES
+* Environment: ROCKETNET_CLIENT_PACKETS_IN_FLIGHT
+* Environment: ROCKETNET_CLIENT_PACKETS_PER_UPDATE
+* Environment: ROCKETNET_CLIENT_UNRELIABLE_DELIVERIES
+* Environment: ROCKETNET_CLIENT_SEQUENCED_HOLDS
+* Environment: ROCKETNET_CLIENT_RECEIPT_RING
+* Environment: ROCKETNET_CLIENT_RESEND_DELAY_INITIAL_MS
+* Environment: ROCKETNET_CLIENT_RESEND_DELAY_MIN_MS
+* Environment: ROCKETNET_CLIENT_RESEND_DELAY_MAX_MS
+* Environment: ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS
+* Environment: ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT
+* Environment: ROCKETNET_CLIENT_SIMULATED_LATENCY_MS
+* Environment: ROCKETNET_CLIENT_SIMULATED_JITTER_MS
+* Environment: ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT
+* Environment: ROCKETNET_SERVER_PROTOCOL_ID
+* Environment: ROCKETNET_SERVER_MAX_CLIENTS
+* Environment: ROCKETNET_SERVER_FILTER_VALUE
+* Environment: ROCKETNET_SERVER_BACKEND_PUBLIC_KEY
+* Environment: ROCKETNET_SERVER_SERVER_PUBLIC_KEY
+* Environment: ROCKETNET_SERVER_SERVER_SECRET_KEY
+* Environment: ROCKETNET_SERVER_NUM_XDP_QUEUES
+* Environment: ROCKETNET_SERVER_NUM_OS_CPUS
+* Environment: ROCKETNET_SERVER_MAX_PAYLOAD_BYTES
+* Environment: ROCKETNET_SERVER_NUM_REASSEMBLY_SLOTS
+* Environment: ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS
+* Environment: ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS
+* Environment: ROCKETNET_SERVER_TRANSPORT
+* Environment: ROCKETNET_SERVER_PUBLIC_ADDRESS
+* Environment: ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS
+* Environment: ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS
+* Environment: ROCKETNET_SERVER_NUM_CHANNELS
+* Environment: ROCKETNET_SERVER_WINDOW_MESSAGES
+* Environment: ROCKETNET_SERVER_RECEIVE_RING_BYTES
+* Environment: ROCKETNET_SERVER_MAX_MESSAGE_BYTES
+* Environment: ROCKETNET_SERVER_SEND_BUFFER_BYTES
+* Environment: ROCKETNET_SERVER_SEND_QUEUE_MESSAGES
+* Environment: ROCKETNET_SERVER_PACKETS_IN_FLIGHT
+* Environment: ROCKETNET_SERVER_PACKETS_PER_UPDATE
+* Environment: ROCKETNET_SERVER_UNRELIABLE_DELIVERIES
+* Environment: ROCKETNET_SERVER_SEQUENCED_HOLDS
+* Environment: ROCKETNET_SERVER_RECEIPT_RING
+* Environment: ROCKETNET_SERVER_RESEND_DELAY_INITIAL_MS
+* Environment: ROCKETNET_SERVER_RESEND_DELAY_MIN_MS
+* Environment: ROCKETNET_SERVER_RESEND_DELAY_MAX_MS
+* Environment: ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS
+* Environment: ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT
+* Environment: ROCKETNET_SERVER_SIMULATED_LATENCY_MS
+* Environment: ROCKETNET_SERVER_SIMULATED_JITTER_MS
+* Environment: ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT
+* Environment: ROCKETNET_LOG_LEVEL
+* Environment: ROCKETNET_CLIENT_GAME_CLOCK_EPOCH
+* Environment: ROCKETNET_SERVER_GAME_CLOCK_EPOCH
+* Environment: ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH
+* Environment: ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH
+* Environment: ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW
+* Environment: ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW
+* Environment: ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES
+* Environment: ROCKETNET_SERVER_MEMORY_BUDGET_BYTES
+* Environment: ROCKETNET_GATEWAY_ETHERNET_ADDRESS
+
 ## Server transports
 
 Transport selection is runtime (#106): one build carries every transport its
@@ -529,7 +606,9 @@ clamped: the xdp transport takes any `num_xdp_queues` from 1, the gso transport 
 past its 32-queue geometry. The GSO transport still probes UDP_SEGMENT and UDP_GRO at
 create and degrades to plain sendmmsg/recvmmsg batching where a kernel lacks them —
 that degradation is internal to the transport, below the ladder; likewise the Darwin
-batch pump's live-refusal pause. Run `./bin/functional`
+batch pump's live-refusal pause. Select the portable pump through
+`ROCKETNET_SERVER_TRANSPORT=portable` and `ROCKETNET_CLIENT_TRANSPORT=portable`.
+Run `./bin/functional`
 against each rung. The unit
 suite, `./bin/test`, does not start a transport, so a transport pin does not change
 what it asserts.
@@ -579,9 +658,9 @@ with the xdp transport is verify-and-bind only: a non-mutating pre-flight checks
 that the machine is provisioned and refuses by name — each unmet condition logs
 the knob, the wanted value, and the script that sets it — and the library's own
 acts stay per-socket (its BPF program built, loaded and attached, AF_XDP binds,
-the memlock rlimit). Provisioning is `scripts/rocketnet-provision`, a shipped
-deliverable: the setup was hand-run once for the game and no game that uses
-rocketnet with XDP reconstructs it. The script's header carries the authoritative
+the memlock rlimit). Provisioning uses `scripts/rocketnet-provision`, an operator
+step that has been hand-run once; no application using XDP reconstructs it. The
+script's header carries the authoritative
 condition list; the pre-flight checks exactly those conditions.
 
 Cold, on a fresh box, as root:
@@ -628,8 +707,8 @@ Cold, on a fresh box, as root:
     #  the enforcement paths can drift silently.)
 
 This configuration — isolated cores 1-15, seven queues, per-queue IRQ pinning,
-the busy-poll pair — is the 10 Gbps point, as measured on the game's Linux
-server; the magnitude belongs to that machine, and the claim attaches to a
+the busy-poll pair — is the 10 Gbps point, as measured on a provisioned 10 GbE
+Linux host; the magnitude belongs to that machine, and the claim attaches to a
 verified-provisioned box, never to the library alone. The isolated-core mask, the
 queue count and the IRQ pinning scale together with NIC bandwidth: one queue
 wants one isolated core, and higher-bandwidth NICs need more cores (the script

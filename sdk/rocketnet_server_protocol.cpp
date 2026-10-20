@@ -145,8 +145,14 @@ static int rocketnet_server_request_cookie_mac( uint8_t * mac,
 static int rocketnet_server_address_is_advertised( const struct rocketnet_server_protocol_t * server,
                                                    struct rocketnet_address_t * addr )
 {
+    // dual_stack: a server bound at the IPv6 wildcard ("[::]"), which
+    // advertises the IPv6 wildcard beside the IPv4 wildcard. A server that
+    // names both families (second_public_address) advertises the two named
+    // addresses and is not dual_stack here.
+    static const uint16_t ipv6_wildcard[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
     const int dual_stack = server->advertised_ipv4.type == ROCKETNET_ADDRESS_IPV4 &&
-                           server->advertised_ipv6.type == ROCKETNET_ADDRESS_IPV6;
+                           server->advertised_ipv6.type == ROCKETNET_ADDRESS_IPV6 &&
+                           memcmp( server->advertised_ipv6.data.ipv6, ipv6_wildcard, sizeof( ipv6_wildcard ) ) == 0;
 
     if ( addr->type == ROCKETNET_ADDRESS_IPV6 && rocketnet_address_is_ipv4_in_ipv6( addr ) )
         rocketnet_address_convert_ipv6_to_ipv4( addr );
@@ -169,41 +175,66 @@ static int rocketnet_server_address_is_advertised( const struct rocketnet_server
     return 0;
 }
 
-// whether the token names an address this server advertises: either flagged
-// address matches, so a token naming both families reaches a server that
-// serves one of them (tla/ServerConnection.tla TokenAddressAdvertised).
+// The arrival family's token address (tla/ServerConnection.tla
+// TokenAddressAdvertised). A v4-mapped source is canonicalised to IPv4
+// first. The token's other-family address is not consulted. A token with
+// no IPv4 flag whose IPv6 address is v4-mapped is that IPv4 address.
+
+static void rocketnet_server_read_token_address( struct rocketnet_address_t * addr, int ipv6, const uint8_t * signed_connect_data )
+{
+    memset( addr, 0, sizeof( *addr ) );
+    if ( ipv6 )
+    {
+        const uint8_t * p = signed_connect_data + ROCKETNET_SIGNED_OFFSET_IPV6;
+        addr->type = ROCKETNET_ADDRESS_IPV6;
+        for ( int i = 0; i < 8; i++ )
+            addr->data.ipv6[i] = rocketnet_read_uint16( &p );
+        addr->port = rocketnet_read_uint16( &p );
+        return;
+    }
+    const uint8_t * p = signed_connect_data + ROCKETNET_SIGNED_OFFSET_IPV4;
+    addr->type = ROCKETNET_ADDRESS_IPV4;
+    for ( int i = 0; i < 4; i++ )
+        addr->data.ipv4[i] = *p++;
+    addr->port = rocketnet_read_uint16( &p );
+}
 
 static int rocketnet_server_token_address_is_advertised( const struct rocketnet_server_protocol_t * server,
+                                                         const struct rocketnet_address_t * from,
                                                          uint8_t address_flags,
                                                          const uint8_t * signed_connect_data )
 {
+    struct rocketnet_address_t arrival = *from;
+    if ( arrival.type == ROCKETNET_ADDRESS_IPV6 && rocketnet_address_is_ipv4_in_ipv6( &arrival ) )
+        rocketnet_address_convert_ipv6_to_ipv4( &arrival );
+
     struct rocketnet_address_t addr;
 
-    if ( address_flags & ROCKETNET_ADDRESS_FLAG_IPV6 )
+    if ( arrival.type == ROCKETNET_ADDRESS_IPV4 )
     {
-        const uint8_t * p = signed_connect_data + ROCKETNET_SIGNED_OFFSET_IPV6;
-        memset( &addr, 0, sizeof(addr) );
-        addr.type = ROCKETNET_ADDRESS_IPV6;
-        for ( int i = 0; i < 8; i++ )
-            addr.data.ipv6[i] = rocketnet_read_uint16( &p );
-        addr.port = rocketnet_read_uint16( &p );
-        if ( rocketnet_server_address_is_advertised( server, &addr ) )
-            return 1;
+        if ( address_flags & ROCKETNET_ADDRESS_FLAG_IPV4 )
+        {
+            rocketnet_server_read_token_address( &addr, 0, signed_connect_data );
+            return rocketnet_server_address_is_advertised( server, &addr );
+        }
+        if ( address_flags & ROCKETNET_ADDRESS_FLAG_IPV6 )
+        {
+            rocketnet_server_read_token_address( &addr, 1, signed_connect_data );
+            if ( addr.type == ROCKETNET_ADDRESS_IPV6 && rocketnet_address_is_ipv4_in_ipv6( &addr ) )
+            {
+                rocketnet_address_convert_ipv6_to_ipv4( &addr );
+                return rocketnet_server_address_is_advertised( server, &addr );
+            }
+        }
+        return 0;
     }
 
-    if ( address_flags & ROCKETNET_ADDRESS_FLAG_IPV4 )
-    {
-        const uint8_t * p = signed_connect_data + ROCKETNET_SIGNED_OFFSET_IPV4;
-        memset( &addr, 0, sizeof(addr) );
-        addr.type = ROCKETNET_ADDRESS_IPV4;
-        for ( int i = 0; i < 4; i++ )
-            addr.data.ipv4[i] = *p++;
-        addr.port = rocketnet_read_uint16( &p );
-        if ( rocketnet_server_address_is_advertised( server, &addr ) )
-            return 1;
-    }
-
-    return 0;
+    if ( arrival.type != ROCKETNET_ADDRESS_IPV6 || ( address_flags & ROCKETNET_ADDRESS_FLAG_IPV6 ) == 0 )
+        return 0;
+    rocketnet_server_read_token_address( &addr, 1, signed_connect_data );
+    if ( rocketnet_address_is_ipv4_in_ipv6( &addr ) )
+        return 0;
+    return rocketnet_server_address_is_advertised( server, &addr );
 }
 
 static int rocketnet_server_process_opened_request( struct rocketnet_server_protocol_t * server,
@@ -382,11 +413,10 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    // the token's server address must be one this server advertises; on a
-    // dual-stack server a v4-mapped token address normalises to IPv4 and
-    // matches the loopback or wildcard the IPv4 client addressed
+    // TokenAddressAdvertised: the arrival family's token address is one
+    // this server advertises. The other family in the token is not read.
 
-    if ( !rocketnet_server_token_address_is_advertised( server, address_flags, signed_connect_data ) )
+    if ( !rocketnet_server_token_address_is_advertised( server, from, address_flags, signed_connect_data ) )
     {
         rocketnet_debug( "server ignored connection request. token names no address this server is advertised at" );
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED]++;
@@ -519,9 +549,41 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
+    // the token-to-address claim and the map capacity are the remaining cheap
+    // rungs, both above the signature. the first address to present a valid
+    // request owns the token until the handshake deadline or until its
+    // response binds the token; a request from a second address is refused
+    // here, so one token buys one half-open mapping and no asymmetric work
+    // (STANDARD.md, Processing Connection Requests; tla/ReceiveOrder.tla,
+    // Claim and Capacity).
+
+    if ( !rocketnet_used_token_history_claim_check( server->used_token_history, token_identifier, from, current_time ) )
+    {
+        rocketnet_debug( "server ignored connection request. connect token claimed by a different address" );
+        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
+    if ( rocketnet_encryption_map_full( server->encryption_map ) )
+    {
+        rocketnet_debug( "server ignored connection request. could not add encryption mapping" );
+        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING]++;
+        counters[ROCKETNET_COUNTER_MAPPING_TABLE_FULL]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
+    if ( !rocketnet_used_token_history_claim_record( server->used_token_history, token_identifier, from,
+                                                     current_time + server->handshake_deadline_seconds, current_time ) )
+    {
+        rocketnet_debug( "server ignored connection request. could not claim connect token" );
+        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
     if ( !rocketnet_verify_signed_connect_data( signed_connect_data, signature, server->backend_public_key ) )
     {
         rocketnet_signature_verify_budget_record_failure( &server->signature_verify_budget, from, current_timestamp );
+        rocketnet_used_token_history_claim_release( server->used_token_history, token_identifier, from );
         rocketnet_debug( "server ignored connection request. signature did not verify" );
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;
@@ -581,10 +643,12 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    // no used-token history record here: a request proves nothing about who
-    // holds the token's keys, so the binding waits for a response that opens
-    // under the handshake key (STANDARD.md, Processing Connection Response
-    // Packets; tla/RNSecurityTables.tla, BoundOnlyToOpener)
+    // no used-token binding record here: the request already holds a claim
+    // for its address until the handshake deadline, but a request proves
+    // nothing about who holds the token's keys, so the binding that outlives
+    // the deadline waits for a response that opens under the handshake key
+    // (STANDARD.md, Processing Connection Response Packets;
+    // tla/RNSecurityTables.tla, BoundOnlyToOpener)
 
     {
         // the server's contribution to the key schedule: a fresh session
@@ -654,6 +718,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         if ( index == -1 )
         {
             sodium_memzero( &keys, sizeof(keys) );
+            rocketnet_used_token_history_claim_release( server->used_token_history, token_identifier, from );
             rocketnet_debug( "server ignored connection request. could not add encryption mapping" );
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING]++;
             counters[ROCKETNET_COUNTER_MAPPING_TABLE_FULL]++;
@@ -730,9 +795,10 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
 
     // the binding: this address has proven it holds the token's keys, which a
     // request never proves, so a replayed request from another address binds
-    // nothing. a no-op when the token is already bound; an expired token is
-    // not recorded, as the request path never recorded one
-    // (tla/RNSecurityTables.tla, BoundOnlyToOpener)
+    // nothing. it replaces the request claim with an entry that lives until
+    // the token expires; a no-op when the token is already bound, and an
+    // expired token is not recorded (tla/RNSecurityTables.tla,
+    // BoundOnlyToOpener)
 
     if ( mapping->token_expire_timestamp > current_timestamp )
     {

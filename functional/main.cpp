@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 
     Functional suite. Each test is a process. Sibling binaries that open a
-    socket or start a real driver are tests of this suite, under the same
+    socket or start a real transport are tests of this suite, under the same
     60s warning and 120s failure limits.
 */
 

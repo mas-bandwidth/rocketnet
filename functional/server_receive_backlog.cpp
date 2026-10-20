@@ -7,6 +7,7 @@
 #include "rocketnet_driver_loopback.h"
 #include "rocketnet_platform.h"
 #include "../test/time_scale.h"
+#include "../test/suite_runner.h"
 
 #include <climits>
 #include <stdio.h>
@@ -89,9 +90,43 @@ static bool server_receive_backlog_all_connected( const std::vector<struct rocke
     return server_receive_backlog_connected_clients( clients ) == (int) clients.size();
 }
 
+// Only this case deliberately instantiates 48 full client transports. Budget
+// their fixed arrays using the SDK's memory plans, rather than bypassing the
+// Debug CRT. The plans currently accept portable, not loopback; using portable
+// conservatively retains its small socket/wake allocation, then adds each
+// actual loopback queue. The 32 MiB margin covers the executable, CRT bookkeeping,
+// process-wide transport table and page rounding. The native Windows Debug
+// negative control must catch an extra touched 64 MiB server allocation.
+// All other functional cases retain the default RSS bound.
+static const int server_receive_backlog_max_clients = 48;
+
+static long rocketnet_server_receive_backlog_rss_bound_mb()
+{
+    const char * name = "server_receive_keeps_up_with_max_clients";
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = server_receive_backlog_max_clients;
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    const uint64_t server_bytes = rocketnet_server_transport_required_memory( &server_config, "portable" );
+    const uint64_t client_bytes = rocketnet_client_transport_required_memory( &client_config, "portable" );
+    const uint64_t queues = uint64_t( server_receive_backlog_max_clients + 1 ) *
+        rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS );
+    if ( !server_bytes || !client_bytes )
+        return 0; // A missing plan falls back to the strict default bound.
+    const uint64_t bytes = server_bytes + server_receive_backlog_max_clients * client_bytes + queues;
+    const long bound = suite_rss_bound_mb( bytes, 32 );
+    if ( getenv( "ROCKETNET_TEST_VERBOSE" ) )
+        printf( "%s rss_budget server_bytes=%llu client_bytes=%llu clients=%d queue_bytes=%llu margin_mb=32 bound_mb=%ld\n",
+                name, (unsigned long long) server_bytes, (unsigned long long) client_bytes,
+                server_receive_backlog_max_clients, (unsigned long long) queues, bound );
+    return bound;
+}
+
+SUITE_CASE_RSS_BOUND( server_receive_keeps_up_with_max_clients, rocketnet_server_receive_backlog_rss_bound_mb );
+
 void rocketnet_test_server_receive_keeps_up_with_max_clients()
 {
-    server_receive_backlog_env_t driver_env( "ROCKETNET_DRIVER" );
     server_receive_backlog_env_t server_env( "ROCKETNET_SERVER_TRANSPORT" );
     server_receive_backlog_env_t client_env( "ROCKETNET_CLIENT_TRANSPORT" );
 
@@ -102,12 +137,12 @@ void rocketnet_test_server_receive_keeps_up_with_max_clients()
     // the case stays small: one client transport is about 7.5 MB of fixed
     // compile-time arrays, by design (one client per game process). The
     // thousand-client scale is a load measurement (bin/load), not this case.
-    const int max_clients = 48;
+    const int max_clients = server_receive_backlog_max_clients;
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = max_clients;
-    snprintf( server_config.driver, sizeof( server_config.driver ), "%s", "loopback" );
+    snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
 
     int status = -1;
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_config, time, &status );
@@ -119,7 +154,7 @@ void rocketnet_test_server_receive_keeps_up_with_max_clients()
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
-    snprintf( client_config.driver, sizeof( client_config.driver ), "%s", "loopback" );
+    snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
 
     std::vector<struct rocketnet_client_transport_t*> clients;
     clients.reserve( max_clients );

@@ -142,8 +142,7 @@ jobs:
     # self-hosted apt step is skipped. They ran on [self-hosted,Linux,X64,rocketnet] until 2026-10-13, a label only
     # hulk carried: hulk went down and every Linux job sat QUEUED for hours.
     # macOS rows run on HOSTED macos-15 AS A STOPGAP (2026-10-13): no [self-hosted,macOS,ARM64,rocketnet] runner was
-    # ever registered, so those rows never started. Hosted macOS is $0.16/min and was ~80% of September's Actions
-    # bill; the self-hosted target is mini-m5 (the fleet's Apple-silicon Mac) once its org runner is registered, and
+    # ever registered, so those rows never started. The self-hosted target is mini-m5 (the fleet's Apple-silicon Mac) once its org runner is registered, and
     # these rows go back to a runner label then. matrix.os stays the display name and the image the row was written
     # against; runner, when set, is the label set runs-on uses instead.
     runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
@@ -292,13 +291,13 @@ jobs:
         run: |
           set -o pipefail
           ./bin/functional | tee functional-pinned.log
-          grep -qx 'driver_env_pin_is_honoured' functional-pinned.log
-          ! grep -q '^driver_env_pin_is_honoured \[SKIPPED' functional-pinned.log
+          grep -qx 'transport_env_pin_is_honoured' functional-pinned.log
+          ! grep -q '^transport_env_pin_is_honoured \[SKIPPED' functional-pinned.log
 
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
       # server, so a family regression on any one transport fails here.
-      # driver_env_pin_is_honoured runs under the same pin and proves the
+      # transport_env_pin_is_honoured runs under the same pin and proves the
       # pinned transport is the one granted. tools/check_transport_matrix.py
       # refuses a driver row in sdk/rocketnet_drivers.inc with no cell on an
       # OS it builds for. A cell line is: server transport, client
@@ -336,7 +335,7 @@ jobs:
             Windows) matrix=$TRANSPORT_MATRIX_WINDOWS; functional=./bin/Release/functional.exe ;;
             *) echo "TRANSPORT-MATRIX no matrix for $RUNNER_OS"; exit 1 ;;
           esac
-          socket_cases="test_transport_udp_loopback test_transport_ipv6_loopback test_transport_dual_stack_ipv4_client driver_env_pin_is_honoured"
+          socket_cases="test_transport_udp_loopback test_transport_ipv6_loopback test_transport_dual_stack_ipv4_client transport_env_pin_is_honoured"
           xdp_cases="xdp_max_size_both_ways_ipv4 xdp_max_size_both_ways_ipv6"
           cell_cases() { if [ "$1" = xdp ]; then echo "$xdp_cases"; else echo "$socket_cases"; fi; }
           uring_offered=0
@@ -492,7 +491,7 @@ jobs:
       - name: "Functional: native driver contract and external backend"
         if: contains(matrix.leg, 'a')
         run: |
-          ./bin/test_driver
+          ./bin/test_transport
           python3 tools/check_driver_extension.py build --config ${{ matrix.build_type }}
 
       # Linux: the embedded server_xdp.o is reproducible and equals a fresh
@@ -622,7 +621,7 @@ jobs:
   #              source, the serialization surface, memory plans
   #   (b)  ~35s  the library boundary (10s), install and relocate the SDK
   #              (12s), ambient config isolation (12s), the native driver
-  #              contract itself (test_driver; transport control is inside functional)
+  #              contract itself (test_transport; transport control is inside functional)
   #
   # `Functional: native driver contract and external backend` was ONE step
   # running three commands. The two exes stay here as `Functional: native
@@ -718,8 +717,8 @@ jobs:
         run: |
           set -o pipefail
           ./bin/Release/functional.exe | tr -d '\r' | tee functional-iocp.log
-          grep -qx 'driver_env_pin_is_honoured' functional-iocp.log
-          ! grep -q '^driver_env_pin_is_honoured \[SKIPPED' functional-iocp.log
+          grep -qx 'transport_env_pin_is_honoured' functional-iocp.log
+          ! grep -q '^transport_env_pin_is_honoured \[SKIPPED' functional-iocp.log
 
       - name: "Functional: lifecycle binary"
         if: matrix.leg == 'a'
@@ -754,13 +753,13 @@ jobs:
       - name: "Functional: native driver contract"
         if: matrix.leg == 'b'
         run: |
-          ./bin/Release/test_driver.exe
+          ./bin/Release/test_transport.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
       # server, so a family regression on any one transport fails here.
-      # driver_env_pin_is_honoured runs under the same pin and proves the
+      # transport_env_pin_is_honoured runs under the same pin and proves the
       # pinned transport is the one granted. tools/check_transport_matrix.py
       # refuses a driver row in sdk/rocketnet_drivers.inc with no cell on an
       # OS it builds for. A cell line is: server transport, client
@@ -787,7 +786,7 @@ jobs:
             Windows) matrix=$TRANSPORT_MATRIX_WINDOWS; functional=./bin/Release/functional.exe ;;
             *) echo "TRANSPORT-MATRIX no matrix for $RUNNER_OS"; exit 1 ;;
           esac
-          cases="test_transport_udp_loopback test_transport_ipv6_loopback test_transport_dual_stack_ipv4_client driver_env_pin_is_honoured"
+          cases="test_transport_udp_loopback test_transport_ipv6_loopback test_transport_dual_stack_ipv4_client transport_env_pin_is_honoured"
           uring_offered=0
           if [ "$RUNNER_OS" = Linux ] && [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then uring_offered=1; fi
           mkdir -p build
@@ -810,7 +809,7 @@ jobs:
           failed=0
           while read -r server client expected; do
             [ -n "$server" ] && [ -d "$logs" ] || continue
-            [ -f "$logs/$server.$client.driver_env_pin_is_honoured.rc" ] || continue
+            [ -f "$logs/$server.$client.transport_env_pin_is_honoured.rc" ] || continue
             for case in $cases; do
               log="$logs/$server.$client.$case.log"
               rc=$(cat "$logs/$server.$client.$case.rc")
@@ -1011,7 +1010,7 @@ jobs:
 
       - name: Build the sanitized functional suite and the lifecycle binaries
         if: matrix.leg == 'functional suite'
-        run: cmake --build build --target functional test_lifecycle test_driver test_sodium --parallel
+        run: cmake --build build --target functional test_lifecycle test_transport test_sodium --parallel
 
       - name: Run unit tests
         if: matrix.leg == 'unit suite'
@@ -1045,7 +1044,7 @@ jobs:
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: |
           ./bin/test_lifecycle
-          ./bin/test_driver
+          ./bin/test_transport
 
       - name: Sodium known answers under sanitizers
         if: matrix.leg == 'functional suite'

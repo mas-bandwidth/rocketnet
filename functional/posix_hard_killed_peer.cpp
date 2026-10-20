@@ -3,10 +3,10 @@
     Licensed under the GNU Affero General Public License v3.0
 
     A hard-killed peer or an ICMP error never stalls or degrades a receive
-    (DRIVERS.md, ICMP errors). A UDP send to a vanished peer comes back as
+    (TRANSPORTS.md, ICMP errors). A UDP send to a vanished peer comes back as
     ICMP port unreachable; a BSD stack reports it to the next receive on a
     connected socket as ECONNREFUSED. These cases run per server transport
-    cell (portable, msgx, and msgx forced portable by ROCKETNET_PUMP=portable),
+    cell (portable and msgx),
     per address family, per client transport:
 
       posix_hard_killed_client  one of four clients runs in a child process
@@ -84,7 +84,7 @@ static const double POSIX_HK_HANDSHAKE_SECONDS = 5.0;
 
 struct posix_hk_cell_t
 {
-    const char * server;        // portable | msgx | msgx_pump_portable
+    const char * server;        // portable | msgx
     bool ipv6;
     const char * client;        // portable | msgx
 };
@@ -110,16 +110,11 @@ static void posix_hk_server_address( const posix_hk_cell_t & cell, int port, cha
         snprintf( out, bytes, "127.0.0.1:%d", port );
 }
 
-// create the cell's server: the transport pinned by env, as the CI matrix
-// pins it. msgx_pump_portable asks for msgx under ROCKETNET_PUMP=portable,
-// which the msgx rung refuses before binding, so the ladder falls to the
-// portable pump; the override is cleared once the server holds its socket
+// Create the cell server with its canonical transport pin.
 
 static struct rocketnet_server_transport_t * posix_hk_server_create( const posix_hk_cell_t & cell, int port, int max_clients )
 {
-    const bool pump_portable = strcmp( cell.server, "msgx_pump_portable" ) == 0;
-    posix_hk_setenv( "ROCKETNET_SERVER_TRANSPORT", pump_portable ? "msgx,portable" : cell.server );
-    posix_hk_setenv( "ROCKETNET_PUMP", pump_portable ? "portable" : NULL );
+    posix_hk_setenv( "ROCKETNET_SERVER_TRANSPORT", cell.server );
 
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
@@ -132,11 +127,10 @@ static struct rocketnet_server_transport_t * posix_hk_server_create( const posix
         posix_hk_server_address( cell, port, address, sizeof(address) );
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, address, &config );
-    posix_hk_setenv( "ROCKETNET_PUMP", NULL );
     posix_hard_killed_require( server );
 
-    const char * expected_driver = strcmp( cell.server, "msgx" ) == 0 ? "msgx" : "portable";
-    posix_hard_killed_require( strcmp( rocketnet_server_transport_driver( server ), expected_driver ) == 0 );
+    const char * expected_transport = strcmp( cell.server, "msgx" ) == 0 ? "msgx" : "portable";
+    posix_hard_killed_require( strcmp( rocketnet_server_transport_io_name( server ), expected_transport ) == 0 );
     struct rocketnet_platform_socket_t * socket = rocketnet_server_transport_platform_socket_for_testing( server );
     posix_hard_killed_require( socket );
     posix_hard_killed_require( strcmp( rocketnet_platform_socket_pump( socket ), posix_hk_expected_server_pump( cell ) ) == 0 );
@@ -823,7 +817,7 @@ static void posix_seam_unknown_errno_pauses_msgx()
 // ---------------------------------------------------------------------------
 // the case table: three case kinds per cell, then the seam cases
 
-static const char * posix_hk_servers[] = { "portable", "msgx", "msgx_pump_portable" };
+static const char * posix_hk_servers[] = { "portable", "msgx" };
 static const char * posix_hk_clients[] = { "portable", "msgx" };
 static const char * posix_hk_kinds[] = { "posix_hard_killed_client", "posix_send_to_closed_port", "posix_client_server_gone" };
 

@@ -46,7 +46,9 @@ int main( void )
     rocketnet_server_dev_config( &server_config );
     server_config.max_clients = 2;
     server_config.transport = "loopback";
-    server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, &create_status );
+    if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -60,7 +62,9 @@ int main( void )
     CHECK( rocketnet_client_default_config_sized( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
     client_config.transport = "loopback";
     client_config.simulated_loss_percent = 30;
-    client = rocketnet_client_create_sized( NULL, &client_config, sizeof( client_config ), NULL, 0 );
+    enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
+    client = rocketnet_client_create_sized( NULL, &client_config, sizeof( client_config ), NULL, 0, &create_status_2 );
+    if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
@@ -80,13 +84,29 @@ int main( void )
         // (2) receive and release incoming messages, and read this frame's receipts
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
-            rocketnet_client_release_message( client, data );
-        // the client's server slot exists only once it is CONNECTED; -1 until then
+        struct rocketnet_message_batch_t batch;
+        while ( rocketnet_client_receive_messages( client, &batch ) )
+        {
+            for ( int i = 0; i < batch.num_messages; i++ )
+            {
+                data = batch.data[i];
+                bytes = batch.bytes[i];
+            }
+        }
         const int slot = rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED ? (int) rocketnet_client_index( client ) : -1;
-        while ( slot >= 0 && rocketnet_server_receive_message( server, slot, 0, &data, &bytes ) )
-            rocketnet_server_release_message( server, slot, data );
+        int sender = -1;
+        struct rocketnet_message_batch_t arrived;
+        while ( rocketnet_server_receive_messages( server, &arrived ) )
+        {
+            for ( int i = 0; i < arrived.num_messages; i++ )
+            {
+                data = arrived.data[i];
+                bytes = arrived.bytes[i];
+                sender = arrived.client_index[i];
+            }
+        }
 
+        (void) data; (void) bytes; (void) sender;
         struct rocketnet_receipt_t receipts[32];
         const int count = rocketnet_client_receipts( client, receipts, 32 );
         for ( int r = 0; r < count; r++ )
@@ -127,7 +147,7 @@ int main( void )
                 CHECK( serials[sent] != 0 );
                 sent++;
             }
-            if ( slot >= 0 && rocketnet_server_client_connected( server, slot ) )
+            if ( rocketnet_server_client_connected( server, slot ) )
             {
                 uint8_t * tick = rocketnet_server_start_message( server, slot, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 1 );
                 if ( tick )

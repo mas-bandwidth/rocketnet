@@ -5,7 +5,7 @@ deterministic instruction-count gate for the client per-frame main-thread path
 and the server tick. Unlike `bench/client_main_thread_cost.cpp`, which uses OS
 sockets, a background receive thread, and `std::chrono::steady_clock` on a
 quiet nightly host, `instruction_count` executes in a single process on the
-in-memory `loopback` driver (`sdk/rocketnet_driver_loopback.h`) with no
+in-memory `loopback` transport (`sdk/rocketnet_driver_loopback.h`) with no
 sockets, no background threads, no wall clock, and a fixed random seed, so it
 can gate every push in CI.
 
@@ -26,7 +26,7 @@ Both regions initialize the runtime identically before `rocketnet_init(NULL)`:
 ### Region `client_frame`
 
 One server (`max_clients = 2`) and one step-driven client connect over the
-`loopback` driver. Each frame writes `P = 32` payloads of `200` bytes with
+`loopback` transport. Each frame writes `P = 32` payloads of `200` bytes with
 `rocketnet_client_transport_start_packet` and
 `rocketnet_client_transport_finish_packet`, then runs:
 
@@ -42,7 +42,7 @@ run outside the instrumented window.
 ### Region `server_tick`
 
 One server (`max_clients = 16`, inside `ROCKETNET_LOOPBACK_MAX_ENDPOINTS`) and
-`16` step-driven clients connect over the `loopback` driver. Each tick, every
+`16` step-driven clients connect over the `loopback` transport. Each tick, every
 connected client writes `4` payloads of `200` bytes (`64` datagrams total) and
 flushes them into the server's loopback endpoint queue outside the instrumented
 window. After `16` warm-up ticks, `64` server ticks are measured. Inside the

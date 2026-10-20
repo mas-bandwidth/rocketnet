@@ -8,7 +8,7 @@
 // path uses real threads and real waits, so its cases (a wake before and
 // during a long wait, and 1000 create and destroy cycles) are in the
 // functional suite (client_receive_thread_quit_*). This unit case keeps the
-// logic only: a step-driven client on the fake driver has no thread, and its
+// logic only: a step-driven client on the fake transport has no thread, and its
 // destroy steps the I/O core to its exit on the calling thread. Single
 // threaded: no thread, no socket, no sleep and no wall clock; the game clock
 // starts at 1000.0 and the token's unix time is supplied.
@@ -32,7 +32,7 @@
 static_assert( ATOMIC_BOOL_LOCK_FREE == 2, "quit is a lock-free atomic" );
 
 // four create and destroy cycles of a step-driven client: every destroy
-// returns and closes its driver once
+// returns and closes its transport once
 static void client_receive_thread_quit_step_driven_destroy_returns()
 {
     struct rocketnet_client_transport_config_t client_config;
@@ -50,7 +50,7 @@ static void client_receive_thread_quit_step_driven_destroy_returns()
     signed_fields.expire_timestamp = unix_timestamp + 30;
     signed_fields.timeout_seconds = 10;
     signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
-    const uint8_t server_address[6] = { 127, 0, 0, 1, 0x40, 0x9c };     // 127.0.0.1:40000; the fake driver opens no socket
+    const uint8_t server_address[6] = { 127, 0, 0, 1, 0x40, 0x9c };     // 127.0.0.1:40000; the fake transport opens no socket
     memcpy( signed_fields.ipv4_address, server_address, 6 );
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
 
@@ -65,7 +65,7 @@ static void client_receive_thread_quit_step_driven_destroy_returns()
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token ) );
 
-    rocketnet_fake_client_driver_t fake = {};
+    rocketnet_fake_client_transport_io_t fake = {};
     const double time = 1000.0;
     for ( int i = 0; i < 4; i++ )
     {

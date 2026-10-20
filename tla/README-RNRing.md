@@ -93,7 +93,7 @@ module; no safety property depends on it):
   receiver, so it changes nothing here.
 - **Channels, ordering holds and dispatch** (layer 4). A hold is just a longer
   time between `Open` and `Release`, which the model already allows.
-- **The send store, the sent-packet map, the RTO.**
+- **The send store, the sent-packet map, the resend delay.**
 
 One thing the design leaves open, found while writing `Floor`: a code 2 record
 that is not a block "takes a number but no ring bytes" (6.2), so if `U'` lands on

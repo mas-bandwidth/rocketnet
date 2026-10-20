@@ -242,6 +242,11 @@ static inline bool rocketnet_xdp_frame_parse(
         header_bytes = ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES;
         if ( frame_bytes < (size_t) header_bytes )
             return false;
+
+        const uint16_t udp_len = ( (uint16_t) f[header_bytes - 4] << 8 ) | f[header_bytes - 3];
+        if ( udp_len < ROCKETNET_UDP_HEADER_BYTES )
+            return false;
+
         out_from->type = ROCKETNET_ADDRESS_IPV4;
         out_from->data.ipv4[0] = f[26];
         out_from->data.ipv4[1] = f[27];
@@ -260,6 +265,11 @@ static inline bool rocketnet_xdp_frame_parse(
         header_bytes = ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES;
         if ( frame_bytes < (size_t) header_bytes )
             return false;
+
+        const uint16_t udp_len = ( (uint16_t) f[header_bytes - 4] << 8 ) | f[header_bytes - 3];
+        if ( udp_len < ROCKETNET_UDP_HEADER_BYTES )
+            return false;
+
         out_from->type = ROCKETNET_ADDRESS_IPV6;
         for ( int i = 0; i < 8; ++i )
             out_from->data.ipv6[i] = ( (uint16_t) f[22 + 2 * i] << 8 ) | f[23 + 2 * i];
@@ -272,7 +282,16 @@ static inline bool rocketnet_xdp_frame_parse(
 
     if ( frame_bytes < (size_t) header_bytes )
         return false;
+
+    // bytes past the UDP length (link-layer padding) are not payload; a UDP
+    // length past the frame end is refused, as server_xdp_udp drops it
+
+    const uint16_t udp_len = ( (uint16_t) f[header_bytes - 4] << 8 ) | f[header_bytes - 3];
     payload_bytes = (int) ( frame_bytes - header_bytes );
+    if ( (int) udp_len - ROCKETNET_UDP_HEADER_BYTES > payload_bytes )
+        return false;
+    payload_bytes = (int) udp_len - ROCKETNET_UDP_HEADER_BYTES;
+
     *out_payload = f + header_bytes;
     *out_payload_length = payload_bytes;
     return true;
@@ -357,7 +376,8 @@ static inline bool rocketnet_xdp_frame_receive(
         return false;
     }
 
-    if ( family != address_type )
+    // address_type below zero accepts either family (ServedFamilies of two).
+    if ( address_type >= 0 && family != address_type )
     {
         drops->other_family++;
         return false;
@@ -378,7 +398,7 @@ static inline bool rocketnet_xdp_frame_receive(
     return true;
 }
 
-// DRIVER BOUNDS: the checks the AF_XDP driver makes before it copies into
+// TRANSPORT BOUNDS: the checks the AF_XDP transport makes before it copies into
 // or reads from a UMEM frame, sets a cpu bit or sizes the stats read. Each
 // holds in a Release build; none relies on an assert.
 //
@@ -490,6 +510,11 @@ struct rocketnet_xdp_reply_macs_t
     bool gateway_known;
     uint64_t learn_count;
     struct rocketnet_xdp_reply_mac_entry_t entries[ROCKETNET_XDP_REPLY_MAC_ENTRIES];
+    // Per-family gateways. Zero after reset, so a one-family table still uses gateway_mac.
+    bool gateway_ipv4_known;
+    bool gateway_ipv6_known;
+    uint8_t gateway_ipv4[6];
+    uint8_t gateway_ipv6[6];
 };
 
 // gateway_mac NULL: no gateway is known for this interface.
@@ -588,6 +613,10 @@ static inline const uint8_t * rocketnet_xdp_reply_mac( struct rocketnet_xdp_repl
     const struct rocketnet_xdp_reply_mac_entry_t * entry = rocketnet_xdp_reply_macs_find( table, destination );
     if ( entry )
         return entry->mac;
+    if ( destination && destination->type == ROCKETNET_ADDRESS_IPV4 && table->gateway_ipv4_known )
+        return table->gateway_ipv4;
+    if ( destination && destination->type == ROCKETNET_ADDRESS_IPV6 && table->gateway_ipv6_known )
+        return table->gateway_ipv6;
     if ( table->gateway_known )
         return table->gateway_mac;
     if ( answered_mac && !( answered_mac[0] & 1 ) && memcmp( answered_mac, zero_mac, 6 ) != 0 )

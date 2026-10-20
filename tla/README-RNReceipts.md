@@ -25,7 +25,7 @@ layer implementation exists.
   ACKs of evicted map entries acknowledge no numbers. Duplicate/unknown
   events with no live transport slot are stuttering inputs.
 - `Tick` ages sent, unacked numbers. `SweepLoss` scans eligible type-5
-  descriptors after their one-RTO deadline or map eviction. Its retained
+  descriptors after their one-resend delay deadline or map eviction. Its retained
   outcome suppresses a late ACK. `Disconnect` represents the documented
   `RELIABLE_TIMEOUT` error when a sent, still-unacked reliable number
   reaches its first-send deadline, even if other traffic progresses.
@@ -115,14 +115,14 @@ property, plus `TypeOK`. They must exit 12 and identify that property.
   in `acked`. `EmitAck(2)` then violates
   `BlockAckedOnlyWhenAllFragmentsAcked`, with `<<2,0>>` still unacked.
 - `BrokenTwoOutcomes`: the nine-state trace chooses single-record type 5.
-  The sends and packet write are followed by `Tick` to RTO 1, transport
+  The sends and packet write are followed by `Tick` to resend delay 1, transport
   open, then `SweepLoss(2)`. Its late transport ACK matches the retained
   map entry. `EmitAck(2)` appends ACKED after LOSS, violating
   `ExactlyOneOutcomePerReceiptSerial` even though the full one-entry ring
   now contains only ACKED. Generation history catches what the ring hides.
 - `BrokenReliableLoss`: the six-state trace chooses a two-fragment type-5
   message promoted to effective type 6. Fragment `<<2,0>>` is written;
-  `Tick` reaches RTO 1. The broken `SweepLoss(2)` emits LOSS for this reliable
+  `Tick` reaches resend delay 1. The broken `SweepLoss(2)` emits LOSS for this reliable
   block, violating `LossOnlyForUnreliableReceipt` before its reliable timeout
   at 2. Actual types 6 and 7 share this checked rule; the enumerated witness
   selects the promoted type first.
@@ -145,7 +145,7 @@ The deliberate receipt differences are:
 1. A block waits for all fragment numbers, rather than firing on the
    highest-index fragment alone (study 7.3).
 2. Sent-map eviction explicitly produces unreliable LOSS in addition to
-   the RTO sweep; the reference receipt history is separate from its
+   the resend delay sweep; the reference receipt history is separate from its
    datagram history (study 6.1 and 7.3).
 3. The fixed receipt ring drops/counts its oldest event when full. The
    reference puts five-byte notification messages on its output queue;

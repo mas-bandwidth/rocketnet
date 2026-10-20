@@ -39,7 +39,7 @@ static void rn_builder_reset_clocks( struct rn_packet_builder_t * builder )
 }
 
 // tla/RNScheduler.tla, Init and Seeds (round_robin = num_channels - 1 so the first turn is channel 0's)
-bool rn_packet_builder_init( struct rn_packet_builder_t * builder, struct rn_region_t * region, struct rn_window_ack_t * ack, struct rocketnet_send_budget_t * budget, int max_packets_per_update, int payload_capacity )
+bool rn_packet_builder_init( struct rn_packet_builder_t * builder, struct rn_region_t * region, struct rn_window_ack_t * ack, struct rocketnet_send_budget_t * budget, int packets_per_update, int payload_capacity )
 {
     if ( !builder )
         return false;
@@ -53,7 +53,7 @@ bool rn_packet_builder_init( struct rn_packet_builder_t * builder, struct rn_reg
     builder->ack = ack;
     builder->budget = budget;
     builder->payload_capacity = payload_capacity;
-    builder->max_packets_per_update = max_packets_per_update < 1 ? 1 : ( max_packets_per_update > ROCKETNET_PACKET_BUILDER_MAX_PACKETS ? ROCKETNET_PACKET_BUILDER_MAX_PACKETS : max_packets_per_update );
+    builder->packets_per_update = packets_per_update < 1 ? 1 : ( packets_per_update > ROCKETNET_PACKET_BUILDER_MAX_PACKETS ? ROCKETNET_PACKET_BUILDER_MAX_PACKETS : packets_per_update );
     builder->num_channels = region->num_channels;
     builder->round_robin = builder->num_channels > 0 ? builder->num_channels - 1 : 0;     // the first turn is channel 0's
     rn_builder_reset_clocks( builder );
@@ -219,7 +219,7 @@ static void rn_builder_take_level( struct rn_packet_builder_t * builder, int lev
 // tla/RNScheduler.tla, Write (class order, clock step, rr') and Tick's clock reset (every item taken)
 int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_packet_item_t * items, int num_items, uint8_t ** payloads, int num_payloads )
 {
-    if ( !builder || builder->max_packets_per_update == 0 )
+    if ( !builder || builder->packets_per_update == 0 )
         return 0;
 
     builder->packets = 0;
@@ -228,7 +228,7 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
     if ( !items || num_items < 1 || !payloads || num_payloads < 1 )
         return 0;
 
-    const int limit = builder->max_packets_per_update < num_payloads ? builder->max_packets_per_update : num_payloads;
+    const int limit = builder->packets_per_update < num_payloads ? builder->packets_per_update : num_payloads;
 
     for ( int p = 0; p < limit; p++ )
     {

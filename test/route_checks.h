@@ -1,5 +1,5 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
-// Shared by native driver tests and the socket-free s390x executable.
+// Shared by native transport tests and the socket-free s390x executable.
 #include "rocketnet_route.h"
 
 static void test_route_prefixes()

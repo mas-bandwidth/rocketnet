@@ -8,7 +8,7 @@
 #include "rocketnet_packet_batch.h"
 #include "rocketnet_wire.h"
 
-// The Windows Registered I/O (RIO) server driver. One UDP socket opened with
+// The Windows Registered I/O (RIO) server transport. One UDP socket opened with
 // WSA_FLAG_REGISTERED_IO, one registered region carved by
 // sdk/rocketnet_rio_layout.h into send frames, send address slots, receive
 // slices and receive address slots, one polled send completion queue, one
@@ -27,7 +27,7 @@
 // tla/RNRioDriver.tla models the design; the functions that implement a
 // model action cite it.
 //
-// The driver is built only on Windows (Windows 10 1709 or later for
+// The transport is built only on Windows (Windows 10 1709 or later for
 // RIOSendEx and RIOReceiveEx). Elsewhere the module is not compiled: only
 // rocketnet_server_rio_available() is defined, and it is false.
 
@@ -79,7 +79,7 @@ enum rocketnet_server_rio_counter_t
 };
 
 void rocketnet_server_rio_counters( rocketnet_server_rio_t * rio, uint64_t * counters );
-// posted sends and receives the kernel has not completed or the driver has
+// posted sends and receives the kernel has not completed or the transport has
 // not yet dequeued
 int rocketnet_server_rio_pending( rocketnet_server_rio_t * rio );
 uint64_t rocketnet_server_rio_allocation_bytes();

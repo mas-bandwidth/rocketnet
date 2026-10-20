@@ -230,6 +230,11 @@ static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketn
     if ( result == 0 || error == WSA_IO_PENDING )
         return true; // Immediate success also produces exactly one IOCP event.
     iocp->pending.fetch_sub( 1, std::memory_order_release );
+    // a post refused with an ICMP report of an earlier send is counted with
+    // the reset statuses, then waits on the retry list like every refused post
+    // (windows-udp-connreset audit, iocp post)
+    if ( rocketnet_platform_receive_status_is_reset( error ) )
+        rocketnet_platform_count_receive_reset();
     iocp->counters[ROCKETNET_IOCP_RECEIVE_REPOST_FAILED].fetch_add( 1, std::memory_order_relaxed );
     InterlockedPushEntrySList( &iocp->retry_receives, &op->free_entry );
     return false;
@@ -249,6 +254,26 @@ static void rocketnet_iocp_retire_send( rocketnet_server_iocp_t * iocp, rocketne
     }
 }
 
+// The UDP_COALESCED_INFO stride of a received message's control area, or 0
+// when it has none. A UDP_COALESCED_INFO header whose cmsg_len is shorter
+// than WSA_CMSG_LEN( sizeof( DWORD ) ) carries no whole DWORD and yields 0:
+// only bytes the header claims are read. Not static: the unit suite calls it
+// over a built WSAMSG (windows_coalesced_cmsg_short_length_is_not_read).
+DWORD rocketnet_iocp_coalesced_stride( WSAMSG * message )
+{
+    for ( WSACMSGHDR * cmsg = WSA_CMSG_FIRSTHDR( message ); cmsg; cmsg = WSA_CMSG_NXTHDR( message, cmsg ) )
+    {
+        if ( cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_COALESCED_INFO )
+        {
+            DWORD stride = 0;
+            if ( cmsg->cmsg_len >= WSA_CMSG_LEN( sizeof( stride ) ) )
+                memcpy( &stride, WSA_CMSG_DATA( cmsg ), sizeof( stride ) );
+            return stride;
+        }
+    }
+    return 0;
+}
+
 // Publishes one URO completion: the datagrams of one source, each the
 // UDP_COALESCED_INFO stride except a shorter last one, split by the shared
 // coalescing rule and each checked against the bounds a single datagram is.
@@ -262,15 +287,7 @@ static void rocketnet_iocp_publish_uro( rocketnet_server_iocp_t * iocp, rocketne
         iocp->counters[ROCKETNET_IOCP_RECEIVE_DROPPED].fetch_add( 1, std::memory_order_relaxed );
         return;
     }
-    DWORD stride = 0;
-    for ( WSACMSGHDR * cmsg = WSA_CMSG_FIRSTHDR( &op->message ); cmsg; cmsg = WSA_CMSG_NXTHDR( &op->message, cmsg ) )
-    {
-        if ( cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_COALESCED_INFO )
-        {
-            memcpy( &stride, WSA_CMSG_DATA( cmsg ), sizeof(stride) );
-            break;
-        }
-    }
+    const DWORD stride = rocketnet_iocp_coalesced_stride( &op->message );
     const int message_bytes = (int) bytes;
     const int segment_bytes = stride > 0 && stride < bytes ? (int) stride : message_bytes;
     // Split window by window: each window but the last is a whole number of
@@ -354,6 +371,18 @@ static void rocketnet_iocp_worker( void * argument )
 
             rocketnet_address_t from;
             const bool running = !iocp->stopping.load( std::memory_order_acquire );
+            if ( !success && running && entries[i].Internal != 0 )
+            {
+                // a receive completed with an ICMP report of an earlier send
+                // (port, host or network unreachable): counted, dropped and
+                // reposted below like every failed receive, never the end of
+                // the worker (windows-udp-connreset audit, iocp and URO completion)
+                DWORD transferred = 0;
+                DWORD completion_flags = 0;
+                if ( !WSAGetOverlappedResult( iocp->socket, &op->overlapped, &transferred, FALSE, &completion_flags ) &&
+                     rocketnet_platform_receive_status_is_reset( WSAGetLastError() ) )
+                    rocketnet_platform_count_receive_reset();
+            }
             if ( op->uro_data )
             {
                 if ( running )
@@ -465,8 +494,16 @@ uint64_t rocketnet_server_iocp_allocation_bytes(int workers)
     return bytes <= SIZE_MAX ? bytes : 0;
 }
 
+static std::atomic<int> rocketnet_iocp_test_forced_flags{0};
+
+void rocketnet_server_iocp_test_force_flags( int flags )
+{
+    rocketnet_iocp_test_forced_flags.store( flags, std::memory_order_relaxed );
+}
+
 rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketnet_address_t * bind_address, int num_workers, int fail_stage, int flags )
 {
+    flags |= rocketnet_iocp_test_forced_flags.load( std::memory_order_relaxed );
     if ( !bind_address || ( bind_address->type != ROCKETNET_ADDRESS_IPV4 && bind_address->type != ROCKETNET_ADDRESS_IPV6 ) ) return NULL;
     if ( num_workers == 0 ) num_workers = ROCKETNET_IOCP_DEFAULT_WORKERS;
     if ( num_workers < 1 || num_workers > ROCKETNET_IOCP_MAX_WORKERS )
@@ -489,7 +526,6 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     DWORD returned_bytes = 0;
     BOOL enabled = TRUE;
     DWORD v6_only = FALSE;
-    BOOL connection_reset = FALSE;
 
     iocp->workers = (rocketnet_iocp_worker_t*) rocketnet_malloc( context, sizeof(rocketnet_iocp_worker_t) * num_workers );
     if ( !iocp->workers ) goto failed;
@@ -515,7 +551,9 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     if ( setsockopt( iocp->socket, SOL_SOCKET, SO_RCVBUF, (const char*) &buffer_bytes, sizeof(buffer_bytes) ) == SOCKET_ERROR ) goto failed;
     buffer_bytes = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
     if ( setsockopt( iocp->socket, SOL_SOCKET, SO_SNDBUF, (const char*) &buffer_bytes, sizeof(buffer_bytes) ) == SOCKET_ERROR ) goto failed;
-    if ( WSAIoctl( iocp->socket, SIO_UDP_CONNRESET, &connection_reset, sizeof(connection_reset), NULL, 0, &returned_bytes, NULL, NULL ) == SOCKET_ERROR ) goto failed;
+    // windows-udp-connreset audit, iocp socket: both ICMP reset reports off;
+    // a refusal is logged once and the receive paths skip the statuses
+    rocketnet_platform_socket_disable_udp_resets( (uintptr_t) iocp->socket );
     if ( bind( iocp->socket, (sockaddr*) &address, address_bytes ) == SOCKET_ERROR ) goto failed;
     address_bytes = sizeof(address);
     if ( getsockname( iocp->socket, (sockaddr*) &address, &address_bytes ) == SOCKET_ERROR ) goto failed;
@@ -740,7 +778,7 @@ static bool rocketnet_iocp_post_send_run( rocketnet_server_iocp_t * iocp, const 
 
     if ( error == WSAEINVAL || error == WSAEOPNOTSUPP )
     {
-        // As the GSO driver does for a refused live UDP_SEGMENT send:
+        // As the GSO transport does for a refused live UDP_SEGMENT send:
         // degrade the tier and resend losslessly, never drop the run.
         rocketnet_warn( "iocp transport: live USO send refused (Winsock %d). degrading to WSASendTo per datagram", error );
         iocp->features.fetch_and( ~ROCKETNET_IOCP_FEATURE_USO, std::memory_order_relaxed );

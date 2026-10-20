@@ -436,14 +436,18 @@ static int seen_test_and_set( stream_t * s, uint32_t sequence )
 
 static void receive_check( matrix_state_t * st, struct rocketnet_client_t * client )
 {
-    /* poll every channel; modes 0, 2, 5, 6 arrive on channel 0 */
-    for ( int channel = 0; channel < ROCKETNET_LIVE_NUM_CHANNELS; channel++ )
+    /* the one receive queue, in batches: each entry names the channel it was
+       delivered on; modes 0, 2, 5, 6 arrive on channel 0. The next batch call
+       or update releases a batch */
+    struct rocketnet_message_batch_t batch;
+    while ( rocketnet_client_receive_messages( client, &batch ) )
     {
-        const uint8_t * data;
-        int bytes;
-        while ( rocketnet_client_receive_message( client, channel, &data, &bytes ) )
+        for ( int m = 0; m < batch.num_messages; m++ )
         {
-            if ( bytes < 1 ) { rocketnet_client_release_message( client, data ); continue; }
+            const uint8_t * data = batch.data[m];
+            const int bytes = batch.bytes[m];
+            const int channel = batch.channel[m];
+            if ( bytes < 1 ) continue;
             int tag = data[0];
             int mode = tag & 7;
             int recv_channel = ( mode == 0 || mode == 2 || mode == 5 || mode == 6 ) ? 0 : channel;
@@ -526,7 +530,6 @@ static void receive_check( matrix_state_t * st, struct rocketnet_client_t * clie
                     }
                 }
             }
-            rocketnet_client_release_message( client, data );
         }
     }
 }
@@ -706,9 +709,11 @@ static void run_matrix( opts_t * o )
         struct rocketnet_client_config_t cc;
         rocketnet_client_default_config( &cc );
         cc.send_kbps = o->send_kbps;
-        cc.max_packets_per_update = 64;     // the budget, section 2
+        cc.packets_per_update = 64;     // the budget, section 2
 
-        struct rocketnet_client_t * client = rocketnet_client_create( NULL, &cc, NULL, 0 );
+        enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+        struct rocketnet_client_t * client = rocketnet_client_create( NULL, &cc, NULL, 0, &create_status );
+        if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
         if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
         {
             rocketnet_client_destroy( client );

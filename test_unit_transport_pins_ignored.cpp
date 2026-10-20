@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The unit suite runs over the loopback driver with no sockets, so a
+// The unit suite runs over the loopback transport with no sockets, so a
 // transport pin in the environment must not reach it: this case sets both
 // pins itself, applies the suite's prepare step, builds a loopback pair
 // and expects CONNECTED. The environment it changed is restored on exit.
@@ -84,12 +84,12 @@ static void unit_transport_pins_ignored()
     memcpy( server_config.backend_public_key, backend_public_key, sizeof( server_config.backend_public_key ) );
     memcpy( server_config.server_public_key, server_public_key, sizeof( server_config.server_public_key ) );
     memcpy( server_config.server_secret_key, server_secret_key, sizeof( server_config.server_secret_key ) );
-    snprintf( server_config.driver, sizeof( server_config.driver ), "%s", "loopback" );
+    snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
 
     struct rocketnet_server_transport_t * server =
         rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) );
     rocketnet_unit_check( server != NULL );
-    rocketnet_unit_check( strcmp( rocketnet_server_transport_driver( server ), "loopback" ) == 0 );
+    rocketnet_unit_check( strcmp( rocketnet_server_transport_io_name( server ), "loopback" ) == 0 );
 
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
@@ -102,14 +102,14 @@ static void unit_transport_pins_ignored()
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config_current( &client_config );
-    snprintf( client_config.driver, sizeof( client_config.driver ), "%s", "loopback" );
+    snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
     client_config.step_driven = 1;
     client_config.time_callback = pins_ignored_time_callback;
 
     struct rocketnet_client_transport_t * client =
         rocketnet_client_transport_create_sized( NULL, token, &client_config, sizeof( client_config ), pins_ignored_clock );
     rocketnet_unit_check( client != NULL );
-    rocketnet_unit_check( strcmp( rocketnet_client_transport_driver( client ), "loopback" ) == 0 );
+    rocketnet_unit_check( strcmp( rocketnet_client_transport_io_name( client ), "loopback" ) == 0 );
 
     bool connected = false;
     for ( int i = 0; i < 400 && !connected; i++ )

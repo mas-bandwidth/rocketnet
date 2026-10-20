@@ -17,7 +17,7 @@ static development library. Each page lives in `docs/examples/`.
 | [reliability](reliability.c) | message reliability modes: unreliable, sequenced, reliable unordered, and reliable ordered | [reliability.md](../docs/examples/reliability.md) |
 | [soak](soak.c) | concurrent multi-client soak and stress load test against a single server | [soak.md](../docs/examples/soak.md) |
 | [stats](stats.c) | reading connection quality stats (RTT, jitter, loss, bandwidth) and diagnostic counters | [stats.md](../docs/examples/stats.md) |
-| [transports](transports.c) | transport selection, priority candidate lists, and transport driver fallback | [transports.md](../docs/examples/transports.md) |
+| [transports](transports.c) | transport selection, priority candidate lists, and transport transport fallback | [transports.md](../docs/examples/transports.md) |
 
 An example that needs two processes is split into `<name>_server.c` and
 `<name>_client.c`, built as `example_<name>_server` and

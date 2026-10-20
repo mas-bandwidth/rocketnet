@@ -13,7 +13,7 @@
     using test/live_verify.h (sections 3 to 5). It runs at the max_clients
     the run sets, dumps counters and resident memory each minute, exits when
     its controlling ssh or stdin closes, and refuses to start when the XDP
-    driver is pinned and the interface reports the in-tree driver (section 9).
+    transport is pinned and the interface reports the in-tree transport (section 9).
 */
 
 #include "rocketnet.h"
@@ -70,12 +70,12 @@ static void usage( void )
         "  --seed X                the run seed, printed at start\n"
         "  --send-kbps K           the per-client send budget\n"
         "  --max-clients N         max_clients, set explicitly (the run uses 1000)\n"
-        "  --max-packets-per-update N  the message config's max_packets_per_update\n"
+        "  --max-packets-per-update N  the message config's packets_per_update\n"
         "  --update-hz H           update rate of the main loop\n"
         "  --counters-every S      snapshot counters, RSS and transport stats every S seconds\n"
         "  --results PATH          where the result lines go\n"
         "  --status PATH           one line per state change, for the orchestrator\n"
-        "  --transport T           pin the transport (e.g. xdp); the in-tree driver refuses\n"
+        "  --transport T           pin the transport (e.g. xdp); the in-tree transport refuses\n"
         "  --self-test-result FILE write a sample result file without any socket and exit\n"
         "  --help                  this message\n"
         "environment:\n"
@@ -126,7 +126,7 @@ static void results_event( const char * fmt, ... )
 }
 
 // The live XDP fleet run's helpers below (resident memory, the stdin watch,
-// the NIC driver check) read Linux and POSIX facilities. On Windows the
+// the NIC transport check) read Linux and POSIX facilities. On Windows the
 // out-of-the-box server builds without them: resident memory reads 0 (as on
 // macOS, which has no /proc), stdin is not watched, and no interface is found.
 static uint64_t resident_bytes( void )
@@ -204,19 +204,19 @@ static int interface_for_address( const char * address, char * out, size_t out_s
 
 // Section 9: the in-tree i40e reports the running kernel's version (the same
 // string as `uname -r`); the out-of-tree build reports its own release number.
-static int in_tree_driver( const char * nic )
+static int in_tree_transport( const char * nic )
 {
 #if defined(_WIN32)
     (void) nic;
     return 0;
 #else
     char cmd[256];
-    snprintf( cmd, sizeof cmd, "ethtool -i %s 2>/dev/null | awk '/^driver:/{d=$2} /^version:/{v=$2} END{print d, v}'", nic );
+    snprintf( cmd, sizeof cmd, "ethtool -i %s 2>/dev/null | awk '/^transport:/{d=$2} /^version:/{v=$2} END{print d, v}'", nic );
     FILE * f = popen( cmd, "r" );
     if ( !f )
         return 1;
-    char driver[64] = {0}, version[64] = {0};
-    if ( fscanf( f, "%63s %63s", driver, version ) != 2 )
+    char transport[64] = {0}, version[64] = {0};
+    if ( fscanf( f, "%63s %63s", transport, version ) != 2 )
     {
         pclose( f );
         return 1;
@@ -651,17 +651,18 @@ static void matrix_arrival( struct rocketnet_message_server_t * server, struct s
     c->verified++;
 }
 
-static void matrix_receive( struct rocketnet_message_server_t * server, struct server_client_t * c, int client_index )
+// the server's one receive queue across every client: each message names its
+// sender's slot, and the channel it was delivered on
+static void matrix_receive( struct rocketnet_message_server_t * server, struct server_client_t * clients )
 {
-    for ( int channel = 0; channel < ROCKETNET_LIVE_NUM_CHANNELS; channel++ )
+    const uint8_t * data = NULL;
+    int bytes = 0;
+    int client_index = 0;
+    int channel = 0;
+    while ( rocketnet_message_server_receive( server, &client_index, &channel, &data, &bytes ) )
     {
-        const uint8_t * data = NULL;
-        int bytes = 0;
-        while ( rocketnet_message_server_receive( server, client_index, channel, &data, &bytes ) )
-        {
-            matrix_arrival( server, c, client_index, channel, data, bytes );
-            rocketnet_message_server_release( server, client_index, data );
-        }
+        matrix_arrival( server, &clients[client_index], client_index, channel, data, bytes );
+        rocketnet_message_server_release( server, data );
     }
 }
 
@@ -680,8 +681,9 @@ static uint32_t matrix_send_one( struct rocketnet_message_server_t * server, int
     return rocketnet_message_server_finish( server, client_index, written );
 }
 
-static void matrix_client_window( struct rocketnet_message_server_t * server, int client_index, struct server_client_t * c )
+static void matrix_client_window( struct rocketnet_message_server_t * server, int client_index, struct server_client_t * clients )
 {
+    struct server_client_t * c = &clients[client_index];
     client_streams_reset( &g_live, c );
     matrix_over_maximum( server, c, client_index, &g_live );
 
@@ -689,7 +691,7 @@ static void matrix_client_window( struct rocketnet_message_server_t * server, in
     while ( !all_done && !quit )
     {
         rocketnet_message_server_update( server, rocketnet_time() );
-        matrix_receive( server, c, client_index );
+        matrix_receive( server, clients );
         matrix_send_progress( server, client_index, c, rocketnet_time() );
         all_done = 1;
         for ( int mode = 0; mode < ROCKETNET_LIVE_NUM_MODES && all_done; mode++ )
@@ -870,7 +872,7 @@ int main( int argc, char ** argv )
     const char * results_path = NULL;
     const char * status_path = NULL;
     int max_clients = 1000;
-    int max_packets_per_update = 64;
+    int packets_per_update = 64;
     double counters_every = 60.0;
     double update_hz = 1000.0;
     uint32_t seed = 0;
@@ -890,7 +892,7 @@ int main( int argc, char ** argv )
         else if ( strcmp( a, "--seed" ) == 0 && i + 1 < argc ) seed = (uint32_t) strtoul( argv[++i], NULL, 10 );
         else if ( strcmp( a, "--send-kbps" ) == 0 && i + 1 < argc ) send_kbps = (uint32_t) strtoul( argv[++i], NULL, 10 );
         else if ( strcmp( a, "--max-clients" ) == 0 && i + 1 < argc ) max_clients = (int) strtol( argv[++i], NULL, 10 );
-        else if ( strcmp( a, "--max-packets-per-update" ) == 0 && i + 1 < argc ) max_packets_per_update = (int) strtol( argv[++i], NULL, 10 );
+        else if ( strcmp( a, "--max-packets-per-update" ) == 0 && i + 1 < argc ) packets_per_update = (int) strtol( argv[++i], NULL, 10 );
         else if ( strcmp( a, "--update-hz" ) == 0 && i + 1 < argc ) update_hz = strtod( argv[++i], NULL );
         else if ( strcmp( a, "--counters-every" ) == 0 && i + 1 < argc ) counters_every = strtod( argv[++i], NULL );
         else if ( strcmp( a, "--results" ) == 0 && i + 1 < argc ) results_path = argv[++i];
@@ -927,17 +929,17 @@ int main( int argc, char ** argv )
 
     const char * env_transport = getenv( "ROCKETNET_SERVER_TRANSPORT" );
     if ( transport )
-        snprintf( config.driver, sizeof config.driver, "%s", transport );
+        snprintf( config.transport, sizeof config.transport, "%s", transport );
     else if ( env_transport )
-        snprintf( config.driver, sizeof config.driver, "%s", env_transport );
+        snprintf( config.transport, sizeof config.transport, "%s", env_transport );
 
-    // section 9: when xdp is pinned, refuse the in-tree driver
-    if ( strcmp( config.driver, "xdp" ) == 0 )
+    // section 9: when xdp is pinned, refuse the in-tree transport
+    if ( strcmp( config.transport, "xdp" ) == 0 )
     {
         char nic[64] = {0};
-        if ( interface_for_address( address, nic, sizeof nic ) && in_tree_driver( nic ) )
+        if ( interface_for_address( address, nic, sizeof nic ) && in_tree_transport( nic ) )
         {
-            fprintf( stderr, "server: refusing: interface %s reports the in-tree driver\n", nic );
+            fprintf( stderr, "server: refusing: interface %s reports the in-tree transport\n", nic );
             rocketnet_term();
             return 1;
         }
@@ -945,7 +947,7 @@ int main( int argc, char ** argv )
 
     struct rocketnet_message_config_t message_config;
     rocketnet_message_default_config( &message_config );
-    message_config.max_packets_per_update = max_packets_per_update;
+    message_config.packets_per_update = packets_per_update;
     g_live.max_message_bytes = (uint32_t) message_config.max_message_bytes;
     g_live.max_payload_bytes = ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
 
@@ -957,14 +959,14 @@ int main( int argc, char ** argv )
     }
 
     struct rocketnet_server_transport_t * transport_obj = rocketnet_message_server_transport( server );
-    printf( "server transport %s\n", rocketnet_server_transport_driver( transport_obj ) );
+    printf( "server transport %s\n", rocketnet_server_transport_io_name( transport_obj ) );
     printf( "server max_clients %d\n", config.max_clients );
     if ( results_path )
     {
         g_results = fopen( results_path, "w" );
         if ( g_results )
         {
-            results_line( "bench", "%s\t%u\t%u\t%d\t%s", label, seed, send_kbps, max_clients, rocketnet_server_transport_driver( transport_obj ) );
+            results_line( "bench", "%s\t%u\t%u\t%d\t%s", label, seed, send_kbps, max_clients, rocketnet_server_transport_io_name( transport_obj ) );
             results_event( "listening" );
         }
     }
@@ -1027,14 +1029,14 @@ int main( int argc, char ** argv )
         {
             rocketnet_message_server_update( server, rocketnet_time() );
             rocketnet_message_server_send_packets( server );
+            matrix_receive( server, clients );
             for ( int i = 0; i < max_clients; i++ )
             {
                 if ( !rocketnet_message_server_client_connected( server, i ) )
                     continue;
-                matrix_receive( server, &clients[i], i );
                 if ( !clients[i].window_done )
                 {
-                    matrix_client_window( server, i, &clients[i] );
+                    matrix_client_window( server, i, clients );
                     clients[i].window_done = 1;
                 }
                 matrix_send_progress( server, i, &clients[i], rocketnet_time() );

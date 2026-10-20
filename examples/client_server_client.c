@@ -144,7 +144,9 @@ int main( int argc, char ** argv )
     rocketnet_client_default_config( &config );
     config.transport = "portable";
     config.state_change_callback = state_changed;
-    client = rocketnet_client_create( NULL, &config, NULL, 0 );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    client = rocketnet_client_create( NULL, &config, NULL, 0, &create_status );
+    if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
@@ -163,11 +165,17 @@ int main( int argc, char ** argv )
         // (2) receive and release every received message
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+        struct rocketnet_message_batch_t batch;
+        while ( rocketnet_client_receive_messages( client, &batch ) )
         {
-            printf( "client received: %.*s\n", bytes, (const char*) data );
-            rocketnet_client_release_message( client, data );
-            received = 1;
+            for ( int i = 0; i < batch.num_messages; i++ )
+            {
+                data = batch.data[i];
+                bytes = batch.bytes[i];
+                printf( "client received: %.*s\n", bytes, (const char*) data );
+
+                received = 1;
+            }
         }
 
         // (3) run the game simulation for the frame: nothing to simulate here

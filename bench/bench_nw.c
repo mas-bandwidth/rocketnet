@@ -1,5 +1,5 @@
 /*
-    rocketnet driver bench: Network.framework (#100)
+    rocketnet transport bench: Network.framework (#100)
 
     Darwin candidate 3, Apple's sanctioned user-space stack (Skywalk).
     The architecture is callback-driven -- one datagram per receive
@@ -37,7 +37,7 @@ static struct bench_send_health_t nw_send_health;
     so the shared rule is reached through a translation. Everything that is
     not the ordinary teardown of a finished connection is a receiver that has
     stopped receiving, and a receiver that has stopped receiving reports a
-    rate of zero, which reads exactly like a slow driver (#98 item 5).
+    rate of zero, which reads exactly like a slow transport (#98 item 5).
 
     Before this, the completion handler returned on ANY error and re-armed
     nothing, so a broken listener produced a clean-looking window of no

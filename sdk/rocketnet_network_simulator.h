@@ -107,7 +107,7 @@ int rocketnet_network_simulator_receive( struct rocketnet_network_simulator_t * 
 
 // Receives the lowest-slot due packet regardless of destination. This is the
 // transport-facing drain: it preserves simulator slot order while also
-// returning the destination the driver must send to.
+// returning the destination the transport must send to.
 int rocketnet_network_simulator_receive_any( struct rocketnet_network_simulator_t * simulator,
                                              double current_time,
                                              struct rocketnet_address_t * out_from,

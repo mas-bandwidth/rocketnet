@@ -21,7 +21,7 @@ the machine it is measuring is its own confound.
 **Run the probe.** `./probe` on Linux, `./probe_darwin` on macOS. It is a
 feature report, not a benchmark, and on a host we have never had a shell on
 before it is the single highest-information run available — it can decide the
-production driver before any measurement does. Keep its output with the
+production transport before any measurement does. Keep its output with the
 results.
 
 ## The run
@@ -68,7 +68,7 @@ what it is being asked to measure (#98 item 5): a receive refused for any
 reason that is not an empty queue, a long unbroken run of sends refused for any
 reason that is not back pressure, an io_uring submission queue with no free
 entry. Before #98 a GSO-less host reported `pps=0` from the GSO harness, which
-reads exactly like a very slow driver.
+reads exactly like a very slow transport.
 
 `BENCH_FAULT=<name>` forces each of those paths on a healthy host, and
 `bench/selftest.sh` runs them and fails unless each one goes red. Run it on any

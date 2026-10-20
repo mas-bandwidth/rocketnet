@@ -13,7 +13,7 @@ names. See [docs/LINUX.md](LINUX.md) for the Linux build, transport ladder, kern
 
 ## The table
 
-| Operating system | Architecture | Compiler | Drivers | Tier | Workflow | Runner label |
+| Operating system | Architecture | Compiler | Transports | Tier | Workflow | Runner label |
 | --- | --- | --- | --- | --- | --- | --- |
 | Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | GCC 13 | portable, gso, xdp | supported | .github/workflows/ci.yml | self-hosted, Linux, X64, fleet |
 | Ubuntu 24.04 (Linux, cross/QEMU) | s390x | s390x-linux-gnu-gcc | portable | supported | .github/workflows/ci.yml | ubuntu-24.04 |
@@ -41,10 +41,10 @@ libraries with MSVC for ARM64, checks that `rocketnet.dll` is an ARM64 image
 and checks its exports. Nothing runs on arm64, so its row stays unsupported.
 
 The macOS rows link to [MACOS.md](MACOS.md), the guide for building, pinning
-and verifying on a Mac. The drivers column names the backends the row actually
+and verifying on a Mac. The transports column names the backends the row actually
 exercises or proves in CI. The registry (`rocketnet_drivers.inc`) also lists
 portable on every platform, gso and xdp on Linux, msgx on macOS and iocp and rio
-on Windows. A driver that the row does not name is not part of that row's claim.
+on Windows. A transport that the row does not name is not part of that row's claim.
 
 ## Policy rules
 
@@ -62,8 +62,8 @@ A supported row promises three things, and only these three:
    the label is present in that file.
 
 It does not promise another compiler, another architecture, another runner
-image, privileged XDP attach, line-rate measurements, or a driver the row does
-not name. In particular, the `big-endian` leg in `ci.yml`
+image, privileged XDP attach, line-rate measurements, or a transport the row does
+not name. In particular, the per-commit `big-endian` leg in `ci.yml`
 cross-compiles the library and suite for s390x and runs the wire and sodium
 checks under qemu-user; the socket-crossing suite runs on s390x only in the
 nightly full-system guest. The nightly row is how that suite is claimed.
@@ -75,7 +75,7 @@ nightly full-system guest. The nightly row is how that suite is claimed.
    budget, add the leg to a nightly workflow instead and it becomes nightly,
    not supported.
 2. Add one row to the table in the same change. The row names the operating
-   system, architecture, compiler, drivers, tier, workflow file and runner
+   system, architecture, compiler, transports, tier, workflow file and runner
    label.
 3. Run `python3 tools/check_platform_policy.py`. A row whose label is absent
    from the named workflow fails the check.
@@ -126,7 +126,7 @@ new support claim:
   `self-hosted, Linux, X64, fleet`, macOS leg on
   `self-hosted, macOS, ARM64, rocketnet-macos`, and Windows leg (hosted
   `windows-2025`) disabled (`if: false`, no Windows fleet runner registered).
-- `nightly.yml`'s `windows-driver-extension` job (hosted `windows-2025`) is
+- `nightly.yml`'s `windows-transport-extension` job (hosted `windows-2025`) is
   disabled (`if: false`, no Windows fleet runner registered).
 - `ci.yml`'s `platform-selftests` job runs on the
   `self-hosted, Linux, X64, fleet` and

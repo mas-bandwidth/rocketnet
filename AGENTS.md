@@ -79,7 +79,7 @@ find_package(RocketNet 1.0 CONFIG REQUIRED)
 target_link_libraries(game PRIVATE RocketNet::rocketnet)
 ```
 
-Pass `-DCMAKE_PREFIX_PATH=/path/to/prefix` when configuring the consuming project. For a shared library build, link against the shared target rather than setting `BUILD_SHARED_LIBS` (targets are explicitly static or shared; see [BUILDING.md](BUILDING.md)).
+Pass `-DCMAKE_PREFIX_PATH=/path/to/prefix` when configuring the consuming project. For a shared library build, configure RocketNet with `-DBUILD_SHARED_LIBS=ON`.
 
 When embedding the source tree with `add_subdirectory`:
 
@@ -96,8 +96,8 @@ A RocketNet integration follows a strict lifecycle and per-frame call order:
 
 1. **Initialize the library once per process:** Call `rocketnet_init(NULL)`; it returns `ROCKETNET_STATUS_OK` on success or a `rocketnet_status_t` refusal.
 2. **Create the server and client:**
-   - Fill `struct rocketnet_server_config_t` with `rocketnet_server_default_config_sized(&server_config, sizeof(server_config))` (or `rocketnet_server_default_config(&server_config)`), set `protocol_id`, `backend_public_key`, `server_public_key`, and `server_secret_key` (or use `rocketnet_server_dev_config_sized` / `rocketnet_server_dev_config` in local development builds), call `rocketnet_server_create_sized` (or `rocketnet_server_create`) with the address, then call `rocketnet_server_start(server)`. Create binds nothing and starts stopped; start binds the transport and accepts clients.
-   - Fill `struct rocketnet_client_config_t` with `rocketnet_client_default_config_sized(&client_config, sizeof(client_config))` (or `rocketnet_client_default_config(&client_config)`), call `rocketnet_client_create_sized` (or `rocketnet_client_create`), then call `rocketnet_client_connect(client, connect_token)` with a `ROCKETNET_CONNECT_TOKEN_BYTES`-byte connect token. The client connects using the token alone; the handshake begins on the first `rocketnet_client_update`.
+   - Fill `struct rocketnet_server_config_t` with `rocketnet_server_default_config(&server_config)`, set `protocol_id`, `backend_public_key`, `server_public_key`, and `server_secret_key` (or use `rocketnet_server_dev_config` in local development builds), call `rocketnet_server_create` with the address and a status out-parameter (it writes the refusal's code on NULL; `rocketnet_status_name` names it), then call `rocketnet_server_start(server)`. Create binds nothing and starts stopped; start binds the transport and accepts clients.
+   - Fill `struct rocketnet_client_config_t` with `rocketnet_client_default_config(&client_config)`, call `rocketnet_client_create` with a status out-parameter (it writes the refusal's code on NULL), then call `rocketnet_client_connect(client, connect_token)` with a `ROCKETNET_CONNECT_TOKEN_BYTES`-byte connect token. The client connects using the token alone; the handshake begins on the first `rocketnet_client_update`.
 3. **Run the five-step frame loop in exact order every tick** (using the caller's monotonic `double time` in seconds):
    - **Step 1 — Update:** Call `rocketnet_client_update(client, time)` and `rocketnet_server_update(server, time)` first to pump the transport, process incoming packets and ACKs, and advance connection state.
    - **Step 2 — Receive:** Drain the one receive queue with `rocketnet_client_receive_messages` / `rocketnet_server_receive_messages`. Each call returns one `rocketnet_message_batch_t`; keep calling until it returns false. Process each entry's client index, channel, reliability, byte count and data pointer before the next receive or update on that endpoint. Read ACK/loss receipts with `rocketnet_client_receipts` / `rocketnet_server_receipts`.
@@ -135,7 +135,7 @@ int main( void )
     const char * server_address = "127.0.0.1:40000";
 
     struct rocketnet_server_config_t server_config;
-    if ( rocketnet_server_default_config_sized( &server_config, sizeof( server_config ) ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_server_default_config( &server_config ) != ROCKETNET_STATUS_OK )
         return 1;
     server_config.protocol_id = protocol_id;
     server_config.max_clients = 8;
@@ -175,7 +175,7 @@ int main( void )
     }
 
     struct rocketnet_client_config_t client_config;
-    if ( rocketnet_client_default_config_sized( &client_config, sizeof( client_config ) ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_client_default_config( &client_config ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
         return 1;
@@ -219,10 +219,10 @@ int main( void )
                     client_received_reply = 1;
         }
 
-        if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
+        uint64_t slot = 0;    /* the sender's client index */
+        while ( rocketnet_server_receive_messages( server, &batch ) )
         {
-            uint64_t slot = rocketnet_client_index( client );
-            if ( rocketnet_server_client_connected( server, slot ) )
+            for ( int i = 0; i < batch.num_messages; i++ )
             {
                 while ( rocketnet_server_receive_messages( server, &batch ) )
                 {
@@ -354,7 +354,7 @@ RocketNet's security model is documented in [SECURITY.md](SECURITY.md):
 - **Keys and key generation:**
   - **Backend signing keypair (Ed25519):** Generated via `rocketnet_generate_backend_keypair` or deterministically via `rocketnet_generate_backend_keypair_from_seed` (`ROCKETNET_BACKEND_SEED_BYTES` = `32`, `ROCKETNET_BACKEND_PUBLIC_KEY_BYTES` = `32`, `ROCKETNET_BACKEND_SECRET_KEY_BYTES` = `64`). The backend keeps `backend_secret_key`; each game server receives `backend_public_key` (`ROCKETNET_SERVER_BACKEND_PUBLIC_KEY`).
   - **Server sealing keypair (X25519):** Generated via `rocketnet_generate_server_keypair` (`ROCKETNET_SERVER_PUBLIC_KEY_BYTES` = `32`, `ROCKETNET_SERVER_SECRET_KEY_BYTES` = `32`). The backend seals private token data to `server_public_key`; the server opens it with `server_secret_key` (`ROCKETNET_SERVER_SERVER_PUBLIC_KEY`, `ROCKETNET_SERVER_SERVER_SECRET_KEY`).
-  - **No default production keys:** `rocketnet_server_default_config` and `rocketnet_server_default_config_sized` leave the three key fields all-zero, and `rocketnet_server_start` refuses to bind until non-zero keys are provided. `rocketnet_server_dev_config` / `rocketnet_server_dev_config_sized` populates the development keys explicitly.
+  - **No default production keys:** `rocketnet_server_default_config` leaves the three key fields all-zero, and `rocketnet_server_start` refuses to bind until non-zero keys are provided. `rocketnet_server_dev_config` populates the development keys explicitly.
   - **User data:** Each token carries `ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES` (`256` bytes) of signed application metadata.
 - **What the server checks on every handshake:**
   1. Packet size, `filter_value` (`ROCKETNET_SERVER_FILTER_VALUE` / `ROCKETNET_CLIENT_FILTER_VALUE`), wire version, `protocol_id` (`ROCKETNET_SERVER_PROTOCOL_ID`), and `create_timestamp <= expire_timestamp`.
@@ -373,7 +373,7 @@ RocketNet never clamps invalid configuration or silently ignores API misuse; eve
 - **Status codes (`enum rocketnet_status_t` and `rocketnet_status_name`):**
   - `ROCKETNET_STATUS_OK` (`0`): operation succeeded (`ROCKETNET_STATUS_COUNT` bounds the enum).
   - `ROCKETNET_STATUS_ALREADY_INITIALIZED`, `ROCKETNET_STATUS_NOT_INITIALIZED`, `ROCKETNET_STATUS_LIVE_ALLOCATIONS`, `ROCKETNET_STATUS_PLATFORM_INIT_FAILED`, `ROCKETNET_STATUS_CRYPTO_INIT_FAILED`: lifecycle and allocator state codes for `rocketnet_init`, `rocketnet_term`, and `rocketnet_set_allocator`.
-  - `ROCKETNET_STATUS_INVALID_ARGUMENT`, `ROCKETNET_STATUS_CONFIG_ENV_INVALID`, `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`, `ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED`, `ROCKETNET_STATUS_MISSING_KEYS`, `ROCKETNET_STATUS_INVALID_PROTOCOL_ID`, `ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE`, `ROCKETNET_STATUS_INVALID_ADDRESS`, `ROCKETNET_STATUS_INVALID_TRANSPORT_LIST`: argument and configuration validation failures (`rocketnet_client_validate_config`, `rocketnet_client_validate_config_sized`, `rocketnet_server_validate_config`, `rocketnet_server_validate_config_sized`).
+  - `ROCKETNET_STATUS_INVALID_ARGUMENT`, `ROCKETNET_STATUS_CONFIG_ENV_INVALID`, `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`, `ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED`, `ROCKETNET_STATUS_MISSING_KEYS`, `ROCKETNET_STATUS_INVALID_PROTOCOL_ID`, `ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE`, `ROCKETNET_STATUS_INVALID_ADDRESS`, `ROCKETNET_STATUS_INVALID_TRANSPORT_LIST`: argument and configuration validation failures (`rocketnet_client_validate_config`, `rocketnet_server_validate_config`).
   - `ROCKETNET_STATUS_INVALID_CONNECT_TOKEN`, `ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED`: client connect-token pre-send checks.
   - `ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED`, `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED`, `ROCKETNET_STATUS_OUT_OF_MEMORY`, `ROCKETNET_STATUS_MUTEX_CREATE_FAILED`, `ROCKETNET_STATUS_THREAD_CREATE_FAILED`, `ROCKETNET_STATUS_TIMER_CREATE_FAILED`: transport candidate ladder and OS resource failures.
   - `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`, `ROCKETNET_STATUS_SERVER_NOT_STOPPED`, `ROCKETNET_STATUS_FLOW_ID_RESERVED`: lifecycle and destination refusals from `rocketnet_client_connect`, `rocketnet_server_start`, and server sends.

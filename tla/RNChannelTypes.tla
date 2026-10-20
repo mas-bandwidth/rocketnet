@@ -74,6 +74,10 @@ Channel(m) == queue[m].channel
 Order(m) == queue[m].ordering
 Sequence(m) == queue[m].sequencing
 Newer(a,b) == Order(a) > Order(b) \/ (Order(a) = Order(b) /\ Sequence(a) > Sequence(b))
+\* r.trace is the application's one receive queue (RakPeer::Receive): every
+\* code's and every channel's deliveries in delivery order, never filtered
+\* by channel (sdk/rocketnet_message_server.cpp, rn_message_object_next). The per-channel
+\* ordered and sequenced traces below are its projections.
 EmptyReceiver == [ordered_read |-> [c \in Channels |-> 0],
     sequenced_watermark |-> [c \in Channels |-> 0],
     heldOrdered |-> {}, heldSequenced |-> {}, seen |-> {}, trace |-> <<>>]

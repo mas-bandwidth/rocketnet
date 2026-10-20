@@ -111,7 +111,9 @@ int main( int argc, char ** argv )
     memcpy( config.server_public_key, server_public_key, sizeof( config.server_public_key ) );
     memcpy( config.server_secret_key, server_secret_key, sizeof( config.server_secret_key ) );
 
-    server = rocketnet_server_create( NULL, address, &config, NULL, 0 );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    server = rocketnet_server_create( NULL, address, &config, NULL, 0, &create_status );
+    if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -141,21 +143,28 @@ int main( int argc, char ** argv )
             break;
 
         // (2) receive and release every received message
-        for ( int i = 0; i < max_clients; i++ )
+        // one queue across every client, each message naming its sender
         {
             const uint8_t * data = NULL;
             int bytes = 0;
-            while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
+            uint64_t i = 0;
+            struct rocketnet_message_batch_t batch;
+            while ( rocketnet_server_receive_messages( server, &batch ) )
             {
-                printf( "server received: %.*s\n", bytes, (const char*) data );
-                uint8_t * out = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
-                if ( out )
+                for ( int j = 0; j < batch.num_messages; j++ )
                 {
-                    memcpy( out, data, (size_t) bytes );
-                    if ( rocketnet_server_finish_message( server, i, bytes ) )
-                        echoed = 1;
+                    data = batch.data[j];
+                    bytes = batch.bytes[j];
+                    i = batch.client_index[j];
+                    printf( "server received: %.*s\n", bytes, (const char*) data );
+                    uint8_t * out = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
+                    if ( out )
+                    {
+                        memcpy( out, data, (size_t) bytes );
+                        if ( rocketnet_server_finish_message( server, i, bytes ) )
+                            echoed = 1;
+                    }
                 }
-                rocketnet_server_release_message( server, i, data );
             }
         }
 

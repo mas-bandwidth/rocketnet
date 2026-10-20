@@ -19,7 +19,7 @@
 # Linux only, and root (namespaces and tc need it). It runs nothing outside its
 # own two namespaces, creates only the namespaces and logs it names below,
 # deletes only what it created, and kills only the processes it started. The
-# driver is pinned to portable by default (no XDP attach); --driver names another.
+# transport is pinned to portable by default (no XDP attach); --transport names another.
 #
 # Options:
 #   --clients N       clients to run (default 64)
@@ -27,7 +27,7 @@
 #   --delay-ms D      one-way delay on each end of the pair, in ms (default 78)
 #   --loss P          one-way loss on each end, as a percentage such as 1% (default 1%)
 #   --burst           correlated loss: runs of lost packets (25% correlation)
-#   --driver NAME     the driver pinned on the server and the clients (default portable)
+#   --transport NAME     the transport pinned on the server and the clients (default portable)
 #   --port PORT       the server's port inside its namespace (default 40000)
 #   --bin-dir DIR     where bin/server and bin/client are (default: ../bin of this script)
 #   --keep-logs       keep the log directory and print its path
@@ -45,7 +45,7 @@ DELAY_MS=78
 LOSS=1%
 BURST=0
 PORT=40000
-DRIVER=portable
+TRANSPORT=portable
 KEEP_LOGS=0
 EVALUATE_DIR=
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -69,7 +69,7 @@ while [ $# -gt 0 ]; do
         --delay-ms)   [ $# -ge 2 ] || fail "--delay-ms needs a value"; DELAY_MS=$2; shift 2 ;;
         --loss)       [ $# -ge 2 ] || fail "--loss needs a value"; LOSS=$2; shift 2 ;;
         --burst)      BURST=1; shift ;;
-        --driver)     [ $# -ge 2 ] || fail "--driver needs a value"; DRIVER=$2; shift 2 ;;
+        --transport)     [ $# -ge 2 ] || fail "--transport needs a value"; TRANSPORT=$2; shift 2 ;;
         --port)       [ $# -ge 2 ] || fail "--port needs a value"; PORT=$2; shift 2 ;;
         --bin-dir)    [ $# -ge 2 ] || fail "--bin-dir needs a value"; BIN_DIR=$2; shift 2 ;;
         --keep-logs)  KEEP_LOGS=1; shift ;;
@@ -241,21 +241,21 @@ ip netns exec "$NS_SERVER" tc qdisc add dev "$VETH_SERVER" root netem limit 1000
 ip netns exec "$NS_CLIENT" tc qdisc add dev "$VETH_CLIENT" root netem limit 100000 delay "${DELAY_MS}ms" "${LOSS_ARGS[@]}" \
     || fail "tc qdisc add netem on the client end"
 
-echo "$NAME: clients=$CLIENTS seconds=$SECONDS_TO_RUN delay_ms=$DELAY_MS (each way) loss=$LOSS (each way) burst=$BURST driver=$DRIVER"
+echo "$NAME: clients=$CLIENTS seconds=$SECONDS_TO_RUN delay_ms=$DELAY_MS (each way) loss=$LOSS (each way) burst=$BURST transport=$TRANSPORT"
 ip netns exec "$NS_SERVER" tc qdisc show dev "$VETH_SERVER"
 ip netns exec "$NS_CLIENT" tc qdisc show dev "$VETH_CLIENT"
 if command -v ping >/dev/null 2>&1; then
     ip netns exec "$NS_CLIENT" ping -c 3 -W 2 "$SERVER_ADDRESS" | tail -2
 fi
 
-ip netns exec "$NS_SERVER" env -u ROCKETNET_DRIVER ROCKETNET_SERVER_PRINT_COUNTERS=1 ROCKETNET_SERVER_TRANSPORT="$DRIVER" \
+ip netns exec "$NS_SERVER" env -u ROCKETNET_DRIVER ROCKETNET_SERVER_PRINT_COUNTERS=1 ROCKETNET_SERVER_TRANSPORT="$TRANSPORT" \
     "$BIN_DIR/server" "$SERVER_ADDRESS:$PORT" > "$LOG_DIR/server.log" 2>&1 &
 SERVER_PID=$!
 sleep 2
 kill -0 "$SERVER_PID" 2>/dev/null || { cat "$LOG_DIR/server.log" >&2; fail "the server exited at start"; }
 
 for i in $(seq 1 "$CLIENTS"); do
-    ip netns exec "$NS_CLIENT" env -u ROCKETNET_DRIVER ROCKETNET_CLIENT_TRANSPORT="$DRIVER" ROCKETNET_CLIENT_CONNECT_ADDRESS="$SERVER_ADDRESS:$PORT" \
+    ip netns exec "$NS_CLIENT" env -u ROCKETNET_DRIVER ROCKETNET_CLIENT_TRANSPORT="$TRANSPORT" ROCKETNET_CLIENT_CONNECT_ADDRESS="$SERVER_ADDRESS:$PORT" \
         "$BIN_DIR/client" > "$LOG_DIR/client-$i.log" 2>&1 &
     CLIENT_PIDS+=("$!")
     sleep 0.05

@@ -1,7 +1,7 @@
 # Can RocketNet use XDP or AF_XDP on AWS GameLift managed fleets
 
 This note answers five questions about running RocketNet's XDP/AF_XDP server
-driver on AWS GameLift managed EC2 fleets. A managed EC2 fleet is a set of
+transport on AWS GameLift managed EC2 fleets. A managed EC2 fleet is a set of
 Amazon EC2 instances that Amazon GameLift Servers owns and operates based on
 your configuration (https://docs.aws.amazon.com/gameliftservers/latest/developerguide/fleets-intro-managed.html).
 
@@ -98,7 +98,7 @@ game server software and launch the game server processes yourself, and
 GameLift only sets up the fleet resource
 (https://docs.aws.amazon.com/gameliftservers/latest/developerguide/fleets-intro-anywhere.html).
 Because you control the compute and the launch, you can run the game server as
-root or grant it the capabilities the XDP driver needs, which gives a different
+root or grant it the capabilities the XDP transport needs, which gives a different
 answer from managed fleets for the user and capability questions.
 
 GameLift container fleets run your game server from a container image you
@@ -122,15 +122,15 @@ and the managed fleet OS (Amazon Linux 2023, kernel 6.1) is new enough for both
 (https://docs.aws.amazon.com/gameliftservers/latest/developerguide/reference-ec2-ami-version-history.html),
 so the only open question is capability possession at launch.
 
-(a) If capabilities survive, the XDP driver works on managed fleets: build for
+(a) If capabilities survive, the XDP transport works on managed fleets: build for
 Linux, use `sudo setcap` in the install script, and let the auto ladder grant
 xdp; verify on a real fleet. (b) If they do not survive, XDP works only on
 Anywhere or container fleets, where the builder controls the user and can run
 with root or set capabilities, and managed fleets fall back to RocketNet's GSO
-(or io_uring) driver. (c) If the capabilities are not retained, the managed
-fleet path is RocketNet's GSO or io_uring driver.
+(or io_uring) transport. (c) If the capabilities are not retained, the managed
+fleet path is RocketNet's GSO or io_uring transport.
 
 A ten-minute test on a real managed EC2 fleet settles it: connect via SSM,
 install the build with `sudo setcap cap_net_admin,cap_bpf,cap_net_raw+ep <server>`, launch the game server, then check that `getcap <server>` still
-shows the capabilities and that RocketNet's xdp driver create succeeds and
+shows the capabilities and that RocketNet's xdp transport create succeeds and
 binds an AF_XDP socket on the ENA interface.

@@ -262,8 +262,9 @@ enum rocketnet_status_t
     ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED            = 23,   ///< Connect refused: the client is not DISCONNECTED; call rocketnet_client_disconnect first; nothing changed
     ROCKETNET_STATUS_SERVER_NOT_STOPPED                 = 24,   ///< Start refused: the server is already running; nothing changed
     ROCKETNET_STATUS_FLOW_ID_RESERVED                   = 25,   ///< A destination id has ROCKETNET_FLOW_ID_BIT set: flow ids are reserved and refused until flows exist
+    ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED     = 26,   ///< A transport cannot serve both named families (two interfaces, or a platform that cannot clear IPV6_V6ONLY)
 
-    ROCKETNET_STATUS_COUNT                              = 26     ///< Sentinel: the count of codes, OK included; not an operation result
+    ROCKETNET_STATUS_COUNT                              = 27     ///< Sentinel: the count of codes, OK included; not an operation result
 };
 
 /// -----------------------------------------
@@ -647,7 +648,7 @@ ROCKETNET_EXPORT void rocketnet_set_log_level( enum rocketnet_log_level_t level 
 ///
 /// The setting is process-wide. Set it before rocketnet_init to skip the timer
 /// period. Threads created after a change follow the new value; a thread
-/// already running keeps what it got. docs/CLIENT-IO.md and DRIVERS.md list the
+/// already running keeps what it got. docs/CLIENT-IO.md and TRANSPORTS.md list the
 /// threads.
 /// @param enabled true (the default) makes the calls; false makes none.
 ROCKETNET_EXPORT void rocketnet_set_thread_priority( bool enabled );
@@ -816,7 +817,6 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_set_allocator( void * (*mallo
 /// The platform passes read these process-wide variables, which are not
 /// config fields:
 ///
-/// Environment: ROCKETNET_PUMP=portable forces the portable datagram pump and refuses the msgx pump; any other value allows the batch pump decision.
 /// Environment: ROCKETNET_GATEWAY_ETHERNET_ADDRESS overrides gateway MAC discovery, xx:xx:xx:xx:xx:xx (linux); a malformed value refuses the socket (sdk/rocketnet_server_socket_linux.cpp:488).
 
 struct rocketnet_client_config_t
@@ -836,15 +836,15 @@ struct rocketnet_client_config_t
     int send_buffer_bytes;                          ///< ROCKETNET_CLIENT_SEND_BUFFER_BYTES: queued message bytes; 12288 .. 1 << 28; default 800000
     int send_queue_messages;                        ///< ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES: queued messages; 16 .. 1 << 20; default 1024
     int packets_in_flight;                          ///< ROCKETNET_CLIENT_PACKETS_IN_FLIGHT: unacknowledged packets tracked; 16 .. 1 << 16; default 256
-    int max_packets_per_update;                     ///< ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE: packets sent per update, in-place unreliable finish messages and send_packets together; 1 .. 1024; default 256; the send budget is the throttle
+    int packets_per_update;                     ///< ROCKETNET_CLIENT_PACKETS_PER_UPDATE: packets sent per update, in-place unreliable finish messages and send_packets together; 1 .. 1024; default 256; the send budget is the throttle
     int unreliable_deliveries;                      ///< ROCKETNET_CLIENT_UNRELIABLE_DELIVERIES: unreliable messages delivered per update; per update; 1 .. 1 << 16; default 256
     int sequenced_holds;                            ///< ROCKETNET_CLIENT_SEQUENCED_HOLDS: sequenced messages held for order; 0 .. 4096; default 16
     /// @brief Maximum queued client send receipts, 16 through 65536 (default 256).
     /// A full ring drops its oldest receipt; ROCKETNET_CLIENT_RECEIPT_RING can override it.
     int receipt_ring;                               ///< ROCKETNET_CLIENT_RECEIPT_RING: send receipts kept until read; a full ring drops its oldest; 16 .. 1 << 16; default 256
-    int rto_initial_ms;                             ///< ROCKETNET_CLIENT_RTO_INITIAL_MS: the retransmit timeout before an rtt sample, milliseconds; 10 .. 60000; default 2000
-    int rto_min_ms;                                 ///< ROCKETNET_CLIENT_RTO_MIN_MS: optional sampled RTO floor in milliseconds; 0 disables it; 0 .. 60000; default 0
-    int rto_max_ms;                                 ///< ROCKETNET_CLIENT_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 2000
+    int resend_delay_initial_ms;                             ///< ROCKETNET_CLIENT_RESEND_DELAY_INITIAL_MS: the initial resend delay before an rtt sample, milliseconds; 10 .. 60000; default 2000
+    int resend_delay_min_ms;                                 ///< ROCKETNET_CLIENT_RESEND_DELAY_MIN_MS: optional sampled resend delay floor in milliseconds; 0 disables it; 0 .. 60000; default 0
+    int resend_delay_max_ms;                                 ///< ROCKETNET_CLIENT_RESEND_DELAY_MAX_MS: the maximum resend delay, milliseconds; 10 .. 60000; default 2000
     int reliable_timeout_ms;                        ///< ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
     /// Simulated link conditions: development only. A release library refuses nonzero simulated_* fields with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE.
     int simulated_loss_percent;                     ///< ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT: development only: outgoing loss 0..100; 0 is off (sdk/rocketnet_internal.h:435)
@@ -865,9 +865,10 @@ struct rocketnet_client_config_t
 ///
 /// public_address, when set, displaces the create call's address at start, so the
 /// address the transport binds and the address connect tokens are checked
-/// against are always the same one. ROCKETNET_SERVER_PUBLIC_ADDRESS applies to
-/// the first server start in the process only, and says so in the log, so a
-/// process with several servers is never redirected wholesale by one variable.
+/// against are always the same one. ROCKETNET_SERVER_PUBLIC_ADDRESS and
+/// ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS are consumed together by the first
+/// server start in the process, and say so in the log, so a process with several
+/// servers is never redirected wholesale by ambient address variables.
 
 struct rocketnet_server_config_t
 {
@@ -883,7 +884,7 @@ struct rocketnet_server_config_t
     int num_reassembly_slots;                       ///< ROCKETNET_SERVER_NUM_REASSEMBLY_SLOTS: per client; 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
     int max_timeout_seconds;                        ///< ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS: 1 .. 3600; default 60
     int handshake_deadline_seconds;                 ///< ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS: 1 .. 60; default 5
-    const char * transport;                         ///< ROCKETNET_SERVER_TRANSPORT: the candidate list; NULL is "auto"; every transport, xdp included, serves IPv4 and IPv6, one family per server (the family of its public address)
+    const char * transport;                         ///< ROCKETNET_SERVER_TRANSPORT: the candidate list; NULL is "auto"; every transport, xdp included, serves IPv4, IPv6, or both when second_public_address names the other family on the same port
     const char * public_address;                    ///< ROCKETNET_SERVER_PUBLIC_ADDRESS: "a.b.c.d:port" or "[v6]:port"; NULL is the create call's address
     int per_client_send_kbps;                       ///< ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS: each client's send budget, kbps; default 10000; the starting rate of each client connection; 0 or less sets the budget to its ceiling, ROCKETNET_SEND_BUDGET_MAX_KBPS (10 Gbit/s), NOT RECOMMENDED; above ROCKETNET_SEND_BUDGET_MAX_KBPS is refused
     int num_channels;                               ///< ROCKETNET_SERVER_NUM_CHANNELS: the channels messages are sent and received on; WIRE; 1 .. ROCKETNET_MAX_CHANNELS; default 32
@@ -893,25 +894,26 @@ struct rocketnet_server_config_t
     int send_buffer_bytes;                          ///< ROCKETNET_SERVER_SEND_BUFFER_BYTES: queued message bytes; per client; 12288 .. 1 << 28; default 800000
     int send_queue_messages;                        ///< ROCKETNET_SERVER_SEND_QUEUE_MESSAGES: queued messages; per client; 16 .. 1 << 20; default 1024
     int packets_in_flight;                          ///< ROCKETNET_SERVER_PACKETS_IN_FLIGHT: unacknowledged packets tracked; per client; 16 .. 1 << 16; default 256
-    int max_packets_per_update;                     ///< ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE: packets sent per update, in-place unreliable finish messages and send_packets together; per client; 1 .. 1024; default 256; the send budget is the throttle
+    int packets_per_update;                     ///< ROCKETNET_SERVER_PACKETS_PER_UPDATE: packets sent per update, in-place unreliable finish messages and send_packets together; per client; 1 .. 1024; default 256; the send budget is the throttle
     int unreliable_deliveries;                      ///< ROCKETNET_SERVER_UNRELIABLE_DELIVERIES: unreliable messages delivered per update; per client per update; 1 .. 1 << 16; default 256
     int sequenced_holds;                            ///< ROCKETNET_SERVER_SEQUENCED_HOLDS: sequenced messages held for order; 0 .. 4096; default 16
     /// @brief Maximum queued receipts per server client, 16 through 65536 (default 256).
     /// A full ring drops its oldest receipt; ROCKETNET_SERVER_RECEIPT_RING can override it.
     int receipt_ring;                               ///< ROCKETNET_SERVER_RECEIPT_RING: send receipts kept until read; a full ring drops its oldest; 16 .. 1 << 16; default 256
-    int rto_initial_ms;                             ///< ROCKETNET_SERVER_RTO_INITIAL_MS: the retransmit timeout before an rtt sample, milliseconds; 10 .. 60000; default 2000
-    int rto_min_ms;                                 ///< ROCKETNET_SERVER_RTO_MIN_MS: optional sampled RTO floor in milliseconds; 0 disables it; 0 .. 60000; default 0
-    int rto_max_ms;                                 ///< ROCKETNET_SERVER_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 2000
+    int resend_delay_initial_ms;                             ///< ROCKETNET_SERVER_RESEND_DELAY_INITIAL_MS: the initial resend delay before an rtt sample, milliseconds; 10 .. 60000; default 2000
+    int resend_delay_min_ms;                                 ///< ROCKETNET_SERVER_RESEND_DELAY_MIN_MS: optional sampled resend delay floor in milliseconds; 0 disables it; 0 .. 60000; default 0
+    int resend_delay_max_ms;                                 ///< ROCKETNET_SERVER_RESEND_DELAY_MAX_MS: the maximum resend delay, milliseconds; 10 .. 60000; default 2000
     int reliable_timeout_ms;                        ///< ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
     /// Simulated link conditions: development only. A release library refuses nonzero simulated_* fields with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE.
     int simulated_loss_percent;                     ///< ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT: development only: outgoing loss 0..100; 0 is off (sdk/rocketnet_internal.h:510)
     int simulated_latency_ms;                       ///< ROCKETNET_SERVER_SIMULATED_LATENCY_MS: development only: outgoing latency 0..60000 milliseconds; 0 is off (sdk/rocketnet_internal.h:511)
     int simulated_jitter_ms;                        ///< ROCKETNET_SERVER_SIMULATED_JITTER_MS: development only: outgoing jitter 0..60000 milliseconds; 0 is off (sdk/rocketnet_internal.h:512)
     int simulated_duplicate_percent;                ///< ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT: development only: outgoing duplication 0..100; 0 is off (sdk/rocketnet_internal.h:513)
+    const char * second_public_address;             ///< ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS: the other family's "a.b.c.d:port" or "[v6]:port" on the same port; NULL or empty serves one family
 };
 
-/// Revision 1, the one revision: the whole struct, through simulated_duplicate_percent.
-#define ROCKETNET_SERVER_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, simulated_duplicate_percent ) + sizeof( int ), sizeof( void * ) )
+/// Revision 1, the one revision: the whole struct, through second_public_address.
+#define ROCKETNET_SERVER_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, second_public_address ) + sizeof( const char * ), sizeof( void * ) )
 
 /// -----------------------------------------
 ///                           Messages
@@ -966,11 +968,11 @@ struct rocketnet_server_config_t
 /// is never dropped; an unreliable one over budget is dropped and counted
 /// (the BUDGET_DROPS counters).
 ///
-/// Receiving: receive hands out the next message of the update on a channel
-/// as a const view and its length, valid until the next update. Release every
-/// received message before the next update; update with one still held
-/// asserts in a debug build and returns ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED
-/// in a release build. Copy what is kept past the update.
+/// Receiving is RakPeer::Receive, pumped: each receive fills the caller's batch,
+/// struct rocketnet_message_batch_t (the receive section at the end of this
+/// header), from one queue per client, or one per server across all clients.
+/// Its data pointers are valid until the next receive or update.
+struct rocketnet_message_batch_t;
 
 /// @brief One outcome for a send's nonzero receipt serial.
 /// Receipts are copied into caller storage after an update. A full receipt ring
@@ -1018,8 +1020,9 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_generate_server_keypair( uint
 /// user_data, and fresh session keys. server_address_strings holds
 /// server_address_count entries (1 or 2), at most one of each family. With
 /// both families the client selects the IPv6 address on a host that can open
-/// an IPv6 socket and the IPv4 address on one that cannot, and a server
-/// accepts the token when either address is one it serves. user_data
+/// an IPv6 socket and the IPv4 address on one that cannot. The server checks
+/// only the token address for the family the request arrived on; that address
+/// must be one the server advertises. user_data
 /// is ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES long, or NULL for all zeros. The
 /// output is ROCKETNET_CONNECT_TOKEN_BYTES long and connect_token_bytes is its
 /// size; a short buffer is refused with ROCKETNET_STATUS_INVALID_ARGUMENT and
@@ -1107,15 +1110,17 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_write_dev_connect_token( cons
 /// form at sizeof(*config) (rocketnet_client_create in sdk/rocketnet_api.cpp).
 /// NULL config is the defaults. context is an opaque caller pointer handed to the
 /// allocator's callbacks and to the config's state_change_callback and
-/// time_callback; keep it valid until destroy. Returns NULL on a config
-/// validate_config refuses, on a refused memory block, and before
-/// rocketnet_init (logged, and counted in rocketnet_api_misuse_count).
-ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * context, const struct rocketnet_client_config_t * config, void * memory, size_t memory_bytes );
+/// time_callback; keep it valid until destroy. The final nullable status
+/// out-parameter holds ROCKETNET_STATUS_OK with a non-NULL result, or the
+/// refusal's code with NULL: NOT_INITIALIZED before init, INVALID_ARGUMENT for
+/// an unknown size or refused memory block, the specific config refusal, or
+/// OUT_OF_MEMORY for a failed allocation.
+ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * context, const struct rocketnet_client_config_t * config, void * memory, size_t memory_bytes, enum rocketnet_status_t * status );
 
 /// Create with a config config_bytes long; an unknown size is refused with a
-/// log line and returns NULL before any other check. context and its lifetime
-/// are as rocketnet_client_create states.
-ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create_sized( void * context, const struct rocketnet_client_config_t * config, size_t config_bytes, void * memory, size_t memory_bytes );
+/// log line and returns NULL before any other check. context, status and their
+/// lifetimes are as rocketnet_client_create states.
+ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create_sized( void * context, const struct rocketnet_client_config_t * config, size_t config_bytes, void * memory, size_t memory_bytes, enum rocketnet_status_t * status );
 
 /// Starts a connection with connect_token, ROCKETNET_CONNECT_TOKEN_BYTES long.
 /// Only from DISCONNECTED: any other state returns
@@ -1214,11 +1219,8 @@ ROCKETNET_EXPORT uint32_t rocketnet_client_finish_message( struct rocketnet_clie
 /// A NULL client is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_client_abort_message( struct rocketnet_client_t * client );
 
-/// 1 with the next message on channel, 0 when there is none. A NULL client, data or bytes is a counted no-op that returns 0.
-ROCKETNET_EXPORT int rocketnet_client_receive_message( struct rocketnet_client_t * client, int channel, const uint8_t ** data, int * bytes );
-
-/// A NULL client or data is a counted no-op; a pointer that is not a held view is a counted misuse.
-ROCKETNET_EXPORT void rocketnet_client_release_message( struct rocketnet_client_t * client, const uint8_t * data );
+/// The client's receive, RakPeer::Receive pumped: fills messages with up to ROCKETNET_RECEIVE_BATCH_MESSAGES next messages of the client's one receive queue, every channel's, in RakNet's order, each naming its sender as index = 0, the server, with the count in num_messages; true when it filled at least one, false when none is pending. Pump it until it returns false: there is no per-update cap. The data pointers point into the library's storage, never copied, and are valid until the next call of this function or of rocketnet_client_update on this client, whichever comes first. A NULL client or messages is a counted no-op that returns false.
+ROCKETNET_EXPORT bool rocketnet_client_receive_messages( struct rocketnet_client_t * client, struct rocketnet_message_batch_t * messages );
 
 /// @brief Copy this update's client receipt outcomes into caller storage.
 /// Call after update and before the next update, without a concurrent update.
@@ -1304,22 +1306,24 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory_sized( const struct roc
 /// once started). The server is created stopped and binds nothing. NULL config
 /// is the defaults, which start refuses until keys are given. context is an
 /// opaque caller pointer handed to the allocator's callbacks and to the message
-/// and transport create; keep it valid until destroy. Returns NULL on a config validate_config
-/// refuses, on a refused memory block, and before rocketnet_init (logged, and
-/// counted in rocketnet_api_misuse_count). A NULL address is a counted no-op
-/// that returns NULL.
-ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * context, const char * address, const struct rocketnet_server_config_t * config, void * memory, size_t memory_bytes );
+/// and transport create; keep it valid until destroy. The final nullable
+/// status out-parameter holds ROCKETNET_STATUS_OK with a non-NULL result, or
+/// the refusal's code with NULL: NOT_INITIALIZED before init, INVALID_ARGUMENT
+/// for a NULL address, unknown size or refused memory block, INVALID_ADDRESS
+/// for an over-long address, the specific config refusal, or OUT_OF_MEMORY for
+/// a failed allocation.
+ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * context, const char * address, const struct rocketnet_server_config_t * config, void * memory, size_t memory_bytes, enum rocketnet_status_t * status );
 
 /// Create with a config config_bytes long; an unknown size is refused with a
-/// log line and returns NULL before any other check. context and its lifetime
-/// are as rocketnet_server_create states.
-ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create_sized( void * context, const char * address, const struct rocketnet_server_config_t * config, size_t config_bytes, void * memory, size_t memory_bytes );
+/// log line and returns NULL before any other check. context, status and their
+/// lifetimes are as rocketnet_server_create states.
+ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create_sized( void * context, const char * address, const struct rocketnet_server_config_t * config, size_t config_bytes, void * memory, size_t memory_bytes, enum rocketnet_status_t * status );
 
 /// Binds the transport at the address and accepts clients, up to the
 /// config's max_clients. Only from stopped: a running server returns
 /// ROCKETNET_STATUS_SERVER_NOT_STOPPED with nothing changed. A transport that
 /// does not start returns its status (ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED,
-/// TRANSPORT_PORT_ZERO_UNSUPPORTED, MISSING_KEYS, THREAD_CREATE_FAILED,
+/// TRANSPORT_PORT_ZERO_UNSUPPORTED, TRANSPORT_FAMILIES_UNSUPPORTED, MISSING_KEYS, THREAD_CREATE_FAILED,
 /// TIMER_CREATE_FAILED, MUTEX_CREATE_FAILED, OUT_OF_MEMORY, ...) and leaves the
 /// server stopped. A NULL server is a counted no-op that returns
 /// ROCKETNET_STATUS_INVALID_ARGUMENT.
@@ -1420,11 +1424,8 @@ ROCKETNET_EXPORT uint32_t rocketnet_server_finish_message( struct rocketnet_serv
 /// A NULL server is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_server_abort_message( struct rocketnet_server_t * server, uint64_t destination_id );
 
-/// 1 with the next message on channel, 0 when there is none. A NULL server, data or bytes is a counted no-op that returns 0.
-ROCKETNET_EXPORT int rocketnet_server_receive_message( struct rocketnet_server_t * server, uint64_t client_index, int channel, const uint8_t ** data, int * bytes );
-
-/// A NULL server or data is a counted no-op; a pointer that is not a held view is a counted misuse.
-ROCKETNET_EXPORT void rocketnet_server_release_message( struct rocketnet_server_t * server, uint64_t client_index, const uint8_t * data );
+/// The server's receive, RakPeer::Receive pumped: fills messages with up to ROCKETNET_RECEIVE_BATCH_MESSAGES next messages of the server's one receive queue across all clients, each naming its sender's client index in client_index[], in RakNet's order, with the count in num_messages; true when it filled at least one, false when none is pending or the server is stopped. Pump it until it returns false: there is no per-update cap. The data pointers point into the library's storage, never copied, and are valid until the next call of this function or of rocketnet_server_update on this server, whichever comes first. A NULL server or messages is a counted no-op that returns false.
+ROCKETNET_EXPORT bool rocketnet_server_receive_messages( struct rocketnet_server_t * server, struct rocketnet_message_batch_t * messages );
 
 /// @brief Copy one connected server client's receipt outcomes.
 /// Call after update and before the next update, without a concurrent update.
@@ -1453,6 +1454,70 @@ ROCKETNET_EXPORT uint64_t rocketnet_server_client_counter( const struct rocketne
 
 /// One client slot's stat by its enum; 0 for a free slot or a value outside the enum. A NULL server is a counted no-op that returns 0.
 ROCKETNET_EXPORT double rocketnet_server_client_stat( const struct rocketnet_server_t * server, uint64_t client_index, enum rocketnet_server_client_stat_t stat );
+
+/// -----------------------------------------
+///             Receiving messages
+/// -----------------------------------------
+
+/// The send's channel is RakNet's ordering channel: RELIABLE_ORDERED,
+/// RELIABLE_ORDERED_WITH_ACK_RECEIPT and the two SEQUENCED types are ordered
+/// or sequenced within it, and a channel at or past the config's num_channels
+/// refuses those sends. UNRELIABLE, RELIABLE, UNRELIABLE_WITH_ACK_RECEIPT and
+/// RELIABLE_WITH_ACK_RECEIPT ignore it, as RakNet's ReliabilityLayer::Send
+/// does: any channel value is accepted for them, never refused, and the
+/// message travels with no channel on the wire (standard/MESSAGES.md, codes 0
+/// and 2).
+///
+/// Receiving is RakPeer::Receive, pumped and zero copy: one queue per client,
+/// and one per server across all its clients. Each receive fills the caller's
+/// struct rocketnet_message_batch_t with the queue's next messages, up to
+/// its capacity ROCKETNET_RECEIVE_BATCH_MESSAGES, one array per field: each
+/// message's sender (on a client, index = 0, the server), the channel it was delivered on, its wire type, its
+/// length and a pointer to its bytes in the library's storage (delivered and
+/// reassembled, never copied), with the count in num_messages. It returns true
+/// when it filled at least one and false when nothing is pending; pump it until
+/// it returns false. There is no per-update cap: what
+/// one call does not return waits for the next call in the same update, in
+/// order. The queue holds every channel's messages: ordered and sequenced
+/// messages keep their order within their channel and sender, and on a server
+/// the queue holds the update's messages client by client in index order:
+///
+///     struct rocketnet_message_batch_t batch;
+///     while ( rocketnet_server_receive_messages( server, &batch ) )
+///     {
+///         for ( int i = 0; i < batch.num_messages; i++ )
+///             handle( batch.client_index[i], batch.data[i], batch.bytes[i] );
+///     }
+///
+/// The data pointers of one call are valid until the next receive call or the
+/// next update of the same client or server, whichever comes first; that call
+/// releases them, and there is no release call. Copy what is kept longer.
+
+/// The messages one receive hands out at most
+#define ROCKETNET_RECEIVE_BATCH_MESSAGES                               256
+
+/// @brief One batch of received messages, one array per field, entry i of
+/// every array describing message i, in receive order.
+struct rocketnet_message_batch_t
+{
+    /// @brief The entries filled, 0 when the queue is empty.
+    int num_messages;
+    /// @brief The sender's index: on a server, the sending client's client_index; on
+    /// a client, index = 0, the server, which sends every message a client
+    /// receives.
+    int client_index[ROCKETNET_RECEIVE_BATCH_MESSAGES];
+    /// @brief The channel the message was delivered on: its ordering channel
+    /// for an ordered or sequenced type, 0 for the types that carry none.
+    int channel[ROCKETNET_RECEIVE_BATCH_MESSAGES];
+    /// @brief The wire type the message arrived as, 0 to 4: a receipt type
+    /// arrives as its twin (UNRELIABLE, RELIABLE or RELIABLE_ORDERED), and a
+    /// promoted unreliable send as its reliable twin.
+    enum rocketnet_reliability_t reliability[ROCKETNET_RECEIVE_BATCH_MESSAGES];
+    /// @brief The message's length in bytes.
+    int bytes[ROCKETNET_RECEIVE_BATCH_MESSAGES];
+    /// @brief The message's bytes in the library's storage, valid until the next receive call or update.
+    const uint8_t * data[ROCKETNET_RECEIVE_BATCH_MESSAGES];
+};
 
 #ifdef __cplusplus
 }

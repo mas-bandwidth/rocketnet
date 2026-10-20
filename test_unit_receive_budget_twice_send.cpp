@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// Receive capacity is at least twice the send budget, per driver
+// Receive capacity is at least twice the send budget, per transport
 // (rocketnet-receive-budget-twice-send). The send budget is what one
 // update can stage or submit; the receive capacity is the bank, ring,
 // staging or completion budget the send path can fill while it waits.
@@ -192,7 +192,7 @@ static void receive_budget_twice_send_uring_reap_no_overflow()
     struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, 1, &source );
     if ( !uring )
     {
-        printf( "[SKIPPED the io_uring driver is not built]\n" );
+        printf( "[SKIPPED the io_uring transport is not built]\n" );
         free( fake );
         return;
     }

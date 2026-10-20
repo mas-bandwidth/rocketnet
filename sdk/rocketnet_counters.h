@@ -266,7 +266,7 @@
     /** @brief ROCKETNET_COUNTER_CLIENT_CONNECTED: Counts client connections established. Unit: occurrences. Class: expected; family: none. */ \
     X( CLIENT_CONNECTED, EXPECTED, NONE ) \
     /* REFUSAL: a resource exhaustion is a refusal. */ \
-    /** @brief ROCKETNET_COUNTER_SEND_RING_FULL: Counts packets refused because the send ring has no free slot. Unit: occurrences. Class: refusal; family: none. */ \
+    /** @brief ROCKETNET_COUNTER_SEND_RING_FULL: Counts packets refused because the send ring has no free slot, plus committed packets destroy drops at its wait deadline. Unit: occurrences. Class: refusal; family: none. */ \
     X( SEND_RING_FULL, REFUSAL, NONE ) \
     /* REFUSAL: an internal state the shipped protocol cannot produce. */ \
     /** @brief ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING: Counts internal events that find a client slot without a mapping. Unit: occurrences. Class: refusal; family: none. */ \
@@ -672,11 +672,11 @@
     /* Layer 3 sent-packet map and resend FIFO (docs/CHANNELS.md 6.4, 15.1): */ \
     /* a sent-packet ring entry evicted to make room for a new packet (its */ \
     /* referenced numbers stay in the resend FIFO), and a reliable record */ \
-    /* resent on the RTO. appended: indices are the contract. */ \
+    /* resent on the resend delay. appended: indices are the contract. */ \
     /** @brief ROCKETNET_COUNTER_MESSAGE_SENT_MAP_EVICTED: Counts sent-packet map entries evicted while their message numbers remain queued for resend. Unit: occurrences. Class: refusal; family: none. */ \
     X( MESSAGE_SENT_MAP_EVICTED, REFUSAL, NONE ) \
-    /* PATH_LOSS: a reliable record resent on the RTO. */ \
-    /** @brief ROCKETNET_COUNTER_MESSAGE_RESENT: Counts reliable records resent after their retransmission timeout. Unit: occurrences. Class: path_loss; family: none. */ \
+    /* PATH_LOSS: a reliable record resent on the resend delay. */ \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_RESENT: Counts reliable records resent after their resend delay. Unit: occurrences. Class: path_loss; family: none. */ \
     X( MESSAGE_RESENT, PATH_LOSS, NONE ) \
     \
     /* a connection's message memory (its region, docs/CHANNELS.md 4) was */ \
@@ -826,11 +826,11 @@
     /** @brief ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG: Counts requests refused because the token lifetime exceeds its limit. Unit: occurrences. Class: refusal; family: CONNECTION_REQUEST_RECEIVED. */ \
     X( CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
     \
-    /* A send the driver refused for want of a link-layer destination: the */ \
-    /* xdp driver on a segment with no default route, to an address with no */ \
-    /* learned MAC that answers no received frame (DRIVERS.md, xdp). Never */ \
+    /* A send the transport refused for want of a link-layer destination: the */ \
+    /* xdp transport on a segment with no default route, to an address with no */ \
+    /* learned MAC that answers no received frame (TRANSPORTS.md, xdp). Never */ \
     /* sent and never counted as sent. appended: indices are the contract. */ \
-    /** @brief ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS: Counts sends refused because the driver has no link-layer destination. Unit: occurrences. Class: refusal; family: none. */ \
+    /** @brief ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS: Counts sends refused because the transport has no link-layer destination. Unit: occurrences. Class: refusal; family: none. */ \
     X( SEND_NO_LINK_ADDRESS, REFUSAL, NONE ) \
     \
     /* An UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT send */ \
@@ -850,7 +850,7 @@
     /* its one copy into the frame at send_packets: the transport gave no */ \
     /* frame (a full send ring), unreliable messages already waited in the */ \
     /* connection's queue, the send budget could not pay it at start, or */ \
-    /* the update's max_packets_per_update was spent (in-place and queued */ \
+    /* the update's packets_per_update was spent (in-place and queued */ \
     /* packets count against it together), one packet of it being kept for */ \
     /* the write pass while reliable work is due. The queued path then */ \
     /* sends it, or drops it over budget and counts */ \
@@ -862,7 +862,7 @@
     /** @brief ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK: Counts fitting unreliable messages that took the queued path instead of being written in place in a packet buffer; one count per message, on the owner's counters. Unit: messages. Class: expected; family: none. */ \
     X( MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK, EXPECTED, NONE ) \
     \
-    /** @brief ROCKETNET_COUNTER_SEND_FAILED: Counts datagrams the transport's socket dropped because the send call failed (ENOBUFS from a full interface queue, EAGAIN from a full send buffer, a refused destination); the socket counts each one (rocketnet_platform_socket_send in sdk/rocketnet_platform.cpp) and the transport reads the driver's send_failures into this counter when the counters are read (sdk/rocketnet_client_transport.cpp, sdk/rocketnet_server_transport.cpp); a driver without send_failures leaves it zero. Appended: indices are the contract. Unit: datagrams. Class: refusal; family: none. */ \
+    /** @brief ROCKETNET_COUNTER_SEND_FAILED: Counts datagrams the transport's socket dropped because the send call failed (ENOBUFS from a full interface queue, EAGAIN from a full send buffer, a refused destination); the socket counts each one (rocketnet_platform_socket_send in sdk/rocketnet_platform.cpp) and the transport reads the transport's send_failures into this counter when the counters are read (sdk/rocketnet_client_transport.cpp, sdk/rocketnet_server_transport.cpp); a transport without send_failures leaves it zero. Appended: indices are the contract. Unit: datagrams. Class: refusal; family: none. */ \
     X( SEND_FAILED, REFUSAL, NONE ) \
     \
     /* The kernel prefilter's PASSED_FRAGMENT (sdk/rocketnet_wire.h): IP */ \
@@ -922,7 +922,24 @@
     /** @brief ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION: Counts reliable records refused because their receive descriptor slot is occupied by another number. Unit: occurrences. Class: refusal; family: none. */ \
     X( MESSAGE_SLOT_COLLISION, REFUSAL, NONE ) \
     /** @brief ROCKETNET_COUNTER_MESSAGE_DUPLICATE_ORDERING: Counts reliable ordered records refused because another record with the same channel and ordering index is already held. Unit: occurrences. Class: refusal; family: none. */ \
-    X( MESSAGE_DUPLICATE_ORDERING, REFUSAL, NONE )
+    X( MESSAGE_DUPLICATE_ORDERING, REFUSAL, NONE ) \
+    \
+    /* The kernel prefilter's DROPPED_NO_SOCKET (sdk/rocketnet_wire.h): a */ \
+    /* packet that passed every prefilter check but whose receive queue */ \
+    /* has no AF_XDP socket in the XSKMAP, so bpf_redirect_map refused it */ \
+    /* and the XDP program dropped it. REFUSAL. appended: indices are the */ \
+    /* contract. */ \
+    /** @brief ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_NO_SOCKET: Counts packets that passed the kernel prefilter but were dropped because their receive queue had no AF_XDP socket in the redirect map. Unit: occurrences. Class: refusal; family: none. */ \
+    X( XDP_KERNEL_DROPPED_NO_SOCKET, REFUSAL, NONE ) \
+    \
+    /* A datagram from a source other than the server the client dialed: */ \
+    /* the client listens to that server alone and drops the datagram */ \
+    /* before any protocol check, counted while the attempt holds the */ \
+    /* server's address; after a terminal state clears it nothing is */ \
+    /* counted (sdk/rocketnet_client_transport.cpp:1296-1301). REFUSAL. */ \
+    /* appended: indices are the contract. */ \
+    /** @brief ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE: Counts datagrams the client drops because their source is not the server it dialed, while the connection attempt holds that server's address; one count per datagram. Unit: datagrams. Class: refusal; family: none. */ \
+    X( CLIENT_RECEIVE_FOREIGN_SOURCE, REFUSAL, NONE )
 
 /**
  * @brief Integer indices for the cumulative protocol counters.
@@ -973,7 +990,7 @@ struct rocketnet_counters_t
     uint64_t handshakes_processed_this_update;
 };
 
-// Surface a driver's kernel prefilter counters through the transport counter
+// Surface a transport's kernel prefilter counters through the transport counter
 // surface: prefilter holds ROCKETNET_SERVER_XDP_NUM_COUNTERS values in
 // ROCKETNET_SERVER_XDP_COUNTER_* order. Each value is assigned (the kernel
 // totals are cumulative) to its transport counter; nothing else moves.

@@ -8,7 +8,7 @@
 # pinned two-file sodium vendor (sodium/sodium.c + sodium.h), which is part of
 # this tree, so it is compiled by the same CMake target with the same flags;
 # no system sodium is linked. The unit suite opens no socket and starts no
-# driver, so the run is the portable configuration: no XDP dataplane, no
+# transport, so the run is the portable configuration: no XDP dataplane, no
 # io_uring. The instrumented binary lives under build-msan/bin so a later
 # `make && ./bin/test` is not a stale sanitizer build.
 #

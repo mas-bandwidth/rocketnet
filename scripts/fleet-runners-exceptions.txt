@@ -8,7 +8,7 @@ ci.yml happy-path DISABLED darwin runner not registered for this repository; owe
 ci.yml platform-selftests DISABLED darwin runner not registered for this repository; owed: a darwin runner registered for this repository
 ci.yml build-and-test-windows DISABLED owed: the Windows fleet machine
 nightly.yml build-and-test-windows-debug DISABLED no Windows fleet runner registered for this repository; owed: the Windows fleet machine
-nightly.yml windows-driver-extension DISABLED no Windows fleet runner registered for this repository; owed: the Windows fleet machine
+nightly.yml windows-transport-extension DISABLED no Windows fleet runner registered for this repository; owed: the Windows fleet machine
 nightly-frame-budget.yml macos-frame-budget DISABLED no darwin fleet runner registered for this repository; owed: a darwin runner registered for this repository
 nightly-frame-budget.yml windows-frame-budget DISABLED no Windows fleet runner registered for this repository; owed: the Windows fleet machine
 nightly-examples.yml examples-macos DISABLED no darwin fleet runner registered for this repository; owed: a darwin runner registered for this repository

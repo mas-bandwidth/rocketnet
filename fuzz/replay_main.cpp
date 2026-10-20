@@ -3,13 +3,13 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// A libFuzzer-free replay driver for the fuzz harnesses. libFuzzer, given
+// A libFuzzer-free replay transport for the fuzz harnesses. libFuzzer, given
 // file arguments, reads each file whole and calls LLVMFuzzerTestOneInput
 // once per file; this main does the same, in argument order, so a corpus
 // replay runs where no libFuzzer runtime exists (Apple Clang, MSVC).
 //
 // The harnesses keep no state across inputs and read no clock or
-// randomness, so the count is all this driver reports. Each harness's
+// randomness, so the count is all this transport reports. Each harness's
 // LLVMFuzzerInitialize is called first, as libFuzzer calls it.
 //
 // Exit 2 with a usage line when no paths are named; exit 1 when a file
