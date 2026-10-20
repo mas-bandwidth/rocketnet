@@ -776,7 +776,7 @@ processes and two packets make it checked once.
 **Files.** `sdk/rocketnet_server_socket_linux.cpp:2121-2229` (receive frames and pending
 return), `:2232-2247` (completions), `:2249-2356` (send batch), `:1762-1795, 1870-1897`
 (start, acquire, publish); `sdk/rocketnet_pending_frames.h:9-35`;
-`sdk/rocketnet_send_handoff.h:9-44`. CLAUDE.md:100-106 ranks the pending-return spill
+`sdk/rocketnet_send_handoff.h:9-57`. CLAUDE.md:100-106 ranks the pending-return spill
 first among known issues: it "has not been driven on hardware".
 
 **States.** Each receive frame is in one of `Fill` (kernel), `Rx` (kernel → user ring)
@@ -796,14 +796,27 @@ or `Pending` (user, awaiting a fill reservation). Each send frame is in one of `
   keeps the batch (`:2334-2355`).
 - Main thread: `send_packets` publishes a non-empty filling generation and acquires the
   next (`:1883-1897`). A fill thread may acquire on the slow path when both are queued
-  (`:1766-1775`).
+  (`:1766-1775`). The handoff's reopen (`send_handoff.h:45`) returns the newest queued
+  generation and never the front; `tla/SendHandoff.tla` checks the reopen rules. The
+  socket's acquire helper (`:2348-2374`) calls acquire first and, when every generation
+  is queued, reopen, marking the reopened generation's finish_base at the count it
+  already published; a finish or abort below that base is refused (`:2310`, `:2340`).
 
 **Rules.**
 - `INV FrameConservation`: every UMEM frame has exactly one owner at every step
   (comment `:2159-2170`; `pending_frames.h:6-7`).
 - `INV ReleaseConsumedOnly`: the RX release covers exactly the consumed descriptors.
-- `INV HandoffNoOverwrite`: a full queue refuses new storage without overwriting a
-  queued generation (`send_handoff.h:8`).
+- `INV HandoffNoOverwrite`: when every generation is queued, acquire returns -1 and
+  reopen returns the newest queued generation, never the front; a queued generation is
+  never overwritten or duplicated (`send_handoff.h:22-49`, `tla/SendHandoff.tla`).
+- `INV ReopenedPrivate`: the generation reopen hands back is no longer queued and is
+  never the one in flight (`send_handoff.h:45`, `tla/SendHandoff.tla`).
+- `INV FrontNeverReopened`: reopen takes the newest queued generation, never the front
+  the worker may be draining (`send_handoff.h:45`, `tla/SendHandoff.tla`).
+- `INV PublishedPacketsStable`: a finish through a pointer from before a reopen does
+  not rewrite a packet already published (`tla/SendHandoff.tla`).
+- `LIVE EveryQueuedGenerationCompletes`: under fairness of publish, take and retire,
+  every generation that reaches the queue is retired (`tla/SendHandoff.tla`).
 - `INV RetireAfterCopy`: a generation is retired only after its last packet is in UMEM
   (`:2318-2319`).
 - `LIVE FramesReturn`: if the kernel drains the fill and TX rings fairly, every Pending
@@ -1120,17 +1133,20 @@ Added with module 12. Written, run and recorded: `tla/ServerSession.tla`,
   `MaxCreates = 1`; `Defect`, `UnresetField` select a witness.
 - VARIABLES: `state` (NONE, STOPPED, RUNNING), per slot `st`, `sess`, `rec` (the
   same per-connection record), `reason`; `kept` (used-token history, keys, config, lifetime
-  counters, kept across stop and start per STANDARD.md:2913); `draining`; `link`.
-- Actions: `Create`, `Destroy`, `Start`, `Stop`, `DrainStep(i)`,
-  `DisconnectAll`, `DrainDone`, `ClientConnects(i, t)`, `Establish(i)`, `Deny(i)`,
+  counters, kept across stop and start per STANDARD.md:2913); `link`; the ghost
+  `allBefore`, the slots before the last `DisconnectAll` and `{}` after any other step.
+- Actions: `Create`, `Destroy`, `Start`, `Stop`, `DisconnectAll` (one step: every
+  CONNECTED slot ended with its disconnect and reason SERVER_DISCONNECTED, HANDSHAKE slots
+  left as they are), `ClientConnects(i, t)`, `Establish(i)`, `Deny(i)`,
   `SlotTimeout(i)`, `ClientLeaves(i)`, `DisconnectClient(i)`, `ServerSend(i)`, `ClientSend`,
   `Deliver`, `Lose`; every exit from a slot's connection goes through one `Reset(i)`.
 - Properties: `StartOnlyFromStopped`, `NoSendUnlessConnected`, `ResetIsInit`,
   `RecordIsCurrent`, `SlotReuseObservesNothing`, `NoClientWhileStopped`,
-  `StopDisconnectsAll`, `ReasonKeptWithinRun`, `ResetTouchesOnlyItsSlot`,
-  `TokenAdmitsOnce`; LIVE `HandshakeResolves`.
+  `StopDisconnectsAll`, `DisconnectAllIsAtomic`, `ReasonKeptWithinRun`,
+  `ResetTouchesOnlyItsSlot`, `TokenAdmitsOnce`; LIVE `HandshakeResolves`.
 - Reversed witnesses: `MCServerSessionUnresetSlot.cfg` must fail `SlotReuseObservesNothing`;
   `MCServerSessionStopLeavesClient.cfg` must fail `NoClientWhileStopped`;
+  `MCServerSessionDisconnectAllLeavesClient.cfg` must fail `DisconnectAllIsAtomic`;
   `MCServerSessionTouchesOtherSlot.cfg` must fail `ResetTouchesOnlyItsSlot`.
 - Cite from: the server's per-slot reset, start, stop and `disconnect_all_clients`, written by
   rocketnet-client-connect-disconnect-reconnect and rocketnet-per-connection-reset-is-complete

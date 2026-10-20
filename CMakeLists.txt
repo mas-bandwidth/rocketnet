@@ -1,4 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
+# 12.0: the Xcode 27 build system refuses 11.0 (its supported range starts at
+# 12.0), so it is the lowest target both the Xcode generator and the Command
+# Line Tools build on both universal slices. Set before project(); -D overrides.
+if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum supported macOS version" FORCE)
+endif()
 project(rocketnet VERSION 1.0.0 LANGUAGES C CXX)
 if(MSVC)
     add_compile_options(/utf-8)
@@ -419,6 +425,11 @@ if(ROCKETNET_BUILD_TESTS)
     # every object, so it links in either order.
     set(ROCKETNET_UNIT_TRANSPORT_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_driver_loopback.cpp")
     list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_TRANSPORT_SOURCE}")
+    # Included by the loopback translation unit, which compiles the server
+    # transport, so the driver-result cases can swap that transport's
+    # receive_batch. Not a second translation unit.
+    set(ROCKETNET_UNIT_DRIVER_RESULTS_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_driver_results_checked.cpp")
+    list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_DRIVER_RESULTS_SOURCE}")
     add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} test.cpp test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
     target_compile_definitions(test PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1)
     if(WIN32)
