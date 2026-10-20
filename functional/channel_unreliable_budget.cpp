@@ -47,7 +47,7 @@ void unreliable_over_receive_budget_dropped_and_counted()
     {
         uint8_t data[4];
         unreliable_budget_payload( i, data );
-        unreliable_budget_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_UNRELIABLE, data, sizeof( data ) ) != 0, "send" );
+        unreliable_budget_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, data, sizeof( data ) ) != 0, "send" );
     }
 
     rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
@@ -90,13 +90,13 @@ void reliable_delivered_when_unreliable_budget_full()
     {
         uint8_t data[4];
         unreliable_budget_payload( i, data );
-        unreliable_budget_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_UNRELIABLE, data, sizeof( data ) ) != 0, "send unreliable" );
+        unreliable_budget_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, data, sizeof( data ) ) != 0, "send unreliable" );
     }
     for ( int i = 0; i < reliable_count; i++ )
     {
         uint8_t data[4];
         unreliable_budget_payload( 32 + i, data );
-        unreliable_budget_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABLE, data, sizeof( data ) ) != 0, "send reliable" );
+        unreliable_budget_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE, data, sizeof( data ) ) != 0, "send reliable" );
     }
 
     rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );

@@ -27,20 +27,21 @@ line at `ERROR` when it refuses, and counts the refusal in
 
 | Public Entry Point | Return on Refusal |
 | :--- | :--- |
-| `rocketnet_init( context )` | `false` |
-| `rocketnet_term( void )` | refuses in place |
-| `rocketnet_allocator( malloc_fn, free_fn )` | `false` |
-| `rocketnet_client_default_config( config )` | a NULL config is a counted no-op |
-| `rocketnet_client_validate_config( config )` | `0`, with a log line naming the rule |
+| `rocketnet_init( context )` | the status code: `ALREADY_INITIALIZED`, `PLATFORM_INIT_FAILED` or `CRYPTO_INIT_FAILED` |
+| `rocketnet_term( void )` | the status code: `NOT_INITIALIZED` or `LIVE_ALLOCATIONS`; nothing changes |
+| `rocketnet_set_allocator( malloc_fn, free_fn )` | the status code: `INVALID_ARGUMENT`, `ALREADY_INITIALIZED` or `LIVE_ALLOCATIONS` |
+| `rocketnet_client_default_config( config )` | `INVALID_ARGUMENT` for a NULL config, counted |
+| `rocketnet_client_validate_config( config )` | `CONFIG_OUT_OF_RANGE`, with a log line naming the rule |
 | `rocketnet_client_create( context, config, memory, memory_bytes )` | `NULL`, with one error line |
 | `rocketnet_client_connect( client, token )` | the status code: `CLIENT_NOT_DISCONNECTED`, `INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, or a transport's code |
 | `rocketnet_client_create_sized(...)` | `NULL` for an unknown config size |
-| `rocketnet_server_default_config( config )` / `rocketnet_server_dev_config( config )` | a NULL config is a counted no-op |
-| `rocketnet_server_validate_config( config )` | `0`, with a log line naming the rule |
+| `rocketnet_server_default_config( config )` / `rocketnet_server_dev_config( config )` | `INVALID_ARGUMENT` for a NULL config, counted |
+| `rocketnet_server_validate_config( config )` | `CONFIG_OUT_OF_RANGE`, with a log line naming the rule |
 | `rocketnet_server_create( context, address, config, memory, memory_bytes )` | `NULL`, with one error line |
 | `rocketnet_server_create_sized(...)` | `NULL` for an unknown config size |
 | `rocketnet_server_start( server )` | the status code: `SERVER_NOT_STOPPED`, or the transport's code (`TRANSPORT_LADDER_EXHAUSTED`, `MISSING_KEYS`, ...) |
-| `rocketnet_client_update( client, time )` / `rocketnet_server_update( server, time )` | `ROCKETNET_MESSAGE_OK` or `ROCKETNET_ERROR_MESSAGE_NOT_RELEASED` |
+| `rocketnet_client_update( client, time )` / `rocketnet_server_update( server, time )` | `ROCKETNET_UPDATE_OK` or `ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED` |
+| key and token writers, `*_set_send_kbps`, the `_sized` config calls | the status code; see each declaration in `sdk/rocketnet.h` |
 
 The client and server create paths validate the config, apply the environment
 overrides (`ROCKETNET_CLIENT_*`, `ROCKETNET_SERVER_*`, with precedence
@@ -76,19 +77,19 @@ Status codes follow the same numbering discipline as `ROCKETNET_MESSAGE_VIOLATIO
 3. **Append-only stability law**: Once a code is published in a release, its
    integer value and meaning are permanent. New codes append immediately before
    `ROCKETNET_NUM_STATUS_CODES`. Deprecated codes remain reserved in the enum
-   and in `rocketnet_status_string` and are never renumbered or reassigned.
+   and in `rocketnet_status_name` and are never renumbered or reassigned.
 4. Runtime introspection mirrors counters (`sdk/rocketnet.h:1218-1221`):
    - `int rocketnet_num_status_codes(void)` returns `ROCKETNET_NUM_STATUS_CODES`.
-   - `const char * rocketnet_status_string(int status)` returns a static ASCII
+   - `const char * rocketnet_status_name(enum rocketnet_status_t status)` returns a static ASCII
      identifier (for example, `"INVALID_CONNECT_TOKEN"`) for `0 <= status < ROCKETNET_NUM_STATUS_CODES`,
-     and `NULL` (without asserting) for out-of-range values.
+     and `"unknown"` (never `NULL`, without asserting) for any other value.
 
 ```c
 enum rocketnet_status_t
 {
     ROCKETNET_STATUS_OK                                 = 0,
 
-    // lifecycle and allocator state (rocketnet_init, rocketnet_term, rocketnet_allocator)
+    // lifecycle and allocator state (rocketnet_init, rocketnet_term, rocketnet_set_allocator)
     ROCKETNET_STATUS_ALREADY_INITIALIZED                = 1,
     ROCKETNET_STATUS_NOT_INITIALIZED                    = 2,
     ROCKETNET_STATUS_LIVE_ALLOCATIONS                   = 3,
@@ -122,55 +123,47 @@ enum rocketnet_status_t
 };
 ```
 
-The public lifecycle and allocator calls return the status code through their
-`_ex` forms: `rocketnet_init_ex` reports `ALREADY_INITIALIZED`,
-`PLATFORM_INIT_FAILED` or `CRYPTO_INIT_FAILED`; `rocketnet_term_ex` reports
-`NOT_INITIALIZED` or `LIVE_ALLOCATIONS`; `rocketnet_allocator_ex` reports
-`INVALID_ARGUMENT`, `ALREADY_INITIALIZED` or `LIVE_ALLOCATIONS`. The client and
-server create paths return a handle or `NULL` and log one `ERROR` line with the
-reason, including `CONFIG_ENV_INVALID`, `CONFIG_OUT_OF_RANGE`,
+Every public call that can fail returns `enum rocketnet_status_t`:
+`rocketnet_init` reports `ALREADY_INITIALIZED`, `PLATFORM_INIT_FAILED` or
+`CRYPTO_INIT_FAILED`; `rocketnet_term` reports `NOT_INITIALIZED` or
+`LIVE_ALLOCATIONS`; `rocketnet_set_allocator` reports `INVALID_ARGUMENT`,
+`ALREADY_INITIALIZED` or `LIVE_ALLOCATIONS`. The client and server create
+paths return a handle or `NULL` and log one `ERROR` line with the reason,
+including `CONFIG_ENV_INVALID`, `CONFIG_OUT_OF_RANGE`,
 `MEMORY_BUDGET_EXCEEDED`, `INVALID_TRANSPORT_LIST`, `OUT_OF_MEMORY`,
 `INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, `TRANSPORT_LADDER_EXHAUSTED`,
 `MISSING_KEYS`, `INVALID_PROTOCOL_ID`, `INVALID_ADDRESS`,
 `TRANSPORT_PORT_ZERO_UNSUPPORTED`, `MUTEX_CREATE_FAILED`,
 `THREAD_CREATE_FAILED` and `TIMER_CREATE_FAILED`.
+`THREAD_CREATE_FAILED` and `TIMER_CREATE_FAILED`.
 
 ### 2.2 The reporting today
 
-The `_ex` forms on init, term and the allocator write the section-2.1 code to
-an optional `int *` and keep the non-`_ex` forms. The client and server create
+Init, term and the allocator return the section-2.1 code directly (the
+SDK's internal `_ex` forms write the same code to an `int *`). The client and server create
 calls return a handle or `NULL`; the reason is one `ERROR` log line, and the
-refusal is counted in `rocketnet_api_misuse_count`. `rocketnet_status_string`
+refusal is counted in `rocketnet_api_misuse_count`. `rocketnet_status_name`
 names any code, and `rocketnet_num_status_codes` gives the count. The internal
 transport layer keeps `_ex` create forms for the SDK's own tests.
 
 ## 3. LOGGING
 
-### 3.1 What the Current Logger Does (`sdk/rocketnet.cpp:79-222`)
+### 3.1 One Log Sink
 
-1. **Varargs callback signature**: `sdk/rocketnet.h:299` exposes
-   `void rocketnet_log_function( void (*function)( int level, const char * format, ... ) )`.
-   C variadic function pointers are not a portable callback form across
-   language boundaries; a preformatted C callback is the proposed addition.
-2. **Redundant formatting (`sdk/rocketnet.cpp:114-222`)**: Every log wrapper
-   (`rocketnet_printf` at `:152`, `rocketnet_info` at `:164`, `rocketnet_warn` at
-   `:176`, `rocketnet_error` at `:188`, `rocketnet_debug` at `:200`, `rocketnet_spam`
-   at `:212`) already formats its `va_list` into `char buffer[1024]` via
-   `vsnprintf( buffer, sizeof( buffer ), format, args )` and calls
-   `log_function( level, "%s", buffer )`. When `default_log_function`
-   (`sdk/rocketnet.cpp:114-136`) is active, it runs `vsnprintf` a **second**
-   time into another `char buffer[1024]` before calling `printf` and `fflush( stdout )`.
-3. **Unfenced globals across threads (`sdk/rocketnet.cpp:79,86,138`)**:
-   `log_quiet`, `log_level`, and `log_function` are plain non-atomic static
-   variables, even though the client receive thread (`the internal client transport:150`),
-   transport worker threads, and concurrent fill threads (`the internal client transport:643,663,684`)
-   read them while the main thread may call `rocketnet_quiet` or `rocketnet_log_level`.
+The library has one log sink, installed with `rocketnet_set_log_callback`.
+Every log line is formatted once into a 1024-byte stack buffer and handed to
+the installed callback, or to the default sink (stdout) when none is
+installed. The level is `enum rocketnet_log_level_t`, set with
+`rocketnet_set_log_level` and read with `rocketnet_get_log_level`;
+`rocketnet_log_level_name` names a level, and `"unknown"` for a value outside
+the enum. `log_quiet` and `log_level` are relaxed atomics read before any
+formatting.
 
-### 3.2 Preformatted Callback Signature and Contract
+### 3.2 Callback Signature and Contract
 
 ```c
 typedef void (*rocketnet_log_callback_t)(
-    void * context, int level, const char * message, size_t length );
+    void * context, enum rocketnet_log_level_t level, const char * message, size_t length );
 
 ROCKETNET_EXPORT void rocketnet_set_log_callback(
     rocketnet_log_callback_t callback, void * context );
@@ -179,7 +172,7 @@ ROCKETNET_EXPORT void rocketnet_set_log_callback(
 1. **Parameters**:
    - `context`: opaque pointer passed to `rocketnet_set_log_callback` (may be `NULL`).
    - `level`: `ROCKETNET_LOG_LEVEL_ERROR` (`1`) .. `ROCKETNET_LOG_LEVEL_SPAM` (`5`),
-     or `ROCKETNET_LOG_LEVEL_NONE` (`0`) for `rocketnet_printf` (`sdk/rocketnet.cpp:161`).
+     or `ROCKETNET_LOG_LEVEL_NONE` (`0`) for `rocketnet_printf`.
    - `message`: non-NULL pointer to a formatted UTF-8 / ASCII stack buffer
      (`char buffer[1024]`). `message[length]` is guaranteed to be `'\0'`, with
      no trailing newline added by the SDK.
@@ -192,33 +185,27 @@ ROCKETNET_EXPORT void rocketnet_set_log_callback(
      messages past return must copy `[message, message + length)`.
    - The callback may be invoked on the main thread, on any game fill thread
      between `update` and `send_packets`, or on a transport receive
-     thread. Callbacks must be thread-safe, must not call `rocketnet_set_log_callback`
-     or `rocketnet_log_function` re-entrantly, and must not unwind via C++
+     thread. Callbacks must be thread-safe, must not call
+     `rocketnet_set_log_callback` re-entrantly, and must not unwind via C++
      exceptions or `longjmp`.
-   - `log_quiet` and `log_level` become `std::atomic<bool>` and `std::atomic<int>`
-     (relaxed load before `vsnprintf`). The `(callback, context, legacy_log_function)`
-     state is guarded by `rocketnet_platform_spin_lock_u64` (`sdk/rocketnet_platform.h:388`)
-     so `callback` and `context` are never observed torn.
+   - The `(callback, context)` pair is guarded by
+     `rocketnet_platform_spin_lock_u64` so it is never observed torn.
 
-### 3.3 Coexistence with `rocketnet_log_function` During Migration
+### 3.3 Dispatch
 
-`rocketnet_log_function` (`sdk/rocketnet.h:299`, `tools/exports.txt:53`) remains
-exported for backward compatibility. Both registration entry points feed a
-single internal helper `rocketnet_log_v( int level, const char * format, va_list args )`
-in `sdk/rocketnet.cpp`:
+`rocketnet_log_v( int level, const char * format, va_list args )` in
+`sdk/rocketnet.cpp`:
 
 1. **Filter before formatting**: If `log_quiet.load(std::memory_order_relaxed)`
    is true or (for `level != ROCKETNET_LOG_LEVEL_NONE`)
    `level > log_level.load(std::memory_order_relaxed)`, return before `vsnprintf`.
 2. **Format once**: Run `vsnprintf( buffer, sizeof( buffer ), format, args )`
    once and compute clamped `size_t length`.
-3. **Dispatch**: If `callback` was set via `rocketnet_set_log_callback`, invoke
-   `callback(context, level, buffer, length)`; else if a custom variadic
-   `function` was set via `rocketnet_log_function`, invoke
-   `function(level, "%s", buffer)`; else invoke `default_log_callback(NULL, level, buffer, length)`
-   directly (`fwrite` + `fflush(stdout)` with no second `vsnprintf`).
-4. **Last registration wins**: Setting a non-NULL callback on either entry point
-   replaces the active sink; passing `NULL` restores `default_log_callback`.
+3. **Dispatch**: invoke the installed `callback(context, level, buffer, length)`,
+   or the default sink, which writes the line to stdout with no second
+   `vsnprintf`.
+4. **Last registration wins**: a non-NULL callback replaces the active sink;
+   passing `NULL` restores the default sink.
 
 ---
 
@@ -282,9 +269,9 @@ SDK (`sdk/rocketnet_layers.h`).
 | Layer | Name | Files Owned | What It Guarantees | How It Is Checked |
 | :--- | :--- | :--- | :--- | :--- |
 | **Layer 1** | Counter Table & C API | `sdk/rocketnet_counters.h`, `sdk/rocketnet_counters.cpp`, `sdk/rocketnet_server_protocol.h`, `sdk/rocketnet_server_protocol.cpp`, `sdk/rocketnet.h`, `tools/exports.txt` | Single `ROCKETNET_COUNTERS_TABLE` generates the C enum and `rocketnet_counter_name`; `handshakes_processed_this_update` moves to `rocketnet_server_protocol_t`; `rocketnet_counter_name` never asserts on out-of-range indices; `rocketnet_counter_value` copies bounded prefixes. | `test_unit_counters.cpp` in `./bin/test` (bijective `0 .. rocketnet_num_counters() - 1` names, out-of-range bounds, counter value checks, `sizeof(rocketnet_counters_t)`). |
-| **Layer 2** | Preformatted Log Callback | `sdk/rocketnet.h`, `sdk/rocketnet.cpp`, `tools/exports.txt` | `log_quiet` and `log_level` use atomic loads before `vsnprintf`; `rocketnet_set_log_callback(cb, ctx)` delivers `(ctx, level, message, length)` with `message[length] == '\0'` and `length <= 1023` in one `vsnprintf` pass; `default_log_function` double-formatting is removed; `rocketnet_log_function` coexists. | `test_unit_logging.cpp` in `./bin/test` (level filtering before format, `log_quiet`, `context` forwarding, exact `length` and NUL termination at `0`, `1023`, `1024`, `2048`, sink switching, multi-thread logging). |
-| **Layer 3** | Status Enum & Plumbing | `sdk/rocketnet.h`, `sdk/rocketnet.cpp`, `sdk/rocketnet_config.h`, `sdk/rocketnet_config.cpp`, `sdk/rocketnet_client_protocol.h`, `sdk/rocketnet_client_protocol.cpp`, `tools/exports.txt` | `enum rocketnet_status_t` (`0 .. ROCKETNET_NUM_STATUS_CODES - 1`), `rocketnet_status_string`, and `rocketnet_num_status_codes` are defined; internal config, ladder, and token helpers accept `int * status` and log at `ROCKETNET_LOG_LEVEL_ERROR` on every refusal. | `test_unit_status.cpp` in `./bin/test` verifying every status string, out-of-range `rocketnet_status_string` queries, and exact status codes from config, transport ladder, and connect-token validation. |
-| **Layer 4** | Public `*_create_ex` Entry Points | `sdk/rocketnet.h`, `sdk/rocketnet.cpp`, `the internal client transport`, `the internal server transport`, `sdk/rocketnet_frame_sync.cpp`, `tools/exports.txt` | `rocketnet_init_ex`, `rocketnet_term_ex`, `rocketnet_allocator_ex`, `rocketnet_client_create`, `rocketnet_server_create`, `rocketnet_frame_sync_create_ex`, and `rocketnet_client_validate_config` report exact `rocketnet_status_t` codes on all branches (C1–C11, S1–S14, F1–F3) while keeping non-`_ex` signatures unchanged. | `test_lifecycle.cpp` and `test_unit_status.cpp` exercising every failure branch, including a fault-injecting allocator (`rocketnet_allocator_ex`) failing at each sequential allocation site to prove `ROCKETNET_STATUS_OUT_OF_MEMORY` and zero leaks at `rocketnet_term_ex`. |
+| **Layer 2** | Preformatted Log Callback | `sdk/rocketnet.h`, `sdk/rocketnet.cpp`, `tools/exports.txt` | `log_quiet` and `log_level` use atomic loads before `vsnprintf`; `rocketnet_set_log_callback(cb, ctx)` delivers `(ctx, level, message, length)` with `message[length] == '\0'` and `length <= 1023` in one `vsnprintf` pass; the default sink formats nothing a second time; it is the one sink. | `test_unit_logging.cpp` in `./bin/test` (level filtering before format, `log_quiet`, `context` forwarding, exact `length` and NUL termination at `0`, `1023`, `1024`, `2048`, sink switching, multi-thread logging). |
+| **Layer 3** | Status Enum & Plumbing | `sdk/rocketnet.h`, `sdk/rocketnet.cpp`, `sdk/rocketnet_config.h`, `sdk/rocketnet_config.cpp`, `sdk/rocketnet_client_protocol.h`, `sdk/rocketnet_client_protocol.cpp`, `tools/exports.txt` | `enum rocketnet_status_t` (`0 .. ROCKETNET_NUM_STATUS_CODES - 1`), `rocketnet_status_name`, and `rocketnet_num_status_codes` are defined; internal config, ladder, and token helpers accept `int * status` and log at `ROCKETNET_LOG_LEVEL_ERROR` on every refusal. | `test_unit_status.cpp` in `./bin/test` verifying every status string, out-of-range `rocketnet_status_name` queries, and exact status codes from config, transport ladder, and connect-token validation. |
+| **Layer 4** | Public `*_create_ex` Entry Points | `sdk/rocketnet.h`, `sdk/rocketnet.cpp`, `the internal client transport`, `the internal server transport`, `sdk/rocketnet_frame_sync.cpp`, `tools/exports.txt` | `rocketnet_init_ex`, `rocketnet_term_ex`, `rocketnet_allocator_ex`, `rocketnet_client_create`, `rocketnet_server_create`, `rocketnet_frame_sync_create_ex`, and `rocketnet_client_validate_config` report exact `rocketnet_status_t` codes on all branches (C1–C11, S1–S14, F1–F3); the public init, term and allocator calls return the same codes. | `test_lifecycle.cpp` and `test_unit_status.cpp` exercising every failure branch, including a fault-injecting allocator (`rocketnet_allocator_ex`) failing at each sequential allocation site to prove `ROCKETNET_STATUS_OUT_OF_MEMORY` and zero leaks at `rocketnet_term_ex`. |
 
 ---
 
@@ -310,8 +297,8 @@ SDK (`sdk/rocketnet_layers.h`).
    granularity, or should OS primitive failures (`MUTEX_CREATE_FAILED`,
    `THREAD_CREATE_FAILED`, `TIMER_CREATE_FAILED`) collapse into a single
    `ROCKETNET_STATUS_PLATFORM_ERROR`?
-4. **`Q4` (Out-of-range return value for `rocketnet_counter_name` and `rocketnet_status_string`)**:
-   When `rocketnet_counter_name(counter)` or `rocketnet_status_string(status)`
+4. **`Q4` (Out-of-range return value for `rocketnet_counter_name` and `rocketnet_status_name`)**:
+   When `rocketnet_counter_name(counter)` or `rocketnet_status_name(status)`
    is called with an out-of-range integer (with `rocketnet_assert(0)` removed so
    debug builds do not abort), should it return `NULL` or the literal `"???"`
    currently returned in release builds (`sdk/rocketnet_counters.cpp:223`)?
