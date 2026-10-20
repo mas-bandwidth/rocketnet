@@ -53,9 +53,13 @@
 (* hand-off that waits for the other ring to be Sent; FullWaitReadable    *)
 (* restores the wait on readable with a full buffer, which returns at     *)
 (* once while datagrams sit in the socket; StepModeStartsThread starts    *)
-(* the I/O thread at create in the step-driven mode as well.  The        *)
-(* deadline (Timeout) bounds destroy's last hand-off wait; SpecNoDeadline *)
-(* is its reversed witness, where the deadline may never fire.            *)
+(* the I/O thread at create in the step-driven mode as well.  IoStall     *)
+(* models a send of the ring that never completes (the ring stays Sending *)
+(* for destroy's wait); Timeout bounds that wait at Deadline.             *)
+(* SpecNoDeadline is the reversed witness: NextNoDeadline removes the      *)
+(* Timeout action, so a stalled other ring leaves destroy waiting forever. *)
+(* The deadline does not bound the join: a driver call stuck inside send  *)
+(* never reaches the thread's stop check (docs/CLIENT-IO.md).             *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -102,6 +106,8 @@ VARIABLES ring,      \* each send ring's state
           now,       \* the transport clock, in steps, capped at Deadline
           destroying, \* destroy has begun: the last hand-off, Stop, Join, Free
           dropped,   \* committed slots destroy dropped at the deadline
+          stalled,   \* rings whose in-flight send never completes
+          spinCycle,      \* the wait spins at the deadline (reversed witness cycle)
           wake,      \* the level-triggered wake (eventfd, kevent or event)
           waiting,   \* the I/O thread is blocked in its wait
           waitReadable, \* the blocked wait also returns on socket readable
@@ -119,10 +125,10 @@ VARIABLES ring,      \* each send ring's state
 
 sendVars == <<ring, owner, sent, fill, ioRing, deferred, mainWait>>
 recvVars == <<pending, arrived, buf, count, snap, owed, delivered>>
-destroyVars == <<destroyWait, now, destroying, dropped>>
+destroyVars == <<destroyWait, now, destroying, dropped, stalled, spinCycle>>
 
 vars == <<ring, owner, sent, fill, ioRing, deferred, mainWait, destroyWait,
-          now, destroying, dropped, wake, waiting, waitReadable, pending,
+          now, destroying, dropped, stalled, spinCycle, wake, waiting, waitReadable, pending,
           arrived, buf, count, snap, owed, delivered, phase, ioAlive, inCall,
           lastExec>>
 
@@ -135,6 +141,7 @@ TypeOK ==
     /\ deferred \in BOOLEAN /\ mainWait \in BOOLEAN
     /\ destroyWait \in BOOLEAN /\ now \in 0..Deadline
     /\ destroying \in BOOLEAN /\ dropped \in SUBSET Slots
+    /\ stalled \in SUBSET Rings /\ spinCycle \in BOOLEAN
     /\ wake \in BOOLEAN /\ waiting \in BOOLEAN /\ waitReadable \in BOOLEAN
     /\ pending \in 0..MaxDatagrams /\ arrived \in 0..MaxDatagrams
     /\ buf \in [Buffers -> BufferStates]
@@ -155,7 +162,7 @@ Init ==
     /\ ioRing = "none"
     /\ deferred = FALSE /\ mainWait = FALSE
     /\ destroyWait = FALSE /\ now = 0
-    /\ destroying = FALSE /\ dropped = {}
+    /\ destroying = FALSE /\ dropped = {} /\ stalled = {} /\ spinCycle = FALSE
     /\ wake = FALSE /\ waiting = FALSE /\ waitReadable = TRUE
     /\ pending = 0 /\ arrived = 0
     /\ buf = [b \in Buffers |-> IF b = 0 THEN "Fill" ELSE "Free"]
@@ -195,7 +202,7 @@ Write(s) ==
     /\ UNCHANGED <<ring, sent, fill, ioRing, deferred, mainWait, wake,
                    waiting, waitReadable, phase, ioAlive>>
     /\ UNCHANGED <<pending, arrived, buf, count, snap, owed, delivered,
-                   destroyWait, now, destroying, dropped>>
+                   destroyWait, now, destroying, dropped, stalled, spinCycle>>
 
 \* finish_packet: the slot is sealed and committed
 Commit(s) ==
@@ -204,7 +211,7 @@ Commit(s) ==
     /\ UNCHANGED <<ring, sent, fill, ioRing, deferred, mainWait, wake,
                    waiting, waitReadable, phase, ioAlive>>
     /\ UNCHANGED <<pending, arrived, buf, count, snap, owed, delivered,
-                   destroyWait, now, destroying, dropped>>
+                   destroyWait, now, destroying, dropped, stalled, spinCycle>>
 
 \* the hand-off (send_packets, send_packet through it, or the end of
 \* update) when the other ring is open: the committed ring goes to the I/O
@@ -222,7 +229,7 @@ HandOff ==
     /\ UNCHANGED <<sent, ioRing, deferred, mainWait, waiting, waitReadable,
                    phase, ioAlive>>
     /\ UNCHANGED <<pending, arrived, buf, count, snap, owed, delivered,
-                   destroyWait, now, destroying, dropped>>
+                   destroyWait, now, destroying, dropped, stalled, spinCycle>>
 
 \* the hand-off when the other ring is still HandedOff or Sending: the
 \* committed slots stay in the Filling ring and CLIENT_SEND_DEFERRED moves;
@@ -240,7 +247,7 @@ Defer ==
     /\ UNCHANGED <<ring, owner, sent, fill, ioRing, wake, waiting,
                    waitReadable, phase, ioAlive>>
     /\ UNCHANGED <<pending, arrived, buf, count, snap, owed, delivered,
-                   destroyWait, now, destroying, dropped>>
+                   destroyWait, now, destroying, dropped, stalled, spinCycle>>
 
 \* the defect's blocked main thread resumes once the other ring is Sent
 WaitDone ==
@@ -250,7 +257,7 @@ WaitDone ==
     /\ UNCHANGED <<ring, owner, sent, fill, ioRing, deferred, wake, waiting,
                    waitReadable, phase, ioAlive>>
     /\ UNCHANGED <<pending, arrived, buf, count, snap, owed, delivered,
-                   destroyWait, now, destroying, dropped>>
+                   destroyWait, now, destroying, dropped, stalled, spinCycle>>
 
 \* a hand-off reopens a ring the I/O thread has finished (acquire load)
 Reopen(r) ==
@@ -265,7 +272,7 @@ Reopen(r) ==
     /\ UNCHANGED <<fill, ioRing, deferred, mainWait, wake, waiting,
                    waitReadable, phase, ioAlive>>
     /\ UNCHANGED <<pending, arrived, buf, count, snap, owed, delivered,
-                   destroyWait, now, destroying, dropped>>
+                   destroyWait, now, destroying, dropped, stalled, spinCycle>>
 
 \* update, first step: expose the Ready buffer (acquire) when there is
 \* one.  The design holds no buffer at this point (the last update
@@ -308,7 +315,7 @@ DestroyBegin ==
     /\ ~destroying
     /\ destroying' = TRUE
     /\ UNCHANGED <<ring, owner, sent, fill, ioRing, deferred, mainWait,
-                   destroyWait, now, dropped, wake, waiting,
+                   destroyWait, now, dropped, stalled, spinCycle, wake, waiting,
                    waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
 
@@ -323,7 +330,7 @@ DestroyWait ==
     /\ ring[Other(fill)] \in {"HandedOff", "Sending"}
     /\ destroyWait' = TRUE
     /\ UNCHANGED <<ring, owner, sent, fill, ioRing, deferred, mainWait,
-                   now, destroying, dropped, wake, waiting,
+                   now, destroying, dropped, stalled, spinCycle, wake, waiting,
                    waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
 
@@ -333,7 +340,7 @@ DestroyWaitDone ==
     /\ ring[Other(fill)] = "Sent"
     /\ destroyWait' = FALSE
     /\ UNCHANGED <<ring, owner, sent, fill, ioRing, deferred, mainWait,
-                   now, destroying, dropped, wake, waiting,
+                   now, destroying, dropped, stalled, spinCycle, wake, waiting,
                    waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
 
@@ -351,7 +358,8 @@ Timeout ==
     /\ dropped' = dropped \cup {s \in Slots : owner[fill][s] = "main"}
     /\ destroyWait' = FALSE
     /\ UNCHANGED <<ring, sent, fill, ioRing, deferred, mainWait, now,
-                   destroying, wake, waiting, waitReadable, phase, ioAlive>>
+                   destroying, stalled, spinCycle, wake, waiting,
+                   waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
 
 \* destroy's wait reads the transport clock again: the clock advances to
@@ -361,7 +369,7 @@ WaitTick ==
     /\ now < Deadline
     /\ now' = now + 1
     /\ UNCHANGED <<ring, owner, sent, fill, ioRing, deferred, mainWait,
-                   destroyWait, destroying, dropped, wake,
+                   destroyWait, destroying, dropped, stalled, spinCycle, wake,
                    waiting, waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
 
@@ -376,7 +384,7 @@ Stop ==
     /\ UNCHANGED sendVars
     /\ UNCHANGED <<waiting, waitReadable, ioAlive>>
     /\ UNCHANGED <<pending, arrived, buf, count, snap, owed, delivered,
-                   destroyWait, now, destroying, dropped>>
+                   destroyWait, now, destroying, dropped, stalled, spinCycle>>
 
 Join ==
     /\ phase = "Stopping"
@@ -385,7 +393,7 @@ Join ==
     /\ UNCHANGED sendVars
     /\ UNCHANGED <<wake, waiting, waitReadable, ioAlive>>
     /\ UNCHANGED <<pending, arrived, buf, count, snap, owed, delivered,
-                   destroyWait, now, destroying, dropped>>
+                   destroyWait, now, destroying, dropped, stalled, spinCycle>>
 
 Free ==
     /\ phase = "Joined"
@@ -393,7 +401,7 @@ Free ==
     /\ UNCHANGED sendVars
     /\ UNCHANGED <<wake, waiting, waitReadable, ioAlive>>
     /\ UNCHANGED <<pending, arrived, buf, count, snap, owed, delivered,
-                   destroyWait, now, destroying, dropped>>
+                   destroyWait, now, destroying, dropped, stalled, spinCycle>>
 
 (* ---- the network ---- *)
 
@@ -432,7 +440,7 @@ IoSend(r, s) ==
     /\ UNCHANGED <<owner, fill, deferred, mainWait, wake, waiting,
                    waitReadable, phase, ioAlive>>
     /\ UNCHANGED <<pending, arrived, buf, count, snap, owed, delivered,
-                   destroyWait, now, destroying, dropped>>
+                   destroyWait, now, destroying, dropped, stalled, spinCycle>>
 
 \* every slot sent: the ring is released to the main thread (release store)
 IoFinishRing(r) ==
@@ -444,7 +452,25 @@ IoFinishRing(r) ==
     /\ UNCHANGED <<owner, sent, fill, deferred, mainWait, wake, waiting,
                    waitReadable, phase, ioAlive>>
     /\ UNCHANGED <<pending, arrived, buf, count, snap, owed, delivered,
-                   destroyWait, now, destroying, dropped>>
+                   destroyWait, now, destroying, dropped, stalled, spinCycle>>
+
+\* the I/O thread's send of the ring never completes: the ring stays Sending
+\* (the state destroy's wait loads) and no slot leaves it, while the thread
+\* itself is modelled as live (it can still reach IoExit when stop is set).
+\* This is the stalled ring the deadline exists for: a driver call blocked
+\* inside send is outside this model and leaves the threaded join unbounded
+\* (docs/CLIENT-IO.md _Stop and destroy order_; see the report).
+IoStall(r) ==
+    /\ IoReady
+    /\ destroying
+    /\ ioRing = r
+    /\ r \notin stalled
+    /\ stalled' = stalled \cup {r}
+    /\ ioRing' = "none"
+    /\ UNCHANGED <<ring, owner, sent, fill, deferred, mainWait, destroyWait,
+                   now, destroying, dropped, spinCycle, wake, waiting, waitReadable,
+                   pending, arrived, buf, count, snap, owed, delivered,
+                   phase, ioAlive>>
 
 \* read one datagram into the I/O thread's buffer while it has room. Every
 \* arriving datagram becomes a record here, regardless of size, as the code
@@ -514,7 +540,7 @@ IoWait ==
     /\ UNCHANGED sendVars
     /\ UNCHANGED <<wake, phase, ioAlive>>
     /\ UNCHANGED <<pending, arrived, buf, count, snap, owed, delivered,
-                   destroyWait, now, destroying, dropped>>
+                   destroyWait, now, destroying, dropped, stalled, spinCycle>>
 
 IoWake ==
     /\ ioAlive /\ waiting
@@ -524,7 +550,7 @@ IoWake ==
     /\ UNCHANGED sendVars
     /\ UNCHANGED <<waitReadable, phase, ioAlive>>
     /\ UNCHANGED <<pending, arrived, buf, count, snap, owed, delivered,
-                   destroyWait, now, destroying, dropped>>
+                   destroyWait, now, destroying, dropped, stalled, spinCycle>>
 
 \* a woken I/O thread consumes a wake it does not need to block on
 IoClearWake ==
@@ -534,7 +560,7 @@ IoClearWake ==
     /\ UNCHANGED sendVars
     /\ UNCHANGED <<waiting, waitReadable, phase, ioAlive>>
     /\ UNCHANGED <<pending, arrived, buf, count, snap, owed, delivered,
-                   destroyWait, now, destroying, dropped>>
+                   destroyWait, now, destroying, dropped, stalled, spinCycle>>
 
 \* stop seen: the ring in flight is finished first, then the thread exits
 IoExit ==
@@ -546,7 +572,7 @@ IoExit ==
     /\ UNCHANGED sendVars
     /\ UNCHANGED <<wake, waiting, waitReadable, phase>>
     /\ UNCHANGED <<pending, arrived, buf, count, snap, owed, delivered,
-                   destroyWait, now, destroying, dropped>>
+                   destroyWait, now, destroying, dropped, stalled, spinCycle>>
 
 Done ==
     /\ phase = "Freed"
@@ -576,7 +602,7 @@ StepBegin ==
     /\ UNCHANGED <<ring, owner, sent, fill, ioRing, deferred, mainWait, wake,
                    waiting, waitReadable, phase, ioAlive, lastExec>>
     /\ UNCHANGED <<pending, arrived, buf, count, snap, owed, delivered,
-                   destroyWait, now, destroying, dropped>>
+                   destroyWait, now, destroying, dropped, stalled, spinCycle>>
 
 \* the step is one pass that never blocks (rocketnet_client_io_step with
 \* block false): it finishes the ring it takes, exits once stopped, and
@@ -596,12 +622,27 @@ StepEnd ==
     /\ UNCHANGED <<ring, owner, sent, fill, ioRing, deferred, mainWait, wake,
                    waiting, waitReadable, phase, ioAlive, lastExec>>
     /\ UNCHANGED <<pending, arrived, buf, count, snap, owed, delivered,
-                   destroyWait, now, destroying, dropped>>
+                   destroyWait, now, destroying, dropped, stalled, spinCycle>>
 
 \* game threads write and commit at any time; the main thread's own
 \* actions never overlap a caller step
 OnGame(A) == A /\ UNCHANGED <<inCall, lastExec>>
 OnMain(A) == ~inCall /\ A /\ UNCHANGED <<inCall, lastExec>>
+
+\* destroy's last hand-off wait at the deadline with a stalled other ring is
+\* the loop's spin: it alternates `spinCycle` so the reversed witness has an
+\* infinite behaviour instead of a deadlock.  The fixed model also has
+\* Timeout enabled there (its fair exit); the reversed witness removes that
+\* action, so the spin cycle is all that is left.
+Spin ==
+    /\ destroying /\ destroyWait
+    /\ now = Deadline
+    /\ Other(fill) \in stalled
+    /\ spinCycle' = ~spinCycle
+    /\ UNCHANGED <<ring, owner, sent, fill, ioRing, deferred, mainWait,
+                   destroyWait, now, destroying, dropped, stalled, wake,
+                   waiting, waitReadable, pending, arrived, buf, count, snap,
+                   owed, delivered, phase, ioAlive, inCall, lastExec>>
 
 MainNext ==
     \/ OnGame(\E s \in Slots : Write(s) \/ Commit(s))
@@ -612,9 +653,23 @@ MainNext ==
     \/ OnMain(Stop \/ Join \/ Free)
     \/ StepBegin \/ StepEnd
 
+\* The reversed witness's next-state relation: the deadline action is absent,
+\* not merely unfair.  Destroy's wait still observes a Sent ring
+\* (DestroyWaitDone) and the clock still advances (WaitTick); with the ring
+\* stalled there is no exit, and destroy never reaches Stop, Join or Free.
+MainNextNoDeadline ==
+    \/ OnGame(\E s \in Slots : Write(s) \/ Commit(s))
+    \/ OnMain(HandOff \/ Defer \/ WaitDone)
+    \/ OnMain(\E r \in Rings : Reopen(r))
+    \/ OnMain(Expose \/ Return)
+    \/ OnMain(DestroyBegin \/ DestroyWait \/ DestroyWaitDone)
+    \/ OnMain(Stop \/ Join \/ Free)
+    \/ StepBegin \/ StepEnd
+
 IoCoreNext ==
     \/ \E r \in Rings, s \in Slots : IoSend(r, s)
     \/ \E r \in Rings : IoFinishRing(r)
+    \/ \E r \in Rings : IoStall(r)
     \/ IoReceive \/ IoPublish \/ IoOwe \/ IoWait \/ IoWake \/ IoClearWake
     \/ IoExit
 
@@ -635,6 +690,12 @@ Next == MainNext \/ IoNext
         \/ OnMain(WaitTick)
         \/ (Done /\ UNCHANGED <<inCall, lastExec>>)
 
+NextNoDeadline == MainNextNoDeadline \/ IoNext
+        \/ (Arrive /\ UNCHANGED <<inCall, lastExec>>)
+        \/ OnMain(WaitTick)
+        \/ (Done /\ UNCHANGED <<inCall, lastExec>>)
+        \/ Spin
+
 Spec == Init /\ [][Next]_vars
 
 \* Weak fairness of the I/O thread's actions, the join, a game thread's
@@ -646,8 +707,7 @@ Spec == Init /\ [][Next]_vars
 \* is enough.  In step mode the I/O core runs only inside a caller step:
 \* the game calls update every frame (StepBegin), and a step finishes its
 \* ring, its exit and its publish or owe before it returns (StepEnd).
-SpecCommon ==
-    /\ Spec
+Fairness ==
     /\ WF_vars(Exec(\E r \in Rings, s \in Slots : IoSend(r, s)))
     /\ WF_vars(Exec(\E r \in Rings : IoFinishRing(r)))
     /\ WF_vars(Exec(IoReceive))
@@ -668,20 +728,29 @@ SpecCommon ==
     /\ WF_vars(OnMain(Free))
     /\ WF_vars(OnMain(WaitTick))
 
-\* the committed run also assumes the wait's two exits are fair: the other
-\* ring's Sent is observed (DestroyWaitDone), and the deadline fires
-\* (Timeout).  Without them destroy's last hand-off may wait forever.
+SpecCommon ==
+    /\ Spec
+    /\ Fairness
+    /\ WF_vars(OnMain(DestroyWaitDone))
+
+\* the committed run also assumes the deadline fires (Timeout).  Without
+\* it destroy's last hand-off may wait forever.
 SpecFair ==
     /\ SpecCommon
-    /\ WF_vars(OnMain(DestroyWaitDone))
     /\ WF_vars(OnMain(Timeout))
 
-\* The reversed witness: the wait's exits (the observation that the ring
-\* is Sent, and the deadline) are not fair, so destroy's wait may never
-\* end even though the I/O thread finishes the ring: DestroyCompletes
-\* falls.  This is the wait the fix bounds (code: the while loop and the
-\* time_callback deadline at sdk/rocketnet_client_transport.cpp).
-SpecNoDeadline == SpecCommon
+\* The reversed witness keeps every progress assumption above, including
+\* the fairness of DestroyWaitDone; only the deadline is gone: Timeout is
+\* absent from the next-state relation (NextNoDeadline) and, because the
+\* broken code has no deadline action at all, it asks no fairness of it.
+\* With a stalled ring the wait has no exit however the scheduler behaves,
+\* so DestroyCompletes falls.  This is the wait the fix bounds (code: the
+\* while loop and the time_callback deadline at
+\* sdk/rocketnet_client_transport.cpp).
+SpecNoDeadline ==
+    /\ Init /\ [][NextNoDeadline]_vars
+    /\ Fairness
+    /\ WF_vars(OnMain(DestroyWaitDone))
 
 \* Step mode: the main thread's own actions are disabled while it runs a
 \* step, so they are enabled only intermittently.  update makes its two
@@ -738,8 +807,9 @@ NoReceiveStall ==
     (phase = "Running" /\ ~destroying /\ count[FillBuffer] > 0) =>
         ENABLED (IoPublish \/ Expose \/ Return \/ IoWake)
 
+\* a handed-off ring is eventually Sent, unless its in-flight send stalls
 HandedOffEventuallySent ==
-    \A r \in Rings : ring[r] = "HandedOff" ~> ring[r] = "Sent"
+    \A r \in Rings : ring[r] = "HandedOff" ~> (ring[r] = "Sent" \/ r \in stalled)
 
 \* a committed slot, deferred or not, is eventually handed to the I/O
 \* thread, or dropped by destroy at the deadline and counted there
@@ -752,8 +822,11 @@ StopEventuallyJoins ==
 
 \* once destroy has begun it finishes: Stop, Join, Free.  The deadline
 \* ends the last hand-off's wait (Timeout); a live I/O thread then reaches
-\* IoExit and the join returns.  The reversed witness restores the wait
-\* without the deadline and a driver send that never returns.
+\* IoExit and the join returns.  This claims the wait, not the join: a
+\* driver call blocked inside send never reaches its stop check, so the
+\* threaded join stays unbounded in that case (docs/CLIENT-IO.md).  The
+\* reversed witness removes Timeout (NextNoDeadline) and stalls the other
+\* ring's send, so the wait never ends and DestroyCompletes falls.
 DestroyCompletes ==
     destroying ~> phase = "Freed"
 

@@ -219,12 +219,14 @@ struct destroy_wait_clock_t
     double now;
     long steps;     // I/O steps taken (receive calls)
     long budget;    // step budget; exceeded fails the case
+    uint64_t dropped; // SEND_RING_FULL when the driver closes (destroy's drop count)
 };
 
 struct destroy_wait_harness_t
 {
     rocketnet_fake_client_driver_t fake;
     destroy_wait_clock_t clock;
+    rocketnet_client_transport_t * transport;   // read at close, before destroy frees it
 };
 
 static double destroy_wait_time( void * context )
@@ -242,6 +244,10 @@ static void * destroy_wait_create( void * context, const rocketnet_client_driver
 static void destroy_wait_destroy( void * driver )
 {
     destroy_wait_harness_t * h = (destroy_wait_harness_t *) driver;
+    // the transport is still alive when the driver closes: read the counter
+    // destroy increments before it frees the transport
+    if ( h->transport )
+        h->clock.dropped = rocketnet_client_transport_counters( h->transport )->values[ROCKETNET_COUNTER_SEND_RING_FULL];
     rocketnet_fake_client_destroy( &h->fake );
 }
 
@@ -307,19 +313,23 @@ static rocketnet_client_transport_t * destroy_wait_transport_create( destroy_wai
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
     config.time_callback = destroy_wait_time;
-    return rocketnet_client_transport_create_step_driven( &h->clock, token, &config, h->clock.now, &destroy_wait_io_operations, h );
+    h->transport = rocketnet_client_transport_create_step_driven( &h->clock, token, &config, h->clock.now, &destroy_wait_io_operations, h );
+    return h->transport;
 }
 
 // The last hand-off's wait, bounded: the other ring is stuck in SENDING (a
 // send that never completes), so it never reaches Sent and the wait would spin
-// forever without the deadline. Destroy gives up at the deadline, counts the
-// committed slot it drops under SEND_RING_FULL, and returns within the step
-// budget; nothing is sent (the committed slot is dropped, not handed off).
+// forever without the deadline. Destroy gives up at the 2 s deadline (the
+// clock advances 1 ms per I/O step), counts the committed slot it drops under
+// SEND_RING_FULL, and continues to Stop; the post-stop step loop is bounded by
+// its own 2 s deadline (a SENDING ring is in flight), so the whole destroy
+// takes at most 4 s of test time. Nothing is sent (the committed slot is
+// dropped, not handed off).
 static void client_io_destroy_handoff_wait_is_bounded()
 {
     destroy_wait_harness_t h = {};
     h.clock.now = 1000.0;
-    h.clock.budget = 100000;
+    h.clock.budget = 10000;   // 10 s of test time: past both 2 s bounds, far short of forever
     rocketnet_client_transport_t * transport = destroy_wait_transport_create( &h );
     rocketnet_unit_check( transport != NULL );
     rocketnet_client_io_t * io = rocketnet_client_transport_client_io( transport );
@@ -331,9 +341,14 @@ static void client_io_destroy_handoff_wait_is_bounded()
     rocketnet_unit_check( io->rings.state[0].load() == ROCKETNET_CLIENT_RING_HANDED_OFF );
     io->rings.state[0].store( ROCKETNET_CLIENT_RING_SENDING, std::memory_order_relaxed );
 
+    const double now_before = h.clock.now;
     const long steps_before = h.clock.steps;
     rocketnet_client_transport_destroy( transport );
+    const double elapsed = h.clock.now - now_before;
     rocketnet_unit_check( h.clock.steps - steps_before < h.clock.budget );
+    rocketnet_unit_check( elapsed >= 3.999 );   // both waits reach their 2 s deadlines
+    rocketnet_unit_check( elapsed <= 4.002 );   // and neither runs past them
+    rocketnet_unit_check( h.clock.dropped == 1 ); // the committed slot destroy drops, counted
     rocketnet_unit_check( h.fake.destroy_calls == 1 );
     rocketnet_unit_check( h.fake.num_sent == 0 );
 }
@@ -341,13 +356,13 @@ REGISTER_UNIT_TEST( client_io_destroy_handoff_wait_is_bounded );
 
 // The post-stop step loop, bounded: no committed fill slots, but a ring stuck
 // in SENDING keeps the I/O core in flight, so the step loop never reaches
-// EXITED without the deadline. Destroy gives up and returns within the step
-// budget.
+// EXITED without the deadline. Destroy gives up at the 2 s deadline (1 ms per
+// step) and returns; nothing is dropped because destroy handed off nothing.
 static void client_io_destroy_step_loop_is_bounded()
 {
     destroy_wait_harness_t h = {};
     h.clock.now = 1000.0;
-    h.clock.budget = 100000;
+    h.clock.budget = 10000;   // 10 s of test time: past the 2 s bound, far short of forever
     rocketnet_client_transport_t * transport = destroy_wait_transport_create( &h );
     rocketnet_unit_check( transport != NULL );
     rocketnet_client_io_t * io = rocketnet_client_transport_client_io( transport );
@@ -355,9 +370,14 @@ static void client_io_destroy_step_loop_is_bounded()
 
     io->rings.state[0].store( ROCKETNET_CLIENT_RING_SENDING, std::memory_order_relaxed );
 
+    const double now_before = h.clock.now;
     const long steps_before = h.clock.steps;
     rocketnet_client_transport_destroy( transport );
+    const double elapsed = h.clock.now - now_before;
     rocketnet_unit_check( h.clock.steps - steps_before < h.clock.budget );
+    rocketnet_unit_check( elapsed >= 1.999 );   // the step loop reaches its 2 s deadline
+    rocketnet_unit_check( elapsed <= 2.002 );   // and does not run past it
+    rocketnet_unit_check( h.clock.dropped == 0 );
     rocketnet_unit_check( h.fake.destroy_calls == 1 );
 }
 REGISTER_UNIT_TEST( client_io_destroy_step_loop_is_bounded );

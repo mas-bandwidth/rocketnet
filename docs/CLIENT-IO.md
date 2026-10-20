@@ -698,12 +698,20 @@ update) and `DestroyCompletes` (once destroy has begun it reaches Stop, Join
 and Free). Destroy's last hand-off waits in `DestroyWait`; the transport clock
 is `now`, capped at `Deadline`, and `Timeout` at the deadline drops the
 committed slots of the Filling ring into `dropped` and continues to Stop,
-Join and Free (`DroppedAtDeadline`). The five reversed witnesses,
+Join and Free (`DroppedAtDeadline`). `IoStall` is the stalled ring the
+deadline exists for: the other ring's in-flight send never completes, so the
+ring stays `Sending` (the state the wait loads) while the thread itself stays
+live and can still reach `IoExit`; `HandedOffEventuallySent` becomes "Sent or
+stalled". The deadline bounds the wait, not the join: a driver call blocked
+inside `send` never reaches the thread's stop check, so the threaded join
+stays unbounded in that case. The five reversed witnesses,
 `MCRNClientIoBrokenReuseBeforeSent.cfg`,
 `MCRNClientIoBrokenSwapWhileReading.cfg`,
 `MCRNClientIoBrokenReceiveStall.cfg`,
 `MCRNClientIoBrokenHandOffWaits.cfg` and
 `MCRNClientIoBrokenFullWaitReadable.cfg`, each violate exactly their declared
-invariant; `MCRNClientIoBrokenDestroyWaitsForever.cfg` removes the fairness of
-the wait's two exits (`SpecNoDeadline`) and fails `DestroyCompletes`, the
+invariant; `MCRNClientIoBrokenDestroyWaitsForever.cfg` keeps every progress
+assumption, including `DestroyWaitDone`, and only removes the deadline action
+from the next-state relation (`NextNoDeadline`/`SpecNoDeadline`). With the
+other ring stalled the wait has no exit and `DestroyCompletes` falls, the
 reversed witness of the deadline.
