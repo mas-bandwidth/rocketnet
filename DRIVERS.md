@@ -233,12 +233,25 @@ families. The IPv6 destination is `public_address_ipv6` in
 `rocketnet_server_xdp_config_t`; all zero accepts any destination, as a zero
 `public_address` does for IPv4.
 
-Every IP fragment passes to the kernel stack for reassembly and increments
+RocketNet assumes a 1500-byte MTU path and never sends a datagram the network
+must fragment, so an IP fragment addressed to the server is hostile or
+misconfigured. The first fragment of a datagram to the server's port (the one
+that carries the UDP header: IPv4 with more-fragments set and offset 0, ihl 5,
+protocol UDP; IPv6 whose next header is the fragment header (44) at offset 0
+with more-fragments set and UDP behind it), whose UDP header is in the frame
+and names the configured port and address, is dropped and increments
+`ROCKETNET_SERVER_XDP_COUNTER_DROPPED_FIRST_FRAGMENT` (surfaced as
+`XDP_KERNEL_DROPPED_FIRST_FRAGMENT`). Every other fragment passes to the kernel
+stack for reassembly and increments
 `ROCKETNET_SERVER_XDP_COUNTER_PASSED_FRAGMENT` (surfaced as
-`XDP_KERNEL_PASSED_FRAGMENT`): IPv4 with more-fragments set or a nonzero
-fragment offset, and IPv6 whose next header is the fragment header (44). The
-check runs before the size, epoch and filter checks for both families, so a
-datagram larger than the link MTU is never counted as a drop. An IPv6 frame
+`XDP_KERNEL_PASSED_FRAGMENT`): non-first fragments to any port, and first
+fragments to another port or address, to an unconfigured program, or whose
+UDP header is not inside the frame. Why this is enough: without its first
+fragment the kernel can never reassemble the datagram, so the rest wait in
+the reassembly queue and are dropped cheaply at its reassembly timeout, and
+other services' fragmented traffic is untouched. Both checks run before the
+size, epoch, filter and replay checks for both families, so a fragment is never
+counted as any other drop. An IPv6 frame
 whose next header is any other extension header (hop-by-hop 0, routing 43,
 destination options 60, AH 51 or ESP 50) passes to the kernel stack through
 one named branch and increments
