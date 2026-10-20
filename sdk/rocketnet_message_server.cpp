@@ -451,8 +451,8 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         return result;
     object->time = time;
 
-    // sdk/rocketnet_message_server.cpp:448-463 leaves both clocks untouched on
-    // a rejected first sample. The client transport starts its clock at the
+    // rn_message_object_update leaves both clocks untouched on a rejected
+    // first sample. The client transport starts its clock at the
     // first valid update, so connect timers and token lifetime start there; the
     // object's own clock (budgets, resends, timeouts) reads game time.
     if ( !object->clock_started && !time_clamped )

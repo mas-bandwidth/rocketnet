@@ -87,9 +87,15 @@ it by reference and does not copy it. Its rules, as the header states:
      identifier (for example, `"INVALID_CONNECT_TOKEN"`) for `0 <= status < ROCKETNET_STATUS_COUNT`,
      and `"unknown"` (never `NULL`, without asserting) for any other value.
 
-A public call that can fail returns `enum rocketnet_status_t`, except a create,
-which returns a handle or `NULL`, and finish message, which returns a
-`uint32_t` receipt serial; both refuse without a status.
+A public call that can fail returns `enum rocketnet_status_t`, except the calls
+that return a pointer, a size or a lookup result instead. A create returns a
+handle or `NULL`; start message and `rocketnet_client_transport_name` /
+`rocketnet_server_transport_name` return a pointer; finish message returns a
+`uint32_t` receipt serial, `0` when refused; a `required_memory` call returns
+the byte count, `0` when refused; `rocketnet_abi_type_size`,
+`rocketnet_abi_field_offset` and `rocketnet_abi_field_size` return `SIZE_MAX`
+for an unknown type or field; and `rocketnet_abi_field_count` returns `-1` for
+an unknown type. None of them refuses with a status code.
 `rocketnet_init` reports `ALREADY_INITIALIZED`, `PLATFORM_INIT_FAILED` or
 `CRYPTO_INIT_FAILED`; `rocketnet_term` reports `NOT_INITIALIZED` or
 `LIVE_ALLOCATIONS`; `rocketnet_set_allocator` reports `INVALID_ARGUMENT`,

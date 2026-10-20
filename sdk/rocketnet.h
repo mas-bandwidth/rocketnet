@@ -9,11 +9,17 @@
 /// reads. Plain C99, callable from C++ through the extern "C" block below.
 ///
 /// The API's shape: a call that can fail returns enum rocketnet_status_t,
-/// except a create, which returns a pointer, NULL when refused, and finish
+/// except a create, which returns a pointer, NULL when refused; finish
 /// message, which returns a uint32_t receipt serial, 0 when refused; start
-/// message returns a pointer; counter reads return uint64_t and
-/// stat reads return double; update returns enum rocketnet_update_result_t; a
-/// pure question returns bool; every set of values is a typed enum named
+/// message, rocketnet_client_transport_name and
+/// rocketnet_server_transport_name, which return a pointer; the
+/// required_memory calls, which return the byte count, 0 when refused;
+/// rocketnet_abi_type_size, rocketnet_abi_field_offset and
+/// rocketnet_abi_field_size, which return SIZE_MAX for an unknown type or
+/// field; and rocketnet_abi_field_count, which returns -1 for an unknown type.
+/// Counter reads return uint64_t and stat reads return double; update returns
+/// enum rocketnet_update_result_t; a pure question returns bool; a call that
+/// reports nothing returns void; every set of values is a typed enum named
 /// ROCKETNET_<SET>_<VALUE>, and each lookup that names an enum value ends in
 /// _name and returns "unknown" for a value outside its enum, never NULL.
 ///
@@ -198,7 +204,13 @@
 extern "C" {
 #endif
 
-/// @brief Stable status values returned by a call that can fail, except a create, which returns a pointer.
+/// @brief Stable status values returned by a call that can fail, except a create
+/// (a pointer, NULL when refused), finish message (a uint32_t receipt serial, 0
+/// when refused), start message and the transport_name calls (pointers), the
+/// required_memory calls (the byte count, 0 when refused),
+/// rocketnet_abi_type_size, rocketnet_abi_field_offset and
+/// rocketnet_abi_field_size (SIZE_MAX for an unknown type or field), and
+/// rocketnet_abi_field_count (-1 for an unknown type).
 ///
 /// OK is the sole success value, every failure is a positive code, and the
 /// numbering is append-only. A published value and meaning never change; a new
