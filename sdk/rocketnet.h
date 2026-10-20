@@ -426,6 +426,11 @@ enum rocketnet_client_counter_t
 
 /// The client's connection quality, read with rocketnet_client_stat. Rates
 /// cover the trailing second.
+///
+/// The loss stat counts gaps in the server's session sequence. The server
+/// assigns a sequence only after finish accepts the payload and reserves every
+/// wire frame, so an aborted start or refused start or finish creates no gap;
+/// a gap after a completed send reflects path loss.
 
 enum rocketnet_client_stat_t
 {
