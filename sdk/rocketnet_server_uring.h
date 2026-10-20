@@ -83,7 +83,8 @@ struct rocketnet_server_uring_t;
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS                        8      // multishot receives armed again after a CQE without F_MORE
 #define ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED                         9      // a send_packets or receive_packets call that spent its completion budget with completions left for the next call (deferred, not dropped)
 #define ROCKETNET_SERVER_URING_COUNTER_SEND_DEFERRED                        10      // a send_packets call that returned with sends not yet completed or staged slots not yet submitted, retired by a later call
-#define ROCKETNET_SERVER_URING_NUM_COUNTERS                                 11
+#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARM_FAILED                 11      // a re-arm found no submission entry (queue left disarmed)
+#define ROCKETNET_SERVER_URING_NUM_COUNTERS                                 12
 
 // true when the library was built with liburing and this kernel accepts the
 // ring, the opcodes and the provided buffer ring the driver needs. the probe

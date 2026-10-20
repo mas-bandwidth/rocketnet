@@ -29,17 +29,19 @@
 (*  bank.  receive_packets swaps the banks (Swap): the old fill bank      *)
 (*  becomes the EXPOSED bank the transport reads (TransportReads) until   *)
 (*  the next Swap.  A CQE without IORING_CQE_F_MORE (KernelStop, the      *)
-(*  ENOBUFS case included) re-arms the multishot when it is reaped.       *)
+(*  ENOBUFS case included) disarms the multishot: the one-shot re-arm     *)
+(*  the CQE handler attempts is not guaranteed, so a receive re-arms it.  *)
 (*                                                                         *)
 (*  DESTROY.  Cancels the multishot (Destroy) and waits for every         *)
 (*  outstanding CQE, sends and cancels, before freeing slots, banks and   *)
 (*  the ring (Free).                                                      *)
 (*                                                                         *)
-(* Three rule switches carry the reversed witnesses.  ResetWaitsForReap = *)
+(* Four rule switches carry the reversed witnesses.  ResetWaitsForReap =  *)
 (* FALSE lets ResetIndex run right after Submit; ReapIntoFill = FALSE     *)
 (* writes reaped receive datagrams into the exposed bank; BoundedReap =   *)
 (* FALSE is the drain until empty: no budget guard on Reap, and a call    *)
-(* ends only with cq empty (receive) or every send reaped (send).         *)
+(* ends only with cq empty (receive) or every send reaped (send);         *)
+(* RearmOnReceive = FALSE leaves a multishot that ends disarmed for good. *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -49,12 +51,14 @@ CONSTANTS Slots,              \* send staging slots per phase
           Budget,             \* CQEs one send or receive call may reap
           ResetWaitsForReap,  \* ResetIndex waits for every send CQE
           ReapIntoFill,       \* reaped receive datagrams go to the fill bank
-          BoundedReap         \* Reap stops at Budget; a call may return early
+          BoundedReap,        \* Reap stops at Budget; a call may return early
+          RearmOnReceive      \* receive_packets re-arms a disarmed multishot
 
 ASSUME Slots \in Nat \ {0} /\ Buffers \in Nat \ {0} /\ MaxSteps \in Nat \ {0}
 ASSUME Budget \in Nat \ {0}
 ASSUME ResetWaitsForReap \in BOOLEAN /\ ReapIntoFill \in BOOLEAN
 ASSUME BoundedReap \in BOOLEAN
+ASSUME RearmOnReceive \in BOOLEAN
 
 SlotIds == 1..Slots
 BufIds  == 1..Buffers
@@ -189,6 +193,7 @@ KernelFill(b) ==
 \* the multishot ends with a CQE without F_MORE (ENOBUFS among the causes)
 KernelStop ==
     /\ armed
+    /\ call # "none"
     /\ Term \notin cq
     /\ armed' = FALSE
     /\ cq' = cq \cup {Term}
@@ -226,8 +231,10 @@ Reap(c) ==
               /\ UNCHANGED <<bufdg, snap, gen, armed, nextdg>>
               /\ UNCHANGED SendVars
          [] c.k = "term" ->
-              \* re-arm the multishot while running; never during destroy
-              /\ armed' = (phase = "Running")
+              \* the multishot ended; the one-shot re-arm the CQE handler
+              \* attempts is not guaranteed (it can find no submission entry),
+              \* so the multishot is disarmed until a receive re-arms it
+              /\ armed' = FALSE
               /\ UNCHANGED <<bstate, bufdg, copied, fill, exposed, snap, gen,
                              nextdg>>
               /\ UNCHANGED SendVars
@@ -278,7 +285,7 @@ SendReturn ==
 \* receive_packets begins: its reaps count against the budget
 RecvBegin ==
     /\ phase = "Running" /\ ~sending /\ call = "none"
-    /\ gen < MaxSteps
+    /\ (gen < MaxSteps \/ ~armed)
     /\ call' = "recv"
     /\ work' = 0
     /\ UNCHANGED <<bstate, bufdg, copied, fill, exposed, snap, gen, armed,
@@ -287,7 +294,8 @@ RecvBegin ==
 
 \* the end of receive_packets, once its reap stops (the cq is empty, or
 \* the budget is spent): the fill bank becomes the exposed bank, a new fill
-\* bank is emptied
+\* bank is emptied. after the generation bound only a re-arm is left, so
+\* the generation stays put while a disarmed multishot is armed again
 Swap ==
     /\ phase = "Running" /\ call = "recv"
     /\ (cq = {} \/ (BoundedReap /\ work >= Budget))
@@ -296,8 +304,10 @@ Swap ==
     /\ exposed' = fill
     /\ snap' = fill
     /\ fill' = {}
-    /\ gen' = gen + 1
-    /\ UNCHANGED <<bstate, bufdg, copied, armed, nextdg, cq, phase>>
+    /\ gen' = IF gen < MaxSteps THEN gen + 1 ELSE gen
+    \* receive_packets re-arms a disarmed multishot when the rule has the fix
+    /\ armed' = (RearmOnReceive \/ armed)
+    /\ UNCHANGED <<bstate, bufdg, copied, nextdg, cq, phase>>
     /\ UNCHANGED SendVars
 
 \* the transport reads the views of the exposed bank: a read changes no
@@ -371,6 +381,7 @@ SpecFair ==
     /\ WF_vars(Submit)
     /\ WF_vars(ResetIndex)
     /\ WF_vars(SendReturn)
+    /\ SF_vars(RecvBegin)
     /\ WF_vars(Swap)
     /\ WF_vars(Free)
 
@@ -431,5 +442,11 @@ SubmittedEventuallyFree ==
 \* destroy always ends in the freed driver
 DestroyEventuallyFrees ==
     (phase = "Destroying") ~> (phase = "Freed")
+
+\* a disarmed multishot is re-armed by a receive while the driver runs, or
+\* destroy ends the run; a receive with no retry never re-arms, a silent
+\* permanent receive stall
+ReceiveLiveness ==
+    (phase = "Running" /\ armed = FALSE) ~> (armed = TRUE \/ phase # "Running")
 
 =============================================================================
