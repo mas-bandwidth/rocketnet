@@ -114,10 +114,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ! arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
-            echo "TOOL-MISSING Rosetta 2 (x86_64 translation) (arch -x86_64 refused) on $RUNNER_NAME"
-            exit 1
-          fi
           cmake -S . -B build-universal \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
             -DCMAKE_BUILD_TYPE=Release
@@ -128,6 +124,12 @@ jobs:
             lipo -archs bin/librocketnet.dylib | tr ' ' '\n' | grep -qx "$arch"
             otool -l -arch "$arch" bin/librocketnet.dylib | grep -A4 LC_BUILD_VERSION | grep -q 'minos 11.0'
           done
+          python3 tools/check_package.py build-universal --config Release
+          python3 tools/check_dll_consumer.py --build build-universal
+          if ! arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
+            echo "TOOL-MISSING Rosetta 2 (x86_64 translation) (arch -x86_64 refused) on $RUNNER_NAME"
+            exit 1
+          fi
           arch -x86_64 ./bin/test
           arch -x86_64 ./bin/test_lifecycle
           env ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable \
