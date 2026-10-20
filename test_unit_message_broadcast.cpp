@@ -533,15 +533,15 @@ static void message_server_broadcast_skips_free_and_exhausted()
     check( rocketnet_message_server_disconnect_reason( pair.server, 2 ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
     check( pair.net->slot_connection[2] == 0 );
 
-    const uint64_t refusals = rocketnet_counter_value( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
+    const uint64_t drops = rocketnet_counter_value( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED );
 
     uint8_t message[64];
     mb_fill( message, (int) sizeof( message ), 4200 );
 
     // only slot 0 is connected; slots 1 (free), 2 (exhausted) and 3 (free) are
-    // skipped, each refusing through the same send path that counts it
+    // skipped, each dropped through the same send path that counts it
     check( rocketnet_message_server_broadcast( pair.server, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) == 1 );
-    check( rocketnet_counter_value( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == refusals + 3 );
+    check( rocketnet_counter_value( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED ) == drops + 3 );
 
     std::vector<mb_received_t> got[MB_MAX_SLOTS];
     mb_step( &pair, got, 6 );
