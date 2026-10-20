@@ -4664,9 +4664,7 @@ void rocketnet_test_server_port_zero_driver()
         rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
         rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
-        char real_port_address[64];
-        rocketnet_test_free_loopback_address( real_port_address, sizeof(real_port_address) );
-        server = rocketnet_server_transport_create( NULL, real_port_address, &config);
+        server = rocketnet_test_server_transport_create_on_free_port( &config );
 
         rocketnet_set_log_level( saved_level );
         rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
@@ -4802,7 +4800,7 @@ void rocketnet_test_server_driver_pin_xdp()
         rocketnet_server_transport_dev_config( &config );
         snprintf( config.driver, sizeof(config.driver), "xdp" );
 
-        rocketnet_check( rocketnet_server_transport_create( NULL, real_port_address, &config) == NULL );
+        rocketnet_check( rocketnet_test_server_transport_create_on_free_port( &config ) == NULL );
     }
 
     rocketnet_test_env_restore( &driver_guard );
