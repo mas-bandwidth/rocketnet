@@ -176,3 +176,22 @@ Measured final outcomes (generated/distinct, elapsed seconds): fixed
 72,559/25,028, 10.274; last-index 421/250, 0.988; two-outcomes 1,599/755,
 1.073; reliable-loss 155/96, 0.970. The fixed run completes temporal checking;
 the three witnesses each exit 12 with precisely their declared invariant.
+
+## Mid-scale instance
+
+`MCRNReceiptsMid.cfg` is the same safety invariants with `MaxPid = 2` instead
+of 0 (three transport packet IDs), a one-entry sent map and receipt ring, and
+`ReliableTimeout = 1`. It passes: 3,602,016 generated / 792,811 distinct
+states in 83.357 s, exit 0, and is a required case in CASES.tsv. The larger
+packet-ID space lets an ACK, a loss notification, map eviction and a fresh
+write coexist without reusing the only ID, which the one-ID instance cannot.
+
+The deployed receipt ring and sent map are `max_clients`-sized (and bounded
+by the connection's receipt capacity), not one entry. `ReceiptRingBounded`,
+`ExactlyOneOutcomePerReceiptSerial`, the promotion table and the
+all-fragments rule are local predicates over a serial, a number and a ring
+position; a larger ring adds events and evictions but does not weaken them.
+The mid instance checks two live packet IDs and one map/ring entry, so it does
+not cover a split map with several simultaneously live receipt blocks; that
+size-dependent case remains the exploratory bound recorded above. The
+`uint32` serial wrap and `uint64` packet-ID wrap are still not proved.
