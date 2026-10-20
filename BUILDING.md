@@ -8,13 +8,19 @@ archive contains no test suite. Review intentional ABI changes in the list as
 part of the same change. `ROCKETNET_ABI_VERSION` identifies SDK calling/layout
 compatibility separately from the wire version; see the ABI rules below.
 
+Deploying a server on Linux: [docs/LINUX.md](docs/LINUX.md) covers the build, the `xdp -> gso -> io_uring -> portable` transport ladder and pinning, what `gso`, `io_uring` and `xdp` need from the host, socket errors and ICMP, the fd and memlock limits for 1000 clients, containers, and how to verify a host.
+
 rocketnet builds on Linux and macOS with CMake 3.20 or later, and on Windows with
 CMake 4.2 or later (the Windows block below says why). On Linux and macOS the
 Makefile is the front door:
 
     make
 
-Binaries and libraries land in `bin/`. Run the unit suite with:
+Binaries and libraries land in `bin/`. On macOS, [docs/MACOS.md](docs/MACOS.md)
+is the guide: the build, the two transports and how to pin them, the client's
+threads and App Nap, socket errors, the file-descriptor limit, the application
+firewall prompt, lldb, fuzz corpus replay, and the commands that verify a Mac.
+Run the unit suite with:
 
     ./bin/test
 
@@ -328,7 +334,7 @@ environment variables (precedence: default < struct < env). The old names
 `ROCKETNET_CLIENT_DRIVER` are refused aloud and never applied:
 
     ./bin/functional                                # auto: the platform's recommended ladder
-                                                #   (linux: xdp,gso,portable — falls on refusal)
+                                                #   (linux: xdp,gso,io_uring,portable — falls on refusal)
     ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional
                                                 # a one-element list is a pin: that transport
                                                 #   or loud failure, never a silent fall
@@ -507,3 +513,67 @@ acquire it without requiring an extra update or flush. The ordinary fill path
 adds an acquire load of the producer-buffer index; only recovery after both
 buffers were queued takes the publication mutex. Hardware throughput and
 pressure measurements are required for this changed XDP path.
+
+## Fuzzing on macOS
+
+Apple clang ships no libFuzzer runtime, so `-fsanitize=fuzzer` fails there with
+`libclang_rt.fuzzer_osx.a not found`. Fuzz on a Mac with an LLVM toolchain that
+carries it; the official LLVM macOS ARM64 release unpacked at
+`$HOME/sdk/llvm` is one. Name that compiler once in `ROCKETNET_FUZZ_CC` and
+`ROCKETNET_FUZZ_CXX` and both the library build and `fuzz/Makefile` pick it
+up. Apple silicon (arm64) is the supported macOS host.
+
+```
+export ROCKETNET_FUZZ_CC="$HOME/sdk/llvm/bin/clang"
+export ROCKETNET_FUZZ_CXX="$HOME/sdk/llvm/bin/clang++"
+export CC="$ROCKETNET_FUZZ_CC" CXX="$ROCKETNET_FUZZ_CXX"
+
+cmake -B build -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_C_COMPILER="$ROCKETNET_FUZZ_CC" \
+  -DCMAKE_CXX_COMPILER="$ROCKETNET_FUZZ_CXX" \
+  -DCMAKE_C_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer" \
+  -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+cmake --build build --target rocketnet_dev --parallel 4
+
+make -C fuzz ROCKETNET_FUZZ_CXX="$ROCKETNET_FUZZ_CXX"
+```
+
+That builds `rocketnet_fuzz`, `rocketnet_fuzz_message`,
+`rocketnet_fuzz_connect_token` and `rocketnet_fuzz_receive_structured` in
+`fuzz/`, each linked with `-fsanitize=fuzzer,address,undefined` and the same
+`-ffp-contract=off` floor as the library. On macOS the link adds
+`-framework CoreFoundation -framework SystemConfiguration`, which the platform
+layer's interface lookup uses, as `CMakeLists.txt` does. Run one for fifteen
+minutes from its seed corpus and the persisted corpus, with the wire
+dictionary, and keep leak detection off: libFuzzer starts its own RSS-polling
+thread and never joins it, so LeakSanitizer reports that frame on macOS
+whatever the product does.
+
+```
+mkdir -p corpus/rocketnet_fuzz
+ASAN_OPTIONS=detect_leaks=0 ./fuzz/rocketnet_fuzz corpus/rocketnet_fuzz fuzz/corpus \
+  -dict=fuzz/rocketnet.dict -max_total_time=900 -print_final_stats=1
+```
+
+The other three take `corpus/rocketnet_fuzz_message` with
+`fuzz/corpus_message`, `corpus/rocketnet_fuzz_connect_token` with
+`fuzz/corpus_connect_token`, and `corpus/rocketnet_fuzz_receive_structured`
+with `fuzz/corpus_receive_structured`. A reproducer libFuzzer writes
+(`crash-*`, `oom-*`, `timeout-*`, `leak-*`) names the bug; a minimized input
+belongs in the target's seed corpus as `regress_<name>` together with its
+pcapng capture, which `tools/check_fuzz_regressions.py` enforces. The nightly
+workflow's `fuzz-macos` job runs this same build for each target; it fails fast
+with `TOOL-MISSING LLVM clang with libclang_rt.fuzzer_osx.a` when
+`$HOME/sdk/llvm` carries no libFuzzer runtime, before any build runs.
+`ci.yml`'s
+`Replay the fuzz corpora without libFuzzer` step stays the gate for the four
+committed corpora: build `fuzz_replay_rocketnet_fuzz`,
+`fuzz_replay_rocketnet_fuzz_message`,
+`fuzz_replay_rocketnet_fuzz_connect_token` and
+`fuzz_replay_rocketnet_fuzz_receive_structured` and run each against its
+`fuzz/corpus*` inputs, which executes every committed file exactly once. The
+`ROCKETNET_FUZZ_CC`/`ROCKETNET_FUZZ_CXX` variable mechanism is not Apple
+silicon specific: building the instrumented library with LLVM clang and
+running `make -C fuzz ROCKETNET_FUZZ_CXX=...` produces the four harnesses with
+`-fsanitize=fuzzer,address,undefined` on any host that carries a libFuzzer
+runtime.
