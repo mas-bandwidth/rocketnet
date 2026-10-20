@@ -58,7 +58,7 @@ when the assertion is about a real socket or a real transport. A test that
 cannot run without a socket is functional, and it keeps its assertions.
 The functional-only sibling binaries are `test_serialize` (a real clock and
 `rocketnet_sleep`), `test_xdp_filter` (a kernel, root or CAP_BPF, and
-`usleep`), `test_driver`, `test_transport_control`, `test_lifecycle`,
+`usleep`), `test_transport`, `test_transport_control`, `test_lifecycle`,
 `test_msgx` and `test_iocp`; they are functional tests, never `./bin/test`.
 Where the same rule is already covered by a simulator or state-machine test,
 that unit test stays beside it. The connect path's unit twin is
@@ -129,12 +129,12 @@ named functional, never as a unit step.
 | `functional` | functional | real sockets and transports | CI `Run functional suite` |
 | `test_serialize` | functional | sleep-wait loops (test_serialize.cpp:58) | `./bin/functional` (the `execs` tables in `main`, functional/main.cpp) |
 | `test_transport_control` | functional | creates a server transport on a loopback socket and reads `rocketnet_time()` (test_transport_control.cpp:172,217) | `./bin/functional` |
-| `test_xdp` | functional | the AF_XDP driver | `./bin/functional` on Linux |
+| `test_xdp` | functional | the AF_XDP transport | `./bin/functional` on Linux |
 | `test_xdp_filter` | functional | loads the XDP program with BPF_PROG_TEST_RUN; root | by hand |
 | `test_msgx` | functional | a loopback socket and sleep-wait loops (test_msgx.cpp:31-44,59) | `./bin/functional` on macOS |
 | `test_iocp` | functional | loopback sockets, threads and sleep-wait loops (test_iocp.cpp:96,293,360) | `functional.exe` on Windows |
 | `test_lifecycle` | functional | threads, `time(NULL)` tokens, and real server and client transports (test_lifecycle.cpp:155,546,590,618) | CI `Functional: lifecycle binary` |
-| `test_driver` | functional | netlink route reads, and the portable driver on loopback sockets with sleep-wait loops (test_driver.cpp:193-217) | CI `Functional: native driver contract` |
+| `test_transport` | functional | netlink route reads, and the portable transport on loopback sockets with sleep-wait loops (`test_transport.cpp`) | CI `Functional: native transport contract` |
 
 The channel cases in `./bin/functional` (`functional/channel_*.cpp`) run on
 `rocketnet_channel_harness_t` (functional/channel_harness.h): the in-memory
