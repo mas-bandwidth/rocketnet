@@ -84,7 +84,7 @@ static int rn_client_link_state( void * transport )
 // A client transport runs one connection attempt (its create connects,
 // rocketnet_client_transport.cpp:765), so its CLIENT_DISCONNECT_ACCEPTED
 // counter is nonzero exactly when that attempt ended on the server's
-// disconnect packet: rocketnet_client_process_disconnect counts it
+// disconnect: rocketnet_client_process_disconnect counts it
 // (rocketnet_client_protocol.cpp:1202) before it sets the protocol
 // DISCONNECTED.
 static int rn_client_link_end_reason( void * transport )
