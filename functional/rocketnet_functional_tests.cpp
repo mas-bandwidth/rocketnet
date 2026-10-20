@@ -7185,6 +7185,7 @@ void rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv6()
 #include <signal.h>
 #include <sys/wait.h>
 #include <sys/vfs.h>
+#include <spawn.h>
 #include <string>
 #include <vector>
 
@@ -7277,18 +7278,10 @@ static bool rocketnet_xdp_veth_inside_virtme()
     return read && strstr( line, "virtme" ) != NULL;
 }
 
-static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name )
+// the namespace, the veth pair and the boot tier both xdp cases run on; every
+// object made here is removed by rocketnet_xdp_veth_teardown
+static void rocketnet_xdp_veth_setup( bool ipv6 )
 {
-    const char * opt_in = rocketnet_platform_getenv( "ROCKETNET_TEST_XDP_VETH" );
-    const bool opted_in = opt_in != NULL && strcmp( opt_in, "1" ) == 0;
-    if ( geteuid() != 0 || !( opted_in || rocketnet_xdp_veth_inside_virtme() ) )
-    {
-        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s [SKIPPED needs root inside a virtme-ng guest, or root and ROCKETNET_TEST_XDP_VETH=1: it makes a namespace and a veth pair and attaches XDP]", case_name );
-        return;
-    }
-
-    atexit( rocketnet_xdp_veth_teardown );
-
     // the boot tier the xdp pre-flight verifies; a guest boots with an empty
     // bpffs mount point
 
@@ -7337,6 +7330,21 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
 
     if ( system( "command -v ethtool >/dev/null 2>&1" ) == 0 )
         rocketnet_xdp_veth_run( "ip netns exec " ROCKETNET_XDP_VETH_NETNS " ethtool -K " ROCKETNET_XDP_VETH_FAR " tx off >/dev/null" );
+}
+
+static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name )
+{
+    const char * opt_in = rocketnet_platform_getenv( "ROCKETNET_TEST_XDP_VETH" );
+    const bool opted_in = opt_in != NULL && strcmp( opt_in, "1" ) == 0;
+    if ( geteuid() != 0 || !( opted_in || rocketnet_xdp_veth_inside_virtme() ) )
+    {
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s [SKIPPED needs root inside a virtme-ng guest, or root and ROCKETNET_TEST_XDP_VETH=1: it makes a namespace and a veth pair and attaches XDP]", case_name );
+        return;
+    }
+
+    atexit( rocketnet_xdp_veth_teardown );
+
+    rocketnet_xdp_veth_setup( ipv6 );
 
     const char * server_host = ipv6 ? "2001:db8:77::1" : "10.77.2.1";
     char server_address[128];
@@ -7624,10 +7632,348 @@ void rocketnet_test_xdp_max_size_both_ways_ipv6()
     rocketnet_xdp_max_size_both_ways( true, "xdp_max_size_both_ways_ipv6" );
 }
 
+// The xdp cell of the hard-killed-peer cases: the server pinned to the xdp
+// driver on the near end of the veth pair, portable clients in the far
+// namespace, as xdp_max_size_both_ways runs it. Three phases, one per posix
+// case: (client_server_gone) two live clients start before the server exists,
+// so their connection requests meet a closed port and the stack answers with
+// ICMP port unreachable to their unconnected sockets, then the server starts
+// and both connect; (hard_killed_client) a child process connects as a third
+// client and is killed with SIGKILL, no disconnect packet; (send_to_closed_port)
+// the server keeps sending four packets a round to the dead client's closed
+// port while the live clients and the server exchange 200 rounds each way.
+// Every live payload must arrive both ways, the server must stay on xdp, and
+// the receive arms skip nothing: linux reports ICMP to no rocketnet socket.
+
+extern char ** environ;
+
+#define ROCKETNET_XDP_HARD_KILLED_ROUNDS 200
+#define ROCKETNET_XDP_HARD_KILLED_BYTES 100
+
+// the child: a portable client that connects to the server address and sends
+// a payload every 5 ms until it is killed
+int rocketnet_xdp_hard_killed_child_main( const char * server_address )
+{
+    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
+        return 1;
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    if ( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
+        return 1;
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config( &config );
+    snprintf( config.driver, sizeof(config.driver), "portable" );
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &config, rocketnet_platform_time() );
+    if ( !client )
+        return 1;
+    uint8_t payload[ROCKETNET_XDP_HARD_KILLED_BYTES];
+    memset( payload, 0xdd, sizeof(payload) );
+    static uint8_t packet[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+    const double deadline = rocketnet_platform_time() + 30.0;
+    while ( rocketnet_platform_time() < deadline )
+    {
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+            rocketnet_client_transport_send_packet( client, payload, (int) sizeof(payload) );
+        while ( rocketnet_client_transport_receive_packet( client, packet, (int) sizeof(packet) ) > 0 )
+        {
+        }
+        rocketnet_platform_sleep( 0.005 );
+    }
+    rocketnet_client_transport_destroy( client );
+    rocketnet_term();
+    return 0;
+}
+
+// the ICMP destination unreachable messages a namespace has sent, so the case
+// proves the weather it claims was on the wire
+static uint64_t rocketnet_xdp_icmp_unreachables_sent( bool far, bool ipv6 )
+{
+    char command[512];
+    snprintf( command, sizeof(command), "%s%s",
+              far ? "ip netns exec " ROCKETNET_XDP_VETH_NETNS " " : "",
+              ipv6 ? "awk '$1==\"Icmp6OutDestUnreachs\"{print $2}' /proc/net/snmp6"
+                   : "awk '/^Icmp:/{if(!h){split($0,n);h=1}else{split($0,v);for(i in n)if(n[i]==\"OutDestUnreachs\")print v[i]}}' /proc/net/snmp" );
+    const std::vector<std::string> lines = rocketnet_xdp_veth_lines( command );
+    rocketnet_check( !lines.empty() );
+    return (uint64_t) strtoull( lines[0].c_str(), NULL, 10 );
+}
+
+static struct rocketnet_client_transport_t * rocketnet_xdp_far_client( const char * server_address )
+{
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config( &config );
+    snprintf( config.driver, sizeof(config.driver), "portable" );
+    const int self_ns = open( "/proc/self/ns/net", O_RDONLY );
+    const int far_ns = open( "/var/run/netns/" ROCKETNET_XDP_VETH_NETNS, O_RDONLY );
+    rocketnet_check( self_ns >= 0 && far_ns >= 0 );
+    rocketnet_check( setns( far_ns, CLONE_NEWNET ) == 0 );
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &config, rocketnet_platform_time() );
+    rocketnet_check( setns( self_ns, CLONE_NEWNET ) == 0 );
+    close( self_ns );
+    close( far_ns );
+    rocketnet_check( client );
+    return client;
+}
+
+static void rocketnet_xdp_hard_killed_client( bool ipv6, const char * case_name )
+{
+    const char * opt_in = rocketnet_platform_getenv( "ROCKETNET_TEST_XDP_VETH" );
+    const bool opted_in = opt_in != NULL && strcmp( opt_in, "1" ) == 0;
+    if ( geteuid() != 0 || !( opted_in || rocketnet_xdp_veth_inside_virtme() ) )
+    {
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s [SKIPPED needs root inside a virtme-ng guest, or root and ROCKETNET_TEST_XDP_VETH=1: it makes a namespace and a veth pair and attaches XDP]", case_name );
+        return;
+    }
+
+    atexit( rocketnet_xdp_veth_teardown );
+    rocketnet_xdp_veth_setup( ipv6 );
+
+    const uint64_t weather_before = rocketnet_platform_receive_weather_skipped();
+
+    const char * server_host = ipv6 ? "2001:db8:77::1" : "10.77.2.1";
+    char server_address[128];
+    if ( ipv6 )
+        snprintf( server_address, sizeof(server_address), "[%s]:%d", server_host, ROCKETNET_XDP_VETH_PORT );
+    else
+        snprintf( server_address, sizeof(server_address), "%s:%d", server_host, ROCKETNET_XDP_VETH_PORT );
+
+    // phase one: the live clients send to the port before any server holds it
+
+    const uint64_t near_icmp_before = rocketnet_xdp_icmp_unreachables_sent( false, ipv6 );
+    struct rocketnet_client_transport_t * live[2];
+    for ( int c = 0; c < 2; c++ )
+        live[c] = rocketnet_xdp_far_client( server_address );
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 0.5 )
+    {
+        for ( int c = 0; c < 2; c++ )
+            rocketnet_client_transport_update( live[c], rocketnet_platform_time() );
+        rocketnet_platform_sleep( 0.001 );
+    }
+    for ( int c = 0; c < 2; c++ )
+        rocketnet_check( rocketnet_client_transport_state( live[c] ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
+    const uint64_t near_icmp = rocketnet_xdp_icmp_unreachables_sent( false, ipv6 ) - near_icmp_before;
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: client_server_gone: the server side sent %llu ICMP unreachables to the clients before the server started", case_name, (unsigned long long) near_icmp );
+    rocketnet_check( near_icmp > 0 );
+
+    rocketnet_server_socket_allow_commit();
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 4;
+    server_config.num_xdp_queues = 1;
+    server_config.num_os_cpus = 1;
+    snprintf( server_config.driver, sizeof(server_config.driver), "xdp" );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, server_address, &server_config );
+    if ( !server || strcmp( rocketnet_server_transport_driver( server ), "xdp" ) != 0 )
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: FAILED: the server did not start on the xdp driver (%s)", case_name, server ? rocketnet_server_transport_driver( server ) : "create refused" );
+    rocketnet_xdp_veth_server = server;
+    rocketnet_check( server );
+    rocketnet_check( strcmp( rocketnet_server_transport_driver( server ), "xdp" ) == 0 );
+
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 10.0 && rocketnet_server_transport_num_connected_clients( server ) < 2 )
+    {
+        for ( int c = 0; c < 2; c++ )
+            rocketnet_client_transport_update( live[c], rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+        rocketnet_platform_sleep( 0.001 );
+    }
+    for ( int c = 0; c < 2; c++ )
+        rocketnet_client_transport_update( live[c], rocketnet_platform_time() );
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: client_server_gone: %d of 2 live clients connected after starting before the server", case_name, rocketnet_server_transport_num_connected_clients( server ) );
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 2 );
+    for ( int c = 0; c < 2; c++ )
+        rocketnet_check( rocketnet_client_transport_state( live[c] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    bool live_index[4] = { false, false, false, false };
+    for ( int i = 0; i < 4; i++ )
+        live_index[i] = rocketnet_server_transport_is_client_connected( server, i ) != 0;
+
+    // phase two: the child connects from the far namespace, then is killed
+
+    char self_path[4096];
+    const ssize_t self_bytes = readlink( "/proc/self/exe", self_path, sizeof(self_path) - 1 );
+    rocketnet_check( self_bytes > 0 );
+    self_path[self_bytes] = '\0';
+    const char * argv[] = { "ip", "netns", "exec", ROCKETNET_XDP_VETH_NETNS, self_path, "--xdp-hard-killed-child", server_address, NULL };
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init( &actions );
+    posix_spawn_file_actions_addopen( &actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0 );
+    pid_t child = 0;
+    rocketnet_check( posix_spawnp( &child, "ip", &actions, NULL, (char * const *) argv, environ ) == 0 );
+    posix_spawn_file_actions_destroy( &actions );
+
+    int dead = -1;
+    int dead_payloads = 0;
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 10.0 && dead_payloads < 10 )
+    {
+        for ( int c = 0; c < 2; c++ )
+            rocketnet_client_transport_update( live[c], rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+        const int num_payloads = rocketnet_server_transport_num_payloads( server );
+        for ( int i = 0; i < num_payloads; i++ )
+        {
+            int client_index, payload_bytes;
+            rocketnet_server_transport_payload( server, i, &client_index, &payload_bytes );
+            if ( client_index >= 0 && client_index < 4 && !live_index[client_index] )
+            {
+                dead = client_index;
+                dead_payloads++;
+            }
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( dead >= 0 );
+
+    rocketnet_check( kill( child, SIGKILL ) == 0 );
+    int status = 0;
+    rocketnet_check( waitpid( child, &status, 0 ) == child );
+    rocketnet_check( WIFSIGNALED( status ) && WTERMSIG( status ) == SIGKILL );
+
+    // a payload in flight at the kill drains here, before the count starts
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 0.1 )
+    {
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+        rocketnet_platform_sleep( 0.001 );
+    }
+
+    // phase three: the server sends four packets a round to the dead client's
+    // closed port while it and the live clients exchange payloads
+
+    uint8_t to_dead[ROCKETNET_XDP_HARD_KILLED_BYTES];
+    uint8_t to_client[ROCKETNET_XDP_HARD_KILLED_BYTES];
+    uint8_t to_server[ROCKETNET_XDP_HARD_KILLED_BYTES];
+    memset( to_dead, 0xee, sizeof(to_dead) );
+    memset( to_client, 0x5c, sizeof(to_client) );
+    memset( to_server, 0xc5, sizeof(to_server) );
+
+    const uint64_t far_icmp_before = rocketnet_xdp_icmp_unreachables_sent( true, ipv6 );
+    const int expected_server = 2 * ROCKETNET_XDP_HARD_KILLED_ROUNDS;
+    int server_received = 0;
+    int client_received[2] = { 0, 0 };
+    int round = 0;
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 10.0 )
+    {
+        if ( round < ROCKETNET_XDP_HARD_KILLED_ROUNDS )
+        {
+            for ( int j = 0; j < 4; j++ )
+                rocketnet_server_transport_send_packet( server, dead, to_dead, (int) sizeof(to_dead) );
+            for ( int i = 0; i < 4; i++ )
+                if ( live_index[i] )
+                    rocketnet_server_transport_send_packet( server, i, to_client, (int) sizeof(to_client) );
+            for ( int c = 0; c < 2; c++ )
+                rocketnet_client_transport_send_packet( live[c], to_server, (int) sizeof(to_server) );
+            round++;
+        }
+        rocketnet_server_transport_send_packets( server );
+        for ( int c = 0; c < 2; c++ )
+            rocketnet_client_transport_update( live[c], rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+
+        const int num_payloads = rocketnet_server_transport_num_payloads( server );
+        for ( int i = 0; i < num_payloads; i++ )
+        {
+            int client_index, payload_bytes;
+            uint8_t * payload = rocketnet_server_transport_payload( server, i, &client_index, &payload_bytes );
+            if ( client_index < 0 || client_index >= 4 || !live_index[client_index] )
+                continue;
+            rocketnet_check( payload_bytes == (int) sizeof(to_server) );
+            rocketnet_check( memcmp( payload, to_server, sizeof(to_server) ) == 0 );
+            server_received++;
+        }
+        static uint8_t packet[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+        for ( int c = 0; c < 2; c++ )
+        {
+            int packet_bytes;
+            while ( ( packet_bytes = rocketnet_client_transport_receive_packet( live[c], packet, (int) sizeof(packet) ) ) > 0 )
+            {
+                rocketnet_check( packet_bytes == (int) sizeof(to_client) );
+                rocketnet_check( memcmp( packet, to_client, sizeof(to_client) ) == 0 );
+                client_received[c]++;
+            }
+        }
+        if ( round == ROCKETNET_XDP_HARD_KILLED_ROUNDS && server_received >= expected_server &&
+             client_received[0] >= ROCKETNET_XDP_HARD_KILLED_ROUNDS && client_received[1] >= ROCKETNET_XDP_HARD_KILLED_ROUNDS )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+
+    const uint64_t far_icmp = rocketnet_xdp_icmp_unreachables_sent( true, ipv6 ) - far_icmp_before;
+    const struct rocketnet_counters_t * counters = rocketnet_server_transport_counters( server );
+    const uint64_t weather_skipped = rocketnet_platform_receive_weather_skipped() - weather_before;
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: the dead client's namespace sent %llu ICMP unreachables to the server", case_name, (unsigned long long) far_icmp );
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: driver=%s rounds=%d server live=%d/%d client0=%d/%d client1=%d/%d dead_index=%d connected=%d redirected=%llu packets_received=%llu weather_skipped=%llu",
+                      case_name, rocketnet_server_transport_driver( server ), round, server_received, expected_server,
+                      client_received[0], ROCKETNET_XDP_HARD_KILLED_ROUNDS, client_received[1], ROCKETNET_XDP_HARD_KILLED_ROUNDS, dead,
+                      rocketnet_server_transport_num_connected_clients( server ),
+                      (unsigned long long) rocketnet_counter_value( counters, ROCKETNET_COUNTER_XDP_KERNEL_REDIRECTED ),
+                      (unsigned long long) rocketnet_counter_value( counters, ROCKETNET_COUNTER_PACKETS_RECEIVED ),
+                      (unsigned long long) weather_skipped );
+    if ( server_received != expected_server || client_received[0] != ROCKETNET_XDP_HARD_KILLED_ROUNDS || client_received[1] != ROCKETNET_XDP_HARD_KILLED_ROUNDS )
+    {
+        // the evidence for a lost payload: every nonzero counter on each side
+        const struct rocketnet_counters_t * sides[3] = { counters, rocketnet_client_transport_counters( live[0] ), rocketnet_client_transport_counters( live[1] ) };
+        static const char * side_names[3] = { "server", "client0", "client1" };
+        for ( int side = 0; side < 3; side++ )
+            for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
+                if ( rocketnet_counter_value( sides[side], i ) != 0 )
+                    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: %s %s = %llu", case_name, side_names[side], rocketnet_counter_name( i ), (unsigned long long) rocketnet_counter_value( sides[side], i ) );
+    }
+    rocketnet_check( round == ROCKETNET_XDP_HARD_KILLED_ROUNDS );
+    rocketnet_check( server_received == expected_server );
+    rocketnet_check( client_received[0] == ROCKETNET_XDP_HARD_KILLED_ROUNDS );
+    rocketnet_check( client_received[1] == ROCKETNET_XDP_HARD_KILLED_ROUNDS );
+    rocketnet_check( strcmp( rocketnet_server_transport_driver( server ), "xdp" ) == 0 );
+    for ( int i = 0; i < 4; i++ )
+        if ( live_index[i] )
+            rocketnet_check( rocketnet_server_transport_is_client_connected( server, i ) );
+    for ( int c = 0; c < 2; c++ )
+        rocketnet_check( rocketnet_client_transport_state( live[c] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( weather_skipped == 0 );
+    rocketnet_check( far_icmp > 0 );
+
+    for ( int c = 0; c < 2; c++ )
+        rocketnet_client_transport_destroy( live[c] );
+    rocketnet_server_transport_stop( server );
+    for ( int i = 0; i < 100 && rocketnet_server_transport_state( server ) != ROCKETNET_SERVER_TRANSPORT_STOPPED; i++ )
+    {
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_server_transport_destroy( server );
+    rocketnet_xdp_veth_server = NULL;
+    rocketnet_xdp_veth_teardown();
+}
+
+void rocketnet_test_xdp_hard_killed_client_ipv4()
+{
+    rocketnet_xdp_hard_killed_client( false, "xdp_hard_killed_client_ipv4" );
+}
+
+void rocketnet_test_xdp_hard_killed_client_ipv6()
+{
+    rocketnet_xdp_hard_killed_client( true, "xdp_hard_killed_client_ipv6" );
+}
+
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
 
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_test_xdp_max_size_both_ways_ipv4, "xdp_max_size_both_ways_ipv4", "linux only: the xdp driver is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_test_xdp_max_size_both_ways_ipv6, "xdp_max_size_both_ways_ipv6", "linux only: the xdp driver is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_test_xdp_hard_killed_client_ipv4, "xdp_hard_killed_client_ipv4", "linux only: the xdp driver is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_test_xdp_hard_killed_client_ipv6, "xdp_hard_killed_client_ipv6", "linux only: the xdp driver is not built on this platform" )
+
+int rocketnet_xdp_hard_killed_child_main( const char * server_address )
+{
+    (void) server_address;
+    return 1;
+}
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
 
@@ -8272,6 +8618,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "max_size_packet_crosses_a_1500_mtu_link_ipv6", rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv6 },
     { "xdp_max_size_both_ways_ipv4", rocketnet_test_xdp_max_size_both_ways_ipv4 },
     { "xdp_max_size_both_ways_ipv6", rocketnet_test_xdp_max_size_both_ways_ipv6 },
+    { "xdp_hard_killed_client_ipv4", rocketnet_test_xdp_hard_killed_client_ipv4 },
+    { "xdp_hard_killed_client_ipv6", rocketnet_test_xdp_hard_killed_client_ipv6 },
     { "test_config_out_of_range_refuses_create", rocketnet_test_config_out_of_range_refuses_create },
     { "test_server_handshake_deadline_from_config", rocketnet_test_server_handshake_deadline_from_config },
     { "test_config_precedence", rocketnet_test_config_precedence },

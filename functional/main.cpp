@@ -20,6 +20,7 @@
 
 #if defined(__APPLE__) || defined(__linux__)
 int rocketnet_posix_hard_killed_child_main( const char * host, int port );
+int rocketnet_xdp_hard_killed_child_main( const char * server_address );
 #endif
 
 int rocketnet_functional_test_count();
@@ -71,6 +72,10 @@ int main( int argc, char ** argv )
     // an absolute path so posix_spawn does not depend on the caller's cwd.
     if ( argc >= 4 && strcmp( argv[1], "--posix-hard-killed-child" ) == 0 )
         return rocketnet_posix_hard_killed_child_main( argv[2], atoi( argv[3] ) );
+    // the xdp hard-killed case starts this binary in the far namespace as the
+    // client it kills
+    if ( argc >= 3 && strcmp( argv[1], "--xdp-hard-killed-child" ) == 0 )
+        return rocketnet_xdp_hard_killed_child_main( argv[2] );
 #endif
 
 #if defined(__APPLE__)

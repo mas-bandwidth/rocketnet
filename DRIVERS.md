@@ -72,7 +72,17 @@ this on Linux for portable, `gso`, `gso` with GSO and GRO off, and `io_uring`,
 IPv4 and IPv6: `posix_hard_killed_client` (a child client ended by `SIGKILL`),
 `posix_send_to_closed_port` and `posix_client_server_gone` assert exact live
 counts and a zero skip count, and `posix_hard_killed_receive_errno_seam`
-injects each errno into `recvfrom`, `recvmmsg` and the `io_uring` receive CQE.
+injects each errno into `recvfrom`, `recvmmsg` and the `io_uring` receive CQE. The `xdp`
+cell is `xdp_hard_killed_client_ipv4` and `_ipv6`
+(`functional/rocketnet_functional_tests.cpp:7720`), run as root in a
+virtme-ng guest the way `xdp_max_size_both_ways` runs: the server on `xdp` at
+the near end of a veth pair and portable clients in the far namespace. Two
+clients send before the server exists and meet ICMP port unreachable, then
+connect; a third is a child process ended by `SIGKILL`; the server keeps
+sending to its closed port while 200 payloads cross each way. Every live
+payload arrives, the server stays on `xdp`, both namespaces' ICMP
+destination-unreachable counters prove the errors were sent, and the skip
+count stays zero.
 
 ## Server capabilities and ownership
 

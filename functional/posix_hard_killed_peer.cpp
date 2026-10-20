@@ -202,11 +202,6 @@ static void rocketnet_posix_start_child( pid_t * pid, const char * host, int por
 #include "rocketnet_packet_batch.h"
 #include "rocketnet_constants.h"
 
-#if ROCKETNET_DEVELOPMENT
-// defined in sdk/rocketnet_server_uring_linux.cpp, development library only
-void rocketnet_server_uring_inject_recv_error_for_testing( struct rocketnet_server_uring_t * uring, int error );
-#endif // #if ROCKETNET_DEVELOPMENT
-
 #define ROCKETNET_POSIX_CELL_BYTES 64
 #define ROCKETNET_POSIX_CELL_MAX 2048
 
@@ -637,6 +632,36 @@ static void rocketnet_posix_linux_cells( void (*cell_case)( int kind, bool ipv6 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 // one server socket, three live clients, one child client killed mid-stream.
+// drain the platform socket until the first empty receive, counting all
+// datagrams and those from the given ports. the cases read while they send,
+// so a receive buffer at the kernel default (212992 bytes) never overflows.
+static int rocketnet_posix_drain_ports( rocketnet_platform_socket_t * socket, const int * ports, int num_ports, int * received )
+{
+    static rocketnet_address_t from_many[512];
+    static int packet_bytes[512];
+    static uint8_t packet_data[512 * 64];
+    int matched = 0;
+    for ( ;; )
+    {
+        const int got = rocketnet_platform_socket_receive_packets( socket, from_many, packet_data, 64, packet_bytes, 512 );
+        if ( got == 0 )
+            break;
+        *received += got;
+        for ( int i = 0; i < got; i++ )
+        {
+            for ( int p = 0; p < num_ports; p++ )
+            {
+                if ( from_many[i].port == ports[p] )
+                {
+                    matched++;
+                    break;
+                }
+            }
+        }
+    }
+    return matched;
+}
+
 // after the kill the server keeps sending to the dead address while the live
 // clients exchange traffic; every live datagram must still arrive and the
 // receive arm must still drain behind the ICMP-class error.
@@ -694,6 +719,8 @@ void rocketnet_test_posix_hard_killed_client()
     // the server keeps sending to the dead peer (the stack answers with ICMP)
     // while the live clients exchange traffic
     int expected = 0;
+    int received = 0;
+    int live_received = 0;
     for ( int i = 0; i < 200; i++ )
     {
         uint8_t dead_packet[32];
@@ -705,13 +732,14 @@ void rocketnet_test_posix_hard_killed_client()
             rocketnet_posix_send_to( live[c], "127.0.0.1", server_port, (uint8_t) ( i + c ) );
             expected++;
         }
-        if ( ( i % 20 ) == 0 )
+        if ( ( i % 20 ) == 19 )
+        {
             rocketnet_posix_settle();
+            live_received += rocketnet_posix_drain_ports( server, live_port, 3, &received );
+        }
     }
     rocketnet_posix_settle();
 
-    int received = 0;
-    int live_received = 0;
     static rocketnet_address_t from_many[512];
     static int packet_bytes[512];
     static uint8_t packet_data[512 * 64];
@@ -775,6 +803,8 @@ void rocketnet_test_posix_send_to_closed_port()
     closed.port = closed_port;
 
     int expected = 0;
+    int received = 0;
+    int ignored = 0;
     for ( int i = 0; i < 1000; i++ )
     {
         uint8_t dead_packet[32];
@@ -784,15 +814,17 @@ void rocketnet_test_posix_send_to_closed_port()
         rocketnet_posix_send_to( live, "127.0.0.1", server_port, (uint8_t) i );
         expected++;
 
-        if ( ( i % 50 ) == 0 )
+        if ( ( i % 50 ) == 49 )
+        {
             rocketnet_posix_settle();
+            received += rocketnet_posix_drain_ports( server, &live_port, 1, &ignored );
+        }
     }
     rocketnet_posix_settle();
 
     static rocketnet_address_t from_many[1100];
     static int packet_bytes[1100];
     static uint8_t packet_data[1100 * 64];
-    int received = 0;
     const double deadline = rocketnet_platform_time() + 5.0;
     while ( received < expected && rocketnet_platform_time() < deadline )
     {
