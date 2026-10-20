@@ -11,6 +11,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(_WIN32)
+bool rocketnet_server_rio_test_receive_overflow( uint64_t * counters, int * packet_counts,
+                                                  int * repost_calls, int * pending_receives, int * guard_hit );
+#endif
+
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "IOCP check failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); exit(1); } } while (0)
 
 static std::atomic<int> live_allocations{0};
@@ -940,6 +945,24 @@ static void test_rio_request_queue_full()
 
 static void test_rio_completion_queue_full()
 {
+#if defined(_WIN32)
+    // Keep the CQ full through a guard beyond two banks. The old unbounded
+    // loop reaches the corrupt-CQ sentinel; bounded receive returns at one
+    // bank and leaves the still-full queue for the next update.
+    uint64_t seam_counters[2 * ROCKETNET_RIO_NUM_COUNTERS] = {};
+    int seam_packets[2] = {};
+    int seam_reposts = 0;
+    int seam_pending = 0;
+    int seam_guard_hit = 0;
+    CHECK( rocketnet_server_rio_test_receive_overflow( seam_counters, seam_packets, &seam_reposts, &seam_pending, &seam_guard_hit ) );
+    CHECK( seam_guard_hit == 0 );
+    CHECK( seam_packets[0] == ROCKETNET_RIO_RECEIVES );
+    CHECK( seam_packets[1] == ROCKETNET_RIO_RECEIVES );
+    CHECK( seam_counters[ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] == ROCKETNET_RIO_RECEIVES );
+    CHECK( seam_counters[ROCKETNET_RIO_NUM_COUNTERS + ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] == 2 * ROCKETNET_RIO_RECEIVES );
+    CHECK( seam_reposts == 2 * ROCKETNET_RIO_RECEIVES );
+    CHECK( seam_pending == ROCKETNET_RIO_RECEIVES );
+#endif
     if ( !rocketnet_server_rio_available() ) { printf("rio_completion_queue_full [SKIPPED no RIO on this host]\n"); return; }
     rocketnet_address_t bind;
     rocketnet_server_rio_t * rio = rio_open(&bind);

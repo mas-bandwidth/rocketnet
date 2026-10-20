@@ -30,7 +30,7 @@
 #define ROCKETNET_IOCP_USO_MAX_SEGMENTS 64
 #define ROCKETNET_IOCP_USO_MAX_SUPER_BYTES 65000
 #define ROCKETNET_IOCP_URO_BUFFER_BYTES 16384
-#define ROCKETNET_IOCP_URO_MAX_SEGMENTS ROCKETNET_IOCP_URO_BUFFER_BYTES
+#define ROCKETNET_IOCP_URO_MAX_SEGMENTS 64
 
 // create flags: skip a probe, so the fallback path is testable on a host
 // that has the feature
