@@ -34,6 +34,8 @@
 4. **`unreliable_integrity`**: Every unreliable message delivered (`ROCKETNET_RELIABILITY_UNRELIABLE`, `ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED`, `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT`) is pattern-verified (never corrupted) and never duplicated (each sequence number per client and reliability mode is observed at most once, and strictly increasing for `ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED`).
 5. **`counters_agree`**: The total messages sent by all clients equals the total messages received by the server plus counted drops (`sent == received + drops`).
 
+When `counters_agree` fails, `load` prints to stderr every nonzero counter of the server transport and the message server, the sums of every nonzero counter over the client transports and the message clients (`load: counters_agree ... <COUNTER>=<n>`), and each combo's client-to-server sent and received counts (`load: counters_agree combo=<n> sent=<n> received=<n>`), so the run names where the uncounted messages went (`load.c:948`).
+
 ## Diagnostic Telemetry (Recorded Without Gating)
 
 At the end of every run, the single summary line records:
