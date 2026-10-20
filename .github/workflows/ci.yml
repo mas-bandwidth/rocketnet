@@ -252,6 +252,13 @@ jobs:
         if: contains(matrix.leg, 'b')
         run: ./bin/test
 
+      # The unit suite opens no socket: ./bin/test runs under strace and the
+      # check fails, naming the first opener, on any socket() call
+      # (tools/check_unit_no_sockets.sh).
+      - name: Unit suite opens no socket
+        if: runner.os == 'Linux' && contains(matrix.leg, 'b')
+        run: bash tools/check_unit_no_sockets.sh ./bin/test
+
       - name: Run unit tests with the driver pin preserved
         if: contains(matrix.leg, 'b')
         run: ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/test
