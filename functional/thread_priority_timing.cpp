@@ -99,6 +99,9 @@ struct priority_timing_wakes_t
 
 static priority_timing_wakes_t priority_timing_wakes;
 
+// the measured stretch has begun: set by the main thread, read by the I/O thread's time callback
+static std::atomic<bool> priority_timing_measuring( false );
+
 static void priority_timing_read_self( int * policy, int * priority )
 {
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
@@ -127,10 +130,13 @@ static double priority_timing_time_callback( void * context )
     }
     else if ( now - w->last_call > PRIORITY_TIMING_WAKE_GROUP )
     {
-        if ( w->num_intervals < PRIORITY_TIMING_MAX_WAKES )
-            w->intervals[w->num_intervals++] = now - w->group_start;
-        else
-            w->dropped++;
+        if ( priority_timing_measuring.load( std::memory_order_acquire ) )
+        {
+            if ( w->num_intervals < PRIORITY_TIMING_MAX_WAKES )
+                w->intervals[w->num_intervals++] = now - w->group_start;
+            else
+                w->dropped++;
+        }
         w->group_start = now;
         w->wakes++;
     }
@@ -288,6 +294,7 @@ static void priority_timing_run( const char * condition, int spinners, bool read
     const bool enabled = rocketnet_get_thread_priority();
 
     memset( &priority_timing_wakes, 0, sizeof( priority_timing_wakes ) );
+    priority_timing_measuring.store( false );
     std::vector<double> wake_storage( PRIORITY_TIMING_MAX_WAKES );
     priority_timing_wakes.intervals = wake_storage.data();
 
@@ -350,7 +357,7 @@ static void priority_timing_run( const char * condition, int spinners, bool read
         load.push_back( std::thread( priority_timing_spinner ) );
 
     // the wakes before the measured stretch are not counted
-    priority_timing_wakes.num_intervals = 0;
+    priority_timing_measuring.store( true, std::memory_order_release );
 
     uint64_t timeouts = 0;
     uint64_t received = 0;

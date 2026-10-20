@@ -1074,6 +1074,7 @@ static inline void rocketnet_channel_harness_destroy( rocketnet_channel_harness_
     if ( h->server.client_slots ) rocketnet_client_slots_destroy( h->server.client_slots );
     if ( h->server.acks ) rocketnet_server_acks_destroy( h->server.acks );
     if ( h->server.reassembly ) rocketnet_reassembly_set_destroy( h->server.reassembly );
+    if ( h->client.reassembly ) rocketnet_reassembly_set_destroy( h->client.reassembly );
     if ( h->sim ) rocketnet_network_simulator_destroy( h->sim );
     if ( h->client_endpoint.payload ) rocketnet_free( NULL, h->client_endpoint.payload );
     if ( h->server_endpoint.payload ) rocketnet_free( NULL, h->server_endpoint.payload );
