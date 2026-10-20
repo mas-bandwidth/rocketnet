@@ -627,7 +627,16 @@
     /* reassembly, counted before any size, epoch or filter check. */ \
     /* EXPECTED: a fragment is not a refusal. appended: indices are the */ \
     /* contract. */ \
-    X( XDP_KERNEL_PASSED_FRAGMENT, EXPECTED, NONE )
+    X( XDP_KERNEL_PASSED_FRAGMENT, EXPECTED, NONE ) \
+    \
+    /* The kernel prefilter's DROPPED_FIRST_FRAGMENT (sdk/rocketnet_wire.h): */ \
+    /* the first IP fragment (the one carrying the UDP header) of a */ \
+    /* datagram to the server's address and port, dropped in XDP before */ \
+    /* any size, epoch or filter check. RocketNet assumes a 1500-byte MTU */ \
+    /* path, so a fragment for the server is hostile or misconfigured; */ \
+    /* without its first fragment the kernel never reassembles the */ \
+    /* datagram. REFUSAL. appended: indices are the contract. */ \
+    X( XDP_KERNEL_DROPPED_FIRST_FRAGMENT, REFUSAL, NONE )
 
 enum
 {
