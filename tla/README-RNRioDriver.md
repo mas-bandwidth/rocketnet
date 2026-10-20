@@ -1,8 +1,7 @@
 # RNRioDriver
 
-The Windows Registered I/O (RIO) server driver, modelled from its design
-before its code exists. The driver is `sdk/rocketnet_server_rio_windows.cpp`
-(owed by the driver card); its region layout and request contexts are
+The Windows Registered I/O (RIO) server driver. The driver is
+`sdk/rocketnet_server_rio_windows.cpp`; its region layout and request contexts are
 `sdk/rocketnet_rio_layout.h`. The driver opens one UDP socket with
 `WSA_FLAG_REGISTERED_IO`, registers one region with one
 `RIORegisterBuffer`, and polls one send completion queue and one receive
@@ -159,15 +158,13 @@ Linux bench (Java 21.0.12.1, the pinned JAR, 110-second budget):
 
 | Case | Outcome | Generated | Distinct | Seconds |
 |---|---|---:|---:|---:|
-| `MCRNRioDriver.cfg` | PASS, exit 0, no error, depth 18 | 25,525 | 6,542 | 7.8 |
-| `MCRNRioDriverBrokenSwitchWithoutDrain.cfg` | `NoReserveIntoPostedPhase` violated, exit 12, depth 8 | 4,563 | 1,692 | 3.6 |
-| `MCRNRioDriverBrokenFreeBeforeDrain.cfg` | `FreedOnlyWhenDrained` violated, exit 12, depth 3 | 56 | 37 | 3.0 |
-| `MCRNRioDriverBrokenRetireOnRefusal.cfg` | `ReceiveDepthNeverShrinks` violated, exit 12, depth 3 | 27 | 23 | 2.9 |
+| `MCRNRioDriver.cfg` | PASS, exit 0, no error | 70,881 | 18,464 | 5.2 |
+| `MCRNRioDriverBrokenSwitchWithoutDrain.cfg` | `NoReserveIntoPostedPhase` violated, exit 12 | 6,243 | 2,446 | 1.2 |
+| `MCRNRioDriverBrokenFreeBeforeDrain.cfg` | `FreedOnlyWhenDrained` violated, exit 12 | 56 | 38 | 1.0 |
+| `MCRNRioDriverBrokenRetireOnRefusal.cfg` | `ReceiveDepthNeverShrinks` violated, exit 12 | 27 | 23 | 1.0 |
+| `MCRNRioDriverBrokenUnboundedReceive.cfg` | `ReceiveCallBound` violated, exit 12, depth 7 | 6,523 | 2,782 | 1.2 |
 
 ## The reversed witnesses
-
-`MCRNRioDriverBrokenUnboundedReceive.cfg` sets `ReceiveBounded = FALSE`. TLC violates `ReceiveCallBound`, exhibiting a receive call that dequeues more than one bank before swapping.
-
 
 ### `MCRNRioDriverBrokenSwitchWithoutDrain.cfg`
 
@@ -234,9 +231,26 @@ retires its slice, the old rule.
   `ReceiveDepthNeverShrinks` fails. The counterexample is real for that
   defect.
 
+### `MCRNRioDriverBrokenUnboundedReceive.cfg`
+
+`Slots = 2, Slices = 2, MaxSteps = 3` with `ReceiveBounded = FALSE`:
+`DequeueReceive` may run while completions keep arriving, with no per-call
+limit, so `Swap` waits for an empty receive queue as the old loop did.
+
+- **The trace TLC printed:** `KernelFillSlice` and `DequeueReceive`
+  alternate three times with no `Swap`, and `receiveCount` reaches 3, past
+  one bank of 2 slices; `ReceiveCallBound` fails at depth 7.
+- **Against the code, by hand:** the old `rocketnet_server_rio_receive_packets`
+  loop left only on a short dequeue, so a completion queue the NIC keeps
+  full holds the main thread in that call. The bounded loop counts the
+  completions it dequeues and stops at `ROCKETNET_RIO_RECEIVES`, one bank;
+  the queued tail is dequeued by the next call. The counterexample is real
+  for that defect.
+
 ## Code correspondence
 
-No sdk file is edited by this change. The driver card that writes
-`sdk/rocketnet_server_rio_windows.cpp` cites this model from its send
-switch and its destroy, and moves the `rio-driver` row of
-`tla/COVERAGE.tsv` from `owed` to `current`.
+`sdk/rocketnet_server_rio_windows.cpp` cites this model: `SwitchPhase` in
+`rocketnet_server_rio_send_packets`, which returns with the switch owed while
+the other phase has outstanding sends, and `DequeueReceive` with its per-call
+bound and `Swap` in `rocketnet_server_rio_receive_packets`. The
+`rio-driver` row of `tla/COVERAGE.tsv` maps every action to its function.

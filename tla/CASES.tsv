@@ -181,6 +181,7 @@ MCRNRioDriver.cfg	MCRNRioDriver.tla	pass	-	check	rnriodriver	required	-
 MCRNRioDriverBrokenSwitchWithoutDrain.cfg	MCRNRioDriver.tla	invariant	NoReserveIntoPostedPhase	check	rnriodriver	required	-
 MCRNRioDriverBrokenFreeBeforeDrain.cfg	MCRNRioDriver.tla	invariant	FreedOnlyWhenDrained	check	rnriodriver	required	-
 MCRNRioDriverBrokenRetireOnRefusal.cfg	MCRNRioDriver.tla	invariant	ReceiveDepthNeverShrinks	check	rnriodriver	required	-
+MCRNRioDriverBrokenUnboundedReceive.cfg	MCRNRioDriver.tla	invariant	ReceiveCallBound	check	rnriodriver	required	-
 MCRNFlows.cfg	MCRNFlows.tla	pass	-	check	rnflows	required	-
 MCRNFlowsBrokenSendAfterUnsubscribe.cfg	MCRNFlows.tla	invariant	DeliveredOnlyToSubscribers	check	rnflows	required	-
 MCRNClientIoDecrypt.cfg	MCRNClientIoDecrypt.tla	pass	-	check	rnclientiodecrypt	required	-
@@ -230,4 +231,3 @@ MCLinkReverseWindow.cfg	MCLinkPatterns.tla	pass	-	check	link	required	-
 MCLinkReverseWindowBrokenOrder.cfg	MCLinkPatterns.tla	invariant	WindowOrderReversed	check	link	required	-
 MCLinkEveryNthBrokenCounter.cfg	MCLinkPatterns.tla	invariant	MCPatternsTypeOK	check	link	required	-
 MCLinkReverseWindowBreaksInOrder.cfg	MCLinkPatterns.tla	invariant	SurvivorsInOrder	check	link	required	-
-MCRNRioDriverBrokenUnboundedReceive.cfg	MCRNRioDriver.tla	invariant	ReceiveCallBound	check	rnriodriver	required	-

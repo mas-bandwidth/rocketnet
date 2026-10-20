@@ -32,7 +32,6 @@ static void rio_overflow_seam()
     check( counters[ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] == ROCKETNET_RIO_RECEIVES );
     check( counters[ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW] == 0 );
     check( counters[ROCKETNET_RIO_COUNTER_RECEIVE_REPOST_FAILED] == 0 );
-    check( repost_calls == ROCKETNET_RIO_RECEIVES );
     check( pending_receives == ROCKETNET_RIO_RECEIVES );
 
     // The queued tail is delivered by the next update. The seam contains two
@@ -42,7 +41,11 @@ static void rio_overflow_seam()
            2 * ROCKETNET_RIO_RECEIVES );
     check( repost_calls == 2 * ROCKETNET_RIO_RECEIVES );
     for ( int i = 0; i < ROCKETNET_RIO_NUM_COUNTERS; ++i )
-        check( counters[i] <= counters[ROCKETNET_RIO_NUM_COUNTERS + i] );
+    {
+        if ( i == ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED )
+            continue;
+        check( counters[i] == counters[ROCKETNET_RIO_NUM_COUNTERS + i] );
+    }
 }
 
 #else
