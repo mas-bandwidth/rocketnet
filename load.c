@@ -50,8 +50,12 @@
     (nobody leaves CONNECTED and the server counts no disconnect or timeout)
     and reliable_in_order (every message arrives once and in order, drops=0).
     The summary line starts `load: mode=light` and names the four criteria;
-    `light drop-one` stops updating client 0 partway and fails.
-*/
+    `light drop-one` stops updating client 0 partway and fails. At 1000
+    clients on the portable server, the server's send ring saturates under
+    max_packets_per_update 1 (SEND_RING_FULL) before the trailing clients'
+    first reliable round trip completes, so the server disconnects them on the
+    3 s reliable timeout and the run fails; the limit is under investigation.
+ */
 
 #if defined(__linux__) && !defined(_GNU_SOURCE)
 #define _GNU_SOURCE     /* setns, for LOAD_CLIENT_NETNS */
