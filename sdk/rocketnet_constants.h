@@ -44,11 +44,15 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
 
 #define ROCKETNET_RECEIVE_PACKETS_PER_CLIENT                                16
 
+// the AF_XDP frame size; defined on every platform because the portable
+// frame and descriptor checks in rocketnet_xdp_frame.h and their unit cases
+// build everywhere
+#define ROCKETNET_XDP_FRAME_SIZE                                          4096  // IMPORTANT: This *must* be 4096 or you will get packet corruption on read!
+
 #if ROCKETNET_XDP
 
 #define ROCKETNET_XDP_NUM_BUFFERS                                            2
 #define ROCKETNET_XDP_NUM_FRAMES                                         65536
-#define ROCKETNET_XDP_FRAME_SIZE                                          4096  // IMPORTANT: This *must* be 4096 or you will get packet corruption on read!
 #define ROCKETNET_XDP_SEND_QUEUE_SIZE                             ( 4096 * 4 )
 #define ROCKETNET_XDP_RECV_QUEUE_SIZE                             ( 4096 * 4 )
 #define ROCKETNET_XDP_FILL_QUEUE_SIZE                                     2048
