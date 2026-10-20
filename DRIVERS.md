@@ -72,6 +72,28 @@ calls them on the main thread once per update, after packet processing, and
 nothing else writes the driver's replay map. XDP is the only built-in backend
 that reports it.
 
+## Per-update send and receive budgets
+
+Every driver receives at least twice what it sends in one update:
+`receive_capacity >= 2 * send_budget`, checked by
+`test_unit_receive_budget_twice_send.cpp` and locked by a
+`ROCKETNET_STATIC_ASSERT` beside each driver's constants. The send budget
+is what one update stages or submits; the receive capacity is the bank,
+ring, staging or completion budget the send path can fill while it waits.
+The server process batch `ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS`
+(`sdk/rocketnet_constants.h`, 16000) bounds every driver's drain.
+
+| Driver | Send budget | Receive capacity |
+| --- | --- | --- |
+| portable | 256–1000, max `ROCKETNET_SERVER_MAX_SEND_PACKETS` (`sdk/rocketnet_constants.h:87`) | 16000 per update (`sdk/rocketnet_constants.h:81`) |
+| msgx | portable batch256–1000 (`sdk/rocketnet_constants.h:87`) | 16000 per update (`sdk/rocketnet_constants.h:81`) |
+| loopback | portable batch256–1000 (`sdk/rocketnet_constants.h:87`) | 2048 per endpoint (`sdk/rocketnet_driver_loopback.h:26`) |
+| gso | 4096 (`sdk/rocketnet_server_gso.h:49`) | 8192 per queue (`sdk/rocketnet_server_gso.h:57`) |
+| io_uring | 2048 staged;10240 completion reap (`sdk/rocketnet_server_uring.h:49`,`sdk/rocketnet_server_uring.h:70`) | 4096 receive buffers per queue;16000 bank (`sdk/rocketnet_server_uring.h:55`,`sdk/rocketnet_server_uring.h:69`) |
+| xdp | 4096 (`sdk/rocketnet_constants.h:57`) | 16384 staging (`sdk/rocketnet_constants.h:58`) |
+| iocp | 2048 (`sdk/rocketnet_server_iocp.h:22`) | 4096 queue (`sdk/rocketnet_server_iocp.h:24`) |
+| rio | 2048 per phase (`sdk/rocketnet_server_rio.h:34`) | 4096 posted receives (`sdk/rocketnet_server_rio.h:35`) |
+
 ## UDP coalescing
 
 The coalescing rules live once, in `sdk/rocketnet_coalesce.h`: a receive split
@@ -228,9 +250,7 @@ worker threads. Its server rank is 45, after IOCP's 40, so automatic selection
 never chooses it ahead of IOCP; pin `rio` to select it directly. Its
 `ROCKETNET_RIO_COUNTER_*` counters report sent and received packets, full send
 slots, failed sends, waits for a send phase, failed receives, dropped-size and
-dropped-overflow receives, failed receive reposts, and RIO commit calls. Its
-send phases, receive banks and destruction are modelled in
-`tla/RNRioDriver.tla`.
+dropped-overflow receives, failed receive reposts, and RIO commit calls. Its send phase swap and one-bank receive limit are implemented in `rocketnet_server_rio_send_packets` and `rocketnet_server_rio_receive_packets` in `sdk/rocketnet_server_rio_windows.cpp`; its receive banks are modelled in `tla/RNRioDriver.tla`.
 
 ## The io_uring server driver
 
@@ -362,7 +382,7 @@ stdin, because the server stops when its stdin reaches end of file
 (server.c:150-165) and a guest run without a terminal starts there:
 
 ```sh
-vng --run ~/vm-kernels/vmlinuz-$(uname -r) --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir <job> -- sudo ./bin/test_xdp_filter -v
+vng --run ~/vm-kernels/vmlinuz-$(uname -r) --memory 1536M --cpus 3 --append "irqaffinity=0 isolcpus=1-2 nohz_full=1-2" --rwdir <job> -- sudo ./bin/test_xdp_filter -v
 ```
 
 A reply frame's destination MAC is the source MAC of the newest packet from
@@ -416,30 +436,36 @@ when a `ROCKETNET_SERVER_XDP_COUNTER_*` has no row that moves it. To reproduce
 a historical filter, configure with
 `-DROCKETNET_XDP_FILTER_HOST_SOURCE=<path>`; the default is the shipped file.
 
-`cmake/XdpSources.cmake` is the source list for staging, archiving, CMake rebuild
-dependencies and verification. Add a new runtime BPF source/header there; archive
-entries use basenames, which must be unique. The checker also exercises adding
-one future input to this list while unrelated files remain in staging.
+The XDP program is compiled at build time and loaded from memory. On Linux,
+`cmake/EmbedXdp.cmake` compiles `server_xdp/server_xdp.c` to `server_xdp.o`
+with a clang that has the BPF target (the flags of `server_xdp/Makefile`, plus
+flags that keep checkout paths out of the object) and
+embeds the object's bytes in `build/generated/rocketnet_server_xdp.h` as
+`rocketnet_server_xdp_o`. `rocketnet_server_socket_create` opens those bytes
+with `bpf_object__open_mem` and hands the object to libxdp with
+`xdp_program__from_bpf_obj`: the server host needs no compiler, `make`, kernel
+headers, temporary directory or child process. `test_xdp_filter` loads the same
+`server_xdp.o`. A configure without such a clang says
+`XDP off: no clang with the BPF target was found, so server_xdp.o is not built and the xdp server transport refuses at create`,
+embeds a zero-length object, and the `xdp` create refuses with
+`could not load server_xdp program: this build has no server_xdp.o (no clang with the BPF target at configure time)`.
+macOS and Windows do not build the object.
 
-Windows uses the committed `sdk/rocketnet_server_xdp.h` without requiring xxd.
-Whenever a listed input changes, refresh that fallback on a development host
-with xxd, then run the same decoded-content check used by package tests and
-Windows CI:
+`cmake/XdpSources.cmake` lists the object's inputs: CMake recompiles the object
+when one changes, and `tools/check_xdp_archive.py` reads the same list. On Linux
+the checker compiles the object twice from copies of the sources at different
+paths, mtimes and umasks and requires identical bytes, requires the generated
+header to embed exactly the object, shows that a changed source changes the
+object, and fails when a build tree's embedded object differs from a fresh
+compile of the current sources (stale):
 
 ```sh
-cmake --build build --target rocketnet_xdp_header
-if ! python3 tools/check_xdp_archive.py --committed-only; then
-    cp build/generated/rocketnet_server_xdp.h sdk/rocketnet_server_xdp.h
-fi
-python3 tools/check_xdp_archive.py
+python3 tools/check_xdp_archive.py            # checks ./build when it exists
+python3 tools/check_xdp_archive.py --build <build-dir>
 ```
 
-`--committed-only` verifies the fallback without requiring xxd. The generated
-header must contain the exact generated archive bytes; the committed fallback's
-archive must contain the exact current source bytes, independently of archive
-timestamps and ownership metadata. The conditional copy avoids changing the
-fallback solely because archive metadata differs. CI compiles a fresh extraction
-of the archive, so a removed input cannot be supplied by old staging files.
+Elsewhere, and with `--committed-only`, it checks only that every listed input
+exists, which needs no compiler.
 Neither check loads a program or attaches to a network interface.
 
 The Linux connection-type label is an IPv4 main-table heuristic. It does not

@@ -402,6 +402,39 @@ Correctness work that follows the v1.0.0 milestone, by the owner's call.
 
 [Source data](docs/roadmap.sexp)
 
+## Final deliverable: hardening and long testing
+
+Soaks, load, stress, matrices, fuzzing, sanitizers, nightlies and the TLA+ ledger, moved off the v1.0.0 sprint on 2026-10-20 by the owner's call: the current milestone is the public API complete with unit and functional tests green, and this work is the final deliverable. Each row keeps its whole brief and its latest head.
+
+| feature | Linux | macOS | Windows |
+|---|:---:|:---:|:---:|
+| A thousand clients for ten minutes on every transport of every platform, over the LAN, every guarantee checked | ❌ | ❌ | ❌ |
+| Linux: every transport cell fifty times in a row with zero flakes, and the functional suite under ASan per transport | ❌ | — | — |
+| macOS: every transport cell fifty times in a row, zero flakes, nightly | — | ❌ | — |
+| A thousand clients against a Windows server, on every Windows transport | — | — | ❌ |
+| Windows soaks per transport under loss, jitter and duplication, with flat handles and memory | — | — | ❌ |
+| Every Windows transport, every address family, fifty times clean | — | — | ❌ |
+| Linux: thirty-minute soaks per transport under impairment with flat fds, threads and memory | ❌ | — | — |
+| Linux: 1000 light clients on every transport | ❌ | — | — |
+| Linux: a hard-killed peer or an ICMP error never stalls portable, gso, io_uring or xdp | ❌ | — | — |
+| macOS: 1000 clients per transport, three runs each, with the fd limit and counts in the summary | — | ❌ | — |
+| macOS: ASan, UBSan and TSan with Apple clang, and the leaks tool, on every suite and transport, nightly | — | ❌ | — |
+| Linux: the nightly soak jobs green at the branch | ❌ | — | — |
+| The fuzz targets build and run under libFuzzer on Windows | — | — | ❌ |
+| Create, destroy, connect, restart: a thousand times on Windows with nothing left behind | — | — | ❌ |
+| Windows nightlies: all jobs run, warnings gated, verifier script safe | — | — | ❌ |
+| TLA ledger: every case finishes or says why; docs current | ❌ | ❌ | ❌ |
+| Server send capacity is sized from the config, never a fixed 256 | ❌ | ❌ | ❌ |
+| macOS: 1000 light clients on msgx and portable | — | ❌ | — |
+| Windows: 1000 light clients on portable, iocp and rio | — | — | ❌ |
+| macOS: the nightly soak job green at the branch | — | ❌ | — |
+| Example soak: disconnect under loss reaches the server again | ❌ | ❌ | ❌ |
+| Ack receipts: LOSS only after the receipt deadline | ❌ | ❌ | ❌ |
+| rocketnet-format-netcode-style-v1 | ❌ | ❌ | ❌ |
+| complete | 0% | 0% | 0% |
+
+[Source data](docs/roadmap.sexp)
+
 ## Release and process
 
 | feature | Linux | macOS | Windows |

@@ -23,4 +23,13 @@ SafetyInvariants ==
     /\ StoredChallengeNeverReplaced
     /\ TimeoutHonoured /\ DeadlineHonoured /\ HalfOpenIdleHonoured
 
+\* the dual-family runs (MCServerConnectionDualFamily.cfg and its reversed
+\* witness MCServerConnectionBrokenIpv6OnlyMatch.cfg): a token naming both
+\* families, a client host with IPv4 only, a server serving IPv4
+MCTokenBothFamilies == {"ipv4", "ipv6"}
+MCHostIpv4Only      == {"ipv4"}
+MCServedIpv4        == "ipv4"
+MCMatchEither       == "either"
+MCMatchIpv6Only     == "ipv6only"
+
 =============================================================================

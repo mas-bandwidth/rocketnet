@@ -348,7 +348,7 @@ class RenderTest( unittest.TestCase ):
                 sections[current] = []
             elif current and l:
                 sections[current].append( l )
-        self.assertEqual( list( sections ), [ "Tests per platform", "Platform-specific tests", "Tests per transport", "Transport-specific tests" ] )
+        self.assertEqual( list( sections ), [ "Tests per platform", "Platform-specific tests", "Tests per transport", "Transport-specific tests", "Release-wide tests" ] )
         for name, body in sections.items():
             self.assertTrue( body[0].startswith( "Source: [docs/testing.sexp](docs/testing.sexp)" ), name )
             self.assertEqual( [ l for l in body[1:] if not l.startswith( "|" ) ], [], name )
@@ -371,6 +371,91 @@ class RenderTest( unittest.TestCase ):
             column_values = { row[1] for row in sections[heading][1:] if row[0] != "complete" }
             self.assertFalse( column_values & set( render.PLATFORMS ), heading )
         self.assertEqual( sections["## Tests per transport"][0][1:], render.TRANSPORTS )
+
+    # PLANNED cells, the release-wide table and the source of every row.
+
+    def test_planned_cell_shows_planned_and_needs_a_note( self ):
+        text = page( [ area( "platforms", [ '(:feature "f" :cells (y p n) :evidence "Linux: t" :pending ((macOS "card-a (working)")))' ] ) ] )
+        lines = render.render( render.parse( text ) ).split( "\n" )
+        self.assertIn( "| f | ✅ | PLANNED | ❌ |", lines )
+        self.assertIn( "| complete | 100% | 0% | 0% |", lines )
+        message = self.refusal( page( [ area( "platforms", [ '(:feature "f" :cells (n p n))' ], aid="pl" ) ] ) )
+        self.assertIn( "area pl", message )
+        self.assertIn( "macOS", message )
+        self.assertIn( "pending", self.refusal( page( [ self.specific( "platforms", [ '(:feature "f" :on Linux :cell p)' ] ) ] ) ) )
+        lines = render.render( render.parse( page( [ self.specific( "platforms", [ '(:feature "f" :on Linux :cell p :pending "card-a (waiting)")' ] ) ] ) ) ).split( "\n" )
+        self.assertIn( "| f | Linux | PLANNED |", lines )
+
+    def test_release_column_is_one_status_column( self ):
+        text = page( [ area( "release", [ '(:feature "model" :cells (y) :evidence "status: run 1")', '(:feature "review" :cells (p) :pending ((status "no card")))' ] ) ] )
+        lines = render.render( render.parse( text ) ).split( "\n" )
+        self.assertIn( "| feature | status |", lines )
+        self.assertIn( "| model | ✅ |", lines )
+        self.assertIn( "| review | PLANNED |", lines )
+        self.assertIn( "| complete | 50% |", lines )
+        self.assertIn( "no evidence", self.refusal( page( [ area( "release", [ '(:feature "model" :cells (y))' ] ) ] ) ) )
+
+    def test_rows_name_source_refuses_a_row_without_one( self ):
+        text = '(:title "T" :rows-name-source t :areas (%s))' % area( "platforms", [ '(:feature "f" :cells (n n n))' ], aid="src" )
+        message = self.refusal( text )
+        self.assertIn( "area src", message )
+        self.assertIn( ":source", message )
+        with_source = '(:title "T" :rows-name-source t :areas (%s))' % area( "platforms", [ '(:feature "f" :cells (n n n) :source "test.cpp")' ] )
+        self.assertTrue( render.render( render.parse( with_source ) ) )
+
+    def plan_rows( self ):
+        with open( os.path.join( ROOT, "docs", "testing.sexp" ), encoding="utf-8" ) as f:
+            top = render.plist( render.parse( f.read() ), "testing" )
+        out = []
+        for a in top["areas"]:
+            for r in render.plist( a, "area" )["rows"]:
+                out.append( render.plist( r, "row" ) )
+        return top, out
+
+    def test_the_testing_plan_names_every_deferred_card_as_owed_or_planned( self ):
+        # The deferred work the owner listed on 2026-10-20: each is a row of the plan, OWED or
+        # PLANNED, except a known red, which stays ❌ with its card.
+        known_red = { "example-soak-disconnect-regression" }
+        deferred = [ "lan-1000-client-soak-matrix", "linux-transport-matrix-repeat", "macos-transport-matrix-repeat",
+                     "win-transport-matrix-repeat", "win-load-1000-clients", "win-soak-per-transport", "linux-soak-per-transport",
+                     "load-light-profile-linux", "load-light-profile-macos", "load-light-profile-windows",
+                     "macos-nightly-soak-green-at-base", "linux-nightly-soak-green-at-base", "example-soak-disconnect-regression",
+                     "r1-receipt-loss-after-its-own-deadline", "server-send-capacity-sized-from-config", "format-netcode-style-v1",
+                     "macos-sanitizers-and-leaks", "win-libfuzzer-clang-cl", "linux-hard-killed-peer-never-stalls-receive",
+                     "win-lifecycle-stress", "r1-windows-nightlies-all-run", "r1-tla-ledger-current" ]
+        top, rows = self.plan_rows()
+        self.assertEqual( render.sym( top.get( "rows-name-source" ) ), "t" )
+        for name in deferred:
+            card = "rocketnet-" + name
+            marks = []
+            for row in rows:
+                pending = row.get( "pending" )
+                notes = [ pending ] if isinstance( pending, str ) else [ p[1] for p in ( pending or [] ) ]
+                if card in row.get( "source", "" ) or any( re.search( re.escape( card ) + r"\b(?!-)", n ) for n in notes ):
+                    cells = [ row["cell"] ] if "cell" in row else row["cells"]
+                    marks += [ render.sym( c ) for c in cells ]
+            self.assertTrue( marks, card )
+            if name in known_red:
+                self.assertIn( "n", marks, card )
+            else:
+                self.assertTrue( set( marks ) & { "o", "p" }, card )
+
+    def test_the_testing_plan_covers_every_planned_test( self ):
+        _, rows = self.plan_rows()
+        features = " | ".join( row["feature"] for row in rows )
+        for test in ( "Unit suite", "Functional suite (", "Functional suite repeated", "Examples (run_examples", "Example soak",
+                      "Sanitizers (ASan, UBSan, TSan; MSVC ASan", "Leaks (LSan, the leaks tool, App Verifier", "libFuzzer", "clang-cl",
+                      "Toolchain matrix (MSVC, clang-cl", "Xcode universal", "gcc and clang", "Soak under impairment",
+                      "Transport matrix, every cell fifty times", "1000 light clients (10 Hz, 1 packet per update)",
+                      "1000 clients over the LAN", "Hard-killed peer never stalls receive", "Lifecycle stress", "Socket error paths",
+                      "SIO_UDP_CONNRESET", "Nightlies", "Live XDP fleet test", "Holistic review: six", "Frama-C",
+                      "Main API calls under 0.1 ms each, Release, under load", "Security pass: per-client resource exhaustion",
+                      "Send budget: packets_per_update 256 at 60 Hz, receive sized at least 2x" ):
+            self.assertIn( test, features )
+        with open( os.path.join( ROOT, "tla", "CASES.tsv" ), encoding="utf-8" ) as f:
+            groups = { l.split( "\t" )[5] for l in f.read().splitlines()[1:] if l.strip() }
+        for group in groups:
+            self.assertIn( "TLA+ model check: %s (" % group, features )
 
 if __name__ == "__main__":
     unittest.main()
