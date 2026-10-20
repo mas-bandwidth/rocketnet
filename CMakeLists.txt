@@ -512,8 +512,11 @@ if(ROCKETNET_BUILD_TESTS)
         functional/cpp_transports.cpp
         functional/live_matrix.cpp
         functional/windows_connreset.cpp
-        functional/posix_socket_errors.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
+    if(NOT WIN32)
+        # functional/posix_socket_errors.cpp:31-34 include POSIX headers above its platform guard at :36; its cases are POSIX only
+        target_sources(functional PRIVATE functional/posix_socket_errors.cpp)
+    endif()
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     target_compile_definitions(functional PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
     target_compile_features(functional PRIVATE cxx_std_11)
