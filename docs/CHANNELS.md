@@ -142,7 +142,8 @@ no slot ever allocates again. A region holds:
    (`P`) and its reference ring (`16P`), the delivered entries (`W + Du`), the
    sequenced holds (`Ru`), and the receipt ring (`Rq`). Section 14 gives each
    size.
-2. **The send store.** A slab of `S` bytes divided equally by bytes into three
+2. **The send store.** The configured headroom of `S` bytes is divided equally
+   by bytes into three
    classes of fixed chunks: 128, 512 and 1152 bytes, where 1152 is the block
    stride `F`. Each class keeps an intrusive free list, so allocate and free are
    both O(1). There is no fragmentation and no coalescing. A message of up to
@@ -153,7 +154,8 @@ no slot ever allocates again. A region holds:
 3. **The receive ring.** `B` bytes with no allocator logic at all. Placement is
    decided by the *sender*: each holdable record carries its ring offset (layer
    3). The receiver only checks bounds.
-4. **The send spans.** `SR = B` bytes of one ring for the messages above one
+4. **The send spans.** Headroom `SR = B`, plus the maximum-RTO reserve
+   described in section 14, forms one ring for the messages above one
    chunk, each a contiguous span the application writes once, in place (see
    "Departure from the chained block" below).
 
@@ -214,8 +216,8 @@ the design these points:
 - **One validation rule more:** rto_min_ms <= rto_initial_ms <= rto_max_ms.
   rto_min_ms is optional and defaults to 0, matching RakNet.
 - **The exact region** is the formula plus at most 63 bytes of alignment per
-  part. At the defaults the padding is 0, and the region is 1,588,480 bytes,
-  which is section 14's figure to the byte.
+  part. The default headroom without a finite budget reserve is 1,588,480
+  bytes with no padding. Section 14 distinguishes this from the total region.
 - **Every entry type is pinned** to its section 14 size by a static assert.
   `rn_delivery_t` holds its pointer in a union with a u64, so it is 24 bytes on
   a 32-bit target too.
@@ -1691,7 +1693,15 @@ Card C2 regenerates every vector from the codec and diffs it byte for byte.
 
 ## 14. Sizing: memory from the configuration
 
-Symbols:
+The tables below show configured headroom, before the create-time maximum-RTO
+reserve described under "Create-time maximum-RTO message reserve". With the
+2-second maximum RTO, the current default client budget of 1000 kbps makes the
+region 2,759,040 bytes; the server budget of 10000 kbps makes it 13,290,560 bytes
+per connection. For 1000 connections these are 2,759,040,000 and 13,290,560,000
+bytes respectively, excluding transport and object metadata. A zero/unlimited
+budget has no finite reserve, so its region retains the headroom-only figure.
+
+Headroom symbols:
 
 - `C` = `num_channels`, `W` = `window_messages`, `B` = `receive_ring_bytes`
 - `S` = `send_buffer_bytes`, `Q` = `send_queue_messages`, `P` = `packets_in_flight`
@@ -1746,7 +1756,8 @@ records and chunks) share those `8·W` links, since a number is in at most one,
 so the second FIFO adds nothing here.
 
 The 460,800 bytes of the first version (`B` 65,536, `S` 131,072, no spans) become
-1,588,480. That is about 1.48 GiB for a 1000-client server, on top of the
+1,588,480 before the finite-budget reserve. That headroom alone is about
+1.48 GiB for 1000 connections, on top of the
 transport's own memory (`rocketnet_server_required_memory`). A game
 whose messages are small sets `max_message_bytes`, `B` and `S` lower, and the
 region follows.
