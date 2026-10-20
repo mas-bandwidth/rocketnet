@@ -2667,7 +2667,7 @@ The server turns a connection request into an encryption mapping, and a connecti
 6. A server MUST then ignore a request whose timeout is zero or negative without permission, then one whose address flags name no family or set a bit above bit 1, then one whose advertised address is not one this server serves, and then one whose server public key is not this server's. It MUST NOT answer a request that rules 2, 4, 5 or 6 refuse.
 7. A server MUST require a valid return cookie before any asymmetric work, and MUST answer a request without one, with a forged one, or with an expired one with a fresh connection cookie packet.
 8. A server MUST refuse, unanswered, a request whose cookie is valid when the per-update handshake work budget is spent, counting `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`.
-9. A server MUST refuse, unanswered, a request whose token identifier is bound to a different source address, and, once the failed-signature budget of the current window is spent, a request from a source with a recorded failure in that window, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`. A source with no recorded failure in the window is not refused by that budget ([t17 Timing and defaults](#t17) item 11).
+ 9. A server MUST refuse, unanswered, a request whose token identifier is bound to a different source address, and a request whose token identifier carries a live request claim held by a different source address, counting `CONNECTION_REQUEST_TOKEN_ALREADY_USED`. The first valid request records the claim for its source address before any signature, seal or keypair work; the claim expires at the handshake deadline ([t17 Timing and defaults](#t17) item 12). A server MUST also refuse, unanswered, a request that finds no free encryption mapping slot before the signature, seal and keypair rungs run, counting `CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING` and `MAPPING_TABLE_FULL`. Once the failed-signature budget of the current window is spent, a server MUST refuse a request from a source with a recorded failure in that window, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`. A source with no recorded failure in the window is not refused by that budget ([t17 Timing and defaults](#t17) item 11).
 10. A server MUST verify the signed connect data before opening the sealed private block, MUST open it only with the keypair its public key names, and MUST ignore a request whose sealed fields disagree with the signed fields or whose client id already holds a slot.
 11. A server MUST deny, with a connection denied packet sealed under the handshake server-to-client key, a request that finds no free slot, and MUST NOT create a mapping for it.
 12. A server MUST generate a fresh session nonce and ephemeral keypair for each mapping, MUST derive the connection keys, MUST erase the ephemeral secret, and MUST store the connection challenge in the mapping so that a repeat is byte-identical.
@@ -2704,6 +2704,8 @@ list is ignored in that state.
 | no mapping | request | cookie absent, forged or expired | send a fresh cookie packet | no mapping |
 | no mapping | request | handshake work budget spent | ignore, count | no mapping |
 | no mapping | request | token used from another address | ignore, count | no mapping |
+| no mapping | request | token claimed from another address until the handshake deadline | ignore, count | no mapping |
+| no mapping | request | encryption mapping table full | ignore, count | no mapping |
 | no mapping | request | failed-signature budget spent and the source has a recorded failure in the window | ignore, count | no mapping |
 | no mapping | request | signature, seal or sealed-field check fails | ignore, count | no mapping |
 | no mapping | request | client id connected | ignore, count | no mapping |
@@ -3623,14 +3625,20 @@ an input ([t1.4 Conventions](#t1.4)).
     connection request validates and before any asymmetric operation. When it
     does, a request past the budget MUST be refused with no reply and counted
     as a refusal, and the budget MUST be reset at the start of each update.
-11. A server SHOULD apply the failed-signature budget before the signature
-    verification. When it does, a request from a source that has already
-    failed in the current failed-signature window MUST be refused before the
-    verification runs and counted as a refusal. The budget MUST NOT refuse a
-    request from a source with no recorded failure in the window, even when
-    the budget is spent and the server can record no further sources; the
-    verifications such requests cost are bounded by the handshake work budget
-    of item 10.
+ 11. A server SHOULD apply the failed-signature budget before the signature
+     verification. When it does, a request from a source that has already
+     failed in the current failed-signature window MUST be refused before the
+     verification runs and counted as a refusal. The budget MUST NOT refuse a
+     request from a source with no recorded failure in the window, even when
+     the budget is spent and the server can record no further sources; the
+     verifications such requests cost are bounded by the handshake work budget
+     of item 10.
+ 12. A server SHOULD refuse a request whose token identifier is claimed by a
+     different source address, and MUST refuse one that finds no free
+     encryption mapping slot, before any signature, seal or keypair work. The
+     first valid request for a token records its claim for the source address,
+     and the claim expires at the handshake deadline; a full mapping table
+     refuses with no reply and is counted as a refusal.
 
 The values this section introduces are:
 
@@ -4235,7 +4243,7 @@ requirements; each difference is specified by the section named in its row.
 | Backend trust | The backend and every server share a secret that authenticates connect tokens. | The backend holds an Ed25519 signing keypair and every server holds its public key; a server holds no secret shared with the backend ([t2.2 Key inventory](#t2.2)). |
 | Token authenticity | A connect token carries an AEAD authenticator computed under the shared secret. | The token carries an Ed25519 signature over its signed connect data, and its private block is sealed to the server's X25519 public key ([t6 Connect token](#t6)). |
 | Token scope | A token names a list of candidate servers. | A token names one server at one IPv4 address and one IPv6 address, each optional ([t2 Architecture and key inventory](#t2)). |
-| Token binding | A token is bound to a server address and an expiry. | A token is also bound to the source address whose connection response first opened under it, and admits one live connection ([t12 Handshake: server](#t12)). |
+| Token binding | A token is bound to a server address and an expiry. | A token is also bound to the first source address that presents a valid request, until the handshake deadline, and then to the source address whose connection response first opened under it; it admits one live connection ([t12 Handshake: server](#t12)). |
 | Packet keys | The session keys minted into the token are the packet keys. | The token keys key a derivation only; each attempt derives separate handshake and session keys from a client salt, a server session nonce and an ephemeral X25519 exchange ([t7 Key schedule](#t7)). |
 | Forward secrecy | Recovering a token recovers the traffic sealed with its keys. | Recovering a token after a connection has ended does not recover that connection's traffic ([t7 Key schedule](#t7)). |
 | IPv6 | Added after the first release. | Dual stack from the first release, with one address normalization rule ([t2 Architecture and key inventory](#t2)). |
