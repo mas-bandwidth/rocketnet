@@ -883,12 +883,19 @@ static unsigned posix_reserved_restart_port( int cell_index )
     // EADDRINUSE. seed on the cell index so each case scans a disjoint
     // subrange.
     const unsigned slice_count = (unsigned) posix_cell_count;
+    if ( slice_count == 0 )
+        return 0;
     const unsigned port_count = last_port - first_port + 1;
     const unsigned slice = port_count / slice_count;
     const unsigned slice_index = (unsigned) cell_index % slice_count;
     const unsigned base = first_port + slice_index * slice;
-    const unsigned usable = slice + ( slice_index == slice_count - 1 ? port_count % slice_count : 0 );
+    const unsigned remainder = ( slice_index == slice_count - 1 ) ? port_count % slice_count : 0;
+    const unsigned usable = slice + remainder;
+    if ( usable == 0 )
+        return 0;
     unsigned port = base + (unsigned) getpid() % usable;
+    if ( port > last_port )
+        return 0;
     for ( unsigned i = 0; i < usable; i++ )
     {
         const int fd = (int) socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
