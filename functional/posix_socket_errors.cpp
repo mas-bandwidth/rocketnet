@@ -28,6 +28,9 @@
 #include <string.h>
 #include <time.h>
 
+// defined in functional/harness.inc: the connect token timestamp from the clock that judges it
+uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time );
+
 #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 #include <sys/socket.h>
@@ -332,7 +335,9 @@ static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char 
     snprintf( server_address, sizeof(server_address), ipv6 ? "[::1]:%d" : "127.0.0.1:%d", rocketnet_server_transport_port( pair->server ) );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    posix_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), token, sizeof(token) ) == ROCKETNET_STATUS_OK );
+    posix_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(),
+                                                    rocketnet_functional_token_timestamp( server_config.game_clock_epoch, rocketnet_platform_time() ),
+                                                    token, sizeof(token) ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
@@ -1759,7 +1764,9 @@ static void posix_xdp_weather( int ipv6 )
     // namespace
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    posix_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), token, sizeof(token) ) == ROCKETNET_STATUS_OK );
+    posix_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(),
+                                                    rocketnet_functional_token_timestamp( server_config.game_clock_epoch, rocketnet_platform_time() ),
+                                                    token, sizeof(token) ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
