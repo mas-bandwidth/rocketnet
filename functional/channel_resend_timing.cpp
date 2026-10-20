@@ -179,11 +179,11 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
             for ( int i = 0; i < RESEND_TIMING_BYTES; i++ )
                 payload[i] = (uint8_t) ( sent * 13 + i );
             memcpy( payload, &sent, sizeof(sent) );
-            resend_timing_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABLE, payload, RESEND_TIMING_BYTES ) != 0 );
+            resend_timing_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE, payload, RESEND_TIMING_BYTES ) != 0 );
             send_time[sent] = h.now;
             sent++;
         }
-        rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_UNRELIABLE, state, (int) sizeof(state) );
+        rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, state, (int) sizeof(state) );
 
         up = rocketnet_channel_harness_pump( &h, tick );
 
@@ -424,7 +424,7 @@ static void block_cost_run( const char * schedule, int cap100, int burst, int wi
     const uint64_t resent_before = h.message_client->object.counters.values[ROCKETNET_COUNTER_MESSAGE_RESENT];
     const int64_t wire_before = h.wire_bytes_to_server;
     const double start = h.now;
-    resend_timing_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABLE_ORDERED, block, BLOCK_COST_BYTES ) != 0 );
+    resend_timing_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, block, BLOCK_COST_BYTES ) != 0 );
 
     int delivered = 0;
     int small_sent = 0;
@@ -444,10 +444,10 @@ static void block_cost_run( const char * schedule, int cap100, int burst, int wi
             for ( int i = 0; i < RESEND_TIMING_BYTES; i++ )
                 small[i] = (uint8_t) ( small_sent * 13 + i );
             memcpy( small, &small_sent, sizeof(small_sent) );
-            resend_timing_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABLE, small, RESEND_TIMING_BYTES ) != 0 );
+            resend_timing_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE, small, RESEND_TIMING_BYTES ) != 0 );
             small_send_time[small_sent++] = h.now;
         }
-        rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_UNRELIABLE, state, (int) sizeof(state) );
+        rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, state, (int) sizeof(state) );
 
         up = rocketnet_channel_harness_pump( &h, tick );
         if ( with_small && small_sent > 0 )

@@ -339,8 +339,8 @@ struct ip_received_t
 static void ip_step( ip_pair_t * pair, std::vector<ip_received_t> * server_got, std::vector<ip_received_t> * client_got, double dt = 0.01 )
 {
     pair->time += dt;
-    check( rocketnet_message_server_update( pair->server, pair->time ) == ROCKETNET_MESSAGE_OK );
-    check( rocketnet_message_client_update( pair->client, pair->time ) == ROCKETNET_MESSAGE_OK );
+    check( rocketnet_message_server_update( pair->server, pair->time ) == ROCKETNET_UPDATE_OK );
+    check( rocketnet_message_client_update( pair->client, pair->time ) == ROCKETNET_UPDATE_OK );
     for ( int channel = 0; channel < 4; channel++ )
     {
         const uint8_t * data;
@@ -396,7 +396,7 @@ static uint64_t ip_counter( const rocketnet_counters_t * counters, int counter )
     return counters->values[counter];
 }
 
-static const int ip_modes[3] = { ROCKETNET_UNRELIABLE, ROCKETNET_UNRELIABLE_SEQUENCED, ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT };
+static const int ip_modes[3] = { ROCKETNET_RELIABILITY_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT };
 
 // start, write the pattern, finish on one end; check the start pointer lies in
 // the frame handed out at start and in the frame finished, with the pattern at
@@ -411,7 +411,7 @@ static void ip_send_in_place( ip_pair_t * pair, bool from_server, int mode, int 
     check( p != NULL );
     check( e->handed.size() == handed_before + 1 );                       // start took one frame from the transport
     check( ip_inside( p, bytes, e->handed.back() ) );                      // and the pointer is inside it
-    if ( mode == ROCKETNET_UNRELIABLE )
+    if ( mode == ROCKETNET_RELIABILITY_UNRELIABLE )
     {
         check( p == e->handed.back().address );                            // SINGLE: the payload root itself
         check( ( (uintptr_t) p & 15 ) == 0 );
@@ -496,7 +496,7 @@ static void unreliable_fit_has_no_message_copy()
     const uint64_t reliable_before = rn_message_payload_copy_count();
     uint8_t message[300];
     ip_fill( message, 60, (int) sizeof( message ) );
-    check( rocketnet_message_client_send( pair.client, 1, ROCKETNET_RELIABLE_ORDERED, message, (int) sizeof( message ) ) != 0 );
+    check( rocketnet_message_client_send( pair.client, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) != 0 );
     rocketnet_message_client_send_packets( pair.client );
     check( rn_message_payload_copy_count() >= reliable_before + 1 );
 
@@ -515,7 +515,7 @@ static void unreliable_over_fit_takes_the_message_buffer()
     // a reliable message, an oversize sequenced one (the large single-record
     // path) and an oversize receipt-bearing one (promoted to the reliable
     // block) take the region record, never a frame
-    struct { int mode; int bytes; } over[3] = { { ROCKETNET_RELIABLE, 300 }, { ROCKETNET_UNRELIABLE_SEQUENCED, 3000 }, { ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT, 2000 } };
+    struct { int mode; int bytes; } over[3] = { { ROCKETNET_RELIABILITY_RELIABLE, 300 }, { ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, 3000 }, { ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, 2000 } };
     for ( int i = 0; i < 3; i++ )
     {
         const size_t handed_before = e->handed.size();
@@ -532,13 +532,13 @@ static void unreliable_over_fit_takes_the_message_buffer()
     // a fitting one the transport gives no frame falls back, counted, and the
     // next fitting one queues behind it so no mode is reordered
     e->refuse_start = true;
-    uint8_t * p = rocketnet_message_client_start( pair.client, 2, ROCKETNET_UNRELIABLE_SEQUENCED, 100 );
+    uint8_t * p = rocketnet_message_client_start( pair.client, 2, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, 100 );
     e->refuse_start = false;
     check( p != NULL && rn_region_contains( connection->region, p, 100 ) );
     ip_fill( p, 80, 100 );
     check( rocketnet_message_client_finish( pair.client, 100 ) != 0 );
     check( ip_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK ) == 1 );
-    p = rocketnet_message_client_start( pair.client, 2, ROCKETNET_UNRELIABLE_SEQUENCED, 100 );
+    p = rocketnet_message_client_start( pair.client, 2, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, 100 );
     check( p != NULL && rn_region_contains( connection->region, p, 100 ) );
     ip_fill( p, 81, 100 );
     check( rocketnet_message_client_finish( pair.client, 100 ) != 0 );
@@ -553,7 +553,7 @@ static void unreliable_over_fit_takes_the_message_buffer()
     check( ip_got( server_got, 0, 72, 2000 ) );
 
     // with the queue empty again, the next fitting one is in place
-    ip_send_in_place( &pair, false, ROCKETNET_UNRELIABLE_SEQUENCED, 2, 100, 82 );
+    ip_send_in_place( &pair, false, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, 2, 100, 82 );
     ip_pair_teardown( &pair );
 }
 
@@ -570,14 +570,14 @@ static void mixed_in_place_and_queued_respect_packet_cap()
 
     // 1 in-place unreliable packet + 2 queued reliable packets in one update:
     // at most max_packets_per_update (2) packets reach the fake transport.
-    ip_send_in_place( &pair, false, ROCKETNET_UNRELIABLE, 1, 100, 90 );
+    ip_send_in_place( &pair, false, ROCKETNET_RELIABILITY_UNRELIABLE, 1, 100, 90 );
     check( client->finished.size() == finished_before + 1 );
 
     uint8_t reliable_a[1400], reliable_b[1400];
     ip_fill( reliable_a, 91, (int) sizeof( reliable_a ) );
     ip_fill( reliable_b, 92, (int) sizeof( reliable_b ) );
-    check( rocketnet_message_client_send( pair.client, 1, ROCKETNET_RELIABLE_ORDERED, reliable_a, (int) sizeof( reliable_a ) ) != 0 );
-    check( rocketnet_message_client_send( pair.client, 2, ROCKETNET_RELIABLE_ORDERED, reliable_b, (int) sizeof( reliable_b ) ) != 0 );
+    check( rocketnet_message_client_send( pair.client, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, reliable_a, (int) sizeof( reliable_a ) ) != 0 );
+    check( rocketnet_message_client_send( pair.client, 2, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, reliable_b, (int) sizeof( reliable_b ) ) != 0 );
 
     rocketnet_message_client_send_packets( pair.client );
     check( client->finished.size() - finished_before <= (size_t) cap );
@@ -587,7 +587,7 @@ static void mixed_in_place_and_queued_respect_packet_cap()
     rn_message_connection_t * connection = rn_message_object_connection( &pair.client->object, 0 );
     uint8_t queued_unr[100];
     ip_fill( queued_unr, 93, (int) sizeof( queued_unr ) );
-    check( rocketnet_message_client_send( pair.client, 1, ROCKETNET_UNRELIABLE, queued_unr, (int) sizeof( queued_unr ) ) != 0 );
+    check( rocketnet_message_client_send( pair.client, 1, ROCKETNET_RELIABILITY_UNRELIABLE, queued_unr, (int) sizeof( queued_unr ) ) != 0 );
     check( connection->unreliable_count == 1 );
     rocketnet_message_client_send_packets( pair.client );
     check( client->finished.size() - finished_before <= (size_t) cap );
@@ -620,7 +620,7 @@ static void repeated_fill_flush_respects_packet_cap()
     {
         uint8_t msg[1400];
         ip_fill( msg, (uint32_t) ( 190 + cycle ), (int) sizeof( msg ) );
-        check( rocketnet_message_client_send( pair.client, 1, ROCKETNET_RELIABLE_ORDERED, msg, (int) sizeof( msg ) ) != 0 );
+        check( rocketnet_message_client_send( pair.client, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, msg, (int) sizeof( msg ) ) != 0 );
         rocketnet_message_client_send_packets( pair.client );
         check( client->finished.size() - finished_before <= (size_t) cap );
     }
@@ -630,7 +630,7 @@ static void repeated_fill_flush_respects_packet_cap()
     // also fall back to the queue instead of finishing another packet.
     uint8_t unr[100];
     ip_fill( unr, 199, (int) sizeof( unr ) );
-    check( rocketnet_message_client_send( pair.client, 1, ROCKETNET_UNRELIABLE, unr, (int) sizeof( unr ) ) != 0 );
+    check( rocketnet_message_client_send( pair.client, 1, ROCKETNET_RELIABILITY_UNRELIABLE, unr, (int) sizeof( unr ) ) != 0 );
     rocketnet_message_client_send_packets( pair.client );
     check( client->finished.size() - finished_before <= (size_t) cap );
 
@@ -673,11 +673,11 @@ static void reliable_not_starved_by_in_place()
 
     uint8_t reliable[200];
     ip_fill( reliable, 120, (int) sizeof( reliable ) );
-    check( rocketnet_message_client_send( pair.client, 1, ROCKETNET_RELIABLE_ORDERED, reliable, (int) sizeof( reliable ) ) != 0 );
+    check( rocketnet_message_client_send( pair.client, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, reliable, (int) sizeof( reliable ) ) != 0 );
 
     for ( int i = 0; i < cap; i++ )
     {
-        uint8_t * p = rocketnet_message_client_start( pair.client, 2, ROCKETNET_UNRELIABLE, 64 );
+        uint8_t * p = rocketnet_message_client_start( pair.client, 2, ROCKETNET_RELIABILITY_UNRELIABLE, 64 );
         check( p != NULL );
         ip_fill( p, 121 + (uint32_t) i, 64 );
         check( rocketnet_message_client_finish( pair.client, 64 ) != 0 );
@@ -719,11 +719,11 @@ static void in_place_unreliable_keeps_acks_and_order()
     for ( uint32_t i = 0; i < 3; i++ )
     {
         ip_fill( message, 100 + i, (int) sizeof( message ) );
-        check( rocketnet_message_server_send( pair.server, 0, 0, ROCKETNET_RELIABLE_ORDERED, message, (int) sizeof( message ) ) != 0 );
+        check( rocketnet_message_server_send( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) != 0 );
         rocketnet_message_server_send_packets( pair.server );
     }
     pair.time += 0.01;
-    check( rocketnet_message_client_update( pair.client, pair.time ) == ROCKETNET_MESSAGE_OK );
+    check( rocketnet_message_client_update( pair.client, pair.time ) == ROCKETNET_UPDATE_OK );
     int client_got_early = 0;
     {
         const uint8_t * data;
@@ -743,19 +743,19 @@ static void in_place_unreliable_keeps_acks_and_order()
     for ( uint32_t i = 0; i < 2; i++ )
     {
         ip_fill( message, 200 + i, (int) sizeof( message ) );
-        check( rocketnet_message_client_send( pair.client, 1, ROCKETNET_RELIABLE_ORDERED, message, (int) sizeof( message ) ) != 0 );
+        check( rocketnet_message_client_send( pair.client, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) != 0 );
     }
-    ip_send_in_place( &pair, false, ROCKETNET_UNRELIABLE_SEQUENCED, 2, 120, 300 );
+    ip_send_in_place( &pair, false, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, 2, 120, 300 );
     check( client->acks_due.empty() );                                     // every ack due rode the first in-place packet
     for ( size_t i = 0; i < due.size(); i++ )
         check( std::find( client->sent.back().acks.begin(), client->sent.back().acks.end(), due[i] ) != client->sent.back().acks.end() );
-    ip_send_in_place( &pair, false, ROCKETNET_UNRELIABLE, 3, 120, 301 );
-    ip_send_in_place( &pair, false, ROCKETNET_UNRELIABLE_SEQUENCED, 2, 120, 302 );
-    ip_send_in_place( &pair, false, ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT, 3, 120, 303 );
+    ip_send_in_place( &pair, false, ROCKETNET_RELIABILITY_UNRELIABLE, 3, 120, 301 );
+    ip_send_in_place( &pair, false, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, 2, 120, 302 );
+    ip_send_in_place( &pair, false, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, 3, 120, 303 );
     for ( uint32_t i = 2; i < 4; i++ )
     {
         ip_fill( message, 200 + i, (int) sizeof( message ) );
-        check( rocketnet_message_client_send( pair.client, 1, ROCKETNET_RELIABLE_ORDERED, message, (int) sizeof( message ) ) != 0 );
+        check( rocketnet_message_client_send( pair.client, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) != 0 );
     }
 
     std::vector<ip_received_t> server_got, client_got;
@@ -798,18 +798,18 @@ static void in_place_unreliable_keeps_acks_and_order()
     check( reliable.size() == 4 && reliable[0] == 200 && reliable[1] == 201 && reliable[2] == 202 && reliable[3] == 203 );
     check( sequenced.size() == 2 && sequenced[0] == 300 && sequenced[1] == 302 );
     check( unreliable == 2 );
-    check( receipt_count == 1 && receipts[0].status == ROCKETNET_RECEIPT_ACKED );
+    check( receipt_count == 1 && receipts[0].status == ROCKETNET_RECEIPT_STATUS_ACKED );
 
     // an in-place start left pending at send_packets is aborted there: the
     // transport forbids a flush with a fill open
     const uint64_t refused = ip_counter( rocketnet_message_client_counters( pair.client ), ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
-    uint8_t * p = rocketnet_message_client_start( pair.client, 2, ROCKETNET_UNRELIABLE, 50 );
+    uint8_t * p = rocketnet_message_client_start( pair.client, 2, ROCKETNET_RELIABILITY_UNRELIABLE, 50 );
     check( p != NULL );
     rocketnet_message_client_send_packets( pair.client );
     check( ip_counter( rocketnet_message_client_counters( pair.client ), ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == refused + 1 );
     check( rocketnet_message_client_finish( pair.client, 50 ) == 0 );
     // and abort gives the frame back
-    p = rocketnet_message_client_start( pair.client, 2, ROCKETNET_UNRELIABLE, 50 );
+    p = rocketnet_message_client_start( pair.client, 2, ROCKETNET_RELIABILITY_UNRELIABLE, 50 );
     check( p != NULL );
     rocketnet_message_client_abort( pair.client );
     for ( int f = 0; f < IP_FRAMES; f++ )
@@ -826,16 +826,18 @@ static void in_place_unreliable_keeps_acks_and_order()
 // test vectors' keys, which are the development keys.
 // ---------------------------------------------------------------------------
 
-static int ip_write_connect_token( const char * server_address_string, uint64_t client_id, uint64_t current_timestamp, uint8_t * connect_token );
+static enum rocketnet_status_t ip_write_connect_token( const char * server_address_string, uint64_t client_id, uint64_t current_timestamp, uint8_t * connect_token, size_t connect_token_bytes );
 #define rocketnet_write_dev_connect_token ip_write_connect_token
 #include "functional/channel_harness.h"
 #undef rocketnet_write_dev_connect_token
 
-static int ip_write_connect_token( const char * server_address_string, uint64_t client_id, uint64_t current_timestamp, uint8_t * connect_token )
+static enum rocketnet_status_t ip_write_connect_token( const char * server_address_string, uint64_t client_id, uint64_t current_timestamp, uint8_t * connect_token, size_t connect_token_bytes )
 {
+    if ( connect_token_bytes < ROCKETNET_CONNECT_TOKEN_BYTES )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
     struct rocketnet_address_t server_address;
     if ( !rocketnet_address_parse( &server_address, server_address_string ) || server_address.type != ROCKETNET_ADDRESS_IPV4 )
-        return 0;
+        return ROCKETNET_STATUS_INVALID_ADDRESS;
     struct rocketnet_signed_connect_data_t signed_fields;
     memset( &signed_fields, 0, sizeof( signed_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
@@ -856,7 +858,7 @@ static int ip_write_connect_token( const char * server_address_string, uint64_t 
         private_fields.client_to_server_key[i] = (uint8_t) ( 0x31 + i );
         private_fields.server_to_client_key[i] = (uint8_t) ( 0x75 + i );
     }
-    return rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, connect_token );
+    return rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, connect_token ) ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
 }
 
 static void unreliable_fit_in_place_every_transport()
@@ -911,6 +913,122 @@ static void unreliable_fit_in_place_every_transport()
     rocketnet_channel_harness_destroy( &h );
 }
 
+// A burst of start/finish sends as fast as the caller can make them, many
+// thousands across several updates, with the reliable bytes in flight well
+// under the send store (send_buffer_bytes, send_queue_messages and
+// window_messages at their defaults): the connection stays up, no exhaustion
+// or refusal counter moves, and every message is delivered, in order, in a
+// later update. The client's budget is uncapped so the packet allowance and
+// the 16-record packet bound are the only pacing.
+static void message_burst_start_finish_delivers_every_message()
+{
+    const int updates = 60;
+    const int per_update = 100;                         // under max_packets_per_update (8) x 16 records
+    const int bytes = 32;
+    ip_pair_t pair;
+    ip_pair_setup( &pair );
+    ip_step( &pair, NULL, NULL );
+    ip_step( &pair, NULL, NULL );                         // settle the initial CONFIG exchange
+    check( rocketnet_message_client_set_send_kbps( pair.client, 0 ) == 1 );
+
+    const rocketnet_counters_t * counters = rocketnet_message_client_counters( pair.client );
+    const int watched[5] = { ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED,
+                             ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET };
+    uint64_t before[5];
+    for ( int i = 0; i < 5; i++ )
+        before[i] = ip_counter( counters, watched[i] );
+
+    std::vector<ip_received_t> server_got;
+    uint32_t id = 0;
+    for ( int u = 0; u < updates; u++ )
+    {
+        for ( int i = 0; i < per_update; i++ )
+        {
+            uint8_t * p = rocketnet_message_client_start( pair.client, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
+            check( p != NULL );
+            ip_fill( p, id, bytes );
+            check( rocketnet_message_client_finish( pair.client, bytes ) != 0 );
+            id++;
+        }
+        rocketnet_message_client_send_packets( pair.client );
+        ip_step( &pair, &server_got, NULL );
+        check( rocketnet_message_client_disconnect_reason( pair.client ) == ROCKETNET_DISCONNECT_REASON_NONE );
+        check( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    }
+    for ( int u = 0; u < 20 && server_got.size() < (size_t) id; u++ )
+        ip_step( &pair, &server_got, NULL );
+
+    check( server_got.size() == (size_t) id );
+    std::vector<uint8_t> expected( (size_t) bytes );
+    for ( uint32_t k = 0; k < id && k < server_got.size(); k++ )
+    {
+        ip_fill( expected.data(), k, bytes );
+        check( server_got[k].channel == 1 );
+        check( server_got[k].bytes.size() == (size_t) bytes && memcmp( server_got[k].bytes.data(), expected.data(), (size_t) bytes ) == 0 );
+    }
+    for ( int i = 0; i < 5; i++ )
+        check( ip_counter( counters, watched[i] ) == before[i] );
+    check( rocketnet_message_client_disconnect_reason( pair.client ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( pair.net->client.connected && pair.net->server.connected );
+    ip_pair_teardown( &pair );
+}
+
+// Past the update's packet allowance a fitting unreliable start is not
+// refused: it falls back to the region (rocketnet_endpoint.h
+// RN_ENDPOINT_IN_PLACE_QUEUED, "or the update's packet allowance is spent";
+// counters.h MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK), finish queues it with a
+// serial, no further packet goes out in that update, and the next update's
+// write pass sends it.
+static void start_past_packet_allowance_falls_back_to_the_region()
+{
+    const int cap = 2;
+    const int extra = 10;
+    ip_pair_t pair;
+    ip_pair_setup( &pair, cap );
+    ip_step( &pair, NULL, NULL );
+    ip_step( &pair, NULL, NULL );                         // settle the initial CONFIG exchange
+
+    ip_end_t * client = &pair.net->client;
+    rn_message_connection_t * connection = rn_message_object_connection( &pair.client->object, 0 );
+    const rocketnet_counters_t * counters = rocketnet_message_client_counters( pair.client );
+    const uint64_t fallback_before = ip_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK );
+    const uint64_t refused_before = ip_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
+
+    // the allowance: cap in-place packets, nothing reliable due
+    for ( int i = 0; i < cap; i++ )
+        ip_send_in_place( &pair, false, ROCKETNET_RELIABILITY_UNRELIABLE, 1, 64, 300 + (uint32_t) i );
+    const size_t finished_spent = client->finished.size();
+    check( ip_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK ) == fallback_before );
+
+    // past it: start returns room in the region, never a frame and never NULL
+    for ( int i = 0; i < extra; i++ )
+    {
+        const size_t handed_before = client->handed.size();
+        uint8_t * p = rocketnet_message_client_start( pair.client, 1, ROCKETNET_RELIABILITY_UNRELIABLE, 64 );
+        check( p != NULL );
+        check( client->handed.size() == handed_before );
+        check( p != NULL && rn_region_contains( connection->region, p, 64 ) );
+        if ( p )
+            ip_fill( p, 310 + (uint32_t) i, 64 );
+        check( rocketnet_message_client_finish( pair.client, 64 ) != 0 );
+    }
+    check( ip_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK ) == fallback_before + (uint64_t) extra );
+    check( ip_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == refused_before );
+    rocketnet_message_client_send_packets( pair.client );
+    check( client->finished.size() == finished_spent );  // the allowance stays spent in this update
+
+    std::vector<ip_received_t> server_got;
+    ip_step( &pair, &server_got, NULL );
+    ip_step( &pair, &server_got, NULL );
+    for ( int i = 0; i < cap; i++ )
+        check( ip_got( server_got, 0, 300 + (uint32_t) i, 64 ) );
+    for ( int i = 0; i < extra; i++ )
+        check( ip_got( server_got, 0, 310 + (uint32_t) i, 64 ) );
+    check( rocketnet_message_client_disconnect_reason( pair.client ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    ip_pair_teardown( &pair );
+}
+
 REGISTER_UNIT_TEST( unreliable_fit_is_written_in_the_packet );
 REGISTER_UNIT_TEST( unreliable_fit_in_place_every_transport );
 REGISTER_UNIT_TEST( unreliable_fit_has_no_message_copy );
@@ -919,3 +1037,5 @@ REGISTER_UNIT_TEST( in_place_unreliable_keeps_acks_and_order );
 REGISTER_UNIT_TEST( mixed_in_place_and_queued_respect_packet_cap );
 REGISTER_UNIT_TEST( repeated_fill_flush_respects_packet_cap );
 REGISTER_UNIT_TEST( reliable_not_starved_by_in_place );
+REGISTER_UNIT_TEST( message_burst_start_finish_delivers_every_message );
+REGISTER_UNIT_TEST( start_past_packet_allowance_falls_back_to_the_region );

@@ -282,7 +282,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
         rn_endpoint_init( connection, rn_arena_region( object->arena, i ), &endpoint_config );
         connection->views = block + layout.views + layout.view_stride * (uint64_t) i;
         connection->cursors = (uint32_t *) ( block + layout.cursors + layout.cursor_stride * (uint64_t) i );
-        connection->disconnect_reason = ROCKETNET_MESSAGE_ERROR_NONE;
+        connection->disconnect_reason = ROCKETNET_DISCONNECT_REASON_NONE;
         if ( object->is_server )
             rocketnet_server_connection_reset( object, (int) ( connection - object->connections ) );
         else
@@ -403,7 +403,7 @@ static rn_message_connection_t * rn_message_admit( rn_message_object_t * object,
 
 int rn_message_object_update( struct rn_message_object_t * object, double time )
 {
-    int result = ROCKETNET_MESSAGE_OK;
+    int result = ROCKETNET_UPDATE_OK;
 
     // RNSlots BeginUpdate, and RejectUnreleasedUpdate: every view handed out
     // in the last update must be released before this one. A held view is the
@@ -418,7 +418,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_NOT_RELEASED, held );
         rocketnet_error( "message update with %u received message(s) not released", held );
         rocketnet_assert( held == 0 && "every received message is released before the next update" );
-        result = ROCKETNET_ERROR_MESSAGE_NOT_RELEASED;
+        result = ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED;
     }
 
     rn_message_object_close_in_place( object );
@@ -495,7 +495,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
             {
                 connection->state = RN_MESSAGE_CONNECTION_CONNECTED;
                 connection->connection_id = id;
-                connection->disconnect_reason = ROCKETNET_MESSAGE_ERROR_NONE;
+                connection->disconnect_reason = ROCKETNET_DISCONNECT_REASON_NONE;
                 rn_endpoint_announce_config( connection, time );   // RNEndpoint Reset: the server's connect (10.3)
             }
         }
@@ -552,7 +552,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         const int transport_connected = object->is_server || object->link.connection( object->link.transport, i ) != 0;
         rn_endpoint_config_tick( connection, transport_connected, time );   // RNEndpoint Tick, the CONFIG half
         const int reason = rn_endpoint_error( connection );
-        if ( reason != ROCKETNET_MESSAGE_ERROR_NONE )
+        if ( reason != ROCKETNET_DISCONNECT_REASON_NONE )
         {
             // RNEndpoint OnPayload: a CONFIG mismatch was logged with the
             // field and both values when the CONFIG was compared
@@ -584,8 +584,8 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
 
     // the transport's payload cap, which the endpoint's large unreliable
     // check reads (a seam: a transport value passed in as an argument)
-    const bool unreliable = reliability == ROCKETNET_UNRELIABLE || reliability == ROCKETNET_UNRELIABLE_SEQUENCED ||
-                            reliability == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT;
+    const bool unreliable = reliability == ROCKETNET_RELIABILITY_UNRELIABLE || reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
+                            reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
     const int transport_max = unreliable && object->link.max_payload_bytes ?
         object->link.max_payload_bytes( object->link.transport ) : ROCKETNET_MAX_PAYLOAD_BYTES;
 
@@ -634,9 +634,9 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
     uint8_t * pointer = rn_endpoint_start( connection, channel, reliability, bytes, transport_max );
     if ( !pointer )
     {
-        if ( connection->send_error != ROCKETNET_MESSAGE_ERROR_NONE )
+        if ( connection->send_error != ROCKETNET_DISCONNECT_REASON_NONE )
         {
-            if ( connection->send_error == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED )
+            if ( connection->send_error == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED )
                 rn_region_send_room_exhausted( connection->region, object->is_server, index );
             rn_message_object_kick( object, index, connection->send_error );   // R5
         }
@@ -862,7 +862,7 @@ bool rn_message_object_set_send_kbps( struct rn_message_object_t * object, int i
 int rn_message_object_disconnect_reason( const struct rn_message_object_t * object, int index )
 {
     if ( index < 0 || index >= object->num_connections )
-        return ROCKETNET_MESSAGE_ERROR_NONE;
+        return ROCKETNET_DISCONNECT_REASON_NONE;
     return object->connections[index].disconnect_reason;
 }
 
@@ -1060,7 +1060,7 @@ struct rocketnet_server_transport_t * rocketnet_message_server_transport( struct
 int rocketnet_message_server_update( struct rocketnet_message_server_t * server, double time )
 {
     if ( !rocketnet_api_null_guard( server ) )
-        return ROCKETNET_MESSAGE_OK;
+        return ROCKETNET_UPDATE_OK;
     return rn_message_object_update( &server->object, time );
 }
 
@@ -1162,7 +1162,7 @@ int rocketnet_message_server_set_send_kbps( struct rocketnet_message_server_t * 
 int rocketnet_message_server_disconnect_reason( struct rocketnet_message_server_t * server, int client_index )
 {
     if ( !rocketnet_api_null_guard( server ) )
-        return ROCKETNET_MESSAGE_ERROR_NONE;
+        return ROCKETNET_DISCONNECT_REASON_NONE;
     return rn_message_object_disconnect_reason( &server->object, client_index );
 }
 

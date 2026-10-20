@@ -34,6 +34,7 @@ Actions, one per operation and per outside event:
 | `Drop(i)` | the path | removes copy `i`; enabled only under `Pattern = "arbitrary"` |
 | `Duplicate(i)` | the path | appends a second copy of copy `i` with its own `due`; disabled at `Capacity` |
 | `Reorder(i)` | the path | swaps copies `i` and `i+1` |
+| `ReverseWindow(w)` | the path | reverses the trailing `w` copies on the wire in place |
 | `Delay(i)` | the path | adds one tick of jitter to copy `i`, up to `MaxDelay` |
 | `Age` | time | every `due` counts down one tick; conjoin into the model's `Tick` |
 
@@ -60,6 +61,7 @@ terrain at a time as well as the arbitrary one:
 | `"first"` | the first send on this link |
 | `"alternate"` | the 1st, 3rd, 5th ... sends; even ones arrive ("first packet dropped, second packet comes through") |
 | `"burst"` | sends `BurstStart .. BurstStart + BurstLen - 1` |
+| `"everynth"` | every `BurstLen`-th send (`BurstLen`, `2 * BurstLen`, ...) |
 | `"arbitrary"` | nothing at send; `Drop(i)` may remove any copy at any time |
 
 A pattern counts sends on this link instance, whatever the packet. A model with two
@@ -94,6 +96,35 @@ cautions:
    packet type should also be checked under `SpecWireFair`-style fairness
    (`Link!WireFair` alone) with `Reordering = FALSE`, where that correlation is the
    only thing left to find.
+
+### The config patterns: drop every Nth, reverse each window
+
+`simulated_drop_every_nth` (N >= 2) and `simulated_reverse_window` (W >= 2) in the client
+and server transport configs are these two model features and nothing else; zero is off.
+
+- `Pattern = "everynth"` is `Send` losing the N-th, 2N-th, ... send (`N = BurstLen`; the
+  counter wraps at N). The code counts from the endpoint's first send in
+  `rocketnet_network_simulator_send` before any random draw, so a lost send takes no
+  draw.
+- `ReverseWindow(w)` reverses the trailing `w` copies on the wire in place. The code
+  buffers each window of W sends and emits it reversed, whole, in
+  `rocketnet_network_simulator_flush_window`; the transports call it when the window
+  fills and at the end of every `send_packets` (and of the update that sends), so a
+  short window is reversed too and nothing is held across updates. A short window is
+  `ReverseWindow(w)` with `w < W`.
+
+Cases of `MCLinkPatterns` (`SpecEveryNth`, `SpecReverseWindow`), each invariant with a
+reversed witness that sets `Defect` to break it:
+
+| Invariant | Pass case | Reversed witness (`Defect`) |
+|---|---|---|
+| `EveryNthDropped` | `MCLinkEveryNth.cfg` | `MCLinkEveryNthBrokenPeriod.cfg` (`wrong_period`: drops the (N-1)-th) |
+| `WindowOrderReversed` | `MCLinkReverseWindow.cfg` | `MCLinkReverseWindowBrokenOrder.cfg` (`unreversed`: the window is delivered in send order) |
+| `SurvivorsInOrder` | `MCLinkEveryNth.cfg` (loss alone keeps order) | `MCLinkReverseWindowBreaksInOrder.cfg`: a model that relies on in-order delivery breaks under the reversal |
+| `MCPatternsTypeOK` | every case | `MCLinkEveryNthBrokenCounter.cfg` (`overrun`: the send counter jumps past `MaxSeq`) |
+
+`MCLinkSpecEveryNth.cfg` and `MCLinkWireFairEveryNth.cfg` run `MCLink` under `"everynth"`
+with `Spec` and `SpecWireFair`: `ResentIsDelivered` and `LinkDelivers` hold.
 
 ## What the module abstracts away
 
@@ -236,3 +267,11 @@ original parameters and is not a completed proof.
 | 9 | `MCLinkWireFairBurst.cfg` | pass |
 | 10 | `MCLinkWireFairArbitraryWitness.cfg` | temporal / LinkDelivers |
 | 11 | `MCLinkWireFairAlternateResent.cfg` | temporal / ResentIsDelivered |
+| 12 | `MCLinkSpecEveryNth.cfg` | pass |
+| 13 | `MCLinkWireFairEveryNth.cfg` | pass |
+| 14 | `MCLinkEveryNth.cfg` | pass |
+| 15 | `MCLinkEveryNthBrokenPeriod.cfg` | invariant / EveryNthDropped |
+| 16 | `MCLinkReverseWindow.cfg` | pass |
+| 17 | `MCLinkReverseWindowBrokenOrder.cfg` | invariant / WindowOrderReversed |
+| 18 | `MCLinkEveryNthBrokenCounter.cfg` | invariant / MCPatternsTypeOK |
+| 19 | `MCLinkReverseWindowBreaksInOrder.cfg` | invariant / SurvivorsInOrder |
