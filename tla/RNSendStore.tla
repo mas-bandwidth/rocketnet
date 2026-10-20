@@ -1,6 +1,6 @@
 ---------------------------- MODULE RNSendStore ----------------------------
 (***************************************************************************)
-(* One class of the message layer's send store (docs/CHANNELS.md 4 and     *)
+(* One class of the message layer's send store (sdk/rocketnet_allocator.cpp and *)
 (* 15; sdk/rocketnet_allocator.cpp, rn_send_store_alloc and                *)
 (* rn_send_store_free_checked).  The three classes share no state, so one  *)
 (* class is the whole model.                                               *)

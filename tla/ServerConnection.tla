@@ -20,7 +20,7 @@
 (* carries every client's packets to the server, S2C the server's packets  *)
 (* to every address.  A packet carries its source address (from) or its    *)
 (* destination (to); the link never reads either.  The server keys          *)
-(* everything on from (STANDARD.md, The client address is the connection   *)
+(* everything on from (TRANSPORT.md, The client address is the connection  *)
 (* identity); a client receives only what is addressed to the address it   *)
 (* holds now, and a packet to an address nobody holds is delivered to the  *)
 (* void (received and discarded, so the link's fairness is never vacuous). *)
@@ -412,7 +412,7 @@ ServerRecvRequest(p) ==
        IN CASE m.live /\ m.slot # 0 ->
                  ServerSilent /\ UNCHANGED <<smap, bound, churnDenied>>
             [] m.live ->
-                 \* STANDARD.md: a mapped address always gets its original challenge.
+                 \* TRANSPORT.md: a mapped address always gets its original challenge.
                  /\ ServerSendPacket([type |-> "challenge", to |-> p.from, salt |-> m.csalt, nonce |-> m.cnonce])
                  /\ smap' = [smap EXCEPT ![p.from].sinceRecv = 0]
                  /\ UNCHANGED <<bound, churnDenied>>

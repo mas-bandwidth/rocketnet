@@ -1,7 +1,7 @@
 ------------------------------ MODULE RNSentHistory ------------------------------
 (***************************************************************************)
 (* rocketnet: the sender's sent history under loss, reordering and ack    *)
-(* delay (docs/TLA-INVENTORY.md M8, the sent-record slice).               *)
+(* delay (the sent-record slice).                                         *)
 (*                                                                         *)
 (* The sender writes every session packet it sends into a ring of N       *)
 (* records, record i holding the newest sequence congruent to i mod N     *)
@@ -18,7 +18,7 @@
 (*            silent peer, or a window too small for the path). Counted    *)
 (*            SEND_HISTORY_OVERFLOW, a refusal of history.                 *)
 (*                                                                         *)
-(* A write never refuses the send. STANDARD.md "Replay window sizing"      *)
+(* A write never refuses the send. TRANSPORT.md "Replay window sizing"     *)
 (* says an implementation MUST NOT throttle application sends to preserve  *)
 (* history, so Send is enabled whenever there is a sequence left to send.  *)
 (*                                                                         *)

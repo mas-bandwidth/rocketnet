@@ -1,7 +1,5 @@
 # ServerSession: the server object's life, its slots across clients, and the per-slot reset
 
-> STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
-
 `tla/ServerSession.tla` models the server object over its life: create (STOPPED, no transport
 bound), start, clients connecting into free slots, sending and receiving, leaving by their own
 disconnect, a timeout, a denial during the handshake, `disconnect_client` or
@@ -59,9 +57,9 @@ one connection per token per run); the standard binds a token to its first sourc
 and a re-presentation from that same address is not modelled here. A token used before a stop
 is admitted again after the next start; `MCServerSessionReadmitAfterStart.cfg` proves that
 state reachable. The
-restart sentences under _Keys_ and _Per-connection keys_ (`STANDARD.md:189`, `:1058`) make key
+restart sentences under _Keys_ and _Per-connection keys_ (standard/TRANSPORT.md t2.2, t7) make key
 freshness independent of the history: the session nonce is chosen when the mapping is created,
-so a restart can never recreate a key. STANDARD.md:189 has the server generate its cookie key "at start"; the
+so a restart can never recreate a key. standard/TRANSPORT.md t2.2 has the server generate its cookie key "at start"; the
 model keeps the keys as one value fresh at create and unchanged by stop and start, as the card
 lists them kept. A cookie key regenerated at each start instead would invalidate only
 outstanding cookies, which no slot record holds, so no property here depends on the choice.

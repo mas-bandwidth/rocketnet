@@ -36,7 +36,7 @@
 (*                                                                         *)
 (* The receiver's replay state is the abstract set of opened sequences in  *)
 (* the window (highestOpened - Window, highestOpened].  The word-level     *)
-(* representation and its large-skip clear (F1, docs/TLA-INVENTORY.md) is  *)
+(* representation and its large-skip clear (F1) is                         *)
 (* module RNReplayWindow's business; here every block is truthful by       *)
 (* construction unless Witness = "overclaim".                              *)
 (*                                                                         *)
@@ -754,7 +754,7 @@ ArenaBounded ==
                     ELSE S.stride * (i + 1) <= MaxPayload
 
 \* A fragment refused as stale is older than the occupant in the sender's
-\* issue order (STANDARD.md, Fragmentation: "its payload was already
+\* issue order (TRANSPORT.md, Fragmentation: "its payload was already
 \* superseded").
 StaleOnlyIfOlder == ~badStale
 
@@ -763,7 +763,7 @@ StaleOnlyIfOlder == ~badStale
 \* any legitimate load").
 BatchFullNeverFires == ~batchFull
 
-\* The first fragment of a payload id fixes its count (STANDARD.md,
+\* The first fragment of a payload id fixes its count (TRANSPORT.md,
 \* FRAGMENT_COUNT_MISMATCH).
 CountPinned ==
     [][\A k \in 0..Slots-1 :

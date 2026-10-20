@@ -4,7 +4,7 @@
 standalone module over transport packet events, with no dependency on
 `RNChannel`. The channel draft is not on origin at staging; the interface
 names are aligned with the local draft for later composition. This is a
-model of the design in `docs/CHANNELS.md` 7.4, not a claim that the message
+model of the design in `standard/MESSAGES.md` 7.4, not a claim that the message
 layer implementation exists.
 
 ## Interface and state
@@ -133,7 +133,7 @@ error or a different safety violation as a substitute for its named property.
 
 ## Reference behavior and differences
 
-The reference study is `docs/RAKNET-RELIABILITY.md` 7.3, 7.4, 10 and I9-I12.
+The reference study is 7.3, 7.4, 10 and I9-I12.
 Both designs allocate a serial at API send, use packet ACKs rather than
 application-consumption reports, never retransmit an unreliable receipt
 record, and never emit reliable LOSS. Types 5/6/7 dispatch as base wire types
