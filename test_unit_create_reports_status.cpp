@@ -13,7 +13,10 @@
 // memory block, and a failed block allocation (the failing allocator of
 // test_unit_driver_create_out_of_memory.cpp, walking every allocation
 // create makes). A NULL status is accepted on a refusal and on a success.
-// No socket, no thread, no real time, no environment variable set.
+// No socket, no thread, no real time. The CONFIG_ENV_INVALID case sets one
+// environment variable per side and restores it before returning, as
+// test_unit_status_client_transport_create_ex.cpp does; every other case
+// sets no environment variable.
 
 #include "test_unit_registry.h"
 
@@ -28,6 +31,14 @@
 #define check rocketnet_unit_check
 
 static void create_status_quiet_assert( const char *, const char *, const char *, int ) {}
+
+#if defined( _WIN32 )
+static int create_status_setenv( const char * name, const char * value ) { return _putenv_s( name, value ); }
+static int create_status_unsetenv( const char * name ) { return _putenv_s( name, "" ); }
+#else
+static int create_status_setenv( const char * name, const char * value ) { return setenv( name, value, 1 ); }
+static int create_status_unsetenv( const char * name ) { return unsetenv( name ); }
+#endif
 
 // ---- the fault-injecting allocator -----------------------------------------
 
@@ -295,6 +306,43 @@ static void create_reports_status_config_refusals()
     // CONFIG_OUT_OF_RANGE; create names the budget code above)
     check( (rocketnet_server_validate_config)( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
     check( rocketnet_server_validate_config( &server_config ) == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+
+    // MEMORY_BUDGET_EXCEEDED on the client is not reachable from a valid
+    // config: at the largest geometry (1 connection, 256 slots, 305408
+    // payload bytes) the reassembly set needs about 117 MiB, under the
+    // 512 MiB budget (sdk/rocketnet_memory.h:8, sdk/rocketnet_api.cpp:405),
+    // and every larger field value is refused as CONFIG_OUT_OF_RANGE first.
+    // The server case above proves the code; here the largest client
+    // geometry validates and creates.
+    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    client_config.num_reassembly_slots = 256;
+    client_config.max_payload_bytes = 305408;
+    check( rocketnet_client_validate_config( &client_config ) == ROCKETNET_STATUS_OK );
+    status = ROCKETNET_STATUS_COUNT;
+    struct rocketnet_client_t * budget_client = rocketnet_client_create( NULL, &client_config, NULL, 0, &status );
+    check( budget_client != NULL );
+    check( status == ROCKETNET_STATUS_OK );
+    rocketnet_client_destroy( budget_client );
+
+    // a malformed environment override: CONFIG_ENV_INVALID, client and server
+    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    const char * prior_client = getenv( "ROCKETNET_CLIENT_SEND_KBPS" );
+    check( create_status_setenv( "ROCKETNET_CLIENT_SEND_KBPS", "not-a-number" ) == 0 );
+    status = ROCKETNET_STATUS_OK;
+    check( rocketnet_client_create( NULL, &client_config, NULL, 0, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
+    if ( prior_client ) check( create_status_setenv( "ROCKETNET_CLIENT_SEND_KBPS", prior_client ) == 0 );
+    else check( create_status_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" ) == 0 );
+
+    check( rocketnet_server_dev_config( &server_config ) == ROCKETNET_STATUS_OK );
+    server_config.max_clients = 4;
+    const char * prior_server = getenv( "ROCKETNET_SERVER_MAX_CLIENTS" );
+    check( create_status_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "not-a-number" ) == 0 );
+    status = ROCKETNET_STATUS_OK;
+    check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
+    if ( prior_server ) check( create_status_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", prior_server ) == 0 );
+    else check( create_status_unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" ) == 0 );
 }
 REGISTER_UNIT_TEST( create_reports_status_config_refusals );
 
@@ -385,3 +433,36 @@ static void create_reports_status_null_status()
     check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, NULL ) == NULL );
 }
 REGISTER_UNIT_TEST( create_reports_status_null_status );
+
+// ---- a NULL config through the convenience macros ---------------------------
+// The macros are NULL-safe: this case compiles in C++ (this file) and the
+// same calls in tools/header_alone/main.c compile as C99 and as C++11, each
+// under -pedantic -Werror (tools/check_public_header.py).
+
+static void create_reports_status_null_config_macro()
+{
+    enum rocketnet_status_t status = ROCKETNET_STATUS_COUNT;
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, NULL, NULL, 0, &status );
+    check( client != NULL );
+    check( status == ROCKETNET_STATUS_OK );
+    rocketnet_client_destroy( client );
+
+    status = ROCKETNET_STATUS_COUNT;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, NULL, 0, &status );
+    check( server != NULL );
+    check( status == ROCKETNET_STATUS_OK );
+    rocketnet_server_destroy( server );
+
+    check( rocketnet_client_validate_config( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_server_validate_config( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_client_required_memory( NULL ) > 0 );
+    check( rocketnet_server_required_memory( NULL ) > 0 );
+    void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
+    rocketnet_set_assert_callback( create_status_quiet_assert );
+    check( rocketnet_client_default_config( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_server_default_config( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_server_dev_config( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    rocketnet_set_assert_callback( saved_assert );
+}
+REGISTER_UNIT_TEST( create_reports_status_null_config_macro );
+

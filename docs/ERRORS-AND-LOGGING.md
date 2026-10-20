@@ -43,7 +43,7 @@ returns `NULL` from start message and `0` from finish message, and counts in
 | `rocketnet_server_create( context, address, config, config_bytes, memory, memory_bytes, status )` (macro: no `config_bytes`) | `NULL` with one error line; `status` holds the refusal's code (the client's codes, plus `INVALID_ADDRESS` for an over-long address), or `OK` with the handle (`sdk/rocketnet.h:1220`; `sdk/rocketnet_api.cpp:1228`) |
 | `rocketnet_server_start( server )` | the status code: `SERVER_NOT_STOPPED`, or the transport's code (`TRANSPORT_LADDER_EXHAUSTED`, `MISSING_KEYS`, ...) |
 | `rocketnet_client_update( client, time )` / `rocketnet_server_update( server, time )` | `ROCKETNET_UPDATE_OK` or `ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED` |
-| key and token writers, `*_set_send_kbps`, the `_sized` config calls | the status code; see each declaration in `sdk/rocketnet.h` |
+| key and token writers, `*_set_send_kbps`, the sized config calls | the status code; see each declaration in `sdk/rocketnet.h` |
 
 The client and server create paths validate the config, apply the environment
 overrides (`ROCKETNET_CLIENT_*`, `ROCKETNET_SERVER_*`, with precedence

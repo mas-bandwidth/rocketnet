@@ -48,7 +48,7 @@ int main( void ) {
     server_config.transport = "loopback"; server_config.num_channels = NUM_MODES;
     server_config.simulated_loss_percent = 25; server_config.simulated_latency_ms = 20; server_config.simulated_jitter_ms = 35;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    server = (rocketnet_server_create)( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ), NULL, 0, &create_status );
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, &create_status );
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
@@ -64,7 +64,7 @@ int main( void ) {
     client_config.transport = "loopback"; client_config.num_channels = NUM_MODES; client_config.step_driven = true;
     client_config.simulated_loss_percent = 25; client_config.simulated_latency_ms = 20; client_config.simulated_jitter_ms = 35;
     enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
-    client = (rocketnet_client_create)( NULL, &client_config, sizeof( client_config ), NULL, 0, &create_status_2 );
+    client = rocketnet_client_create( NULL, &client_config, NULL, 0, &create_status_2 );
     if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
