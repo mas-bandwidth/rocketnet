@@ -86,7 +86,7 @@ static struct rocketnet_server_transport_t * windows_connreset_server( const win
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, bind, &config );
     rocketnet_server_iocp_test_force_flags( 0 );
     windows_connreset_require( server != NULL );
-    windows_connreset_require( strcmp( rocketnet_server_transport_transport( server ), transport->transport ) == 0 );
+    windows_connreset_require( strcmp( rocketnet_server_transport_io_name( server ), transport->transport ) == 0 );
     return server;
 }
 

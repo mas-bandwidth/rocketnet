@@ -247,7 +247,7 @@ static void windows_socket_errors_session_start( windows_socket_errors_session_t
     snprintf( bind, sizeof( bind ), "%s:0", windows_socket_errors_host( transport->ipv6 ) );
     session->server = rocketnet_server_transport_create( NULL, bind, &server_config );
     windows_socket_errors_require( session->server != NULL );
-    windows_socket_errors_require( strcmp( rocketnet_server_transport_transport( session->server ), transport->transport ) == 0 );
+    windows_socket_errors_require( strcmp( rocketnet_server_transport_io_name( session->server ), transport->transport ) == 0 );
 
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     snprintf( server_address, sizeof( server_address ), "%s:%d", windows_socket_errors_host( transport->ipv6 ), rocketnet_server_transport_port( session->server ) );
