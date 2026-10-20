@@ -137,7 +137,7 @@ static const rocketnet_client_driver_operations_t portable_client_operations =
 #else
   NULL, NULL,
 #endif
-  NULL, NULL, ROCKETNET_PORTABLE_SEND_FAILURES
+  NULL, NULL, portable_send_failures
 };
 #endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 extern const rocketnet_driver_backend_t rocketnet_portable_driver = { &portable_server_operations, &portable_client_operations };
