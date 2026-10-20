@@ -323,3 +323,62 @@ static void api_polish_null_client_state_is_invalid()
     rocketnet_set_assert_callback( NULL );
 }
 REGISTER_UNIT_TEST( api_polish_null_client_state_is_invalid );
+
+// --- ruling 10: abi layouts lists only public types ---------------------------
+
+static void api_polish_abi_layouts()
+{
+    const char * const * layouts = rocketnet_abi_layouts();
+    check( layouts != NULL );
+    int count = 0;
+    bool has_client_config = false;
+    bool has_server_config = false;
+    bool has_receipt = false;
+    bool has_address_type = false;
+    bool has_internal = false;
+
+    for ( int i = 0; layouts[i] != NULL; ++i )
+    {
+        count++;
+        if ( strcmp( layouts[i], "rocketnet_client_config_t" ) == 0 )
+            has_client_config = true;
+        else if ( strcmp( layouts[i], "rocketnet_server_config_t" ) == 0 )
+            has_server_config = true;
+        else if ( strcmp( layouts[i], "rocketnet_receipt_t" ) == 0 )
+            has_receipt = true;
+        else if ( strcmp( layouts[i], "rocketnet_address_type_t" ) == 0 )
+            has_address_type = true;
+        else
+            has_internal = true;
+    }
+
+    check( has_client_config );
+    check( has_server_config );
+    check( has_receipt );
+    check( has_address_type );
+    check( !has_internal );
+    check( count == 4 );
+}
+REGISTER_UNIT_TEST( api_polish_abi_layouts );
+
+// --- ruling 11: server abort_message past max_clients counts misuse ------------
+
+static void api_polish_server_abort_message_misuse()
+{
+    rocketnet_server_config_t config;
+    check( rocketnet_server_dev_config( &config ) == ROCKETNET_STATUS_OK );
+    config.max_clients = 16;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0 );
+    check( server != NULL );
+
+    rocketnet_set_assert_callback( api_polish_quiet_assert );
+    const uint64_t before = rocketnet_api_misuse_count();
+    rocketnet_server_abort_message( server, 16 );
+    check( rocketnet_api_misuse_count() == before + 1 );
+    rocketnet_server_abort_message( server, 100 );
+    check( rocketnet_api_misuse_count() == before + 2 );
+    rocketnet_set_assert_callback( NULL );
+
+    rocketnet_server_destroy( server );
+}
+REGISTER_UNIT_TEST( api_polish_server_abort_message_misuse );

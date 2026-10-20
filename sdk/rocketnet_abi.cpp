@@ -145,6 +145,7 @@ static const abi_type_t types[] =
     TYPE(client_config)
     TYPE(server_config)
     TYPE(receipt)
+    { "rocketnet_address_type_t", sizeof(enum rocketnet_address_type_t), NULL, 0 },
     TYPE(client_transport_config)
     TYPE(server_transport_config)
     TYPE(client_transport_stats)
@@ -212,6 +213,19 @@ size_t rocketnet_abi_field_size(const char * type_name, const char * field_name)
         return SIZE_MAX;
     const auto * field = find_field(type_name, field_name);
     return field ? field->size : SIZE_MAX;
+}
+
+const char * const * rocketnet_abi_layouts( void )
+{
+    static const char * const names[] =
+    {
+        "rocketnet_client_config_t",
+        "rocketnet_server_config_t",
+        "rocketnet_receipt_t",
+        "rocketnet_address_type_t",
+        NULL
+    };
+    return names;
 }
 
 #if !defined( ROCKETNET_ABI_QUERIES_ONLY )

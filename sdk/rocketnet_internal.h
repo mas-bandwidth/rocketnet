@@ -591,4 +591,7 @@ void rocketnet_platform_set_network_lookups_for_testing( const struct rocketnet_
 // or NaN request, ROCKETNET_SLEEP_MAX_SECONDS for a longer or infinite one
 double rocketnet_sleep_clamp( double seconds );
 
+// The ABI layouts list: type names known to the ABI queries.
+const char * const * rocketnet_abi_layouts( void );
+
 #endif // #ifndef ROCKETNET_INTERNAL_H

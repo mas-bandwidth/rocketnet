@@ -17,6 +17,7 @@
 /// (memory_bytes, the required_memory results, config_bytes,
 /// connect_token_bytes); config fields, message bytes and counts are int;
 /// client indexes and destination ids are uint64_t.
+/// Pure lookups, ABI queries, and time calls are thread-safe; client and server instances are not.
 
 #ifndef ROCKETNET_H
 #define ROCKETNET_H
@@ -164,31 +165,26 @@
 
 /// Messages (docs/CHANNELS.md): the channel bound
 
-#ifndef ROCKETNET_MAX_CHANNELS
 #define ROCKETNET_MAX_CHANNELS                                         32
-#endif /// #ifndef ROCKETNET_MAX_CHANNELS
 
 /// The largest message one packet carries, written in place with zero copies:
-/// the payload capacity less the one form byte
+/// the payload capacity less the one form byte. Unreliable messages above
+/// the 1411-byte in-place limit promote to reliable.
 
-#define ROCKETNET_MESSAGE_SINGLE_BYTES          ( ROCKETNET_MAX_PAYLOAD_BYTES - 1 )      ///< 1415
+#define ROCKETNET_MESSAGE_SINGLE_BYTES          ( ROCKETNET_MAX_PAYLOAD_BYTES - 1 )      ///< 1415; above the 1411 in-place limit
 
 /// Send budgets are kilobits per second of wire bytes (1 kbps = 1000 bit/s),
 /// per connection: the defaults of the config's send_kbps and
 /// per_client_send_kbps, each connection's starting rate.
 
-#ifndef ROCKETNET_DEFAULT_CLIENT_SEND_KBPS
 /// @brief Default client send budget in decimal kilobits per second per connection.
 #define ROCKETNET_DEFAULT_CLIENT_SEND_KBPS                  1000
-#endif
-#ifndef ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS
+
 /// @brief Default server send budget in decimal kilobits per second for each client.
 #define ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS       10000
-#endif
-#ifndef ROCKETNET_SEND_BUDGET_MAX_KBPS
+
 /// @brief Maximum supported send budget in decimal kilobits per second per connection.
 #define ROCKETNET_SEND_BUDGET_MAX_KBPS                      10000000    ///< 10 Gbit/s per connection
-#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -254,6 +250,18 @@ enum rocketnet_log_level_t
     ROCKETNET_LOG_LEVEL_INFO                            = 3,   ///< Information
     ROCKETNET_LOG_LEVEL_DEBUG                           = 4,   ///< Debugging
     ROCKETNET_LOG_LEVEL_SPAM                            = 5    ///< The most verbose level
+};
+
+/// -----------------------------------------
+///                  Address types
+/// -----------------------------------------
+
+/// @brief Address family types for endpoints.
+enum rocketnet_address_type_t
+{
+    ROCKETNET_ADDRESS_NONE                              = 0,   ///< No address family
+    ROCKETNET_ADDRESS_IPV4                              = 1,   ///< IPv4 address family
+    ROCKETNET_ADDRESS_IPV6                              = 2    ///< IPv6 address family
 };
 
 /// -----------------------------------------
@@ -655,8 +663,6 @@ ROCKETNET_EXPORT void rocketnet_set_log_callback( rocketnet_log_callback_t callb
 /// @return Relaxed atomic diagnostic count; this read does not synchronize SDK work.
 ROCKETNET_EXPORT uint64_t rocketnet_api_misuse_count( void );
 
-/// @brief Returns the protocol identifier derived from the selected release version. @return Hashed release version, or 0 in a development build. Safe before init.
-ROCKETNET_EXPORT uint64_t rocketnet_protocol_version( void );
 
 /// @brief Returns monotonic elapsed time in seconds from an unspecified process-local origin. @return Nondecreasing platform clock value; use the same clock for all time-taking calls.
 ROCKETNET_EXPORT double rocketnet_time( void );
@@ -739,8 +745,8 @@ struct rocketnet_client_config_t
     int num_reassembly_slots;                       ///< ROCKETNET_CLIENT_NUM_REASSEMBLY_SLOTS: 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
     bool step_driven;                               ///< ROCKETNET_CLIENT_STEP_DRIVEN: true (env 1) runs the client I/O step inside update and send_packets on the caller's thread, with no I/O thread; false (env 0, the default) keeps the I/O thread
     const char * transport;                         ///< ROCKETNET_CLIENT_TRANSPORT: the candidate list; NULL is "auto"
-    void (*state_change_callback)( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state );   ///< No env form; NULL is none
-    double (*time_callback)( void * context );      ///< No env form: the receive stamp clock, read once at create; NULL is the platform clock
+    void (*state_change_callback)( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state );   ///< No env form; NULL is none. Fires inside disconnect and destroy and must not re-enter the client.
+    double (*time_callback)( void * context );      ///< No env form: the receive stamp clock, read once at create; NULL is the platform clock. Runs on the I/O thread.
     int send_kbps;                                  ///< ROCKETNET_CLIENT_SEND_KBPS: the send budget, kbps; default 1000; the starting rate of each connection; 0 or less sets the budget to its ceiling, ROCKETNET_SEND_BUDGET_MAX_KBPS (10 Gbit/s), NOT RECOMMENDED; above ROCKETNET_SEND_BUDGET_MAX_KBPS is refused
     int num_channels;                               ///< ROCKETNET_CLIENT_NUM_CHANNELS: the channels messages are sent and received on; WIRE; 1 .. ROCKETNET_MAX_CHANNELS; default 32
     int window_messages;                            ///< ROCKETNET_CLIENT_WINDOW_MESSAGES: reliable messages in flight per channel set; WIRE, power of two; 64 .. 1 << 20; default 1024
@@ -759,6 +765,7 @@ struct rocketnet_client_config_t
     int rto_min_ms;                                 ///< ROCKETNET_CLIENT_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
     int rto_max_ms;                                 ///< ROCKETNET_CLIENT_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
     int reliable_timeout_ms;                        ///< ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
+    /// Simulated link conditions: development only. A release library refuses nonzero simulated_* fields with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE.
     int simulated_loss_percent;                     ///< Development only: outgoing loss 0..100; 0 is off
     int simulated_latency_ms;                       ///< Development only: outgoing latency in milliseconds; 0 is off
     int simulated_jitter_ms;                        ///< Development only: outgoing jitter in milliseconds; 0 is off
@@ -816,6 +823,7 @@ struct rocketnet_server_config_t
     int rto_min_ms;                                 ///< ROCKETNET_SERVER_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
     int rto_max_ms;                                 ///< ROCKETNET_SERVER_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
     int reliable_timeout_ms;                        ///< ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
+    /// Simulated link conditions: development only. A release library refuses nonzero simulated_* fields with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE.
     int simulated_loss_percent;                     ///< Development only: outgoing loss 0..100; 0 is off
     int simulated_latency_ms;                       ///< Development only: outgoing latency in milliseconds; 0 is off
     int simulated_jitter_ms;                        ///< Development only: outgoing jitter in milliseconds; 0 is off
@@ -1030,7 +1038,12 @@ ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create_sized( void
 /// the next update. A connection the server ended (DISCONNECTED, its object
 /// still held) is ended here first, its reason kept. A NULL
 /// client or connect_token is a counted no-op that returns
-/// ROCKETNET_STATUS_INVALID_ARGUMENT.
+/// ROCKETNET_STATUS_INVALID_ARGUMENT. Returns ROCKETNET_STATUS_OK,
+/// ROCKETNET_STATUS_INVALID_ARGUMENT, ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED,
+/// ROCKETNET_STATUS_INVALID_CONNECT_TOKEN, ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED,
+/// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED,
+/// ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED, ROCKETNET_STATUS_OUT_OF_MEMORY,
+/// ROCKETNET_STATUS_MUTEX_CREATE_FAILED, or ROCKETNET_STATUS_THREAD_CREATE_FAILED.
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * client, const uint8_t * connect_token );
 
 /// From any state: a live connection ends as rocketnet_client_disconnect ends
