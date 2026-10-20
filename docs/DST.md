@@ -360,6 +360,20 @@ none changes SDK behaviour. "Session" below is (client index, generation) on the
 | `leak` | (no model) | The allocator's count after the seed's destroy equals its count before the seed's create | seed end |
 | `liveness_connected` | ClientSession: `ConnectReachesConnectedOrError`; ServerSession: `HandshakeResolves`; RNSimFaults: `EveryLiveClientConnects` | Every client that is not crashed is CONNECTED and the server holds its session, by the last step (the quiet window: 20 s in `full`, 15 s in `push`, after the fault window) | the last step |
 | `liveness_delivered` | RNChannel: `EveryOrderedMessageDelivered`; RNChannelTypes: `EveryReliableAckedAndDelivered`; RNReceipts: `ReceiptProgress` | Every message of types 2, 3, 6, 7 sent on a session still live at the last step is delivered; for type 4 the stream's last sent sequence is delivered; every receipt serial on a live session has its outcome | the last step |
+| `dst_lap` | (no model: the sequence-table bound) | A per-stream sequence index is at most 4095 past the oldest unresolved one; a larger index would read a newer sequence's bit | every per-stream sequence bit read or write |
+
+**The 4096-sequence window.** Every per-stream sequence table in `dst_checks.h` holds
+`ROCKETNET_DST_CHECK_SEQ_BITS` (4096) bits. The reliable pair tracks its oldest unresolved
+sequence (sent and not delivered) and moves the base past each contiguous delivered sequence; the
+tables that never resolve an entry (`opened`, `unreliable_delivered`, `receipt_seen`) keep the
+first sequence as the oldest unresolved. Before a helper reads or sets a bit it compares the index
+with that base. An index 4096 or more past it would read a newer sequence's bit, so the helper fails
+`FAIL ... check=dst_lap what=table=<table> seq=<index> base=<oldest> lap=<n>` instead of aliasing.
+The lap is a finding, never a silent wrap: a stream that reaches it has outgrown the check's table.
+The `whole_message` size table (`sent_size` and `sent_size_set`, indexed by sequence) uses the same
+window: `rocketnet_dst_check_sent` refuses to record a sent size at or past the base's lap, and
+`rocketnet_dst_check_whole_message` refuses a delivery there instead of comparing it to a newer
+sequence's recorded size; a size for a sequence below the base is resolved and not looked at.
 
 The checks run from `dst_checks.h`, called by the harness at the hooks the table names: every
 delivery, every link `acked()` call, every server slot change and client state change, every step,
