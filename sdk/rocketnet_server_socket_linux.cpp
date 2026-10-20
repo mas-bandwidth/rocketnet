@@ -2515,7 +2515,13 @@ static void pin_thread_to_cpu( int cpu )
 
     pthread_t current_thread = pthread_self();    
 
-    pthread_setaffinity_np( current_thread, sizeof(cpu_set_t), &cpuset );
+    const int result = pthread_setaffinity_np( current_thread, sizeof(cpu_set_t), &cpuset );
+    if ( result != 0 )
+    {
+        char call[64];
+        snprintf( call, sizeof( call ), "pthread_setaffinity_np cpu %d", cpu );
+        rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_SET_AFFINITY, "thread affinity", call, strerror( result ), "the thread runs on any cpu" );
+    }
 }
 
 struct rocketnet_server_socket_process_packets_t * rocketnet_server_socket_process_packets( struct rocketnet_server_socket_t * server_socket )
@@ -2608,9 +2614,21 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
     pin_thread_to_cpu( socket->num_os_cpus + socket->queue );
 
-    struct sched_param param;
-    param.sched_priority = sched_get_priority_min( SCHED_RR );
-    pthread_setschedparam( pthread_self(), SCHED_RR, &param );
+    // flow_server_socket_linux.cpp:1374-1381: pin, then SCHED_RR at the
+    // minimum on itself. the priority call follows the off switch; the pin
+    // is the queue's cpu and always runs
+    if ( rocketnet_platform_thread_priority_enabled() )
+    {
+        struct sched_param param;
+        param.sched_priority = sched_get_priority_min( SCHED_RR );
+        const int result = pthread_setschedparam( pthread_self(), SCHED_RR, &param );
+        if ( result != 0 )
+        {
+            char call[64];
+            snprintf( call, sizeof( call ), "pthread_setschedparam SCHED_RR %d", param.sched_priority );
+            rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_SET_SCHED, "thread priority", call, strerror( result ), "the thread runs at its default priority" );
+        }
+    }
 
     rocketnet_info( "pinning xdp thread %d to CPU %d", socket->queue, socket->num_os_cpus + socket->queue );
 
