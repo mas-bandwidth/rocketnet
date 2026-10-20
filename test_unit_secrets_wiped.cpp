@@ -348,19 +348,24 @@ static void secrets_wiped_pair_exchange( secrets_wiped_pair_t * pair,
     for ( int step = 0; step < 400 && ( at_server < 1 || at_client < 1 ); step++ )
     {
         secrets_wiped_pump( pair );
-        const uint8_t * data = NULL;
-        int bytes = 0;
-        while ( rocketnet_server_receive_message( pair->server, 0, 0, &data, &bytes ) )
+        struct rocketnet_message_batch_t batch;
+        while ( rocketnet_server_receive_messages( pair->server, &batch ) )
         {
-            check( bytes == SECRETS_WIPED_MESSAGE_BYTES && memcmp( data, message, SECRETS_WIPED_MESSAGE_BYTES ) == 0 );
-            rocketnet_server_release_message( pair->server, 0, data );
-            at_server++;
+            for ( int i = 0; i < batch.num_messages; i++ )
+            {
+                check( batch.client_index[i] == 0 && batch.channel[i] == 0 );
+                check( batch.bytes[i] == SECRETS_WIPED_MESSAGE_BYTES && memcmp( batch.data[i], message, SECRETS_WIPED_MESSAGE_BYTES ) == 0 );
+                at_server++;
+            }
         }
-        while ( rocketnet_client_receive_message( pair->client, 0, &data, &bytes ) )
+        while ( rocketnet_client_receive_messages( pair->client, &batch ) )
         {
-            check( bytes == SECRETS_WIPED_MESSAGE_BYTES && memcmp( data, message, SECRETS_WIPED_MESSAGE_BYTES ) == 0 );
-            rocketnet_client_release_message( pair->client, data );
-            at_client++;
+            for ( int i = 0; i < batch.num_messages; i++ )
+            {
+                check( batch.channel[i] == 0 );
+                check( batch.bytes[i] == SECRETS_WIPED_MESSAGE_BYTES && memcmp( batch.data[i], message, SECRETS_WIPED_MESSAGE_BYTES ) == 0 );
+                at_client++;
+            }
         }
     }
     check( at_server == 1 && at_client == 1 );

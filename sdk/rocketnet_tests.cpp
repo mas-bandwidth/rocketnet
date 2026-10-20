@@ -8080,6 +8080,9 @@ static bool rocketnet_test_name_in( const char * name, const char * const * list
 
 #define RN_TEST_ONE_MISUSE( call ) do { const uint64_t misuse_before = rocketnet_api_misuse_count(); call; rocketnet_check( rocketnet_api_misuse_count() == misuse_before + 1 ); } while ( 0 )
 
+// destroy on NULL is silent, as free(NULL) is: no misuse counted, no assert fired
+#define RN_TEST_SILENT_NULL( call ) do { const uint64_t misuse_before = rocketnet_api_misuse_count(); const int asserts_before = rocketnet_test_null_asserts; call; rocketnet_check( rocketnet_api_misuse_count() == misuse_before ); rocketnet_check( rocketnet_test_null_asserts == asserts_before ); } while ( 0 )
+
 void rocketnet_test_public_api_null()
 {
     void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) = rn_assert_function;
@@ -8110,7 +8113,7 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( (rocketnet_client_default_config_sized)( NULL, 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( (rocketnet_client_default_config_sized)( NULL, sizeof( client_config ) ) != ROCKETNET_STATUS_OK ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_connect( NULL, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
-    RN_TEST_ONE_MISUSE( rocketnet_client_destroy( NULL ) );
+    RN_TEST_SILENT_NULL( rocketnet_client_destroy( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_update( NULL, 1000.0 ) == ROCKETNET_UPDATE_OK ) );
     RN_TEST_ONE_MISUSE( rocketnet_client_send_packets( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_client_disconnect( NULL ) );
@@ -8133,7 +8136,7 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_check( (rocketnet_server_default_config_sized)( NULL, sizeof( server_config ) ) != ROCKETNET_STATUS_OK ) );
     RN_TEST_ONE_MISUSE( (rocketnet_server_dev_config_sized)( NULL, 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( (rocketnet_server_create_sized)( NULL, NULL, NULL, 0, NULL, 0, NULL ) == NULL ) );
-    RN_TEST_ONE_MISUSE( rocketnet_server_destroy( NULL ) );
+    RN_TEST_SILENT_NULL( rocketnet_server_destroy( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_start( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_stop( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_running( NULL ) == 0 ) );

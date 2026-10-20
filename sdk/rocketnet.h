@@ -368,7 +368,7 @@ enum rocketnet_disconnect_reason_t
 enum rocketnet_update_result_t
 {
     ROCKETNET_UPDATE_OK                                         =  0,  ///< The update ran
-    ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED                       = -1   ///< Refused: a received message view is still held
+    ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED                       = -1   ///< Reserved: never returned, as the next receive or update on the same object releases each batch
 };
 
 /// -----------------------------------------
@@ -420,7 +420,7 @@ enum rocketnet_client_counter_t
     ROCKETNET_CLIENT_COUNTER_RECEIPTS_LOST,         ///< Receipts: sends with a receipt that were lost
     ROCKETNET_CLIENT_COUNTER_BUDGET_DROPS,          ///< Messages: unreliable messages dropped because the send budget was spent
     ROCKETNET_CLIENT_COUNTER_SEND_DEFERRED,         ///< Hand-offs: sends that left with the next hand-off to the send thread
-    ROCKETNET_CLIENT_COUNTER_MESSAGES_NOT_RELEASED, ///< Messages: received messages still held when an update was refused
+    ROCKETNET_CLIENT_COUNTER_MESSAGES_NOT_RELEASED, ///< Messages: reserved, stays 0, as the next receive or update releases each batch
     ROCKETNET_CLIENT_COUNTER_NOT_CONNECTED_DROPS,   ///< Messages: sends dropped because the connection was not CONNECTED
     ROCKETNET_CLIENT_COUNTER_COUNT
 };
@@ -464,7 +464,7 @@ enum rocketnet_server_counter_t
     ROCKETNET_SERVER_COUNTER_RECEIPTS_ACKED,        ///< Receipts: sends with a receipt that a client acknowledged
     ROCKETNET_SERVER_COUNTER_RECEIPTS_LOST,         ///< Receipts: sends with a receipt that were lost
     ROCKETNET_SERVER_COUNTER_BUDGET_DROPS,          ///< Messages: unreliable messages dropped because a client's send budget was spent
-    ROCKETNET_SERVER_COUNTER_MESSAGES_NOT_RELEASED, ///< Messages: received messages still held when an update was refused
+    ROCKETNET_SERVER_COUNTER_MESSAGES_NOT_RELEASED, ///< Messages: reserved, stays 0, as the next receive or update releases each batch
     ROCKETNET_SERVER_COUNTER_NOT_CONNECTED_DROPS,   ///< Messages: sends dropped because the connection was not CONNECTED
     ROCKETNET_SERVER_COUNTER_COUNT
 };
@@ -703,11 +703,9 @@ ROCKETNET_EXPORT void rocketnet_set_log_callback( rocketnet_log_callback_t callb
 
 /// @brief Reads the process-wide count of API misuses since the process started.
 /// It counts exactly these: a NULL argument a call refuses (a NULL client's
-/// state included); a create before rocketnet_init; a refused
+/// state included, a NULL to either destroy excepted); a create before rocketnet_init; a refused
 /// rocketnet_set_allocator; an update time that is not finite or goes
-/// backwards; a release of a pointer that is not a held view, a release on a
-/// client with no connection, or a server release to an index at or past
-/// max_clients or on a stopped server; an in-place start message still open at
+/// backwards; an in-place start message still open at
 /// update or send_packets; a connect from a state other than DISCONNECTED; a
 /// server start while running, and a server update or send_packets while
 /// stopped; a server start message or finish message to an index at or past
@@ -933,7 +931,7 @@ struct rocketnet_server_config_t
 ///
 /// The update order, on the main thread: update (messages in, acks into the
 /// channels, received messages into deliveries, then the checks that
-/// disconnect), receive and release, start message, write, finish message
+/// disconnect), receive, start message, write, finish message
 /// (or abort message), then send_packets (each connection's messages, the
 /// queued messages included in them, under its send budget, out to the wire).
 ///
@@ -1149,7 +1147,8 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_connect( struct rocket
 /// DISCONNECTED, an error state, REQUESTING_COOKIE or SENDING_CONNECTION_REQUEST
 /// nothing is sent. The client is freed, and a caller memory block is cleared
 /// and given back to the caller. Every pointer from the client is invalid after
-/// the call. A NULL client is a counted no-op.
+/// the call. A NULL client is a silent no-op, as free(NULL) is: no assert and
+/// nothing counted.
 ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * client );
 
 /// ROCKETNET_UPDATE_OK, or ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED. The update time
@@ -1343,7 +1342,8 @@ ROCKETNET_EXPORT bool rocketnet_server_running( const struct rocketnet_server_t 
 /// disconnect packets before the transport closes; with no connected client
 /// nothing is sent. Then the server's memory, keys included, is wiped and
 /// freed, and a caller memory block is given back to the caller. Every pointer
-/// from the server is invalid after the call. A NULL server is a counted no-op.
+/// from the server is invalid after the call. A NULL server is a silent no-op,
+/// as free(NULL) is: no assert and nothing counted.
 ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * server );
 
 /// ROCKETNET_UPDATE_OK, or ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED. The update time
