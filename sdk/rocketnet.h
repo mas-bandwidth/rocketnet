@@ -1044,11 +1044,13 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_default_config_sized( 
 /// library), the reassembly-memory budget (create reports that refusal as
 /// ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED; this call reports it as
 /// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE), and the message rules. The
-/// environment is not read. Safe before init. NULL means the defaults.ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_validate_config( const struct rocketnet_client_config_t * config );
+/// environment is not read. Safe before init. NULL means the defaults.
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_validate_config( const struct rocketnet_client_config_t * config );
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_validate_config_sized( const struct rocketnet_client_config_t * config, size_t config_bytes );
 
 /// The bytes a caller memory block for this client needs; 0 for a refused
-/// config. NULL means the defaults. The _sized form takes config_bytes: an unknown non-NULL size logs and returns 0.ROCKETNET_EXPORT size_t rocketnet_client_required_memory( const struct rocketnet_client_config_t * config );
+/// config. NULL means the defaults. The _sized form takes config_bytes: an unknown non-NULL size logs and returns 0.
+ROCKETNET_EXPORT size_t rocketnet_client_required_memory( const struct rocketnet_client_config_t * config );
 ROCKETNET_EXPORT size_t rocketnet_client_required_memory_sized( const struct rocketnet_client_config_t * config, size_t config_bytes );
 
 #if ROCKETNET_DEVELOPMENT
@@ -1239,7 +1241,8 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_dev_config_sized( stru
 /// ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED; this call reports it as
 /// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE), and the message rules. The
 /// environment is not read and the keys are not checked (start refuses a
-/// config with none). Safe before init. NULL means the defaults.ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_validate_config( const struct rocketnet_server_config_t * config );
+/// config with none). Safe before init. NULL means the defaults.
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_validate_config( const struct rocketnet_server_config_t * config );
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_validate_config_sized( const struct rocketnet_server_config_t * config, size_t config_bytes );
 
 /// The bytes a caller memory block for this server needs, at the config's

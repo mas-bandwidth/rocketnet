@@ -83,7 +83,7 @@ with a log line.
 
 A value that does not parse, or is out of range, **refuses the create with one
 error line; nothing is ever clamped**. A secret key logs redacted, on both the
-old and the new value. The `_sized` create, default and validate calls each take the struct size (`config_bytes`) so a program built against an older header keeps working; the unsized calls use the revision-1 size. An unknown size is refused before anything is read or written. Each of the four creates takes a final status out-parameter (NULL is accepted): it holds `ROCKETNET_STATUS_OK` with a non-NULL result, or the refusal's code with NULL (`sdk/rocketnet.h:1079`, `sdk/rocketnet.h:1084`, `sdk/rocketnet.h:1269`, `sdk/rocketnet.h:1274`; `sdk/rocketnet_api.cpp:561`, `sdk/rocketnet_api.cpp:1302`).
+old and the new value. The `_sized` create, default and validate calls each take the struct size (`config_bytes`) so a program built against an older header keeps working; the unsized calls use the revision-1 size. An unknown size is refused before anything is read or written. Each of the four creates takes a final status out-parameter (NULL is accepted): it holds `ROCKETNET_STATUS_OK` with a non-NULL result, or the refusal's code with NULL (`sdk/rocketnet.h:1081`, `sdk/rocketnet.h:1086`, `sdk/rocketnet.h:1272`, `sdk/rocketnet.h:1277`; `sdk/rocketnet_api.cpp:561`, `sdk/rocketnet_api.cpp:1302`).
 
 ```c
 #include "rocketnet.h"

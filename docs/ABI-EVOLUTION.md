@@ -233,8 +233,8 @@ before 1.0.0; no earlier ABI was released, so the release starts at 1:
   final status out-parameter (the owner ruling of 2026-10-20; the same holds
   for `rocketnet_client_create_sized`, `rocketnet_server_create` and
   `rocketnet_server_create_sized`;
-  `sdk/rocketnet.h:1079`, `sdk/rocketnet.h:1084`, `sdk/rocketnet.h:1269`,
-  `sdk/rocketnet.h:1274`, `sdk/rocketnet_api.cpp:561`,
+  `sdk/rocketnet.h:1081`, `sdk/rocketnet.h:1086`, `sdk/rocketnet.h:1272`,
+  `sdk/rocketnet.h:1277`, `sdk/rocketnet_api.cpp:561`,
   `sdk/rocketnet_api.cpp:1302`); the token moves
   to the new `rocketnet_client_connect`.
 - `rocketnet_server_create` binds nothing; the new
