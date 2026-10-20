@@ -472,6 +472,10 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
          object->connections[0].state == RN_MESSAGE_CONNECTION_CONNECTED &&
          object->link.state( object->link.transport ) <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
     {
+        // the transport's end reason (SERVER_DISCONNECTED once it accepted
+        // the server's disconnect) is recorded before the reset, which keeps it
+        if ( object->link.end_reason )
+            object->connections[0].disconnect_reason = object->link.end_reason( object->link.transport );
         rocketnet_client_connection_reset( object );
         rn_slots_observe( &object->slots, 0, 0 );
     }

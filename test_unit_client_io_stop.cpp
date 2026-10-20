@@ -161,7 +161,7 @@ static void client_io_stop_hand_off_assert_hook( const char * condition, const c
 static void client_io_hand_off_after_stop_asserts()
 {
     void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) =
-        rocketnet_assert_function_pointer;
+        rn_assert_function;
     rocketnet_set_assert_callback( client_io_stop_hand_off_assert_hook );
     client_io_stop_hand_off_asserts = 0;
 

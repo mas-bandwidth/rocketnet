@@ -82,6 +82,15 @@ include(cmake/RocketNetDependencies.cmake)
 
 if(NOT ROCKETNET_USE_SYSTEM_SODIUM)
     set(ROCKETNET_SODIUM_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/sodium/sodium.c")
+    # the vendor has no configure step, so sodium_memzero (sodium/sodium.c:176)
+    # falls to its volatile byte loop unless a HAVE_ macro names the platform
+    # wipe; glibc and musl have explicit_bzero, the wipe libsodium's own
+    # configure picks there. The byte loop spends ~125 ms on the 56 MB server
+    # transport that rocketnet_server_transport_destroy wipes through
+    # rocketnet_clear_and_free (sdk/rocketnet.cpp:488).
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set_property(SOURCE "${ROCKETNET_SODIUM_SOURCE}" APPEND PROPERTY COMPILE_DEFINITIONS HAVE_EXPLICIT_BZERO=1)
+    endif()
 endif()
 function(rocketnet_use_sodium target)
     if(ROCKETNET_USE_SYSTEM_SODIUM)
@@ -190,6 +199,12 @@ add_library(rocketnet_dev STATIC ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 add_library(rocketnet_shared_dev SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 add_library(RocketNet::rocketnet ALIAS rocketnet)
 add_library(RocketNet::rocketnet_shared ALIAS rocketnet_shared)
+
+# The send-failure seam drives the send error arms from the functional suite.
+# It is compiled into the development libraries only, never a production
+# archive or a shared library, so no shipped symbol carries it.
+target_compile_definitions(rocketnet_dev PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
+target_compile_definitions(rocketnet_shared_dev PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
 
 # The soname follows SDK layout/calling compatibility, independently of wire version.
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/sdk/rocketnet.h" ROCKETNET_ABI_LINE REGEX "^#define ROCKETNET_ABI_VERSION [0-9]+$")
@@ -523,8 +538,11 @@ if(ROCKETNET_BUILD_TESTS)
         functional/lifecycle_driver.cpp
         functional/cpp_transports.cpp
         functional/live_matrix.cpp
+        functional/posix_lifecycle_stress.cpp
+        functional/posix_socket_errors.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
+    target_compile_definitions(functional PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
     target_compile_features(functional PRIVATE cxx_std_11)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_dependencies(functional test_xdp test_serialize test_transport_control)
