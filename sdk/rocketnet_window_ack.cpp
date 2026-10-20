@@ -370,6 +370,8 @@ void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_regi
 
     ack->srtt = 0.0;
     ack->rttvar = 0.0;
+    ack->rsrtt = 0.0;
+    ack->rdev = 0.0;
     ack->rto = ack->rto_initial;                // tla/RNResendTiming.tla Init: rto = RtoInitial
     ack->has_rtt = 0;
     ack->has_oldest = 0;
@@ -603,6 +605,20 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
 
     // 1. One unambiguous RTT sample per acked packet_id (RFC 6298, CHANNELS 6.4).
     const double rtt = now >= entry->send_time ? ( now - entry->send_time ) : 0.0;
+    // RakNet's estimate and deviation, each 5% toward this sample, the
+    // deviation against the estimate before it moves (CC.cpp:210-222); the
+    // first sample sets them, as at CC.cpp:210. They feed its rto and nothing
+    // else: the resend rto below is the RFC 6298 one of CHANNELS 6.4.
+    if ( !ack->has_rtt )
+    {
+        ack->rsrtt = rtt;
+        ack->rdev = rtt * 0.5;
+    }
+    else
+    {
+        ack->rdev += ( fabs( ack->rsrtt - rtt ) - ack->rdev ) * 0.05;
+        ack->rsrtt += ( rtt - ack->rsrtt ) * 0.05;
+    }
     if ( !ack->has_rtt )
     {
         ack->srtt = rtt;
@@ -699,13 +715,16 @@ void rn_window_ack_receipt_sweep( rn_window_ack_t * ack, double now )
 {
     rocketnet_assert( ack );
     // RNReceipts SweepLoss: sent order makes the first unexpired entry the
-    // stopping point. Reliable references remain in the map for late ACKs.
+    // stopping point. An entry expires at its send time plus the receipt
+    // deadline (rn_window_ack_receipt_loss_delay), RakNet's rto, which is its
+    // own deadline and not the resend delay. Reliable references remain in the
+    // map for late ACKs.
     if ( ack->receipt_sweep < ack->pkt_head )
         ack->receipt_sweep = ack->pkt_head;
     while ( ack->receipt_sweep < ack->pkt_tail )
     {
         rn_sent_packet_t * entry = &ack->region->sent_packets[ack->receipt_sweep % ack->region->packets];
-        if ( entry->packet_id != 0 && now < entry->send_time + ack->rto )
+        if ( entry->packet_id != 0 && now < entry->send_time + rn_window_ack_receipt_loss_delay( ack ) )
             break;
         if ( entry->packet_id != 0 )
             rn_window_ack_receipt_resolve( ack, entry, ROCKETNET_RECEIPT_STATUS_LOSS );

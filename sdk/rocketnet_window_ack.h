@@ -82,6 +82,8 @@ struct rn_window_ack_t
     double srtt;                    // smoothed RTT (RFC 6298)
     double rttvar;                  // RTT variation (RFC 6298)
     double rto;                     // current clamped RTO; there is no back-off (tla/RNResendTiming.tla)
+    double rsrtt;                   // RakNet's estimated RTT: 5% toward each sample
+    double rdev;                    // RakNet's RTT deviation: 5% toward |rtt - rsrtt|
     uint8_t has_rtt;                // 0 before the first valid ack sample, 1 after
     uint8_t has_oldest;             // 1 while oldest_number is tracked at U
     uint16_t pad;
@@ -126,6 +128,31 @@ struct rn_window_ack_t
 static inline double rn_window_ack_resend_delay( const rn_window_ack_t * ack )
 {
     return ack->rto < ack->resend_interval ? ack->rto : ack->resend_interval;
+}
+
+// The + 30 ms and the 2 s of RakNet's rto (docs/RAKNET-RELIABILITY.md 9 "RTO",
+// CC.cpp:288-314): 2 s while the rtt is unknown, and the cap on the formula.
+#define RN_RAKNET_RTO_ADD_S              0.030
+#define RN_RAKNET_RTO_CAP_S              2.0
+
+// The receipt deadline of an UNRELIABLE_WITH_ACK_RECEIPT packet, in seconds
+// after its send: RakNet's rto, 2 s while the rtt is unknown and
+// min( 2 x estimated rtt + 4 x deviation + 30 ms, 2 s ) once a sample has
+// landed (docs/RAKNET-RELIABILITY.md 9 "RTO"), never below the resend rto.
+// The estimate and the deviation move 5% toward each sample and the rto is the
+// same for every send: there is no back-off. The deadline is independent of the
+// resend delay, so an unreliable send is never resent and a late ack, past the
+// resend rto, reports ACKED (tla/RNReceipts.tla LossOnlyAfterReceiptDeadline).
+static inline double rn_window_ack_receipt_loss_delay( const rn_window_ack_t * ack )
+{
+    double deadline = RN_RAKNET_RTO_CAP_S;
+    if ( ack->has_rtt )
+    {
+        deadline = 2.0 * ack->rsrtt + 4.0 * ack->rdev + RN_RAKNET_RTO_ADD_S;
+        if ( deadline > RN_RAKNET_RTO_CAP_S )
+            deadline = RN_RAKNET_RTO_CAP_S;
+    }
+    return deadline > ack->rto ? deadline : ack->rto;
 }
 
 // The resend delay of a chunk of a block: the RTO alone, not the 100 ms cap,

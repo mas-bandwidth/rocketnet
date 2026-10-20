@@ -173,6 +173,15 @@
 
 #define ROCKETNET_MESSAGE_SINGLE_BYTES          ( ROCKETNET_MAX_PAYLOAD_BYTES - 1 )      ///< 1415
 
+/// The receipt deadline of UNRELIABLE_WITH_ACK_RECEIPT is RakNet's rto
+/// (docs/RAKNET-RELIABILITY.md 9 "RTO"), measured from the send: 2000 ms
+/// while the round-trip time is unknown, and otherwise the smaller of
+/// 2 x estimated round-trip time + 4 x its deviation + 30 ms and 2000 ms,
+/// with the estimate and the deviation moving 5% toward every acknowledged
+/// sample and no back-off (rn_window_ack_receipt_loss_delay,
+/// sdk/rocketnet_window_ack.h). It is never below the resend retransmit
+/// timeout. It adapts to the path and is not a fixed deadline.
+
 /// Send budgets are kilobits per second of wire bytes (1 kbps = 1000 bit/s),
 /// per connection: the defaults of the config's send_kbps and
 /// per_client_send_kbps, each connection's starting rate.
@@ -284,7 +293,9 @@ enum rocketnet_reliability_t
     ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED                    = 4,
     /// Send once and report whether the carrying packet is acknowledged. A
     /// larger message is sent as a reliable block and can report ACKED only. A
-    /// single-packet message can report ACKED or LOSS.
+    /// single-packet message can report ACKED or LOSS: LOSS when no
+    /// acknowledgement arrives by its receipt deadline, RakNet's rto as
+    /// described above.
     ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT           = 5,
     /// Resend until acknowledged and report an ACKED receipt. Delivery is
     /// once without channel ordering. A connection failure does not produce a
@@ -301,8 +312,10 @@ enum rocketnet_receipt_status_t
     /// The peer's transport acknowledged the packet. This does not mean the
     /// peer application read the message.
     ROCKETNET_RECEIPT_STATUS_ACKED                              = 1,
-    /// An unreliable receipt packet was not acknowledged. The message is not
-    /// resent; reliable receipt modes do not produce LOSS.
+    /// An unreliable receipt packet was not acknowledged by its receipt
+    /// deadline (RakNet's rto, never below the resend retransmit timeout), the
+    /// sender evicted it from its sent map, or the send budget refused it. The
+    /// message is not resent; reliable receipt modes do not produce LOSS.
     ROCKETNET_RECEIPT_STATUS_LOSS                               = 2
 };
 
