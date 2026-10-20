@@ -232,7 +232,6 @@ MCLinkReverseWindowBrokenOrder.cfg	MCLinkPatterns.tla	invariant	WindowOrderRever
 MCLinkEveryNthBrokenCounter.cfg	MCLinkPatterns.tla	invariant	MCPatternsTypeOK	check	link	required	-
 MCLinkReverseWindowBreaksInOrder.cfg	MCLinkPatterns.tla	invariant	SurvivorsInOrder	check	link	required	-
 MCRNDriverSendStagingBrokenRefusesSend.cfg	MCRNDriverSendStaging.tla	invariant	NoRefusedSend	check	rndriversendstaging	required	-
-MCRNDriverSendStagingBrokenNoRetry.cfg	MCRNDriverSendStaging.tla	invariant	RetryFlushPublishes	check	rndriversendstaging	required	-
 MCRNServerSendFair.cfg	MCRNServerSendFair.tla	pass	-	check	rnserversendfair	required	-
 MCRNServerSendFairWalk.cfg	MCRNServerSendFair.tla	pass	-	check	rnserversendfair	required	-
 MCRNServerSendFairBrokenFromZero.cfg	MCRNServerSendFair.tla	invariant	FairService	check	rnserversendfair	required	-

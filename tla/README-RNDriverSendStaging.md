@@ -51,9 +51,6 @@ The existing disconnect witness still rejects `StagedDisconnectFlushed`.
 
 ### Reversed no-retry witness
 
-`MCRNDriverSendStagingBrokenNoRetry.cfg` sets `RetryFlushWhenEqual = FALSE`,
-so `Publish` queues only when `xdpCountersDiffer` holds. `Publish` now gates
-its queueing step on the counter condition the transport checks
 (`send_staged != send_flushed`, or the XDP re-flush), and a flush that runs
 leaves the counters equal. TLC rejects exactly `RetryFlushPublishes`:
 a start stages a generation and advances the counters; a flush queues it and

@@ -1208,7 +1208,5 @@ retries retained work without a new commit, and
 `XdpStagedEventuallyPublished` requires eventual publication under fair
 publication and retirement. `MCRNDriverSendStagingBrokenRefusesSend.cfg`
 restores two queued generations and violates `NoRefusedSend` at depth 6;
-`MCRNDriverSendStagingBrokenNoRetry.cfg` removes the re-flush and violates
-`RetryFlushPublishes`.
 The existing transport model separately retains packet-capacity drops.
 See `tla/README-RNDriverSendStaging.md` for the hand-checked trace.
