@@ -1035,7 +1035,7 @@ headers sit beside it. There is no C# or managed binding in this tree.
   cheap to confirm with a two-peer harness and a lossy link: arrival-order
   reassembly (section 8.2), the sequenced `+ 1` asymmetry and the heap-drain
   watermark (section 11 items 18 and 19), the receipt on the last-index
-  fragment (section 7.3), and the unthrottled unreliable path (section 9).
+  fragment (section 7.3), and the unreliable path (section 9).
 - `CCRakNetUDT`, the non-default congestion controller, was not read.
 - `RakPeer.cpp` was read for `Send`, `SendList`, the buffered command path,
   `SendImmediate`, `Receive`, `DeallocatePacket`, the dispatch into and drain

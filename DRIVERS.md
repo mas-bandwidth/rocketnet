@@ -108,6 +108,27 @@ tentative bind address cannot constrain the next candidate. A discovering
 factory reports its actual port on success. Existing XDP preflight and the
 commit barrier remain in its adapter/backend.
 
+A factory reports why it failed through `config->status`
+(`rocketnet_server_driver_config_t.status` and
+`rocketnet_client_driver_config_t.status`, sdk/rocketnet_driver.h:52 and :115),
+one form for every driver. `rocketnet_server_driver_open` and
+`rocketnet_client_driver_open` write `ROCKETNET_STATUS_OUT_OF_MEMORY` there
+when the create returned NULL after an allocation on the calling thread was
+refused (sdk/rocketnet_driver.cpp:126, :148 and :182, reading the per-thread
+count kept at sdk/rocketnet.cpp:369); any other NULL leaves it OK and is a
+refusal. The count rises on every `rocketnet_malloc` refusal
+(sdk/rocketnet.cpp:461 and :475) and on the two page buffers a driver
+allocates outside it, the xdp umem (sdk/rocketnet_server_socket_linux.cpp:1720)
+and the rio region (sdk/rocketnet_server_rio_windows.cpp:508), through
+`rocketnet_allocation_refused` (sdk/rocketnet.cpp:378). So every built-in
+driver (portable, msgx, gso, xdp, io_uring, iocp, rio, loopback) reports it
+through the open. The transport ladder falls to the next
+candidate on a refusal, and on OUT_OF_MEMORY it stops:
+`rocketnet_server_transport_create_ex` (sdk/rocketnet_server_transport.cpp:1299)
+and `rocketnet_client_transport_create_ex`
+(sdk/rocketnet_client_transport.cpp:882) destroy what they built and return
+NULL with `ROCKETNET_STATUS_OUT_OF_MEMORY`.
+
 Server stop is an idempotent stop/poll callback: false means work remains; true
 allows the transport to report stopped. It must not wait for outstanding I/O
 inside update. Destroy handles partial setup and a created instance that never
@@ -282,7 +303,12 @@ CAP_NET_ADMIN; `-v` prints the verifier's last log line. One case,
 runs the example server and client across it, so it skips outside a
 virtme-ng guest; the guest boots with the boot tier the xdp pre-flight
 verifies, and with room for the server's UMEM and queues (the default guest
-memory runs out and the server is killed):
+memory runs out and the server is killed). The case starts the server with
+`--max-clients 4`, so its message object is sized for the one client it
+connects rather than the example's default 1000 (test_xdp_filter.cpp:1280,
+server.c:872), and it gives the server and client a pipe it holds open as
+stdin, because the server stops when its stdin reaches end of file
+(server.c:150-165) and a guest run without a terminal starts there:
 
 ```sh
 vng --run ~/vm-kernels/vmlinuz-$(uname -r) --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir <job> -- sudo ./bin/test_xdp_filter -v
