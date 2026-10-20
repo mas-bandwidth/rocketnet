@@ -95,6 +95,9 @@ enum
 
 void * rocketnet_platform_adapters_fetch( void * context, unsigned long bytes, int (*query)( void * buffer, unsigned long * bytes ) )
 {
+    // ROCKETNET_PLATFORM_ADAPTERS_ATTEMPTS bounds this loop: each pass makes one
+    // allocation and one query; a refused allocation and an error answer return
+    // at once, and only an overflow answer goes round again
     for ( int attempt = 0; attempt < ROCKETNET_PLATFORM_ADAPTERS_ATTEMPTS; ++attempt )
     {
         void * buffer = rocketnet_malloc( context, bytes );

@@ -412,8 +412,9 @@ static void driver_create_client_ladder_stops_on_out_of_memory()
 
 // ---- the connection-type buffer loop -----------------------------------------
 
-// rocketnet_platform_adapters_fetch and its answers and bound
-// (sdk/rocketnet_platform.cpp, after rocketnet_platform_sleep_tail_yields)
+// rocketnet_platform_adapters_fetch, with its answers and its bound mirrored
+// from the ROCKETNET_PLATFORM_ADAPTERS_* names beside it (the overflow case
+// below counts the attempts, so a changed bound turns it red)
 enum
 {
     DRIVER_OOM_ADAPTERS_OK,
