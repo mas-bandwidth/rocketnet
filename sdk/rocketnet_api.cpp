@@ -578,7 +578,8 @@ struct rocketnet_client_t * (rocketnet_client_create_sized)( void * context, con
 
 struct rocketnet_client_t * (rocketnet_client_create)( void * context, const struct rocketnet_client_config_t * config, void * memory, size_t memory_bytes, enum rocketnet_status_t * status )
 {
-    return (rocketnet_client_create_sized)( context, config, sizeof( struct rocketnet_client_config_t ), memory, memory_bytes, status );
+    struct rocketnet_client_config_t current;
+    return rn_client_create_current( context, rn_client_config_read( &current, config, ROCKETNET_CLIENT_CONFIG_BYTES_1 ), memory, memory_bytes, status );
 }
 
 static uint64_t rn_client_connection_counter( struct rocketnet_message_client_t * message_client, int counter );
@@ -1322,7 +1323,10 @@ struct rocketnet_server_t * (rocketnet_server_create_sized)( void * context, con
 
 struct rocketnet_server_t * (rocketnet_server_create)( void * context, const char * address, const struct rocketnet_server_config_t * config, void * memory, size_t memory_bytes, enum rocketnet_status_t * status )
 {
-    return (rocketnet_server_create_sized)( context, address, config, sizeof( struct rocketnet_server_config_t ), memory, memory_bytes, status );
+    struct rocketnet_server_config_t current;
+    struct rocketnet_server_t * result = rn_server_create_current( context, address, rn_server_config_read( &current, config, ROCKETNET_SERVER_CONFIG_BYTES_1 ), memory, memory_bytes, status );
+    sodium_memzero( &current, sizeof( current ) );
+    return result;
 }
 
 enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * server )
