@@ -14,7 +14,11 @@
 
 #include "sdk/rocketnet_server_uring.h"
 
-#if defined(__linux__) && defined(ROCKETNET_IO_URING) && ROCKETNET_IO_URING && defined(ROCKETNET_URING_TEST_HOOKS)
+#if defined(__linux__)
+#include "sdk/rocketnet_uring_codec.h"
+#endif
+
+#if defined(__linux__) && defined(IORING_RECV_MULTISHOT) && defined(ROCKETNET_URING_REAP_TEST_HOOKS)
 #define ROCKETNET_URING_REARM_TEST 1
 #else
 #define ROCKETNET_URING_REARM_TEST 0
@@ -70,14 +74,14 @@ static void uring_rearm_retries_a_failed_arm()
 
 // red first: with a fake completion source that always yields a CQE every
 // round is non-silent, so destroy's empty-round count never moves and the wait
-// never ends. With the fix a total round bound ends it; the case's own guard
-// stops the red run instead of hanging it.
+// would never end without the total round bound. With the bound it ends; the
+// case's own guard stops a wait that does not.
 
 static void uring_destroy_wait_is_bounded()
 {
 #if ROCKETNET_URING_REARM_TEST
     const int completions_rounds = rocketnet_server_uring_test_destroy_wait_rounds( true, 1000 );
-    rocketnet_unit_check( completions_rounds == 20 );
+    rocketnet_unit_check( completions_rounds == 64 );
 
     // with no completions the older silent-round bound still ends the wait
     const int silent_rounds = rocketnet_server_uring_test_destroy_wait_rounds( false, 1000 );
