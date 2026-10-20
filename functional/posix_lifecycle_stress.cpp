@@ -636,6 +636,14 @@ void rocketnet_test_posix_server_create_destroy_1000()
         {
             rocketnet_server_transport_t * server = posix_server_create( cell, posix_bind_address( cell ), 4 );
             rocketnet_server_transport_destroy( server );
+
+            // a leak per cycle exhausts a kernel limit long before the last of
+            // 1000 creates, so the counts are also compared after the first
+            if ( i == 0 )
+            {
+                const posix_resource_counts_t first = posix_stable_counts();
+                posix_case_result( "posix_server_create_destroy_1000 after one cycle", cell, &before, &first, posix_now_seconds() - start );
+            }
         }
         const double seconds = posix_now_seconds() - start;
         const posix_resource_counts_t after = posix_stable_counts();
