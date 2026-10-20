@@ -440,7 +440,7 @@ MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumToke
 and both application disconnects unchanged. It keeps `SafetyInvariants`,
 `ChurnNeverDenied` and `ExpiredTokenNeverMapped` and the two action
 properties. It passes: 470,755 generated / 100,278 distinct states, depth 38,
-16.609 s, exit 0, and is a required case.
+44.315 s, exit 0, and is a required case.
 
 The deployed server has up to `ROCKETNET_MAX_CLIENTS` slots and a mapping
 table of `max_clients * 2` entries. The safety invariants are local: each

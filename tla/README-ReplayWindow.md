@@ -266,6 +266,18 @@ covered at deployed size is the 64-bit sequence and ack-range width
 (`uint64` marks, `u16` ack run caps); those are wire-representation
 obligations, not ring-size behaviour.
 
-The mid run does not finish inside the 110-second budget: the bench record is
-a timeout at 110.6 s with no result, so the lap behaviour is argued from the
-formula and the small checked instance, not machine-checked at `W = 21`.
+The mid run exceeds the 110-second runner budget, so it is a bench case, and
+a manual exploration under the same two workers completes: 34,603,033
+generated / 3,145,729 distinct states in 445.380 s, exit 0, with every
+invariant and `Monotone` passing. The record carries `mode = manual` and the
+bench row names the measured time. This checks a full lap at `W = 21` rather
+than extrapolating it from the formula.
+
+What the mid instance does not cover is the deployed ring's width: 64 words of
+64 bits (4096 bits) and a 64-bit sequence space. Going from 21 to 4096 bits
+adds word boundaries (`b div WordBits`) that the 21-bit ring never crosses
+past word 2, so the deployed-size lap remains argued, not checked. The
+invariant statements themselves are pointwise in `W` and `WordBits`, and the
+long-skip branch clears every word, so the argument is that a larger ring
+changes which sequence names share a bit without changing the predicate a
+bit must satisfy.

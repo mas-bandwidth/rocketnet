@@ -226,8 +226,9 @@ packet references can leave room for a fresh retransmission ID. It keeps every
 invariant the committed case lists: ordered exactly-once delivery, whole
 messages, indexed chunk placement, unreliable at-most-once, bounded buffers,
 no slot collision and the sequenced-reset trace. It uses the same alternating
-loss pattern. It is a bench case because it does not finish inside 110 s; the
-record is a timeout at 110.7 s.
+loss pattern, with `SendCapacity = 1` so one reliable message is outstanding
+at a time. It passes: 723,930 generated / 281,764 distinct states in 33.015 s,
+exit 0, and is a required case.
 
 The deployed channel window is `window_messages` per channel, not `W = 4`.
 The checked properties split into two kinds. The ordering, chunk-placement and
@@ -237,6 +238,9 @@ which reliable numbers share a ring position and still checks the same
 predicates. Ring reuse and the send window's admission rule
 (`n < UPrime + W`) are size-dependent: a wider window admits more numbers
 before the oldest is delivered, and the mid instance exercises that wider
-admission but not the deployed `window_messages`. Packet-ID wrap and
-half-range sequence reconstruction remain outside this module, as recorded
-above.
+admission but not the deployed `window_messages`. With `SendCapacity = 1` the
+mid instance does not cover several reliable messages outstanding at once in
+a `W = 4` window; `MCRNChannelSafety.cfg` covers `W = 4` with
+`SendCapacity = 2` under arbitrary loss, so that dimension is checked in a
+separate required case rather than in this one. Packet-ID wrap and half-range
+sequence reconstruction remain outside this module, as recorded above.

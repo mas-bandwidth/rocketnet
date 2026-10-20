@@ -182,7 +182,7 @@ the three witnesses each exit 12 with precisely their declared invariant.
 `MCRNReceiptsMid.cfg` is the same safety invariants with `MaxPid = 2` instead
 of 0 (three transport packet IDs), a one-entry sent map and receipt ring, and
 `ReliableTimeout = 1`. It passes: 3,602,016 generated / 792,811 distinct
-states in 23.677 s, exit 0, and is a required case in CASES.tsv. The larger
+states in 83.357 s, exit 0, and is a required case in CASES.tsv. The larger
 packet-ID space lets an ACK, a loss notification, map eviction and a fresh
 write coexist without reusing the only ID, which the one-ID instance cannot.
 
