@@ -18,6 +18,7 @@
 extern "C" {
 #endif
 
+/** @brief Capacity in bytes of transport address strings, including the terminating NUL. */
 #define ROCKETNET_MAX_ADDRESS_STRING_LENGTH                256
 
 /** @brief Address-family value for no address family. */
@@ -242,13 +243,24 @@ const char * rocketnet_client_transport_state_name( int state );
 // optional state-change callback. NULL config is the development posture:
 // the published test filter, the defaults, no callback.
 
+/** @brief Settings and callbacks for one client transport.
+ * @details Members use the defaults and ranges documented below. A NULL config to create selects the default test filter, table defaults, and no callbacks. At creation, defaults are overlaid by this struct and then by nonempty environment overrides; invalid values are refused. The caller owns this value and may modify it before creation.
+ * @par Threading
+ * Do not mutate the config concurrently with a create call.
+ */
 struct rocketnet_client_transport_config_t
 {
+    /** @brief Per-title 4-byte packet filter; peers with a different value cannot connect. */
     uint8_t filter_value[4];
+    /** @brief Largest sent and reassembled payload in bytes; zero selects the default, otherwise ROCKETNET_MAX_PAYLOAD_BYTES through 305408. */
     int max_payload_bytes;                          // ROCKETNET_MAX_PAYLOAD_BYTES .. 305,408; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
+    /** @brief Concurrent fragmented payloads per connection; zero selects the default, otherwise 1 through 256. */
     int num_reassembly_slots;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
+    /** @brief Ordered transport candidate list; defaults to auto. */
     char driver[ROCKETNET_DRIVER_STRING_LENGTH];    // the candidate list; default "auto"
+    /** @brief Optional state transition callback; NULL disables it. It receives the create context and previous and current states. */
     void (*state_change_callback)( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state );
+    /** @brief Optional monotonic receive timestamp clock in seconds; NULL selects the platform clock. */
     double (*time_callback)( void * context );      // the receive stamp clock, read once at create; NULL is the platform clock
     uint64_t game_clock_epoch;                      // unix seconds at the game clock's zero for the token check; 0 reads the wall clock
     uint64_t step_driven;                           // 1: the caller's update and send_packets run the I/O step, no I/O thread; 0: today's thread
@@ -259,6 +271,10 @@ struct rocketnet_client_transport_config_t
 };
 
 // a NULL config is a counted no-op.
+/** @brief Fill a client transport config with its defaults.
+ * @param[out] config Receives the defaults; NULL is a counted no-op.
+ * @details This function only writes caller-owned storage and does not require library initialization. The caller may edit the result before create. Do not mutate it concurrently with a create call.
+ */
 void rocketnet_client_transport_default_config( struct rocketnet_client_transport_config_t * config );
 
 // Allocation-free constructor memory plan for one built-in driver name.
@@ -269,11 +285,23 @@ void rocketnet_client_transport_default_config( struct rocketnet_client_transpor
 // means invalid geometry, overflow, unknown/custom driver, or driver not built
 // for this platform. Query each candidate separately: "auto" and driver lists
 // are not concrete plans.
+/** @brief Measure SDK allocator bytes for one client transport driver.
+ * @param[in] config Numeric settings to measure, or NULL for defaults. Environment overrides are not applied.
+ * @param[in] driver One concrete built-in driver name; `auto` and comma-separated candidate lists are not plans.
+ * @return The planned SDK allocator bytes, including its alignment and ownership overhead, or 0 for invalid geometry, overflow, an unknown/custom driver, or a driver not built for this platform.
+ * @details This is allocation-free and does not validate keys, inspect the environment, probe a socket, or enforce a host memory budget. It excludes OS stacks, kernel, libc, and application memory. Query each candidate separately before choosing a driver. The result is a plan, not a reservation or grant.
+ */
 uint64_t rocketnet_client_transport_required_memory( const struct rocketnet_client_transport_config_t * config, const char * driver );
 
 // the defaults for a caller whose struct is config_bytes long, a known size of
 // the struct. 1 written; 0 refused, nothing written. a NULL config is a
 // counted no-op that returns 0.
+/** @brief Write defaults into a known client config revision.
+ * @param[out] config Receives the defaults; NULL is a counted no-op and returns 0.
+ * @param[in] config_bytes Size, in bytes, of the caller's config revision.
+ * @return 1 when config_bytes is a known revision and the bytes are written; 0 when it is unknown or config is NULL. An unknown size leaves config untouched.
+ * @details A known prefix receives defaults for that revision only. This function is allocation-free and may be called before initialization. The caller owns config.
+ */
 int rocketnet_client_transport_default_config_sized( struct rocketnet_client_transport_config_t * config, size_t config_bytes );
 
 
@@ -294,6 +322,21 @@ struct rocketnet_client_transport_t * rocketnet_client_transport_create_ex( void
 // defaults and created as above; an unknown size is refused with a log line and
 // returns NULL before any other check. a NULL config is the default shape,
 // whatever config_bytes says.
+/** @brief Create a client transport from a versioned config prefix.
+ * @param[in] context Opaque pointer passed to callbacks; may be NULL.
+ * @param[in] connect_token Server-issued connection token; NULL is a counted misuse and returns NULL.
+ * @param[in] config Config prefix to read over defaults; NULL selects defaults regardless of config_bytes.
+ * @param[in] config_bytes Size in bytes of config; non-NULL configs require a known revision.
+ * @param[in] time Monotonic game-clock time in seconds, using the same clock as later timed calls.
+ * @return The transport on success, or NULL when a size is unknown or transport creation is refused.
+ * @details The library must be initialized first. An unknown config size is refused before other argument checks. A known-size config follows the ordinary create path, including environment overrides and validation. Destroy the returned object with rocketnet_client_transport_destroy; the object owns its internal allocations.
+ * @code
+ * struct rocketnet_client_transport_config_t config;
+ * rocketnet_client_transport_default_config_sized(&config, sizeof(config));
+ * struct rocketnet_client_transport_t * client =
+ *     rocketnet_client_transport_create_sized(context, token, &config, sizeof(config), now);
+ * @endcode
+ */
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_sized( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, size_t config_bytes, double time );
 
 // a NULL client_transport is a counted no-op.
@@ -578,21 +621,40 @@ typedef int (*rocketnet_server_admission_callback_t)( void * context, const stru
 // The handshake deadline is fixed at the challenge, never refreshed, and
 // discharged on connect.
 
+/** @brief Settings used to create a server transport.
+ * @details Members document defaults and ranges. Creation applies defaults, this struct, then nonempty environment overrides; invalid values are refused. The caller owns the config and its buffers.
+ * @par Threading
+ * Do not mutate the config concurrently with a create call.
+ */
 struct rocketnet_server_transport_config_t
 {
+    /** @brief Title protocol identifier carried by connect tokens. */
     uint64_t protocol_id;
+    /** @brief Maximum simultaneous clients; 1 through ROCKETNET_MAX_CLIENTS, default 1000. */
     int max_clients;                                // 1 .. ROCKETNET_MAX_CLIENTS; default 1000
+    /** @brief Per-title 4-byte packet filter; peers with a different value cannot connect. */
     uint8_t filter_value[4];
+    /** @brief 32-byte key used to verify connect-token signatures. */
     uint8_t backend_public_key[32];
+    /** @brief 32-byte public key used to seal server-bound token data. */
     uint8_t server_public_key[32];
+    /** @brief 32-byte server secret key; override logs redact it. */
     uint8_t server_secret_key[32];                  // secret: logged redacted
+    /** @brief Requested XDP/GSO queue count; zero selects the driver default, otherwise 1 through 1024. */
     int num_xdp_queues;                             // 1 .. 1024; 0 is the driver default
+    /** @brief Cores reserved for the operating system by XDP; zero selects the driver default, otherwise 1 through 256. */
     int num_os_cpus;                                // 1 .. 256; 0 is the driver default
+    /** @brief Largest sent and reassembled payload in bytes; zero selects the default, otherwise ROCKETNET_MAX_PAYLOAD_BYTES through 305408. */
     int max_payload_bytes;                          // ROCKETNET_MAX_PAYLOAD_BYTES .. 305,408; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
+    /** @brief Concurrent fragmented payloads per client; zero selects the default, otherwise 1 through 256. */
     int num_reassembly_slots;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
+    /** @brief Ordered transport candidate list; defaults to auto. */
     char driver[ROCKETNET_DRIVER_STRING_LENGTH];    // the candidate list; default "auto"
+    /** @brief NUL-terminated advertised address; an empty string uses the create address. */
     char public_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    /** @brief Maximum client inactivity in seconds; 1 through 3600, default 60. */
     int max_timeout_seconds;                        // 1 .. 3600; default 60
+    /** @brief Fixed handshake deadline in seconds; 1 through 60, default 5. */
     int handshake_deadline_seconds;                 // 1 .. 60; default 5
     uint64_t game_clock_epoch;                      // unix seconds at the game clock's zero for the token check; 0 reads the wall clock
     int simulated_loss_percent;                     // development only: simulated loss 0..100, 0 off
@@ -602,14 +664,28 @@ struct rocketnet_server_transport_config_t
 };
 
 // a NULL config is a counted no-op.
+/** @brief Fill a server transport config with its defaults.
+ * @param[out] config Receives the defaults; NULL is a counted no-op.
+ * @details This writes caller-owned storage and does not require initialization. Edit the result before creating a server; do not mutate it concurrently with creation.
+ */
 void rocketnet_server_transport_default_config( struct rocketnet_server_transport_config_t * config );
 
 // the defaults for a caller whose struct is config_bytes long, a known size of
 // the struct. 1 written; 0 refused, nothing written. a NULL config is a
 // counted no-op that returns 0.
+/** @brief Write defaults into a known server config revision.
+ * @param[out] config Receives the defaults; NULL is a counted no-op and returns 0.
+ * @param[in] config_bytes Size, in bytes, of the caller's config revision.
+ * @return 1 when config_bytes is a known revision and the bytes are written; 0 when it is unknown or config is NULL. An unknown size leaves config untouched.
+ * @details A known prefix receives defaults for that revision only. This is allocation-free and may be called before initialization; the caller owns config.
+ */
 int rocketnet_server_transport_default_config_sized( struct rocketnet_server_transport_config_t * config, size_t config_bytes );
 
 // a NULL config is a counted no-op.
+/** @brief Fill a server config with the development key set.
+ * @param[out] config Receives the defaults and published development keys; NULL is a counted no-op.
+ * @details This helper selects the built-in development posture. It does not create a transport. Use only in builds that enable development support; the caller owns the resulting config and must supply production keys for production servers.
+ */
 void rocketnet_server_transport_dev_config( struct rocketnet_server_transport_config_t * config );
 
 // Allocation-free constructor memory plan for one built-in driver name.
@@ -620,6 +696,12 @@ void rocketnet_server_transport_dev_config( struct rocketnet_server_transport_co
 // overlay, key validation, socket probe or budget refusal. Zero means invalid
 // geometry, overflow, unknown/custom driver, or driver not built for this platform.
 // Query each candidate separately: "auto" and driver lists are not concrete plans.
+/** @brief Measure SDK allocator bytes for one server transport driver.
+ * @param[in] config Numeric server settings to measure, or NULL for defaults. Environment overrides are not applied.
+ * @param[in] driver One concrete built-in driver name; `auto` and candidate lists are not plans.
+ * @return The planned SDK allocator bytes, including XDP UMEM where applicable, or 0 for invalid geometry, overflow, an unknown/custom driver, or a driver not built for this platform.
+ * @details This is allocation-free and does not validate keys, inspect environment overrides, probe sockets, or enforce a host memory budget. It excludes OS stacks, kernel/libbpf/libxdp resources, libc bookkeeping, and application memory. It measures one driver candidate; the result is not a reservation or grant.
+ */
 uint64_t rocketnet_server_transport_required_memory( const struct rocketnet_server_transport_config_t * config, const char * driver );
 
 // Allocation-free whole-host memory estimate for one built-in driver name: the
@@ -637,22 +719,44 @@ uint64_t rocketnet_server_transport_required_memory( const struct rocketnet_serv
 // required_memory: NULL config means defaults; false (and a zeroed estimate)
 // means no plan. A NULL estimate is a counted misuse that returns false.
 
+/** @brief Component breakdown of a requested host-memory estimate.
+ * @details Each byte value is a requested amount, not a kernel grant or a host-memory cap. The exclusions array points to process-lifetime strings.
+ */
 struct rocketnet_host_memory_estimate_t
 {
+    /** @brief SDK allocator bytes excluding XDP UMEM. */
     uint64_t allocator_bytes;
+    /** @brief Requested XDP UMEM bytes. */
     uint64_t umem_bytes;
+    /** @brief Sum of requested socket send-buffer bytes. */
     uint64_t socket_send_buffer_bytes;
+    /** @brief Sum of requested socket receive-buffer bytes. */
     uint64_t socket_receive_buffer_bytes;
+    /** @brief Requested AF_XDP RX and TX descriptor-ring bytes. */
     uint64_t xdp_ring_bytes;
+    /** @brief Total reserved address space for worker thread stacks. */
     uint64_t thread_stack_bytes;
+    /** @brief Platform-default stack bytes attributed to each worker thread. */
     uint64_t thread_stack_bytes_per_thread;
+    /** @brief Sum of all byte components. */
     uint64_t total_bytes;
+    /** @brief Number of sockets included in the estimate. */
     int sockets;
+    /** @brief Number of worker threads included in the estimate. */
     int worker_threads;
+    /** @brief Number of process-lifetime strings in exclusions. */
     int num_exclusions;
+    /** @brief Process-lifetime descriptions of memory excluded from the estimate. */
     const char * exclusions[ROCKETNET_HOST_MEMORY_MAX_EXCLUSIONS];
 };
 
+/** @brief Estimate memory requests made by one server transport driver.
+ * @param[in] config Numeric server settings, or NULL for defaults; environment overrides are not applied.
+ * @param[in] driver One concrete built-in driver name; NULL or an unsupported driver makes the call fail.
+ * @param[out] estimate Receives the estimate; NULL is counted misuse and returns false. On failure the struct remains zeroed.
+ * @return true with a populated estimate, or false when the driver/config has no valid plan, arithmetic overflows, or estimate is NULL.
+ * @details This allocation-free estimate separates SDK allocator bytes, UMEM, requested socket buffers or XDP rings, and worker stack address space. They are requests, not grants. Exclusions point to static strings whose storage remains valid for the process lifetime. This is not a host RAM limit.
+ */
 bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_server_transport_config_t * config, const char * driver, struct rocketnet_host_memory_estimate_t * estimate );
 
 // a NULL public_address_string is a counted no-op that returns NULL; a NULL
@@ -669,6 +773,14 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
 // defaults and created as above; an unknown size is refused with a log line and
 // returns NULL before any other check. a NULL config is the default shape,
 // whatever config_bytes says.
+/** @brief Create a server transport from a versioned config prefix.
+ * @param[in] context Opaque pointer passed to callbacks; may be NULL.
+ * @param[in] public_address_string Public bind/advertise address; NULL is counted misuse and returns NULL.
+ * @param[in] config Config prefix to read over defaults; NULL selects defaults regardless of config_bytes.
+ * @param[in] config_bytes Size in bytes of config; non-NULL configs require a known revision.
+ * @return The transport on success, or NULL when the size is unknown or creation is refused.
+ * @details The library must be initialized first. Unknown sizes are refused before other argument checks. A known-size config follows ordinary server creation, including environment overrides and validation. Stop and destroy the returned object according to the transport lifecycle; it owns its internal allocations.
+ */
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_sized( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config, size_t config_bytes );
 
 // a NULL server_transport is a counted no-op.
@@ -1168,57 +1280,117 @@ struct rocketnet_message_receipt_t
 // connection verifies them. Validation applies the ranges here and the cross
 // rules of docs/CHANNELS.md section 14, and refuses, never clamps.
 
+/** @brief Memory, wire, and timing settings for the message layer.
+ * @details Member comments state defaults and accepted ranges. Fields marked WIRE must agree between peers. The caller owns this value; validation and sizing do not allocate.
+ */
 struct rocketnet_message_config_t
 {
+    /** @brief Message channels; WIRE, 1 through ROCKETNET_MAX_CHANNELS, default 32. */
     int num_channels;                   // WIRE; 1 .. ROCKETNET_MAX_CHANNELS; default 32
+    /** @brief Reliable receive window; WIRE, power of two from 64 through 1<<20, default 1024. */
     int window_messages;                // WIRE, power of two; 64 .. 1 << 20; default 1024
+    /** @brief Receive ring bytes; WIRE, multiple of 16 from 4096 through 1<<20, default 262144. */
     int receive_ring_bytes;             // WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
+    /** @brief Maximum message bytes; WIRE, at most receive_ring_bytes and from ROCKETNET_MESSAGE_SINGLE_BYTES through 1<<20, default 262144. */
     int max_message_bytes;              // WIRE, <= receive_ring_bytes; ROCKETNET_MESSAGE_SINGLE_BYTES .. 1 << 20; default 262144
+    /** @brief Per-connection queued payload bytes; 12288 through 1<<28, default 800000. */
     int send_buffer_bytes;              // 12288 .. 1 << 28; default 800000
+    /** @brief Queued message count; 16 through 1<<20, default 1024. */
     int send_queue_messages;            // 16 .. 1 << 20; default 1024
+    /** @brief Tracked unacknowledged packets; 16 through 1<<16, default 256. */
     int packets_in_flight;              // 16 .. 1 << 16; default 256
+    /** @brief Packets sent per connection per update, in-place unreliable messages and the send pass together; 1 through 1024, default 256. */
     int max_packets_per_update;         // 1 .. 1024; default 256
+    /** @brief Unreliable deliveries per connection per update; 1 through 1<<16, default 256. */
     int unreliable_deliveries;          // per connection per update; 1 .. 1 << 16; default 256
+    /** @brief Messages held for sequenced delivery; 0 through 4096, default 16. */
     int sequenced_holds;                // 0 .. 4096; default 16
+    /** @brief Receipt history entries; 16 through 1<<16, default 256; a full ring drops its oldest. */
     int receipt_ring;                   // 16 .. 1 << 16; default 256
+    /** @brief Initial retransmit timeout in milliseconds; 10 through 60000, default 100. */
     int rto_initial_ms;                 // 10 .. 60000; default 100
+    /** @brief Minimum retransmit timeout in milliseconds; 1 through 60000, default 10. */
     int rto_min_ms;                     // 1 .. 60000; default 10
+    /** @brief Maximum retransmit timeout in milliseconds; 10 through 60000, default 250. */
     int rto_max_ms;                     // 10 .. 60000; default 250
+    /** @brief Reliable-message lifetime in milliseconds; 1000 through 600000, default 10000. */
     int reliable_timeout_ms;            // 1000 .. 600000; default 10000
+    /** @brief Default client send budget in kilobits per second; zero or less is uncapped, positive values may not exceed ROCKETNET_SEND_BUDGET_MAX_KBPS. */
     int client_send_kbps;                // client default budget; 0 or lower uncapped; <= ROCKETNET_SEND_BUDGET_MAX_KBPS
+    /** @brief Default per-client server send budget in kilobits per second; zero or less is uncapped, positive values may not exceed ROCKETNET_SEND_BUDGET_MAX_KBPS. */
     int server_send_kbps;                // server per-client default budget; 0 or lower uncapped; <= ROCKETNET_SEND_BUDGET_MAX_KBPS
 };
 
 // a NULL config is a counted no-op.
+/** @brief Fill a message config with its defaults.
+ * @param[out] config Receives the defaults; NULL is a counted no-op.
+ * @details This writes caller-owned storage and is safe before initialization. Edit the config before validating or creating message objects; do not mutate it concurrently with those calls.
+ */
 void rocketnet_message_default_config( struct rocketnet_message_config_t * config );
 
 // the defaults for a caller whose struct is config_bytes long, a known size of
 // the struct. 1 written; 0 refused, nothing written. a NULL config is a
 // counted no-op that returns 0.
+/** @brief Write defaults into a known message config revision.
+ * @param[out] config Receives the defaults; NULL is a counted no-op and returns 0.
+ * @param[in] config_bytes Size, in bytes, of the caller's config revision.
+ * @return 1 when config_bytes is a known revision and defaults are written; 0 when unknown or config is NULL. An unknown size leaves config untouched.
+ * @details Known prefixes receive defaults for that revision. This operation is allocation-free and safe before initialization; the caller owns config.
+ */
 int rocketnet_message_default_config_sized( struct rocketnet_message_config_t * config, size_t config_bytes );
 
 // 1 when the config is accepted, else 0 with a log line naming the rule.
 // NULL means the defaults. Allocation-free; safe before init.
+/** @brief Check a message config without allocating memory.
+ * @param[in] config Settings to check, or NULL to check the defaults.
+ * @return 1 when every field and cross-field rule is accepted; 0 when a rule is refused, with an error log naming the rule.
+ * @details This function may run before initialization and does not create a connection. It checks field ranges and message-layer relationships such as ring capacity, retransmission timing, and wire constraints. It never clamps values.
+ */
 int rocketnet_message_validate_config( const struct rocketnet_message_config_t * config );
 
 // As rocketnet_message_validate_config, with the section-2.1 code written to
 // *status on every return path when status is not NULL (CONFIG_OUT_OF_RANGE on
 // refusal). A refusal logs one error line.
+/** @brief Validate message settings and return the refusal status.
+ * @param[in] config Settings to check, or NULL to check the defaults.
+ * @param[out] status Optional status output; receives ROCKETNET_STATUS_OK on success or ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE on refusal.
+ * @return 1 when accepted, otherwise 0; a refusal logs one error line naming the rule.
+ * @details Allocation-free and safe before initialization. The caller owns status and config; NULL status is allowed.
+ */
 int rocketnet_message_validate_config_ex( const struct rocketnet_message_config_t * config, int * status );
 
 // The exact bytes of one connection's region (docs/CHANNELS.md 14): the
 // formula plus the 64-byte alignment of each part. 0 for a refused config;
 // NULL means the defaults. Allocation-free; callable before init or connect.
 // A server holds one region per client slot, a client one.
+/** @brief Measure the aligned memory region for one message connection.
+ * @param[in] config Message settings, or NULL for defaults.
+ * @return Exact region bytes including 64-byte alignment padding, or 0 when the config is refused.
+ * @details This formula-only query allocates nothing and is callable before initialization or connection creation. A server needs one region per client slot; a client needs one. The result is not memory allocated by the SDK.
+ */
 uint64_t rocketnet_message_connection_bytes( const struct rocketnet_message_config_t * config );
 
 // The formula, each term at this config, the padding, the region and the
 // total for num_connections regions, as text into buffer. Returns the full
 // length (as snprintf: a short buffer is truncated and terminated, and NULL
 // with 0 measures), or 0 for a refused config. Allocation-free.
+/** @brief Format the message connection memory formula and totals.
+ * @param[in] config Message settings, or NULL for defaults.
+ * @param[in] num_connections Number of regions to total; negative values are treated as zero.
+ * @param[out] buffer Output text, or NULL to measure when buffer_size is zero. A positive capacity receives a NUL-terminated, possibly truncated string.
+ * @param[in] buffer_size Buffer capacity in bytes; negative values are treated as zero.
+ * @return Full formatted character count excluding the terminator, as snprintf does, or 0 when config validation refuses the layout.
+ * @details Allocation-free and callable before initialization. If the buffer is short, inspect the returned length to detect truncation. The caller owns the buffer.
+ */
 int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t * config, int num_connections, char * buffer, int buffer_size );
 
 // The same lines, logged at info level. Returns the region bytes, or 0 refused.
+/** @brief Log the connection memory breakdown at info level.
+ * @param[in] config Message settings, or NULL for defaults.
+ * @param[in] num_connections Number of regions to display; negative values are treated as zero.
+ * @return Bytes in one connection region, or 0 when config validation refuses the layout.
+ * @details This emits one info log line per breakdown line and allocates no region. Call it when info logging is appropriate; use rocketnet_message_connection_sizing for caller-owned text instead.
+ */
 uint64_t rocketnet_message_print_connection_sizing( const struct rocketnet_message_config_t * config, int num_connections );
 
 // The client and server message objects over the transports (docs/CHANNELS.md
@@ -1270,6 +1442,11 @@ uint64_t rocketnet_message_print_connection_sizing( const struct rocketnet_messa
 // ---- client ----
 
 // the bytes a caller block for a client object needs; 0 for a refused config
+/** @brief Measure caller-provided memory for one message client.
+ * @param[in] message_config Message settings, or NULL for defaults.
+ * @return Required bytes for one client object, or 0 for a refused config or arithmetic overflow.
+ * @details This query is allocation-free. The create call requires at least this many bytes in caller-provided memory aligned to 64 bytes; the caller retains ownership of that region.
+ */
 uint64_t rocketnet_message_client_required_memory( const struct rocketnet_message_config_t * message_config );
 
 // a NULL connect_token is a counted no-op that returns NULL. NULL configs are the defaults.
@@ -1293,6 +1470,19 @@ struct rocketnet_message_client_t * rocketnet_message_client_create_ex( void * c
 // known size is read over its defaults and created as above; an unknown size is
 // refused with a log line and returns NULL before any other check. a NULL config
 // is its defaults, whatever its size says.
+/** @brief Create a message client using versioned transport and message configs.
+ * @param[in] context Opaque callback context; may be NULL.
+ * @param[in] connect_token Server-issued connection token; NULL is counted misuse and returns NULL.
+ * @param[in] transport_config Client transport config prefix, or NULL for defaults.
+ * @param[in] transport_config_bytes Size of that prefix in bytes; ignored when its config is NULL, otherwise must be a known revision.
+ * @param[in] message_config Message config prefix, or NULL for defaults.
+ * @param[in] message_config_bytes Size of that prefix in bytes; ignored when its config is NULL, otherwise must be a known revision.
+ * @param[in] memory Caller-owned region, at least the required size and 64-byte aligned; NULL selects SDK allocation.
+ * @param[in] memory_bytes Size of memory in bytes; must cover the required region when memory is supplied.
+ * @param[in] send_kbps Per-client wire budget in kilobits per second: takes message_config client_send_kbps (the built-in default applies only when message_config is NULL; 0 or lower in that field disables the budget; a positive send_kbps argument overrides it for this create; above ROCKETNET_SEND_BUDGET_MAX_KBPS refuses; the environment override applies over both).
+ * @return The client on success, or NULL for unknown config sizes, invalid arguments/configuration, an invalid budget, or insufficient memory.
+ * @details The library must be initialized first. Unknown non-NULL config sizes are refused before create checks. The object owns its transport; destroy the client to release it. A supplied memory region remains caller-owned and must outlive the client.
+ */
 struct rocketnet_message_client_t * rocketnet_message_client_create_sized( void * context, const uint8_t * connect_token,
                                                                                           const struct rocketnet_client_transport_config_t * transport_config, size_t transport_config_bytes,
                                                                                           const struct rocketnet_message_config_t * message_config, size_t message_config_bytes,
@@ -1354,6 +1544,12 @@ const struct rocketnet_counters_t * rocketnet_message_client_counters( struct ro
 // ---- server ----
 
 // the bytes a caller block for a server object needs, at the transport config's max_clients; 0 for a refused config
+/** @brief Measure caller-provided memory for a message server and its client slots.
+ * @param[in] transport_config Server transport settings, or NULL for defaults.
+ * @param[in] message_config Message settings, or NULL for defaults.
+ * @return Required bytes for the server object and configured client slots, or 0 for refused settings or arithmetic overflow.
+ * @details This query is allocation-free. Create requires at least this many bytes in caller-provided memory aligned to 64 bytes; the caller retains ownership of that region.
+ */
 uint64_t rocketnet_message_server_required_memory( const struct rocketnet_server_transport_config_t * transport_config, const struct rocketnet_message_config_t * message_config );
 
 // a NULL address is a counted no-op that returns NULL. NULL configs are the defaults.
@@ -1376,6 +1572,19 @@ struct rocketnet_message_server_t * rocketnet_message_server_create_ex( void * c
 // known size is read over its defaults and created as above; an unknown size is
 // refused with a log line and returns NULL before any other check. a NULL config
 // is its defaults, whatever its size says.
+/** @brief Create a message server using versioned transport and message configs.
+ * @param[in] context Opaque callback context; may be NULL.
+ * @param[in] address Public bind/advertise address; NULL is counted misuse and returns NULL.
+ * @param[in] transport_config Server transport config prefix, or NULL for defaults.
+ * @param[in] transport_config_bytes Size of that prefix in bytes; ignored when its config is NULL, otherwise must be a known revision.
+ * @param[in] message_config Message config prefix, or NULL for defaults.
+ * @param[in] message_config_bytes Size of that prefix in bytes; ignored when its config is NULL, otherwise must be a known revision.
+ * @param[in] memory Caller-owned region, at least the required size and 64-byte aligned; NULL selects SDK allocation.
+ * @param[in] memory_bytes Size of memory in bytes; must cover the required region when memory is supplied.
+ * @param[in] per_client_send_kbps Per-client wire budget in kilobits per second: takes message_config server_send_kbps (the built-in default applies only when message_config is NULL; 0 or lower in that field disables the budget; a positive per_client_send_kbps argument overrides it for this create; above ROCKETNET_SEND_BUDGET_MAX_KBPS refuses; the environment override applies over both).
+ * @return The server on success, or NULL for unknown config sizes, invalid arguments/configuration, an invalid budget, or insufficient memory.
+ * @details The library must be initialized first. Unknown non-NULL config sizes are refused before create checks. Destroy the server to release its owned transport. Supplied memory remains caller-owned and must outlive the server.
+ */
 struct rocketnet_message_server_t * rocketnet_message_server_create_sized( void * context, const char * address,
                                                                                           const struct rocketnet_server_transport_config_t * transport_config, size_t transport_config_bytes,
                                                                                           const struct rocketnet_message_config_t * message_config, size_t message_config_bytes,
