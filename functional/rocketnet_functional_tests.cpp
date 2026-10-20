@@ -7215,6 +7215,7 @@ void rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv6()
 #include "rocketnet_server_socket.h"
 #include <signal.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <sys/vfs.h>
 #include <string>
 #include <vector>
@@ -7399,11 +7400,42 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
             }
             char filter[64];
             snprintf( filter, sizeof(filter), "udp port %d", ROCKETNET_XDP_VETH_PORT );
-            execlp( "ip", "ip", "netns", "exec", ROCKETNET_XDP_VETH_NETNS, "tcpdump", "-i", ROCKETNET_XDP_VETH_FAR, "-n", "-U", "-s", "0", "-w", rocketnet_xdp_veth_pcap, filter, (char*) NULL );
+            // --immediate-mode: each packet reaches the file as it arrives.
+            // Without it, libpcap's TPACKET_V3 ring holds packets in a block
+            // until the block's timeout retires it, and the packets of a block
+            // not yet retired when SIGINT stops tcpdump never reach the file.
+            execlp( "ip", "ip", "netns", "exec", ROCKETNET_XDP_VETH_NETNS, "tcpdump", "--immediate-mode", "-i", ROCKETNET_XDP_VETH_FAR, "-n", "-U", "-s", "0", "-w", rocketnet_xdp_veth_pcap, filter, (char*) NULL );
             _exit( 127 );
         }
         rocketnet_xdp_veth_capture_pid = pid;
-        rocketnet_platform_sleep( 1.0 );        // tcpdump opens its packet socket
+
+        // tcpdump -U -w writes the 24-byte pcap global header once its packet
+        // socket is open and filtered, so the exchange starts only after the
+        // file holds it, and a capture that never opens fails by name.
+        const double capture_wait_start = rocketnet_platform_time();
+        bool capture_ready = false;
+        bool capture_exited = false;
+        while ( rocketnet_platform_time() - capture_wait_start < 10.0 )
+        {
+            struct stat pcap_stat;
+            if ( stat( rocketnet_xdp_veth_pcap, &pcap_stat ) == 0 && pcap_stat.st_size >= 24 )
+            {
+                capture_ready = true;
+                break;
+            }
+            if ( waitpid( pid, NULL, WNOHANG ) == pid )
+            {
+                rocketnet_xdp_veth_capture_pid = -1;
+                capture_exited = true;
+                break;
+            }
+            rocketnet_platform_sleep( 0.01 );
+        }
+        if ( !capture_ready )
+            rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: FAILED: the capture never became ready: tcpdump %s before it wrote the pcap header", case_name, capture_exited ? "exited" : "took more than 10 seconds" );
+        else
+            rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: capture ready after %.3f seconds", case_name, rocketnet_platform_time() - capture_wait_start );
+        rocketnet_check( capture_ready );
     }
     else
     {
