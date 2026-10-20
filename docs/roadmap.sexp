@@ -1860,7 +1860,9 @@ No names of people, machines or customers in code, comments or docs; docs and co
 Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
 \"Not done\" is a welcome report; a green claim you did not run is not.
 
-ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.")))
+ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.")
+    (:feature "Every allocation goes through the caller's allocator" :cells (n n n) :note "Today AF_XDP UMEM uses posix_memalign, io_uring rings and buffer rings use mmap, the RIO registered region uses VirtualAlloc, thread stacks are OS-managed, interface discovery uses getifaddrs, XDP gateway discovery runs external commands, and the C library allocates its stdout buffer on the first log line. Route allocations through the caller's allocator where the OS allows; account for unavoidable OS-managed storage, including kernel-mapped rings and thread stacks, by size. Done when a counting-allocator test over a fixed block accounts for every SDK allocation")
+    (:feature "The memory plan covers connect, reconnect, start and stop" :cells (n n n) :note "The plan must report bytes needed at client and server create, client connect and reconnect, and server start, so a caller can size one fixed block for the whole session. Done when a test runs create, connect, traffic, disconnect, reconnect and stop/start through an allocator over a block sized from the plan alone, and it never runs out")))
   (:id "verification" :title "Verification"
    :text "How RocketNet is checked: unit tests without sockets or real time, functional tests, fuzzing, deterministic simulation, proofs and models. A proof or a model is platform-free: it is checked on Linux, where its job runs, and is — on macOS and Windows."
    :columns platforms

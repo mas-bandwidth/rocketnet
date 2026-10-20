@@ -241,7 +241,9 @@ Many channels and many connections, measured.
 | LAN bench runner: the orchestration (later) | ❌ | ❌ | ❌ |
 | Profile pass 1, measurement: soak across the matrix, the raw numbers committed (later) | ❌ | ❌ | ❌ |
 | Profile pass 1, report: where the time goes, and what to cut first (later) | ❌ | ❌ | ❌ |
-| complete | 20% | 14% | 14% |
+| Every allocation goes through the caller's allocator | ❌ | ❌ | ❌ |
+| The memory plan covers connect, reconnect, start and stop | ❌ | ❌ | ❌ |
+| complete | 18% | 12% | 12% |
 
 [Source data](docs/roadmap.sexp)
 
