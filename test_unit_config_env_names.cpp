@@ -1,0 +1,398 @@
+/*
+    RocketNet. Copyright 2026 Más Bandwidth LLC.
+    Licensed under the GNU Affero General Public License v3.0
+*/
+
+// One documented environment variable per config field, and the log level
+// read before init logs. Each case sets variables through a setenv shim and
+// reads what the env passes do through the log callback; none opens a
+// socket, starts a transport or reads the clock.
+//
+//   - the public env pass (sdk/rocketnet_api.cpp rn_apply_message_and_budget_env)
+//     reads the message table under the endpoint's prefix and the budget under
+//     its own name; the budget is never read a second time under a message
+//     field's name (ROCKETNET_CLIENT_CLIENT_SEND_KBPS)
+//   - a message object's create (sdk/rocketnet_message_server.cpp
+//     rn_message_object_create) reads no environment, so nothing overrides
+//     ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS after it is applied
+//   - rocketnet_init (sdk/rocketnet.cpp) applies ROCKETNET_LOG_LEVEL before
+//     its first log line
+//   - the step_driven row (sdk/rocketnet_config.cpp rocketnet_client_config_fields)
+//     takes 0 or 1 only
+//   - every variable those passes apply is named in sdk/rocketnet.h
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <string>
+#include <vector>
+#include "test_unit_registry.h"
+#include "sdk/rocketnet.h"
+#include "sdk/rocketnet_config.h"
+#include "sdk/rocketnet_allocator.h"
+#include "sdk/rocketnet_message_object.h"
+
+#define check rocketnet_unit_check
+
+#if defined( _WIN32 )
+static void env_names_setenv( const char * name, const char * value ) { _putenv_s( name, value ); }
+static void env_names_unsetenv( const char * name ) { _putenv_s( name, "" ); }
+#else
+static void env_names_setenv( const char * name, const char * value ) { setenv( name, value, 1 ); }
+static void env_names_unsetenv( const char * name ) { unsetenv( name ); }
+#endif
+
+// ---------------------------------------------------------------------------
+// the log capture: every line, and the variable each override line names
+// ---------------------------------------------------------------------------
+
+struct env_names_log_t
+{
+    std::vector<std::string> lines;
+    std::vector<int> levels;
+};
+
+static void env_names_log_capture( void * context, rocketnet_log_level_t level, const char * message, size_t length )
+{
+    env_names_log_t * log = (env_names_log_t *) context;
+    log->lines.push_back( std::string( message, length ) );
+    log->levels.push_back( (int) level );
+}
+
+// rocketnet_config_apply_env logs "<endpoint> config override NAME=value"
+static std::vector<std::string> env_names_overrides( const env_names_log_t & log )
+{
+    std::vector<std::string> names;
+    for ( size_t i = 0; i < log.lines.size(); i++ )
+    {
+        const char * at = strstr( log.lines[i].c_str(), "config override " );
+        if ( !at )
+            continue;
+        at += strlen( "config override " );
+        const char * end = strchr( at, '=' );
+        if ( end )
+            names.push_back( std::string( at, (size_t) ( end - at ) ) );
+    }
+    return names;
+}
+
+static bool env_names_contains( const std::vector<std::string> & names, const char * name )
+{
+    for ( size_t i = 0; i < names.size(); i++ )
+        if ( names[i] == name )
+            return true;
+    return false;
+}
+
+struct env_names_capture_t
+{
+    env_names_log_t log;
+    rocketnet_log_level_t saved_level;
+};
+
+static void env_names_capture_begin( env_names_capture_t * capture )
+{
+    capture->saved_level = rocketnet_get_log_level();
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );            // the override lines are info
+    rocketnet_set_log_callback( env_names_log_capture, &capture->log );
+}
+
+static void env_names_capture_end( env_names_capture_t * capture )
+{
+    rocketnet_set_log_callback( NULL, NULL );
+    rocketnet_set_log_level( capture->saved_level );
+}
+
+// ---------------------------------------------------------------------------
+// a message object on a link that sends nothing
+// ---------------------------------------------------------------------------
+
+static void env_names_link_update( void *, double ) {}
+static int env_names_link_payloads( void *, const int ** client_index, uint8_t * const ** payload_data, const int ** payload_bytes )
+{
+    *client_index = NULL;
+    *payload_data = NULL;
+    *payload_bytes = NULL;
+    return 0;
+}
+static int env_names_link_acked( void *, const int ** client_index, const uint64_t ** packet_ids )
+{
+    *client_index = NULL;
+    *packet_ids = NULL;
+    return 0;
+}
+static int env_names_link_max_payload_bytes( void * ) { return 1200; }
+static uint8_t * env_names_link_start_packet( void *, int, int, struct rocketnet_packet_context_t * ) { return NULL; }
+static int env_names_link_finish_packet( void *, struct rocketnet_packet_context_t *, int ) { return 0; }
+static void env_names_link_abort_packet( void *, struct rocketnet_packet_context_t * ) {}
+static void env_names_link_send_packets( void * ) {}
+static uint64_t env_names_link_connection( void *, int ) { return 0; }
+static void env_names_link_disconnect( void *, int ) {}
+static int env_names_link_state( void * ) { return 0; }
+
+static struct rn_message_object_t * env_names_object_create( int is_server, int32_t kbps )
+{
+    rn_message_link_t link;
+    memset( &link, 0, sizeof( link ) );
+    link.update = env_names_link_update;
+    link.payloads = env_names_link_payloads;
+    link.acked = env_names_link_acked;
+    link.max_payload_bytes = env_names_link_max_payload_bytes;
+    link.start_packet = env_names_link_start_packet;
+    link.finish_packet = env_names_link_finish_packet;
+    link.abort_packet = env_names_link_abort_packet;
+    link.send_packets = env_names_link_send_packets;
+    link.connection = env_names_link_connection;
+    link.disconnect = env_names_link_disconnect;
+    link.state = env_names_link_state;
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    return rn_message_object_create( NULL, &link, is_server, 1, &config, NULL, 0, kbps, 1000.0 );
+}
+
+// ---------------------------------------------------------------------------
+// (1) the budget has one name: ROCKETNET_CLIENT_SEND_KBPS, never a message
+// field's name under the endpoint prefix
+// ---------------------------------------------------------------------------
+
+static void config_env_budget_is_never_a_message_field()
+{
+    env_names_setenv( "ROCKETNET_CLIENT_CLIENT_SEND_KBPS", "123" );
+    env_names_setenv( "ROCKETNET_SERVER_SERVER_SEND_KBPS", "456" );
+
+    env_names_capture_t capture;
+    env_names_capture_begin( &capture );
+    struct rocketnet_client_transport_config_t client_transport;
+    struct rocketnet_server_transport_config_t server_transport;
+    struct rocketnet_message_config_t message;
+    uint32_t client_kbps = 0;
+    uint32_t server_kbps = 0;
+    const bool client_resolved = rocketnet_client_config_resolve( NULL, true, &client_transport, &message, &client_kbps );
+    const bool server_resolved = rocketnet_server_config_resolve( NULL, true, &server_transport, &message, &server_kbps );
+    env_names_capture_end( &capture );
+
+    env_names_unsetenv( "ROCKETNET_CLIENT_CLIENT_SEND_KBPS" );
+    env_names_unsetenv( "ROCKETNET_SERVER_SERVER_SEND_KBPS" );
+
+    check( client_resolved );
+    check( server_resolved );
+    const std::vector<std::string> overrides = env_names_overrides( capture.log );
+    check( !env_names_contains( overrides, "ROCKETNET_CLIENT_CLIENT_SEND_KBPS" ) );
+    check( !env_names_contains( overrides, "ROCKETNET_SERVER_SERVER_SEND_KBPS" ) );
+    check( client_kbps == ROCKETNET_DEFAULT_CLIENT_SEND_KBPS );
+    check( server_kbps == ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS );
+}
+REGISTER_UNIT_TEST( config_env_budget_is_never_a_message_field );
+
+// ---------------------------------------------------------------------------
+// (1) the documented ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS is the budget the
+// message object takes: ROCKETNET_MESSAGE_SERVER_SEND_KBPS changes nothing
+// ---------------------------------------------------------------------------
+
+static void config_env_per_client_send_kbps_is_the_server_budget()
+{
+    env_names_setenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", "500" );
+    env_names_setenv( "ROCKETNET_MESSAGE_SERVER_SEND_KBPS", "700" );
+    env_names_setenv( "ROCKETNET_CLIENT_SEND_KBPS", "300" );
+    env_names_setenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS", "400" );
+
+    struct rocketnet_server_transport_config_t server_transport;
+    struct rocketnet_client_transport_config_t client_transport;
+    struct rocketnet_message_config_t message;
+    uint32_t server_kbps = 0;
+    uint32_t client_kbps = 0;
+    const bool server_resolved = rocketnet_server_config_resolve( NULL, true, &server_transport, &message, &server_kbps );
+    const bool client_resolved = rocketnet_client_config_resolve( NULL, true, &client_transport, &message, &client_kbps );
+    struct rn_message_object_t * server = server_resolved ? env_names_object_create( 1, (int32_t) server_kbps ) : NULL;
+    struct rn_message_object_t * client = client_resolved ? env_names_object_create( 0, (int32_t) client_kbps ) : NULL;
+    const int32_t server_default = server ? server->default_kbps : 0;
+    const int32_t client_default = client ? client->default_kbps : 0;
+    if ( server )
+        rn_message_object_destroy( server );
+    if ( client )
+        rn_message_object_destroy( client );
+
+    env_names_unsetenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" );
+    env_names_unsetenv( "ROCKETNET_MESSAGE_SERVER_SEND_KBPS" );
+    env_names_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" );
+    env_names_unsetenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS" );
+
+    check( server_resolved && server_kbps == 500 );
+    check( client_resolved && client_kbps == 300 );
+    check( server != NULL );
+    check( client != NULL );
+    check( server_default == 500 );
+    check( client_default == 300 );
+}
+REGISTER_UNIT_TEST( config_env_per_client_send_kbps_is_the_server_budget );
+
+// ---------------------------------------------------------------------------
+// (1, 3) ROCKETNET_LOG_LEVEL is applied before init's first line: at error,
+// init emits no info line
+// ---------------------------------------------------------------------------
+
+static void config_env_log_level_applies_before_init_logs()
+{
+    // the worker ran init at error; the default level is info
+    check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    char level[8];
+    snprintf( level, sizeof( level ), "%d", (int) ROCKETNET_LOG_LEVEL_ERROR );
+    env_names_setenv( "ROCKETNET_LOG_LEVEL", level );
+
+    env_names_log_t log;
+    rocketnet_set_log_callback( env_names_log_capture, &log );
+    const rocketnet_status_t status = rocketnet_init( NULL );
+    rocketnet_set_log_callback( NULL, NULL );
+    const rocketnet_log_level_t after = rocketnet_get_log_level();
+
+    env_names_unsetenv( "ROCKETNET_LOG_LEVEL" );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+
+    check( status == ROCKETNET_STATUS_OK );
+    check( after == ROCKETNET_LOG_LEVEL_ERROR );
+    for ( size_t i = 0; i < log.levels.size(); i++ )
+        check( log.levels[i] <= (int) ROCKETNET_LOG_LEVEL_ERROR );
+}
+REGISTER_UNIT_TEST( config_env_log_level_applies_before_init_logs );
+
+// ---------------------------------------------------------------------------
+// (3) ROCKETNET_CLIENT_STEP_DRIVEN is 0 or 1: any other value is out of range
+// ---------------------------------------------------------------------------
+
+static bool env_names_step_driven_valid( const char * value )
+{
+    int num_fields = 0;
+    const struct rocketnet_config_field_t * fields = rocketnet_client_transport_config_fields( &num_fields );
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config_current( &config );
+    env_names_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", value );
+    const bool applied = rocketnet_config_apply_env( "client", &config, fields, num_fields );
+    env_names_unsetenv( "ROCKETNET_CLIENT_STEP_DRIVEN" );
+    check( applied );
+    return rocketnet_config_validate( "client", &config, fields, num_fields );
+}
+
+static void config_env_step_driven_is_zero_or_one()
+{
+    check( env_names_step_driven_valid( "0" ) );
+    check( env_names_step_driven_valid( "1" ) );
+    check( !env_names_step_driven_valid( "2" ) );
+    check( !env_names_step_driven_valid( "18446744073709551615" ) );
+}
+REGISTER_UNIT_TEST( config_env_step_driven_is_zero_or_one );
+
+// ---------------------------------------------------------------------------
+// (4) every variable the public env pass and a message object's create apply
+// is a name sdk/rocketnet.h documents, beside its field ("///< NAME:")
+// ---------------------------------------------------------------------------
+
+static std::vector<std::string> env_names_documented()
+{
+    std::vector<std::string> names;
+    const std::string path = std::string( ROCKETNET_SOURCE_DIR ) + "/sdk/rocketnet.h";
+    FILE * file = fopen( path.c_str(), "rb" );
+    check( file != NULL );
+    std::string text;
+    char buffer[4096];
+    size_t bytes;
+    while ( ( bytes = fread( buffer, 1, sizeof( buffer ), file ) ) > 0 )
+        text.append( buffer, bytes );
+    fclose( file );
+    const std::string marker = "///< ROCKETNET_";
+    for ( size_t at = text.find( marker ); at != std::string::npos; at = text.find( marker, at + 1 ) )
+    {
+        size_t begin = at + strlen( "///< " );
+        size_t end = begin;
+        while ( end < text.size() && ( ( text[end] >= 'A' && text[end] <= 'Z' ) || ( text[end] >= '0' && text[end] <= '9' ) || text[end] == '_' ) )
+            end++;
+        if ( end < text.size() && text[end] == ':' )
+            names.push_back( text.substr( begin, end - begin ) );
+    }
+    return names;
+}
+
+// every message table field and budget field, under each prefix a pass could
+// read it with, set to its default so every create still succeeds
+static std::vector<std::string> env_names_set_candidates()
+{
+    std::vector<std::string> set;
+    rocketnet_message_config_t defaults;
+    rocketnet_message_default_config( &defaults );
+    int num_fields = 0;
+    const struct rocketnet_config_field_t * fields = rocketnet_message_config_fields( &num_fields );
+    const char * prefixes[] = { "client", "server", "message" };
+    for ( int p = 0; p < 3; p++ )
+    {
+        for ( int i = 0; i < num_fields; i++ )
+        {
+            char name[128];
+            check( rocketnet_config_env_var_name_for( prefixes[p], fields[i].name, name, sizeof( name ) ) );
+            int value = 0;
+            memcpy( &value, (const uint8_t *) &defaults + fields[i].offset, sizeof( value ) );
+            char text[32];
+            snprintf( text, sizeof( text ), "%d", value );
+            env_names_setenv( name, text );
+            set.push_back( name );
+        }
+    }
+    char text[32];
+    snprintf( text, sizeof( text ), "%d", ROCKETNET_DEFAULT_CLIENT_SEND_KBPS );
+    env_names_setenv( "ROCKETNET_CLIENT_SEND_KBPS", text );
+    set.push_back( "ROCKETNET_CLIENT_SEND_KBPS" );
+    snprintf( text, sizeof( text ), "%d", ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS );
+    env_names_setenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", text );
+    set.push_back( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" );
+    struct rocketnet_server_config_t server_defaults;
+    rocketnet_server_default_config_sized( &server_defaults, sizeof( server_defaults ) );
+    snprintf( text, sizeof( text ), "%d", server_defaults.max_clients );
+    env_names_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", text );
+    set.push_back( "ROCKETNET_SERVER_MAX_CLIENTS" );
+    return set;
+}
+
+static void config_env_every_name_read_is_documented()
+{
+    const std::vector<std::string> documented = env_names_documented();
+    check( env_names_contains( documented, "ROCKETNET_CLIENT_SEND_KBPS" ) );
+    check( env_names_contains( documented, "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" ) );
+    check( env_names_contains( documented, "ROCKETNET_CLIENT_NUM_CHANNELS" ) );
+
+    const std::vector<std::string> set = env_names_set_candidates();
+
+    env_names_capture_t capture;
+    env_names_capture_begin( &capture );
+    struct rocketnet_client_transport_config_t client_transport;
+    struct rocketnet_server_transport_config_t server_transport;
+    struct rocketnet_message_config_t message;
+    uint32_t client_kbps = 0;
+    uint32_t server_kbps = 0;
+    const bool client_resolved = rocketnet_client_config_resolve( NULL, true, &client_transport, &message, &client_kbps );
+    const bool server_resolved = rocketnet_server_config_resolve( NULL, true, &server_transport, &message, &server_kbps );
+    struct rn_message_object_t * server = env_names_object_create( 1, 0 );
+    struct rn_message_object_t * client = env_names_object_create( 0, 0 );
+    env_names_capture_end( &capture );
+    if ( server )
+        rn_message_object_destroy( server );
+    if ( client )
+        rn_message_object_destroy( client );
+
+    for ( size_t i = 0; i < set.size(); i++ )
+        env_names_unsetenv( set[i].c_str() );
+
+    check( client_resolved );
+    check( server_resolved );
+    check( server != NULL );
+    check( client != NULL );
+
+    const std::vector<std::string> overrides = env_names_overrides( capture.log );
+    check( env_names_contains( overrides, "ROCKETNET_CLIENT_SEND_KBPS" ) );       // the passes ran and logged
+    check( env_names_contains( overrides, "ROCKETNET_SERVER_NUM_CHANNELS" ) );
+    for ( size_t i = 0; i < overrides.size(); i++ )
+    {
+        if ( !env_names_contains( documented, overrides[i].c_str() ) )
+            printf( "read but not documented in sdk/rocketnet.h: %s\n", overrides[i].c_str() );
+        check( env_names_contains( documented, overrides[i].c_str() ) );
+    }
+}
+REGISTER_UNIT_TEST( config_env_every_name_read_is_documented );
