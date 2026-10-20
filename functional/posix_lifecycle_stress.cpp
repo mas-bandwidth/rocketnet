@@ -737,11 +737,16 @@ static bool posix_wait_connected( rocketnet_server_transport_t * server, rocketn
     return false;
 }
 
-static bool posix_wait_server_empty( rocketnet_server_transport_t * server, double seconds )
+static bool posix_wait_server_empty( rocketnet_server_transport_t * server, rocketnet_client_transport_t * client,
+                                     posix_client_clock_t * clock, double seconds )
 {
     const double deadline = rocketnet_platform_time() + seconds;
     while ( rocketnet_platform_time() < deadline )
     {
+        // Disconnect may defer its burst while the I/O thread owns the other
+        // ring. Keep updating the client to retry that hand-off, as specified
+        // by docs/CLIENT-IO.md, without advancing either clock artificially.
+        rocketnet_client_transport_update( client, posix_client_clock_now( clock ) );
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( server );
         if ( rocketnet_server_transport_num_connected_clients( server ) == 0 )
@@ -1037,7 +1042,7 @@ void rocketnet_test_posix_connect_disconnect_1000()
                 printf( "%s [%s]: connect stalled at cycle %d\n", case_name, cell->name, i );
             posix_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
             rocketnet_client_transport_disconnect( client );
-            posix_check( posix_wait_server_empty( server, 5.0 ) );
+            posix_check( posix_wait_server_empty( server, client, &clock, 5.0 ) );
             rocketnet_client_transport_destroy( client );
         }
         const double seconds = posix_now_seconds() - start;

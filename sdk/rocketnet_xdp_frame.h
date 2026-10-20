@@ -242,6 +242,11 @@ static inline bool rocketnet_xdp_frame_parse(
         header_bytes = ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES;
         if ( frame_bytes < (size_t) header_bytes )
             return false;
+
+        const uint16_t udp_len = ( (uint16_t) f[header_bytes - 4] << 8 ) | f[header_bytes - 3];
+        if ( udp_len < ROCKETNET_UDP_HEADER_BYTES )
+            return false;
+
         out_from->type = ROCKETNET_ADDRESS_IPV4;
         out_from->data.ipv4[0] = f[26];
         out_from->data.ipv4[1] = f[27];
@@ -260,6 +265,11 @@ static inline bool rocketnet_xdp_frame_parse(
         header_bytes = ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES;
         if ( frame_bytes < (size_t) header_bytes )
             return false;
+
+        const uint16_t udp_len = ( (uint16_t) f[header_bytes - 4] << 8 ) | f[header_bytes - 3];
+        if ( udp_len < ROCKETNET_UDP_HEADER_BYTES )
+            return false;
+
         out_from->type = ROCKETNET_ADDRESS_IPV6;
         for ( int i = 0; i < 8; ++i )
             out_from->data.ipv6[i] = ( (uint16_t) f[22 + 2 * i] << 8 ) | f[23 + 2 * i];
@@ -272,7 +282,16 @@ static inline bool rocketnet_xdp_frame_parse(
 
     if ( frame_bytes < (size_t) header_bytes )
         return false;
+
+    // bytes past the UDP length (link-layer padding) are not payload; a UDP
+    // length past the frame end is refused, as server_xdp_udp drops it
+
+    const uint16_t udp_len = ( (uint16_t) f[header_bytes - 4] << 8 ) | f[header_bytes - 3];
     payload_bytes = (int) ( frame_bytes - header_bytes );
+    if ( (int) udp_len - ROCKETNET_UDP_HEADER_BYTES > payload_bytes )
+        return false;
+    payload_bytes = (int) udp_len - ROCKETNET_UDP_HEADER_BYTES;
+
     *out_payload = f + header_bytes;
     *out_payload_length = payload_bytes;
     return true;

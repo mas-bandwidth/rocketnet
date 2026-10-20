@@ -255,9 +255,9 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
 // Repinned because every eliciting packet now gets a standalone ACK on the next update;
 // simulator latency adds two connected steps (24 without it, 26 with it).
 static const struct loopback_trace_t loopback_base_trace_simulator_off =
-    { 67, 66, 5954, 4320, 67, 66, 4389, 5889, UINT64_C( 0xa8da9261b1f204a7 ), UINT64_C( 0x5004c4f6d4f35505 ), 24 };
+    { 67, 66, 5954, 4320, 67, 66, 4389, 5889, UINT64_C( 0xecdbac07c373df87 ), UINT64_C( 0x78d5ee0b5b9c67a5 ), 24 };
 static const struct loopback_trace_t loopback_base_trace_simulator_on =
-    { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0x5cddcfdb9c7304e7 ), UINT64_C( 0x5004c4f6d4f35505 ), 26 };
+    { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0x7d41913a03e767c7 ), UINT64_C( 0x78d5ee0b5b9c67a5 ), 26 };
 
 static void loopback_patterns_off_same_trace()
 {
@@ -431,11 +431,11 @@ static void loopback_reliable_ordered_survives_loss_and_reorder()
     message_config.send_buffer_bytes = 65536;
     message_config.send_queue_messages = 1024;
     message_config.packets_in_flight = 64;
-    message_config.max_packets_per_update = 8;
+    message_config.packets_per_update = 8;
     message_config.unreliable_deliveries = 64;
-    message_config.rto_initial_ms = 100;
-    message_config.rto_min_ms = 20;
-    message_config.rto_max_ms = 400;
+    message_config.resend_delay_initial_ms = 100;
+    message_config.resend_delay_min_ms = 20;
+    message_config.resend_delay_max_ms = 400;
     message_config.reliable_timeout_ms = 120000;
 
     struct rn_message_link_t server_link;

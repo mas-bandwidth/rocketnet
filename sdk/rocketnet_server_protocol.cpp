@@ -549,9 +549,41 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
+    // the token-to-address claim and the map capacity are the remaining cheap
+    // rungs, both above the signature. the first address to present a valid
+    // request owns the token until the handshake deadline or until its
+    // response binds the token; a request from a second address is refused
+    // here, so one token buys one half-open mapping and no asymmetric work
+    // (STANDARD.md, Processing Connection Requests; tla/ReceiveOrder.tla,
+    // Claim and Capacity).
+
+    if ( !rocketnet_used_token_history_claim_check( server->used_token_history, token_identifier, from, current_time ) )
+    {
+        rocketnet_debug( "server ignored connection request. connect token claimed by a different address" );
+        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
+    if ( rocketnet_encryption_map_full( server->encryption_map ) )
+    {
+        rocketnet_debug( "server ignored connection request. could not add encryption mapping" );
+        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING]++;
+        counters[ROCKETNET_COUNTER_MAPPING_TABLE_FULL]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
+    if ( !rocketnet_used_token_history_claim_record( server->used_token_history, token_identifier, from,
+                                                     current_time + server->handshake_deadline_seconds, current_time ) )
+    {
+        rocketnet_debug( "server ignored connection request. could not claim connect token" );
+        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
     if ( !rocketnet_verify_signed_connect_data( signed_connect_data, signature, server->backend_public_key ) )
     {
         rocketnet_signature_verify_budget_record_failure( &server->signature_verify_budget, from, current_timestamp );
+        rocketnet_used_token_history_claim_release( server->used_token_history, token_identifier, from );
         rocketnet_debug( "server ignored connection request. signature did not verify" );
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;
@@ -611,10 +643,12 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    // no used-token history record here: a request proves nothing about who
-    // holds the token's keys, so the binding waits for a response that opens
-    // under the handshake key (STANDARD.md, Processing Connection Response
-    // Packets; tla/RNSecurityTables.tla, BoundOnlyToOpener)
+    // no used-token binding record here: the request already holds a claim
+    // for its address until the handshake deadline, but a request proves
+    // nothing about who holds the token's keys, so the binding that outlives
+    // the deadline waits for a response that opens under the handshake key
+    // (STANDARD.md, Processing Connection Response Packets;
+    // tla/RNSecurityTables.tla, BoundOnlyToOpener)
 
     {
         // the server's contribution to the key schedule: a fresh session
@@ -684,6 +718,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         if ( index == -1 )
         {
             sodium_memzero( &keys, sizeof(keys) );
+            rocketnet_used_token_history_claim_release( server->used_token_history, token_identifier, from );
             rocketnet_debug( "server ignored connection request. could not add encryption mapping" );
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING]++;
             counters[ROCKETNET_COUNTER_MAPPING_TABLE_FULL]++;
@@ -760,9 +795,10 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
 
     // the binding: this address has proven it holds the token's keys, which a
     // request never proves, so a replayed request from another address binds
-    // nothing. a no-op when the token is already bound; an expired token is
-    // not recorded, as the request path never recorded one
-    // (tla/RNSecurityTables.tla, BoundOnlyToOpener)
+    // nothing. it replaces the request claim with an entry that lives until
+    // the token expires; a no-op when the token is already bound, and an
+    // expired token is not recorded (tla/RNSecurityTables.tla,
+    // BoundOnlyToOpener)
 
     if ( mapping->token_expire_timestamp > current_timestamp )
     {

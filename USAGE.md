@@ -19,7 +19,7 @@ Call `rocketnet_init` once before creating a client or a server, and check its
 result. Every call that can fail returns `enum rocketnet_status_t`, and
 `ROCKETNET_STATUS_OK` (0) is success; `rocketnet_status_name` names a code. A
 second init returns `ROCKETNET_STATUS_ALREADY_INITIALIZED` without disturbing
-the live library. A create before init returns NULL and allocates nothing. Call
+the live library. A create before init returns NULL, allocates nothing, and writes `ROCKETNET_STATUS_NOT_INITIALIZED` through its status out-parameter. Call
 `rocketnet_term` after every client and server is destroyed; termination with
 live allocations is refused with `ROCKETNET_STATUS_LIVE_ALLOCATIONS` and
 logged, and a repeated termination returns `ROCKETNET_STATUS_NOT_INITIALIZED`. Startup,
@@ -83,9 +83,7 @@ with a log line.
 
 A value that does not parse, or is out of range, **refuses the create with one
 error line; nothing is ever clamped**. A secret key logs redacted, on both the
-old and the new value. The `_sized` create and default calls accept a struct
-size so a program built against an older header keeps working; an unknown size
-is refused before anything is read or written.
+old and the new value. The `_sized` create, default and validate calls each take the struct size (`config_bytes`) so a program built against an older header keeps working; the unsized calls use the revision-1 size. An unknown size is refused before anything is read or written. Each of the four creates takes a final status out-parameter (NULL is accepted): it holds `ROCKETNET_STATUS_OK` with a non-NULL result, or the refusal's code with NULL (`sdk/rocketnet.h:1081`, `sdk/rocketnet.h:1086`, `sdk/rocketnet.h:1272`, `sdk/rocketnet.h:1277`; `sdk/rocketnet_api.cpp:561`, `sdk/rocketnet_api.cpp:1302`).
 
 ```c
 #include "rocketnet.h"
@@ -152,13 +150,13 @@ row per field of both public structs.
 | send_buffer_bytes | ROCKETNET_CLIENT_SEND_BUFFER_BYTES | int | `800000` | refuses the create unless `12288..268435456` |
 | send_queue_messages | ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES | int | `1024` | refuses the create unless `16..1048576` |
 | packets_in_flight | ROCKETNET_CLIENT_PACKETS_IN_FLIGHT | int | `256` | refuses the create unless `16..65536` |
-| max_packets_per_update | ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE | int | `256` | refuses the create unless `1..1024` |
+| packets_per_update | ROCKETNET_CLIENT_PACKETS_PER_UPDATE | int | `256` | refuses the create unless `1..1024` |
 | unreliable_deliveries | ROCKETNET_CLIENT_UNRELIABLE_DELIVERIES | int | `256` | refuses the create unless `1..65536` |
 | sequenced_holds | ROCKETNET_CLIENT_SEQUENCED_HOLDS | int | `16` | refuses the create unless `0..4096` |
 | receipt_ring | ROCKETNET_CLIENT_RECEIPT_RING | int | `256` | refuses the create unless `16..65536` |
-| rto_initial_ms | ROCKETNET_CLIENT_RTO_INITIAL_MS | int | `100` | refuses the create unless `10..60000` |
-| rto_min_ms | ROCKETNET_CLIENT_RTO_MIN_MS | int | `10` | refuses the create unless `1..60000` |
-| rto_max_ms | ROCKETNET_CLIENT_RTO_MAX_MS | int | `250` | refuses the create unless `10..60000` |
+| resend_delay_initial_ms | ROCKETNET_CLIENT_RESEND_DELAY_INITIAL_MS | int | `100` | refuses the create unless `10..60000` |
+| resend_delay_min_ms | ROCKETNET_CLIENT_RESEND_DELAY_MIN_MS | int | `10` | refuses the create unless `1..60000` |
+| resend_delay_max_ms | ROCKETNET_CLIENT_RESEND_DELAY_MAX_MS | int | `250` | refuses the create unless `10..60000` |
 | reliable_timeout_ms | ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS | int | `10000` | refuses the create unless `1000..600000` |
 | simulated_loss_percent | ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT | int | `0` | refuses the create unless `0..100`; development only, and a production library refuses any nonzero value |
 | simulated_latency_ms | ROCKETNET_CLIENT_SIMULATED_LATENCY_MS | int | `0` | refuses the create unless `0..60000`; development only, and a production library refuses any nonzero value |
@@ -186,13 +184,13 @@ row per field of both public structs.
 | send_buffer_bytes | ROCKETNET_SERVER_SEND_BUFFER_BYTES | int | `800000` (per client) | refuses the create unless `12288..268435456` |
 | send_queue_messages | ROCKETNET_SERVER_SEND_QUEUE_MESSAGES | int | `1024` (per client) | refuses the create unless `16..1048576` |
 | packets_in_flight | ROCKETNET_SERVER_PACKETS_IN_FLIGHT | int | `256` (per client) | refuses the create unless `16..65536` |
-| max_packets_per_update | ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE | int | `256` (per client) | refuses the create unless `1..1024` |
+| packets_per_update | ROCKETNET_SERVER_PACKETS_PER_UPDATE | int | `256` (per client) | refuses the create unless `1..1024` |
 | unreliable_deliveries | ROCKETNET_SERVER_UNRELIABLE_DELIVERIES | int | `256` (per client per update) | refuses the create unless `1..65536` |
 | sequenced_holds | ROCKETNET_SERVER_SEQUENCED_HOLDS | int | `16` | refuses the create unless `0..4096` |
 | receipt_ring | ROCKETNET_SERVER_RECEIPT_RING | int | `256` | refuses the create unless `16..65536` |
-| rto_initial_ms | ROCKETNET_SERVER_RTO_INITIAL_MS | int | `100` | refuses the create unless `10..60000` |
-| rto_min_ms | ROCKETNET_SERVER_RTO_MIN_MS | int | `10` | refuses the create unless `1..60000` |
-| rto_max_ms | ROCKETNET_SERVER_RTO_MAX_MS | int | `250` | refuses the create unless `10..60000` |
+| resend_delay_initial_ms | ROCKETNET_SERVER_RESEND_DELAY_INITIAL_MS | int | `100` | refuses the create unless `10..60000` |
+| resend_delay_min_ms | ROCKETNET_SERVER_RESEND_DELAY_MIN_MS | int | `10` | refuses the create unless `1..60000` |
+| resend_delay_max_ms | ROCKETNET_SERVER_RESEND_DELAY_MAX_MS | int | `250` | refuses the create unless `10..60000` |
 | reliable_timeout_ms | ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS | int | `10000` | refuses the create unless `1000..600000` |
 | simulated_loss_percent | ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT | int | `0` | refuses the create unless `0..100`; development only, and a production library refuses any nonzero value |
 | simulated_latency_ms | ROCKETNET_SERVER_SIMULATED_LATENCY_MS | int | `0` | refuses the create unless `0..60000`; development only, and a production library refuses any nonzero value |
@@ -283,9 +281,14 @@ and `delta: 1595776` on this SDK revision.
 ```c
 #include "rocketnet.h"
 
+#include <stdio.h>
+
 struct rocketnet_client_t * start_client( const uint8_t * token, const struct rocketnet_client_config_t * config )
 {
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, config, NULL, 0 );
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, config, NULL, 0, &status );
+    if ( !client )
+        printf( "create refused: %s\n", rocketnet_status_name( status ) );
     if ( client && rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
@@ -296,7 +299,10 @@ struct rocketnet_client_t * start_client( const uint8_t * token, const struct ro
 
 struct rocketnet_server_t * start_server( const struct rocketnet_server_config_t * config )
 {
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "0.0.0.0:40000", config, NULL, 0 );
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "0.0.0.0:40000", config, NULL, 0, &status );
+    if ( !server )
+        printf( "create refused: %s\n", rocketnet_status_name( status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );

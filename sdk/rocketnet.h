@@ -837,15 +837,15 @@ struct rocketnet_client_config_t
     int send_buffer_bytes;                          ///< ROCKETNET_CLIENT_SEND_BUFFER_BYTES: queued message bytes; 12288 .. 1 << 28; default 800000
     int send_queue_messages;                        ///< ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES: queued messages; 16 .. 1 << 20; default 1024
     int packets_in_flight;                          ///< ROCKETNET_CLIENT_PACKETS_IN_FLIGHT: unacknowledged packets tracked; 16 .. 1 << 16; default 256
-    int max_packets_per_update;                     ///< ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE: packets sent per update, in-place unreliable finish messages and send_packets together; 1 .. 1024; default 256; the send budget is the throttle
+    int packets_per_update;                     ///< ROCKETNET_CLIENT_PACKETS_PER_UPDATE: packets sent per update, in-place unreliable finish messages and send_packets together; 1 .. 1024; default 256; the send budget is the throttle
     int unreliable_deliveries;                      ///< ROCKETNET_CLIENT_UNRELIABLE_DELIVERIES: unreliable messages delivered per update; per update; 1 .. 1 << 16; default 256
     int sequenced_holds;                            ///< ROCKETNET_CLIENT_SEQUENCED_HOLDS: sequenced messages held for order; 0 .. 4096; default 16
     /// @brief Maximum queued client send receipts, 16 through 65536 (default 256).
     /// A full ring drops its oldest receipt; ROCKETNET_CLIENT_RECEIPT_RING can override it.
     int receipt_ring;                               ///< ROCKETNET_CLIENT_RECEIPT_RING: send receipts kept until read; a full ring drops its oldest; 16 .. 1 << 16; default 256
-    int rto_initial_ms;                             ///< ROCKETNET_CLIENT_RTO_INITIAL_MS: the retransmit timeout before an rtt sample, milliseconds; 10 .. 60000; default 2000
-    int rto_min_ms;                                 ///< ROCKETNET_CLIENT_RTO_MIN_MS: optional sampled RTO floor in milliseconds; 0 disables it; 0 .. 60000; default 0
-    int rto_max_ms;                                 ///< ROCKETNET_CLIENT_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 2000
+    int resend_delay_initial_ms;                             ///< ROCKETNET_CLIENT_RESEND_DELAY_INITIAL_MS: the initial resend delay before an rtt sample, milliseconds; 10 .. 60000; default 2000
+    int resend_delay_min_ms;                                 ///< ROCKETNET_CLIENT_RESEND_DELAY_MIN_MS: optional sampled resend delay floor in milliseconds; 0 disables it; 0 .. 60000; default 0
+    int resend_delay_max_ms;                                 ///< ROCKETNET_CLIENT_RESEND_DELAY_MAX_MS: the maximum resend delay, milliseconds; 10 .. 60000; default 2000
     int reliable_timeout_ms;                        ///< ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
     /// Simulated link conditions: development only. A release library refuses nonzero simulated_* fields with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE.
     int simulated_loss_percent;                     ///< ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT: development only: outgoing loss 0..100; 0 is off (sdk/rocketnet_internal.h:435)
@@ -895,15 +895,15 @@ struct rocketnet_server_config_t
     int send_buffer_bytes;                          ///< ROCKETNET_SERVER_SEND_BUFFER_BYTES: queued message bytes; per client; 12288 .. 1 << 28; default 800000
     int send_queue_messages;                        ///< ROCKETNET_SERVER_SEND_QUEUE_MESSAGES: queued messages; per client; 16 .. 1 << 20; default 1024
     int packets_in_flight;                          ///< ROCKETNET_SERVER_PACKETS_IN_FLIGHT: unacknowledged packets tracked; per client; 16 .. 1 << 16; default 256
-    int max_packets_per_update;                     ///< ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE: packets sent per update, in-place unreliable finish messages and send_packets together; per client; 1 .. 1024; default 256; the send budget is the throttle
+    int packets_per_update;                     ///< ROCKETNET_SERVER_PACKETS_PER_UPDATE: packets sent per update, in-place unreliable finish messages and send_packets together; per client; 1 .. 1024; default 256; the send budget is the throttle
     int unreliable_deliveries;                      ///< ROCKETNET_SERVER_UNRELIABLE_DELIVERIES: unreliable messages delivered per update; per client per update; 1 .. 1 << 16; default 256
     int sequenced_holds;                            ///< ROCKETNET_SERVER_SEQUENCED_HOLDS: sequenced messages held for order; 0 .. 4096; default 16
     /// @brief Maximum queued receipts per server client, 16 through 65536 (default 256).
     /// A full ring drops its oldest receipt; ROCKETNET_SERVER_RECEIPT_RING can override it.
     int receipt_ring;                               ///< ROCKETNET_SERVER_RECEIPT_RING: send receipts kept until read; a full ring drops its oldest; 16 .. 1 << 16; default 256
-    int rto_initial_ms;                             ///< ROCKETNET_SERVER_RTO_INITIAL_MS: the retransmit timeout before an rtt sample, milliseconds; 10 .. 60000; default 2000
-    int rto_min_ms;                                 ///< ROCKETNET_SERVER_RTO_MIN_MS: optional sampled RTO floor in milliseconds; 0 disables it; 0 .. 60000; default 0
-    int rto_max_ms;                                 ///< ROCKETNET_SERVER_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 2000
+    int resend_delay_initial_ms;                             ///< ROCKETNET_SERVER_RESEND_DELAY_INITIAL_MS: the initial resend delay before an rtt sample, milliseconds; 10 .. 60000; default 2000
+    int resend_delay_min_ms;                                 ///< ROCKETNET_SERVER_RESEND_DELAY_MIN_MS: optional sampled resend delay floor in milliseconds; 0 disables it; 0 .. 60000; default 0
+    int resend_delay_max_ms;                                 ///< ROCKETNET_SERVER_RESEND_DELAY_MAX_MS: the maximum resend delay, milliseconds; 10 .. 60000; default 2000
     int reliable_timeout_ms;                        ///< ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
     /// Simulated link conditions: development only. A release library refuses nonzero simulated_* fields with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE.
     int simulated_loss_percent;                     ///< ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT: development only: outgoing loss 0..100; 0 is off (sdk/rocketnet_internal.h:510)
@@ -1111,15 +1111,17 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_write_dev_connect_token( cons
 /// form at sizeof(*config) (rocketnet_client_create in sdk/rocketnet_api.cpp).
 /// NULL config is the defaults. context is an opaque caller pointer handed to the
 /// allocator's callbacks and to the config's state_change_callback and
-/// time_callback; keep it valid until destroy. Returns NULL on a config
-/// validate_config refuses, on a refused memory block, and before
-/// rocketnet_init (logged, and counted in rocketnet_api_misuse_count).
-ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * context, const struct rocketnet_client_config_t * config, void * memory, size_t memory_bytes );
+/// time_callback; keep it valid until destroy. The final nullable status
+/// out-parameter holds ROCKETNET_STATUS_OK with a non-NULL result, or the
+/// refusal's code with NULL: NOT_INITIALIZED before init, INVALID_ARGUMENT for
+/// an unknown size or refused memory block, the specific config refusal, or
+/// OUT_OF_MEMORY for a failed allocation.
+ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * context, const struct rocketnet_client_config_t * config, void * memory, size_t memory_bytes, enum rocketnet_status_t * status );
 
 /// Create with a config config_bytes long; an unknown size is refused with a
-/// log line and returns NULL before any other check. context and its lifetime
-/// are as rocketnet_client_create states.
-ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create_sized( void * context, const struct rocketnet_client_config_t * config, size_t config_bytes, void * memory, size_t memory_bytes );
+/// log line and returns NULL before any other check. context, status and their
+/// lifetimes are as rocketnet_client_create states.
+ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create_sized( void * context, const struct rocketnet_client_config_t * config, size_t config_bytes, void * memory, size_t memory_bytes, enum rocketnet_status_t * status );
 
 /// Starts a connection with connect_token, ROCKETNET_CONNECT_TOKEN_BYTES long.
 /// Only from DISCONNECTED: any other state returns
@@ -1308,16 +1310,18 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory_sized( const struct roc
 /// once started). The server is created stopped and binds nothing. NULL config
 /// is the defaults, which start refuses until keys are given. context is an
 /// opaque caller pointer handed to the allocator's callbacks and to the message
-/// and transport create; keep it valid until destroy. Returns NULL on a config validate_config
-/// refuses, on a refused memory block, and before rocketnet_init (logged, and
-/// counted in rocketnet_api_misuse_count). A NULL address is a counted no-op
-/// that returns NULL.
-ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * context, const char * address, const struct rocketnet_server_config_t * config, void * memory, size_t memory_bytes );
+/// and transport create; keep it valid until destroy. The final nullable
+/// status out-parameter holds ROCKETNET_STATUS_OK with a non-NULL result, or
+/// the refusal's code with NULL: NOT_INITIALIZED before init, INVALID_ARGUMENT
+/// for a NULL address, unknown size or refused memory block, INVALID_ADDRESS
+/// for an over-long address, the specific config refusal, or OUT_OF_MEMORY for
+/// a failed allocation.
+ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * context, const char * address, const struct rocketnet_server_config_t * config, void * memory, size_t memory_bytes, enum rocketnet_status_t * status );
 
 /// Create with a config config_bytes long; an unknown size is refused with a
-/// log line and returns NULL before any other check. context and its lifetime
-/// are as rocketnet_server_create states.
-ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create_sized( void * context, const char * address, const struct rocketnet_server_config_t * config, size_t config_bytes, void * memory, size_t memory_bytes );
+/// log line and returns NULL before any other check. context, status and their
+/// lifetimes are as rocketnet_server_create states.
+ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create_sized( void * context, const char * address, const struct rocketnet_server_config_t * config, size_t config_bytes, void * memory, size_t memory_bytes, enum rocketnet_status_t * status );
 
 /// Binds the transport at the address and accepts clients, up to the
 /// config's max_clients. Only from stopped: a running server returns

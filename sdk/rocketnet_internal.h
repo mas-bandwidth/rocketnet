@@ -552,13 +552,13 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
     INT_FIELD( send_buffer_bytes,      800000,  12288, 1 << 28,                0 )                                         \
     INT_FIELD( send_queue_messages,      1024,     16, 1 << 20,                0 )                                         \
     INT_FIELD( packets_in_flight,         256,     16, 1 << 16,                0 )                                         \
-    INT_FIELD( max_packets_per_update,    256,      1, 1024,                   0 )                                         \
+    INT_FIELD( packets_per_update,    256,      1, 1024,                   0 )                                         \
     INT_FIELD( unreliable_deliveries,     256,      1, 1 << 16,                0 )   /* per connection per update */       \
     INT_FIELD( sequenced_holds,            16,      0, 4096,                   0 )                                         \
     INT_FIELD( receipt_ring,              256,     16, 1 << 16,                0 )                                         \
-    INT_FIELD( rto_initial_ms,           2000,     10, 60000,                  0 )                                         \
-    INT_FIELD( rto_min_ms,                  0,      0, 60000,                  0 )                                         \
-    INT_FIELD( rto_max_ms,               2000,     10, 60000,                  0 )                                         \
+    INT_FIELD( resend_delay_initial_ms,           2000,     10, 60000,                  0 )                                         \
+    INT_FIELD( resend_delay_min_ms,                  0,      0, 60000,                  0 )                                         \
+    INT_FIELD( resend_delay_max_ms,               2000,     10, 60000,                  0 )                                         \
     INT_FIELD( reliable_timeout_ms,     10000,   1000, 600000,                 0 )                                         \
     INT_FIELD( client_send_kbps,         ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, INT32_MIN, ROCKETNET_SEND_BUDGET_MAX_KBPS, 0 ) \
     INT_FIELD( server_send_kbps,         ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, INT32_MIN, ROCKETNET_SEND_BUDGET_MAX_KBPS, 0 )

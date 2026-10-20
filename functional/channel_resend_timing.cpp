@@ -14,8 +14,8 @@
     messages that never arrived (timeouts).
 
     Two schedules run on the same seed: "rule" is the shipped default
-    (the adaptive RTO, no back-off) and "fixed" is a resend every
-    100 ms, set on the client's estimator (rto_min = rto_max = rto = 100 ms).
+    (the adaptive resend delay, no back-off) and "fixed" is a resend every
+    100 ms, set on the client's estimator (resend_delay_min = resend_delay_max = resend_delay = 100 ms).
     The case prints the whole table beside the Monte Carlo model's p99 for
     the rule (one message's timeline, ack after RTT plus up to a tick), and
     the resend gaps each row measured.
@@ -26,15 +26,15 @@
     - zero timeouts;
     - every resend gap, from the client's resend gap record (struct
       rn_resend_gaps_t, measured where rn_window_ack_commit sets last_send),
-      is at least the adaptive RTO in force at the
+      is at least the adaptive resend delay in force at the
       resend, and at most the delay in force at the update before plus one
-      tick; the RTO follows max(rto_min, min(2*SRTT + 4*dev + 30 ms, rto_max));
+      tick; the resend delay follows max(resend_delay_min, min(2*SRTT + 4*dev + 30 ms, resend_delay_max));
     - ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS gaps of the largest size fit
       inside reliable_timeout (RNResendTiming AttemptsBeforeTimeout);
     - every message's latency is within its own ceiling: the one-way latency
       and its jitter, the harness floor of two ticks (a send waits for its
       update, a delivery is seen at the receiver's next one) and, for each
-      send of it before the one that arrived, the preceding update's formula-derived RTO plus a tick.
+      send of it before the one that arrived, the preceding update's formula-derived resend delay plus a tick.
 
     The p50, p99 and p99.9 columns are printed, not asserted. A p99 of 400
     samples is the fifth-slowest message, which moves by a whole resend when
@@ -45,13 +45,13 @@
 
     The model's p99 is not asserted directly: the harness updates both ends
     at 60 Hz, so each measured RTT sample is the path's RTT plus up to two
-    ticks and the ack's own update, and on a 20 ms path the RTO follows that
+    ticks and the ack's own update, and on a 20 ms path the resend delay follows that
     longer measured RTT. The table shows the difference row by row.
 
     Why the delay at the update before and not at the earlier send: the walk
     resends a number at the first update where now >= last_send + delay, with
     the delay in force at that update. An RTT sample between the two sends
-    moves the RTO; when it lowers it, the gap is longer than the new delay by
+    moves the resend delay; when it lowers it, the gap is longer than the new delay by
     up to the drop, and when it raises it, longer than the earlier send's
     delay. At the update before the resend the number was not due, so the
     gap is less than that update's delay plus the time to the next update.
@@ -94,7 +94,7 @@ struct resend_timing_row_t
     uint32_t gaps;                  // resends measured by the client's resend gap record
     double gap_min_ms;
     double gap_max_ms;
-    double rto_bound_ms;            // largest formula-derived RTO during the run
+    double resend_delay_bound_ms;            // largest formula-derived resend delay during the run
     double early_min_ms;            // min of gap - delay at the resend
     double late_max_ms;             // max of gap - delay at the update before
     double reliable_timeout_ms;
@@ -115,11 +115,11 @@ static double resend_timing_percentile( const double * sorted, int count, double
 }
 
 // Independent oracle: keep the assertion separate from the production helper.
-static double resend_timing_rto_bound( const rn_window_ack_t * ack )
+static double resend_timing_resend_delay_bound( const rn_window_ack_t * ack )
 {
     if ( !ack->has_rtt )
-        return ack->rto_initial;
-    return std::max( ack->rto_min, std::min( 2.0 * ack->srtt + 4.0 * ack->rttvar + 0.030, ack->rto_max ) );
+        return ack->resend_delay_initial;
+    return std::max( ack->resend_delay_min, std::min( 2.0 * ack->srtt + 4.0 * ack->rttvar + 0.030, ack->resend_delay_max ) );
 }
 
 static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_ms, int loss_percent, resend_timing_row_t * row )
@@ -133,10 +133,10 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
     rn_window_ack_t * ack = &ordered->ack;
     if ( fixed_100ms )
     {
-        ack->rto_min = 0.1;
-        ack->rto_max = 0.1;
-        ack->rto_initial = 0.1;
-        ack->rto = 0.1;
+        ack->resend_delay_min = 0.1;
+        ack->resend_delay_max = 0.1;
+        ack->resend_delay_initial = 0.1;
+        ack->resend_delay = 0.1;
     }
 
     const double latency = (double) rtt_ms / 2000.0;
@@ -173,7 +173,7 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
     memset( state, 0x5A, sizeof(state) );
 
     const double tick_ms = tick * 1000.0;
-    double rto_bound_ms = resend_timing_rto_bound( ack ) * 1000.0;
+    double resend_delay_bound_ms = resend_timing_resend_delay_bound( ack ) * 1000.0;
     double ceiling_slack_ms = -1.0e30;
     int max_sends = 0;
 
@@ -195,11 +195,11 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
         }
         rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, state, (int) sizeof(state) );
 
-        const double previous_rto_ms = resend_timing_rto_bound( ack ) * 1000.0;
+        const double previous_resend_delay_ms = resend_timing_resend_delay_bound( ack ) * 1000.0;
         up = rocketnet_channel_harness_pump( &h, tick );
-        const double current_rto_ms = resend_timing_rto_bound( ack ) * 1000.0;
-        resend_timing_check( fabs( ack->rto * 1000.0 - current_rto_ms ) <= 1e-6 );
-        rto_bound_ms = std::max( rto_bound_ms, current_rto_ms );
+        const double current_resend_delay_ms = resend_timing_resend_delay_bound( ack ) * 1000.0;
+        resend_timing_check( fabs( ack->resend_delay * 1000.0 - current_resend_delay_ms ) <= 1e-6 );
+        resend_delay_bound_ms = std::max( resend_delay_bound_ms, current_resend_delay_ms );
 
         // each send of each undelivered message: a send sets its number's
         // last_send to the update's time, at most once an update
@@ -218,10 +218,10 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
             if ( n > 0 )
             {
                 const double gap_ms = ( h.now - sends_at[i][n - 1] ) * 1000.0;
-                resend_timing_check( gap_ms >= current_rto_ms - 1e-6 );
-                resend_timing_check( gap_ms <= previous_rto_ms + tick_ms + 1e-6 );
+                resend_timing_check( gap_ms >= current_resend_delay_ms - 1e-6 );
+                resend_timing_check( gap_ms <= previous_resend_delay_ms + tick_ms + 1e-6 );
             }
-            resend_ceiling_ms[i][n] = n == 0 ? 0.0 : resend_ceiling_ms[i][n - 1] + previous_rto_ms + tick_ms;
+            resend_ceiling_ms[i][n] = n == 0 ? 0.0 : resend_ceiling_ms[i][n - 1] + previous_resend_delay_ms + tick_ms;
             sends_at[i][sends[i]++] = h.now;
         }
 
@@ -273,7 +273,7 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
     row->gaps = gaps->count[0];
     row->gap_min_ms = gaps->gap_min[0] * 1000.0;
     row->gap_max_ms = gaps->gap_max[0] * 1000.0;
-    row->rto_bound_ms = rto_bound_ms;
+    row->resend_delay_bound_ms = resend_delay_bound_ms;
     row->early_min_ms = gaps->early_min[0] * 1000.0;
     row->late_max_ms = gaps->late_max[0] * 1000.0;
     row->reliable_timeout_ms = ack->reliable_timeout * 1000.0;
@@ -325,7 +325,7 @@ void resend_timing_table_over_lossy_links()
                 resend_timing_check( row->gaps > 0 );
                 resend_timing_check( row->early_min_ms >= -eps_ms );
                 resend_timing_check( row->late_max_ms <= tick_ms + eps_ms );
-                resend_timing_check( row->gap_max_ms <= row->rto_bound_ms + tick_ms + eps_ms );
+                resend_timing_check( row->gap_max_ms <= row->resend_delay_bound_ms + tick_ms + eps_ms );
                 // the attempts rule: MIN_RESEND_ATTEMPTS of the largest gap fit inside reliable_timeout
                 resend_timing_check( (double) ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS * row->gap_max_ms <= row->reliable_timeout_ms );
                 // the rule, per message: within its own ceiling
@@ -342,7 +342,7 @@ void resend_timing_table_over_lossy_links()
     sends one 32-byte unreliable message per update so acks ride packets
     going the other way. Each run prints the client's wire bytes per block
     payload byte, the block's completion time and the copies sent per record.
-    A fifth run ("rto+small") also sends one 64-byte reliable message per
+    A fifth run ("resend_delay+small") also sends one 64-byte reliable message per
     60 Hz update from 0.35 s, once the block's first sends are written, until
     the block is delivered, so the small records are resent beside chunks
     that wait for their acks; it prints those messages' p99 delivery latency.
@@ -350,12 +350,12 @@ void resend_timing_table_over_lossy_links()
     packet wait for numbering until they are written: that is first-write
     order, section 8, not the resend walk, and this case does not measure it.)
 
-    Two schedules run on the same seed: "rto" is the shipped rule (a chunk
-    waits the RTO; a small record uses the same RTO) and
+    Two schedules run on the same seed: "resend_delay" is the shipped rule (a chunk
+    waits the resend delay; a small record uses the same resend delay) and
     "cap100" puts the chunks back on the 100 ms cap, set on the client's
-    estimator (rto_max = rto_initial = rto = 100 ms, which leaves the small
+    estimator (resend_delay_max = resend_delay_initial = resend_delay = 100 ms, which leaves the small
     records' delay at 100 ms on this path). The case asserts: the
-    block arrives whole in every run; under "rto" the client's wire bytes are
+    block arrives whole in every run; under "resend_delay" the client's wire bytes are
     at most 1.4 times the block's payload, and below the cap's; and the small
     messages beside the block are all delivered and never held behind its
     chunks: after every update's packets are written, the oldest unacked
@@ -414,7 +414,7 @@ static void block_cost_run( const char * schedule, int cap100, int burst, int wi
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     if ( burst )
-        config.max_packets_per_update = 32;
+        config.packets_per_update = 32;
     rocketnet_channel_harness_t h;
     resend_timing_check( rocketnet_channel_harness_create_with_config( &h, &config ) );
     resend_timing_check( rocketnet_channel_harness_connect( &h, 60 * 10 ) );
@@ -424,9 +424,9 @@ static void block_cost_run( const char * schedule, int cap100, int burst, int wi
     if ( cap100 )
     {
         rn_window_ack_t * ack = &h.message_client->object.connections[0].ordered.ack;
-        ack->rto_max = 0.1;
-        ack->rto_initial = 0.1;
-        ack->rto = 0.1;
+        ack->resend_delay_max = 0.1;
+        ack->resend_delay_initial = 0.1;
+        ack->resend_delay = 0.1;
     }
 
     const double latency = 0.100;
@@ -526,11 +526,11 @@ static void block_cost_run( const char * schedule, int cap100, int burst, int wi
 void block_resend_cost_over_long_path()
 {
     block_cost_row_t rows[5];
-    block_cost_run( "rto", 0, 1, 0, &rows[0] );
+    block_cost_run( "resend_delay", 0, 1, 0, &rows[0] );
     block_cost_run( "cap100", 1, 1, 0, &rows[1] );
-    block_cost_run( "rto", 0, 0, 0, &rows[2] );
+    block_cost_run( "resend_delay", 0, 0, 0, &rows[2] );
     block_cost_run( "cap100", 1, 0, 0, &rows[3] );
-    block_cost_run( "rto+small", 0, 1, 1, &rows[4] );
+    block_cost_run( "resend_delay+small", 0, 1, 1, &rows[4] );
 
     printf( "block_resend_cost_over_long_path: one %d-byte reliable-ordered block, rtt 200 ms, 10%% loss, 60 Hz\n", BLOCK_COST_BYTES );
     printf( "schedule  sender delivered completion_s wire_per_payload_byte copies_per_record small_sent small_p99_ms small_held\n" );

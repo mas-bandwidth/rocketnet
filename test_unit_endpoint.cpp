@@ -117,10 +117,10 @@ static void ep_config( rocketnet_message_config_t * config )
     config->receive_ring_bytes = 65536;
     config->max_message_bytes = 65536;
     config->send_buffer_bytes = 262144;
-    config->max_packets_per_update = 4;
-    config->rto_min_ms = 20;
-    config->rto_initial_ms = 100;
-    config->rto_max_ms = 250;
+    config->packets_per_update = 4;
+    config->resend_delay_min_ms = 20;
+    config->resend_delay_initial_ms = 100;
+    config->resend_delay_max_ms = 250;
     config->reliable_timeout_ms = 600000;
 }
 
