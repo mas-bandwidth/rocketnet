@@ -60,9 +60,11 @@
 (*                 unacknowledged bit is set                               *)
 (*   "staleheld"   the reconcile leaves a slot's held bit set after its    *)
 (*                 sequence falls below the retained window                *)
-(* StaleRule selects the stale test: "code" is the shipped unsigned        *)
-(* difference bounded by StaleAhead (ROCKETNET_MAX_FRAGMENTS), "serial" the *)
-(* standard's half-space comparison, "plain" a plain less-than.           *)
+(* StaleRule selects the stale test. "code" is the shipped pair: an id    *)
+(* farther than a quarter of IdSpace from the newest completed id in both   *)
+(* directions, or an id at most StaleAhead behind the occupant. "retired"   *)
+(* is the old forward difference. "serial" is the half-space comparison,    *)
+(* "plain" a plain less-than.                                                *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
@@ -76,7 +78,7 @@ CONSTANTS
     Slots,          \* num_reassembly_slots
     IdSpace,        \* payload ids live in 1..IdSpace-1, arithmetic mod IdSpace
     FirstId,        \* the first payload id the sender issues
-    StaleAhead,     \* ROCKETNET_MAX_FRAGMENTS in the "code" stale test
+    StaleAhead,     \* behind window in this id space; bound of the retired arm
     StaleRule,      \* "code" | "serial" | "plain"
     MaxGen,         \* fragmented payloads (and fragmented burns) the sender may issue
     MaxCount,       \* the largest fragment count any packet may name
@@ -101,7 +103,7 @@ ASSUME /\ MaxSeq \in Nat \ {0} /\ SentRing \in Nat \ {0} /\ AggRing \in Nat \ {0
        /\ BatchCap \in Nat \ {0} /\ Window \in Nat \ {0} /\ MaxRanges \in Nat
        /\ Slots \in Nat \ {0} /\ IdSpace \in Nat \ {2} /\ IdSpace >= 4
        /\ FirstId \in 1..IdSpace-1 /\ StaleAhead \in Nat \ {0}
-       /\ StaleRule \in {"code", "serial", "plain"}
+       /\ StaleRule \in {"code", "retired", "serial", "plain"}
        /\ MaxGen \in Nat \ {0} /\ MaxCount \in Nat \ {0, 1}
        /\ Counts \subseteq 2..MaxCount /\ Counts # {}
        /\ Stride \in Nat \ {0} /\ FinalBytes \in 1..Stride
@@ -171,6 +173,7 @@ VARIABLES
     numDelivered,   \* completions delivered this update
     batchFull,      \* a completion was dropped because numDelivered = DeliveredCap
     lastDelivery,   \* the last delivered slot, as it was at completion
+    newestCompleted,\* stale-rule reference: newest completed payload id, 0 at start
     \* ghosts
     burned,         \* sequences spent and never sent
     fragsOf,        \* packet id -> the sequences carrying it
@@ -189,7 +192,7 @@ R2D == INSTANCE Link WITH wire <- r2dWire, sent <- r2dSent, pulse <- r2dPulse,
                           Packets <- AckPackets, Pattern <- R2DPattern
 
 senderVars   == <<nextSeq, nextGen, sent, highestSent, aggs, numAggs, batch, outbox>>
-receiverVars == <<highestOpened, opened, drained, slots, numDelivered, batchFull, lastDelivery>>
+receiverVars == <<highestOpened, opened, drained, slots, numDelivered, batchFull, lastDelivery, newestCompleted>>
 ghostVars    == <<burned, fragsOf, surfacedCount, deliveredCount, openedEver, namedEver, badStale>>
 d2rVars      == <<d2rWire, d2rSent, d2rPulse>>
 r2dVars      == <<r2dWire, r2dSent, r2dPulse>>
@@ -226,6 +229,7 @@ Init ==
     /\ slots = [k \in 0..Slots-1 |-> EmptySlot]
     /\ numDelivered = 0 /\ batchFull = FALSE
     /\ lastDelivery = EmptySlot
+    /\ newestCompleted = 0
     /\ burned = {}
     /\ fragsOf = [p \in Pids |-> {}]
     /\ surfacedCount = [p \in Pids |-> 0]
@@ -502,10 +506,33 @@ SendAck ==
 (* Every refusal is decided before anything mutates; the two whole-payload *)
 (* refusals clear the slot.                                                *)
 (***************************************************************************)
+\* Shipped bounds, counted in this id space. Reach is a quarter of the
+\* id space (ROCKETNET_REASSEMBLY_REACH is 2^30 of 2^32). Behind is the
+\* occupant window (ROCKETNET_REASSEMBLY_BEHIND), which this instance
+\* already names StaleAhead.
+Reach == IdSpace \div 4
+Behind == StaleAhead
+
+\* Farther than Reach from the reference in both directions.
+Far(id, reference) ==
+    /\ ((id - reference) % IdSpace) > Reach
+    /\ ((reference - id) % IdSpace) > Reach
+
+\* 1..Behind behind the occupant, unsigned.
+BehindOccupant(new, old) == ((old - new) % IdSpace) <= Behind
+
+\* A completion moves the reference when its id is strictly ahead inside
+\* half the id space (the unsigned test against 2^31).
+AdvanceCompleted(id) ==
+    LET d == (id - newestCompleted) % IdSpace
+    IN IF d # 0 /\ d < (IdSpace \div 2) THEN id ELSE newestCompleted
+
 Stale(new, old) ==
-    CASE StaleRule = "code"   -> ((new - old) % IdSpace) > StaleAhead
+    CASE StaleRule = "code" ->
+            Far(new, newestCompleted) \/ BehindOccupant(new, old)
+      [] StaleRule = "retired" -> ((new - old) % IdSpace) > StaleAhead
       [] StaleRule = "serial" -> ((old - new) % IdSpace) < IdSpace \div 2
-      [] StaleRule = "plain"  -> new < old
+      [] StaleRule = "plain" -> new < old
 
 ClearSlot(S) == EmptySlot
 
@@ -548,6 +575,8 @@ Outcome(S, p) ==
         finalContribution == IF final THEN p.bytes ELSE IF same /\ S.finalBytes >= 0 THEN S.finalBytes ELSE 1
         none   == [slot |-> S, delivered |-> EmptySlot, dropped |-> FALSE, stale |-> FALSE]
     IN IF p.id = 0 THEN none                                                        \* FRAGMENT_ZERO_PAYLOAD_ID
+       ELSE IF StaleRule = "code" /\ Far(p.id, newestCompleted)
+            THEN [none EXCEPT !.stale = TRUE]                                          \* reach, empty slot or not
        ELSE IF S.id # 0 /\ ~same /\ Stale(p.id, S.id) THEN [none EXCEPT !.stale = TRUE] \* FRAGMENT_STALE
        ELSE IF p.cnt = 1 THEN none                                                  \* FRAGMENT_COUNT_INVALID
        ELSE IF p.idx >= p.cnt THEN none                                             \* FRAGMENT_INDEX_OUT_OF_RANGE
@@ -578,6 +607,8 @@ RecvFragment(p) ==
                             THEN [deliveredCount EXCEPT ![o.delivered.gen] = Sat2(@)]
                             ELSE deliveredCount
        /\ badStale' = (badStale \/ (o.stale /\ p.gen # 0 /\ slots[k].gen # 0 /\ p.gen > slots[k].gen))
+       /\ newestCompleted' = IF o.delivered # EmptySlot \/ o.dropped
+                             THEN AdvanceCompleted(p.id) ELSE newestCompleted
 
 \* A data packet arrives: the reading order's replay check, then the type's
 \* processing.  A refused packet was still drained.
@@ -588,12 +619,12 @@ RecvData ==
         /\ D2R!Deliver(p)
         /\ drained' = drained + 1
         /\ IF ~Fresh(p.seq)
-           THEN UNCHANGED <<highestOpened, opened, slots, numDelivered, batchFull, lastDelivery, deliveredCount, badStale, openedEver>>
+           THEN UNCHANGED <<highestOpened, opened, slots, numDelivered, batchFull, lastDelivery, newestCompleted, deliveredCount, badStale, openedEver>>
            ELSE /\ highestOpened' = AdvanceHighest(p.seq)
                 /\ opened' = AdvanceOpened(p.seq)
                 /\ openedEver' = openedEver \cup {p.seq}
                 /\ IF p.type = "payload"
-                   THEN UNCHANGED <<slots, numDelivered, batchFull, lastDelivery, deliveredCount, badStale>>
+                   THEN UNCHANGED <<slots, numDelivered, batchFull, lastDelivery, newestCompleted, deliveredCount, badStale>>
                    ELSE RecvFragment(p)
     /\ UNCHANGED <<senderVars, burned, fragsOf, surfacedCount, namedEver, r2dVars, bitVars>>
 
@@ -606,7 +637,7 @@ Tick ==
     /\ numDelivered' = 0
     /\ D2R!Age /\ R2D!Age
     /\ UNCHANGED <<nextSeq, nextGen, sent, highestSent, aggs, numAggs, outbox>>
-    /\ UNCHANGED <<highestOpened, opened, slots, batchFull, lastDelivery, ghostVars, bitVars>>
+    /\ UNCHANGED <<highestOpened, opened, slots, batchFull, lastDelivery, newestCompleted, ghostVars, bitVars>>
 
 D2REnvironment == D2R!Environment /\ UNCHANGED <<senderVars, receiverVars, ghostVars, r2dVars, bitVars>>
 R2DEnvironment == R2D!Environment /\ UNCHANGED <<senderVars, receiverVars, ghostVars, d2rVars, bitVars>>
@@ -685,6 +716,7 @@ TypeOK ==
     /\ slots \in [0..Slots-1 -> Slot]
     /\ numDelivered \in 0..DeliveredCap
     /\ batchFull \in BOOLEAN
+    /\ newestCompleted \in 0..IdSpace-1
     /\ lastDelivery \in Slot
     /\ burned \subseteq Seqs
     /\ fragsOf \in [Pids -> SUBSET Seqs]
