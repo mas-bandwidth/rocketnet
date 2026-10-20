@@ -383,6 +383,53 @@ static void server_send_cap_two_three_clients()
     fair_run_case( 3, 2 );
 }
 
+// More than one payload frame is due at each peer. Tiny messages can share a
+// frame, so the service assertion here observes packets rather than delivery
+// of a whole message that itself needs several turns to finish.
+static void server_send_cap_two_multi_packet_service()
+{
+    fair_world_t world;
+    fair_world_create( &world, 3, 2 );
+    for ( int c = 0; c < 3; c++ )
+        fair_connect( &world, c, 0x9200 + c );
+    int last_service[3] = { -1, -1, -1 };
+    for ( int tick = 0; tick < 24; tick++ )
+    {
+        fair_update_clients( &world );
+        for ( int c = 0; c < 3; c++ )
+        {
+            const uint8_t * data;
+            int bytes;
+            while ( rocketnet_client_receive_message( world.clients[c], FAIR_CHANNEL_RELIABLE, &data, &bytes ) )
+                rocketnet_client_release_message( world.clients[c], data );
+        }
+        fair_send_clients( &world );
+        fair_server_update( &world );
+        uint64_t before[3];
+        for ( int c = 0; c < 3; c++ )
+        {
+            before[c] = rocketnet_server_client_counter( world.server, world.server_index[c], ROCKETNET_SERVER_CLIENT_COUNTER_PACKETS_SENT );
+            uint8_t * out = rocketnet_server_start_message( world.server, world.server_index[c], FAIR_CHANNEL_RELIABLE,
+                                                           ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 3000 );
+            check( out != NULL );
+            memset( out, tick, 3000 );
+            check( rocketnet_server_finish_message( world.server, world.server_index[c], 3000 ) != 0 );
+        }
+        rocketnet_server_send_packets( world.server );
+        for ( int c = 0; c < 3; c++ )
+        {
+            if ( rocketnet_server_client_counter( world.server, world.server_index[c], ROCKETNET_SERVER_CLIENT_COUNTER_PACKETS_SENT ) > before[c] )
+                last_service[c] = tick;
+            if ( tick >= 1 )
+                check( tick - last_service[c] < 2 );
+        }
+        world.time += FAIR_DT;
+    }
+    fair_world_destroy( &world );
+}
+
+REGISTER_UNIT_TEST( server_send_cap_two_multi_packet_service );
+
 static void server_send_capacity_spare_slots_keep_in_place()
 {
     fair_world_t world;
