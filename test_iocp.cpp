@@ -737,6 +737,75 @@ static void test_iocp_send_queue_full_recovers()
     iocp_finish(driver, peer);
 }
 
+// A watchdog over one case: the process exits 1 naming the case when the
+// case runs past its bound, so a destroy that never returns is a failure,
+// never a hang.
+struct case_watchdog_t
+{
+    std::atomic<bool> done{false};
+    std::thread thread;
+    case_watchdog_t( const char * name, double seconds )
+    {
+        thread = std::thread( [this, name, seconds]() {
+            const double deadline = rocketnet_platform_time() + seconds;
+            while ( !done.load() )
+            {
+                if ( rocketnet_platform_time() > deadline )
+                {
+                    fprintf( stderr, "IOCP check failed: %s ran past its %.0f s watchdog (%s:%d)\n", name, seconds, __FILE__, __LINE__ );
+                    fflush( stderr );
+                    _Exit( 1 );
+                }
+                rocketnet_platform_sleep( 0.01 );
+            }
+        } );
+    }
+    ~case_watchdog_t() { done.store( true ); thread.join(); }
+};
+
+// Destroy with I/O in flight: rocketnet_server_iocp_stop cancels with
+// CancelIoEx( socket, NULL ), which cancels every thread's outstanding I/O on
+// the handle, then wakes each worker; destroy joins the workers and only then
+// closes the socket. 100 idle servers are created and destroyed, then 100
+// more whose receives were re-posted by their own worker threads (a datagram
+// to each worker's receives first), so the cancelled I/O was issued by a
+// thread other than the destroying one. Every destroy returns inside the
+// 10 s watchdog.
+static void test_iocp_destroy_never_hangs()
+{
+    case_watchdog_t watchdog( "iocp_destroy_never_hangs", 10.0 );
+    double slowest = 0.0;
+    for ( int i = 0; i < 100; ++i )
+    {
+        rocketnet_address_t bind = address("127.0.0.1:0");
+        rocketnet_server_iocp_t * driver = rocketnet_server_iocp_create(NULL, &bind, 4);
+        CHECK(driver);
+        const double start = rocketnet_platform_time();
+        rocketnet_server_iocp_destroy(driver);
+        const double elapsed = rocketnet_platform_time() - start;
+        if ( elapsed > slowest ) slowest = elapsed;
+    }
+    rocketnet_address_t peer_address;
+    rocketnet_platform_socket_t * peer = fault_peer(&peer_address);
+    for ( int i = 0; i < 100; ++i )
+    {
+        rocketnet_address_t bind = address("127.0.0.1:0");
+        rocketnet_server_iocp_t * driver = rocketnet_server_iocp_create(NULL, &bind, 4);
+        CHECK(driver);
+        fault_peer_send(peer, &bind, 0xEE, 4 * ROCKETNET_IOCP_RECEIVES_PER_WORKER);
+        const double deadline = rocketnet_platform_time() + 5.0;
+        while ( iocp_counter(driver, ROCKETNET_IOCP_RECEIVE_COMPLETED) == 0 && rocketnet_platform_time() < deadline )
+            rocketnet_platform_sleep(0.001);
+        CHECK(iocp_counter(driver, ROCKETNET_IOCP_RECEIVE_COMPLETED) > 0);
+        const double start = rocketnet_platform_time();
+        rocketnet_server_iocp_destroy(driver);
+        const double elapsed = rocketnet_platform_time() - start;
+        if ( elapsed > slowest ) slowest = elapsed;
+    }
+    rocketnet_platform_socket_destroy(peer);
+    printf("iocp_destroy_never_hangs: 200 destroys, slowest %.3f ms\n", slowest * 1000.0);
+}
+
 // ---- RIO ----
 
 static uint64_t rio_counter( rocketnet_server_rio_t * rio, int counter )
@@ -982,6 +1051,37 @@ static void test_rio_completion_queue_full()
     printf("rio_completion_queue_full\n");
 }
 
+// Sends a refused RIO_MSG_COMMIT_ONLY left deferred at destroy are
+// committed before rocketnet_server_rio_destroy closes the socket: the
+// destroy drains well inside ROCKETNET_RIO_DRAIN_SECONDS, leaks no region,
+// and the peer receives every deferred send.
+static void test_rio_destroy_commits_deferred_sends()
+{
+    if ( !rocketnet_server_rio_available() ) { printf("rio_destroy_commits_deferred_sends [SKIPPED no RIO on this host]\n"); return; }
+    rocketnet_address_t bind;
+    rocketnet_server_rio_t * rio = rio_open(&bind);
+    rocketnet_address_t peer_address;
+    rocketnet_platform_socket_t * peer = fault_peer(&peer_address);
+    rio_exchange(rio, &bind, peer, &peer_address, 16);
+
+    const int round = ++fault_round & 0xFF;
+    rocketnet_server_rio_test_fail_next(rio, ROCKETNET_RIO_TEST_FAULT_COMMIT, 1, WSAENOBUFS);
+    rio_stage(rio, &peer_address, round, 10);
+    rocketnet_server_rio_send_packets(rio);
+    CHECK(rocketnet_server_rio_test_faults_left(rio, ROCKETNET_RIO_TEST_FAULT_COMMIT) == 0);
+    CHECK(rocketnet_server_rio_pending(rio) == ROCKETNET_RIO_RECEIVES + 10);
+
+    const double start = rocketnet_platform_time();
+    rocketnet_server_rio_destroy(rio);
+    const double elapsed = rocketnet_platform_time() - start;
+    printf("rio_destroy_commits_deferred_sends: destroy %.3f ms\n", elapsed * 1000.0);
+    CHECK(rocketnet_server_rio_leaked_regions() == 0);
+    CHECK(elapsed < 1.0);
+    CHECK(fault_peer_receive(peer, round, 10) == 10);
+    rocketnet_platform_socket_destroy(peer);
+    printf("rio_destroy_commits_deferred_sends\n");
+}
+
 struct fault_case_t { const char * name; void (*run)(); };
 
 static const fault_case_t fault_cases[] = {
@@ -989,9 +1089,11 @@ static const fault_case_t fault_cases[] = {
     { "iocp_send_post_fails", test_iocp_send_post_fails },
     { "iocp_receive_completion_fails", test_iocp_receive_completion_fails },
     { "iocp_send_queue_full_recovers", test_iocp_send_queue_full_recovers },
+    { "iocp_destroy_never_hangs", test_iocp_destroy_never_hangs },
     { "rio_completion_queue_full", test_rio_completion_queue_full },
     { "rio_request_queue_full", test_rio_request_queue_full },
     { "rio_send_post_fails", test_rio_send_post_fails },
+    { "rio_destroy_commits_deferred_sends", test_rio_destroy_commits_deferred_sends },
 };
 
 // With no argument every case runs; with names, only those cases run.

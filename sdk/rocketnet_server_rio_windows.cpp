@@ -352,6 +352,12 @@ void rocketnet_server_rio_destroy( rocketnet_server_rio_t * rio )
     if ( !rio ) return;
     rio->stopping.store( true, std::memory_order_release );
 
+    // Commit: sends a refused RIO_MSG_COMMIT_ONLY left deferred are committed
+    // before the close, so they complete with every other posted request and
+    // the drain below accounts for them.
+    if ( rio->request_queue != RIO_INVALID_RQ )
+        rocketnet_rio_commit( rio );
+
     // Close
     if ( rio->socket != INVALID_SOCKET )
     {
