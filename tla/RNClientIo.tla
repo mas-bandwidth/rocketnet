@@ -345,7 +345,11 @@ IoFinishRing(r) ==
                    waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
 
-\* read one datagram into the I/O thread's buffer while it has room
+\* read one datagram into the I/O thread's buffer while it has room. Every
+\* arriving datagram becomes a record here, regardless of size; the main
+\* thread's prefilter refuses and counts runts (PREFILTER_TOO_SHORT) and
+\* oversize datagrams (PREFILTER_TOO_LARGE) over the receive ceiling, so the
+\* model never needs a size branch and the receive path stays simple.
 IoReceive ==
     /\ IoReady
     /\ pending > 0
