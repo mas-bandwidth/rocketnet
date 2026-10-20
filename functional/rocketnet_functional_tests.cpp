@@ -4885,7 +4885,7 @@ void rocketnet_test_driver_all_skipped_uses_auto()
     // auto order, loudly, instead of bricking (#110 review, ruled inside
     // the #106 ignore rule). a typo is still a typo: loud parse failure,
     // no create. refusal-exhausted lists still fail loudly -- the xdp pin
-    // test and the pump-alias msgx pin prove that side.
+    // test proves that side.
 
     struct rocketnet_test_env_guard_t driver_guard;
     rocketnet_test_env_clear( &driver_guard, "ROCKETNET_SERVER_TRANSPORT" );

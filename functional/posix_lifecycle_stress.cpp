@@ -248,7 +248,6 @@ struct posix_cell_t
     const char * server_granted;
     const char * client_driver;
     const char * client_granted;
-    const char * pump;
     bool xdp;
 };
 
@@ -256,14 +255,14 @@ static const posix_cell_t posix_cells[] =
 {
 #if defined(__linux__)
     // the Linux server cells, each against the portable client
-    { "server portable, client portable", "portable", "portable", "portable", "portable", NULL, false },
-    { "server gso, client portable",      "gso",      "gso",      "portable", "portable", NULL, false },
-    { "server io_uring, client portable", "io_uring", "io_uring", "portable", "portable", NULL, false },
-    { "server xdp, client portable",      "xdp",      "xdp",      "portable", "portable", NULL, true },
+    { "server portable, client portable", "portable", "portable", "portable", "portable", false },
+    { "server gso, client portable",      "gso",      "gso",      "portable", "portable", false },
+    { "server io_uring, client portable", "io_uring", "io_uring", "portable", "portable", false },
+    { "server xdp, client portable",      "xdp",      "xdp",      "portable", "portable", true },
 #else
-    { "server portable, client portable", "portable",      "portable", "portable", "portable", NULL },
+    { "server portable, client portable", "portable",      "portable", "portable", "portable" },
     { "server portable, client msgx",     "portable",      "portable", "msgx",     "msgx",     NULL },
-    { "server msgx, client portable",     "msgx",          "msgx",     "portable", "portable", NULL },
+    { "server msgx, client portable",     "msgx",          "msgx",     "portable", "portable" },
     { "server msgx, client msgx",         "msgx",          "msgx",     "msgx",     "msgx",     NULL },
 #endif
 };

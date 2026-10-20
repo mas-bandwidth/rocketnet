@@ -301,7 +301,7 @@ static void posix_pair_check_connected( struct posix_pair_t * pair )
 }
 
 static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char * server_driver, const char * client_driver,
-                               const char * pump_override, const char * server_pump, const char * client_pump )
+                               const char * server_pump, const char * client_pump )
 {
     memset( pair, 0, sizeof(*pair) );
     pair->ipv6 = ipv6;
@@ -514,10 +514,10 @@ static const struct rocketnet_counters_t * posix_pair_counters( struct posix_pai
 // and the server sends the valid traffic.
 
 static void posix_weather_cell( int ipv6, int at_server, const char * server_driver, const char * client_driver,
-                                const char * pump_override, const char * server_pump, const char * client_pump )
+                                const char * server_pump, const char * client_pump )
 {
     struct posix_pair_t pair;
-    posix_pair_create( &pair, ipv6, server_driver, client_driver, pump_override, server_pump, client_pump );
+    posix_pair_create( &pair, ipv6, server_driver, client_driver, server_pump, client_pump );
     posix_weather_native = at_server ? pair.native : POSIX_NATIVE_NONE;
     posix_weather_driver = at_server ? pair.driver : NULL;
 
@@ -701,9 +701,9 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_dri
     posix_check( valid_seen == POSIX_WEATHER_ROUNDS );
     posix_pair_check_connected( &pair );
 
-    printf( "  %s %s server=%s%s client=%s%s: pump %s/%s too_short %llu too_large %llu wrong_epoch %llu wrong_value %llu driver_size %llu valid %d\n",
+    printf( "  %s %s server=%s%s client=%s: pump %s/%s too_short %llu too_large %llu wrong_epoch %llu wrong_value %llu driver_size %llu valid %d\n",
             at_server ? "server-cell" : "client-cell", ipv6 ? "ipv6" : "ipv4", server_driver, posix_weather_note, client_driver,
-            pump_override ? " forced-portable" : "", pair.server_pump ? pair.server_pump : server_driver, pair.client_pump,
+            pair.server_pump ? pair.server_pump : server_driver, pair.client_pump,
             (unsigned long long) expect.too_short, (unsigned long long) expect.too_large,
             (unsigned long long) expect.wrong_epoch, (unsigned long long) expect.wrong_value,
             (unsigned long long) expect.driver_size, valid_seen );
@@ -731,21 +731,21 @@ void rocketnet_test_posix_server_receive_weather()
 
     for ( int ipv6 = 0; ipv6 < 2; ipv6++ )
     {
-        posix_weather_cell( ipv6, 1, "portable", "portable", NULL, "portable", "portable" );
+        posix_weather_cell( ipv6, 1, "portable", "portable", "portable", "portable" );
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-        posix_weather_cell( ipv6, 1, "msgx", "portable", NULL, posix_msgx_pump(), "portable" );
+        posix_weather_cell( ipv6, 1, "msgx", "portable", posix_msgx_pump(), "portable" );
 #endif
 #if defined(__linux__)
         // gso, then gso forced to its plain tiers (no UDP_SEGMENT, no
         // UDP_GRO), then io_uring when this kernel offers it
-        posix_weather_cell( ipv6, 1, "gso", "portable", NULL, NULL, "portable" );
+        posix_weather_cell( ipv6, 1, "gso", "portable", NULL, "portable" );
         posix_force_gso_plain( 1 );
         posix_weather_note = " (plain)";
-        posix_weather_cell( ipv6, 1, "gso", "portable", NULL, NULL, "portable" );
+        posix_weather_cell( ipv6, 1, "gso", "portable", NULL, "portable" );
         posix_weather_note = "";
         posix_force_gso_plain( 0 );
         if ( rocketnet_server_uring_available() )
-            posix_weather_cell( ipv6, 1, "io_uring", "portable", NULL, NULL, "portable" );
+            posix_weather_cell( ipv6, 1, "io_uring", "portable", NULL, "portable" );
         else
         {
             printf( "  server-cell %s server=io_uring: not offered by this kernel\n", ipv6 ? "ipv6" : "ipv4" );
@@ -761,9 +761,9 @@ void rocketnet_test_posix_client_receive_weather()
 
     for ( int ipv6 = 0; ipv6 < 2; ipv6++ )
     {
-        posix_weather_cell( ipv6, 0, "portable", "portable", NULL, "portable", "portable" );
+        posix_weather_cell( ipv6, 0, "portable", "portable", "portable", "portable" );
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-        posix_weather_cell( ipv6, 0, "portable", "msgx", NULL, "portable", posix_msgx_pump() );
+        posix_weather_cell( ipv6, 0, "portable", "msgx", "portable", posix_msgx_pump() );
 #endif
     }
 }
@@ -936,7 +936,7 @@ void rocketnet_test_posix_platform_send_seam()
 static void posix_transport_send_seam_cell( int ipv6, const char * server_driver, const char * server_pump )
 {
     struct posix_pair_t pair;
-    posix_pair_create( &pair, ipv6, server_driver, "portable", NULL, server_pump, "portable" );
+    posix_pair_create( &pair, ipv6, server_driver, "portable", server_pump, "portable" );
 
     const int errors[2] = { ENOBUFS, EAGAIN };
     int tag = 0;
@@ -1412,7 +1412,7 @@ static void posix_linux_gso_send_cell( int ipv6, int plain )
 {
     posix_force_gso_plain( plain );
     struct posix_pair_t pair;
-    posix_pair_create( &pair, ipv6, "gso", "portable", NULL, NULL, "portable" );
+    posix_pair_create( &pair, ipv6, "gso", "portable", NULL, "portable" );
     posix_force_gso_plain( 0 );
 
     const int errors[2] = { ENOBUFS, EAGAIN };
@@ -1446,7 +1446,7 @@ static void posix_linux_gso_receive_cell( int ipv6, int plain )
 {
     posix_force_gso_plain( plain );
     struct posix_pair_t pair;
-    posix_pair_create( &pair, ipv6, "gso", "portable", NULL, NULL, "portable" );
+    posix_pair_create( &pair, ipv6, "gso", "portable", NULL, "portable" );
     posix_force_gso_plain( 0 );
 
     // the workers' next 64 recvmmsg calls answer -1 with EIO. each failed
@@ -1519,7 +1519,7 @@ void rocketnet_test_linux_uring_receive_cqe_errors()
     for ( int ipv6 = 0; ipv6 < 2; ipv6++ )
     {
         struct posix_pair_t pair;
-        posix_pair_create( &pair, ipv6, "io_uring", "portable", NULL, NULL, "portable" );
+        posix_pair_create( &pair, ipv6, "io_uring", "portable", NULL, "portable" );
         struct rocketnet_server_uring_t * uring = (struct rocketnet_server_uring_t*) pair.driver;
         const int queues = rocketnet_server_uring_num_queues( uring );
 
@@ -1574,7 +1574,7 @@ void rocketnet_test_linux_uring_send_cqe_errors()
     for ( int ipv6 = 0; ipv6 < 2; ipv6++ )
     {
         struct posix_pair_t pair;
-        posix_pair_create( &pair, ipv6, "io_uring", "portable", NULL, NULL, "portable" );
+        posix_pair_create( &pair, ipv6, "io_uring", "portable", NULL, "portable" );
 
         int tag = 0;
         for ( int pass = 0; pass < 2; pass++ )
