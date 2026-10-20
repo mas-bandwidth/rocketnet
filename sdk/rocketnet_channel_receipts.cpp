@@ -19,16 +19,3 @@ int rn_channels_reliable_receipt_base( int type )
         return ROCKETNET_CHANNEL_RECEIPT_BASE( type );
     return -1;
 }
-
-// tla/RNReceipts.tla TakeReceipt
-int rn_channels_dispatch_receipt( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out )
-{
-    (void) record;
-    (void) out;
-
-    if ( !channels )
-        return ROCKETNET_CHANNEL_DISPATCH_NONE;
-
-    rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED );
-    return ROCKETNET_CHANNEL_DISPATCH_NONE;
-}

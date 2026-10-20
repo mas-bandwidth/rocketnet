@@ -394,7 +394,7 @@ static void user_block_is_used_and_nothing_else()
 // R2: a counting allocator sees create's one allocation and then nothing
 // across sends, acks, exhaustion, the kick decision, the reset and reuse,
 // for a server-shaped arena and a client-shaped one; destroy is the one free.
-static void no_allocation_after_create()
+static void connection_memory_no_allocation_after_create()
 {
     cm_install();
 
@@ -609,6 +609,6 @@ REGISTER_UNIT_TEST( reassembly_geometry_refuses_bad_arguments_and_budget );
 REGISTER_UNIT_TEST( exhaustion_is_a_kick_with_its_reason );
 REGISTER_UNIT_TEST( reused_slot_starts_clean );
 REGISTER_UNIT_TEST( user_block_is_used_and_nothing_else );
-REGISTER_UNIT_TEST( no_allocation_after_create );
+REGISTER_UNIT_TEST( connection_memory_no_allocation_after_create );
 REGISTER_UNIT_TEST( exhausted_region_refuses_sends_until_reset );
 REGISTER_UNIT_TEST( receive_without_room_exhausts_the_region );
