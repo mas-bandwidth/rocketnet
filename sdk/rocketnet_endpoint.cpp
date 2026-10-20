@@ -147,12 +147,32 @@ static bool rn_endpoint_reliable_path( const rn_endpoint_t * endpoint, int type 
            rn_channels_reliable_receipt_base( type ) >= 0;
 }
 
+// RakNet's ordering channel: only ORDERED and SEQUENCED use it. For every
+// other type the channel is ignored, so a channel outside the configured
+// range is accepted and travels as 0; a valid channel is unchanged.
+static bool rn_endpoint_channel_ignored( int type )
+{
+    return type == ROCKETNET_RELIABILITY_UNRELIABLE || type == ROCKETNET_RELIABILITY_RELIABLE ||
+           rn_channels_reliable_receipt_base( type ) >= 0 ||
+           type == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT ||
+           type == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT ||
+           type == ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT;
+}
+
+static int rn_endpoint_send_channel( const rn_endpoint_t * endpoint, int type, int channel )
+{
+    if ( rn_endpoint_channel_ignored( type ) && ( channel < 0 || channel >= endpoint->config->num_channels ) )
+        return 0;
+    return channel;
+}
+
 uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes )
 {
     // tla/RNEndpoint.tla Send, its first half (RNChannel Enqueue's first
     // half): room in the region for a message of `bytes` bytes, and the
     // pointer it is written at, once, in place (R3). A refusal for want of
     // room sets send_error (R5); the owner ends the connection with it.
+    channel = rn_endpoint_send_channel( endpoint, reliability, channel );
     if ( endpoint->pending_type != -1 || channel < 0 || channel >= endpoint->config->num_channels || bytes < 1 )
     {
         rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
@@ -381,6 +401,7 @@ static int rn_endpoint_sequenced_header_bytes( int channel )
 
 int rn_endpoint_in_place_header( const struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes, double now )
 {
+    channel = rn_endpoint_send_channel( endpoint, reliability, channel );
     if ( endpoint->pending_type != -1 || channel < 0 || channel >= endpoint->config->num_channels || bytes < 1 )
         return RN_ENDPOINT_IN_PLACE_NO;
     if ( reliability != ROCKETNET_RELIABILITY_UNRELIABLE && reliability != ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED &&

@@ -24,6 +24,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+static uint64_t rn_public_receive_sender;
+
 // The header at this base declares start, finish, receive, release and
 // send_packets; the lifecycle rename makes them *_start_message and friends.
 
@@ -154,7 +156,7 @@ int main( int argc, char ** argv )
             const double start = rocketnet_time();
             rocketnet_client_update( client, time );                                    // (1) update
             if ( wrong_order ) rocketnet_client_send_packets( client );                 // the mistake: sends last frame's queue
-            while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )              // (2) receive the snapshot
+            while ( rocketnet_client_receive_message( client, &data, &bytes ) )              // (2) receive the snapshot
                 { read_message( &to_client, frame, data, bytes ); rocketnet_client_release_message( client, data ); }
             // (3) simulate: nothing moves in this example
             if ( measuring && ( buffer = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, sizeof( message_t ) ) ) )
@@ -177,10 +179,10 @@ int main( int argc, char ** argv )
         for ( int i = 0; i < num_clients; i++ )                                         // (2) receive positions and events
         {
             if ( !rocketnet_server_client_connected( server, i ) ) continue;
-            while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
-                { read_message( &to_server, frame, data, bytes ); rocketnet_server_release_message( server, i, data ); }
-            while ( rocketnet_server_receive_message( server, i, 1, &data, &bytes ) )
-                { read_message( &to_server, frame, data, bytes ); rocketnet_server_release_message( server, i, data ); events_received++; }
+            while ( rocketnet_server_receive_message( server, &rn_public_receive_sender, &data, &bytes ) )
+                { read_message( &to_server, frame, data, bytes ); rocketnet_server_release_message( server, data ); }
+            while ( rocketnet_server_receive_message( server, &rn_public_receive_sender, &data, &bytes ) )
+                { read_message( &to_server, frame, data, bytes ); rocketnet_server_release_message( server, data ); events_received++; }
         }
         // (3) simulate: nothing moves in this example
         for ( int i = 0; measuring && i < num_clients; i++ )                            // (4) queue each client's snapshot

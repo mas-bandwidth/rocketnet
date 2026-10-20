@@ -14,6 +14,8 @@
 #include <stdint.h>
 #include <string.h>
 
+static uint64_t rn_public_receive_sender;
+
 // This example uses the send names the header at this base declares (start,
 // finish, receive, release, send_packets); a later lifecycle rename makes
 // them *_start_message and friends.
@@ -80,11 +82,11 @@ int main( void )
         // (2) receive and release incoming messages, and read this frame's receipts
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+        while ( rocketnet_client_receive_message( client, &data, &bytes ) )
             rocketnet_client_release_message( client, data );
         const int slot = rocketnet_client_index( client );
-        while ( rocketnet_server_receive_message( server, slot, 0, &data, &bytes ) )
-            rocketnet_server_release_message( server, slot, data );
+        while ( rocketnet_server_receive_message( server, &rn_public_receive_sender, &data, &bytes ) )
+            rocketnet_server_release_message( server, data );
 
         struct rocketnet_receipt_t receipts[32];
         const int count = rocketnet_client_receipts( client, receipts, 32 );

@@ -21,6 +21,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+static uint64_t rn_public_receive_sender;
+
 static const char * reliability_names[8] =
 {
     "ROCKETNET_RELIABILITY_UNRELIABLE",
@@ -89,7 +91,7 @@ int main( int argc, char ** argv )
         {
             const uint8_t * data = NULL;
             int bytes = 0;
-            while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
+            while ( rocketnet_server_receive_message( server, &rn_public_receive_sender, &data, &bytes ) )
             {
                 const int mode = bytes > 0 ? data[0] : -1;
                 const int ok = mode >= 0 && mode < 8 &&
@@ -103,7 +105,7 @@ int main( int argc, char ** argv )
                     bad = 1;
                 }
                 fflush( stdout );
-                rocketnet_server_release_message( server, i, data );
+                rocketnet_server_release_message( server, data );
             }
         }
 

@@ -67,6 +67,7 @@ struct rn_message_object_layout_t
     uint64_t view_stride;
     uint64_t cursors;
     uint64_t cursor_stride;
+    uint64_t delivery_order;
     uint64_t arena;
     uint64_t arena_bytes;
     uint64_t total;
@@ -96,6 +97,8 @@ static bool rn_message_object_layout( const rocketnet_message_config_t * config,
     layout->cursors = offset;
     layout->cursor_stride = rn_message_align64( sizeof( uint32_t ) * (uint64_t) config->num_channels );
     offset += layout->cursor_stride * n;
+    layout->delivery_order = offset;
+    offset += rn_message_align64( sizeof( uint32_t ) * deliveries * n );
     layout->arena = offset;
     layout->arena_bytes = arena_bytes;
     offset += rn_message_align64( arena_bytes );
@@ -258,6 +261,10 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     object->block = block;
     object->owns_block = owns_block ? 1 : 0;
     object->connections = (rn_message_connection_t *) ( block + layout.connections );
+    object->delivery_order = (uint32_t *) ( block + layout.delivery_order );
+    object->delivery_order_capacity = (uint32_t) ( (uint64_t) config->window_messages + (uint64_t) config->unreliable_deliveries ) * (uint32_t) num_connections;
+    object->delivery_order_count = 0;
+    object->delivery_order_read = 0;
     rn_slots_init( &object->slots, num_connections );
 
     object->arena = rn_arena_create_in_block( block + layout.arena, layout.arena_bytes, config, num_connections, &object->counters );
@@ -486,6 +493,9 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         }
     }
 
+    object->delivery_order_count = 0;
+    object->delivery_order_read = 0;
+
     object->link.update( object->link.transport, time - object->clock_origin );
 
     // The client message connection is bound before the handshake so its
@@ -565,8 +575,18 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         for ( int k = 0; k < count; k++ )
         {
             rn_message_connection_t * connection = rn_message_admit( object, client_index, object->link.payload_connection, k );
-            if ( connection )
-                rn_endpoint_on_payload( connection, payload_data[k], payload_bytes[k], NULL, 0, NULL, time );    // RNEndpoint OnPayload
+            if ( !connection )
+                continue;
+            const uint32_t before = connection->ordered.channels.deliveries;
+            rn_endpoint_on_payload( connection, payload_data[k], payload_bytes[k], NULL, 0, NULL, time );    // RNEndpoint OnPayload
+            const uint32_t after = connection->ordered.channels.deliveries;
+            const int index = (int) ( connection - object->connections );
+            for ( uint32_t d = before; d < after; d++ )
+            {
+                if ( object->delivery_order_count >= object->delivery_order_capacity )
+                    break;
+                object->delivery_order[object->delivery_order_count++] = ( (uint32_t) index << 22 ) | ( d & 0x3FFFFFu );
+            }
         }
     }
 
@@ -903,6 +923,99 @@ void rn_message_object_release( struct rn_message_object_t * object, int index, 
     rocketnet_api_misuse_record();
 }
 
+#define RN_MESSAGE_DELIVERY_INDEX_MASK 0x003FFFFFu
+
+int rn_message_object_receive_next( struct rn_message_object_t * object, const uint8_t ** data, int * bytes, int * index )
+{
+    if ( data )
+        *data = NULL;
+    if ( bytes )
+        *bytes = 0;
+    if ( index )
+        *index = 0;
+    if ( !object || !data || !bytes )
+        return 0;
+
+    while ( object->delivery_order_read < object->delivery_order_count )
+    {
+        const uint32_t packed = object->delivery_order[object->delivery_order_read++];
+        const int connection_index = (int) ( packed >> 22 );
+        const uint32_t delivery_index = packed & RN_MESSAGE_DELIVERY_INDEX_MASK;
+        if ( connection_index < 0 || connection_index >= object->num_connections )
+            continue;
+
+        rn_message_connection_t * connection = &object->connections[connection_index];
+        if ( connection->state != RN_MESSAGE_CONNECTION_CONNECTED )
+            continue;
+        if ( delivery_index >= connection->ordered.channels.deliveries )
+            continue;
+        if ( connection->views[delivery_index] != RN_MESSAGE_VIEW_WAITING )
+            continue;
+
+        const rn_delivery_t * table = connection->region->deliveries;
+        connection->views[delivery_index] = RN_MESSAGE_VIEW_HELD;
+        connection->held++;
+        *data = table[delivery_index].data;
+        *bytes = table[delivery_index].bytes;
+        if ( index )
+            *index = connection_index;
+        return 1;
+    }
+    return 0;
+}
+
+void rn_message_object_release_next( struct rn_message_object_t * object, const uint8_t * data )
+{
+    if ( !object || !data )
+        return;
+    for ( int i = 0; i < object->num_connections; i++ )
+    {
+        rn_message_connection_t * connection = &object->connections[i];
+        const uint32_t deliveries = connection->ordered.channels.deliveries;
+        const rn_delivery_t * table = connection->region->deliveries;
+        for ( uint32_t k = 0; k < deliveries; k++ )
+        {
+            if ( table[k].data == data && connection->views[k] == RN_MESSAGE_VIEW_HELD )
+            {
+                connection->views[k] = RN_MESSAGE_VIEW_RELEASED;
+                connection->held--;
+                return;
+            }
+        }
+    }
+    rocketnet_api_misuse_record();
+}
+
+bool rn_message_object_receive_batch( struct rn_message_object_t * object, struct rocketnet_message_batch_t * batch )
+{
+    if ( !object || !batch )
+        return false;
+    batch->count = 0;
+    if ( !batch->messages || batch->capacity < 1 )
+        return false;
+    while ( batch->count < batch->capacity )
+    {
+        const uint8_t * data = NULL;
+        int bytes = 0;
+        int index = 0;
+        if ( !rn_message_object_receive_next( object, &data, &bytes, &index ) )
+            break;
+        struct rocketnet_message_t * message = &batch->messages[batch->count++];
+        message->data = data;
+        message->bytes = bytes;
+        message->client_index = (uint64_t) index;
+    }
+    return batch->count > 0;
+}
+
+void rn_message_object_release_batch( struct rn_message_object_t * object, const struct rocketnet_message_batch_t * batch )
+{
+    if ( !object || !batch || !batch->messages )
+        return;
+    for ( int i = 0; i < batch->count; i++ )
+        rn_message_object_release_next( object, batch->messages[i].data );
+}
+
 bool rn_message_object_set_send_kbps( struct rn_message_object_t * object, int index, int32_t kbps )
 {
     if ( index < 0 || index >= object->num_connections )
@@ -1199,6 +1312,46 @@ int rocketnet_message_server_receive( struct rocketnet_message_server_t * server
     if ( !rocketnet_api_null_guard( bytes ) )
         return 0;
     return rn_message_object_receive( &server->object, client_index, channel, data, bytes );
+}
+
+int rocketnet_message_server_receive_next( struct rocketnet_message_server_t * server, const uint8_t ** data, int * bytes, int * client_index )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+        return 0;
+    if ( !rocketnet_api_null_guard( data ) )
+        return 0;
+    if ( !rocketnet_api_null_guard( bytes ) )
+        return 0;
+    if ( !rocketnet_api_null_guard( client_index ) )
+        return 0;
+    return rn_message_object_receive_next( &server->object, data, bytes, client_index );
+}
+
+bool rocketnet_message_server_receive_batch( struct rocketnet_message_server_t * server, struct rocketnet_message_batch_t * batch )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+        return false;
+    if ( !rocketnet_api_null_guard( batch ) )
+        return false;
+    return rn_message_object_receive_batch( &server->object, batch );
+}
+
+void rocketnet_message_server_release_next( struct rocketnet_message_server_t * server, const uint8_t * data )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+        return;
+    if ( !rocketnet_api_null_guard( data ) )
+        return;
+    rn_message_object_release_next( &server->object, data );
+}
+
+void rocketnet_message_server_release_batch( struct rocketnet_message_server_t * server, const struct rocketnet_message_batch_t * batch )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+        return;
+    if ( !rocketnet_api_null_guard( batch ) )
+        return;
+    rn_message_object_release_batch( &server->object, batch );
 }
 
 int rocketnet_message_server_receipts( struct rocketnet_message_server_t * server, int client_index, struct rocketnet_message_receipt_t * out, int capacity )

@@ -284,7 +284,7 @@ void client_frame( struct rocketnet_client_t * client, double time )
     /* 2. receive and release every delivered message */
     const uint8_t * data;
     int bytes;
-    while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+    while ( rocketnet_client_receive_message( client, &data, &bytes ) )
         rocketnet_client_release_message( client, data );
 
     /* 3. run the game simulation for this frame */
@@ -302,8 +302,8 @@ void client_frame( struct rocketnet_client_t * client, double time )
 The server runs the same block with `rocketnet_server_update`,
 `rocketnet_server_receive_message`, `rocketnet_server_release_message`,
 `rocketnet_server_start_message`, `rocketnet_server_finish_message` and
-`rocketnet_server_send_packets`, looping the receive step over every client
-index. `rocketnet_client_update` and `rocketnet_server_update` return
+`rocketnet_server_send_packets`; the server's one receive queue already spans
+every client, so the receive step is not looped per client index. `rocketnet_client_update` and `rocketnet_server_update` return
 `ROCKETNET_UPDATE_OK`, or `ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED` when a
 received view from the last update was not released.
 
@@ -382,20 +382,26 @@ changes nothing; that is not misuse.
 ## Receiving messages
 
 `rocketnet_client_receive_message` and `rocketnet_server_receive_message` hand out the next
-message of the update on a channel as a const view and its length. The view is
-valid until the next update, and every received message must be released with
-`rocketnet_client_release_message` or `rocketnet_server_release_message` before the next
+message of the update from one receive queue as a const view and its length,
+in delivery order across every channel; the server's queue spans every client
+and each message names its sender in the `client_index` out-argument. This is
+RakNet's `Receive` shape. The batch forms `rocketnet_client_receive_messages`
+and `rocketnet_server_receive_messages` fill a caller array from the same queue
+with one call per update. The views are valid until the next update, and every
+received message must be released with `rocketnet_client_release_message` or
+`rocketnet_server_release_message` (or the batch release calls) before the next
 update. Copy anything kept past the update. Updating with a view still held
 asserts in a debug build and returns `ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED` in
 a release build.
 
-Each call returns `1` with the next message, or `0` when there is none on that
-channel for that client.
+Each call returns `1` with the next message, or `0` when there is none. The
+send-side channel is RakNet's ordering channel: ORDERED and SEQUENCED messages
+are ordered within it, and the other types ignore it.
 
 ```c
 #include "rocketnet.h"
 
-void server_frame( struct rocketnet_server_t * server, int client_index, int channel, double time )
+void server_frame( struct rocketnet_server_t * server, double time )
 {
     /* 1. pump the transport and take in what arrived */
     rocketnet_server_update( server, time );
@@ -403,10 +409,11 @@ void server_frame( struct rocketnet_server_t * server, int client_index, int cha
     /* 2. receive and release every delivered message */
     const uint8_t * data;
     int bytes;
-    while ( rocketnet_server_receive_message( server, client_index, channel, &data, &bytes ) )
+    uint64_t client_index = 0;
+    while ( rocketnet_server_receive_message( server, &client_index, &data, &bytes ) )
     {
-        /* process data and bytes, then release the view */
-        rocketnet_server_release_message( server, client_index, data );
+        /* process client_index, data and bytes, then release the view */
+        rocketnet_server_release_message( server, data );
     }
 
     /* 3. run the game simulation for this frame */

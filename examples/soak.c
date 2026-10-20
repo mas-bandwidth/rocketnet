@@ -19,6 +19,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+static uint64_t rn_public_receive_sender;
+
 // Note: sdk/rocketnet.h at BASE declares the pre-rename message calls
 // (*_start, *_finish, *_receive, *_release, *_send_packets) and int client_index.
 #define CHECK( cond ) do { if ( !( cond ) ) { printf( "FAIL: %s (line %d)\n", #cond, __LINE__ ); goto cleanup; } } while ( 0 )
@@ -220,7 +222,7 @@ int main( int argc, char ** argv ) {
                 // (2) receive and release every received message
                 for ( int ch = 0; ch < 2; ch++ ) {
                     const uint8_t * data = NULL; int bytes = 0;
-                    while ( rocketnet_client_receive_message( clients[c], ch, &data, &bytes ) ) {
+                    while ( rocketnet_client_receive_message( clients[c], &data, &bytes ) ) {
                         bool ok = soak_check_msg( data, bytes, seed, (uint64_t) c, ch, &s2c[c], &corrupt, &gaps );
                         rocketnet_client_release_message( clients[c], data );
                         CHECK( ok );
@@ -258,9 +260,9 @@ int main( int argc, char ** argv ) {
                 // (2) server receive and release
                 for ( int ch = 0; ch < 2; ch++ ) {
                     const uint8_t * data = NULL; int bytes = 0;
-                    while ( rocketnet_server_receive_message( server, (int) client_idx, ch, &data, &bytes ) ) {
+                    while ( rocketnet_server_receive_message( server, &rn_public_receive_sender, &data, &bytes ) ) {
                         bool ok = soak_check_msg( data, bytes, seed, (uint64_t) c, ch, &c2s[c], &corrupt, &gaps );
-                        rocketnet_server_release_message( server, (int) client_idx, data );
+                        rocketnet_server_release_message( server, data );
                         CHECK( ok );
                         if ( ch == 1 ) recv_rel++; else recv_seq++;
                     }

@@ -881,9 +881,13 @@ struct rocketnet_server_config_t
 /// is never dropped; an unreliable one over budget is dropped and counted
 /// (the BUDGET_DROPS counters).
 ///
-/// Receiving: receive hands out the next message of the update on a channel
-/// as a const view and its length, valid until the next update. Release every
-/// received message before the next update; update with one still held
+/// Receiving: receive hands out the next message of the update from one queue
+/// as a const view and its length, valid until the next update. The queue is
+/// one per client and one per server across all clients; every channel is in
+/// it in delivery order and, on the server, each message names its sender.
+/// RakNet's Receive has the same shape. The batch form fills a caller array
+/// from the same queue in the same order with one call per update. Release
+/// every received message before the next update; update with one still held
 /// asserts in a debug build and returns ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED
 /// in a release build. Copy what is kept past the update.
 
@@ -898,6 +902,29 @@ struct rocketnet_receipt_t
     /// rocketnet_receipt_status_t value, ROCKETNET_RECEIPT_STATUS_ACKED or
     /// ROCKETNET_RECEIPT_STATUS_LOSS, held in a fixed 32-bit field.
     uint32_t status;
+};
+
+/// @brief One message received from the one receive queue.
+/// data is a view valid until the next update or until it is released, and
+/// bytes is its length. client_index is the server slot the message came
+/// from; on the client it is always 0, meaning the server.
+struct rocketnet_message_t
+{
+    const uint8_t * data;
+    int bytes;
+    uint64_t client_index;
+};
+
+/// @brief A caller-owned array the batch receive fills.
+/// Set messages to an array of capacity entries before the call. The receive
+/// fills count entries and returns true when count is at least 1. The caller
+/// owns the array; the message views in it are the ones the one-at-a-time
+/// receive hands out, with the same lifetime.
+struct rocketnet_message_batch_t
+{
+    struct rocketnet_message_t * messages;
+    int capacity;
+    int count;
 };
 
 /// -----------------------------------------
@@ -1112,11 +1139,29 @@ ROCKETNET_EXPORT uint32_t rocketnet_client_finish_message( struct rocketnet_clie
 /// A NULL client is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_client_abort_message( struct rocketnet_client_t * client );
 
-/// 1 with the next message on channel, 0 when there is none. A NULL client, data or bytes is a counted no-op that returns 0.
-ROCKETNET_EXPORT int rocketnet_client_receive_message( struct rocketnet_client_t * client, int channel, const uint8_t ** data, int * bytes );
+/// 1 with the next message from the client's one receive queue, 0 when there
+/// is none. Messages from every channel are in delivery order, as RakNet's
+/// Receive returns the next message from one queue. A message's channel is not
+/// part of the receive call; the send's channel orders ORDERED and SEQUENCED
+/// messages within that channel and is ignored by the other types. A NULL
+/// client, data or bytes is a counted no-op that returns 0.
+ROCKETNET_EXPORT int rocketnet_client_receive_message( struct rocketnet_client_t * client, const uint8_t ** data, int * bytes );
+
+/// Fills batch with up to batch->capacity messages from the same one queue,
+/// in the same order, and returns true when it holds at least one; returns
+/// false when nothing is pending. Set batch->messages and batch->capacity
+/// before the call; batch->count receives the number filled. Pump with
+/// while ( rocketnet_client_receive_messages( client, &batch ) ) { ... }.
+/// A batch is one call per update on the fast path, never one call per
+/// message. The views are valid until the next update or until released.
+/// On the client every message's client_index is 0, meaning the server.
+ROCKETNET_EXPORT bool rocketnet_client_receive_messages( struct rocketnet_client_t * client, struct rocketnet_message_batch_t * batch );
 
 /// A NULL client or data is a counted no-op; a pointer that is not a held view is a counted misuse.
 ROCKETNET_EXPORT void rocketnet_client_release_message( struct rocketnet_client_t * client, const uint8_t * data );
+
+/// Releases every message in batch that is still held, in one call.
+ROCKETNET_EXPORT void rocketnet_client_release_messages( struct rocketnet_client_t * client, const struct rocketnet_message_batch_t * batch );
 
 /// @brief Copy this update's client receipt outcomes into caller storage.
 /// Call after update and before the next update, without a concurrent update.
@@ -1310,11 +1355,29 @@ ROCKETNET_EXPORT uint32_t rocketnet_server_finish_message( struct rocketnet_serv
 /// A NULL server is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_server_abort_message( struct rocketnet_server_t * server, uint64_t destination_id );
 
-/// 1 with the next message on channel, 0 when there is none. A NULL server, data or bytes is a counted no-op that returns 0.
-ROCKETNET_EXPORT int rocketnet_server_receive_message( struct rocketnet_server_t * server, uint64_t client_index, int channel, const uint8_t ** data, int * bytes );
+/// 1 with the next message from the server's one receive queue across every
+/// client, 0 when there is none. Messages are in delivery order, as RakNet's
+/// Receive returns the next message from one queue, and client_index receives
+/// the sender's slot. A message sent on any channel is here; the send's
+/// channel orders ORDERED and SEQUENCED messages within that channel and is
+/// ignored by the other types. A NULL server, client_index, data or bytes is
+/// a counted no-op that returns 0.
+ROCKETNET_EXPORT int rocketnet_server_receive_message( struct rocketnet_server_t * server, uint64_t * client_index, const uint8_t ** data, int * bytes );
+
+/// Fills batch with up to batch->capacity messages from the same one queue
+/// across every client, in the same order, and returns true when it holds at
+/// least one; returns false when nothing is pending. Set batch->messages and
+/// batch->capacity before the call; batch->count receives the number filled.
+/// Pump with while ( rocketnet_server_receive_messages( server, &batch ) )
+/// { ... }. Each entry's client_index names the sender's slot. The views are
+/// valid until the next update or until released.
+ROCKETNET_EXPORT bool rocketnet_server_receive_messages( struct rocketnet_server_t * server, struct rocketnet_message_batch_t * batch );
 
 /// A NULL server or data is a counted no-op; a pointer that is not a held view is a counted misuse.
-ROCKETNET_EXPORT void rocketnet_server_release_message( struct rocketnet_server_t * server, uint64_t client_index, const uint8_t * data );
+ROCKETNET_EXPORT void rocketnet_server_release_message( struct rocketnet_server_t * server, const uint8_t * data );
+
+/// Releases every message in batch that is still held, in one call.
+ROCKETNET_EXPORT void rocketnet_server_release_messages( struct rocketnet_server_t * server, const struct rocketnet_message_batch_t * batch );
 
 /// @brief Copy one connected server client's receipt outcomes.
 /// Call after update and before the next update, without a concurrent update.

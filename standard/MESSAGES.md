@@ -2697,10 +2697,12 @@ wire representation.
 1. An implementation MUST set its build-specific maximum channel count to a
    value from 1 through 65,536, inclusive. The default build-specific maximum
    MUST be 32. A connection MUST set num_channels from 1 through its
-   implementation build-specific maximum. For every message send, a sender
-   MUST select a channel from zero through one less than that connection's
-   num_channels, and a message endpoint MUST refuse a send with a channel
-   outside that range.
+   implementation build-specific maximum. The send's channel is RakNet's
+   ordering channel: ORDERED and SEQUENCED sends select a channel from zero
+   through one less than that connection's num_channels, and a message
+   endpoint MUST refuse such a send with a channel outside that range. Every
+   other type ignores the channel, so a channel outside the range is accepted
+   there and travels as channel 0.
 2. A record with code 1, 3 or 4 MUST carry the channel field in
    [m3 Record format](#m3). Receipt types use their base codes from
    [m1.3 Reliability types](#m1.3): type 7 uses code 3 and carries a channel;
@@ -2738,6 +2740,18 @@ WIDE   |      channel, little-endian   |
 | channel wide boundary | `256` | channels | first channel encoded as WIDE |
 | default maximum channel count | `32` | channels | SDK default for the build-specific maximum |
 | maximum allowed build-specific channel count | `65536` | channels | largest build-specific maximum permitted |
+
+The application receive queue is one per client and one per server across all
+clients, as RakNet's `Receive` is. A receiver MUST append every delivery to
+that one queue in delivery order across all channels, and a server's queue
+also spans every client, each entry naming the sender. The obsolete per-channel
+and per-client polling loses a message whose send named a channel the caller
+did not poll. A receiver MUST NOT deliver the same update's deliveries a second
+time after the queue is empty. The SDK's one-at-a-time calls are
+`rocketnet_client_receive_message` and `rocketnet_server_receive_message`
+(sdk/rocketnet.h:1137 and :1349), and the batch calls over the same queue are
+`rocketnet_client_receive_messages` and `rocketnet_server_receive_messages`
+(sdk/rocketnet.h:1153 and :1365).
 
 ```vector m10.narrow-channel
 record: RELIABLE_ORDERED, channel 3, number 5, ring 0, ordering 0, data "hi"

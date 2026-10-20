@@ -168,6 +168,14 @@ struct rn_message_object_t
     int clock_started;                          // 1 from the first update on
     int pending_connection;                     // the connection with a start pending, or -1
 
+    // the one receive queue (RakNet's Receive): this update's deliveries from
+    // every connection, in delivery order. Each entry packs the connection
+    // index and that connection's delivery index. reset at begin update.
+    uint32_t * delivery_order;
+    uint32_t delivery_order_capacity;
+    uint32_t delivery_order_count;
+    uint32_t delivery_order_read;
+
     // the in-place unreliable send (docs/OUTGOING-BUILD.md, tla/RNOutgoingBuild.tla):
     // the pending start is written in this transport frame
     int in_place;                               // 1 while the pending start holds a frame
@@ -222,6 +230,19 @@ uint32_t rn_message_object_send( struct rn_message_object_t * object, int index,
 
 int rn_message_object_receive( struct rn_message_object_t * object, int index, int channel, const uint8_t ** data, int * bytes );
 void rn_message_object_release( struct rn_message_object_t * object, int index, const uint8_t * data );
+
+// The one receive queue: the next delivery across every connection, in
+// delivery order. *index receives its connection (the sender slot). 1 when
+// there is one, 0 when the queue is empty.
+int rn_message_object_receive_next( struct rn_message_object_t * object, const uint8_t ** data, int * bytes, int * index );
+void rn_message_object_release_next( struct rn_message_object_t * object, const uint8_t * data );
+
+// The batch form over the same queue: fills batch->messages up to
+// batch->capacity, sets batch->count, and returns true when it holds at least
+// one message. A pump with a small capacity delivers everything once, in
+// order; false means nothing is pending.
+bool rn_message_object_receive_batch( struct rn_message_object_t * object, struct rocketnet_message_batch_t * batch );
+void rn_message_object_release_batch( struct rn_message_object_t * object, const struct rocketnet_message_batch_t * batch );
 
 bool rn_message_object_set_send_kbps( struct rn_message_object_t * object, int index, int32_t kbps );
 int rn_message_object_disconnect_reason( const struct rn_message_object_t * object, int index );

@@ -18,6 +18,8 @@
 #include <stdint.h>
 #include <string.h>
 
+static uint64_t rn_public_receive_sender;
+
 // This example uses the send names the header at this base declares (start,
 // finish, receive, release, send_packets); a later lifecycle rename makes
 // them *_start_message and friends.
@@ -105,15 +107,15 @@ int main( void )
         // sent on channel 1, so the example checks none was lost
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+        while ( rocketnet_client_receive_message( client, &data, &bytes ) )
             rocketnet_client_release_message( client, data );
         const int slot = rocketnet_client_index( client );
-        while ( rocketnet_server_receive_message( server, slot, 0, &data, &bytes ) )
-            rocketnet_server_release_message( server, slot, data );
-        while ( rocketnet_server_receive_message( server, slot, 1, &data, &bytes ) )
+        while ( rocketnet_server_receive_message( server, &rn_public_receive_sender, &data, &bytes ) )
+            rocketnet_server_release_message( server, data );
+        while ( rocketnet_server_receive_message( server, &rn_public_receive_sender, &data, &bytes ) )
         {
             reliable_received++;
-            rocketnet_server_release_message( server, slot, data );
+            rocketnet_server_release_message( server, data );
         }
 
         // (3) run the game simulation for the frame: nothing to simulate here
