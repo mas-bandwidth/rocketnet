@@ -298,8 +298,11 @@ StartFragmented(cnt) ==
     /\ UNCHANGED <<bitsChecked, lastExpect, lastVisited>>
 
 \* A sequence spent and never sent: start_packet acquired a frame and the
-\* packet was aborted, or finish_packet returned zero on the wire route
-\* (USAGE.md, "Not every NULL from start_packet spends one").
+\* packet was aborted, finish_packet returned zero on the wire route, or
+\* start_packet took the sequence and then refused (the client's send ring,
+\* arena or lease table; the server's lease table: the server takes its
+\* sequence after the ring or arena frame, so those refusals spend none).
+\* USAGE.md, "A start the client refuses ... spends its session sequence".
 BurnOne ==
     /\ Burns
     /\ nextSeq <= MaxSeq

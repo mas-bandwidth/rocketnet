@@ -3,14 +3,16 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// A start_packet that the send arena, the packet lease table or the payload
+// A start_packet that the client's send arena, packet lease table or payload
 // ring refuses has already spent a session sequence:
-// rocketnet_server_transport_start_packet takes it at
-// sdk/rocketnet_server_transport.cpp:2154 and refuses at :2166 (arena),
-// :2183 and :2238 (lease), :2195 (staged driver ring) and :2210 (ring);
 // rocketnet_client_transport_start_packet takes it at
-// sdk/rocketnet_client_transport.cpp:1532 and refuses at :1546 (ring), :1566
-// (arena) and :1585 (lease). Nothing is sent on that sequence.
+// sdk/rocketnet_client_transport.cpp:1532 and refuses at :1549 (ring), :1570
+// (arena) and :1587 (lease). rocketnet_server_transport_start_packet acquires
+// the frame first and takes the sequence after it
+// (sdk/rocketnet_server_transport.cpp:2135 arena, :2166 staged driver ring,
+// :2191 ring), so its arena and ring refusals (:2130, :2163, :2182) spend
+// none; its lease refusals (:2149, :2213) come after the take and spend one.
+// Nothing is sent on a spent sequence.
 // tla/FragmentsAndAcks.tla models such a sequence as a burn (BurnOne,
 // :300-310; "a burn spends sequences nothing is ever sent on", :19-20) and
 // checks BurnedNeverNamed (:705-707): a burned sequence is never opened and
@@ -200,8 +202,9 @@ REGISTER_UNIT_TEST( sequence_burn_receiver_block_skips_unopened );
 // A transport pair on the in-memory loopback driver, stepped from 1000.0 by
 // 10 ms, no socket. The burning side fills its own capacity with real packets
 // and then calls start_packet until it refuses for real (SEND_RING_FULL or
-// SEND_ARENA_FULL counts each refusal), so every refusal spends a session
-// sequence nothing is sent on. The control run sends the very same real
+// SEND_ARENA_FULL counts each refusal). On the client every refusal spends a
+// session sequence nothing is sent on; on the server the refusal comes before
+// the sequence is taken and spends none. The control run sends the very same real
 // packets in the very same rounds and never makes the refused calls. Both
 // runs report the measures of sequence_burn_measures_t.
 

@@ -2103,9 +2103,15 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         return NULL;
     }
 
+    // the frame is acquired before the sequence is taken: a start the arena,
+    // the staged driver or the payload ring refuses spends no sequence, so the
+    // client's receive-side loss stat sees no gap for it. The fill phase keeps
+    // connections stable, so the address resolved here is the mapping
+    // start_payload then reads.
+
     rocketnet_address_t to;
-    uint64_t sequence;
-    if ( !rocketnet_server_protocol_start_payload( &server_transport->protocol, client_index, &to, &sequence ) )
+    uint64_t sequence = 0;
+    if ( !rocketnet_server_protocol_client_address( &server_transport->protocol, client_index, &to ) )
         return NULL;
 
     uint8_t * frame = NULL;
@@ -2124,6 +2130,10 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
             rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_ARENA_FULL], 1 );
             return NULL;
         }
+
+        // an arena slot needs no undo: the flush reclaims the whole arena
+        if ( !rocketnet_server_protocol_start_payload( &server_transport->protocol, client_index, &to, &sequence ) )
+            return NULL;
 
         rocketnet_assert( ( (uintptr_t) frame % 16 ) == 0 );
 
@@ -2153,6 +2163,11 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
                 rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
             return NULL;
         }
+        if ( !rocketnet_server_protocol_start_payload( &server_transport->protocol, client_index, &to, &sequence ) )
+        {
+            rocketnet_server_driver_abort_packet( server_transport, packet_id, frame );
+            return NULL;
+        }
         rocketnet_platform_atomic_add_u64( &server_transport->send_staged, 1 );
         context->packet_id = packet_id;
     }
@@ -2171,6 +2186,10 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         ring->info[slot].to = to;
         ring->info[slot].client_index = client_index;
         ring->info[slot].wire_bytes = 0;
+
+        // an unwritten slot (wire_bytes zero) is skipped by the flush
+        if ( !rocketnet_server_protocol_start_payload( &server_transport->protocol, client_index, &to, &sequence ) )
+            return NULL;
 
         frame = ring->data + slot * ROCKETNET_FRAME_STRIDE;
 
