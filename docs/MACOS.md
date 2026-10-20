@@ -146,7 +146,7 @@ logs `transport list "gso" names no transport for this endpoint on this platform
 displaces whatever `transport` the program set (each create logs `server config override ROCKETNET_SERVER_TRANSPORT=gso (displaces <old>)`), so the
 example's own impossible pin is displaced too, its last check fails, and it
 exits 1. The functional
-case `driver_env_pin_is_honoured` fails under such a pin for the same reason.
+case `transport_env_pin_is_honoured` fails under such a pin for the same reason.
 
 Pinning `msgx` requires the batch symbols on the host: without them the create
 refuses instead of falling to `portable`. The first real batch call then
@@ -156,39 +156,23 @@ pauses `msgx` and runs `portable` rather than failing after create. Pinning
 queued datagram read before the caller does
 (`rocketnet_platform_socket_create_with_pump`).
 
-**`ROCKETNET_PUMP=portable`** is the older override, kept with its meaning:
-the batch pump is off. Under it `auto` lands on `portable`, logging
-`msgx pump refused: ROCKETNET_PUMP=portable`, and a pinned `msgx` refuses
-(`rocketnet_platform_socket_create_with_pump`). The per-endpoint transport
-variables are its successors.
-
-```sh
-./bin/example_transports
-ROCKETNET_PUMP=portable ./bin/example_transports
-```
-
-The first prints `auto chose msgx`; the second logs the refusal above and
-`server transport ladder granted portable after refusals: msgx`
-(`examples/transports.c`).
+`./bin/example_transports` prints the transport chosen by the automatic ladder
+and verifies an explicit portable pin.
 
 Every other config field has an overlay named
 `ROCKETNET_<ENDPOINT>_<FIELD>` with `<ENDPOINT>` `CLIENT` or `SERVER`, built by
 `rocketnet_config_env_var_name_for` (`sdk/rocketnet_config.cpp`); the comment
-beside each field in `sdk/rocketnet.h` names its variable. The legacy names
-`ROCKETNET_DRIVER`, `ROCKETNET_TRANSPORT`, `ROCKETNET_SERVER_DRIVER` and
-`ROCKETNET_CLIENT_DRIVER` are refused aloud and never applied
-(`sdk/rocketnet_config.cpp`).
+beside each field in `sdk/rocketnet.h` names its variable.
 
-The test suites clear `ROCKETNET_PUMP` and every config overlay before they
+The test suites clear every config overlay before they
 run, and keep only `ROCKETNET_SERVER_TRANSPORT` and
 `ROCKETNET_CLIENT_TRANSPORT` (`sdk/rocketnet_tests.cpp`,
-`rocketnet_test_environment_t`). Under a suite, `ROCKETNET_PUMP` has no effect;
-use an example program, or your game, to see it.
+`rocketnet_test_environment_t`).
 
 CI pins every macOS pair on IPv4, IPv6 and dual stack: `portable/portable`,
 `portable/msgx`, `msgx/portable`, `msgx/msgx` and `loopback/loopback`, each
 running `test_transport_udp_loopback`, `test_transport_ipv6_loopback`,
-`test_transport_dual_stack_ipv4_client` and `driver_env_pin_is_honoured`
+`test_transport_dual_stack_ipv4_client` and `transport_env_pin_is_honoured`
 (`.github/workflows/ci.yml`, "Transport family matrix",
 `TRANSPORT_MATRIX_MACOS`). The commands are in "Verify a Mac" below.
 
@@ -415,7 +399,7 @@ ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/fu
 
 for pair in portable:portable portable:msgx msgx:portable msgx:msgx loopback:loopback; do
   for name in test_transport_udp_loopback test_transport_ipv6_loopback \
-              test_transport_dual_stack_ipv4_client driver_env_pin_is_honoured; do
+              test_transport_dual_stack_ipv4_client transport_env_pin_is_honoured; do
     ROCKETNET_SERVER_TRANSPORT=${pair%%:*} ROCKETNET_CLIENT_TRANSPORT=${pair##*:} \
       ./bin/functional --run $name > /dev/null || echo "FAILED $pair $name"
   done
@@ -433,8 +417,8 @@ How to read them:
   60 seconds prints a warning; over 120 seconds it is killed and the suite
   fails (`test/suite_runner.h`; Debug scales the limit).
 - `./bin/functional` opens real sockets on loopback. With no pin set it prints
-  `driver_env_pin_is_honoured [SKIPPED ...]`; under the portable pin it prints
-  `driver_env_pin_is_honoured` alone, which is what CI greps for
+  `transport_env_pin_is_honoured [SKIPPED ...]`; under the portable pin it prints
+  `transport_env_pin_is_honoured` alone, which is what CI greps for
   (`.github/workflows/ci.yml`, "Run functional suite (portable rung pinned by
   env)").
 - The loop is CI's macOS transport matrix, case by case; it prints nothing

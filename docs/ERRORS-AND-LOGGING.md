@@ -6,12 +6,9 @@ callback, and the runtime counter inspection contract for C SDK consumers.
 `sdk/rocketnet.h` is the authority for every public name, field, default and
 environment variable in this document.
 
-Read this document beside `docs/ABI-EVOLUTION.md` (`issue-149`), which governs
+Read this document beside `docs/ABI-EVOLUTION.md`, which governs
 shared-library symbol versioning, header installation boundaries, and the
 native ABI queries and version contract (`sdk/rocketnet_abi.cpp`).
-
-The former C# binding and its smoke/managed ABI gate have been removed;
-the C API, its logging surface and native verification remain in scope.
 
 ---
 

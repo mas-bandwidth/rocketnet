@@ -510,9 +510,7 @@ transport; on macOS
 the Darwin batch pump and portable — and the transport walks an ordered candidate
 list at create. The list rides the config's transport field or the
 per-endpoint `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
-environment variables (precedence: default < struct < env). The old names
-`ROCKETNET_DRIVER`, `ROCKETNET_TRANSPORT`, `ROCKETNET_SERVER_DRIVER` and
-`ROCKETNET_CLIENT_DRIVER` are refused aloud and never applied:
+environment variables (precedence: default < struct < env):
 
     ./bin/functional                                # auto: the platform's recommended ladder
                                                 #   (linux: xdp,gso,io_uring,portable — falls on refusal)
@@ -531,18 +529,15 @@ clamped: the xdp transport takes any `num_xdp_queues` from 1, the gso transport 
 past its 32-queue geometry. The GSO transport still probes UDP_SEGMENT and UDP_GRO at
 create and degrades to plain sendmmsg/recvmmsg batching where a kernel lacks them —
 that degradation is internal to the transport, below the ladder; likewise the Darwin
-batch pump's live-refusal pause. The pre-#106 `ROCKETNET_PUMP=portable` override is
-absorbed into this system with its exact old meaning — the msgx pump off —
-honored and named in the logs, with `ROCKETNET_SERVER_TRANSPORT=portable` and
-`ROCKETNET_CLIENT_TRANSPORT=portable` as its successors. Run `./bin/functional`
+batch pump's live-refusal pause. Run `./bin/functional`
 against each rung. The unit
 suite, `./bin/test`, does not start a transport, so a transport pin does not change
 what it asserts.
 
 The SDK test suite temporarily clears config overrides derived from both
-config tables and their older aliases, then restores them on return.
+config tables, then restores them on return.
 `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT` remain intentional
-test pins, and the old transport names are cleared; `ROCKETNET_TEST_VERBOSE`
+test pins; `ROCKETNET_TEST_VERBOSE`
 keeps its diagnostic meaning. Passing ordinary runs print test names and
 explicitly named platform skips. Failures retain the captured diagnostic log.
 
