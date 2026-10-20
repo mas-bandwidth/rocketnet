@@ -37,7 +37,12 @@ static void loopback_rss_free( void *, void * memory )
         HeapFree( GetProcessHeap(), 0, memory );
 }
 
-// The endpoint-count cases touch queued packets; HeapAlloc avoids filling unused queue slots in the Debug CRT.
+// Each loopback endpoint allocates its whole packet queue at create, and the
+// endpoint-count cases create MAX_ENDPOINTS endpoints but queue at most one
+// packet on each client endpoint (and one per client on the server), so most
+// queue pages stay untouched. The Windows Debug CRT malloc fills every block
+// it returns, which touches them all; HeapAlloc returns the block unfilled.
+// Every queue keeps its size.
 static void loopback_rss_allocator_begin()
 {
     rocketnet_unit_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );

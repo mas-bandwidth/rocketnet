@@ -72,7 +72,11 @@ static void swarm_rss_free( void *, void * memory )
         HeapFree( GetProcessHeap(), 0, memory );
 }
 
-// rocketnet_test_swarm initializes used state; HeapAlloc avoids filling unused ACK history in the Debug CRT.
+// The Windows Debug CRT malloc fills every block it returns, which touches every
+// page of the swarm's server ACK history and reassembly sets, sized for all 1000
+// clients up front. rocketnet_test_swarm touches only the parts its traffic
+// uses; HeapAlloc returns the block unfilled, so untouched pages stay out of the
+// resident set. Every buffer keeps its size.
 static void swarm_rss_allocator_begin()
 {
     rocketnet_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
