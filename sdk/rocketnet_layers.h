@@ -1610,6 +1610,8 @@ struct rocketnet_message_client_t * rocketnet_message_client_create( void * cont
 // code (INVALID_CONNECT_TOKEN, CONNECT_TOKEN_EXPIRED, a socket or thread
 // failure), CONFIG_OUT_OF_RANGE for a refused message config or budget,
 // OUT_OF_MEMORY when the object's block is refused.
+// reserve_unlimited is for the public zero-budget setting: keep its runtime
+// ceiling while omitting a finite create-time payload reserve.
 struct rocketnet_message_client_t * rocketnet_message_client_create_ex( void * context, const uint8_t * connect_token,
                                                                         const struct rocketnet_client_transport_config_t * transport_config,
                                                                         const struct rocketnet_message_config_t * message_config,
@@ -1712,6 +1714,8 @@ struct rocketnet_message_server_t * rocketnet_message_server_create( void * cont
 // code for a transport that does not start (rocketnet_server_transport_create_ex),
 // CONFIG_OUT_OF_RANGE for a refused message config or budget, OUT_OF_MEMORY
 // when the object's block is refused.
+// reserve_unlimited preserves the public unlimited-budget runtime ceiling
+// without sizing a finite payload reserve for that sentinel.
 struct rocketnet_message_server_t * rocketnet_message_server_create_ex( void * context, const char * address,
                                                                         const struct rocketnet_server_transport_config_t * transport_config,
                                                                         const struct rocketnet_message_config_t * message_config,
