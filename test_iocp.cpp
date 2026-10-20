@@ -974,11 +974,13 @@ static void test_rio_completion_queue_full()
     // with ROCKETNET_RIO_RECEIVES completions; the host drops what arrives
     // with no slice posted. The poll that reads the full queue fills the bank
     // to capacity and re-posts slice by slice while a sender keeps datagrams
-    // coming, so completions past the bank capacity arrive in the same poll
-    // and the overflow is counted. No slice is lost and traffic resumes.
+    // coming. rocketnet_server_rio_receive_packets dequeues at most one bank
+    // per call, so completions past the bank stay queued for the next call:
+    // no overflow is counted, and the next poll delivers the tail.
     const uint64_t overflow = rio_counter(rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW);
     int attempts = 0;
-    while ( rio_counter(rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW) == overflow && attempts < 10 )
+    int tail = 0;
+    while ( tail == 0 && attempts < 10 )
     {
         ++attempts;
         const uint64_t received = rio_counter(rio, ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED);
@@ -992,13 +994,18 @@ static void test_rio_completion_queue_full()
         flood.join();
         CHECK(rocketnet_server_rio_process_packets(rio)->num_packets == ROCKETNET_RIO_RECEIVES);
         CHECK(rio_counter(rio, ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED) - received == ROCKETNET_RIO_RECEIVES);
+        // completions the flood queued during the bounded poll are the tail
+        rocketnet_server_rio_receive_packets(rio);
+        tail = rocketnet_server_rio_process_packets(rio)->num_packets;
+        CHECK(tail <= ROCKETNET_RIO_RECEIVES);
+        CHECK(rio_counter(rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW) == overflow);
         rio_settle(rio);
         // drain what the sender left before the next attempt
         for ( int i = 0; i < 20; ++i ) { rocketnet_server_rio_receive_packets(rio); rocketnet_platform_sleep(0.005); }
     }
-    const uint64_t dropped = rio_counter(rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW) - overflow;
-    printf("rio_completion_queue_full: overflow %llu after %d attempts\n", (unsigned long long) dropped, attempts);
-    CHECK(dropped > 0);
+    printf("rio_completion_queue_full: tail %d after %d attempts\n", tail, attempts);
+    CHECK(tail > 0);
+    CHECK(rio_counter(rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW) == overflow);
     rio_settle(rio);
     rio_exchange(rio, &bind, peer, &peer_address, 64);
     rio_finish(rio, peer);
