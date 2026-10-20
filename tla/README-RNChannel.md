@@ -217,3 +217,26 @@ output directory per shard. Merge the eight `RUNS.tsv` files with `--keep`,
 and check `groups --stale`. No C++ changes, Go/C++ tests, sequenced wire types,
 allocator proof, rate scheduler proof, or full-width wrap proof are part of
 this card.
+
+## Mid-scale instance
+
+`MCRNChannelMid.cfg` is the safety configuration with a larger send window and
+packet map: `W = 4` (from 2), `P = 2` (from 1) and `MaxPid = 2` so two live
+packet references can leave room for a fresh retransmission ID. It keeps every
+invariant the committed case lists: ordered exactly-once delivery, whole
+messages, indexed chunk placement, unreliable at-most-once, bounded buffers,
+no slot collision and the sequenced-reset trace. It uses the same alternating
+loss pattern. It is a bench case because it does not finish inside 110 s; the
+record is a timeout at 110.7 s.
+
+The deployed channel window is `window_messages` per channel, not `W = 4`.
+The checked properties split into two kinds. The ordering, chunk-placement and
+at-most-once rules are local to each accepted message, number and ring slot,
+and their statements do not mention the window size; the mid instance changes
+which reliable numbers share a ring position and still checks the same
+predicates. Ring reuse and the send window's admission rule
+(`n < UPrime + W`) are size-dependent: a wider window admits more numbers
+before the oldest is delivered, and the mid instance exercises that wider
+admission but not the deployed `window_messages`. Packet-ID wrap and
+half-range sequence reconstruction remain outside this module, as recorded
+above.
