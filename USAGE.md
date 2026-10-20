@@ -57,11 +57,10 @@ kernel for an ephemeral port; read the granted port with
 monotonic clock in seconds; use the same clock for every call that takes a
 time, and keep it finite and non-decreasing.
 
-The connect-token create and expire checks read the wall clock unless the
-config sets `game_clock_epoch`, the unix time at the game clock's zero. With an
-epoch, the check reads epoch plus the caller's time, floored to whole seconds,
-so a test can hold time still and a fixed token still connects. Zero, the
-default, keeps the wall clock.
+The frame and update loops (`rocketnet_client_update`, `rocketnet_server_update`)
+take the caller's monotonic time and read no clock of their own on those paths,
+so the game owns simulation time and a test can hold it still. However, connect
+token expiry checks read the host wall clock (`::time(NULL)`).
 
 ## Configuration
 
@@ -106,9 +105,10 @@ void configure( struct rocketnet_client_config_t * client, struct rocketnet_serv
 }
 ```
 
-`transport` is an ordered candidate list, comma separated, tried left to right
-at create. The first candidate that starts wins, and a list that every
-candidate refuses fails loudly. `"auto"` (the default, also NULL or the empty
+`transport` is an ordered candidate list, comma separated, validated at create
+and walked left to right at client `connect` and server `start`. The first
+candidate that starts wins, and a list that every candidate refuses fails
+loudly. `"auto"` (the default, also NULL or the empty
 string) is the platform's recommended order; a one-element list is a pin. A
 known name this endpoint does not have is skipped with one log line; a name
 that is no transport anywhere is a typo and fails loudly. The accessor on each
@@ -139,7 +139,7 @@ row per field of both public structs.
 | transport | ROCKETNET_CLIENT_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, or a list with no usable candidate: refuses the create |
 | state_change_callback | none | `void (*)( void *, int, int )` | `NULL` | no environment form |
 | time_callback | none | `double (*)( void * )` | `NULL` (platform clock) | no environment form |
-| game_clock_epoch | ROCKETNET_CLIENT_GAME_CLOCK_EPOCH | uint64_t | `0` (wall clock) | a non-integer: refuses the create |
+| step_driven | ROCKETNET_CLIENT_STEP_DRIVEN | int | `0` | refuses the create unless `0` or `1` |
 | send_kbps | ROCKETNET_CLIENT_SEND_KBPS | int | `1000` | a non-integer, or above `10000000`: refuses the create; `0` or less sets the budget to its ceiling, `ROCKETNET_SEND_BUDGET_MAX_KBPS` (10 Gbit/s), NOT RECOMMENDED; each connection's starting rate |
 | num_channels | ROCKETNET_CLIENT_NUM_CHANNELS | int | `32` | refuses the create unless `1..32` |
 | window_messages | ROCKETNET_CLIENT_WINDOW_MESSAGES | int | `1024` | refuses the create unless `64..1048576` and a power of two |
@@ -156,6 +156,10 @@ row per field of both public structs.
 | rto_min_ms | ROCKETNET_CLIENT_RTO_MIN_MS | int | `10` | refuses the create unless `1..60000` |
 | rto_max_ms | ROCKETNET_CLIENT_RTO_MAX_MS | int | `250` | refuses the create unless `10..60000` |
 | reliable_timeout_ms | ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS | int | `10000` | refuses the create unless `1000..600000` |
+| simulated_loss_percent | ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT | int | `0` | refuses the create unless `0..100`; development only, and a production library refuses any nonzero value |
+| simulated_latency_ms | ROCKETNET_CLIENT_SIMULATED_LATENCY_MS | int | `0` | refuses the create unless `0..60000`; development only, and a production library refuses any nonzero value |
+| simulated_jitter_ms | ROCKETNET_CLIENT_SIMULATED_JITTER_MS | int | `0` | refuses the create unless `0..60000`; development only, and a production library refuses any nonzero value |
+| simulated_duplicate_percent | ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT | int | `0` | refuses the create unless `0..100`; development only, and a production library refuses any nonzero value |
 | protocol_id | ROCKETNET_SERVER_PROTOCOL_ID | uint64_t | `0` | a non-decimal value, or one past the type: refuses the create |
 | max_clients | ROCKETNET_SERVER_MAX_CLIENTS | int | `1000` | refuses the create unless `1..1000` |
 | filter_value | ROCKETNET_SERVER_FILTER_VALUE | uint8_t[4], base64 | `b7 59 01 00` (test filter) | not exactly 4 bytes, or invalid base64: refuses the create |
@@ -168,7 +172,6 @@ row per field of both public structs.
 | num_reassembly_slots | ROCKETNET_SERVER_NUM_REASSEMBLY_SLOTS | int | `0` (8) | refuses the create unless `0` or `1..256` |
 | max_timeout_seconds | ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS | int | `60` | refuses the create unless `1..3600` |
 | handshake_deadline_seconds | ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS | int | `5` | refuses the create unless `1..60` |
-| game_clock_epoch | ROCKETNET_SERVER_GAME_CLOCK_EPOCH | uint64_t | `0` (wall clock) | a non-integer: refuses the create |
 | transport | ROCKETNET_SERVER_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, or a list with no usable candidate: refuses the create |
 | public_address | ROCKETNET_SERVER_PUBLIC_ADDRESS | const char * | `NULL` | an address that does not parse: refuses the create |
 | per_client_send_kbps | ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS | int | `10000` | a non-integer, or above `10000000`: refuses the create; `0` or less sets the budget to its ceiling, `ROCKETNET_SEND_BUDGET_MAX_KBPS` (10 Gbit/s), NOT RECOMMENDED; each client connection's starting rate |
@@ -187,10 +190,29 @@ row per field of both public structs.
 | rto_min_ms | ROCKETNET_SERVER_RTO_MIN_MS | int | `10` | refuses the create unless `1..60000` |
 | rto_max_ms | ROCKETNET_SERVER_RTO_MAX_MS | int | `250` | refuses the create unless `10..60000` |
 | reliable_timeout_ms | ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS | int | `10000` | refuses the create unless `1000..600000` |
+| simulated_loss_percent | ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT | int | `0` | refuses the create unless `0..100`; development only, and a production library refuses any nonzero value |
+| simulated_latency_ms | ROCKETNET_SERVER_SIMULATED_LATENCY_MS | int | `0` | refuses the create unless `0..60000`; development only, and a production library refuses any nonzero value |
+| simulated_jitter_ms | ROCKETNET_SERVER_SIMULATED_JITTER_MS | int | `0` | refuses the create unless `0..60000`; development only, and a production library refuses any nonzero value |
+| simulated_duplicate_percent | ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT | int | `0` | refuses the create unless `0..100`; development only, and a production library refuses any nonzero value |
 
 The message fields marked WIRE must be identical on both ends; the connection
 verifies them. The cross rules are in [docs/CHANNELS.md](docs/CHANNELS.md)
 section 14.
+
+### Operator-only environment variables
+
+Several variables configure global subsystem behavior without corresponding
+fields in the public configuration structs:
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `ROCKETNET_CLIENT_GAME_CLOCK_EPOCH` / `ROCKETNET_SERVER_GAME_CLOCK_EPOCH` | uint64, unix seconds | `0` (wall clock) | Sets `game_clock_epoch`, the unix time at the game clock's zero, for the connect-token expiry check; `0` reads the host wall clock. |
+| `ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH` / `ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH` | int, `2..1000000` | `0` (off) | Development only: drop every Nth outgoing datagram. |
+| `ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW` / `ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW` | int, `2..64` | `0` (off) | Development only: reverse each window of W outgoing datagrams. |
+| `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES` | uint64 | `0` (unlimited) | Enforces an upper bound on server transport memory plans; over-budget candidates are skipped, and `rocketnet_server_start` (which creates the transport) fails with `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED` only when no candidate fits. |
+| `ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES` | uint64 | `0` (unlimited) | Enforces an upper bound on client transport memory plans; over-budget candidates are skipped, and `rocketnet_client_connect` (which creates the transport) fails with `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED` only when no candidate fits. |
+| `ROCKETNET_GATEWAY_ETHERNET_ADDRESS` | string (`xx:xx:xx:xx:xx:xx`) | auto-discovered | Sets the gateway MAC address for Linux AF_XDP server sockets when automatic gateway ARP discovery cannot resolve it. |
+| `ROCKETNET_LOG_LEVEL` | int (`0..5`) | `info` (`3`) | Sets process-wide log verbosity: `none` (`0`), `error` (`1`), `warn` (`2`), `info` (`3`), `debug` (`4`), `spam` (`5`). Only a whole-string integer in `0..5` is accepted; the names are output names, not accepted inputs, and a word is ignored with a warning. |
 
 ## Create, connect, start, stop and destroy
 
@@ -214,6 +236,44 @@ start again. Clients are identified by index (`uint64_t`),
 report the bytes a caller block needs. Pass NULL and zero to let RocketNet make
 the allocation; a block of at least the reported size, aligned to
 `ROCKETNET_ALLOCATION_ALIGNMENT`, makes none.
+
+### Server memory footprint
+
+A default 1,000-client server requires approximately 1.52 GB (1,595,804,864 bytes)
+of memory, which scales to approximately 1.52 MB (1,595,776 bytes) per client slot.
+This memory figure can be measured directly using `rocketnet_server_required_memory`:
+
+```c
+#include "rocketnet.h"
+#include <stdio.h>
+
+int main( void )
+{
+    struct rocketnet_server_config_t config;
+    rocketnet_server_default_config( &config );
+
+    config.max_clients = 1000;
+    const size_t bytes_1000 = rocketnet_server_required_memory( &config );
+    config.max_clients = 1;
+    const size_t bytes_1 = rocketnet_server_required_memory( &config );
+    config.max_clients = 2;
+    const size_t bytes_2 = rocketnet_server_required_memory( &config );
+
+    printf( "1000 clients: %zu\n1 client: %zu\n2 clients: %zu\ndelta: %zu\n",
+            bytes_1000, bytes_1, bytes_2, bytes_2 - bytes_1 );
+    return 0;
+}
+```
+
+Build a Release tree, save the program as `measure_server_memory.c`, and run:
+
+```sh
+cc -I sdk measure_server_memory.c build/librocketnet.a -lbpf -lxdp -luring -lstdc++ -lpthread -lm -o measure_server_memory
+./measure_server_memory
+```
+
+It prints `1000 clients: 1595804864`, `1 client: 1608704`, `2 clients: 3204480`
+and `delta: 1595776` on this SDK revision.
 
 ```c
 #include "rocketnet.h"
@@ -337,10 +397,10 @@ The reliability is one of `ROCKETNET_RELIABILITY_UNRELIABLE`,
 `ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED`, `ROCKETNET_RELIABILITY_RELIABLE`,
 `ROCKETNET_RELIABILITY_RELIABLE_ORDERED`, `ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED`,
 `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT`, `ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT`
-or `ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT`. Plain UNRELIABLE is one
-message in one packet, up to `ROCKETNET_MESSAGE_SINGLE_BYTES`; the other types
-are bounded by the config's `max_message_bytes`. A larger payload fragments
-transparently, and a lost fragment loses the whole payload.
+or `ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT`. Plain UNRELIABLE is one record in one packet up to 1,411 bytes, which is `ROCKETNET_MESSAGE_SINGLE_BYTES - 1 - ROCKETNET_MESSAGE_RECORD_FIXED_BYTES`;
+above 1,411 bytes it promotes to its reliable twin (`ROCKETNET_RELIABILITY_RELIABLE`),
+which fragments across packets transparently up to `max_message_bytes`, as RakNet's
+reliability layer does.
 
 A send the connection's region has no room for ends the connection with
 `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED`: the server disconnects that
@@ -491,9 +551,10 @@ void report_quality( const struct rocketnet_client_t * client, const struct rock
 ## Connection lifecycle
 
 A client moves from `ROCKETNET_CLIENT_STATE_DISCONNECTED` through the handshake
-states to `ROCKETNET_CLIENT_STATE_CONNECTED`. Every negative value is a way the
-attempt or the connection ended, and the client stays in it until it is
-destroyed. Read the state with `rocketnet_client_state`, its name with
+states to `ROCKETNET_CLIENT_STATE_CONNECTED`. Every negative value is an error state that ended the attempt or the connection,
+and the client stays in it until `rocketnet_client_disconnect` returns it to
+`ROCKETNET_CLIENT_STATE_DISCONNECTED` (ready to connect again with a new token)
+or `rocketnet_client_destroy` releases it. Read the state with `rocketnet_client_state`, its name with
 `rocketnet_client_state_name`, and the end reason with
 `rocketnet_client_disconnect_reason`. `rocketnet_client_index` reports the
 client's slot on the server while connected.
