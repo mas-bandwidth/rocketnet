@@ -296,6 +296,7 @@ normative section it argues for.
 ## m1. Scope, terminology and relation to RN-1
 
 [RN-2 m1 Scope, terminology and relation to RN-1](MESSAGES.md#m1) The preconditions in are the facts about the connection layer that the message layer's correctness rests on. They are stated as requirements on the connection layer, in RN-2, because RN-2 is the party that relies on them, and an RN-1 implementation that carries only opaque payloads need not keep the stronger ones. The replay window bound is the reason 24-bit message numbers are enough: a stale resend cannot arrive from further back than the window admits, and within that distance the signed half-range reading of a number never aliases. Both depth bounds are pinned to named constants of the reference implementation.
+[RN-2 m1 Scope, terminology and relation to RN-1](MESSAGES.md#m1) A send on a connection that is not connected is dropped rather than held. Holding it adds state and latency for nothing: a game sends every frame, so the first frame after the connection is established carries the current state anyway. One rule for both endpoints matches the server, which never had a connection to send on before its slot was assigned. The drop is counted so that it stays visible.
 
 <a id="m2"></a>
 ## m2. Payload forms and sender size rules
