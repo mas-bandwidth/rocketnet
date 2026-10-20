@@ -24,17 +24,6 @@
 #define ROCKETNET_URING_REARM_TEST 0
 #endif
 
-#if ROCKETNET_URING_REARM_TEST
-struct rocketnet_server_uring_t;
-struct rocketnet_server_uring_t * rocketnet_server_uring_test_create_fake( int num_queues );
-void rocketnet_server_uring_test_destroy_fake( struct rocketnet_server_uring_t * uring );
-void rocketnet_server_uring_test_set_arm_failures( struct rocketnet_server_uring_t * uring, int count );
-void rocketnet_server_uring_test_multishot_ends( struct rocketnet_server_uring_t * uring, int queue_index, bool arm_finds_no_sqe );
-bool rocketnet_server_uring_test_queue_armed( struct rocketnet_server_uring_t * uring, int queue_index );
-uint64_t rocketnet_server_uring_test_counter( struct rocketnet_server_uring_t * uring, int counter );
-int rocketnet_server_uring_test_destroy_wait_rounds( bool always_completes, int guard );
-#endif
-
 // red first: without the re-arm in receive_packets the queue stays unarmed
 // after its multishot ends on a failed arm, and every later receive finds it
 // still unarmed. With the fix each receive retries and each failure counts.
@@ -72,10 +61,11 @@ static void uring_rearm_retries_a_failed_arm()
 #endif
 }
 
-// red first: with a fake completion source that always yields a CQE every
-// round is non-silent, so destroy's empty-round count never moves and the wait
-// would never end without the total round bound. With the bound it ends; the
-// case's own guard stops a wait that does not.
+// red first: when every round yields a CQE no round is silent, so destroy's
+// empty-round count never moves and the wait would never end without the total
+// round bound. The case runs rocketnet_server_uring_destroy_wait_over, the end
+// condition rocketnet_server_uring_destroy's wait loop uses; the case's own
+// guard stops a wait that does not end.
 
 static void uring_destroy_wait_is_bounded()
 {

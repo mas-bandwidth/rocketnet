@@ -164,6 +164,20 @@ struct rocketnet_server_uring_test_source_t
 };
 
 struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void * context, int num_queues, const struct rocketnet_server_uring_test_source_t * source );
+
+// the no-kernel-ring seam of the re-arm cases: a fake driver with queues and
+// no ring, whose receive_packets runs only the re-arm loop and whose next
+// count arm calls find no submission entry. destroy_wait_rounds runs the
+// end condition destroy's wait uses (rocketnet_server_uring_destroy_wait_over)
+// with every round completing or every round silent, stopped by guard.
+
+struct rocketnet_server_uring_t * rocketnet_server_uring_test_create_fake( int num_queues );
+void rocketnet_server_uring_test_destroy_fake( struct rocketnet_server_uring_t * uring );
+void rocketnet_server_uring_test_set_arm_failures( struct rocketnet_server_uring_t * uring, int count );
+void rocketnet_server_uring_test_multishot_ends( struct rocketnet_server_uring_t * uring, int queue_index, bool arm_finds_no_sqe );
+bool rocketnet_server_uring_test_queue_armed( struct rocketnet_server_uring_t * uring, int queue_index );
+uint64_t rocketnet_server_uring_test_counter( struct rocketnet_server_uring_t * uring, int counter );
+int rocketnet_server_uring_test_destroy_wait_rounds( bool always_completes, int guard );
 #endif
 
 int rocketnet_server_uring_num_queues( struct rocketnet_server_uring_t * uring );

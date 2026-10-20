@@ -29,8 +29,9 @@
 (*  bank.  receive_packets swaps the banks (Swap): the old fill bank      *)
 (*  becomes the EXPOSED bank the transport reads (TransportReads) until   *)
 (*  the next Swap.  A CQE without IORING_CQE_F_MORE (KernelStop, the      *)
-(*  ENOBUFS case included) disarms the multishot: the one-shot re-arm     *)
-(*  the CQE handler attempts is not guaranteed, so a receive re-arms it.  *)
+(*  ENOBUFS case included) ends the multishot: the one-shot re-arm the    *)
+(*  CQE handler attempts may find no submission entry, so a receive       *)
+(*  re-arms a multishot left disarmed.                                    *)
 (*                                                                         *)
 (*  DESTROY.  Cancels the multishot (Destroy) and waits for every         *)
 (*  outstanding CQE, sends and cancels, before freeing slots, banks and   *)
@@ -230,10 +231,11 @@ Reap(c) ==
               /\ UNCHANGED <<bufdg, snap, gen, armed, nextdg>>
               /\ UNCHANGED SendVars
          [] c.k = "term" ->
-              \* the multishot ended; the one-shot re-arm the CQE handler
-              \* attempts is not guaranteed (it can find no submission entry),
-              \* so the multishot is disarmed until a receive re-arms it
-              /\ armed' = FALSE
+              \* the multishot ended. while running, the CQE handler's one-shot
+              \* re-arm either succeeds or finds no submission entry, and then
+              \* the multishot is disarmed until a receive re-arms it; during
+              \* destroy it is never re-armed
+              /\ armed' \in IF phase = "Running" THEN {FALSE, TRUE} ELSE {FALSE}
               /\ UNCHANGED <<bstate, bufdg, copied, fill, exposed, snap, gen,
                              nextdg>>
               /\ UNCHANGED SendVars

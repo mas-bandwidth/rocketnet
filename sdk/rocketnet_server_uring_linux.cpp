@@ -87,6 +87,15 @@
 #define ROCKETNET_URING_DESTROY_WAIT_ROUNDS                                  5
 #define ROCKETNET_URING_DESTROY_MAX_ROUNDS                                  64
 
+// destroy's wait ends after ROCKETNET_URING_DESTROY_WAIT_ROUNDS silent rounds,
+// or after ROCKETNET_URING_DESTROY_MAX_ROUNDS rounds however many of them
+// completed, so steady completions cannot hold it open
+
+static bool rocketnet_server_uring_destroy_wait_over( int empty_rounds, int rounds )
+{
+    return empty_rounds >= ROCKETNET_URING_DESTROY_WAIT_ROUNDS || rounds >= ROCKETNET_URING_DESTROY_MAX_ROUNDS;
+}
+
 // each slot's info is the slot's msghdr, iovec and destination, which the
 // kernel reads until the send's CQE. finish threads write packet_bytes, so a
 // slot's info is cache line aligned.
@@ -919,15 +928,16 @@ uint64_t rocketnet_server_uring_test_counter( struct rocketnet_server_uring_t * 
     return uring->counters[counter];
 }
 
-// destroy's wait loop with a fake completion source: always_completes says
-// every round yields a CQE, so no round is silent. guard is the case's own
-// iteration bound, so a wait that never ends is reported, not run forever.
+// destroy's wait end condition (rocketnet_server_uring_destroy_wait_over):
+// always_completes says every round yields a CQE, so no round is silent.
+// guard is the case's own iteration bound, so a wait that never ends is
+// reported, not run forever.
 
 int rocketnet_server_uring_test_destroy_wait_rounds( bool always_completes, int guard )
 {
     int empty_rounds = 0;
     int rounds = 0;
-    while ( empty_rounds < ROCKETNET_URING_DESTROY_WAIT_ROUNDS && rounds < ROCKETNET_URING_DESTROY_MAX_ROUNDS )
+    while ( !rocketnet_server_uring_destroy_wait_over( empty_rounds, rounds ) )
     {
         if ( !always_completes )
             empty_rounds++;
@@ -1183,7 +1193,7 @@ void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring )
         int rounds = 0;
         bool drained = false;
 
-        while ( empty_rounds < ROCKETNET_URING_DESTROY_WAIT_ROUNDS && rounds < ROCKETNET_URING_DESTROY_MAX_ROUNDS )
+        while ( !rocketnet_server_uring_destroy_wait_over( empty_rounds, rounds ) )
         {
             rounds++;
 
