@@ -518,6 +518,7 @@ if(ROCKETNET_BUILD_TESTS)
         functional/main.cpp
         functional/rocketnet_functional_tests.cpp
         functional/server_receive_backlog.cpp
+        functional/macos_client_timing.cpp
         functional/lifecycle_driver.cpp
         functional/cpp_transports.cpp
         functional/live_matrix.cpp
