@@ -40,6 +40,9 @@
 #include <string.h>
 #include <time.h>
 
+// defined in functional/harness.inc: the connect token timestamp from the clock that judges it
+uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time );
+
 #define LIVE_MATRIX_DIRECTIONS              2
 #define LIVE_MATRIX_MODES                   8
 #define LIVE_MATRIX_CHANNELS                32
@@ -621,7 +624,7 @@ static void live_matrix_flush( struct live_matrix_t * m )
 static void live_matrix_connect( struct live_matrix_t * m )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    live_matrix_check( rocketnet_write_dev_connect_token( m->server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    live_matrix_check( rocketnet_write_dev_connect_token( m->server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( 0, live_matrix_now( m ) ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     m->client = rocketnet_message_client_create( NULL, token, NULL, &m->message_config, NULL, 0, LIVE_MATRIX_SEND_KBPS );
     live_matrix_check( m->client );
 
