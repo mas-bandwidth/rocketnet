@@ -29,6 +29,7 @@
 #define ROCKETNET_URING_CODEC_ACTIVE 0
 #endif
 
+#if ROCKETNET_URING_CODEC_ACTIVE
 static void put_u32_le( uint8_t * b, uint32_t v )
 {
     b[0] = (uint8_t) ( v & 0xFF );
@@ -36,6 +37,7 @@ static void put_u32_le( uint8_t * b, uint32_t v )
     b[2] = (uint8_t) ( ( v >> 16 ) & 0xFF );
     b[3] = (uint8_t) ( ( v >> 24 ) & 0xFF );
 }
+#endif
 
 static void uring_codec_tag_round_trips()
 {

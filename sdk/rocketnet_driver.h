@@ -33,11 +33,23 @@ enum rocketnet_server_driver_flags_t
     ROCKETNET_DRIVER_BINDS_PUBLIC_ADDRESS = 1 << 3
 };
 
+// status: where a failed open reports why, for server and client alike
+// (NULL: not asked). rocketnet_server_driver_open and
+// rocketnet_client_driver_open write ROCKETNET_STATUS_OUT_OF_MEMORY there when
+// create returned NULL after an allocation on the calling thread was refused
+// (sdk/rocketnet_driver.cpp:126-130, :148 and :182): a rocketnet_malloc
+// refusal, or a driver's own page buffer counted by
+// rocketnet_allocation_refused (sdk/rocketnet_server_socket_linux.cpp:1720,
+// sdk/rocketnet_server_rio_windows.cpp:508). Any other NULL leaves it OK and
+// is a refusal, and the transport ladder falls to the next candidate;
+// OUT_OF_MEMORY ends the ladder and the create
+// (sdk/rocketnet_server_transport.cpp:1299, sdk/rocketnet_client_transport.cpp:882).
 struct rocketnet_server_driver_config_t
 {
     const char * name;
     const rocketnet_server_transport_config_t * transport;
     const char * public_address;
+    int * status;
 };
 
 struct rocketnet_server_driver_operations_t
@@ -95,10 +107,12 @@ struct rocketnet_server_driver_operations_t
 // the start_packet id of a refusal for want of a link-layer destination
 #define ROCKETNET_DRIVER_PACKET_UNREACHABLE    0xFFFFFFFFFFFFFFFFULL
 
+// status: as rocketnet_server_driver_config_t.status
 struct rocketnet_client_driver_config_t
 {
     const char * name;
     const rocketnet_client_transport_config_t * transport;
+    int * status;
 };
 
 // A backend with wait and wake runs the client I/O thread design of
@@ -167,6 +181,14 @@ bool rocketnet_driver_discovers_bound_port( int driver );
 bool rocketnet_driver_pin_only( int driver );
 const int * rocketnet_server_driver_availability( int * num_available );
 const int * rocketnet_client_driver_availability( int * num_available );
+
+// The allocations rocketnet_malloc has refused on the calling thread, ever
+// (defined in sdk/rocketnet.cpp beside rocketnet_malloc).
+uint64_t rocketnet_allocation_refusals();
+
+// Counts one failed allocation made outside rocketnet_malloc on the calling
+// thread, so a driver open reports OUT_OF_MEMORY for it (sdk/rocketnet.cpp).
+void rocketnet_allocation_refused();
 
 // Validate the contract once at creation, never in the packet path. Also used
 // by native extension conformance tests before a backend enters the registry.
