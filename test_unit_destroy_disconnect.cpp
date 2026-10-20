@@ -483,9 +483,14 @@ static void destroy_without_live_connection_sends_nothing()
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     destroy_disconnect_mint_token( &keys, 40000, 0xE301ULL, token );
 
+    // Each fake driver is static and zeroed in place: one fake holds two 256
+    // datagram rings (test/fake_client_driver.h:37), and an unoptimised MSVC
+    // build gives both blocks their own stack slot, past the default 1 MB stack.
+
     // Client on the base fake driver: destroyed before any session keys exist.
     {
-        rocketnet_fake_client_driver_t fake = {};
+        static rocketnet_fake_client_driver_t fake;
+        memset( &fake, 0, sizeof( fake ) );
         rocketnet_client_transport_config_t config;
         rocketnet_client_transport_default_config( &config );
         rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_at_timestamp(
@@ -502,7 +507,8 @@ static void destroy_without_live_connection_sends_nothing()
 
     // Client on the I/O-step fake driver: destroyed with no live connection.
     {
-        rocketnet_fake_client_driver_t fake = {};
+        static rocketnet_fake_client_driver_t fake;
+        memset( &fake, 0, sizeof( fake ) );
         rocketnet_client_transport_config_t config;
         rocketnet_client_transport_default_config( &config );
         config.step_driven = 1;
