@@ -2725,6 +2725,1381 @@ ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Clau
    :columns platforms
    :rows
    ((:id "server-running-invariants" :feature "TLA+ invariants NoReceiveUnlessRunning and NoAdmitUnlessRunning on the server lifecycle, plus tests that a stopping or stopped server reads no packet and admits no client" :cells (n n n) :note "the query itself ships as rocketnet_server_running in v1.0.0")))
+  (:id "after-payment" :title "Hardening and long testing after the payment milestone (later)"
+   :text "Soaks, load, stress, matrices, fuzzing, sanitizers, nightlies and the TLA+ ledger, moved off the v1.0.0 sprint on 2026-10-20 by the owner's call: the payment milestone is the public API complete with unit and functional tests green, and this work follows it. Each row keeps its whole brief and its latest head."
+   :columns platforms
+   :rows
+   (
+(:id "rocketnet-lan-1000-client-soak-matrix" :feature "A thousand clients for ten minutes on every transport of every platform, over the LAN, every guarantee checked" :cells (n n n) :note "after the payment milestone (owner 2026-10-20); latest work: no pushed branch" :brief "RESULT: rocketnet-lan-1000-client-soak-matrix sha=<sha12> tier: heavy
+WHO: only friend rowan
+REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: code
+PRIORITY: blocker
+STREAM: rocketnet-api
+DEPENDS-ON: rocketnet-linux-load-1000-clients,rocketnet-macos-load-1000-clients-t,rocketnet-win-load-1000-clients,rocketnet-linux-soak-per-transport,rocketnet-macos-soak-per-transport,rocketnet-win-soak-per-transport,rocketnet-windows-udp-connreset-never-stalls-receive,rocketnet-macos-hard-killed-peer-never-stalls-receive,rocketnet-linux-hard-killed-peer-never-stalls-receive,rocketnet-windows-suite-stable
+LAND-AFTER: rocketnet-windows-client-overlapped-send,rocketnet-win-receive-backlog-connect-wait,rocketnet-destroy-sends-disconnect,rocketnet-client-send-drops-until-connected,rocketnet-network-thread-priority-as-space,rocketnet-xdp-drops-first-fragment,rocketnet-api-polish-v1-followups,rocketnet-linux-lifecycle-stress,rocketnet-linux-socket-error-paths,rocketnet-macos-client-timing-under-app-nap,rocketnet-macos-lifecycle-stress-t,rocketnet-macos-sanitizers-and-leaks,rocketnet-macos-socket-errors-and-enobufs-t,rocketnet-macos-universal-and-xcode-t,rocketnet-v1-hygiene-t,rocketnet-win-libfuzzer-clang-cl,rocketnet-win-lifecycle-stress,rocketnet-win-msvc-asan,rocketnet-win-socket-error-paths-t,rocketnet-win-toolchain-matrix
+SOURCE: the owner, 2026-10-20: \"I also want to prove out we can actually connect 1000 clients and soak for 10 minutes per-transport and platform we have\", \"this means that we must do that work ON THIS LAN\", \"while we do it, we just hold all fleet machines on the LAN, and you distribute clients around\", \"in this test, we exercise all the different messages and reliability guarantees\", and the per-client load is 256 kbps. This is the v1.0.0 proof that every server transport on every platform holds 1000 real clients over a real network for 10 minutes with every reliability guarantee checked.
+PATHS: load.c,tools/lan/**,docs/LOAD.md,CMakeLists.txt
+NEW: tools/lan/soak_matrix.py,tools/lan/hosts.tsv,tools/lan/RESULTS.md
+START: load.c (read), sdk/rocketnet.h (read), soak.c (read)
+TEST: none because the property is real 1000-client runs over the LAN on held machines, a functional-tier run; DONE-WHEN names the runs and the table
+DONE-WHEN: (1) load.c gains two modes beside its one-process mode: `load server <bind address> <clients> <seconds>` (one server, the transport from ROCKETNET_SERVER_TRANSPORT) and `load clients <server address> <first client id> <count> <seconds>` (count clients in one process), with tokens minted from the development keys for the server's LAN address; the one-process mode is unchanged; (2) every client sends and receives on all eight channel types (unreliable, unreliable sequenced, reliable, reliable ordered, reliable sequenced, and the receipt variants) for the whole run, small messages and oversize/fragmented messages on each, including oversize unreliable (which promotes), at a steady offered 256 kbps per client, payload plus headers, each direction; (3) every payload carries the sender's client id, channel, a per-channel sequence number and a checksum over the payload, and each end checks at the end of the run, per client and per channel: reliable: every message sent delivered exactly once; reliable ordered: in send order with no gap; both sequenced kinds: never older than one already delivered; unreliable: no duplicate, loss equal to the counters' loss; receipts: every acked receipt matches a delivered message and every lost receipt a message that was not; zero checksum failures; any violation fails the cell; (4) tools/lan/soak_matrix.py runs one cell: it starts the server on its host, waits for it to listen, starts the client processes spread over the client hosts (about 1000/number-of-client-hosts each, ids disjoint) over ssh by LAN address, waits for 1000 connected, holds 10 minutes, stops the clients, then the server, and collects every summary; a cell passes only when 1000 clients are connected from start to end with zero timeouts and zero disconnects, every method flowed for the whole run, and (3) holds; (5) the cell matrix, each run once, each passing: Linux server transports portable, gso (GSO/GRO with sendmmsg/recvmmsg) and io_uring on a LAN Linux host (hulk or vision), and AF_XDP: the dedicated XDP machine is not on this LAN, so the XDP cell runs its server inside a virtme-ng guest on a LAN Linux host with a bridged or tap interface the LAN clients can reach (if no guest can be reached from the LAN, the cell is reported not-run with the measured reason, and the owner decides); Windows server transports portable, iocp and rio on captain; macOS server transports portable and msgx on mini-m5-1 (or the studio if mini-m5-1 is down); the clients for every cell on the other LAN machines (amd-1, amd-2, amd-3, intel, vision, hulk, captain, mini-m5-1, never the cell's own server host), LAN addresses (192.168.1.x) only, never loopback and never a host off this LAN; (6) tools/lan/RESULTS.md holds the results table, one row per cell and method: platform, transport, server host and its NIC link speed, client hosts, clients connected at start and at end, duration, timeouts, disconnects, sent, delivered, lost (unreliable only), out of order (0 where ordered), duplicates (0), checksum failures (0), achieved kbps per client and aggregate, peak server CPU (percent of one core and of the host) and peak server memory, and the head the run built; (7) each host builds the card's head from GitHub itself (Release), never a binary copied from the studio; (8) ./bin/test and ./bin/functional green on Linux and macOS at the head, and load's one-process mode still passes `load 1000 60` on macOS.
+TOOLCHAIN: on each held host its platform compiler (gcc or clang, Apple clang, MSVC) and cmake; on the coordinator's machine Python 3 (standard library only) and ssh to the LAN hosts
+GATE-NEEDS: darwin, arm64
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 480 minutes.
+
+# A thousand clients for ten minutes on every transport of every platform, over the LAN, every guarantee checked
+The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).
+You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.
+Deadline: finish within 480 minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.
+Libraries considered: none new; load.c and soak.c as the load and soak cards leave them, ssh and Python 3's subprocess for the runner.
+
+HELD MACHINES. This card is run by the coordinator's own row, never dealt to the fleet. Before the first cell the coordinator holds every LAN fleet machine at once (`nova-sprint fleet hold amd-1 amd-2 amd-3 intel vision hulk captain mini-m5-1 --reason 'rocketnet LAN 1000-client soak matrix'`), waits until `nova-sprint where` shows each held with nothing running, runs the cells one after another, and unholds them all when the matrix ends or stops (`nova-sprint fleet unhold ...`). No other work runs on a held machine during a cell. Server and clients are always on different machines.
+
+THE TASK. Build the two-mode load tool and the runner, then run the matrix and write the table. The guarantees are checked, not counted: each end keeps per-client, per-channel state for the checks in DONE-WHEN (3). The offered load is steady at 256 kbps per client each way (about 256 Mbps through the server and about 32 Mbps per client host), well inside every LAN link; record each server's NIC speed anyway. A cell that fails is a finding: keep its summaries, profile the server before changing code (a timed stack or perf/sample on the server host), and fix at the cause on this branch only if the fix is in PATHS; otherwise report it with verdict HOLD.
+
+STEP 1. Confirm the platform is macOS and the coordinator's machine; cd into the staged checkout JOB.md names; git log --oneline -1; build; read the START files.
+STEP 2. Write the two load modes and the checks; prove each check red once on a planted fault in a short local run (a duplicated reliable message, an out-of-order ordered message, a corrupted payload), kept out of the commit.
+STEP 3. Write tools/lan/hosts.tsv (host, LAN address, platform, role) and tools/lan/soak_matrix.py; commit; push the branch so each host can build the head.
+STEP 4. Hold the machines; run each cell of DONE-WHEN (5); write tools/lan/RESULTS.md; unhold.
+STEP 5. Run DONE-WHEN (8); commit on your own branch as `rocketnet-lan-1000-client-soak-matrix: <what>` with the trailer; end as JOB.md says.
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on the coordinator's machine; servers run only on the cell's server host.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names; do not clone a second copy on this machine. Commit on its own branch; touch no other branch; the branch may be pushed so the LAN hosts can build its head; never merge into BASE.
+Build and run the cells only on the held LAN hosts; on the coordinator's machine only build and run the unit and functional suites. Never search /, ~ or /Volumes; stay inside the checkout and the job directory (and one scratch directory per host).
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS names; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+
+STANDING RULES (owner, binding on every card).
+- Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0. Anything that needs a real socket, a kernel object, a child process, a thread timing or the wall clock is a functional test, never ./bin/test.
+- Make the smallest change, with no refactor.
+- Never touch the space game's baseline or delta code.
+- Never run `nova-sprint friend stage`.
+- Never loosen a Release bound, a protocol timeout or a test assertion to make a run pass; a failure found is a finding, fixed at its cause or reported. The per-case peak RSS bound in test/suite_runner.h is never changed by a card (the owner's ruling: Windows Debug runs above it are run by hand on a held machine).
+- Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+- The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+
+BUILD BOUND (the bench sandbox caps a job at 256 processes and 8 GiB). On Linux and macOS build with `(mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=Release .. >/dev/null && nice make -j4 --no-print-directory)` (Debug: -DCMAKE_BUILD_TYPE=Debug into build-debug); on Windows `cmake -B build -A x64` then `cmake --build build --config Release --parallel 4`. Run builds and suites one at a time, never in the background.
+
+ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
+CARRY: OWNER PROFILE (2026-10-20): \"I want 1000 players tested and working on all platforms and all transports for v1.0.0. But each client should be light. 10HZ ticks. 1 packet per-update.\" and \"I want the hardcore load testing done after v1.0.0.\" So every 1000-client run here is the light profile: 1000 clients, each updating at 10 Hz and sending 1 packet per update, on every server transport of the platform; pass = all connect, every client receives, none disconnected, reliable in order. No high-rate or bandwidth stress (that is the next milestone). This supersedes any heavier rate or the 256 kbps profile written earlier in this brief.
+")
+    (:id "rocketnet-linux-transport-matrix-repeat" :feature "Linux: every transport cell fifty times in a row with zero flakes, and the functional suite under ASan per transport" :cells (n - -) :note "after the payment milestone (owner 2026-10-20); latest work: no pushed branch" :brief "REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: code
+PRIORITY: blocker
+STREAM: rocketnet-api
+DEPENDS-ON: rocketnet-linux-hard-killed-peer-never-stalls-receive
+LAND-AFTER: rocketnet-windows-udp-connreset-never-stalls-receive,rocketnet-win-socket-error-paths-t,rocketnet-win-lifecycle-stress,rocketnet-win-msvc-asan,rocketnet-win-app-verifier,rocketnet-win-libfuzzer-clang-cl,rocketnet-win-toolchain-matrix,rocketnet-win-transport-matrix-repeat,rocketnet-win-soak-per-transport,rocketnet-win-load-1000-clients,rocketnet-win-nightlies-on-fleet-runner,rocketnet-linux-socket-error-paths,rocketnet-linux-lifecycle-stress,rocketnet-api-polish-v1-followups,rocketnet-destroy-sends-disconnect,rocketnet-functional-cookie-expiry-uses-test-clock,rocketnet-functional-free-ports,rocketnet-macos-client-timing-under-app-nap,rocketnet-macos-hard-killed-peer-never-stalls-receive,rocketnet-macos-socket-errors-and-enobufs-t,rocketnet-network-thread-priority-as-space,rocketnet-windows-client-overlapped-send,rocketnet-xdp-drops-first-fragment
+SOURCE: the owner, 2026-10-19: \"I assume we are already linux hardened, but tell me if not and do that too.\" The audit found Linux CI strong on sanitizers, fuzzing and TSan but with no hard-killed-peer case, no per-transport repeat, soak, load or lifecycle-count proof for portable, gso, io_uring and xdp. ci.yml's transport family matrix runs each Linux cell (portable, gso, io_uring, xdp in a guest) once per commit, and the sanitizers and nightly-leaks jobs run the functional suite under ASan only on the auto ladder (gso), so portable and io_uring never run the whole suite under ASan. This card creates tools/posix/transport_repeat.py, the repeat runner shared with macOS, with the Linux cells; the macOS card rocketnet-macos-transport-matrix-repeat adds the macOS cells to it and lands after this card. This card depends on rocketnet-linux-hard-killed-peer-never-stalls-receive for the posix_hard_killed_client case on Linux.
+PATHS: functional/rocketnet_functional_tests.cpp,sdk/rocketnet_platform.cpp,sdk/rocketnet_server_gso_linux.cpp,sdk/rocketnet_server_uring_linux.cpp,sdk/rocketnet_server_transport.cpp,.github/workflows/nightly-leaks.yml,.github/workflows/nightly-soak.yml
+NEW: tools/posix/transport_repeat.py
+START: .github/workflows/ci.yml (read), functional/posix_hard_killed_peer.cpp (read)
+TEST: none because the checks are runs on the member that DONE-WHEN names, each with its count and its red proof
+DONE-WHEN: (1) tools/posix/transport_repeat.py (macOS and Linux, Python 3 standard library only) runs each cell's cases by `./bin/functional --run <case>` with the cell's transport pins in the environment, N times (`--runs N`), takes a cell table that the macOS card rocketnet-macos-transport-matrix-repeat extends with its cells after this card lands (one entry per cell: name, env pins, cases, where it runs), prints one line per cell and case `<cell> <case> pass=<p>/<N> p50=<ms> max=<ms>`, and exits non-zero on any fail or skip, naming the run and its last five lines; it carries the Linux cells portable, gso, gso plain, io_uring (when offered) with the portable client, running test_transport_udp_loopback, test_transport_ipv6_loopback, test_transport_dual_stack_ipv4_client, driver_env_pin_is_honoured and posix_hard_killed_client, and the xdp cell (xdp_max_size_both_ways_ipv4 and _ipv6, inside one virtme-ng guest per batch of runs); (2) on this member `--runs 50` prints pass=50/50 on every line (the xdp lines 20/20), the table in the report; (3) the full functional suite runs under ASan+UBSan (the sanitizers job's flags) once pinned to each of portable, gso and io_uring, green, and nightly-leaks.yml runs the functional suite under LSan per pin; (4) each flake or report found is fixed at its cause with the run that showed it, or reported HOLD; (5) .github/workflows/nightly-soak.yml's Linux soak job gains a step running `--runs 20`, proven by hand
+TOOLCHAIN: gcc and clang, cmake, make, Python 3 (standard library only), vng (virtme-ng) with the member's kernel image for the xdp cell, on the Linux member JOB.md names
+GATE-NEEDS: linux, xdp
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 180 minutes.
+
+The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).
+You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.
+Deadline: finish within 180 minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.
+Libraries considered: Python 3 standard library
+
+# Linux: every transport cell fifty times in a row with zero flakes, and the functional suite under ASan per transport
+
+THE TASK. Prove each Linux transport cell on IPv4, IPv6, a dual-stack IPv4 client and a hard-killed peer fifty times in a row with zero flakes through the shared repeat runner, run the whole functional suite under ASan and LSan per transport, and run both nightly. Fix each flake at its cause.
+
+STEP 1. Confirm the platform is Linux (`uname -sr` and `nproc` recorded, `cat /proc/sys/kernel/io_uring_disabled` recorded); cd into the staged checkout JOB.md names; `git log --oneline -1`; build as THIS REPOSITORY says and keep the last build line.
+STEP 2. Add the Linux cells (DONE-WHEN (1)); a --runs 3 pass.
+STEP 3. Run the gate (DONE-WHEN (2), (3)); fix (DONE-WHEN (4)).
+STEP 4. Nightly steps proven by hand (DONE-WHEN (3), (5)).
+STEP 5. Commit on your own branch as `rocketnet-linux-transport-matrix-repeat: <what>` with the trailer; end as JOB.md says (the pull request body or RESULT.md carries the gate's lines and the run table).
+
+THIS REPOSITORY. mas-bandwidth/rocketnet: a C++ UDP transport library with runtime-selected transports (DRIVERS.md (read); sdk/rocketnet_drivers.inc (read) is the registry: on Linux the server builds portable, gso (UDP GSO/GRO over sendmmsg/recvmmsg, sdk/rocketnet_server_gso_linux.cpp), io_uring (multishot receive, sdk/rocketnet_server_uring_linux.cpp) and xdp (AF_XDP, sdk/rocketnet_server_socket_linux.cpp), the client portable with the mmsg batch pump; ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT pin one by name). The Linux build is `make` (Release) or `cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build --parallel 4`; executables land in bin/ (test, functional, `./bin/functional --run <case>`, test_lifecycle, test_driver, soak, soak_sim, load). .github/workflows/ci.yml (read) job build-and-test (the ubuntu-24.04 rows) and its transport family matrix step (TRANSPORT_MATRIX_LINUX) are the worked example of every Linux step, including how the xdp cell runs: as root inside a virtme-ng guest of the member's own kernel (vng, ~/vm-kernels/vmlinuz-$(uname -r), /dev/kvm), never as root on the host. Config fields have an env overlay named ROCKETNET_<TRANSPORT>_<FIELD> (sdk/rocketnet_config.cpp (read)).
+
+STANDING RULES (owner, binding on every card).
+- Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0. Anything that needs a real socket, a kernel object, a child process, a thread timing or the wall clock is a functional test, never ./bin/test.
+- Make the smallest change, with no refactor.
+- Never touch the space game's baseline or delta code.
+- Never run `nova-sprint friend stage`.
+- Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+- The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+- Never read outside the job's working directory.
+- Never loosen a Release bound, a protocol timeout or a test assertion to make a run pass; a failure found is a finding, fixed at its cause or reported.
+
+LINUX BOUND. This card runs on a Linux bench member, never on the coordinator's machine. Run builds and suites one at a time, never in the background, and never two suites at once. Build with `--parallel 4`. Root is used only inside a virtme-ng guest, exactly as ci.yml's xdp cell does; never sudo on the host, never touch the host's interfaces, qdiscs or sysctls. A test red at head is rerun at the unchanged BASE only for that one test. Commit the work before any check that reads git status. Every run count in DONE-WHEN is a count of real runs on this member, each with its pass or fail and run time in the report; a run that was not made is reported as not made.
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names; do not clone a second copy. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the member JOB.md names, never the coordinator's machine. Never search /, the home directory or any volume root; stay inside the checkout and the job directory.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install. A named tool that is missing on the member is reported as not-done with the missing component named, verdict HOLD.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+
+ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
+FIX (coordinator, 2026-10-20, owner deferral): under the owner's two-minute rule this card does NOT run its long soak, load, stress or repeat runs now. Scope it to what can be proven in short runs: the harness, workflow or code change the card adds, built and run in Debug at the exact head with each run under 2 minutes, a red-first proof where the card fixes a bug, and CHECKLIST.md. Then finish LAND, listing every long run as OWED (they become a separate card after v1.0.0-preview1). If the card has no change beyond the long run itself, finish LAND with only the docs or workflow wiring and the long run OWED. Never shorten a long run and call it a pass. Build on the latest pushed head.
+")
+    (:id "rocketnet-macos-transport-matrix-repeat" :feature "macOS: every transport cell fifty times in a row, zero flakes, nightly" :cells (- n -) :note "after the payment milestone (owner 2026-10-20); latest work: no pushed branch" :brief "WHO: only friend rowan
+REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: code
+PRIORITY: blocker
+STREAM: rocketnet-api
+DEPENDS-ON: rocketnet-macos-hard-killed-peer-never-stalls-receive,rocketnet-linux-transport-matrix-repeat
+LAND-AFTER: rocketnet-windows-udp-connreset-never-stalls-receive,rocketnet-win-socket-error-paths-t,rocketnet-win-lifecycle-stress,rocketnet-win-msvc-asan,rocketnet-win-app-verifier,rocketnet-win-libfuzzer-clang-cl,rocketnet-win-toolchain-matrix,rocketnet-win-transport-matrix-repeat,rocketnet-win-soak-per-transport,rocketnet-win-load-1000-clients,rocketnet-win-nightlies-on-fleet-runner,rocketnet-macos-socket-errors-and-enobufs-t,rocketnet-macos-lifecycle-stress-t,rocketnet-macos-sanitizers-and-leaks,rocketnet-macos-universal-and-xcode-t,rocketnet-linux-transport-matrix-repeat,rocketnet-api-polish-v1-followups,rocketnet-destroy-sends-disconnect,rocketnet-functional-cookie-expiry-uses-test-clock,rocketnet-functional-free-ports,rocketnet-linux-hard-killed-peer-never-stalls-receive,rocketnet-linux-lifecycle-stress,rocketnet-linux-socket-error-paths,rocketnet-macos-client-timing-under-app-nap,rocketnet-network-thread-priority-as-space,rocketnet-windows-client-overlapped-send,rocketnet-xdp-drops-first-fragment
+SOURCE: the owner, 2026-10-19: \"Do we need to do any macos hardening, to match the windows hardening for rocketnet? Their main programmer on the engine is mac like us.\" The customer's engine programmer builds, runs and debugs on macOS, so the macOS client and server must be proven to the bar the Windows hardening set (stream rocketnet-api, the rocketnet-win-* cards) sets for Windows. The Windows card rocketnet-win-transport-matrix-repeat runs each cell 50 times. On macOS ci.yml's transport family matrix runs each of portable/portable, portable/msgx, msgx/portable and msgx/msgx once per commit; the degraded msgx path (ROCKETNET_PUMP=portable, or a probe refusal) has one case (test_platform_batch_pump_degraded).
+PATHS: functional/rocketnet_functional_tests.cpp,sdk/rocketnet_platform.cpp,sdk/rocketnet_server_transport.cpp,sdk/rocketnet_client_transport.cpp,.github/workflows/nightly-soak.yml,.github/workflows/nightly-leaks.yml,sdk/rocketnet_server_gso_linux.cpp,sdk/rocketnet_server_uring_linux.cpp
+NEW: tools/posix/transport_repeat.py
+START: .github/workflows/ci.yml (read)
+TEST: none because the checks are runs on the member that DONE-WHEN names, each with its count and its red proof
+DONE-WHEN: (1) tools/posix/transport_repeat.py (created by rocketnet-linux-transport-matrix-repeat with the Linux cells, the CLI and the output line below; this card adds the macOS cells to its cell table and changes nothing else in it) runs, for each macOS cell portable/portable, portable/msgx, msgx/portable, msgx/msgx and msgx-degraded/msgx-degraded (ROCKETNET_PUMP=portable), the cases test_transport_udp_loopback, test_transport_ipv6_loopback, test_transport_dual_stack_ipv4_client, driver_env_pin_is_honoured and posix_hard_killed_client by `./bin/functional --run <case>`, N times (`--runs N`), prints one line per cell and case `<cell> <case> pass=<p>/<N> p50=<ms> max=<ms>`, and exits non-zero on any fail or skip, naming the run and its last five lines; (2) on this member `--runs 50` prints pass=50/50 on every line (25 lines, 1250 runs), the table in the report; (3) the full functional suite runs 10 times pinned msgx/msgx and 10 times degraded, 20 of 20 green, times recorded; (4) each flake found is fixed at its cause with the run that showed it, or reported HOLD; (5) .github/workflows/nightly-soak.yml's soak-macos job gains a step running `--runs 20`, proven by hand
+TOOLCHAIN: Apple clang from the Command Line Tools, cmake, make, Python 3 (standard library only), on the fleet's macOS member JOB.md names
+GATE-NEEDS: darwin, arm64
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 150 minutes.
+
+The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).
+You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.
+Deadline: finish within 150 minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.
+Libraries considered: Python 3 standard library (subprocess, time, statistics)
+
+# macOS: every transport cell fifty times in a row, zero flakes, nightly
+
+THE TASK. Prove each macOS transport cell, including the degraded msgx path, on IPv4, IPv6, a dual-stack IPv4 client and a hard-killed peer fifty times in a row with zero flakes, through the repeat runner shared with Linux (created by rocketnet-linux-transport-matrix-repeat) that prints a pass table, and run it nightly. Fix each flake at its cause.
+
+STEP 1. Confirm the platform is macOS on Apple silicon (`uname -s` prints Darwin, `uname -m` prints arm64, `sw_vers -productVersion` and `clang --version` recorded); cd into the staged checkout JOB.md names; `git log --oneline -1`; build as THIS REPOSITORY says and keep the last build line. Then, before any change: if tools/posix/transport_repeat.py is not at your BASE, take the Linux card rocketnet-linux-transport-matrix-repeat's pushed work, which creates it: `git ls-remote origin 'refs/heads/sprint/rocketnet-linux-transport-matrix-repeat.*'`, pick the branch with the highest w then g number, `git fetch origin <that branch>` and `git merge --no-edit FETCH_HEAD`, and name the merged sha in the report; those commits ride with yours and the lander lands the Linux card first (LAND-AFTER). If no such branch exists, finish HOLD naming the missing runner; never write a second runner.
+STEP 2. Write the runner (DONE-WHEN (1)); a --runs 3 pass to see it work.
+STEP 3. Run the gate (DONE-WHEN (2), (3)); fix flakes (DONE-WHEN (4)).
+STEP 4. Add and prove the nightly step (DONE-WHEN (5)).
+STEP 5. Commit on your own branch as `rocketnet-macos-transport-matrix-repeat: <what>` with the trailer; end as JOB.md says (the pull request body or RESULT.md carries the gate's lines and the run table).
+
+THIS REPOSITORY. mas-bandwidth/rocketnet: a C++ UDP transport library with runtime-selected transports (DRIVERS.md (read); sdk/rocketnet_drivers.inc (read) is the registry: on macOS the server builds portable and msgx, the client portable and msgx; msgx is the darwin batch pump over sendmsg_x/recvmsg_x, resolved by dlsym and probed per socket at create (sdk/rocketnet_platform.cpp, the block that opens 'The darwin batch pump'), degrading to the portable per-packet loop on refusal; ROCKETNET_PUMP=portable forces the degraded path; ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT pin a transport by name). The macOS build is `make` (Release) or `cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build --parallel 4`; executables land in bin/ (test is the unit suite, functional the functional suite, `./bin/functional --run <case>` runs one case, test_msgx, test_lifecycle, test_driver, soak, soak_sim, load, transport_memory). .github/workflows/ci.yml (read) jobs build-and-test (the macos-15 rows on the fleet runner label rocketnet-macos) and its transport family matrix step (TRANSPORT_MATRIX_MACOS) are the worked example of every macOS step. Config fields have an env overlay named ROCKETNET_<TRANSPORT>_<FIELD> (sdk/rocketnet_config.cpp (read), rocketnet_config_env_var_name_for).
+
+STANDING RULES (owner, binding on every card).
+- Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0. Anything that needs a real socket, a kernel object, a child process, a thread timing or the wall clock is a functional test, never ./bin/test.
+- Make the smallest change, with no refactor.
+- Never touch the space game's baseline or delta code.
+- Never run `nova-sprint friend stage`.
+- Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+- The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+- Never read outside the job's working directory.
+- Never loosen a Release bound, a protocol timeout or a test assertion to make a run pass; a failure found is a finding, fixed at its cause or reported.
+
+MACOS BOUND. This card runs on the fleet's macOS member (an Apple-silicon Mac mini; the CI runner label rocketnet-macos is on it), never on the coordinator's machine. Run builds and suites one at a time, never in the background, and never two suites at once. Build with `--parallel 4`. A test red at head is rerun at the unchanged BASE only for that one test. Commit the work before any check that reads git status. Every run count in DONE-WHEN is a count of real runs on this member, each with its pass or fail and run time in the report; a run that was not made is reported as not made. A macOS firewall or permission prompt that a run raises is a finding to report, never something to click through.
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names; do not clone a second copy. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the member JOB.md names, never the coordinator's machine. Never search /, the home directory or any volume root; stay inside the checkout and the job directory.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install. A named tool that is missing on the member is reported as not-done with the missing component named, verdict HOLD.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+
+ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
+FIX (coordinator, 2026-10-20, owner deferral): under the owner's two-minute rule this card does NOT run its long soak, load, stress or repeat runs now. Scope it to what can be proven in short runs: the harness, workflow or code change the card adds, built and run in Debug at the exact head with each run under 2 minutes, a red-first proof where the card fixes a bug, and CHECKLIST.md. Then finish LAND, listing every long run as OWED (they become a separate card after v1.0.0-preview1). If the card has no change beyond the long run itself, finish LAND with only the docs or workflow wiring and the long run OWED. Never shorten a long run and call it a pass. Build on the latest pushed head.
+")
+    (:id "rocketnet-win-load-1000-clients" :feature "A thousand clients against a Windows server, on every Windows transport" :cells (- - n) :note "after the payment milestone (owner 2026-10-20); latest work: no pushed branch" :brief "REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: code
+PRIORITY: blocker
+STREAM: rocketnet-api
+DEPENDS-ON: rocketnet-windows-suite-stable
+LAND-AFTER: rocketnet-windows-udp-connreset-never-stalls-receive,rocketnet-win-socket-error-paths-t,rocketnet-win-lifecycle-stress,rocketnet-win-msvc-asan,rocketnet-win-app-verifier,rocketnet-win-libfuzzer-clang-cl,rocketnet-win-toolchain-matrix,rocketnet-win-transport-matrix-repeat,rocketnet-win-soak-per-transport,rocketnet-api-polish-v1-followups,rocketnet-destroy-sends-disconnect,rocketnet-linux-lifecycle-stress,rocketnet-macos-client-timing-under-app-nap,rocketnet-macos-hard-killed-peer-never-stalls-receive,rocketnet-network-thread-priority-as-space,rocketnet-win-nightlies-on-fleet-runner,rocketnet-windows-client-overlapped-send
+SOURCE: the owner, 2026-10-19: \"I think we need to do extra testing and checking on windows and windows transports before we deliver rocketnet. It will be their primary platform so we should make it perfect.\" The customer ships on Windows; v1.0.0 is not delivered until Windows is proven. load.c stands up one message server and up to 1000 clients in one process with five pass criteria, and builds on Windows (it already reads the working set through psapi), but no record shows it run at 1000 clients on Windows on any transport.
+PATHS: load.c,sdk/rocketnet_platform.cpp,sdk/rocketnet_server_iocp_windows.cpp,sdk/rocketnet_server_rio_windows.cpp,sdk/rocketnet_server_transport.cpp,sdk/rocketnet_client_transport.cpp
+START: load.c (read)
+TEST: none because the checks are runs on native Windows that DONE-WHEN names, each with its count and its red proof
+DONE-WHEN: (1) load.exe's summary line on Windows also prints `handles=<n>` (GetProcessHandleCount) and `threads=<n>` at the end and at the end of the connect phase, and the usage comment at the top of load.c says so; (2) on this member `load.exe 1000 300` passes (verdict=PASS, all five criteria) 3 times each with ROCKETNET_SERVER_TRANSPORT portable, iocp and rio (9 runs), every run's summary line in the report with server_update_p50_us, server_update_p99_us, rss_mb, handles and threads; (3) `load.exe 1000 60 drop-one` still fails naming its criterion on each transport (the harness can still fail); (4) handles and threads at the end equal those after connect within plus or minus 2 on every run; (5) a cause found (a connect that misses the 10 s deadline, a disconnect, a delivery or counter mismatch, a handle climb) is profiled before it is fixed: the report names the call and the evidence, and the fix is minimal in sdk/; a limit that is the machine's (cores, the loopback stack) and not the library's is shown with a smaller count that passes and named, verdict HOLD; (6) `bin/Release/test.exe` and `bin/Release/functional.exe` green
+TOOLCHAIN: Visual Studio 18 / MSVC x64, cmake, Windows Performance Recorder (wpr) for profiling when a cause needs it, on the native Windows member JOB.md names
+GATE-NEEDS: windows
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 180 minutes.
+
+The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).
+You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.
+Deadline: finish within 180 minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.
+Libraries considered: none new; load.c's own harness, psapi already linked by it.
+
+# A thousand clients against a Windows server, on every Windows transport
+
+THE TASK. Run the existing many-client load harness at its 1000-client maximum against each Windows server transport, three times each, and make every run pass all five criteria with no handle or thread growth. Add the handle and thread counts to its summary line. Profile any failure before fixing it.
+
+AMENDMENT. Only the documentation destination changed: docs/LOAD.md is retired by the v1 docs cleanup (rocketnet-docs-v1-cleanup deletes it), so the text DONE-WHEN asks for goes to the usage comment at the top of load.c instead; write no .md file. Nothing else in this card changed.
+
+STEP 1. Confirm the platform is native Windows (`cmd /c ver` prints a Windows version; under Git Bash `uname -s` prints MINGW or MSYS, never Linux); cd into the staged checkout JOB.md names; `git log --oneline -1`; build Release as THIS REPOSITORY says and keep the last build line.
+STEP 2. Add the counts (DONE-WHEN (1)); run `load.exe 50 10` once per transport to see the line.
+STEP 3. Run the gate: DONE-WHEN (2), (3), (4) and (6), one run at a time; profile and fix what fails (DONE-WHEN (5)) and rerun the whole count.
+STEP 4. Commit on your own branch as `rocketnet-win-load-1000-clients: <what>` with the trailer; end as JOB.md says (the pull request body or RESULT.md carries the gate's lines and the run table).
+
+THIS REPOSITORY. mas-bandwidth/rocketnet: a C++ UDP transport library with runtime-selected server transports (TRANSPORTS.md, or DRIVERS.md where BASE predates the rename (read); sdk/rocketnet_drivers.inc (read) is the registry: on Windows the server builds portable, iocp and rio, the client portable; ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT pin one by name). The Windows build is `cmake -B build -A x64` then `cmake --build build --config Release --parallel 4`; executables land in bin/Release/ (test.exe is the unit suite, functional.exe the functional suite, `functional.exe --run <case>` runs one case, test_iocp.exe the IOCP driver tests, test_lifecycle.exe, soak.exe, load.exe). .github/workflows/ci.yml (read) job build-and-test-windows is the worked example of every Windows step, including the transport family matrix. Config fields have an env overlay named ROCKETNET_<TRANSPORT>_<FIELD> (sdk/rocketnet_config.cpp (read), rocketnet_config_env_var_name_for).
+
+STANDING RULES (owner, binding on every card).
+- Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0. Anything that needs a real socket, a kernel object, a thread timing or the wall clock is a functional test, never ./bin/test.
+- Make the smallest change, with no refactor.
+- Never touch the space game's baseline or delta code.
+- Never run `nova-sprint friend stage`.
+- Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+- The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+- Never read outside the job's working directory.
+- Never loosen a Release bound, a protocol timeout or a test assertion to make a run pass; a failure found is a finding, fixed at its cause or reported.
+
+WINDOWS BOUND. This card runs on a native Windows member (captain today, a weak machine; titan, a Xeon workstation, soon). Run builds and suites one at a time, never in the background, and never two suites at once. Build with `--parallel 4`. A test red at head is rerun at the unchanged BASE only for that one test. Commit the work before any check that reads git status. Every run count in DONE-WHEN is a count of real runs on this member, each with its pass or fail and run time in the report; a run that was not made is reported as not made.
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names; do not clone a second copy. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the Windows member JOB.md names, never the coordinator's machine. Never search C:\\, the user profile or any drive root; stay inside the checkout and the job directory.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install. A named tool that is missing on the member is reported as not-done with the missing component named, verdict HOLD.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+
+ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
+CARRY: OWNER PROFILE (2026-10-20): \"I want 1000 players tested and working on all platforms and all transports for v1.0.0. But each client should be light. 10HZ ticks. 1 packet per-update.\" and \"I want the hardcore load testing done after v1.0.0.\" So every 1000-client run here is the light profile: 1000 clients, each updating at 10 Hz and sending 1 packet per update, on every server transport of the platform; pass = all connect, every client receives, none disconnected, reliable in order. No high-rate or bandwidth stress (that is the next milestone). This supersedes any heavier rate or the 256 kbps profile written earlier in this brief.
+FIX (coordinator, 2026-10-20, owner deferral): under the owner's two-minute rule this card does NOT run its long soak, load, stress or repeat runs now. Scope it to what can be proven in short runs: the harness, workflow or code change the card adds, built and run in Debug at the exact head with each run under 2 minutes, a red-first proof where the card fixes a bug, and CHECKLIST.md. Then finish LAND, listing every long run as OWED (they become a separate card after v1.0.0-preview1). If the card has no change beyond the long run itself, finish LAND with only the docs or workflow wiring and the long run OWED. Never shorten a long run and call it a pass. Build on the latest pushed head.
+")
+    (:id "rocketnet-win-soak-per-transport" :feature "Windows soaks per transport under loss, jitter and duplication, with flat handles and memory" :cells (- - n) :note "after the payment milestone (owner 2026-10-20); latest work: no pushed branch" :brief "REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: code
+PRIORITY: blocker
+STREAM: rocketnet-api
+DEPENDS-ON: rocketnet-windows-suite-stable
+LAND-AFTER: rocketnet-windows-udp-connreset-never-stalls-receive,rocketnet-win-socket-error-paths-t,rocketnet-win-lifecycle-stress,rocketnet-win-msvc-asan,rocketnet-win-app-verifier,rocketnet-win-libfuzzer-clang-cl,rocketnet-win-toolchain-matrix,rocketnet-win-transport-matrix-repeat,rocketnet-api-polish-v1-followups,rocketnet-destroy-sends-disconnect,rocketnet-functional-cookie-expiry-uses-test-clock,rocketnet-functional-free-ports,rocketnet-linux-lifecycle-stress,rocketnet-macos-client-timing-under-app-nap,rocketnet-macos-hard-killed-peer-never-stalls-receive,rocketnet-network-thread-priority-as-space,rocketnet-win-nightlies-on-fleet-runner,rocketnet-windows-client-overlapped-send,rocketnet-xdp-drops-first-fragment
+SOURCE: the owner, 2026-10-19: \"I think we need to do extra testing and checking on windows and windows transports before we deliver rocketnet. It will be their primary platform so we should make it perfect.\" The customer ships on Windows; v1.0.0 is not delivered until Windows is proven. The Windows soak legs in .github/workflows/nightly-soak.yml are disabled (`if: false`, hosted windows-2025) and soak.c never runs with loss, latency or reordering on Windows. The public link simulator (simulated_loss_percent, simulated_latency_ms, simulated_jitter_ms, simulated_duplicate_percent in sdk/rocketnet.h, development library only, which soak.exe links) loses, delays, jitters (and so reorders) and duplicates outgoing datagrams on any transport. The card rocketnet-soak-seconds-flag (a dependency, landed at BASE before this card starts) gives soak.c `--seconds S`, the counter summary and the non-zero exit on an unplanned disconnect on every OS; this card uses them.
+PATHS: soak.c,sdk/rocketnet_platform.cpp,sdk/rocketnet_server_iocp_windows.cpp,sdk/rocketnet_server_rio_windows.cpp,sdk/rocketnet_server_transport.cpp,sdk/rocketnet_client_transport.cpp,functional/rocketnet_functional_tests.cpp
+NEW: tools/windows/resource_watch.py,tools/windows/soak_matrix.py
+START: soak.c (read), sdk/rocketnet.h (read), sdk/rocketnet_config.cpp (read)
+TEST: none because the checks are runs on native Windows that DONE-WHEN names, each with its count and its red proof
+DONE-WHEN: (1) tools/windows/resource_watch.py samples a running process by pid every N seconds with ctypes only (GetProcessHandleCount, GetProcessMemoryInfo PrivateUsage and WorkingSetSize, the thread count from CreateToolhelp32Snapshot) into a CSV, and on exit fails when, after a warm-up of the first 10 percent of samples, the least-squares slope of handles, threads or private bytes over the rest exceeds a stated bound (handles and threads: zero growth beyond plus or minus 2; private bytes: under 1 MiB per hour); its own check on a scratch process that leaks one event handle per second turns it red, shown once in the report; (2) `soak.exe --seconds 10` (from rocketnet-soak-seconds-flag, at BASE) runs, prints its counter summary and exits 0 on this member, shown in the report; soak.c changes only to fix a cause a run finds; (3) tools/windows/soak_matrix.py runs soak.exe under the watcher for each of portable, iocp and rio, each pinned by env, with the link simulator set through the env overlay on both ends to loss 5 percent, latency 30 ms, jitter 20 ms (reordering), duplicate 2 percent, and once more per transport with the simulator off; (4) on this member each of the six runs lasts 30 minutes and passes: zero verify failures, zero unplanned disconnects, the conservation the counters allow (sent equals received plus counted drops and simulator losses, stated per run) and a flat watcher verdict; the table of the six runs, their counters and their slopes is in the report; (5) a leak found is fixed at its cause in sdk/ with the run that showed it, or reported with verdict HOLD; (6) the docstring at the top of tools/windows/soak_matrix.py names both scripts and how to read their verdicts; (7) `bin/Release/test.exe` and `bin/Release/functional.exe` green
+TOOLCHAIN: Visual Studio 18 / MSVC x64, cmake, Python 3 (standard library and ctypes only) on the native Windows member JOB.md names
+GATE-NEEDS: windows
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 240 minutes.
+
+The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).
+You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.
+Deadline: finish within 240 minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.
+Libraries considered: ctypes over kernel32 and psapi for the samples (psutil is not on the member and is not added); the library's own link simulator for the impairment.
+
+# Windows soaks per transport under loss, jitter and duplication, with flat handles and memory
+
+THE TASK. Soak each Windows server transport for thirty minutes with the link simulator impairing both directions and again clean, and prove the process neither leaks handles, threads nor memory nor drops a connection it did not mean to. Use soak.c's duration and counter summary, and add a ctypes resource watcher with a slope verdict that is shown red on a planted leak.
+
+AMENDMENT. Only the documentation destination changed: docs/LOAD.md is retired by the v1 docs cleanup (rocketnet-docs-v1-cleanup deletes it), so the text DONE-WHEN asks for goes to the docstring at the top of tools/windows/soak_matrix.py instead; write no .md file. Nothing else in this card changed.
+
+STEP 1. Confirm the platform is native Windows (`cmd /c ver` prints a Windows version; under Git Bash `uname -s` prints MINGW or MSYS, never Linux); cd into the staged checkout JOB.md names; `git log --oneline -1`; build Release as THIS REPOSITORY says and keep the last build line.
+STEP 2. Write the watcher and prove it red on the scratch leaker (DONE-WHEN (1)); confirm soak.c's duration and summary on Windows (DONE-WHEN (2)).
+STEP 3. Write the matrix script (DONE-WHEN (3)); a 2-minute pass per cell first to see it work.
+STEP 4. Run the gate: DONE-WHEN (4) and (7), one soak at a time; fix what fails (DONE-WHEN (5)); write DONE-WHEN (6).
+STEP 5. Commit on your own branch as `rocketnet-win-soak-per-transport: <what>` with the trailer; end as JOB.md says (the pull request body or RESULT.md carries the gate's lines and the run table).
+
+THIS REPOSITORY. mas-bandwidth/rocketnet: a C++ UDP transport library with runtime-selected server transports (TRANSPORTS.md, or DRIVERS.md where BASE predates the rename (read); sdk/rocketnet_drivers.inc (read) is the registry: on Windows the server builds portable, iocp and rio, the client portable; ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT pin one by name). The Windows build is `cmake -B build -A x64` then `cmake --build build --config Release --parallel 4`; executables land in bin/Release/ (test.exe is the unit suite, functional.exe the functional suite, `functional.exe --run <case>` runs one case, test_iocp.exe the IOCP driver tests, test_lifecycle.exe, soak.exe, load.exe). .github/workflows/ci.yml (read) job build-and-test-windows is the worked example of every Windows step, including the transport family matrix. Config fields have an env overlay named ROCKETNET_<TRANSPORT>_<FIELD> (sdk/rocketnet_config.cpp (read), rocketnet_config_env_var_name_for).
+
+STANDING RULES (owner, binding on every card).
+- Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0. Anything that needs a real socket, a kernel object, a thread timing or the wall clock is a functional test, never ./bin/test.
+- Make the smallest change, with no refactor.
+- Never touch the space game's baseline or delta code.
+- Never run `nova-sprint friend stage`.
+- Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+- The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+- Never read outside the job's working directory.
+- Never loosen a Release bound, a protocol timeout or a test assertion to make a run pass; a failure found is a finding, fixed at its cause or reported.
+
+WINDOWS BOUND. This card runs on a native Windows member (captain today, a weak machine; titan, a Xeon workstation, soon). Run builds and suites one at a time, never in the background, and never two suites at once. Build with `--parallel 4`. A test red at head is rerun at the unchanged BASE only for that one test. Commit the work before any check that reads git status. Every run count in DONE-WHEN is a count of real runs on this member, each with its pass or fail and run time in the report; a run that was not made is reported as not made.
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names; do not clone a second copy. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the Windows member JOB.md names, never the coordinator's machine. Never search C:\\, the user profile or any drive root; stay inside the checkout and the job directory.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install. A named tool that is missing on the member is reported as not-done with the missing component named, verdict HOLD.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+
+ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
+FIX (coordinator, 2026-10-20, owner deferral): under the owner's two-minute rule this card does NOT run its long soak, load, stress or repeat runs now. Scope it to what can be proven in short runs: the harness, workflow or code change the card adds, built and run in Debug at the exact head with each run under 2 minutes, a red-first proof where the card fixes a bug, and CHECKLIST.md. Then finish LAND, listing every long run as OWED (they become a separate card after v1.0.0-preview1). If the card has no change beyond the long run itself, finish LAND with only the docs or workflow wiring and the long run OWED. Never shorten a long run and call it a pass. Build on the latest pushed head.
+")
+    (:id "rocketnet-win-transport-matrix-repeat" :feature "Every Windows transport, every address family, fifty times clean" :cells (- - n) :note "after the payment milestone (owner 2026-10-20); latest work: no pushed branch" :brief "REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: code
+PRIORITY: blocker
+STREAM: rocketnet-api
+DEPENDS-ON: rocketnet-windows-suite-stable
+LAND-AFTER: rocketnet-windows-udp-connreset-never-stalls-receive,rocketnet-win-socket-error-paths-t,rocketnet-win-lifecycle-stress,rocketnet-win-msvc-asan,rocketnet-win-app-verifier,rocketnet-win-libfuzzer-clang-cl,rocketnet-win-toolchain-matrix,rocketnet-api-polish-v1-followups,rocketnet-destroy-sends-disconnect,rocketnet-functional-cookie-expiry-uses-test-clock,rocketnet-functional-free-ports,rocketnet-linux-lifecycle-stress,rocketnet-macos-client-timing-under-app-nap,rocketnet-macos-hard-killed-peer-never-stalls-receive,rocketnet-network-thread-priority-as-space,rocketnet-win-nightlies-on-fleet-runner,rocketnet-windows-client-overlapped-send,rocketnet-xdp-drops-first-fragment
+SOURCE: the owner, 2026-10-19: \"I think we need to do extra testing and checking on windows and windows transports before we deliver rocketnet. It will be their primary platform so we should make it perfect.\" The customer ships on Windows; v1.0.0 is not delivered until Windows is proven. rocketnet-transport-family-ci-matrix put each Windows transport (portable, iocp, rio) through IPv4, IPv6 and dual stack once per CI run; once is not proof against flakes, and the IOCP offloads (USO send, URO receive) are probed per host, so a host without them runs a different code path that only test_server_iocp_uso_uro_probe (functional/rocketnet_functional_tests.cpp) touches, by the internal ROCKETNET_IOCP_DISABLE_USO and ROCKETNET_IOCP_DISABLE_URO create flags (sdk/rocketnet_server_iocp.h).
+PATHS: sdk/rocketnet_server_iocp_windows.cpp,sdk/rocketnet_server_iocp.h,sdk/rocketnet_server_rio_windows.cpp,sdk/rocketnet_server_rio.h,sdk/rocketnet_server_transport.cpp,sdk/rocketnet_client_transport.cpp,sdk/rocketnet_platform.cpp,functional/rocketnet_functional_tests.cpp,.github/workflows/nightly.yml
+NEW: tools/windows/transport_repeat.py
+START: sdk/rocketnet_server_iocp_windows.cpp (read 429-545), .github/workflows/ci.yml (read), functional/rocketnet_functional_tests.cpp (read)
+TEST: none because the checks are runs on native Windows that DONE-WHEN names, each with its count and its red proof
+DONE-WHEN: (1) at BASE, record that no transport-level run pins iocp with USO and URO off: `git grep -n IOCP_DISABLE_USO -- sdk functional` shows the one probe case only; keep the lines; (2) a development-only override forces the IOCP per-datagram path for a whole run: an env value read only when ROCKETNET_DEVELOPMENT is 1 (name it in the report, in the ROCKETNET_<TRANSPORT>_<FIELD> style, for example ROCKETNET_IOCP_OFFLOAD=off) that passes ROCKETNET_IOCP_DISABLE_USO | ROCKETNET_IOCP_DISABLE_URO at create; the production library ignores it (show with the production test that it changes nothing) and sdk/rocketnet.h and tools/exports.txt are unchanged; (3) tools/windows/transport_repeat.py runs, for each cell of portable, iocp (offloads as probed), iocp-offload-off and rio, each pinned by env with the portable client, the cases test_transport_udp_loopback, test_transport_ipv6_loopback, test_transport_dual_stack_ipv4_client and driver_env_pin_is_honoured by `functional.exe --run <case>`, N times (`--runs N`), and prints one line per cell and case `<cell> <case> pass=<p>/<N> p50=<ms> max=<ms>` and exits non-zero on any fail or skip, naming the run and the last five lines of its output; (4) on this member `python tools/windows/transport_repeat.py --runs 50` prints pass=50/50 on every line (16 lines, 800 runs), the table in the report; the per-datagram path is proven taken in the iocp-offload-off cell (the run logs USO 0, URO 0 from the transport counters); (5) the full functional suite runs 10 times with ROCKETNET_SERVER_TRANSPORT=rio and 10 times with iocp and the offload override off, 20 of 20 green, run times recorded; (6) each failure found on the way is fixed at its cause in the files PATHS names, with the run that showed it in the report, or reported with verdict HOLD; (7) .github/workflows/nightly.yml gains a step on [self-hosted, Windows, X64, rocketnet-windows] running `python tools/windows/transport_repeat.py --runs 10`; `python -c \"import yaml\"` permitting, the file parses; (8) `bin/Release/test.exe` and `bin/Release/test_iocp.exe` green
+TOOLCHAIN: Visual Studio 18 / MSVC x64, cmake, Python 3 (standard library only) on the native Windows member JOB.md names
+GATE-NEEDS: windows
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 150 minutes.
+
+The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).
+You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.
+Deadline: finish within 150 minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.
+Libraries considered: Python's subprocess and statistics modules for the runner; nothing new in the library.
+
+# Every Windows transport, every address family, fifty times clean
+
+THE TASK. Prove each Windows server transport on IPv4, IPv6 and a dual-stack IPv4 client fifty times in a row with zero flakes, including the IOCP per-datagram path that a host without USO and URO takes. Add a development-only override that runs IOCP with its offloads off, a repeat runner that prints a pass table, and a nightly step that runs it. Fix each flake at its cause.
+
+STEP 1. Confirm the platform is native Windows (`cmd /c ver` prints a Windows version; under Git Bash `uname -s` prints MINGW or MSYS, never Linux); cd into the staged checkout JOB.md names; `git log --oneline -1`; build Release as THIS REPOSITORY says and keep the last build line. Record DONE-WHEN (1).
+STEP 2. Add the override (DONE-WHEN (2)) and the runner (DONE-WHEN (3)); run one pass of 5 to see the table.
+STEP 3. Run the gate: DONE-WHEN (4), (5) and (8), one suite at a time; fix what fails at its cause (DONE-WHEN (6)) and rerun the whole count.
+STEP 4. Add the nightly step (DONE-WHEN (7)).
+STEP 5. Commit on your own branch as `rocketnet-win-transport-matrix-repeat: <what>` with the trailer; end as JOB.md says (the pull request body or RESULT.md carries the gate's lines and the run table).
+
+THIS REPOSITORY. mas-bandwidth/rocketnet: a C++ UDP transport library with runtime-selected server transports (DRIVERS.md (read); sdk/rocketnet_drivers.inc (read) is the registry: on Windows the server builds portable, iocp and rio, the client portable; ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT pin one by name). The Windows build is `cmake -B build -A x64` then `cmake --build build --config Release --parallel 4`; executables land in bin/Release/ (test.exe is the unit suite, functional.exe the functional suite, `functional.exe --run <case>` runs one case, test_iocp.exe the IOCP driver tests, test_lifecycle.exe, soak.exe, load.exe). .github/workflows/ci.yml (read) job build-and-test-windows is the worked example of every Windows step, including the transport family matrix. Config fields have an env overlay named ROCKETNET_<TRANSPORT>_<FIELD> (sdk/rocketnet_config.cpp (read), rocketnet_config_env_var_name_for).
+
+STANDING RULES (owner, binding on every card).
+- Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0. Anything that needs a real socket, a kernel object, a thread timing or the wall clock is a functional test, never ./bin/test.
+- Make the smallest change, with no refactor.
+- Never touch the space game's baseline or delta code.
+- Never run `nova-sprint friend stage`.
+- Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+- The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+- Never read outside the job's working directory.
+- Never loosen a Release bound, a protocol timeout or a test assertion to make a run pass; a failure found is a finding, fixed at its cause or reported.
+
+WINDOWS BOUND. This card runs on a native Windows member (captain today, a weak machine; titan, a Xeon workstation, soon). Run builds and suites one at a time, never in the background, and never two suites at once. Build with `--parallel 4`. A test red at head is rerun at the unchanged BASE only for that one test. Commit the work before any check that reads git status. Every run count in DONE-WHEN is a count of real runs on this member, each with its pass or fail and run time in the report; a run that was not made is reported as not made.
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names; do not clone a second copy. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the Windows member JOB.md names, never the coordinator's machine. Never search C:\\, the user profile or any drive root; stay inside the checkout and the job directory.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install. A named tool that is missing on the member is reported as not-done with the missing component named, verdict HOLD.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+
+ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
+FIX (coordinator, 2026-10-20, owner deferral): under the owner's two-minute rule this card does NOT run its long soak, load, stress or repeat runs now. Scope it to what can be proven in short runs: the harness, workflow or code change the card adds, built and run in Debug at the exact head with each run under 2 minutes, a red-first proof where the card fixes a bug, and CHECKLIST.md. Then finish LAND, listing every long run as OWED (they become a separate card after v1.0.0-preview1). If the card has no change beyond the long run itself, finish LAND with only the docs or workflow wiring and the long run OWED. Never shorten a long run and call it a pass. Build on the latest pushed head.
+")
+    (:id "rocketnet-linux-soak-per-transport" :feature "Linux: thirty-minute soaks per transport under impairment with flat fds, threads and memory" :cells (n - -) :note "after the payment milestone (owner 2026-10-20); latest work: sprint/rocketnet-linux-soak-per-transport.w9.g1.e0" :brief "CARRY: rocketnet-linux-soak-per-transport attempt 4 head=9395a2438f18acd9edc0e6486feaae072c0c270f
+REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: code
+PRIORITY: blocker
+STREAM: rocketnet-api
+DEPENDS-ON: -
+LAND-AFTER: rocketnet-windows-udp-connreset-never-stalls-receive,rocketnet-win-socket-error-paths-t,rocketnet-win-lifecycle-stress,rocketnet-win-msvc-asan,rocketnet-win-app-verifier,rocketnet-win-libfuzzer-clang-cl,rocketnet-win-toolchain-matrix,rocketnet-win-transport-matrix-repeat,rocketnet-win-load-1000-clients,rocketnet-win-nightlies-on-fleet-runner,rocketnet-macos-hard-killed-peer-never-stalls-receive,rocketnet-macos-socket-errors-and-enobufs-t,rocketnet-macos-lifecycle-stress-t,rocketnet-macos-sanitizers-and-leaks,rocketnet-macos-universal-and-xcode-t,rocketnet-macos-transport-matrix-repeat,rocketnet-macos-soak-per-transport,rocketnet-macos-load-1000-clients-t,rocketnet-macos-client-timing-under-app-nap,rocketnet-linux-hard-killed-peer-never-stalls-receive,rocketnet-linux-socket-error-paths,rocketnet-linux-lifecycle-stress,rocketnet-linux-transport-matrix-repeat,rocketnet-api-polish-v1-followups,rocketnet-destroy-sends-disconnect,rocketnet-network-thread-priority-as-space,rocketnet-win-soak-per-transport,rocketnet-windows-client-overlapped-send
+SOURCE: the owner, 2026-10-19: \"I assume we are already linux hardened, but tell me if not and do that too.\" The audit found Linux CI strong on sanitizers, fuzzing and TSan but with no hard-killed-peer case, no per-transport repeat, soak, load or lifecycle-count proof for portable, gso, io_uring and xdp. nightly-soak.yml's Linux soak runs `./bin/soak 200000` once on the auto ladder (gso) with no impairment and no resource watch; sanitized-soak runs soak_sim (the in-memory simulator, no sockets) under LSan. No Linux transport is soaked for a fixed time under loss, jitter and duplication. This card depends on rocketnet-soak-seconds-flag for `soak --seconds S` and its counter summary; the Windows soak card is not a dependency.
+PATHS: soak.c,sdk/rocketnet_platform.cpp,sdk/rocketnet_server_gso_linux.cpp,sdk/rocketnet_server_uring_linux.cpp,sdk/rocketnet_server_transport.cpp,sdk/rocketnet_client_transport.cpp,sdk/rocketnet_server_socket_linux.cpp,sdk/rocketnet_send_handoff.h,tools/linux/resource_watch.py,tools/linux/soak_matrix.py,sdk/rocketnet_send_handoff.h,test_lifecycle.cpp,tools/macos/soak_matrix.py
+NEW: tools/linux/resource_watch.py,tools/linux/soak_matrix.py
+START: soak.c (read)
+TEST: none because the checks are runs on the member that DONE-WHEN names, each with its count and its red proof
+DONE-WHEN: (1) tools/linux/resource_watch.py samples a pid from /proc (fd count, thread count, VmRSS, VmLck) every N seconds into a CSV with a slope verdict: after a warm-up of the first 10 percent of samples it fails when the least-squares slope of fds or threads over the rest exceeds plus or minus 2, or memory grows more than 1 MiB per hour; its check on a scratch process leaking one fd per second turns it red, shown once; (2) tools/linux/soak_matrix.py runs `soak --seconds S` under the watcher for the server cells portable, gso and io_uring with the portable client, the link simulator on both ends at loss 5 percent, latency 30 ms, jitter 20 ms, duplicate 2 percent, and again clean, and a 30-minute xdp soak inside a virtme-ng guest with the watcher inside the guest; (3) on this member each of the seven runs lasts 30 minutes and passes: zero verify failures, zero unplanned disconnects, the counter conservation stated per run and a flat verdict; one further run per cell of 10 minutes under ASan+LSan exits clean; the table in the report; (4) a leak found is fixed at its cause, or reported HOLD; (5) the docstring at the top of tools/linux/soak_matrix.py names both scripts and how to read their verdicts
+TOOLCHAIN: gcc and clang, cmake, make, Python 3 (standard library only), vng (virtme-ng) with the member's kernel image for the xdp cell, on the Linux member JOB.md names
+GATE-NEEDS: linux, xdp
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 240 minutes.
+
+The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).
+You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.
+Deadline: finish within 240 minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.
+Libraries considered: /proc only; psutil is not added
+
+# Linux: thirty-minute soaks per transport under impairment with flat fds, threads and memory
+
+THE TASK. Soak each Linux server transport (portable, gso, io_uring, xdp in a guest) for thirty minutes under loss, jitter and duplication and again clean, prove no fd, thread or memory growth and no unplanned disconnect with a /proc resource watcher shown red on a planted leak, and a sanitized ten-minute run per transport.
+
+AMENDMENT. Only the documentation destination changed: docs/LOAD.md is retired by the v1 docs cleanup (rocketnet-docs-v1-cleanup deletes it), so the text DONE-WHEN asks for goes to the docstring at the top of tools/linux/soak_matrix.py instead; write no .md file. Nothing else in this card changed.
+
+STEP 1. Confirm the platform is Linux (`uname -sr` and `nproc` recorded, `cat /proc/sys/kernel/io_uring_disabled` recorded); cd into the staged checkout JOB.md names; `git log --oneline -1`; build as THIS REPOSITORY says and keep the last build line.
+STEP 2. Write and prove the watcher (DONE-WHEN (1)); write the matrix script (DONE-WHEN (2)); a 2-minute pass per cell.
+STEP 3. Run the soaks one at a time (DONE-WHEN (3)); fix what fails (DONE-WHEN (4)).
+STEP 4. Write the docs section (DONE-WHEN (5)).
+STEP 5. Commit on your own branch as `rocketnet-linux-soak-per-transport: <what>` with the trailer; end as JOB.md says (the pull request body or RESULT.md carries the gate's lines and the run table).
+
+THIS REPOSITORY. mas-bandwidth/rocketnet: a C++ UDP transport library with runtime-selected transports (TRANSPORTS.md, or DRIVERS.md where BASE predates the rename (read); sdk/rocketnet_drivers.inc (read) is the registry: on Linux the server builds portable, gso (UDP GSO/GRO over sendmmsg/recvmmsg, sdk/rocketnet_server_gso_linux.cpp), io_uring (multishot receive, sdk/rocketnet_server_uring_linux.cpp) and xdp (AF_XDP, sdk/rocketnet_server_socket_linux.cpp), the client portable with the mmsg batch pump; ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT pin one by name). The Linux build is `make` (Release) or `cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build --parallel 4`; executables land in bin/ (test, functional, `./bin/functional --run <case>`, test_lifecycle, test_driver, soak, soak_sim, load). .github/workflows/ci.yml (read) job build-and-test (the ubuntu-24.04 rows) and its transport family matrix step (TRANSPORT_MATRIX_LINUX) are the worked example of every Linux step, including how the xdp cell runs: as root inside a virtme-ng guest of the member's own kernel (vng, ~/vm-kernels/vmlinuz-$(uname -r), /dev/kvm), never as root on the host. Config fields have an env overlay named ROCKETNET_<TRANSPORT>_<FIELD> (sdk/rocketnet_config.cpp (read)).
+
+STANDING RULES (owner, binding on every card).
+- Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0. Anything that needs a real socket, a kernel object, a child process, a thread timing or the wall clock is a functional test, never ./bin/test.
+- Make the smallest change, with no refactor.
+- Never touch the space game's baseline or delta code.
+- Never run `nova-sprint friend stage`.
+- Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+- The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+- Never read outside the job's working directory.
+- Never loosen a Release bound, a protocol timeout or a test assertion to make a run pass; a failure found is a finding, fixed at its cause or reported.
+
+LINUX BOUND. This card runs on a Linux bench member, never on the coordinator's machine. Run builds and suites one at a time, never in the background, and never two suites at once. Build with `--parallel 4`. Root is used only inside a virtme-ng guest, exactly as ci.yml's xdp cell does; never sudo on the host, never touch the host's interfaces, qdiscs or sysctls. A test red at head is rerun at the unchanged BASE only for that one test. Commit the work before any check that reads git status. Every run count in DONE-WHEN is a count of real runs on this member, each with its pass or fail and run time in the report; a run that was not made is reported as not made.
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names; do not clone a second copy. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the member JOB.md names, never the coordinator's machine. Never search /, the home directory or any volume root; stay inside the checkout and the job directory.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install. A named tool that is missing on the member is reported as not-done with the missing component named, verdict HOLD.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+
+ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
+CARRY: head=2c26b9b2de2aa78d5feaea7c8fdf04e46c776571: portable/gso/io_uring soaks 30 min clean x6, sanitizer runs clean, watcher red on the planted leak; xdp guest boots at 3072M with the veth gateway set. One defect left (driver file now in PATHS): under the 30-min impaired soak the xdp server counts SEND_RING_FULL (51 on amd-1, 1 on vision) because both send buffers are handed off and neither has come back (rocketnet_server_socket_linux.cpp:2045-2054). Find why completions are not reaped in time under impairment (reap before claiming a buffer, or size the pool to the TX ring) and fix it so the impaired xdp soak shows zero SEND_RING_FULL; keep fds/threads/memory flat. Then re-run the xdp impaired and clean 30-min soaks.
+NOTE: rebalanced to Stella (owner 2026-10-20, Rowan width 8): build on the latest pushed head of this card (the Rowan worker pushes it before stopping); run CHECKLIST.md; two-minute rule.
+")
+    (:id "rocketnet-load-light-profile-linux" :feature "Linux: 1000 light clients on every transport" :cells (n - -) :note "after the payment milestone (owner 2026-10-20); latest work: 6fdee017 on sprint/rocketnet-load-light-profile-linux.w5.g1.e0" :brief "CARRY: rocketnet-load-light-profile-linux attempt 1 head=e132c94da295fe4cbedc0edf24eb812db9b08681
+REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: test
+PRIORITY: blocker
+STREAM: rocketnet-api
+DEPENDS-ON: -
+SOURCE: TESTING.md (branch testing-md-v1, docs/testing.sexp) lists this cell as no card at sprint/rocketnet-proof 091204c9. Row: 1000 light clients / Linux. The owner, 2026-10-20: 1000 players tested and working on all platforms and all transports for v1.0.0, each client light, 10 Hz ticks, one packet per update; functional testing, not load testing. ./bin/load today runs its clients on a 1 ms loop with max_packets_per_update 4 (load.c ~515, ~729, ~963), which is not that profile.
+PATHS: load.c,.github/workflows/nightly-soak.yml,sdk/rocketnet_server_transport.cpp
+START: load.c (read the usage comment, the traffic loop and the five criteria)
+TEST: none because the gate runs as DONE-WHEN says and has no go or ctest name
+DONE-WHEN: (1) load.c gains a light mode (`./bin/load <clients> <seconds> light`): the server and every client update at 10 Hz on the wall clock, each client sends one message per update on a reliable ordered channel, max_packets_per_update is 1, and the server sends one reliable ordered message per client per update; the existing mode is unchanged; (2) its pass criteria are the owner's light profile, functional and not load: 1000 clients, each updating at 10 Hz and sending one packet per update; pass means all 1000 connect, every client receives, nobody is disconnected, and reliable messages arrive in order; build up from a few clients to 1000; no throughput, bandwidth or stress target; the summary line names the mode and the four criteria; (3) red first: `./bin/load 1000 60 light drop-one` (load's existing drop-one fault, client 0 stops processing reliable messages partway, docs/LOAD.md) fails naming its criterion; (4) on this member the light run passes at 10, 100 and 1000 clients, in that order, for each server transport portable, gso and io_uring (client portable), and once at 1000 for xdp inside a virtme-ng guest, the table in the report with connect time and the fd and thread counts at start and end, end equal to start; (5) nightly-soak.yml's Linux job gains one light run per cell, proven by running the step by hand; the usage comment at the top of load.c names the light mode and its criteria (docs/LOAD.md is left as it is)
+TOOLCHAIN: gcc and clang, cmake, make, Python 3 (standard library only), on a Linux bench member JOB.md names; vng (virtme-ng) with the member's kernel image for the xdp cell, root only inside the guest
+GATE-NEEDS: linux, kvm
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 150 minutes.
+
+# Linux: 1000 light clients on every transport
+
+THE TASK. Give the load harness the owner's light profile (10 Hz, one packet per update), prove it fails when a client stops, and pass 1000 light clients on portable, gso, io_uring and xdp.
+STANDING RULES (owner, binding on every card).
+- Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0. Anything that needs a real socket, a kernel object, a child process, a thread timing or the wall clock is a functional test, never ./bin/test.
+- Make the smallest change, with no refactor.
+- Never touch the space game's baseline or delta code.
+- Never run `nova-sprint friend stage`.
+- Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+- The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+- Never read outside the job's working directory.
+- Never loosen a Release bound, a protocol timeout or a test assertion to make a run pass; a failure found is a finding, fixed at its cause or reported.
+
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names; do not clone a second copy. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the member JOB.md names, never the coordinator's machine. Never search /, the home directory or any volume root; stay inside the checkout and the job directory.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install. A named tool that is missing on the member is reported as not-done with the missing component named, verdict HOLD.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+
+ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
+NOTE: coordinator 2026-10-20: XDP checks run inside a booted vng guest on any kvm bench (VM KIT: /opt/vm-kernels/{6.8,7.0}/vmlinuz), with the guest uname -r quoted; GATE-NEEDS moved from xdp to kvm. A SKIPPED guest case is not a pass.
+")
+    (:id "rocketnet-linux-hard-killed-peer-never-stalls-receive" :feature "Linux: a hard-killed peer or an ICMP error never stalls portable, gso, io_uring or xdp" :cells (n - -) :note "after the payment milestone (owner 2026-10-20); latest work: 9bd3c64c on sprint/rocketnet-linux-hard-killed-peer-never-stalls-receive.w9.g1.e0" :brief "REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: code
+PRIORITY: blocker
+STREAM: rocketnet-api
+DEPENDS-ON: -
+LAND-AFTER: rocketnet-windows-udp-connreset-never-stalls-receive,rocketnet-win-socket-error-paths-t,rocketnet-win-lifecycle-stress,rocketnet-win-msvc-asan,rocketnet-win-app-verifier,rocketnet-win-libfuzzer-clang-cl,rocketnet-win-toolchain-matrix,rocketnet-win-transport-matrix-repeat,rocketnet-win-soak-per-transport,rocketnet-win-load-1000-clients,rocketnet-win-nightlies-on-fleet-runner,rocketnet-macos-hard-killed-peer-never-stalls-receive,rocketnet-api-polish-v1-followups,rocketnet-destroy-sends-disconnect,rocketnet-functional-cookie-expiry-uses-test-clock,rocketnet-functional-free-ports,rocketnet-linux-lifecycle-stress,rocketnet-macos-client-timing-under-app-nap,rocketnet-network-thread-priority-as-space,rocketnet-windows-client-overlapped-send,rocketnet-xdp-drops-first-fragment
+SOURCE: the owner, 2026-10-19: \"I assume we are already linux hardened, but tell me if not and do that too.\" The audit found Linux CI strong on sanitizers, fuzzing and TSan but with no hard-killed-peer case, no per-transport repeat, soak, load or lifecycle-count proof for portable, gso, io_uring and xdp. On Linux an unconnected UDP socket without IP_RECVERR is not told of ICMP errors, and rocketnet sets no IP_RECVERR and connects no socket (sdk/rocketnet_platform.cpp), so the netcode #113 class should not arise; but no test proves it, and the arms differ: the portable recvfrom loop (sdk/rocketnet_platform.cpp near 580-595) returns 0, read as drained, on any errno but EAGAIN and EINTR; the client mmsg receive (near 935-950) stops its drain on any errno but EINTR, EAGAIN, EWOULDBLOCK; the gso worker (sdk/rocketnet_server_gso_linux.cpp near 450-460) breaks its drain on count <= 0 whatever errno; the io_uring multishot (sdk/rocketnet_server_uring_linux.cpp near 553-585) re-arms on a terminating CQE; the xdp path takes raw frames and passes ICMP to the kernel. The macOS card rocketnet-macos-hard-killed-peer-never-stalls-receive creates functional/posix_hard_killed_peer.cpp and its errno seam and has pushed them; this card is worked in parallel, starts from that pushed work (STEP 1), adds the Linux cells, and lands after it.
+PATHS: sdk/rocketnet_platform.cpp,sdk/rocketnet_platform.h,sdk/rocketnet_server_gso_linux.cpp,sdk/rocketnet_server_uring_linux.cpp,sdk/rocketnet_server_socket_linux.cpp,sdk/rocketnet_client_transport.cpp,sdk/rocketnet_server_transport.cpp,functional/rocketnet_functional_tests.cpp,functional/main.cpp,CMakeLists.txt,DRIVERS.md,TRANSPORTS.md,sdk/rocketnet_server_uring.h,functional/posix_hard_killed_peer.cpp
+NEW: functional/posix_hard_killed_peer.cpp,TRANSPORTS.md
+START: sdk/rocketnet_platform.cpp (read 560-610 and 855-975), sdk/rocketnet_server_gso_linux.cpp (read 400-480), sdk/rocketnet_server_uring_linux.cpp (read 540-640), functional/posix_hard_killed_peer.cpp (read)
+TEST: none because the checks are runs on the member that DONE-WHEN names, each with its count and its red proof
+DONE-WHEN: (1) AUDIT FIRST, in the report: every socket rocketnet creates on Linux (portable server and client, gso queues, io_uring queues, the xdp transport's kernel sockets; IPv4 and IPv6) with file:line showing it is never connect()ed and never sets IP_RECVERR/IPV6_RECVERR, and every receive and send arm (recvfrom, recvmmsg in the client pump and the gso worker, the io_uring recv CQE, the xdp rx ring, sendto, sendmmsg, the gso flush, io_uring send CQEs) with file:line of how it handles ECONNREFUSED, EHOSTUNREACH, ENETUNREACH, ENOBUFS, EAGAIN, EINTR and a pending SO_ERROR; (2) at head every receive arm treats those as skip-and-continue, never the end of a drain while datagrams remain and never fatal; each fix cites its audit line; (3) posix_hard_killed_client, posix_send_to_closed_port and posix_client_server_gone run on Linux for the server cells portable, gso, gso with GSO and GRO off (the plain sendmmsg/recvmmsg tier, as test_server_gso_wire_plain selects it), io_uring (when /proc/sys/kernel/io_uring_disabled is 0, else reported not run with the value) and xdp (inside a virtme-ng guest, server xdp with the portable client, as ci.yml's xdp cell runs), IPv4 and IPv6, with the same bounds as the macOS cells; (4) the injected-errno seam of the macOS card is extended to recvfrom, recvmmsg and the io_uring recv CQE res, and cases prove each errno is skipped and the drain continues; (5) the red proof: a scratch commit (not kept) that sets IP_RECVERR on the portable server socket turns posix_hard_killed_client red (or, if the kernel queues the error without surfacing it to recvfrom, the report says so with the errno trace), and one that ends the gso worker on the first errno turns a seam case red; each shown once; (6) the cases pass 20 runs in a row on this member per cell (the xdp cell 5 runs, it boots a guest each time), the run table in the report; (7) `./bin/test`, `./bin/functional` and the ci.yml transport family matrix cases green at head; the transports document's 'ICMP errors' paragraph covers Linux
+TOOLCHAIN: gcc and clang, cmake, make, Python 3 (standard library only), vng (virtme-ng) with the member's kernel image for the xdp cell, on the Linux member JOB.md names
+GATE-NEEDS: linux, kvm
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 180 minutes.
+
+The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).
+You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.
+Deadline: finish within 180 minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.
+Libraries considered: liburing as already linked; posix_spawn for the child client, ended by the test itself on its own pid; no new library
+
+# Linux: a hard-killed peer or an ICMP error never stalls portable, gso, io_uring or xdp
+
+THE TASK. Audit every Linux socket and receive arm for the ICMP error class and buffer errnos, make each skip-and-continue, and prove it per transport (portable, gso and its plain tier, io_uring, xdp in a guest) with a SIGKILLed client process, sends to a closed port and an injected-errno seam, red against planted regressions.
+
+AMENDMENT. Only the documentation destination changed: DRIVERS.md is renamed TRANSPORTS.md by the v1 docs cleanup. Edit the transports document that exists at BASE (TRANSPORTS.md, or DRIVERS.md where BASE predates the rename), never both and never create the other. Nothing else in this card changed.
+
+STEP 1. Confirm the platform is Linux (`uname -sr` and `nproc` recorded, `cat /proc/sys/kernel/io_uring_disabled` recorded); cd into the staged checkout JOB.md names; `git log --oneline -1`; build as THIS REPOSITORY says and keep the last build line. Then, before any change: if functional/posix_hard_killed_peer.cpp is not at your BASE, take the macOS card rocketnet-macos-hard-killed-peer-never-stalls-receive's pushed work, which creates it: `git ls-remote origin 'refs/heads/sprint/rocketnet-macos-hard-killed-peer-never-stalls-receive.*'`, pick the branch with the highest w then g number (at card time sprint/rocketnet-macos-hard-killed-peer-never-stalls-receive.w1.g1.e21 at 2ae31cbda5d0), `git fetch origin <that branch>` and `git merge --no-edit FETCH_HEAD`; name the merged sha in the report. Those commits ride with yours, the lander lands the macOS card first (LAND-AFTER), and you change its cases only to add the Linux cells; a defect you find in them is a finding for the report. If no such branch exists, finish HOLD naming the missing file.
+STEP 2. Write the audit table (DONE-WHEN (1)) before changing code.
+STEP 3. Add the Linux cells and the seam arms (DONE-WHEN (3), (4)); run at BASE; fix each gap (DONE-WHEN (2)).
+STEP 4. Prove red (DONE-WHEN (5)) and drop the scratch commits.
+STEP 5. Run the gate (DONE-WHEN (6), (7)), one suite at a time.
+STEP 6. Commit on your own branch as `rocketnet-linux-hard-killed-peer-never-stalls-receive: <what>` with the trailer; end as JOB.md says (the pull request body or RESULT.md carries the gate's lines and the run table).
+
+THIS REPOSITORY. mas-bandwidth/rocketnet: a C++ UDP transport library with runtime-selected transports (TRANSPORTS.md, or DRIVERS.md where BASE predates the rename (read); sdk/rocketnet_drivers.inc (read) is the registry: on Linux the server builds portable, gso (UDP GSO/GRO over sendmmsg/recvmmsg, sdk/rocketnet_server_gso_linux.cpp), io_uring (multishot receive, sdk/rocketnet_server_uring_linux.cpp) and xdp (AF_XDP, sdk/rocketnet_server_socket_linux.cpp), the client portable with the mmsg batch pump; ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT pin one by name). The Linux build is `make` (Release) or `cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build --parallel 4`; executables land in bin/ (test, functional, `./bin/functional --run <case>`, test_lifecycle, test_driver, soak, soak_sim, load). .github/workflows/ci.yml (read) job build-and-test (the ubuntu-24.04 rows) and its transport family matrix step (TRANSPORT_MATRIX_LINUX) are the worked example of every Linux step, including how the xdp cell runs: as root inside a virtme-ng guest of the member's own kernel (vng, ~/vm-kernels/vmlinuz-$(uname -r), /dev/kvm), never as root on the host. Config fields have an env overlay named ROCKETNET_<TRANSPORT>_<FIELD> (sdk/rocketnet_config.cpp (read)).
+
+STANDING RULES (owner, binding on every card).
+- Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0. Anything that needs a real socket, a kernel object, a child process, a thread timing or the wall clock is a functional test, never ./bin/test.
+- Make the smallest change, with no refactor.
+- Never touch the space game's baseline or delta code.
+- Never run `nova-sprint friend stage`.
+- Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+- The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+- Never read outside the job's working directory.
+- Never loosen a Release bound, a protocol timeout or a test assertion to make a run pass; a failure found is a finding, fixed at its cause or reported.
+
+LINUX BOUND. This card runs on a Linux bench member, never on the coordinator's machine. Run builds and suites one at a time, never in the background, and never two suites at once. Build with `--parallel 4`. Root is used only inside a virtme-ng guest, exactly as ci.yml's xdp cell does; never sudo on the host, never touch the host's interfaces, qdiscs or sysctls. A test red at head is rerun at the unchanged BASE only for that one test. Commit the work before any check that reads git status. Every run count in DONE-WHEN is a count of real runs on this member, each with its pass or fail and run time in the report; a run that was not made is reported as not made.
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names; do not clone a second copy. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the member JOB.md names, never the coordinator's machine. Never search /, the home directory or any volume root; stay inside the checkout and the job directory.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install. A named tool that is missing on the member is reported as not-done with the missing component named, verdict HOLD.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+
+ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
+CARRY: Coordinator 2026-10-20 13:05Z: brief confirmed current for the v1.0 push; the newest CARRY above names exactly what is owed. Continue from the last pushed head merged with the current base.
+CARRY: VM AUDIT 2026-10-20: the hetzner1 reader booted a vng guest at head 9bc92abd and found xdp_hard_killed_client_ipv4 RED: '0 of 2 live clients connected', contradicting the worker's '2/2 rc0' claim. Reproduce inside a booted guest (run vng from a short dir such as /tmp/rn-<short> so the virtiofs socket path is under 108 bytes; print the guest uname -r as boot proof), fix at the cause, and show the xdp cells green in a booted guest with that proof quoted. Any xdp claim without guest boot proof does not count.
+NOTE: coordinator 2026-10-20: XDP checks run inside a booted vng guest on any kvm bench (VM KIT: /opt/vm-kernels/{6.8,7.0}/vmlinuz), with the guest uname -r quoted; GATE-NEEDS moved from xdp to kvm. A SKIPPED guest case is not a pass.
+NOTE: fix routed to friends (owner 2026-10-20); carry the latest pushed head and FIX lines; run CHECKLIST.md; two-minute rule.
+")
+    (:id "rocketnet-macos-load-1000-clients-t" :feature "macOS: 1000 clients per transport, three runs each, with the fd limit and counts in the summary" :cells (- n -) :note "after the payment milestone (owner 2026-10-20); latest work: 6dd8067c on sprint/rocketnet-macos-load-1000-clients-t.w10.g1.e0" :brief "WHO: only friend rowan
+CARRY: rocketnet-macos-load-1000-clients-t attempt 6 head=7c5994ed7d0fb1775b9942f58b4bd829205eac32
+REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: code
+PRIORITY: blocker
+STREAM: rocketnet-api
+DEPENDS-ON: -
+LAND-AFTER: rocketnet-windows-udp-connreset-never-stalls-receive,rocketnet-win-socket-error-paths-t,rocketnet-win-lifecycle-stress,rocketnet-win-msvc-asan,rocketnet-win-app-verifier,rocketnet-win-libfuzzer-clang-cl,rocketnet-win-toolchain-matrix,rocketnet-win-transport-matrix-repeat,rocketnet-win-soak-per-transport,rocketnet-win-load-1000-clients,rocketnet-win-nightlies-on-fleet-runner,rocketnet-macos-hard-killed-peer-never-stalls-receive,rocketnet-macos-socket-errors-and-enobufs-t,rocketnet-macos-lifecycle-stress-t,rocketnet-macos-sanitizers-and-leaks,rocketnet-macos-universal-and-xcode-t,rocketnet-macos-transport-matrix-repeat,rocketnet-macos-soak-per-transport,rocketnet-api-polish-v1-followups,rocketnet-destroy-sends-disconnect,rocketnet-linux-hard-killed-peer-never-stalls-receive,rocketnet-linux-lifecycle-stress,rocketnet-linux-socket-error-paths,rocketnet-linux-transport-matrix-repeat,rocketnet-macos-client-timing-under-app-nap,rocketnet-network-thread-priority-as-space,rocketnet-windows-client-overlapped-send
+SOURCE: the owner, 2026-10-19: \"Do we need to do any macos hardening, to match the windows hardening for rocketnet? Their main programmer on the engine is mac like us.\" The customer's engine programmer builds, runs and debugs on macOS, so the macOS client and server must be proven to the bar the Windows hardening set (stream rocketnet-api, the rocketnet-win-* cards) sets for Windows. The Windows card rocketnet-win-load-1000-clients runs load.c at 1000 clients. load.c (rocketnet-load-many-clients-harness) raises RLIMIT_NOFILE itself but never runs in CI or a nightly on any platform; on the fleet Mac `ulimit -n` is 256 and `launchctl limit maxfiles` is 256 soft (checked 2026-10-19), so a game that opens 1000 sockets or a dev who runs a local 1000-client test meets the limit.
+PATHS: load.c,docs/LOAD.md,sdk/rocketnet_platform.cpp,sdk/rocketnet_server_transport.cpp,sdk/rocketnet_client_transport.cpp,.github/workflows/nightly-soak.yml,sdk/rocketnet_client_io.h,docs/CLIENT-IO.md,tla/RNClientIo.tla,tla/MCRNClientIo.cfg,tla/RUNS.tsv,tla/CASES.tsv,functional/macos_client_timing.cpp
+START: load.c (read), docs/LOAD.md (read)
+TEST: none because the checks are runs on the member that DONE-WHEN names, each with its count and its red proof
+DONE-WHEN: (1) load's summary line adds the fd count and thread count at start, peak and end, and the RLIMIT_NOFILE soft and hard values it ran with; when the limit cannot be raised to clients plus a margin it exits non-zero naming the limit and the command that raises it, never a silent partial run; (2) on this member `./bin/load 1000 60` passes all five criteria three times for each server cell portable, msgx and msgx-degraded, the table in the report with connect time p50 and max and the counts; fds and threads at end equal start; (3) the red proof: the run with `ulimit -n 256` in its shell fails with the named-limit message, shown once; (4) any failure is profiled (`sample <pid>` or a timed stack) before it is fixed, the profile cited; (5) nightly-soak.yml's soak-macos job gains `./bin/load 1000 60` per cell, proven by hand; (6) docs/LOAD.md gains a macOS section on the fd limit
+TOOLCHAIN: Apple clang from the Command Line Tools, cmake, make, Python 3 (standard library only), on the fleet's macOS member JOB.md names; sample from macOS for profiling
+GATE-NEEDS: darwin, arm64
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 180 minutes.
+
+The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).
+You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.
+Deadline: finish within 180 minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.
+Libraries considered: none new
+
+# macOS: 1000 clients per transport, three runs each, with the fd limit and counts in the summary
+
+THE TASK. Run the many-client load harness at its 1000-client maximum against each macOS server transport three times each, make every run pass its five criteria with no fd or thread growth, make the fd limit loud, and run it nightly. Profile any failure before fixing it.
+
+STEP 1. Confirm the platform is macOS on Apple silicon (`uname -s` prints Darwin, `uname -m` prints arm64, `sw_vers -productVersion` and `clang --version` recorded); cd into the staged checkout JOB.md names; `git log --oneline -1`; build as THIS REPOSITORY says and keep the last build line.
+STEP 2. Extend the summary and the limit check (DONE-WHEN (1)); red proof (DONE-WHEN (3)).
+STEP 3. Run the gate (DONE-WHEN (2)); profile and fix (DONE-WHEN (4)).
+STEP 4. Nightly step and docs (DONE-WHEN (5), (6)).
+STEP 5. Commit on your own branch as `rocketnet-macos-load-1000-clients-t: <what>` with the trailer; end as JOB.md says (the pull request body or RESULT.md carries the gate's lines and the run table).
+
+THIS REPOSITORY. mas-bandwidth/rocketnet: a C++ UDP transport library with runtime-selected transports (DRIVERS.md (read); sdk/rocketnet_drivers.inc (read) is the registry: on macOS the server builds portable and msgx, the client portable and msgx; msgx is the darwin batch pump over sendmsg_x/recvmsg_x, resolved by dlsym and probed per socket at create (sdk/rocketnet_platform.cpp, the block that opens 'The darwin batch pump'), degrading to the portable per-packet loop on refusal; ROCKETNET_PUMP=portable forces the degraded path; ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT pin a transport by name). The macOS build is `make` (Release) or `cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build --parallel 4`; executables land in bin/ (test is the unit suite, functional the functional suite, `./bin/functional --run <case>` runs one case, test_msgx, test_lifecycle, test_driver, soak, soak_sim, load, transport_memory). .github/workflows/ci.yml (read) jobs build-and-test (the macos-15 rows on the fleet runner label rocketnet-macos) and its transport family matrix step (TRANSPORT_MATRIX_MACOS) are the worked example of every macOS step. Config fields have an env overlay named ROCKETNET_<TRANSPORT>_<FIELD> (sdk/rocketnet_config.cpp (read), rocketnet_config_env_var_name_for).
+
+STANDING RULES (owner, binding on every card).
+- Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0. Anything that needs a real socket, a kernel object, a child process, a thread timing or the wall clock is a functional test, never ./bin/test.
+- Make the smallest change, with no refactor.
+- Never touch the space game's baseline or delta code.
+- Never run `nova-sprint friend stage`.
+- Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+- The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+- Never read outside the job's working directory.
+- Never loosen a Release bound, a protocol timeout or a test assertion to make a run pass; a failure found is a finding, fixed at its cause or reported.
+
+MACOS BOUND. This card runs on the fleet's macOS member (an Apple-silicon Mac mini; the CI runner label rocketnet-macos is on it), never on the coordinator's machine. Run builds and suites one at a time, never in the background, and never two suites at once. Build with `--parallel 4`. A test red at head is rerun at the unchanged BASE only for that one test. Commit the work before any check that reads git status. Every run count in DONE-WHEN is a count of real runs on this member, each with its pass or fail and run time in the report; a run that was not made is reported as not made. A macOS firewall or permission prompt that a run raises is a finding to report, never something to click through.
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names; do not clone a second copy. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the member JOB.md names, never the coordinator's machine. Never search /, the home directory or any volume root; stay inside the checkout and the job directory.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install. A named tool that is missing on the member is reported as not-done with the missing component named, verdict HOLD.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+
+ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
+
+DEAL NOTE (coordinator 2026-10-19): earlier attempts of this card were dealt to Linux benches by a nova-sprint deal bug (the level, the rebalance and the next-attempt deal ignored GATE-NEEDS; fixed in nova-sprint v1.6.8), so their HOLDs were the machine's, not this brief's. The BENCH line keeps it on the fleet Mac; every DONE-WHEN run is on mini-m5-1 only. Carry the work already pushed and finish the macOS runs it still owes.
+
+DECISION (coordinator audit 2026-10-20): attempts on the fleet member mini-m5-1 could not open a socket: the member's nova-sandbox wall on darwin grants no network-inbound (local ip) without --net-listen (measured with nova-sandbox policy), so every AF_INET/AF_INET6 bind returns EPERM, and the same red reproduces at BASE. That is the member's wall, not this brief and not the code. The BENCH line is removed and the card now carries a WHO line naming one friend, and that friend's child builds and runs every DONE-WHEN step directly on mini-m5-1 (Darwin arm64), outside the member wall, as an earlier macOS socket-errors attempt did. Carry the work already pushed (the carried head holds it); do not redo it. If bind still returns EPERM, report it with the errno and the command as evidence, verdict HOLD, blocked on environment; never weaken a test to pass.
+CARRY: head=27aa95eab44a7d9ceea411b38649e116dcc0ac6c: fixed the macOS dual-stack port-0 collision (rocketnet_platform.cpp picks the port via an IPv4 probe first; 1000/1000 with 4000 ports held, 759 with the bug back); 9/9 Release gate, ulimit message, Debug suites green. One defect left: in 3 of 22 runs with the PORTABLE server ~97 clients timed out together on reliable messages ~3.4 s into traffic while the server's send ring was full (suspected 256-frame ring starving the last clients). Prove the cause (counters per client: queued vs sent vs acked), fix it at the cause (ring size, fair draining, or send budget) with a red-first proof, then 20 Release runs in a row of the 1000-client load with zero timeouts on portable and msgx. The Debug connect-deadline miss is base behaviour (connection-request crypto in Debug), not this card.
+CARRY: Coordinator ruling 2026-10-20 09:35Z on the macOS dual-stack port-0 collision: rocketnet-macos-cookie-request-never-stalls (head cb809a1c, LAND, in review) fixes it at sdk/rocketnet_client_transport.cpp:796 (a macOS client of an IPv4 server binds an IPv4 socket; red proof holds 1024 IPv4 ports). Merge the base once that card lands (or merge its branch now and say so). Keep your rocketnet_platform.cpp IPv4-probe change ONLY if a red-first case shows a collision the client-side fix does not cover (e.g. a server binding [::]:0, or an IPv6 client); otherwise drop it so one fix lands. Then chase the remaining defect: ~97 clients timing out together while the PORTABLE server's send ring is full.
+CARRY: head=149c1b864e38b1abaaa856a89407ff9df08d0f37. Coordinator ruling: the client I/O guard wake (ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS 0.001, rocketnet_client_io.h:40) goes to 0.100: it is a safety net behind the event wake, and 1 ms at top priority costs ~1.7% CPU per idle client (1681% for 1000 in one process). PATHS now include rocketnet_client_io.h, docs/CLIENT-IO.md and tla/RNClientIo + records. Show in tla/RNClientIo that no wake is lost with the longer guard (the guard only bounds the stall if an event wake is missed): run TLC through tlacheck merge --keep, never hand-written rows. Update docs/CLIENT-IO.md:356 with the measured reason. Then the 9-run gate, the 20-run streak and the msgx cells, on mini-m5-1 under the mkdir lock.
+CARRY: OWNER PROFILE (2026-10-20): \"I want 1000 players tested and working on all platforms and all transports for v1.0.0. But each client should be light. 10HZ ticks. 1 packet per-update.\" and \"I want the hardcore load testing done after v1.0.0.\" So every 1000-client run here is the light profile: 1000 clients, each updating at 10 Hz and sending 1 packet per update, on every server transport of the platform; pass = all connect, every client receives, none disconnected, reliable in order. No high-rate or bandwidth stress (that is the next milestone). This supersedes any heavier rate or the 256 kbps profile written earlier in this brief.
+NOTE: rebalanced to Stella (owner 2026-10-20, Rowan width 8): build on the latest pushed head of this card (the Rowan worker pushes it before stopping); run CHECKLIST.md; two-minute rule.
+")
+    (:id "rocketnet-macos-sanitizers-and-leaks" :feature "macOS: ASan, UBSan and TSan with Apple clang, and the leaks tool, on every suite and transport, nightly" :cells (- n -) :note "after the payment milestone (owner 2026-10-20); latest work: 0585538d on sprint/rocketnet-macos-sanitizers-and-leaks.w10.g1.e0" :brief "WHO: only friend rowan
+CARRY: rocketnet-macos-sanitizers-and-leaks attempt 3 head=4b506cec7d12af242bd444a7c244af8626414805
+REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: code
+PRIORITY: blocker
+STREAM: rocketnet-api
+DEPENDS-ON: -
+LAND-AFTER: rocketnet-windows-udp-connreset-never-stalls-receive,rocketnet-win-socket-error-paths-t,rocketnet-win-lifecycle-stress,rocketnet-win-msvc-asan,rocketnet-win-app-verifier,rocketnet-win-libfuzzer-clang-cl,rocketnet-win-toolchain-matrix,rocketnet-win-transport-matrix-repeat,rocketnet-win-soak-per-transport,rocketnet-win-load-1000-clients,rocketnet-win-nightlies-on-fleet-runner,rocketnet-macos-hard-killed-peer-never-stalls-receive,rocketnet-macos-socket-errors-and-enobufs-t,rocketnet-macos-lifecycle-stress-t,rocketnet-api-polish-v1-followups,rocketnet-destroy-sends-disconnect,rocketnet-functional-cookie-expiry-uses-test-clock,rocketnet-functional-free-ports,rocketnet-linux-hard-killed-peer-never-stalls-receive,rocketnet-linux-lifecycle-stress,rocketnet-linux-socket-error-paths,rocketnet-linux-transport-matrix-repeat,rocketnet-macos-client-timing-under-app-nap,rocketnet-network-thread-priority-as-space,rocketnet-windows-client-overlapped-send,rocketnet-xdp-drops-first-fragment
+SOURCE: the owner, 2026-10-19: \"Do we need to do any macos hardening, to match the windows hardening for rocketnet? Their main programmer on the engine is mac like us.\" The customer's engine programmer builds, runs and debugs on macOS, so the macOS client and server must be proven to the bar the Windows hardening set (stream rocketnet-api, the rocketnet-win-* cards) sets for Windows. The Windows cards rocketnet-win-msvc-asan and rocketnet-win-app-verifier run every suite under ASan and Application Verifier. On macOS no sanitizer runs at all: ci.yml's sanitizers, tsan and msan jobs and nightly-leaks.yml are Linux only. Apple clang 21 on the fleet Mac links -fsanitize=address,undefined and -fsanitize=thread (checked 2026-10-19); LeakSanitizer is not supported on Apple platforms, so leaks are checked with /usr/bin/leaks under MallocStackLogging on a non-ASan build.
+PATHS: CMakeLists.txt,.github/workflows/nightly-leaks.yml,sdk/rocketnet_platform.cpp,sdk/rocketnet_server_transport.cpp,sdk/rocketnet_client_transport.cpp,functional/rocketnet_functional_tests.cpp,BUILDING.md,sdk/rocketnet.cpp,sdk/rocketnet_ack.cpp,sdk/rocketnet_tests.cpp,test_unit_ack_block_walk.cpp,functional/posix_socket_errors.cpp,functional/channel_harness.h,functional/thread_priority_timing.cpp,test_unit_sequence_burn.cpp
+NEW: tools/macos/leaks_run.py
+START: .github/workflows/ci.yml (read), .github/workflows/nightly-leaks.yml (read)
+TEST: none because the checks are runs on the member that DONE-WHEN names, each with its count and its red proof
+DONE-WHEN: (1) one CMake option (ROCKETNET_SANITIZE=address|thread, default off, Apple and Linux alike; the existing Linux jobs keep their flags) builds every suite with -fsanitize=address,undefined -fno-sanitize-recover=all or -fsanitize=thread; (2) the planted proofs, each a scratch commit not kept and shown once with the report's first lines: a one-byte heap overrun in a receive path is caught by ASan, a signed overflow by UBSan, an unsynchronised write between the client receive thread and update by TSan; (3) under ASan+UBSan on this member: ./bin/test, ./bin/test_lifecycle, ./bin/test_driver, ./bin/test_msgx and ./bin/functional with each pin (server portable, msgx, msgx forced portable; client portable, msgx) all green; under TSan ./bin/test and ./bin/functional with each pin green (setarch has no macOS form: say so and run without it); (4) tools/macos/leaks_run.py runs a named binary under `MallocStackLogging=1 leaks --atExit --` on a Release build without sanitizers, fails on any leak with its stack, and its check on a scratch binary that leaks one allocation turns it red; it runs test_lifecycle, functional and soak (100000 iterations) per pin, all green; (5) every report found is fixed at its cause in sdk/ with the run that showed it, or reported HOLD; (6) .github/workflows/nightly-leaks.yml gains a macOS job on [self-hosted, macOS, ARM64, rocketnet-macos] that runs (3) and (4) with a 60-minute timeout, each step proven green by hand on this member with its time in the report; (7) BUILDING.md names the option and the leaks script
+TOOLCHAIN: Apple clang from the Command Line Tools, cmake, make, Python 3 (standard library only), on the fleet's macOS member JOB.md names; /usr/bin/leaks and MallocStackLogging from macOS
+GATE-NEEDS: darwin, arm64
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 180 minutes.
+
+The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).
+You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.
+Deadline: finish within 180 minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.
+Libraries considered: Apple clang's ASan, UBSan and TSan runtimes; the system leaks tool (LSan is unsupported on Apple)
+
+# macOS: ASan, UBSan and TSan with Apple clang, and the leaks tool, on every suite and transport, nightly
+
+THE TASK. Run every rocketnet suite on macOS under ASan with UBSan and under TSan, built with Apple clang behind one CMake option, on each macOS transport; check leaks with the system leaks tool on a plain build; prove each tool catches a planted defect; fix every report at its cause; add a nightly macOS job on the fleet runner.
+
+STEP 1. Confirm the platform is macOS on Apple silicon (`uname -s` prints Darwin, `uname -m` prints arm64, `sw_vers -productVersion` and `clang --version` recorded); cd into the staged checkout JOB.md names; `git log --oneline -1`; build as THIS REPOSITORY says and keep the last build line.
+STEP 2. Add the option (DONE-WHEN (1)) and make the planted proofs (DONE-WHEN (2)).
+STEP 3. Run (3) one suite and one pin at a time; fix what they find (DONE-WHEN (5)).
+STEP 4. Write and prove the leaks script (DONE-WHEN (4)); add the nightly job and prove its steps by hand (DONE-WHEN (6)); write (7).
+STEP 5. Commit on your own branch as `rocketnet-macos-sanitizers-and-leaks: <what>` with the trailer; end as JOB.md says (the pull request body or RESULT.md carries the gate's lines and the run table).
+
+THIS REPOSITORY. mas-bandwidth/rocketnet: a C++ UDP transport library with runtime-selected transports (DRIVERS.md (read); sdk/rocketnet_drivers.inc (read) is the registry: on macOS the server builds portable and msgx, the client portable and msgx; msgx is the darwin batch pump over sendmsg_x/recvmsg_x, resolved by dlsym and probed per socket at create (sdk/rocketnet_platform.cpp, the block that opens 'The darwin batch pump'), degrading to the portable per-packet loop on refusal; ROCKETNET_PUMP=portable forces the degraded path; ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT pin a transport by name). The macOS build is `make` (Release) or `cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build --parallel 4`; executables land in bin/ (test is the unit suite, functional the functional suite, `./bin/functional --run <case>` runs one case, test_msgx, test_lifecycle, test_driver, soak, soak_sim, load, transport_memory). .github/workflows/ci.yml (read) jobs build-and-test (the macos-15 rows on the fleet runner label rocketnet-macos) and its transport family matrix step (TRANSPORT_MATRIX_MACOS) are the worked example of every macOS step. Config fields have an env overlay named ROCKETNET_<TRANSPORT>_<FIELD> (sdk/rocketnet_config.cpp (read), rocketnet_config_env_var_name_for).
+
+STANDING RULES (owner, binding on every card).
+- Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0. Anything that needs a real socket, a kernel object, a child process, a thread timing or the wall clock is a functional test, never ./bin/test.
+- Make the smallest change, with no refactor.
+- Never touch the space game's baseline or delta code.
+- Never run `nova-sprint friend stage`.
+- Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+- The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+- Never read outside the job's working directory.
+- Never loosen a Release bound, a protocol timeout or a test assertion to make a run pass; a failure found is a finding, fixed at its cause or reported.
+
+MACOS BOUND. This card runs on the fleet's macOS member (an Apple-silicon Mac mini; the CI runner label rocketnet-macos is on it), never on the coordinator's machine. Run builds and suites one at a time, never in the background, and never two suites at once. Build with `--parallel 4`. A test red at head is rerun at the unchanged BASE only for that one test. Commit the work before any check that reads git status. Every run count in DONE-WHEN is a count of real runs on this member, each with its pass or fail and run time in the report; a run that was not made is reported as not made. A macOS firewall or permission prompt that a run raises is a finding to report, never something to click through.
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names; do not clone a second copy. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the member JOB.md names, never the coordinator's machine. Never search /, the home directory or any volume root; stay inside the checkout and the job directory.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install. A named tool that is missing on the member is reported as not-done with the missing component named, verdict HOLD.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+
+ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
+
+DEAL NOTE (coordinator 2026-10-19): earlier attempts of this card were dealt to Linux benches by a nova-sprint deal bug (the level, the rebalance and the next-attempt deal ignored GATE-NEEDS; fixed in nova-sprint v1.6.8), so their HOLDs were the machine's, not this brief's. The BENCH line keeps it on the fleet Mac; every DONE-WHEN run is on mini-m5-1 only. Carry the work already pushed and finish the macOS runs it still owes.
+
+
+DECISION (coordinator 2026-10-19, after attempts 5 and 6): both attempts ended with no result because `/usr/bin/leaks --atExit` never returned on mini-m5-1. Root cause measured on the member: Developer Mode is disabled there (`DevToolsSecurity -status`), so leaks stops the target at exit and then waits for a task-port authorization that a non-GUI session never grants; the target stays stopped (state T) and leaks prints nothing, so the run went silent and was idle-reaped at 300 s. A bare run outside any sandbox hangs the same way. So: before any leaks run, record `DevToolsSecurity -status`; run every leaks invocation under a hard 120 s timeout that kills leaks and its stopped target; if Developer Mode is disabled or leaks times out, do not retry it: report DONE-WHEN (4) and the leaks step of (6) as not-done, blocked on environment (Developer Mode off on the member), with the status line as evidence, finish everything else (the sanitizer option, the planted proofs, the ASan/UBSan/TSan runs, BUILDING.md), and finish HOLD naming that one block. Never run `DevToolsSecurity` with sudo or change any system setting. This attempt is worked by the WHO friend's child directly on mini-m5-1.
+
+DECISION (coordinator audit 2026-10-20): the BENCH line is removed. the BENCH line with the WHO line left the card dealable to no one (the bench names a fleet member, the WHO a friend row), so it sat ready untaken. the WHO friend's child works it directly on mini-m5-1 as the decision above says.
+CARRY: head=4b506cec7d12af242bd444a7c244af8626414805. PATHS widened: apply the three fix diffs in /private/tmp/claude-501/-Volumes-nova-ai-rowan/91b9aacc-938b-4bf3-8fa6-975024be9624/scratchpad/rnreads/sanitizers-evidence/ (UBSan enum loads rocketnet.cpp:96,:223; TSan g_ack_visit_count rocketnet_ack.cpp:514; TSan volatile flags posix_socket_errors.cpp:968), each with its planted-red proof, then the full sanitizer set on the merged base. Leaks steps wait on Developer Mode on the studio (owner action); report them as pending, not failed. Base-only reds (env-pinned weather cases, TSan matrix 52.5s vs 50s, server_xdp.c:407 misalign, Release 100k soak refusal) are listed, not fixed here.
+CARRY: w6 HOLD head 85b0f72b: three sanitizer fixes proven; leaks script fixed (per-case, signed binaries, self-test red); Developer Mode now on and the Xcode license now accepted on the studio (DEVELOPER_DIR workaround no longer needed). Remaining: (a) apply the channel_harness.h destroy fix (proposed-channel-harness.diff in ~/.local/state/nova-reads/rocketnet-macos-sanitizers-and-leaks.w6/) and show control_fragment_packets_each_end at 0 leaks on all pins; (b) fix the TSan race in functional/thread_priority_timing.cpp :130/:353; (c) merge current BASE and re-run; (d) functional reds that also fail at BASE under sanitizers are pre-existing: list them, do not fix them here.
+NOTE: rebalanced to Stella (owner 2026-10-20): Rowan's row was over its width; build on the latest pushed head.
+")
+    (:id "rocketnet-linux-nightly-soak-green-at-base" :feature "Linux: the nightly soak jobs green at the branch" :cells (n - -) :note "after the payment milestone (owner 2026-10-20); latest work: 0e3143ab on sprint/rocketnet-linux-nightly-soak-green-at-base.w4.g1.e0" :brief "RESULT: rocketnet-linux-nightly-soak-green-at-base sha=000000000000 tier: pro
+REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: test
+PRIORITY: high
+STREAM: rocketnet-api
+DEPENDS-ON: -
+SOURCE: TESTING.md (branch testing-md-v1, docs/testing.sexp) lists this cell as no card at sprint/rocketnet-proof 091204c9. Row: Nightlies / Linux. The scheduled nightlies run only on main, which is far behind this branch; nightly-soak's Linux soak job (the soak run, the 1000-client load step per cell) and sanitized-soak (soak_sim under asan + ubsan + lsan) have not run on this branch's code as scheduled. rocketnet-linux-load-1000-clients proved only its load step by hand.
+PATHS: .github/workflows/nightly-soak.yml
+START: .github/workflows/nightly-soak.yml (read the soak job's ubuntu row and the sanitized-soak job)
+TEST: none because the gate is the two Linux jobs' own steps, run by hand as DONE-WHEN says
+DONE-WHEN: (1) at BASE, on this member, every step of nightly-soak.yml's soak job (the ubuntu row) and its sanitized-soak job is run by hand as the workflow spells it, one job at a time, each command's exit code, run time and last lines kept; the xdp load cell runs in a virtme-ng guest as the workflow does; (2) each red's cause is named in the report with file:line, fixed in this commit when the fix is in a file PATHS names and otherwise carried as a proposed diff for its own card; a bound is never loosened; a red already held by rocketnet-linux-soak-per-transport is listed with that id; (3) red first: each step fixed in this commit is shown red at BASE and green at head; (4) at head every step in (1) exits 0 on this member, or the report names the proposed diff it waits on, each job's run time recorded
+TOOLCHAIN: gcc and clang, cmake, make, Python 3 (standard library only), on a Linux bench member JOB.md names; vng (virtme-ng) with the member's kernel image for the xdp cell, root only inside the guest
+GATE-NEEDS: linux, xdp
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 180 minutes.
+
+# Linux: the nightly soak jobs green at the branch
+
+THE TASK. Run nightly-soak's Linux soak and sanitized-soak jobs by hand at BASE, fix each red at its cause, and show both green at head with their run times.
+STANDING RULES (owner, binding on every card).
+- Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0. Anything that needs a real socket, a kernel object, a child process, a thread timing or the wall clock is a functional test, never ./bin/test.
+- Make the smallest change, with no refactor.
+- Never touch the space game's baseline or delta code.
+- Never run `nova-sprint friend stage`.
+- Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+- The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+- Never read outside the job's working directory.
+- Never loosen a Release bound, a protocol timeout or a test assertion to make a run pass; a failure found is a finding, fixed at its cause or reported.
+
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names; do not clone a second copy. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the member JOB.md names, never the coordinator's machine. Never search /, the home directory or any volume root; stay inside the checkout and the job directory.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install. A named tool that is missing on the member is reported as not-done with the missing component named, verdict HOLD.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+
+ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
+")
+    (:id "rocketnet-win-libfuzzer-clang-cl" :feature "The fuzz targets build and run under libFuzzer on Windows" :cells (- - n) :note "after the payment milestone (owner 2026-10-20); latest work: sprint/rocketnet-win-libfuzzer-clang-cl.w9.g5.e0" :brief "CARRY: rocketnet-win-libfuzzer-clang-cl attempt 9 head=63b568add8b117fd6562188a88dd1fbbbba51bba
+REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: code
+PRIORITY: blocker
+STREAM: rocketnet-api
+DEPENDS-ON: -
+LAND-AFTER: rocketnet-windows-udp-connreset-never-stalls-receive,rocketnet-win-socket-error-paths-t,rocketnet-win-lifecycle-stress,rocketnet-win-msvc-asan,rocketnet-win-app-verifier,rocketnet-api-polish-v1-followups,rocketnet-destroy-sends-disconnect,rocketnet-functional-free-ports,rocketnet-linux-lifecycle-stress,rocketnet-macos-client-timing-under-app-nap,rocketnet-macos-hard-killed-peer-never-stalls-receive,rocketnet-network-thread-priority-as-space,rocketnet-win-nightlies-on-fleet-runner,rocketnet-windows-client-overlapped-send,rocketnet-xdp-drops-first-fragment
+SOURCE: the owner, 2026-10-19: \"I think we need to do extra testing and checking on windows and windows transports before we deliver rocketnet. It will be their primary platform so we should make it perfect.\" The customer ships on Windows; v1.0.0 is not delivered until Windows is proven. The four fuzz harnesses (fuzz/rocketnet_fuzz.cpp, fuzz/rocketnet_fuzz_message.cpp, fuzz/rocketnet_fuzz_connect_token.cpp, fuzz/rocketnet_fuzz_receive_structured.cpp) fuzz only on Linux (fuzz/Makefile is Linux only and links bpf and xdp); Windows only replays the committed corpora through fuzz/replay_main.cpp. clang-cl supports -fsanitize=fuzzer,address on Windows, so the receive and parse paths as built for Windows can be fuzzed there.
+PATHS: CMakeLists.txt,fuzz/*.cpp,fuzz/corpus/**,fuzz/corpus_message/**,fuzz/corpus_connect_token/**,fuzz/corpus_receive_structured/**,.github/workflows/fuzz-nightly.yml,sdk/rocketnet_platform.cpp,sdk/rocketnet_server_iocp_windows.cpp,sdk/rocketnet_server_rio_windows.cpp,sdk/rocketnet_server_transport.cpp,sdk/rocketnet_client_transport.cpp,BUILDING.md,build-fuzz/fuzz_rocketnet_fuzz.exe,build/test.exe,fuzz/rocketnet.dict,sdk/rocketnet_base64.cpp
+START: fuzz/Makefile (read), CMakeLists.txt (read), .github/workflows/fuzz-nightly.yml (read)
+TEST: none because the checks are runs on native Windows that DONE-WHEN names, each with its count and its red proof
+DONE-WHEN: (1) a CMake option ROCKETNET_BUILD_FUZZERS (default OFF), honoured when the compiler is clang-cl, builds fuzz_rocketnet_fuzz, fuzz_rocketnet_fuzz_message, fuzz_rocketnet_fuzz_connect_token and fuzz_rocketnet_fuzz_receive_structured with -fsanitize=fuzzer,address against the development library built with -fsanitize=fuzzer-no-link,address; configured with `cmake -B build-fuzz -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DROCKETNET_BUILD_FUZZERS=ON` (or the Visual Studio generator with -T ClangCL), the four targets build on this member; any MSVC-only flag that clang-cl refuses is fixed in CMakeLists.txt; (2) each of the four runs for 15 minutes on its committed corpus (`-max_total_time=900 -rss_limit_mb=2048`, with fuzz/rocketnet.dict where the Linux runs use it) with no crash, leak or timeout; the exec/s and the final cov and corp lines of each are in the report; (3) a planted defect (scratch commit, not kept) in a parse path rocketnet_fuzz reaches is found by it within 15 minutes, the crash line in the report; (4) a real crash found is minimised, added to its corpus directory, fixed at its cause in sdk/, and the Release replay step (ci.yml's) passes over it; (5) .github/workflows/fuzz-nightly.yml gains a Windows job on [self-hosted, Windows, X64, rocketnet-windows] that builds with the option and runs each target 10 minutes; (6) the MSVC Release build and its test.exe stay green and the four fuzz_replay executables pass over their corpora
+TOOLCHAIN: Visual Studio 18 with its LLVM toolset (clang-cl, the component Microsoft.VisualStudio.Component.VC.Llvm.Clang, which carries libFuzzer and the ASan runtime), cmake, Ninja from the Visual Studio install, on the native Windows member JOB.md names; a missing clang-cl is HOLD naming that component
+GATE-NEEDS: windows
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 150 minutes.
+
+The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).
+You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.
+Deadline: finish within 150 minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.
+Libraries considered: libFuzzer and AddressSanitizer as shipped with Visual Studio's clang-cl; the existing harnesses and dictionary unchanged unless a Windows build needs it.
+
+# The fuzz targets build and run under libFuzzer on Windows
+
+THE TASK. Build the four rocketnet fuzz harnesses with clang-cl and libFuzzer on Windows behind one CMake option, fuzz each for fifteen minutes from its corpus, prove a planted parse defect is found, fix and keep any real crash as a corpus file, and add a nightly Windows fuzz job.
+
+STEP 1. Confirm the platform is native Windows (`cmd /c ver` prints a Windows version; under Git Bash `uname -s` prints MINGW or MSYS, never Linux); cd into the staged checkout JOB.md names; `git log --oneline -1`; build Release as THIS REPOSITORY says and keep the last build line. Confirm `clang-cl --version` answers from the Visual Studio LLVM toolset.
+STEP 2. Add the option and build the four targets (DONE-WHEN (1)); a 1-minute run of each first.
+STEP 3. Run the gate: DONE-WHEN (2), (3) and (6), one fuzzer at a time; handle crashes (DONE-WHEN (4)).
+STEP 4. Add the nightly job (DONE-WHEN (5)).
+STEP 5. Commit on your own branch as `rocketnet-win-libfuzzer-clang-cl: <what>` with the trailer; end as JOB.md says (the pull request body or RESULT.md carries the gate's lines and the run table).
+
+THIS REPOSITORY. mas-bandwidth/rocketnet: a C++ UDP transport library with runtime-selected server transports (DRIVERS.md (read); sdk/rocketnet_drivers.inc (read) is the registry: on Windows the server builds portable, iocp and rio, the client portable; ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT pin one by name). The Windows build is `cmake -B build -A x64` then `cmake --build build --config Release --parallel 4`; executables land in bin/Release/ (test.exe is the unit suite, functional.exe the functional suite, `functional.exe --run <case>` runs one case, test_iocp.exe the IOCP driver tests, test_lifecycle.exe, soak.exe, load.exe). .github/workflows/ci.yml (read) job build-and-test-windows is the worked example of every Windows step, including the transport family matrix. Config fields have an env overlay named ROCKETNET_<TRANSPORT>_<FIELD> (sdk/rocketnet_config.cpp (read), rocketnet_config_env_var_name_for).
+
+STANDING RULES (owner, binding on every card).
+- Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0. Anything that needs a real socket, a kernel object, a thread timing or the wall clock is a functional test, never ./bin/test.
+- Make the smallest change, with no refactor.
+- Never touch the space game's baseline or delta code.
+- Never run `nova-sprint friend stage`.
+- Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+- The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+- Never read outside the job's working directory.
+- Never loosen a Release bound, a protocol timeout or a test assertion to make a run pass; a failure found is a finding, fixed at its cause or reported.
+
+WINDOWS BOUND. This card runs on a native Windows member (captain today, a weak machine; titan, a Xeon workstation, soon). Run builds and suites one at a time, never in the background, and never two suites at once. Build with `--parallel 4`. A test red at head is rerun at the unchanged BASE only for that one test. Commit the work before any check that reads git status. Every run count in DONE-WHEN is a count of real runs on this member, each with its pass or fail and run time in the report; a run that was not made is reported as not made.
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names; do not clone a second copy. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the Windows member JOB.md names, never the coordinator's machine. Never search C:\\, the user profile or any drive root; stay inside the checkout and the job directory.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install. A named tool that is missing on the member is reported as not-done with the missing component named, verdict HOLD.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+
+ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
+CARRY: Coordinator 2026-10-20 13:05Z: brief confirmed current for the v1.0 push; the newest CARRY above names exactly what is owed. Continue from the last pushed head merged with the current base.
+CARRY: w5 HOLD head 2d1bd5b4 (w4 8021603f + base 28038005, clean, pushed): only the gate is owed, never run because captain's winlock starved the shared take for 2h. Gate, in one SHARED winlock hold on captain: rebuild the 4 fuzz targets, 60 s each, fuzz_replay over each corpus, Release test.exe. Exclusive takers are paused so shared jobs run.
+FIX (coordinator, 2026-10-20, owner's two-minute rule): DONE-WHEN (2)'s four 15-minute fuzz runs are OWED until features land. Do not run them, and do not count them as fails. At the exact head (581f28b merged with the current base), in one shared winlock hold on captain:
+- rebuild the 4 targets;
+- run each for 60 s (under 2 minutes);
+- fuzz_replay over each corpus;
+- the planted-defect proof: a planted bug in a fuzzed parser must be caught within 60 s at its own frame, then restored;
+- Release test.exe.
+Make sure the nightly step's paths match the Ninja output dir (build-fuzz/). Then finish LAND with the 15-minute runs listed as OWED.
+")
+    (:id "rocketnet-win-lifecycle-stress" :feature "Create, destroy, connect, restart: a thousand times on Windows with nothing left behind" :cells (- - n) :note "after the payment milestone (owner 2026-10-20); latest work: 745ffb1b on sprint/rocketnet-win-lifecycle-stress.w13.g3.e0" :brief "CARRY: rocketnet-win-lifecycle-stress attempt 2 head=0959fdc23f471c26d86b9ce30794d53088cfcb25 (the last pushed head, on sprint/rocketnet-win-lifecycle-stress.w2.g1.e21, verified on GitHub 2026-10-20; continue from it, merged with BASE, and redo nothing it already holds). This head supersedes any earlier carry the brief names below.
+REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: code
+PRIORITY: blocker
+STREAM: rocketnet-api
+DEPENDS-ON: -
+LAND-AFTER: rocketnet-windows-udp-connreset-never-stalls-receive,rocketnet-win-socket-error-paths-t,rocketnet-api-polish-v1-followups,rocketnet-destroy-sends-disconnect,rocketnet-functional-cookie-expiry-uses-test-clock,rocketnet-functional-free-ports,rocketnet-linux-lifecycle-stress,rocketnet-macos-client-timing-under-app-nap,rocketnet-macos-hard-killed-peer-never-stalls-receive,rocketnet-network-thread-priority-as-space,rocketnet-win-nightlies-on-fleet-runner,rocketnet-windows-client-overlapped-send,rocketnet-xdp-drops-first-fragment
+SOURCE: the owner, 2026-10-19: \"I think we need to do extra testing and checking on windows and windows transports before we deliver rocketnet. It will be their primary platform so we should make it perfect.\" The customer ships on Windows; v1.0.0 is not delivered until Windows is proven. On Windows rocketnet_init calls WSAStartup and rocketnet_term calls WSACleanup (sdk/rocketnet_platform.cpp rocketnet_platform_init and rocketnet_platform_term), the IOCP and RIO transports bind with SO_EXCLUSIVEADDRUSE, and each transport starts and joins threads. A game creates and destroys clients and servers many times per session, restarts servers on the same port, and may use Winsock itself; no test repeats these cycles on Windows and counts what is left behind.
+PATHS: functional/rocketnet_functional_tests.cpp,CMakeLists.txt,sdk/rocketnet_platform.cpp,sdk/rocketnet_server_iocp_windows.cpp,sdk/rocketnet_server_rio_windows.cpp,sdk/rocketnet_server_transport.cpp,sdk/rocketnet_client_transport.cpp
+NEW: functional/windows_lifecycle_stress.cpp
+START: functional/rocketnet_functional_tests.cpp (read), functional/lifecycle_driver.cpp (read), sdk/rocketnet.cpp (read)
+TEST: none because the checks are runs on native Windows that DONE-WHEN names, each with its count and its red proof
+DONE-WHEN: (1) functional/windows_lifecycle_stress.cpp, compiled on Windows only and listed in the functional target in CMakeLists.txt, adds cases that each record GetProcessHandleCount and the process thread count before and after and fail on any difference beyond plus or minus 2: windows_init_term_cycles (rocketnet_init and rocketnet_term 1000 times; then a socket the test opened with its own WSAStartup before the loop still sends and receives, and the test's own WSACleanup balances), windows_server_create_destroy_cycles (200 create, start, destroy of a message server on each of portable, iocp and rio), windows_server_restart_same_port (100 stop and recreate of each transport on one fixed port, each rebind succeeding within 1 s and a client connecting each time), windows_client_connect_disconnect_cycles (200 connect, exchange, disconnect, destroy of a client against one server, on each server transport), and windows_destroy_while_traffic (destroy a server and its client mid-stream 50 times; no crash, no hang beyond 2 s, nothing left); (2) each case is red when its object leaks: a scratch commit (not kept) that skips one CloseHandle or one thread join in a transport destroy turns the matching case red, shown once; (3) the five cases pass 10 runs in a row on this member (`functional.exe --run <case>`), run times recorded; (4) each leak, hang or rebind failure found is fixed at its cause in sdk/, or reported with verdict HOLD; (5) the full functional.exe and test.exe stay green
+TOOLCHAIN: Visual Studio 18 / MSVC x64, cmake, on the native Windows member JOB.md names
+GATE-NEEDS: windows
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 150 minutes.
+
+The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).
+You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.
+Deadline: finish within 150 minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.
+Libraries considered: Win32 GetProcessHandleCount and CreateToolhelp32Snapshot for the counts; the functional harness already in the tree.
+
+# Create, destroy, connect, restart: a thousand times on Windows with nothing left behind
+
+THE TASK. Add Windows functional cases that cycle init and term, server create and destroy, same-port restart, client connect and disconnect, and destroy under traffic, on every Windows transport, and that fail on any handle or thread left behind or a Winsock state broken for the embedding game. Prove each is red on a planted leak and fix what they find.
+
+STEP 1. Confirm the platform is native Windows (`cmd /c ver` prints a Windows version; under Git Bash `uname -s` prints MINGW or MSYS, never Linux); cd into the staged checkout JOB.md names; `git log --oneline -1`; build Release as THIS REPOSITORY says and keep the last build line.
+STEP 2. Write the five cases (DONE-WHEN (1)); prove them red on the scratch leak (DONE-WHEN (2)) and drop the scratch commit.
+STEP 3. Run the gate: DONE-WHEN (3) and (5), one suite at a time; fix what fails (DONE-WHEN (4)).
+STEP 4. Commit on your own branch as `rocketnet-win-lifecycle-stress: <what>` with the trailer; end as JOB.md says (the pull request body or RESULT.md carries the gate's lines and the run table).
+
+THIS REPOSITORY. mas-bandwidth/rocketnet: a C++ UDP transport library with runtime-selected server transports (DRIVERS.md (read); sdk/rocketnet_drivers.inc (read) is the registry: on Windows the server builds portable, iocp and rio, the client portable; ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT pin one by name). The Windows build is `cmake -B build -A x64` then `cmake --build build --config Release --parallel 4`; executables land in bin/Release/ (test.exe is the unit suite, functional.exe the functional suite, `functional.exe --run <case>` runs one case, test_iocp.exe the IOCP driver tests, test_lifecycle.exe, soak.exe, load.exe). .github/workflows/ci.yml (read) job build-and-test-windows is the worked example of every Windows step, including the transport family matrix. Config fields have an env overlay named ROCKETNET_<TRANSPORT>_<FIELD> (sdk/rocketnet_config.cpp (read), rocketnet_config_env_var_name_for).
+
+STANDING RULES (owner, binding on every card).
+- Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0. Anything that needs a real socket, a kernel object, a thread timing or the wall clock is a functional test, never ./bin/test.
+- Make the smallest change, with no refactor.
+- Never touch the space game's baseline or delta code.
+- Never run `nova-sprint friend stage`.
+- Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+- The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+- Never read outside the job's working directory.
+- Never loosen a Release bound, a protocol timeout or a test assertion to make a run pass; a failure found is a finding, fixed at its cause or reported.
+
+WINDOWS BOUND. This card runs on a native Windows member (captain today, a weak machine; titan, a Xeon workstation, soon). Run builds and suites one at a time, never in the background, and never two suites at once. Build with `--parallel 4`. A test red at head is rerun at the unchanged BASE only for that one test. Commit the work before any check that reads git status. Every run count in DONE-WHEN is a count of real runs on this member, each with its pass or fail and run time in the report; a run that was not made is reported as not made.
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names; do not clone a second copy. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the Windows member JOB.md names, never the coordinator's machine. Never search C:\\, the user profile or any drive root; stay inside the checkout and the job directory.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install. A named tool that is missing on the member is reported as not-done with the missing component named, verdict HOLD.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+
+ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
+CARRY: head=793576d9935bd9203a2a6ae27c6efdd29d0bd5b6 (functional/windows_lifecycle_stress.cpp ported to current names; all 5 cases passed 1 Release run on captain). Owed: merge current base, planted-leak red proof (skip CloseHandle(iocp->port) in rocketnet_server_iocp_destroy; skip WSACleanup in platform term), Debug build+gate, the 10-run gate under winlock --exclusive, full functional.exe and test.exe. Debug stack overflows and the >698 MB Debug bound are not this card's (nightlies card; owner's by-hand ruling).
+CARRY: Coordinator ruling (2026-10-20): the Debug test.exe stack overflows and the over-698 MB Debug cases belong to rocketnet-win-nightlies-on-fleet-runner; run Debug with ROCKETNET_TEST_MAX_CASE_RSS_MB lifted for that run only (owner's ruling); neither blocks LAND here. rocketnet-functional-builds-on-windows has landed: merge the current base.
+CARRY: head=f149e5f59879ae6c4ca0fbd2ac1f6c155f9cb598 (base dee6a29b merged, Release green on captain). Captain is congested: queue ONCE with winlock --exclusive and do EVERYTHING inside that single hold as one script: merge current base first (on captain, before queueing), Debug build, the two planted leaks (skip CloseHandle(iocp->port) at rocketnet_server_iocp_windows.cpp:441 -> windows_server_create_destroy_cycles red at its handle check; skip WSACleanup at rocketnet_platform.cpp:3270 -> windows_init_term_cycles red at probe == INVALID_SOCKET), restore, the 10-run gate, full functional.exe and test.exe (Debug RSS bound lifted per the owner). Never queue twice.
+CARRY: w8 head a78dbc1d (sprint/rocketnet-win-lifecycle-stress.w8.g1.e0): the thread check fails only on growth (:113), handles unchanged (:112); captain Debug and Release build; test.exe green in both; planted leaks red at :112 and :355. ONLY OWED: merge BASE (4e1be4e8+), then one EXCLUSIVE winlock hold (allowed from 15:45Z): full functional.exe Release, Debug with the 4096 bound, and the 10-run gate of the five cases. Scripts are ready at /mnt/c/rowan-jobs/rocketnet-win-lifecycle-stress.w8/excl.sh. Push from captain over HTTPS via its nova-push-credential helper (benches can't reach captain).
+FIX (coordinator, 2026-10-20, owner deferral): under the owner's two-minute rule this card does NOT run its long soak, load, stress or repeat runs now. Scope it to what can be proven in short runs: the harness, workflow or code change the card adds, built and run in Debug at the exact head with each run under 2 minutes, a red-first proof where the card fixes a bug, and CHECKLIST.md. Then finish LAND, listing every long run as OWED (they become a separate card after v1.0.0-preview1). If the card has no change beyond the long run itself, finish LAND with only the docs or workflow wiring and the long run OWED. Never shorten a long run and call it a pass. Build on the latest pushed head.
+")
+    (:id "rocketnet-r1-windows-nightlies-all-run" :feature "Windows nightlies: all jobs run, warnings gated, verifier script safe" :cells (- - n) :note "after the payment milestone (owner 2026-10-20); latest work: no pushed branch" :brief "REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: ci
+PRIORITY: high
+STREAM: rocketnet-api
+DEPENDS-ON: -
+SOURCE: holistic review round 1 at base 2803800 (six whole-system reviews and three re-reads, merged in v1-review/round1-merged.md). A re-read, verified at the tip: three Windows nightly jobs are still `if: false` (.github/workflows/nightly-examples.yml:116 examples-windows, the only Windows run of run_examples; nightly-frame-budget.yml:120 windows-frame-budget; nightly.yml:176 windows-driver-extension), though the fleet runner label [self-hosted, Windows, X64, rocketnet-windows] serves ci.yml. The nightly windows-toolchains job has no warning check, and CMakeLists.txt adds -Wno-deprecated-declarations to every clang-cl target. tools/windows/appverif_run.py runs -configure with check=False, loops export_logs `while True`, leaves -logtofile enabled globally and kills only the direct child on timeout.
+PATHS: .github/workflows/nightly-examples.yml,.github/workflows/nightly-frame-budget.yml,.github/workflows/nightly.yml,docs/PLATFORMS.md,tools/windows/appverif_run.py
+START: .github/workflows/nightly.yml (read the two jobs rocketnet-win-nightlies-on-fleet-runner moved), tools/windows/appverif_run.py (read 160-245)
+TEST: none because the checks are runs on native Windows that DONE-WHEN names, each with its count and its red proof
+DONE-WHEN: (1) the three jobs run on the fleet Windows label with no `if: false`, configured like the two jobs already moved; each job's steps are run by hand on captain under winlock and pass (run_examples.py, check_frame_budget.py, check_driver_extension.py), or a failure is fixed at its cause or reported with the line; (2) the windows-toolchains job fails on any clang-cl warning MSVC does not also give (a warning-diff step or /WX), red on a planted warning; (3) appverif_run.py checks the -configure exit status, bounds the log export loop, restores -logtofile, and kills the whole process tree on timeout; a dry run on captain shows each; (4) docs/PLATFORMS.md names these jobs as running; (5) the workflows parse (PyYAML) and Linux ./bin/test is untouched
+TOOLCHAIN: cmake and MSVC on captain under winlock (one suite at a time); cmake, make on a Linux member JOB.md names
+GATE-NEEDS: windows,linux
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 150 minutes.
+
+# Windows nightlies: all jobs run, warnings gated, verifier script safe
+
+THE TASK. Three Windows nightly jobs are still disabled, the toolchain nightly lets new warnings through, and the Application Verifier script can hang or leave global settings behind. Move the jobs to the fleet runner, gate warnings, and make the script safe.
+
+STANDING RULES (owner, binding on every card).
+- Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0. Anything that needs a real socket, a kernel object, a child process, a thread timing or the wall clock is a functional test, never ./bin/test.
+- Make the smallest change, with no refactor.
+- Never touch the space game's baseline or delta code.
+- Never run `nova-sprint friend stage`.
+- Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+- The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+- Never read outside the job's working directory.
+- Never loosen a Release bound, a protocol timeout or a test assertion to make a run pass; a failure found is a finding, fixed at its cause or reported.
+
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names; do not clone a second copy. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the member JOB.md names, never the coordinator's machine. Never search /, the home directory or any volume root; stay inside the checkout and the job directory.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install. A named tool that is missing on the member is reported as not-done with the missing component named, verdict HOLD.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+
+ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
+NOTE: fix routed to friends (owner 2026-10-20); build on the latest pushed head of this card, never discard it unless plainly garbage (say so); run CHECKLIST.md; two-minute rule.
+")
+    (:id "rocketnet-r1-tla-ledger-current" :feature "TLA ledger: every case finishes or says why; docs current" :cells (n n n) :note "after the payment milestone (owner 2026-10-20); latest work: d629f045 on sprint/rocketnet-r1-tla-ledger-current.w4.g1.e0" :brief "REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: fix
+PRIORITY: high
+STREAM: rocketnet-api
+DEPENDS-ON: -
+LAND-AFTER: rocketnet-r1-tlc-gate-runs-on-sprint-branch,rocketnet-r1-uring-update-bounded,rocketnet-r1-rio-update-bounded,rocketnet-r1-serversession-model-matches-stop
+SOURCE: holistic review round 1 at base 2803800 (six whole-system reviews and three re-reads, merged in v1-review/round1-merged.md). Three reviewers: 17 TLC cases have never completed (exit 124 in tla/RUNS.tsv: the nine MCClientConnectionS*.cfg, LArbitrary, LCrash, MCFragmentsAndAcks.cfg and Live, PatNone/First/Burst, FindStaleSerialSmall, MCRNEndpointTwoWay/Partial), so ClientConnection's SafetyInvariants and the committed FragmentsAndAcks instance have no finished full-environment safety check; MCRNChannel.cfg passes at 109.4 s of a 110 s budget; tla/README.md says 47 cases against 217; docs/TLA-INVENTORY.md lists nine modules that do not exist and describes the fixed replay long-skip bug (F1) as open; docs/WITNESSES.tsv maps invariants to a retired draft's lines; tla/RUNS-ServerConnection.tsv is an unread duplicate; three COVERAGE rows (RNSimFaults, RNLiveFleetRun, RNFlows) promise code that does not exist; tla/ReplayWindow.tla's header describes fixed bugs, tla/RNUringDriver.tla's says it is not yet written, tla/RNDriverSendStaging.tla cites stale line numbers.
+PATHS: tla/README.md,tla/RUNS-ServerConnection.tsv,tla/ReplayWindow.tla,tla/RNDriverSendStaging.tla,tla/CASES.tsv,tla/RUNS.tsv,tla/COVERAGE.tsv,docs/TLA-INVENTORY.md,docs/WITNESSES.tsv
+START: tla/CASES.tsv and tla/RUNS.tsv (read), tla/README.md (read), docs/TLA-INVENTORY.md (read)
+TEST: none because the cases are TLC rows and ledger checks; run as DONE-WHEN says
+DONE-WHEN: (1) for each of the 17 never-completed cases: add one safety-only full-environment cfg per loss pattern that finishes inside its budget on the bench (no PROPERTIES), or record the case as unverified in CASES.tsv with the reason; no invariant is weakened; (2) MCRNChannel.cfg finishes with at least 25% headroom (a smaller instance or a split cfg, same invariants); (3) tla/README.md's case table is generated from CASES.tsv (a short script, or the existing ledger tool) and its counts match; docs/TLA-INVENTORY.md names only modules that exist and marks F1 fixed with the commit; docs/WITNESSES.tsv cites invariant names, not line numbers; tla/RUNS-ServerConnection.tsv is deleted; (4) the three design-only COVERAGE rows say `design, no code`; ReplayWindow.tla and RNDriverSendStaging.tla headers describe the current code by symbol; (5) `python3 tools/check_tla_coverage.py --all` exits 0 and `/opt/tla/tlacheck groups --root . --stale` prints [] (records only via /opt/tla/tlacheck merge --keep)
+TOOLCHAIN: cmake, make, java and /opt/tla on a Linux member JOB.md names
+GATE-NEEDS: tla,linux
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 180 minutes.
+
+# TLA ledger: every case finishes or says why; docs current
+
+THE TASK. Seventeen model cases have never finished, one runs at its time limit, and the TLA README, inventory and witness map describe a tree that no longer exists. Give each unfinished case a safety check that finishes or record it as unverified, and regenerate the ledger documents from the case table.
+
+STEP 1. After any model edit, run TLC for its group and refresh the records with tlacheck merge --keep (tla/RUNS.tsv is written only by it).
+
+STANDING RULES (owner, binding on every card).
+- Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0. Anything that needs a real socket, a kernel object, a child process, a thread timing or the wall clock is a functional test, never ./bin/test.
+- Make the smallest change, with no refactor.
+- Never touch the space game's baseline or delta code.
+- Never run `nova-sprint friend stage`.
+- Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+- The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+- Never read outside the job's working directory.
+- Never loosen a Release bound, a protocol timeout or a test assertion to make a run pass; a failure found is a finding, fixed at its cause or reported.
+
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names; do not clone a second copy. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the member JOB.md names, never the coordinator's machine. Never search /, the home directory or any volume root; stay inside the checkout and the job directory.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install. A named tool that is missing on the member is reported as not-done with the missing component named, verdict HOLD.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+
+ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
+CARRY: Owner 2026-10-20: fix cards go to friends, not the fleet. Carry the latest pushed head of this card and its FIX lines. Run CHECKLIST.md before finishing; two-minute rule.
+CARRY: rocketnet-r1-tla-ledger-current attempt 3 head=9cbb38903fea51981731c0b6529f98c464482a90
+FIX (coordinator, 2026-10-20, converge for v1.0): finish LAND at this head with the current base merged. Two DONE-WHEN items move after v1.0, so don't HOLD for them:
+- item (2): the MCRNChannel.cfg headroom, since a smaller instance would cut coverage and that's an owner call later;
+- item (3): rekeying docs/WITNESSES.tsv and its checker.
+List both as OWED (post-v1.0). Approved as PATHS-PROPOSED: tla/README-ServerConnection.md and tla/README-ReplayWindow.md. The MCReplayWindowMid 445 s manual rerun is OWED.
+")
+    (:id "rocketnet-server-send-capacity-sized-from-config" :feature "Server send capacity is sized from the config, never a fixed 256" :cells (n n n) :note "after the payment milestone (owner 2026-10-20); latest work: no pushed branch" :brief "REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: fix
+PRIORITY: blocker
+STREAM: rocketnet-api
+DEPENDS-ON: -
+LAND-AFTER: rocketnet-r1-server-send-cap-fair-at-one,rocketnet-receive-budget-twice-send
+SOURCE: owner, 2026-10-20: \"assume 100 packets per-client at 60HZ and this should be the budget for sends from the server ... It may not be able to sustain this.\" Also the owner, on the portable server's 256-packet send ring: \"obviously this is woefully inadequate.\" Found by rocketnet-load-light-profile-linux w1 (head e132c94d): sdk/rocketnet_server_transport.cpp:75 `#define ROCKETNET_SERVER_MAX_SEND_PACKETS 256` and :107 size the payload ring; every packet past the 256th in one send_packets call is dropped and counted SEND_RING_FULL. With the light profile (10 Hz, one reliable message per client per update, max_packets_per_update=1) 250 clients pass, 300 end with exactly 256 connected and SEND_RING_FULL=1364, and 1000 fail every_client_receives. v1.0 is 1000 clients on every platform and transport. rocketnet-r1-server-send-cap-fair-at-one makes sending fair under a cap; this card removes the cap as a capacity limit.
+PATHS: CMakeLists.txt,sdk/rocketnet_constants.h,sdk/rocketnet_server_transport.cpp,sdk/rocketnet_message_server.cpp,sdk/rocketnet_server_socket_linux.cpp,sdk/rocketnet_server_gso.h,sdk/rocketnet_server_gso_linux.cpp,sdk/rocketnet_server_uring.h,sdk/rocketnet_server_uring_linux.cpp,sdk/rocketnet_server_iocp.h,sdk/rocketnet_server_iocp_windows.cpp,sdk/rocketnet_server_rio.h,sdk/rocketnet_server_rio_windows.cpp,sdk/rocketnet_driver_loopback.h,sdk/rocketnet_driver_loopback.cpp,sdk/rocketnet_platform.cpp,sdk/rocketnet_config.cpp,sdk/rocketnet_config.h,DRIVERS.md,test_unit_receive_budget_twice_send.cpp
+NEW: test_unit_server_send_capacity.cpp
+START: sdk/rocketnet_server_transport.cpp (read 60-130, 2190-2360), sdk/rocketnet_message_server.cpp (read 780-830), sdk/rocketnet_constants.h (read), DRIVERS.md (read)
+TEST: none because the unit suite's REGISTER_UNIT_TEST cases have no go or ctest name; the cases are in the NEW file, run as DONE-WHEN says
+DONE-WHEN: (1) a table in the report, one row per server driver (portable, msgx, gso, io_uring, xdp, iocp, rio, loopback): its send capacity per update at BASE, the constants and file:line it comes from, and the most one update can ask of it; (2) THE BUDGET (owner): the server's send capacity per update is max_packets_per_update packets per client (default 256, owner 2026-10-20: \"OK default it to 256. Let's aim high.\"), for an update rate of 60 Hz: max_clients x 256 packet slots by default (256,000 at 1000 clients, about 15M packets/s), plus room for control traffic (keep-alives, disconnects, challenge and connection replies to pending clients). CONFIGURABLE (owner, 2026-10-20: \"Remember that 100 packets per-update should be configurable in the config!\"): the per-client packets per update is a server config field, default 256 (owner revised the same day: \"OK default it to 256. Let's aim high.\"). The field is max_packets_per_update (owner, 2026-10-20), the existing per-client per-update cap: keep its default at 256 (unchanged) and size capacity from it; never add a second field for the same thing. Say so in the report, because it lands with the v1.0 config revision (rocketnet-r1-config-one-revision). Every driver computes capacity at create as max_clients x that field, never a fixed #define; it is allocated once at create, with no allocation per update. REFERENCE (owner, 2026-10-20): \"This is why the XDP transport takes a lot of memory. It's sized for space game doing exactly this.\" The XDP driver's sizing (about 3.9 GB server footprint, accepted) already serves this budget: read its constants first, state in the report how its per-update send and receive capacity meet max_clients x max_packets_per_update, and size the other drivers to the same per-update budget (their memory may be smaller where the kernel holds the buffers, never their capacity). Holding the budget is required; SUSTAINING that rate is NOT required for v1.0 (performance is the final milestone): the report states what each driver measured in a short run and names the bottleneck, and nothing is dropped for capacity below the budget; (3) RECEIVE IS AT LEAST 2X SEND (owner, 2026-10-20: \"Remember that this implies at least 2X receive side.\"): every driver's receive capacity per update (bank, ring, staging or completion budget, whichever the send path can fill) is at least 2 x max_clients x max_packets_per_update, which is 512,000 packet slots at 1000 clients with the default 256, sized at create from the config. The memory for it goes in the report (5); it is server-side, so more memory is fine. The receive side stays at least twice the new send capacity on every driver (the rule rocketnet-receive-budget-twice-send locks): update that rule's case for the new sizes, never weaken it; (4) red first: the NEW unit case drives a fake transport at max_clients=1000 with max_packets_per_update (256) packets queued per client in one update and asserts zero SEND_RING_FULL and every packet handed to the driver in that update; a second case does the light profile (one packet per client); both fail at BASE on the portable driver at the 257th packet, the failing line kept; it uses no real time, sockets or threads; (5) the server's memory at max_clients=1000 per driver, as counted by the allocator hooks goes in the report and in DRIVERS.md. More memory on the server is fine; the client allocates once. Memory is not a constraint (owner, 2026-10-20: \"Yes, it's just memory.\"): allocate the full send budget and the 2x receive side, and never shrink either to save memory; every new send and receive buffer is allocated through rocketnet_malloc / rocketnet_free (the caller's allocator from rocketnet_set_allocator, as in netcode), never raw malloc, calloc or new. NO EXCEPTIONS (owner, 2026-10-20): every allocation of regular memory goes through the user-provided alloc/free, including buffers the kernel later registers or needs page-aligned (XDP UMEM, the RIO region, io_uring buffer rings): over-allocate through rocketnet_malloc and align inside it. Only memory the kernel itself allocates and maps (io_uring SQ/CQ rings, xsk ring maps) is outside the hooks. List every allocation site that does not go through the hooks today with file:line, and fix the ones this card's drivers own; (6) a create whose config would need more than the platform can give fails create with a status, never a silent cap; (7) ./bin/test green in Debug on Linux, macOS and Windows (captain under winlock); planted bug: restore the 256 #define and show the NEW case red at its own check line; (8) TWO-MINUTE RULE: the 1000-client functional light run is OWED after landing, not run here.
+TOOLCHAIN: cmake, make, liburing, on the members JOB.md names; Windows on captain under winlock; macOS on mini-m5-1
+GATE-NEEDS: linux,macos,windows
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 180 minutes.
+
+# Server send capacity is sized from the config, never a fixed 256
+
+THE TASK. The portable server drops every packet past the 256th in an update, so a server with more than about 256 clients loses sends and drops clients. v1.0 serves 1000 clients on every platform and transport. Size every server driver's per-update send capacity at create to the owner's budget, max_packets_per_update (default 256) packets per client per update at 60 Hz (max_clients x max_packets_per_update), keep the receive side at least twice that, prove it red first with a unit case at 1000 fake clients, and record the memory cost.
+
+STANDING RULES (owner, binding on every card).
+- Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0. Anything that needs a real socket, a kernel object, a child process, a thread timing or the wall clock is a functional test, never ./bin/test.
+- Make the smallest change, with no refactor.
+- Match RakNet semantics; never invent API shape. No new public config field without saying so on a PATHS-PROPOSED line for the coordinator to rule on.
+- Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+- Run CHECKLIST.md (the nova-sprint before-finish checklist) before every finish.
+- Never loosen a Release bound, a protocol timeout or a test assertion to make a run pass.
+
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+")
+    (:id "rocketnet-load-light-profile-macos" :feature "macOS: 1000 light clients on msgx and portable" :cells (- n -) :note "after the payment milestone (owner 2026-10-20); latest work: no pushed branch" :brief "REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: test
+PRIORITY: blocker
+STREAM: rocketnet-api
+DEPENDS-ON: rocketnet-load-light-profile-linux
+SOURCE: TESTING.md (branch testing-md-v1, docs/testing.sexp) lists this cell as no card at sprint/rocketnet-proof 091204c9. Row: 1000 light clients / macOS. The light mode comes from rocketnet-load-light-profile-linux; this card runs it on the macOS transports. The owner, 2026-10-20: 1000 light players working on every platform and transport for v1.0.0.
+PATHS: load.c,.github/workflows/nightly-soak.yml
+START: load.c (read the usage comment, the light mode and the RLIMIT_NOFILE handling)
+TEST: none because the gate runs as DONE-WHEN says and has no go or ctest name
+DONE-WHEN: (1) on this member `./bin/load <n> 60 light` passes at 10, 100 and 1000 clients, in that order, for each server cell msgx and portable (ROCKETNET_SERVER_TRANSPORT pins it), with the criteria of the owner's light profile, functional and not load: 1000 clients, each updating at 10 Hz and sending one packet per update; pass means all 1000 connect, every client receives, nobody is disconnected, and reliable messages arrive in order; build up from a few clients to 1000; no throughput, bandwidth or stress target; the table in the report with connect time and the fd and thread counts at start and end, end equal to start; (2) red first: `./bin/load 1000 60 light drop-one` fails naming its criterion on msgx; (3) a failure is profiled (`sample <pid>`) before it is fixed, the fix minimal and in PATHS or reported with file:line; (4) nightly-soak.yml's soak-macos job gains one light run per cell, proven by running the step by hand
+TOOLCHAIN: Apple clang from the Command Line Tools, cmake, make, Python 3, on the studio or mini-m5-1 (macOS)
+GATE-NEEDS: darwin, arm64
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 120 minutes.
+
+# macOS: 1000 light clients on msgx and portable
+
+THE TASK. Run the load harness's light mode at 1000 clients on the macOS server transports msgx and portable, building up from 10, and run it nightly.
+STANDING RULES (owner, binding on every card).
+- Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0. Anything that needs a real socket, a kernel object, a child process, a thread timing or the wall clock is a functional test, never ./bin/test.
+- Make the smallest change, with no refactor.
+- Never touch the space game's baseline or delta code.
+- Never run `nova-sprint friend stage`.
+- Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+- The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+- Never read outside the job's working directory.
+- Never loosen a Release bound, a protocol timeout or a test assertion to make a run pass; a failure found is a finding, fixed at its cause or reported.
+
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names; do not clone a second copy. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the member JOB.md names, never the coordinator's machine. Never search /, the home directory or any volume root; stay inside the checkout and the job directory.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install. A named tool that is missing on the member is reported as not-done with the missing component named, verdict HOLD.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+
+ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
+FIX (coordinator, 2026-10-20, owner deferral): under the owner's two-minute rule this card does NOT run its long soak, load, stress or repeat runs now. Scope it to what can be proven in short runs: the harness, workflow or code change the card adds, built and run in Debug at the exact head with each run under 2 minutes, a red-first proof where the card fixes a bug, and CHECKLIST.md. Then finish LAND, listing every long run as OWED (they become a separate card after v1.0.0-preview1). If the card has no change beyond the long run itself, finish LAND with only the docs or workflow wiring and the long run OWED. Never shorten a long run and call it a pass. Build on the latest pushed head.
+")
+    (:id "rocketnet-load-light-profile-windows" :feature "Windows: 1000 light clients on portable, iocp and rio" :cells (- - n) :note "after the payment milestone (owner 2026-10-20); latest work: no pushed branch" :brief "REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: test
+PRIORITY: blocker
+STREAM: rocketnet-api
+DEPENDS-ON: rocketnet-load-light-profile-linux
+SOURCE: TESTING.md (branch testing-md-v1, docs/testing.sexp) lists this cell as no card at sprint/rocketnet-proof 091204c9. Row: 1000 light clients / Windows. The light mode comes from rocketnet-load-light-profile-linux; this card runs it on the Windows transports. The owner, 2026-10-20: 1000 light players working on every platform and transport for v1.0.0.
+PATHS: load.c,.github/workflows/nightly-soak.yml
+START: load.c (read the usage comment and the light mode)
+TEST: none because the gate runs as DONE-WHEN says and has no go or ctest name
+DONE-WHEN: (1) on this member `bin/Release/load.exe <n> 60 light` passes at 10, 100 and 1000 clients, in that order, for each server transport portable, iocp and rio (ROCKETNET_SERVER_TRANSPORT pins it), with the criteria of the owner's light profile, functional and not load: 1000 clients, each updating at 10 Hz and sending one packet per update; pass means all 1000 connect, every client receives, nobody is disconnected, and reliable messages arrive in order; build up from a few clients to 1000; no throughput, bandwidth or stress target; each run's summary line in the report; handles and threads at the end within plus or minus 2 of those after connect; (2) red first: `load.exe 1000 60 light drop-one` fails naming its criterion on iocp; (3) a failure is profiled (wpr or a timed stack) before it is fixed, the fix minimal and in PATHS or reported with file:line; a red already held by rocketnet-windows-suite-stable is listed with that id; (4) nightly-soak.yml's soak-windows job gains one light run per transport, proven by running the step by hand
+TOOLCHAIN: MSVC (Visual Studio), CMake, Python 3, on captain under winlock
+GATE-NEEDS: windows
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 120 minutes.
+
+# Windows: 1000 light clients on portable, iocp and rio
+
+THE TASK. Run the load harness's light mode at 1000 clients on the Windows server transports portable, iocp and rio, building up from 10, and run it nightly.
+STANDING RULES (owner, binding on every card).
+- Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0. Anything that needs a real socket, a kernel object, a child process, a thread timing or the wall clock is a functional test, never ./bin/test.
+- Make the smallest change, with no refactor.
+- Never touch the space game's baseline or delta code.
+- Never run `nova-sprint friend stage`.
+- Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+- The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+- Never read outside the job's working directory.
+- Never loosen a Release bound, a protocol timeout or a test assertion to make a run pass; a failure found is a finding, fixed at its cause or reported.
+
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names; do not clone a second copy. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the member JOB.md names, never the coordinator's machine. Never search /, the home directory or any volume root; stay inside the checkout and the job directory.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install. A named tool that is missing on the member is reported as not-done with the missing component named, verdict HOLD.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+
+ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
+FIX (coordinator, 2026-10-20, owner deferral): under the owner's two-minute rule this card does NOT run its long soak, load, stress or repeat runs now. Scope it to what can be proven in short runs: the harness, workflow or code change the card adds, built and run in Debug at the exact head with each run under 2 minutes, a red-first proof where the card fixes a bug, and CHECKLIST.md. Then finish LAND, listing every long run as OWED (they become a separate card after v1.0.0-preview1). If the card has no change beyond the long run itself, finish LAND with only the docs or workflow wiring and the long run OWED. Never shorten a long run and call it a pass. Build on the latest pushed head.
+")
+    (:id "rocketnet-macos-nightly-soak-green-at-base" :feature "macOS: the nightly soak job green at the branch" :cells (- n -) :note "after the payment milestone (owner 2026-10-20); latest work: 3bd59a0b on sprint/rocketnet-macos-nightly-soak-green-at-base.w4.g1.e0" :brief "RESULT: rocketnet-macos-nightly-soak-green-at-base sha=000000000000 tier: pro
+REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: test
+PRIORITY: high
+STREAM: rocketnet-api
+DEPENDS-ON: -
+SOURCE: TESTING.md (branch testing-md-v1, docs/testing.sexp) lists this cell as no card at sprint/rocketnet-proof 091204c9. Row: Nightlies / macOS. The scheduled nightlies run only on main, which is far behind this branch; nightly-soak's soak-macos job has never run on this branch's code. rocketnet-macos-soak-per-transport (landed) ran its own soak matrix, not this job.
+PATHS: .github/workflows/nightly-soak.yml
+START: .github/workflows/nightly-soak.yml (read the soak-macos job)
+TEST: none because the gate is the soak-macos job's own steps, run by hand as DONE-WHEN says
+DONE-WHEN: (1) at BASE, on this member, every step of nightly-soak.yml's soak-macos job is run by hand as the workflow spells it, each command's exit code, run time and last lines kept; (2) each red's cause is named in the report with file:line, fixed in this commit when the fix is in a file PATHS names and otherwise carried as a proposed diff for its own card; a bound is never loosened; a red already held by rocketnet-macos-load-1000-clients-t is listed with that id; (3) red first: each step fixed in this commit is shown red at BASE and green at head; (4) at head every step exits 0 on this member, or the report names the proposed diff it waits on, the run time recorded
+TOOLCHAIN: Apple clang from the Command Line Tools, cmake, make, Python 3, on the studio or mini-m5-1 (macOS)
+GATE-NEEDS: darwin, arm64
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 150 minutes.
+
+# macOS: the nightly soak job green at the branch
+
+THE TASK. Run nightly-soak's soak-macos job by hand at BASE, fix each red at its cause, and show it green at head with its run time.
+STANDING RULES (owner, binding on every card).
+- Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0. Anything that needs a real socket, a kernel object, a child process, a thread timing or the wall clock is a functional test, never ./bin/test.
+- Make the smallest change, with no refactor.
+- Never touch the space game's baseline or delta code.
+- Never run `nova-sprint friend stage`.
+- Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+- The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+- Never read outside the job's working directory.
+- Never loosen a Release bound, a protocol timeout or a test assertion to make a run pass; a failure found is a finding, fixed at its cause or reported.
+
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names; do not clone a second copy. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the member JOB.md names, never the coordinator's machine. Never search /, the home directory or any volume root; stay inside the checkout and the job directory.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install. A named tool that is missing on the member is reported as not-done with the missing component named, verdict HOLD.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+
+ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
+")
+    (:id "rocketnet-example-soak-disconnect-regression" :feature "Example soak: disconnect under loss reaches the server again" :cells (n n n) :note "after the payment milestone (owner 2026-10-20); latest work: no pushed branch" :brief "RESULT: rocketnet-example-soak-disconnect-regression sha=000000000000 tier: pro
+REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: fix
+PRIORITY: critical
+STREAM: rocketnet-api
+DEPENDS-ON: -
+SOURCE: worker report, 2026-10-20 19:25Z (rocketnet-example-ack-receipts-debug-assert w9): example_soak fails on Linux, macOS and Windows, in Debug and Release, at examples/soak.c check rocketnet_server_num_connected_clients( server ) == 0 (line 320). It fails the same way at BASE. Bisected to base commit 0500dc7a (rocketnet-r1-client-link-sim-and-memory-plan-e): its parent passes 3 of 3, and 0500dc7a fails 3 of 3. The soak example simulates 1% loss; since that commit, its two disconnect passes no longer leave the server empty.
+PATHS: CMakeLists.txt,examples/soak.c,sdk/rocketnet_client_transport.cpp,sdk/rocketnet_client_io.h,sdk/rocketnet_client_protocol.cpp,sdk/rocketnet_server_protocol.cpp,sdk/rocketnet_api.cpp
+NEW: test_unit_disconnect_under_loss.cpp
+START: git show 0500dc7a; examples/soak.c (the disconnect passes); the client disconnect path under the link simulator
+TEST: none because the unit suite's REGISTER_UNIT_TEST cases have no go or ctest name; run as DONE-WHEN says
+DONE-WHEN: (1) The root cause in 0500dc7a is named: why a client disconnect under 1% simulated loss no longer reaches the server. Expected suspects: the link simulator now applies loss to the disconnect burst, or the burst size or resend behaviour changed. (2) Fix it in the SDK so that disconnect still reaches the server under loss, as before 0500dc7a: the disconnect burst (ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS) must survive 1% loss. Never weaken the soak example's check. (3) Red first: a unit case in the NEW file drives a client disconnect through a lossy fake link (no sockets, no real time, test clock from 1000.0) and fails at base at its own check line. (4) run_examples passes 11/11 plus example_soak, in Debug and Release on Linux, and on macOS (mini-m5-1 or studio) and Windows (captain under winlock); the known base build red (ROCKETNET_XDP_FRAME_SIZE) is owned elsewhere, so merge its fix locally only, to test. (5) ./bin/test is green. Two-minute rule.
+TOOLCHAIN: cmake, make, on the members JOB.md names; Windows on captain under winlock; macOS on mini-m5-1
+GATE-NEEDS: linux
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 120 minutes.
+
+# Example soak: disconnect under loss reaches the server again
+
+THE TASK. Since 0500dc7a, example_soak leaves clients connected on the server after its disconnect passes under 1% loss, on every platform. Find what that commit changed in the disconnect path, fix it in the SDK without weakening the example, and prove it red first with a socket-free unit case.
+
+STANDING RULES (owner, binding on every card).
+- Make the smallest change, with no refactor. Unit tests use no real time, sockets or threads.
+- Run CHECKLIST.md (the nova-sprint before-finish checklist) before every finish, with a cold read.
+- Finish LAND with `--head <sha>`; finish HOLD with `--failed`.
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+")
+    (:id "rocketnet-r1-receipt-loss-after-its-own-deadline" :feature "Ack receipts: LOSS only after the receipt deadline" :cells (n n n) :note "after the payment milestone (owner 2026-10-20); latest work: sprint/rocketnet-r1-receipt-loss-after-its-own-deadline.w7.g1.e0" :brief "RESULT: rocketnet-r1-receipt-loss-after-its-own-deadline sha=000000000000 tier: pro
+REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: fix
+PRIORITY: high
+STREAM: rocketnet-api
+DEPENDS-ON: rocketnet-r1-loopback-rtt-and-spurious-resends
+LAND-AFTER: rocketnet-r1-tlc-gate-runs-on-sprint-branch,rocketnet-r1-uring-update-bounded,rocketnet-r1-rio-update-bounded,rocketnet-r1-serversession-model-matches-stop,rocketnet-r1-tla-ledger-current,rocketnet-r1-request-ladder-matches-spec,rocketnet-r1-production-token-minter-refuses-dead-tokens,rocketnet-r1-loopback-rtt-and-spurious-resends
+SOURCE: holistic review round 1 at base 2803800 (six whole-system reviews and three re-reads, merged in v1-review/round1-merged.md). One reviewer, verified in code: UNRELIABLE_WITH_ACK_RECEIPT reports LOSS whenever the ack takes longer than the resend rto (sdk/rocketnet_window_ack.cpp ~708: now >= send_time + rto gives LOSS; the late ack is then suppressed, ~478-487), and rto is clamped to rto_max 250 ms (sdk/rocketnet_layers.h ~1468-1473). Any path with RTT >= 250 ms, or a LAN peer updating at 10 Hz, gets LOSS for delivered messages; sdk/rocketnet.h ~302-305 states no deadline. RakNet reports receipt loss on its own timeout, independent of the resend timer; owner ruling: match RakNet.
+PATHS: sdk/rocketnet_window_ack.cpp,sdk/rocketnet_window_ack.h,sdk/rocketnet_layers.h,sdk/rocketnet.h,standard/MESSAGES.md,tla/RNReceipts.tla,tla/README-RNReceipts.md,tla/CASES.tsv,tla/RUNS.tsv,CMakeLists.txt,tla/MCRNReceipts.cfg,sdk/rocketnet_endpoint.cpp,docs/CHANNELS.md,tla/COVERAGE.tsv,tla/MCRNReceiptsBrokenLastIndexAck.cfg,tla/MCRNReceiptsBrokenTwoOutcomes.cfg,tla/MCRNReceiptsBrokenReliableLoss.cfg,tools/check_tla_ledger_merge.py,tools/check_test_environment.py,functional/posix_lifecycle_stress.cpp
+NEW: test_unit_receipt_loss_deadline.cpp,tla/MCRNReceiptsBrokenLossAtRto.cfg,docs/SPEC-CARD-CONTRACT.md
+START: sdk/rocketnet_window_ack.cpp (read 470-490, 690-720), tla/RNReceipts.tla (read)
+TEST: none because the unit suite's REGISTER_UNIT_TEST cases have no go or ctest name; the cases are in the NEW file, run as DONE-WHEN says
+DONE-WHEN: (1) red first at BASE: a unit case on two endpoints with the test clock and a 300 ms one-way delay, and another with a 1 ms path and a peer acking every 100 ms, each sends UNRELIABLE_WITH_ACK_RECEIPT and gets LOSS for a message the peer received; (2) receipt loss is decided by a receipt deadline independent of, and never below, the resend rto: a fixed constant stated in the header and in standard/MESSAGES.md, at least the reliable timeout's order of magnitude as RakNet's receipt timeout is; an ack arriving before the deadline gives ACKED; (3) exactly one outcome per receipt still holds (the existing receipt cases pass); (4) RNReceipts.tla states LOSS only after the deadline, with a reversed witness (LOSS at rto) failing it; records only via /opt/tla/tlacheck merge --keep; (5) the cases of (1) pass at head; ./bin/test and ./bin/functional green on Linux
+FIX: Owner ruling wins over older lines in this brief: the receipt deadline is the shared RakNet RTO (first sample deviation = rtt, 5% smoothing, min(2*SRTT + 4*dev + 30 ms, max), 2 s unknown, no backoff) with the optional public config field rto_min_ms, default 0, range 0..60000; ignore the superseded 100 ms floor line and the fixed-constant wording in DONE-WHEN (2). Attempt 7 (head d9f3fdfd) has that shape. Unmet: (a) call rn_window_ack_compute_rto as rocketnet-r1-loopback-rtt-and-spurious-resends defines it, over the shared srtt/rttvar, with no second RTO function and no rsrtt/rdev fields, and keep the receipt deadline never below the resend rto; (b) ./bin/test red at mo_end_to_end_up: this card now needs the loopback card and starts after it lands; if mo_end_to_end_up is red at that BASE tip it is pre-existing and goes in the report as a finding for the loopback card, never loosened here; if it is green at BASE and red at your head, fix it at its cause. Runs over 2 minutes are OWED under the two-minute rule, never a HOLD cause.
+TOOLCHAIN: cmake, make, java and /opt/tla on a Linux member JOB.md names
+GATE-NEEDS: linux, tla
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 120 minutes.
+
+# Ack receipts: LOSS only after the receipt deadline
+
+THE TASK. An unreliable message with an ack receipt is reported lost whenever its ack takes longer than 250 ms, though it was delivered. Decide receipt loss on its own deadline, as RakNet does, documented and modelled, red first with a delayed-ack case.
+
+STEP 1. After any model edit, run TLC for its group and refresh the records with tlacheck merge --keep (tla/RUNS.tsv is written only by it).
+
+STANDING RULES (owner, binding on every card).
+- Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0. Anything that needs a real socket, a kernel object, a child process, a thread timing or the wall clock is a functional test, never ./bin/test.
+- Make the smallest change, with no refactor.
+- Never touch the space game's baseline or delta code.
+- Never run `nova-sprint friend stage`.
+- Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+- The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+- Never read outside the job's working directory.
+- Never loosen a Release bound, a protocol timeout or a test assertion to make a run pass; a failure found is a finding, fixed at its cause or reported.
+
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names; do not clone a second copy. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the member JOB.md names, never the coordinator's machine. Never search /, the home directory or any volume root; stay inside the checkout and the job directory.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install. A named tool that is missing on the member is reported as not-done with the missing component named, verdict HOLD.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+
+ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
+CARRY: rocketnet-r1-receipt-loss-after-its-own-deadline attempt 7 head=d9f3fdfd1007aec4e652b00b44f2ca48a67657ef
+CARRY: READER (vs RakNet CCRakNetSlidingWindow.cpp) on head d7355860: (A) first sample must set deviation = rtt (RakNet OnAck unset branch, CC.cpp:210-222), not rtt*0.5 (window_ack.cpp:614-615): first RTO is 6*rtt+30ms (300 ms -> 1.83 s); fix test_unit_receipt_loss_deadline.cpp:353 and :383-385 expected values (100 then 200 ms -> rsrtt 0.105, rdev 0.1, deadline 0.64 s). (B) drop the extra floor at window_ack.h:155: RakNet has no minimum (CC.cpp:294/298 commented out; RAKNET-RELIABILITY.md:690-692); update the test at :401-420. (C) ONE RTO function: rocketnet-r1-loopback-rtt-and-spurious-resends owns rn RakNet RTO (plain, no receipt-only floor); this card calls it, landing after that card. PATHS-PROPOSED tla/MCRNReceiptsBroken*.cfg are legitimate.
+CARRY: OWNER 2026-10-20: match RakNet and be better where it helps. The RTO is RakNet's formula (first sample deviation = rtt; 5% smoothing; min(2*SRTT + 4*dev + 30 ms, max); 2 s unknown; no backoff) PLUS a minimum floor of 100 ms in the shared RTO function, documented as our deliberate improvement over RakNet. That replaces the earlier no-floor instruction. Receipt loss uses that same function with its 100 ms floor; no extra receipt-only floor.
+CARRY: OWNER 2026-10-20 (supersedes the 100 ms floor line): the RTO floor is a config option, default 0.0 (no floor), which matches RakNet exactly; a caller may set it, for example to 0.1 s. One config field (one way to do it), validated >= 0, documented in the header; tests pin both the default (no floor, RakNet values) and a set floor.
+CARRY: SHARED RTO HELPER (owned by rocketnet-r1-loopback-rtt-and-spurious-resends): rn_window_ack_compute_rto( srtt, rttvar, configured_min, configured_max ), using the public config field rto_min_ms (default 0, range 0..60000). Receipt loss calls that helper; don't write a second RTO function. Land after loopback-rtt.
+")
+    (:id "rocketnet-format-netcode-style-v1" :feature "rocketnet-format-netcode-style-v1" :cells (n n n) :note "after the payment milestone (owner 2026-10-20); latest work: no pushed branch" :brief "RESULT: rocketnet-format-netcode-style-v1 sha=000000000000 tier: heavy
+REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: chore
+PRIORITY: blocker
+STREAM: rocketnet-api
+DEPENDS-ON: rocketnet-driver-renamed-transport
+LAND-AFTER: rocketnet-destroy-sends-disconnect,rocketnet-api-polish-v1-followups,rocketnet-check-test-environment-green,rocketnet-client-send-drops-until-connected,rocketnet-example-ack-receipts-debug-assert,rocketnet-examples-free-ports,rocketnet-functional-cookie-expiry-uses-test-clock,rocketnet-functional-free-ports,rocketnet-functional-tokens-use-the-test-clock,rocketnet-lan-1000-client-soak-matrix,rocketnet-linux-hard-killed-peer-never-stalls-receive,rocketnet-linux-lifecycle-stress,rocketnet-linux-load-1000-clients,rocketnet-linux-soak-per-transport,rocketnet-linux-socket-error-paths,rocketnet-linux-transport-matrix-repeat,rocketnet-macos-client-timing-under-app-nap,rocketnet-macos-hard-killed-peer-never-stalls-receive,rocketnet-macos-lifecycle-stress-t,rocketnet-macos-load-1000-clients-t,rocketnet-macos-sanitizers-and-leaks,rocketnet-macos-soak-per-transport,rocketnet-macos-socket-errors-and-enobufs-t,rocketnet-macos-transport-matrix-repeat,rocketnet-macos-universal-and-xcode-t,rocketnet-macos-wildcard-bind-check,rocketnet-network-thread-priority-as-space,rocketnet-send-budget-env-refused-create-leaks-nothing,rocketnet-server-create-ex-test-installs-its-allocator,rocketnet-v1-hygiene-fallout,rocketnet-v1-hygiene-t,rocketnet-win-app-verifier,rocketnet-win-libfuzzer-clang-cl,rocketnet-win-lifecycle-stress,rocketnet-win-load-1000-clients,rocketnet-win-msvc-asan,rocketnet-win-nightlies-on-fleet-runner,rocketnet-win-receive-backlog-connect-wait,rocketnet-win-soak-per-transport,rocketnet-win-socket-error-paths-t,rocketnet-win-toolchain-matrix,rocketnet-win-transport-matrix-repeat,rocketnet-windows-client-overlapped-send,rocketnet-windows-udp-connreset-never-stalls-receive,rocketnet-xdp-drops-first-fragment
+SOURCE: the owner, 2026-10-19: use the clang-format configuration derived from his own code to format rocketnet and keep it tidy. This card runs only after the held sentinel rocketnet-quiet-for-reformat is released, at a quiet point: a whole-tree reformat conflicts with every rocketnet branch in flight. The coordinator releases the sentinel when rocketnet's open streams have drained, or right after the M1 milestone.
+PATHS: sdk/**,*.c,*.cpp,test/*.h,test/driver_extension/**,test/xdp_host/server_xdp_host.c,test/xdp_host/server_xdp_host.h,functional/**,fuzz/**,bench/**,examples/**,tools/**,proofs/**,server_xdp/**,docs/mrdocs/**,.github/workflows/static.yml
+SHARED: .github/workflows/static.yml
+NEW: tools/format/same_tokens.sh
+TEST: none because the change is formatting only; the proof is the raw-token comparison script (token streams identical before and after for every changed file), the format-check target green, and the unit and functional suites green
+DONE-WHEN: (a) one commit whose diff is formatting only: `sh tools/format/same_tokens.sh <BASE sha>` prints `ok: <n> files, token streams identical` with n equal to the count of changed C/C++ files and exits 0, and at BASE with one planted non-format edit in a scratch copy (a renamed identifier in one file) it prints that file and exits 1 (the plant is not committed); (b) `make format-check` prints `ok: <n> files formatted` and exits 0, and `sh tools/format/test_check_format.sh` still passes; (c) nothing under sodium/, test/xdp_host/linux/, test/xdp_host/bpf/, test/wycheproof/ or any file check_format.sh skips as generated changes; (d) object files compared where the build allows it: build BASE and head with the same flags into separate build trees and report how many object files are byte-identical, naming the ones that differ and why (assert or log macros carrying __LINE__ are the expected reason); (e) `make && ./bin/test` and `./bin/functional` are green on the Linux member; (f) .github/workflows/static.yml gains a `format` job on `[self-hosted, Linux, X64, fleet]` running `sh tools/format/test_check_format.sh` and `make format-check`, never on a GitHub-hosted runner.
+TOOLCHAIN: clang-format-18 and clang-18 (/usr/bin, Ubuntu packages clang-format-18 and clang-18), GNU make, cmake and a C++17 compiler on the Linux member JOB.md names; libsodium is vendored under sodium/
+GATE-NEEDS: linux
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 120 minutes.
+
+The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).
+You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.
+Deadline: finish within 120 minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.
+Libraries considered: clang-format 18 does the formatting with the committed .clang-format; clang 18's raw lexer (`clang-18 -cc1 -dump-raw-tokens`, which lexes one file without preprocessing, so __LINE__ and includes do not matter) gives the token stream for the no-semantic-change proof; diff and sed compare them. No script of more than about thirty lines is needed.
+
+THIS REPOSITORY. mas-bandwidth/rocketnet: a C++ UDP transport library with a C API (sdk/rocketnet.h), its tests at the root (test*.cpp, test_unit_*.cpp), functional/, fuzz/, bench/, examples/, tools/ and proofs/. `make` builds into bin/ through CMake under build/; `./bin/test` is the unit suite and `./bin/functional` the functional suite. The landed card rocketnet-clang-format-from-netcode added .clang-format at the root (derived from the owner's netcode and Network Next SDK style; its header comment lists what it cannot express), DisableFormat files in the vendored trees, tools/format/check_format.sh (which files are checked and which are skipped, read it), tools/format/test_check_format.sh and a `make format-check` target that CI does not run yet. .github/workflows/static.yml (read) is the per-commit static gate, already on the fleet runners.
+
+THE TASK.
+(1) tools/format/same_tokens.sh <base-rev>: sh, set -eu; for each C/C++ file `git diff --name-only <base-rev>` lists, dump the raw tokens of the base version (`git show <base-rev>:<f>` into a mktemp file inside the job directory) and of the working version with `clang-18 -cc1 -dump-raw-tokens -x c++ <file>` (stderr), drop the location and flag columns (keep each token's kind and spelling), and compare; print `<file>: tokens differ` per mismatch; end with `ok: <n> files, token streams identical` and exit 0, or exit 1. Comments are not tokens in raw mode, so reflowed comments pass; a changed identifier, literal or operator fails.
+(2) Run `clang-format-18 -i --style=file` over exactly the files check_format.sh checks (never sodium/, test/xdp_host/linux/, test/xdp_host/bpf/, generated files). Read the result: where the formatter makes something clearly worse (a hand-aligned table, a long initializer, an ASCII diagram in code), wrap that region in `// clang-format off` / `// clang-format on` with no other change, and list each such region in the pull request body; keep these few.
+(3) .github/workflows/static.yml: a second job `format`, `runs-on: [self-hosted, Linux, X64, fleet]`, timeout 10 minutes, steps: checkout, `sh tools/format/test_check_format.sh`, `make format-check`. No hosted fallback install step beyond the pattern the static job already has.
+
+STEP 1. Confirm `uname -s` is Linux, `clang-format-18 --version` and `clang-18 --version` print 18.x; if either is missing, stop and report HOLD naming the package. cd into the staged checkout JOB.md names and run git log --oneline -1; it is a NEW worktree on the branch this card names; record the BASE sha. Confirm .clang-format and tools/format/check_format.sh exist; if not, the card that adds them has not landed: stop and report HOLD.
+STEP 2. Red first: write tools/format/same_tokens.sh, run `make format-check; echo exit=$?` at BASE and keep the count of unformatted files; prove the token check catches a real edit by planting one renamed identifier in a scratch copy, running same_tokens.sh, keeping the failing line, and reverting the plant.
+STEP 3. Build BASE into build-base/ (`cmake -B build-base -DCMAKE_BUILD_TYPE=Release && cmake --build build-base -j8`) for the object comparison, then do THE TASK (2) and (3).
+STEP 4. Run the gate: `sh tools/format/same_tokens.sh <BASE sha>`; `make format-check`; `sh tools/format/test_check_format.sh`; build head into build-head/ with the same flags and compare object files (`cmp` each pair under CMakeFiles, report identical/total and the differing names); then `make && ./bin/test` and `./bin/functional`, reading the last lines. When a test fails, name its file and say whether that file was changed by your work (yours) or is unchanged (already red at BASE: run the same test on the unchanged base to say so), and report that line first. Remove build-base/ and build-head/ before committing; they are never committed.
+STEP 5. Commit on your own branch as `rocketnet-format-netcode-style-v1: format the tree with clang-format 18` with the trailer, the reformat and the static.yml job in that one commit, tools/format/same_tokens.sh included. Nothing reaches the forge from inside the wall: in the job the git shim records a push, the pull request is the finish JOB.md names, and the member makes both, against the BASE: line's branch, from outside the wall when the card finishes. The pull request body states the diff stat, the same_tokens.sh line and its planted red line, the object comparison counts, the clang-format off regions, the test lines, and what was not done.
+STEP 6. End as JOB.md says: where JOB.md ends the card with its pull request, that is the end and there is nothing else to write, the gate's lines in the pull request body; where it asks for RESULT.md, write it in JOB.md's shape (head, branch, verdict, gate, output, report).
+
+STANDING RULES.
+Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0.
+Make the smallest change, with no refactor: whitespace and line breaks only, plus the few clang-format off/on markers.
+Never touch the space game's baseline or delta code.
+Never run `nova-sprint friend stage`. Clone on the bench from GitHub, never on the studio Mac.
+Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+Never read outside the job's working directory.
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the Linux member JOB.md names, never the coordinator's machine.
+Anything that uses real time, sockets or the network is a functional test and belongs in ./bin/functional, never ./bin/test.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Never format vendored or generated code: sodium/, test/xdp_host/linux/, test/xdp_host/bpf/, test/wycheproof/, and every file check_format.sh skips.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+")))
   (:id "release" :title "Release and process"
    :columns platforms
    :rows
