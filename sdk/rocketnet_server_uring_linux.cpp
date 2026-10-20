@@ -28,9 +28,16 @@
 // The send side is the gso driver's staging: game threads reserve a frame
 // slot with one atomic add between flushes, and send_packets submits one
 // SENDMSG per slot with bytes, each slot carrying its own msghdr, iovec and
-// destination, then reaps until every send it submitted has completed. Only
-// then does the reservation index go back to zero: until its CQE the kernel
-// owns a slot's frame and msghdr.
+// destination, then reaps within its completion budget and one bounded
+// wait. The reservation index goes back to zero only in a call that leaves
+// no send without its CQE and no staged slot unsubmitted: until its CQE the
+// kernel owns a slot's frame and msghdr, so a call that returns first leaves
+// the index where it is and a later call retires the rest.
+//
+// Every call is bounded: receive_packets reaps at most
+// ROCKETNET_URING_RECEIVE_BUDGET completions and send_packets at most
+// ROCKETNET_URING_SEND_BUDGET, each from its own budget; completions past a
+// budget stay in the completion queue for the next call.
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined(ROCKETNET_IO_URING) && ROCKETNET_IO_URING
 #include <liburing.h>
@@ -66,13 +73,19 @@
 
 #define ROCKETNET_URING_CQE_BATCH                                          256
 
+// send_packets waits at most once per call, this long, for a completion
+
+#define ROCKETNET_URING_SEND_WAIT_SECONDS                                0.001
+
 // destroy waits this long per round for the cancels, and gives up waiting
-// after this many empty rounds. a destroy that gives up exits the ring and
+// after this many empty rounds, or after ROCKETNET_URING_DESTROY_MAX_ROUNDS
+// rounds of at most ROCKETNET_URING_RECEIVE_BUDGET completions each. a destroy that gives up exits the ring and
 // closes the sockets, but leaks the buffer rings, the queues and the driver
 // allocation: the kernel may still write them (see rocketnet_server_uring_destroy)
 
 #define ROCKETNET_URING_DESTROY_WAIT_SECONDS                                 1
 #define ROCKETNET_URING_DESTROY_WAIT_ROUNDS                                  5
+#define ROCKETNET_URING_DESTROY_MAX_ROUNDS                                  64
 
 // each slot's info is the slot's msghdr, iovec and destination, which the
 // kernel reads until the send's CQE. finish threads write packet_bytes, so a
@@ -141,7 +154,8 @@ struct rocketnet_server_uring_t
     std::atomic<uint64_t> packet_id{0};
 
     uint64_t send_rotation;                     // main thread only: rotates submit chunks across the group's sockets
-    int sends_pending;                          // sends submitted by this send_packets with no CQE reaped
+    int sends_pending;                          // sends submitted, by this send_packets or an earlier one, with no CQE reaped
+    int send_submitted;                         // staged slots below this were submitted by an earlier send_packets
     int fill_bank;                              // the bank receive CQEs are copied into; the other is exposed
 
     uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
@@ -160,7 +174,120 @@ struct rocketnet_server_uring_t
     int test_receive_error[ROCKETNET_URING_MAX_QUEUES];
     int test_fail_sends;
 #endif
+
+#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+    // the unit suite's fake completion source (rocketnet_server_uring_test_create):
+    // non-NULL means no kernel ring. its submission entries queue here until
+    // a submit hands their user_data to the source, and a peek copies its
+    // completions here
+    const struct rocketnet_server_uring_test_source_t * test_source;
+    struct io_uring_sqe test_sqes[ROCKETNET_URING_ENTRIES];
+    int test_sqes_queued;
+    struct rocketnet_server_uring_test_completion_t test_completions[ROCKETNET_URING_CQE_BATCH];
+#endif
 };
+
+// the ring operations, each through the fake completion source when the
+// unit suite's seam is compiled in and the driver has one
+
+#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+static_assert( sizeof(struct rocketnet_server_uring_test_completion_t) == sizeof(struct io_uring_cqe), "a fake completion is laid out as a cqe" );
+#define ROCKETNET_URING_FAKE( uring ) ( (uring)->test_source != NULL )
+#else
+#define ROCKETNET_URING_FAKE( uring ) false
+#endif
+
+static struct io_uring_sqe * rocketnet_server_uring_ring_get_sqe( struct rocketnet_server_uring_t * uring )
+{
+#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+    if ( ROCKETNET_URING_FAKE( uring ) )
+    {
+        if ( uring->test_sqes_queued >= ROCKETNET_URING_ENTRIES )
+            return NULL;
+        struct io_uring_sqe * sqe = &uring->test_sqes[uring->test_sqes_queued++];
+        memset( sqe, 0, sizeof(*sqe) );
+        return sqe;
+    }
+#endif
+    return io_uring_get_sqe( &uring->ring );
+}
+
+static unsigned rocketnet_server_uring_ring_sq_space( struct rocketnet_server_uring_t * uring )
+{
+#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+    if ( ROCKETNET_URING_FAKE( uring ) )
+        return (unsigned) ( ROCKETNET_URING_ENTRIES - uring->test_sqes_queued );
+#endif
+    return io_uring_sq_space_left( &uring->ring );
+}
+
+static unsigned rocketnet_server_uring_ring_sq_ready( struct rocketnet_server_uring_t * uring )
+{
+#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+    if ( ROCKETNET_URING_FAKE( uring ) )
+        return (unsigned) uring->test_sqes_queued;
+#endif
+    return io_uring_sq_ready( &uring->ring );
+}
+
+static int rocketnet_server_uring_ring_submit( struct rocketnet_server_uring_t * uring )
+{
+#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+    if ( ROCKETNET_URING_FAKE( uring ) )
+    {
+        const int count = uring->test_sqes_queued;
+        uring->test_sqes_queued = 0;
+        for ( int i = 0; i < count; i++ )
+            uring->test_source->submitted( uring->test_source->context, uring->test_sqes[i].user_data );
+        return count;
+    }
+#endif
+    return io_uring_submit( &uring->ring );
+}
+
+static unsigned rocketnet_server_uring_ring_peek( struct rocketnet_server_uring_t * uring, struct io_uring_cqe ** cqes, unsigned max )
+{
+#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+    if ( ROCKETNET_URING_FAKE( uring ) )
+    {
+        if ( max > ROCKETNET_URING_CQE_BATCH )
+            max = ROCKETNET_URING_CQE_BATCH;
+        int count = uring->test_source->peek( uring->test_source->context, uring->test_completions, (int) max );
+        if ( count < 0 )
+            count = 0;
+        if ( count > (int) max )
+            count = (int) max;
+        for ( int i = 0; i < count; i++ )
+            cqes[i] = (struct io_uring_cqe*) (void*) &uring->test_completions[i];
+        return (unsigned) count;
+    }
+#endif
+    return io_uring_peek_batch_cqe( &uring->ring, cqes, max );
+}
+
+static void rocketnet_server_uring_ring_advance( struct rocketnet_server_uring_t * uring, unsigned count )
+{
+#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+    if ( ROCKETNET_URING_FAKE( uring ) )
+    {
+        uring->test_source->advance( uring->test_source->context, (int) count );
+        return;
+    }
+#endif
+    io_uring_cq_advance( &uring->ring, count );
+}
+
+static unsigned rocketnet_server_uring_ring_cq_ready( struct rocketnet_server_uring_t * uring )
+{
+#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+    if ( ROCKETNET_URING_FAKE( uring ) )
+    {
+        const int ready = uring->test_source->ready( uring->test_source->context );
+        return ready > 0 ? (unsigned) ready : 0;
+    }
+#endif
+    return io_uring_cq_ready( &uring->ring );
+}
 
 // ---------------------------------------------------------------------------
 
@@ -442,12 +569,12 @@ uint64_t rocketnet_server_uring_allocation_bytes( int queues )
 
 static struct io_uring_sqe * rocketnet_server_uring_get_sqe( struct rocketnet_server_uring_t * uring )
 {
-    struct io_uring_sqe * sqe = io_uring_get_sqe( &uring->ring );
+    struct io_uring_sqe * sqe = rocketnet_server_uring_ring_get_sqe( uring );
     if ( !sqe )
     {
-        io_uring_submit( &uring->ring );
+        rocketnet_server_uring_ring_submit( uring );
         uring->counters[ROCKETNET_SERVER_URING_COUNTER_SUBMIT_SYSCALLS]++;
-        sqe = io_uring_get_sqe( &uring->ring );
+        sqe = rocketnet_server_uring_ring_get_sqe( uring );
     }
     return sqe;
 }
@@ -617,20 +744,25 @@ static void rocketnet_server_uring_reap_cqe( struct rocketnet_server_uring_t * u
     }
 }
 
-// drain every CQE available now, without blocking; returns how many
+// reap the CQEs available now, oldest first, without blocking and at most
+// budget of them (RNUringDriver Reap within a call's Budget); returns how
+// many. CQEs past the budget stay in the completion queue for a later call.
 
-static int rocketnet_server_uring_reap_available( struct rocketnet_server_uring_t * uring )
+static int rocketnet_server_uring_reap_available( struct rocketnet_server_uring_t * uring, int budget )
 {
     int total = 0;
-    while ( true )
+    while ( total < budget )
     {
         struct io_uring_cqe * cqes[ROCKETNET_URING_CQE_BATCH];
-        const unsigned count = io_uring_peek_batch_cqe( &uring->ring, cqes, ROCKETNET_URING_CQE_BATCH );
+        unsigned want = (unsigned) ( budget - total );
+        if ( want > ROCKETNET_URING_CQE_BATCH )
+            want = ROCKETNET_URING_CQE_BATCH;
+        const unsigned count = rocketnet_server_uring_ring_peek( uring, cqes, want );
         if ( count == 0 )
             break;
         for ( unsigned i = 0; i < count; i++ )
             rocketnet_server_uring_reap_cqe( uring, cqes[i] );
-        io_uring_cq_advance( &uring->ring, count );
+        rocketnet_server_uring_ring_advance( uring, count );
         total += (int) count;
     }
     return total;
@@ -638,9 +770,9 @@ static int rocketnet_server_uring_reap_available( struct rocketnet_server_uring_
 
 static void rocketnet_server_uring_submit( struct rocketnet_server_uring_t * uring )
 {
-    if ( io_uring_sq_ready( &uring->ring ) == 0 )
+    if ( rocketnet_server_uring_ring_sq_ready( uring ) == 0 )
         return;
-    const int result = io_uring_submit( &uring->ring );
+    const int result = rocketnet_server_uring_ring_submit( uring );
     uring->counters[ROCKETNET_SERVER_URING_COUNTER_SUBMIT_SYSCALLS]++;
     if ( result < 0 && result != -EINTR && result != -EAGAIN && result != -EBUSY )
         rocketnet_error( "io_uring transport: submit failed: %s", strerror( -result ) );
@@ -650,6 +782,8 @@ static void rocketnet_server_uring_submit( struct rocketnet_server_uring_t * uri
 
 static void rocketnet_server_uring_wait( struct rocketnet_server_uring_t * uring, double seconds )
 {
+    if ( ROCKETNET_URING_FAKE( uring ) )
+        return;
     struct __kernel_timespec timeout;
     timeout.tv_sec = (long long) seconds;
     timeout.tv_nsec = (long long) ( ( seconds - (double) timeout.tv_sec ) * 1000000000.0 );
@@ -705,6 +839,100 @@ void rocketnet_server_uring_test_stall_destroy( struct rocketnet_server_uring_t 
     rocketnet_assert( uring );
     uring->test_stall_destroy = true;
 }
+
+#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+
+// the fake driver: create's allocations and arms, with the source in place
+// of the ring and the sockets. each queue's buffer ring is plain memory the
+// driver returns buffers to as it does to a kernel's, and every buffer holds
+// the multishot recvmsg layout of one datagram from 127.0.0.1:1000
+
+struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void * context, int num_queues, const struct rocketnet_server_uring_test_source_t * source )
+{
+    rocketnet_assert( source );
+
+    if ( num_queues < 1 || num_queues > ROCKETNET_URING_MAX_QUEUES )
+        return NULL;
+
+    struct rocketnet_server_uring_t * uring = (struct rocketnet_server_uring_t*) rocketnet_malloc( context, sizeof(struct rocketnet_server_uring_t) );
+    if ( !uring )
+        return NULL;
+
+    new ( uring ) rocketnet_server_uring_t();
+
+    uring->context = context;
+    uring->num_queues = num_queues;
+    uring->ipv6 = false;
+    uring->packet_id = 1;
+    uring->test_source = source;
+
+    uring->queues = (struct rocketnet_server_uring_queue_t*) rocketnet_malloc( context, sizeof(struct rocketnet_server_uring_queue_t) * num_queues );
+    if ( !uring->queues )
+    {
+        uring->~rocketnet_server_uring_t();
+        rocketnet_free( context, uring );
+        return NULL;
+    }
+
+    for ( int i = 0; i < num_queues; i++ )
+    {
+        new ( &uring->queues[i] ) rocketnet_server_uring_queue_t();
+        uring->queues[i].fd = -1;
+    }
+
+    uring->ring_ready = true;
+
+    struct io_uring_recvmsg_out out;
+    memset( &out, 0, sizeof(out) );
+    out.namelen = sizeof(struct sockaddr_in);
+    out.payloadlen = ROCKETNET_URING_TEST_PAYLOAD_BYTES;
+
+    struct sockaddr_in source_address;
+    memset( &source_address, 0, sizeof(source_address) );
+    source_address.sin_family = AF_INET;
+    source_address.sin_port = htons( 1000 );
+    source_address.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+
+    for ( int i = 0; i < num_queues; i++ )
+    {
+        struct rocketnet_server_uring_queue_t * queue = &uring->queues[i];
+
+        queue->buf_ring = (struct io_uring_buf_ring*) rocketnet_malloc( context, ROCKETNET_URING_RECV_BUFFERS * sizeof(struct io_uring_buf) );
+        if ( !queue->buf_ring )
+        {
+            rocketnet_server_uring_destroy( uring );
+            return NULL;
+        }
+        io_uring_buf_ring_init( queue->buf_ring );
+
+        const int mask = io_uring_buf_ring_mask( ROCKETNET_URING_RECV_BUFFERS );
+        for ( int b = 0; b < ROCKETNET_URING_RECV_BUFFERS; b++ )
+        {
+            uint8_t * buffer = queue->buffers[b];
+            memset( buffer, 0, ROCKETNET_URING_RECV_BUFFER_BYTES );
+            memcpy( buffer, &out, sizeof(out) );
+            memcpy( buffer + sizeof(out), &source_address, sizeof(source_address) );
+            memset( buffer + sizeof(out) + sizeof(struct sockaddr_storage), (uint8_t) b, ROCKETNET_URING_TEST_PAYLOAD_BYTES );
+            io_uring_buf_ring_add( queue->buf_ring, buffer, ROCKETNET_URING_RECV_BUFFER_BYTES, (unsigned short) b, mask, b );
+        }
+        io_uring_buf_ring_advance( queue->buf_ring, ROCKETNET_URING_RECV_BUFFERS );
+
+        memset( &queue->receive_message, 0, sizeof(queue->receive_message) );
+        queue->receive_message.msg_namelen = sizeof(struct sockaddr_storage);
+
+        if ( !rocketnet_server_uring_arm( uring, i ) )
+        {
+            rocketnet_server_uring_destroy( uring );
+            return NULL;
+        }
+    }
+
+    rocketnet_server_uring_submit( uring );
+
+    return uring;
+}
+
+#endif // #if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
 
 struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context, struct rocketnet_address_t * bind_address, int num_queues )
 {
@@ -839,7 +1067,8 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
 // RNUringDriver Destroy, then Free: cancel every multishot receive, wait for
 // every outstanding CQE (each cancel's own and each multishot's last), and
 // only then free the buffer rings, the ring, the sockets and the memory.
-// sends are never outstanding here: send_packets reaps all of its own.
+// sends may be outstanding here (a send_packets that returned within its
+// budget leaves them to a later call), so the drain waits for them too.
 //
 // the wait is bounded. a destroy that gives up has not reached Free: a
 // multishot or a cancel may still be outstanding, and io_uring_queue_exit
@@ -859,9 +1088,13 @@ void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring )
         uring->destroying = true;
 
         int empty_rounds = 0;
+        int rounds = 0;
+        bool drained = false;
 
-        while ( empty_rounds < ROCKETNET_URING_DESTROY_WAIT_ROUNDS )
+        while ( empty_rounds < ROCKETNET_URING_DESTROY_WAIT_ROUNDS && rounds < ROCKETNET_URING_DESTROY_MAX_ROUNDS )
         {
+            rounds++;
+
             bool outstanding = uring->sends_pending > 0;
 
             for ( int i = 0; i < uring->num_queues; i++ )
@@ -887,25 +1120,29 @@ void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring )
                 outstanding = true;
 
             if ( !outstanding )
+            {
+                drained = true;
                 break;
+            }
 
             rocketnet_server_uring_submit( uring );
 
-            if ( rocketnet_server_uring_reap_available( uring ) == 0 )
+            if ( rocketnet_server_uring_reap_available( uring, ROCKETNET_URING_RECEIVE_BUDGET ) == 0 )
             {
                 if ( !uring->test_stall_destroy )
                     rocketnet_server_uring_wait( uring, ROCKETNET_URING_DESTROY_WAIT_SECONDS );
-                if ( rocketnet_server_uring_reap_available( uring ) == 0 )
+                if ( rocketnet_server_uring_reap_available( uring, ROCKETNET_URING_RECEIVE_BUDGET ) == 0 )
                     empty_rounds++;
             }
         }
 
-        if ( empty_rounds >= ROCKETNET_URING_DESTROY_WAIT_ROUNDS )
+        if ( !drained )
         {
             // gave up: not drained, so never Free. exit the ring and close the
             // sockets; leak every byte the kernel may still write
 
-            io_uring_queue_exit( &uring->ring );
+            if ( !ROCKETNET_URING_FAKE( uring ) )
+                io_uring_queue_exit( &uring->ring );
             uring->ring_ready = false;
 
             uint64_t leaked = sizeof(rocketnet_server_uring_t) + (uint64_t) uring->num_queues * sizeof(rocketnet_server_uring_queue_t);
@@ -923,7 +1160,7 @@ void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring )
             rocketnet_server_uring_leaked_bytes_total += leaked;
             rocketnet_server_uring_leaked_drivers_total++;
 
-            rocketnet_warn( "io_uring transport: destroy gave up waiting for the receive cancels; %" PRIu64 " bytes the kernel may still write are leaked, not freed", leaked );
+            rocketnet_warn( "io_uring transport: destroy gave up waiting for the receive cancels and the sends; %" PRIu64 " bytes the kernel may still write are leaked, not freed", leaked );
             return;
         }
 
@@ -931,13 +1168,17 @@ void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring )
         {
             if ( uring->queues[i].buf_ring )
             {
-                rocketnet_server_uring_free_buf_ring( &uring->ring, uring->queues[i].buf_ring, ROCKETNET_URING_RECV_BUFFERS, i,
-                                                       uring->queues[i].buf_ring_inverted_resv );
+                if ( ROCKETNET_URING_FAKE( uring ) )
+                    rocketnet_free( uring->context, uring->queues[i].buf_ring );
+                else
+                    rocketnet_server_uring_free_buf_ring( &uring->ring, uring->queues[i].buf_ring, ROCKETNET_URING_RECV_BUFFERS, i,
+                                                           uring->queues[i].buf_ring_inverted_resv );
                 uring->queues[i].buf_ring = NULL;
             }
         }
 
-        io_uring_queue_exit( &uring->ring );
+        if ( !ROCKETNET_URING_FAKE( uring ) )
+            io_uring_queue_exit( &uring->ring );
         uring->ring_ready = false;
     }
 
@@ -1054,11 +1295,17 @@ void rocketnet_server_uring_abort_packet( struct rocketnet_server_uring_t * urin
     uring->send.info[slot].packet_bytes = 0;
 }
 
-// RNUringDriver Submit, Reap and ResetIndex: one SENDMSG per slot with
-// bytes, in chunks no larger than the free submission queue space, rotated
-// across the group's sockets; then reap until every send of this call has
-// its CQE (receive CQEs met on the way go to the fill bank); only then the
-// reservation index goes back to 0.
+// RNUringDriver Submit, Reap, SendReturn and ResetIndex: one SENDMSG per
+// slot with bytes not submitted by an earlier call, in chunks no larger than
+// the free submission queue space, rotated across the group's sockets; then
+// reap, at most ROCKETNET_URING_SEND_BUDGET CQEs in the whole call and after
+// at most one wait of ROCKETNET_URING_SEND_WAIT_SECONDS (receive CQEs met on
+// the way go to the fill bank). The reservation index goes back to 0 only
+// when no send is without its CQE and every staged slot is submitted
+// (ResetIndex); otherwise the call returns with the index unchanged, counted
+// SEND_DEFERRED, and a later call submits and retires the rest (SendReturn).
+// The kernel owns a slot from its submit to its CQE, and no return frees or
+// reuses one.
 
 void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * uring )
 {
@@ -1068,7 +1315,9 @@ void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * urin
     if ( num_slots > ROCKETNET_URING_SEND_QUEUE_SIZE )
         num_slots = ROCKETNET_URING_SEND_QUEUE_SIZE;
 
-    int slot = 0;
+    int slot = uring->send_submitted;
+    int budget = ROCKETNET_URING_SEND_BUDGET;
+    bool waited = false;
 
     while ( slot < num_slots )
     {
@@ -1077,16 +1326,25 @@ void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * urin
 
         if ( uring->sends_pending >= ROCKETNET_URING_ENTRIES )
         {
-            if ( rocketnet_server_uring_reap_available( uring ) == 0 )
-                rocketnet_server_uring_wait( uring, 1.0 );
+            const int reaped = rocketnet_server_uring_reap_available( uring, budget );
+            budget -= reaped;
+            if ( reaped == 0 )
+            {
+                if ( waited || budget == 0 )
+                    break;
+                rocketnet_server_uring_wait( uring, ROCKETNET_URING_SEND_WAIT_SECONDS );
+                waited = true;
+            }
             continue;
         }
 
-        unsigned space = io_uring_sq_space_left( &uring->ring );
+        unsigned space = rocketnet_server_uring_ring_sq_space( uring );
         if ( space == 0 )
         {
             rocketnet_server_uring_submit( uring );
-            rocketnet_server_uring_reap_available( uring );
+            budget -= rocketnet_server_uring_reap_available( uring, budget );
+            if ( rocketnet_server_uring_ring_sq_space( uring ) == 0 )
+                break;                                  // the submit took nothing: a later call submits the rest
             continue;
         }
 
@@ -1134,7 +1392,7 @@ void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * urin
             info->message.msg_iov = &info->iovec;
             info->message.msg_iovlen = 1;
 
-            struct io_uring_sqe * sqe = io_uring_get_sqe( &uring->ring );
+            struct io_uring_sqe * sqe = rocketnet_server_uring_ring_get_sqe( uring );
             rocketnet_assert( sqe );
             io_uring_prep_sendmsg( sqe, fd, &info->message, MSG_DONTWAIT );
             io_uring_sqe_set_data64( sqe, rocketnet_uring_tag( ROCKETNET_URING_TAG_SEND, queue_index, (uint32_t) slot ) );
@@ -1145,40 +1403,68 @@ void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * urin
         }
 
         rocketnet_server_uring_submit( uring );
-        rocketnet_server_uring_reap_available( uring );
+        budget -= rocketnet_server_uring_reap_available( uring, budget );
     }
 
-    // Reap: every send this call submitted has its CQE before the reset
+    uring->send_submitted = slot;
 
-    while ( uring->sends_pending > 0 )
+    // Reap: the sends still without a CQE, this call's and earlier calls',
+    // within what is left of the budget and after at most one wait
+
+    if ( uring->sends_pending > 0 && budget > 0 )
     {
-        if ( rocketnet_server_uring_reap_available( uring ) == 0 )
-            rocketnet_server_uring_wait( uring, 1.0 );
+        budget -= rocketnet_server_uring_reap_available( uring, budget );
+        if ( uring->sends_pending > 0 && budget > 0 && !waited )
+        {
+            rocketnet_server_uring_wait( uring, ROCKETNET_URING_SEND_WAIT_SECONDS );
+            waited = true;
+            budget -= rocketnet_server_uring_reap_available( uring, budget );
+        }
     }
+
+    if ( budget == 0 && rocketnet_server_uring_ring_cq_ready( uring ) > 0 )
+        uring->counters[ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED]++;
 
     // re-arms queued while reaping
 
     rocketnet_server_uring_submit( uring );
 
-    // ResetIndex: no slot is kernel owned now
+    if ( uring->sends_pending == 0 && slot >= num_slots )
+    {
+        // ResetIndex: no slot is kernel owned now
 
-    uring->send.num_packets.store( 0, std::memory_order_relaxed );
+        uring->send_submitted = 0;
+        uring->send.num_packets.store( 0, std::memory_order_relaxed );
+    }
+    else
+    {
+        // SendReturn: the kernel still owns some slots, or some staged slots
+        // wait to be submitted; the index stays, so no start_packet returns
+        // a slot the kernel owns
+
+        uring->counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DEFERRED]++;
+    }
 }
 
 // ---------------------------------------------------------------------------
 // receive
 // ---------------------------------------------------------------------------
 
-// drain the completion queue without blocking into the fill bank (Reap),
-// submit any re-arm, then RNUringDriver Swap: the fill bank becomes the
-// exposed bank the transport reads until the next call, and the other bank
-// is emptied as the new fill bank
+// reap at most ROCKETNET_URING_RECEIVE_BUDGET CQEs without blocking into the
+// fill bank (Reap within the Budget; CQEs past it stay in the completion
+// queue, counted REAP_DEFERRED), submit any re-arm, then RNUringDriver Swap:
+// the fill bank becomes the exposed bank the transport reads until the next
+// call, and the other bank is emptied as the new fill bank
 
 void rocketnet_server_uring_receive_packets( struct rocketnet_server_uring_t * uring )
 {
     rocketnet_assert( uring );
 
-    rocketnet_server_uring_reap_available( uring );
+    if ( rocketnet_server_uring_reap_available( uring, ROCKETNET_URING_RECEIVE_BUDGET ) == ROCKETNET_URING_RECEIVE_BUDGET &&
+         rocketnet_server_uring_ring_cq_ready( uring ) > 0 )
+    {
+        uring->counters[ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED]++;
+    }
     rocketnet_server_uring_submit( uring );
 
     const int exposed_bank = uring->fill_bank;
@@ -1311,6 +1597,13 @@ struct rocketnet_server_socket_process_packets_t * rocketnet_server_uring_proces
 #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 void rocketnet_server_uring_test_fail_receive( struct rocketnet_server_uring_t *, int, int ) {}
 void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t *, int ) {}
+#endif
+
+#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void *, int, const struct rocketnet_server_uring_test_source_t * )
+{
+    return NULL;
+}
 #endif
 
 #endif // #if ROCKETNET_URING_BUILT

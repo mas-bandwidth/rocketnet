@@ -12,6 +12,7 @@ COVERAGE = ROOT / "tla" / "COVERAGE.tsv"
 TLA_DIR = ROOT / "tla"
 
 FUNC_RE = re.compile(r"(?:rn_|rocketnet_)[A-Za-z0-9_]+(?=,|\)|and\b)")
+DST_CHECK_RE = re.compile(r'rocketnet_dst_check_fail\(\s*\w+,\s*"([a-z0-9_]+)"')
 
 
 def iter_rows():
@@ -38,13 +39,52 @@ def tla_modules():
     return modules
 
 
-def check_row(row):
+def dst_check_names():
+    path = ROOT / "dst_checks.h"
+    if not path.is_file():
+        return set()
+    return set(DST_CHECK_RE.findall(path.read_text(errors="replace")))
+
+
+def check_row(row, dst_names):
     failures = []
     module = row["module"]
     machine = row.get("machine", "")
     status = row.get("status", "")
     code = row.get("code", "")
     note = row.get("note", "")
+
+    if status == "none":
+        if module != "-":
+            failures.append(f"{module}: {machine} a row with no model must name - as its module")
+        if "," in code:
+            failures.append(f"{module}: {machine} code column must hold one path, one per row")
+            return failures
+        if not (ROOT / code).is_file():
+            failures.append(f"{module}: {code} does not exist")
+            return failures
+        if "no model" not in note.lower():
+            failures.append(f"{module}: {machine} a row with no model must say why the code is safe")
+        return failures
+
+    if status == "dst":
+        if module != "-":
+            module_file = TLA_DIR / f"{module}.tla"
+            if not module_file.exists():
+                failures.append(f"{module}: tla/{module}.tla does not exist")
+        if "," in code:
+            failures.append(f"{module}: {machine} code column must hold one path, one per row")
+            return failures
+        if not (ROOT / code).is_file():
+            failures.append(f"{module}: {code} does not exist")
+            return failures
+        if not any(re.search(rf"\b{re.escape(name)}\b", note) for name in dst_names):
+            failures.append(f"{module}: {machine} a dst row must name the DST check in its note")
+        return failures
+
+    if status != "owed" and status not in ("current", "covered"):
+        failures.append(f"{module}: {machine} unknown status {status}")
+        return failures
 
     module_file = TLA_DIR / f"{module}.tla"
     if not module_file.exists():
@@ -69,6 +109,36 @@ def check_row(row):
     return failures
 
 
+def owed_but_cited(rows):
+    """An owed row says no code implements its model; a model that a file
+    under sdk/ cites is implemented, so its owed row is stale. The citation
+    counts with or without the tla/ prefix: sdk/rocketnet_client_receive_
+    handshake.h writes RNClientIo.tla bare, seven times."""
+    failures = []
+    sdk = ROOT / "sdk"
+    texts = {}
+    if sdk.is_dir():
+        for path in sorted(sdk.rglob("*")):
+            if path.is_file():
+                texts[path.relative_to(ROOT).as_posix()] = path.read_text(errors="replace")
+    for row in rows:
+        if row.get("status", "") != "owed":
+            continue
+        module = row["module"]
+        # Owner CARRY 2026-10-20: the keyed filter epochs are deleted for v1.0
+        # (card rocketnet-delete-keyed-filter-epochs). Leave rn-filter-epochs as it is
+        # at BASE for that card to set to design, no code.
+        if module == "RNFilterEpochs":
+            continue
+        forms = (f"tla/{module}.tla", f"{module}.tla")
+        for name, text in texts.items():
+            cite = next((form for form in forms if form in text), None)
+            if cite:
+                failures.append(f"{module}: {row.get('machine', '')} is owed but {name} cites {cite}")
+                break
+    return failures
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--require", action="append", default=[], metavar="MODULES",
@@ -79,8 +149,9 @@ def main():
 
     rows = list(iter_rows())
     failures = []
+    dst_names = dst_check_names()
     for row in rows:
-        failures.extend(check_row(row))
+        failures.extend(check_row(row, dst_names))
 
     for machine, count in Counter(row["machine"] for row in rows).items():
         if count > 1:
@@ -98,6 +169,8 @@ def main():
         for module in tla_modules():
             if module not in have:
                 failures.append(f"{module}: no coverage row")
+
+    failures.extend(owed_but_cited(rows))
 
     if failures:
         for failure in sorted(failures):

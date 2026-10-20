@@ -38,6 +38,23 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
 #include "rocketnet_network_simulator.h"
 #include "rocketnet_memory.h"
 
+// The capacity-aware receive entry's declaration lives beside its definition
+// in sdk/rocketnet_server_protocol.cpp; the transport passes the size of the
+// payload buffer it hands over.
+
+int rocketnet_server_protocol_process_packet_capacity( struct rocketnet_server_protocol_t * server,
+                                     const struct rocketnet_address_t * from,
+                                     const uint8_t * packet_data,
+                                     int packet_bytes,
+                                     uint64_t current_timestamp,
+                                     double current_time,
+                                     uint8_t * response_packet,
+                                     int * response_bytes,
+                                     uint8_t * out_payload,
+                                     int out_payload_capacity,
+                                     int * out_payload_bytes,
+                                     int * out_payload_client_index );
+
 #include <sodium.h>
 #include <atomic>
 #include <memory.h>
@@ -170,6 +187,7 @@ struct rocketnet_server_pending_wire_totals_t
 {
     rocketnet_address_t address;
     struct rocketnet_server_wire_totals_t totals;
+    double first_seen_time;
     bool used;
 };
 
@@ -334,11 +352,23 @@ static struct rocketnet_server_pending_wire_totals_t * rocketnet_server_pending_
         {
             memset( pending, 0, sizeof( *pending ) );
             pending->address = *address;
+            pending->first_seen_time = server_transport->time;
             pending->used = true;
             return pending;
         }
     }
     return NULL;
+}
+
+static void rocketnet_server_pending_wire_expire( struct rocketnet_server_transport_t * server_transport, double time )
+{
+    const double deadline = server_transport->protocol.handshake_deadline_seconds;
+    for ( int i = 0; i < ROCKETNET_SERVER_PENDING_WIRE_TOTALS; i++ )
+    {
+        struct rocketnet_server_pending_wire_totals_t * pending = &server_transport->pending_wire_totals[i];
+        if ( pending->used && time - pending->first_seen_time >= deadline )
+            pending->used = false;
+    }
 }
 
 static void rocketnet_server_wire_totals_add_sent( struct rocketnet_server_transport_t * server_transport,
@@ -1665,6 +1695,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     server_transport->packet_leases.reset();
 
     server_transport->time = time;
+    rocketnet_server_pending_wire_expire( server_transport, time );
     rocketnet_server_link_drain( server_transport );
 
     rocketnet_server_update_stats( server_transport, time );
@@ -1731,11 +1762,13 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         if ( response )
             response += ROCKETNET_FRAME_WIRE_OFFSET;
 
-        const int outcome = rocketnet_server_protocol_process_packet( &server_transport->protocol, &received->from[i],
+        const int outcome = rocketnet_server_protocol_process_packet_capacity( &server_transport->protocol, &received->from[i],
                                          received->packet_data[i], received->packet_bytes[i],
                                          current_timestamp, current_time,
                                          response ? response : response_overflow, &response_bytes,
-                                         payload ? payload : payload_overflow, &payload_bytes, &payload_client_index );
+                                         payload ? payload : payload_overflow,
+                                         payload ? ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES : (int) sizeof(payload_overflow),
+                                         &payload_bytes, &payload_client_index );
 
         // a packet that opened under a connection's keys teaches the driver
         // its link-layer source (the xdp reply-MAC rule, DRIVERS.md); a
@@ -1859,10 +1892,12 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             if ( response )
                 response += ROCKETNET_FRAME_WIRE_OFFSET;
 
-            rocketnet_server_protocol_process_packet( &server_transport->protocol, &from, receive_frame, packet_bytes,
+            rocketnet_server_protocol_process_packet_capacity( &server_transport->protocol, &from, receive_frame, packet_bytes,
                                              current_timestamp, current_time,
                                              response ? response : response_overflow, &response_bytes,
-                                             payload ? payload : payload_overflow, &payload_bytes, &payload_client_index );
+                                             payload ? payload : payload_overflow,
+                                             payload ? ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES : (int) sizeof(payload_overflow),
+                                             &payload_bytes, &payload_client_index );
 
             int wire_client_after = wire_client_before;
             if ( wire_client_before < 0 )
