@@ -1426,6 +1426,13 @@ accessors. Config defaults and validation use
 `rocketnet_client_default_config`, `rocketnet_client_validate_config`,
 `rocketnet_server_default_config`, and `rocketnet_server_validate_config`.
 
+A client whose server ended its connection — `rocketnet_server_disconnect_client`,
+`rocketnet_server_stop`, or `rocketnet_server_destroy` — reports
+`ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED` from
+`rocketnet_client_disconnect_reason` until the next connection is established; a
+deliberate client disconnect and a connection timeout read
+`ROCKETNET_DISCONNECT_REASON_NONE`.
+
 The counters and stats this document names are read through the client and
 server accessors in `sdk/rocketnet.h`; the message-layer counter names are
 internal (`sdk/rocketnet_layers.h`). The counters this document names are `MESSAGE_SEND_STORE_FULL`,

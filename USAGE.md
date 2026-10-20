@@ -471,7 +471,12 @@ attempt or the connection ended, and the client stays in it until it is
 destroyed. Read the state with `rocketnet_client_state`, its name with
 `rocketnet_client_state_name`, and the end reason with
 `rocketnet_client_disconnect_reason`. `rocketnet_client_index` reports the
-client's slot on the server while connected.
+client's slot on the server while connected. When the server ends the
+connection — `rocketnet_server_disconnect_client`, `rocketnet_server_stop`, or
+`rocketnet_server_destroy` — the client reads
+`ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED` until it connects again; a
+deliberate client disconnect and a connection timeout read
+`ROCKETNET_DISCONNECT_REASON_NONE`.
 
 `rocketnet_client_disconnect` ends the connection: the disconnect is sent and
 the state becomes DISCONNECTED. On the server,

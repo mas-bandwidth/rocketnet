@@ -8202,8 +8202,77 @@ void rocketnet_test_client_receive_thread_quit_wake_before_wait_returns()
 
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
+// DONE-WHEN (6): a real client and server over sockets; the server disconnects
+// the client, and the client reports
+// ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED.
+void rocketnet_test_server_disconnect_client_reports_server_disconnected()
+{
+    struct rocketnet_server_config_t server_config;
+    rocketnet_server_dev_config( &server_config );
+    server_config.max_clients = 4;
+    server_config.transport = "portable";
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
+    rocketnet_check( server );
+
+    char server_address[64];
+    snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, 99, (uint64_t) time( NULL ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_client_config_t client_config;
+    rocketnet_client_default_config( &client_config );
+    client_config.transport = "portable";
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    if ( client && rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_client_destroy( client );
+        client = NULL;
+    }
+    rocketnet_check( client );
+
+    const double wall_start = rocketnet_time();
+    while ( rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED && rocketnet_time() - wall_start < 10.0 )
+    {
+        const double now = 1000.0 + ( rocketnet_time() - wall_start );
+        rocketnet_server_update( server, now );
+        rocketnet_client_update( client, now );
+        rocketnet_client_send_packets( client );
+        rocketnet_server_send_packets( server );
+        rocketnet_sleep( 0.005 );
+    }
+    rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+
+    const int slot = rocketnet_client_index( client );
+    rocketnet_check( rocketnet_server_client_connected( server, slot ) );
+
+    rocketnet_server_disconnect_client( server, slot );
+    rocketnet_server_send_packets( server );
+
+    bool reported = false;
+    for ( int i = 0; i < 200 && !reported; i++ )
+    {
+        const double now = 1000.0 + ( rocketnet_time() - wall_start );
+        rocketnet_client_update( client, now );
+        rocketnet_client_send_packets( client );
+        if ( rocketnet_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED )
+            reported = true;
+        rocketnet_sleep( 0.002 );
+    }
+    rocketnet_check( reported );
+    rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+
+    rocketnet_client_destroy( client );
+    rocketnet_server_destroy( server );
+}
+
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
+    { "server_disconnect_client_reports_server_disconnected", rocketnet_test_server_disconnect_client_reports_server_disconnected },
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config },
     { "server_receive_keeps_up_with_max_clients", rocketnet_test_server_receive_keeps_up_with_max_clients },
     { "macos_client_timing_default_qos", macos_client_timing_default_qos },

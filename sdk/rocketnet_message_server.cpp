@@ -41,6 +41,7 @@
 #include "rocketnet_channel.h"
 #include "rocketnet_config.h"
 #include "rocketnet_counters.h"
+#include "rocketnet_layers.h"
 #include "rocketnet_endpoint.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet_message.h"
@@ -461,6 +462,19 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         }
     }
 
+    // the client transport's accepted-server-disconnect count, taken before
+    // the update so the terminal check below can tell a server-ended
+    // connection from a timeout or a refusal (the client reports
+    // ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED only when the server's
+    // disconnect packet was accepted this update)
+    const uint64_t * client_counters = NULL;
+    uint64_t client_disconnect_accepted_before = 0;
+    if ( !object->is_server && object->link.transport )
+    {
+        client_counters = rocketnet_client_transport_counters( (rocketnet_client_transport_t *) object->link.transport )->values;
+        client_disconnect_accepted_before = client_counters[ROCKETNET_COUNTER_CLIENT_DISCONNECT_ACCEPTED];
+    }
+
     object->link.update( object->link.transport, time - object->clock_origin );
 
     // The client message connection is bound before the handshake so sends
@@ -472,6 +486,8 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
          object->connections[0].state == RN_MESSAGE_CONNECTION_CONNECTED &&
          object->link.state( object->link.transport ) <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
     {
+        if ( client_counters && client_counters[ROCKETNET_COUNTER_CLIENT_DISCONNECT_ACCEPTED] != client_disconnect_accepted_before )
+            object->connections[0].disconnect_reason = ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED;
         rocketnet_client_connection_reset( object );
         rn_slots_observe( &object->slots, 0, 0 );
     }

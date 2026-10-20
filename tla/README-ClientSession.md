@@ -18,7 +18,7 @@ numbers below are at `14993f6` (the base of this change).
 | `st` | `struct rocketnet_client_transport_t` (`sdk/rocketnet_client_transport.cpp:120`), read by `rocketnet_client_transport_state` (`:1591`); the state codes are `ROCKETNET_CLIENT_TRANSPORT_STATE_*` (`sdk/rocketnet.h:705-716`) | `NONE` (no object), `DISCONNECTED`, the three handshake stages, `CONNECTED`, and the seven error states |
 | `cur` | ghost | the session tag of the connection in progress, 0 outside one |
 | `conn[f]` | the per-connection fields of `struct rocketnet_client_protocol_t` (`sdk/rocketnet_client_protocol.h:57`: the send sequences `:91-92`, the replay windows `:94-95`, the reassembly set `:136`) and the message layer above it | one field per row of the reset inventory, each 0 (Init) or the tag of the session that wrote it |
-| `reason` | `rocketnet_message_client_disconnect_reason` (`sdk/rocketnet.h:2324`) | the disconnect reason, kept through the reset, cleared to NONE when the next connection reaches CONNECTED |
+| `reason` | `rocketnet_message_client_disconnect_reason` (`sdk/rocketnet.h:2324`) | the disconnect reason, kept through the reset, cleared to NONE when the next connection reaches CONNECTED; `ServerDisconnect` writes `ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED` (6) |
 | `kept` | the lifetime counters and the config | kept across connections; fresh only at create |
 | `link` | the path from the server | the session tags of server packets in flight (lossy: `Lose`) |
 
