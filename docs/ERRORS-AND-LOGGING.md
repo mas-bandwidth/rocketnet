@@ -207,6 +207,31 @@ ROCKETNET_EXPORT void rocketnet_set_log_callback(
 4. **Last registration wins**: a non-NULL callback replaces the active sink;
    passing `NULL` restores the default sink.
 
+### 3.4 Refused Thread Priority Calls
+
+The library's network-thread priority calls (`docs/CLIENT-IO.md`, Thread
+priority; `DRIVERS.md`, Server network threads) check each result. A refused
+call (`pthread_setschedparam` nonzero, `pthread_setaffinity_np` nonzero on the
+XDP thread, `SetThreadPriority` FALSE, `timeBeginPeriod` or `timeEndPeriod`
+not `TIMERR_NOERROR`) adds one to a process-wide count, read with
+`rocketnet_get_thread_priority_refusals()`, and never fails a create or
+`rocketnet_init`. The first refusal of each call kind logs one warning, and
+that kind never logs again in the process:
+
+```
+thread priority: pthread_setschedparam SCHED_RR 1 refused (Operation not permitted); the thread runs at its default priority
+```
+
+The other kinds read `thread priority: SetThreadPriority
+THREAD_PRIORITY_TIME_CRITICAL refused (error <n>); ...`, `thread affinity:
+pthread_setaffinity_np cpu <n> refused (...); the thread runs on any cpu`,
+`timer period: timeBeginPeriod 1 refused (error <n>); the timer keeps its
+default period` and `timer period: timeEndPeriod 1 refused (...)`. The count
+is updated with a relaxed atomic from whichever thread made the call, so a
+worker thread never writes a transport's counters. An unprivileged Linux
+process is refused `SCHED_RR`; the count and the one line are how a game sees
+that its network threads run at the default priority.
+
 ---
 
 ## 4. COUNTERS

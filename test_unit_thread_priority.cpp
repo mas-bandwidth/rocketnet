@@ -8,7 +8,7 @@
 // system and a thread handle that is never started stands in for the thread.
 // No real thread, no real time, no socket.
 //
-// The values are the flow library's, as the space game carried it:
+// The values are the flow library's (flow_platform.cpp), unchanged:
 //   POSIX client and server thread: pthread_setschedparam( thread, SCHED_RR,
 //     sched_get_priority_min( SCHED_RR ) ), one call.
 //   Windows client and server thread: SetThreadPriority( thread,

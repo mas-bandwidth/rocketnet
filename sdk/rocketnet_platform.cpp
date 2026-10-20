@@ -76,7 +76,7 @@ bool rocketnet_platform_sleep_tail_yields( double remaining )
 static bool rocketnet_platform_ipv6_socket_available_for_testing = true;
 
 // Network-thread priority (docs/CLIENT-IO.md, DRIVERS.md). The calls and their
-// values are the flow library's as the space game carried it; each platform
+// values are the flow library's (flow_platform.cpp), unchanged; each platform
 // block below fills the real call table. A unit test replaces the table
 // (test_unit_thread_priority.cpp). A refused call is counted process-wide and
 // logged once per call kind; it never fails the caller.
@@ -3154,7 +3154,7 @@ static int connection_type = ROCKETNET_CONNECTION_TYPE_UNKNOWN;
 
 // Windows: SetThreadPriority( thread, THREAD_PRIORITY_TIME_CRITICAL ) on the
 // network threads (flow_platform.cpp:1839-1851), and the process timer at 1 ms
-// from platform init to platform term (space platform.cpp:154 and :173)
+// from platform init to platform term (game/Libraries/platform/platform.cpp:154 and :173 in the game that carried flow)
 
 static int rocketnet_platform_real_set_sched( rocketnet_platform_thread_t * thread, int policy, int priority )
 {
