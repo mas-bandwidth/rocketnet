@@ -98,8 +98,10 @@ static enum rocketnet_status_t both_families_start( const both_families_identity
     config.second_public_address = second;
     both_families_now = 1000.0;
     rocketnet_set_quiet( 1 );
-    struct rocketnet_server_t * server = rocketnet_server_create_sized( NULL, first, &config, sizeof( config ), NULL, 0 );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_COUNT;
+    struct rocketnet_server_t * server = rocketnet_server_create_sized( NULL, first, &config, sizeof( config ), NULL, 0, &create_status );
     check( server != NULL );
+    check( create_status == ROCKETNET_STATUS_OK );
     enum rocketnet_status_t status = rocketnet_server_start( server );
     *out = server;
     return status;
@@ -196,8 +198,10 @@ static struct rocketnet_client_t * both_families_connect_client( const both_fami
     both_families_token( identity, client_id, address, token );
     rocketnet_client_config_t config;
     both_families_client_config( &config );
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL, 0 );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_COUNT;
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL, 0, &create_status );
     check( client != NULL );
+    check( create_status == ROCKETNET_STATUS_OK );
     check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
     return client;
 }
