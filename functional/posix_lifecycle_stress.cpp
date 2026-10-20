@@ -201,6 +201,11 @@ static posix_resource_counts_t posix_stable_counts()
 // onto the portable pump) against every client cell (portable, msgx). The
 // forced cell requests msgx first and lets ROCKETNET_PUMP=portable refuse that
 // rung, so the ladder grants portable; the grant is checked, not assumed.
+// ROCKETNET_PUMP=portable turns the msgx pump off for every create in the
+// process, client and server alike (rocketnet_platform_socket_create_with_pump
+// in sdk/rocketnet_platform.cpp refuses a required msgx while it is set), so
+// posix_server_create sets it around the server create only and the client
+// cell keeps its own pump.
 struct posix_cell_t
 {
     const char * name;
@@ -475,8 +480,6 @@ static void posix_cell_begin( const posix_cell_t * cell, posix_env_guard_t * ser
     posix_env_clear( server_guard, "ROCKETNET_SERVER_TRANSPORT" );
     posix_env_clear( client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
     posix_env_clear( pump_guard, "ROCKETNET_PUMP" );
-    if ( cell->pump )
-        posix_check( setenv( "ROCKETNET_PUMP", cell->pump, 1 ) == 0 );
 #if defined(__linux__) && ROCKETNET_XDP
     if ( cell->xdp )
         posix_xdp_setup();
@@ -504,7 +507,11 @@ static rocketnet_server_transport_t * posix_server_create( const posix_cell_t * 
     }
     snprintf( config.driver, sizeof( config.driver ), "%s", cell->server_driver );
     int status = ROCKETNET_STATUS_OK;
+    if ( cell->pump )
+        posix_check( setenv( "ROCKETNET_PUMP", cell->pump, 1 ) == 0 );
     rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, address, &config, rocketnet_platform_time(), &status );
+    if ( cell->pump )
+        posix_check( unsetenv( "ROCKETNET_PUMP" ) == 0 );
     if ( !server )
         printf( "server create [%s] at %s failed: %s\n", cell->name, address, rocketnet_status_name( (enum rocketnet_status_t) status ) );
     posix_check( server != NULL );
