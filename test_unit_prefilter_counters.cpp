@@ -164,8 +164,8 @@ static void pcapng_free( void * context, void * p )
 static void pcapng_allocator_install()
 {
     rocketnet_term();
-    check( rocketnet_allocator( pcapng_malloc, pcapng_free ) );
-    check( rocketnet_init( NULL ) );
+    check( rocketnet_set_allocator( pcapng_malloc, pcapng_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
     pcapng_live_bytes = 0;
     pcapng_peak_bytes = 0;
 }
@@ -173,8 +173,8 @@ static void pcapng_allocator_install()
 static void pcapng_allocator_restore()
 {
     rocketnet_term();
-    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
-    check( rocketnet_init( NULL ) );
+    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
 static std::string pcapng_directory()

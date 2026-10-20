@@ -94,7 +94,7 @@ int main( int argc, char ** argv )
 
     struct rocketnet_server_t * server = NULL;
     struct rocketnet_client_t ** clients = calloc( (size_t) num_clients, sizeof( clients[0] ) );
-    if ( !clients || !rocketnet_init( NULL ) ) { printf( "FAIL: init\n" ); return 1; }
+    if ( !clients || rocketnet_init( NULL ) != ROCKETNET_STATUS_OK ) { printf( "FAIL: init\n" ); return 1; }
 
     // the in-memory loopback transport holds ROCKETNET_LOOPBACK_MAX_ENDPOINTS
     // endpoints: one server and ROCKETNET_MAX_CLIENTS clients
@@ -119,7 +119,7 @@ int main( int argc, char ** argv )
     for ( int i = 0; i < num_clients; i++ )
     {
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];       // a development token stamped far ahead, as in hello
-        if ( !rocketnet_write_dev_connect_token( server_address, (uint64_t) i, 4102444800ull, token ) ||
+        if ( rocketnet_write_dev_connect_token( server_address, (uint64_t) i, 4102444800ull, token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK ||
              !( clients[i] = rocketnet_client_create( NULL, &client_config, NULL, 0 ) ) ||
              rocketnet_client_connect( clients[i], token ) != ROCKETNET_STATUS_OK )
             { printf( "FAIL: client %d create\n", i ); goto cleanup; }
@@ -157,11 +157,11 @@ int main( int argc, char ** argv )
             while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )              // (2) receive the snapshot
                 { read_message( &to_client, frame, data, bytes ); rocketnet_client_release_message( client, data ); }
             // (3) simulate: nothing moves in this example
-            if ( measuring && ( buffer = rocketnet_client_start_message( client, 0, ROCKETNET_UNRELIABLE_SEQUENCED, sizeof( message_t ) ) ) )
+            if ( measuring && ( buffer = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, sizeof( message_t ) ) ) )
                 { write_message( buffer, frame ); rocketnet_client_finish_message( client, sizeof( message_t ) ); }      // (4) queue
             if ( measuring && ( frame + i ) % 30 == 0 && frame + 60 < measure_from + frames )
             {
-                if ( ( buffer = rocketnet_client_start_message( client, 1, ROCKETNET_RELIABLE_ORDERED, sizeof( message_t ) ) ) ) write_message( buffer, frame );
+                if ( ( buffer = rocketnet_client_start_message( client, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, sizeof( message_t ) ) ) ) write_message( buffer, frame );
                 if ( !buffer || !rocketnet_client_finish_message( client, sizeof( message_t ) ) ) { printf( "FAIL: client %d event refused\n", i ); goto cleanup; }
                 events_sent++;
             }
@@ -184,7 +184,7 @@ int main( int argc, char ** argv )
         }
         // (3) simulate: nothing moves in this example
         for ( int i = 0; measuring && i < num_clients; i++ )                            // (4) queue each client's snapshot
-            if ( ( buffer = rocketnet_server_start_message( server, i, 0, ROCKETNET_UNRELIABLE_SEQUENCED, sizeof( message_t ) ) ) )
+            if ( ( buffer = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, sizeof( message_t ) ) ) )
                 { write_message( buffer, frame ); rocketnet_server_finish_message( server, i, sizeof( message_t ) ); }
         if ( !wrong_order ) rocketnet_server_send_packets( server );                    // (5) last, so this frame's messages leave this frame
 

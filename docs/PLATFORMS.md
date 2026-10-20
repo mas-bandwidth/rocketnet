@@ -17,20 +17,20 @@ names.
 | --- | --- | --- | --- | --- | --- | --- |
 | Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | GCC 13 | portable, gso, xdp | supported | .github/workflows/ci.yml | self-hosted, Linux, X64, fleet |
 | Ubuntu 24.04 (Linux, cross/QEMU) | s390x | s390x-linux-gnu-gcc | portable | supported | .github/workflows/ci.yml | ubuntu-24.04 |
-| macOS 27 (self-hosted fleet) | arm64 | Apple Clang | portable, msgx | supported | .github/workflows/ci.yml | self-hosted, macOS, ARM64, rocketnet-macos |
+| [macOS 27 (self-hosted fleet)](MACOS.md) | arm64 | Apple Clang | portable, msgx | supported | .github/workflows/ci.yml | self-hosted, macOS, ARM64, rocketnet-macos |
 | Windows Server 2025 | x86_64 | MSVC | portable, iocp | supported | .github/workflows/ci.yml | windows-2025 |
 | Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | GCC | portable, gso, xdp | nightly | .github/workflows/nightly-leaks.yml | self-hosted, Linux, X64, fleet |
 | Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | Clang | portable | nightly | .github/workflows/fuzz-nightly.yml | self-hosted, Linux, X64, fleet |
 | Ubuntu 24.04 (Linux, full-system guest) | s390x | GCC | portable | nightly | .github/workflows/nightly-bigendian-system.yml | self-hosted, Linux, X64, fleet |
-| macOS 27 (self-hosted fleet) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-soak.yml | self-hosted, macOS, ARM64, rocketnet-macos |
-| macOS 27 (self-hosted fleet) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-frame-budget.yml | self-hosted, macOS, ARM64, rocketnet-macos |
-| macOS 27 (self-hosted fleet) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-examples.yml | self-hosted, macOS, ARM64, rocketnet-macos |
+| [macOS 27 (self-hosted fleet)](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-soak.yml | self-hosted, macOS, ARM64, rocketnet-macos |
+| [macOS 27 (self-hosted fleet)](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-frame-budget.yml | self-hosted, macOS, ARM64, rocketnet-macos |
+| [macOS 27 (self-hosted fleet)](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-examples.yml | self-hosted, macOS, ARM64, rocketnet-macos |
 | Windows Server 2025 | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly-soak.yml | windows-2025 |
 | Windows Server 2025 | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly.yml | windows-2025 |
 | Windows 11 (self-hosted fleet) | x86_64 | clang-cl (LLVM toolset) | portable | nightly | .github/workflows/nightly.yml | self-hosted, Windows, X64, rocketnet-windows |
 | Linux | arm64 | none | none | unsupported | - | - |
 | Windows | arm64 | MSVC (cross, build-checked) | none | unsupported | - | - |
-| macOS | x86_64 | none | none | unsupported | - | - |
+| [macOS](MACOS.md) | x86_64 | none | none | unsupported | - | - |
 
 clang-cl x64 is built and tested nightly: the `windows-toolchains` job in
 `nightly.yml` builds the static and shared libraries, `test.exe` and
@@ -40,10 +40,11 @@ build-checked and untested: the same job cross-builds the static and shared
 libraries with MSVC for ARM64, checks that `rocketnet.dll` is an ARM64 image
 and checks its exports. Nothing runs on arm64, so its row stays unsupported.
 
-The drivers column names the backends the row actually exercises or proves in
-CI. The registry (`rocketnet_drivers.inc`) also lists portable on every
-platform, gso and xdp on Linux, msgx on macOS and iocp on Windows. A driver
-that the row does not name is not part of that row's claim.
+The macOS rows link to [MACOS.md](MACOS.md), the guide for building, pinning
+and verifying on a Mac. The drivers column names the backends the row actually
+exercises or proves in CI. The registry (`rocketnet_drivers.inc`) also lists
+portable on every platform, gso and xdp on Linux, msgx on macOS and iocp on
+Windows. A driver that the row does not name is not part of that row's claim.
 
 ## Policy rules
 

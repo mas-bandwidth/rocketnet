@@ -30,7 +30,7 @@
 // Exhaustion is a counted refusal (MESSAGE_SEND_STORE_FULL,
 // MESSAGE_SEND_QUEUE_FULL), never growth, and it ends the connection: the
 // region takes a sticky exhausted state with the reason
-// ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED, the owner's update reads
+// ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED, the owner's update reads
 // rn_connection_memory_decide and disconnects that connection (a server
 // kicks the slot, a client disconnects itself), and rn_region_reset gives
 // the slot's next client a fresh region (tla/RNConnectionMemory.tla).
@@ -361,7 +361,7 @@ struct rn_region_t
     uint32_t descriptors_free;
 
     uint32_t exhausted;                 // sticky until reset: an operation found no room (RNConnectionMemory Exhaust)
-    int32_t exhausted_reason;           // ROCKETNET_MESSAGE_ERROR_*: NONE, or MESSAGE_MEMORY_EXHAUSTED
+    int32_t exhausted_reason;           // ROCKETNET_DISCONNECT_REASON_*: NONE, or MESSAGE_MEMORY_EXHAUSTED
 
     uint32_t send_room_armed;           // 1 until the send room watch reports a crossing, 1 again below half (rn_region_send_room_watch)
 };
@@ -392,10 +392,10 @@ void rn_region_exhaust( rn_region_t * region );
 
 bool rn_region_exhausted( const rn_region_t * region );
 
-int rn_region_exhausted_reason( const rn_region_t * region );     // ROCKETNET_MESSAGE_ERROR_*
+int rn_region_exhausted_reason( const rn_region_t * region );     // ROCKETNET_DISCONNECT_REASON_*
 
 // RNConnectionMemory Kick, the decision: pure, allocation-free, called by the
-// owner every update. ROCKETNET_MESSAGE_ERROR_NONE, or the reason to end
+// owner every update. ROCKETNET_DISCONNECT_REASON_NONE, or the reason to end
 // this connection with: a server disconnects the slot
 // (rocketnet_server_transport_disconnect_client) and resets its region; a
 // client disconnects itself (rocketnet_client_transport_disconnect). An

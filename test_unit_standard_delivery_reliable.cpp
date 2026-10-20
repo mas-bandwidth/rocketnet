@@ -223,7 +223,7 @@ static int trace_run( const delivery_step_t * steps, int count, uint8_t * out, i
                 {
                     rn_delivery_t delivery;
                     outcome = rn_channels_dispatch( &channels, &parsed, &delivery );
-                    if ( channels.error != ROCKETNET_MESSAGE_ERROR_NONE )
+                    if ( channels.error != ROCKETNET_DISCONNECT_REASON_NONE )
                         connection_violation = 1;
                 }
             }

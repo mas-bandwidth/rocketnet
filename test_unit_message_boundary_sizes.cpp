@@ -168,8 +168,8 @@ static void boundary_drain(boundary_pair_t * pair,std::vector<boundary_received_
     }
 }
 static void boundary_step(boundary_pair_t * pair,std::vector<boundary_received_t> * got) {
-    pair->time+=0.01; check(rocketnet_message_server_update(pair->server,pair->time)==ROCKETNET_MESSAGE_OK);
-    check(rocketnet_message_client_update(pair->client,pair->time)==ROCKETNET_MESSAGE_OK); boundary_drain(pair,got);
+    pair->time+=0.01; check(rocketnet_message_server_update(pair->server,pair->time)==ROCKETNET_UPDATE_OK);
+    check(rocketnet_message_client_update(pair->client,pair->time)==ROCKETNET_UPDATE_OK); boundary_drain(pair,got);
     rocketnet_message_server_send_packets(pair->server); rocketnet_message_client_send_packets(pair->client);
 }
 static std::vector<uint8_t> boundary_data(uint32_t sequence,int bytes) {

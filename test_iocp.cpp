@@ -997,9 +997,9 @@ static const fault_case_t fault_cases[] = {
 // With no argument every case runs; with names, only those cases run.
 int main( int argc, char ** argv )
 {
-    rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
-    rocketnet_allocator(allocate, release);
-    CHECK(rocketnet_init( NULL ));
+    rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_NONE);
+    rocketnet_set_allocator(allocate, release);
+    CHECK(rocketnet_init( NULL ) == ROCKETNET_STATUS_OK);
     if ( argc < 2 )
     {
         test_create_cleanup();
