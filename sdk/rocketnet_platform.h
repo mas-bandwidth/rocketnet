@@ -652,6 +652,8 @@ void rocketnet_platform_server_thread_priority( struct rocketnet_platform_thread
  * with a recording fake through rocketnet_platform_set_priority_calls_for_testing.
  * An entry a platform does not use is a stub that does nothing.
  */
+struct rocketnet_platform_mutex_t;
+
 struct rocketnet_platform_priority_calls_t
 {
     /** @brief POSIX: pthread_setschedparam on the thread with the policy and priority; 0 or an errno. */
@@ -664,6 +666,12 @@ struct rocketnet_platform_priority_calls_t
     unsigned int ( *time_end_period )( unsigned int period );
     /** @brief Windows: QueryPerformanceFrequency into the LARGE_INTEGER the argument points at. */
     void ( *timer_frequency )( void * frequency );
+    /** @brief Platform mutex create on the embedded handle; 0 on success, an errno or nonzero on failure. */
+    int ( *mutex_init )( struct rocketnet_platform_mutex_t * mutex );
+    /** @brief Platform startup (Windows WSAStartup); 0 on success, nonzero on failure. */
+    int ( *platform_start )( void );
+    /** @brief Windows: CreateWaitableTimerExW; NULL on failure. Off Windows the handle is unused and the entry returns a non-NULL placeholder, so NULL stays the failure answer on every platform. */
+    void* ( *create_waitable_timer )( unsigned flags );
 };
 
 /**
@@ -678,6 +686,12 @@ const struct rocketnet_platform_priority_calls_t * rocketnet_platform_priority_c
  * @return None.
  */
 void rocketnet_platform_set_priority_calls_for_testing( const struct rocketnet_platform_priority_calls_t * calls );
+
+/**
+ * @brief The priority call table currently in effect (the test override, or the real table).
+ * @return The table in effect; never NULL.
+ */
+const struct rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls_current( void );
 
 /**
  * @brief Forgets which call kinds have logged their one refusal line, for unit tests only.
