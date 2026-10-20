@@ -86,9 +86,9 @@ struct rocketnet_server_driver_operations_t
     // opened under the connection's keys); a driver that addresses frames
     // itself learns the packet's link-layer source for its address.
     void (*peer_accepted)( void * driver, int view_index );
-    // optional; any thread. The driver's count of datagrams its send calls
-    // dropped, monotonic for the driver's life. The transport surfaces it as
-    // SEND_FAILED when its counters are read.
+    // optional; any thread. The datagrams the driver's sends dropped on a
+    // failed send call, cumulative for the driver's life; the transport
+    // surfaces it as SEND_FAILED when its counters are read.
     uint64_t (*send_failures)( void * driver );
 };
 
@@ -125,9 +125,9 @@ struct rocketnet_client_driver_operations_t
     // optional, with wait; any thread. Sets the level-triggered wake, so a
     // wait in progress or the next wait returns at once.
     void (*wake)( void * driver );
-    // optional; any thread. The driver's count of datagrams its send calls
-    // dropped, monotonic for the driver's life. The transport surfaces it as
-    // SEND_FAILED when its counters are read.
+    // optional; any thread. The datagrams the driver's sends dropped on a
+    // failed send call, cumulative for the driver's life; the transport
+    // surfaces it as SEND_FAILED when its counters are read.
     uint64_t (*send_failures)( void * driver );
 };
 

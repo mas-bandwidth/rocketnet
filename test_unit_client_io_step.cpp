@@ -215,10 +215,10 @@ static void client_io_receive_time_from_callback()
 }
 REGISTER_UNIT_TEST( client_io_receive_time_from_callback );
 
-// Two datagrams, one under the size prefilter: both reach the expose, because
-// the main thread's prefilter counts the runt rather than the I/O thread
-// dropping it; after the return a later datagram reaches the next expose.
-// RNClientIo IoReceive, IoPublish, Expose, Return.
+// Two datagrams, one under the size prefilter: the expose delivers both, the
+// runt as a record for the main thread's prefilter to refuse and count; after
+// its return a later datagram reaches the next expose. RNClientIo
+// IoReceive, IoPublish, Expose, Return.
 static void client_io_step_publishes_received()
 {
     rocketnet_fake_client_driver_t fake = {};
