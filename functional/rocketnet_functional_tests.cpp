@@ -6735,21 +6735,25 @@ void rocketnet_test_client_io_linux_mmsg_batch_round_trip()
 
     // One recvmmsg result with a truncated datagram, a zero-length one and a
     // kept one exercises chunk indexing, the oversize report (true size, the
-    // stored prefix) and rejection compaction.
+    // stored prefix) and rejection compaction. The zero-length datagram goes
+    // by a raw sendto: the mmsg send path carries positive-size payloads only.
     uint8_t truncated_data[16];
     memset( truncated_data, 'T', sizeof(truncated_data) );
     uint8_t kept_data[2] = { 0xA1, 0xB2 };
-    struct rocketnet_platform_send_t compact_sends[3];
+
+    sockaddr_in zero_length_to;
+    rocketnet_platform_address_to_sockaddr_in( &bind_address, &zero_length_to );
+    const char zero_length_byte = 0;
+    rocketnet_check( sendto( sender->handle, &zero_length_byte, 0, 0, (sockaddr*) &zero_length_to, sizeof(zero_length_to) ) == 0 );
+
+    struct rocketnet_platform_send_t compact_sends[2];
     compact_sends[0].to = &bind_address;
     compact_sends[0].packet_data = truncated_data;
     compact_sends[0].packet_bytes = sizeof(truncated_data);
     compact_sends[1].to = &bind_address;
-    compact_sends[1].packet_data = &kept_data[0];
-    compact_sends[1].packet_bytes = 0;
-    compact_sends[2].to = &bind_address;
-    compact_sends[2].packet_data = &kept_data[1];
-    compact_sends[2].packet_bytes = 1;
-    rocketnet_platform_socket_send_packets_mmsg( sender, compact_sends, 3 );
+    compact_sends[1].packet_data = &kept_data[1];
+    compact_sends[1].packet_bytes = 1;
+    rocketnet_platform_socket_send_packets_mmsg( sender, compact_sends, 2 );
     rocketnet_platform_sleep( 0.01 );
 
     uint8_t compact_receive_data[3][8];
