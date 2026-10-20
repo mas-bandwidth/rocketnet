@@ -432,3 +432,24 @@ MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumToke
 MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1; checks TimedOutSlotFreed, AbandonedMappingDies	18960	4767	pass	hetzner2	2026-10-13
 MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, C2SPattern "first", S2CPattern "first"; checks TimedOutSlotFreed, AbandonedMappingDies	18480	4592	pass	hetzner2	2026-10-13
 ```
+
+## Two-slot instance
+
+`MCServerConnectionTwoSlots.cfg` is the committed configuration with
+`MaxSlots = 2` and `MapCap = 2`, two clients and two tokens, every deadline
+and both application disconnects unchanged. It keeps `SafetyInvariants`,
+`ChurnNeverDenied` and `ExpiredTokenNeverMapped` and the two action
+properties. It passes: 470,755 generated / 100,278 distinct states, depth 38,
+44.315 s, exit 0, and is a required case.
+
+The deployed server has up to `ROCKETNET_MAX_CLIENTS` slots and a mapping
+table of `max_clients * 2` entries. The safety invariants are local: each
+names a slot, a mapping or a token binding and its statement does not count
+slots, while `MappingsBounded` compares the live mappings with the configured
+capacity. The two-slot instance exercises the lowest-free-slot assignment
+across two live slots, two simultaneous mappings and slot reuse; a third or
+later slot changes only which index is free, not the predicates. The
+size-dependent part it does not cover is the sweep and handshake-deadline
+interleaving at a full table, and the reverse witnesses use their own small
+instances. Link patterns are the committed no-loss FIFO pattern; the larger
+loss-pattern runs are recorded above as owed bound.
