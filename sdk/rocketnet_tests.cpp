@@ -7215,6 +7215,17 @@ void rocketnet_test_frame_sync_lifecycle()
     rocketnet_frame_sync_destroy( frame_sync );
 }
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+extern int rocketnet_frame_sync_timebase_ready_for_testing();
+
+void rocketnet_test_frame_sync_timebase_before_create()
+{
+    // The probe reads only the OS timebase scale, never the live clock. The
+    // first frame-sync object has not been created when this runs.
+    rocketnet_check( rocketnet_frame_sync_timebase_ready_for_testing() );
+}
+#endif
+
 // a counting allocator: a create that reached allocation would move it. the
 // library is uninitialized with no live allocations when it is installed, so
 // the install is accepted.
@@ -14399,6 +14410,9 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_frame_sync_advance", rocketnet_test_frame_sync_advance },
     { "test_frame_sync_guard", rocketnet_test_frame_sync_guard },
     { "test_frame_sync_lifecycle", rocketnet_test_frame_sync_lifecycle },
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+    { "test_frame_sync_timebase_before_create", rocketnet_test_frame_sync_timebase_before_create },
+#endif
     { "test_create_before_init_is_refused", rocketnet_test_create_before_init_is_refused },
     { "test_allocator_refusal_is_returned", rocketnet_test_allocator_refusal_is_returned },
     { "test_public_api_null_is_a_counted_no_op", rocketnet_test_public_api_null_is_a_counted_no_op },

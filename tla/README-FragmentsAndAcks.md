@@ -76,7 +76,7 @@ Safety, checked under every loss pattern with no fairness:
 | Property | The rule |
 |---|---|
 | `SurfacedOnce` | the acked batch names a packet id at most once, ever (USAGE.md, "the packet ids newly acknowledged by the last update") |
-| `SurfacedOnlyIfOpened` | a packet id surfaces only when every sequence carrying it was opened by the receiver: for a fragmented payload, every fragment (USAGE.md, "a fragmented payload's id surfaces in the acked batch only when every fragment has been acknowledged"). Opened, not delivered: the acks cover a payload that reassembly then refused (`FRAGMENT_STALE`, `FRAGMENT_PAYLOAD_BATCH_FULL`), which USAGE.md:146-148 allows at the fragment level; the gap is real and D1 and D2 both sit in it |
+| `SurfacedOnlyIfOpened` | a packet id surfaces only when every sequence carrying it was opened by the receiver: for a fragmented payload, every fragment (USAGE.md, "a fragmented payload's id surfaces in the acked batch only when every fragment has been acknowledged"). Opened, not delivered: the acks cover a payload that reassembly then refused (`FRAGMENT_STALE`, `FRAGMENT_PAYLOAD_BATCH_FULL`), which USAGE.md:146-148 allows at the fragment level; the gap is real and the model's rule witnesses sit in it |
 | `BurnedNeverNamed` | a burned sequence is never opened and never named by a block, so it is never acknowledged as received |
 | `AckedMeansSurfaced` | a record with a packet id is marked acknowledged only once its id has surfaced, and an aggregate reaches zero only once its id has: the batch defers, it never drops (`sdk/rocketnet_ack.cpp`, "a packet id that cannot fit the batch is deferred, never dropped"); the safety face of `OpenedSurfacesOrLaps` |
 | `DeliveredExact` | a delivered payload is exactly the fragments of one id, each index once, every non-final fragment the stride, the final at most the stride (STANDARD.md, Fragmentation, "Fragment bytes land at index × stride") |
@@ -86,12 +86,15 @@ Safety, checked under every loss pattern with no fairness:
 | `CountPinned` (action property) | the first fragment of a payload id fixes its count (STANDARD.md, `FRAGMENT_COUNT_MISMATCH`) |
 | `TypeOK` | types, including both links' |
 
-Two more are the findings below, each in its own run and expected to fail on the code:
-`StaleOnlyIfOlder` (D1) and `BatchFullNeverFires` (D2).
+`StaleOnlyIfOlder` passes on the code arm and fails on the plain comparison and on the
+retired arm. `BatchFullNeverFires` fails on `find-batchfull`, where `DeliveredCap` is
+below the bound, and passes on `MCFragmentsAndAcksBatchAtBound.cfg`, where the cap is
+the bound. Neither failure is a code defect: the retired arm is a rule the code does
+not run, and `find-batchfull` is a below-bound witness.
 
-Out of scope: a liveness property for stale-slot recycling (an occupant that is never
-completed is eventually displaced). The code has no such rule, D1 is the proof, and the
-property belongs beside the fix.
+Out of scope: a liveness property that an occupant which is never completed is
+eventually displaced. The shipped stale rule refuses by distance from the newest
+completed id and from the occupant.
 
 Liveness, under the fairness described below:
 
@@ -195,9 +198,9 @@ through the pinned `tlacheck` as `tla/README.md` describes, each case its own sh
 the 110 s budget:
 
 ```sh
-for i in $(seq 0 23); do
+for i in $(seq 0 24); do
   "$job/tlacheck" run --root . --jar "$jar" --java "$java" \
-    --group fragmentsandacks --shards 24 --shard "$i" --workers 2 --timeout 110s \
+    --group fragmentsandacks --shards 25 --shard "$i" --workers 2 --timeout 110s \
     --dir "$job/fragmentsandacks-$i"
 done
 "$job/tlacheck" merge --root . --keep tla/RUNS.tsv \
@@ -218,8 +221,8 @@ burn beside a send, a deferral and every witness. The safety state space at this
 is 44.9 million distinct states (depth 49, 12 minutes with 4 workers), far over the
 110 s budget, so the committed run is a `bench` row with its debt named; at `MaxSeq = 6`
 with jitter it passes 100 million without finishing in 30 minutes, and at `MaxSeq = 8`
-it passes 95 million. The two findings reproduce in seconds, so their rows keep the
-larger instances.
+it passes 95 million. The below-bound batch witness still violates inside the budget.
+The code-arm stale rows are shrunk so their passes finish inside it.
 
 The other cfgs are the committed file with a few lines changed. Three shapes recur:
 
@@ -228,8 +231,9 @@ The other cfgs are the committed file with a few lines changed. Three shapes rec
   reordering and burns off (the defective sender is about header values, not the path);
   the two defect witnesses use it. The `defect` row itself is smaller still: `DefectIds = {0, 1}`, `MaxCount = 2`, counts `{2}`, `MaxSeq = 2`;
 - *pattern p*: both `Pattern` lines set to `p`;
-- *stale-small*: counts `{2}`, duplication and reordering off, pattern `"arbitrary"` (loss stays on, or nothing is ever left incomplete), burns on:
-  the instance on which the code's stale rule and the standard's are compared.
+- *stale-small*: counts `{2}`, duplication and reordering off, burns on. The code-arm
+  row uses `IdSpace = 16` and finite-burst loss so completions remain reachable; the
+  full safety exploration is retained as bench debt.
 
 | Run | Cfg | Changes | Expected | Gate |
 |---|---|---|---|---|
@@ -239,12 +243,14 @@ The other cfgs are the committed file with a few lines changed. Three shapes rec
 | live-dup | `MCFragmentsAndAcksLiveDup.cfg` | live with `MaxSeq = 1`, `MaxGen = 1`, `MaxCount = 2`, counts `{2}`, burns off, data link `"none"`, ack link `"arbitrary"` with duplication, reordering off; `OpenedSurfacesOrLaps` only (no INVARIANTS, no CountPinned): the instance on which the old per-link fairness failed; `live-small` has duplication off and cannot tell the two forms apart | passes: the evidence the fairness fix works on the failing case | required |
 | pat-none / first / burst | `MCFragmentsAndAcksPatNone.cfg`, `...PatFirst.cfg`, `...PatBurst.cfg` | pattern, `SpecSafety` + `CountPinned` | passes | bench: over budget |
 | pat-alternate | `MCFragmentsAndAcksPatAlternate.cfg` | pattern, `SpecSafety` + `CountPinned` | passes | required |
-| find-stale | `MCFragmentsAndAcksFindStale.cfg` | safety + `StaleOnlyIfOlder`, `MaxSeq = 6`, `MaxGen = 3`, `StaleAhead = 1` (the `num_slots = 256` geometry: one whole payload lost poisons) | **fails** `StaleOnlyIfOlder`: D1 | required |
-| find-stale-small | `MCFragmentsAndAcksFindStaleSmall.cfg` | find-stale + stale-small | **fails** `StaleOnlyIfOlder`: D1 | required |
-| find-stale-serial-small | `MCFragmentsAndAcksFindStaleSerialSmall.cfg` | find-stale-small + `StaleRule = "serial"` | passes: the standard's rule | bench: over budget |
-| find-stale-ahead2 | `MCFragmentsAndAcksFindStaleAhead2.cfg` | safety + `StaleOnlyIfOlder`, `MaxSeq = 8`, `MaxGen = 4`, `MaxDelay = 1` (`StaleAhead = 2`: two whole payloads lost poison), counts `{2}`, duplication and reordering off, ack link `"none"`, `Capacity = 1` | **fails** `StaleOnlyIfOlder`: D1 | required |
-| find-stale-plain | `MCFragmentsAndAcksFindStalePlain.cfg` | find-stale + `StaleRule = "plain"`, `FirstId = 6` | **fails** `StaleOnlyIfOlder`: the standard's own witness, a plain comparison across the wrap | required |
-| find-batchfull | `MCFragmentsAndAcksFindBatchFull.cfg` | safety + `BatchFullNeverFires`, `MaxSeq = 6`, `MaxGen = 3`, `Slots = 2`, `StaleRule = "serial"`, counts `{2}`, pattern none, duplication and burns off | **fails** `BatchFullNeverFires`: D2 | required |
+| find-stale | `MCFragmentsAndAcksFindStale.cfg` | safety + `StaleOnlyIfOlder`, `StaleRule = "code"`, `IdSpace = 16`, `FirstId = 3`, `MaxSeq = 6`, `MaxGen = 3`, `StaleAhead = 1`, counts `{2}`, burst loss at send 4, ack link `"none"`, `Capacity = 1`, duplication and reordering off | passes: the shipped rule with the reference advanced past the initial value; an honest id 5 arrives beyond `Reach` of reference 0 against a lower-generation occupant, which fails with `AdvanceCompleted` a no-op | required |
+| find-stale-small | `MCFragmentsAndAcksFindStaleSmall.cfg` | code arm, `IdSpace = 16`, counts `{2}`, burns on, data loss `"burst"`, ack link `"arbitrary"`, `Capacity = 2` | over the 110 s budget; unmeasured debt, not a completed pass | bench: over budget |
+| find-stale-serial-small | `MCFragmentsAndAcksFindStaleSerialSmall.cfg` | the unreduced small instance with `StaleRule = "serial"` | passes: the half-space comparison | bench: over budget |
+| find-stale-ahead2 | `MCFragmentsAndAcksFindStaleAhead2.cfg` | safety + `StaleOnlyIfOlder`, `StaleRule = "code"`, `IdSpace = 16`, `MaxSeq = 8`, `MaxGen = 4`, `MaxDelay = 1`, `StaleAhead = 2`, counts `{2}`, burns off, data loss `"burst"`, ack link `"none"`, `Capacity = 1`, duplication and reordering off | over the 110 s budget; unmeasured debt, not a completed pass | bench: over budget |
+| find-stale-retired | `MCFragmentsAndAcksFindStaleRetired.cfg` | the original small arbitrary-loss terrain with `StaleRule = "retired"` | **fails** `StaleOnlyIfOlder`: reversed witness for the old forward difference | required |
+| find-stale-plain | `MCFragmentsAndAcksFindStalePlain.cfg` | `StaleRule = "plain"`, `FirstId = 6` | **fails** `StaleOnlyIfOlder`: a plain comparison across the wrap | required |
+| find-batchfull | `MCFragmentsAndAcksFindBatchFull.cfg` | safety + `BatchFullNeverFires`, `MaxSeq = 6`, `MaxGen = 3`, `Slots = 2`, `DrainCap = 4`, `DeliveredCap = 2`, `StaleRule = "serial"`, counts `{2}`, pattern none, reordering on, duplication and burns off | **fails** `BatchFullNeverFires`: below-bound witness, not a code defect | required |
+| batch-at-bound | `MCFragmentsAndAcksBatchAtBound.cfg` | `MaxSeq = 8`, `MaxGen = 4`, `DeliveredCap = 3` (the bound) and `AckLinkIdle`; the pass reaches the third completion at the cap | passes `BatchFullNeverFires` | required |
 | defect | `MCFragmentsAndAcksDefect.cfg` | the small defect instance, `SpecSafety`, invariants + `CountPinned` | passes | required |
 | wit-firstfrag | `MCFragmentsAndAcksWitFirstfrag.cfg` | safety, `Witness = "firstfrag"` | **fails** `SurfacedOnlyIfOpened` | required |
 | wit-dropfull | `MCFragmentsAndAcksWitDropfull.cfg` | safety, `Witness = "dropfull"` | **fails** `AckedMeansSurfaced` | required |
@@ -257,16 +263,21 @@ The other cfgs are the committed file with a few lines changed. Three shapes rec
 | wit-staleheld | `MCFragmentsAndAcksWitStaleheld.cfg` | bits, `Witness = "staleheld"`, no `CountPinned` | **fails** `BitsMatchRing` | required |
 | link-fair | none | `SPECIFICATION SpecLinkFair` on the live cfg | TLC refuses the formula as a tautology (the fairness note above) | no case |
 
-Three instances were shrunk to fit the 110 s budget at two TLC workers: `live-small`
-from `MaxSeq = 3` with `Capacity = 2` to `MaxSeq = 2` with `Capacity = 1`; `defect` from
-`MaxSeq = 4` to `MaxSeq = 2`; and the D1 witness `find-stale-ahead2`, which keeps its
-`MaxSeq`, `MaxGen`, `StaleAhead` and jitter and drops counts `{2, 3}`, duplication,
-reordering, ack loss and the second wire slot, and still fails `StaleOnlyIfOlder` in the
-same 11 states (ids 2 and 3 burned whole, id 4's fragment 0 refused). The
-`find-stale-serial-small` pass needs the instance on which the code's rule fails
-(`MaxSeq = 6`; at `MaxSeq = 5` the code's rule finds no violation in 5 minutes), which
-is 19.7 million distinct states, so it stays a `bench` row rather than shrink below the
-comparison it exists for.
+Instances shrunk to fit the 110 s budget at two TLC workers: `live-small` from
+`MaxSeq = 3` with `Capacity = 2` to `MaxSeq = 2` with `Capacity = 1`; `defect` from
+`MaxSeq = 4` to `MaxSeq = 2`. The code-arm stale rows use `IdSpace = 16`, so `Reach` is
+4. `find-stale` is the measured pass: `FirstId` 3 and `MaxGen` 3 give honest ids 3, 4
+and 5; the finite burst drops payload 4's final, so payload 3's completion advances the
+reference to 3 while payload 4's first fragment remains as the lower-generation
+occupant. Id 5 is farther than `Reach` from reference 0 but within it of reference 3,
+so the row fails if the reference does not advance. `find-stale-small` and
+`find-stale-ahead2` keep larger terrains and the ack link `"none"`; their records are
+exit 124 timeouts, so they are unmeasured debt, not completed passes. `find-batchfull`
+is not shrunk: `DeliveredCap` 2 is the below-bound witness and it still violates inside
+the budget. `batch-at-bound` keeps that geometry and the reorder, raises `MaxGen` to 4,
+sets `DeliveredCap` to 3, and constrains the ack link idle so the pass finishes at the
+third completion. `find-stale-serial-small` stays a bench row: the half-space
+comparison on the unreduced small instance is 19.7 million distinct states.
 
 `link-fair` has no case: TLC exits 77 with "Temporal formula is a tautology (its
 negation is unsatisfiable)" after "Implied-temporal checking--satisfiability problem
@@ -282,37 +293,39 @@ once), re-measured after the three bitmap invariants were added to every cfg wit
 `INVARIANTS` section. Every case reaches its declared result except the six `bench`
 rows that time out (exit 124), which is a failed measurement, not a proof.
 `MCFragmentsAndAcksPatAlternate.cfg` is a required check, not bench debt. With the bitmap state it
-is 1,422,444 distinct states and the recorded run finishes in 52.181 s, inside the budget, so a
+is 1,422,444 distinct states and the recorded run finishes in 57.104 s, inside the budget, so a
 regression to exit 124 fails the gate. A saturated bench can still reach that budget with no
 counterexample. The
 required control for the bitmaps is `MCFragmentsAndAcksBits.cfg`.
 
 | Case | Result | Generated | Distinct | Time |
 |---|---|---|---|---|
-| `MCFragmentsAndAcks.cfg` | timeout, bench debt |  |  | 110.3 s |
-| `MCFragmentsAndAcksLive.cfg` | timeout, bench debt |  |  | 110.1 s |
-| `MCFragmentsAndAcksLiveSmall.cfg` | pass | 20,552 | 6,721 | 9.2 s |
-| `MCFragmentsAndAcksLiveDup.cfg` | pass | 47,836 | 10,276 | 8.6 s |
-| `MCFragmentsAndAcksPatNone.cfg` | timeout, bench debt |  |  | 110.3 s |
-| `MCFragmentsAndAcksPatFirst.cfg` | timeout, bench debt |  |  | 110.3 s |
-| `MCFragmentsAndAcksPatAlternate.cfg` | pass | 5,924,703 | 1,422,444 | 52.181 s |
-| `MCFragmentsAndAcksPatBurst.cfg` | timeout, bench debt |  |  | 110.2 s |
-| `MCFragmentsAndAcksFindStale.cfg` | `StaleOnlyIfOlder` violated (exit 12), D1 | 205,517 | 73,495 | 4.0 s |
-| `MCFragmentsAndAcksFindStaleSmall.cfg` | `StaleOnlyIfOlder` violated (exit 12), D1 | 62,405 | 23,863 | 2.1 s |
-| `MCFragmentsAndAcksFindStaleSerialSmall.cfg` | timeout, bench debt |  |  | 110.3 s |
-| `MCFragmentsAndAcksFindStaleAhead2.cfg` | `StaleOnlyIfOlder` violated (exit 12), D1 | 334,146 | 96,226 | 5.1 s |
-| `MCFragmentsAndAcksFindStalePlain.cfg` | `StaleOnlyIfOlder` violated (exit 12) | 205,517 | 73,495 | 3.7 s |
-| `MCFragmentsAndAcksFindBatchFull.cfg` | `BatchFullNeverFires` violated (exit 12), D2 | 1,179,685 | 459,388 | 23.6 s |
-| `MCFragmentsAndAcksDefect.cfg` | pass | 374,661 | 89,755 | 3.6 s |
-| `MCFragmentsAndAcksWitFirstfrag.cfg` | `SurfacedOnlyIfOpened` violated (exit 12) | 1,495 | 679 | 0.8 s |
-| `MCFragmentsAndAcksWitDropfull.cfg` | `AckedMeansSurfaced` violated (exit 12) | 23,327 | 8,765 | 1.6 s |
-| `MCFragmentsAndAcksWitOverclaim.cfg` | `BurnedNeverNamed` violated (exit 12) | 1,768 | 809 | 0.9 s |
-| `MCFragmentsAndAcksWitNoclear.cfg` | `DeliveredExact` violated (exit 12) | 30,943 | 11,465 | 1.6 s |
-| `MCFragmentsAndAcksWitNosizecheck.cfg` | `ArenaBounded` violated (exit 12) | 7,612 | 7,081 | 1.2 s |
-| `MCFragmentsAndAcksWitNopin.cfg` | `CountPinned` violated (exit 13) | 157,421 | 76,216 | 3.7 s |
-| `MCFragmentsAndAcksBits.cfg` | pass | 760,466 | 265,345 | 7.6 s |
-| `MCFragmentsAndAcksWitWalkskip.cfg` | `WalkVisitsUnacked` violated (exit 12) | 618 | 316 | 0.8 s |
-| `MCFragmentsAndAcksWitStaleheld.cfg` | `BitsMatchRing` violated (exit 12) | 1,152 | 567 | 0.9 s |
+| `MCFragmentsAndAcks.cfg` | timeout, bench debt |  |  | 111.080 s |
+| `MCFragmentsAndAcksLive.cfg` | timeout, bench debt |  |  | 110.397 s |
+| `MCFragmentsAndAcksLiveSmall.cfg` | pass | 20,552 | 6,721 | 9.422 s |
+| `MCFragmentsAndAcksLiveDup.cfg` | pass | 47,836 | 10,276 | 9.381 s |
+| `MCFragmentsAndAcksPatNone.cfg` | timeout, bench debt |  |  | 110.703 s |
+| `MCFragmentsAndAcksPatFirst.cfg` | timeout, bench debt |  |  | 110.791 s |
+| `MCFragmentsAndAcksPatAlternate.cfg` | pass | 5,924,703 | 1,422,444 | 73.012 s |
+| `MCFragmentsAndAcksPatBurst.cfg` | timeout, bench debt |  |  | 110.339 s |
+| `MCFragmentsAndAcksFindStale.cfg` | pass: shipped rule, REACH comparison exercised | 1,365,215 | 489,695 | 15.479 s |
+| `MCFragmentsAndAcksFindStaleSmall.cfg` | timeout, bench debt |  |  | 110.266 s |
+| `MCFragmentsAndAcksFindStaleSerialSmall.cfg` | timeout, bench debt |  |  | 110.337 s |
+| `MCFragmentsAndAcksFindStaleAhead2.cfg` | timeout, bench debt |  |  | 110.173 s |
+| `MCFragmentsAndAcksFindStaleRetired.cfg` | `StaleOnlyIfOlder` violated (exit 12): retired-arm witness | 62,405 | 23,863 | 2.410 s |
+| `MCFragmentsAndAcksFindStalePlain.cfg` | `StaleOnlyIfOlder` violated (exit 12) | 205,517 | 73,495 | 4.247 s |
+| `MCFragmentsAndAcksFindBatchFull.cfg` | `BatchFullNeverFires` violated (exit 12): below-bound witness | 1,179,685 | 459,388 | 28.869 s |
+| `MCFragmentsAndAcksBatchAtBound.cfg` | pass: reaches the third completion at the cap | 99,320 | 26,650 | 2.792 s |
+| `MCFragmentsAndAcksDefect.cfg` | pass | 374,661 | 89,755 | 3.887 s |
+| `MCFragmentsAndAcksWitFirstfrag.cfg` | `SurfacedOnlyIfOpened` violated (exit 12) | 1,495 | 679 | 0.862 s |
+| `MCFragmentsAndAcksWitDropfull.cfg` | `AckedMeansSurfaced` violated (exit 12) | 23,327 | 8,765 | 1.679 s |
+| `MCFragmentsAndAcksWitOverclaim.cfg` | `BurnedNeverNamed` violated (exit 12) | 1,768 | 809 | 0.882 s |
+| `MCFragmentsAndAcksWitNoclear.cfg` | `DeliveredExact` violated (exit 12) | 30,943 | 11,465 | 1.736 s |
+| `MCFragmentsAndAcksWitNosizecheck.cfg` | `ArenaBounded` violated (exit 12) | 7,612 | 7,068 | 1.362 s |
+| `MCFragmentsAndAcksWitNopin.cfg` | `CountPinned` violated (exit 13) | 149,647 | 70,574 | 4.393 s |
+| `MCFragmentsAndAcksBits.cfg` | pass | 760,466 | 265,345 | 10.165 s |
+| `MCFragmentsAndAcksWitWalkskip.cfg` | `WalkVisitsUnacked` violated (exit 12) | 618 | 316 | 0.867 s |
+| `MCFragmentsAndAcksWitStaleheld.cfg` | `BitsMatchRing` violated (exit 12) | 1,152 | 567 | 0.910 s |
 
 ### Earlier results without the budget (TLC 2.19, 4 workers, `-Xmx6g`, 2026-10-13)
 
@@ -324,8 +337,8 @@ are not current records; they are the evidence for the bench rows above.
 | committed (`SpecSafety`, all invariants + CountPinned) | pass | 317,743,656 | 44,927,746 | 49 | 11 min 52 s |
 | live (`Spec` + `OpenedSurfacesOrLaps`, committed instance) | not finished: stopped at 1,928,008 distinct states, BFS at depth 18, 2 h 20 min; it carries no evidence | | | | |
 | live-small (`MaxSeq = 3`, `MaxGen = 1`, no dup, no reorder) | pass | 229,436 | 54,283 | 25 | 1 min 0 s |
-| find-stale-serial-small (find-stale-small, `StaleRule = "serial"`) | pass: the standard's rule on the instance the code's rule fails | 90,830,297 | 19,697,444 | 43 | 3 min 21 s |
-| find-stale-ahead2 (`MaxSeq = 8`, `MaxGen = 4`, `MaxDelay = 1`, counts `{2, 3}`, duplication and reordering on) | **StaleOnlyIfOlder violated**, 11 states (D1) | 8,174,784 | 1,739,380 | | 21 s |
+| find-stale-serial-small (unreduced small instance, `StaleRule = "serial"`) | pass: the half-space comparison | 90,830,297 | 19,697,444 | 43 | 3 min 21 s |
+| find-stale-ahead2 (unreduced: `MaxSeq = 8`, `MaxGen = 4`, `MaxDelay = 1`, counts `{2, 3}`, duplication and reordering on, old forward difference) | violated `StaleOnlyIfOlder` under the retired arm | 8,174,784 | 1,739,380 | | 21 s |
 | defect (`DefectIds = {0, 1}`, `MaxCount = 2`, counts `{2}`, `MaxGen = 1`, `MaxSeq = 4`, `Capacity = 1`, no dup, no reorder, no burns) | pass | 82,754,545 | 17,468,462 | 30 | 2 min 44 s |
 
 The evidence for an over-budget run of `pat-alternate` (not the gate record) is its run with the bitmaps outside the
@@ -438,133 +451,101 @@ states in 138.2 s; with `bitsChecked` collapsed to a caught-up flag (the reconci
 starting at `WindowLow` every time, which is equivalent because the reconcile is
 idempotent) and the ghosts kept it is 1,147,728 in 117.8 s. No encoding of the bitmap
 state keeps that instance inside 110 s on a loaded bench, but on an idle bench its recorded
-run, with the three invariants, finishes in 52.181 s, inside the gate budget, so
+run, with the three invariants, finishes in 57.104 s, inside the gate budget, so
 `MCFragmentsAndAcksPatAlternate.cfg` is a required check (its CASES.tsv row gates) rather than
 `bench` debt; the other three pattern rows stay over budget and remain bench debt.
 
 ## What TLC found
 
-Every counterexample below was replayed by hand through the functions it names.
+The rows below are the code arm, the retired arm, and the delivered-bound witness.
 
-**Severity, from the cold reads.** D1 is HIGH: it is permanent for the connection's
-life, and the payloads it refuses were acknowledged to the sender (the ack block is
-built from the replay window, before reassembly), so a delta-compression scheme built on
-the notifications takes a baseline the peer never delivered. Its fix is the serial
-comparison STANDARD.md:1981-1987 specifies. D2 is MEDIUM on the server and LOW on the
-client.
+The code arm of the stale rule passes `StaleOnlyIfOlder`. That pass is not a code
+defect. The retired arm is the old forward difference; its violation of
+`StaleOnlyIfOlder` is a reversed witness of a rule the code does not run.
+`find-batchfull` is a below-bound witness, not a code defect: `DeliveredCap` is under
+the bound in `sdk/rocketnet_fragment.h`, and `batch-at-bound` passes at that bound.
 
-### D1. A loss burst, or one late fragment, poisons a reassembly slot for the connection's life (defect, HIGH)
+The `find-stale` pass is non-vacuous for the REACH comparison. Its terrain
+(`tla/MCFragmentsAndAcksFindStale.cfg`) puts an honest id farther than `Reach` from the
+initial reference while a lower-generation occupant is present. With the correct
+`AdvanceCompleted` the reference has moved and the id is accepted; with
+`AdvanceCompleted` replaced by a no-op the same fragment is refused and TLC reports
+`StaleOnlyIfOlder` violated (5,121 distinct states before the violation), so the case
+distinguishes the two. The recorded pass generates 1,365,215 states and 489,695
+distinct in 15.479 s at two workers.
 
-`sdk/rocketnet_fragment.cpp:267-273`, the stale test:
+### The stale rule the code runs
 
-```c
-if ( slot->payload_id != 0 && payload_id != slot->payload_id &&
-     payload_id - slot->payload_id > ROCKETNET_MAX_FRAGMENTS )
-    ... FRAGMENT_STALE, return 0;
+The shipped test is two comparisons. `sdk/rocketnet_fragment.cpp:378-380` reads the
+reference and refuses an id farther than `ROCKETNET_REASSEMBLY_REACH` (a quarter of the
+id space, `sdk/rocketnet_fragment.h:87`) from the newest completed id in both
+directions, before the slot is consulted:
+
+```
+const uint32_t reference = set->newest_completed[connection_index];
+if ( payload_id - reference > ROCKETNET_REASSEMBLY_REACH && reference - payload_id > ROCKETNET_REASSEMBLY_REACH )
 ```
 
-The comment above it argues that the next honest id for a slot is at most
-`ROCKETNET_MAX_FRAGMENTS` (256) ahead of its occupant, because the id counter advances
-by one per fragmented payload and the slot recurs every `num_slots` ids. That holds only
-while the occupant is the slot's latest id. It is not when payloads die whole: a payload
-none of whose fragments arrive never touches the slot, so the occupant stays and the
-gap to the next honest id grows.
+`sdk/rocketnet_fragment.cpp:387-388` then refuses an id at most
+`ROCKETNET_REASSEMBLY_BEHIND` (`ROCKETNET_MAX_FRAGMENTS`,
+`sdk/rocketnet_fragment.h:86`) behind an occupied slot's id:
 
-TLC's trace (`find-stale` and `find-stale-small`, 10 states, `Slots = 1`,
-`StaleAhead = 1`): payload id 1
-(gen 1) is sent and its fragment 0 opened, so slot 0 holds id 1 with one of two
-fragments. Id 2 is consumed with no fragment reaching the receiver (in the trace by a
-burned finish; a link that loses both its fragments is the same state). Id 3's
-fragment 0 arrives: `3 - 1 = 2 > 1`, refused as stale, counted `FRAGMENT_STALE`.
-`find-stale-ahead2` is the same with `StaleAhead = 2` and four ids: ids 2 and 3 lost
-whole, id 4 refused (11 states). The occupant is still id 1, incomplete, and every later
-honest id is further ahead, so every later fragmented payload for this slot is refused
-as stale until `rocketnet_reassembly_set_reset_connection` (a reconnect). The abandoned
-counter never fires for them: the loss is reported as "stale", which the standard
-reserves for superseded payloads.
+```
+if ( slot->payload_id != 0 && payload_id != slot->payload_id &&
+     slot->payload_id - payload_id <= ROCKETNET_REASSEMBLY_BEHIND )
+```
 
-Replayed through the code at the shipped geometry, there are two routes in.
+`tla/FragmentsAndAcks.tla:513-522` scales those two constants, and `:530-534` is the
+`"code"` arm: `Far(new, newestCompleted) \/ BehindOccupant(new, old)`. `Reach` is
+`IdSpace \div 4` and `Behind` is `StaleAhead`. `newestCompleted` starts at 0 and
+advances on a completion, including one the delivery bound drops, when the forward
+distance is nonzero and below half the id space (`tla/FragmentsAndAcks.tla:526-528`,
+`sdk/rocketnet_fragment.cpp:600-602`).
 
-*The loss route.* With `num_slots = 8` (the default, `sdk/rocketnet.h:531`) the ids of
-one slot are 8 apart, so with an incomplete occupant X the slot tolerates the next 32
-payloads of its own series lost whole (X+8 .. X+256; X+256 is exactly 256 ahead and
-passes) and refuses the 33rd, X+264, and everything after. Only the slot's series has to
-be lost: the other seven slots' payloads can arrive and complete throughout. At
-`num_slots = 256`, which the configuration admits (`sdk/rocketnet.h:611` and `:851`, up to
-`ROCKETNET_MAX_FRAGMENTS`), the tolerance is zero. A seal refusal inside the fragment
-loop (`BurnFragmented`) consumes an id with nothing reaching the wire and counts toward
-the same 32.
+Before this change the model's `code` arm was `((new - old) % IdSpace) > StaleAhead`,
+one unsigned forward distance against the slot's occupant. The shipped test above is two
+comparisons: the reach pair against the newest completed id (`sdk/rocketnet_fragment.cpp:380`)
+and the behind bound against the occupant (`:387-388`). The old arm had neither a
+reference id nor the occupant's behind bound, so it is kept only as the retired arm.
 
-*The one-packet route.* The stale test is skipped for an empty slot
-(`slot->payload_id != 0`, `fragment.cpp:267`). A delayed fragment of a payload that was
-abandoned long ago lands in a slot that a completion has just emptied, re-occupies it
-with its old id, and from then on every live id is more than 256 ahead of the occupant:
-from id X+264 on, every payload in that slot is refused, with no loss burst at all. The
-reader's harness (to become the fix card's test) drove this: 644 of 736 payloads delivered, 92 `FRAGMENT_STALE`, exactly one slot
-in eight, no other loss. It holds for payloads of up to about 15 fragments (past that the
-delayed fragment is outside the 4,096-sequence replay window and refused there). The
-model's window (`Window = SentRing = MaxSeq = 4`) is too small to tell "late but inside
-the replay window" from "too late", so this route is in the hand replay, not in a TLC
-trace.
+`find-stale` runs that arm and passes `StaleOnlyIfOlder`. Its terrain reaches a
+completion before the far honest id arrives and leaves a lower-generation occupant in
+the slot, so the pass fails when `AdvanceCompleted` is a no-op; the `find-stale` table
+row and its cfg header state the terrain. `find-stale-small` and `find-stale-ahead2` are `bench`
+rows whose records are exit 124 timeouts, not completed passes: they are unmeasured
+debt, as the table at "Instances shrunk to fit" says. `find-stale-plain`
+(`StaleRule = "plain"`, `FirstId = 6`) still violates `StaleOnlyIfOlder`: a plain
+comparison across the wrap. `StaleRule = "retired"` is
+`(new - old) % IdSpace > StaleAhead`, the old forward difference against the occupant.
+On the small instance that arm violates `StaleOnlyIfOlder`. The violation stays a
+reversed witness in `MCFragmentsAndAcksFindStaleRetired.cfg`. `StaleRule = "serial"` remains the
+half-space comparison; `find-stale-serial-small` is the bench row for it.
 
-In both routes the refused payloads were acknowledged to the sender, and the abandoned
-counter never fires for them: the loss is reported as "stale", which the standard
-reserves for superseded payloads.
+### The delivered bound, and the below-bound witness
 
-The standard (Fragmentation, "Older is serial-number arithmetic on the 32-bit values,
-so no id can poison a slot", STANDARD.md:1981-1987) specifies the half-space comparison.
-The model's `StaleRule = "serial"` is that comparison; `find-stale-serial-small` checks
-it on the instance where the code's rule fails (`find-stale-small`), and the result is
-in the table. The code's comment chose the bounded difference against a hostile id
-"just under 2^31 ahead", which only the connection's own sealed sender can produce.
-`find-stale-plain` (`StaleRule = "plain"`, `FirstId = 6` so the id counter wraps during
-the run) fails as the standard says a plain comparison must. The fix is a code card, not
-this one: the serial comparison the standard names.
+`sdk/rocketnet_fragment.h:135-139`: an update that drains N packets on one connection
+completes at most `(N + min(N, connections × slots)) / 2` payloads, and at that
+capacity `BATCH_FULL` is zero under any load the drain delivers. A set sized below the
+bound counts `BATCH_FULL` for each completion past it.
 
-### D2. `BATCH_FULL` fires under legitimate load (design claim contradicted; MEDIUM on the server, LOW on the client)
-
-`sdk/rocketnet_fragment.h:108-117` and `sdk/rocketnet_client_transport.cpp:260-267`:
-`delivered_capacity` is sized to half the receive drain ("a payload takes at least two
-fragments, so one update completes at most half the packets it drains"), and
-`BATCH_FULL` is called "a true invariant: zero under any legitimate load". On the client
-the half-the-drain argument counts only fragments drained this update; a payload whose
-first fragments arrived in an earlier update completes on one packet. On the server the
-argument is simply not the code's sizing (below).
-
-TLC's trace (`find-batchfull`, 18 states, `Slots = 2`, `DrainCap = 4`,
-`DeliveredCap = 2`, no loss, in-order delivery except one `Reorder`): update 1 drains
-fragment 0 of payload 1 (sequence 1) and fragment 0 of payload 2 (sequence 3, reordered
-ahead of sequence 2), two slots half full; `Tick`; update 2 drains sequence 2 (payload 1
-complete, delivered), sequence 4 (payload 2 complete, delivered, `num_delivered = 2 = delivered_capacity`), then sequences 5 and 6, payload 3, whose completion is dropped at
-`sdk/rocketnet_fragment.cpp:463-467`, counted `FRAGMENT_PAYLOAD_BATCH_FULL`, the slot
-cleared: a payload lost with nothing lost on the wire, four packets drained in the
-update that the sizing says can complete at most two.
-
-Replayed at the shipped sizes.
-
-*Client (LOW).* `delivered_capacity = 1024 / 2 = 512` (`ROCKETNET_NUM_CLIENT_PACKETS / 2`), 8 slots: 8 carried-over completions plus `(1024 - 8) / 2 = 508` fresh ones is 516.
-This needs the carried-over half payloads, which take reordering (as in the trace) or
-interleaved fill threads on the sender (each fragment's ring slot is its own
-`atomic_add`, `sdk/rocketnet_client_transport.cpp:881`), and a 1,024-packet update.
-
-*Server (MEDIUM).* The server has no per-client drain. It drains one global array of
-`ROCKETNET_RECEIVE_PACKETS_PER_CLIENT × ROCKETNET_MAX_CLIENTS = 16 × 1000 = 16,000`
-packets per update (`sdk/rocketnet_constants.h:63`,
-`sdk/rocketnet_server_socket_linux.cpp:1946`), while the delivered pool is
-`max_clients × num_reassembly_slots` (`sdk/rocketnet_server_transport.cpp:851-852`), 64 × 8
-= 512 at the defaults (`sdk/rocketnet.h:842`). So it overflows with no carried-over
-payloads at all: 64 clients each completing 9 two-fragment payloads in one update is
-1,152 fragments drained, 576 reassembled, 64 `BATCH_FULL`. The comment at
-`sdk/rocketnet_server_transport.cpp:842-849` makes the same false claim as
-`fragment.h` ("completions cap at eight per client at the defaults"). `drain / 2 + num_slots` would not fix the server; the pool has to follow the drain (16,000 / 2) or
-the drain the pool. A model of one connection cannot see this: the overflow is across
-connections, in a pool the model's receiver does not share. The fix is a code card.
+`find-batchfull` is that below-bound witness. `DrainCap` is 4 and `Slots` is 2, so the
+bound is 3, and `DeliveredCap` is 2. One reorder leaves two slots half full; the next
+update completes both and then a third two-fragment payload, and the third is dropped.
+`BatchFullNeverFires` is violated. `MCFragmentsAndAcksBatchAtBound.cfg` is the same
+geometry with `MaxGen` 4, which supplies enough payloads to reach the third completion,
+and `DeliveredCap` 3, the bound. The pass reaches that third completion at the cap; a
+fourth completion in one update would violate `BatchFullNeverFires`, not demonstrate
+the pass. The `DeliveredCap` 2 control at the same size drops the third completion
+(`batchFull = TRUE`). The ack link stays idle (`AckLinkIdle` in
+`MCFragmentsAndAcks.tla`): that schedule sends no ack, and an ack step does not change
+reassembly, so every fragment schedule remains and the pass finishes inside the budget.
+`BatchFullNeverFires` holds.
 
 ### Model errors found and fixed on the way
 
 1. **Two assignments parsed as disjunctions.** `badStale' = badStale \/ (...)` is
    `(badStale' = badStale) \/ (...)` in TLA+; TLC reported `RecvData` leaving `badStale`
-   unassigned on exactly the D1 trace. Parenthesised, with `batchFull'`.
+   unassigned on the retired-arm trace. Parenthesised, with `batchFull'`.
 2. **Per-packet link fairness.** See "Fairness, and why it is stated per link".
 3. **Receive by search.** `RecvData` and `RecvAck` first chose the packet with
    `\E p \in Packets` and let `Link!Deliver(p)` pick the head; TLC evaluated that

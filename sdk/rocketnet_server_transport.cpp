@@ -506,6 +506,7 @@ int rocketnet_server_transport_send_capacity( const rocketnet_server_transport_t
 
 // How many payload frames may still start this update. The staged drivers
 // keep their own staging, so the transport-side cap does not apply to them.
+// tla/RNServerSendFair.tla Tick models this bounded cyclic send-pass cap.
 int rocketnet_server_transport_send_capacity_available( const rocketnet_server_transport_t * server_transport )
 {
     if ( !server_transport )
@@ -2013,7 +2014,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
                                                                         batch_capacity );
 
         // a count past the slots asked for, or a byte count that is negative
-        // or past the stride, is a driver fault and is not a received packet
+        // or beyond the UDP envelope, is a driver fault and is not a received packet
         if ( num_received < 0 )
         {
             server_transport->driver_faults++;
@@ -2030,9 +2031,18 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             struct rocketnet_address_t from = receive_buffer->from[i];
             uint8_t * receive_frame = receive_buffer->data + i * ROCKETNET_RECEIVE_CEILING;
             const int packet_bytes = receive_buffer->packet_bytes[i];
-            if ( packet_bytes < 0 || packet_bytes > ROCKETNET_RECEIVE_CEILING )
+            if ( packet_bytes < 0 )
             {
                 server_transport->driver_faults++;
+                continue;
+            }
+            if ( packet_bytes > ROCKETNET_RECEIVE_CEILING )
+            {
+                // An oversize datagram is rejected by the driver-results
+                // size/stride check, but it still counts PREFILTER_TOO_LARGE
+                // exactly once.
+                server_transport->driver_faults++;
+                server_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE]++;
                 continue;
             }
 

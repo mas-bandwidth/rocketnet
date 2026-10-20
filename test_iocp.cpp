@@ -12,6 +12,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(_WIN32)
+bool rocketnet_server_rio_test_receive_overflow( uint64_t * counters, int * packet_counts,
+                                                  int * repost_calls, int * pending_receives, int * guard_hit );
+#endif
+
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "IOCP check failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); exit(1); } } while (0)
 
 static std::atomic<int> live_allocations{0};
@@ -738,6 +743,76 @@ static void test_iocp_send_queue_full_recovers()
     iocp_finish(driver, peer);
 }
 
+// A watchdog over one call: the process exits 1 naming the call when it
+// runs past its bound, so a destroy that never returns is a failure, never a
+// hang.
+struct case_watchdog_t
+{
+    std::atomic<bool> done{false};
+    std::thread thread;
+    case_watchdog_t( const char * name, double seconds )
+    {
+        thread = std::thread( [this, name, seconds]() {
+            const double deadline = rocketnet_platform_time() + seconds;
+            while ( !done.load() )
+            {
+                if ( rocketnet_platform_time() > deadline )
+                {
+                    fprintf( stderr, "IOCP check failed: %s ran past its %.0f s watchdog (%s:%d)\n", name, seconds, __FILE__, __LINE__ );
+                    fflush( stderr );
+                    _Exit( 1 );
+                }
+                rocketnet_platform_sleep( 0.01 );
+            }
+        } );
+    }
+    ~case_watchdog_t() { done.store( true ); thread.join(); }
+};
+
+// Destroy with I/O in flight: rocketnet_server_iocp_stop cancels with
+// CancelIoEx( socket, NULL ), which cancels every thread's outstanding I/O on
+// the handle, then wakes each worker; destroy joins the workers and only then
+// closes the socket. 100 idle servers are created and destroyed, then 100
+// more after datagrams completed, so at least one receive was re-posted by a
+// worker thread rather than the destroying one. Each destroy runs under its
+// own 10 s watchdog.
+static void iocp_destroy_watched( rocketnet_server_iocp_t * driver, double * slowest )
+{
+    case_watchdog_t watchdog( "rocketnet_server_iocp_destroy", 10.0 );
+    const double start = rocketnet_platform_time();
+    rocketnet_server_iocp_destroy(driver);
+    const double elapsed = rocketnet_platform_time() - start;
+    if ( elapsed > *slowest ) *slowest = elapsed;
+}
+
+static void test_iocp_destroy_never_hangs()
+{
+    double slowest = 0.0;
+    for ( int i = 0; i < 100; ++i )
+    {
+        rocketnet_address_t bind = address("127.0.0.1:0");
+        rocketnet_server_iocp_t * driver = rocketnet_server_iocp_create(NULL, &bind, 4);
+        CHECK(driver);
+        iocp_destroy_watched(driver, &slowest);
+    }
+    rocketnet_address_t peer_address;
+    rocketnet_platform_socket_t * peer = fault_peer(&peer_address);
+    for ( int i = 0; i < 100; ++i )
+    {
+        rocketnet_address_t bind = address("127.0.0.1:0");
+        rocketnet_server_iocp_t * driver = rocketnet_server_iocp_create(NULL, &bind, 4);
+        CHECK(driver);
+        fault_peer_send(peer, &bind, 0xEE, 4 * ROCKETNET_IOCP_RECEIVES_PER_WORKER);
+        const double deadline = rocketnet_platform_time() + 5.0;
+        while ( iocp_counter(driver, ROCKETNET_IOCP_RECEIVE_COMPLETED) == 0 && rocketnet_platform_time() < deadline )
+            rocketnet_platform_sleep(0.001);
+        CHECK(iocp_counter(driver, ROCKETNET_IOCP_RECEIVE_COMPLETED) > 0);
+        iocp_destroy_watched(driver, &slowest);
+    }
+    rocketnet_platform_socket_destroy(peer);
+    printf("iocp_destroy_never_hangs: 200 destroys, slowest %.3f ms\n", slowest * 1000.0);
+}
+
 // ---- RIO ----
 
 static uint64_t rio_counter( rocketnet_server_rio_t * rio, int counter )
@@ -941,6 +1016,24 @@ static void test_rio_request_queue_full()
 
 static void test_rio_completion_queue_full()
 {
+#if defined(_WIN32)
+    // Keep the CQ full through a guard beyond two banks. The old unbounded
+    // loop reaches the corrupt-CQ sentinel; bounded receive returns at one
+    // bank and leaves the still-full queue for the next update.
+    uint64_t seam_counters[2 * ROCKETNET_RIO_NUM_COUNTERS] = {};
+    int seam_packets[2] = {};
+    int seam_reposts = 0;
+    int seam_pending = 0;
+    int seam_guard_hit = 0;
+    CHECK( rocketnet_server_rio_test_receive_overflow( seam_counters, seam_packets, &seam_reposts, &seam_pending, &seam_guard_hit ) );
+    CHECK( seam_guard_hit == 0 );
+    CHECK( seam_packets[0] == ROCKETNET_RIO_RECEIVES );
+    CHECK( seam_packets[1] == ROCKETNET_RIO_RECEIVES );
+    CHECK( seam_counters[ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] == ROCKETNET_RIO_RECEIVES );
+    CHECK( seam_counters[ROCKETNET_RIO_NUM_COUNTERS + ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] == 2 * ROCKETNET_RIO_RECEIVES );
+    CHECK( seam_reposts == 2 * ROCKETNET_RIO_RECEIVES );
+    CHECK( seam_pending == ROCKETNET_RIO_RECEIVES );
+#endif
     if ( !rocketnet_server_rio_available() ) { printf("rio_completion_queue_full [SKIPPED no RIO on this host]\n"); return; }
     rocketnet_address_t bind;
     rocketnet_server_rio_t * rio = rio_open(&bind);
@@ -952,11 +1045,13 @@ static void test_rio_completion_queue_full()
     // with ROCKETNET_RIO_RECEIVES completions; the host drops what arrives
     // with no slice posted. The poll that reads the full queue fills the bank
     // to capacity and re-posts slice by slice while a sender keeps datagrams
-    // coming, so completions past the bank capacity arrive in the same poll
-    // and the overflow is counted. No slice is lost and traffic resumes.
+    // coming. rocketnet_server_rio_receive_packets dequeues at most one bank
+    // per call, so completions past the bank stay queued for the next call:
+    // no overflow is counted, and the next poll delivers the tail.
     const uint64_t overflow = rio_counter(rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW);
     int attempts = 0;
-    while ( rio_counter(rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW) == overflow && attempts < 10 )
+    int tail = 0;
+    while ( tail == 0 && attempts < 10 )
     {
         ++attempts;
         const uint64_t received = rio_counter(rio, ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED);
@@ -970,17 +1065,54 @@ static void test_rio_completion_queue_full()
         flood.join();
         CHECK(rocketnet_server_rio_process_packets(rio)->num_packets == ROCKETNET_RIO_RECEIVES);
         CHECK(rio_counter(rio, ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED) - received == ROCKETNET_RIO_RECEIVES);
+        // completions the flood queued during the bounded poll are the tail
+        rocketnet_server_rio_receive_packets(rio);
+        tail = rocketnet_server_rio_process_packets(rio)->num_packets;
+        CHECK(tail <= ROCKETNET_RIO_RECEIVES);
+        CHECK(rio_counter(rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW) == overflow);
         rio_settle(rio);
         // drain what the sender left before the next attempt
         for ( int i = 0; i < 20; ++i ) { rocketnet_server_rio_receive_packets(rio); rocketnet_platform_sleep(0.005); }
     }
-    const uint64_t dropped = rio_counter(rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW) - overflow;
-    printf("rio_completion_queue_full: overflow %llu after %d attempts\n", (unsigned long long) dropped, attempts);
-    CHECK(dropped > 0);
+    printf("rio_completion_queue_full: tail %d after %d attempts\n", tail, attempts);
+    CHECK(tail > 0);
+    CHECK(rio_counter(rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW) == overflow);
     rio_settle(rio);
     rio_exchange(rio, &bind, peer, &peer_address, 64);
     rio_finish(rio, peer);
     printf("rio_completion_queue_full\n");
+}
+
+// Sends a refused RIO_MSG_COMMIT_ONLY left deferred at destroy are
+// committed before rocketnet_server_rio_destroy closes the socket: the
+// destroy drains well inside ROCKETNET_RIO_DRAIN_SECONDS and leaks no
+// region. The close may abort committed sends, so delivery is printed, not
+// checked.
+static void test_rio_destroy_commits_deferred_sends()
+{
+    if ( !rocketnet_server_rio_available() ) { printf("rio_destroy_commits_deferred_sends [SKIPPED no RIO on this host]\n"); return; }
+    rocketnet_address_t bind;
+    rocketnet_server_rio_t * rio = rio_open(&bind);
+    rocketnet_address_t peer_address;
+    rocketnet_platform_socket_t * peer = fault_peer(&peer_address);
+    rio_exchange(rio, &bind, peer, &peer_address, 16);
+
+    const int round = ++fault_round & 0xFF;
+    rocketnet_server_rio_test_fail_next(rio, ROCKETNET_RIO_TEST_FAULT_COMMIT, 1, WSAENOBUFS);
+    rio_stage(rio, &peer_address, round, 10);
+    rocketnet_server_rio_send_packets(rio);
+    CHECK(rocketnet_server_rio_test_faults_left(rio, ROCKETNET_RIO_TEST_FAULT_COMMIT) == 0);
+    CHECK(rocketnet_server_rio_pending(rio) == ROCKETNET_RIO_RECEIVES + 10);
+
+    const double start = rocketnet_platform_time();
+    rocketnet_server_rio_destroy(rio);
+    const double elapsed = rocketnet_platform_time() - start;
+    printf("rio_destroy_commits_deferred_sends: destroy %.3f ms\n", elapsed * 1000.0);
+    CHECK(rocketnet_server_rio_leaked_regions() == 0);
+    CHECK(elapsed < 1.0);
+    printf("rio_destroy_commits_deferred_sends: peer received %d of 10\n", fault_peer_receive(peer, round, 10));
+    rocketnet_platform_socket_destroy(peer);
+    printf("rio_destroy_commits_deferred_sends\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -1140,9 +1272,11 @@ static const fault_case_t fault_cases[] = {
     { "iocp_send_post_fails", test_iocp_send_post_fails },
     { "iocp_receive_completion_fails", test_iocp_receive_completion_fails },
     { "iocp_send_queue_full_recovers", test_iocp_send_queue_full_recovers },
+    { "iocp_destroy_never_hangs", test_iocp_destroy_never_hangs },
     { "rio_completion_queue_full", test_rio_completion_queue_full },
     { "rio_request_queue_full", test_rio_request_queue_full },
     { "rio_send_post_fails", test_rio_send_post_fails },
+    { "rio_destroy_commits_deferred_sends", test_rio_destroy_commits_deferred_sends },
     { "windows_port_exclusive", test_windows_port_exclusive },
     { "windows_send_failures_counted", test_windows_send_failures_counted },
 };
