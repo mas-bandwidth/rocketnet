@@ -57,6 +57,7 @@ static int rocketnet_functional_worker( const char * name )
 }
 
 int rocketnet_posix_hard_killed_child_main( int argc, char ** argv );
+int rocketnet_posix_hard_killed_peer_test_group( const char * name );
 
 int main( int argc, char ** argv )
 {
@@ -83,7 +84,7 @@ int main( int argc, char ** argv )
         { "test_transport_control", "test_transport_control", true },
         { "test_msgx", "test_msgx", true },
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3, NULL, 0, false );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3, NULL, 0, false, rocketnet_posix_hard_killed_peer_test_group );
 #elif defined(__linux__)
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize", true },

@@ -869,6 +869,20 @@ const char * rocketnet_posix_hard_killed_peer_test_name( int index )
     return posix_hk_names[index];
 }
 
+// the suite group (test/suite_runner.h, group_of) of a case name: the cell
+// cases measure receive gaps and handshake times against the wall clock, so
+// they run as group 1, after every other case and the sibling executables
+// (group 0) have finished, never beside the loopback load those make; they
+// run in parallel with each other. the seam cases measure no time.
+
+int rocketnet_posix_hard_killed_peer_test_group( const char * name )
+{
+    for ( int i = 0; i < 3; i++ )
+        if ( strncmp( name, posix_hk_kinds[i], strlen( posix_hk_kinds[i] ) ) == 0 )
+            return 1;
+    return 0;
+}
+
 void rocketnet_posix_hard_killed_peer_test_run( int index )
 {
     if ( index >= POSIX_HK_NUM_CELL_CASES )
@@ -910,6 +924,11 @@ const char * rocketnet_posix_hard_killed_peer_test_name( int )
 
 void rocketnet_posix_hard_killed_peer_test_run( int )
 {
+}
+
+int rocketnet_posix_hard_killed_peer_test_group( const char * )
+{
+    return 0;
 }
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
