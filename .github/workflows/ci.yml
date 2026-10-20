@@ -405,7 +405,7 @@ jobs:
           rm -rf "$logs"
           exit "$failed"
 
-      - name: Run lifecycle unit binary
+      - name: "Functional: lifecycle binary"
         if: contains(matrix.leg, 'a')
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
@@ -486,7 +486,7 @@ jobs:
         if: contains(matrix.leg, 'a')
         run: python3 tools/check_memory.py ./bin/transport_memory
 
-      - name: Native driver contract and external backend
+      - name: "Functional: native driver contract and external backend"
         if: contains(matrix.leg, 'a')
         run: |
           ./bin/test_driver
@@ -607,8 +607,8 @@ jobs:
   #
   # AND IT STILL GATES EVERY COMMIT, on Linux and macOS. Only the WINDOWS
   # spelling went nightly, where it cost 42s on top of a 92s floor; the same
-  # script runs per commit in build-and-test's `Native driver contract and
-  # external backend` step, 15s there. What waits until morning is
+  # script runs per commit in build-and-test's `Functional: native driver
+  # contract and external backend` step, 15s there. What waits until morning is
   # specifically "does the out-of-tree backend still build under MSVC", and
   # nothing else. That is a much smaller hole than moving the check itself.
   #
@@ -622,8 +622,9 @@ jobs:
   #              (12s), ambient config isolation (12s), the native driver
   #              contract itself (test_driver; transport control is inside functional)
   #
-  # `Native driver contract and external backend` was ONE step running three
-  # commands. The two exes stay here as `Native driver contract`; the python
+  # `Functional: native driver contract and external backend` was ONE step
+  # running three commands. The two exes stay here as `Functional: native
+  # driver contract`; the python
   # check is the thing that left. Same commands, same order, one of them on a
   # different clock.
   #
@@ -718,7 +719,7 @@ jobs:
           grep -qx 'driver_env_pin_is_honoured' functional-iocp.log
           ! grep -q '^driver_env_pin_is_honoured \[SKIPPED' functional-iocp.log
 
-      - name: Run lifecycle unit binary
+      - name: "Functional: lifecycle binary"
         if: matrix.leg == 'a'
         shell: bash
         env:
@@ -748,7 +749,7 @@ jobs:
         if: matrix.leg == 'b'
         run: python tools/check_test_environment.py ./bin/Release/test.exe
 
-      - name: Native driver contract
+      - name: "Functional: native driver contract"
         if: matrix.leg == 'b'
         run: |
           ./bin/Release/test_driver.exe
@@ -1033,7 +1034,7 @@ jobs:
           UBSAN_OPTIONS: print_stacktrace=1
         run: ./bin/functional
 
-      - name: Allocation lifecycle under sanitizers
+      - name: "Functional binaries under sanitizers: lifecycle and driver contract"
         if: matrix.leg == 'functional suite'
         env:
           ASAN_OPTIONS: detect_leaks=1
@@ -1043,7 +1044,13 @@ jobs:
         run: |
           ./bin/test_lifecycle
           ./bin/test_driver
-          ./bin/test_sodium
+
+      - name: Sodium known answers under sanitizers
+        if: matrix.leg == 'functional suite'
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: ./bin/test_sodium
 
       - name: Inactive XDP index negative control
         if: matrix.leg == 'functional suite'
@@ -1606,7 +1613,7 @@ jobs:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
         run: setarch "$(uname -m)" -R ./bin/soak 20000
 
-      - name: Allocation lifecycle under tsan
+      - name: "Functional binary under tsan: lifecycle"
         if: matrix.leg == 'loopback soak'
         env:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
