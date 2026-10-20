@@ -37,10 +37,12 @@ CONSTANTS Slots,              \* send staging slots per phase
           Buffers,            \* provided receive buffers in the ring
           MaxSteps,           \* bound on datagrams and on bank swaps
           ResetWaitsForReap,  \* ResetIndex waits for every send CQE
-          ReapIntoFill        \* reaped receive datagrams go to the fill bank
+          ReapIntoFill,       \* reaped receive datagrams go to the fill bank
+          RearmOnReceive      \* receive_packets re-arms a disarmed multishot
 
 ASSUME Slots \in Nat \ {0} /\ Buffers \in Nat \ {0} /\ MaxSteps \in Nat \ {0}
 ASSUME ResetWaitsForReap \in BOOLEAN /\ ReapIntoFill \in BOOLEAN
+ASSUME RearmOnReceive \in BOOLEAN
 
 SlotIds == 1..Slots
 BufIds  == 1..Buffers
@@ -189,12 +191,14 @@ Reap(c) ==
                       /\ UNCHANGED fill
               /\ UNCHANGED <<bufdg, snap, gen, armed, nextdg>>
               /\ UNCHANGED SendVars
-         [] c.k = "term" ->
-              \* re-arm the multishot while running; never during destroy
-              /\ armed' = (phase = "Running")
-              /\ UNCHANGED <<bstate, bufdg, copied, fill, exposed, snap, gen,
-                             nextdg>>
-              /\ UNCHANGED SendVars
+          [] c.k = "term" ->
+               \* the multishot ended; the one-shot re-arm the CQE handler
+               \* attempts is not guaranteed (it can find no submission entry),
+               \* so the multishot is disarmed until a receive re-arms it
+               /\ armed' = FALSE
+               /\ UNCHANGED <<bstate, bufdg, copied, fill, exposed, snap, gen,
+                              nextdg>>
+               /\ UNCHANGED SendVars
          [] c.k = "cancel" ->
               /\ UNCHANGED RecvVars
               /\ UNCHANGED SendVars
@@ -230,7 +234,9 @@ Swap ==
     /\ snap' = fill
     /\ fill' = {}
     /\ gen' = gen + 1
-    /\ UNCHANGED <<bstate, bufdg, copied, armed, nextdg, cq, phase>>
+    \* receive_packets re-arms a disarmed multishot when the rule has the fix
+    /\ armed' = RearmOnReceive \/ armed
+    /\ UNCHANGED <<bstate, bufdg, copied, nextdg, cq, phase>>
     /\ UNCHANGED SendVars
 
 \* the transport reads the views of the exposed bank: a read changes no
@@ -289,6 +295,7 @@ SpecFair ==
     /\ \A s \in SlotIds : WF_vars(KernelComplete(s))
     /\ \A c \in Cqes : WF_vars(Reap(c))
     /\ \A b \in BufIds : WF_vars(ReturnBuffer(b))
+    /\ WF_vars(Swap)
     /\ WF_vars(ResetIndex)
     /\ WF_vars(Free)
 
@@ -341,5 +348,11 @@ SubmittedEventuallyFree ==
 \* destroy always ends in the freed driver
 DestroyEventuallyFrees ==
     (phase = "Destroying") ~> (phase = "Freed")
+
+\* a disarmed multishot is re-armed by a receive while the driver is running
+\* and there is still a swap left; a receive with no retry never re-arms, a
+\* silent permanent receive stall
+ReceiveLiveness ==
+    (phase = "Running" /\ armed = FALSE /\ gen < MaxSteps) ~> (armed = TRUE)
 
 =============================================================================

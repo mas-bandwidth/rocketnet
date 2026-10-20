@@ -74,6 +74,12 @@
 #define ROCKETNET_URING_DESTROY_WAIT_SECONDS                                 1
 #define ROCKETNET_URING_DESTROY_WAIT_ROUNDS                                  5
 
+// destroy also gives up after this many rounds no matter how many completed,
+// so steady traffic cannot hold the wait open forever by keeping every round
+// non-silent
+
+#define ROCKETNET_URING_DESTROY_WAIT_TOTAL_ROUNDS                           20
+
 // each slot's info is the slot's msghdr, iovec and destination, which the
 // kernel reads until the send's CQE. finish threads write packet_bytes, so a
 // slot's info is cache line aligned.
@@ -852,8 +858,10 @@ void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring )
         uring->destroying = true;
 
         int empty_rounds = 0;
+        int total_rounds = 0;
 
-        while ( empty_rounds < ROCKETNET_URING_DESTROY_WAIT_ROUNDS )
+        while ( empty_rounds < ROCKETNET_URING_DESTROY_WAIT_ROUNDS &&
+                total_rounds < ROCKETNET_URING_DESTROY_WAIT_TOTAL_ROUNDS )
         {
             bool outstanding = uring->sends_pending > 0;
 
@@ -891,9 +899,12 @@ void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring )
                 if ( rocketnet_server_uring_reap_available( uring ) == 0 )
                     empty_rounds++;
             }
+
+            total_rounds++;
         }
 
-        if ( empty_rounds >= ROCKETNET_URING_DESTROY_WAIT_ROUNDS )
+        if ( empty_rounds >= ROCKETNET_URING_DESTROY_WAIT_ROUNDS ||
+             total_rounds >= ROCKETNET_URING_DESTROY_WAIT_TOTAL_ROUNDS )
         {
             // gave up: not drained, so never Free. exit the ring and close the
             // sockets; leak every byte the kernel may still write
@@ -1172,6 +1183,23 @@ void rocketnet_server_uring_receive_packets( struct rocketnet_server_uring_t * u
     rocketnet_assert( uring );
 
     rocketnet_server_uring_reap_available( uring );
+
+    // re-arm every queue whose multishot is disarmed and not destroying, so a
+    // re-arm that found no submission entry at the end of a multishot does
+    // not silence the queue for good; each failed arm is counted
+
+    for ( int i = 0; i < uring->num_queues; i++ )
+    {
+        struct rocketnet_server_uring_queue_t * queue = &uring->queues[i];
+        if ( !queue->armed && !uring->destroying )
+        {
+            if ( rocketnet_server_uring_arm( uring, i ) )
+                uring->counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS]++;
+            else
+                uring->counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARM_FAILED]++;
+        }
+    }
+
     rocketnet_server_uring_submit( uring );
 
     const int exposed_bank = uring->fill_bank;

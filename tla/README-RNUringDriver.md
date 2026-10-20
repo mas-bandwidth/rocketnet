@@ -31,8 +31,10 @@ contents:
   is unique while it is pending.
 - **Phase:** `Running`, `Destroying` or `Freed`.
 
-Two constants act as rule switches and carry the reversed witnesses:
-`ResetWaitsForReap` and `ReapIntoFill`. Both are `TRUE` in the rule.
+Three constants act as rule switches and carry the reversed witnesses:
+`ResetWaitsForReap`, `ReapIntoFill` and `RearmOnReceive`. The first two
+are `TRUE` in the rule; `RearmOnReceive` is `TRUE` in the rule (receive
+re-arms a disarmed multishot) and `FALSE` in the reversed witness.
 
 ## Each action against THE DESIGN
 
@@ -45,8 +47,9 @@ Two constants act as rule switches and carry the reversed witnesses:
 | `KernelComplete(s)` | the kernel finishes the send (any res, where a negative one counts SEND_DROPPED) and posts the send CQE |
 | `KernelFill(b)` | the armed multishot RECVMSG fills a provided ring buffer and posts a receive CQE |
 | `KernelStop` | a CQE without IORING_CQE_F_MORE ends the multishot (ENOBUFS among the causes) |
-| `Reap(c)` | the main thread reaps one CQE, inside send_packets or outside it. A send CQE frees nothing by itself; it only removes the slot from `pending`. A receive CQE is copied into the **fill** bank. `Term` re-arms the multishot while the driver is running and never during destroy |
+| `Reap(c)` | the main thread reaps one CQE, inside send_packets or outside it. A send CQE frees nothing by itself; it only removes the slot from `pending`. A receive CQE is copied into the **fill** bank. `Term` disarms the multishot: the one-shot re-arm the CQE handler attempts is not guaranteed (it can find no submission entry), so the multishot stays disarmed until a receive re-arms it |
 | `ReturnBuffer(b)` | after the copy, the buffer goes back to the ring |
+| `Swap` | receive_packets: the old fill bank becomes the exposed bank, the new fill bank is emptied, and a disarmed multishot is re-armed when `RearmOnReceive` is TRUE |
 | `ResetIndex` | send_packets resets the reservation index to 0 only when no slot is `Kernel` owned and every send it submitted has its CQE reaped; the call returns |
 | `Swap` | receive_packets: the old fill bank becomes the exposed bank and the new fill bank is emptied |
 | `TransportReads` | the transport reads the views of the exposed bank. A read changes no driver state, so here it is a stutter; what the read relies on is ExposedStable |
@@ -73,6 +76,10 @@ Liveness, under `SpecFair`:
 
 - `SubmittedEventuallyFree`: every `Kernel` slot is eventually `Free`.
 - `DestroyEventuallyFrees`: `Destroying ~> Freed`.
+- `ReceiveLiveness`: a disarmed running multishot is re-armed by a receive
+  while a swap is left (`phase = "Running" /\ armed = FALSE /\ gen < MaxSteps`
+  leads-to `armed = TRUE`). A receive with no retry never re-arms, a silent
+  permanent receive stall.
 
 `SpecFair` gives weak fairness to the following:
 
@@ -124,9 +131,10 @@ Outcomes measured on hulk (linux-amd64, Java 21.0.12.1, the pinned JAR,
 
 | Case | Expected | Exit | Generated | Distinct | Seconds |
 |---|---|---:|---:|---:|---:|
-| `MCRNUringDriver.cfg` | pass (5 invariants, 2 properties) | 0 | 119869 | 31373 | 67.5 |
+| `MCRNUringDriver.cfg` | pass (5 invariants, 3 properties) | 0 | — | — | — |
 | `MCRNUringDriverBrokenResetBeforeReap.cfg` | `NoReuseWhileKernelOwned` | 12 | 1007 | 459 | 6.6 |
 | `MCRNUringDriverBrokenOneBank.cfg` | `ExposedStable` | 12 | 27 | 22 | 6.1 |
+| `MCRNUringDriverBrokenNoRearmRetry.cfg` | `ReceiveLiveness` | 12 | — | — | — |
 
 `MaxSteps = 3` also passed when run by hand with raw TLC: 194972 distinct
 states in 2 min 51 s, over the 110 s record budget. That run is not a
@@ -169,5 +177,12 @@ the bank the transport is reading changes under it. The design forbids
 this with "Receive CQEs ... always go to the fill bank". This is a real
 defect.
 
-Each witness fails on exactly its declared invariant (exit 12), and the
-control passes every invariant and both liveness properties.
+**BrokenNoRearmRetry** (`RearmOnReceive = FALSE`): receive_packets never
+re-arms. A `Term` leaves `armed` FALSE (the one-shot CQE-handler re-arm is
+not guaranteed), and nothing ever re-arms the multishot. TLC prints a
+counterexample: `KernelStop` disarms the multishot, the next `Swap`
+(gen < MaxSteps) does not re-arm it, and `armed` stays FALSE, so
+`ReceiveLiveness` fails.
+
+Each witness fails on exactly its declared invariant or property (exit 12),
+and the control passes every invariant and all three liveness properties.
