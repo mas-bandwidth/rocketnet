@@ -11,8 +11,10 @@ compatibility separately from the wire version; see the ABI rules below.
 Deploying a server on Linux: [docs/LINUX.md](docs/LINUX.md) covers the build, the `xdp -> gso -> io_uring -> portable` transport ladder and pinning, what `gso`, `io_uring` and `xdp` need from the host, socket errors and ICMP, the fd and memlock limits for 1000 clients, containers, and how to verify a host.
 
 rocketnet builds on Linux and macOS with CMake 3.20 or later, and on Windows with
-CMake 4.2 or later (the Windows block below says why). On Linux and macOS the
-Makefile is the front door:
+CMake 4.2 or later (the Windows block below says why). On Linux the build is
+tested with gcc 15.2.0 and clang 21.1.8 in Debug and Release: with each compiler
+the static and shared libraries, `./bin/test` and `./bin/functional` build, and
+both suites pass. On Linux and macOS the Makefile is the front door:
 
     make
 

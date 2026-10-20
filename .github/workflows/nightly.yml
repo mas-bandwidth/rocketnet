@@ -41,6 +41,51 @@ permissions:
 
 jobs:
 
+  # THE LINUX SECOND COMPILER: clang, which no per-commit Linux row names --
+  # ci.yml's Linux rows take the platform default (gcc) through the Makefile
+  # or a plain cmake configure. This job builds the static and shared
+  # libraries, the unit suite and the functional suite with clang and runs
+  # both suites, so a warning, an error or a behavior that only clang shows
+  # has a gate. Debug keeps the asserts, which Release compiles out.
+  #
+  # A clean clang build takes about two minutes, the unit suite about 15s,
+  # and the functional suite about 6 minutes with the 1000-client
+  # create/destroy cases.
+
+  linux-clang:
+    name: linux / clang
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-linux-clang-${{ matrix.ref }}
+      cancel-in-progress: true
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Print compiler versions
+        run: |
+          clang --version | head -1
+          clang++ --version | head -1
+
+      - name: Configure (clang)
+        run: cmake -B build-clang -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+
+      - name: Build static and shared libraries, unit suite and functional suite (clang)
+        run: cmake --build build-clang --parallel
+
+      - name: Unit suite (clang)
+        run: ./bin/test
+
+      - name: Functional suite (clang)
+        timeout-minutes: 20
+        run: ./bin/functional
+
   # The windows Debug row, lifted from ci.yml's build-and-test-windows on
   # 2026-09-13, step for step. The doctrine it carries (#81's baseline): the
   # portable driver built with MSVC and the full test suite run on the runner.
