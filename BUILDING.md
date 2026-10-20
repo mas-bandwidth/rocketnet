@@ -58,13 +58,34 @@ create is functional; `test_server_keyless_config_has_no_keys` checks the
 config the gate reads, without creating a transport.
 
 The functional suite takes its loopback ports from the OS. Every loopback
-server and socket it opens binds port 0 and reads back the port the OS gave.
-An address that must carry a real port takes a free one from the OS through
+server and socket it opens binds port 0 and reads back the port the OS gave,
+except the restart case, which reserves a port below the kernel's ephemeral
+range so a sibling's port-0 bind cannot take it between rebinds. An address
+that must carry a real port takes a free one from the OS through
 `rocketnet_test_free_port`, which binds a scratch socket to
-`127.0.0.1:0`, reads the port, and closes it. Two `./bin/functional` runs
-may share a machine at the same time. The one exception is the root-only XDP
-veth case (`ROCKETNET_TEST_XDP_VETH`), which makes a fixed namespace and veth
-pair and binds port 40411 on it; it skips without root.
+`127.0.0.1:0`, reads the port, and closes it; its callers hand that port to
+an xdp create the commit barrier refuses before any bind. Two
+`./bin/functional` runs may share a machine at the same time. What holds then:
+
+- The lifecycle cases read their after counts with `posix_settled_counts`,
+  which polls until the counts equal the before counts or 10 seconds pass, so
+  a joined thread the kernel has not yet reaped is not counted as a leak, and
+  a thread, descriptor or umem really left still fails the case.
+- `posix_server_create_destroy_1000` runs 250 cycles on the gso and io_uring
+  cells and 1000 on the others, so two suites at once stay under the 120
+  second case limit; the counts are compared after the first cycle and the
+  last, so a leak per cycle still fails.
+- `posix_server_restart_same_port_100` reserves a port below the kernel's
+  ephemeral range in a slice its cell alone scans and binds it again 100
+  times, so a sibling suite's port-0 binds cannot take it between rebinds.
+- The root-only XDP veth case (`ROCKETNET_TEST_XDP_VETH`) makes a fixed
+  namespace and veth pair and binds port 40411 on it; it skips without root.
+
+Two `tools/run_examples.py` runs may also share a machine: each example
+pair runs in its own temporary directory on its own free port, the client
+starts only after the server has written its keys, and a server that cannot
+bind before then is retried on a new port, at most three tries
+(tools/run_examples.py).
 
 Many-client load runs use the dedicated load harness:
 
