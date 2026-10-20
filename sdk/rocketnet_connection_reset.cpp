@@ -104,7 +104,9 @@ static void rocketnet_message_connection_reset( struct rn_message_object_t * obj
     /*
         rn_endpoint_reset releases queued channel state and resets its region.
         views and cursors are allocations inside that region and remain stable;
-        their contents become fresh with the region.
+        their contents become fresh with the region. A start pending on this
+        connection is cancelled by the update before it calls this reset
+        (sdk/rocketnet_message_server.cpp, rn_message_connection_cancel_at_reset).
     */
     rn_endpoint_reset( connection, object->time );
     memset( connection->views, 0, connection->region->delivery_entries );
