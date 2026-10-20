@@ -506,8 +506,9 @@ static void message_server_broadcast_skips_free_and_exhausted()
 {
     rocketnet_message_config_t config;
     mb_small_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // isolate explicit capacity
     mb_pair_t pair;
-    mb_pair_setup( &pair, 3, &config );
+    mb_pair_setup( &pair, 3, &config, 0, 0 );
     mb_step( &pair );
 
     // slot 1 is free: its transport connection is gone before the broadcast

@@ -902,11 +902,11 @@ static void config_packets_per_update_range()
     // make accidental reads visible: both creates must ignore these names.
     check( lifecycle_setenv( "ROCKETNET_CLIENT_MAX_PACKETS_" "PER_UPDATE", "1025" ) == 0 );
     check( lifecycle_setenv( "ROCKETNET_CLIENT_RTO_" "INITIAL_MS", "60001" ) == 0 );
-    check( lifecycle_setenv( "ROCKETNET_CLIENT_RTO_" "MIN_MS", "0" ) == 0 );
+    check( lifecycle_setenv( "ROCKETNET_CLIENT_RTO_" "MIN_MS", "-1" ) == 0 );
     check( lifecycle_setenv( "ROCKETNET_CLIENT_RTO_" "MAX_MS", "60001" ) == 0 );
     check( lifecycle_setenv( "ROCKETNET_SERVER_MAX_PACKETS_" "PER_UPDATE", "1025" ) == 0 );
     check( lifecycle_setenv( "ROCKETNET_SERVER_RTO_" "INITIAL_MS", "60001" ) == 0 );
-    check( lifecycle_setenv( "ROCKETNET_SERVER_RTO_" "MIN_MS", "0" ) == 0 );
+    check( lifecycle_setenv( "ROCKETNET_SERVER_RTO_" "MIN_MS", "-1" ) == 0 );
     check( lifecycle_setenv( "ROCKETNET_SERVER_RTO_" "MAX_MS", "60001" ) == 0 );
     client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
     check( client != NULL );
@@ -927,7 +927,7 @@ static void config_packets_per_update_range()
     check( lifecycle_setenv( "ROCKETNET_CLIENT_RESEND_DELAY_INITIAL_MS", "9" ) == 0 );
     check( rocketnet_client_create( NULL, &client_config, NULL, 0 ) == NULL );
     check( lifecycle_unsetenv( "ROCKETNET_CLIENT_RESEND_DELAY_INITIAL_MS" ) == 0 );
-    check( lifecycle_setenv( "ROCKETNET_CLIENT_RESEND_DELAY_MIN_MS", "251" ) == 0 );
+    check( lifecycle_setenv( "ROCKETNET_CLIENT_RESEND_DELAY_MIN_MS", "2001" ) == 0 );
     check( rocketnet_client_create( NULL, &client_config, NULL, 0 ) == NULL );
     check( lifecycle_unsetenv( "ROCKETNET_CLIENT_RESEND_DELAY_MIN_MS" ) == 0 );
     check( lifecycle_setenv( "ROCKETNET_CLIENT_RESEND_DELAY_MAX_MS", "9" ) == 0 );
@@ -937,7 +937,7 @@ static void config_packets_per_update_range()
     check( lifecycle_setenv( "ROCKETNET_SERVER_RESEND_DELAY_INITIAL_MS", "9" ) == 0 );
     check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 ) == NULL );
     check( lifecycle_unsetenv( "ROCKETNET_SERVER_RESEND_DELAY_INITIAL_MS" ) == 0 );
-    check( lifecycle_setenv( "ROCKETNET_SERVER_RESEND_DELAY_MIN_MS", "251" ) == 0 );
+    check( lifecycle_setenv( "ROCKETNET_SERVER_RESEND_DELAY_MIN_MS", "2001" ) == 0 );
     check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 ) == NULL );
     check( lifecycle_unsetenv( "ROCKETNET_SERVER_RESEND_DELAY_MIN_MS" ) == 0 );
     check( lifecycle_setenv( "ROCKETNET_SERVER_RESEND_DELAY_MAX_MS", "9" ) == 0 );

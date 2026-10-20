@@ -137,15 +137,19 @@ static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
 
 #define ROCKETNET_TEST_LOG_RING_LINES 32
 #define ROCKETNET_TEST_LOG_RING_LINE_BYTES 1024
-// a slot holds "<time>: <level>: " in front of a whole captured line: the
+// a slot holds "<event>: <level>: " in front of a whole captured line: the
 // level name is at most 7 bytes (sdk/rocketnet.cpp:179), so 64 bytes hold
-// the prefix for any clock reading below 10^40 seconds
+// the prefix for any uint64 event ordinal
 #define ROCKETNET_TEST_LOG_RING_PREFIX_BYTES 64
 #define ROCKETNET_TEST_LOG_RING_SLOT_BYTES ( ROCKETNET_TEST_LOG_RING_PREFIX_BYTES + ROCKETNET_TEST_LOG_RING_LINE_BYTES )
 
 static char rocketnet_test_log_ring[ROCKETNET_TEST_LOG_RING_LINES][ROCKETNET_TEST_LOG_RING_SLOT_BYTES];
 
 static int rocketnet_test_log_ring_lines;
+
+// the capture stamps each entry with a monotonically increasing event ordinal,
+// never a clock read: the unit suite reads no real time.
+static uint64_t rocketnet_test_log_ring_stamp;
 
 static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
 {
@@ -164,9 +168,11 @@ static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level
     }
 
     char * slot = rocketnet_test_log_ring[rocketnet_test_log_ring_lines % ROCKETNET_TEST_LOG_RING_LINES];
-    const int slot_length = snprintf( slot, ROCKETNET_TEST_LOG_RING_SLOT_BYTES, "%.6f: %s: %s", rocketnet_platform_time(), rocketnet_log_level_name( level ), line );
+    const int slot_length = snprintf( slot, ROCKETNET_TEST_LOG_RING_SLOT_BYTES, "%llu: %s: %s",
+              (unsigned long long) rocketnet_test_log_ring_stamp, rocketnet_log_level_name( level ), line );
     if ( slot_length < 0 || (size_t) slot_length >= ROCKETNET_TEST_LOG_RING_SLOT_BYTES )
         return;
+    rocketnet_test_log_ring_stamp++;
     rocketnet_test_log_ring_lines++;
 }
 
@@ -223,14 +229,6 @@ do                                                                              
 // the exact-delta helper and the conservation assert, checked by this suite
 #define ROCKETNET_COUNTERS_CHECK rocketnet_check
 #include "../test/counters_expect.h"
-
-void rocketnet_test_time()
-{
-    double start = rocketnet_platform_time();
-    rocketnet_platform_sleep( 0.1 );
-    double finish = rocketnet_platform_time();
-    rocketnet_check( finish > start );
-}
 
 // the clamp is a pure function: a non-finite time or a step backwards is the
 // last good time, counted and (in a debug build) asserted; a forward step
@@ -1533,92 +1531,6 @@ void rocketnet_test_connect_token_mint()
     rocketnet_connect_token_identifier( id_1, token_data );
     rocketnet_connect_token_identifier( id_2, token_data_2 );
     rocketnet_check( memcmp( id_1, id_2, 16 ) != 0 );
-}
-
-struct rocketnet_mint_thread_result_t
-{
-    bool ok;
-    int mints;
-};
-
-// one thread's independent run: mint into its own buffer, then verify and open
-// every token against the test keys and its own private fields
-static void rocketnet_test_connect_token_mint_thread( struct rocketnet_signed_connect_data_t signed_fields,
-                                                      struct rocketnet_connect_token_private_t private_fields,
-                                                      uint64_t base_client_id,
-                                                      int iterations,
-                                                      struct rocketnet_mint_thread_result_t * result )
-{
-    result->ok = true;
-    result->mints = 0;
-
-    for ( int i = 0; i < iterations; i++ )
-    {
-        struct rocketnet_connect_token_private_t fields = private_fields;
-        fields.client_id = base_client_id + (uint64_t) i;
-
-        uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
-        if ( !rocketnet_write_connect_token( &signed_fields, &fields, rocketnet_test_backend_secret_key, token_data ) )
-        {
-            result->ok = false;
-            return;
-        }
-
-        struct rocketnet_connect_token_t token;
-        rocketnet_read_connect_token( &token, token_data );
-        if ( !rocketnet_verify_signed_connect_data( token.signed_connect_data, token.signature, rocketnet_test_backend_public_key ) )
-        {
-            result->ok = false;
-            return;
-        }
-
-        struct rocketnet_connect_token_private_t opened;
-        if ( !rocketnet_open_connect_token_private( &opened, token.signed_connect_data, rocketnet_test_server_public_key, rocketnet_test_server_secret_key ) )
-        {
-            result->ok = false;
-            return;
-        }
-
-        if ( opened.client_id != fields.client_id )
-        {
-            result->ok = false;
-            return;
-        }
-
-        if ( memcmp( opened.client_to_server_key, fields.client_to_server_key, ROCKETNET_KEY_BYTES ) != 0 ||
-             memcmp( opened.server_to_client_key, fields.server_to_client_key, ROCKETNET_KEY_BYTES ) != 0 )
-        {
-            result->ok = false;
-            return;
-        }
-
-        result->mints++;
-    }
-}
-
-void rocketnet_test_connect_token_mint_concurrent()
-{
-    // two threads mint independent tokens at once, each with its own client
-    // ids and output buffer, and each opens only its own tokens: minting must
-    // touch no state outside its own call
-    struct rocketnet_signed_connect_data_t signed_fields;
-    struct rocketnet_connect_token_private_t private_fields;
-    rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
-
-    const int iterations = 300;
-    struct rocketnet_mint_thread_result_t results[2];
-
-    std::thread thread_a( rocketnet_test_connect_token_mint_thread, signed_fields, private_fields,
-                          ROCKETNET_TEST_CLIENT_ID + 1, iterations, &results[0] );
-    std::thread thread_b( rocketnet_test_connect_token_mint_thread, signed_fields, private_fields,
-                          ROCKETNET_TEST_CLIENT_ID + 0x100000, iterations, &results[1] );
-    thread_a.join();
-    thread_b.join();
-
-    rocketnet_check( results[0].ok );
-    rocketnet_check( results[1].ok );
-    rocketnet_check( results[0].mints == iterations );
-    rocketnet_check( results[1].mints == iterations );
 }
 
 void rocketnet_test_connect_token_refusals()
@@ -6791,21 +6703,7 @@ void rocketnet_test_payload_size_sweep()
 }
 
 
-static bool threads_work = false;
 
-static void test_thread_function(void*)
-{
-    threads_work = true;
-}
-
-void rocketnet_test_platform_thread()
-{
-    rocketnet_platform_thread_t * thread = rocketnet_platform_thread_create( NULL, test_thread_function, NULL );
-    rocketnet_check( thread );
-    rocketnet_platform_thread_join( thread );
-    rocketnet_platform_thread_destroy( thread );
-    rocketnet_check( threads_work );
-}
 
 void rocketnet_test_platform_mutex()
 {
@@ -8568,33 +8466,6 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     rocketnet_set_assert_callback( saved_assert );
 }
 
-void rocketnet_test_frame_sync_wait()
-{
-    // paced for real, briefly: 25 frames at 250hz is ~100ms of wall time.
-    // the assertion is pacing and accounting, never precision -- precision
-    // was the issue #56 measurement campaign's job, and CI runners are noisy.
-
-    struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create( NULL, 250.0 );
-    rocketnet_check( frame_sync );
-
-    const double start = rocketnet_platform_time();
-    for ( int i = 0; i < 25; i++ )
-    {
-        rocketnet_frame_sync_wait( frame_sync );
-    }
-    const double elapsed = rocketnet_platform_time() - start;
-
-    struct rocketnet_frame_sync_stats_t stats;
-    rocketnet_frame_sync_stats( frame_sync, &stats );
-    rocketnet_check( stats.frame == 25 );
-    rocketnet_check( elapsed > 0.06 );                              // it actually paced: a free run finishes in microseconds
-    rocketnet_check( elapsed < 5.0 );                               // and it did not wedge
-    rocketnet_check( !stats.spinning || stats.priority_held );      // never an unprivileged spin
-    rocketnet_check( stats.guard_seconds <= ( 1.0 / 250.0 ) / ROCKETNET_FRAME_SYNC_GUARD_CAP_DIVISOR + 1e-9 );
-
-    rocketnet_frame_sync_destroy( frame_sync );
-}
-
 // --- the general acks ---
 
 static int rocketnet_test_popcount64_reference( uint64_t v )
@@ -9233,9 +9104,10 @@ void rocketnet_test_ack_debt()
     int payload_client_index = -1;
 
     double time = 200.0;
+    test.server.acks->endpoints[0].ack_debt = 0;
 
     // --- the server side: eliciting packets received with nothing sent
-    // back arm the debt, and the threshold fires exactly one type 8 ---
+    // back arm the debt, and one eliciting packet makes exactly one type 8 due ---
 
     const uint8_t data[4] = { 1, 2, 3, 4 };
 
@@ -9249,10 +9121,10 @@ void rocketnet_test_ack_debt()
                                                           payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
     }
 
-    // one below the threshold: not due
+    // no eliciting packet: not due
     rocketnet_check( rocketnet_server_protocol_write_ack_if_due( &test.server, 0, time, packet ) == 0 );
 
-    // the threshold: the standalone ack goes out, and the debt resets
+    // one eliciting packet: the standalone ack goes out, and the debt resets
     time += 0.001;
     int bytes = rocketnet_client_protocol_write_payload( &client, data, 4, time, packet );
     rocketnet_check( rocketnet_server_protocol_process_packet( &test.server, &test.client_address, packet, bytes,
@@ -9287,12 +9159,11 @@ void rocketnet_test_ack_debt()
     rocketnet_check( rocketnet_server_protocol_process_packet( &test.server, &test.client_address, packet, bytes,
                                                       ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
                                                       payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
-    rocketnet_check( rocketnet_server_protocol_write_ack_if_due( &test.server, 0, time, packet ) == 0 );
+    uint8_t reset_ack[ROCKETNET_RECEIVE_CEILING];
+    rocketnet_check( rocketnet_server_protocol_write_ack_if_due( &test.server, 0, time, reset_ack ) >= ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES );
 
-    // --- the client side: keep-alives received with nothing sent back arm
-    // the client's debt, and its update emits the type 8 outside the send
-    // rate -- that is what removes the coupling between ack capacity and
-    // return-traffic cadence ---
+    // --- the client side: one keep-alive makes an ack due on the next
+    // protocol update, outside the scheduled send rate ---
 
     double client_time = client.last_send_time + 0.02;      // inside the rate gate: no scheduled send is due
 
@@ -9333,6 +9204,8 @@ void rocketnet_test_ack_non_elicitation()
     struct rocketnet_counters_t client_counters;
     struct rocketnet_client_protocol_t client;
     rocketnet_test_ack_connect( &test, &client, &client_counters, 0xE11C17ULL );
+    client.ack.ack_debt = 0;
+    test.server.acks->endpoints[0].ack_debt = 0;
 
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
@@ -9341,10 +9214,8 @@ void rocketnet_test_ack_non_elicitation()
     int payload_bytes = 0;
     int payload_client_index = -1;
 
-    // type 8 never elicits: a flood of standalone acks -- twice the debt
-    // threshold -- adds nothing to the client's debt, so its update emits no
-    // ack back and the conversation terminates. two quiet peers each
-    // obliged to acknowledge acknowledgments would exchange them forever.
+    // Type 8 never elicits. Even when an ack is due after one other packet,
+    // a flood of type 8 packets adds no debt and cannot start an ack loop.
 
     struct rocketnet_encryption_mapping_t * mapping =
         rocketnet_encryption_map_entry( test.server.encryption_map,
@@ -9369,8 +9240,7 @@ void rocketnet_test_ack_non_elicitation()
     rocketnet_client_protocol_update( &client, client_time, packet, &out_bytes );
     rocketnet_check( out_bytes == 0 );
 
-    // the mirror at the server: hand it a flood of type 8s and its own
-    // standalone ack never becomes due
+    // The mirror at the server: type 8 packets never create server ack debt.
     for ( int i = 0; i < 2 * ROCKETNET_ACK_DEBT_THRESHOLD; i++ )
     {
         int bytes = rocketnet_test_write_session_packet_salted( packet, ROCKETNET_CONNECTION_ACK_PACKET,
@@ -9384,9 +9254,10 @@ void rocketnet_test_ack_non_elicitation()
     client.send_sequence_session += (uint64_t) ( 2 * ROCKETNET_ACK_DEBT_THRESHOLD );        // the hand-built packets spent these
     rocketnet_check( rocketnet_server_protocol_write_ack_if_due( &test.server, 0, client_time, packet ) == 0 );
 
-    // and a balanced idle connection exchanges no type 8 at all: both ends
-    // at their scheduled rates for thirty simulated seconds, every packet a
-    // keep-alive. time continues from the connection's own clock so neither
+    // and a balanced idle connection sends no ack in response to an ack: both
+    // ends exchange keep-alives, and each eliciting keep-alive may receive one
+    // standalone ack on the next update. Time continues from the connection's
+    // own clock so neither
     // end's idle timeout fires.
     double time = client_time;
     for ( int step = 0; step < 3000; step++ )
@@ -9396,7 +9267,7 @@ void rocketnet_test_ack_non_elicitation()
         rocketnet_client_protocol_update( &client, time, packet, &bytes );
         if ( bytes > 0 )
         {
-            rocketnet_check( packet[0] == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET );
+            rocketnet_check( packet[0] == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET || packet[0] == ROCKETNET_CONNECTION_ACK_PACKET );
             rocketnet_check( rocketnet_server_protocol_process_packet( &test.server, &test.client_address, packet, bytes,
                                                               ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
                                                               payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
@@ -9406,7 +9277,7 @@ void rocketnet_test_ack_non_elicitation()
             bytes = rocketnet_server_protocol_write_ack_if_due( &test.server, 0, time, packet );
         if ( bytes > 0 )
         {
-            rocketnet_check( packet[0] == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET );
+            rocketnet_check( packet[0] == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET || packet[0] == ROCKETNET_CONNECTION_ACK_PACKET );
             rocketnet_check( rocketnet_client_protocol_process_packet( &client, packet, bytes, time, payload, sizeof(payload), &payload_bytes ) );
         }
     }
@@ -14404,7 +14275,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_token_lifetime_bounded", rocketnet_test_token_lifetime_bounded },
     { "test_token_timeout_clamped", rocketnet_test_token_timeout_clamped },
     { "test_suite_environment", rocketnet_test_suite_environment },
-    { "test_time", rocketnet_test_time },
     { "test_update_time_clamp", rocketnet_test_update_time_clamp },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_xdp_free_list_refuses_overflow", rocketnet_test_xdp_free_list_refuses_overflow },
@@ -14440,7 +14310,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_signed_connect_data", rocketnet_test_signed_connect_data },
     { "test_connect_token_frozen", rocketnet_test_connect_token_frozen },
     { "test_connect_token_mint", rocketnet_test_connect_token_mint },
-    { "test_connect_token_mint_concurrent", rocketnet_test_connect_token_mint_concurrent },
     { "test_connect_token_refusals", rocketnet_test_connect_token_refusals },
     { "test_prefilter", rocketnet_test_prefilter },
     { "test_packet_associated_data", rocketnet_test_packet_associated_data },
@@ -14510,7 +14379,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_client_slots_free_list", rocketnet_test_client_slots_free_list },
     { "test_table_creates_refuse_overflowing_capacity", rocketnet_test_table_creates_refuse_overflowing_capacity },
     { "test_client_id_out_of_range_returns_zero", rocketnet_test_client_id_out_of_range_returns_zero },
-    { "test_platform_thread", rocketnet_test_platform_thread },
     { "test_platform_mutex", rocketnet_test_platform_mutex },
     { "test_value_tracker", rocketnet_test_value_tracker },
     { "test_wire_server_packet_valid", rocketnet_test_wire_server_packet_valid },
@@ -14571,7 +14439,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_fragment_hostile_id_does_not_poison_slot", rocketnet_test_fragment_hostile_id_does_not_poison_slot },
     { "test_fragment_too_large_clauses", rocketnet_test_fragment_too_large_clauses },
     { "test_send_arena", rocketnet_test_send_arena },
-    { "test_frame_sync_wait", rocketnet_test_frame_sync_wait },
     { "test_config_env_round_trip", rocketnet_test_config_env_round_trip },
     { "test_public_config_env_round_trip", rocketnet_test_public_config_env_round_trip },
     { "test_public_config_resolve", rocketnet_test_public_config_resolve },

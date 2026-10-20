@@ -54,7 +54,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
 
 #define ROCKETNET_XDP_NUM_BUFFERS                                            2
 #define ROCKETNET_XDP_NUM_FRAMES                                         65536
-#define ROCKETNET_XDP_SEND_QUEUE_SIZE                             ( 4096 * 4 )
+#define ROCKETNET_XDP_SEND_QUEUE_SIZE                             ( 1024 * 4 )
 #define ROCKETNET_XDP_RECV_QUEUE_SIZE                             ( 4096 * 4 )
 #define ROCKETNET_XDP_FILL_QUEUE_SIZE                                     2048
 #define ROCKETNET_XDP_SEND_BATCH_SIZE                                       32
@@ -65,12 +65,30 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_FRAME_SIZE >= ROCKETNET_ETHERNET_HEADER_B
 ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_FRAME_SIZE == 4096,
                          "the XDP UMEM frame the driver registers is 4096 bytes" );
 
+ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_RECV_QUEUE_SIZE >= 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE,
+                         "receive budget twice send: XDP receive queue holds at least twice the send queue" );
+
 #endif // #if ROCKETNET_XDP
 
 #define ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS        ( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS )
 
+#if ROCKETNET_XDP
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE,
+                         "receive budget twice send: server process batch holds at least twice the XDP send queue" );
+#endif
+
 // One update reads at most ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS packets (16 * 1000 = 16000), bounding its work. This equals the payload-batch capacity; batches share one bound and one storage cap.
 #define ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE   ( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS )
+
+// Portable and msgx buffered batch sizes. The per-update receive budget
+// holds at least twice the send batch. The transport uses max_clients with
+// the historical 256-slot floor, bounded by the shared maximum below.
+#define ROCKETNET_SERVER_MIN_SEND_PACKETS                                  256
+#define ROCKETNET_SERVER_MAX_SEND_PACKETS                       ROCKETNET_MAX_CLIENTS
+#define ROCKETNET_SERVER_MAX_RECEIVE_PACKETS                               256
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS,
+                         "receive budget twice send: per-update receive budget holds at least twice the portable send batch" );
 
 // the send frame layout. every slot a transport hands out is a 16-aligned
 // root; the wire packet begins at the wire offset inside it and the payload
@@ -150,10 +168,17 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE == ROCK
 
 #define ROCKETNET_INTEGRITY_LIMIT                               ( 1ULL << 36 )
 
-// the ack debt threshold from the standard's timing table: a standalone ack
-// goes out at this many eliciting packets received since the last block sent
+// Any accepted eliciting packet makes an ack due on the next update.
 
-#define ROCKETNET_ACK_DEBT_THRESHOLD                                      64
+#define ROCKETNET_ACK_DEBT_THRESHOLD                                       1
+
+// RakNet ReliabilityLayer adaptive resend delay.
+
+#define ROCKETNET_MESSAGE_RESEND_DELAY_SCALE_PERCENT                          200
+#define ROCKETNET_MESSAGE_RESEND_DELAY_VARIANCE_SCALE                           4
+#define ROCKETNET_MESSAGE_RESEND_DELAY_GRANULARITY_MS                          30
+// Retained for historical benchmark comparisons; it does not cap live resends.
+#define ROCKETNET_MESSAGE_RESEND_INTERVAL_MS                              100
 
 // the per-client statistics recompute runs round-robin, a sixth of the
 // slots per update, every slot covered -- the reference's amortization

@@ -676,7 +676,7 @@
     /** @brief ROCKETNET_COUNTER_MESSAGE_SENT_MAP_EVICTED: Counts sent-packet map entries evicted while their message numbers remain queued for resend. Unit: occurrences. Class: refusal; family: none. */ \
     X( MESSAGE_SENT_MAP_EVICTED, REFUSAL, NONE ) \
     /* PATH_LOSS: a reliable record resent on the resend delay. */ \
-    /** @brief ROCKETNET_COUNTER_MESSAGE_RESENT: Counts reliable records resent after their retransmission timeout. Unit: occurrences. Class: path_loss; family: none. */ \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_RESENT: Counts reliable records resent after their resend delay. Unit: occurrences. Class: path_loss; family: none. */ \
     X( MESSAGE_RESENT, PATH_LOSS, NONE ) \
     \
     /* a connection's message memory (its region, docs/CHANNELS.md 4) was */ \

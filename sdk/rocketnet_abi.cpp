@@ -3,12 +3,8 @@
 #include "rocketnet_config.h"
 #include <string.h>
 
-ROCKETNET_STATIC_ASSERT( ROCKETNET_CLIENT_CONFIG_BYTES_1 == offsetof( struct rocketnet_client_config_t, simulated_loss_percent ), "client public revision 1 must end before simulator fields" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_CLIENT_CONFIG_BYTES_1 < ROCKETNET_CLIENT_CONFIG_BYTES_2, "client public config revisions must grow" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_CLIENT_CONFIG_BYTES_2 == sizeof( struct rocketnet_client_config_t ), "client public config current revision must match its struct" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_1 == offsetof( struct rocketnet_server_config_t, simulated_loss_percent ), "server public revision 1 must end before simulator fields" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_1 < ROCKETNET_SERVER_CONFIG_BYTES_2, "server public config revisions must grow" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_2 == sizeof( struct rocketnet_server_config_t ), "server public config current revision must match its struct" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_CLIENT_CONFIG_BYTES_1 == sizeof( struct rocketnet_client_config_t ), "client public config revision 1 must be the whole struct" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_1 == sizeof( struct rocketnet_server_config_t ), "server public config revision 1 must be the whole struct" );
 
 struct abi_field_t { const char * name; size_t offset; size_t size; };
 struct abi_type_t { const char * name; size_t size; const abi_field_t * fields; int count; };

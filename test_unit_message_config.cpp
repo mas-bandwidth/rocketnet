@@ -839,6 +839,9 @@ static void config_vector_is_library_default()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
+    check( config.resend_delay_initial_ms == 2000 );
+    check( config.resend_delay_min_ms == 0 );
+    check( config.resend_delay_max_ms == 2000 );
 
     // the body rn_ordered_announce_config writes for a NULL/default config
     struct rocketnet_message_config_body_t body;

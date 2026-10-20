@@ -660,9 +660,9 @@ uint32_t rn_endpoint_begin_update( struct rn_endpoint_t * endpoint )
 
 // Whether the ordered path has a packet to write now: a message queued for
 // its first write, or a number at the head of either resend FIFO that is
-// unsent or past its class's delay, min( resend_delay, resend_interval ) for a small
-// record and the resend delay for a chunk of a block (tla/RNResendTiming.tla Due). It
-// keeps a frame from being started for nothing.
+// unsent or past its class's adaptive resend delay (chunks also respect the
+// reliable-timeout attempts cap). This keeps a frame from being started
+// for nothing.
 
 static int rn_endpoint_fifo_due( const rn_region_t * region, uint32_t cursor, double delay, double now )
 {

@@ -479,11 +479,13 @@ static uint64_t ep_frees = 0;
 
 #if ROCKETNET_TEST_CLOCK_WRAP
 static uint64_t ep_clock_reads = 0;
+static double ep_fake_clock = 1000.0;
 extern "C" double __real_rocketnet_platform_time();
 extern "C" double __wrap_rocketnet_platform_time()
 {
     ep_clock_reads++;
-    return __real_rocketnet_platform_time();
+    ep_fake_clock += ( 1.0 / 60.0 );
+    return ep_fake_clock;
 }
 #endif // #if ROCKETNET_TEST_CLOCK_WRAP
 

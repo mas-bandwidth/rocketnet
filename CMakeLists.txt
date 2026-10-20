@@ -539,6 +539,14 @@ if(ROCKETNET_BUILD_TESTS)
     # bare soname when its rooted name misses; the executable's RUNPATH lets
     # that fallback resolve from any working directory.
     set_property(TARGET test APPEND PROPERTY BUILD_RPATH "$<TARGET_FILE_DIR:rocketnet_shared>")
+    # Functional-tier binaries (BUILDING.md, "Test binaries and their tiers"):
+    # test_lifecycle, test_driver, test_serialize, test_transport_control,
+    # test_xdp, test_xdp_filter, test_msgx and test_iocp open real sockets,
+    # start threads, sleep or read the wall clock, so none of them is a unit
+    # test. ./bin/functional runs test_serialize, test_transport_control and
+    # the platform's driver binary (the execs table in functional/main.cpp's
+    # main); CI runs test_lifecycle and test_driver in steps named
+    # "Functional: ...".
     foreach(test_target test_lifecycle test_driver)
         add_executable(${test_target} ${test_target}.cpp)
         target_include_directories(${test_target} PRIVATE test)
@@ -637,6 +645,7 @@ if(ROCKETNET_BUILD_TESTS)
     add_executable(functional
         functional/main.cpp
         functional/rocketnet_functional_tests.cpp
+        functional/platform_primitives.cpp
         functional/server_receive_backlog.cpp
         functional/thread_priority_timing.cpp
         functional/macos_client_timing.cpp
