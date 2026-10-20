@@ -2705,7 +2705,7 @@ wire representation.
    nor sequenced: a message endpoint MUST ignore its channel, MUST NOT refuse
    it for its channel, and sends it with no channel field (rule 2), as RakNet's
    ordering channel is ignored by its unordered reliabilities
-   (`sdk/rocketnet_message_server.cpp:612-618`).
+   (`rn_message_object_start` in `sdk/rocketnet_message_server.cpp`).
 2. A record with code 1, 3 or 4 MUST carry the channel field in
    [m3 Record format](#m3). Receipt types use their base codes from
    [m1.3 Reliability types](#m1.3): type 7 uses code 3 and carries a channel;

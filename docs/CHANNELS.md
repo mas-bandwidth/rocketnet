@@ -1354,7 +1354,7 @@ header; the internal transport and message layers are in
 - **The send's channel** is RakNet's ordering channel: the types that are
   neither ordered nor sequenced (UNRELIABLE, RELIABLE and their receipt types)
   ignore it and accept any value, never refused
-  (`sdk/rocketnet_message_server.cpp:612-618`).
+  (`rn_message_object_start` in `sdk/rocketnet_message_server.cpp`).
 - **UNRELIABLE.** A code 0 record carries no channel (13.2), so an unreliable
   message is delivered on channel 0. It is one record in one packet, up to the
   payload capacity less the form byte and the record's three header bytes

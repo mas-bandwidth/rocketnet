@@ -412,7 +412,7 @@ sequenced within it, independently of every other channel, and a channel at or
 past the config's `num_channels` refuses them. UNRELIABLE, RELIABLE and the
 other two receipt types ignore it, as RakNet's `ReliabilityLayer::Send` does:
 any channel is accepted for them, never refused, and they travel with no
-channel (`sdk/rocketnet_message_server.cpp:612-618`).
+channel (`rn_message_object_start` in `sdk/rocketnet_message_server.cpp`).
 
 A send the connection's region has no room for ends the connection with
 `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED`: the server disconnects that
