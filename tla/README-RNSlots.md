@@ -10,7 +10,7 @@ tag. A slot index never identifies a connection by itself.
 A delivered message is an opaque byte view into the connection's region.
 The application explicitly releases every view before its next object update.
 Calling update while a view remains held enters
-`ROCKETNET_ERROR_MESSAGE_NOT_RELEASED`; the implementation asserts in debug
+`ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED`; the implementation asserts in debug
 and returns this named error in release. Views cannot survive an update.
 This refines section 11.1's batch lifetime and supersedes the earlier open
 choice between automatic expiry and arbitrary explicit lifetime. `BeginUpdate`
