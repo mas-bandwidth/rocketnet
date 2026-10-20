@@ -441,7 +441,7 @@ static bool rocketnet_server_transport_staged( const rocketnet_server_transport_
 }
 
 // a NULL start with the id ROCKETNET_DRIVER_PACKET_UNREACHABLE is the
-// driver's refusal for want of a link-layer destination (DRIVERS.md, xdp):
+// driver's refusal for want of a link-layer destination (TRANSPORTS.md, xdp):
 // counted here, never as a full ring, and never sent or counted as sent
 static uint8_t * rocketnet_server_driver_start_packet( rocketnet_server_transport_t * transport, const rocketnet_address_t * to, uint64_t * id )
 {
@@ -1440,7 +1440,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     protocol->client_slots = rocketnet_client_slots_create( context, max_clients );
     protocol->acks = rocketnet_server_acks_create( context, max_clients );
 
-    // the connection ids (docs/CHANNELS.md P9a, P9b): one per slot, 0 while
+    // the connection ids (standard/TRANSPORT.md): one per slot, 0 while
     // free, and one per acked batch entry, sized as the acked batch is
     protocol->connection_ids = (uint64_t*) rocketnet_malloc( context, (size_t) max_clients * sizeof(uint64_t) );
     protocol->acked_connection_ids = (uint64_t*) rocketnet_malloc( context, (size_t) max_clients * ROCKETNET_SENT_PACKET_BUFFER_SIZE * sizeof(uint64_t) );
@@ -1451,7 +1451,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     if ( server_transport->client_wire_totals )
         memset( server_transport->client_wire_totals, 0, (size_t) max_clients * sizeof(struct rocketnet_server_wire_totals_t) );
     // one reassembly set per connection slot, created here at create and
-    // reached only from a connected slot (STANDARD.md _Fragmentation_).
+    // reached only from a connected slot (standard/TRANSPORT.md _Fragmentation_).
     // the delivered mirror sizes to the server's completion bound: the
     // receive path drains one global array of up to
     // ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS packets per update with no
@@ -1746,7 +1746,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
                                          payload ? payload : payload_overflow, &payload_bytes, &payload_client_index );
 
         // a packet that opened under a connection's keys teaches the driver
-        // its link-layer source (the xdp reply-MAC rule, DRIVERS.md); a
+        // its link-layer source (the xdp reply-MAC rule, TRANSPORTS.md); a
         // dropped or unauthenticated packet (a cookie or a challenge answer)
         // teaches nothing
         if ( ( outcome == ROCKETNET_SERVER_PROCESS_ACCEPTED || outcome == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE ) && server_transport->io.operations->peer_accepted )
@@ -2035,7 +2035,7 @@ int rocketnet_server_transport_payloads( struct rocketnet_server_transport_t * s
     return server_transport->payloads.num_payloads;
 }
 
-// docs/CHANNELS.md P9b: the connection id of each payload entry, parallel to
+// standard/TRANSPORT.md: the connection id of each payload entry, parallel to
 // the client index array above
 
 int rocketnet_server_transport_payload_connection_ids( struct rocketnet_server_transport_t * server_transport, const uint64_t ** connection_id )
@@ -2713,7 +2713,7 @@ uint64_t rocketnet_server_transport_client_id( struct rocketnet_server_transport
     return rocketnet_client_slots_client_id( server_transport->protocol.client_slots, client_index );
 }
 
-// docs/CHANNELS.md P9a: the connection that holds the slot now
+// standard/TRANSPORT.md: the connection that holds the slot now
 
 uint64_t rocketnet_server_transport_client_connection_id( struct rocketnet_server_transport_t * server_transport, int client_index )
 {
@@ -2784,7 +2784,7 @@ int rocketnet_server_transport_acked_packets( struct rocketnet_server_transport_
     return acks->num_acked;
 }
 
-// docs/CHANNELS.md P9b: the connection id of each acked packet id, parallel
+// standard/TRANSPORT.md: the connection id of each acked packet id, parallel
 // to the client index array above
 
 int rocketnet_server_transport_acked_connection_ids( struct rocketnet_server_transport_t * server_transport, const uint64_t ** connection_id )

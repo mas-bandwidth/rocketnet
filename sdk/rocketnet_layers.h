@@ -73,7 +73,7 @@ extern "C" {
 
 #define ROCKETNET_MESSAGE_FRAGMENT_BYTES                             1152
 
-// The reliable resend schedule (docs/CHANNELS.md 6.4). Every resend of a
+// The reliable resend schedule (standard/MESSAGES.md m9.3). Every resend of a
 // record waits min( rto, ROCKETNET_MESSAGE_RESEND_INTERVAL_MS ), with no
 // back-off, and rto = clamp( srtt x ROCKETNET_MESSAGE_RTO_SCALE_PERCENT / 100
 // + 2 rttvar, rto_min_ms, rto_max_ms ). Validation refuses reliable_timeout_ms
@@ -1264,7 +1264,7 @@ void rocketnet_frame_sync_stats( struct rocketnet_frame_sync_t * frame_sync, str
 //                           messages
 // -----------------------------------------
 
-// The message layer above the transports (docs/CHANNELS.md): the message
+// The message layer above the transports (standard/MESSAGES.md): the message
 // config, the sizing of one connection's region, callable before any
 // connect, and the client and server message objects.
 
@@ -1278,7 +1278,7 @@ struct rocketnet_message_receipt_t
 
 // The message config. Fields marked WIRE must be identical on both ends; the
 // connection verifies them. Validation applies the ranges here and the cross
-// rules of docs/CHANNELS.md section 14, and refuses, never clamps.
+// rules of standard/MESSAGES.md m5.4, and refuses, never clamps.
 
 /** @brief Memory, wire, and timing settings for the message layer.
  * @details Member comments state defaults and accepted ranges. Fields marked WIRE must agree between peers. The caller owns this value; validation and sizing do not allocate.
@@ -1359,7 +1359,7 @@ int rocketnet_message_validate_config( const struct rocketnet_message_config_t *
  */
 int rocketnet_message_validate_config_ex( const struct rocketnet_message_config_t * config, int * status );
 
-// The exact bytes of one connection's region (docs/CHANNELS.md 14): the
+// The exact bytes of one connection's region (standard/MESSAGES.md m5.4): the
 // formula plus the 64-byte alignment of each part. 0 for a refused config;
 // NULL means the defaults. Allocation-free; callable before init or connect.
 // A server holds one region per client slot, a client one.
@@ -1393,7 +1393,7 @@ int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t
  */
 uint64_t rocketnet_message_print_connection_sizing( const struct rocketnet_message_config_t * config, int num_connections );
 
-// The client and server message objects over the transports (docs/CHANNELS.md
+// The client and server message objects over the transports (standard/MESSAGES.md
 // 10 to 12): a message is bytes, a pointer and a length. Each object is
 // one block made at create -- the object, its connections and one region per
 // connection (the client's one, one per server slot) -- and allocates nothing
@@ -1622,7 +1622,7 @@ uint32_t rocketnet_message_server_send( struct rocketnet_message_server_t * serv
 
 // Sends data to every connected slot exactly as rocketnet_message_server_send
 // would, one copy per connection: each connection's region holds its own copy
-// (docs/CHANNELS.md section 11.4, Broadcast). Returns the number of slots it
+// (standard/MESSAGES.md, Broadcast). Returns the number of slots it
 // was queued for; a slot that refuses (exhausted, not connected) is skipped.
 // a NULL server or data is a counted no-op that returns 0.
 int rocketnet_message_server_broadcast( struct rocketnet_message_server_t * server, int channel, int reliability, const uint8_t * data, int bytes );

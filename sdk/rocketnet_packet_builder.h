@@ -17,7 +17,7 @@
 #include "rocketnet_send_budget.h"
 #include "rocketnet_window_ack.h"
 
-// Layer 6's packet builder (docs/CHANNELS.md 9.3): per connection per update,
+// Layer 6's packet builder (standard/MESSAGES.md m3): per connection per update,
 // write packets through layer 2's writer into frames the caller provides,
 // packing several small records per packet, taking items in the budget's class
 // order, and committing each packet's carried reliable numbers to layer 3's
@@ -61,10 +61,10 @@ struct rn_packet_item_t
     uint8_t send_class;             // ROCKETNET_SEND_CLASS_*: the budget's class order
     uint8_t taken;                  // the builder sets this on an item it wrote
     uint8_t priority;               // ROCKETNET_PRIORITY_*: 0 IMMEDIATE to 3 LOW; boosts the item's whole channel (9.2)
-    uint8_t block;                  // nonzero: one fragment of a block (CHANNELS.md 8)
+    uint8_t block;                  // nonzero: one fragment of a block (standard/MESSAGES.md m8)
     uint8_t alone;                  // nonzero: the record travels in a packet by itself (a chunk: tla/RNChannel.tla, a chunk travels alone)
     uint8_t resend;                 // nonzero: an RTO resend, counted and backed off by the caller
-    uint8_t control;                // nonzero: a layer control record, code 2 with CONTROL set (CHANNELS.md 10.3)
+    uint8_t control;                // nonzero: a layer control record, code 2 with CONTROL set (standard/MESSAGES.md m11)
 };
 
 struct rn_packet_builder_t
@@ -107,7 +107,7 @@ bool rn_packet_builder_init( struct rn_packet_builder_t * builder, struct rn_reg
 // Writes at most max_packets_per_update packets into the caller's payload
 // areas (each payload_capacity bytes; the caller owns the frames and passes
 // frame + payload_index). Items are taken in three nested orders
-// (tla/RNScheduler.tla, docs/CHANNELS.md 9.2):
+// (tla/RNScheduler.tla, standard/MESSAGES.md m10):
 //
 // 1. the budget's class order, the outer rule -- retransmits, ordered
 //    progress, new reliable, unreliable -- whatever the priorities;
@@ -147,7 +147,7 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
 
 void rn_packet_builder_commit( struct rn_packet_builder_t * builder, int packet_index, uint64_t packet_id, double now );
 
-// Recovers a packet the transport refused to finish (docs/CHANNELS.md 6.4
+// Recovers a packet the transport refused to finish (standard/MESSAGES.md m9.3
 // "Failed send"): its numbers keep their assignment and go to the head of the
 // resend FIFO, due now, so the next update resends them first.
 

@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// Layer 6's packet builder, unit tier (docs/CHANNELS.md 9.3; tla/RNChannel.tla
+// Layer 6's packet builder, unit tier (standard/MESSAGES.md m3; tla/RNChannel.tla
 // WritePacket with tla/RNSendBudget.tla). No sockets, no threads, no wall
 // clock: time is an argument.
 

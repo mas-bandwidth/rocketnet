@@ -4,8 +4,7 @@
 */
 
 // Decrypt on the client I/O thread (tla/RNClientIoDecrypt.tla,
-// docs/CLIENT-IO-DECRYPT.md If decrypt moves): the I/O step opens each session
-// datagram before IoPublish with its own copy of the open key and its own
+// the I/O step opens each session datagram before IoPublish with its own copy of the open key and its own
 // replay window, and update consumes the records in arrival order. Single
 // threaded and step-driven: the fake client driver, the step called on the
 // test's thread in place of the I/O thread, a test clock from 1000.0, and

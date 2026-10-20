@@ -1,8 +1,6 @@
 # RNSentHistory: the sent history under loss, reordering and ack delay
 
-> STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
-
-`RNSentHistory.tla` is the sent-record slice of `docs/TLA-INVENTORY.md` M8: a
+`RNSentHistory.tla` is the sent-record slice of M8: a
 ring of `N` records, each holding the newest sent session sequence congruent to
 its index mod `N`, and what a write does to the record it replaces.
 
@@ -17,7 +15,7 @@ told apart by what the sender knows:
 | unacked, and `largest_acked_sequence >= seq + Threshold` | `SEND_HISTORY_LOST` | known path loss (RFC 9002 6.1.1, packet threshold 3), an outcome |
 | unacked, no such later ack | `SEND_HISTORY_OVERFLOW` | unknown fate: a silent peer, or a window too small for the path; a refusal of history that reads zero on a healthy path |
 
-The write never refuses the send (STANDARD.md "Replay window sizing": an
+The write never refuses the send (TRANSPORT.md "Replay window sizing": an
 implementation MUST NOT throttle sends to preserve history). The sum of the two
 counts is the count of overwritten unacknowledged records the standard names.
 

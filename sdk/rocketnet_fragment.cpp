@@ -344,7 +344,7 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
     uint8_t * slot_payload = set->arena + ( (size_t) connection_index * set->num_slots + (size_t) ( payload_id % (uint32_t) set->num_slots ) ) * set->slot_arena_bytes;
     uint8_t * slot_staging = slot_payload + set->max_payload_bytes;
 
-    // the stale test, STANDARD.md _Fragmentation_, against two references.
+    // the stale test, standard/TRANSPORT.md _Fragmentation_, against two references.
     // Ids are compared as unsigned differences, so the rollover past
     // 0xFFFFFFFF is ordinary arithmetic.
     //

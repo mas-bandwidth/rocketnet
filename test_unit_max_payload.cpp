@@ -4,7 +4,7 @@
 */
 
 // The packet size limits. One number -- the link MTU -- fixes every other
-// limit by derivation (STANDARD.md _Packet sizes_): the receive ceiling is
+// limit by derivation (standard/TRANSPORT.md _Packet sizes_): the receive ceiling is
 // the IPv4 UDP payload of a 1500-byte link, the send budget the IPv6 one, the
 // payload capacity the budget less the fixed overhead and the minimum ack
 // block rounded down to eight, and the SINGLE message the capacity less its
@@ -279,7 +279,7 @@ static void message_of_1400_bytes_is_one_unfragmented_packet()
     }
 
     // 3. reliable ordered (code 3): reliable records may only ride a payload
-    // at or under the wire capacity (STANDARD.md _Messages_ check 9), so the
+    // at or under the wire capacity (standard/MESSAGES.md _Messages_ check 9), so the
     // whole 1400-byte message must fit in one unfragmented packet
 
     {

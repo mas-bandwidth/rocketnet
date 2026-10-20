@@ -1,18 +1,16 @@
 # ClientConnection: the client's connection state machine
 
-> STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
-
 `tla/ClientConnection.tla` is the client of `sdk/rocketnet_client_protocol.cpp` (driven
 by `sdk/rocketnet_client_transport.cpp`'s update cycle), checked over two instances of
 the shared lossy link `tla/Link.tla`: `C2S` carries what the client sends, `S2C` what
 the server sends. The server is modelled as the environment the client talks to, only
 as far as it drives the client. `tla/MCClientConnection.tla` and
 `tla/MCClientConnection.cfg` are the small instance; current measured cases are in
-`tla/RUNS.tsv`, with earlier records retained in `tla/RUNS-HISTORY.tsv`. The inventory this card worked from is `docs/TLA-INVENTORY.md`, M1.
+`tla/RUNS.tsv`, with earlier records retained in `tla/RUNS-HISTORY.tsv`. The inventory this card worked from is M1.
 
 ## What the model covers
 
-**States** are the standard's numbers (STANDARD.md, _Client State Machine_;
+**States** are the standard's numbers (TRANSPORT.md, _Client State Machine_;
 `sdk/rocketnet.h:398-409`): -7 token expired, -5 connection timed out, -4 response
 timed out, -3 request timed out, -2 cookie request timed out, -1 denied, 0 disconnected,
 1 requesting cookie, 2 sending connection request, 3 sending connection response,
@@ -274,8 +272,8 @@ in every safety run. The liveness runs use a FIFO link (the fairness section say
 ## What TLC found
 
 Every counterexample below was replayed by hand through the functions it names before
-it was written down. Three are findings in the code (all three already in
-`docs/TLA-INVENTORY.md`, now reproduced as traces); the rest are model errors fixed on
+it was written down. Three are findings in the code (all three
+now reproduced as traces); the rest are model errors fixed on
 the way, or the reversed witnesses doing their job.
 
 ### The hang, reproduced (reversed witnesses)

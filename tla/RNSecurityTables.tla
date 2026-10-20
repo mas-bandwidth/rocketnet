@@ -8,7 +8,7 @@
 (* rocketnet_server_protocol_rotate_cookie_key_if_due,                     *)
 (* rocketnet_server_process_opened_request and                             *)
 (* rocketnet_server_process_connection_response), and the failed-verify    *)
-(* budget (sdk/rocketnet_server.h, 64 table slots), as STANDARD.md         *)
+(* budget (sdk/rocketnet_server.h, 64 table slots), as TRANSPORT.md        *)
 (* specifies them (Connect token sharing, Processing Connection            *)
 (* Requests, Processing Connection Response Packets).  This module         *)
 (* lands the held draft of tla/Security.tla at the table grain: the        *)
@@ -243,14 +243,14 @@ TypeOK ==
 \* TokenUsedOnce, the headline rule, as the server enforces it: one token,
 \* one live connection.  No two client slots hold one token at once.  A
 \* token whose connection has closed may connect again inside its short
-\* expiry: the accepted residual risk (docs/SESSION.md, Token reuse).
+\* expiry: the accepted residual risk.
 OneTokenOneLiveConnection == \A t \in Tokens : Cardinality({s \in slots : s.tok = t}) <= 1
 \* Ordinary churn is never denied: a fresh token at a server with a free
 \* slot is never refused or denied at the response.
 ChurnNeverDenied == ~churnDenied
 \* A token is bound in the history only by a response that opened under
 \* it, from the address it binds, so a replay from an address that holds
-\* no keys binds nothing (STANDARD.md, Processing Connection Response
+\* no keys binds nothing (TRANSPORT.md, Processing Connection Response
 \* Packets).  NoBindToNonHolder is its consequence for the attacker: no
 \* address outside Holds[t] is ever bound to t.
 BoundOnlyToOpener == \A t \in Tokens : history[t] # None => history[t].opened

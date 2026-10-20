@@ -16,7 +16,7 @@
 #include <sodium.h>
 #include <string.h>
 
-// the connection ids, docs/CHANNELS.md P9a: a slot takes the next id from the
+// the connection ids, standard/TRANSPORT.md: a slot takes the next id from the
 // server-wide counter when it is assigned and drops to 0 when it is released
 
 uint64_t rocketnet_server_protocol_connection_id( const struct rocketnet_server_protocol_t * server, int client_index )
@@ -282,8 +282,8 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
                 counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_ALREADY_CONNECTED]++;
                 return ROCKETNET_SERVER_PROCESS_IGNORED;
             }
-            // STANDARD.md: a mapping answers every request from its address with its stored challenge, whatever the request's salt.
-            mapping->last_receive_time = current_time;     // STANDARD.md _Half-open state_: traffic refreshes the idle deadline
+            // standard/TRANSPORT.md: a mapping answers every request from its address with its stored challenge, whatever the request's salt.
+            mapping->last_receive_time = current_time;     // standard/TRANSPORT.md _Half-open state_: traffic refreshes the idle deadline
             memcpy( response_packet, mapping->challenge_packet, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
             *response_bytes = ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES;
             rocketnet_debug( "server resent stored connection challenge" );
@@ -347,7 +347,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
             if ( token_create_timestamp > current_timestamp + 5 )
             {
                 rocketnet_debug( "server ignored connection request. connect token created in future" );
-                // one counter per refusal reason (STANDARD.md, Counters).
+                // one counter per refusal reason (standard/TRANSPORT.md, Counters).
                 counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE]++;
                 return ROCKETNET_SERVER_PROCESS_IGNORED;
             }
@@ -357,7 +357,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
             if ( lifetime > (uint64_t) server->max_token_lifetime_seconds )
             {
                 rocketnet_debug( "server ignored connection request. connect token lifetime exceeds maximum" );
-                // one counter per refusal reason (STANDARD.md, Counters).
+                // one counter per refusal reason (standard/TRANSPORT.md, Counters).
                 counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG]++;
                 return ROCKETNET_SERVER_PROCESS_IGNORED;
             }
@@ -587,7 +587,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
 
     // no used-token history record here: a request proves nothing about who
     // holds the token's keys, so the binding waits for a response that opens
-    // under the handshake key (STANDARD.md, Processing Connection Response
+    // under the handshake key (standard/TRANSPORT.md, Processing Connection Response
     // Packets; tla/RNSecurityTables.tla, BoundOnlyToOpener)
 
     {
@@ -597,7 +597,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES];
         randombytes_buf( session_nonce, sizeof(session_nonce) );
 
-        // Cheap refusals come before cryptography (STANDARD.md, Reading
+        // Cheap refusals come before cryptography (standard/TRANSPORT.md, Reading
         // packets; ReceiveOrder CheapRefusalsFirst). The handshake keys need
         // no ephemeral pair, so derive them alone and check the slots before
         // any keypair or scalar multiplication. A full server seals the same
@@ -753,7 +753,7 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
     }
 
     // one token, one live connection (tla/RNSecurityTables.tla,
-    // OneTokenOneLiveConnection; docs/SESSION.md 1.6). a token carries one
+    // OneTokenOneLiveConnection). a token carries one
     // client id, so with the binding at the response, when two addresses each
     // hold a mapping for one token, the first to be admitted connects and the
     // second is refused here while that connection lives. no admitted-token
@@ -1035,7 +1035,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     }
 
     // session types: the slot gate runs before the replay-window mark, per
-    // STANDARD.md _Reading packets_ -- a session packet whose mapping has no
+    // standard/TRANSPORT.md _Reading packets_ -- a session packet whose mapping has no
     // assigned slot is ignored after the open and before the mark -- and
     // _Processing session packets at the server_. The NoAdvanceBeforeConnect
     // invariant of tla/ReplayWindow.tla: the session window of a mapping
@@ -1342,7 +1342,7 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
 
         if ( !mapping->established )
         {
-            // STANDARD.md _Half-open state_: the earlier of the idle and handshake deadlines removes the mapping.
+            // standard/TRANSPORT.md _Half-open state_: the earlier of the idle and handshake deadlines removes the mapping.
             if ( current_time >= mapping->handshake_deadline )
             {
                 rocketnet_debug( "server removed encryption mapping. handshake deadline expired" );

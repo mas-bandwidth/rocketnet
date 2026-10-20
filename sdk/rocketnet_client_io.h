@@ -31,7 +31,7 @@
 // so the header needs no sodium include.
 void rocketnet_client_io_wipe( void * data, size_t bytes );
 
-// The client I/O step of docs/CLIENT-IO.md _The I/O step_ and _The wake_, and
+// The client I/O step, and
 // the RNClientIo actions it names. The thread loop is one call per iteration;
 // unit tests call it directly, with a fake driver and a test clock, on the
 // test's thread.
@@ -53,7 +53,7 @@ struct rocketnet_client_io_ring_view_t
 
 // Each record carries the I/O thread's verdict (ROCKETNET_CLIENT_IO_VERDICT_*,
 // sdk/rocketnet_client_protocol.h) and, when opened, the reconstructed 64-bit
-// session sequence (docs/CLIENT-IO-DECRYPT.md, If decrypt moves). An opened
+// session sequence (If decrypt moves). An opened
 // record keeps its wire header and its wire byte count; the plaintext replaces
 // the ciphertext behind the header.
 
@@ -69,7 +69,7 @@ struct rocketnet_client_receive_buffer_t
     uint8_t data[ROCKETNET_FRAME_SIZE*ROCKETNET_NUM_CLIENT_PACKETS];
 };
 
-// The I/O thread's open block (docs/CLIENT-IO-DECRYPT.md): an I/O-owned copy
+// The I/O thread's open block: an I/O-owned copy
 // of the session open key, protocol id, connection salt and filter value, an
 // open epoch (0 none, odd live generation, a retired value), and the I/O
 // thread's own replay window (tla/RNClientIoDecrypt.tla epoch, ioKeys, ioWin).
@@ -279,7 +279,7 @@ inline void rocketnet_client_io_decrypt_datagram( rocketnet_client_io_t * io, co
 }
 
 // RNClientIo Stop; main thread. Stores quit, then wakes the I/O thread
-// (docs/CLIENT-IO.md _Stop and destroy order_). The I/O thread finishes the
+// The I/O thread finishes the
 // ring in flight and exits; the main thread joins, closes the driver, then
 // frees.
 inline void rocketnet_client_io_stop( rocketnet_client_io_t * io )
@@ -290,7 +290,7 @@ inline void rocketnet_client_io_stop( rocketnet_client_io_t * io )
 }
 
 // RNClientIo HandOff and Defer; main thread. A LATE result is the deferred
-// hand-off of docs/CLIENT-IO.md _Reuse only after sent_: the committed slots
+// hand-off: the committed slots
 // stay in the Filling ring and leave with the next hand-off. This function
 // never waits, spins or retries, and wakes the I/O thread only on HANDED_OFF.
 inline int rocketnet_client_io_hand_off( rocketnet_client_io_t * io, uint64_t committed, const rocketnet_address_t * to )
@@ -320,7 +320,7 @@ inline void rocketnet_client_io_return( rocketnet_client_io_t * io )
 }
 
 // The I/O thread's loop body (RNClientIo IoSend, IoFinishRing, IoReceive,
-// IoPublish, IoOwe, IoWait; docs/CLIENT-IO.md _The I/O step_ and _The wake_).
+// IoPublish, IoOwe, IoWait).
 inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
 {
     rocketnet_assert( io );
@@ -493,7 +493,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
 }
 
 // RNClientIo IoExit; the I/O thread's body. Calls the step in a loop until it
-// returns EXITED (docs/CLIENT-IO.md _Stop and destroy order_). The transport
+// returns EXITED. The transport
 // creates the thread with this function and joins it before closing the driver.
 inline void rocketnet_client_io_thread_function( void * data )
 {
@@ -511,8 +511,8 @@ bool rocketnet_client_transport_uses_io_thread( const rocketnet_client_driver_op
 // driver's create receives driver_context) with no I/O thread. When the
 // operations have wait and wake the caller runs rocketnet_client_io_step on
 // rocketnet_client_transport_client_io in place of the thread, and destroy
-// runs the step in place of the sleep and the join (docs/CLIENT-IO.md _Stop
-// and destroy order_). Returns NULL on any create refusal.
+// runs the step in place of the sleep and the join. Returns NULL on any create
+// refusal.
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven( void * context, const uint8_t * connect_token,
     const struct rocketnet_client_transport_config_t * config, double time,
     const rocketnet_client_driver_operations_t * operations, void * driver_context );

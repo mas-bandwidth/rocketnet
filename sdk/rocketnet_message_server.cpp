@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The server message object (docs/CHANNELS.md 11.1) and the object core it
+// The server message object (standard/MESSAGES.md) and the object core it
 // shares with the client: the client is the same object with one connection
 // (11.3), so the core lives here and sdk/rocketnet_message_client.cpp adds the
 // client's link and C API.
@@ -143,7 +143,7 @@ struct rn_message_connection_t * rn_message_object_connection( struct rn_message
 //                     create and destroy
 // ---------------------------------------------------------------
 
-// DEFAULT < STRUCT < ENV for the R6 send budget (docs/CHANNELS.md 11.5;
+// DEFAULT < STRUCT < ENV for the R6 send budget (standard/MESSAGES.md m9.4;
 // tla/RNSendBudget.tla SetKbps): the direction's field is read from
 // ROCKETNET_MESSAGE_CLIENT_SEND_KBPS or ROCKETNET_MESSAGE_SERVER_SEND_KBPS over
 // the value create resolved, through the config table's own overlay, which
@@ -201,7 +201,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
         config = &defaults;
     }
 
-    // R6 (docs/CHANNELS.md 11.5): a create argument of 0 takes the message
+    // R6 (standard/MESSAGES.md m9.4): a create argument of 0 takes the message
     // config's field; a positive value overrides it for this create; 0 or
     // lower in the config field itself disables that direction's budget.
     if ( default_kbps == 0 )
@@ -999,7 +999,7 @@ struct rocketnet_message_server_t * rocketnet_message_server_create_ex( void * c
     if ( !rocketnet_api_null_guard( address ) )
         return NULL;
 
-    // R6 (docs/CHANNELS.md 11.5): 0 takes server_send_kbps from the message
+    // R6 (standard/MESSAGES.md m9.4): 0 takes server_send_kbps from the message
     // config; a positive value overrides it for every slot this create makes.
     // The create argument is uint32_t, so refuse above the maximum before
     // narrowing: a value in [2^31, 2^32) must not wrap negative and become

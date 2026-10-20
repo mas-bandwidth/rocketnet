@@ -18,8 +18,7 @@ struct rn_message_object_t;
 
 /*
     The inventory is deliberately beside the reset declarations. A change to
-    either inventoried layout must make an explicit RESET or KEEP decision here
-    and in docs/CONNECTION-RESET.md.
+    either inventoried layout must make an explicit RESET or KEEP decision here.
 
     X receives (decision, field). Array fields are one entry because reset and
     comparison always cover sizeof(field) bytes.

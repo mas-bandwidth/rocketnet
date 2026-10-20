@@ -1,7 +1,6 @@
 # RNClientIoDecrypt
 
-Decrypt on the client I/O thread, as `docs/CLIENT-IO-DECRYPT.md`, If decrypt
-moves, designs it. The I/O thread opens each session datagram in the receive
+Decrypt on the client I/O thread, as the design of moving decrypt there specifies it. The I/O thread opens each session datagram in the receive
 buffer it fills, before `IoPublish`, with its own copy of the open key and its
 own replay window; `update` consumes the records in arrival order and keeps
 every counter, the integrity limit, the session state and `replay_session`.

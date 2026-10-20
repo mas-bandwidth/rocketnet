@@ -1,7 +1,5 @@
 # ServerConnection: the server's slot lifecycle and encryption mapping
 
-> STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
-
 > **Current model note (2026-10-18).** The following historical narrative and RUNS examples describe the earlier admitted-token abstraction. The current model removes `admitted`, `admits`, and `AdmittedCap`: admission is not a separate global token set. `bound[t]` represents used-token history by source address; a mapping is created at request time, while history is bound only when an opened response is accepted. Request-side connected-ID checks are followed by the authoritative response-side connected-ID check. The current properties are `OneTokenOneLiveConnection`, `ChurnNeverDenied`, and `ExpiredTokenNeverMapped`; `OneConnectionPerToken` remains a compatibility alias for the first property for the small `MCServerConnection.tla` wrapper.
 
 > Two reversed witnesses exercise the checks at the point they matter. In `MCServerConnectionClientIdNoCheck.cfg`, two same-token requests from distinct clients create pending mappings before either response arrives. The first response binds the token and occupies a slot; with the response-side client-ID check disabled, the second response occupies another slot too, violating `OneTokenOneLiveConnection` (24,910 generated / 10,671 distinct states; expected invariant violation, exit 12). The production check at `sdk/rocketnet_server_protocol.cpp:734` looks up the client ID when processing the response, after the request race, and prevents that second seat.
@@ -23,7 +21,7 @@ the same phases, with the clients as the environment this time. Both are checked
 instances of the shared lossy link `tla/Link.tla`: `C2S` carries every client's packets to
 the server, `S2C` the server's packets to every address. `tla/MCServerConnection.tla` and
 `tla/MCServerConnection.cfg` are the small instance; every TLC run is a row in
-`tla/RUNS.tsv`. The inventory this card worked from is `docs/TLA-INVENTORY.md`, M2 and M3
+`tla/RUNS.tsv`. The inventory this card worked from is M2 and M3
 (with M4's keep-alive pacing and M6's admission checks where they decide a slot). Line
 numbers below are at `3ad4179` (origin/main at the time of writing).
 
@@ -368,12 +366,12 @@ and fixed on the way.
    `rocketnet_admitted_token_set_contains` check at the response, before the slot check at
    `:678`, with its own counter (not a change to `add()`: `sdk/rocketnet_tests.cpp:2007-2008`
    asserts that `add` is idempotent, and a refusal from `add` would be counted under
-   `ADMITTED_SET_FULL` at `:688`, which it is not); and the rung added to STANDARD.md's
+   `ADMITTED_SET_FULL` at `:688`, which it is not); and the rung added to TRANSPORT.md's
    response ladder, between the client-id bullet (S:2817) and the slot bullet (S:2818): "If
    this token's identifier is in the admitted-token set, ignore it."
 
    **Superseded 2026-10-18.** The admitted-token set is removed from the code
-   (`docs/SESSION.md` 1.6): the rule is now one token, one live connection, and a
+   the rule is now one token, one live connection, and a
    token whose connection has closed may connect again inside its short expiry, by the
    owner's ruling. This module still models the set; the code now matches
    `AdmittedHeld = FALSE` with the set never full, under which `OneConnectionPerToken`

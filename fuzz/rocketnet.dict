@@ -53,7 +53,7 @@ fragment_first_of_two="\x01\x00\x00\x00\x00\x01"
 fragment_last_of_two="\x01\x00\x00\x00\x01\x01"
 fragment_max_count="\x01\x00\x00\x00\xff\xff"
 
-# --- sequence numbers (STANDARD.md _Sequence numbers_) ---
+# --- sequence numbers (sdk/rocketnet_window_ack.h) ---
 
 # the wire's 4 bytes: one (the first valid), zero (never valid), and the
 # reconstruction window's edges
@@ -79,7 +79,7 @@ driver_xdp="xdp"
 driver_msgx="msgx"
 driver_ladder="xdp,gso,portable"
 
-# --- message records (sdk/rocketnet_message.h, STANDARD.md _Messages_) ---
+# --- message records (sdk/rocketnet_message.h) ---
 
 # the form bytes, ROCKETNET_MESSAGE_FORM_SINGLE and _RECORDS
 message_form_single="\x00"

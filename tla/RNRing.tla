@@ -1,6 +1,6 @@
 ------------------------------ MODULE RNRing ------------------------------
 (***************************************************************************)
-(* rocketnet: the receive ring's placement rule (docs/CHANNELS.md 6.2, the *)
+(* rocketnet: receive ring's placement rule (standard/MESSAGES.md m5.1, the *)
 (* byte bound; 6.3 step 3; 8, a block's span; 15, the RNRing row).         *)
 (*                                                                         *)
 (* The receiver's ring of B bytes has no allocator (section 4, item 3).    *)

@@ -1,5 +1,5 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
-// Public-API packet-fill microbenchmark. See transport_fill.md for its limits.
+// Public-API packet-fill microbenchmark.
 #include "rocketnet_internal.h"
 #include <chrono>
 #include <stdio.h>
