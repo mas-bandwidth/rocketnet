@@ -218,3 +218,27 @@ void rocketnet_test_config_out_of_range_refuses_create()
     rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config, rocketnet_platform_time() ) == NULL );
     rocketnet_test_env_restore( &guard );
 }
+
+// A free loopback port from the OS, for an address that must carry a real
+// port (a rung that refuses port zero) without binding a fixed one: a scratch
+// UDP socket binds 127.0.0.1:0, rocketnet_platform_socket_create writes the
+// port the OS gave into the address, and the socket is closed before the
+// port is returned. Two suites on one machine then never name the same port.
+
+uint16_t rocketnet_test_free_port()
+{
+    rocketnet_address_t address;
+    rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1:0" ) );
+    struct rocketnet_platform_socket_t * scratch = rocketnet_platform_socket_create( NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, 65536, 65536 );
+    rocketnet_check( scratch );
+    rocketnet_check( address.port != 0 );
+    rocketnet_platform_socket_destroy( scratch );
+    return address.port;
+}
+
+// "127.0.0.1:<port>" with a port from rocketnet_test_free_port
+
+void rocketnet_test_free_loopback_address( char * buffer, size_t buffer_size )
+{
+    snprintf( buffer, buffer_size, "127.0.0.1:%d", (int) rocketnet_test_free_port() );
+}
