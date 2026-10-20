@@ -62,7 +62,7 @@ Dependencies, per platform, as CI installs them:
     # macOS
     brew install cmake
 
-The macOS default build is the host's native slice. `CMakeLists.txt` sets
+The macOS default build is the host's native slice. `CMakeLists.txt:5` sets
 `CMAKE_OSX_DEPLOYMENT_TARGET` to 11.0 when the caller does not: 11.0 is the
 first macOS release on Apple silicon, so it is the lowest target both slices
 of a universal library can share. Override it with `-D` for another minimum.
@@ -73,7 +73,7 @@ To build a universal (arm64 and x86_64) library and the suites:
     lipo -info build-universal/librocketnet.a bin/librocketnet.dylib
 
 Both `lipo -info` lines name `x86_64 arm64`. The libraries and executables of
-every build tree land in the checkout's `bin/`, so `--clean-first` relinks
+every build tree land in the checkout's `bin/` (`CMakeLists.txt:40`), so `--clean-first` relinks
 them against the universal objects when a native build ran first; without it
 CMake sees the newer native files and skips the link. To read the deployment
 target on
@@ -88,8 +88,15 @@ architecture in its own clang pass, so the vendored sodium builds its x86 asm
 into the x86_64 slice and its ARM path into the arm64 slice; the XDP archive
 is embedded once with the host `xxd` and the generated header is
 architecture-neutral. The `-fcf-protection` hardening option is x86-only, so
-the compiler-flag check drops it for a fat compile while the stack protector
+the compiler-flag check (`CMakeLists.txt:156`) drops it for a fat compile while the stack protector
 and the other Release flags stay on both slices.
+
+Against a universal build, `tools/check_package.py build-universal` passes the
+build's `CMAKE_OSX_ARCHITECTURES` to its consumers (`tools/check_package.py:56`)
+and `tools/check_dll_consumer.py --build build-universal` adds one `-arch` per
+library slice (`tools/check_dll_consumer.py:183`); each refuses a consumer
+executable whose `lipo -archs` lacks a slice (`tools/check_package.py:64`,
+`tools/check_dll_consumer.py:252`).
 
 The Xcode generator needs Xcode installed and selected; the Command Line
 Tools alone have no `xcodebuild`, so `xcode-select -p` must name Xcode.app:
