@@ -260,8 +260,12 @@ boot tier is verified, never performed (`scripts/rocketnet-provision:25`).
   seven queues are 1,879,048,192 bytes of UMEM inside a plan of roughly 4.2 GiB
   (`BUILDING.md:232-233`, `:282`), within the 4096 MiB `ROCKETNET_XDP_MEMORY_MIB`
   budget (`BUILDING.md:225-229`, `sdk/rocketnet_server_socket_linux.cpp:894-901`).
-- One family per interface: a server serves the family of its public address,
-  and one interface takes one XDP program (`DRIVERS.md:237-243`).
+- Both families on one interface: `second_public_address` names the other
+  family on the same port, and `xdp` carries both destinations when both
+  addresses are on that interface (`sdk/rocketnet_server_socket_linux.cpp:1848`).
+  Two interfaces refuse with `TRANSPORT_FAMILIES_UNSUPPORTED`
+  (`sdk/rocketnet_server_socket_linux.cpp:1479`). One interface still takes one
+  XDP program.
 
 Checks that need no root, as CI runs them
 (`.github/workflows/ci.yml:475-480`, `:492-494`):

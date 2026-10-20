@@ -237,8 +237,9 @@ enum rocketnet_status_t
     ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED            = 23,   ///< Connect refused: the client is not DISCONNECTED; call rocketnet_client_disconnect first; nothing changed
     ROCKETNET_STATUS_SERVER_NOT_STOPPED                 = 24,   ///< Start refused: the server is already running; nothing changed
     ROCKETNET_STATUS_FLOW_ID_RESERVED                   = 25,   ///< A destination id has ROCKETNET_FLOW_ID_BIT set: flow ids are reserved and refused until flows exist
+    ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED     = 26,   ///< A transport cannot serve both named families (two interfaces, or a platform that cannot clear IPV6_V6ONLY)
 
-    ROCKETNET_STATUS_COUNT                              = 26     ///< Sentinel: the count of codes, OK included; not an operation result
+    ROCKETNET_STATUS_COUNT                              = 27     ///< Sentinel: the count of codes, OK included; not an operation result
 };
 
 /// -----------------------------------------
@@ -796,7 +797,7 @@ struct rocketnet_server_config_t
     int num_reassembly_slots;                       ///< ROCKETNET_SERVER_NUM_REASSEMBLY_SLOTS: per client; 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
     int max_timeout_seconds;                        ///< ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS: 1 .. 3600; default 60
     int handshake_deadline_seconds;                 ///< ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS: 1 .. 60; default 5
-    const char * transport;                         ///< ROCKETNET_SERVER_TRANSPORT: the candidate list; NULL is "auto"; every transport, xdp included, serves IPv4 and IPv6, one family per server (the family of its public address)
+    const char * transport;                         ///< ROCKETNET_SERVER_TRANSPORT: the candidate list; NULL is "auto"; every transport, xdp included, serves IPv4, IPv6, or both when second_public_address names the other family on the same port
     const char * public_address;                    ///< ROCKETNET_SERVER_PUBLIC_ADDRESS: "a.b.c.d:port" or "[v6]:port"; NULL is the create call's address
     int per_client_send_kbps;                       ///< ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS: each client's send budget, kbps; default 10000; the starting rate of each client connection; 0 or less sets the budget to its ceiling, ROCKETNET_SEND_BUDGET_MAX_KBPS (10 Gbit/s), NOT RECOMMENDED; above ROCKETNET_SEND_BUDGET_MAX_KBPS is refused
     int num_channels;                               ///< ROCKETNET_SERVER_NUM_CHANNELS: the channels messages are sent and received on; WIRE; 1 .. ROCKETNET_MAX_CHANNELS; default 32
@@ -820,11 +821,13 @@ struct rocketnet_server_config_t
     int simulated_latency_ms;                       ///< Development only: outgoing latency in milliseconds; 0 is off
     int simulated_jitter_ms;                        ///< Development only: outgoing jitter in milliseconds; 0 is off
     int simulated_duplicate_percent;                ///< Development only: outgoing duplication 0..100; 0 is off
+    const char * second_public_address;             ///< ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS: the other family's "a.b.c.d:port" or "[v6]:port" on the same port; NULL or empty serves one family
 };
 
 #define ROCKETNET_SERVER_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, reliable_timeout_ms ) + sizeof( int ), sizeof( void * ) )
 #define ROCKETNET_SERVER_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, simulated_duplicate_percent ) + sizeof( int ), sizeof( void * ) )
-#define ROCKETNET_SERVER_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_CONFIG_BYTES_1, ROCKETNET_SERVER_CONFIG_BYTES_2
+#define ROCKETNET_SERVER_CONFIG_BYTES_3 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, second_public_address ) + sizeof( const char * ), sizeof( void * ) )
+#define ROCKETNET_SERVER_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_CONFIG_BYTES_1, ROCKETNET_SERVER_CONFIG_BYTES_2, ROCKETNET_SERVER_CONFIG_BYTES_3
 
 /// -----------------------------------------
 ///                           Messages
@@ -1205,7 +1208,7 @@ ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create_sized( void
 /// config's max_clients. Only from stopped: a running server returns
 /// ROCKETNET_STATUS_SERVER_NOT_STOPPED with nothing changed. A transport that
 /// does not start returns its status (ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED,
-/// TRANSPORT_PORT_ZERO_UNSUPPORTED, MISSING_KEYS, THREAD_CREATE_FAILED,
+/// TRANSPORT_PORT_ZERO_UNSUPPORTED, TRANSPORT_FAMILIES_UNSUPPORTED, MISSING_KEYS, THREAD_CREATE_FAILED,
 /// TIMER_CREATE_FAILED, MUTEX_CREATE_FAILED, OUT_OF_MEMORY, ...) and leaves the
 /// server stopped. A NULL server is a counted no-op that returns
 /// ROCKETNET_STATUS_INVALID_ARGUMENT.

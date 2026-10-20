@@ -131,6 +131,11 @@ Revision 2 appends the four development link-simulator controls to both the
 client and server configs. Their `BYTES_2` formulas end at
 `simulated_duplicate_percent` and remain frozen when later revisions grow.
 
+Revision 3 appends `second_public_address` to the server config only.
+`ROCKETNET_SERVER_CONFIG_BYTES_3` ends at that pointer. `BYTES_2` stays frozen
+at `simulated_duplicate_percent`. `ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED`
+is appended immediately before `ROCKETNET_STATUS_COUNT`.
+
 Revision 1 is the layout of the first release that carries the sized entry
 points. `time_callback` joins the client config before that release, so it is
 part of revision 1, not a revision of its own; a revision is added only for a
@@ -151,9 +156,10 @@ does not grow.
 sizes taken from the compiler. A binding compares them against its own
 declarations before its first call. They pin this rule three ways:
 
-- `static_assert`s in `sdk/rocketnet_abi.cpp` require each config's revision 1
-  size formula to equal the compiler's `sizeof`, so a formula wrong for a
-  target fails the build there.
+- `static_assert`s in `sdk/rocketnet_abi.cpp` require the latest revision's
+  size formula to equal the compiler's `sizeof` (revision 3 for the server
+  config, revision 2 for the client config), so a formula wrong for a target
+  fails the build there.
 - `sized_config_accepts_every_known_size` (`test_unit_sized_config.cpp`)
   requires each known-size list to be strictly growing and to end at the size
   `rocketnet_abi_type_size` reports, so a revision added without its size, or

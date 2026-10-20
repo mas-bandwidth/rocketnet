@@ -32,4 +32,12 @@ MCServedIpv4        == "ipv4"
 MCMatchEither       == "either"
 MCMatchIpv6Only     == "ipv6only"
 
+
+\* both families (MCServerConnectionServesBothFamilies.cfg and the reversed
+\* witness MCServerConnectionBrokenOneFamilyServed.cfg): client 1 is on an
+\* IPv4-only host, client 2 on an IPv6-only host, the config names both
+MCHostSplit(c) == IF c = 1 THEN {"ipv4"} ELSE {"ipv6"}
+MCConfiguredBoth == {"ipv4", "ipv6"}
+MCServeFirstOnly == TRUE
+
 =============================================================================

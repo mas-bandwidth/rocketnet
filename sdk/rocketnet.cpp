@@ -226,6 +226,7 @@ static const char * const rocketnet_status_names[] =
     "CLIENT_NOT_DISCONNECTED",
     "SERVER_NOT_STOPPED",
     "FLOW_ID_RESERVED",
+    "TRANSPORT_FAMILIES_UNSUPPORTED",
 };
 
 static_assert( sizeof( rocketnet_status_names ) / sizeof( rocketnet_status_names[0] ) == ROCKETNET_STATUS_COUNT,

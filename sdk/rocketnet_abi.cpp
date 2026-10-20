@@ -8,7 +8,8 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_CLIENT_CONFIG_BYTES_1 < ROCKETNET_CLIENT_CONF
 ROCKETNET_STATIC_ASSERT( ROCKETNET_CLIENT_CONFIG_BYTES_2 == sizeof( struct rocketnet_client_config_t ), "client public config current revision must match its struct" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_1 == offsetof( struct rocketnet_server_config_t, simulated_loss_percent ), "server public revision 1 must end before simulator fields" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_1 < ROCKETNET_SERVER_CONFIG_BYTES_2, "server public config revisions must grow" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_2 == sizeof( struct rocketnet_server_config_t ), "server public config current revision must match its struct" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_2 < ROCKETNET_SERVER_CONFIG_BYTES_3, "server public config revisions must grow" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_3 == sizeof( struct rocketnet_server_config_t ), "server public config current revision must match its struct" );
 
 struct abi_field_t { const char * name; size_t offset; size_t size; };
 struct abi_type_t { const char * name; size_t size; const abi_field_t * fields; int count; };
@@ -45,6 +46,7 @@ static const abi_field_t server_config_fields[] =
     FIELD(unreliable_deliveries) FIELD(sequenced_holds) FIELD(receipt_ring) FIELD(rto_initial_ms)
     FIELD(rto_min_ms) FIELD(rto_max_ms) FIELD(reliable_timeout_ms)
     FIELD(simulated_loss_percent) FIELD(simulated_latency_ms) FIELD(simulated_jitter_ms) FIELD(simulated_duplicate_percent)
+    FIELD(second_public_address)
 };
 #undef ABI_TYPE
 
@@ -229,7 +231,8 @@ size_t rocketnet_abi_field_size(const char * type_name, const char * field_name)
 // this target.
 
 static_assert( ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_2 == sizeof( struct rocketnet_client_transport_config_t ), "client transport config revision 2 size" );
-static_assert( ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2 == sizeof( struct rocketnet_server_transport_config_t ), "server transport config revision 2 size" );
+static_assert( ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2 < ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3, "server transport config revisions must grow" );
+static_assert( ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3 == sizeof( struct rocketnet_server_transport_config_t ), "server transport config revision 3 size" );
 static_assert( ROCKETNET_MESSAGE_CONFIG_BYTES_2 == sizeof( struct rocketnet_message_config_t ), "message config revision 2 size" );
 
 static const size_t rocketnet_client_transport_config_known_bytes[] = { ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES };

@@ -163,6 +163,9 @@ struct rocketnet_server_xdp_socket_t
     uint8_t server_ethernet_address[ETH_ALEN];
     uint8_t gateway_ethernet_address[ETH_ALEN];
     rocketnet_address_t server_address;     // the public address and port (host-order port): its family is the family this socket serves
+    int serves_both;                        // 1: ipv4_address and ipv6_address are both live
+    rocketnet_address_t ipv4_address;
+    rocketnet_address_t ipv6_address;
 
     struct rocketnet_server_socket_receive_buffer_t receive_buffer[ROCKETNET_XDP_NUM_BUFFERS];
 
@@ -212,6 +215,10 @@ struct rocketnet_server_socket_t
     rocketnet_server_xdp_socket_t * socket;
 
     rocketnet_server_socket_process_packets_t process_packets;
+
+    int serves_both;
+    rocketnet_address_t ipv4_address;
+    rocketnet_address_t ipv6_address;
 };
 
 void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server );
@@ -1331,11 +1338,14 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
     return provisioned;
 }
 
-rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * public_address_string, const uint8_t * filter_value, int num_queues, int num_os_cpus )
+rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * public_address_string, const uint8_t * filter_value, int num_queues, int num_os_cpus, const char * second_server_address, int * create_status )
 {
     rocketnet_assert( num_queues >= 1 );
     rocketnet_assert( public_address_string );
     rocketnet_assert( filter_value );
+    rocketnet_address_t second_address;
+    memset( &second_address, 0, sizeof( second_address ) );
+    int serves_both = 0;
 
     // the committing create refuses outright in a process that forbade it
     // (the test suite's structural barrier) -- before its first act, so no
@@ -1362,8 +1372,8 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         return NULL;
     }
 
-    // one server, one public address, one family: IPv4 or IPv6, the family
-    // of the address it is created with (DRIVERS.md, AF_XDP)
+    // One family, or both when second_server_address names the other family
+    // on the same port (ServedFamilies). Two interfaces refuse.
 
     if ( public_address.type != ROCKETNET_ADDRESS_IPV4 && public_address.type != ROCKETNET_ADDRESS_IPV6 )
     {
@@ -1375,6 +1385,39 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     {
         rocketnet_error( "server public address is ipv6 link-local (fe80::/10); a server's public address is global" );
         return NULL;
+    }
+
+    if ( second_server_address && second_server_address[0] != '\0' )
+    {
+        if ( !rocketnet_address_parse( &second_address, second_server_address ) )
+        {
+            rocketnet_error( "server second_public_address does not parse" );
+            if ( create_status )
+                *create_status = ROCKETNET_STATUS_INVALID_ADDRESS;
+            return NULL;
+        }
+        if ( second_address.type == public_address.type )
+        {
+            rocketnet_error( "server second_public_address is the same family as the public address" );
+            if ( create_status )
+                *create_status = ROCKETNET_STATUS_INVALID_ADDRESS;
+            return NULL;
+        }
+        if ( second_address.port != public_address.port )
+        {
+            rocketnet_error( "server second_public_address is on a different port from the public address" );
+            if ( create_status )
+                *create_status = ROCKETNET_STATUS_INVALID_ADDRESS;
+            return NULL;
+        }
+        if ( rocketnet_server_socket_ipv6_link_local( &second_address ) )
+        {
+            rocketnet_error( "server public address is ipv6 link-local (fe80::/10); a server's public address is global" );
+            if ( create_status )
+                *create_status = ROCKETNET_STATUS_INVALID_ADDRESS;
+            return NULL;
+        }
+        serves_both = 1;
     }
 
     // VERIFY, then bind (#106): the non-mutating pre-flight refuses unless
@@ -1421,6 +1464,37 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
     server_socket->interface_index = (int) interface_index;
 
+    if ( serves_both )
+    {
+        char second_interface_name[1024];
+        unsigned int second_interface_index = 0;
+        if ( !rocketnet_server_socket_find_interface( &second_address, second_interface_name, sizeof( second_interface_name ), &second_interface_index ) )
+        {
+            rocketnet_error( "server could not find any network interface matching public address" );
+            rocketnet_server_socket_destroy( server_socket );
+            return NULL;
+        }
+        if ( second_interface_index != interface_index )
+        {
+            rocketnet_error( "server xdp cannot serve both families: the addresses are on different interfaces" );
+            if ( create_status )
+                *create_status = ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED;
+            rocketnet_server_socket_destroy( server_socket );
+            return NULL;
+        }
+        server_socket->serves_both = 1;
+        if ( public_address.type == ROCKETNET_ADDRESS_IPV4 )
+        {
+            server_socket->ipv4_address = public_address;
+            server_socket->ipv6_address = second_address;
+        }
+        else
+        {
+            server_socket->ipv6_address = public_address;
+            server_socket->ipv4_address = second_address;
+        }
+    }
+
     rocketnet_info( "server network interface is %s", interface_name );
 
     server_socket->num_queues = num_queues;
@@ -1443,9 +1517,41 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         server_socket->server_ethernet_address[5] 
     );
 
-    // look up the gateway ethernet address for the network interface
+    // look up the gateway ethernet address for the network interface.
+    // Both families discover one gateway MAC each. The env override still
+    // covers both, because get_gateway_mac_address reads it for either family.
 
-    if ( !get_gateway_mac_address( interface_name, public_address.type, server_socket->gateway_ethernet_address, &server_socket->gateway_known ) )
+    if ( serves_both )
+    {
+        bool ipv4_known = false;
+        bool ipv6_known = false;
+        uint8_t ipv4_mac[6];
+        uint8_t ipv6_mac[6];
+        if ( !get_gateway_mac_address( interface_name, ROCKETNET_ADDRESS_IPV4, ipv4_mac, &ipv4_known ) ||
+             !get_gateway_mac_address( interface_name, ROCKETNET_ADDRESS_IPV6, ipv6_mac, &ipv6_known ) )
+        {
+            rocketnet_error( "server could not get gateway mac address" );
+            rocketnet_server_socket_destroy( server_socket );
+            return NULL;
+        }
+        if ( ipv4_known )
+        {
+            memcpy( server_socket->gateway_ethernet_address, ipv4_mac, 6 );
+            server_socket->gateway_known = true;
+        }
+        rocketnet_xdp_reply_macs_reset( &server_socket->reply_macs, NULL );
+        if ( ipv4_known )
+        {
+            memcpy( server_socket->reply_macs.gateway_ipv4, ipv4_mac, 6 );
+            server_socket->reply_macs.gateway_ipv4_known = true;
+        }
+        if ( ipv6_known )
+        {
+            memcpy( server_socket->reply_macs.gateway_ipv6, ipv6_mac, 6 );
+            server_socket->reply_macs.gateway_ipv6_known = true;
+        }
+    }
+    else if ( !get_gateway_mac_address( interface_name, public_address.type, server_socket->gateway_ethernet_address, &server_socket->gateway_known ) )
     {
         rocketnet_error( "server could not get gateway mac address" );
         rocketnet_server_socket_destroy( server_socket );
@@ -1471,7 +1577,8 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     // replies go to the source MAC learned from each answered peer, else
     // to the gateway
 
-    rocketnet_xdp_reply_macs_reset( &server_socket->reply_macs, server_socket->gateway_known ? server_socket->gateway_ethernet_address : NULL );
+    if ( !serves_both )
+        rocketnet_xdp_reply_macs_reset( &server_socket->reply_macs, server_socket->gateway_known ? server_socket->gateway_ethernet_address : NULL );
 
     // STATE IDENTITY (re-derived twice on the #110 gate): the identity
     // input contains NOTHING process-derived -- a random 64-bit token
@@ -1738,7 +1845,13 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         // the program redirects only this server's family and passes the
         // other family's traffic to the kernel untouched
 
-        if ( public_address.type == ROCKETNET_ADDRESS_IPV4 )
+        if ( serves_both )
+        {
+            // Both destinations. A loopback placeholder would pass the other family.
+            memcpy( &config.public_address, server_socket->ipv4_address.data.ipv4, 4 );
+            rocketnet_server_socket_ipv6_bytes( &server_socket->ipv6_address, config.public_address_ipv6 );
+        }
+        else if ( public_address.type == ROCKETNET_ADDRESS_IPV4 )
         {
             memcpy( &config.public_address, public_address.data.ipv4, 4 );     // network order
             config.public_address_ipv6[15] = 1;
@@ -1867,6 +1980,12 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         memcpy( socket->server_ethernet_address, server_socket->server_ethernet_address, ETH_ALEN );
         memcpy( socket->gateway_ethernet_address, server_socket->gateway_ethernet_address, ETH_ALEN );
         socket->server_address = public_address;
+        socket->serves_both = server_socket->serves_both;
+        if ( server_socket->serves_both )
+        {
+            socket->ipv4_address = server_socket->ipv4_address;
+            socket->ipv6_address = server_socket->ipv6_address;
+        }
 
         // initialize send frame allocator
 
@@ -2736,7 +2855,8 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
                 const uint8_t * payload_data = NULL;
                 int payload_bytes = 0;
 
-                if ( rocketnet_xdp_frame_receive( packet_data, (size_t) desc->len, socket->server_address.type, &from, &payload_data, &payload_bytes, &socket->receive_drops ) )
+                const int address_type = socket->serves_both ? -1 : socket->server_address.type;
+                if ( rocketnet_xdp_frame_receive( packet_data, (size_t) desc->len, address_type, &from, &payload_data, &payload_bytes, &socket->receive_drops ) )
                 {
                     const int index = receive_buffer->num_packets;
 
@@ -2851,7 +2971,10 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
                         const int header_bytes = rocketnet_xdp_frame_header_bytes( send_buffer->packet_info[i].to.type );
                         memcpy( packet_data + header_bytes, send_buffer->packet_data[i] + ROCKETNET_FRAME_WIRE_OFFSET, payload_bytes );
 
-                        const int frame_bytes = rocketnet_xdp_frame_build( packet_data, ROCKETNET_XDP_FRAME_SIZE, socket->server_ethernet_address, send_buffer->packet_info[i].destination_mac, &socket->server_address, &send_buffer->packet_info[i].to, payload_bytes );
+                        const rocketnet_address_t * source = &socket->server_address;
+                        if ( socket->serves_both )
+                            source = send_buffer->packet_info[i].to.type == ROCKETNET_ADDRESS_IPV4 ? &socket->ipv4_address : &socket->ipv6_address;
+                        const int frame_bytes = rocketnet_xdp_frame_build( packet_data, ROCKETNET_XDP_FRAME_SIZE, socket->server_ethernet_address, send_buffer->packet_info[i].destination_mac, source, &send_buffer->packet_info[i].to, payload_bytes );
                         if ( frame_bytes <= 0 )
                         {
                             free_send_frame( socket, frame );

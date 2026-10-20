@@ -354,7 +354,9 @@ static inline bool rocketnet_xdp_frame_receive(
         return false;
     }
 
-    if ( family != address_type )
+    // address_type below zero accepts either family (ServedFamilies of two).
+    // ROCKETNET_ADDRESS_IPV4 is zero, so the test is signed.
+    if ( address_type >= 0 && family != address_type )
     {
         drops->other_family++;
         return false;
@@ -416,6 +418,11 @@ struct rocketnet_xdp_reply_macs_t
     bool gateway_known;
     uint64_t learn_count;
     struct rocketnet_xdp_reply_mac_entry_t entries[ROCKETNET_XDP_REPLY_MAC_ENTRIES];
+    // Per-family gateways. Zero after reset, so a one-family table still uses gateway_mac.
+    bool gateway_ipv4_known;
+    bool gateway_ipv6_known;
+    uint8_t gateway_ipv4[6];
+    uint8_t gateway_ipv6[6];
 };
 
 // gateway_mac NULL: no gateway is known for this interface.
@@ -514,6 +521,10 @@ static inline const uint8_t * rocketnet_xdp_reply_mac( struct rocketnet_xdp_repl
     const struct rocketnet_xdp_reply_mac_entry_t * entry = rocketnet_xdp_reply_macs_find( table, destination );
     if ( entry )
         return entry->mac;
+    if ( destination && destination->type == ROCKETNET_ADDRESS_IPV4 && table->gateway_ipv4_known )
+        return table->gateway_ipv4;
+    if ( destination && destination->type == ROCKETNET_ADDRESS_IPV6 && table->gateway_ipv6_known )
+        return table->gateway_ipv6;
     if ( table->gateway_known )
         return table->gateway_mac;
     if ( answered_mac && !( answered_mac[0] & 1 ) && memcmp( answered_mac, zero_mac, 6 ) != 0 )

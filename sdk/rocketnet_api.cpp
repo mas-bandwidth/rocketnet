@@ -191,6 +191,8 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
         return false;
     if ( !rn_copy_config_string( transport->public_address, sizeof( transport->public_address ), config->public_address, "", "server", "public_address" ) )
         return false;
+    if ( !rn_copy_config_string( transport->second_public_address, sizeof( transport->second_public_address ), config->second_public_address, "", "server", "second_public_address" ) )
+        return false;
 
     rocketnet_message_default_config( message );
 #define RN_COPY( name ) message->name = config->name;
@@ -955,6 +957,7 @@ static void rn_server_config_from_transport_current( struct rocketnet_server_con
     config->simulated_duplicate_percent = transport->simulated_duplicate_percent;
     config->transport = NULL;
     config->public_address = NULL;
+    config->second_public_address = NULL;
     config->per_client_send_kbps = ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS;
     struct rocketnet_message_config_t message;
     rocketnet_message_default_config( &message );
