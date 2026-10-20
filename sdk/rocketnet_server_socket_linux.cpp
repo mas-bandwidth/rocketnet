@@ -1732,9 +1732,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             const bool zero_copy = attempt == 0;
 
             struct xsk_umem_config umem_config;
-            memset( &umem_config, 0, sizeof(umem_config) );
-            umem_config.frame_size = ROCKETNET_XDP_FRAME_SIZE;
-            umem_config.frame_headroom = 0;
+            rocketnet_xdp_umem_config( &umem_config );
 
             result = xsk_umem__create( &socket->umem, socket->buffer, buffer_size, &socket->fill_queue, &socket->complete_queue, &umem_config );
             if ( result )
