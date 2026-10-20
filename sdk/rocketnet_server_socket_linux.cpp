@@ -2285,7 +2285,7 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
         {
             // RNDriverSendStaging.Publish: retain the last producer buffer.
             // A busy worker leaves this generation staged for the next
-            // transport send_packets call (SendPackets re-flush rule).
+            // transport send_packets call (Publish retry rule).
             if ( socket->send_handoff.publish() )
                 socket->send_flow_index.store( -1, std::memory_order_relaxed );
         }
