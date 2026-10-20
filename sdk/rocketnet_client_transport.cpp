@@ -1379,8 +1379,24 @@ static void rocketnet_client_transport_io_hand_off( rocketnet_client_transport_t
     if ( committed > ROCKETNET_CLIENT_PAYLOAD_RING_SIZE )
         committed = ROCKETNET_CLIENT_PAYLOAD_RING_SIZE;
 
+    // the destination of a retry with none named: the dialed server while a
+    // connection holds one, else the address the Filling ring's last hand-off
+    // attempt recorded (rocketnet_client_io_hand_off writes client_io.to for
+    // the Filling ring on every attempt, deferred or not). After a disconnect
+    // the connection reset has erased protocol.server_address, and a deferred
+    // disconnect burst is retried by the next update or send_packets; the
+    // recorded address is the one rocketnet_client_transport_disconnect named
+    // for it, so the burst still reaches the server.
+
+    if ( !destination )
+    {
+        destination = client_transport->protocol.server_address.type != ROCKETNET_ADDRESS_NONE
+                    ? &client_transport->protocol.server_address
+                    : &client_transport->client_io.to[client_transport->client_io.rings.fill];
+    }
+
     const int stats_index = client_transport->current_stats_index;
-    const int address_type = destination ? destination->type : client_transport->protocol.server_address.type;
+    const int address_type = destination->type;
 
     for ( uint64_t i = client_transport->stats_counted; i < committed; i++ )
     {
@@ -1397,7 +1413,7 @@ static void rocketnet_client_transport_io_hand_off( rocketnet_client_transport_t
     if ( committed == 0 )
         return;
 
-    const int result = rocketnet_client_io_hand_off( &client_transport->client_io, committed, destination ? destination : &client_transport->protocol.server_address );
+    const int result = rocketnet_client_io_hand_off( &client_transport->client_io, committed, destination );
 
     if ( result == ROCKETNET_CLIENT_RINGS_HANDED_OFF )
     {

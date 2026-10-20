@@ -1686,6 +1686,14 @@ void rocketnet_test_transport_stats()
     rocketnet_check( server_stats.bandwidth_sent_kbps == 0.0f );
     rocketnet_check( server_stats.bandwidth_received_kbps == 0.0f );
 
+    // the server heard the disconnect burst: a burst whose hand-off the I/O
+    // thread deferred is retried by the next update after the connection
+    // reset, and still goes to the server (rocketnet_client_transport_io_hand_off).
+    // A burst that never arrives leaves the server sending keep-alives the
+    // client counts as received.
+
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 0 );
+
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
     rocketnet_server_transport_stop( server );
     rocketnet_server_transport_update( server, game_time );
