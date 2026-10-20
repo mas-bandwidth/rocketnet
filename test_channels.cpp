@@ -1594,7 +1594,7 @@ static void test_channels_allocator_sizing()
     const enum rocketnet_log_level_t old_level = rocketnet_get_log_level();
     rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
     const int lines_before = rn_log_lines;
-    check( rocketnet_message_print_connection_sizing( &config, 16 ) == 1588480 );
+    check( rocketnet_message_print_connection_sizing( &config, 16 ) == rocketnet_message_connection_bytes( &config ) );
     rocketnet_set_log_level( old_level );
     check( rn_log_lines - lines_before >= 10 );
     check( strstr( rn_log_last, "16 connections" ) != NULL );

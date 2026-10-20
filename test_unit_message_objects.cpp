@@ -2447,7 +2447,7 @@ static void send_room_warns_in_debug_builds_only()
 
     // a server names the slot
     mo_pair_teardown( &pair );
-    mo_pair_setup( &pair, 1, &config );
+    mo_pair_setup( &pair, 1, &config, 0, 0 );
     mo_step( &pair );
     mo_step( &pair );
     check( rocketnet_message_server_client_connected( pair.server, 0 ) == 1 );

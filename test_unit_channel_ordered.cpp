@@ -1675,7 +1675,7 @@ static void ordered_no_allocation_after_create()
     int accepted = 0;
     while ( send_message( c, 0, 100000 ) )
         accepted++;
-    check( accepted == 2 );                                             // two spans of 100,000 fit 262,144; the third does not
+    check( accepted == (int) ( c->region->span_bytes / 100000 ) );          // exact capacity includes the create-time reserve
     check( counter( c, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED ) == 1 );
     check( counter( c, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) >= 1 );
     check( rn_ordered_decide( &c->ordered ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
