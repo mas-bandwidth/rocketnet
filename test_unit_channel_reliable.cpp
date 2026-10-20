@@ -347,7 +347,7 @@ static void reliable_control_record_frees_its_number()
 REGISTER_UNIT_TEST( reliable_control_record_frees_its_number );
 
 // A channel set whose mask does not enable code 2 refuses it
-// (rn_channels_dispatch_reliable, sdk/rocketnet_channel_reliable.cpp): counted
+// (rn_channels_dispatch, sdk/rocketnet_channel.cpp, by wire code): counted
 // TYPE_NOT_ENABLED, the error set, and no delivery.
 static void reliable_record_on_a_disabled_mask_is_refused()
 {
