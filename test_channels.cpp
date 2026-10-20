@@ -1111,7 +1111,6 @@ static void test_channels_allocator_validation()
         { "queue below its minimum",                (int) offsetof( rocketnet_message_config_t, send_queue_messages ), 15 },
         { "rto_initial above rto_max",              (int) offsetof( rocketnet_message_config_t, rto_initial_ms ), 3000 },
         { "rto_min above rto_max",                  (int) offsetof( rocketnet_message_config_t, rto_min_ms ), 3000 },
-        { "rto_initial below rto_min",              (int) offsetof( rocketnet_message_config_t, rto_min_ms ), 150 },
     };
 
     for ( size_t i = 0; i < sizeof(rejected) / sizeof(rejected[0]); i++ )
@@ -1130,6 +1129,15 @@ static void test_channels_allocator_validation()
         rn_region_layout_t layout;
         check( !rn_region_layout( &config, &layout ) );
     }
+
+    // rto_initial below rto_min needs two fields: the default initial (2000 ms)
+    // is above every single-field floor the range allows. Re-pinned for the
+    // RakNet default initial value.
+    rocketnet_message_default_config( &config );
+    config.rto_initial_ms = 100;
+    config.rto_min_ms = 150;
+    check( rocketnet_message_validate_config( &config ) == 0 );
+    check( rocketnet_message_connection_bytes( &config ) == 0 );
 
     // ceil( max_message_bytes / F ) above W: a 64-message window holds at most 64 fragments
 

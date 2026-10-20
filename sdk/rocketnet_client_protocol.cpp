@@ -298,7 +298,6 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
                                                                NULL, 0, current_time, out_packet );
             if ( bytes > 0 )
             {
-                client->last_send_time = current_time;
                 *out_packet_bytes = bytes;
                 rocketnet_spam( "client sent standalone ack" );
             }
