@@ -1814,6 +1814,12 @@ void rocketnet_client_transport_send_packets( rocketnet_client_transport_t * cli
         // RNClientIo HandOff or Defer: no driver call on the main thread.
         // The arena resets as at BASE: finish already copied every arena
         // write into ring slots, so the I/O thread never reads the arena.
+        // Caller-stepped with overlapped sends, the completions since the
+        // last step are reaped first (RNClientIo Complete, IoFinishRing), so
+        // the ring posted last frame is Sent and this hand-off is not
+        // deferred to update.
+        if ( client_transport->step_in_update && rocketnet_client_io_overlapped( &client_transport->client_io ) )
+            rocketnet_client_io_reap( &client_transport->client_io );
         rocketnet_client_transport_io_hand_off( client_transport );
         rocketnet_send_arena_reset( client_transport->send_arena );
         if ( client_transport->step_in_update )

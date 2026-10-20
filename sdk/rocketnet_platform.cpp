@@ -4210,6 +4210,14 @@ bool rocketnet_platform_wake_post_send( rocketnet_platform_wake_t * wake, int ta
             rocketnet_debug( "WSASendTo failed: %d", error );
             return false;
         }
+        // Pending: the kernel could not take the datagram into the socket's
+        // send buffer at once, where a synchronous non-blocking sendto would
+        // have failed with WSAEWOULDBLOCK and dropped it. The send is
+        // cancelled here, so it completes with an error (tla/RNClientIo.tla
+        // Complete, the error outcome) instead of holding the ring Sending
+        // until the wire drains; the record stays in use until that
+        // completion is reaped (NoFreeBeforeComplete).
+        CancelIoEx( (HANDLE) wake->socket_handle, &send->overlapped );
     }
     send->in_use = true;
     wake->num_outstanding++;
