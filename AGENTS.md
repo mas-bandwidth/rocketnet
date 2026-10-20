@@ -70,7 +70,7 @@ cmake --install build --config Release --prefix C:/path/to/prefix
 When consuming an installed prefix:
 
 ```cmake
-find_package(RocketNet 1.0.0 EXACT CONFIG REQUIRED)
+find_package(RocketNet 1.0 CONFIG REQUIRED)
 target_link_libraries(game PRIVATE RocketNet::rocketnet)
 ```
 
