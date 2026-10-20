@@ -3,8 +3,10 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// Visit counter for testing: increments on each sequence visit during process_block
-unsigned long long g_ack_visit_count = 0;
+// Visit counter for testing: increments on each sequence visit during process_block.
+// thread_local: a client and a server in one process walk acks on their own threads,
+// and the unit tests that read it walk on the thread that reads it.
+thread_local unsigned long long g_ack_visit_count = 0;
 
 #include "rocketnet_memory.h"
 #include "rocketnet_ack.h"
