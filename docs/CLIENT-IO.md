@@ -589,11 +589,11 @@ with `timeEndPeriod( 1 )` at `rocketnet_term` (`rocketnet_platform_init` and
 `rocketnet_platform_term` in `sdk/rocketnet_platform.cpp`). A step-driven client
 (`step_driven` or `step_in_update`) creates no thread and makes no call.
 
-The game's own threads are the game's: the library sets nothing on the main
-thread or on any thread it does not create. The game that carried flow also raises
-its main thread (`SCHED_RR` at `sched_get_priority_max` on Linux,
-`THREAD_PRIORITY_TIME_CRITICAL` on Windows) and pins its server task workers at
-`SCHED_FIFO`; those settings belong to the game, and the library does not copy
+The caller's threads remain under its control: the library sets nothing on the
+main thread or on any thread it does not create. An application may raise its
+main thread (`SCHED_RR` at `sched_get_priority_max` on Linux,
+`THREAD_PRIORITY_TIME_CRITICAL` on Windows) and can pin its server task workers at
+`SCHED_FIFO`; those settings belong to the application, and the library does not copy
 them.
 
 `rocketnet_set_thread_priority( false )` turns every one of these calls off,

@@ -632,7 +632,7 @@ records which it got.
 - no XDP program already attached (R3);
 - IRQ pinning, busy poll, SMT off and the queue count (R4-R7).
 
-`scripts/rocketnet-provision` is the setup, hand-run once for the game
+`scripts/rocketnet-provision` is the setup, hand-run once
 (`scripts/rocketnet-provision:8-16`). The run uses only its `verify` mode,
 which mutates nothing. It never runs provision mode on this NIC.
 Provision mode unloads XDP, rewrites IRQ affinity and runs `ethtool -L`,

@@ -3,7 +3,7 @@
 The design that every message-layer card implements. It covers a client and a
 server that send messages over `n` ordering channels with RakNet's eight
 reliabilities, chosen per send. Only `UNRELIABLE` and `RELIABLE_ORDERED` ship
-first. After them come the client and server objects the space game integrates,
+first. After them come the client and server objects an application integrates,
 and only then the other six types. This document also shows that adding the
 other six later changes neither the wire nor the per-channel state.
 
@@ -2129,8 +2129,7 @@ requires.
   `RNEndpoint`, `RNSlots`.
 - **C8.** Layer 8: objects, loopback functional tests, the swarm soak with
   messages.
-- **C9.** Layer 9: the C API and native consumer checks. **The space game
-  integrates here.**
+- **C9.** Layer 9: the C API and native consumer checks. **Applications integrate here.**
 - **C10 onward**, one card per type, in this order: 2, 6, 7, 1, 4, 5. Each
   card adds `RNReceipts` and the dispatch tests where needed.
 - **C-stress.** `ROCKETNET_MAX_CHANNELS` at 1024 and 10,000 under the swarm.

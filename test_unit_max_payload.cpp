@@ -43,8 +43,8 @@
 #define ROCKETNET_COUNTERS_CHECK rocketnet_unit_check
 #include "test/counters_expect.h"
 
-// the space game's largest packet: its baseline, delta, explosion and
-// message writers fill to this many bytes
+// the largest application packet represented here: baseline, delta, explosion
+// and message writers fill to this many bytes
 
 #define MAX_PAYLOAD_TEST_GAME_PACKET_BYTES      1400
 
