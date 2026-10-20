@@ -471,6 +471,11 @@ static void destroy_disconnect_public_client_destroy_sends_nothing( const destro
     rocketnet_server_destroy( server );
 }
 
+// The two fake drivers are static: each holds 512 datagrams
+// (test/fake_client_driver.h:28, :39 and :42), and an AddressSanitizer build
+// keeps both frames apart, past the default 1 MB main-thread stack. Each block
+// zeroes its fake before use, as the = {} it replaces did.
+
 // DONE-WHEN (4): destroying a client or server with no live connection sends
 // nothing (a case counts datagrams handed to the fake transport: zero).
 static void destroy_without_live_connection_sends_nothing()
@@ -485,7 +490,8 @@ static void destroy_without_live_connection_sends_nothing()
 
     // Client on the base fake driver: destroyed before any session keys exist.
     {
-        rocketnet_fake_client_driver_t fake = {};
+        static rocketnet_fake_client_driver_t fake;
+        memset( &fake, 0, sizeof( fake ) );
         rocketnet_client_transport_config_t config;
         rocketnet_client_transport_default_config( &config );
         rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_at_timestamp(
@@ -502,7 +508,8 @@ static void destroy_without_live_connection_sends_nothing()
 
     // Client on the I/O-step fake driver: destroyed with no live connection.
     {
-        rocketnet_fake_client_driver_t fake = {};
+        static rocketnet_fake_client_driver_t fake;
+        memset( &fake, 0, sizeof( fake ) );
         rocketnet_client_transport_config_t config;
         rocketnet_client_transport_default_config( &config );
         config.step_driven = 1;
