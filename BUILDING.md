@@ -70,10 +70,17 @@ To build a universal (arm64 and x86_64) library and the suites:
     cmake --build build-universal --parallel 4
     lipo -info build-universal/librocketnet.a bin/librocketnet.dylib
 
-Both `lipo -info` lines name `x86_64 arm64`. CMake compiles each architecture
-as its own clang invocation, so the vendored sodium builds its x86 asm into
-the x86_64 slice and its ARM path into the arm64 slice; the XDP archive is
-embedded once with the host `xxd` and the generated header is
+Both `lipo -info` lines name `x86_64 arm64`. To read the deployment target on
+each slice:
+
+    otool -l -arch arm64 bin/librocketnet.dylib | grep -A4 LC_BUILD_VERSION
+    otool -l -arch x86_64 bin/librocketnet.dylib | grep -A4 LC_BUILD_VERSION
+
+Both print `minos 11.0`; the static archive carries the same load command in
+each member, read after `lipo -thin <arch>` and `ar -x`. CMake compiles each
+architecture in its own clang pass, so the vendored sodium builds its x86 asm
+into the x86_64 slice and its ARM path into the arm64 slice; the XDP archive
+is embedded once with the host `xxd` and the generated header is
 architecture-neutral. The `-fcf-protection` hardening option is x86-only, so
 the compiler-flag check drops it for a fat compile while the stack protector
 and the other Release flags stay on both slices.
