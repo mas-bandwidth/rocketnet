@@ -130,7 +130,7 @@ the configuration to them, so its executables and libraries land in
 `bin/Release/`. The unit suite opens the development library by its absolute
 build path (`CMakeLists.txt:533-534`), and the release library by
 `bin/librocketnet.dylib`, then by the bare name
-(`sdk/rocketnet_tests.cpp:14691-14692`), which the executable's run path
+(`sdk/rocketnet_tests.cpp:14700-14701`), which the executable's run path
 resolves in `bin/Release/` (`CMakeLists.txt:538`).
 
 Windows has no Makefile path; CMake is driven directly, and the binaries land
