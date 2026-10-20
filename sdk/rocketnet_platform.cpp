@@ -2110,7 +2110,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
 // binds, while an explicit dual-stack bind to P refuses with EADDRINUSE.
 // A client so bound sends from P, and the replies to 127.0.0.1:P are
 // delivered to the IPv4 socket instead (posix_connect_disconnect_1000 in
-// functional/posix_lifecycle_stress.cpp:499, red printed at :321): the client stays in
+// functional/posix_lifecycle_stress.cpp:499, red printed at :321; the client stays in
 // REQUESTING_COOKIE and the server counts WRONG_DIRECTION). So the port is
 // picked by an IPv4 port-0 bind and then bound explicitly, where the kernel
 // checks both families; a port taken in between refuses and the pick runs
