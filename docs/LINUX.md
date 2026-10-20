@@ -130,12 +130,7 @@ endpoint: `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
 Every other server config field has the overlay `ROCKETNET_SERVER_<FIELD>`
 (`sdk/rocketnet_config.cpp:344-375`), for example
 `ROCKETNET_SERVER_NUM_XDP_QUEUES` and `ROCKETNET_SERVER_NUM_OS_CPUS`
-(`sdk/rocketnet.h:805`, `sdk/rocketnet_internal.h:480-481`). The process-wide
-spelling `ROCKETNET_<FIELD>` is refused aloud and not applied, naming its
-replacement (`sdk/rocketnet_config.cpp:548-562`); so are the old
-`ROCKETNET_DRIVER`, `ROCKETNET_TRANSPORT`, `ROCKETNET_SERVER_DRIVER` and
-`ROCKETNET_CLIENT_DRIVER` (`sdk/rocketnet_config.cpp:564-565`,
-`BUILDING.md:332-334`).
+(`sdk/rocketnet.h:805`, `sdk/rocketnet_internal.h:480-481`).
 
 CI's transport matrix pins each Linux server transport against the portable
 client on four cases, `driver_env_pin_is_honoured` among them, which proves
