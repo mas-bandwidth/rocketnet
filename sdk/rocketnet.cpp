@@ -372,6 +372,13 @@ uint64_t rocketnet_allocation_refusals()
 {
     return rocketnet_allocation_refusals_on_this_thread;
 }
+
+// counts a failed allocation made outside rocketnet_malloc (a page-aligned
+// buffer a driver registers with the kernel) as a refusal on this thread
+void rocketnet_allocation_refused()
+{
+    ++rocketnet_allocation_refusals_on_this_thread;
+}
 static void (*rocketnet_free_function)( void * context, void * p ) = rocketnet_default_free_function;
 
 static std::mutex rocketnet_lifecycle_mutex;

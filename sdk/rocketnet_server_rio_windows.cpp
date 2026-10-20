@@ -5,6 +5,7 @@
 
 #include "rocketnet_memory.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_driver.h"
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
@@ -502,7 +503,11 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     if ( !rocketnet_rio_layout_plan( ROCKETNET_RIO_SEND_FRAMES, ROCKETNET_RIO_RECEIVES, ROCKETNET_FRAME_STRIDE,
                                      ROCKETNET_RIO_RECEIVE_SLICE_BYTES, (int) sizeof(SOCKADDR_INET), 4096, &rio->layout ) ) goto failed;
     rio->region = (uint8_t*) VirtualAlloc( NULL, (SIZE_T) rio->layout.total_bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE );
-    if ( !rio->region ) goto failed;
+    if ( !rio->region )
+    {
+        rocketnet_allocation_refused();
+        goto failed;
+    }
     rio->buffer_id = rio->rio.RIORegisterBuffer( (PCHAR) rio->region, (DWORD) rio->layout.total_bytes );
     if ( rio->buffer_id == RIO_INVALID_BUFFERID || fail_stage == 3 ) goto failed;
 

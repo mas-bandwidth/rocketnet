@@ -33,17 +33,17 @@ enum rocketnet_server_driver_flags_t
     ROCKETNET_DRIVER_BINDS_PUBLIC_ADDRESS = 1 << 3
 };
 
-// The status a driver create reports, for server and client alike: create
-// returns NULL and, when the reason is an allocation that failed, writes
-// ROCKETNET_STATUS_OUT_OF_MEMORY through config->status (NULL: not asked).
-// Any other NULL is a refusal, and the transport ladder falls to the next
-// candidate; OUT_OF_MEMORY ends the ladder and the create
-// (sdk/rocketnet_server_transport.cpp and sdk/rocketnet_client_transport.cpp,
-// after their driver open). rocketnet_server_driver_open and
-// rocketnet_client_driver_open write it on a driver's behalf when the create
-// returned NULL after rocketnet_malloc refused an allocation on the calling
-// thread (rocketnet_allocation_refusals), so a driver that allocates through
-// rocketnet_malloc need not write it itself.
+// status: where a failed open reports why, for server and client alike
+// (NULL: not asked). rocketnet_server_driver_open and
+// rocketnet_client_driver_open write ROCKETNET_STATUS_OUT_OF_MEMORY there when
+// create returned NULL after an allocation on the calling thread was refused
+// (sdk/rocketnet_driver.cpp:126-130, :148 and :182): a rocketnet_malloc
+// refusal, or a driver's own page buffer counted by
+// rocketnet_allocation_refused (sdk/rocketnet_server_socket_linux.cpp:1720,
+// sdk/rocketnet_server_rio_windows.cpp:508). Any other NULL leaves it OK and
+// is a refusal, and the transport ladder falls to the next candidate;
+// OUT_OF_MEMORY ends the ladder and the create
+// (sdk/rocketnet_server_transport.cpp:1299, sdk/rocketnet_client_transport.cpp:882).
 struct rocketnet_server_driver_config_t
 {
     const char * name;
@@ -185,6 +185,10 @@ const int * rocketnet_client_driver_availability( int * num_available );
 // The allocations rocketnet_malloc has refused on the calling thread, ever
 // (defined in sdk/rocketnet.cpp beside rocketnet_malloc).
 uint64_t rocketnet_allocation_refusals();
+
+// Counts one failed allocation made outside rocketnet_malloc on the calling
+// thread, so a driver open reports OUT_OF_MEMORY for it (sdk/rocketnet.cpp).
+void rocketnet_allocation_refused();
 
 // Validate the contract once at creation, never in the packet path. Also used
 // by native extension conformance tests before a backend enters the registry.

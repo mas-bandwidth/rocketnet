@@ -21,8 +21,9 @@
 // The socket drivers (portable, msgx, gso, iocp) and the kernel-object
 // drivers (xdp, io_uring, rio) open a socket or a kernel object in their
 // create, which the unit tier never does; their allocations go through
-// rocketnet_malloc, whose refusals the open reads (sdk/rocketnet_driver.cpp:126), the same
-// path these cases walk.
+// rocketnet_malloc, or for the xdp umem and the rio region are counted by
+// rocketnet_allocation_refused (sdk/rocketnet.cpp:378), and the open reads
+// that count (sdk/rocketnet_driver.cpp:126), the same path these cases walk.
 
 #include "test_unit_registry.h"
 
