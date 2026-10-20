@@ -265,3 +265,127 @@ static void client_io_update_exposes_published_batch()
 }
 
 REGISTER_UNIT_TEST( client_io_update_exposes_published_batch );
+
+// tla/RNClientIo.tla IoSend, Complete and IoFinishRing on the overlapped table
+// (docs/CLIENT-IO.md The Windows send): a step posts the ring's sends and
+// returns with the ring still Sending; a step with no completion leaves it
+// Sending and the next hand-off is deferred; only the step that reaps the
+// ring's last completion marks it Sent (NoFreeBeforeComplete,
+// MCRNClientIoBrokenSentBeforeComplete.cfg). No driver send runs.
+static void client_io_overlapped_ring_sent_only_after_last_completion()
+{
+    rocketnet_fake_client_driver_t * fake = new rocketnet_fake_client_driver_t();
+    client_io_transport_clock_t clock = { 1000.0, 0 };
+    rocketnet_client_transport_t * transport = client_io_transport_create( fake, &rocketnet_fake_client_operations_overlapped, &clock );
+    rocketnet_client_io_t * io = rocketnet_client_transport_client_io( transport );
+    check( io != NULL );
+
+    rocketnet_client_transport_update( transport, 1000.0 );
+    check( io->rings.state[0].load() == ROCKETNET_CLIENT_RING_HANDED_OFF );
+    check( rocketnet_client_io_step( io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    check( fake->post_calls == 1 );
+    check( fake->num_pending == 1 );
+    check( io->outstanding == 1 );
+    check( io->rings.state[0].load() == ROCKETNET_CLIENT_RING_SENDING );
+
+    rocketnet_client_io_step( io, false );
+    check( io->rings.state[0].load() == ROCKETNET_CLIENT_RING_SENDING );
+
+    rocketnet_client_transport_update( transport, 1000.2 );
+    check( client_io_transport_counter( transport, ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED ) == 1 );
+
+    rocketnet_fake_client_complete( fake, 1, true );
+    check( rocketnet_client_io_step( io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    check( io->outstanding == 0 );
+    check( io->rings.state[0].load() == ROCKETNET_CLIENT_RING_SENT );
+
+    // the deferred packet and the next one leave together in ring 1: two
+    // posts, and the ring stays Sending until the second completion
+    rocketnet_client_transport_update( transport, 1000.4 );
+    check( io->rings.state[1].load() == ROCKETNET_CLIENT_RING_HANDED_OFF );
+    check( io->rings.committed[1] == 2 );
+    check( rocketnet_client_io_step( io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    check( fake->post_calls == 3 );
+    check( io->outstanding == 2 );
+    rocketnet_fake_client_complete( fake, 1, true );
+    rocketnet_client_io_step( io, false );
+    check( io->outstanding == 1 );
+    check( io->rings.state[1].load() == ROCKETNET_CLIENT_RING_SENDING );
+    rocketnet_fake_client_complete( fake, 1, true );
+    rocketnet_client_io_step( io, false );
+    check( io->outstanding == 0 );
+    check( io->rings.state[1].load() == ROCKETNET_CLIENT_RING_SENT );
+
+    check( fake->send_calls == 0 );
+    check( fake->send_batch_calls == 0 );
+    check( io->send_errors.load() == 0 );
+
+    rocketnet_client_transport_destroy( transport );
+    check( fake->destroy_calls == 1 );
+    delete fake;
+}
+
+REGISTER_UNIT_TEST( client_io_overlapped_ring_sent_only_after_last_completion );
+
+// tla/RNClientIo.tla Complete with ok FALSE: an error completion releases its
+// slot like any completion, so the ring is Sent once the last one is reaped,
+// and send_errors moves once per failed send; a post the driver refuses is
+// done at once and counted the same way.
+static void client_io_overlapped_error_completion_releases_ring()
+{
+    rocketnet_fake_client_driver_t * fake = new rocketnet_fake_client_driver_t();
+    client_io_transport_clock_t clock = { 1000.0, 0 };
+    rocketnet_client_transport_t * transport = client_io_transport_create( fake, &rocketnet_fake_client_operations_overlapped, &clock );
+    rocketnet_client_io_t * io = rocketnet_client_transport_client_io( transport );
+    check( io != NULL );
+
+    rocketnet_client_transport_update( transport, 1000.0 );
+    check( rocketnet_client_io_step( io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    check( io->rings.state[0].load() == ROCKETNET_CLIENT_RING_SENDING );
+    rocketnet_fake_client_complete( fake, 1, false );
+    check( rocketnet_client_io_step( io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    check( io->rings.state[0].load() == ROCKETNET_CLIENT_RING_SENT );
+    check( io->send_errors.load() == 1 );
+
+    fake->refuse_posts = true;
+    rocketnet_client_transport_update( transport, 1000.2 );
+    check( io->rings.state[1].load() == ROCKETNET_CLIENT_RING_HANDED_OFF );
+    check( rocketnet_client_io_step( io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    check( io->outstanding == 0 );
+    check( io->rings.state[1].load() == ROCKETNET_CLIENT_RING_SENT );
+    check( io->send_errors.load() == 2 );
+
+    rocketnet_client_transport_destroy( transport );
+    delete fake;
+}
+
+REGISTER_UNIT_TEST( client_io_overlapped_error_completion_releases_ring );
+
+// docs/CLIENT-IO.md Stop and destroy order on the overlapped table: destroy
+// with a posted send outstanding runs the step until that send's completion is
+// reaped, and only then exits the core and closes the driver
+// (NoFreeBeforeComplete, StopEventuallyFrees): the fake completes it three
+// reaps later, and none is outstanding when the driver's destroy runs.
+static void client_io_overlapped_destroy_waits_for_completions()
+{
+    rocketnet_fake_client_driver_t * fake = new rocketnet_fake_client_driver_t();
+    client_io_transport_clock_t clock = { 1000.0, 0 };
+    rocketnet_client_transport_t * transport = client_io_transport_create( fake, &rocketnet_fake_client_operations_overlapped, &clock );
+    rocketnet_client_io_t * io = rocketnet_client_transport_client_io( transport );
+    check( io != NULL );
+
+    rocketnet_client_transport_update( transport, 1000.0 );
+    check( rocketnet_client_io_step( io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    check( fake->num_pending == 1 );
+    const int reaps_before = fake->reap_calls;
+    fake->auto_complete_reaps = 3;
+
+    rocketnet_client_transport_destroy( transport );
+    check( fake->reap_calls >= reaps_before + 3 );
+    check( fake->num_pending == 0 );
+    check( fake->destroy_calls == 1 );
+    check( fake->outstanding_at_destroy == 0 );
+    delete fake;
+}
+
+REGISTER_UNIT_TEST( client_io_overlapped_destroy_waits_for_completions );

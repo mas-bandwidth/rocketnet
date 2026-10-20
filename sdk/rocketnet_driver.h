@@ -121,6 +121,19 @@ struct rocketnet_client_driver_operations_t
     // optional, with wait; any thread. Sets the level-triggered wake, so a
     // wait in progress or the next wait returns at once.
     void (*wake)( void * driver );
+    // optional, both or none, with wait and wake; I/O thread only. The
+    // overlapped send (docs/CLIENT-IO.md "The Windows send", tla/RNClientIo.tla
+    // IoSend and Complete). post_send posts one datagram tagged with its ring
+    // and returns without waiting for the kernel; it borrows to and data
+    // until that send completes, and returns false when the send could not
+    // be posted (the slot is then done, counted as a send error). reap_sends
+    // never blocks: it writes up to max completed sends' tags and results
+    // (ok false for an error completion) and returns the count; a completion
+    // also ends the driver's wait. destroy cancels and waits for every send
+    // still outstanding before it frees. NULL for both keeps the synchronous
+    // send and send_batch (docs/ABI-EVOLUTION.md).
+    bool (*post_send)( void * driver, int tag, const rocketnet_address_t * to, const uint8_t * data, int bytes );
+    int (*reap_sends)( void * driver, int * tags, bool * ok, int max );
 };
 
 struct rocketnet_driver_backend_t

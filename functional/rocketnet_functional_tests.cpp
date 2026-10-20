@@ -587,6 +587,115 @@ void rocketnet_test_client_io_windows_handoff_round_trip()
     rocketnet_test_client_io_handoff_round_trip( "portable", "client_io_windows_handoff_round_trip" );
 }
 
+void rocketnet_test_client_send_buffer_pressure_windows()
+{
+    // docs/CLIENT-IO.md The Windows send, tla/RNClientIo.tla
+    // IoNeverBlocksOnSend: eight portable clients, each with its own I/O
+    // thread, hand off rings of 64 datagrams of 1000 bytes every frame to one
+    // loopback server, so the kernel's send path is under pressure from many
+    // sockets at once. The I/O core records the longest send phase of one
+    // ring (rocketnet_client_io_t longest_send_seconds, read around the post
+    // loop or the driver send calls in rocketnet_client_io_step). With the
+    // overlapped send the phase only posts, so no client's I/O thread is held
+    // past one 60 Hz frame; the synchronous sendto it replaced can be held
+    // by the kernel for longer. Ring-full refusals are backpressure, counted
+    // and skipped: delivery is not what this case measures.
+
+    const int NUM_CLIENTS = 8;
+    const int FRAMES = 200;
+    const int PACKETS_PER_FRAME = 64;
+    const int PAYLOAD_BYTES = 1000;
+    const double FRAME_BUDGET_SECONDS = 1.0 / 60.0;
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = NUM_CLIENTS;
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config );
+    rocketnet_check( server );
+
+    char server_address[64];
+    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+
+    struct rocketnet_client_transport_t * clients[NUM_CLIENTS];
+    for ( int c = 0; c < NUM_CLIENTS; c++ )
+    {
+        uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+        rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+        struct rocketnet_client_transport_config_t client_config;
+        rocketnet_client_transport_default_config( &client_config );
+        snprintf( client_config.driver, sizeof(client_config.driver), "%s", "portable" );
+        clients[c] = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
+        rocketnet_check( clients[c] );
+        rocketnet_check( rocketnet_client_transport_client_io( clients[c] ) != NULL );
+    }
+
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        int connected = 0;
+        for ( int c = 0; c < NUM_CLIENTS; c++ )
+        {
+            rocketnet_client_transport_update( clients[c], rocketnet_platform_time() );
+            if ( rocketnet_client_transport_state( clients[c] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+                connected++;
+        }
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+        if ( connected == NUM_CLIENTS && rocketnet_server_transport_num_connected_clients( server ) == NUM_CLIENTS )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == NUM_CLIENTS );
+
+    int sent = 0;
+    int refused = 0;
+    for ( int frame = 0; frame < FRAMES; frame++ )
+    {
+        for ( int c = 0; c < NUM_CLIENTS; c++ )
+        {
+            for ( int i = 0; i < PACKETS_PER_FRAME; i++ )
+            {
+                struct rocketnet_packet_context_t context;
+                uint8_t * payload = rocketnet_client_transport_start_packet( clients[c], PAYLOAD_BYTES, &context );
+                if ( !payload )
+                {
+                    refused++;
+                    continue;
+                }
+                memset( payload + context.payload_index, (uint8_t) ( frame + i ), PAYLOAD_BYTES );
+                rocketnet_check( rocketnet_client_transport_finish_packet( clients[c], &context, PAYLOAD_BYTES ) > PAYLOAD_BYTES );
+                sent++;
+            }
+            rocketnet_client_transport_send_packets( clients[c] );
+            rocketnet_client_transport_update( clients[c], rocketnet_platform_time() );
+            static uint8_t drain[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+            while ( rocketnet_client_transport_receive_packet( clients[c], drain, (int) sizeof(drain) ) > 0 ) {}
+        }
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+        rocketnet_platform_sleep( 0.001 );
+    }
+
+    double longest = 0.0;
+    uint64_t send_errors = 0;
+    for ( int c = 0; c < NUM_CLIENTS; c++ )
+    {
+        rocketnet_client_io_t * io = rocketnet_client_transport_client_io( clients[c] );
+        const double seconds = io->longest_send_seconds.load( std::memory_order_relaxed );
+        if ( seconds > longest )
+            longest = seconds;
+        send_errors += io->send_errors.load( std::memory_order_relaxed );
+    }
+    printf( "client_send_buffer_pressure_windows clients=%d frames=%d sent=%d refused=%d longest_send_ms=%.3f send_errors=%llu\n",
+        NUM_CLIENTS, FRAMES, sent, refused, longest * 1000.0, (unsigned long long) send_errors );
+    rocketnet_check( longest < FRAME_BUDGET_SECONDS );
+
+    for ( int c = 0; c < NUM_CLIENTS; c++ )
+        rocketnet_client_transport_destroy( clients[c] );
+    rocketnet_server_transport_destroy( server );
+}
+
 static int rocketnet_test_fill_server_ring( rocketnet_server_transport_t * server, int completion_capacity )
 {
     // IOCP may still own earlier sends. Keep every successful reservation in
@@ -7005,6 +7114,7 @@ ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_linux_mmsg_batch_
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_apple_handoff_round_trip, "client_io_apple_handoff_round_trip", "mac and ios only: the msgx client I/O wake is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_windows_wakes_and_reads, "platform_wake_windows_wakes_and_reads", "windows only: the event wake is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_windows_handoff_round_trip, "client_io_windows_handoff_round_trip", "windows only: the portable client I/O event wake is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_send_buffer_pressure_windows, "client_send_buffer_pressure_windows", "windows only: the overlapped client send is built on windows alone" )
 
 
 // A maximum-size packet crosses a 1500-MTU link, whole and unfragmented, on
@@ -8255,8 +8365,10 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 #endif
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "client_io_windows_handoff_round_trip", rocketnet_test_client_io_windows_handoff_round_trip },
+    { "client_send_buffer_pressure_windows", rocketnet_test_client_send_buffer_pressure_windows },
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "client_io_windows_handoff_round_trip", rocketnet_functional_skip_client_io_windows_handoff_round_trip },
+    { "client_send_buffer_pressure_windows", rocketnet_functional_skip_client_send_buffer_pressure_windows },
 #endif
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     { "test_platform_batch_pump_refused_destination", rocketnet_test_platform_batch_pump_refused_destination },

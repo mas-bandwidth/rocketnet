@@ -7,9 +7,12 @@
 // CLIENT-IO.md "The I/O step", tla/RNClientIo.tla): no socket, no thread, no
 // time; wait never blocks. Unit tests drive the step with this driver on the
 // test's thread. Four callbacks are required (create/destroy/send/receive);
-// wait, wake, send_batch and receive_batch are optional, and the three
-// static const rocketnet_client_driver_operations_t tables expose the three
-// subsets in the driver struct's member order.
+// wait, wake, send_batch, receive_batch, post_send and reap_sends are
+// optional, and the four static const rocketnet_client_driver_operations_t
+// tables expose four subsets in the driver struct's member order. The
+// overlapped table's sends complete only when the test completes them
+// (rocketnet_fake_client_complete), or after auto_complete_reaps reaps
+// (tla/RNClientIo.tla IoSend, Complete).
 
 #pragma once
 
@@ -45,6 +48,16 @@ struct rocketnet_fake_client_driver_t
     bool wake;
     double last_wait_timeout;
     bool last_wait_readable;
+    // the overlapped send: posted (pending) and completed but not reaped (done)
+    int post_calls, reap_calls;
+    int pending_tags[ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS];
+    int num_pending;
+    int done_tags[ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS];
+    bool done_ok[ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS];
+    int num_done;
+    bool refuse_posts;          // post_send returns false
+    int auto_complete_reaps;    // > 0: that many reaps later every pending send completes ok
+    int outstanding_at_destroy; // pending plus done when destroy ran
 };
 
 // create returns its context argument (the test passes the fake as the
@@ -61,6 +74,7 @@ static void rocketnet_fake_client_destroy( void * driver )
 {
     rocketnet_fake_client_driver_t * fake = (rocketnet_fake_client_driver_t *) driver;
     fake->destroy_calls++;
+    fake->outstanding_at_destroy = fake->num_pending + fake->num_done;
 }
 
 // send appends to sent.
@@ -137,7 +151,7 @@ static bool rocketnet_fake_client_wait( void * driver, bool readable, double tim
     fake->wait_calls++;
     fake->last_wait_timeout = timeout_seconds;
     fake->last_wait_readable = readable;
-    bool ready = fake->wake || ( readable && fake->inbound_count > 0 );
+    bool ready = fake->wake || ( readable && fake->inbound_count > 0 ) || fake->num_done > 0;
     fake->wake = false;
     return ready;
 }
@@ -150,21 +164,80 @@ static void rocketnet_fake_client_wake( void * driver )
     fake->wake = true;
 }
 
-// The three tables: base (four required), io (four plus wait and wake), batch
-// (all eight), each in rocketnet_client_driver_operations_t member order.
+// post_send records the datagram in sent (as send does) and its tag as
+// pending; it returns false, recording nothing, while refuse_posts is set.
+static bool rocketnet_fake_client_post_send( void * driver, int tag, const rocketnet_address_t * to, const uint8_t * data, int bytes )
+{
+    rocketnet_fake_client_driver_t * fake = (rocketnet_fake_client_driver_t *) driver;
+    fake->post_calls++;
+    if ( fake->refuse_posts )
+        return false;
+    assert( fake->num_sent < ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS );
+    rocketnet_fake_client_datagram_t * dg = &fake->sent[fake->num_sent++];
+    dg->address = *to;
+    dg->bytes = bytes;
+    memcpy( dg->data, data, (size_t) bytes );
+    assert( fake->num_pending < ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS );
+    fake->pending_tags[fake->num_pending++] = tag;
+    return true;
+}
+
+// Complete the first count pending sends, oldest first, ok or with an error
+// (tla/RNClientIo.tla Complete); they wait in done until a reap.
+inline void rocketnet_fake_client_complete( rocketnet_fake_client_driver_t * fake, int count, bool ok )
+{
+    assert( count <= fake->num_pending );
+    for ( int i = 0; i < count; i++ )
+    {
+        fake->done_tags[fake->num_done] = fake->pending_tags[i];
+        fake->done_ok[fake->num_done] = ok;
+        fake->num_done++;
+    }
+    for ( int i = count; i < fake->num_pending; i++ )
+        fake->pending_tags[i - count] = fake->pending_tags[i];
+    fake->num_pending -= count;
+}
+
+// reap_sends pops up to max completed sends, oldest first; with
+// auto_complete_reaps set it counts down and completes every pending send ok
+// when it reaches zero, before the pop.
+static int rocketnet_fake_client_reap_sends( void * driver, int * tags, bool * ok, int max )
+{
+    rocketnet_fake_client_driver_t * fake = (rocketnet_fake_client_driver_t *) driver;
+    fake->reap_calls++;
+    if ( fake->auto_complete_reaps > 0 && --fake->auto_complete_reaps == 0 )
+        rocketnet_fake_client_complete( fake, fake->num_pending, true );
+    int got = fake->num_done < max ? fake->num_done : max;
+    for ( int i = 0; i < got; i++ )
+    {
+        tags[i] = fake->done_tags[i];
+        ok[i] = fake->done_ok[i];
+    }
+    for ( int i = got; i < fake->num_done; i++ )
+    {
+        fake->done_tags[i - got] = fake->done_tags[i];
+        fake->done_ok[i - got] = fake->done_ok[i];
+    }
+    fake->num_done -= got;
+    return got;
+}
+
+// The four tables: base (four required), io (four plus wait and wake), batch
+// (the first eight), overlapped (io plus post_send and reap_sends), each in
+// rocketnet_client_driver_operations_t member order.
 
 static const rocketnet_client_driver_operations_t rocketnet_fake_client_operations_base =
 {
     rocketnet_fake_client_create, rocketnet_fake_client_destroy,
     rocketnet_fake_client_send, rocketnet_fake_client_receive,
-    NULL, NULL, NULL, NULL
+    NULL, NULL, NULL, NULL, NULL, NULL
 };
 
 static const rocketnet_client_driver_operations_t rocketnet_fake_client_operations_io =
 {
     rocketnet_fake_client_create, rocketnet_fake_client_destroy,
     rocketnet_fake_client_send, rocketnet_fake_client_receive,
-    NULL, NULL, rocketnet_fake_client_wait, rocketnet_fake_client_wake
+    NULL, NULL, rocketnet_fake_client_wait, rocketnet_fake_client_wake, NULL, NULL
 };
 
 static const rocketnet_client_driver_operations_t rocketnet_fake_client_operations_batch =
@@ -172,7 +245,15 @@ static const rocketnet_client_driver_operations_t rocketnet_fake_client_operatio
     rocketnet_fake_client_create, rocketnet_fake_client_destroy,
     rocketnet_fake_client_send, rocketnet_fake_client_receive,
     rocketnet_fake_client_send_batch, rocketnet_fake_client_receive_batch,
-    rocketnet_fake_client_wait, rocketnet_fake_client_wake
+    rocketnet_fake_client_wait, rocketnet_fake_client_wake, NULL, NULL
+};
+
+static const rocketnet_client_driver_operations_t rocketnet_fake_client_operations_overlapped =
+{
+    rocketnet_fake_client_create, rocketnet_fake_client_destroy,
+    rocketnet_fake_client_send, rocketnet_fake_client_receive,
+    NULL, NULL, rocketnet_fake_client_wait, rocketnet_fake_client_wake,
+    rocketnet_fake_client_post_send, rocketnet_fake_client_reap_sends
 };
 
 // Push an inbound datagram (docs/CLIENT-IO.md "The I/O step"). Appends past

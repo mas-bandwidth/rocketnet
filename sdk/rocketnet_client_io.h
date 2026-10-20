@@ -106,6 +106,12 @@ struct rocketnet_client_io_t
     double guard_timeout_seconds;               // ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS
     std::atomic<bool> quit;
     struct rocketnet_client_io_open_t open;
+    // the overlapped send (tla/RNClientIo.tla IoSend, Complete, IoFinishRing);
+    // I/O thread only, except the two atomics any thread may read
+    int posted_ring;                            // the ring whose sends are posted, or -1
+    int outstanding;                            // its posted sends not yet completed
+    std::atomic<uint64_t> send_errors;          // sends refused at post or completed with an error
+    std::atomic<double> longest_send_seconds;   // the longest send phase of one ring on the I/O thread
 };
 
 // RNClientIo initial; main thread. Takes the two ring views and the two
@@ -138,6 +144,54 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
     io->open.epoch.store( ROCKETNET_CLIENT_IO_EPOCH_NONE, std::memory_order_relaxed );
     memset( &io->open.replay, 0, sizeof( io->open.replay ) );
     io->open.loaded_epoch = ROCKETNET_CLIENT_IO_EPOCH_NONE;
+    io->posted_ring = -1;
+    io->outstanding = 0;
+    io->send_errors.store( 0, std::memory_order_relaxed );
+    io->longest_send_seconds.store( 0.0, std::memory_order_relaxed );
+}
+
+// True when the driver posts overlapped sends (post_send and reap_sends).
+inline bool rocketnet_client_io_overlapped( const rocketnet_client_io_t * io )
+{
+    return io->driver->operations->post_send && io->driver->operations->reap_sends;
+}
+
+// tla/RNClientIo.tla Complete, as the I/O step reads it, then IoFinishRing; I/O
+// thread. Reaps the driver's completed sends: each releases its slot, and an
+// error completion moves send_errors. Once the posted ring has no send
+// outstanding it is marked Sent (release store), never before
+// (NoFreeBeforeComplete; MCRNClientIoBrokenSentBeforeComplete.cfg). Returns
+// true when a send completed or the ring was finished.
+inline bool rocketnet_client_io_reap( rocketnet_client_io_t * io )
+{
+    bool reaped = false;
+    if ( io->outstanding > 0 )
+    {
+        int tags[ROCKETNET_CLIENT_IO_BATCH];
+        bool ok[ROCKETNET_CLIENT_IO_BATCH];
+        while ( true )
+        {
+            const int got = io->driver->operations->reap_sends( io->driver->instance, tags, ok, ROCKETNET_CLIENT_IO_BATCH );
+            for ( int i = 0; i < got; i++ )
+            {
+                rocketnet_assert( tags[i] == io->posted_ring );
+                rocketnet_assert( io->outstanding > 0 );
+                io->outstanding--;
+                if ( !ok[i] )
+                    io->send_errors.fetch_add( 1, std::memory_order_relaxed );
+                reaped = true;
+            }
+            if ( got < ROCKETNET_CLIENT_IO_BATCH )
+                break;
+        }
+    }
+    if ( io->posted_ring >= 0 && io->outstanding == 0 )
+    {
+        rocketnet_client_send_rings_finish( &io->rings, io->posted_ring );
+        io->posted_ring = -1;
+        reaped = true;
+    }
+    return reaped;
 }
 
 // tla/RNClientIoDecrypt.tla PublishKeys; main thread, where the challenge
@@ -319,8 +373,9 @@ inline void rocketnet_client_io_return( rocketnet_client_io_t * io )
         io->driver->operations->wake( io->driver->instance );
 }
 
-// The I/O thread's loop body (RNClientIo IoSend, IoFinishRing, IoReceive,
-// IoPublish, IoOwe, IoWait; docs/CLIENT-IO.md _The I/O step_ and _The wake_).
+// The I/O thread's loop body (RNClientIo IoSend, Complete, IoFinishRing,
+// IoReceive, IoPublish, IoOwe, IoWait; docs/CLIENT-IO.md _The I/O step_, _The
+// wake_ and _The Windows send_).
 inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
 {
     rocketnet_assert( io );
@@ -334,12 +389,35 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     // 1. RNClientIo IoSend / IoFinishRing: send a handed-off ring. Slot i is
     // at data + i * frame_stride + wire_offset; a zero int byte count is an
     // aborted slot and stays unsent.
+    const bool overlapped = rocketnet_client_io_overlapped( io );
     const int ring = rocketnet_client_send_rings_take( &io->rings );
     if ( ring >= 0 )
     {
         const rocketnet_client_io_ring_view_t * view = &io->ring_view[ring];
         const uint64_t committed = io->rings.committed[ring];
-        if ( io->driver->operations->send_batch )
+        const double send_start = io->time( io->time_context );
+        if ( overlapped )
+        {
+            // RNClientIo IoSend, overlapped: each slot's send is posted and
+            // the step goes on (IoNeverBlocksOnSend); the ring stays Sending
+            // until its last completion is reaped below (IoFinishRing). A
+            // send the driver refuses to post is done and counted.
+            rocketnet_assert( io->posted_ring < 0 && io->outstanding == 0 );
+            io->posted_ring = ring;
+            for ( uint64_t slot = 0; slot < committed; slot++ )
+            {
+                int bytes = 0;
+                memcpy( &bytes, view->wire_bytes + (size_t) slot * view->wire_bytes_stride, sizeof( bytes ) );
+                if ( bytes == 0 )
+                    continue;
+                const uint8_t * packet_data = view->data + (size_t) slot * view->frame_stride + view->wire_offset;
+                if ( io->driver->operations->post_send( io->driver->instance, ring, &io->to[ring], packet_data, bytes ) )
+                    io->outstanding++;
+                else
+                    io->send_errors.fetch_add( 1, std::memory_order_relaxed );
+            }
+        }
+        else if ( io->driver->operations->send_batch )
         {
             rocketnet_platform_send_t sends[ROCKETNET_CLIENT_IO_BATCH];
             int num_sends = 0;
@@ -374,13 +452,25 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                 io->driver->operations->send( io->driver->instance, &io->to[ring], packet_data, bytes );
             }
         }
-        rocketnet_client_send_rings_finish( &io->rings, ring );
+        const double send_seconds = io->time( io->time_context ) - send_start;
+        if ( send_seconds > io->longest_send_seconds.load( std::memory_order_relaxed ) )
+            io->longest_send_seconds.store( send_seconds, std::memory_order_relaxed );
+        if ( !overlapped )
+            rocketnet_client_send_rings_finish( &io->rings, ring );
         worked = true;
     }
 
+    // RNClientIo Complete and IoFinishRing on the overlapped path: reap the
+    // completions, here after the posts so a send that completed during them
+    // is read in this step, and finish the ring once none is outstanding.
+    if ( overlapped && rocketnet_client_io_reap( io ) )
+        worked = true;
+
     // RNClientIo IoExit: once quit is stored, the ring handed off before stop
-    // is sent first (the send phase above); when nothing is in flight the
-    // thread exits at once: no receive, no publish, no wait.
+    // is sent first (the send phase above), and on the overlapped path its
+    // posted sends complete first (the ring stays Sending until then); when
+    // nothing is in flight the thread exits at once: no receive, no publish,
+    // no wait.
     if ( quitting && !rocketnet_client_send_rings_in_flight( &io->rings ) )
     {
         rocketnet_client_io_drop_keys( io );    // destroy retires; the copy dies with the thread
@@ -483,7 +573,9 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     // (MCRNClientIoBrokenFullWaitReadable.cfg, FullWaitsOnWake). The owed flag
     // was stored above before this wait, so the return at the end of the next
     // update wakes it.
-    if ( block && !worked && !quitting )
+    // While quitting with posted sends outstanding the step waits too: a
+    // completion ends the wait (RNClientIo IoWake), so it does not spin.
+    if ( block && !worked && ( !quitting || io->outstanding > 0 ) )
     {
         const bool readable = rocketnet_client_receive_handshake_io_wait( handshake );
         io->driver->operations->wait( io->driver->instance, readable, io->guard_timeout_seconds );

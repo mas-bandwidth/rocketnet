@@ -106,10 +106,28 @@ static bool portable_io_client_wait( void * driver, bool readable, double timeou
 { struct portable_io_client_t * client = (struct portable_io_client_t*) driver; return rocketnet_platform_wake_wait( client->wake, readable, timeout_seconds ); }
 static void portable_io_client_wake( void * driver )
 { struct portable_io_client_t * client = (struct portable_io_client_t*) driver; rocketnet_platform_wake_set( client->wake ); }
+#if defined( ROCKETNET_PLATFORM_HAS_OVERLAPPED_SEND )
+// RNClientIo IoSend and Complete on Windows (docs/CLIENT-IO.md The Windows
+// send): the I/O step posts each slot with WSASendTo and reaps the
+// completions, so the kernel never holds the I/O thread inside a send.
+// portable_io_client_destroy destroys the wake first, which cancels and
+// waits for any send still outstanding before the socket closes.
+static bool portable_io_client_post_send( void * driver, int tag, const rocketnet_address_t * to, const uint8_t * data, int bytes )
+{ struct portable_io_client_t * client = (struct portable_io_client_t*) driver; return rocketnet_platform_wake_post_send( client->wake, tag, to, data, bytes ); }
+static int portable_io_client_reap_sends( void * driver, int * tags, bool * ok, int max )
+{ struct portable_io_client_t * client = (struct portable_io_client_t*) driver; return rocketnet_platform_wake_reap_sends( client->wake, tags, ok, max ); }
+#define ROCKETNET_PORTABLE_IO_CLIENT_POST_SEND portable_io_client_post_send
+#define ROCKETNET_PORTABLE_IO_CLIENT_REAP_SENDS portable_io_client_reap_sends
+#else
+// Linux and macOS keep the synchronous send (NULL post_send and reap_sends).
+#define ROCKETNET_PORTABLE_IO_CLIENT_POST_SEND NULL
+#define ROCKETNET_PORTABLE_IO_CLIENT_REAP_SENDS NULL
+#endif
 static const rocketnet_client_driver_operations_t portable_client_operations =
 {
     portable_io_client_create, portable_io_client_destroy, portable_io_client_send, portable_io_client_receive,
-    portable_io_client_send_batch, portable_io_client_receive_batch, portable_io_client_wait, portable_io_client_wake
+    portable_io_client_send_batch, portable_io_client_receive_batch, portable_io_client_wait, portable_io_client_wake,
+    ROCKETNET_PORTABLE_IO_CLIENT_POST_SEND, ROCKETNET_PORTABLE_IO_CLIENT_REAP_SENDS
 };
 #else // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 static void * portable_client_create( void * context, const rocketnet_client_driver_config_t * config, rocketnet_address_t * bind )

@@ -525,6 +525,24 @@ bool rocketnet_platform_wake_wait( struct rocketnet_platform_wake_t * wake, bool
  */
 void rocketnet_platform_wake_set( struct rocketnet_platform_wake_t * wake );
 
+// The Windows client's overlapped send (docs/CLIENT-IO.md "The Windows send",
+// tla/RNClientIo.tla IoSend and Complete): the wake owns a pool of
+// ROCKETNET_PLATFORM_WAKE_MAX_SENDS WSASendTo records on its socket, sharing
+// one manual-reset event that joins the wake's WaitForMultipleObjects set, so
+// a completion ends rocketnet_platform_wake_wait. post_send posts one datagram
+// and never waits for the kernel; it borrows data until the send completes,
+// and returns false when the pool is full or WSASendTo fails at once.
+// reap_sends resets the event, then writes up to max completed records' tags
+// and results (ok false for an error completion), freeing them, and returns
+// the count; it never blocks. wake_destroy cancels (CancelIoEx) and waits for
+// every record still outstanding before it closes the event. Windows only.
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+#define ROCKETNET_PLATFORM_HAS_OVERLAPPED_SEND 1
+#define ROCKETNET_PLATFORM_WAKE_MAX_SENDS 512
+bool rocketnet_platform_wake_post_send( struct rocketnet_platform_wake_t * wake, int tag, const struct rocketnet_address_t * to, const void * packet_data, int packet_bytes );
+int rocketnet_platform_wake_reap_sends( struct rocketnet_platform_wake_t * wake, int * tags, bool * ok, int max );
+#endif
+
 // ----------------------------------------------------------------
 
 #ifdef __cplusplus

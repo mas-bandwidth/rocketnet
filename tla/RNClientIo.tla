@@ -49,6 +49,21 @@
 (* restores the wait on readable with a full buffer, which returns at     *)
 (* once while datagrams sit in the socket; StepModeStartsThread starts    *)
 (* the I/O thread at create in the step-driven mode as well.              *)
+(*                                                                         *)
+(* The overlapped send (rocketnet-windows-client-overlapped-send): each    *)
+(* ring's slot sends are posted in one step (IoSend: the code's post loop  *)
+(* touches only slots the I/O thread owns, so no other action can observe  *)
+(* it half done) and each is completed later, ok or with an error,         *)
+(* by an outside event, the kernel (Complete).  A ring becomes Sent only   *)
+(* when every posted send of it has completed (IoFinishRing), and while    *)
+(* sends are outstanding the I/O thread receives, publishes and waits; the *)
+(* ring's last completion ends that wait (IoWake).  An error completion    *)
+(* releases its slot exactly as an ok one does, so one action models both. *)
+(* Two defined switches, FALSE                                             *)
+(* here and overridden by their witness configs, restore the defects:      *)
+(* BlockingSend holds the send in the I/O step until it completes, the     *)
+(* synchronous sendto the kernel can hold for a second; SentBeforeComplete *)
+(* marks the ring Sent once every slot is posted, before the completions.  *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -100,14 +115,23 @@ VARIABLES ring,      \* each send ring's state
           phase,     \* the transport's life
           ioAlive,   \* the I/O thread has not exited (the I/O core, in step mode)
           inCall,    \* step mode: update or send_packets is running the I/O step
-          lastExec   \* who ran the last I/O core action: none, thread or caller
+          lastExec,  \* who ran the last I/O core action: none, thread or caller
+          posted,    \* slots of a ring whose send is posted and not yet completed
+          inSend     \* the I/O thread is held inside a send call (BlockingSend)
 
-sendVars == <<ring, owner, sent, fill, ioRing, deferred, mainWait>>
+\* the overlapped send's defect switches (see the header); a witness config
+\* overrides one with CONSTANT BlockingSend <- MCTrue
+BlockingSend == FALSE
+SentBeforeComplete == FALSE
+
+ovVars   == <<posted, inSend>>
+sendVars == <<ring, owner, sent, fill, ioRing, deferred, mainWait, posted,
+              inSend>>
 recvVars == <<pending, arrived, buf, count, snap, owed, delivered>>
 
 vars == <<ring, owner, sent, fill, ioRing, deferred, mainWait, wake, waiting,
           waitReadable, pending, arrived, buf, count, snap, owed, delivered,
-          phase, ioAlive, inCall, lastExec>>
+          phase, ioAlive, inCall, lastExec, posted, inSend>>
 
 TypeOK ==
     /\ ring \in [Rings -> RingStates]
@@ -127,6 +151,8 @@ TypeOK ==
     /\ ioAlive \in BOOLEAN
     /\ inCall \in BOOLEAN
     /\ lastExec \in {"none", "thread", "caller"}
+    /\ posted \in [Rings -> SUBSET Slots]
+    /\ inSend \in BOOLEAN
 
 Init ==
     /\ ring = [r \in Rings |-> "Filling"]
@@ -146,6 +172,8 @@ Init ==
     /\ ioAlive = TRUE
     /\ inCall = FALSE
     /\ lastExec = "none"
+    /\ posted = [r \in Rings |-> {}]
+    /\ inSend = FALSE
 
 FillBuffer    == CHOOSE b \in Buffers : buf[b] = "Fill"
 HasExposed    == \E b \in Buffers : buf[b] = "Exposed"
@@ -173,6 +201,7 @@ Write(s) ==
     /\ UNCHANGED <<ring, sent, fill, ioRing, deferred, mainWait, wake,
                    waiting, waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
+    /\ UNCHANGED ovVars
 
 \* finish_packet: the slot is sealed and committed
 Commit(s) ==
@@ -181,6 +210,7 @@ Commit(s) ==
     /\ UNCHANGED <<ring, sent, fill, ioRing, deferred, mainWait, wake,
                    waiting, waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
+    /\ UNCHANGED ovVars
 
 \* the hand-off (send_packets, send_packet through it, or the end of
 \* update) when the other ring is open: the committed ring goes to the I/O
@@ -198,6 +228,7 @@ HandOff ==
     /\ UNCHANGED <<sent, ioRing, deferred, mainWait, waiting, waitReadable,
                    phase, ioAlive>>
     /\ UNCHANGED recvVars
+    /\ UNCHANGED ovVars
 
 \* the hand-off when the other ring is still HandedOff or Sending: the
 \* committed slots stay in the Filling ring and CLIENT_SEND_DEFERRED moves;
@@ -214,6 +245,7 @@ Defer ==
     /\ UNCHANGED <<ring, owner, sent, fill, ioRing, wake, waiting,
                    waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
+    /\ UNCHANGED ovVars
 
 \* the defect's blocked main thread resumes once the other ring is Sent
 WaitDone ==
@@ -223,6 +255,7 @@ WaitDone ==
     /\ UNCHANGED <<ring, owner, sent, fill, ioRing, deferred, wake, waiting,
                    waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
+    /\ UNCHANGED ovVars
 
 \* a hand-off reopens a ring the I/O thread has finished (acquire load)
 Reopen(r) ==
@@ -236,6 +269,7 @@ Reopen(r) ==
     /\ UNCHANGED <<fill, ioRing, deferred, mainWait, wake, waiting,
                    waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
+    /\ UNCHANGED ovVars
 
 \* update, first step: expose the Ready buffer (acquire) when there is
 \* one.  The design holds no buffer at this point (the last update
@@ -317,32 +351,55 @@ Arrive ==
 \* defect that starts it in both modes.
 ThreadStarted == ~StepDriven \/ StepModeStartsThread
 
-IoReady == ioAlive /\ ~waiting
+IoReady == ioAlive /\ ~waiting /\ ~inSend
 
-\* send one slot of the handed-off ring
-IoSend(r, s) ==
+\* every slot the I/O thread owns in ring r has its send posted or completed
+AllPosted(r) == \A s \in Slots : owner[r][s] = "io" => s \in posted[r] \cup sent[r]
+
+\* the ring may be released: every posted send has completed (under the
+\* SentBeforeComplete defect, every slot posted is enough)
+RingDone(r) ==
+    IF SentBeforeComplete THEN AllPosted(r)
+    ELSE \A s \in Slots : owner[r][s] = "io" => s \in sent[r]
+
+\* take the handed-off ring and post every slot's send (WSASendTo with an
+\* OVERLAPPED, one per slot, in the post loop of rocketnet_client_io_step);
+\* the calls return at once and each send completes later (Complete).  Under
+\* BlockingSend the I/O step is held until the sends complete.
+IoSend(r) ==
     /\ IoReady
-    /\ \/ ioRing = r
-       \/ ioRing = "none" /\ ring[r] = "HandedOff"
-    /\ owner[r][s] = "io"
-    /\ s \notin sent[r]
+    /\ ioRing = "none"
+    /\ ring[r] = "HandedOff"
     /\ ioRing' = r
-    /\ ring' = [ring EXCEPT ![r] = IF ring[r] = "HandedOff" THEN "Sending"
-                                    ELSE ring[r]]
-    /\ sent' = [sent EXCEPT ![r] = sent[r] \cup {s}]
-    /\ UNCHANGED <<owner, fill, deferred, mainWait, wake, waiting,
+    /\ ring' = [ring EXCEPT ![r] = "Sending"]
+    /\ posted' = [posted EXCEPT ![r] = {s \in Slots : owner[r][s] = "io"}]
+    /\ inSend' = BlockingSend
+    /\ UNCHANGED <<owner, sent, fill, deferred, mainWait, wake, waiting,
                    waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
 
-\* every slot sent: the ring is released to the main thread (release store)
+\* the kernel completes a posted send, ok or with an error; either way the
+\* slot is done (an error moves send_errors in the code and releases the
+\* slot the same way, so the model needs no second action)
+Complete(r, s) ==
+    /\ s \in posted[r]
+    /\ posted' = [posted EXCEPT ![r] = posted[r] \ {s}]
+    /\ sent' = [sent EXCEPT ![r] = sent[r] \cup {s}]
+    /\ inSend' = (inSend /\ posted'[r] # {})
+    /\ UNCHANGED <<ring, owner, fill, ioRing, deferred, mainWait, wake,
+                   waiting, waitReadable, phase, ioAlive>>
+    /\ UNCHANGED recvVars
+
+\* every posted send completed: the ring is released to the main thread
+\* (release store)
 IoFinishRing(r) ==
     /\ IoReady
     /\ ioRing = r
-    /\ \A s \in Slots : owner[r][s] = "io" => s \in sent[r]
+    /\ RingDone(r)
     /\ ring' = [ring EXCEPT ![r] = "Sent"]
     /\ ioRing' = "none"
     /\ UNCHANGED <<owner, sent, fill, deferred, mainWait, wake, waiting,
-                   waitReadable, phase, ioAlive>>
+                   waitReadable, phase, ioAlive, posted, inSend>>
     /\ UNCHANGED recvVars
 
 \* read one datagram into the I/O thread's buffer while it has room
@@ -393,7 +450,8 @@ IoWait ==
     /\ ~StepDriven
     /\ IoReady
     /\ phase = "Running"
-    /\ ioRing = "none"
+    /\ \/ ioRing = "none"
+       \/ ioRing # "none" /\ AllPosted(ioRing) /\ posted[ioRing] # {}
     /\ \A r \in Rings : ring[r] # "HandedOff"
     /\ ~wake
     /\ ~(count[FillBuffer] > 0 /\ HasFree)
@@ -405,9 +463,14 @@ IoWait ==
     /\ UNCHANGED <<wake, phase, ioAlive>>
     /\ UNCHANGED recvVars
 
+\* the wait returns on the wake, on readable when it waits on it, or once
+\* the posted ring's sends have completed (the OVERLAPPED event in the wait
+\* set; an earlier completion also ends the wait, and the step then waits
+\* again, which the model folds into this one return)
 IoWake ==
     /\ ioAlive /\ waiting
-    /\ wake \/ (waitReadable /\ pending > 0)
+    /\ \/ wake \/ (waitReadable /\ pending > 0)
+       \/ ioRing # "none" /\ RingDone(ioRing)
     /\ waiting' = FALSE
     /\ wake' = FALSE
     /\ UNCHANGED sendVars
@@ -428,7 +491,7 @@ IoExit ==
     /\ IoReady
     /\ phase = "Stopping"
     /\ ioRing = "none"
-    /\ \A r \in Rings : ring[r] # "HandedOff"
+    /\ \A r \in Rings : ring[r] # "HandedOff" /\ posted[r] = {}
     /\ ioAlive' = FALSE
     /\ UNCHANGED sendVars
     /\ UNCHANGED <<wake, waiting, waitReadable, phase>>
@@ -451,6 +514,7 @@ StepBegin ==
     /\ UNCHANGED <<ring, owner, sent, fill, ioRing, deferred, mainWait, wake,
                    waiting, waitReadable, phase, ioAlive, lastExec>>
     /\ UNCHANGED recvVars
+    /\ UNCHANGED ovVars
 
 \* the step is one pass that never blocks (rocketnet_client_io_step with
 \* block false): it finishes the ring it takes, exits once stopped, and
@@ -459,7 +523,7 @@ StepBegin ==
 \* only into the buffer it holds), so receive work does not hold it, and
 \* the wake, which no step mode wait reads, is consumed or left.
 StepWork ==
-    \/ \E r \in Rings, s \in Slots : IoSend(r, s)
+    \/ \E r \in Rings : IoSend(r)
     \/ \E r \in Rings : IoFinishRing(r)
     \/ IoPublish \/ IoOwe \/ IoExit
 
@@ -470,6 +534,7 @@ StepEnd ==
     /\ UNCHANGED <<ring, owner, sent, fill, ioRing, deferred, mainWait, wake,
                    waiting, waitReadable, phase, ioAlive, lastExec>>
     /\ UNCHANGED recvVars
+    /\ UNCHANGED ovVars
 
 \* game threads write and commit at any time; the main thread's own
 \* actions never overlap a caller step
@@ -484,7 +549,7 @@ MainNext ==
     \/ StepBegin \/ StepEnd
 
 IoCoreNext ==
-    \/ \E r \in Rings, s \in Slots : IoSend(r, s)
+    \/ \E r \in Rings : IoSend(r)
     \/ \E r \in Rings : IoFinishRing(r)
     \/ IoReceive \/ IoPublish \/ IoOwe \/ IoWait \/ IoWake \/ IoClearWake
     \/ IoExit
@@ -501,8 +566,12 @@ IoThreadNext == OnThread(IoCoreNext)
 CallerStep == OnCaller(IoCoreNext)
 IoNext == IoThreadNext \/ CallerStep
 
+\* the kernel, outside both threads
+CompleteNext == \E r \in Rings, s \in Slots : Complete(r, s)
+
 Next == MainNext \/ IoNext
         \/ (Arrive /\ UNCHANGED <<inCall, lastExec>>)
+        \/ (CompleteNext /\ UNCHANGED <<inCall, lastExec>>)
         \/ (Done /\ UNCHANGED <<inCall, lastExec>>)
 
 Spec == Init /\ [][Next]_vars
@@ -518,7 +587,7 @@ Spec == Init /\ [][Next]_vars
 \* ring, its exit and its publish or owe before it returns (StepEnd).
 SpecFair ==
     /\ Spec
-    /\ WF_vars(Exec(\E r \in Rings, s \in Slots : IoSend(r, s)))
+    /\ WF_vars(Exec(\E r \in Rings : IoSend(r)))
     /\ WF_vars(Exec(\E r \in Rings : IoFinishRing(r)))
     /\ WF_vars(Exec(IoReceive))
     /\ WF_vars(Exec(IoPublish))
@@ -533,6 +602,8 @@ SpecFair ==
     /\ WF_vars(OnMain(HandOff))
     /\ WF_vars(OnMain(Expose))
     /\ WF_vars(OnMain(Return))
+    /\ WF_vars(CompleteNext /\ UNCHANGED <<inCall, lastExec>>)
+    /\ WF_vars(OnMain(Free))
 
 \* Step mode: the main thread's own actions are disabled while it runs a
 \* step, so they are enabled only intermittently.  update makes its two
@@ -586,6 +657,24 @@ NoIoThreadActionInStepMode ==
 NoReceiveStall ==
     (phase = "Running" /\ count[FillBuffer] > 0) =>
         ENABLED (IoPublish \/ Expose \/ Return \/ IoWake)
+
+\* the I/O thread is never held inside a send: a send is posted and the
+\* step goes on (rocketnet_client_io_step's post, then its reap)
+IoNeverBlocksOnSend == ~inSend
+
+\* no ring is reopened, and the transport is never freed, while a send of
+\* that ring is outstanding: the kernel still reads the slot's bytes
+NoFreeBeforeComplete ==
+    /\ \A r \in Rings : posted[r] # {} => ring[r] = "Sending"
+    /\ phase = "Freed" => \A r \in Rings : posted[r] = {}
+
+\* every posted send eventually completes, ok or with an error
+PostedEventuallyCompletes ==
+    \A r \in Rings, s \in Slots : s \in posted[r] ~> s \notin posted[r]
+
+\* destroy still reaches the free once sends are posted
+StopEventuallyFrees ==
+    phase = "Stopping" ~> phase = "Freed"
 
 HandedOffEventuallySent ==
     \A r \in Rings : ring[r] = "HandedOff" ~> ring[r] = "Sent"

@@ -273,6 +273,47 @@ generated, 672 distinct).
   the full buffer waits on the wake alone, and the `Return` at the end of the
   next `update` wakes it because owed is set.
 
+### `MCRNClientIoBrokenSentBeforeComplete.cfg`
+
+`SentBeforeComplete <- MCTrue`: `IoFinishRing` marks the ring Sent once every
+slot's send is posted, before the kernel completes them. TLC exits 12:
+**`Invariant NoFreeBeforeComplete is violated`**: the I/O thread posts ring
+A's slot and marks A Sent with the send still posted, which the invariant's
+first conjunct (a ring with a posted send is Sending) refuses; the next step
+of the defect would be the main thread reopening A for a game thread to
+write while the kernel reads it. Against the code, by hand: in
+`rocketnet_client_io_step` the overlapped path skips the finish after the
+post loop and only `rocketnet_client_io_reap` finishes the ring, when
+`outstanding` is zero (`sdk/rocketnet_client_io.h:165`); a planted finish
+after the post loop turns `client_io_overlapped_ring_sent_only_after_last_completion` red.
+
+### `MCRNClientIoBrokenBlockingSend.cfg`
+
+`BlockingSend <- MCTrue`: `IoSend` leaves the I/O thread inside the send
+(`inSend`) until `Complete` returns it, which is the synchronous `sendto` the
+Windows kernel held for 0.94 s. TLC exits 12: **`Invariant IoNeverBlocksOnSend
+is violated`** at the first `IoSend`. Against the code, by hand: with
+`post_send` NULL the step calls the driver's `send` or `send_batch` and
+returns only when the kernel does; with it set, `WSASendTo` returns 0 or
+`WSA_IO_PENDING` at once (`sdk/rocketnet_platform.cpp:3952`).
+
+## The overlapped send
+
+`IoSend(r)` takes the handed-off ring and posts all its slots in one step
+(the post loop touches only slots the I/O thread owns, so no other action can
+see it half done); `posted` holds the outstanding sends. `Complete(r, s)` is
+the kernel, outside both threads: an ok and an error completion release the
+slot the same way (the code counts the error in `send_errors`), so one action
+models both. `IoFinishRing` needs every posted send completed, `IoWait` may
+block with a ring posted and none of its sends complete yet, `IoWake` also
+returns once the ring's sends have completed (the completion event in the
+wait set), and `IoExit` needs no send outstanding. The two defect switches
+are defined `FALSE` in the module and overridden by their witness configs
+through `MCTrue` (`MCRNClientIo.tla`), so the other configs are unchanged.
+`IoNeverBlocksOnSend` and `NoFreeBeforeComplete` are checked in
+`MCRNClientIo.cfg` with `PostedEventuallyCompletes` and `StopEventuallyFrees`
+under `SpecFair`, which is weakly fair on `Complete` and on `Free`.
+
 ## Runs
 
 The eight rows are in `tla/RUNS.tsv` from `tlacheck run` on a Linux bench
