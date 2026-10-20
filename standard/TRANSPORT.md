@@ -2460,7 +2460,7 @@ The response of step 4 MUST be retransmitted byte for byte; a later challenge MU
 <a id="t11.3"></a>
 ### t11.3. Session processing before connected
 
-A session packet opens under the session keys from sending connection response (3) on. Every opened session packet MUST refresh the last-received time and MUST have its ack block applied. A keep-alive received in sending connection response (3) MUST store the client index and the slot count it carries and MUST move the client to connected (4). A payload received in sending connection response (3) MUST be delivered to the application. A disconnect received in sending connection response (3) MUST release the connection state and MUST move the client to disconnected (0).
+A session packet opens under the session keys from sending connection response (3) on. Every opened session packet MUST refresh the last-received time and MUST have its ack block applied. A keep-alive received in sending connection response (3) MUST store the client index and the slot count it carries and MUST move the client to connected (4). A payload received in sending connection response (3) MUST be delivered to the application. A disconnect received in sending connection response (3) MUST release the connection state and MUST move the client to disconnected (0). An application message the client sends before connected (4) is dropped and counted, as [RN-2 m1.5 Sending on a connection that is not connected](MESSAGES.md#m1.5) states.
 
 | State | Event | Guard | Action | Next state |
 |---|---|---|---|---|
@@ -2671,6 +2671,8 @@ The server turns a connection request into an encryption mapping, and a connecti
 10. A server MUST generate a fresh session nonce and ephemeral keypair for each mapping, MUST derive the connection keys, MUST erase the ephemeral secret, and MUST store the connection challenge in the mapping so that a repeat is byte-identical.
 11. A connection response MUST be processed only after it has opened under the mapping's handshake client-to-server key. A server MUST bind the token identifier to the source address at that point, MUST ignore a response when the source address or the client id already holds a slot, MUST deny one that finds no free slot, and otherwise MUST assign a slot, mark the client unconfirmed, and send the first keep-alive.
 12. A mapping without a connected slot MUST be removed at its handshake deadline, which is fixed at creation and is never refreshed, or at the half-open idle deadline, which traffic refreshes; whichever comes first. A connected slot MUST be removed at its idle timeout. A server MUST count these removals apart.
+
+An application message the server sends to a slot that is not connected is dropped and counted, as [RN-2 m1.5 Sending on a connection that is not connected](MESSAGES.md#m1.5) states.
 
 The policy values of this section are below. A value of `0` for the maximum token lifetime selects no limit.
 
@@ -3927,6 +3929,7 @@ The registry of counters, in index order, is:
 | `SEND_FAILED` | `refusal` | `none` |
 | `XDP_KERNEL_PASSED_FRAGMENT` | `expected` | `none` |
 | `XDP_KERNEL_DROPPED_FIRST_FRAGMENT` | `refusal` | `none` |
+| `MESSAGE_SEND_NOT_CONNECTED` | `expected` | `none` |
 | `CLIENT_RECEIVE_FOREIGN_SOURCE` | `refusal` | `none` |
 
 The vector below encodes the registry in index order. For each counter it holds
@@ -4045,7 +4048,8 @@ fd 00 00 00 be a9 a8 b8 00 4e 00 22 20 3f b1 00
 8b 6d 57 dc 00 00 00 bf 7a 1a af 01 00 00 9b 86
 1b 95 01 00 00 79 87 fe 4c 01 00 00 f9 84 f0 6e
 01 00 00 25 11 95 dc 00 00 00 df ff a1 97 01 00
-00 7e 01 4f a1 00 00 00 79 b8 15 e7 00 00 00
+00 7e 01 4f a1 00 00 00 1d 39 f1 61 01 00 00 79
+b8 15 e7 00 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations

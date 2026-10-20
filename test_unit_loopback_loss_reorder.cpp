@@ -258,9 +258,9 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
 // CLIENT_RECEIVE_FOREIGN_SOURCE (zero in this run) moves it; over the rows
 // before it it is the base's value.
 static const struct loopback_trace_t loopback_base_trace_simulator_off =
-    { 35, 35, 3762, 2437, 35, 35, 2437, 3762, UINT64_C( 0x4393f65828b4dd66 ), UINT64_C( 0xec89783b8289d264 ), 24 };
+    { 35, 35, 3762, 2437, 35, 35, 2437, 3762, UINT64_C( 0x193f6138358a0626 ), UINT64_C( 0xb42e15cefdf106e4 ), 24 };
 static const struct loopback_trace_t loopback_base_trace_simulator_on =
-    { 35, 35, 3762, 2437, 35, 35, 2437, 3762, UINT64_C( 0x4393f65828b4dd66 ), UINT64_C( 0xec89783b8289d264 ), 25 };
+    { 35, 35, 3762, 2437, 35, 35, 2437, 3762, UINT64_C( 0x193f6138358a0626 ), UINT64_C( 0xb42e15cefdf106e4 ), 25 };
 
 static void loopback_patterns_off_same_trace()
 {

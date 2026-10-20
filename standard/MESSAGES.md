@@ -111,6 +111,13 @@ implementation, stated here because RN-2 is the party that relies on it.
    implementation that fills one connection's packets from several threads
    MUST keep the fills in the order their sequences were taken.
 
+<a id="m1.5"></a>
+### m1.5. Sending on a connection that is not connected
+
+An endpoint MUST NOT send an application message on a connection that is not connected. A send the application makes on such a connection MUST be dropped, MUST NOT be held for a later send, and MUST be counted once in `MESSAGE_SEND_NOT_CONNECTED`. The rule is the same for a client and for a server.
+
+A client's connection is connected while the client is in connected (4) of [RN-1 t11 Handshake: client](TRANSPORT.md#t11); a server's connection to a slot is connected from the session [RN-1 t12 Handshake: server](TRANSPORT.md#t12) assigns that slot until the session ends. The CONFIG control record is not an application message and keeps the timing of [m11 CONFIG control record](#m11). The drop is visible to the application as a refused send and in the counter.
+
 <a id="m2"></a>
 ## m2. Payload forms and sender size rules
 
@@ -2630,8 +2637,8 @@ earlier class.
 The client's budget to the server defaults to client_default_kbps and the
 server's budget to each client defaults to server_default_kbps. A positive
 value outside send_kbps_min to send_kbps_max MUST be refused and MUST leave the
-budget unchanged. A budget of 0 or less disables that direction's budget, so
-the endpoint sends unthrottled; disabling a budget is NOT RECOMMENDED.
+budget unchanged. A budget of 0 or less sets that direction's budget to
+send_kbps_max; such a budget is NOT RECOMMENDED.
 
 A setter MUST refill at the old rate up to its time argument, then apply the
 new rate and depth from that time, keeping the bucket's bytes capped at the new
