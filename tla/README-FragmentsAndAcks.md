@@ -242,7 +242,7 @@ The other cfgs are the committed file with a few lines changed. Three shapes rec
 | live-small | `MCFragmentsAndAcksLiveSmall.cfg` | live with `MaxSeq = 2`, `MaxGen = 1`, `Capacity = 1`, duplication and reordering off | passes | required |
 | live-dup | `MCFragmentsAndAcksLiveDup.cfg` | live with `MaxSeq = 1`, `MaxGen = 1`, `MaxCount = 2`, counts `{2}`, burns off, data link `"none"`, ack link `"arbitrary"` with duplication, reordering off; `OpenedSurfacesOrLaps` only (no INVARIANTS, no CountPinned): the instance on which the old per-link fairness failed; `live-small` has duplication off and cannot tell the two forms apart | passes: the evidence the fairness fix works on the failing case | required |
 | pat-none / first / burst | `MCFragmentsAndAcksPatNone.cfg`, `...PatFirst.cfg`, `...PatBurst.cfg` | pattern, `SpecSafety` + `CountPinned` | passes | bench: over budget |
-| pat-alternate | `MCFragmentsAndAcksPatAlternate.cfg` | pattern, `SpecSafety` + `CountPinned` | passes | bench: over budget on a loaded bench |
+| pat-alternate | `MCFragmentsAndAcksPatAlternate.cfg` | pattern, `SpecSafety` + `CountPinned` | passes | required |
 | find-stale | `MCFragmentsAndAcksFindStale.cfg` | safety + `StaleOnlyIfOlder`, `StaleRule = "code"`, `IdSpace = 16`, `MaxSeq = 6`, `MaxGen = 3`, `StaleAhead = 1`, counts `{2, 3}`, data loss `"alternate"`, ack link `"none"`, `Capacity = 1`, duplication and reordering off | passes: the shipped rule, not a code defect | required |
 | find-stale-small | `MCFragmentsAndAcksFindStaleSmall.cfg` | code arm, `IdSpace = 16`, counts `{2}`, burns on, data loss `"alternate"`, ack link `"arbitrary"`, `Capacity = 2` | passes: the shipped rule, not a code defect | required |
 | find-stale-serial-small | `MCFragmentsAndAcksFindStaleSerialSmall.cfg` | the unreduced small instance with `StaleRule = "serial"` | passes: the half-space comparison | bench: over budget |
@@ -288,10 +288,10 @@ pinned jar, two workers per case, 110 s per case, each case its own shard, four 
 once), re-measured after the three bitmap invariants were added to every cfg with an
 `INVARIANTS` section. Every case reaches its declared result except the six `bench`
 rows that time out (exit 124), which is a failed measurement, not a proof.
-`MCFragmentsAndAcksPatAlternate.cfg` is a seventh `bench` row: with the bitmap state it
-is 1,422,444 distinct states, which finished in 41.0 s on an idle bench and timed out
-(110.4 s) on a loaded one, so it is declared debt rather than a required control that
-passes or fails with the bench load (the bitmaps section has the measurements). The
+`MCFragmentsAndAcksPatAlternate.cfg` is a required check, not bench debt. With the bitmap state it
+is 1,422,444 distinct states and the recorded run finishes in 52.181 s, inside the budget, so a
+regression to exit 124 fails the gate. A saturated bench can still reach that budget with no
+counterexample. The
 required control for the bitmaps is `MCFragmentsAndAcksBits.cfg`.
 
 | Case | Result | Generated | Distinct | Time |
@@ -302,7 +302,7 @@ required control for the bitmaps is `MCFragmentsAndAcksBits.cfg`.
 | `MCFragmentsAndAcksLiveDup.cfg` | pass | 47,836 | 10,276 | 7.1 s |
 | `MCFragmentsAndAcksPatNone.cfg` | timeout, bench debt |  |  | 110.3 s |
 | `MCFragmentsAndAcksPatFirst.cfg` | timeout, bench debt |  |  | 110.3 s |
-| `MCFragmentsAndAcksPatAlternate.cfg` | pass (bench row) | 5,924,703 | 1,422,444 | 38.0 s |
+| `MCFragmentsAndAcksPatAlternate.cfg` | pass | 5,924,703 | 1,422,444 | 37.1 s |
 | `MCFragmentsAndAcksPatBurst.cfg` | timeout, bench debt |  |  | 110.4 s |
 | `MCFragmentsAndAcksFindStale.cfg` | pass: shipped rule | 1,408,977 | 480,045 | 12.1 s |
 | `MCFragmentsAndAcksFindStaleSmall.cfg` | pass: shipped rule | 6,803,137 | 1,563,992 | 50.4 s |
@@ -335,7 +335,7 @@ are not current records; they are the evidence for the bench rows above.
 | find-stale-ahead2 (unreduced: `MaxSeq = 8`, `MaxGen = 4`, `MaxDelay = 1`, counts `{2, 3}`, duplication and reordering on, old forward difference) | violated `StaleOnlyIfOlder` under the retired arm | 8,174,784 | 1,739,380 | | 21 s |
 | defect (`DefectIds = {0, 1}`, `MaxCount = 2`, counts `{2}`, `MaxGen = 1`, `MaxSeq = 4`, `Capacity = 1`, no dup, no reorder, no burns) | pass | 82,754,545 | 17,468,462 | 30 | 2 min 44 s |
 
-The evidence for the `pat-alternate` bench row is its run with the bitmaps outside the
+The evidence for an over-budget run of `pat-alternate` (not the gate record) is its run with the bitmaps outside the
 budget (TLC 2.19, 2 workers, 2026-10-17, before the three invariants were in its cfg):
 pass, 5,924,703 states, 1,422,444 distinct, depth 43, 168.8 s.
 
@@ -444,9 +444,10 @@ added to its cfg): 5,924,703 states generated, 1,422,444 distinct, depth 43, no 
 states in 138.2 s; with `bitsChecked` collapsed to a caught-up flag (the reconcile
 starting at `WindowLow` every time, which is equivalent because the reconcile is
 idempotent) and the ghosts kept it is 1,147,728 in 117.8 s. No encoding of the bitmap
-state keeps that instance inside 110 s on a loaded bench, so it is `bench` debt
-(`pattern-alternate-committed-instance-safety-over-budget`), like the other three pattern
-rows; its recorded run, with the three invariants, passes in 38.0 s.
+state keeps that instance inside 110 s on a loaded bench, but its recorded
+run, with the three invariants, finishes inside the budget, so
+`MCFragmentsAndAcksPatAlternate.cfg` is a required check rather than bench
+debt. The other three pattern rows stay over budget and remain bench debt.
 
 ## What TLC found
 
