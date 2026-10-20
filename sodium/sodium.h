@@ -1295,13 +1295,6 @@ int crypto_stream_chacha20_ietf_ext_xor_ic(unsigned char *c, const unsigned char
 #include <stdlib.h>
 #include <string.h>
 
-#if defined( _MSC_VER )
-#pragma warning(disable:4127)
-#pragma warning(disable:4244)
-#pragma warning(disable:4668)
-#pragma warning(disable:4456)
-#endif
-
 #define COMPILER_ASSERT(X) (void) sizeof(char[(X) ? 1 : -1])
 
 /* 128-bit integer support: enables the Poly1305 donna64 and SSE2 code paths.

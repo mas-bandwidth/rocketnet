@@ -28,6 +28,11 @@ DEFINE = re.compile(r'^\s*#\s*define\s+(\w+)', re.M)
 # that shadows a file-scope name, or marks a compiler extension as one.
 BASELINE_ADAPTATIONS = {
     'sodium.h': [
+        # The baseline turned four MSVC warnings off for every file that
+        # includes sodium.h, the SDK's own included; the warnings are fixed
+        # at their sites instead.
+        ('#if defined( _MSC_VER )\n#pragma warning(disable:4127)\n#pragma warning(disable:4244)\n'
+         '#pragma warning(disable:4668)\n#pragma warning(disable:4456)\n#endif\n\n', ''),
         # -Wpedantic: __int128 is a GCC/Clang extension; __extension__ is the
         # compilers' own marker for a deliberate one.
         ('typedef unsigned __int128 uint128_t;',
