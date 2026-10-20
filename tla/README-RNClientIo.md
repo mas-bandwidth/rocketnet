@@ -80,7 +80,7 @@ and update ends with a hand-off) (`SpecFair`):
 
 - **`HandedOffEventuallySent`**: a handed-off ring is eventually Sent.
 - **`CommittedEventuallyHandedOff`**: a committed slot, deferred or not, is
-  eventually handed to the I/O thread; destroy drops none.
+  eventually handed to the I/O thread, or dropped by destroy at its wait deadline and counted.
 - **`StopEventuallyJoins`**: after `Stop` the thread is eventually joined.
 - **`FilledEventuallyExposed`**: a Fill buffer holding datagrams is
   eventually Exposed, unless the transport stops.
