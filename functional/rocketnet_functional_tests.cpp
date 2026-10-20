@@ -7717,11 +7717,14 @@ static bool wire_totals_drain_slot( struct rocketnet_client_transport_t * client
     return false;
 }
 
+enum { WIRE_TOTALS_GAME_CLOCK_EPOCH = 1700000000ULL };
+
 static struct rocketnet_server_transport_t * wire_totals_server_create( const char * public_address, double time )
 {
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
     config.max_clients = 1;
+    config.game_clock_epoch = WIRE_TOTALS_GAME_CLOCK_EPOCH;
     snprintf( config.driver, sizeof( config.driver ), "%s", "loopback" );
 
     int status = -1;
@@ -7733,11 +7736,12 @@ static struct rocketnet_server_transport_t * wire_totals_server_create( const ch
 static struct rocketnet_client_transport_t * wire_totals_client_create( const char * address, uint64_t client_id, double time )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    if ( rocketnet_write_dev_connect_token( address, client_id, (uint64_t) ::time( NULL ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_write_dev_connect_token( address, client_id, WIRE_TOTALS_GAME_CLOCK_EPOCH + (uint64_t) time, token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
         return NULL;
 
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
+    config.game_clock_epoch = WIRE_TOTALS_GAME_CLOCK_EPOCH;
     snprintf( config.driver, sizeof( config.driver ), "%s", "loopback" );
     return rocketnet_client_transport_create( NULL, token, &config, time );
 }
@@ -7912,13 +7916,16 @@ static void wire_bytes_per_family_exchange( const char * public_address, const c
     rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
     rocketnet_test_env_clear( &client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
 
+    double time = 1000.0;
+
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 1;
+    server_config.game_clock_epoch = WIRE_TOTALS_GAME_CLOCK_EPOCH;
     snprintf( server_config.driver, sizeof( server_config.driver ), "%s", "portable" );
 
     int server_status = -1;
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, public_address, &server_config, 1000.0, &server_status );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, public_address, &server_config, time, &server_status );
     rocketnet_check( server != NULL );
     rocketnet_check( server_status == ROCKETNET_STATUS_OK );
 
@@ -7927,13 +7934,12 @@ static void wire_bytes_per_family_exchange( const char * public_address, const c
     snprintf( address, sizeof( address ), "%s:%d", peer_address, server_port );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( address, client_id, (uint64_t) ::time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_write_dev_connect_token( address, client_id, WIRE_TOTALS_GAME_CLOCK_EPOCH + (uint64_t) time, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
+    client_config.game_clock_epoch = WIRE_TOTALS_GAME_CLOCK_EPOCH;
     snprintf( client_config.driver, sizeof( client_config.driver ), "%s", "portable" );
-
-    double time = 1000.0;
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, time );
     rocketnet_check( client != NULL );
     rocketnet_check( wire_totals_connect( client, server, &time ) );
@@ -8050,6 +8056,9 @@ extern void block_resend_cost_over_long_path();
 extern void rocketnet_test_cpp_transports_connect_over_loopback();
 extern void live_message_matrix_loopback();
 extern void rocketnet_test_server_receive_keeps_up_with_max_clients();
+extern void macos_client_timing_default_qos();
+extern void macos_client_timing_taskpolicy_background();
+extern void macos_client_timing_background_thread_qos();
 
 // A destroyed client's receive thread always exits: destroy stores quit and
 // wakes the receive thread's wait explicitly before the join. These cases use
@@ -8163,6 +8172,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config },
     { "server_receive_keeps_up_with_max_clients", rocketnet_test_server_receive_keeps_up_with_max_clients },
+    { "macos_client_timing_default_qos", macos_client_timing_default_qos },
+    { "macos_client_timing_taskpolicy_background", macos_client_timing_taskpolicy_background },
+    { "macos_client_timing_background_thread_qos", macos_client_timing_background_thread_qos },
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     // Windows keeps its sleep and its wake is a no-op, so only POSIX runs the wake cases
     { "client_receive_thread_quit_wake_ends_a_long_wait", rocketnet_test_client_receive_thread_quit_wake_ends_a_long_wait },
