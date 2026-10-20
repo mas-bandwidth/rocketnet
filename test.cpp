@@ -118,6 +118,22 @@ static int rocketnet_unit_worker( const char * name )
     }
 
     rocketnet_unit_prepare();
+
+    // the suite's config isolation clears every transport variable above. Two
+    // cases create a client transport through the public API before stepping
+    // it themselves; run those step-driven, after the isolation, so the unit
+    // suite starts no client I/O thread.
+    if ( strcmp( name, "token_time_game_clock_admits_a_fixed_token" ) == 0 ||
+         strcmp( name, "public_link_simulator_revision_1_prefixes" ) == 0 )
+    {
+#if defined(_WIN32)
+        if ( _putenv_s( "ROCKETNET_CLIENT_STEP_DRIVEN", "1" ) != 0 )
+            return 1;
+#else
+        if ( setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", "1", 1 ) != 0 )
+            return 1;
+#endif
+    }
     rocketnet_channels_prepare_log( name );
     int result = rocketnet_channels_run_named( name );
     if ( result == 2 )
