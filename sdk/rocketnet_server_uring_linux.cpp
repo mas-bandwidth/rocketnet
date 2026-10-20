@@ -485,7 +485,7 @@ static void rocketnet_server_uring_receive_cqe( struct rocketnet_server_uring_t 
     const int buffer_id = rocketnet_uring_buffer_id( cqe->flags );
     if ( buffer_id < 0 || buffer_id >= ROCKETNET_URING_RECV_BUFFERS )
     {
-        uring->counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SIZE]++;
+        uring->counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_NO_BUFFER]++;
         return;
     }
 

@@ -97,6 +97,8 @@ struct xdp_host_frame_t
     uint16_t source_port = xdp_host_client_port;
     int truncate_to = -1;                   // >= 0: cut the frame to this many bytes
     int override_udp_len = -1;              // >= 0: override UDP header length field
+    int override_ip_len = -1;               // >= 0: override the IPv4 total length or IPv6 payload length field
+    int pad_bytes = 0;                      // zero bytes after the UDP payload (link-layer padding)
 };
 
 static void xdp_host_put16( std::vector<uint8_t> & out, uint16_t value )
@@ -134,7 +136,7 @@ static std::vector<uint8_t> xdp_host_frame_bytes( const xdp_host_frame_t & f )
         const int header_bytes = f.ipv4_ihl * 4;
         out.push_back( (uint8_t) ( 0x40 | ( f.ipv4_ihl & 0x0f ) ) );
         out.push_back( 0x00 );
-        xdp_host_put16( out, (uint16_t) ( header_bytes + udp_bytes ) );
+        xdp_host_put16( out, (uint16_t) ( f.override_ip_len >= 0 ? f.override_ip_len : header_bytes + udp_bytes ) );
         xdp_host_put16( out, 0x0000 );
         xdp_host_put16( out, f.ipv4_frag_off );
         out.push_back( 64 );
@@ -156,7 +158,7 @@ static std::vector<uint8_t> xdp_host_frame_bytes( const xdp_host_frame_t & f )
         out.push_back( 0x00 );
         out.push_back( 0x00 );
         out.push_back( 0x00 );
-        xdp_host_put16( out, (uint16_t) ( udp_bytes + ( fragment ? 8 : 0 ) ) );
+        xdp_host_put16( out, (uint16_t) ( f.override_ip_len >= 0 ? f.override_ip_len : udp_bytes + ( fragment ? 8 : 0 ) ) );
         out.push_back( fragment ? 44 : f.protocol );
         out.push_back( 64 );
         out.insert( out.end(), xdp_host_client_ipv6, xdp_host_client_ipv6 + 16 );
@@ -192,6 +194,8 @@ static std::vector<uint8_t> xdp_host_frame_bytes( const xdp_host_frame_t & f )
                                     (uint8_t) ( ( f.sequence >> 16 ) & 0xff ), (uint8_t) ( ( f.sequence >> 24 ) & 0xff ) };
     for ( int i = 0; i < f.payload_bytes; i++ )
         out.push_back( i < 10 ? prefilter[i] : 0x00 );
+    for ( int i = 0; i < f.pad_bytes; i++ )
+        out.push_back( 0x00 );
 
     if ( f.truncate_to >= 0 && (size_t) f.truncate_to < out.size() )
         out.resize( (size_t) f.truncate_to );
@@ -1386,6 +1390,23 @@ static void xdp_host_udp_length_drops()
         past_end.frame.override_udp_len = 8 + past_end.frame.payload_bytes + 20;
         rows.push_back( xdp_host_expect( past_end, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL ) ) );
     }
+    for ( int f = 0; f < 2; f++ )
+    {
+        // link-layer padding after the datagram: the UDP length names the
+        // payload, so the frame redirects at its real size
+
+        xdp_host_row_t padded = xdp_host_row( "frame padded past the UDP length", families[f] );
+        padded.frame.pad_bytes = 6;
+        rows.push_back( padded );
+
+        // the IP length names fewer bytes than the UDP length, and the
+        // padding makes the frame long enough for the UDP length
+
+        xdp_host_row_t ip_short = xdp_host_row( "IP length shorter than the UDP length", families[f] );
+        ip_short.frame.pad_bytes = 6;
+        ip_short.frame.override_ip_len = ( families[f] == 4 ? 20 : 0 ) + 8 + ip_short.frame.payload_bytes - 4;
+        rows.push_back( xdp_host_expect( ip_short, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL ) ) );
+    }
     xdp_host_run_rows( rows );
     // Also verify the host frame parser refuses corrupt/short UDP length
     {
@@ -1400,6 +1421,23 @@ static void xdp_host_udp_length_drops()
         f.override_udp_len = 0;
         frame = xdp_host_frame_bytes( f );
         rocketnet_unit_check( !rocketnet_xdp_frame_parse( frame.data(), frame.size(), &from, &payload, &payload_len ) );
+    }
+
+    // the padding strip: trailing link-layer padding is not payload; the
+    // parsed payload is the UDP length less the UDP header, in both families
+
+    for ( int family = 4; family <= 6; family += 2 )
+    {
+        xdp_host_frame_t f;
+        f.family = family;
+        f.pad_bytes = 6;
+        const std::vector<uint8_t> frame = xdp_host_frame_bytes( f );
+        rocketnet_address_t from;
+        const uint8_t * payload = NULL;
+        int payload_len = 0;
+        rocketnet_unit_check( rocketnet_xdp_frame_parse( frame.data(), frame.size(), &from, &payload, &payload_len ) );
+        rocketnet_unit_check( payload_len == f.payload_bytes );
+        rocketnet_unit_check( payload == frame.data() + frame.size() - f.pad_bytes - f.payload_bytes );
     }
 
 }

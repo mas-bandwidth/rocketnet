@@ -188,11 +188,16 @@ static __always_inline int server_xdp_first_fragment_is_ours( struct udphdr * ud
 // Everything after the IP header is one function for both families, so the
 // two cannot drift apart. The caller has parsed its IP header, checked that
 // the UDP header fits, and compared the destination address against the
-// configuration; this takes the UDP header, the bounded IP end, frame end,
-// that address result, and the source address (4 bytes for family 4, 16 for
-// family 6, network order) for the replay lookup.
+// configuration; this takes the UDP header, the frame end, the bytes from
+// the UDP header to the end of the datagram as its IP header gives them
+// (ip_udp_bytes), that address result, and the source address (4 bytes for
+// family 4, 16 for family 6, network order) for the replay lookup.
+//
+// The UDP and IP length fields are byte-swapped scalars the verifier does not
+// bound, so they are compared as numbers against the frame bytes after the
+// UDP header (lines 224, 400, 434) and never added to a packet pointer.
 
-static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * udp, void * ip_end, void * data_end,
+static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * udp, __u32 ip_udp_bytes, void * data_end,
                                            const struct rocketnet_server_xdp_config_t * config, int address_match,
                                            __u8 family, const void * source_address )
 {
@@ -214,8 +219,9 @@ static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * 
         return XDP_DROP;
     }
 
-    const __u16 udp_len = __builtin_bswap16( udp->len );
-    if ( udp_len < sizeof(struct udphdr) || (void*)udp + udp_len > ip_end || (void*)udp + udp_len > data_end )
+    const __u32 frame_udp_bytes = data_end - (void*)udp;
+    const __u32 udp_len = __builtin_bswap16( udp->len );
+    if ( udp_len < sizeof(struct udphdr) || udp_len > ip_udp_bytes || udp_len > frame_udp_bytes )
     {
         debug_printf( "packet udp length is too small or exceeds bounds" );
         server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL );
@@ -384,16 +390,17 @@ SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
                     if ( config == NULL )
                         return XDP_PASS;
 
-                    void * ip_end = data_end;
-                    const __u16 ip_tot_len = __builtin_bswap16( ip->tot_len );
-                    if ( ip_tot_len >= sizeof(struct iphdr) + sizeof(struct udphdr) )
-                    {
-                        void * specified_end = (void*) ip + ip_tot_len;
-                        if ( specified_end <= data_end )
-                            ip_end = specified_end;
-                    }
+                    // the IP total length bounds the datagram when it names
+                    // at least a UDP header and fits in the frame; otherwise
+                    // the frame end does
 
-                    return server_xdp_udp( ctx, udp, ip_end, data_end, config, server_xdp_ipv4_address_match( config, ip ), 4, &ip->saddr );
+                    const __u32 frame_udp_bytes = data_end - (void*)udp;
+                    const __u32 ip_tot_len = __builtin_bswap16( ip->tot_len );
+                    __u32 ip_udp_bytes = frame_udp_bytes;
+                    if ( ip_tot_len >= sizeof(struct iphdr) + sizeof(struct udphdr) && ip_tot_len - sizeof(struct iphdr) <= frame_udp_bytes )
+                        ip_udp_bytes = ip_tot_len - sizeof(struct iphdr);
+
+                    return server_xdp_udp( ctx, udp, ip_udp_bytes, data_end, config, server_xdp_ipv4_address_match( config, ip ), 4, &ip->saddr );
                 }
             }
         }
@@ -417,16 +424,17 @@ SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
                     if ( config == NULL )
                         return XDP_PASS;
 
-                    void * ip_end = data_end;
-                    const __u16 ip6_payload_len = __builtin_bswap16( ip6->payload_len );
-                    if ( ip6_payload_len >= sizeof(struct udphdr) )
-                    {
-                        void * specified_end = (void*) udp + ip6_payload_len;
-                        if ( specified_end <= data_end )
-                            ip_end = specified_end;
-                    }
+                    // the IPv6 payload length bounds the datagram when it
+                    // names at least a UDP header and fits in the frame;
+                    // otherwise the frame end does
 
-                    return server_xdp_udp( ctx, udp, ip_end, data_end, config, server_xdp_ipv6_address_match( config, ip6 ), 6, &ip6->saddr );
+                    const __u32 frame_udp_bytes = data_end - (void*)udp;
+                    const __u32 ip6_payload_len = __builtin_bswap16( ip6->payload_len );
+                    __u32 ip_udp_bytes = frame_udp_bytes;
+                    if ( ip6_payload_len >= sizeof(struct udphdr) && ip6_payload_len <= frame_udp_bytes )
+                        ip_udp_bytes = ip6_payload_len;
+
+                    return server_xdp_udp( ctx, udp, ip_udp_bytes, data_end, config, server_xdp_ipv6_address_match( config, ip6 ), 6, &ip6->saddr );
                 }
             }
             else if ( ip6->nexthdr == IPPROTO_FRAGMENT )
