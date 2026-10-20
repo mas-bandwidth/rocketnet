@@ -14,7 +14,7 @@
 // one compiled against a newer, unknown, larger struct.
 //
 // Plain entry points use the current config implementation
-// (sdk/rocketnet_api.cpp:498, :1206). The regressions below check full defaults
+// (rocketnet_client_create and rocketnet_server_create in sdk/rocketnet_api.cpp). The regressions below check full defaults
 // and simulation fields, including a real in-memory loopback create/connect.
 
 #include "test_unit_registry.h"
@@ -327,8 +327,7 @@ static void server_default_config_max_clients_is_1000()
 }
 
 // The public creates and validate_config run one validation per side
-// (rn_client_config_valid and rn_server_config_valid, sdk/rocketnet_api.cpp:380
-// and :1047):
+// (rn_client_config_valid and rn_server_config_valid in sdk/rocketnet_api.cpp):
 // for the config's own values, validate_config returns OK exactly when create
 // accepts, and a refused config is refused by both. A create before
 // rocketnet_init returns NULL and is counted once, as the transport creates
@@ -597,7 +596,7 @@ static void public_config_plain_create_applies_simulation()
     const bool development = rocketnet_public_link_simulator_development();
 
     // Client and server creates validate the full config before allocation
-    // (sdk/rocketnet_api.cpp:459 and :1155), including simulated_* fields.
+    // (rn_client_config_valid and rn_server_config_valid in sdk/rocketnet_api.cpp), including simulated_* fields.
 
     rocketnet_public_link_simulator_test_development( 0 );
     {

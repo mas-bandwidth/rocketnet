@@ -45,8 +45,9 @@ whole of today's struct, so `rocketnet_client_default_config`,
 `rocketnet_server_default_config` and `rocketnet_server_dev_config` write every
 field, and the unsized creates, validations and required-memory queries read
 every field, the four `simulated_*` controls included
-(`sdk/rocketnet_api.cpp:325-333`, `:470-475`, `:948-956`, `:980-988`,
-`:1152-1161`). When a config struct grows past revision 1, the unsized forms
+(`rocketnet_client_default_config`, `rocketnet_client_create`,
+`rocketnet_server_default_config`, `rocketnet_server_dev_config` and
+`rocketnet_server_create` in `sdk/rocketnet_api.cpp`). When a config struct grows past revision 1, the unsized forms
 keep reading and writing exactly the revision 1 bytes (so a binary built
 against revision 1 keeps working against a newer library), and a caller that
 wants a later field uses the sized forms.
@@ -106,7 +107,7 @@ is not a known revision size).
 
 The public client and server configs each have one known size,
 `ROCKETNET_CLIENT_CONFIG_BYTES_1` and `ROCKETNET_SERVER_CONFIG_BYTES_1`
-(`sdk/rocketnet.h:773`, `:829`; checked at `sdk/rocketnet_api.cpp:335-349`).
+(both in `sdk/rocketnet.h`; checked by `rn_public_config_size_known` in `sdk/rocketnet_api.cpp`).
 The internal transport and message configs keep oldest-first known-size lists
 in the internal layer header, so the library and a caller read one list. Each revision's size is written as the
 end of that revision's last field rounded up to that revision's alignment
@@ -139,7 +140,7 @@ authority for a given build; this document does not repeat the numbers.
 The client and server configs have one revision. Revision 1 is the whole
 struct, through the four development link-simulator controls. Its
 `ROCKETNET_CLIENT_CONFIG_BYTES_1` and `ROCKETNET_SERVER_CONFIG_BYTES_1`
-formulas end at `simulated_duplicate_percent` (`sdk/rocketnet.h:773`, `:829`).
+formulas end at `simulated_duplicate_percent` (both in `sdk/rocketnet.h`).
 A `static_assert` requires each to equal the struct's `sizeof`
 (`sdk/rocketnet_abi.cpp:6-7`).
 
@@ -190,7 +191,7 @@ declarations before its first call. They pin this rule three ways:
    with a default that equals the old behaviour.
 2. Add `ROCKETNET_<STRUCT>_BYTES_<N>` for the new revision and add it to the
    struct's known sizes (for the public configs, the one-entry lists at
-   `sdk/rocketnet_api.cpp:335-336`); the earlier entries keep their formulas.
+   `rn_client_config_known_bytes` and `rn_server_config_known_bytes` in `sdk/rocketnet_api.cpp`); the earlier entries keep their formulas.
 3. Keep the unsized entry points on the revision 1 prefix: they copy the
    caller's revision 1 bytes over the defaults, as the sized read does for
    that size.
