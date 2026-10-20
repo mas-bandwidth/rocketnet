@@ -24,6 +24,8 @@ import subprocess
 import sys
 import tempfile
 
+from check_dll_consumer import msvc_environment, msvc_tool
+
 ROOT = Path(__file__).resolve().parent.parent
 HEADER = ROOT / "sdk" / "rocketnet.h"
 ALLOWED_INCLUDES = {"stdint.h", "stddef.h", "stdbool.h"}
@@ -54,8 +56,8 @@ def line_of(text, offset):
 # (a) -----------------------------------------------------------------------
 
 def compile_alone(compiler_c, compiler_cxx):
-    if sys.platform == "win32" and not shutil.which(compiler_c):
-        report(False, "(a) no C compiler named " + compiler_c + " on PATH")
+    if sys.platform == "win32":
+        compile_alone_cl()
         return
     languages = [
         ("C99", compiler_c, ["-std=c99", "-pedantic", "-Wall", "-Wextra", "-Wstrict-prototypes", "-Werror", "-fsyntax-only", "-x", "c"]),
@@ -69,6 +71,31 @@ def compile_alone(compiler_c, compiler_cxx):
             command = [compiler] + flags + defines + [str(HEADER)]
             result = subprocess.run(command, capture_output=True, text=True)
             detail = "" if result.returncode == 0 else ": " + (result.stderr.strip().splitlines() or ["exit %d" % result.returncode])[0]
+            report(result.returncode == 0, "(a) the header alone compiles as %s%s%s" % (name, suffix, detail))
+
+
+def compile_alone_cl():
+    # cl has no C99 or C++11 mode: its default C, /std:c11 and /std:c++14
+    # (its oldest C++ mode) stand in; /Zs is syntax only, /W4 /WX warnings as errors
+    try:
+        compiler = msvc_tool("cl")
+        environment = msvc_environment()
+    except (RuntimeError, OSError, KeyError, subprocess.CalledProcessError) as error:
+        report(False, "(a) no MSVC cl to compile the header alone: %s" % error)
+        return
+    languages = [
+        ("C (cl default)", [], "/Tc"),
+        ("C11 (cl /std:c11)", ["/std:c11"], "/Tc"),
+        ("C++14 (cl /std:c++14)", ["/std:c++14", "/permissive-"], "/Tp"),
+    ]
+    variants = [("", []), (" with ROCKETNET_SHARED", ["/DROCKETNET_SHARED"]),
+                (" with ROCKETNET_DEVELOPMENT=1", ["/DROCKETNET_DEVELOPMENT=1"])]
+    for name, flags, source_flag in languages:
+        for suffix, defines in variants:
+            command = [compiler, "/nologo", "/Zs", "/W4", "/WX"] + flags + defines + [source_flag + str(HEADER)]
+            result = subprocess.run(command, capture_output=True, text=True, env=environment)
+            lines = [line for line in (result.stdout + result.stderr).strip().splitlines() if line.strip() and line.strip() != HEADER.name]
+            detail = "" if result.returncode == 0 else ": " + (lines or ["exit %d" % result.returncode])[0]
             report(result.returncode == 0, "(a) the header alone compiles as %s%s%s" % (name, suffix, detail))
 
 
@@ -239,7 +266,16 @@ def self_contained(build, config, compiler_c, compiler_cxx):
     directory = Path(tempfile.mkdtemp(prefix="rocketnet_header_alone_"))
     source_directory = Path(tempfile.mkdtemp(prefix="rocketnet_header_alone_source_"))
     # no include path but the directory: the compiler's environment paths are cleared
-    environment = {key: value for key, value in os.environ.items()
+    if sys.platform == "win32":
+        try:
+            base_environment = msvc_environment()
+            cl = msvc_tool("cl")
+        except (RuntimeError, OSError, KeyError, subprocess.CalledProcessError) as error:
+            report(False, "(d) no MSVC cl to build tools/header_alone: %s" % error)
+            return
+    else:
+        base_environment = os.environ
+    environment = {key: value for key, value in base_environment.items()
                    if key not in ("CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "OBJC_INCLUDE_PATH")}
     try:
         # the sources compile from their own directory, which holds only them,
@@ -257,8 +293,11 @@ def self_contained(build, config, compiler_c, compiler_cxx):
         ]
         for name, compiler, flags, source, program in builds:
             if sys.platform == "win32":
-                command = ["cl", "/nologo", "/W4", "/WX", "/D_CRT_SECURE_NO_WARNINGS", "/I", str(directory), "/TC" if name == "C99" else "/TP",
-                           str(source), str(directory / library.name), "ws2_32.lib", "iphlpapi.lib", "advapi32.lib",
+                # /Tc or /Tp names the one source file's language; the libraries stay plain link inputs
+                crt = "/MDd" if config.lower() == "debug" else "/MD"
+                command = [cl, "/nologo", "/W4", "/WX", crt, "/D_CRT_SECURE_NO_WARNINGS", "/I", str(directory),
+                           ("/Tc" if name == "C99" else "/Tp") + str(source), str(directory / library.name),
+                           "ws2_32.lib", "iphlpapi.lib", "advapi32.lib",
                            "/Fe:" + str(directory / (program + ".exe")), "/Fo:" + str(directory) + "\\"]
                 executable = directory / (program + ".exe")
             else:
@@ -268,7 +307,9 @@ def self_contained(build, config, compiler_c, compiler_cxx):
             result = subprocess.run(command, capture_output=True, text=True, cwd=directory, env=environment)
             if result.returncode != 0:
                 report(False, "(d) %s client and server build against rocketnet.h and %s alone: %s" %
-                       (name, library.name, (result.stderr.strip().splitlines() or ["exit %d" % result.returncode])[0]))
+                       (name, library.name, (result.stderr.strip().splitlines() or
+                                             [line for line in result.stdout.splitlines() if "error" in line] or
+                                             ["exit %d" % result.returncode])[0]))
                 continue
             report(True, "(d) %s client and server build against rocketnet.h and %s alone" % (name, library.name))
             try:
@@ -299,10 +340,7 @@ def main():
 
     raw = HEADER.read_text()
     print("%s: %d lines" % (HEADER.relative_to(ROOT) if ROOT in HEADER.parents else HEADER, len(raw.splitlines())))
-    if sys.platform != "win32":
-        compile_alone(args.cc, args.cxx)
-    else:
-        print("skip  (a) the gcc/clang compile of the header alone runs on Linux and macOS")
+    compile_alone(args.cc, args.cxx)
     check_includes(raw)
     check_declarations(raw)
     if not args.no_run:
