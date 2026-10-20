@@ -23,7 +23,16 @@
     its clients open their sockets in the far end's namespace, and its
     1000-count loops run 100 times, since every create attaches to the pair.
     ROCKETNET_POSIX_LIFECYCLE_CELLS, a comma list of server driver names, runs
-    only those cells.
+    only those cells. On Linux every case is registered once per server cell
+    (posix_<case>_<cell>), so each run covers one cell.
+
+    A connect waits on the client's send rate: the client sends at most once
+    per 1/send_rate, 10 per second (sdk/rocketnet_client_protocol.cpp:88 and
+    :296), and a handshake is three sends, so on the platform clock alone one
+    connect takes 0.2 s. The client here runs on its own clock, the platform
+    clock plus the send intervals the wait has skipped (its time_callback and
+    the time every update is given), and the wait skips one interval each
+    time the client's state moves, so the next update sends at once.
 */
 
 #include "rocketnet_internal.h"
@@ -32,6 +41,7 @@
 #if !defined(_WIN32)
 
 #include <errno.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -53,6 +63,7 @@
 #else
 #include <dirent.h>
 #include <fcntl.h>
+#include <malloc.h>
 #include <sched.h>
 #include <sys/vfs.h>
 #include <unistd.h>
@@ -359,8 +370,12 @@ static bool posix_io_uring_offered()
 
 // ROCKETNET_POSIX_LIFECYCLE_CELLS, when set, names the server drivers whose
 // cells run
+static const char * posix_only_server_driver = NULL;
+
 static bool posix_cell_selected( const posix_cell_t * cell )
 {
+    if ( posix_only_server_driver && strcmp( posix_only_server_driver, cell->server_driver ) != 0 )
+        return false;
     const char * list = getenv( "ROCKETNET_POSIX_LIFECYCLE_CELLS" );
     if ( !list || list[0] == '\0' )
         return true;
@@ -494,8 +509,35 @@ static rocketnet_server_transport_t * posix_server_create( const posix_cell_t * 
     return server;
 }
 
-static rocketnet_client_transport_t * posix_client_create( const posix_cell_t * cell, const char * server_address )
+// the client's clock: the platform clock plus the send intervals skipped.
+// Read by the client's receive thread through time_callback, so atomic.
+#define POSIX_CLIENT_SEND_INTERVAL 0.1
+
+struct posix_client_clock_t
 {
+    std::atomic<int> skipped;
+};
+
+static double posix_client_clock_now( posix_client_clock_t * clock )
+{
+    return rocketnet_platform_time() + clock->skipped.load( std::memory_order_acquire ) * POSIX_CLIENT_SEND_INTERVAL;
+}
+
+static double posix_client_clock_callback( void * context )
+{
+    return posix_client_clock_now( (posix_client_clock_t*) context );
+}
+
+static void posix_client_clock_skip( posix_client_clock_t * clock )
+{
+    clock->skipped.fetch_add( 1, std::memory_order_acq_rel );
+}
+
+static rocketnet_client_transport_t * posix_client_create( const posix_cell_t * cell, const char * server_address,
+                                                           posix_client_clock_t * clock )
+{
+    clock->skipped.store( 0, std::memory_order_release );
+
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     posix_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ),
                                                     token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
@@ -503,6 +545,7 @@ static rocketnet_client_transport_t * posix_client_create( const posix_cell_t * 
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
     snprintf( config.driver, sizeof( config.driver ), "%s", cell->client_driver );
+    config.time_callback = posix_client_clock_callback;
     int status = ROCKETNET_STATUS_OK;
     rocketnet_client_transport_t * client = NULL;
 #if defined(__linux__)
@@ -514,7 +557,7 @@ static rocketnet_client_transport_t * posix_client_create( const posix_cell_t * 
         const int far_ns = open( "/var/run/netns/" POSIX_XDP_NETNS, O_RDONLY );
         posix_check( self_ns >= 0 && far_ns >= 0 );
         posix_check( setns( far_ns, CLONE_NEWNET ) == 0 );
-        client = rocketnet_client_transport_create_ex( NULL, token, &config, rocketnet_platform_time(), &status );
+        client = rocketnet_client_transport_create_ex( clock, token, &config, posix_client_clock_now( clock ), &status );
         posix_check( setns( self_ns, CLONE_NEWNET ) == 0 );
         close( self_ns );
         close( far_ns );
@@ -522,7 +565,7 @@ static rocketnet_client_transport_t * posix_client_create( const posix_cell_t * 
     else
 #endif
     {
-        client = rocketnet_client_transport_create_ex( NULL, token, &config, rocketnet_platform_time(), &status );
+        client = rocketnet_client_transport_create_ex( clock, token, &config, posix_client_clock_now( clock ), &status );
     }
     if ( !client )
         printf( "client create [%s] to %s failed: %s\n", cell->name, server_address, rocketnet_status_name( (enum rocketnet_status_t) status ) );
@@ -537,12 +580,19 @@ static const char * posix_server_address( const posix_cell_t * cell, rocketnet_s
     return buffer;
 }
 
-static bool posix_wait_connected( rocketnet_server_transport_t * server, rocketnet_client_transport_t * client, double seconds )
+// how long the wait lets a sent packet go unanswered before it skips the
+// client's clock ahead anyway, so the next update sends again
+#define POSIX_CLIENT_RESEND_WAIT 0.01
+
+static bool posix_wait_connected( rocketnet_server_transport_t * server, rocketnet_client_transport_t * client,
+                                  posix_client_clock_t * clock, double seconds )
 {
     const double deadline = rocketnet_platform_time() + seconds;
+    int previous_state = rocketnet_client_transport_state( client );
+    double quiet_since = rocketnet_platform_time();
     while ( rocketnet_platform_time() < deadline )
     {
-        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_client_transport_update( client, posix_client_clock_now( clock ) );
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( server );
         const int state = rocketnet_client_transport_state( client );
@@ -550,7 +600,16 @@ static bool posix_wait_connected( rocketnet_server_transport_t * server, rocketn
             return true;
         if ( state < ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
             return false;
-        rocketnet_platform_sleep( 0.0002 );
+        if ( state != previous_state || rocketnet_platform_time() - quiet_since > POSIX_CLIENT_RESEND_WAIT )
+        {
+            // the state moved, or the last send went unanswered: the next
+            // update sends without waiting out the interval
+            previous_state = state;
+            quiet_since = rocketnet_platform_time();
+            posix_client_clock_skip( clock );
+            continue;
+        }
+        rocketnet_platform_sleep( 0.0001 );
     }
     return false;
 }
@@ -671,7 +730,8 @@ void rocketnet_test_posix_client_create_destroy_1000()
         const int count = posix_count( cell, 1000 );
         for ( int i = 0; i < count; i++ )
         {
-            rocketnet_client_transport_t * client = posix_client_create( cell, "127.0.0.1:40000" );
+            posix_client_clock_t clock;
+            rocketnet_client_transport_t * client = posix_client_create( cell, "127.0.0.1:40000", &clock );
             rocketnet_client_transport_destroy( client );
         }
         const double seconds = posix_now_seconds() - start;
@@ -716,8 +776,9 @@ void rocketnet_test_posix_server_restart_same_port_100()
 
             char server_address[64];
             posix_server_address( cell, server, server_address, sizeof( server_address ) );
-            rocketnet_client_transport_t * client = posix_client_create( cell, server_address );
-            posix_check( posix_wait_connected( server, client, 5.0 ) );
+            posix_client_clock_t clock;
+            rocketnet_client_transport_t * client = posix_client_create( cell, server_address, &clock );
+            posix_check( posix_wait_connected( server, client, &clock, 5.0 ) );
             rocketnet_client_transport_destroy( client );
             rocketnet_server_transport_destroy( server );
         }
@@ -752,8 +813,9 @@ void rocketnet_test_posix_connect_disconnect_1000()
         const int count = posix_count( cell, 1000 );
         for ( int i = 0; i < count; i++ )
         {
-            rocketnet_client_transport_t * client = posix_client_create( cell, server_address );
-            posix_check( posix_wait_connected( server, client, 5.0 ) );
+            posix_client_clock_t clock;
+            rocketnet_client_transport_t * client = posix_client_create( cell, server_address, &clock );
+            posix_check( posix_wait_connected( server, client, &clock, 5.0 ) );
             rocketnet_client_transport_disconnect( client );
             posix_check( posix_wait_server_empty( server, 5.0 ) );
             rocketnet_client_transport_destroy( client );
@@ -807,10 +869,11 @@ void rocketnet_test_posix_destroy_under_traffic_100()
             posix_server_address( cell, server, server_address, sizeof( server_address ) );
 
             rocketnet_client_transport_t * clients[client_count];
+            posix_client_clock_t clocks[client_count];
             for ( int i = 0; i < client_count; i++ )
             {
-                clients[i] = posix_client_create( cell, server_address );
-                posix_check( posix_wait_connected( server, clients[i], 5.0 ) );
+                clients[i] = posix_client_create( cell, server_address, &clocks[i] );
+                posix_check( posix_wait_connected( server, clients[i], &clocks[i], 5.0 ) );
             }
 
             std::atomic<bool> running( true );
@@ -849,5 +912,54 @@ void rocketnet_test_posix_destroy_under_traffic_100()
         posix_case_result( case_name, cell, &before, &after, seconds );
     }
 }
+
+#if defined(__linux__)
+
+// one registered case per Linux server cell: the case runs that cell alone
+
+// The server transport and the gso driver are single allocations of 56 MB
+// and 116 MB (strace of one create: two anonymous mmaps of those sizes),
+// past glibc's largest mmap threshold, so every create maps them fresh and
+// the value-initialising placement new (sdk/rocketnet_server_transport.cpp:1163,
+// sdk/rocketnet_server_gso_linux.cpp:575) faults every page in: ~42k minor
+// faults and ~0.12 s of system time a gso create on a 64-core Linux member.
+// A per-cell case serves those allocations from the main heap and keeps the
+// heap untrimmed, so a create after the first reuses resident pages. The
+// counts read file descriptors, threads and locked memory, none of which
+// this moves.
+static void posix_heap_keep( bool keep )
+{
+#if defined(__GLIBC__)
+    posix_check( mallopt( M_MMAP_MAX, keep ? 0 : 65536 ) == 1 );
+    posix_check( mallopt( M_TRIM_THRESHOLD, keep ? INT_MAX : 128 * 1024 ) == 1 );
+#else
+    (void) keep;
+#endif
+}
+
+#define POSIX_LINUX_CELL_CASE( case_name, driver )                                                                    \
+void rocketnet_test_##case_name##_##driver()                                                                        \
+{                                                                                                                   \
+    posix_only_server_driver = #driver;                                                                             \
+    posix_heap_keep( true );                                                                                        \
+    rocketnet_test_##case_name();                                                                                   \
+    posix_heap_keep( false );                                                                                       \
+    posix_only_server_driver = NULL;                                                                                \
+}
+
+#define POSIX_LINUX_CELL_CASES( case_name )                                                                           \
+    POSIX_LINUX_CELL_CASE( case_name, portable )                                                                    \
+    POSIX_LINUX_CELL_CASE( case_name, gso )                                                                         \
+    POSIX_LINUX_CELL_CASE( case_name, io_uring )                                                                    \
+    POSIX_LINUX_CELL_CASE( case_name, xdp )
+
+POSIX_LINUX_CELL_CASES( posix_init_term_1000 )
+POSIX_LINUX_CELL_CASES( posix_server_create_destroy_1000 )
+POSIX_LINUX_CELL_CASES( posix_client_create_destroy_1000 )
+POSIX_LINUX_CELL_CASES( posix_server_restart_same_port_100 )
+POSIX_LINUX_CELL_CASES( posix_connect_disconnect_1000 )
+POSIX_LINUX_CELL_CASES( posix_destroy_under_traffic_100 )
+
+#endif // #if defined(__linux__)
 
 #endif // #if !defined(_WIN32)
