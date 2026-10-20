@@ -882,7 +882,7 @@ and no protocol. Its pure parts are already factored out for direct tests
 | Config and env precedence | `sdk/rocketnet_server_transport.cpp:377-397` and around | Pure function. |
 | Library init / term | `sdk/rocketnet.cpp` | Three states and two refusals; a unit test covers it. |
 | Client transport lifecycle (thread start/quit) | `client_transport.cpp:355-386, 1140-1150` | One quit flag, a join; the flip is covered by M12. |
-| Keyed prefilter epochs | S:478-546 | Specified, not implemented in 1.0. Model it when built: the generation window and the wrap are the properties. |
+| Keyed prefilter epochs | S:478-546 | Design only: `tla/RNFilterEpochs.tla` models the generation window and the wrap, and no code implements it in v1.0. The keyed filter-epoch check was removed; the wire field stays, so the keyed form can return later as a value change, never a format change. |
 | Backend connected set | S:889-981 | A deployment property outside the library. |
 | Darwin `msgx` pump's live-refusal pause | `sdk/rocketnet_platform.cpp:1139-2000` | Outside this card's START list; not read. It deserves its own line in the next inventory. |
 | Stats windows, loss and jitter trackers | `rocketnet_stats_window.h`, `rocketnet_packet_loss_tracker.h`, `rocketnet_jitter_tracker.h` | Measurement, not control: nothing reads them to decide a transition. |
