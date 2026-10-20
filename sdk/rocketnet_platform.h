@@ -680,6 +680,91 @@ void rocketnet_platform_client_thread_priority( struct rocketnet_platform_thread
  */
 void rocketnet_platform_server_thread_priority( struct rocketnet_platform_thread_t * thread );
 
+/**
+ * @brief The operating-system calls behind the network-thread priority.
+ *
+ * Each platform fills the table with the real calls; a unit test replaces it
+ * with a recording fake through rocketnet_platform_set_priority_calls_for_testing.
+ * An entry a platform does not use is a stub that does nothing.
+ */
+struct rocketnet_platform_priority_calls_t
+{
+    /** @brief POSIX: pthread_setschedparam on the thread with the policy and priority; 0 or an errno. */
+    int ( *set_sched )( struct rocketnet_platform_thread_t * thread, int policy, int priority );
+    /** @brief Windows: SetThreadPriority on the thread; nonzero on success, as the call returns. */
+    int ( *set_thread_priority )( struct rocketnet_platform_thread_t * thread, int priority );
+    /** @brief Windows: timeBeginPeriod; 0 (TIMERR_NOERROR) on success. */
+    unsigned int ( *time_begin_period )( unsigned int period );
+    /** @brief Windows: timeEndPeriod; 0 (TIMERR_NOERROR) on success. */
+    unsigned int ( *time_end_period )( unsigned int period );
+    /** @brief Windows: QueryPerformanceFrequency into the LARGE_INTEGER the argument points at. */
+    void ( *timer_frequency )( void * frequency );
+};
+
+/**
+ * @brief The real call table of this platform.
+ * @return The table the library uses when no test has replaced it; never NULL.
+ */
+const struct rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls_real( void );
+
+/**
+ * @brief Replaces the priority call table, for unit tests only.
+ * @param calls The table to use; NULL restores the real table.
+ * @return None.
+ */
+void rocketnet_platform_set_priority_calls_for_testing( const struct rocketnet_platform_priority_calls_t * calls );
+
+/**
+ * @brief Forgets which call kinds have logged their one refusal line, for unit tests only.
+ * @return None.
+ */
+void rocketnet_platform_thread_priority_reset_logged_for_testing( void );
+
+/** @brief The call kinds a refusal is counted and logged under, one line each. */
+enum
+{
+    ROCKETNET_PLATFORM_PRIORITY_CALL_SET_SCHED = 0,
+    ROCKETNET_PLATFORM_PRIORITY_CALL_SET_AFFINITY,
+    ROCKETNET_PLATFORM_PRIORITY_CALL_SET_THREAD_PRIORITY,
+    ROCKETNET_PLATFORM_PRIORITY_CALL_TIME_BEGIN_PERIOD,
+    ROCKETNET_PLATFORM_PRIORITY_CALL_TIME_END_PERIOD,
+    ROCKETNET_PLATFORM_PRIORITY_CALL_COUNT
+};
+
+/**
+ * @brief Sets whether the library makes its priority and timer period calls.
+ * @param enabled true (the default) makes them; false makes none.
+ * @return None.
+ */
+void rocketnet_platform_set_thread_priority_enabled( bool enabled );
+
+/**
+ * @brief Reads whether the library makes its priority and timer period calls.
+ * @return true when enabled.
+ */
+bool rocketnet_platform_thread_priority_enabled( void );
+
+/**
+ * @brief Counts one refused priority, affinity or timer period call.
+ *
+ * Adds one to the process-wide refusal count and, the first time for the call
+ * kind only, logs one warning: "<prefix>: <call> refused (<reason>); <effect>".
+ * Safe from any thread.
+ * @param kind One of the ROCKETNET_PLATFORM_PRIORITY_CALL_* kinds.
+ * @param prefix "thread priority", "thread affinity" or "timer period".
+ * @param call The call and its arguments, for example "pthread_setschedparam SCHED_RR 1".
+ * @param reason Why the operating system refused it.
+ * @param effect What runs instead, for example "the thread runs at its default priority".
+ * @return None.
+ */
+void rocketnet_platform_thread_priority_refused( int kind, const char * prefix, const char * call, const char * reason, const char * effect );
+
+/**
+ * @brief The process-wide count of refused priority, affinity and timer period calls.
+ * @return The count since the process started.
+ */
+uint64_t rocketnet_platform_thread_priority_refusals( void );
+
 // ----------------------------------------------------------------
 
 /**
