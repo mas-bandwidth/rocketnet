@@ -50,6 +50,30 @@ unconnected, so xnu has no connected-UDP control block to report the ICMP error
 against; the receive paths still hold the contract for a host or a future
 connected socket that does.
 
+On Linux an unconnected UDP socket is told of an ICMP error only when it sets
+`IP_RECVERR` or `IPV6_RECVERR`, and no rocketnet socket on Linux connects or
+sets either: the portable server and client sockets, each `gso` and
+`io_uring` queue socket, IPv4 and IPv6. The `xdp` transport takes raw frames
+from its AF_XDP ring, its program passes ICMP to the kernel, and its other
+kernel sockets are short-lived interface probes, so no ICMP report reaches a
+receive. The Linux receive arms hold the contract anyway, because a socket
+that did set the option would see the error once as a pending `SO_ERROR`,
+ahead of any queued datagram: portable `recvfrom`, the client `recvmmsg` pump
+and the `gso` worker's `recvmmsg` (both tiers) retry `EINTR`, skip
+`ECONNREFUSED`, `EHOSTUNREACH`, `ENETUNREACH`, `EHOSTDOWN`, `ENETDOWN` and
+`ENOBUFS` (at most 64 a call) and keep draining; an `io_uring` multishot
+receive that ends with one of them is re-armed and reaped again in the same
+`receive_packets`, so the datagrams behind it land in that update. Each skip
+is counted by `rocketnet_platform_receive_weather_skipped`, which stays zero
+on a real host. With `IP_RECVERR` set the kernel hands the pending error to
+whichever call comes next, and a server that keeps sending to the dead peer
+usually takes it on `sendto`. `functional/posix_hard_killed_peer.cpp` proves
+this on Linux for portable, `gso`, `gso` with GSO and GRO off, and `io_uring`,
+IPv4 and IPv6: `posix_hard_killed_client` (a child client ended by `SIGKILL`),
+`posix_send_to_closed_port` and `posix_client_server_gone` assert exact live
+counts and a zero skip count, and `posix_hard_killed_receive_errno_seam`
+injects each errno into `recvfrom`, `recvmmsg` and the `io_uring` receive CQE.
+
 ## Server capabilities and ownership
 
 Two I/O shapes preserve the existing implementations:
