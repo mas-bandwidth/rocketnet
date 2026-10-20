@@ -149,10 +149,12 @@ unreachable. A BSD stack reports such an error to the next receive or send on a
 connected socket as ECONNREFUSED, EHOSTUNREACH or ENETUNREACH. The portable and
 msgx sockets are never connected, so on macOS the kernel does not route these
 errors to them. The receive arms still treat ECONNREFUSED, EHOSTUNREACH,
-ENETUNREACH, EHOSTDOWN, ENETDOWN, ENOBUFS and EINTR as weather: they skip the
-error and keep draining. The error is never fatal, never ends a drain, and never
+ENETUNREACH, EHOSTDOWN, ENETDOWN, ENOBUFS and EINTR as weather
+(`rocketnet_platform_receive_weather`, `sdk/rocketnet_platform.cpp:2550`): the
+portable arm (`:2626`) and the msgx arm (`:3025`) skip the error and keep
+draining. The error is never fatal, never ends a drain, and never
 pauses the msgx pump. EAGAIN ends a drain, because the queue is empty. Any other
-receive errno pauses the msgx pump with one warning per pause. The send side
+receive errno pauses the msgx pump with one warning per pause (`:3033`). The send side
 already classes the same errnos as weather. A backend's receive keeps the same
 contract: one peer's death never stalls or degrades another peer's traffic.
 The functional cases in functional/posix_hard_killed_peer.cpp hold this per
