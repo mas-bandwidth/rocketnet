@@ -107,6 +107,74 @@ jobs:
         shell: bash
         run: ./bin/Release/soak.exe 200000
 
+      # One 1000-client run per Linux server cell (load.c's header names each
+      # pin): portable, gso, gso plain and io_uring on loopback, and xdp as
+      # root inside a virtme-ng guest of the runner's own kernel, the shape of
+      # ci.yml's transport matrix xdp cell: a veth pair, the far end in its
+      # own namespace, the clients opened there. Each run must pass, name the
+      # expected server transport, and end with the fd and thread counts it
+      # started with. A runner with no VM tier fails the xdp cell.
+      - name: Many-client load (1000 clients, every Linux server cell)
+        if: runner.os == 'Linux'
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -n 65536 || ulimit -n "$(ulimit -Hn)"
+          check_cell() {
+            cell=$1; want=$2; line=$3
+            echo "LOAD cell=$cell $line"
+            case "$line" in *verdict=PASS*) ;; *) echo "LOAD cell=$cell FAIL"; return 1 ;; esac
+            case "$line" in *"server_driver=$want "*) ;; *) echo "LOAD cell=$cell wrong server transport (want $want)"; return 1 ;; esac
+            fs=$(echo "$line" | sed -E "s/.*fds_start=([0-9]+).*/\1/"); fe=$(echo "$line" | sed -E "s/.*fds_end=([0-9]+).*/\1/")
+            ts=$(echo "$line" | sed -E "s/.*threads_start=([0-9]+).*/\1/"); te=$(echo "$line" | sed -E "s/.*threads_end=([0-9]+).*/\1/")
+            [ "$fs" = "$fe" ] && [ "$ts" = "$te" ] || { echo "LOAD cell=$cell fd or thread growth"; return 1; }
+          }
+          run_cell() {
+            cell=$1; want=$2; shift 2
+            line=$(env "$@" ./bin/load 1000 60 | grep '^load: connected' | tail -n 1) || true
+            check_cell "$cell" "$want" "$line"
+          }
+          run_cell portable portable ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable
+          run_cell gso gso ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_CLIENT_TRANSPORT=portable
+          run_cell gso-plain gso ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_CLIENT_TRANSPORT=portable ROCKETNET_TEST_GSO_PLAIN=1
+          if [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then
+            run_cell io_uring io_uring ROCKETNET_SERVER_TRANSPORT=io_uring ROCKETNET_CLIENT_TRANSPORT=portable
+          else
+            echo "LOAD cell=io_uring [SKIPPED this kernel disables io_uring]"
+          fi
+          vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
+          if ! command -v vng >/dev/null || [ ! -r "$vm_kernel" ] || [ ! -w /dev/kvm ]; then
+            echo "LOAD cell=xdp FAIL no VM tier on this runner: needs vng, a readable $vm_kernel and a writable /dev/kvm"
+            exit 1
+          fi
+          mkdir -p build
+          guest=$(mktemp -d "$PWD/build/load-xdp.XXXXXX")
+          cat > "$guest/run.sh" <<'GUEST'
+          set -u
+          cd "$2"
+          mountpoint -q /sys/fs/bpf || mount -t bpf bpf /sys/fs/bpf
+          ip netns add rnxdpload
+          ip link add rnxdpload0 mtu 1500 type veth peer name rnxdpload1 mtu 1500
+          ip link set rnxdpload1 netns rnxdpload
+          ip addr add 10.77.3.1/24 dev rnxdpload0
+          ip -n rnxdpload addr add 10.77.3.2/24 dev rnxdpload1
+          ip link set rnxdpload0 up
+          echo 2 > /sys/class/net/rnxdpload0/napi_defer_hard_irqs
+          echo 200000 > /sys/class/net/rnxdpload0/gro_flush_timeout
+          ip -n rnxdpload link set lo up
+          ip -n rnxdpload link set rnxdpload1 up
+          env ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_CLIENT_TRANSPORT=portable \
+              ROCKETNET_SERVER_NUM_XDP_QUEUES=1 ROCKETNET_SERVER_NUM_OS_CPUS=1 \
+              LOAD_SERVER_ADDRESS=10.77.3.1:40411 LOAD_CLIENT_NETNS=/var/run/netns/rnxdpload \
+              ./bin/load 1000 60 > "$1/xdp.out" 2> "$1/xdp.err"
+          GUEST
+          timeout 300 vng --run "$vm_kernel" --memory 16G --cpus 16 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
+            sudo sh "$guest/run.sh" "$guest" "$PWD" > "$guest/vm.log" 2>&1 || true
+          line=$(grep '^load: connected' "$guest/xdp.out" 2>/dev/null | tail -n 1) || true
+          [ -n "$line" ] || tail -n 20 "$guest/vm.log" "$guest/xdp.err" 2>/dev/null || true
+          check_cell xdp xdp "$line"
+
   soak-macos:
     name: soak (${{ matrix.ref }} / macos-15)
     runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
@@ -169,10 +237,12 @@ jobs:
         run: ./bin/soak 200000
 
   soak-windows:
-    name: soak (${{ matrix.ref }} / windows-2025)
-    # DISABLED: no Windows fleet runner registered for this repository; owed: the Windows fleet machine
-    if: false
-    runs-on: windows-2025
+    name: soak (${{ matrix.ref }} / windows)
+    # the fleet's native Windows runner (Windows 11, MSVC; label rocketnet-windows), the one ci.yml's
+    # build-and-test-windows runs on, never a hosted image. Run by hand on that runner:
+    # configure 19s, Release build 114s (--parallel 4), Tests 12s, wire audit 23s, simulator
+    # soak 561s, UDP loopback soak 339s; 1068s (about 18 minutes) in all, inside the 90-minute bound.
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     timeout-minutes: 90
     strategy:
       fail-fast: false
