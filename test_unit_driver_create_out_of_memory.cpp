@@ -38,6 +38,7 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_driver.h"
 #include "rocketnet_driver_loopback.h"
+#include "rocketnet_platform.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -420,8 +421,6 @@ enum
     DRIVER_OOM_ADAPTERS_ERROR,
 };
 enum { DRIVER_OOM_ADAPTERS_ATTEMPTS = 3 };
-// the connection type platform init found (sdk/rocketnet_platform.h)
-extern int rocketnet_platform_connection_type();
 extern void * rocketnet_platform_adapters_fetch( void * context, unsigned long bytes, int (*query)( void * buffer, unsigned long * bytes ) );
 
 // a refusing allocator gives way after this many refusals, so a loop with no
