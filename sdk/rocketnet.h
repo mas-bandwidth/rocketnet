@@ -913,7 +913,7 @@ struct rocketnet_client_config_t
     int packets_in_flight;                          ///< ROCKETNET_CLIENT_PACKETS_IN_FLIGHT: unacknowledged packets tracked; 16 .. 1 << 16; default 256
     /// @brief ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE: max_packets_per_update, the most packets the client sends in one update; 1 .. 1024; default 256.
     ///
-    /// In-place unreliable messages sent at finish and what
+    /// In-place unreliable messages sent at finish message and what
     /// rocketnet_client_send_packets() writes count together against this one
     /// allowance per update. While reliable work is due, an in-place message
     /// never takes the last of the allowance, so that work is sent in the
@@ -1051,7 +1051,7 @@ struct rocketnet_server_config_t
     int packets_in_flight;                          ///< ROCKETNET_SERVER_PACKETS_IN_FLIGHT: unacknowledged packets tracked; per client; 16 .. 1 << 16; default 256
     /// @brief ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE: max_packets_per_update, the most packets sent to each client in one update; 1 .. 1024; default 256.
     ///
-    /// Per client: in-place unreliable messages sent at finish and what
+    /// Per client: in-place unreliable messages sent at finish message and what
     /// rocketnet_server_send_packets() writes count together against this one
     /// allowance per update. While reliable work is due, an in-place message
     /// never takes the last of the allowance, so that work is sent in the
@@ -1521,7 +1521,7 @@ ROCKETNET_EXPORT uint64_t rocketnet_client_index( const struct rocketnet_client_
 /// The transport that won the candidate list at connect ("portable", "msgx"), NULL while DISCONNECTED. A NULL client is a counted no-op that returns NULL.
 ROCKETNET_EXPORT const char * rocketnet_client_transport_name( const struct rocketnet_client_t * client );
 
-/// @brief Start a message: get the room to write it in, then finish it or abort it.
+/// @brief Start a message: get the room to write it in, then call finish message, or abort it.
 ///
 /// Start message returns a pointer into the connection's region for a
 /// message of bytes, or, for an unreliable message whose declared bytes fit
@@ -1534,7 +1534,7 @@ ROCKETNET_EXPORT const char * rocketnet_client_transport_name( const struct rock
 /// at a time. Messages flow only while CONNECTED.
 ///
 /// An unreliable message too big for one packet's record is promoted to its
-/// reliable twin (the messages section above). A start the connection's
+/// reliable twin (the messages section above). A start message the connection's
 /// region has no room for ends the connection with
 /// ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED.
 ///
@@ -1552,7 +1552,7 @@ ROCKETNET_EXPORT const char * rocketnet_client_transport_name( const struct rock
 /// @param reliability How the message is delivered.
 /// @param bytes The most bytes the message holds, 1 to the config's max_message_bytes.
 /// @return The room, or NULL when refused: a client not CONNECTED (counted
-/// in rocketnet_api_misuse_count), a start already pending, a channel,
+/// in rocketnet_api_misuse_count), a start message already pending, a channel,
 /// reliability or size out of range, or no room in the region. A NULL
 /// client is a counted no-op that returns NULL.
 ROCKETNET_EXPORT uint8_t * rocketnet_client_start_message( struct rocketnet_client_t * client, int channel, enum rocketnet_reliability_t reliability, int bytes );
@@ -1562,14 +1562,14 @@ ROCKETNET_EXPORT uint8_t * rocketnet_client_start_message( struct rocketnet_clie
 /// The message joins its channel's queue in order and leaves at the next
 /// rocketnet_client_send_packets. A message written in place has its
 /// packet buffer completed and staged here, with no copy; each such finish
-/// counts against the config's max_packets_per_update.
+/// message counts against the config's max_packets_per_update.
 ///
 /// @param client The client.
 /// @param bytes_written The bytes written at the start message's pointer, 1 to the bytes started.
 /// @return The receipt serial, nonzero; a receipt reliability reports it
 /// through rocketnet_client_receipts. 0 when no start message is pending,
-/// bytes_written is out of range (the start stays pending: finish again or
-/// abort), or the client is not CONNECTED (counted). A NULL client is a
+/// bytes_written is out of range (the start message stays pending: finish message
+/// again or abort), or the client is not CONNECTED (counted). A NULL client is a
 /// counted no-op that returns 0.
 ROCKETNET_EXPORT uint32_t rocketnet_client_finish_message( struct rocketnet_client_t * client, int bytes_written );
 
@@ -1916,7 +1916,7 @@ ROCKETNET_EXPORT void rocketnet_server_disconnect_all_clients( struct rocketnet_
 /// range, a stopped server, and a NULL server (a counted no-op).
 ROCKETNET_EXPORT enum rocketnet_disconnect_reason_t rocketnet_server_disconnect_reason( const struct rocketnet_server_t * server, uint64_t client_index );
 
-/// @brief Start a message to one client: get the room to write it in, then finish it or abort it.
+/// @brief Start a message to one client: get the room to write it in, then call finish message, or abort it.
 ///
 /// Start message returns a pointer into the connection's region for a
 /// message of bytes, or, for an unreliable message whose declared bytes fit
@@ -1930,7 +1930,7 @@ ROCKETNET_EXPORT enum rocketnet_disconnect_reason_t rocketnet_server_disconnect_
 /// loop over the slots.
 ///
 /// An unreliable message too big for one packet's record is promoted to its
-/// reliable twin (the messages section above). A start the connection's
+/// reliable twin (the messages section above). A start message the connection's
 /// region has no room for disconnects that client with
 /// ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED.
 ///
@@ -1953,7 +1953,7 @@ ROCKETNET_EXPORT enum rocketnet_disconnect_reason_t rocketnet_server_disconnect_
 /// @param bytes The most bytes the message holds, 1 to the config's max_message_bytes.
 /// @return The room, or NULL when refused: a flow id, an index out of range
 /// or a stopped server (both counted in rocketnet_api_misuse_count), a slot
-/// with no connection, a start already pending, a channel, reliability or
+/// with no connection, a start message already pending, a channel, reliability or
 /// size out of range, or no room in the region. A NULL server is a counted
 /// no-op that returns NULL.
 ROCKETNET_EXPORT uint8_t * rocketnet_server_start_message( struct rocketnet_server_t * server, uint64_t destination_id, int channel, enum rocketnet_reliability_t reliability, int bytes );
@@ -1963,15 +1963,15 @@ ROCKETNET_EXPORT uint8_t * rocketnet_server_start_message( struct rocketnet_serv
 /// The message joins its channel's queue in order and leaves at the next
 /// rocketnet_server_send_packets. A message written in place has its
 /// packet buffer completed and staged here, with no copy; each such finish
-/// counts against the config's max_packets_per_update for the client.
+/// message counts against the config's max_packets_per_update for the client.
 ///
 /// @param server The server.
 /// @param destination_id The client index the start message named.
 /// @param bytes_written The bytes written at the start message's pointer, 1 to the bytes started.
 /// @return The receipt serial, nonzero; a receipt reliability reports it
 /// through rocketnet_server_receipts. 0 when no start message is pending for
-/// destination_id, bytes_written is out of range (the start stays pending:
-/// finish again or abort), destination_id is a flow id or out of range, or
+/// destination_id, bytes_written is out of range (the start message stays
+/// pending: finish message again or abort), destination_id is a flow id or out of range, or
 /// the server is stopped (counted). A NULL server is a counted no-op that
 /// returns 0.
 ROCKETNET_EXPORT uint32_t rocketnet_server_finish_message( struct rocketnet_server_t * server, uint64_t destination_id, int bytes_written );
