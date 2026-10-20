@@ -141,25 +141,6 @@ static int rocketnet_server_request_cookie_mac( uint8_t * mac,
     return rocketnet_generate_cookie_mac( mac, from, connection_salt, cookie_expire_timestamp, cookie_key );
 }
 
-// the address fields of the signed connect data, encoded as the token
-// encodes them, for comparison against this server's advertised addresses
-
-static void rocketnet_encode_token_address( uint8_t * output, const struct rocketnet_address_t * address, int ipv6 )
-{
-    uint8_t * p = output;
-    if ( !ipv6 )
-    {
-        rocketnet_write_bytes( &p, address->data.ipv4, 4 );
-        rocketnet_write_uint16( &p, address->port );
-    }
-    else
-    {
-        for ( int i = 0; i < 8; i++ )
-            rocketnet_write_uint16( &p, address->data.ipv6[i] );
-        rocketnet_write_uint16( &p, address->port );
-    }
-}
-
 // whether the token's server address is one this server advertises. on a
 // dual-stack server -- bound to the IPv6 wildcard, so it also advertises its
 // IPv4 wildcard -- a v4-mapped token address normalises to native IPv4 and
