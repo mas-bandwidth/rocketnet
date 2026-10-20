@@ -135,6 +135,9 @@ int main( void )
             // unreliable messages over budget are dropped and counted at send
             if ( !unreliable_sent )
             {
+                // the runtime budget is set once connected: set_send_kbps refuses before then
+                CHECK( rocketnet_client_set_send_kbps( client, CLIENT_SEND_KBPS ) == ROCKETNET_STATUS_OK );
+                printf( "runtime set-send-kbps returned 1\n" );
                 CHECK( send_burst( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, UNRELIABLE_COUNT ) );
                 unreliable_sent = 1;
             }
