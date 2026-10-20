@@ -32,7 +32,8 @@
     connect takes 0.2 s. The client here runs on its own clock, the platform
     clock plus the send intervals the wait has skipped (its time_callback and
     the time every update is given), and the wait skips one interval each
-    time the client's state moves, so the next update sends at once.
+    time the client's state moves, so the next update sends at once. The
+    skip is Linux only: the macOS cells keep the platform clock.
 */
 
 #include "rocketnet_internal.h"
@@ -530,10 +531,12 @@ static double posix_client_clock_callback( void * context )
     return posix_client_clock_now( (posix_client_clock_t*) context );
 }
 
+#if defined(__linux__)
 static void posix_client_clock_skip( posix_client_clock_t * clock )
 {
     clock->skipped.fetch_add( 1, std::memory_order_acq_rel );
 }
+#endif
 
 static rocketnet_client_transport_t * posix_client_create( const posix_cell_t * cell, const char * server_address,
                                                            posix_client_clock_t * clock )
@@ -586,7 +589,9 @@ static bool posix_wait_connected( rocketnet_server_transport_t * server, rocketn
                                   posix_client_clock_t * clock, double seconds )
 {
     const double deadline = rocketnet_platform_time() + seconds;
+#if defined(__linux__)
     int previous_state = rocketnet_client_transport_state( client );
+#endif
     while ( rocketnet_platform_time() < deadline )
     {
         rocketnet_client_transport_update( client, posix_client_clock_now( clock ) );
@@ -597,6 +602,7 @@ static bool posix_wait_connected( rocketnet_server_transport_t * server, rocketn
             return true;
         if ( state < ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
             return false;
+#if defined(__linux__)
         if ( state != previous_state )
         {
             // the state moved: the next update sends without waiting out the
@@ -606,7 +612,8 @@ static bool posix_wait_connected( rocketnet_server_transport_t * server, rocketn
             posix_client_clock_skip( clock );
             continue;
         }
-        rocketnet_platform_sleep( 0.0001 );
+#endif
+        rocketnet_platform_sleep( 0.0002 );
     }
     return false;
 }
