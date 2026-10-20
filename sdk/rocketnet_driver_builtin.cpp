@@ -23,10 +23,18 @@ static int portable_receive( void * driver, rocketnet_address_t * from, uint8_t 
 {
     return rocketnet_platform_socket_receive_packets( (rocketnet_platform_socket_t*) driver, from, data, stride, bytes, count );
 }
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+static uint64_t portable_send_failures( void * driver )
+{ return rocketnet_platform_socket_send_failures( (rocketnet_platform_socket_t*) driver ); }
+#define ROCKETNET_PORTABLE_SEND_FAILURES portable_send_failures
+#else
+#define ROCKETNET_PORTABLE_SEND_FAILURES NULL
+#endif
 static const rocketnet_server_driver_operations_t portable_server_operations =
 {
     ROCKETNET_DRIVER_FLUSH_ON_UPDATE, portable_create, portable_destroy, synchronous_stop,
-    NULL, NULL, NULL, NULL, NULL, portable_send, portable_receive
+    NULL, NULL, NULL, NULL, NULL, portable_send, portable_receive,
+    NULL, NULL, NULL, NULL, NULL, ROCKETNET_PORTABLE_SEND_FAILURES
 };
 #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 // The portable client on a platform with the client I/O wake: an eight-callback
@@ -123,11 +131,18 @@ static int portable_io_client_reap_sends( void * driver, int * tags, bool * ok, 
 #define ROCKETNET_PORTABLE_IO_CLIENT_POST_SEND NULL
 #define ROCKETNET_PORTABLE_IO_CLIENT_REAP_SENDS NULL
 #endif
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+static uint64_t portable_io_client_send_failures( void * driver )
+{ struct portable_io_client_t * client = (struct portable_io_client_t*) driver; return rocketnet_platform_socket_send_failures( client->socket ); }
+#define ROCKETNET_PORTABLE_IO_CLIENT_SEND_FAILURES portable_io_client_send_failures
+#else
+#define ROCKETNET_PORTABLE_IO_CLIENT_SEND_FAILURES NULL
+#endif
 static const rocketnet_client_driver_operations_t portable_client_operations =
 {
     portable_io_client_create, portable_io_client_destroy, portable_io_client_send, portable_io_client_receive,
     portable_io_client_send_batch, portable_io_client_receive_batch, portable_io_client_wait, portable_io_client_wake,
-    ROCKETNET_PORTABLE_IO_CLIENT_POST_SEND, ROCKETNET_PORTABLE_IO_CLIENT_REAP_SENDS
+    ROCKETNET_PORTABLE_IO_CLIENT_SEND_FAILURES, ROCKETNET_PORTABLE_IO_CLIENT_POST_SEND, ROCKETNET_PORTABLE_IO_CLIENT_REAP_SENDS
 };
 #else // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 static void * portable_client_create( void * context, const rocketnet_client_driver_config_t * config, rocketnet_address_t * bind )
@@ -146,7 +161,10 @@ static const rocketnet_client_driver_operations_t portable_client_operations =
 { portable_client_create, portable_destroy, portable_client_send, portable_client_receive,
 #if defined(__linux__)
   portable_client_send_batch, portable_client_receive_batch,
+#else
+  NULL, NULL,
 #endif
+  NULL, NULL, ROCKETNET_PORTABLE_SEND_FAILURES
 };
 #endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 extern const rocketnet_driver_backend_t rocketnet_portable_driver = { &portable_server_operations, &portable_client_operations };

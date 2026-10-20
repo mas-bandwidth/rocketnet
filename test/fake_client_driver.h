@@ -223,21 +223,22 @@ static int rocketnet_fake_client_reap_sends( void * driver, int * tags, bool * o
 }
 
 // The four tables: base (four required), io (four plus wait and wake), batch
-// (the first eight), overlapped (io plus post_send and reap_sends), each in
+// (the first eight), overlapped (io plus post_send and reap_sends; send_failures
+// NULL), each in
 // rocketnet_client_driver_operations_t member order.
 
 static const rocketnet_client_driver_operations_t rocketnet_fake_client_operations_base =
 {
     rocketnet_fake_client_create, rocketnet_fake_client_destroy,
     rocketnet_fake_client_send, rocketnet_fake_client_receive,
-    NULL, NULL, NULL, NULL, NULL, NULL
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL
 };
 
 static const rocketnet_client_driver_operations_t rocketnet_fake_client_operations_io =
 {
     rocketnet_fake_client_create, rocketnet_fake_client_destroy,
     rocketnet_fake_client_send, rocketnet_fake_client_receive,
-    NULL, NULL, rocketnet_fake_client_wait, rocketnet_fake_client_wake, NULL, NULL
+    NULL, NULL, rocketnet_fake_client_wait, rocketnet_fake_client_wake, NULL, NULL, NULL
 };
 
 static const rocketnet_client_driver_operations_t rocketnet_fake_client_operations_batch =
@@ -245,7 +246,7 @@ static const rocketnet_client_driver_operations_t rocketnet_fake_client_operatio
     rocketnet_fake_client_create, rocketnet_fake_client_destroy,
     rocketnet_fake_client_send, rocketnet_fake_client_receive,
     rocketnet_fake_client_send_batch, rocketnet_fake_client_receive_batch,
-    rocketnet_fake_client_wait, rocketnet_fake_client_wake, NULL, NULL
+    rocketnet_fake_client_wait, rocketnet_fake_client_wake, NULL, NULL, NULL
 };
 
 static const rocketnet_client_driver_operations_t rocketnet_fake_client_operations_overlapped =
@@ -253,7 +254,7 @@ static const rocketnet_client_driver_operations_t rocketnet_fake_client_operatio
     rocketnet_fake_client_create, rocketnet_fake_client_destroy,
     rocketnet_fake_client_send, rocketnet_fake_client_receive,
     NULL, NULL, rocketnet_fake_client_wait, rocketnet_fake_client_wake,
-    rocketnet_fake_client_post_send, rocketnet_fake_client_reap_sends
+    NULL, rocketnet_fake_client_post_send, rocketnet_fake_client_reap_sends
 };
 
 // Push an inbound datagram (docs/CLIENT-IO.md "The I/O step"). Appends past

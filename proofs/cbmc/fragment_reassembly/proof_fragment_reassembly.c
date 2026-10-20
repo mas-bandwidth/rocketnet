@@ -104,7 +104,7 @@ static void * proof_memcpy( void * destination, const void * source, size_t byte
 /* the sdk's own assertions are claims too: with NDEBUG unset each
    rocketnet_assert is a checked property */
 #define ROCKETNET_ASSERTS 1
-#define rocketnet_assert_function_pointer( condition, function, file, line ) __CPROVER_assert( 0, condition )
+#define rn_assert_function( condition, function, file, line ) __CPROVER_assert( 0, condition )
 
 #endif
 
