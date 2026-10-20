@@ -50,10 +50,10 @@ returns `NULL` from start message and `0` from finish message, and counts in
 The client and server create paths validate the config, apply the environment
 overrides (`ROCKETNET_CLIENT_*`, `ROCKETNET_SERVER_*`, with precedence
 DEFAULT < CONFIG STRUCT < ENVIRONMENT), reserve the caller memory block or make
-the one allocation, and start the selected transport. The detailed transport
-create failure branches belong to the internal transport layer
-(`sdk/rocketnet_layers.h`); a game sees only the public create result, the log
-line and the misuse count.
+the one allocation. The transport is started when `rocketnet_client_connect`
+or `rocketnet_server_start` is called. The detailed transport failure branches
+belong to the internal transport layer (`sdk/rocketnet_layers.h`); a game sees
+only the public result, the log line and the misuse count.
 
 The helper names used later in this document (`rocketnet_error`,
 `rocketnet_assert`, `rocketnet_log_v`, `rocketnet_config_apply_env`,
@@ -63,8 +63,8 @@ The helper names used later in this document (`rocketnet_error`,
 `rocketnet_platform_socket_create`, `rocketnet_platform_socket_create_with_pump`,
 `rocketnet_platform_thread_create`, `rocketnet_platform_mutex_create`,
 `rocketnet_free`, `rocketnet_frame_sync_create`, `rocketnet_frame_sync_create_ex`,
-`rocketnet_num_counters`, `rocketnet_counter_name`, `rocketnet_counter_value`
-and `rocketnet_last_error`) are internal to the SDK
+`rocketnet_num_counters`, `rocketnet_counter_name` and `rocketnet_counter_value`)
+are internal to the SDK
 (`sdk/rocketnet_layers.h`, `sdk/rocketnet_internal.h`); a game does not call
 them.
 
