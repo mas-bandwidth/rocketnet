@@ -296,12 +296,12 @@ takes a store chunk of the smallest class that fits. A message above one chunk
   one thing the regions share, and they add atomically.
 - **Exhaustion kicks.** An operation that cannot get room sets the region's
   sticky exhausted state with the reason
-  `ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED` (`rn_region_exhaust`),
+  `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED` (`rn_region_exhaust`),
   and counts `MESSAGE_MEMORY_EXHAUSTED` once beside the refusal's own counter.
   `rn_region_send_alloc` does this on both of its refusals (store and
   descriptor pool). The owner reads `rn_connection_memory_decide` every
   update: a pure function of the region that returns the reason to end the
-  connection with, or `ROCKETNET_MESSAGE_ERROR_NONE`. On the server the owner
+  connection with, or `ROCKETNET_DISCONNECT_REASON_NONE`. On the server the owner
   then disconnects that slot (`rocketnet_server_disconnect_client`),
   records the reason, frees the slot and resets the region. A client
   disconnects itself (`rocketnet_client_disconnect`) with the same
@@ -706,7 +706,7 @@ details explicit:
   `rn_window_ack_resend` checks
   `rn_window_ack_check_timeout` first (if any unacked number has
   `now - first_send >= reliable_timeout`, `ack->error` becomes
-  `ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT` and resending stops), then walks
+  `ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT` and resending stops), then walks
   from `resend_head` while `now >= last_send + rn_window_ack_resend_delay(ack)`
   (`min(rto, resend_interval)`) and from `chunk_head` while
   `now >= last_send + rn_window_ack_chunk_resend_delay(ack)`, each walk
@@ -1266,7 +1266,7 @@ main thread, after every message for the frame is queued,
 ### 11.2 The zero-copy send
 
 ```c
-uint8_t * room = rocketnet_server_start_message( server, client_index, channel, ROCKETNET_UNRELIABLE, request_bytes );
+uint8_t * room = rocketnet_server_start_message( server, client_index, channel, ROCKETNET_RELIABILITY_UNRELIABLE, request_bytes );
 /* write the message at room */
 (void) room;
 uint32_t serial = rocketnet_server_finish_message( server, client_index, message_bytes );
@@ -1330,7 +1330,7 @@ header; the internal transport and message layers are in
 - **The receive.** `rocketnet_client_receive_message` or `rocketnet_server_receive_message` hands out the update's next message on
   the channel as a const view and a length; `rocketnet_client_release_message` or `rocketnet_server_release_message` gives it back. Every view
   is released before the next update: update with one held asserts in a debug
-  build and returns `ROCKETNET_ERROR_MESSAGE_NOT_RELEASED` in a release build,
+  build and returns `ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED` in a release build,
   counted as `MESSAGE_NOT_RELEASED` (tla/RNSlots.tla, RejectUnreleasedUpdate).
   The views are taken back either way, so memory never grows from a held view.
 - **UNRELIABLE.** A code 0 record carries no channel (13.2), so an unreliable
@@ -1359,7 +1359,7 @@ header; the internal transport and message layers are in
   tag from the transport (P9b) closes it.
 - **Exhaustion** (R5). A start the region has no room for, or a record the
   receive side cannot place, ends the connection with
-  `ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED`: the server disconnects
+  `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED`: the server disconnects
   the slot, the client disconnects itself. The region is reset at the next
   update, before the transport can hand the slot to another client.
 - **Budgets** (R6) are per connection, in kbps, and are configuration: the
@@ -1406,7 +1406,7 @@ for ( ;; )                                                /* 2. receive and rele
     rocketnet_client_release_message( client, view );
 }
 /* 3. run the game simulation for this frame */
-uint8_t * out = rocketnet_client_start_message( client, channel, ROCKETNET_UNRELIABLE, (int) bytes ); /* 4. queue */
+uint8_t * out = rocketnet_client_start_message( client, channel, ROCKETNET_RELIABILITY_UNRELIABLE, (int) bytes ); /* 4. queue */
 if ( out )
 {
     memcpy( out, data, bytes );

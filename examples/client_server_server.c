@@ -56,7 +56,7 @@ int main( void )
     int had_client = 0;
     int echoed = 0;
 
-    CHECK( rocketnet_init( NULL ) );
+    CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     // a deployment mints the backend keypair in the backend and gives servers
     // only the public half; here the server bootstraps it so the separate
@@ -98,7 +98,7 @@ int main( void )
         const int max_clients = rocketnet_server_max_clients( server );
 
         // (1) update pumps the transport and takes in what arrived
-        if ( rocketnet_server_update( server, now ) != ROCKETNET_MESSAGE_OK )
+        if ( rocketnet_server_update( server, now ) != ROCKETNET_UPDATE_OK )
             break;
 
         // (2) receive and release every received message
@@ -109,7 +109,7 @@ int main( void )
             while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
             {
                 printf( "server received: %.*s\n", bytes, (const char*) data );
-                uint8_t * out = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABLE_ORDERED, bytes );
+                uint8_t * out = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
                 if ( out )
                 {
                     memcpy( out, data, (size_t) bytes );

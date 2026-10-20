@@ -111,7 +111,7 @@ static const struct rocketnet_config_field_t rocketnet_message_config_field_tabl
 // structs must have the same size, so the header and the tables cannot drift.
 
 #define ROCKETNET_CLIENT_CONFIG_STRUCT_UINT64( name, def, flags )                                           \
-    void (*state_change_callback)( void * context, int previous_state, int current_state );                 \
+    void (*state_change_callback)( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state );                 \
     double (*time_callback)( void * context );                                                              \
     uint64_t name;
 
@@ -505,7 +505,7 @@ bool rocketnet_config_apply_env_uint64( const char * transport_name, const char 
 // spellings, process-wide ROCKETNET_DRIVER and per-endpoint
 // ROCKETNET_<ENDPOINT>_DRIVER, are refused aloud, naming the variable to use
 // now, and their values are never applied. (the process-wide
-// ROCKETNET_TRANSPORT is refused by the general legacy rule in
+// ROCKETNET_TRANSPORT is refused by the general process-wide rule in
 // rocketnet_config_apply_env.)
 
 static void rocketnet_config_refuse_driver_names( const char * transport_name, const char * env_name )
@@ -550,16 +550,16 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
         // exports ROCKETNET_<FIELD> is never silently ignored -- their value
         // is NOT applied, and the error tells them the name to use now.
 
-        char legacy_name[128];
-        if ( !rocketnet_config_env_var_name( field->name, legacy_name, sizeof(legacy_name) ) )
+        char process_wide_name[128];
+        if ( !rocketnet_config_env_var_name( field->name, process_wide_name, sizeof(process_wide_name) ) )
         {
             rocketnet_error( "%s config field name \"%s\" does not fit an env var name", transport_name, field->name );
             return false;
         }
 
-        const char * legacy_value = rocketnet_platform_getenv( legacy_name );
-        if ( legacy_value && legacy_value[0] != '\0' )
-            rocketnet_error( "%s config ignores the process-wide %s: use the per-endpoint %s instead", transport_name, legacy_name, env_name );
+        const char * process_wide_value = rocketnet_platform_getenv( process_wide_name );
+        if ( process_wide_value && process_wide_value[0] != '\0' )
+            rocketnet_error( "%s config ignores the process-wide %s: use the per-endpoint %s instead", transport_name, process_wide_name, env_name );
 
         if ( strcmp( field->name, "driver" ) == 0 )
             rocketnet_config_refuse_driver_names( transport_name, env_name );

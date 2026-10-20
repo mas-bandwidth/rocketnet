@@ -67,10 +67,10 @@ struct rn_endpoint_config_t
     X( send_budget_enabled, int send_budget_enabled ) /* 0: this connection is uncapped (R6, docs/CHANNELS.md 11.5) */                                \
     X( unreliable_limit, uint32_t unreliable_limit ) /* the largest UNRELIABLE message: one record in one packet */                                   \
     X( max_payload_bytes, int max_payload_bytes ) /* the transport's payload cap (rn_endpoint_send) */                                                \
-    X( send_error, int send_error ) /* ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED once a send found no room (R5), else NONE */                  \
+    X( send_error, int send_error ) /* ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED once a send found no room (R5), else NONE */                  \
     /* CONFIG (10.3): the wait for the peer's CONFIG */                                                                                               \
     X( config_wait_start, double config_wait_start ) /* when this end began waiting for the peer's CONFIG, or -1 before its transport is connected */ \
-    X( config_error, int config_error ) /* ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT once the peer's CONFIG is past reliable_timeout, else NONE */     \
+    X( config_error, int config_error ) /* ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT once the peer's CONFIG is past reliable_timeout, else NONE */     \
     X( serial, uint32_t serial ) /* the receipt serial of the last finished send (7.4) */                                                             \
     /* the start between start and finish (one at a time) */                                                                                          \
     X( pending_type, int pending_type ) /* -1 when no start is pending */                                                                             \
@@ -245,7 +245,7 @@ void rn_endpoint_packet_failed( struct rn_endpoint_t * endpoint, uint64_t packet
 
 int rn_endpoint_take_receipts( const struct rn_endpoint_t * endpoint, struct rocketnet_message_receipt_t * out, int capacity );
 
-// 0, or the ROCKETNET_MESSAGE_ERROR_* reason the connection ends with (12).
+// 0, or the ROCKETNET_DISCONNECT_REASON_* reason the connection ends with (12).
 int rn_endpoint_error( const struct rn_endpoint_t * endpoint );
 
 // The earliest time the endpoint has work: a resend due, the reliable

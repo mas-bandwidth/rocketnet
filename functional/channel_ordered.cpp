@@ -124,8 +124,8 @@ static uint32_t rocketnet_ordered_send( rocketnet_channel_harness_t * h,
                                         int bytes )
 {
     if ( client_to_server )
-        return rocketnet_channel_harness_client_send( h, 0, ROCKETNET_RELIABLE_ORDERED, data, bytes );
-    return rocketnet_channel_harness_server_send( h, 0, ROCKETNET_RELIABLE_ORDERED, data, bytes );
+        return rocketnet_channel_harness_client_send( h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, data, bytes );
+    return rocketnet_channel_harness_server_send( h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, data, bytes );
 }
 
 // A maximum-size send needs the full receive/send span ring; wait for earlier

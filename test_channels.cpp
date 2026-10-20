@@ -961,13 +961,12 @@ void operator delete[]( void * p, size_t ) noexcept
 static char rn_log_last[1024];
 static int rn_log_lines = 0;
 
-static void rn_test_log_function( int level, const char * format, ... )
+static void rn_test_log_function( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
 {
+    (void) context;
+    (void) length;
     (void) level;
-    va_list args;
-    va_start( args, format );
-    vsnprintf( rn_log_last, sizeof(rn_log_last), format, args );
-    va_end( args );
+    snprintf( rn_log_last, sizeof(rn_log_last), "%s", message );
     rn_log_lines++;
 }
 
@@ -1580,11 +1579,11 @@ static void test_channels_allocator_sizing()
     // the print form logs the same lines at info level and returns the region bytes
 
     rocketnet_message_default_config( &config );
-    const int old_level = rocketnet_get_log_level();
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    const enum rocketnet_log_level_t old_level = rocketnet_get_log_level();
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
     const int lines_before = rn_log_lines;
     check( rocketnet_message_print_connection_sizing( &config, 16 ) == 1588480 );
-    rocketnet_log_level( old_level );
+    rocketnet_set_log_level( old_level );
     check( rn_log_lines - lines_before >= 10 );
     check( strstr( rn_log_last, "16 connections" ) != NULL );
 }
@@ -1757,7 +1756,7 @@ static void rn_soak_send( rn_soak_side_t * side )
         rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
         check( descriptor->bytes == (uint32_t) bytes );
         descriptor->serial = ++side->serial;
-        descriptor->reliability = ROCKETNET_RELIABLE_ORDERED;
+        descriptor->reliability = ROCKETNET_RELIABILITY_RELIABLE_ORDERED;
         descriptor->priority = (uint8_t) ( rn_random() % 4 );
         descriptor->channel = (uint16_t) ( rn_random() % region->num_channels );
 
@@ -1877,7 +1876,7 @@ static void rn_soak_write_and_receive( rn_soak_side_t * side, uint64_t tick )
                 check( !rd->live || rd->number == number );
                 rd->number = number;
                 rd->live = 1;
-                rd->code = ROCKETNET_RELIABLE_ORDERED;
+                rd->code = ROCKETNET_RELIABILITY_RELIABLE_ORDERED;
                 rd->channel = (uint16_t) c;
                 rd->ordering = descriptor->ordering;
                 rd->sequencing = 0;
@@ -1916,7 +1915,7 @@ static void rn_soak_write_and_receive( rn_soak_side_t * side, uint64_t tick )
             delivery->data = receiver->receive_ring + ( ring % receiver->ring_bytes );
             delivery->bytes = (int32_t) descriptor->bytes;
             delivery->channel = (uint16_t) c;
-            delivery->code = ROCKETNET_RELIABLE_ORDERED;
+            delivery->code = ROCKETNET_RELIABILITY_RELIABLE_ORDERED;
             delivery->serial = descriptor->serial;
             check( rn_region_contains( receiver, delivery->data, descriptor->bytes ) );
             for ( uint32_t b = 0; b < descriptor->bytes; b += 97 )
@@ -1993,7 +1992,7 @@ static void rn_soak_ack( rn_soak_side_t * side, uint64_t tick, bool all )
                 }
                 rn_receipt_t * receipt = &region->receipts[( side->receipt_head + side->receipt_count ) % region->receipt_entries];
                 receipt->serial = descriptor->serial;
-                receipt->status = ROCKETNET_RECEIPT_ACKED;
+                receipt->status = ROCKETNET_RECEIPT_STATUS_ACKED;
                 side->receipt_count++;
                 rn_region_send_free( region, slot->descriptor );
             }
@@ -3393,11 +3392,11 @@ static void test_channels_window_reliable_timeout_enters_the_error_state()
 
     // Just before 15.00: still alive.
     check( rn_window_ack_check_timeout( &ack, 14.999 ) == 0 );
-    check( ack.error == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
 
     // At t = 15.00 (now - first_send == 10.0 == reliable_timeout): enters error state and stops resending.
     check( rn_window_ack_resend( &ack, 15.00, &next_pkt, out, 4 ) == 0 );
-    check( ack.error == ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT );
+    check( ack.error == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
     check( rn_window_ack_check_timeout( &ack, 15.00 ) == 1 );
 
     rn_arena_destroy( arena );
@@ -3588,7 +3587,7 @@ static void test_channels_window_lossy_soak_leg( float loss_percent )
         //    before its ack returns, and the soak ends in RELIABLE_TIMEOUT.
         uint64_t resent_numbers[32];
         const uint32_t resent_count = rn_window_ack_resend( &ack, now, &next_packet_id, resent_numbers, 1 );
-        check( ack.error == ROCKETNET_MESSAGE_ERROR_NONE );
+        check( ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
         for ( uint32_t i = 0; i < resent_count; i++ )
         {
             // rn_window_ack_resend assigned packet_ids [next_packet_id - resent_count + i]
@@ -3805,7 +3804,7 @@ static void test_channels_window_lossy_soak_leg( float loss_percent )
     check( accepted_total == (int) send.next );
     check( receive.R == send.next && send.U == send.next && send.U_prime == send.next );
     check( ack.resend_count == 0 && ack.resend_head == RN_RESEND_NONE && ack.resend_tail == RN_RESEND_NONE );
-    check( ack.error == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
     check( receive.violation == ROCKETNET_MESSAGE_VIOLATION_NONE );
     check( source->descriptors_free == source->queue );
     for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
@@ -3934,7 +3933,7 @@ static void test_channels_window_lossy_soak_product_leg( float loss_percent )
         //    soak ends in RELIABLE_TIMEOUT. Every 23rd packet is a failed send
         //    (resent first next update, 6.4).
         const int written = rn_ordered_write( sender, now, pointers, 1 );
-        check( sender->ack.error == ROCKETNET_MESSAGE_ERROR_NONE );
+        check( sender->ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
         for ( int p = 0; p < written; p++ )
         {
             if ( packets_written++ % 23 == 11 )
@@ -4000,8 +3999,8 @@ static void test_channels_window_lossy_soak_product_leg( float loss_percent )
     check( next_message == total_messages && drained == 16 );
     check( delivered_total == total_messages );
     check( sender->send.U == sender->send.next && sender->ack.resend_head == RN_RESEND_NONE );
-    check( rn_ordered_decide( sender ) == ROCKETNET_MESSAGE_ERROR_NONE );
-    check( rn_ordered_decide( receiver ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( rn_ordered_decide( sender ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rn_ordered_decide( receiver ) == ROCKETNET_DISCONNECT_REASON_NONE );
     check( sender->channels.region->descriptors_free == sender->channels.region->queue );
     if ( loss_percent >= 50.0f )
         check( rn_counter( &counters[0], ROCKETNET_COUNTER_MESSAGE_RESENT ) > 0 );
@@ -4412,12 +4411,12 @@ void rocketnet_channels_prepare( const char * name )
 {
     if ( !rocketnet_channels_is_allocator_test( name ) )
         return;
-    rocketnet_allocator( rn_test_malloc_hook, rn_test_free_hook );
+    rocketnet_set_allocator( rn_test_malloc_hook, rn_test_free_hook );
 }
 
 void rocketnet_channels_prepare_log( const char * name )
 {
     if ( !rocketnet_channels_is_allocator_test( name ) )
         return;
-    rocketnet_log_function( rn_test_log_function );
+    rocketnet_set_log_callback( rn_test_log_function, NULL );
 }
