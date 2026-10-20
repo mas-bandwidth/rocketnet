@@ -2566,20 +2566,20 @@ The sender MUST estimate the round-trip time with the algorithm of RFC 6298
 over the samples of the acknowledgement mapping. The retransmission timeout
 MUST be
 
-    clamp( srtt x rto_scale_percent / 100 + 2 x rttvar, rto_min_ms, rto_max_ms )
+    clamp( srtt x resend_delay_scale_percent / 100 + 2 x rttvar, resend_delay_min_ms, resend_delay_max_ms )
 
 where srtt is the smoothed round-trip time and rttvar is its variation, both
-in seconds. Before the first sample the timeout MUST be rto_initial_ms. The
+in seconds. Before the first sample the timeout MUST be resend_delay_initial_ms. The
 timeout MUST NOT back off after a resend: every pass uses the same function of
 the samples, so a record that is never acknowledged is resent at the same
 delay until the reliable timeout ends the connection.
 
 | Name | Value | Unit | Meaning |
 |---|---|---|---|
-| `rto_initial_ms` | `100` | ms | the timeout before the first round-trip sample |
-| `rto_min_ms` | `10` | ms | the smallest timeout the estimate may take |
-| `rto_max_ms` | `250` | ms | the largest timeout the estimate may take |
-| `rto_scale_percent` | `125` | percent | the srtt weight in the timeout |
+| `resend_delay_initial_ms` | `100` | ms | the timeout before the first round-trip sample |
+| `resend_delay_min_ms` | `10` | ms | the smallest timeout the estimate may take |
+| `resend_delay_max_ms` | `250` | ms | the largest timeout the estimate may take |
+| `resend_delay_scale_percent` | `125` | percent | the srtt weight in the timeout |
 | `reliable_timeout_ms` | `10000` | ms | how long the oldest unacknowledged number may stand |
 | `resend_interval_ms` | `100` | ms | the cap on the resend delay of a single-packet record |
 | `min_resend_attempts` | `4` | count | the sends that fit before the reliable timeout |
@@ -2590,8 +2590,8 @@ A sender MUST keep two resend queues. A single-packet reliable record is in the
 small-record queue; a fragment of a block is in the chunk queue. A number MUST
 be in at most one queue.
 
-The resend delay of a single-packet record MUST be min( rto,
-resend_interval_ms ). The resend delay of a chunk MUST be min( rto,
+The resend delay of a single-packet record MUST be min( resend_delay,
+resend_interval_ms ). The resend delay of a chunk MUST be min( resend_delay,
 reliable_timeout_ms / min_resend_attempts ). A sender MUST resend a due number
 at the first update whose time is at least the number's last send plus its
 resend delay, and MUST NOT resend it before then. A resend MUST use a fresh

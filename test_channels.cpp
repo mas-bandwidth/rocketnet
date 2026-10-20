@@ -1109,9 +1109,9 @@ static void test_channels_allocator_validation()
         { "max message above the ring",             (int) offsetof( rocketnet_message_config_t, max_message_bytes ), 262144 + 16 },
         { "store too small for a maximal block",    (int) offsetof( rocketnet_message_config_t, send_buffer_bytes ), 12288 },
         { "queue below its minimum",                (int) offsetof( rocketnet_message_config_t, send_queue_messages ), 15 },
-        { "rto_min above rto_max",                  (int) offsetof( rocketnet_message_config_t, rto_min_ms ), 3000 },
-        { "rto_initial above rto_max",              (int) offsetof( rocketnet_message_config_t, rto_initial_ms ), 3000 },
-        { "rto_initial below rto_min",              (int) offsetof( rocketnet_message_config_t, rto_min_ms ), 150 },
+        { "resend_delay_min above resend_delay_max",                  (int) offsetof( rocketnet_message_config_t, resend_delay_min_ms ), 3000 },
+        { "resend_delay_initial above resend_delay_max",              (int) offsetof( rocketnet_message_config_t, resend_delay_initial_ms ), 3000 },
+        { "resend_delay_initial below resend_delay_min",              (int) offsetof( rocketnet_message_config_t, resend_delay_min_ms ), 150 },
     };
 
     for ( size_t i = 0; i < sizeof(rejected) / sizeof(rejected[0]); i++ )
@@ -1183,13 +1183,13 @@ static void test_channels_allocator_validation()
     config.send_buffer_bytes = 12288;
     config.send_queue_messages = 16;
     config.packets_in_flight = 16;
-    config.max_packets_per_update = 1;
+    config.packets_per_update = 1;
     config.unreliable_deliveries = 1;
     config.sequenced_holds = 0;
     config.receipt_ring = 16;
-    config.rto_min_ms = 1;
-    config.rto_initial_ms = 10;
-    config.rto_max_ms = 10;
+    config.resend_delay_min_ms = 1;
+    config.resend_delay_initial_ms = 10;
+    config.resend_delay_max_ms = 10;
     config.reliable_timeout_ms = 1000;
     check( rocketnet_message_validate_config( &config ) == 1 );
     check( rocketnet_message_connection_bytes( &config ) > 0 );
@@ -2923,7 +2923,7 @@ static void test_channels_window_send_and_receive_over_the_lossy_simulator()
 }
 
 // ----------------------------------------------------------------
-//      Layer 3: the sent-packet map, resend FIFO, RTT, RTO (6.4)
+//      Layer 3: the sent-packet map, resend FIFO, RTT, resend delay (6.4)
 // ----------------------------------------------------------------
 
 static void test_channels_window_ack_of_an_unknown_id_is_ignored()
@@ -2952,7 +2952,7 @@ static void test_channels_window_ack_of_an_unknown_id_is_ignored()
     check( rn_window_ack_entries_in_flight( &ack ) == 1 );
     check( ack.resend_count == 1 );
     check( ack.has_rtt == 0 );
-    check( ack.rto == 0.1 );
+    check( ack.resend_delay == 0.1 );
     check( rn_window_ack_resend_delay( &ack ) == 0.1 );
     const uint32_t free_desc_before = region->descriptors_free;
 
@@ -2965,7 +2965,7 @@ static void test_channels_window_ack_of_an_unknown_id_is_ignored()
     check( rn_window_ack_entries_in_flight( &ack ) == 1 );
     check( ack.resend_count == 1 );
     check( ack.has_rtt == 0 );
-    check( ack.rto == 0.1 );
+    check( ack.resend_delay == 0.1 );
     check( rn_window_ack_resend_delay( &ack ) == 0.1 );
     check( send.U == 0 && send.U_prime == 0 );
     check( region->descriptors_free == free_desc_before );
@@ -2979,9 +2979,9 @@ static void test_channels_window_ack_of_an_unknown_id_is_ignored()
 
     // A duplicate ack of packet 10 is now unknown and ignored without altering RTT.
     const double srtt_after = ack.srtt;
-    const double rto_after = ack.rto;
+    const double resend_delay_after = ack.resend_delay;
     check( rn_window_ack_on_ack( &ack, 10, 1.50 ) == 0 );
-    check( ack.srtt == srtt_after && ack.rto == rto_after );
+    check( ack.srtt == srtt_after && ack.resend_delay == resend_delay_after );
 
     rn_arena_destroy( arena );
 }
@@ -3083,8 +3083,8 @@ static void test_channels_window_rtt_sample_is_unambiguous_across_resends()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.rto_initial_ms = 200;
-    config.rto_max_ms = 2000;                                   // so the RTO formula shows unclamped
+    config.resend_delay_initial_ms = 200;
+    config.resend_delay_max_ms = 2000;                                   // so the resend delay formula shows unclamped
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -3114,7 +3114,7 @@ static void test_channels_window_rtt_sample_is_unambiguous_across_resends()
         check( ack.has_rtt == 1 );
         check( ack.srtt > 0.299999 && ack.srtt < 0.300001 );
         check( ack.rttvar > 0.149999 && ack.rttvar < 0.150001 );
-        check( ack.rto > 0.674999 && ack.rto < 0.675001 );     // 1.25 x 0.30 + 2 x 0.15
+        check( ack.resend_delay > 0.674999 && ack.resend_delay < 0.675001 );     // 1.25 x 0.30 + 2 x 0.15
         check( send.U == 1 && ack.resend_count == 0 );
 
         // Subsequent ack of packet 2 at t = 1.35 does not double-ack n0.
@@ -3144,7 +3144,7 @@ static void test_channels_window_rtt_sample_is_unambiguous_across_resends()
         check( ack.has_rtt == 1 );
         check( ack.srtt > 0.079999 && ack.srtt < 0.080001 );
         check( ack.rttvar > 0.039999 && ack.rttvar < 0.040001 );
-        check( ack.rto > 0.179999 && ack.rto < 0.180001 );     // 1.25 x 0.08 + 2 x 0.04
+        check( ack.resend_delay > 0.179999 && ack.resend_delay < 0.180001 );     // 1.25 x 0.08 + 2 x 0.04
         check( send.U == 1 && ack.resend_count == 0 );
     }
 
@@ -3156,7 +3156,7 @@ static void test_channels_window_eviction_keeps_numbers_resendable()
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.packets_in_flight = 16; // P = 16, 16P = 256
-    config.rto_initial_ms = 200;
+    config.resend_delay_initial_ms = 200;
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -3187,7 +3187,7 @@ static void test_channels_window_eviction_keeps_numbers_resendable()
     for ( uint64_t id = 1; id <= 4; id++ )
         check( rn_window_ack_on_ack( &ack, id, 1.05 ) == 0 );
 
-    // Yet all 20 numbers remain in the resend FIFO and resend on RTO at t = 1.25!
+    // Yet all 20 numbers remain in the resend FIFO and resend on resend delay at t = 1.25!
     uint64_t next_pkt = 100;
     uint64_t resent[32];
     const uint32_t count = rn_window_ack_resend( &ack, 1.25, &next_pkt, resent, 32 );
@@ -3212,11 +3212,11 @@ static void test_channels_window_eviction_keeps_numbers_resendable()
 
 static void test_channels_window_resend_delay_never_backs_off()
 {
-    // tla/RNResendTiming.tla: every resend waits min( rto, resend_interval ),
-    // the same delay each pass; an ack moves rto, never a back-off factor
+    // tla/RNResendTiming.tla: every resend waits min( resend_delay, resend_interval ),
+    // the same delay each pass; an ack moves resend_delay, never a back-off factor
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.rto_initial_ms = 250;                                // above the 100 ms resend interval
+    config.resend_delay_initial_ms = 250;                                // above the 100 ms resend interval
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -3233,7 +3233,7 @@ static void test_channels_window_resend_delay_never_backs_off()
     uint64_t n0 = 0, p0 = 0;
     check( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, RN_DESCRIPTOR_NONE, &n0, &p0 ) == RN_WINDOW_SEND_NUMBERED );
     rn_window_ack_commit_packet( &ack, 1, &n0, 1, t0 );
-    check( ack.rto == 0.25 && rn_window_ack_resend_delay( &ack ) == 0.1 );     // min( rto, the interval )
+    check( ack.resend_delay == 0.25 && rn_window_ack_resend_delay( &ack ) == 0.1 );     // min( resend_delay, the interval )
 
     uint64_t next_pkt = 2;
     uint64_t out[4];
@@ -3249,7 +3249,7 @@ static void test_channels_window_resend_delay_never_backs_off()
         check( rn_window_ack_resend_delay( &ack ) == 0.1 );
     }
 
-    // an ack of the latest send takes a sample: rto follows it, and the
+    // an ack of the latest send takes a sample: resend_delay follows it, and the
     // resend interval still caps the delay
     check( rn_window_ack_on_ack( &ack, next_pkt - 1, last + 0.04 ) == 1 );
     check( ack.has_rtt == 1 );
@@ -3262,7 +3262,7 @@ static void test_channels_window_resend_walk_stops_at_the_first_not_due()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.rto_initial_ms = 200;
+    config.resend_delay_initial_ms = 200;
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -3284,7 +3284,7 @@ static void test_channels_window_resend_walk_stops_at_the_first_not_due()
     }
     check( ack.resend_head == 0 && ack.resend_tail == 4 && ack.resend_count == 5 );
 
-    // At t = 1.26 (rto = 0.20, backoff = 1):
+    // At t = 1.26 (resend_delay = 0.20, backoff = 1):
     // n = 0 (due 1.20) and n = 1 (due 1.25) are due; n = 2 (due 1.40) is not due.
     uint64_t next_pkt = 10;
     uint64_t resent[8];
@@ -3307,7 +3307,7 @@ static void test_channels_window_failed_send_marks_due_now()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.rto_initial_ms = 200;
+    config.resend_delay_initial_ms = 200;
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -3345,7 +3345,7 @@ static void test_channels_window_failed_send_marks_due_now()
     check( region->resend_fifo[2].next == 0 );
     check( ack.resend_tail == 0 );
 
-    // At t = 1.02 (no RTO wait), resend immediately emits n = 1 and n = 2, and stops at n = 0.
+    // At t = 1.02 (no resend delay wait), resend immediately emits n = 1 and n = 2, and stops at n = 0.
     uint64_t next_pkt = 2;
     uint64_t out[4];
     check( rn_window_ack_resend( &ack, 1.02, &next_pkt, out, 4 ) == 2 );
@@ -3361,7 +3361,7 @@ static void test_channels_window_reliable_timeout_enters_the_error_state()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.rto_initial_ms = 250;
+    config.resend_delay_initial_ms = 250;
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -3379,7 +3379,7 @@ static void test_channels_window_reliable_timeout_enters_the_error_state()
     check( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, RN_DESCRIPTOR_NONE, &n0, &p0 ) == RN_WINDOW_SEND_NUMBERED );
     rn_window_ack_commit_packet( &ack, 1, &n0, 1, 5.00 );
 
-    // Resend across several RTO passes so last_send advances while first_send stays 5.00.
+    // Resend across several resend delay passes so last_send advances while first_send stays 5.00.
     uint64_t next_pkt = 2;
     uint64_t out[4];
     check( rn_window_ack_resend( &ack, 5.25, &next_pkt, out, 4 ) == 1 );
@@ -3507,9 +3507,9 @@ static void test_channels_window_lossy_soak_leg( float loss_percent )
     config.send_buffer_bytes = 65536;
     config.send_queue_messages = 64;
     config.packets_in_flight = (int) P;
-    config.rto_min_ms = 20;
-    config.rto_initial_ms = 50;
-    config.rto_max_ms = 400;
+    config.resend_delay_min_ms = 20;
+    config.resend_delay_initial_ms = 50;
+    config.resend_delay_max_ms = 400;
     config.reliable_timeout_ms = 60000;
 
     rocketnet_counters_t counters;
@@ -3581,7 +3581,7 @@ static void test_channels_window_lossy_soak_leg( float loss_percent )
         }
 
         // 2. Resend due numbers from the resend FIFO, one packet per tick: the
-        //    per-update packet limit the writers keep (max_packets_per_update),
+        //    per-update packet limit the writers keep (packets_per_update),
         //    so the packets written in one RTT stay under P and acks land on
         //    live sent-map entries (docs/CHANNELS.md 14, "Sizing P"). With no
         //    back-off an unbounded resend walk at P = 16 evicts every entry
@@ -3844,9 +3844,9 @@ static void test_channels_window_lossy_soak_product_leg( float loss_percent )
     config.send_buffer_bytes = 262144;
     config.send_queue_messages = 256;
     config.packets_in_flight = 16;
-    config.rto_min_ms = 20;
-    config.rto_initial_ms = 50;
-    config.rto_max_ms = 400;
+    config.resend_delay_min_ms = 20;
+    config.resend_delay_initial_ms = 50;
+    config.resend_delay_max_ms = 400;
     config.reliable_timeout_ms = 60000;
 
     rocketnet_counters_t counters[2];

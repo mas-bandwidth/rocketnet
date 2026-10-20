@@ -86,15 +86,15 @@ extern "C" {
 #define ROCKETNET_MESSAGE_FRAGMENT_BYTES                             1152
 
 // The reliable resend schedule (docs/CHANNELS.md 6.4). Every resend of a
-// record waits min( rto, ROCKETNET_MESSAGE_RESEND_INTERVAL_MS ), with no
-// back-off, and rto = clamp( srtt x ROCKETNET_MESSAGE_RTO_SCALE_PERCENT / 100
-// + 2 rttvar, rto_min_ms, rto_max_ms ). Validation refuses reliable_timeout_ms
+// record waits min( resend_delay, ROCKETNET_MESSAGE_RESEND_INTERVAL_MS ), with no
+// back-off, and resend_delay = clamp( srtt x ROCKETNET_MESSAGE_RESEND_DELAY_SCALE_PERCENT / 100
+// + 2 rttvar, resend_delay_min_ms, resend_delay_max_ms ). Validation refuses reliable_timeout_ms
 // below ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS times
-// max( ROCKETNET_MESSAGE_RESEND_INTERVAL_MS, rto_initial_ms ), the sends that
+// max( ROCKETNET_MESSAGE_RESEND_INTERVAL_MS, resend_delay_initial_ms ), the sends that
 // must fit before reliable_timeout gives up on a record.
 
 #define ROCKETNET_MESSAGE_RESEND_INTERVAL_MS                         100
-#define ROCKETNET_MESSAGE_RTO_SCALE_PERCENT                          125
+#define ROCKETNET_MESSAGE_RESEND_DELAY_SCALE_PERCENT                          125
 #define ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS                        4
 
 // What a clean run shows of a counter. Every counter has exactly one class.
@@ -1465,7 +1465,7 @@ struct rocketnet_message_config_t
     /** @brief Tracked unacknowledged packets; 16 through 1<<16, default 256. */
     int packets_in_flight;              // 16 .. 1 << 16; default 256
     /** @brief Packets sent per connection per update, in-place unreliable messages and the send pass together; 1 through 1024, default 256. */
-    int max_packets_per_update;         // 1 .. 1024; default 256
+    int packets_per_update;         // 1 .. 1024; default 256
     /** @brief Unreliable deliveries per connection per update; 1 through 1<<16, default 256. */
     int unreliable_deliveries;          // per connection per update; 1 .. 1 << 16; default 256
     /** @brief Messages held for sequenced delivery; 0 through 4096, default 16. */
@@ -1473,11 +1473,11 @@ struct rocketnet_message_config_t
     /** @brief Receipt history entries; 16 through 1<<16, default 256; a full ring drops its oldest. */
     int receipt_ring;                   // 16 .. 1 << 16; default 256
     /** @brief Initial retransmit timeout in milliseconds; 10 through 60000, default 100. */
-    int rto_initial_ms;                 // 10 .. 60000; default 100
+    int resend_delay_initial_ms;                 // 10 .. 60000; default 100
     /** @brief Minimum retransmit timeout in milliseconds; 1 through 60000, default 10. */
-    int rto_min_ms;                     // 1 .. 60000; default 10
+    int resend_delay_min_ms;                     // 1 .. 60000; default 10
     /** @brief Maximum retransmit timeout in milliseconds; 10 through 60000, default 250. */
-    int rto_max_ms;                     // 10 .. 60000; default 250
+    int resend_delay_max_ms;                     // 10 .. 60000; default 250
     /** @brief Reliable-message lifetime in milliseconds; 1000 through 600000, default 10000. */
     int reliable_timeout_ms;            // 1000 .. 600000; default 10000
     /** @brief Default client send budget in kilobits per second; zero or less is uncapped, positive values may not exceed ROCKETNET_SEND_BUDGET_MAX_KBPS. */

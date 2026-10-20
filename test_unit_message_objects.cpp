@@ -397,11 +397,11 @@ static void mo_config( rocketnet_message_config_t * config )
     config->send_buffer_bytes = 65536;
     config->send_queue_messages = 64;
     config->packets_in_flight = 64;
-    config->max_packets_per_update = 8;
+    config->packets_per_update = 8;
     config->unreliable_deliveries = 64;
-    config->rto_initial_ms = 100;
-    config->rto_min_ms = 20;
-    config->rto_max_ms = 400;
+    config->resend_delay_initial_ms = 100;
+    config->resend_delay_min_ms = 20;
+    config->resend_delay_max_ms = 400;
     config->reliable_timeout_ms = 120000;
 }
 
@@ -1277,7 +1277,7 @@ static void acks_only_from_transport_acked_packets()
     }
     check( delivered == 1 );                                                       // once, however often it arrives
     check( region->descriptors_free == region->queue - 2 );                        // still in flight: no ack, no release (this message and the connection's CONFIG, 10.3)
-    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_RESENT ) > 0 );          // resent on its RTO
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_RESENT ) > 0 );          // resent on its resend delay
     check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_DUPLICATE ) > 0 );
 
     // a delivered payload is not an ack, nor is any other event: the record

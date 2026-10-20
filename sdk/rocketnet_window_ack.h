@@ -11,7 +11,7 @@
 #include "rocketnet_window_send.h"
 
 // Layer 3 of the message layer: the sent-packet map, the resend FIFO, RTT,
-// RTO, resend delay, failed-send recovery, and reliable timeout (docs/CHANNELS.md
+// RTT, resend delay, failed-send recovery, and reliable timeout (docs/CHANNELS.md
 // section 6.4; TLA+ actions WritePacket, WriteOldest, ReceiveAck and
 // invariants TablesBounded and EveryReliableAckedAndDelivered in
 // tla/RNWindow.tla).
@@ -50,7 +50,7 @@
 //   delay at the resend <= gap < delay at the update before + the time between the two updates
 //
 // The delay of the earlier send is not a bound: an RTT sample between the two
-// sends moves the RTO, and the walk follows the delay in force at each update.
+// sends moves the resend delay, and the walk follows the delay in force at each update.
 // Nothing allocates; a resend costs a class lookup and a few compares.
 struct rn_resend_gaps_t
 {
@@ -72,16 +72,16 @@ struct rn_window_ack_t
     rn_window_send_t * send;        // the sender's numbering window (U, U', next)
     rn_region_t * region;           // the connection's carved region
 
-    double rto_initial;             // seconds (default 0.1)
-    double rto_min;                 // seconds (default 0.01)
-    double rto_max;                 // seconds (default 0.25)
+    double resend_delay_initial;      // seconds (default 0.1)
+    double resend_delay_min;          // seconds (default 0.01)
+    double resend_delay_max;          // seconds (default 0.25)
     double reliable_timeout;        // seconds (default 10.0)
     double resend_interval;         // seconds (default 0.1): the cap on the resend delay
-    double rto_scale;               // ROCKETNET_MESSAGE_RTO_SCALE_PERCENT / 100 (1.25)
+    double resend_delay_scale;        // ROCKETNET_MESSAGE_RESEND_DELAY_SCALE_PERCENT / 100 (1.25)
 
     double srtt;                    // smoothed RTT (RFC 6298)
     double rttvar;                  // RTT variation (RFC 6298)
-    double rto;                     // current clamped RTO; there is no back-off (tla/RNResendTiming.tla)
+    double resend_delay;              // current clamped resend delay; there is no back-off (tla/RNResendTiming.tla)
     uint8_t has_rtt;                // 0 before the first valid ack sample, 1 after
     uint8_t has_oldest;             // 1 while oldest_number is tracked at U
     uint16_t pad;
@@ -118,27 +118,27 @@ struct rn_window_ack_t
 #endif // #if ROCKETNET_DEVELOPMENT
 };
 
-// The resend delay of a single-packet record: min( rto, resend_interval ),
+// The resend delay of a single-packet record: min( resend_delay, resend_interval ),
 // the same for every resend, with no back-off (docs/CHANNELS.md 6.4 "Resend";
 // tla/RNResendTiming.tla Delay("s") with MaxBackoff = 1). The three resend
 // walks (rn_window_ack_resend, rn_ordered_write, rn_message_ordered_due) read
 // it for the small-record FIFO.
 static inline double rn_window_ack_resend_delay( const rn_window_ack_t * ack )
 {
-    return ack->rto < ack->resend_interval ? ack->rto : ack->resend_interval;
+    return ack->resend_delay < ack->resend_interval ? ack->resend_delay : ack->resend_interval;
 }
 
-// The resend delay of a chunk of a block: the RTO alone, not the 100 ms cap,
+// The resend delay of a chunk of a block: the resend delay alone, not the 100 ms cap,
 // so a large block on a long path is not sent again before its acks can
 // return (docs/CHANNELS.md 6.4 "Resend"; tla/RNResendTiming.tla Delay("c")).
 // It is capped at reliable_timeout / ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS
 // (ChunkCap) so the attempts rule holds for chunks under any accepted
-// rto_max; at the defaults (2.5 s against rto_max 250 ms) the cap never binds.
+// resend_delay_max; at the defaults (2.5 s against resend_delay_max 250 ms) the cap never binds.
 // The same for every resend, with no back-off.
 static inline double rn_window_ack_chunk_resend_delay( const rn_window_ack_t * ack )
 {
     const double cap = ack->reliable_timeout / (double) ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS;
-    return ack->rto < cap ? ack->rto : cap;
+    return ack->resend_delay < cap ? ack->resend_delay : cap;
 }
 
 // Whether the number in send_numbers slot `slot_index` is a chunk of a block:
@@ -187,13 +187,13 @@ void rn_window_ack_receipt_emit_loss( rn_window_ack_t * ack, uint32_t serial );
 int rn_window_ack_receipts( const rn_window_ack_t * ack, rocketnet_message_receipt_t * out, int capacity );
 
 // Processes one acked transport sequence `packet_id` at time `now`
-// (docs/CHANNELS.md 6.4 "Ack" and "RTO"; tla/RNWindow.tla ReceiveAck,
+// (docs/CHANNELS.md 6.4 "Ack" and "resend delay"; tla/RNWindow.tla ReceiveAck,
 // tla/RNResendTiming.tla Sample).
 // Looks up `packet_id` in sent_index in O(1). If absent (an ack of a keep-alive
 // or pure-unreliable packet, a duplicate ack, or an ack arriving after eviction),
 // does nothing and returns 0.
 // If present: takes one RTT sample now - send_time, updates srtt, rttvar, and
-// rto = clamp(srtt * rto_scale + 2 * rttvar, rto_min, rto_max), marks
+// resend_delay = clamp(srtt * resend_delay_scale + 2 * rttvar, resend_delay_min, resend_delay_max), marks
 // each still-unacked referenced number >= U acked, unlinks it from the resend
 // FIFO, frees its chunk in region->store (and frees its send descriptor back to Q
 // when its last fragment is acked), advances U and U', and removes the entry
@@ -236,7 +236,7 @@ uint32_t rn_window_ack_resend( rn_window_ack_t * ack, double now, uint64_t * io_
 
 // The resend gap record's clock (development builds only; a no-op otherwise):
 // called once per update before the update's packets are written, with the
-// update's time, after its acks have moved the RTO. It keeps this update's and
+// update's time, after its acks have moved the resend delay. It keeps this update's and
 // the previous update's class delays for rn_window_ack_commit's measure.
 #if ROCKETNET_DEVELOPMENT
 void rn_window_ack_gaps_update( rn_window_ack_t * ack, double now );

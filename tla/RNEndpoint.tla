@@ -32,7 +32,7 @@
 (* RNChannelTypes check: a reliable record takes its number in queue       *)
 (* order, is first written only while its number is below U + W (U the    *)
 (* oldest unacked number), and may be resent at any time until acked (the  *)
-(* RTO is abstract, as in RNWindow; its timing is RNResendTiming's).  The  *)
+(* resend delay is abstract, as in RNWindow; its timing is RNResendTiming's).  The  *)
 (* receiver keeps the received set (RNWindow's R and bitset), drops a      *)
 (* duplicate, and holds an ordered message until its channel predecessors  *)
 (* are received (RNChannelTypes).                                          *)
@@ -75,7 +75,7 @@ CONSTANTS
     Failures,       \* BOOLEAN: a written packet may fail to send (PacketFailed, P5)
     WriteAll,       \* BOOLEAN: a packet carries every due record (a model-size knob;
                     \* TRUE on an in-order link leaves ordering unexercised)
-    RtoAboveRtt,    \* BOOLEAN: a record is resent only once its copy and its ack are gone
+    ResendDelayAboveRtt,    \* BOOLEAN: a record is resent only once its copy and its ack are gone
     ABPattern,      \* Link loss pattern, a to b
     BAPattern,      \* Link loss pattern, b to a
     Capacity, MaxDelay, Duplication, Reordering, BurstStart, BurstLen
@@ -96,7 +96,7 @@ ASSUME /\ N \in Nat \ {0}
        /\ ConfigReliable \in BOOLEAN /\ ConfigCompared \in BOOLEAN
        /\ OrderChecked \in BOOLEAN
        /\ TimeoutAnyTime \in BOOLEAN /\ Silence \in BOOLEAN /\ Failures \in BOOLEAN
-       /\ WriteAll \in BOOLEAN /\ RtoAboveRtt \in BOOLEAN
+       /\ WriteAll \in BOOLEAN /\ ResendDelayAboveRtt \in BOOLEAN
 
 \* a packet: reliable records, unreliable records, and the transport acks
 \* it carries back (the records of the peer's packets this end opened)
@@ -165,7 +165,7 @@ Oldest(e)   == relQ[e][UPos(e)]
 Writable(e) == {relQ[e][i] : i \in {j \in DOMAIN relQ[e] :
                     j < UPos(e) + W /\ relQ[e][j] \notin acked[e]}}
 
-\* RtoAboveRtt: the abstract RTO, bounded below by the RTT.  A record is
+\* ResendDelayAboveRtt: the abstract resend delay, bounded below by the RTT.  A record is
 \* due again only once no copy of it is in flight out of e and no ack of
 \* it is pending at the peer or in flight back: the resend answers a real
 \* loss.  RNResendTiming checks the timing that makes this so.
@@ -173,7 +173,7 @@ WireOutOf(e)  == IF e = "a" THEN abWire ELSE baWire
 InFlight(e)   == UNION {WireOutOf(e)[i].pkt.rel : i \in DOMAIN WireOutOf(e)}
 AckInFlight(e) ==
     pendAck[Peer(e)] \cup UNION {WireOutOf(Peer(e))[i].pkt.acks : i \in DOMAIN WireOutOf(Peer(e))}
-Due(e) == IF RtoAboveRtt THEN Writable(e) \ (InFlight(e) \cup AckInFlight(e))
+Due(e) == IF ResendDelayAboveRtt THEN Writable(e) \ (InFlight(e) \cup AckInFlight(e))
                          ELSE Writable(e)
 
 \* the ordered messages that must be delivered before k (7.2, per channel)
@@ -339,7 +339,7 @@ OnPayload(e, p) ==
 (***************************************************************************)
 (* Tick (rn_endpoint_tick): the reliable timeout.  An endpoint still       *)
 (* waiting for the peer's CONFIG, or with a reliable record unacked, past  *)
-(* reliable_timeout enters RELIABLE_TIMEOUT.  The RTO due marks are        *)
+(* reliable_timeout enters RELIABLE_TIMEOUT.  The resend delay due marks are        *)
 (* abstract (any unacked record may be resent at any time), so Tick here   *)
 (* is the timeout alone.  With TimeoutAnyTime the timeout may fire at any  *)
 (* moment (safety holds whenever it fires); without it, only once the peer *)

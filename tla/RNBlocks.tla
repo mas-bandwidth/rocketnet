@@ -23,7 +23,7 @@
 (* stands for its bytes.  Acks are not modelled (RNWindow checks them and  *)
 (* the U' rule; RNRing checks ring reuse), so nothing is ever acked, U' is *)
 (* the first number and the floor is the first span's start; the instance *)
-(* is one window wide and one ring long.  The RTO is abstract: any         *)
+(* is one window wide and one ring long.  The resend delay is abstract: any         *)
 (* numbered record may be resent at any time.                              *)
 (*                                                                         *)
 (* The receiver.  A record passes layer 3's duplicate check (a number      *)

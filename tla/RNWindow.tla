@@ -27,8 +27,8 @@
 (* the oldest when full.  A record takes its number late, when it is first *)
 (* written, and only while n < U' + W.  Writing a packet gives it a fresh  *)
 (* id and any set of unacked numbers: a first send, a resend, or both in   *)
-(* one packet.  The RTO is abstract: any unacked number may be resent at   *)
-(* any time (6.4, "resent on the RTO"); last_send and the resend FIFO      *)
+(* one packet.  The resend delay is abstract: any unacked number may be resent at   *)
+(* any time (6.4, "resent on the resend delay"); last_send and the resend FIFO      *)
 (* therefore have no counterpart here.  Blocks appear only as their effect *)
 (* on U' and on the receiver's holds: one block of BlockLen consecutive    *)
 (* numbers, numbered at one moment (section 8).                            *)
@@ -235,7 +235,7 @@ NumberRecord ==
     /\ UNCHANGED <<acked, smap, receiverVars, ghostVars, fwdVars, revVars>>
 
 \* A packet is written: a fresh id, carrying any unacked numbered records,
-\* first sends and resends alike (the RTO is abstract: any unacked number
+\* first sends and resends alike (the resend delay is abstract: any unacked number
 \* may be resent at any time).  The sent map records it, evicting the
 \* oldest entry when full (6.4); the evicted entry's numbers keep their
 \* state and stay resendable.
@@ -411,17 +411,17 @@ Next ==
 (* deterministic patterns on a FIFO link without duplication.              *)
 (*                                                                         *)
 (* AcksLand: acks that still matter land.  The model's stand-in for real   *)
-(* time: with the RTO abstract, the sender may write faster than any ack   *)
-(* returns and evict every entry before its ack lands; the real RTO is     *)
+(* time: with the resend delay abstract, the sender may write faster than any ack   *)
+(* returns and evict every entry before its ack lands; the real resend delay is     *)
 (* above the RTT, so acks land before eviction.  In Fairness, because the  *)
-(* abstract RTO outpaces every pattern, not only "arbitrary".              *)
+(* abstract resend delay outpaces every pattern, not only "arbitrary".              *)
 (*                                                                         *)
 (* OldestLands (FairnessTyped) adds what "arbitrary" needs, where Drop     *)
 (* removes copies in flight: the oldest number, written without bound, is  *)
 (* opened without bound.                                                   *)
 (***************************************************************************)
 \* The oldest unacked number is written: the resend FIFO's guarantee that
-\* the oldest record reaches the head and is resent on the RTO.  Fairness
+\* the oldest record reaches the head and is resent on the resend delay.  Fairness
 \* on this one action, rather than on every number, is enough (once U is
 \* acked the next number is the oldest) and costs TLC a fraction of the
 \* per-number conditions, which ran the liveness check for twenty minutes
@@ -445,8 +445,8 @@ DeliveryFairHead == SF_vars(OpenHead) /\ SF_vars(ReceiveAckAny)
 
 \* Acks that still matter land: if acks leave without bound, acks naming an
 \* id the map still holds arrive without bound.  The model's stand-in for
-\* the RTO being above the RTT (and P above the packets written per RTT):
-\* with the RTO abstract, TLC found the sender writing a number twice
+\* the resend delay being above the RTT (and P above the packets written per RTT):
+\* with the resend delay abstract, TLC found the sender writing a number twice
 \* between the receiver opening it and its ack landing, so every ack named
 \* an evicted id and the number was never acked (README-RNWindow.md).
 AcksLand == ([]<> <<SendAckThrough>>_vars) => ([]<> <<ReceiveUsefulAck>>_vars)

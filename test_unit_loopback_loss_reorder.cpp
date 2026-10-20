@@ -426,11 +426,11 @@ static void loopback_reliable_ordered_survives_loss_and_reorder()
     message_config.send_buffer_bytes = 65536;
     message_config.send_queue_messages = 1024;
     message_config.packets_in_flight = 64;
-    message_config.max_packets_per_update = 8;
+    message_config.packets_per_update = 8;
     message_config.unreliable_deliveries = 64;
-    message_config.rto_initial_ms = 100;
-    message_config.rto_min_ms = 20;
-    message_config.rto_max_ms = 400;
+    message_config.resend_delay_initial_ms = 100;
+    message_config.resend_delay_min_ms = 20;
+    message_config.resend_delay_max_ms = 400;
     message_config.reliable_timeout_ms = 120000;
 
     struct rn_message_link_t server_link;

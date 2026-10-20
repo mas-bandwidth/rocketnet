@@ -110,9 +110,9 @@ static void node_config( rocketnet_message_config_t * config, int window, int ri
     config->receive_ring_bytes = ring;
     config->max_message_bytes = max_message;
     config->send_buffer_bytes = store;
-    config->rto_min_ms = 20;
-    config->rto_initial_ms = 100;
-    config->rto_max_ms = 400;
+    config->resend_delay_min_ms = 20;
+    config->resend_delay_initial_ms = 100;
+    config->resend_delay_max_ms = 400;
     config->reliable_timeout_ms = 120000;
 }
 
@@ -502,13 +502,13 @@ static void small_packed_and_resent_until_packet_acked()
     }
     check( n == 4 );
 
-    // the packet is lost. Before the RTO, nothing is resent
+    // the packet is lost. Before the resend delay, nothing is resent
     now += 0.05;
     wire_packet_t none[4];
     check( write_packets( a, now, none, 4 ) == 0 );
     check( counter( a, ROCKETNET_COUNTER_MESSAGE_RESENT ) == 0 );
 
-    // after the RTO passes without a transport ack, the same four numbers go again, packed again
+    // after the resend delay passes without a transport ack, the same four numbers go again, packed again
     now += 0.07;
     wire_packet_t second[4];
     check( write_packets( a, now, second, 4 ) == 1 );

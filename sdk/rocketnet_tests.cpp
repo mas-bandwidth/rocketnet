@@ -12534,9 +12534,9 @@ void rocketnet_test_public_config_resolve()
     client.time_callback = rocketnet_test_resolve_time;
     client.send_kbps = 1234;
     client.num_channels = 7; client.window_messages = 128; client.receive_ring_bytes = 8192; client.max_message_bytes = 4096;
-    client.send_buffer_bytes = 20000; client.send_queue_messages = 32; client.packets_in_flight = 32; client.max_packets_per_update = 2;
-    client.unreliable_deliveries = 17; client.sequenced_holds = 5; client.receipt_ring = 32; client.rto_initial_ms = 200;
-    client.rto_min_ms = 20; client.rto_max_ms = 300; client.reliable_timeout_ms = 5000;
+    client.send_buffer_bytes = 20000; client.send_queue_messages = 32; client.packets_in_flight = 32; client.packets_per_update = 2;
+    client.unreliable_deliveries = 17; client.sequenced_holds = 5; client.receipt_ring = 32; client.resend_delay_initial_ms = 200;
+    client.resend_delay_min_ms = 20; client.resend_delay_max_ms = 300; client.reliable_timeout_ms = 5000;
     rocketnet_check( rocketnet_client_config_resolve( &client, true, &client_transport, &message, &kbps ) );
     rocketnet_check( memcmp( client_transport.filter_value, filter, 4 ) == 0 );
     rocketnet_check( client_transport.max_payload_bytes == 2000 && client_transport.num_reassembly_slots == 3 );
@@ -12544,9 +12544,9 @@ void rocketnet_test_public_config_resolve()
     rocketnet_check( client_transport.state_change_callback == rocketnet_test_resolve_state_change && client_transport.time_callback == rocketnet_test_resolve_time );
     rocketnet_check( kbps == 1234 );
     rocketnet_check( message.num_channels == 7 && message.window_messages == 128 && message.receive_ring_bytes == 8192 && message.max_message_bytes == 4096 );
-    rocketnet_check( message.send_buffer_bytes == 20000 && message.send_queue_messages == 32 && message.packets_in_flight == 32 && message.max_packets_per_update == 2 );
-    rocketnet_check( message.unreliable_deliveries == 17 && message.sequenced_holds == 5 && message.receipt_ring == 32 && message.rto_initial_ms == 200 );
-    rocketnet_check( message.rto_min_ms == 20 && message.rto_max_ms == 300 && message.reliable_timeout_ms == 5000 );
+    rocketnet_check( message.send_buffer_bytes == 20000 && message.send_queue_messages == 32 && message.packets_in_flight == 32 && message.packets_per_update == 2 );
+    rocketnet_check( message.unreliable_deliveries == 17 && message.sequenced_holds == 5 && message.receipt_ring == 32 && message.resend_delay_initial_ms == 200 );
+    rocketnet_check( message.resend_delay_min_ms == 20 && message.resend_delay_max_ms == 300 && message.reliable_timeout_ms == 5000 );
 
     // the env displaces the struct
 

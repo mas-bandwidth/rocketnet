@@ -3,12 +3,12 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The resend delay of a reliable record (docs/CHANNELS.md 6.4 "RTO" and
+// The resend delay of a reliable record (docs/CHANNELS.md 6.4 "resend delay" and
 // "Resend"; tla/RNResendTiming.tla): every resend waits
-// min( rto, ROCKETNET_MESSAGE_RESEND_INTERVAL_MS ), with no back-off, and
-// rto = clamp( srtt x ROCKETNET_MESSAGE_RTO_SCALE_PERCENT / 100 + 2 rttvar,
-// rto_min, rto_max ),
-// rto_initial before the first sample. The validation refuses a config that
+// min( resend_delay, ROCKETNET_MESSAGE_RESEND_INTERVAL_MS ), with no back-off, and
+// resend_delay = clamp( srtt x ROCKETNET_MESSAGE_RESEND_DELAY_SCALE_PERCENT / 100 + 2 rttvar,
+// resend_delay_min, resend_delay_max ),
+// resend_delay_initial before the first sample. The validation refuses a config that
 // fits fewer than ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS sends before
 // reliable_timeout.
 //
@@ -88,11 +88,11 @@ static uint32_t resend_timing_pass( resend_timing_fixture_t * f, double now )
 }
 
 // resend_delay_is_min_of_interval_and_rtt: on a short path the delay is the
-// RTO, 1.25 srtt + 2 rttvar; on a long path the RTO clamps at rto_max and the
+// resend delay, 1.25 srtt + 2 rttvar; on a long path the resend delay clamps at resend_delay_max and the
 // 100 ms resend interval is the delay.
 static void resend_delay_is_min_of_interval_and_rtt()
 {
-    // short path: one sample of 20 ms gives rto = 25 + 20 = 45 ms, under the cap
+    // short path: one sample of 20 ms gives resend_delay = 25 + 20 = 45 ms, under the cap
     {
         resend_timing_fixture_t f;
         rocketnet_message_default_config( &f.config );
@@ -102,13 +102,13 @@ static void resend_delay_is_min_of_interval_and_rtt()
         const uint64_t other = resend_timing_send( &f, t0, NULL );
         check( rn_window_ack_on_ack( &f.ack, other, t0 + 0.020 ) == 1 );
         check( f.ack.has_rtt == 1 );
-        check( fabs( f.ack.rto - 0.045 ) < 0.0005 );
-        check( resend_timing_pass( &f, t0 + 0.040 ) == 0 );     // not before the RTO
+        check( fabs( f.ack.resend_delay - 0.045 ) < 0.0005 );
+        check( resend_timing_pass( &f, t0 + 0.040 ) == 0 );     // not before the resend delay
         check( resend_timing_pass( &f, t0 + 0.046 ) == 1 );     // resent at it, well before 100 ms
         resend_timing_close( &f );
     }
 
-    // long path: one sample of 400 ms gives 500 + 400 ms, clamped to rto_max
+    // long path: one sample of 400 ms gives 500 + 400 ms, clamped to resend_delay_max
     // 250 ms; the delay is the 100 ms interval
     {
         resend_timing_fixture_t f;
@@ -118,7 +118,7 @@ static void resend_delay_is_min_of_interval_and_rtt()
         resend_timing_send( &f, t0, NULL );
         const uint64_t other = resend_timing_send( &f, t0, NULL );
         check( rn_window_ack_on_ack( &f.ack, other, t0 + 0.400 ) == 1 );
-        check( fabs( f.ack.rto - 0.250 ) < 0.0005 );
+        check( fabs( f.ack.resend_delay - 0.250 ) < 0.0005 );
         // the record went at t0 and is past its interval at the sample: due now
         check( resend_timing_pass( &f, t0 + 0.400 ) == 1 );
         check( resend_timing_pass( &f, t0 + 0.400 + 0.099 ) == 0 );
@@ -130,14 +130,14 @@ static void resend_delay_is_min_of_interval_and_rtt()
 REGISTER_UNIT_TEST( resend_delay_is_min_of_interval_and_rtt );
 
 // no_backoff_between_resends: a record that is never acked is resent at the
-// same delay every time. With rto_initial at 100 ms and no sample, a 60 Hz
+// same delay every time. With resend_delay_initial at 100 ms and no sample, a 60 Hz
 // update resends it every 100 ms (to the next tick) for as long as it is
 // unacked; the first version doubled the delay after each pass.
 static void no_backoff_between_resends()
 {
     resend_timing_fixture_t f;
     rocketnet_message_default_config( &f.config );
-    f.config.rto_initial_ms = 100;
+    f.config.resend_delay_initial_ms = 100;
     resend_timing_open( &f );
 
     const double t0 = resend_timing_start;
@@ -170,17 +170,17 @@ static void no_backoff_between_resends()
 
 REGISTER_UNIT_TEST( no_backoff_between_resends );
 
-// first_resend_before_any_sample_at_rto_initial: a fresh connection has no RTT
-// sample, so the delay is min( rto_initial, resend_interval ), 100 ms at the
+// first_resend_before_any_sample_at_resend_delay_initial: a fresh connection has no RTT
+// sample, so the delay is min( resend_delay_initial, resend_interval ), 100 ms at the
 // defaults, not the first version's one second.
-static void first_resend_before_any_sample_at_rto_initial()
+static void first_resend_before_any_sample_at_resend_delay_initial()
 {
     resend_timing_fixture_t f;
     rocketnet_message_default_config( &f.config );
     resend_timing_open( &f );
     check( f.ack.has_rtt == 0 );
-    check( f.ack.rto == f.ack.rto_initial );
-    check( fabs( f.ack.rto_initial - 0.100 ) < 1e-9 );
+    check( f.ack.resend_delay == f.ack.resend_delay_initial );
+    check( fabs( f.ack.resend_delay_initial - 0.100 ) < 1e-9 );
 
     const double t0 = resend_timing_start;
     resend_timing_send( &f, t0, NULL );
@@ -190,11 +190,11 @@ static void first_resend_before_any_sample_at_rto_initial()
     resend_timing_close( &f );
 }
 
-REGISTER_UNIT_TEST( first_resend_before_any_sample_at_rto_initial );
+REGISTER_UNIT_TEST( first_resend_before_any_sample_at_resend_delay_initial );
 
 // config_refuses_fewer_than_four_attempts: reliable_timeout_ms must fit four
 // sends of the longest first delay, max( the 100 ms resend interval,
-// rto_initial_ms ).
+// resend_delay_initial_ms ).
 // Validation refuses and never clamps.
 static void config_refuses_fewer_than_four_attempts()
 {
@@ -202,11 +202,11 @@ static void config_refuses_fewer_than_four_attempts()
     rocketnet_message_default_config( &config );
     check( rocketnet_message_validate_config( &config ) );
 
-    // rto_initial 2 s and a 5 s timeout: two and a half first delays
+    // resend_delay_initial 2 s and a 5 s timeout: two and a half first delays
     rocketnet_message_default_config( &config );
-    config.rto_min_ms = 10;
-    config.rto_initial_ms = 2000;
-    config.rto_max_ms = 2000;
+    config.resend_delay_min_ms = 10;
+    config.resend_delay_initial_ms = 2000;
+    config.resend_delay_max_ms = 2000;
     config.reliable_timeout_ms = 5000;
     check( !rocketnet_message_validate_config( &config ) );
     check( rocketnet_message_connection_bytes( &config ) == 0 );
@@ -218,25 +218,25 @@ static void config_refuses_fewer_than_four_attempts()
     check( rocketnet_message_validate_config( &config ) );
 
     // the config is not repaired by validation
-    check( config.rto_initial_ms == 2000 && config.reliable_timeout_ms == 8000 );
+    check( config.resend_delay_initial_ms == 2000 && config.reliable_timeout_ms == 8000 );
 }
 
 REGISTER_UNIT_TEST( config_refuses_fewer_than_four_attempts );
 
 // resend_timing_witness_replays: the schedule of
 // tla/MCRNResendTimingBrokenBackoff.cfg against the code. The first version's
-// RTO settings (rto_initial 1000 ms, rto_min 50 ms, rto_max 2000 ms,
+// resend delay settings (resend_delay_initial 1000 ms, resend_delay_min 50 ms, resend_delay_max 2000 ms,
 // reliable_timeout 10 s), one RTT sample of 500 ms (which drives the first
-// version's rto to exactly 1.5 s), and the record's own sends all lost. The
+// version's resend_delay to exactly 1.5 s), and the record's own sends all lost. The
 // witness fits three sends before the timeout (0, 1.5 and 4.5 s); the code
 // must make at least ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS.
 static void resend_timing_witness_replays()
 {
     resend_timing_fixture_t f;
     rocketnet_message_default_config( &f.config );
-    f.config.rto_initial_ms = 1000;
-    f.config.rto_min_ms = 50;
-    f.config.rto_max_ms = 2000;
+    f.config.resend_delay_initial_ms = 1000;
+    f.config.resend_delay_min_ms = 50;
+    f.config.resend_delay_max_ms = 2000;
     f.config.reliable_timeout_ms = 10000;
     resend_timing_open( &f );
 
@@ -294,7 +294,7 @@ static void message_config_abi_size_is_unchanged()
 REGISTER_UNIT_TEST( message_config_abi_size_is_unchanged );
 
 // ---------------------------------------------------------------------------
-// The chunks of a block wait the RTO alone (docs/CHANNELS.md 6.4 "Resend";
+// The chunks of a block wait the resend delay alone (docs/CHANNELS.md 6.4 "Resend";
 // tla/RNResendTiming.tla Delay("c"), SmallNeverHeldByChunk and the reversed
 // witness MCRNResendTimingBrokenOneFifo.cfg). These cases read only what
 // every version of layer 3 has (the walk's output and resend_count), so they
@@ -344,9 +344,9 @@ static bool resend_timing_contains( const uint64_t * numbers, uint32_t count, ui
     return false;
 }
 
-// chunk_resend_paced_by_rtt_not_interval: on a 200 ms path (rto = 1.25 x 200
-// + 2 x 100 ms, clamped to rto_max 250 ms) a chunk of a block is resent at
-// the RTO, 250 ms after its send, not at the 100 ms cap a small record keeps;
+// chunk_resend_paced_by_rtt_not_interval: on a 200 ms path (resend_delay = 1.25 x 200
+// + 2 x 100 ms, clamped to resend_delay_max 250 ms) a chunk of a block is resent at
+// the resend delay, 250 ms after its send, not at the 100 ms cap a small record keeps;
 // and at the same delay every time after.
 static void chunk_resend_paced_by_rtt_not_interval()
 {
@@ -355,7 +355,7 @@ static void chunk_resend_paced_by_rtt_not_interval()
     resend_timing_open( &f );
 
     const double t1 = resend_timing_sample( &f, resend_timing_start, 0.200 );
-    check( fabs( f.ack.rto - 0.250 ) < 1e-9 );
+    check( fabs( f.ack.resend_delay - 0.250 ) < 1e-9 );
 
     uint64_t chunks[8];
     const uint32_t n = resend_timing_send_block( &f, t1, 2500, chunks, 8 );
@@ -366,7 +366,7 @@ static void chunk_resend_paced_by_rtt_not_interval()
     check( resent == 0 );                                          // not at the 100 ms cap
     check( resend_timing_pass_numbers( &f, t1 + 0.249, out ) == 0 );
     resent = resend_timing_pass_numbers( &f, t1 + 0.251, out );
-    check( resent == n );                                          // at the RTO, every chunk
+    check( resent == n );                                          // at the resend delay, every chunk
     for ( uint32_t i = 0; i < n; i++ )
         check( resend_timing_contains( out, resent, chunks[i] ) );
 
@@ -375,7 +375,7 @@ static void chunk_resend_paced_by_rtt_not_interval()
     check( resend_timing_pass_numbers( &f, t1 + 0.251 + 0.249, out ) == 0 );
     check( resend_timing_pass_numbers( &f, t1 + 0.251 + 0.251, out ) == n );
 
-    // a single-packet record on the same path keeps min( rto, 100 ms )
+    // a single-packet record on the same path keeps min( resend_delay, 100 ms )
     uint64_t small = 0;
     const double t2 = t1 + 0.6;
     resend_timing_send( &f, t2, &small );
@@ -391,7 +391,7 @@ REGISTER_UNIT_TEST( chunk_resend_paced_by_rtt_not_interval );
 // MCRNResendTimingBrokenOneFifo.cfg against the code. A block's chunks go
 // first, a small record 10 ms after, so in a FIFO ordered by last send the
 // chunks are ahead of it. At 111 ms the small record is due (100 ms cap) and
-// the chunks are not (RTO 250 ms): the small record is resent in that pass
+// the chunks are not (resend delay 250 ms): the small record is resent in that pass
 // and the chunks are not touched; the small record is resent every 100 ms
 // while the chunks wait.
 static void small_record_behind_a_chunk_not_held()
@@ -401,7 +401,7 @@ static void small_record_behind_a_chunk_not_held()
     resend_timing_open( &f );
 
     const double t1 = resend_timing_sample( &f, resend_timing_start, 0.200 );
-    check( fabs( f.ack.rto - 0.250 ) < 1e-9 );
+    check( fabs( f.ack.resend_delay - 0.250 ) < 1e-9 );
 
     uint64_t chunks[8];
     const uint32_t n = resend_timing_send_block( &f, t1, 2500, chunks, 8 );
@@ -415,7 +415,7 @@ static void small_record_behind_a_chunk_not_held()
     resent = resend_timing_pass_numbers( &f, t1 + 0.212, out );
     check( resent == 1 && out[0] == small );                       // again at its own 100 ms
     resent = resend_timing_pass_numbers( &f, t1 + 0.251, out );
-    check( resent == n );                                          // the chunks at their RTO
+    check( resent == n );                                          // the chunks at their resend delay
     for ( uint32_t i = 0; i < n; i++ )
         check( resend_timing_contains( out, resent, chunks[i] ) );
     resend_timing_close( &f );
@@ -436,7 +436,7 @@ static void both_fifos_walk_only_what_is_due()
     resend_timing_open( &f );
 
     const double t1 = resend_timing_sample( &f, resend_timing_start, 0.200 );
-    check( fabs( f.ack.rto - 0.250 ) < 1e-9 );
+    check( fabs( f.ack.resend_delay - 0.250 ) < 1e-9 );
     check( f.ack.resend_count == 0 );
 
     // chunks c0..c2 and small s1 at t1, small s2 at +20 ms; at +30 ms a small
@@ -473,7 +473,7 @@ static void both_fifos_walk_only_what_is_due()
     check( resent == 1 && out[0] == s2 );
     check( f.ack.resend_count == linked - 1 );                     // the small tripwire, not the chunk one
 
-    // +251 ms: s1 and s2 are due again and c0..c2 at their RTO; the chunk
+    // +251 ms: s1 and s2 are due again and c0..c2 at their resend delay; the chunk
     // walk passes the acked c3 and stops at c4 (due at +280 ms)
     resent = resend_timing_pass_numbers( &f, t1 + 0.251, out );
     check( resent == 5 );

@@ -50,7 +50,7 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double
 #define LIVE_MATRIX_TINY                    ROCKETNET_LIVE_HEADER_BYTES
 #define LIVE_MATRIX_TOKEN_TIMEOUT           10.0            // the development connect token's timeout_seconds
 #define LIVE_MATRIX_SEND_KBPS               10000000        // ROCKETNET_SEND_BUDGET_MAX_KBPS: the wire, not the budget, is the limit
-// Each send_packets writes at most max_packets_per_update packets, reliable
+// Each send_packets writes at most packets_per_update packets, reliable
 // first (sdk/rocketnet_endpoint.cpp rn_endpoint_next_packet_bytes): the
 // matrix queues about forty packets of reliable bytes and twenty-four of
 // unreliable bytes per update, so the reliable path never starves the
@@ -1103,7 +1103,7 @@ void live_message_matrix_loopback()
     m->message_config.send_buffer_bytes = 128 * 1024 * 1024;
     m->message_config.send_queue_messages = 16384;
     m->message_config.packets_in_flight = 2048;
-    m->message_config.max_packets_per_update = 64;
+    m->message_config.packets_per_update = 64;
     m->message_config.unreliable_deliveries = 8192;
     m->message_config.receipt_ring = 4096;
     m->message_config.window_messages = 4096;

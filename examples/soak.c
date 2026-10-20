@@ -163,7 +163,7 @@ int main( int argc, char ** argv ) {
     s_cfg.packets_in_flight = c_cfg.packets_in_flight = s_cfg.unreliable_deliveries = c_cfg.unreliable_deliveries = s_cfg.receipt_ring = c_cfg.receipt_ring = 64;
     s_cfg.receive_ring_bytes = c_cfg.receive_ring_bytes = s_cfg.send_buffer_bytes = c_cfg.send_buffer_bytes = 32768;
     s_cfg.sequenced_holds = c_cfg.sequenced_holds = 8; s_cfg.simulated_loss_percent = c_cfg.simulated_loss_percent = 1;
-    s_cfg.rto_min_ms = c_cfg.rto_min_ms = s_cfg.rto_initial_ms = c_cfg.rto_initial_ms = 200; s_cfg.rto_max_ms = c_cfg.rto_max_ms = 500;
+    s_cfg.resend_delay_min_ms = c_cfg.resend_delay_min_ms = s_cfg.resend_delay_initial_ms = c_cfg.resend_delay_initial_ms = 200; s_cfg.resend_delay_max_ms = c_cfg.resend_delay_max_ms = 500;
     server = rocketnet_server_create_sized( NULL, "127.0.0.1:0", &s_cfg, sizeof( s_cfg ), NULL, 0 );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {

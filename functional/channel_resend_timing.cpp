@@ -14,8 +14,8 @@
     messages that never arrived (timeouts).
 
     Two schedules run on the same seed: "rule" is the shipped default
-    (min( rto, resend_interval ), no back-off) and "fixed" is a resend every
-    100 ms, set on the client's estimator (rto_min = rto_max = rto = 100 ms).
+    (min( resend_delay, resend_interval ), no back-off) and "fixed" is a resend every
+    100 ms, set on the client's estimator (resend_delay_min = resend_delay_max = resend_delay = 100 ms).
     The case prints the whole table beside the Monte Carlo model's p99 for
     the rule (one message's timeline, ack after RTT plus up to a tick), and
     the resend gaps each row measured.
@@ -26,7 +26,7 @@
     - zero timeouts;
     - every resend gap, from the client's resend gap record (struct
       rn_resend_gaps_t, measured where rn_window_ack_commit sets last_send),
-      is at least the delay min( rto, resend_interval ) in force at the
+      is at least the delay min( resend_delay, resend_interval ) in force at the
       resend, and at most the delay in force at the update before plus one
       tick; so no gap exceeds resend_interval plus one tick;
     - ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS gaps of the largest size fit
@@ -45,13 +45,13 @@
 
     The model's p99 is not asserted directly: the harness updates both ends
     at 60 Hz, so each measured RTT sample is the path's RTT plus up to two
-    ticks and the ack's own update, and on a 20 ms path the RTO follows that
+    ticks and the ack's own update, and on a 20 ms path the resend delay follows that
     longer measured RTT. The table shows the difference row by row.
 
     Why the delay at the update before and not at the earlier send: the walk
     resends a number at the first update where now >= last_send + delay, with
     the delay in force at that update. An RTT sample between the two sends
-    moves the RTO; when it lowers it, the gap is longer than the new delay by
+    moves the resend delay; when it lowers it, the gap is longer than the new delay by
     up to the drop, and when it raises it, longer than the earlier send's
     delay. At the update before the resend the number was not due, so the
     gap is less than that update's delay plus the time to the next update.
@@ -124,10 +124,10 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
     rn_window_ack_t * ack = &ordered->ack;
     if ( fixed_100ms )
     {
-        ack->rto_min = 0.1;
-        ack->rto_max = 0.1;
-        ack->rto_initial = 0.1;
-        ack->rto = 0.1;
+        ack->resend_delay_min = 0.1;
+        ack->resend_delay_max = 0.1;
+        ack->resend_delay_initial = 0.1;
+        ack->resend_delay = 0.1;
     }
 
     const double latency = (double) rtt_ms / 2000.0;
@@ -320,7 +320,7 @@ void resend_timing_table_over_lossy_links()
     sends one 32-byte unreliable message per update so acks ride packets
     going the other way. Each run prints the client's wire bytes per block
     payload byte, the block's completion time and the copies sent per record.
-    A fifth run ("rto+small") also sends one 64-byte reliable message per
+    A fifth run ("resend_delay+small") also sends one 64-byte reliable message per
     60 Hz update from 0.35 s, once the block's first sends are written, until
     the block is delivered, so the small records are resent beside chunks
     that wait for their acks; it prints those messages' p99 delivery latency.
@@ -328,12 +328,12 @@ void resend_timing_table_over_lossy_links()
     packet wait for numbering until they are written: that is first-write
     order, section 8, not the resend walk, and this case does not measure it.)
 
-    Two schedules run on the same seed: "rto" is the shipped rule (a chunk
-    waits the RTO alone; a small record min( rto, resend_interval )) and
+    Two schedules run on the same seed: "resend_delay" is the shipped rule (a chunk
+    waits the resend delay alone; a small record min( resend_delay, resend_interval )) and
     "cap100" puts the chunks back on the 100 ms cap, set on the client's
-    estimator (rto_max = rto_initial = rto = 100 ms, which leaves the small
+    estimator (resend_delay_max = resend_delay_initial = resend_delay = 100 ms, which leaves the small
     records' delay at its 100 ms cap on this path). The case asserts: the
-    block arrives whole in every run; under "rto" the client's wire bytes are
+    block arrives whole in every run; under "resend_delay" the client's wire bytes are
     at most 1.4 times the block's payload, and below the cap's; and the small
     messages beside the block are all delivered and never held behind its
     chunks: after every update's packets are written, the oldest unacked
@@ -392,7 +392,7 @@ static void block_cost_run( const char * schedule, int cap100, int burst, int wi
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     if ( burst )
-        config.max_packets_per_update = 32;
+        config.packets_per_update = 32;
     rocketnet_channel_harness_t h;
     resend_timing_check( rocketnet_channel_harness_create_with_config( &h, &config ) );
     resend_timing_check( rocketnet_channel_harness_connect( &h, 60 * 10 ) );
@@ -402,9 +402,9 @@ static void block_cost_run( const char * schedule, int cap100, int burst, int wi
     if ( cap100 )
     {
         rn_window_ack_t * ack = &h.message_client->object.connections[0].ordered.ack;
-        ack->rto_max = 0.1;
-        ack->rto_initial = 0.1;
-        ack->rto = 0.1;
+        ack->resend_delay_max = 0.1;
+        ack->resend_delay_initial = 0.1;
+        ack->resend_delay = 0.1;
     }
 
     const double latency = 0.100;
@@ -504,11 +504,11 @@ static void block_cost_run( const char * schedule, int cap100, int burst, int wi
 void block_resend_cost_over_long_path()
 {
     block_cost_row_t rows[5];
-    block_cost_run( "rto", 0, 1, 0, &rows[0] );
+    block_cost_run( "resend_delay", 0, 1, 0, &rows[0] );
     block_cost_run( "cap100", 1, 1, 0, &rows[1] );
-    block_cost_run( "rto", 0, 0, 0, &rows[2] );
+    block_cost_run( "resend_delay", 0, 0, 0, &rows[2] );
     block_cost_run( "cap100", 1, 0, 0, &rows[3] );
-    block_cost_run( "rto+small", 0, 1, 1, &rows[4] );
+    block_cost_run( "resend_delay+small", 0, 1, 1, &rows[4] );
 
     printf( "block_resend_cost_over_long_path: one %d-byte reliable-ordered block, rtt 200 ms, 10%% loss, 60 Hz\n", BLOCK_COST_BYTES );
     printf( "schedule  sender delivered completion_s wire_per_payload_byte copies_per_record small_sent small_p99_ms small_held\n" );

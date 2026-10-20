@@ -23,7 +23,7 @@
 #define check rocketnet_unit_check
 
 // ---------------------------------------------------------------------------
-// m9.resend-trace: the sent-packet map, min( rto, resend interval ), and the
+// m9.resend-trace: the sent-packet map, min( resend_delay, resend interval ), and the
 // reliable timeout over two paths, time an argument from 1000.0.
 // ---------------------------------------------------------------------------
 
@@ -81,7 +81,7 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
         if ( capacity < 16 )
             return -1;
 
-        // short path: a 20 ms sample gives rto 45 ms, under the 100 ms interval
+        // short path: a 20 ms sample gives resend_delay 45 ms, under the 100 ms interval
         {
             resend_trace_fixture_t f;
             resend_trace_open( &f );
@@ -99,7 +99,7 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
             resend_trace_close( &f );
         }
 
-        // long path: a 400 ms sample clamps rto at 250 ms, so the 100 ms
+        // long path: a 400 ms sample clamps resend_delay at 250 ms, so the 100 ms
         // resend interval is the delay
         {
             resend_trace_fixture_t f;
