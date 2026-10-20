@@ -1,7 +1,5 @@
 # FragmentsAndAcks: fragment reassembly and the ack window
 
-> STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
-
 `tla/FragmentsAndAcks.tla` is one direction of a rocketnet session: a sender A hands
 payloads to a receiver B over the shared lossy link `tla/Link.tla` (instance `D2R`),
 and B sends ack blocks back over a second instance (`R2D`). A is the session sequence
@@ -19,7 +17,7 @@ line citations below are re-checked against the code it lands on (`617d498`).
 (safety); `tla/MCFragmentsAndAcksLive.cfg` is the liveness run on the same instance. Every
 other run is its own root cfg, named once in `tla/CASES.tsv` (group `fragmentsandacks`),
 and its measured record is in `tla/RUNS.tsv`, written by `tlacheck` (`tla/README.md`). The
-inventory rows are `docs/TLA-INVENTORY.md`, M8 and M9.
+inventory rows are M8 and M9.
 
 ## What the model covers
 
@@ -79,11 +77,11 @@ Safety, checked under every loss pattern with no fairness:
 | `SurfacedOnlyIfOpened` | a packet id surfaces only when every sequence carrying it was opened by the receiver: for a fragmented payload, every fragment (USAGE.md, "a fragmented payload's id surfaces in the acked batch only when every fragment has been acknowledged"). Opened, not delivered: the acks cover a payload that reassembly then refused (`FRAGMENT_STALE`, `FRAGMENT_PAYLOAD_BATCH_FULL`), which USAGE.md:146-148 allows at the fragment level; the gap is real and D1 and D2 both sit in it |
 | `BurnedNeverNamed` | a burned sequence is never opened and never named by a block, so it is never acknowledged as received |
 | `AckedMeansSurfaced` | a record with a packet id is marked acknowledged only once its id has surfaced, and an aggregate reaches zero only once its id has: the batch defers, it never drops (`sdk/rocketnet_ack.cpp`, "a packet id that cannot fit the batch is deferred, never dropped"); the safety face of `OpenedSurfacesOrLaps` |
-| `DeliveredExact` | a delivered payload is exactly the fragments of one id, each index once, every non-final fragment the stride, the final at most the stride (STANDARD.md, Fragmentation, "Fragment bytes land at index × stride") |
+| `DeliveredExact` | a delivered payload is exactly the fragments of one id, each index once, every non-final fragment the stride, the final at most the stride (TRANSPORT.md, Fragmentation, "Fragment bytes land at index × stride") |
 | `DeliveredOnce` | an honest payload is delivered at most once |
 | `CompleteDelivers` | no slot holds a complete payload: delivery happens in the fragment's own process call, so "within one update" holds with nothing to wait for |
 | `ArenaBounded` | reassembly state stays inside what was allocated at create: placed bytes inside `stride × (cnt − 1) + final ≤ max payload`, the staging buffer one fragment of the receive maximum, the received set inside the pinned count |
-| `CountPinned` (action property) | the first fragment of a payload id fixes its count (STANDARD.md, `FRAGMENT_COUNT_MISMATCH`) |
+| `CountPinned` (action property) | the first fragment of a payload id fixes its count (TRANSPORT.md, `FRAGMENT_COUNT_MISMATCH`) |
 | `TypeOK` | types, including both links' |
 
 Two more are the findings below, each in its own run and expected to fail on the code:
@@ -113,7 +111,7 @@ window refuses.
 ## What the model abstracts away
 
 - **The replay window's representation.** `opened` is a set; the 64-word bitmap and
-  its large-skip clear (F1, `docs/TLA-INVENTORY.md`) belong to the ReplayWindow
+  its large-skip clear (F1) belong to the ReplayWindow
   module. Every block here is truthful by construction, so `SurfacedOnlyIfOpened` says
   what the ack layer does with truthful blocks. F1 broke it from below; the code now
   clears the whole window on a large skip (`rocketnet_replay_advance`,
@@ -449,7 +447,7 @@ Every counterexample below was replayed by hand through the functions it names.
 life, and the payloads it refuses were acknowledged to the sender (the ack block is
 built from the replay window, before reassembly), so a delta-compression scheme built on
 the notifications takes a baseline the peer never delivered. Its fix is the serial
-comparison STANDARD.md:1981-1987 specifies. D2 is MEDIUM on the server and LOW on the
+comparison standard/TRANSPORT.md t16.3 specifies. D2 is MEDIUM on the server and LOW on the
 client.
 
 ### D1. A loss burst, or one late fragment, poisons a reassembly slot for the connection's life (defect, HIGH)
@@ -511,7 +509,7 @@ counter never fires for them: the loss is reported as "stale", which the standar
 reserves for superseded payloads.
 
 The standard (Fragmentation, "Older is serial-number arithmetic on the 32-bit values,
-so no id can poison a slot", STANDARD.md:1981-1987) specifies the half-space comparison.
+so no id can poison a slot", standard/TRANSPORT.md t16.3) specifies the half-space comparison.
 The model's `StaleRule = "serial"` is that comparison; `find-stale-serial-small` checks
 it on the instance where the code's rule fails (`find-stale-small`), and the result is
 in the table. The code's comment chose the bounded difference against a hostile id

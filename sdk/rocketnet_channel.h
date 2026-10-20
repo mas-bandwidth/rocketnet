@@ -21,14 +21,14 @@
 #include "rocketnet_window_send.h"
 
 // Layer 4 of the message layer: the per-channel state and the dispatch
-// (docs/CHANNELS.md 7). tla/RNChannel.tla is the spec; each function below
+// (standard/MESSAGES.md m7). tla/RNChannel.tla is the spec; each function below
 // names the action it implements (owner rule R7).
 //
 // The state lives in the connection's region (layer 1): C rn_channel_send_t
 // and C rn_channel_receive_t carved by rn_region_carve, so nothing here
 // allocates (R2). RakNet's four counters and their coupling are present from
 // the first version and run even though no sequenced type is enabled
-// (CHANNELS.md 7.1, RNChannel's OrderedTraceUnchangedBySequenced).
+// (standard/MESSAGES.md m7.1, RNChannel's OrderedTraceUnchangedBySequenced).
 //
 // A record's dispatch is a switch over all eight types. The enabled mask of
 // 7.5 admits a type; a disabled type is refused on send
@@ -41,7 +41,7 @@
 //   sdk/rocketnet_channel_sequenced.cpp   codes 1 and 4
 //   sdk/rocketnet_channel_receipts.cpp    codes 5, 6 and 7
 
-// the eight application types (docs/CHANNELS.md 7.5, 17.1): the five wire
+// the eight application types (standard/MESSAGES.md m10): the five wire
 // codes, then the three receipt variants, which travel as 0, 2 and 3.
 
 #define ROCKETNET_CHANNEL_TYPE_UNRELIABLE                       0
@@ -62,7 +62,7 @@
 
 #define ROCKETNET_CHANNEL_RECEIPT_BASE( type )                  ( (type) < 5 ? (type) : ( (type) == 5 ? 0 : (type) - 4 ) )
 
-// what a dispatch did with one record (docs/CHANNELS.md 7.2)
+// what a dispatch did with one record (standard/MESSAGES.md m4)
 
 #define ROCKETNET_CHANNEL_DISPATCH_NONE                         0   // nothing: refused, counted, or held by a later card
 #define ROCKETNET_CHANNEL_DISPATCH_DELIVERED                    1   // a view into the batch, or a delivery from the ring
@@ -218,7 +218,7 @@ int rn_channels_dispatch( struct rn_channels_t * channels, const struct rocketne
 //     the sender chose, indexed by (channel, ordering) in the held index, and
 //     kept live; returns HELD.
 //   ordering behind: a violation (MESSAGE_ORDERING_BEHIND).
-//   a block fragment (CHANNELS.md 8): copied to ring + index * F, counted in the
+//   a block fragment (standard/MESSAGES.md m8): copied to ring + index * F, counted in the
 //     block's state, found through the held index; the whole block is one
 //     message once every fragment is in, delivered in place from the ring, never
 //     before. A count or index that disagrees with the first fragment seen, a
@@ -323,7 +323,7 @@ struct rn_ordered_t
     struct rocketnet_send_budget_t * budget;        // R6, or NULL
     struct rocketnet_message_limits_t limits;       // what layer 2's reader checks a payload against
 
-    // CONFIG (docs/CHANNELS.md 10.3, 13.4; tla/RNEndpoint.tla)
+    // CONFIG (standard/MESSAGES.md m11; tla/RNEndpoint.tla)
     struct rocketnet_message_config_body_t config;  // this end's CONFIG body, set by rn_ordered_announce_config
     int config_announced;                           // this end's CONFIG is queued (RNEndpoint Reset)
     int config_received;                            // the peer's CONFIG was taken and equals this end's (RNEndpoint peerCfg # NoCfg)
@@ -367,7 +367,7 @@ uint32_t rn_ordered_acks( struct rn_ordered_t * ordered, const uint64_t * packet
 
 int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, int bytes );
 
-// tla/RNEndpoint.tla Reset, the CONFIG half (CHANNELS.md 10.3): queues this
+// tla/RNEndpoint.tla Reset, the CONFIG half (standard/MESSAGES.md m11): queues this
 // end's one CONFIG control record, code 2 with CONTROL set and the 28-byte
 // body of 13.4 written from `config` (NULL: the defaults) and the enabled
 // mask, at the head of IMMEDIATE on channel 0, so it takes the connection's
@@ -378,7 +378,7 @@ int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, 
 
 bool rn_ordered_announce_config( struct rn_ordered_t * ordered, const struct rocketnet_message_config_t * config );
 
-// tla/RNEndpoint.tla OnPayload with ConfigCompare (CHANNELS.md 10.3, 13.4):
+// tla/RNEndpoint.tla OnPayload with ConfigCompare (standard/MESSAGES.md m11):
 // the peer's CONFIG record, already accepted by layer 3, read and compared
 // field by field with this end's body. Equal: config_received is set. A
 // different field, or a version this end does not know, logs one error line

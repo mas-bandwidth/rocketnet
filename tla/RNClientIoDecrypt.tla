@@ -1,6 +1,6 @@
 --------------------------- MODULE RNClientIoDecrypt ---------------------------
 (***************************************************************************)
-(* Decrypt on the client I/O thread, as docs/CLIENT-IO-DECRYPT.md, If      *)
+(* Decrypt on the client I/O thread, If                                    *)
 (* decrypt moves, designs it.  The I/O thread opens each session datagram  *)
 (* in the receive buffer it fills, before it publishes that buffer, with   *)
 (* its own copy of the open key and its own replay window; update consumes *)

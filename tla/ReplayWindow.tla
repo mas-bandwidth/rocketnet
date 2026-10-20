@@ -12,7 +12,7 @@
 (* and advance (the mark after the open).  A third reads it: the ack block *)
 (* builder, sdk/rocketnet_ack.cpp:48-52 and 54-137, enumerates the same    *)
 (* bits between the floor and the high-water mark, so what the window says *)
-(* is what the peer is told was received (STANDARD.md, Replay Protection   *)
+(* is what the peer is told was received (TRANSPORT.md, Replay Protection  *)
 (* and Acks).                                                              *)
 (*                                                                         *)
 (* The window has one job: inside the retained range (highest - W,         *)
@@ -211,13 +211,13 @@ GenuineIsAccepted ==
 AckReportsOnlyReceived ==
     \A s \in Seqs : AckReports(s) => s \in received
 
-\* Within the window a sequence is accepted exactly once (STANDARD.md,
+\* Within the window a sequence is accepted exactly once (TRANSPORT.md,
 \* Replay Protection): everything that opened is refused thereafter.
 ReceivedIsRefused ==
     \A s \in received : AlreadyReceived(s)
 
 \* Below the window everything is refused as too old; an undersized window
-\* discards old legitimate packets, it never accepts a replay (STANDARD.md,
+\* discards old legitimate packets, it never accepts a replay (TRANSPORT.md,
 \* Replay window sizing).
 BelowFloorIsRefused ==
     \A s \in Seqs : s < Floor => AlreadyReceived(s)

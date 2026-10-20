@@ -18,7 +18,7 @@
 // top of the request path, and the client-id check refuses a second live
 // connection for a token's client id (sdk/rocketnet_server_protocol.cpp). The
 // admitted-token set that held every token until it expired is gone, because
-// it denied ordinary churn (docs/SESSION.md 1.6).
+// it denied ordinary churn.
 //
 // The used-token history binds a token identifier to the first source address
 // that presented it. Fixed capacity, oldest-first eviction, entries expire

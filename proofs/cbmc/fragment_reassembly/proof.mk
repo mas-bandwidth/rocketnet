@@ -9,7 +9,7 @@
 # output per harness, then its unwinding, bound, property count and time.
 #
 # proofs-fragment_reassembly runs each harness at the largest bound that
-# finishes (results.md). proofs-fragment_reassembly-full runs the full
+# finishes. proofs-fragment_reassembly-full runs the full
 # production bounds, which do not finish; it is not on the nightly list.
 # Each harness runs under a 30-minute limit and a 16 GB address-space limit.
 

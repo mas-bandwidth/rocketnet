@@ -3,10 +3,10 @@
 #   RocketNet. Copyright 2026 Más Bandwidth LLC.
 #   Licensed under the GNU Affero General Public License v3.0
 
-"""Witness coverage for the behavioural MUSTs of STANDARD.md.
+"""Witness coverage for the behavioural MUSTs of the standard.
 
 docs/WITNESSES.tsv names, for each behavioural MUST, the anchor that would
-move if the rule moved: the STANDARD.md line, the TLA+ invariant (if one
+move if the rule moved: the standard's line, the TLA+ invariant (if one
 exists), the C++ function, and the test. This checker holds those anchors to
 the tree. It fails when an anchor is stale -- the named line no longer
 carries the rule's keyword, or the function, test or invariant is gone.

@@ -6,10 +6,10 @@
     code. The readers are sdk/rocketnet_fragment.cpp, included below (never
     copied). This harness supersedes proof_fragment_bounds.c, which copies
     the reassembly function; the copy's divergences from the real function
-    are named in results.md.
+    are named.
 
     The checker is ESBMC, built as C++17: sdk/rocketnet_fragment.cpp is C++
-    that the CBMC front end does not parse (results.md). proof.mk passes
+    that the CBMC front end does not parse. proof.mk passes
     esbmc_cprover.h with --include-file, which maps the __CPROVER_ names
     used here onto ESBMC, and compiles this file through a one-line C++
     wrapper. Checks: ESBMC's default bounds, pointer and division checks,
@@ -21,8 +21,8 @@
     ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES and one byte past it, and
     max_payload_bytes up to ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES.
     PROOF_MAX_FRAGMENT, PROOF_MAX_PAYLOAD and the sizing macros lower them.
-    proof.mk passes the largest bounds that finish; results.md records the
-    bound each harness proved and the full bounds that did not finish.
+    proof.mk passes the largest bounds that finish. Each harness proves a
+    bound; the full production bounds do not finish.
 */
 
 #include <stdlib.h>

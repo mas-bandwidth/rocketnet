@@ -1,14 +1,13 @@
 # RNEndpoint: two endpoints end to end, with CONFIG
 
-`RNEndpoint` is the model `docs/CHANNELS.md` section 15 plans for layer 7:
+`RNEndpoint` is the model `standard/MESSAGES.md` section 15 plans for layer 7:
 two message endpoints, one at each end of a connection, joined by two
 instances of `tla/Link.tla` (`AB` carries a's packets to b, `BA` carries b's
 to a), with the transport's ack semantics and the CONFIG announcement of
-sections 10.3 and 13.4. It is written before the code: it is the spec the
-CONFIG card (`rocketnet-config-announcement`) and the endpoint card
-(`rocketnet-endpoint-pure`) implement, and its actions carry the names of
-the planned functions of section 10.1. No code implements it yet, so
-`tla/COVERAGE.tsv` holds its row as owed by `rocketnet-endpoint-pure`.
+sections 10.3 and 13.4. The code is `sdk/rocketnet_endpoint.cpp`: its actions carry the names of
+`rn_endpoint_reset`, `rn_endpoint_announce_config`, `rn_endpoint_send`,
+`rn_endpoint_on_acked`, `rn_endpoint_on_payload`, `rn_endpoint_tick` and
+`rn_endpoint_begin_update`, so `tla/COVERAGE.tsv` holds its row as current.
 
 ## What is modelled
 
@@ -208,10 +207,9 @@ loaded bench may need a quieter one.
 
 ## Reversed witnesses, each checked by hand
 
-The traces were read by hand against `docs/CHANNELS.md` 10.3 and 13.4.
-No code implements CONFIG or the endpoint yet (`sdk/` defines only the
-error code), so the check is against the design, which is the spec the
-two code cards implement.
+The traces were read by hand against `standard/MESSAGES.md` m11.
+The check is against the code in `sdk/rocketnet_endpoint.cpp`, whose
+CONFIG announcement and comparison follow the same rule.
 
 **`MCRNEndpointBrokenConfigNotCompared.cfg`** (`ConfigCompared = FALSE`,
 invariant `MismatchErrorsBothEnds`, 3 states). Init picks the differing

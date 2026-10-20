@@ -2,7 +2,7 @@
     RocketNet. Copyright 2026 Mas Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    The DST layer-1 core's unit cases (docs/DST.md section 2): determinism of
+    The DST layer-1 core's unit cases: determinism of
     the seeded run, seed sensitivity, substream independence, and the fail
     line naming the seed and the replay command. Time is an argument starting
     at 1000.0; the core never reads the wall clock.

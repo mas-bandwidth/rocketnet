@@ -2,7 +2,7 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    The loopback message matrix (docs/LIVE-XDP.md sections 3 to 5): a real
+    The loopback message matrix: a real
     message server and a real message client in one process over the UDP
     loopback, every mode at once on every channel the config allows, both
     directions, across the full size schedule of section 4 including each
@@ -223,7 +223,7 @@ static const struct rocketnet_counters_t * live_matrix_sender_counters( struct l
 }
 
 // ---------------------------------------------------------------
-//                     pacing by the sender's room (docs/LIVE-XDP.md section 6)
+//                     pacing by the sender's room
 // ---------------------------------------------------------------
 
 // A start message the region has no room for ends the connection

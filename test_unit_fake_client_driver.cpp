@@ -4,7 +4,7 @@
 */
 
 // The in-memory fake client driver (test/fake_client_driver.h) pins the I/O
-// step's driver contract (docs/CLIENT-IO.md "The I/O step"): each table opens
+// step's driver contract ("The I/O step"): each table opens
 // through rocketnet_client_driver_open, wake is level-triggered and cleared by
 // wait, and receive_batch drains in order with per-packet stride layout.
 

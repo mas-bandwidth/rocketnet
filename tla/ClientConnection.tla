@@ -12,7 +12,7 @@
 (* half-open mapping at its handshake deadline and an idle one at the      *)
 (* timeout (sdk/rocketnet_server_protocol.cpp).                            *)
 (*                                                                         *)
-(* States are the standard's numbers (STANDARD.md, Client State Machine;   *)
+(* States are the standard's numbers (TRANSPORT.md, Client State Machine;  *)
 (* sdk/rocketnet.h:398-409): -7 token expired, -6 invalid token, -5        *)
 (* connection timed out, -4 response timed out, -3 request timed out, -2   *)
 (* cookie request timed out, -1 denied, 0 disconnected, 1 requesting       *)
@@ -334,7 +334,7 @@ ClientRecvSession(p) ==
 \* a fragment (type 9), modelled at the receive step itself: the sealed
 \* packet's journey is the session packets' journey, so the action is the
 \* acceptance, which is the only step that creates client reassembly state.
-\* Accepted only in connected (state 4), per STANDARD.md _Fragmentation_.
+\* Accepted only in connected (state 4), per TRANSPORT.md _Fragmentation_.
 ClientFragmentReceive ==
     /\ cstate = 4 /\ ~cReasm
     /\ cReasm' = TRUE
@@ -430,7 +430,7 @@ ServerRecvSession(p) ==
 
 \* a fragment (type 9), modelled at the receive step itself, as on the
 \* client side: acceptance for a mapping holding a slot is the only step
-\* that creates server reassembly state for that slot (STANDARD.md
+\* that creates server reassembly state for that slot (TRANSPORT.md
 \* _Fragmentation_)
 ServerFragmentReceive ==
     /\ sMap.live /\ sMap.slot /\ ~sReasm
@@ -668,7 +668,7 @@ ConnectedMeansHandshake ==
 
 \* reassembly state changes only while connected: client reassembly exists
 \* only in state 4, server reassembly only for a mapping holding its slot
-\* (STANDARD.md _Fragmentation_; sdk/rocketnet_client_protocol.cpp,
+\* (TRANSPORT.md _Fragmentation_; sdk/rocketnet_client_protocol.cpp,
 \* sdk/rocketnet_server_protocol.cpp)
 FragmentOnlyWhenConnected ==
     /\ (cReasm => cstate = 4)

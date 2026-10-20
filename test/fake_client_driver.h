@@ -3,8 +3,8 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// An in-memory fake client driver for the I/O step's unit tests (docs/
-// CLIENT-IO.md "The I/O step", tla/RNClientIo.tla): no socket, no thread, no
+// An in-memory fake client driver for the I/O step's unit tests (tla/
+// RNClientIo.tla): no socket, no thread, no
 // time; wait never blocks. Unit tests drive the step with this driver on the
 // test's thread. Four callbacks are required (create/destroy/send/receive);
 // wait, wake, send_batch and receive_batch are optional, and the three
@@ -175,7 +175,7 @@ static const rocketnet_client_driver_operations_t rocketnet_fake_client_operatio
     rocketnet_fake_client_wait, rocketnet_fake_client_wake
 };
 
-// Push an inbound datagram (docs/CLIENT-IO.md "The I/O step"). Appends past
+// Push an inbound datagram. Appends past
 // ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS assert.
 
 inline void rocketnet_fake_client_push( rocketnet_fake_client_driver_t * fake, const rocketnet_address_t * from, const uint8_t * data, int bytes )

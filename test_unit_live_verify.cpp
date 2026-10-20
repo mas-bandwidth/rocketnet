@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 
     Unit tests for the live-message verify scheme and size schedule
-    (test/live_verify.h, docs/LIVE-XDP.md sections 3 and 4). Logic only: no
+    (test/live_verify.h). Logic only: no
     socket, no clock, no network. Known-answer vectors pin the length and
     byte rules, the boundary list, the tiny-prefix rules and each named
     failure (short, bad length, bad header, wrong channel, wrong cycle, bad

@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The client and server message objects and their C API (docs/CHANNELS.md 10
+// The client and server message objects and their C API (standard/MESSAGES.md
 // to 12; tla/RNSlots.tla, tla/RNConnectionMemory.tla). The objects run over
 // the in-memory transport pair below, bound through the object's transport
 // seam (rn_message_link_t) exactly where the real transports bind: it hands
@@ -748,7 +748,7 @@ static void release_returns_room()
     rocketnet_set_assert_callback( mo_assert_hook );
     mo_asserts = 0;
 
-    // the server's CONFIG (CHANNELS.md 10.3) is acked first, so the room counted below is the application's alone
+    // the server's CONFIG (standard/MESSAGES.md m11) is acked first, so the room counted below is the application's alone
     mo_step( &pair );
     mo_step( &pair );
     const uint32_t descriptors = region->descriptors_free;
@@ -1303,7 +1303,7 @@ static void budget_set_at_create_and_runtime()
 
 // ---------------------------------------------------------------------------
 // R6: the send budget is a configured default, and 0 or lower disables it
-// (docs/CHANNELS.md 11.5; tla/RNSendBudget.tla)
+// (standard/MESSAGES.md m9.4; tla/RNSendBudget.tla)
 // ---------------------------------------------------------------------------
 
 static void send_budget_defaults_from_config()
@@ -1913,7 +1913,7 @@ static void message_objects_client_clock_starts_at_first_update()
 }
 
 // ---------------------------------------------------------------------------
-// The unreliable path on the shipped objects (docs/CHANNELS.md 5, 6.3, 6.4,
+// The unreliable path on the shipped objects (standard/MESSAGES.md m3,
 // 9.3): the cases of the retired standalone rn_unreliable_* module that
 // describe behaviour the product has, run through the message objects.
 // ---------------------------------------------------------------------------
@@ -2351,7 +2351,7 @@ REGISTER_UNIT_TEST( receive_view_is_the_record );
 REGISTER_UNIT_TEST( release_returns_room );
 
 // the operator's environment overrides the config field and the create
-// argument, loudly: DEFAULT < STRUCT < ENV (docs/CHANNELS.md 11.5). Windows
+// argument, loudly: DEFAULT < STRUCT < ENV (standard/MESSAGES.md m9.4). Windows
 // has no setenv or unsetenv: _putenv_s sets, and an empty value removes.
 
 #if defined( _WIN32 )

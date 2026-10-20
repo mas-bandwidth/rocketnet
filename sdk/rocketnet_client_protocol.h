@@ -18,7 +18,7 @@
 #include "rocketnet_counters.h"
 #include "rocketnet_ack.h"
 
-// The client state machine, per STANDARD.md: the machine steps forward or
+// The client state machine, per standard/TRANSPORT.md: the machine steps forward or
 // fails, never sideways. A client climbs 1, 2, 3, 4 entering each state
 // exactly once per attempt; on any failure it dies to a terminal state, and
 // recovery is a fresh connect with a fresh token -- the ordinary path, run
@@ -30,7 +30,7 @@
 struct rocketnet_reassembly_set_t;
 
 // The verdict a client I/O thread records for each datagram it worked
-// (tla/RNClientIoDecrypt.tla IoCheck and IoOpen, docs/CLIENT-IO-DECRYPT.md):
+// (tla/RNClientIoDecrypt.tla IoCheck and IoOpen):
 // raw (not opened: a handshake packet, or anything while its copy of the open
 // key is not live), opened, or the rung that refused it before or at the AEAD.
 

@@ -1291,7 +1291,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     }
 
     // one server, one public address, one family: IPv4 or IPv6, the family
-    // of the address it is created with (DRIVERS.md, AF_XDP)
+    // of the address it is created with (TRANSPORTS.md, AF_XDP)
 
     if ( public_address.type != ROCKETNET_ADDRESS_IPV4 && public_address.type != ROCKETNET_ADDRESS_IPV6 )
     {

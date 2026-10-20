@@ -1,7 +1,7 @@
 # RNRing: the receive ring's placement rule
 
 `tla/RNRing.tla` is the sender's placement rule for the receive ring and the
-receiver's live spans: docs/CHANNELS.md section 6.2 (the byte bound), 6.3 step 3
+receiver's live spans: `standard/MESSAGES.md` section 6.2 (the byte bound), 6.3 step 3
 (why the receiver never runs out of room), section 8 (a block's span) and section
 15's `RNRing` row. It was written before any of the rule's code exists: the only
 ring code on main is the receiver's local check, `rn_region_ring_span_valid` in

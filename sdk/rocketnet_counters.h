@@ -156,7 +156,7 @@
     X( CONNECTION_REQUEST_SEALED_MISMATCH, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
     /** @brief ROCKETNET_COUNTER_CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED: Counts connection requests refused because that client identifier is already connected. Unit: occurrences. Class: refusal; family: CONNECTION_REQUEST_RECEIVED. */ \
     X( CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
-    /* retired with the admitted-token set (docs/SESSION.md 1.6): keeps its */ \
+    /* retired with the admitted-token set: keeps its */ \
     /* index, always zero. */ \
     /** @brief ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED: Counts retired counter slot; it stays zero while the connected-client check handles this refusal. Unit: occurrences. Class: refusal; family: CONNECTION_REQUEST_RECEIVED. */ \
     X( CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
@@ -188,7 +188,7 @@
     X( CONNECTION_RESPONSE_ALREADY_CONNECTED, EXPECTED, CONNECTION_RESPONSE_RECEIVED ) \
     /** @brief ROCKETNET_COUNTER_CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED: Counts connection responses refused because that client identifier is already connected. Unit: occurrences. Class: refusal; family: CONNECTION_RESPONSE_RECEIVED. */ \
     X( CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED, REFUSAL, CONNECTION_RESPONSE_RECEIVED ) \
-    /* retired with the admitted-token set (docs/SESSION.md 1.6): keeps its */ \
+    /* retired with the admitted-token set: keeps its */ \
     /* index, always zero. */ \
     /** @brief ROCKETNET_COUNTER_CONNECTION_RESPONSE_ADMITTED_SET_FULL: Counts retired counter slot; it stays zero after the admitted-token set is removed. Unit: occurrences. Class: refusal; family: CONNECTION_RESPONSE_RECEIVED. */ \
     X( CONNECTION_RESPONSE_ADMITTED_SET_FULL, REFUSAL, CONNECTION_RESPONSE_RECEIVED ) \
@@ -621,7 +621,7 @@
     /** @brief ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_SIZE: Counts client cookie packets with a wire size that does not match the packet type. Unit: occurrences. Class: refusal; family: CLIENT_COOKIE_RECEIVED. */ \
     X( CLIENT_COOKIE_WRONG_SIZE, REFUSAL, CLIENT_COOKIE_RECEIVED ) \
     \
-    /* the message layer's region (docs/CHANNELS.md 4): a send refused because */ \
+    /* the message layer's region (sdk/rocketnet_allocator.cpp): a send refused because */ \
     /* the connection's send store had no chunk of the class it needs (or, for */ \
     /* a block, not every chunk it needs), and a send refused because every */ \
     /* send descriptor was in use. Exhaustion is a counted refusal, never */ \
@@ -647,7 +647,7 @@
     /** @brief ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT: Counts cookie-validated requests refused before signature verification because the source exceeded its failure budget. Unit: occurrences. Class: refusal; family: CONNECTION_REQUEST_RECEIVED. */ \
     X( CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
     \
-    /* the UNRELIABLE path (docs/CHANNELS.md 5, 6.3, 6.4, 9.3, 11.2): a code-0 */ \
+    /* the UNRELIABLE path (standard/MESSAGES.md m3): a code-0 */ \
     /* record dropped on receive because the per-update unreliable delivery */ \
     /* budget Du was full (section 6.3 step 4), and a code-0 message dropped on */ \
     /* send: because finish_packet refused the packet that carried it (section */ \
@@ -669,7 +669,7 @@
     /** @brief ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL: Counts reliable send numbering stalls because the sender's own send window is full (its message count bound or its ring byte bound); counted once per stall, not per retry. Unit: occurrences. Class: refusal; family: none. */ \
     X( MESSAGE_WINDOW_STALL, REFUSAL, NONE ) \
     \
-    /* Layer 3 sent-packet map and resend FIFO (docs/CHANNELS.md 6.4, 15.1): */ \
+    /* Layer 3 sent-packet map and resend FIFO (standard/MESSAGES.md m9.3): */ \
     /* a sent-packet ring entry evicted to make room for a new packet (its */ \
     /* referenced numbers stay in the resend FIFO), and a reliable record */ \
     /* resent on the RTO. appended: indices are the contract. */ \
@@ -679,7 +679,7 @@
     /** @brief ROCKETNET_COUNTER_MESSAGE_RESENT: Counts reliable records resent after their retransmission timeout. Unit: occurrences. Class: path_loss; family: none. */ \
     X( MESSAGE_RESENT, PATH_LOSS, NONE ) \
     \
-    /* a connection's message memory (its region, docs/CHANNELS.md 4) was */ \
+    /* a connection's message memory (its region, sdk/rocketnet_allocator.cpp) was */ \
     /* exhausted: an operation found no room, the region took its sticky */ \
     /* exhausted state, and the connection is disconnected with the reason */ \
     /* ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED (tla/RNConnectionMemory.tla, */ \
@@ -690,7 +690,7 @@
     /** @brief ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED: Counts the exhaustion of a connection's message memory region once, plus each send refused while the region stays exhausted; an exhausted connection is then disconnected. Unit: occurrences. Class: refusal; family: none. */ \
     X( MESSAGE_MEMORY_EXHAUSTED, REFUSAL, NONE ) \
     \
-    /* Layer 4's dispatch (docs/CHANNELS.md 7.2, 7.3, 7.4, 7.5): a send refused */ \
+    /* Layer 4's dispatch (standard/MESSAGES.md m4): a send refused */ \
     /* because its reliability is outside the enabled mask, a receive of an */ \
     /* application record whose code the mask does not admit, an unreliable */ \
     /* record dropped because the send budget could not pay the packet that */ \
@@ -747,7 +747,7 @@
     /** @brief ROCKETNET_COUNTER_SEND_HISTORY_LOST: Counts send records confirmed lost by the acknowledgement window. Unit: occurrences. Class: path_loss; family: none. */ \
     X( SEND_HISTORY_LOST, PATH_LOSS, NONE ) \
     \
-    /* RELIABLE_ORDERED's receive path (docs/CHANNELS.md 7.2, 8): each is a */ \
+    /* RELIABLE_ORDERED's receive path (standard/MESSAGES.md m4): each is a */ \
     /* wire violation, counted once per record, and each ends the */ \
     /* connection with ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION. A record */ \
     /* whose channel is at or past this end's count; a block fragment whose */ \
@@ -798,7 +798,7 @@
     X( XDP_KERNEL_PASSED_IPV6_EXTENSION, EXPECTED, NONE ) \
     \
     /* A connection response that opened for a token already in the */ \
-    /* admitted-token set. Retired with the set (docs/SESSION.md 1.6): the */ \
+    /* admitted-token set. Retired with the set: the */ \
     /* client-id check refuses the second of two addresses holding one */ \
     /* token while the first is connected. appended: indices are the */ \
     /* contract, so it keeps its index and always reads zero. */ \
@@ -806,7 +806,7 @@
     X( CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED, REFUSAL, CONNECTION_RESPONSE_RECEIVED ) \
     \
     /* A client hand-off deferred because the other send ring is still */ \
-    /* handed off or sending (docs/CLIENT-IO.md, Reuse only after sent; a */ \
+    /* handed off or sending (a */ \
     /* hand-off never waits; tla/RNClientIo.tla Defer): the committed slots */ \
     /* stay in the Filling ring and leave with the next hand-off. EXPECTED: */ \
     /* deferral is the common case, not an overload signal. appended: */ \
@@ -824,7 +824,7 @@
     /* Client received a connection challenge or connection denied packet */ \
     /* whose wire length was not ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES */ \
     /* or ROCKETNET_CONNECTION_DENIED_WIRE_BYTES: refused before the state */ \
-    /* gate and before any AEAD open (STANDARD.md, Reading packets). */ \
+    /* gate and before any AEAD open (standard/TRANSPORT.md, Reading packets). */ \
     /* appended: indices are the contract. */ \
     /** @brief ROCKETNET_COUNTER_CLIENT_CHALLENGE_WRONG_SIZE: Counts challenge packets refused for the wrong wire length. Unit: occurrences. Class: refusal; family: CLIENT_CHALLENGE_RECEIVED. */ \
     X( CLIENT_CHALLENGE_WRONG_SIZE, REFUSAL, CLIENT_CHALLENGE_RECEIVED ) \
@@ -833,7 +833,7 @@
     \
     /* The two token-time refusals that were merged into */ \
     /* CONNECTION_REQUEST_TOKEN_EXPIRED, split out so each refusal reason has */ \
-    /* its own counter (STANDARD.md, Counters: refusal reasons are never */ \
+    /* its own counter (standard/TRANSPORT.md, Counters: refusal reasons are never */ \
     /* merged; Processing Connection Requests, the request order). They sit */ \
     /* beside TOKEN_EXPIRED in class and parent, and are appended here because */ \
     /* the indices are the contract. */ \
@@ -844,7 +844,7 @@
     \
     /* A send the driver refused for want of a link-layer destination: the */ \
     /* xdp driver on a segment with no default route, to an address with no */ \
-    /* learned MAC that answers no received frame (DRIVERS.md, xdp). Never */ \
+    /* learned MAC that answers no received frame (TRANSPORTS.md, xdp). Never */ \
     /* sent and never counted as sent. appended: indices are the contract. */ \
     /** @brief ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS: Counts sends refused because the driver has no link-layer destination. Unit: occurrences. Class: refusal; family: none. */ \
     X( SEND_NO_LINK_ADDRESS, REFUSAL, NONE ) \

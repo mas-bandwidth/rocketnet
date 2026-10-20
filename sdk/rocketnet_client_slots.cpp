@@ -28,7 +28,7 @@
     X( num_buckets, int num_buckets )                                                 \
     /* the free list: a stack of unused client indices, popped on connect */          \
     /* and pushed on disconnect, so finding a free slot is constant time in */        \
-    /* the number of client slots and never a search (STANDARD.md, */                 \
+    /* the number of client slots and never a search (standard/TRANSPORT.md, */                 \
     /* "Lookup complexity": "a free slot is found from a free list, not a */          \
     /* search") */                                                                    \
     X( free_stack, int * free_stack ) /* max_clients, unused indices */               \
@@ -180,7 +180,7 @@ int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
     // a free slot comes from the free list, not a search: a stack of unused
     // indices, popped here on connect and pushed on release, so the
     // per-connection lookup is constant time in the number of client slots,
-    // as STANDARD.md's "Lookup complexity" rule requires ("a free slot is
+    // as standard/TRANSPORT.md's "Lookup complexity" rule requires ("a free slot is
     // found from a free list, not a search"). a full table pops nothing and
     // returns -1.
 

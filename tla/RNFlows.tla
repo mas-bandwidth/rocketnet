@@ -1,5 +1,5 @@
 ---------------------------- MODULE RNFlows ----------------------------
-\* Flows on the message server (docs/FLOWS.md): a flow is a server-side set
+\* Flows on the message server: a flow is a server-side set
 \* of subscribed slots with an id. Send to a flow queues one copy to each
 \* subscriber's endpoint, the way broadcast does. A subscription is tagged
 \* with the connection id of its slot (as RNSlots binds endpoints) and ends
@@ -54,10 +54,10 @@ Issued == 1..(nextId - 1)
 \* not free and not kicked since the last Observe.
 Live(s) == bound[s] # 0 /\ owner[s] = bound[s]
 \* A refusal changes no flow state: the design counts it under the name r
-\* (FLOWS.md 4); the counter is not modelled, so a refusal is a stutter.
+\* the counter is not modelled, so a refusal is a stutter.
 Refuse(r) == /\ r \in Reasons /\ UNCHANGED vars
 
-\* ---- application phase: the main thread between updates (FLOWS.md 3) ----
+\* ---- application phase: the main thread between updates ----
 
 \* rn_flows_create: the first free index; FLOW_TABLE_FULL when none.
 \* MaxIds bounds the model's lifetime, not the design: ids never repeat.
@@ -84,7 +84,7 @@ Destroy(id) ==
                /\ UNCHANGED <<phase, owner, nextConn, bound, nextId, queue,
                               entitled, delivered, nextMsg>>
 
-\* rn_flows_subscribe: the refusals in FLOWS.md 4, in that order.
+\* rn_flows_subscribe: the refusals, in that order.
 Subscribe(id, s) ==
     /\ phase = "application"
     /\ LET i == IndexOf(id)
@@ -138,7 +138,7 @@ Send(id) ==
 \* thread, possibly in the middle of a flow send: the transport ends the
 \* connection now and the endpoint takes nothing more. The flow lists are
 \* not touched; the slot is a changed slot at the next Observe, which drops
-\* its subscriptions (FLOWS.md 5, Kick).
+\* its subscriptions (Kick).
 Kick(s) ==
     /\ phase = "application" /\ Live(s)
     /\ owner' = [owner EXCEPT ![s] = 0]
@@ -217,7 +217,7 @@ DeliveredOnlyToSubscribers == delivered \subseteq entitled
 NoSubscriptionSurvivesReuse ==
     \A i \in Flows : \A x \in subs[i] : bound[x.slot] = x.conn
 
-\* The bounds of FLOWS.md 2: no flow over its subscriber limit, no client
+\* The bounds: no flow over its subscriber limit, no client
 \* over its flow limit, the two lists agree, and a free index is empty.
 BoundsHeld ==
     /\ \A i \in Flows : Cardinality(subs[i]) <= MaxSubsPerFlow

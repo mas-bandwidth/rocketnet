@@ -6,7 +6,7 @@
 """Tests for tools/conformance/check_witnesses.py.
 
 Each test builds a small fixture tree in a temporary directory -- a
-STANDARD.md, a tla/ model, a code file and a test file -- and drives the
+a standard, a tla/ model, a code file and a test file -- and drives the
 checker against it. The checker is a pure function of its root, so the tests
 need no network, no time and no socket, and each stays inside its own
 temporary directory.

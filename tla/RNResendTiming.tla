@@ -1,6 +1,6 @@
 --------------------------- MODULE RNResendTiming ---------------------------
 (***************************************************************************)
-(* rocketnet: the resend timing of reliable records (docs/CHANNELS.md 6.4  *)
+(* rocketnet: resend timing of reliable records (standard/MESSAGES.md m9.3  *)
 (* "RTO", "Resend" and "Giving up"; the code is                            *)
 (* rn_window_ack_resend_delay, rn_window_ack_chunk_resend_delay,           *)
 (* rn_window_ack_resend and rn_window_ack_check_timeout in                 *)

@@ -151,11 +151,11 @@ struct alignas(64) rocketnet_client_stats_frame_t
     X( max_payload_bytes, int max_payload_bytes )                                                                    \
     X( send_arena, struct rocketnet_send_arena_t * send_arena )                                                      \
     X( reassembly, struct rocketnet_reassembly_set_t * reassembly )                                                  \
-    /* two rings of one layout (docs/CLIENT-IO.md _The hand-off and the two */                                       \
+    /* two rings of one layout ( */                                       \
     /* rings_): game threads fill payload_ring[client_io.rings.fill]. The BASE */                                    \
     /* path never hands off, so it fills ring 0 only. */                                                             \
     X( payload_ring, struct rocketnet_client_payload_ring_t payload_ring[2] )                                        \
-    /* the I/O thread design (docs/CLIENT-IO.md): true when the granted */                                           \
+    /* the I/O thread design: true when the granted */                                           \
     /* driver has wait and wake; step_driven when no I/O thread runs and the */                                      \
     /* caller calls rocketnet_client_io_step itself (unit tests) */                                                  \
     X( io_thread, bool io_thread )                                                                                   \
@@ -939,12 +939,12 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         return NULL;
     }
 
-    // the clock (docs/CLIENT-IO.md _The clock_): read once here; NULL means
+    // the clock: read once here; NULL means
     // rocketnet_platform_time
     client_transport->time_callback = config->time_callback ? config->time_callback : rocketnet_client_platform_time;
 
-    // a driver with wait and wake runs the I/O thread design of
-    // docs/CLIENT-IO.md through rocketnet_client_io_t, modelled by
+    // a driver with wait and wake runs the I/O thread design through
+    // rocketnet_client_io_t, modelled by
     // tla/RNClientIo.tla (every RNClientIo action named here); any other
     // keeps the BASE path: per-packet sends on the main thread and the
     // polling receive thread under the mutex
@@ -1028,7 +1028,7 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
     if ( ( client_transport->io_thread || client_transport->step_in_update ) &&
          ( client_transport->thread || client_transport->step_driven || client_transport->step_in_update ) )
     {
-        // docs/CLIENT-IO.md _Stop and destroy order_: the last hand-off,
+        // the last hand-off,
         // waiting for the other ring to be Sent if it must (only destroy
         // waits; RNClientIo CommittedEventuallyHandedOff), then Stop, Join,
         // close and free (FreedOnlyAfterJoin). The step-driven mode runs the
@@ -1176,7 +1176,7 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
 // RNClientIo HandOff and Defer; main thread, I/O thread path only, with the
 // fills joined. The stats count a slot at the hand-off attempt that first sees
 // it committed (stats_counted keeps a deferred slot from counting twice), not
-// when the I/O thread sends it (docs/CLIENT-IO.md _Reuse only after sent; a hand-off never
+// when the I/O thread sends it (a hand-off never
 // waits_). The committed slots of the Filling ring are counted into the stats
 // once, then handed to the I/O thread. A ROCKETNET_CLIENT_RINGS_LATE result is
 // the deferred hand-off: it counts CLIENT_SEND_DEFERRED and returns at once,
@@ -1228,7 +1228,7 @@ static void rocketnet_client_transport_io_hand_off( rocketnet_client_transport_t
 
 // RNClientIo Write and Commit for a packet the main thread built: the
 // protocol packet of update and the disconnect burst are sealed into a slot of
-// the Filling ring like a payload (docs/CLIENT-IO.md _The protocol packet and
+// the Filling ring like a payload (
 // disconnect_), and leave with the next hand-off. No driver send on the main
 // thread in the I/O thread path. A full Filling ring drops the packet and
 // counts SEND_RING_FULL, as start_packet refuses a payload.
@@ -1354,7 +1354,7 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
 
     client_transport->protocol.num_acked = 0;
 
-    // RNClientIo Expose (docs/CLIENT-IO.md _The receive path_, update step 1):
+    // RNClientIo Expose (update step 1):
     // a Ready buffer becomes Exposed and is processed exactly as at BASE. The
     // BASE path swaps under the mutex.
 
@@ -1986,8 +1986,7 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
     {
         // the burst is sealed into slots of the Filling ring and handed off
         // like any packet: deferred when the other ring is busy, retried by
-        // the next update, and handed off by destroy at the latest
-        // (docs/CLIENT-IO.md _The protocol packet and disconnect_)
+        // the next update, and handed off by destroy at the latest.
         for ( int i = 0; i < burst_count; i++ )
             rocketnet_client_transport_io_commit_packet( client_transport, burst + i * ROCKETNET_SEND_BUDGET, burst_bytes );
         rocketnet_client_transport_io_hand_off( client_transport, &server_address );
@@ -2044,7 +2043,7 @@ void rocketnet_client_transport_stats( rocketnet_client_transport_t * client_tra
     memset( stats, 0, sizeof(struct rocketnet_client_transport_stats_t) );
 
     g_client_ack_stats_count++;
-    // the client's only reader of the ack statistics is this getter, so they are computed here (docs/CLIENT-IO-DECRYPT.md, The ack statistics)
+    // the client's only reader of the ack statistics is this getter, so they are computed here
     rocketnet_ack_endpoint_update_stats( &client_transport->protocol.ack );
 
     // rtt seeds from the handshake's round trips and the acks refresh it
@@ -2071,7 +2070,7 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
 {
     rocketnet_assert( client_transport );
 
-    // the mutex covers the append only, never a socket call (docs/CLIENT-IO.md, Measured)
+    // the mutex covers the append only, never a socket call
 
     uint8_t scratch[ROCKETNET_MAX_PACKET_BYTES];
 

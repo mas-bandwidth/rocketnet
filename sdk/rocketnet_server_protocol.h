@@ -67,7 +67,7 @@ struct rocketnet_server_protocol_t
     struct rocketnet_counters_t * counters;
     struct rocketnet_signature_verify_budget_t signature_verify_budget;   // per-source failed-verify budget, before the verify
 
-    // the connection ids (docs/CHANNELS.md P9a, P9b). connection_ids holds one
+    // the connection ids (standard/TRANSPORT.md). connection_ids holds one
     // per client slot: nonzero and unique over the server's life while the
     // slot is held (a counter from 1, taken when the slot is assigned), 0
     // while it is free. acked_connection_ids parallels acks->acked_client_index
@@ -181,7 +181,7 @@ int rocketnet_server_protocol_write_ack_if_due( struct rocketnet_server_protocol
 //   connection.
 //
 // The acknowledgment is the peer's unverifiable claim, not proof; see
-// _Keep-alive generation_ in STANDARD.md and the fuller reasoning at the
+// _Keep-alive generation_ in standard/TRANSPORT.md and the fuller reasoning at the
 // definition. The caller loops the client indices each frame. Returns 0 when
 // not connected or not due.
 

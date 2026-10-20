@@ -1,6 +1,6 @@
 --------------------------- MODULE RNLiveFleetRun ---------------------------
 (***************************************************************************)
-(* rocketnet: the lifecycle of one live fleet run (docs/LIVE-XDP.md).      *)
+(* rocketnet: the lifecycle of one live fleet run.                         *)
 (*                                                                         *)
 (* One orchestrator on the coordinator's machine drives, over ssh, one     *)
 (* server on the test server (the xdp driver, so loading the server        *)
@@ -156,7 +156,7 @@ Init ==
     /\ collected = FALSE
 
 -----------------------------------------------------------------------------
-(* The orchestrator's steps, in order (docs/LIVE-XDP.md section 12).       *)
+(* The orchestrator's steps, in order.                                     *)
 
 \* systemd-run arms the dead-man timer before anything touches the NIC
 ArmDeadman ==
@@ -327,7 +327,7 @@ DeadmanFires ==
                     collected >>
 
 -----------------------------------------------------------------------------
-(* Each client's cycle (docs/LIVE-XDP.md section 6).                       *)
+(* Each client's cycle.                                                    *)
 
 StartClient(c) ==
     /\ orch = "serving" /\ phase[c] = "built"

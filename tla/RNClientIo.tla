@@ -1,7 +1,7 @@
 ------------------------------ MODULE RNClientIo ------------------------------
 (***************************************************************************)
-(* The client transport with its socket I/O on one I/O thread, as         *)
-(* docs/CLIENT-IO.md designs it.  The code at the base of the design is   *)
+(* The client transport with its socket I/O on one I/O thread.            *)
+(* The code at the base of the design is                                  *)
 (* sdk/rocketnet_client_transport.cpp: the payload ring the game threads  *)
 (* fill (rocketnet_client_transport_start_packet), the flush that sends   *)
 (* it per packet on the main thread                                       *)

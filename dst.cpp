@@ -2,7 +2,7 @@
     RocketNet. Copyright 2026 Mas Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    The DST command line (docs/DST.md section 2): one seed drives one
+    The DST command line: one seed drives one
     single-process run of N clients and a server over the in-memory network
     simulator, the message layer on every channel type. A passing range prints
     one PASS line and exits 0; a failing seed prints its FAIL line and the
