@@ -8196,6 +8196,8 @@ void rocketnet_test_linux_gso_sendmmsg_errors();
 void rocketnet_test_linux_gso_recvmmsg_errors();
 void rocketnet_test_linux_uring_receive_cqe_errors();
 void rocketnet_test_linux_uring_send_cqe_errors();
+void rocketnet_test_linux_xdp_receive_weather_ipv4();
+void rocketnet_test_linux_xdp_receive_weather_ipv6();
 #endif
 #endif
 
@@ -8276,6 +8278,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_linux_gso_recvmmsg_errors", rocketnet_test_linux_gso_recvmmsg_errors },
     { "test_linux_uring_receive_cqe_errors", rocketnet_test_linux_uring_receive_cqe_errors },
     { "test_linux_uring_send_cqe_errors", rocketnet_test_linux_uring_send_cqe_errors },
+    { "test_linux_xdp_receive_weather_ipv4", rocketnet_test_linux_xdp_receive_weather_ipv4 },
+    { "test_linux_xdp_receive_weather_ipv6", rocketnet_test_linux_xdp_receive_weather_ipv6 },
 #endif
 #endif
     { "test_platform_batch_pump_refused_destination", rocketnet_test_platform_batch_pump_refused_destination },
