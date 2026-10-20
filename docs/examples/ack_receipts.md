@@ -2,14 +2,14 @@
 
 A game sends state snapshots unreliably because a lost snapshot is superseded by the next frame's snapshot, never retransmitted.
 Delta compression still needs to know the newest snapshot the peer actually received so the next frame can encode against that baseline.
-Sending with `ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT` gives each snapshot one receipt (`ROCKETNET_RECEIPT_ACKED` or `ROCKETNET_RECEIPT_LOSS`) without retransmitting lost ones.
+Sending with `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT` gives each snapshot one receipt (`ROCKETNET_RECEIPT_STATUS_ACKED` or `ROCKETNET_RECEIPT_STATUS_LOSS`) without retransmitting lost ones.
 
 ## What it shows
 
 1. Create a server and a client over the `loopback` transport, with `simulated_loss_percent = 30` on the client (`rocketnet_client_default_config_sized` and `rocketnet_client_create_sized`) so some packets arrive and some are lost.
-2. Queue 20 state updates with `ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT` (`rocketnet_client_start_message` and `rocketnet_client_finish_message`), recording the nonzero serial returned for each update.
+2. Queue 20 state updates with `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT` (`rocketnet_client_start_message` and `rocketnet_client_finish_message`), recording the nonzero serial returned for each update.
 3. Read `rocketnet_client_receipts` each frame after `rocketnet_client_update` and match each `rocketnet_receipt_t` serial back to the update that sent it.
-4. Print `ACKED` (`ROCKETNET_RECEIPT_ACKED`) or `LOSS` (`ROCKETNET_RECEIPT_LOSS`) for each update and verify that all 20 sends receive exactly one receipt.
+4. Print `ACKED` (`ROCKETNET_RECEIPT_STATUS_ACKED`) or `LOSS` (`ROCKETNET_RECEIPT_STATUS_LOSS`) for each update and verify that all 20 sends receive exactly one receipt.
 
 Each frame runs the five steps in game-loop order: update, receive and release (plus receipts), simulate, queue outgoing messages, and `send_packets` last.
 

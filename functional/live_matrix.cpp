@@ -54,9 +54,6 @@
 // unreliable queue.
 #define LIVE_MATRIX_RELIABLE_RATE           ( 40 * 1400 )
 #define LIVE_MATRIX_UNRELIABLE_RATE         ( 24 * 1400 )
-#define LIVE_MATRIX_LEDGER                  ( 1 << 16 )
-#define LIVE_MATRIX_TIMED_SECONDS           1.0             // mode 4 and unreliable spans: released by arrival, or after this long on the clock
-#define LIVE_MATRIX_SPAN_MIN_BYTES          ( ROCKETNET_LIVE_BLOCK_STRIDE + 1 )     // RN_SPAN_MIN_BYTES: a message above the store's large chunk takes a span
 #define LIVE_MATRIX_RECEIPT_TABLE           ( 1 << 15 )
 // Release bounds as written; a Debug or sanitizer build scales them (test/time_scale.h)
 #define LIVE_MATRIX_WALL_BOUND              ( 30.0 * ROCKETNET_FUNCTIONAL_TIME_SCALE )
@@ -120,13 +117,6 @@ static int live_matrix_complete( int mode, uint32_t length )
     return mode == 2 || mode == 3 || mode == 6 || mode == 7;
 }
 
-// the bytes the sender's region holds until the peer acks: the reliable
-// paths, mode 4 included, which the pacing ledger counts
-static int live_matrix_reliable_path( int mode, uint32_t length )
-{
-    return live_matrix_complete( mode, length ) || mode == 4 || live_matrix_promoted( mode, length );
-}
-
 static int live_matrix_has_receipt( int mode )
 {
     return mode == 5 || mode == 6 || mode == 7;
@@ -146,7 +136,6 @@ struct live_matrix_stream_t
     uint64_t seen[LIVE_MATRIX_MAX_SEQUENCES / 64];
     int64_t last;                   // the last sequence received (7 bytes or more), sequenced and ordered modes
     uint32_t expected;              // ordered modes: the next sequence due
-    uint32_t released;              // mode 4: the pacing ledger is released below this sequence
     uint32_t received;
     uint32_t lost_sequenced;        // mode 1 and 4: sequences skipped over
 };
@@ -159,47 +148,12 @@ struct live_matrix_receipt_entry_t
     uint32_t length;
 };
 
-// One send the pacing ledger holds until it is released: on its arrival at
-// the peer (the ack follows). A mode-4 message may never arrive (superseded
-// or stale) and is released by a later mode-4 arrival on its channel. An
-// unreliable span is the sender's until it is written to the wire, and the
-// unreliable sends leave in the order they were queued, so it is released
-// when it or any unreliable message queued after it arrives. Both are
-// released after LIVE_MATRIX_TIMED_SECONDS as well, since a lost one may be
-// the last of its kind.
-struct live_matrix_ledger_entry_t
-{
-    uint32_t length;
-    uint16_t numbers;               // reliable message numbers: ceil(L / F), at least 1
-    uint8_t span;                   // placed in the send span ring
-    uint8_t reliable;
-    uint8_t released;
-    double release_time;            // 0: on arrival only
-};
-
 struct live_matrix_direction_t
 {
     struct live_matrix_stream_t streams[LIVE_MATRIX_MODES][LIVE_MATRIX_CHANNELS];
     uint32_t tiny_sent[LIVE_MATRIX_MODES][LIVE_MATRIX_TINY];
     uint32_t tiny_received[LIVE_MATRIX_MODES][LIVE_MATRIX_TINY];
     int cursor;
-    struct live_matrix_ledger_entry_t ledger[LIVE_MATRIX_LEDGER];
-    uint64_t ledger_head;           // the oldest entry not released
-    uint64_t ledger_tail;
-    uint64_t ledger_timed[LIVE_MATRIX_LEDGER];
-    uint64_t timed_head;
-    uint64_t timed_tail;
-    uint64_t ledger_index[LIVE_MATRIX_MODES][LIVE_MATRIX_CHANNELS][LIVE_MATRIX_MAX_SEQUENCES];   // entry + 1, 0 for none
-    uint64_t unreliable_ordinal[LIVE_MATRIX_MODES][LIVE_MATRIX_CHANNELS][LIVE_MATRIX_MAX_SEQUENCES];   // queue order + 1, 0 for none
-    uint64_t unreliable_next;       // the queue order of the next unreliable send
-    uint64_t unreliable_spans[LIVE_MATRIX_LEDGER];          // ledger entries of unreliable spans, in queue order
-    uint64_t unreliable_span_ordinals[LIVE_MATRIX_LEDGER];
-    uint64_t unreliable_head;
-    uint64_t unreliable_tail;
-    int64_t outstanding_bytes;
-    int64_t outstanding_messages;
-    int64_t outstanding_numbers;
-    int64_t span_ring_bytes;        // span bytes from the oldest unreleased entry to the tail
     int64_t reliable_tokens;
     int64_t unreliable_tokens;
     uint64_t paced;
@@ -236,10 +190,6 @@ struct live_matrix_t
     uint64_t not_delivered;              // modes 0, 1 and 4: lost or superseded, counted, not failed
     uint64_t refusals;
     uint64_t iteration;
-    int64_t limit_bytes;
-    int64_t limit_messages;
-    int64_t limit_numbers;
-    int64_t limit_span_ring;
 };
 
 static double live_matrix_now( struct live_matrix_t * m )
@@ -273,143 +223,34 @@ static const struct rocketnet_counters_t * live_matrix_sender_counters( struct l
 }
 
 // ---------------------------------------------------------------
-//                     the pacing ledger (docs/LIVE-XDP.md section 6)
+//                     pacing by the sender's room (docs/LIVE-XDP.md section 6)
 // ---------------------------------------------------------------
 
-// The API has no query for free room and a start the region cannot hold
-// ends the connection (MESSAGE_MEMORY_EXHAUSTED), so the sender keeps its
-// own ledger and admits a send only while each of these stays under half of
-// the region's room: the store bytes, the queued messages, the reliable
-// numbers, and the send span ring. The span ring is receive_ring_bytes long
-// (sdk/rocketnet_allocator.cpp, RN_PART_SEND_SPANS = B) and its head is the
-// oldest live span, so its use is every span byte placed since the oldest
-// unreleased send, released or not.
+// A start message the region has no room for ends the connection
+// (MESSAGE_MEMORY_EXHAUSTED), and the region frees a message only when the
+// peer acks it (or, for an unreliable one, writes it), so the sender asks the
+// library for its room before each start message: a send is admitted only
+// while it fits and leaves at least half of the pool it takes from free, the
+// store class for a message up to one block stride, the send spans above it.
+// Every mode reads the same room, whether its messages wait for an ack or not,
+// and nothing is released on a timer.
 
-static void live_matrix_ledger_release( struct live_matrix_direction_t * d, uint64_t index )
-{
-    struct live_matrix_ledger_entry_t * e = &d->ledger[index % LIVE_MATRIX_LEDGER];
-    if ( e->released )
-        return;
-    e->released = 1;
-    if ( e->reliable )
-    {
-        d->outstanding_bytes -= e->length;
-        d->outstanding_messages--;
-        d->outstanding_numbers -= e->numbers;
-    }
-    while ( d->ledger_head < d->ledger_tail && d->ledger[d->ledger_head % LIVE_MATRIX_LEDGER].released )
-    {
-        const struct live_matrix_ledger_entry_t * h = &d->ledger[d->ledger_head % LIVE_MATRIX_LEDGER];
-        if ( h->span )
-            d->span_ring_bytes -= h->length;
-        d->ledger_head++;
-    }
-}
-
-static void live_matrix_ledger_release_sequence( struct live_matrix_direction_t * d, int mode, int channel, uint32_t sequence )
-{
-    if ( sequence >= LIVE_MATRIX_MAX_SEQUENCES )
-        return;
-    const uint64_t index = d->ledger_index[mode][channel][sequence];
-    if ( index != 0 )
-        live_matrix_ledger_release( d, index - 1 );
-}
-
-static void live_matrix_ledger_expire( struct live_matrix_t * m, struct live_matrix_direction_t * d )
-{
-    while ( d->timed_head < d->timed_tail )
-    {
-        const uint64_t index = d->ledger_timed[d->timed_head % LIVE_MATRIX_LEDGER];
-        if ( d->ledger[index % LIVE_MATRIX_LEDGER].release_time > live_matrix_now( m ) )
-            break;
-        live_matrix_ledger_release( d, index );
-        d->timed_head++;
-    }
-}
-
-// an unreliable message queued at ordinal has arrived: it, and every
-// unreliable send queued before it, has left the sender
-static void live_matrix_ledger_unreliable_arrived( struct live_matrix_direction_t * d, int mode, int channel, uint32_t sequence )
-{
-    if ( sequence >= LIVE_MATRIX_MAX_SEQUENCES || d->unreliable_ordinal[mode][channel][sequence] == 0 )
-        return;
-    const uint64_t ordinal = d->unreliable_ordinal[mode][channel][sequence] - 1;
-    while ( d->unreliable_head < d->unreliable_tail && d->unreliable_span_ordinals[d->unreliable_head % LIVE_MATRIX_LEDGER] <= ordinal )
-    {
-        live_matrix_ledger_release( d, d->unreliable_spans[d->unreliable_head % LIVE_MATRIX_LEDGER] );
-        d->unreliable_head++;
-    }
-}
+// internal, defined in sdk/rocketnet_message_server.cpp (rn_region_send_fits);
+// not in rocketnet.h and not exported
+int rn_message_client_send_fits( struct rocketnet_message_client_t * client, int bytes, uint64_t * free_bytes, uint64_t * pool_bytes, uint32_t * free_messages );
+int rn_message_server_send_fits( struct rocketnet_message_server_t * server, int client_index, int bytes, uint64_t * free_bytes, uint64_t * pool_bytes, uint32_t * free_messages );
 
 static int live_matrix_unreliable_queue( int mode, uint32_t length )
 {
     return ( ( mode == 0 || mode == 1 ) && !live_matrix_promoted( mode, length ) ) || ( mode == 5 && length <= ROCKETNET_LIVE_UNRELIABLE_LIMIT );
 }
 
-static uint16_t live_matrix_numbers( uint32_t length )
+// 1 when the sender's room admits a send of length now
+static int live_matrix_room_admits( struct live_matrix_t * m, int direction, uint32_t length, uint64_t * free_bytes, uint64_t * pool_bytes, uint32_t * free_messages )
 {
-    const uint32_t n = ( length + ROCKETNET_LIVE_BLOCK_STRIDE - 1 ) / ROCKETNET_LIVE_BLOCK_STRIDE;
-    return (uint16_t) ( n < 1 ? 1 : n );
-}
-
-// 1 when the ledger admits a send of length on this mode
-static int live_matrix_ledger_admits( struct live_matrix_t * m, struct live_matrix_direction_t * d, int mode, uint32_t length )
-{
-    if ( length < LIVE_MATRIX_TINY )
-        return 1;
-    if ( d->ledger_tail - d->ledger_head >= LIVE_MATRIX_LEDGER - 1 || d->timed_tail - d->timed_head >= LIVE_MATRIX_LEDGER - 1 ||
-         d->unreliable_tail - d->unreliable_head >= LIVE_MATRIX_LEDGER - 1 )
-        return 0;
-    if ( length >= LIVE_MATRIX_SPAN_MIN_BYTES && d->span_ring_bytes + length > m->limit_span_ring )
-        return 0;
-    if ( !live_matrix_reliable_path( mode, length ) )
-        return 1;
-    return d->outstanding_bytes + length <= m->limit_bytes &&
-           d->outstanding_messages < m->limit_messages &&
-           d->outstanding_numbers + live_matrix_numbers( length ) <= m->limit_numbers;
-}
-
-static void live_matrix_ledger_add( struct live_matrix_t * m, struct live_matrix_direction_t * d, int mode, int channel, uint32_t sequence, uint32_t length )
-{
-    if ( length < LIVE_MATRIX_TINY )
-        return;             // a tiny message carries no sequence to release it by; six lengths per mode, negligible room
-    uint64_t ordinal = 0;
-    if ( live_matrix_unreliable_queue( mode, length ) )
-    {
-        ordinal = d->unreliable_next++;
-        if ( sequence < LIVE_MATRIX_MAX_SEQUENCES )
-            d->unreliable_ordinal[mode][channel][sequence] = ordinal + 1;
-    }
-    const int reliable = live_matrix_reliable_path( mode, length );
-    const int span = length >= LIVE_MATRIX_SPAN_MIN_BYTES;
-    if ( !reliable && !span )
-        return;
-    const uint64_t index = d->ledger_tail++;
-    struct live_matrix_ledger_entry_t * e = &d->ledger[index % LIVE_MATRIX_LEDGER];
-    e->length = length;
-    e->numbers = live_matrix_numbers( length );
-    e->span = (uint8_t) span;
-    e->reliable = (uint8_t) reliable;
-    e->released = 0;
-    e->release_time = ( mode == 4 || mode == 1 || !reliable ) ? live_matrix_now( m ) + LIVE_MATRIX_TIMED_SECONDS : 0.0;
-    if ( e->release_time > 0.0 )
-        d->ledger_timed[d->timed_tail++ % LIVE_MATRIX_LEDGER] = index;
-    if ( !reliable )
-    {
-        d->unreliable_spans[d->unreliable_tail % LIVE_MATRIX_LEDGER] = index;
-        d->unreliable_span_ordinals[d->unreliable_tail % LIVE_MATRIX_LEDGER] = ordinal;
-        d->unreliable_tail++;
-    }
-    if ( reliable )
-    {
-        d->outstanding_bytes += length;
-        d->outstanding_messages++;
-        d->outstanding_numbers += e->numbers;
-    }
-    if ( span )
-        d->span_ring_bytes += length;
-    if ( sequence < LIVE_MATRIX_MAX_SEQUENCES )
-        d->ledger_index[mode][channel][sequence] = index + 1;
+    const int fits = direction == 0 ? rn_message_client_send_fits( m->client, (int) length, free_bytes, pool_bytes, free_messages )
+                                    : rn_message_server_send_fits( m->server, 0, (int) length, free_bytes, pool_bytes, free_messages );
+    return fits && *free_bytes >= (uint64_t) length && *free_bytes - length >= *pool_bytes / 2 && *free_messages >= 1;
 }
 
 // ---------------------------------------------------------------
@@ -452,11 +293,11 @@ static void live_matrix_take_receipts( struct live_matrix_t * m, int direction )
         }
         e->receipted = 1;
         d->receipts_seen++;
-        if ( receipts[i].status == ROCKETNET_RECEIPT_ACKED )
+        if ( receipts[i].status == ROCKETNET_RECEIPT_STATUS_ACKED )
         {
             d->receipts_acked++;
         }
-        else if ( receipts[i].status == ROCKETNET_RECEIPT_LOSS )
+        else if ( receipts[i].status == ROCKETNET_RECEIPT_STATUS_LOSS )
         {
             d->receipts_lost++;
             // modes 6 and 7, and 5 as a reliable block, get exactly one ACKED and no LOSS
@@ -473,17 +314,6 @@ static void live_matrix_take_receipts( struct live_matrix_t * m, int direction )
 // ---------------------------------------------------------------
 //                     receive (sections 3 and 5)
 // ---------------------------------------------------------------
-
-static void live_matrix_release_mode4( struct live_matrix_direction_t * d, struct live_matrix_stream_t * s, int channel, uint32_t below )
-{
-    // a mode-4 message superseded before it arrived was acked all the same:
-    // release it from the pacing ledger
-    while ( s->released < below && s->released < s->next )
-    {
-        live_matrix_ledger_release_sequence( d, 4, channel, s->released );
-        s->released++;
-    }
-}
 
 static void live_matrix_arrival( struct live_matrix_t * m, int direction, int receive_channel, const uint8_t * data, int bytes )
 {
@@ -554,8 +384,6 @@ static void live_matrix_arrival( struct live_matrix_t * m, int direction, int re
         return;
     }
 
-    if ( mode == 4 )
-        live_matrix_release_mode4( d, s, channel, q );
     if ( live_matrix_sequenced( mode ) && s->last >= 0 )
         s->lost_sequenced += (uint32_t) ( (int64_t) q - s->last - 1 );
 
@@ -564,9 +392,6 @@ static void live_matrix_arrival( struct live_matrix_t * m, int direction, int re
     s->received++;
     if ( live_matrix_ordered( mode ) )
         s->expected++;
-    live_matrix_ledger_release_sequence( d, mode, channel, q );
-    if ( live_matrix_unreliable_queue( mode, length ) )
-        live_matrix_ledger_unreliable_arrived( d, mode, channel, q );
     live_matrix_table_received[direction][mode][channel][bucket]++;
     m->verified++;
 }
@@ -634,7 +459,6 @@ static int64_t live_matrix_next_sequence( struct live_matrix_direction_t * d, in
 static void live_matrix_send( struct live_matrix_t * m, int direction )
 {
     struct live_matrix_direction_t * d = &live_matrix_directions[direction];
-    live_matrix_ledger_expire( m, d );
     const int streams = LIVE_MATRIX_MODES * LIVE_MATRIX_CHANNELS;
     d->reliable_tokens += LIVE_MATRIX_RELIABLE_RATE;
     if ( d->reliable_tokens > LIVE_MATRIX_RELIABLE_RATE )
@@ -658,7 +482,9 @@ static void live_matrix_send( struct live_matrix_t * m, int direction )
         const uint32_t sequence = (uint32_t) q;
         const uint32_t length = rocketnet_live_length( &m->live, mode, channel, sequence );
         const int unreliable_queue = live_matrix_unreliable_queue( mode, length );
-        if ( ( unreliable_queue ? d->unreliable_tokens : d->reliable_tokens ) <= 0 || !live_matrix_ledger_admits( m, d, mode, length ) )
+        uint64_t free_bytes = 0, pool_bytes = 0;
+        uint32_t free_messages = 0;
+        if ( ( unreliable_queue ? d->unreliable_tokens : d->reliable_tokens ) <= 0 || !live_matrix_room_admits( m, direction, length, &free_bytes, &pool_bytes, &free_messages ) )
         {
             // held back: the stream waits, the others go on
             d->paced++;
@@ -671,9 +497,8 @@ static void live_matrix_send( struct live_matrix_t * m, int direction )
         if ( serial == 0 )
         {
             live_matrix_fail( m, "send", direction, mode, channel, sequence, "refused", (int) length );
-            printf( "ledger at the refusal: iteration %llu, outstanding %lld bytes %lld messages %lld numbers, span ring %lld bytes, %llu entries\n",
-                    (unsigned long long) m->iteration, (long long) d->outstanding_bytes, (long long) d->outstanding_messages,
-                    (long long) d->outstanding_numbers, (long long) d->span_ring_bytes, (unsigned long long) ( d->ledger_tail - d->ledger_head ) );
+            printf( "room at the refusal: iteration %llu, pool %llu of %llu bytes free, %u messages free\n",
+                    (unsigned long long) m->iteration, (unsigned long long) free_bytes, (unsigned long long) pool_bytes, free_messages );
             printf( "sender counters: store_full %llu queue_full %llu memory_exhausted %llu\n",
                     (unsigned long long) live_matrix_counter( live_matrix_sender_counters( m, direction ), ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ),
                     (unsigned long long) live_matrix_counter( live_matrix_sender_counters( m, direction ), ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL ),
@@ -685,7 +510,6 @@ static void live_matrix_send( struct live_matrix_t * m, int direction )
         s->sent++;
         if ( length < LIVE_MATRIX_TINY )
             d->tiny_sent[mode][length]++;
-        live_matrix_ledger_add( m, d, mode, channel, sequence, length );
         if ( live_matrix_has_receipt( mode ) )
         {
             struct live_matrix_receipt_entry_t * e = live_matrix_receipt_slot( d, serial, 1 );
@@ -776,15 +600,15 @@ static int live_matrix_up( struct live_matrix_t * m )
 {
     return rocketnet_message_client_state( m->client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
            rocketnet_message_server_client_connected( m->server, 0 ) &&
-           rocketnet_message_client_disconnect_reason( m->client ) == ROCKETNET_MESSAGE_ERROR_NONE &&
-           rocketnet_message_server_disconnect_reason( m->server, 0 ) == ROCKETNET_MESSAGE_ERROR_NONE;
+           rocketnet_message_client_disconnect_reason( m->client ) == ROCKETNET_DISCONNECT_REASON_NONE &&
+           rocketnet_message_server_disconnect_reason( m->server, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE;
 }
 
 static void live_matrix_pump( struct live_matrix_t * m )
 {
     const double now = live_matrix_now( m );
-    live_matrix_check( rocketnet_message_client_update( m->client, now ) == ROCKETNET_MESSAGE_OK );
-    live_matrix_check( rocketnet_message_server_update( m->server, now ) == ROCKETNET_MESSAGE_OK );
+    live_matrix_check( rocketnet_message_client_update( m->client, now ) == ROCKETNET_UPDATE_OK );
+    live_matrix_check( rocketnet_message_server_update( m->server, now ) == ROCKETNET_UPDATE_OK );
 }
 
 static void live_matrix_flush( struct live_matrix_t * m )
@@ -797,7 +621,7 @@ static void live_matrix_flush( struct live_matrix_t * m )
 static void live_matrix_connect( struct live_matrix_t * m )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    live_matrix_check( rocketnet_write_dev_connect_token( m->server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), token ) );
+    live_matrix_check( rocketnet_write_dev_connect_token( m->server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     m->client = rocketnet_message_client_create( NULL, token, NULL, &m->message_config, NULL, 0, LIVE_MATRIX_SEND_KBPS );
     live_matrix_check( m->client );
 
@@ -827,7 +651,7 @@ static void live_matrix_advance( struct live_matrix_t * m, double seconds, int s
     for ( double passed = 0.0; passed < seconds; passed += step )
     {
         m->offset += step;
-        live_matrix_check( rocketnet_message_server_update( m->server, live_matrix_now( m ) ) == ROCKETNET_MESSAGE_OK );
+        live_matrix_check( rocketnet_message_server_update( m->server, live_matrix_now( m ) ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_server_send_packets( m->server );
         if ( stop_when_slot_empty && !rocketnet_message_server_client_connected( m->server, 0 ) )
             return;
@@ -1011,7 +835,7 @@ static void live_matrix_edge_probes( struct live_matrix_t * m )
         }
     }
 
-    // every probe's receipt is in before the matrix starts its own ledger
+    // every probe's receipt is in before the matrix starts its own sends
     const double start = rocketnet_platform_time();
     while ( m->failures == 0 && rocketnet_platform_time() - start < 2.0 &&
             ( live_matrix_directions[0].receipts_seen < live_matrix_directions[0].receipts_expected ||
@@ -1174,7 +998,7 @@ static void live_matrix_window( struct live_matrix_t * m, double deadline )
         }
     }
 
-    printf( "window %u: %.3f s, %llu iterations, c2s %llu messages %llu bytes, s2c %llu messages %llu bytes, receipts c2s %u acked %u lost, s2c %u acked %u lost, sequenced stale %llu superseded %llu, sends held back by the ledger c2s %llu s2c %llu\n",
+    printf( "window %u: %.3f s, %llu iterations, c2s %llu messages %llu bytes, s2c %llu messages %llu bytes, receipts c2s %u acked %u lost, s2c %u acked %u lost, sequenced stale %llu superseded %llu, sends held back for room c2s %llu s2c %llu\n",
             m->cycle, rocketnet_platform_time() - window_start, (unsigned long long) iterations,
             (unsigned long long) live_matrix_directions[0].messages_sent, (unsigned long long) live_matrix_directions[0].bytes_sent,
             (unsigned long long) live_matrix_directions[1].messages_sent, (unsigned long long) live_matrix_directions[1].bytes_sent,
@@ -1253,11 +1077,6 @@ void live_message_matrix_loopback()
     m->message_config.window_messages = 4096;
     m->message_config.receive_ring_bytes = 1 << 20;
 
-    m->limit_bytes = m->message_config.send_buffer_bytes / 2;
-    m->limit_messages = m->message_config.send_queue_messages / 2;
-    m->limit_numbers = m->message_config.window_messages / 2;
-    m->limit_span_ring = m->message_config.receive_ring_bytes / 4;
-
     m->live.seed = 0x5EED0001u;
     m->live.max_message_bytes = (uint32_t) m->message_config.max_message_bytes;
     m->live.max_payload_bytes = ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
@@ -1286,7 +1105,7 @@ void live_message_matrix_loopback()
         const double start = rocketnet_platform_time();
         while ( rocketnet_message_server_client_connected( m->server, 0 ) && rocketnet_platform_time() - start < 2.0 )
         {
-            live_matrix_check( rocketnet_message_server_update( m->server, live_matrix_now( m ) ) == ROCKETNET_MESSAGE_OK );
+            live_matrix_check( rocketnet_message_server_update( m->server, live_matrix_now( m ) ) == ROCKETNET_UPDATE_OK );
             rocketnet_platform_sleep( 0.0005 );
         }
         live_matrix_check( !rocketnet_message_server_client_connected( m->server, 0 ) );
