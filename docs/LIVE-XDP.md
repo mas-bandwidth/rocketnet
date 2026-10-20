@@ -755,7 +755,7 @@ file run over ssh under a timeout (section 12):
 
 - **Minted at each connect, in the client process.** Each client mints its
   own development token just before each connect, with
-  `rocketnet_write_dev_connect_token(address, rocketnet_random_uint64(), time(NULL), token)`,
+  `rocketnet_write_dev_connect_token(address, rocketnet_random_uint64(), time(NULL), token, sizeof(token))`,
   as `client.c:46` does. (`rocketnet_random_uint64` is an internal SDK
   helper in `sdk/rocketnet_layers.h`, not a public call in `sdk/rocketnet.h`.)
   It is never minted ahead of time and never shipped between machines.

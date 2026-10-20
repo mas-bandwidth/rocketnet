@@ -3,9 +3,9 @@
     Licensed under the GNU Affero General Public License v3.0
 
     Ack receipts: send unreliable state updates with
-    ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT, record the serial
+    ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, record the serial
     rocketnet_client_finish_message returns, and read rocketnet_client_receipts each
-    frame for ROCKETNET_RECEIPT_ACKED or ROCKETNET_RECEIPT_LOSS so the sender
+    frame for ROCKETNET_RECEIPT_STATUS_ACKED or ROCKETNET_RECEIPT_STATUS_LOSS so the sender
     knows which snapshot the receiver actually got. Run: ./bin/example_ack_receipts.
 */
 
@@ -41,7 +41,7 @@ int main( void )
     memset( serials, 0, sizeof( serials ) );
     memset( outcomes, 0, sizeof( outcomes ) );
 
-    CHECK( rocketnet_init( NULL ) );
+    CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     rocketnet_server_dev_config( &server_config );
     server_config.max_clients = 2;
@@ -55,9 +55,9 @@ int main( void )
     CHECK( server != NULL );
 
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
-    CHECK( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token ) );
+    CHECK( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    CHECK( rocketnet_client_default_config_sized( &client_config, sizeof( client_config ) ) == 1 );
+    CHECK( rocketnet_client_default_config_sized( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
     client_config.transport = "loopback";
     client_config.simulated_loss_percent = 30;
     client = rocketnet_client_create_sized( NULL, &client_config, sizeof( client_config ), NULL, 0 );
@@ -74,8 +74,8 @@ int main( void )
         const double now = 1000.0 + ( rocketnet_time() - start );
 
         // (1) update pumps the transport and resolves this frame's receipts
-        CHECK( rocketnet_server_update( server, now ) == ROCKETNET_MESSAGE_OK );
-        CHECK( rocketnet_client_update( client, now ) == ROCKETNET_MESSAGE_OK );
+        CHECK( rocketnet_server_update( server, now ) == ROCKETNET_UPDATE_OK );
+        CHECK( rocketnet_client_update( client, now ) == ROCKETNET_UPDATE_OK );
 
         // (2) receive and release incoming messages, and read this frame's receipts
         const uint8_t * data = NULL;
@@ -100,15 +100,15 @@ int main( void )
                 }
             }
             CHECK( idx >= 0 && outcomes[idx] == 0 );
-            CHECK( receipts[r].status == ROCKETNET_RECEIPT_ACKED || receipts[r].status == ROCKETNET_RECEIPT_LOSS );
+            CHECK( receipts[r].status == ROCKETNET_RECEIPT_STATUS_ACKED || receipts[r].status == ROCKETNET_RECEIPT_STATUS_LOSS );
             outcomes[idx] = receipts[r].status;
             resolved++;
-            if ( receipts[r].status == ROCKETNET_RECEIPT_ACKED )
+            if ( receipts[r].status == ROCKETNET_RECEIPT_STATUS_ACKED )
                 acked++;
             else
                 lost++;
             printf( "update %d (serial %u): %s\n", idx, receipts[r].serial,
-                    receipts[r].status == ROCKETNET_RECEIPT_ACKED ? "ACKED" : "LOSS" );
+                    receipts[r].status == ROCKETNET_RECEIPT_STATUS_ACKED ? "ACKED" : "LOSS" );
         }
 
         // (3) run the game simulation for the frame
@@ -119,7 +119,7 @@ int main( void )
             if ( sent < NUM_UPDATES )
             {
                 uint32_t snapshot_id = (uint32_t) sent;
-                uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT, (int) sizeof( snapshot_id ) );
+                uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, (int) sizeof( snapshot_id ) );
                 CHECK( out != NULL );
                 memcpy( out, &snapshot_id, sizeof( snapshot_id ) );
                 serials[sent] = rocketnet_client_finish_message( client, (int) sizeof( snapshot_id ) );
@@ -128,7 +128,7 @@ int main( void )
             }
             if ( rocketnet_server_client_connected( server, slot ) )
             {
-                uint8_t * tick = rocketnet_server_start_message( server, slot, 0, ROCKETNET_UNRELIABLE, 1 );
+                uint8_t * tick = rocketnet_server_start_message( server, slot, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 1 );
                 if ( tick )
                 {
                     tick[0] = 0;

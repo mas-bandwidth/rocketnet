@@ -33,8 +33,8 @@ void reliable_mixed_sizes_over_lossy_link()
 
     for ( int i = 0; i < 4; i++ )
     {
-        reliable_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABLE, client_data[i], lengths[i] ) != 0 );
-        reliable_check( rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABLE, server_data[i], lengths[i] ) != 0 );
+        reliable_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE, client_data[i], lengths[i] ) != 0 );
+        reliable_check( rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE, server_data[i], lengths[i] ) != 0 );
     }
 
     uint32_t server_seen = 0, client_seen = 0;
@@ -102,10 +102,10 @@ void reliable_duplicate_after_gap_delivered_once()
     const uint64_t duplicates_before = h.message_server->object.counters.values[ROCKETNET_COUNTER_MESSAGE_DUPLICATE];
 
     rocketnet_channel_harness_set_wire( &h, ROCKETNET_CHANNEL_WIRE_HOLD_PAYLOADS, ROCKETNET_CHANNEL_WIRE_DROP );
-    reliable_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABLE, a, a_bytes ) != 0 );
+    reliable_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE, a, a_bytes ) != 0 );
     rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
     const int a_end = h.held_count;
-    reliable_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABLE, b, b_bytes ) != 0 );
+    reliable_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE, b, b_bytes ) != 0 );
     rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
     const int b_end = h.held_count;
     reliable_check( a_end >= 1 && b_end > a_end );

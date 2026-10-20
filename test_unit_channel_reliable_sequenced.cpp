@@ -96,7 +96,7 @@ static void reliable_sequenced_c_api_start_finish()
                                                                ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 );
     check( object != NULL );
     rocketnet_message_client_t * client = (rocketnet_message_client_t *) object;
-    uint8_t * data = rocketnet_message_client_start( client, 0, ROCKETNET_RELIABLE_SEQUENCED, 3 );
+    uint8_t * data = rocketnet_message_client_start( client, 0, ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED, 3 );
     check( data != NULL );
     if ( data )
     {
@@ -104,7 +104,7 @@ static void reliable_sequenced_c_api_start_finish()
         check( rocketnet_message_client_finish( client, 3 ) != 0 );
         const uint32_t d = object->connections[0].region->channel_send[0].queue_tail;    // the head is the connection's CONFIG (CHANNELS.md 10.3)
         check( d != RN_DESCRIPTOR_NONE );
-        check( object->connections[0].region->send_descriptors[d].reliability == ROCKETNET_RELIABLE_SEQUENCED );
+        check( object->connections[0].region->send_descriptors[d].reliability == ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED );
     }
     rn_message_object_destroy( object );
 }
@@ -184,7 +184,7 @@ static void resent_until_packet_acked()
     rs_node_t sender;
     rs_init( &sender );
     const uint8_t state = 9;
-    rs_send( &sender, ROCKETNET_RELIABLE_SEQUENCED, &state, 1 );
+    rs_send( &sender, ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED, &state, 1 );
     check( sender.ordered.send.next == 0 ); // numbering is late
     rs_packet_t first[1], retry[1];
     check( rs_write( &sender, 1.0, first, 1, 11 ) == 1 );
@@ -209,9 +209,9 @@ static void stale_transport_ack_retires_resend_after_discard()
     rs_init( &receiver );
     const uint8_t old = 1, newest = 2;
     rs_packet_t old_packet[1], new_packet[1], retry[1];
-    rs_send( &sender, ROCKETNET_RELIABLE_SEQUENCED, &old, 1 );
+    rs_send( &sender, ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED, &old, 1 );
     check( rs_write( &sender, 1.0, old_packet, 1, 31 ) == 1 );
-    rs_send( &sender, ROCKETNET_RELIABLE_SEQUENCED, &newest, 1 );
+    rs_send( &sender, ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED, &newest, 1 );
     check( rs_write( &sender, 1.01, new_packet, 1, 32 ) == 1 );
 
     // RNChannelTypes!Dispatch: packet arrival is ACK-worthy even when the
@@ -250,7 +250,7 @@ static void reliable_sequenced_block_delivers_whole()
     uint8_t data[2 * ROCKETNET_MESSAGE_FRAGMENT_BYTES + 17];
     for ( uint32_t i = 0; i < bytes; i++ )
         data[i] = (uint8_t) ( i * 7 + 3 );
-    rs_send( &sender, ROCKETNET_RELIABLE_SEQUENCED, data, bytes );
+    rs_send( &sender, ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED, data, bytes );
     rs_packet_t packets[3];
     check( rs_write( &sender, 1.0, packets, 3, 41 ) == 3 );
     for ( int i = 2; i >= 0; i-- )
@@ -286,10 +286,10 @@ static void reliable_sequenced_block_ahead_drains_from_ring()
     uint8_t data[ROCKETNET_MESSAGE_FRAGMENT_BYTES + 300];
     for ( uint32_t i = 0; i < sizeof( data ); i++ )
         data[i] = (uint8_t) ( i * 11 + 5 );
-    rs_send( &sender, ROCKETNET_RELIABLE_ORDERED, &ordered, 1 );
+    rs_send( &sender, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, &ordered, 1 );
     rs_packet_t packets[3];
     check( rs_write( &sender, 1.0, packets, 1, 61 ) == 1 );
-    rs_send( &sender, ROCKETNET_RELIABLE_SEQUENCED, data, (uint32_t) sizeof( data ) );
+    rs_send( &sender, ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED, data, (uint32_t) sizeof( data ) );
     check( rs_write( &sender, 1.01, packets + 1, 2, 62 ) == 2 );
     check( rn_ordered_receive( &receiver.ordered, packets[2].data, packets[2].bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
     rn_ordered_end_update( &receiver.ordered );
@@ -427,14 +427,14 @@ static void rs_counted_free( void *, void * memory )
 static void reliable_sequenced_no_allocation_after_create()
 {
     rocketnet_term();
-    check( rocketnet_allocator( rs_counted_malloc, rs_counted_free ) );
-    check( rocketnet_init( NULL ) );
+    check( rocketnet_set_allocator( rs_counted_malloc, rs_counted_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
     rs_node_t sender, receiver;
     rs_init( &sender );
     rs_init( &receiver );
     const uint64_t created = rs_allocations;
     const uint8_t state = 7;
-    rs_send( &sender, ROCKETNET_RELIABLE_SEQUENCED, &state, 1 );
+    rs_send( &sender, ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED, &state, 1 );
     rs_packet_t packet;
     check( rs_write( &sender, 1.0, &packet, 1, 91 ) == 1 );
     check( rn_ordered_receive( &receiver.ordered, packet.data, packet.bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
@@ -446,8 +446,8 @@ static void reliable_sequenced_no_allocation_after_create()
     rn_arena_destroy( sender.arena );
     rn_arena_destroy( receiver.arena );
     rocketnet_term();
-    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
-    check( rocketnet_init( NULL ) );
+    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
 REGISTER_UNIT_TEST( reliable_sequenced_no_allocation_after_create );
@@ -464,7 +464,7 @@ static void rs_check_refused( rs_node_t * node, const rocketnet_message_record_t
     if ( counter != ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION )
         check( node->counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == violations_before + 1 );
     check( node->ordered.channels.deliveries == 0 );
-    check( node->ordered.channels.error == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
+    check( node->ordered.channels.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
 }
 
 // RNChannelTypes!Dispatch: a sequenced record that names a channel the set

@@ -164,8 +164,8 @@ static bool ep_send_next( ep_side_t * from, ep_side_t * to, uint64_t * random )
     const int kind = pick < 5 ? EP_KIND_ORDERED : ( pick < 8 ? EP_KIND_RELIABLE : EP_KIND_UNRELIABLE );
     const int channel = kind == EP_KIND_ORDERED ? (int) ( ep_random( random ) % EP_ORDERED_CHANNELS ) :
                         ( kind == EP_KIND_RELIABLE ? EP_RELIABLE_CHANNEL : EP_UNRELIABLE_CHANNEL );
-    const int reliability = kind == EP_KIND_ORDERED ? ROCKETNET_RELIABLE_ORDERED :
-                            ( kind == EP_KIND_RELIABLE ? ROCKETNET_RELIABLE : ROCKETNET_UNRELIABLE );
+    const int reliability = kind == EP_KIND_ORDERED ? ROCKETNET_RELIABILITY_RELIABLE_ORDERED :
+                            ( kind == EP_KIND_RELIABLE ? ROCKETNET_RELIABILITY_RELIABLE : ROCKETNET_RELIABILITY_UNRELIABLE );
 
     // the message: its index, its kind, then filler up to its size
     const int bytes = 8 + (int) ( ep_random( random ) % 200 );
@@ -179,7 +179,7 @@ static bool ep_send_next( ep_side_t * from, ep_side_t * to, uint64_t * random )
     const uint32_t serial = rn_endpoint_send( &from->endpoint, data, bytes, reliability, ROCKETNET_PRIORITY_MEDIUM, channel, 0 );
     if ( serial == 0 )
         return false;                                           // the window or the queue is full: try again later
-    check( rn_endpoint_error( &from->endpoint ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( rn_endpoint_error( &from->endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
     from->kind_of[index] = kind;
     from->channel_of[index] = channel;
     from->sent[index] = 1;
@@ -281,7 +281,7 @@ static void ep_update( ep_side_t * side, ep_side_t * peer, double now, uint64_t 
             ep_deliver( side, peer, &out[i], stats );
     }
     rn_endpoint_config_tick( endpoint, 1, now );                  // the stand-in transport is connected throughout
-    check( rn_endpoint_error( endpoint ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( rn_endpoint_error( endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
     // the application sends a few
     for ( int i = 0; i < 3; i++ )
@@ -424,8 +424,8 @@ static void endpoint_back_to_back_over_lossy_array()
     check( stats.acks_lost > 0 );
     check( ep_counter( a, ROCKETNET_COUNTER_MESSAGE_RESENT ) > 0 );
     check( ep_counter( b, ROCKETNET_COUNTER_MESSAGE_RESENT ) > 0 );
-    check( rn_endpoint_error( &a->endpoint ) == ROCKETNET_MESSAGE_ERROR_NONE );
-    check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( rn_endpoint_error( &a->endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
     // CONFIG (10.3): each end announced its CONFIG, and took and matched
     // the peer's through the same lossy array
@@ -441,14 +441,14 @@ static void endpoint_back_to_back_over_lossy_array()
         rn_endpoint_config_tick( &b->endpoint, 0, start - 1.0 );   // the wait starts only once the transport is connected
         check( b->endpoint.config_wait_start < 0.0 );
         rn_endpoint_config_tick( &b->endpoint, 1, start );
-        check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_MESSAGE_ERROR_NONE );
+        check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
         check( rn_endpoint_deadline( &b->endpoint ) == start + timeout );
         rn_endpoint_config_tick( &b->endpoint, 1, start + timeout * 0.5 );
-        check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_MESSAGE_ERROR_NONE );
+        check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
         rn_endpoint_config_tick( &b->endpoint, 0, start + timeout );   // started, the wait times out whatever the transport says
-        check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT );
+        check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
         rn_endpoint_reset( &b->endpoint, start + timeout );
-        check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_MESSAGE_ERROR_NONE );
+        check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
     }
 
     // a reset starts a fresh connection on the same region
@@ -504,8 +504,8 @@ static void ep_free( void * context, void * p )
 static void endpoint_never_allocates_or_reads_a_clock()
 {
     rocketnet_term();
-    check( rocketnet_allocator( ep_malloc, ep_free ) );
-    check( rocketnet_init( NULL ) );
+    check( rocketnet_set_allocator( ep_malloc, ep_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     rocketnet_message_config_t config;
     ep_config( &config );
@@ -566,8 +566,8 @@ static void endpoint_never_allocates_or_reads_a_clock()
     check( traces[0] == traces[1] );
 
     rocketnet_term();
-    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
-    check( rocketnet_init( NULL ) );
+    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
 // R6 (docs/CHANNELS.md 11.5; tla/RNSendBudget.tla UncappedNeverDropsOrWaits):
@@ -594,7 +594,7 @@ static void endpoint_uncapped_large_sequenced_skips_the_bucket()
     check( endpoint.send_budget_enabled == 0 );
 
     const int bytes = 3000;
-    uint8_t * p = rn_endpoint_start( &endpoint, 0, ROCKETNET_UNRELIABLE_SEQUENCED, bytes, endpoint_config.max_payload_bytes );
+    uint8_t * p = rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, bytes, endpoint_config.max_payload_bytes );
     check( p != NULL );
     if ( p )
     {

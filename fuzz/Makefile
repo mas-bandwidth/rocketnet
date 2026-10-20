@@ -6,19 +6,32 @@
 # rocketnet_fuzz against the release library; fuzz-nightly.yml drives these
 # four here.
 #
-# Linux only (libFuzzer + bpf/xdp link deps). The mac is the edit loop; the
-# `compile` target proves the sources compile against the development headers
-# on any host, which is where an undeclared development symbol would surface.
+# The bpf/xdp link deps are Linux only; darwin links the same library without
+# them and adds the CoreFoundation and SystemConfiguration frameworks the
+# platform layer's interface lookup uses, as CMakeLists.txt does. The `compile` target proves the sources compile against the development
+# headers on any host, which is where an undeclared development symbol would
+# surface.
 
 # := rather than ?= : GNU make's built-in CXX = g++ would otherwise win the
 # default, and g++ has no libFuzzer (-fsanitize=fuzzer) support. A command
 # line CXX=... still overrides this, so the nightly job's direct clang++
 # invocation is unaffected.
-CXX      := clang++
+#
+# ROCKETNET_FUZZ_CXX names the compiler that links libFuzzer. Apple clang
+# ships no libFuzzer runtime, so on a Mac point it at an LLVM toolchain that
+# does, for example the LLVM release for macOS ARM64 unpacked at ~/sdk/llvm:
+# make ROCKETNET_FUZZ_CXX="$$HOME/sdk/llvm/bin/clang++".
+CXX      := $(if $(ROCKETNET_FUZZ_CXX),$(ROCKETNET_FUZZ_CXX),clang++)
 SANITIZE ?= -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
 FLAGS     = -g -O1 -std=c++17 -ffp-contract=off -DROCKETNET_DEVELOPMENT=1 -I../sodium -I../sdk -I../test
-LIB       = ../build/librocketnet_dev.a
-LINKS     = -lbpf -lxdp -lpthread
+BUILD    ?= ../build
+LIB       = $(BUILD)/librocketnet_dev.a
+UNAME_S  := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+LINKS     = -lpthread -framework CoreFoundation -framework SystemConfiguration
+else
+LINKS     = -lbpf -lxdp -luring -lpthread
+endif
 
 TARGETS = rocketnet_fuzz rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_message
 SOURCES = rocketnet_fuzz.cpp rocketnet_fuzz_connect_token.cpp rocketnet_fuzz_receive_structured.cpp rocketnet_fuzz_message.cpp

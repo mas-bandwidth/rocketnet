@@ -48,9 +48,9 @@ static int run_connect_and_traffic( struct rocketnet_server_t * server, struct r
     {
         const double now = 1000.0 + ( rocketnet_time() - start );
         // (1) update pumps the transport; (2) receive, release, echo back
-        if ( rocketnet_server_update( server, now ) != ROCKETNET_MESSAGE_OK )
+        if ( rocketnet_server_update( server, now ) != ROCKETNET_UPDATE_OK )
             return -1;
-        if ( rocketnet_client_update( client, now ) != ROCKETNET_MESSAGE_OK )
+        if ( rocketnet_client_update( client, now ) != ROCKETNET_UPDATE_OK )
             return -1;
         {
             const uint8_t * data = NULL;
@@ -63,7 +63,7 @@ static int run_connect_and_traffic( struct rocketnet_server_t * server, struct r
                     continue;
                 while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
                 {
-                    uint8_t * out = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABLE_ORDERED, bytes );
+                    uint8_t * out = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
                     if ( out )
                     {
                         memcpy( out, data, (size_t) bytes );
@@ -76,7 +76,7 @@ static int run_connect_and_traffic( struct rocketnet_server_t * server, struct r
         // (3) simulate; (4) queue this frame's outgoing message once connected
         if ( connected )
         {
-            uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABLE_ORDERED, (int) sizeof( payload ) );
+            uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) sizeof( payload ) );
             if ( out )
             {
                 memcpy( out, payload, sizeof( payload ) );
@@ -107,7 +107,7 @@ int main( void )
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     char server_address[64];
     int result = 1;
-    CHECK( rocketnet_init( NULL ) );
+    CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
     rocketnet_server_dev_config( &server_config );
     server_config.max_clients = 2;
     server_config.transport = "loopback";
@@ -119,7 +119,7 @@ int main( void )
     }
     CHECK( server != NULL );
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
-    CHECK( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token ) );
+    CHECK( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     rocketnet_client_default_config( &client_config );
     client_config.transport = "loopback";
     client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
