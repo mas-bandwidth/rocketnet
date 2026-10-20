@@ -2,18 +2,15 @@
 
 ## What this is
 
-RocketNet is a merger of the game's transport bits and zero copy API with a
-netcode-like connection protocol and security: a packet level transport
-library worthy of a **1000 player (or above)** game. The game's
-transport goodness, productized for its first customer, and once done
-re-integrated into the game as its foundation. The requirements are
-locked in [REQUIREMENTS.md](REQUIREMENTS.md); scope questions argue against
-that file.
+RocketNet is a packet-level transport library with a zero-copy API, a
+netcode-like connection protocol and security, built to support a **1000 player
+(or above)** game. Its requirements are locked in [REQUIREMENTS.md](REQUIREMENTS.md);
+scope questions are resolved against that file.
 
 **Messages are opaque byte buffers.** rocketnet does not own serialization. That is
 the central design decision and it shapes everything: at 1000 players, trading
 a little bandwidth for simpler code and less CPU is the right side of the
-trade, so bit-packing moved *above* rocketnet (the game fills buffers with a
+trade, so bit-packing moved *above* rocketnet (the caller fills buffers with a
 schema compiler) and rocketnet ships bytes. There is not one bit-packing routine on
 the send or receive path.
 
@@ -40,7 +37,7 @@ hooks, RNG.
 
 **The strongest structural property, worth protecting:** the two server
 implementations satisfy one header with **zero `#ifdef` at the call site** —
-the game's `network_server.cpp` is byte-identical whether it builds against
+the integration's `network_server.cpp` is byte-identical whether it builds against
 XDP or portable. Any third implementation drops into that same seam.
 
 ## What rocketnet owns, and what it does not
@@ -74,17 +71,17 @@ The win is not mainly syscall elimination, though that is real (~0.12–0.24
 core-seconds/second reclaimed at 60 kpps each way). The larger win is that RSS
 fans RX across N queues into N pinned `SCHED_RR` threads with **zero shared
 state between queues** — no cross-queue locks, no shared frame pool — while TX
-shards by `packet_id % num_queues` so any game thread can produce into any
+shards by `packet_id % num_queues` so any application thread can produce into any
 queue with a single `fetch_add`. What kills a 1000-player single-socket UDP
 server is the per-socket receive-queue lock and the skb allocator; both are
 gone. The buffer handoff is correct: the XDP thread holds `receive_mutex`
-across its whole fill loop, so the game's counter flip lands only between
-batches and the game then drains the *other* buffer lock-free — one mutex
+across its whole fill loop, so the caller's counter flip lands only between
+batches and the caller then drains the *other* buffer lock-free — one mutex
 acquisition per tick per queue.
 
-"Zero copy" in the comments means game↔rocketnet. There is exactly one `memcpy`
+"Zero copy" in the comments means application↔rocketnet. There is exactly one `memcpy`
 each way in the XDP path, which is the right trade: it keeps umem frame
-lifetime out of the game entirely, for ~85 MB/s of copying at target load.
+lifetime out of the application entirely, for ~85 MB/s of copying at target load.
 
 ## Known issues, ranked
 
@@ -141,8 +138,8 @@ all three pass:
    so "fast" can never be achieved by silently dropping, and a days-long run
    stays diagnosable with no logs.
 
-This requires a **synthetic traffic generator as part of step 1's
-deliverable**, not later tooling: a swarm client built on the real library
+This requires a **synthetic traffic generator as part of step 1**, not later
+tooling: a swarm client built on the real library
 (real handshakes, real crypto, churn schedules, a percentage abandoning
 mid-handshake so the half-open reclaim soaks under pressure), plus a garbage
 generator so the reject paths soak too — a polite-traffic-only soak is half a
@@ -154,7 +151,7 @@ Two cadences: a short smoke load per change; the long soak scheduled on a
 Linux box.
 
 **The discipline behind all three: ALWAYS BE LOADED, and no rare codepaths.**
-The game server does the work of 1000 players all the time — snapshot
+The representative server runs the 1000-player workload all the time — snapshot
 deltas, packet construction, everything — even with one client connected, so
 the cost profile is flat, the 999th client cannot surprise, and any
 scale-dependent bug is hit trivially by booting the server and connecting one
@@ -228,7 +225,7 @@ nothing here vendors them.
 
 ## Vendoring
 
-The game vendors this whole SDK into `game/ThirdParty/rocketnet/`,
-byte-for-byte. Fix here, then re-vendor there — and note the game's build
-compiles vendored third-party with `-O3 -DNDEBUG` even in Debug, deliberately,
-so the game can be debugged without debugging its dependencies.
+An application may vendor this SDK byte-for-byte. When it does, synchronize
+changes from this source into its vendor copy. A host build may compile vendored
+third-party code with `-O3 -DNDEBUG` even in Debug so the application can be
+debugged without debugging its dependencies.

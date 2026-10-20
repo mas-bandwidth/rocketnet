@@ -3524,7 +3524,7 @@ static int connection_type = ROCKETNET_CONNECTION_TYPE_UNKNOWN;
 
 // Windows: SetThreadPriority( thread, THREAD_PRIORITY_TIME_CRITICAL ) on the
 // network threads (flow_platform.cpp:1839-1851), and the process timer at 1 ms
-// from platform init to platform term (game/Libraries/platform/platform.cpp:154 and :173 in the game that carried flow)
+// from platform init to platform term, matching the host application's lifecycle
 
 static int rocketnet_platform_real_set_sched( rocketnet_platform_thread_t * thread, int policy, int priority )
 {
