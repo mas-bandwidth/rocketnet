@@ -266,5 +266,5 @@ message on its channel is received; with that check, message 2 waits in
 | `OnPayload(e, p)` | `rn_endpoint_on_payload` | m4 (receiver's checks in order, rule 5 the channel bound); m5.2 rule 8 (duplicates); m7.2 (dispatch, holds) |
 | `ConfigCompare(e)` | `rn_ordered_take_config` (`sdk/rocketnet_channel.cpp`), reached from `rn_endpoint_on_payload` | m11 rules 8 and 9 (every field compared, a mismatch is `CONFIG_MISMATCH`) |
 | `Tick(e)` | `rn_endpoint_tick` | m11 rule 4 (no CONFIG within the reliable timeout is `RELIABLE_TIMEOUT`); m9.3 |
-| `err` | `rn_endpoint_error` | `ROCKETNET_MESSAGE_ERROR_*` in `sdk/rocketnet.h` |
+| `err` | `rn_endpoint_error` | `ROCKETNET_DISCONNECT_REASON_*` in `sdk/rocketnet.h` (`sdk/rocketnet_endpoint.cpp:1158`) |
 | `WriteAck(e)`, `AckSilence(e)` | the transport (not the endpoint) | m1.4 rules 2 and 4 |

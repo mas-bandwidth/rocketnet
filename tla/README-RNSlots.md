@@ -14,9 +14,9 @@ tag. A slot index never identifies a connection by itself.
 A delivered message is an opaque byte view into the connection's region.
 The application explicitly releases every view before its next object update.
 Calling update while a view remains held enters
-`ROCKETNET_ERROR_MESSAGE_NOT_RELEASED`; the implementation asserts in debug
+`ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED`; the implementation asserts in debug
 and returns this named error in release (the update's entry check in
-`sdk/rocketnet_message_server.cpp`). Views cannot survive an update. The
+`sdk/rocketnet_message_server.cpp:416`). Views cannot survive an update. The
 application releases each view with `rocketnet_server_release_message` or
 `rocketnet_client_release_message`. `BeginUpdate`
 checks for empty held sets before running the transport; `Observe` retains
