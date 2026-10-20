@@ -8385,8 +8385,22 @@ void rocketnet_test_linux_xdp_receive_weather_ipv6();
 #endif
 #endif
 
+// getaddrinfo can open a socket (the nscd lookup on glibc), so name
+// resolution is a functional case, never a unit one.
+
+static void rocketnet_test_hostname_resolve_localhost()
+{
+    rocketnet_address_t address, ipv6;
+    rocketnet_check(rocketnet_platform_hostname_resolve("localhost", "40000", &address));
+    rocketnet_check(address.port == 40000);
+    rocketnet_check(rocketnet_address_parse(&ipv6, "[::1]:40000"));
+    rocketnet_check((address.type == ROCKETNET_ADDRESS_IPV4 && address.data.ipv4[0] == 127) ||
+                   rocketnet_address_equal(&address, &ipv6));
+}
+
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
+    { "test_hostname_resolve_localhost", rocketnet_test_hostname_resolve_localhost },
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config },
     { "server_receive_keeps_up_with_max_clients", rocketnet_test_server_receive_keeps_up_with_max_clients },
     { "thread_priority_timing_receive_gaps", thread_priority_timing_receive_gaps },
