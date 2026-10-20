@@ -88,7 +88,9 @@ static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level
     (void) context;
     (void) length;
     char line[ROCKETNET_FUNCTIONAL_LOG_RING_LINE_BYTES];
-    snprintf( line, sizeof(line), "%s", message );
+    const int line_length = snprintf( line, sizeof(line), "%s", message );
+    if ( line_length < 0 || (size_t) line_length >= sizeof(line) )
+        return;
 
     if ( level == ROCKETNET_LOG_LEVEL_NONE )
     {
@@ -98,7 +100,9 @@ static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level
     }
 
     char * slot = rocketnet_test_log_ring[rocketnet_test_log_ring_lines % ROCKETNET_FUNCTIONAL_LOG_RING_LINES];
-    snprintf( slot, ROCKETNET_FUNCTIONAL_LOG_RING_SLOT_BYTES, "%.6f: %s: %s", rocketnet_platform_time(), rocketnet_log_level_name( level ), line );
+    const int slot_length = snprintf( slot, ROCKETNET_FUNCTIONAL_LOG_RING_SLOT_BYTES, "%.6f: %s: %s", rocketnet_platform_time(), rocketnet_log_level_name( level ), line );
+    if ( slot_length < 0 || (size_t) slot_length >= ROCKETNET_FUNCTIONAL_LOG_RING_SLOT_BYTES )
+        return;
     rocketnet_test_log_ring_lines++;
 }
 
