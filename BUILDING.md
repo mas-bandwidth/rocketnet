@@ -269,7 +269,7 @@ default (`functional_cases` and `run_functional`,
 tools/macos/leaks_run.py:196 and :213). The table holds rows for other
 platforms behind `#if`; a case this build does not hold answers
 `unknown functional test` with exit 2 on its plain run
-(functional/rocketnet_functional_tests.cpp:8700), and the matrix lists
+(functional/rocketnet_functional_tests.cpp:8787), and the matrix lists
 it as SKIP with no leaks run. The soak takes longer than the default
 timeout, so the matrix runs with `--timeout 600`.
 
