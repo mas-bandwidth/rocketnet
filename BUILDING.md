@@ -143,6 +143,14 @@ allocation turns the check red:
     python3 tools/macos/leaks_run.py --self-test
     python3 tools/macos/leaks_run.py --matrix
 
+`leaks --atExit` needs Developer Mode. The script prints
+`DevToolsSecurity -status` first and exits 2 when it reports disabled
+(`check_developer_mode`, tools/macos/leaks_run.py:60). Each leaks call runs in
+its own process group and is killed with its target after `--timeout` seconds,
+120 by default (`run_leaks`, tools/macos/leaks_run.py:77). The pins are the four
+transport pairs and both ends on auto with `ROCKETNET_PUMP=portable`
+(`PINS`, tools/macos/leaks_run.py:41).
+
 The `ROCKETNET_SANITIZE` option builds and the unit suite passes green under
 ASan+UBSan (`address`) and under TSan (`thread`) on Linux as well, so the same
 configure line serves both platforms. The leaks path is macOS-only: the

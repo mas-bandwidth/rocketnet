@@ -161,6 +161,10 @@ jobs:
               ROCKETNET_SERVER_TRANSPORT=$server ROCKETNET_CLIENT_TRANSPORT=$client ./bin/functional
             done
           done
+          # msgx forced portable: both ends on auto with the batch pump off
+          # (a pinned msgx refuses under ROCKETNET_PUMP=portable, docs/MACOS.md)
+          echo "functional pin auto/auto ROCKETNET_PUMP=portable"
+          ROCKETNET_PUMP=portable ./bin/functional
 
       - name: Build TSan
         run: |
@@ -179,15 +183,21 @@ jobs:
               ROCKETNET_SERVER_TRANSPORT=$server ROCKETNET_CLIENT_TRANSPORT=$client ./bin/functional
             done
           done
+          # msgx forced portable: both ends on auto with the batch pump off
+          # (a pinned msgx refuses under ROCKETNET_PUMP=portable, docs/MACOS.md)
+          echo "functional pin auto/auto ROCKETNET_PUMP=portable"
+          ROCKETNET_PUMP=portable ./bin/functional
 
       - name: Build Release without sanitizers
         run: |
           cmake -B build-release -DCMAKE_BUILD_TYPE=Release
           cmake --build build-release --parallel 4
 
+      # leaks --atExit needs Developer Mode on the runner; the script prints
+      # DevToolsSecurity -status and exits 2 when it is disabled
       - name: Leaks tool self-test
         run: python3 tools/macos/leaks_run.py --self-test
 
       - name: Run the suites under the leaks tool on every pin
         timeout-minutes: 30
-        run: python3 tools/macos/leaks_run.py --matrix
+        run: python3 tools/macos/leaks_run.py --matrix --timeout 600
