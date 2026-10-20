@@ -1,6 +1,7 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #include "rocketnet_driver.h"
 #include "rocketnet_driver_loopback.h"
+#include "rocketnet_address.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_wire.h"
@@ -104,16 +105,17 @@ static rocketnet_address_t loopback_sender_address( const rocketnet_address_t & 
     return from;
 }
 
-// the endpoint a datagram to this address reaches: the endpoint bound at its
-// family and port, else, for an IPv4 address, a dual-stack endpoint bound to
-// the IPv6 wildcard on that port.
+// the endpoint a datagram reaches: one bound to this address, or to the
+// wildcard of this family, on this port. an IPv4 datagram also reaches a
+// dual-stack endpoint bound to the IPv6 wildcard on that port.
 
 static rocketnet_loopback_endpoint_t * loopback_find_destination( rocketnet_loopback_state_t & state, const rocketnet_address_t & to )
 {
     for ( int i = 0; i < ROCKETNET_LOOPBACK_MAX_ENDPOINTS; ++i )
     {
         rocketnet_loopback_endpoint_t & e = state.endpoints[i];
-        if ( e.live && e.bind.port == to.port && e.bind.type == to.type )
+        if ( e.live && e.bind.port == to.port && e.bind.type == to.type &&
+             ( loopback_is_wildcard( e.bind ) || rocketnet_address_equal( &e.bind, &to ) ) )
             return &e;
     }
     if ( to.type == ROCKETNET_ADDRESS_IPV4 )
