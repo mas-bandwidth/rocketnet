@@ -216,7 +216,7 @@ static posix_resource_counts_t posix_stable_counts()
 // onto the portable pump) against every client cell (portable, msgx). The
 // forced cell requests msgx first and lets ROCKETNET_PUMP=portable refuse that
 // rung, so the ladder grants portable; the grant is checked, not assumed.
-// The override is read at socket create (sdk/rocketnet_platform.cpp:4324 in
+// The override is read at socket create (sdk/rocketnet_platform.cpp:4534 in
 // rocketnet_platform_socket_create_with_pump), so posix_server_create sets it
 // around the server create only: a msgx client in the same cell keeps the
 // darwin batch pump instead of being refused by the server's override.
