@@ -25,6 +25,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+static uint64_t rn_public_receive_sender;
+
 // the pair is built over the in-memory loopback driver, which this test names in
 // the server transport config; the caller's ROCKETNET_SERVER_TRANSPORT pin wins
 // over the struct by design, so a CI leg pinned to a real driver would open a
@@ -226,7 +228,7 @@ static bool public_not_released_receive_client( struct public_not_released_pair_
 {
     for ( int i = 0; i < 20; i++ )
     {
-        if ( rocketnet_client_receive_message( pair->client, 0, data, bytes ) )
+        if ( rocketnet_client_receive_message( pair->client, data, bytes ) )
             return true;
         public_not_released_pump( pair );
     }
@@ -237,7 +239,7 @@ static bool public_not_released_receive_server( struct public_not_released_pair_
 {
     for ( int i = 0; i < 20; i++ )
     {
-        if ( rocketnet_server_receive_message( pair->server, 0, 0, data, bytes ) )
+        if ( rocketnet_server_receive_message( pair->server, &rn_public_receive_sender, data, bytes ) )
             return true;
         public_not_released_pump( pair );
     }
@@ -304,7 +306,7 @@ static void public_not_released_counter_server()
     public_not_released_send_from_client( &pair, 10 );
     const uint8_t * next = NULL;
     check( public_not_released_receive_server( &pair, &next, &bytes ) );
-    rocketnet_server_release_message( pair.server, 0, next );
+    rocketnet_server_release_message( pair.server, next );
     pair.time += 0.01;
     check( rocketnet_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
     check( rocketnet_server_counter( pair.server, ROCKETNET_SERVER_COUNTER_MESSAGES_NOT_RELEASED ) == 1 );

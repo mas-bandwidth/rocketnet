@@ -18,6 +18,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+static uint64_t rn_public_receive_sender;
+
 #define check rocketnet_unit_check
 #define LIFECYCLE_PROTOCOL 0x7A11C1C1E5EED001ULL
 #define LIFECYCLE_MAX_CLIENTS 4
@@ -183,13 +185,13 @@ static void lifecycle_exchange( lifecycle_world_t * world, int client, uint8_t t
         lifecycle_pump( world );
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_server_receive_message( world->server, index, 0, &data, &bytes ) )
+        while ( rocketnet_server_receive_message( world->server, &rn_public_receive_sender, &data, &bytes ) )
         {
             check( bytes == 2 && data[0] == tag && data[1] == (uint8_t) at_server );
-            rocketnet_server_release_message( world->server, index, data );
+            rocketnet_server_release_message( world->server, data );
             at_server++;
         }
-        while ( rocketnet_client_receive_message( c, 0, &data, &bytes ) )
+        while ( rocketnet_client_receive_message( c, &data, &bytes ) )
         {
             check( bytes == 2 && data[0] == tag && data[1] == (uint8_t) at_client );
             rocketnet_client_release_message( c, data );
@@ -398,8 +400,8 @@ static void lifecycle_check_nothing_then_first_send( lifecycle_world_t * world, 
         lifecycle_pump( world );
         const uint8_t * data = NULL;
         int bytes = 0;
-        check( rocketnet_server_receive_message( world->server, index, 0, &data, &bytes ) == 0 );
-        check( rocketnet_client_receive_message( c, 0, &data, &bytes ) == 0 );
+        check( rocketnet_server_receive_message( world->server, &rn_public_receive_sender, &data, &bytes ) == 0 );
+        check( rocketnet_client_receive_message( c, &data, &bytes ) == 0 );
     }
     lifecycle_exchange( world, client, tag, 1 );
 }
@@ -752,8 +754,8 @@ static void connection_reset_client_reconnect_delivers()
     lifecycle_pump( &world );
     const uint8_t * data = NULL;
     int bytes = 0;
-    while ( rocketnet_server_receive_message( world.server, index, 0, &data, &bytes ) )
-        rocketnet_server_release_message( world.server, index, data );
+    while ( rocketnet_server_receive_message( world.server, &rn_public_receive_sender, &data, &bytes ) )
+        rocketnet_server_release_message( world.server, data );
     lifecycle_disconnect( &world, 0 );
 
     // the new connection's first messages deliver, and nothing of the old
@@ -763,8 +765,8 @@ static void connection_reset_client_reconnect_delivers()
     {
         lifecycle_pump( &world );
         const uint64_t now_index = rocketnet_client_index( client );
-        check( rocketnet_server_receive_message( world.server, now_index, 0, &data, &bytes ) == 0 );
-        check( rocketnet_client_receive_message( client, 0, &data, &bytes ) == 0 );
+        check( rocketnet_server_receive_message( world.server, &rn_public_receive_sender, &data, &bytes ) == 0 );
+        check( rocketnet_client_receive_message( client, &data, &bytes ) == 0 );
     }
     lifecycle_world_destroy( &world );
 }

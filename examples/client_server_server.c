@@ -23,6 +23,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+static uint64_t rn_public_receive_sender;
+
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
 #define PROTOCOL_ID 0x636c69656e747331ull
@@ -144,7 +146,7 @@ int main( int argc, char ** argv )
         {
             const uint8_t * data = NULL;
             int bytes = 0;
-            while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
+            while ( rocketnet_server_receive_message( server, &rn_public_receive_sender, &data, &bytes ) )
             {
                 printf( "server received: %.*s\n", bytes, (const char*) data );
                 uint8_t * out = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
@@ -154,7 +156,7 @@ int main( int argc, char ** argv )
                     if ( rocketnet_server_finish_message( server, i, bytes ) )
                         echoed = 1;
                 }
-                rocketnet_server_release_message( server, i, data );
+                rocketnet_server_release_message( server, data );
             }
         }
 

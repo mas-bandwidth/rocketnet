@@ -7438,7 +7438,9 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_client_finish_message",
     "rocketnet_client_abort_message",
     "rocketnet_client_receive_message",
+    "rocketnet_client_receive_messages",
     "rocketnet_client_release_message",
+    "rocketnet_client_release_messages",
     "rocketnet_client_receipts",
     "rocketnet_client_set_send_kbps",
     "rocketnet_client_counter",
@@ -7472,7 +7474,9 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_server_finish_message",
     "rocketnet_server_abort_message",
     "rocketnet_server_receive_message",
+    "rocketnet_server_receive_messages",
     "rocketnet_server_release_message",
+    "rocketnet_server_release_messages",
     "rocketnet_server_receipts",
     "rocketnet_server_set_send_kbps",
     "rocketnet_server_counter",
@@ -7507,7 +7511,9 @@ static const char * rocketnet_test_public_null_case_exports[] =
     "rocketnet_client_finish_message",
     "rocketnet_client_abort_message",
     "rocketnet_client_receive_message",
+    "rocketnet_client_receive_messages",
     "rocketnet_client_release_message",
+    "rocketnet_client_release_messages",
     "rocketnet_client_receipts",
     "rocketnet_client_set_send_kbps",
     "rocketnet_client_counter",
@@ -7536,7 +7542,9 @@ static const char * rocketnet_test_public_null_case_exports[] =
     "rocketnet_server_finish_message",
     "rocketnet_server_abort_message",
     "rocketnet_server_receive_message",
+    "rocketnet_server_receive_messages",
     "rocketnet_server_release_message",
+    "rocketnet_server_release_messages",
     "rocketnet_server_receipts",
     "rocketnet_server_set_send_kbps",
     "rocketnet_server_counter",
@@ -7941,6 +7949,9 @@ void rocketnet_test_public_api_null()
     uint8_t data[8] = { 0 };
     const uint8_t * view = NULL;
     int bytes = 0;
+    uint64_t sender = 0;
+    struct rocketnet_message_t batch_messages[2];
+    struct rocketnet_message_batch_t batch = { batch_messages, 2, 0 };
     struct rocketnet_receipt_t receipts[2];
     struct rocketnet_client_config_t client_config;
     struct rocketnet_server_config_t server_config;
@@ -7974,8 +7985,10 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_start_message( NULL, 0, ROCKETNET_RELIABILITY_RELIABLE, 4 ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_finish_message( NULL, 4 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_client_abort_message( NULL ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_receive_message( NULL, 0, &view, &bytes ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_receive_message( NULL, &view, &bytes ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_receive_messages( NULL, &batch ) == false ) );
     RN_TEST_ONE_MISUSE( rocketnet_client_release_message( NULL, data ) );
+    RN_TEST_ONE_MISUSE( rocketnet_client_release_messages( NULL, &batch ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_receipts( NULL, receipts, 2 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_set_send_kbps( NULL, 1000 ) != ROCKETNET_STATUS_OK ) );
     for ( int i = 0; i <= ROCKETNET_CLIENT_COUNTER_COUNT; i++ )
@@ -8005,8 +8018,10 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_start_message( NULL, 0, 0, ROCKETNET_RELIABILITY_RELIABLE, 4 ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_finish_message( NULL, 0, 4 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_abort_message( NULL, 0 ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_receive_message( NULL, 0, 0, &view, &bytes ) == 0 ) );
-    RN_TEST_ONE_MISUSE( rocketnet_server_release_message( NULL, 0, data ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_receive_message( NULL, &sender, &view, &bytes ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_receive_messages( NULL, &batch ) == false ) );
+    RN_TEST_ONE_MISUSE( rocketnet_server_release_message( NULL, data ) );
+    RN_TEST_ONE_MISUSE( rocketnet_server_release_messages( NULL, &batch ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_receipts( NULL, 0, receipts, 2 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_set_send_kbps( NULL, 0, 1000 ) != ROCKETNET_STATUS_OK ) );
     for ( int i = 0; i <= ROCKETNET_SERVER_COUNTER_COUNT; i++ )

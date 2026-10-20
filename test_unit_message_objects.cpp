@@ -31,6 +31,8 @@
 #include "sdk/rocketnet_send_budget.h"
 #include "sdk/rocketnet_wire.h"
 
+static uint64_t rn_public_receive_sender;
+
 #define check rocketnet_unit_check
 
 // ---------------------------------------------------------------------------
@@ -2771,13 +2773,13 @@ static int reconnect_exchange( reconnect_world_t * world, int client, uint8_t ta
         reconnect_pump( world );
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_server_receive_message( world->server, 0, 0, &data, &bytes ) )
+        while ( rocketnet_server_receive_message( world->server, &rn_public_receive_sender, &data, &bytes ) )
         {
             check( bytes == 2 && data[0] == tag && data[1] == (uint8_t) at_server );
-            rocketnet_server_release_message( world->server, 0, data );
+            rocketnet_server_release_message( world->server, data );
             at_server++;
         }
-        while ( rocketnet_client_receive_message( c, 0, &data, &bytes ) )
+        while ( rocketnet_client_receive_message( c, &data, &bytes ) )
         {
             check( bytes == 2 && data[0] == tag && data[1] == (uint8_t) at_client );
             rocketnet_client_release_message( c, data );
@@ -2893,4 +2895,184 @@ REGISTER_UNIT_TEST( pending_start_cancelled_by_slot_reset );
 REGISTER_UNIT_TEST( slot_bound_this_update_keeps_its_first_payload );
 REGISTER_UNIT_TEST( previous_connection_payload_dropped_after_reconnect );
 REGISTER_UNIT_TEST( previous_connection_ack_dropped_after_reconnect );
+
+// A game polls one receive queue like RakNet's Receive: every type sent on
+// every channel is delivered through it, ordered messages arrive in order
+// within their channel, the server's queue spans every client and names the
+// sender, and the batch form sees the same messages in the same order with
+// one call per update. Before the one-queue API, a message sent on channel 5
+// was never seen by a caller polling channel 0.
+#define ONE_QUEUE_PROTOCOL 0x4F4E455155455545ULL
+static double one_queue_now = 1000.0;
+static double one_queue_clock( void * ) { return one_queue_now; }
+
+static void one_queue_pump( rocketnet_server_t * server, rocketnet_client_t * clients[2], double * time )
+{
+    one_queue_now = *time;
+    for ( int i = 0; i < 2; i++ )
+    {
+        check( rocketnet_client_update( clients[i], *time ) == ROCKETNET_UPDATE_OK );
+        rocketnet_client_send_packets( clients[i] );
+    }
+    check( rocketnet_server_update( server, *time ) == ROCKETNET_UPDATE_OK );
+    rocketnet_server_send_packets( server );
+    *time += 0.01;
+}
+
+static void one_queue_connect( rocketnet_server_t * server, uint8_t * backend_secret, const uint8_t * server_public,
+                               rocketnet_client_t * client, uint64_t client_id )
+{
+    char address[64];
+    snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) rocketnet_server_port( server ) );
+    const char * addresses[] = { address };
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    check( rocketnet_write_production_connect_token( backend_secret, server_public, ONE_QUEUE_PROTOCOL, addresses, 1,
+        client_id, 1000, 1ULL << 40, 300, NULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
+}
+
+static uint32_t one_queue_send( rocketnet_client_t * client, int channel, enum rocketnet_reliability_t reliability, uint8_t tag, uint8_t index )
+{
+    uint8_t payload[2] = { tag, index };
+    uint8_t * out = rocketnet_client_start_message( client, channel, reliability, 2 );
+    check( out != NULL );
+    if ( !out )
+        return 0;
+    out[0] = payload[0];
+    out[1] = payload[1];
+    return rocketnet_client_finish_message( client, 2 );
+}
+
+static void one_queue_receive_matches_raknet()
+{
+    rocketnet_set_quiet( 1 );
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    check( rocketnet_generate_backend_keypair( backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_generate_server_keypair( server_public, server_secret ) == ROCKETNET_STATUS_OK );
+
+    rocketnet_server_config_t server_config;
+    rocketnet_server_default_config( &server_config );
+    server_config.protocol_id = ONE_QUEUE_PROTOCOL;
+    server_config.max_clients = 2;
+    memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
+    memcpy( server_config.server_public_key, server_public, sizeof( server_config.server_public_key ) );
+    memcpy( server_config.server_secret_key, server_secret, sizeof( server_config.server_secret_key ) );
+    server_config.transport = "loopback";
+    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    check( server != NULL );
+    check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+
+    rocketnet_client_t * clients[2] = { NULL, NULL };
+    for ( int i = 0; i < 2; i++ )
+    {
+        rocketnet_client_config_t client_config;
+        rocketnet_client_default_config( &client_config );
+        client_config.transport = "loopback";
+        client_config.step_driven = true;
+        client_config.time_callback = one_queue_clock;
+        clients[i] = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+        check( clients[i] != NULL );
+    }
+    one_queue_now = 1000.0;
+    double time = 1000.0;
+    one_queue_connect( server, backend_secret, server_public, clients[0], 0x11ULL );
+    one_queue_connect( server, backend_secret, server_public, clients[1], 0x22ULL );
+    for ( int i = 0; i < 400 && ( rocketnet_client_state( clients[0] ) != ROCKETNET_CLIENT_STATE_CONNECTED ||
+                                  rocketnet_client_state( clients[1] ) != ROCKETNET_CLIENT_STATE_CONNECTED ); i++ )
+        one_queue_pump( server, clients, &time );
+    check( rocketnet_client_state( clients[0] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    check( rocketnet_client_state( clients[1] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+
+    // Every type on a channel of its own, plus three ordered messages on
+    // channel 5: two from client 0, one from client 1. The reliable message on
+    // channel 5 is the one the old per-channel receive lost.
+    const int channels[4] = { 5, 0, 3, 1 };
+    const enum rocketnet_reliability_t types[4] = {
+        ROCKETNET_RELIABILITY_RELIABLE,
+        ROCKETNET_RELIABILITY_UNRELIABLE,
+        ROCKETNET_RELIABILITY_RELIABLE_ORDERED,
+        ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT,
+    };
+    for ( int round = 0; round < 2; round++ )
+    {
+        for ( int i = 0; i < 4; i++ )
+            check( one_queue_send( clients[i & 1], channels[i], types[i], (uint8_t) ( 0x40 + i ), (uint8_t) i ) != 0 );
+        int ordered = 0;
+        for ( int i = 0; i < 3; i++ )
+            check( one_queue_send( clients[i == 2 ? 1 : 0], 5, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 0x50, (uint8_t) ordered++ ) != 0 );
+
+        struct one_queue_got_t { uint8_t tag; uint8_t index; uint64_t sender; } got[16];
+        int count = 0;
+        for ( int step = 0; step < 200 && count < 7; step++ )
+        {
+            one_queue_pump( server, clients, &time );
+            if ( round == 0 )
+            {
+                // the one-at-a-time form, RakNet's Receive
+                for ( ;; )
+                {
+                    const uint8_t * data = NULL;
+                    int bytes = 0;
+                    uint64_t sender = 0;
+                    if ( !rocketnet_server_receive_message( server, &sender, &data, &bytes ) )
+                        break;
+                    check( count < 16 && bytes == 2 );
+                    got[count].tag = data[0];
+                    got[count].index = data[1];
+                    got[count].sender = sender;
+                    count++;
+                    rocketnet_server_release_message( server, data );
+                }
+            }
+            else
+            {
+                // the batch form: two entries per call, pumped to empty
+                struct rocketnet_message_t messages[2];
+                struct rocketnet_message_batch_t batch = { messages, 2, 0 };
+                while ( rocketnet_server_receive_messages( server, &batch ) )
+                {
+                    check( batch.count >= 1 && batch.count <= 2 );
+                    for ( int m = 0; m < batch.count; m++ )
+                    {
+                        check( count < 16 && messages[m].bytes == 2 );
+                        got[count].tag = messages[m].data[0];
+                        got[count].index = messages[m].data[1];
+                        got[count].sender = messages[m].client_index;
+                        count++;
+                    }
+                    rocketnet_server_release_messages( server, &batch );
+                }
+            }
+        }
+        check( count == 7 );
+
+        // ordered messages on channel 5 are in order within the channel, and
+        // each message names its sender (client 0 sent index 0 and 1, client 1
+        // sent index 2)
+        int expected = 0;
+        for ( int i = 0; i < count; i++ )
+        {
+            if ( got[i].tag == 0x50 )
+            {
+                check( got[i].index == expected );
+                check( got[i].sender == ( expected == 2 ? 1u : 0u ) );
+                expected++;
+            }
+            else
+            {
+                check( got[i].sender == (uint64_t) ( got[i].tag == 0x41 || got[i].tag == 0x43 ? 1u : 0u ) );
+            }
+        }
+        check( expected == 3 );
+    }
+
+    for ( int i = 0; i < 2; i++ )
+        rocketnet_client_destroy( clients[i] );
+    rocketnet_server_destroy( server );
+}
+
+REGISTER_UNIT_TEST( one_queue_receive_matches_raknet );
 REGISTER_UNIT_TEST( same_client_id_reconnect_in_one_update_resets_the_slot );

@@ -20,6 +20,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+static uint64_t rn_public_receive_sender;
+
 #define check rocketnet_unit_check
 #define PUBLIC_STEP_PROTOCOL 0x51E7D41A92B3C6D8ULL
 
@@ -190,12 +192,12 @@ static void public_step_driven_client_delivers_both_ways()
     {
         public_step_pump( &pair );
         const uint8_t * data = NULL; int bytes = 0;
-        while ( rocketnet_server_receive_message( pair.server, 0, 0, &data, &bytes ) )
+        while ( rocketnet_server_receive_message( pair.server, &rn_public_receive_sender, &data, &bytes ) )
         {
             check( at_server < 2 && bytes == 4 && memcmp( data, client_messages[at_server], 4 ) == 0 );
-            rocketnet_server_release_message( pair.server, 0, data ); at_server++;
+            rocketnet_server_release_message( pair.server, data ); at_server++;
         }
-        while ( rocketnet_client_receive_message( pair.client, 0, &data, &bytes ) )
+        while ( rocketnet_client_receive_message( pair.client, &data, &bytes ) )
         {
             check( at_client < 2 && bytes == 4 && memcmp( data, server_messages[at_client], 4 ) == 0 );
             rocketnet_client_release_message( pair.client, data ); at_client++;

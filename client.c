@@ -441,7 +441,7 @@ static void receive_check( matrix_state_t * st, struct rocketnet_client_t * clie
     {
         const uint8_t * data;
         int bytes;
-        while ( rocketnet_client_receive_message( client, channel, &data, &bytes ) )
+        while ( rocketnet_client_receive_message( client, &data, &bytes ) )
         {
             if ( bytes < 1 ) { rocketnet_client_release_message( client, data ); continue; }
             int tag = data[0];

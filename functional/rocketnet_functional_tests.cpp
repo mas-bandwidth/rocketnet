@@ -10,6 +10,8 @@
 
 #include "rocketnet_internal.h"
 
+static uint64_t rn_public_receive_sender;
+
 // The shared harness carries one call with the retired create-time argument.
 // The harness itself is outside this card's paths, so the call is routed to the
 // current three-argument entry here, at its only include site: the extra
@@ -3478,9 +3480,9 @@ void rocketnet_test_public_client_server_queries()
         }
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_server_receive_message( server, 0, 0, &data, &bytes ) )
-            rocketnet_server_release_message( server, 0, data );
-        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+        while ( rocketnet_server_receive_message( server, &rn_public_receive_sender, &data, &bytes ) )
+            rocketnet_server_release_message( server, data );
+        while ( rocketnet_client_receive_message( client, &data, &bytes ) )
             rocketnet_client_release_message( client, data );
         rocketnet_client_send_packets( client );
         rocketnet_server_send_packets( server );
@@ -7189,6 +7191,7 @@ void rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv6()
 #include <sys/vfs.h>
 #include <string>
 #include <vector>
+
 
 #define ROCKETNET_XDP_VETH_NETNS        "rnxdpfam"
 #define ROCKETNET_XDP_VETH_NEAR         "rnxdpfam0"

@@ -737,13 +737,23 @@ void rocketnet_client_abort_message( struct rocketnet_client_t * client )
     rocketnet_message_client_abort( client->connection );
 }
 
-int rocketnet_client_receive_message( struct rocketnet_client_t * client, int channel, const uint8_t ** data, int * bytes )
+int rocketnet_client_receive_message( struct rocketnet_client_t * client, const uint8_t ** data, int * bytes )
 {
     if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( data ) || !rocketnet_api_null_guard( bytes ) )
         return 0;
     if ( !client->connection )
         return 0;
-    return rocketnet_message_client_receive( client->connection, channel, data, bytes );
+    uint64_t client_index = 0;
+    return rocketnet_message_client_receive_next( client->connection, data, bytes, &client_index );
+}
+
+bool rocketnet_client_receive_messages( struct rocketnet_client_t * client, struct rocketnet_message_batch_t * batch )
+{
+    if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( batch ) )
+        return false;
+    if ( !client->connection )
+        return false;
+    return rocketnet_message_client_receive_batch( client->connection, batch );
 }
 
 void rocketnet_client_release_message( struct rocketnet_client_t * client, const uint8_t * data )
@@ -755,7 +765,19 @@ void rocketnet_client_release_message( struct rocketnet_client_t * client, const
         rocketnet_api_misuse_record();
         return;
     }
-    rocketnet_message_client_release( client->connection, data );
+    rocketnet_message_client_release_next( client->connection, data );
+}
+
+void rocketnet_client_release_messages( struct rocketnet_client_t * client, const struct rocketnet_message_batch_t * batch )
+{
+    if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( batch ) )
+        return;
+    if ( !client->connection )
+    {
+        rocketnet_api_misuse_record();
+        return;
+    }
+    rocketnet_message_client_release_batch( client->connection, batch );
 }
 
 int rocketnet_client_receipts( struct rocketnet_client_t * client, struct rocketnet_receipt_t * out, int capacity )
@@ -1474,27 +1496,36 @@ void rocketnet_server_abort_message( struct rocketnet_server_t * server, uint64_
     rocketnet_message_server_abort( rn_server( server ), slot );
 }
 
-int rocketnet_server_receive_message( struct rocketnet_server_t * server, uint64_t client_index, int channel, const uint8_t ** data, int * bytes )
+int rocketnet_server_receive_message( struct rocketnet_server_t * server, uint64_t * client_index, const uint8_t ** data, int * bytes )
 {
-    if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( data ) || !rocketnet_api_null_guard( bytes ) )
+    if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( client_index ) || !rocketnet_api_null_guard( data ) || !rocketnet_api_null_guard( bytes ) )
         return 0;
-    int slot;
-    if ( !rn_server_slot( server, client_index, &slot ) )
-        return 0;
-    return rocketnet_message_server_receive( rn_server( server ), slot, channel, data, bytes );
+    int slot = 0;
+    const int got = rocketnet_message_server_receive_next( rn_server( server ), data, bytes, &slot );
+    if ( got )
+        *client_index = (uint64_t) slot;
+    return got;
 }
 
-void rocketnet_server_release_message( struct rocketnet_server_t * server, uint64_t client_index, const uint8_t * data )
+bool rocketnet_server_receive_messages( struct rocketnet_server_t * server, struct rocketnet_message_batch_t * batch )
+{
+    if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( batch ) )
+        return false;
+    return rocketnet_message_server_receive_batch( rn_server( server ), batch );
+}
+
+void rocketnet_server_release_message( struct rocketnet_server_t * server, const uint8_t * data )
 {
     if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( data ) )
         return;
-    int slot;
-    if ( !rn_server_slot( server, client_index, &slot ) )
-    {
-        rocketnet_api_misuse_record();
+    rocketnet_message_server_release_next( rn_server( server ), data );
+}
+
+void rocketnet_server_release_messages( struct rocketnet_server_t * server, const struct rocketnet_message_batch_t * batch )
+{
+    if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( batch ) )
         return;
-    }
-    rocketnet_message_server_release( rn_server( server ), slot, data );
+    rocketnet_message_server_release_batch( rn_server( server ), batch );
 }
 
 int rocketnet_server_receipts( struct rocketnet_server_t * server, uint64_t client_index, struct rocketnet_receipt_t * out, int capacity )

@@ -19,6 +19,8 @@
 #include <stdint.h>
 #include <string.h>
 
+static uint64_t rn_public_receive_sender;
+
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
 // Connect a portable client over the loopback interface, send one reliable
@@ -56,16 +58,16 @@ static int exchange( struct rocketnet_server_t * server, const char * server_add
         // (2) receive and release every received message
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+        while ( rocketnet_client_receive_message( client, &data, &bytes ) )
             rocketnet_client_release_message( client, data );
         for ( int i = 0; i < max_clients; i++ )
         {
             if ( !rocketnet_server_client_connected( server, i ) )
                 continue;
-            while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
+            while ( rocketnet_server_receive_message( server, &rn_public_receive_sender, &data, &bytes ) )
             {
                 received++;
-                rocketnet_server_release_message( server, i, data );
+                rocketnet_server_release_message( server, data );
             }
         }
         // (3) run the game simulation for the frame: nothing to simulate here

@@ -95,7 +95,7 @@ A RocketNet integration follows a strict lifecycle and per-frame call order:
    - Fill `struct rocketnet_client_config_t` with `rocketnet_client_default_config_sized(&client_config, sizeof(client_config))` (or `rocketnet_client_default_config(&client_config)`), call `rocketnet_client_create_sized` (or `rocketnet_client_create`), then call `rocketnet_client_connect(client, connect_token)` with a `ROCKETNET_CONNECT_TOKEN_BYTES`-byte connect token. The client connects using the token alone; the handshake begins on the first `rocketnet_client_update`.
 3. **Run the five-step frame loop in exact order every tick** (using the caller's monotonic `double time` in seconds):
    - **Step 1 — Update:** Call `rocketnet_client_update(client, time)` and `rocketnet_server_update(server, time)` first to pump the transport, process incoming packets and ACKs, and advance connection state.
-   - **Step 2 — Receive and release:** Drain every pending message on each channel with `rocketnet_client_receive_message` / `rocketnet_server_receive_message`, copy or process its payload, and release the view in the **same** frame before the next update with `rocketnet_client_release_message` / `rocketnet_server_release_message`. Read any ACK/loss receipts with `rocketnet_client_receipts` / `rocketnet_server_receipts`.
+   - **Step 2 — Receive and release:** Drain the one receive queue with `rocketnet_client_receive_message` / `rocketnet_server_receive_message` (or the batch forms `rocketnet_client_receive_messages` / `rocketnet_server_receive_messages`), copy or process its payload, and release the view in the **same** frame before the next update with the release calls (`rocketnet_client_release_message` / `rocketnet_server_release_message`, or `rocketnet_client_release_messages` / `rocketnet_server_release_messages` for a batch). The queue spans every channel in delivery order; on the server it spans every client and each message names its sender. Read any ACK/loss receipts with `rocketnet_client_receipts` / `rocketnet_server_receipts`.
    - **Step 3 — Simulate:** Run the game simulation for the frame.
    - **Step 4 — Queue outgoing messages:** Reserve space in place with `rocketnet_client_start_message` / `rocketnet_server_start_message`, write the message bytes directly into the returned pointer, and commit with `rocketnet_client_finish_message` / `rocketnet_server_finish_message` (or cancel with `rocketnet_client_abort_message` / `rocketnet_server_abort_message`). To send one message to every connected client, loop over the slots with `rocketnet_server_client_connected` and start and finish a message for each.
    - **Step 5 — Send packets last:** Call `rocketnet_client_send_packets(client)` and `rocketnet_server_send_packets(server)` **last** so every message queued during the frame goes out on the wire in the same frame instead of waiting until the next tick.
@@ -206,21 +206,25 @@ int main( void )
 
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+        while ( rocketnet_client_receive_message( client, &data, &bytes ) )
         {
             if ( bytes == 4 && memcmp( data, "pong", 4 ) == 0 )
                 client_received_reply = 1;
             rocketnet_client_release_message( client, data );
         }
 
-        uint64_t slot = rocketnet_client_index( client );
-        if ( rocketnet_server_client_connected( server, slot ) )
+        uint64_t slot = 0;
+        const int connected = rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED;
+        if ( connected )
+            slot = rocketnet_client_index( client );
+        if ( connected && rocketnet_server_client_connected( server, slot ) )
         {
-            while ( rocketnet_server_receive_message( server, slot, 0, &data, &bytes ) )
+            uint64_t sender = 0;
+            while ( rocketnet_server_receive_message( server, &sender, &data, &bytes ) )
             {
                 if ( bytes == 4 && memcmp( data, "ping", 4 ) == 0 )
                     server_received_and_replied = 1;
-                rocketnet_server_release_message( server, slot, data );
+                rocketnet_server_release_message( server, data );
 
                 if ( server_received_and_replied )
                 {
@@ -352,7 +356,7 @@ RocketNet never clamps invalid configuration or silently ignores API misuse; eve
 
 ## Threading rules
 
-- **Main-thread ownership:** A `rocketnet_client_t` or `rocketnet_server_t` instance is owned by one caller thread for its frame loop. Run `rocketnet_client_update` / `rocketnet_server_update`, `rocketnet_client_receive_message` / `rocketnet_server_receive_message`, `rocketnet_client_release_message` / `rocketnet_server_release_message`, `rocketnet_client_start_message` / `rocketnet_server_start_message`, `rocketnet_client_finish_message` / `rocketnet_server_finish_message`, `rocketnet_client_abort_message` / `rocketnet_server_abort_message`, `rocketnet_client_send_packets` / `rocketnet_server_send_packets`, `rocketnet_client_receipts` / `rocketnet_server_receipts`, and `rocketnet_client_disconnect` / `rocketnet_server_disconnect_client` sequentially on that owning thread—never concurrently on the same object.
+- **Main-thread ownership:** A `rocketnet_client_t` or `rocketnet_server_t` instance is owned by one caller thread for its frame loop. Run `rocketnet_client_update` / `rocketnet_server_update`, `rocketnet_client_receive_message` / `rocketnet_server_receive_message` (and their batch forms), `rocketnet_client_release_message` / `rocketnet_server_release_message` (and their batch forms), `rocketnet_client_start_message` / `rocketnet_server_start_message`, `rocketnet_client_finish_message` / `rocketnet_server_finish_message`, `rocketnet_client_abort_message` / `rocketnet_server_abort_message`, `rocketnet_client_send_packets` / `rocketnet_server_send_packets`, `rocketnet_client_receipts` / `rocketnet_server_receipts`, and `rocketnet_client_disconnect` / `rocketnet_server_disconnect_client` sequentially on that owning thread—never concurrently on the same object.
 - **What the background I/O thread does:** By default (`step_driven == 0`), socket drivers run background I/O threads that pull UDP datagrams off the NIC, decrypt and authenticate packets off the main thread, and drain staged outgoing batches when `rocketnet_client_send_packets` / `rocketnet_server_send_packets` flushes them. The caller thread never touches locks during message reads or writes; handoff happens inside `update` and `send_packets`.
 - **Step-driven client mode (`step_driven`):** Setting `client_config.step_driven = 1` (or `ROCKETNET_CLIENT_STEP_DRIVEN=1` in the environment) disables the client's background I/O thread. The client then runs its socket/transport receive step inside `rocketnet_client_update` and its send step inside `rocketnet_client_send_packets` directly on the caller's thread. Use `step_driven = 1` in deterministic simulations, single-threaded harnesses, or when the host engine manages every thread explicitly.
 

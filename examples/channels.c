@@ -17,6 +17,8 @@
 #include <stdint.h>
 #include <string.h>
 
+static uint64_t rn_public_receive_sender;
+
 // Uses the public API names as declared in sdk/rocketnet.h: client/server
 // start_message, finish_message, receive_message, release_message,
 // send_packets and client_connected.
@@ -81,28 +83,28 @@ int main( void )
         // (2) receive and release every received message on both channels
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive_message( client, CHAT_CHANNEL, &data, &bytes ) )
+        while ( rocketnet_client_receive_message( client, &data, &bytes ) )
             rocketnet_client_release_message( client, data );
 
         uint32_t chat_this_frame = 0, pos_this_frame = 0;
         if ( rocketnet_server_client_connected( server, 0 ) )
         {
-            while ( rocketnet_server_receive_message( server, 0, CHAT_CHANNEL, &data, &bytes ) )
+            while ( rocketnet_server_receive_message( server, &rn_public_receive_sender, &data, &bytes ) )
             {
                 uint32_t seq = 0;
                 CHECK( bytes == (int) sizeof( seq ) );
                 memcpy( &seq, data, sizeof( seq ) );
-                rocketnet_server_release_message( server, 0, data );
+                rocketnet_server_release_message( server, data );
                 CHECK( seq == chat_received + 1 );
                 chat_received = seq;
                 chat_this_frame++;
             }
-            while ( rocketnet_server_receive_message( server, 0, POSITION_CHANNEL, &data, &bytes ) )
+            while ( rocketnet_server_receive_message( server, &rn_public_receive_sender, &data, &bytes ) )
             {
                 uint32_t pos = 0;
                 CHECK( bytes == (int) sizeof( pos ) );
                 memcpy( &pos, data, sizeof( pos ) );
-                rocketnet_server_release_message( server, 0, data );
+                rocketnet_server_release_message( server, data );
                 CHECK( pos > last_pos );
                 last_pos = pos;
                 positions_received++;

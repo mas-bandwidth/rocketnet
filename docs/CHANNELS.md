@@ -1297,8 +1297,8 @@ dropped at start message: `NULL`, counted once in `MESSAGE_SEND_NOT_CONNECTED`
 tla/ClientSession.tla DropSend); the server drops a send to a slot that is not
 CONNECTED the same way. Only the CONFIG control record, announced at create, is
 held, unnumbered, until CONNECTED. One client object makes one connection, like the
-transport. The client receives with `rocketnet_client_receive_message`, modelled on the
-transport's receive. CONNECTED is emitted
+transport. The client receives with `rocketnet_client_receive_message` from one queue,
+modelled on RakNet's `Receive`; see 11.5. CONNECTED is emitted
 when the transport first reports state 4. DISCONNECTED is emitted when the
 transport leaves state 4, or when the endpoint errors, in which case the
 object calls `rocketnet_client_disconnect`.
@@ -1331,8 +1331,15 @@ header; the internal transport and message layers are in
   its receipt serial, nonzero. `abort` gives the room back, and `send` is the
   copying convenience. The one
   copy on the path is THE COPIES (a), record to frame, in layer 6's writer.
-- **The receive.** `rocketnet_client_receive_message` or `rocketnet_server_receive_message` hands out the update's next message on
-  the channel as a const view and a length; `rocketnet_client_release_message` or `rocketnet_server_release_message` gives it back. Every view
+- **The receive.** `rocketnet_client_receive_message` or `rocketnet_server_receive_message` hands out the update's next message from
+  one queue as a const view and a length, in delivery order across every
+  channel; the server's queue spans every client and each message names its
+  sender (sdk/rocketnet.h:1137 and :1349). The batch forms
+  `rocketnet_client_receive_messages` and `rocketnet_server_receive_messages`
+  fill a caller array from the same queue with one call per update
+  (sdk/rocketnet.h:1153 and :1365). `rocketnet_client_release_message` or
+  `rocketnet_server_release_message` gives a view back, and the batch release
+  calls give a whole batch back. Every view
   is released before the next update: update with one held asserts in a debug
   build and returns `ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED` in a release build,
   counted as `MESSAGE_NOT_RELEASED` (tla/RNSlots.tla, RejectUnreleasedUpdate).
@@ -1415,7 +1422,7 @@ for ( ;; )                                                /* 2. receive and rele
 {
     const uint8_t * view = NULL;
     int view_bytes = 0;
-    if ( !rocketnet_client_receive_message( client, channel, &view, &view_bytes ) )
+    if ( !rocketnet_client_receive_message( client, &view, &view_bytes ) )
         break;
     /* process view */
     rocketnet_client_release_message( client, view );
@@ -1469,7 +1476,10 @@ covers the following protocol needs:
 
 - RakNet's `Send` maps to `rocketnet_client_start_message`/`rocketnet_client_finish_message`, or the server forms, which return a nonzero serial.
 - `Receive` and `DeallocatePacket` become `rocketnet_client_receive_message` and
-  `rocketnet_client_release_message`, or the server forms with a `client_index`.
+  `rocketnet_client_release_message`, or `rocketnet_server_receive_message`
+  with a sender out-argument and `rocketnet_server_release_message`. Both
+  receive calls read one queue, as RakNet's `Receive` does; the batch calls are
+  the fast-path form of the same queue.
 - Receipts and connection notices are lists. A consumer adapter can merge them into
   RakNet's single stream, so the interleaving I17 describes is reproduced above
   this layer.
