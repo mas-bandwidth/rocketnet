@@ -55,13 +55,13 @@ past the capacity returns NULL and counts `SEND_RING_FULL`
 (`sdk/rocketnet_server_transport.cpp:2230`, `:2366`).
 `rocketnet_server_transport_send_capacity` reports the value. The message
 layer shares a shortage fairly (`tla/RNServerSendFair.tla`):
-`rn_message_object_send_packets` (`sdk/rocketnet_message_server.cpp:869`) offers
+`rn_message_object_send_packets` (`sdk/rocketnet_message_server.cpp:823`) offers
 every connection one packet, in rotation from the first connection refused in
 the previous update, before any connection takes a second, and a refusal holds
 back in-place unreliable starts for the next update
-(`sdk/rocketnet_message_server.cpp:650`, `:900`). A refused packet writes
+(`sdk/rocketnet_message_server.cpp:604`, `:854`). A refused packet writes
 nothing and its reliable messages stay due
-(`sdk/rocketnet_message_server.cpp:821`). The walk serves a waiting connection
+(`sdk/rocketnet_message_server.cpp:775`). The walk serves a waiting connection
 within `ceil(N / K)` updates; in-place starts add at most the initial update
 before the first refusal constrains them (`tla/RNServerSendFair.tla:108`).
 
