@@ -146,9 +146,6 @@ jobs:
           - { os: ubuntu-24.04, build_type: Debug,   leg: ab, runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: ubuntu-24.04, build_type: Release, leg: a, runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: ubuntu-24.04, build_type: Release, leg: b, runner: '["self-hosted","Linux","X64","fleet"]' }
-          # sdk/rocketnet_server_socket_linux.cpp:1807 initializes UMEM ring sizes.
-          # libxdp 1.4 rejects zeroed ring sizes; 1.6 accepts them, so pin an XDP cell.
-          - { os: ubuntu-24.04, build_type: Debug,   leg: b, runner: '["self-hosted","Linux","X64","fleet","libxdp-1-4"]' }
           # macOS Apple silicon on the fleet's darwin runner (mini-m5-1-rocketnet-1, label rocketnet-macos; rowan-tools fleet/runners.tsv)
           - { os: macos-15, build_type: Debug,   leg: ab, runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
           - { os: macos-15, build_type: Release, leg: ab, runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
@@ -502,6 +499,47 @@ jobs:
       - name: Provisioning script selftest
         if: runner.os == 'Linux' && (contains(matrix.leg, 'b'))
         run: bash scripts/rocketnet-provision selftest
+
+  # sdk/rocketnet_server_socket_linux.cpp:1807 initializes UMEM ring sizes.
+  # libxdp 1.4 rejects zeroed ring sizes; 1.6 accepts them, so pin this XDP cell.
+  xdp-libxdp-1-4:
+    name: XDP / libxdp 1.4 / Debug
+    runs-on: [self-hosted, Linux, X64, fleet, libxdp-1-4]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the XDP functional cell (Debug)
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(pkg-config --modversion libxdp)
+          echo "libxdp $version"
+          case "$version" in 1.4.*) ;; *) echo "libxdp-1-4 requires libxdp 1.4.x"; exit 1 ;; esac
+          cmake -B build -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build --target functional --parallel 2
+      - name: XDP max size on IPv4 and IPv6 in the runner kernel guest
+        shell: bash
+        run: |
+          set -euo pipefail
+          vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
+          command -v vng
+          test -r "$vm_kernel"
+          test -w /dev/kvm
+          cat > build/xdp-libxdp-1-4.sh <<'GUEST'
+          uname -r
+          failed=0
+          for case in xdp_max_size_both_ways_ipv4 xdp_max_size_both_ways_ipv6; do
+            log="build/libxdp-1-4.$case.log"
+            sudo ./bin/functional --run "$case" > "$log" 2>&1
+            rc=$?
+            cat "$log"
+            echo "CASE $case EXIT $rc"
+            if [ "$rc" != 0 ] || ! grep -qx "$case" "$log" || grep -q '\[SKIPPED' "$log"; then failed=1; fi
+          done
+          exit "$failed"
+          GUEST
+          timeout 120 vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
+            sh build/xdp-libxdp-1-4.sh
 
   # The windows leg (#81's baseline doctrine): the portable driver built with
   # MSVC — the first machine ever to compile the windows arm — and the full
