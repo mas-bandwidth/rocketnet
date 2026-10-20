@@ -57,13 +57,25 @@ inline jmp_buf ** rocketnet_unit_expected_fail_env()
 }
 
 // A static registrar: a file-scope object whose constructor registers the
-// test, so the test runs without any manual enumeration.
+// test, so the test runs without any manual enumeration. Names are unique
+// across every test_unit_*.cpp: rocketnet_unit_file_find returns the first
+// match, so a second test under a name would never run. The constructor
+// aborts with the name when it is already registered, before main runs.
 
 struct rocketnet_unit_file_registrar_t
 {
     struct rocketnet_unit_file_test_t test;
     rocketnet_unit_file_registrar_t( const char * name, void ( *function )(), const char * expected_fail_card )
     {
+        for ( struct rocketnet_unit_file_test_t * t = *rocketnet_unit_file_head(); t != NULL; t = t->next )
+        {
+            if ( strcmp( t->name, name ) == 0 )
+            {
+                fprintf( stderr, "error: unit test %s is registered twice; unit test names must be unique\n", name );
+                fflush( stderr );
+                abort();
+            }
+        }
         test.name = name;
         test.function = function;
         test.expected_fail_card = expected_fail_card;
