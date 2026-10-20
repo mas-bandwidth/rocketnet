@@ -2026,16 +2026,6 @@ typedef ssize_t (*rocketnet_recvmsg_x_fn)( int s, struct rocketnet_msghdr_x_t * 
 static rocketnet_sendmsg_x_fn rocketnet_sendmsg_x = NULL;
 static rocketnet_recvmsg_x_fn rocketnet_recvmsg_x = NULL;
 
-#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-typedef void (*rocketnet_msgx_probe_test_hook_t)( int socket );
-static rocketnet_msgx_probe_test_hook_t rocketnet_msgx_probe_test_hook = NULL;
-
-void rocketnet_platform_set_msgx_probe_test_hook( rocketnet_msgx_probe_test_hook_t hook )
-{
-    rocketnet_msgx_probe_test_hook = hook;
-}
-#endif
-
 // the seam batch: how many messages one syscall carries. matches the
 // transport's own batch shape; chunking inside the pump keeps the stack
 // arrays small and bounded.
@@ -2441,10 +2431,9 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
     // the batch pump probe: resolved symbols, a non-blocking socket (the
     // pump's spin discipline assumes it), no environment override, and one
     // real recvmsg_x with MSG_PEEK against the just-bound socket -- a live
-    // syscall answers EAGAIN (or observes an already queued datagram without
-    // consuming it), and anything else (ENOSYS on a kernel that
-    // dropped the syscall, EOPNOTSUPP, EINVAL on an ABI drift) leaves the
-    // socket on the portable pump. degradation is silent above the seam.
+    // syscall answers EAGAIN without consuming queued traffic. If MSG_PEEK
+    // is unsupported, defer the msgx decision to the first real receive batch,
+    // whose error path pauses msgx and finishes per-packet without losing data.
 
     if ( pump_mode != ROCKETNET_PUMP_MODE_FORCE_PORTABLE && rocketnet_sendmsg_x && rocketnet_recvmsg_x && socket_type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING )
     {
@@ -2452,8 +2441,26 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
         if ( !pump_override || strcmp( pump_override, "portable" ) != 0 )
         {
 #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-            if ( rocketnet_msgx_probe_test_hook )
-                rocketnet_msgx_probe_test_hook( socket->handle );
+            // Functional-only injection is opt-in through the environment;
+            // the unit binaries carry no hook state or callback.
+            const char * inject_first_datagram = rocketnet_platform_getenv( "ROCKETNET_TEST_MSGX_PROBE_INJECT" );
+            if ( inject_first_datagram && strcmp( inject_first_datagram, "1" ) == 0 )
+            {
+                struct sockaddr_storage address;
+                socklen_t address_bytes = sizeof(address);
+                if ( getsockname( socket->handle, (struct sockaddr*) &address, &address_bytes ) == 0 && address.ss_family == AF_INET )
+                {
+                    struct sockaddr_in * ipv4 = (struct sockaddr_in*) &address;
+                    ipv4->sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+                    const int sender = ::socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+                    if ( sender >= 0 )
+                    {
+                        static const uint8_t payload[] = { 0x4d, 0x53, 0x47, 0x58, 0x01 };
+                        sendto( sender, payload, sizeof(payload), 0, (struct sockaddr*) ipv4, sizeof(*ipv4) );
+                        close( sender );
+                    }
+                }
+            }
 #endif
 
             uint8_t probe_data[64];
@@ -2470,7 +2477,7 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
 
             errno = 0;
             ssize_t probe_result = rocketnet_recvmsg_x( socket->handle, &probe_msg, 1, MSG_PEEK );
-            if ( probe_result >= 0 || errno == EAGAIN || errno == EWOULDBLOCK )
+            if ( probe_result >= 0 || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINVAL )
             {
                 socket->msgx = true;
             }
