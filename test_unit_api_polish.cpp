@@ -472,6 +472,7 @@ static void api_polish_client_index_is_zero_until_connected()
     rocketnet_set_quiet( false );
 }
 REGISTER_UNIT_TEST( api_polish_client_index_is_zero_until_connected );
+
 // --- the production minter refuses a token no peer accepts ---------------------
 
 // a timeout of zero or below (t13.2: a production server refuses both), and an

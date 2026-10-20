@@ -696,7 +696,7 @@ uint64_t rocketnet_client_index( const struct rocketnet_client_t * client )
     if ( !client->connection )
         return 0;
     // only a CONNECTED client holds a server slot: before then the transport's
-    // index is -1 (rocketnet_client_protocol.cpp:91), which as a uint64_t carries ROCKETNET_FLOW_ID_BIT
+    // index is -1 (rocketnet_client_protocol_init), which as a uint64_t carries ROCKETNET_FLOW_ID_BIT
     if ( rocketnet_message_client_state( client->connection ) != ROCKETNET_CLIENT_STATE_CONNECTED )
         return 0;
     const uint64_t index = (uint64_t) rocketnet_client_transport_client_index( rocketnet_message_client_transport( client->connection ) );

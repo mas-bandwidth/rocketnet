@@ -121,7 +121,7 @@ int main( void )
         // (4) queue this frame's outgoing messages, once connected
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
-            // set-send-kbps takes a CONNECTED client only (sdk/rocketnet.h:1092);
+            // set-send-kbps takes a CONNECTED client only (rocketnet_client_set_send_kbps);
             // the config's send_kbps already set the connection's starting rate
             if ( !budget_set )
             {
@@ -164,7 +164,7 @@ int main( void )
     result = 0;
 
 cleanup:
-    // destroy on NULL is a counted misuse that asserts in a debug build (sdk/rocketnet_internal.h:314)
+    // destroy on NULL is a counted misuse that asserts in a debug build (rocketnet_api_null_guard)
     if ( client )
         rocketnet_client_destroy( client );
     if ( server )
