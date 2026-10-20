@@ -611,8 +611,14 @@ int main( int argc, char ** argv )
                 {
                     fprintf( stderr, "load: client %d not connected at the deadline: state=%d %s\n",
                              i, st, rocketnet_client_transport_state_name( st ) );
-                    const struct rocketnet_counters_t * ctc =
-                        rocketnet_client_transport_counters( rocketnet_message_client_transport( clients[i] ) );
+                    struct rocketnet_client_transport_t * ct = rocketnet_message_client_transport( clients[i] );
+                    struct rocketnet_client_transport_stats_t cs;
+                    memset( &cs, 0, sizeof( cs ) );
+                    rocketnet_client_transport_stats( ct, &cs );
+                    fprintf( stderr, "load: client %d driver=%s packets_sent=%llu packets_received=%llu\n", i,
+                             rocketnet_client_transport_driver( ct ),
+                             (unsigned long long) cs.packets_sent, (unsigned long long) cs.packets_received );
+                    const struct rocketnet_counters_t * ctc = rocketnet_client_transport_counters( ct );
                     for ( int k = 0; ctc && k < ROCKETNET_NUM_COUNTERS; k++ )
                         if ( rocketnet_counter_value( ctc, k ) )
                             fprintf( stderr, "load: client %d counter %s=%llu\n", i, rocketnet_counter_name( k ),
