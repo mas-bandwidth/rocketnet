@@ -219,28 +219,29 @@ int main( void )
                     client_received_reply = 1;
         }
 
-        uint64_t slot = 0;    /* the sender's client index */
+        int reply_pending = 0;
+        uint64_t reply_index = 0;
         while ( rocketnet_server_receive_messages( server, &batch ) )
         {
             for ( int i = 0; i < batch.num_messages; i++ )
             {
-                while ( rocketnet_server_receive_messages( server, &batch ) )
+                if ( batch.bytes[i] == 4 && memcmp( batch.data[i], "ping", 4 ) == 0 )
                 {
-                    for ( int i = 0; i < batch.num_messages; i++ )
-                    {
-                        if ( batch.client_index[i] == (int) slot && batch.bytes[i] == 4 && memcmp( batch.data[i], "ping", 4 ) == 0 )
-                        {
-                            server_received_and_replied = 1;
-                            uint8_t * reply = rocketnet_server_start_message( server, slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
-                            if ( !reply )
-                                return 1;
-                            memcpy( reply, "pong", 4 );
-                            if ( rocketnet_server_finish_message( server, slot, 4 ) == 0 )
-                                return 1;
-                        }
-                    }
+                    reply_pending = 1;
+                    reply_index = (uint64_t) batch.client_index[i];
                 }
             }
+        }
+
+        if ( reply_pending )
+        {
+            uint8_t * reply = rocketnet_server_start_message( server, reply_index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
+            if ( !reply )
+                return 1;
+            memcpy( reply, "pong", 4 );
+            if ( rocketnet_server_finish_message( server, reply_index, 4 ) == 0 )
+                return 1;
+            server_received_and_replied = 1;
         }
 
         if ( !client_sent && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
