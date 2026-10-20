@@ -185,7 +185,7 @@ full server sends. The set is removed. Its counters
 `CONNECTION_RESPONSE_ADMITTED_SET_FULL` (sdk/rocketnet_counters.h:194) and
 `CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED` (sdk/rocketnet_counters.h:162)
 keep their indices and read zero; nothing increments them, and
-sdk/rocketnet_tests.cpp:6474 and :6480 check both at zero. The reversed witness
+sdk/rocketnet_tests.cpp:6482 and :6488 check both at zero. The reversed witness
 `MCRNSecurityTablesHoldUntilExpire.cfg` reproduces the denial in the model.
 `server_admits_sequential_fresh_tokens_past_twice_max_clients` reproduced it
 in the code before the fix, failing at the third cycle with
