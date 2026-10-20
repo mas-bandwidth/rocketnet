@@ -6,7 +6,8 @@ layers for the executable's image name, sets every stop those layers issue to
 log to the verifier log file without a debugger (a stop ends the run with
 STATUS_VERIFIER_STOP after it is logged), runs the executable, exports the verifier log to XML and disables verification
 for the image again on every exit path. It exits non-zero when the executable
-fails or when the log holds any verifier stop, printing one line per stop with
+fails, when the log is not exported, or when the log holds any verifier stop,
+printing one line per stop with
 its layer, stop code and top frames.
 
 usage: python tools/windows/appverif_run.py [--xml FILE] [--timeout SECONDS] -- EXE [ARGS...]
@@ -213,6 +214,8 @@ def main() -> int:
             ],
             check=False,
         )
+        if not xml_path.is_file():
+            raise RuntimeError(f"verifier log for {image_name} was not exported to {xml_path}")
         stops = parse_stops(xml_path)
     except RuntimeError as error:
         print(f"appverif_run: {error}", file=sys.stderr)
