@@ -21,13 +21,6 @@ static void rec_send( struct rocketnet_dst_check_state_t * st, int stream, uint3
     rocketnet_dst_check_sent( st, 1000.0, session, channel, type, seq, 1, 1, 0, 64 );
 }
 
-static void rec_deliver( struct rocketnet_dst_check_state_t * st, int stream, uint32_t seq )
-{
-    (void) st;
-    (void) stream;
-    (void) seq;
-}
-
 static void dst_check_ordered_out_of_order_fails()
 {
     static struct rocketnet_dst_check_state_t st;

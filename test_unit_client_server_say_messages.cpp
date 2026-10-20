@@ -287,6 +287,11 @@ static void client_server_say_messages_not_packets()
         exit( 1 );
     }
 
+    // a passing run prints its name only; ROCKETNET_TEST_VERBOSE adds the
+    // per-reason report
+    if ( getenv( "ROCKETNET_TEST_VERBOSE" ) == NULL )
+        return;
+
     std::vector<std::string> reasons;
     std::vector<int> counts;
     for ( size_t r = 0; r < allowlist_count; r++ )

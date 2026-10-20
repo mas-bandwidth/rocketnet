@@ -2200,6 +2200,7 @@ static void test_channels_allocator_no_live_allocation()
         server_store += sides[2 * s].refused_store;
         server_queue += sides[2 * s].refused_queue;
         client_store += sides[2 * s + 1].refused_store;
+        (void) client_store;
         client_queue += sides[2 * s + 1].refused_queue;
         check( sides[2 * s + 1].refused_store == rn_counter( &client_counters[s], ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) );
         check( sides[2 * s + 1].refused_queue == rn_counter( &client_counters[s], ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL ) );

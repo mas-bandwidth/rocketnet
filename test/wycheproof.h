@@ -430,6 +430,7 @@ inline bool wycheproof_load( const char * file_name,
 
     int num_groups = (int) groups_node->arr.size();
     int total = 0;
+    (void) total;
     for ( int gi = 0; gi < num_groups; gi++ )
     {
         const wyj::node_t & g = groups_node->arr[gi];
