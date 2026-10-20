@@ -82,13 +82,13 @@ def _table_names(path):
 
 
 def _register_names(path):
-    names = set()
+    names = []
     try:
         text = path.read_text()
     except OSError:
         return names
     for m in REGISTER_RE.finditer(text):
-        names.add(m.group(1))
+        names.append(m.group(1))
     return names
 
 
@@ -99,10 +99,23 @@ def registered_unit_names():
         a, p = _table_names(REPO.joinpath(*rel))
         all_names |= a
         paired_names |= p
+    # A REGISTER_UNIT_TEST name is unique: test.cpp runs a name from the sdk
+    # and channels tables before the unit-file registry, and the registry runs
+    # a name's first registration only (rocketnet_unit_file_find in
+    # test_unit_registry.h), so a repeated name never runs its later test.
+    # The registrar aborts on the first repeat; this names every one.
+    table_names = set(all_names)
+    seen = {}
+    duplicates = []
     for path in sorted(REPO.glob("test_unit_*.cpp")):
-        r = _register_names(path)
-        all_names |= r
-        paired_names |= r
+        for name in _register_names(path):
+            if name in seen or name in table_names:
+                duplicates.append("%s (%s, %s)" % (name, seen.get(name, "registry table"), path.name))
+            seen.setdefault(name, path.name)
+    if duplicates:
+        sys.exit("unit test names registered more than once: " + "; ".join(duplicates))
+    all_names |= set(seen)
+    paired_names |= set(seen)
     return all_names, paired_names
 
 
