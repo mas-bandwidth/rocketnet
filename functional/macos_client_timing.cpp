@@ -20,6 +20,9 @@
                 (config time_callback, the receive stamp clock) runs on the I/O
                 thread once per driver receive call, and calls closer than
                 200 us apart are one wake
+      lag       receive lag: from the server's send to the first I/O thread
+                receive call at or after it, the time the I/O thread takes to
+                respond to a datagram (the event wake, not the guard timeout)
       latency   receive-to-update: from the server's send to the client update
                 that returns the payload (the loopback wire is microseconds)
       late      the part of that latency past the first client update that ran
@@ -28,8 +31,12 @@
       frame     the game thread's measured update interval
 
     Asserted at the default class and with a background game thread:
-    connected for the whole 60 s with zero timeouts, and the I/O thread's wake
-    p99 under 5 ms. At the default class also receive-to-update p99 at most two
+    connected for the whole 60 s with zero timeouts, and the I/O thread's
+    receive lag p99 under 5 ms. The wake interval is printed, not asserted:
+    the wait's timeout is a guard, never a cadence
+    (ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS), so the I/O thread wakes when
+    a datagram arrives or the wake is set, and its interval follows the
+    server's 10 ms send. At the default class also receive-to-update p99 at most two
     update intervals plus 10 ms: the receive handoff's floor, where a datagram
     can wait for the update that returns the buffer the I/O thread needs and
     then for the next update. With a background game thread the game loop's
@@ -67,7 +74,7 @@ extern char ** environ;
 #define MACOS_TIMING_SERVER_INTERVAL 0.010
 #define MACOS_TIMING_BOUND_SLACK 0.010
 #define MACOS_TIMING_LATENCY_INTERVALS 2.0
-#define MACOS_TIMING_WAKE_BOUND 0.005
+#define MACOS_TIMING_LAG_BOUND 0.005
 #define MACOS_TIMING_WAKE_GROUP 0.0002
 #define MACOS_TIMING_MAX_WAKES ( 4 * 1024 * 1024 )
 #define MACOS_TIMING_CHILD_ENV "ROCKETNET_MACOS_TIMING_TASKPOLICY_CHILD"
@@ -94,6 +101,8 @@ struct macos_timing_wakes_t
     int io_qos;
     double * intervals;
     uint64_t num_intervals;
+    double * call_times;        // every receive call's time, for the receive lag
+    uint64_t num_call_times;
 };
 
 static macos_timing_wakes_t macos_timing_wakes;
@@ -118,6 +127,8 @@ static double macos_timing_time_callback( void * context )
         w->group_start = now;
         w->wakes++;
     }
+    if ( w->num_call_times < MACOS_TIMING_MAX_WAKES )
+        w->call_times[w->num_call_times++] = now;
     w->last_call = now;
     w->calls++;
     return now;
@@ -205,6 +216,8 @@ static void macos_timing_run( const char * condition, bool lower_game_thread, bo
     memset( &macos_timing_wakes, 0, sizeof( macos_timing_wakes ) );
     std::vector<double> wake_storage( MACOS_TIMING_MAX_WAKES );
     macos_timing_wakes.intervals = wake_storage.data();
+    std::vector<double> call_storage( MACOS_TIMING_MAX_WAKES );
+    macos_timing_wakes.call_times = call_storage.data();
 
     const double start = rocketnet_platform_time();
 
@@ -264,10 +277,12 @@ static void macos_timing_run( const char * condition, bool lower_game_thread, bo
         macos_timing_require( connected );
 
     std::vector<double> latency;
+    std::vector<double> sent_times;
     std::vector<double> late;
     std::vector<double> frame;
     std::vector<double> update_times;
     latency.reserve( 8192 );
+    sent_times.reserve( 8192 );
     late.reserve( 8192 );
     frame.reserve( 8192 );
     update_times.reserve( 8192 );
@@ -299,6 +314,7 @@ static void macos_timing_run( const char * condition, bool lower_game_thread, bo
             if ( sent_at < measure_start )
                 continue;
             latency.push_back( updated - sent_at );
+            sent_times.push_back( sent_at );
             // the first update that started after the send
             std::vector<double>::iterator first = std::upper_bound( update_times.begin(), update_times.end(), sent_at );
             late.push_back( first == update_times.end() ? 0.0 : now - *first );
@@ -330,6 +346,21 @@ static void macos_timing_run( const char * condition, bool lower_game_thread, bo
 
     std::vector<double> wakes( wake_storage.begin(), wake_storage.begin() + (ptrdiff_t) macos_timing_wakes.num_intervals );
     const macos_timing_stats_t w = macos_timing_stats( wakes );
+    // the receive calls are in time order (one I/O thread); a payload with no
+    // receive call after its send is not counted (the client received it, so
+    // that cannot happen while the time callback is the receive stamp)
+    const double * call_begin = call_storage.data();
+    const double * call_end = call_begin + macos_timing_wakes.num_call_times;
+    std::vector<double> lag;
+    lag.reserve( sent_times.size() );
+    for ( size_t i = 0; i < sent_times.size(); i++ )
+    {
+        const double * first = std::lower_bound( call_begin, call_end, sent_times[i] );
+        if ( first != call_end )
+            lag.push_back( *first - sent_times[i] );
+    }
+    const size_t num_lag = lag.size();
+    const macos_timing_stats_t g = macos_timing_stats( lag );
     const size_t num_latency = latency.size();
     const macos_timing_stats_t l = macos_timing_stats( latency );
     const macos_timing_stats_t k = macos_timing_stats( late );
@@ -337,27 +368,30 @@ static void macos_timing_run( const char * condition, bool lower_game_thread, bo
     const double latency_bound = MACOS_TIMING_LATENCY_INTERVALS * MACOS_TIMING_UPDATE_INTERVAL + MACOS_TIMING_BOUND_SLACK;
 
     const bool stayed = connected && not_connected_frames == 0 && final_state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED && measured_seconds >= MACOS_TIMING_SECONDS;
-    // the I/O thread's wake p99 is the library's own contract in every gated
-    // condition; a coalesced game loop's own sleep sets the end-to-end latency,
-    // so latency is bounded only where the game loop runs at its cadence
-    const bool wake_within = macos_timing_wakes.num_intervals > 0 && w.p99 < MACOS_TIMING_WAKE_BOUND;
+    // the I/O thread's receive lag p99 is the library's own contract in every
+    // gated condition; a coalesced game loop's own sleep sets the end-to-end
+    // latency, so latency is bounded only where the game loop runs at its
+    // cadence
+    const bool lag_within = num_lag > 0 && g.p99 < MACOS_TIMING_LAG_BOUND;
     const bool latency_within = num_latency > 0 && l.p99 <= latency_bound;
-    const bool within = coalesced_game_loop ? wake_within : ( wake_within && latency_within );
+    const bool within = coalesced_game_loop ? lag_within : ( lag_within && latency_within );
     printf( "macos_client_timing condition=%s seconds=%.1f game_qos=%s io_qos=%s io_calls=%llu wakes=%llu wake_dropped=%llu "
             "wake_ms p50=%.3f p99=%.3f max=%.3f "
+            "lag_ms n=%llu p50=%.3f p99=%.3f max=%.3f "
             "latency_ms n=%llu p50=%.3f p99=%.3f max=%.3f "
             "late_ms p50=%.3f p99=%.3f max=%.3f "
             "frame_ms p50=%.3f p99=%.3f max=%.3f "
-            "server_sent=%llu final_state=%d timeouts=%llu wake_bound_ms=%.3f wake_within=%d latency_bound_ms=%.3f latency_within=%d status=%s\n",
+            "server_sent=%llu final_state=%d timeouts=%llu lag_bound_ms=%.3f lag_within=%d latency_bound_ms=%.3f latency_within=%d status=%s\n",
             condition, measured_seconds, macos_timing_qos_name( game_qos ), macos_timing_qos_name( macos_timing_wakes.io_qos ),
             (unsigned long long) macos_timing_wakes.calls, (unsigned long long) macos_timing_wakes.wakes,
             (unsigned long long) macos_timing_wakes.dropped,
             w.p50 * 1000.0, w.p99 * 1000.0, w.max * 1000.0,
+            (unsigned long long) num_lag, g.p50 * 1000.0, g.p99 * 1000.0, g.max * 1000.0,
             (unsigned long long) num_latency, l.p50 * 1000.0, l.p99 * 1000.0, l.max * 1000.0,
             k.p50 * 1000.0, k.p99 * 1000.0, k.max * 1000.0,
             f.p50 * 1000.0, f.p99 * 1000.0, f.max * 1000.0,
             (unsigned long long) server_state.sent, final_state, (unsigned long long) timeouts,
-            MACOS_TIMING_WAKE_BOUND * 1000.0, wake_within ? 1 : 0, latency_bound * 1000.0, latency_within ? 1 : 0,
+            MACOS_TIMING_LAG_BOUND * 1000.0, lag_within ? 1 : 0, latency_bound * 1000.0, latency_within ? 1 : 0,
             !gated ? "MEASURED" : ( stayed && within ? "PASS" : "FAIL" ) );
     fflush( stdout );
 
@@ -366,7 +400,7 @@ static void macos_timing_run( const char * condition, bool lower_game_thread, bo
 
     macos_timing_require( stayed );
     macos_timing_require( timeouts == 0 );
-    macos_timing_require( wake_within );
+    macos_timing_require( lag_within );
     if ( !coalesced_game_loop )
         macos_timing_require( latency_within );
 }
