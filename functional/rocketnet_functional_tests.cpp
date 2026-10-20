@@ -7876,6 +7876,13 @@ static void rocketnet_xdp_hard_killed_client( bool ipv6, const char * case_name 
     int server_received = 0;
     int client_received[2] = { 0, 0 };
     int round = 0;
+    // a live payload the server refuses at the send (SEND_RING_FULL: the xdp
+    // send ring has no free frame until the xdp thread reaps completions) is
+    // offered again on the next pass, so all 200 still cross; the retries are
+    // counted and printed
+    int pending[4] = { 0, 0, 0, 0 };
+    int send_retries = 0;
+    const struct rocketnet_counters_t * server_counters = rocketnet_server_transport_counters( server );
     start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 10.0 )
     {
@@ -7885,10 +7892,24 @@ static void rocketnet_xdp_hard_killed_client( bool ipv6, const char * case_name 
                 rocketnet_server_transport_send_packet( server, dead, to_dead, (int) sizeof(to_dead) );
             for ( int i = 0; i < 4; i++ )
                 if ( live_index[i] )
-                    rocketnet_server_transport_send_packet( server, i, to_client, (int) sizeof(to_client) );
+                    pending[i]++;
             for ( int c = 0; c < 2; c++ )
                 rocketnet_client_transport_send_packet( live[c], to_server, (int) sizeof(to_server) );
             round++;
+        }
+        for ( int i = 0; i < 4; i++ )
+        {
+            while ( pending[i] > 0 )
+            {
+                const uint64_t refused_before = rocketnet_counter_value( server_counters, ROCKETNET_COUNTER_SEND_RING_FULL );
+                rocketnet_server_transport_send_packet( server, i, to_client, (int) sizeof(to_client) );
+                if ( rocketnet_counter_value( server_counters, ROCKETNET_COUNTER_SEND_RING_FULL ) != refused_before )
+                {
+                    send_retries++;
+                    break;
+                }
+                pending[i]--;
+            }
         }
         rocketnet_server_transport_send_packets( server );
         for ( int c = 0; c < 2; c++ )
@@ -7917,7 +7938,7 @@ static void rocketnet_xdp_hard_killed_client( bool ipv6, const char * case_name 
                 client_received[c]++;
             }
         }
-        if ( round == ROCKETNET_XDP_HARD_KILLED_ROUNDS && server_received >= expected_server &&
+        if ( round == ROCKETNET_XDP_HARD_KILLED_ROUNDS && pending[0] + pending[1] + pending[2] + pending[3] == 0 && server_received >= expected_server &&
              client_received[0] >= ROCKETNET_XDP_HARD_KILLED_ROUNDS && client_received[1] >= ROCKETNET_XDP_HARD_KILLED_ROUNDS )
             break;
         rocketnet_platform_sleep( 0.001 );
@@ -7927,6 +7948,7 @@ static void rocketnet_xdp_hard_killed_client( bool ipv6, const char * case_name 
     const struct rocketnet_counters_t * counters = rocketnet_server_transport_counters( server );
     const uint64_t weather_skipped = rocketnet_platform_receive_weather_skipped() - weather_before;
     rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: the dead client's namespace sent %llu ICMP unreachables to the server", case_name, (unsigned long long) far_icmp );
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: live payloads offered again after SEND_RING_FULL: %d", case_name, send_retries );
     rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: driver=%s rounds=%d server live=%d/%d client0=%d/%d client1=%d/%d dead_index=%d connected=%d redirected=%llu packets_received=%llu weather_skipped=%llu",
                       case_name, rocketnet_server_transport_driver( server ), round, server_received, expected_server,
                       client_received[0], ROCKETNET_XDP_HARD_KILLED_ROUNDS, client_received[1], ROCKETNET_XDP_HARD_KILLED_ROUNDS, dead,
