@@ -48,11 +48,11 @@ Two I/O shapes preserve the existing implementations:
 On a buffered driver one update stages at most `payload_ring_capacity` payload
 packets. At create the server allocates that many ring slots; the default is
 the larger of `ROCKETNET_SERVER_MAX_SEND_PACKETS` (256) and the configured
-`max_clients` (`sdk/rocketnet_server_transport.cpp:1154`). The allocation holds
+`max_clients` (`sdk/rocketnet_server_transport.cpp:1171`). The allocation holds
 the slot metadata and frames together, with a 64-aligned metadata start and
-16-aligned frame roots (`sdk/rocketnet_server_transport.cpp:1479`). A start
+16-aligned frame roots (`sdk/rocketnet_server_transport.cpp:1496`). A start
 past the capacity returns NULL and counts `SEND_RING_FULL`
-(`sdk/rocketnet_server_transport.cpp:2209`, `:2345`).
+(`sdk/rocketnet_server_transport.cpp:2230`, `:2366`).
 `rocketnet_server_transport_send_capacity` reports the value. The message
 layer shares a shortage fairly (`tla/RNServerSendFair.tla`):
 `rn_message_object_send_packets` (`sdk/rocketnet_message_server.cpp:869`) offers
