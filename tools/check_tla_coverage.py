@@ -69,6 +69,27 @@ def check_row(row):
     return failures
 
 
+def owed_but_cited(rows):
+    """An owed row says no code implements its model; a model that a file
+    under sdk/ cites is implemented, so its owed row is stale."""
+    failures = []
+    sdk = ROOT / "sdk"
+    texts = {}
+    if sdk.is_dir():
+        for path in sorted(sdk.rglob("*")):
+            if path.is_file():
+                texts[path.relative_to(ROOT).as_posix()] = path.read_text(errors="replace")
+    for row in rows:
+        if row.get("status", "") != "owed":
+            continue
+        module = row["module"]
+        cite = f"tla/{module}.tla"
+        citing = [name for name, text in texts.items() if cite in text]
+        if citing:
+            failures.append(f"{module}: {row.get('machine', '')} is owed but {citing[0]} cites {cite}")
+    return failures
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--require", action="append", default=[], metavar="MODULES",
@@ -98,6 +119,8 @@ def main():
         for module in tla_modules():
             if module not in have:
                 failures.append(f"{module}: no coverage row")
+
+    failures.extend(owed_but_cited(rows))
 
     if failures:
         for failure in sorted(failures):

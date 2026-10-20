@@ -2,7 +2,7 @@ name: TLC records
 
 on:
   push:
-    branches: [main, sprint/rocketnet-fixes]
+    branches: [main, 'sprint/**']
   pull_request:
   workflow_dispatch:
 

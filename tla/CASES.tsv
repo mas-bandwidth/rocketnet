@@ -57,7 +57,7 @@ MCReceiveOrderBrokenVersionNotFirst.cfg	MCReceiveOrder.tla	invariant	CheapRefusa
 MCRNDriverSendStaging.cfg	MCRNDriverSendStaging.tla	pass	-	check	rndriversendstaging	required	-
 MCRNDriverSendStagingBrokenDisconnect.cfg	MCRNDriverSendStaging.tla	invariant	StagedDisconnectFlushed	check	rndriversendstaging	required	-
 MCRNSecurityTables.cfg	MCRNSecurityTables.tla	pass	-	check	rnsecuritytables	required	-
-MCServerConnection.cfg	MCServerConnection.tla	pass	-	ignore-terminal	serverconnection	bench	server-reuse-safety-over-budget
+MCServerConnection.cfg	MCServerConnection.tla	pass	-	ignore-terminal	serverconnection	required	-
 MCRNSecurityTablesNoRefuseAdmitted.cfg	MCRNSecurityTables.tla	invariant	SafetyInvariants	check	rnsecuritytables	required	-
 MCRNSecurityTablesAdmitExpired.cfg	MCRNSecurityTables.tla	invariant	SafetyInvariants	check	rnsecuritytables	required	-
 MCRNSecurityTablesEvictLiveHistory.cfg	MCRNSecurityTables.tla	invariant	SafetyInvariants	check	rnsecuritytables	required	-
@@ -130,7 +130,7 @@ MCFragmentsAndAcksLiveSmall.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsand
 MCFragmentsAndAcksLiveDup.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	required	-
 MCFragmentsAndAcksPatNone.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	bench	pattern-none-committed-instance-safety-over-budget
 MCFragmentsAndAcksPatFirst.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	bench	pattern-first-committed-instance-safety-over-budget
-MCFragmentsAndAcksPatAlternate.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	bench	pattern-alternate-committed-instance-safety-over-budget
+MCFragmentsAndAcksPatAlternate.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	required	-
 MCFragmentsAndAcksPatBurst.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	bench	pattern-burst-committed-instance-safety-over-budget
 MCFragmentsAndAcksFindStale.cfg	MCFragmentsAndAcks.tla	invariant	StaleOnlyIfOlder	check	fragmentsandacks	required	-
 MCFragmentsAndAcksFindStaleSmall.cfg	MCFragmentsAndAcks.tla	invariant	StaleOnlyIfOlder	check	fragmentsandacks	required	-
