@@ -14,8 +14,8 @@
 // one compiled against a newer, unknown, larger struct.
 //
 // Plain entry points use the current config implementation
-// (sdk/rocketnet_api.cpp:498, :1206); the regressions below check full defaults
-// and simulation fields through them.
+// (sdk/rocketnet_api.cpp:498, :1206). The regressions below check full defaults
+// and simulation fields, including a real in-memory loopback create/connect.
 
 #include "test_unit_registry.h"
 
