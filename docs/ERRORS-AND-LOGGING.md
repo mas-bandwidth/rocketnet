@@ -87,12 +87,14 @@ it by reference and does not copy it. Its rules, as the header states:
      identifier (for example, `"INVALID_CONNECT_TOKEN"`) for `0 <= status < ROCKETNET_STATUS_COUNT`,
      and `"unknown"` (never `NULL`, without asserting) for any other value.
 
-Every public call that can fail returns `enum rocketnet_status_t`:
+A public call that can fail returns `enum rocketnet_status_t`, except a create,
+which returns a handle or `NULL`, and finish message, which returns a
+`uint32_t` receipt serial; both refuse without a status.
 `rocketnet_init` reports `ALREADY_INITIALIZED`, `PLATFORM_INIT_FAILED` or
 `CRYPTO_INIT_FAILED`; `rocketnet_term` reports `NOT_INITIALIZED` or
 `LIVE_ALLOCATIONS`; `rocketnet_set_allocator` reports `INVALID_ARGUMENT`,
 `ALREADY_INITIALIZED` or `LIVE_ALLOCATIONS`. The client and server create
-paths return a handle or `NULL` and log one `ERROR` line with the reason,
+paths log one `ERROR` line with the reason,
 including `CONFIG_ENV_INVALID`, `CONFIG_OUT_OF_RANGE`,
 `MEMORY_BUDGET_EXCEEDED`, `INVALID_TRANSPORT_LIST`, `OUT_OF_MEMORY`,
 `INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, `TRANSPORT_LADDER_EXHAUSTED`,

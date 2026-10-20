@@ -8,10 +8,10 @@
 /// includes only standard C headers and declares only what a caller calls or
 /// reads. Plain C99, callable from C++ through the extern "C" block below.
 ///
-/// The API's shape: a lifecycle or config call that can fail returns enum
-/// rocketnet_status_t; a create that can fail returns a pointer, NULL when
-/// refused; start message returns a pointer and finish message returns a
-/// uint32_t receipt serial, 0 when refused; counter reads return uint64_t and
+/// The API's shape: a call that can fail returns enum rocketnet_status_t,
+/// except a create, which returns a pointer, NULL when refused, and finish
+/// message, which returns a uint32_t receipt serial, 0 when refused; start
+/// message returns a pointer; counter reads return uint64_t and
 /// stat reads return double; update returns enum rocketnet_update_result_t; a
 /// pure question returns bool; every set of values is a typed enum named
 /// ROCKETNET_<SET>_<VALUE>, and each lookup that names an enum value ends in
@@ -198,7 +198,7 @@
 extern "C" {
 #endif
 
-/// @brief Stable status values returned by every call that can fail.
+/// @brief Stable status values returned by a call that can fail, except a create, which returns a pointer.
 ///
 /// OK is the sole success value, every failure is a positive code, and the
 /// numbering is append-only. A published value and meaning never change; a new
@@ -1023,7 +1023,8 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_write_dev_connect_token( cons
 ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * context, const struct rocketnet_client_config_t * config, void * memory, size_t memory_bytes );
 
 /// Create with a config config_bytes long; an unknown size is refused with a
-/// log line and returns NULL before any other check.
+/// log line and returns NULL before any other check. context and its lifetime
+/// are as rocketnet_client_create states.
 ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create_sized( void * context, const struct rocketnet_client_config_t * config, size_t config_bytes, void * memory, size_t memory_bytes );
 
 /// Starts a connection with connect_token, ROCKETNET_CONNECT_TOKEN_BYTES long.
@@ -1195,15 +1196,16 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory_sized( const struct roc
 /// port of 0 takes an ephemeral port (read it back with rocketnet_server_port
 /// once started). The server is created stopped and binds nothing. NULL config
 /// is the defaults, which start refuses until keys are given. context is an
-/// opaque caller pointer handed to the allocator's callbacks and to the config's
-/// callbacks; keep it valid until destroy. Returns NULL on a config validate_config
+/// opaque caller pointer handed to the allocator's callbacks and to the message
+/// and transport create; keep it valid until destroy. Returns NULL on a config validate_config
 /// refuses, on a refused memory block, and before rocketnet_init (logged, and
 /// counted in rocketnet_api_misuse_count). A NULL address is a counted no-op
 /// that returns NULL.
 ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * context, const char * address, const struct rocketnet_server_config_t * config, void * memory, size_t memory_bytes );
 
 /// Create with a config config_bytes long; an unknown size is refused with a
-/// log line and returns NULL before any other check.
+/// log line and returns NULL before any other check. context and its lifetime
+/// are as rocketnet_server_create states.
 ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create_sized( void * context, const char * address, const struct rocketnet_server_config_t * config, size_t config_bytes, void * memory, size_t memory_bytes );
 
 /// Binds the transport at the address and accepts clients, up to the
