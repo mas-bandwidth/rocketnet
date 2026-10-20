@@ -99,7 +99,8 @@ struct rocketnet_server_gso_t;
 #define ROCKETNET_SERVER_GSO_COUNTER_GSO_SENDS                      7       // sendmmsg messages that carried a UDP_SEGMENT cmsg
 #define ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES                    8       // receive buffers that arrived GRO-coalesced (more than one segment)
 #define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SOURCE         9       // source address family the boundary could not convert
-#define ROCKETNET_SERVER_GSO_NUM_COUNTERS                          10
+#define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS                10       // recvmmsg answered -1 with an errno other than EAGAIN; the worker goes back to poll
+#define ROCKETNET_SERVER_GSO_NUM_COUNTERS                          11
 
 // bind_address is read for family and port and written back when the port
 // was zero, the same contract as rocketnet_platform_socket_create. an ipv6
@@ -142,5 +143,15 @@ void rocketnet_server_gso_send_packets( struct rocketnet_server_gso_t * gso );
 void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso );
 
 struct rocketnet_server_socket_process_packets_t * rocketnet_server_gso_process_packets( struct rocketnet_server_gso_t * gso );
+
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+// development library only. force_create_flags ORs flags (the DISABLE set)
+// into every following create. fail_receives makes the next count recvmmsg
+// calls on any worker answer -1 with error without reaching the kernel;
+// fail_sends does the same for the next count sendmmsg calls of a flush.
+void rocketnet_server_gso_test_force_create_flags( int flags );
+void rocketnet_server_gso_test_fail_receives( struct rocketnet_server_gso_t * gso, int count, int error );
+void rocketnet_server_gso_test_fail_sends( struct rocketnet_server_gso_t * gso, int count, int error );
+#endif
 
 #endif // #ifndef ROCKETNET_SERVER_GSO_H

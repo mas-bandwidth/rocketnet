@@ -7397,7 +7397,7 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_num_status_codes",
     "rocketnet_status_name",
     "rocketnet_set_assert_callback",
-    "rocketnet_quiet",
+    "rocketnet_set_quiet",
     "rocketnet_set_log_level",
     "rocketnet_get_log_level",
     "rocketnet_log_level_name",
@@ -7550,7 +7550,7 @@ static const char * rocketnet_test_public_null_exempt_exports[] =
     "rocketnet_num_status_codes",
     "rocketnet_status_name",
     "rocketnet_set_assert_callback",
-    "rocketnet_quiet",
+    "rocketnet_set_quiet",
     "rocketnet_set_log_level",
     "rocketnet_get_log_level",
     "rocketnet_log_level_name",
@@ -7596,7 +7596,7 @@ static const char * rocketnet_test_layer_exports[] =
     "rocketnet_term",
     "rocketnet_term_ex",
     "rocketnet_set_assert_callback",
-    "rocketnet_quiet",
+    "rocketnet_set_quiet",
     "rocketnet_set_log_level",
     "rocketnet_get_log_level",
     "rocketnet_log_level_name",
@@ -7879,7 +7879,7 @@ static const char * rocketnet_test_layer_null_exempt_exports[] =
     "rocketnet_term",
     "rocketnet_term_ex",
     "rocketnet_set_assert_callback",
-    "rocketnet_quiet",
+    "rocketnet_set_quiet",
     "rocketnet_set_log_level",
     "rocketnet_get_log_level",
     "rocketnet_log_level_name",
@@ -7930,7 +7930,7 @@ static bool rocketnet_test_name_in( const char * name, const char * const * list
 
 void rocketnet_test_public_api_null()
 {
-    void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) = rocketnet_assert_function_pointer;
+    void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) = rn_assert_function;
     rocketnet_set_assert_callback( rocketnet_test_null_assert_hook );
 
     uint8_t data[8] = { 0 };
@@ -8058,7 +8058,7 @@ void rocketnet_test_version_is_one_integer()
 
 void rocketnet_test_public_api_null_is_a_counted_no_op()
 {
-    void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) = rocketnet_assert_function_pointer;
+    void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) = rn_assert_function;
     rocketnet_set_assert_callback( rocketnet_test_null_assert_hook );
     rocketnet_test_null_asserts = 0;
 

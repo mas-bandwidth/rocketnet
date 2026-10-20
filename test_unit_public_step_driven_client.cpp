@@ -102,7 +102,7 @@ static void public_step_pair_create( public_step_pair_t * pair, const public_ste
 {
     memset( pair, 0, sizeof( *pair ) );
     pair->time = 1000.0;
-    rocketnet_quiet( 1 );
+    rocketnet_set_quiet( 1 );
 
     rocketnet_server_config_t server_config;
     public_step_server_config( &server_config, identity );
