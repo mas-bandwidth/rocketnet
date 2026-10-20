@@ -142,7 +142,7 @@ enum server_disconnected_how_t
 // handshake, and the next CONNECTED reads NONE.
 static void server_disconnect_sets_server_disconnected_reason()
 {
-    rocketnet_quiet( 1 );
+    rocketnet_set_quiet( 1 );
     server_disconnected_identity_t identity;
     server_disconnected_identity( &identity );
 
@@ -202,7 +202,7 @@ REGISTER_UNIT_TEST( server_disconnect_sets_server_disconnected_reason );
 // connection timeout, whose state is CONNECTION_TIMED_OUT.
 static void client_disconnect_and_timeout_read_none()
 {
-    rocketnet_quiet( 1 );
+    rocketnet_set_quiet( 1 );
     server_disconnected_identity_t identity;
     server_disconnected_identity( &identity );
 
