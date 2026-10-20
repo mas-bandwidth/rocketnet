@@ -5,6 +5,12 @@
 #include "rocketnet_packet_batch.h"
 
 // Native implementation interface. None of these symbols is a public C export.
+// Receive byte counts describe the original datagram, not bytes copied. A
+// driver writes only min(reported bytes, supplied capacity/stride) bytes.
+// Truncated UDP datagrams retain their length for prefilter size accounting;
+// consumers must reject sizes beyond the wire ceiling before parsing bytes.
+// Negative lengths and lengths beyond the non-jumbogram UDP envelope are faults.
+#define ROCKETNET_DRIVER_MAX_DATAGRAM_BYTES 65535
 struct rocketnet_platform_send_t;
 
 // A preference rank this large keeps a driver out of every auto order; a pin

@@ -2300,6 +2300,11 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
         const int packet_bytes = client_transport->io.operations->receive( client_transport->io.instance, &from, scratch, ROCKETNET_MAX_PACKET_BYTES );
         if ( packet_bytes == 0 )
             break;
+        if ( packet_bytes < 0 || packet_bytes > ROCKETNET_DRIVER_MAX_DATAGRAM_BYTES )
+        {
+            client_transport->client_io.driver_faults++;
+            break;
+        }
 
         // every datagram is kept with its true size, a runt or an oversize
         // one too, as the I/O core keeps it (sdk/rocketnet_client_io.h:390-396):
