@@ -6,6 +6,7 @@
 #include "rocketnet_memory.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_route.h"
+#include <atomic>
 #include <limits.h>
 #include <math.h>
 #include <stdint.h>
@@ -2605,6 +2606,58 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
     }
 }
 
+// UDP's ordinary weather on the receive path (DRIVERS.md, ICMP errors). a
+// BSD stack reports an ICMP error (port or host unreachable, a peer that
+// died hard) to the next receive on a CONNECTED socket, and a full mbuf
+// pool reports ENOBUFS; neither says anything about the datagrams still
+// queued behind it. every receive arm skips these and keeps draining:
+// never fatal, never the end of a drain, never an msgx pause. the sockets
+// are unconnected (no connect() anywhere in this file), so the kernel does
+// not route ICMP errors to them at all; this is the contract that keeps an
+// error harmless if one ever arrives. EAGAIN/EWOULDBLOCK stays the drain's
+// end: it means the queue is empty. each weather return is a one-shot
+// report (a pending socket error is cleared as it is returned), so a drain
+// always reaches a datagram or EAGAIN.
+
+static bool rocketnet_platform_receive_weather( int error )
+{
+    return error == ECONNREFUSED || error == EHOSTUNREACH || error == ENETUNREACH ||
+           error == EHOSTDOWN || error == ENETDOWN || error == ENOBUFS || error == EINTR;
+}
+
+#if ROCKETNET_DEVELOPMENT
+
+// the test seam (development builds only, never the production library):
+// the next recvmsg or recvmsg_x on any socket returns -1 with this errno
+// instead of calling the kernel, leaving every queued datagram in place.
+
+static std::atomic<int> rocketnet_platform_receive_errno_for_testing( 0 );
+
+void rocketnet_platform_inject_receive_errno_for_testing( int error )
+{
+    rocketnet_platform_receive_errno_for_testing.store( error );
+}
+
+static int rocketnet_platform_take_receive_errno_for_testing()
+{
+    return rocketnet_platform_receive_errno_for_testing.exchange( 0 );
+}
+
+#endif // #if ROCKETNET_DEVELOPMENT
+
+static ssize_t rocketnet_platform_recvmsg( int handle, struct msghdr * msg )
+{
+#if ROCKETNET_DEVELOPMENT
+    const int injected = rocketnet_platform_take_receive_errno_for_testing();
+    if ( injected != 0 )
+    {
+        errno = injected;
+        return -1;
+    }
+#endif // #if ROCKETNET_DEVELOPMENT
+    return recvmsg( handle, msg, 0 );
+}
+
 int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * socket, rocketnet_address_t * from, void * packet_data, int max_packet_size )
 {
     rocketnet_assert( socket );
@@ -2633,13 +2686,21 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
         msg.msg_iov = iov;
         msg.msg_iovlen = 2;
 
-        result = int( recvmsg( socket->handle, &msg, 0 ) );
+        result = int( rocketnet_platform_recvmsg( socket->handle, &msg ) );
 
         if ( result < 0 )
         {
-            if ( errno != EAGAIN && errno != EINTR )
+            const int error = errno;
+
+            // ICMP-class and buffer weather: skip it and read on, the
+            // datagrams behind it are still queued (DRIVERS.md, ICMP errors)
+
+            if ( rocketnet_platform_receive_weather( error ) )
+                continue;
+
+            if ( error != EAGAIN && error != EWOULDBLOCK && error != EINTR )
             {
-                rocketnet_debug( "recvfrom failed with error %d", errno );
+                rocketnet_debug( "recvfrom failed with error %d", error );
             }
             return 0;
         }
@@ -3012,19 +3073,36 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
         }
 
         errno = 0;
-        ssize_t result = rocketnet_recvmsg_x( socket->handle, msg, (u_int) want, 0 );
+        ssize_t result;
+#if ROCKETNET_DEVELOPMENT
+        const int injected = rocketnet_platform_take_receive_errno_for_testing();
+        if ( injected != 0 )
+        {
+            errno = injected;
+            result = -1;
+        }
+        else
+#endif // #if ROCKETNET_DEVELOPMENT
+        result = rocketnet_recvmsg_x( socket->handle, msg, (u_int) want, 0 );
         if ( result < 0 )
         {
-            if ( errno == EINTR )
-                continue;
-            if ( errno == EAGAIN || errno == EWOULDBLOCK )
+            const int error = errno;
+            if ( error == EAGAIN || error == EWOULDBLOCK )
                 return total;
+
+            // ICMP-class and buffer weather (and EINTR): skip it and keep
+            // draining on the batch pump until EAGAIN -- never a pause and
+            // never the end of a drain (DRIVERS.md, ICMP errors).
+
+            if ( rocketnet_platform_receive_weather( error ) )
+                continue;
 
             // outside ordinary weather: pause the pump and finish this
             // call per-packet -- what earlier chunks drained is already
-            // delivered, nothing about this call's contract changes.
+            // delivered, nothing about this call's contract changes. the
+            // pause logs once, and a paused pump never reaches this line.
 
-            rocketnet_msgx_pause( socket, "recvmsg_x", errno );
+            rocketnet_msgx_pause( socket, "recvmsg_x", error );
             goto per_packet;
         }
 
