@@ -69,9 +69,10 @@ makes a fixed namespace and veth pair and binds port 40411 on it
 
 Dependencies, per platform, as CI installs them:
 
-    # Linux -- the build links the XDP dataplane, and liburing is the bench
-    # harness's io_uring rung
-    sudo apt install cmake build-essential libbpf-dev libxdp-dev liburing-dev xxd
+    # Linux -- the build links the XDP dataplane, liburing is the bench
+    # harness's io_uring rung; clang with the BPF target compiles the XDP
+    # program at build time (the server host needs no compiler)
+    sudo apt install cmake build-essential clang libbpf-dev libxdp-dev liburing-dev xxd
 
     # macOS
     brew install cmake
@@ -233,7 +234,8 @@ target_link_libraries(game PRIVATE rocketnet_dev)
 `python3 tools/check_package.py build --config Release --embedded` installs and
 moves the package, then builds and runs separate C/C++ consumers against both
 libraries. It also checks an embedded build with `BUILD_SHARED_LIBS=ON` and
-verifies that the XDP archive contains the current sources. These checks are in CI.
+verifies that the generated header embeds exactly the `server_xdp.o` the build
+compiled. These checks are in CI.
 
 ## ABI compatibility
 

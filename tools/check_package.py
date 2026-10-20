@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
-from check_xdp_archive import check_archive, embedded_bytes, inputs_for
+from check_xdp_archive import embedded_bytes
 
 
 def run(*args, **kwargs):
@@ -99,12 +99,16 @@ def main():
     # them for; let the workers exit so TemporaryDirectory can remove the tree.
     native_build_options = (["--", "-nodeReuse:false"]
                             if cache["CMAKE_GENERATOR"].startswith("Visual Studio") else [])
-    archive = build / "generated/rocketnet_server_xdp.tar.gz"
+    header = build / "generated/rocketnet_server_xdp.h"
     with tempfile.TemporaryDirectory(prefix="package check ", dir=build) as directory:
         root = Path(directory)
-        inputs = inputs_for(source, root)
-        data = archive.read_bytes() if archive.exists() else embedded_bytes(source / "sdk/rocketnet_server_xdp.h")
-        check_archive(data, inputs)
+        # Linux builds embed server_xdp.o (cmake/EmbedXdp.cmake): the array
+        # holds exactly the object the build compiled.
+        if header.exists():
+            obj = build / "generated/server_xdp.o"
+            data = embedded_bytes(header)
+            if data and (not obj.exists() or obj.read_bytes() != data):
+                raise RuntimeError(f"{header} does not embed {obj}")
         stage, installed = root / "stage", root / "relocated SDK"
         run("cmake", "--install", build, "--config", args.config, "--prefix", stage)
         stage.rename(installed)

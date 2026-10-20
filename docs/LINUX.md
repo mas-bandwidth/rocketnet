@@ -11,7 +11,7 @@ backs it; a section whose proof is still an open card says **pending**.
 
 The build needs CMake 3.20 or later (`CMakeLists.txt:1`, `BUILDING.md:13-15`)
 and, on Debian or Ubuntu, the packages CI installs: `cmake`, `build-essential`,
-`libbpf-dev`, `libxdp-dev`, `liburing-dev` and `xxd` (`BUILDING.md:56-60`).
+`clang`, `libbpf-dev`, `libxdp-dev`, `liburing-dev` and `xxd` (`BUILDING.md`, Dependencies).
 `dpkg-query` in section 10 checks they are present.
 
 libbpf and libxdp are required: configure stops without them
@@ -20,6 +20,19 @@ the `io_uring` driver is built to refuse and configure prints
 `liburing not found: the io_uring server driver is built to refuse`
 (`cmake/RocketNetDependencies.cmake:32-50`, `CMakeLists.txt:22`). The libbpf
 floor is 1.0 (`BUILDING.md:479-482`).
+
+The XDP program is compiled at build time, never on the server host.
+`cmake/EmbedXdp.cmake` compiles `server_xdp/server_xdp.c` to `server_xdp.o`
+with a clang that has the BPF target, against the kernel UAPI headers
+(`linux-libc-dev`, which `build-essential` pulls in) and libbpf's
+`bpf/bpf_helpers.h`, and embeds the object's bytes in the library;
+`rocketnet_server_socket_create` opens them with `bpf_object__open_mem`. A
+configure that finds no such clang prints
+`XDP off: no clang with the BPF target was found, so server_xdp.o is not built and the xdp server transport refuses at create`,
+and that build's `xdp` transport refuses at create with
+`could not load server_xdp program: this build has no server_xdp.o (no clang with the BPF target at configure time)`,
+so `auto` falls to the next rung. The server host needs no compiler, no
+`make`, no kernel headers and no temporary directory to start `xdp`.
 
 `make` is the front door. It configures `build/` as **Release** and runs the
 child make with `-j` set to the processor count capped at 8; `make JOBS=<n>`
@@ -244,6 +257,8 @@ boot tier is verified, never performed (`scripts/rocketnet-provision:25`).
 
 **What the server needs.**
 
+- No compiler: the XDP program is compiled and embedded at build time
+  (section 1), and the server loads it from memory.
 - Root: the pre-flight refuses a non-root process with
   `xdp pre-flight: not root (R1 of scripts/rocketnet-provision)`
   (`sdk/rocketnet_server_socket_linux.cpp:905-912`), and any unmet condition
@@ -268,7 +283,7 @@ Checks that need no root, as CI runs them
 
 ```sh
 bash scripts/rocketnet-provision selftest
-xdp_compile_dir=$(mktemp -d "$PWD/build/xdp-archive.XXXXXX") && tar -xzf build/generated/rocketnet_server_xdp.tar.gz -C "$xdp_compile_dir" && make -C "$xdp_compile_dir" server_xdp.o && rm -rf "$xdp_compile_dir"
+python3 tools/check_xdp_archive.py
 ```
 
 Live AF_XDP runs as root only inside a virtme-ng guest of the host's own
@@ -284,12 +299,9 @@ vng --run "$HOME/vm-kernels/vmlinuz-$(uname -r)" --memory 1536M --cpus 2 --appen
 ```
 
 `test_xdp_filter` judges the BPF program with the kernel's verifier and
-`BPF_PROG_TEST_RUN` (`DRIVERS.md:256-261`). Its case
-`xdp_on_link_reply_reaches_the_peer` is **pending**: it fails at this revision,
-so a host is judged on the other cases, each printing `ok`. In the 1536M guest
-the case's example server cannot allocate its 1,595,923,712-byte message
-object; in a 4096M guest that allocation succeeds and the client still does
-not connect over the veth pair.
+`BPF_PROG_TEST_RUN` (`DRIVERS.md:256-261`), on the same `server_xdp.o` the
+library embeds. In a 1536M guest with no clang on `PATH`, its 16 cases each
+print `ok`, `xdp_on_link_reply_reaches_the_peer` among them.
 
 ## 7. Socket errors and ICMP
 
@@ -415,7 +427,7 @@ nproc
 cat /proc/sys/kernel/io_uring_disabled
 ulimit -n
 ulimit -l
-dpkg-query -W cmake build-essential libbpf-dev libxdp-dev liburing-dev xxd
+dpkg-query -W cmake build-essential clang libbpf-dev libxdp-dev liburing-dev xxd
 make JOBS=4
 ./bin/test
 ./bin/test_driver

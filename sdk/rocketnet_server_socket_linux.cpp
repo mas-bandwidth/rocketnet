@@ -37,7 +37,7 @@
 #include <linux/sockios.h>
 #include <errno.h>
 #include <poll.h>
-#include <unistd.h>   // mkdtemp (POSIX declares it in stdlib.h; unistd.h is the portable belt-and-braces)
+#include <unistd.h>
 
 #include <rocketnet_server_xdp.h>
 #include "rocketnet_pending_frames.h"
@@ -192,6 +192,7 @@ struct rocketnet_server_socket_t
     uint8_t process_eth[ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS][ETH_ALEN];
 
     int interface_index;
+    struct bpf_object * program_object;  // opened from the embedded server_xdp.o; libxdp does not own it, so destroy closes it after the program
     struct xdp_program * program;
     bool attached_native;
     bool attached_skb;
@@ -638,30 +639,6 @@ static uint64_t alloc_receive_frame( rocketnet_server_xdp_socket_t * socket )
 }
 
 static void rocketnet_server_socket_xdp_thread_function( void * data );
-
-// Removes the private build directory created by mkdtemp. The path is always
-// one this process made, never a glob and never the caller's CWD, so an
-// unguarded rm -rf on it is safe in a way the code this replaced was not.
-// Still refuses anything that does not look like our own mkdtemp template --
-// an rm -rf built by snprintf deserves one cheap assertion in front of it.
-static void rocketnet_server_socket_remove_workdir( const char * workdir )
-{
-    if ( workdir == NULL || strncmp( workdir, "/var/tmp/rocketnet_xdp_", 23 ) != 0 )
-    {
-        rocketnet_error( "refusing to remove unexpected work directory" );
-        return;
-    }
-
-    char command[1024];
-    snprintf( command, sizeof(command), "rm -rf %s", workdir );
-    FILE * file = popen( command, "r" );
-    if ( file )
-    {
-        char buffer[1024];
-        while ( fgets( buffer, sizeof(buffer), file ) != NULL ) {}
-        pclose( file );
-    }
-}
 
 // the public address as the 16 network-order bytes the XDP config carries
 // (the rocketnet address stores IPv6 as host-order 16-bit groups)
@@ -1563,64 +1540,19 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         server_socket->num_pinned = 4;
     }
 
-    // Build the server_xdp program in a PRIVATE directory.
-    //
-    // It must not build in whatever directory the process inherited. There is
-    // no chdir anywhere in this library, so any glob or removal would expand
-    // wherever the server was started from -- a source tree, or a directory
-    // two servers share and race over server_xdp.o in. A launcher that cds
-    // somewhere safe first cannot be relied on: the build lives in the
-    // library, not the launcher.
-    //
-    // mkdtemp gives a fresh 0700 directory per process. Nothing needs
-    // pre-clearing (it starts empty), there is no race, and cleanup is
-    // rm -rf on a path this process created rather than a glob over files it
-    // did not put there.
+    // load the server_xdp program and attach it to the network interface.
+    // server_xdp.o is compiled at build time and embedded as bytes
+    // (cmake/EmbedXdp.cmake): it opens from memory, with no compiler, no
+    // temporary directory and no child process on the server host.
 
-    char workdir[] = "/var/tmp/rocketnet_xdp_XXXXXX";
-    if ( mkdtemp( workdir ) == NULL )
+    rocketnet_info( "loading server_xdp..." );
+
+    if ( rocketnet_server_xdp_o_len == 0 )
     {
-        rocketnet_error( "could not create a temporary directory to build server_xdp" );
+        rocketnet_error( "could not load server_xdp program: this build has no server_xdp.o (no clang with the BPF target at configure time)" );
         rocketnet_server_socket_destroy( server_socket );
         return NULL;
     }
-
-    // write out source tar.gz for server_xdp program
-    {
-        char tarball[1024];
-        snprintf( tarball, sizeof(tarball), "%s/server_xdp_source.tar.gz", workdir );
-
-        FILE * file = fopen( tarball, "wb" );
-        if ( !file )
-        {
-            rocketnet_error( "could not open %s for writing", tarball );
-            rocketnet_server_socket_remove_workdir( workdir );
-            rocketnet_server_socket_destroy( server_socket );
-            return NULL;
-        }
-
-        fwrite( rocketnet_server_xdp_tar_gz, sizeof(rocketnet_server_xdp_tar_gz), 1, file );
-
-        fclose( file );
-    }
-
-    // unzip source and build server_xdp.o, entirely inside the private directory
-    {
-        char command[2048];
-        snprintf( command, sizeof(command),
-                  "cd %s && tar -zxf server_xdp_source.tar.gz && make server_xdp.o", workdir );
-        FILE * file = popen( command, "r" );
-        if ( file )
-        {
-            char buffer[1024];
-            while ( fgets( buffer, sizeof(buffer), file ) != NULL ) {}
-            pclose( file );
-        }
-    }
-
-    // load the server_xdp program and attach it to the network interface
-
-    rocketnet_info( "loading server_xdp..." );
 
     {
         // the open opts carry this instance's pin root, so LIBBPF_PIN_BY_NAME
@@ -1629,24 +1561,26 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         struct bpf_object_open_opts open_opts;
         memset( &open_opts, 0, sizeof(open_opts) );
         open_opts.sz = sizeof(open_opts);
+        open_opts.object_name = "server_xdp";
         open_opts.pin_root_path = server_socket->pin_root;
 
-        char object[1024];
-        snprintf( object, sizeof(object), "%s/server_xdp.o", workdir );
-        server_socket->program = xdp_program__open_file( object, "server_xdp", &open_opts );
-    }
+        struct bpf_object * object = bpf_object__open_mem( rocketnet_server_xdp_o, rocketnet_server_xdp_o_len, &open_opts );
+        if ( libbpf_get_error( object ) )
+        {
+            rocketnet_error( "could not load server_xdp program" );
+            rocketnet_server_socket_destroy( server_socket );
+            return NULL;
+        }
+        server_socket->program_object = object;
 
-    // Clean up after ourselves. This happens AFTER the load, unlike the old
-    // sequence -- the old cleanup could run first only because it left
-    // server_xdp.o behind in the shared directory for the loader to find.
-    // Unlinking a file libxdp still holds open is fine on Linux.
-    rocketnet_server_socket_remove_workdir( workdir );
-
-    if ( libxdp_get_error( server_socket->program ) )
-    {
-        rocketnet_error( "could not load server_xdp program" );
-        rocketnet_server_socket_destroy( server_socket );
-        return NULL;
+        struct xdp_program * program = xdp_program__from_bpf_obj( object, "server_xdp" );
+        if ( libxdp_get_error( program ) )
+        {
+            rocketnet_error( "could not load server_xdp program" );
+            rocketnet_server_socket_destroy( server_socket );
+            return NULL;
+        }
+        server_socket->program = program;
     }
 
     rocketnet_info( "server_xdp loaded successfully." );
@@ -2008,6 +1942,9 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
         }
         xdp_program__close( server_socket->program );
     }
+
+    if ( server_socket->program_object != NULL )
+        bpf_object__close( server_socket->program_object );
 
     if ( server_socket->config_map_fd > 0 )
         close( server_socket->config_map_fd );
