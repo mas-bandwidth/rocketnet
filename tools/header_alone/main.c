@@ -103,10 +103,12 @@ int main( void )
         const uint8_t * data = NULL;
         int bytes = 0;
 
-        while ( rocketnet_server_receive_message( server, 0, 0, &data, &bytes ) )
+        uint64_t sender = 1;
+        while ( rocketnet_server_receive_message( server, &sender, &data, &bytes ) )
         {
+            CHECK( sender == 0 );
             CHECK( bytes == (int) sizeof( client_message ) && memcmp( data, client_message, sizeof( client_message ) ) == 0 );
-            rocketnet_server_release_message( server, 0, data );
+            rocketnet_server_release_message( server, data );
             server_got = 1;
         }
 
@@ -119,7 +121,7 @@ int main( void )
             server_sent = 1;
         }
 
-        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+        while ( rocketnet_client_receive_message( client, &data, &bytes ) )
         {
             CHECK( bytes == (int) sizeof( server_message ) && memcmp( data, server_message, sizeof( server_message ) ) == 0 );
             rocketnet_client_release_message( client, data );

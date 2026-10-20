@@ -55,13 +55,11 @@ static int run_connect_and_traffic( struct rocketnet_server_t * server, struct r
         {
             const uint8_t * data = NULL;
             int bytes = 0;
-            while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+            while ( rocketnet_client_receive_message( client, &data, &bytes ) )
                 rocketnet_client_release_message( client, data );
-            for ( int i = 0; i < max_clients; i++ )
             {
-                if ( !rocketnet_server_client_connected( server, i ) )
-                    continue;
-                while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
+                uint64_t i = 0;
+                while ( rocketnet_server_receive_message( server, &i, &data, &bytes ) )
                 {
                     uint8_t * out = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
                     if ( out )
@@ -69,7 +67,7 @@ static int run_connect_and_traffic( struct rocketnet_server_t * server, struct r
                         memcpy( out, data, (size_t) bytes );
                         rocketnet_server_finish_message( server, i, bytes );
                     }
-                    rocketnet_server_release_message( server, i, data );
+                    rocketnet_server_release_message( server, data );
                 }
             }
         }

@@ -2694,10 +2694,15 @@ wire representation.
 1. An implementation MUST set its build-specific maximum channel count to a
    value from 1 through 65,536, inclusive. The default build-specific maximum
    MUST be 32. A connection MUST set num_channels from 1 through its
-   implementation build-specific maximum. For every message send, a sender
-   MUST select a channel from zero through one less than that connection's
-   num_channels, and a message endpoint MUST refuse a send with a channel
-   outside that range.
+   implementation build-specific maximum. The channel of a send is its
+   ordering channel. For a send of reliability 1, 3, 4 or 7, a sender MUST
+   select a channel from zero through one less than that connection's
+   num_channels, and a message endpoint MUST refuse such a send with a channel
+   outside that range. A send of reliability 0, 2, 5 or 6 is neither ordered
+   nor sequenced: a message endpoint MUST ignore its channel, MUST NOT refuse
+   it for its channel, and sends it with no channel field (rule 2), as RakNet's
+   ordering channel is ignored by its unordered reliabilities
+   (`sdk/rocketnet_message_server.cpp:590-596`).
 2. A record with code 1, 3 or 4 MUST carry the channel field in
    [m3 Record format](#m3). Receipt types use their base codes from
    [m1.3 Reliability types](#m1.3): type 7 uses code 3 and carries a channel;
@@ -2707,6 +2712,14 @@ wire representation.
    encode a larger channel as a little-endian u16 and MUST set WIDE if and only
    if it uses that u16 encoding. A receiver MUST reject WIDE when the channel
    fits in u8.
+4. A receiver MUST hand the application its connection's deliveries as one
+   queue in the update's delivery order, every channel's together, and MUST
+   NOT filter them by channel. A server MUST hand them as one queue across all
+   its connections, each message naming the connection it arrived on. Order
+   holds within a channel of a connection as rules [m6](#m6) and [m7](#m7)
+   state it; the queue makes no order between channels or between
+   connections. The SDK's queue is each connection's deliveries in turn, in
+   connection index order (`sdk/rocketnet_message_server.cpp:842-868`).
 
 The diagrams show the channel field alone. Its position in a record is the
 position defined by its code in [m3 Record format](#m3).

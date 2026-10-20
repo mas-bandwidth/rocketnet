@@ -3477,9 +3477,10 @@ void rocketnet_test_public_client_server_queries()
         }
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_server_receive_message( server, 0, 0, &data, &bytes ) )
-            rocketnet_server_release_message( server, 0, data );
-        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+        uint64_t sender = 0;
+        while ( rocketnet_server_receive_message( server, &sender, &data, &bytes ) )
+            rocketnet_server_release_message( server, data );
+        while ( rocketnet_client_receive_message( client, &data, &bytes ) )
             rocketnet_client_release_message( client, data );
         rocketnet_client_send_packets( client );
         rocketnet_server_send_packets( server );
@@ -6561,7 +6562,7 @@ void rocketnet_test_message_objects_loopback_from_t1000()
 
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_message_server_receive( server, 0, 0, &data, &bytes ) )
+        while ( rocketnet_message_server_receive( server, NULL, NULL, &data, &bytes ) )
         {
             if ( bytes == 4 )
             {
@@ -6575,9 +6576,9 @@ void rocketnet_test_message_objects_loopback_from_t1000()
                     rocketnet_check( data[i] == (uint8_t) ( server_got + i ) );          // in order, intact
                 server_got++;
             }
-            rocketnet_message_server_release( server, 0, data );
+            rocketnet_message_server_release( server, data );
         }
-        while ( rocketnet_message_client_receive( client, 0, &data, &bytes ) )
+        while ( rocketnet_message_client_receive( client, NULL, &data, &bytes ) )
         {
             if ( bytes == 4 )
             {

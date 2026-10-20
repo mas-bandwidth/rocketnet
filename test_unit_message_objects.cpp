@@ -455,39 +455,44 @@ struct mo_received_t
 
 static void mo_drain_server( mo_pair_t * pair, std::vector<mo_received_t> * out )
 {
-    for ( int slot = 0; slot < MO_MAX_SLOTS; slot++ )
-        for ( int channel = 0; channel < 4; channel++ )
+    // the server's one receive queue across every slot, in batches: each
+    // entry names its sender's slot and the channel it was delivered on
+    for ( ;; )
+    {
+        const rocketnet_received_messages_t * batch = rocketnet_message_server_receive_messages( pair->server );
+        check( batch != NULL );
+        if ( !batch || batch->num_messages == 0 )
+            break;
+        for ( int i = 0; i < batch->num_messages; i++ )
         {
-            const uint8_t * data = NULL;
-            int bytes = 0;
-            while ( rocketnet_message_server_receive( pair->server, slot, channel, &data, &bytes ) )
-            {
-                mo_received_t r;
-                r.slot = slot;
-                r.channel = channel;
-                r.bytes.assign( data, data + bytes );
-                if ( out )
-                    out->push_back( r );
-                rocketnet_message_server_release( pair->server, slot, data );
-            }
+            check( batch->client_index[i] < (uint64_t) MO_MAX_SLOTS );
+            mo_received_t r;
+            r.slot = (int) batch->client_index[i];
+            r.channel = batch->channel[i];
+            r.bytes.assign( batch->data[i], batch->data[i] + batch->bytes[i] );
+            if ( out )
+                out->push_back( r );
         }
+    }
 }
 
 static void mo_drain_client( rocketnet_message_client_t * client, std::vector<mo_received_t> * out )
 {
-    for ( int channel = 0; channel < 4; channel++ )
+    for ( ;; )
     {
-        const uint8_t * data = NULL;
-        int bytes = 0;
-        while ( rocketnet_message_client_receive( client, channel, &data, &bytes ) )
+        const rocketnet_received_messages_t * batch = rocketnet_message_client_receive_messages( client );
+        check( batch != NULL );
+        if ( !batch || batch->num_messages == 0 )
+            break;
+        for ( int i = 0; i < batch->num_messages; i++ )
         {
+            check( batch->client_index[i] == 0 );
             mo_received_t r;
             r.slot = 0;
-            r.channel = channel;
-            r.bytes.assign( data, data + bytes );
+            r.channel = batch->channel[i];
+            r.bytes.assign( batch->data[i], batch->data[i] + batch->bytes[i] );
             if ( out )
                 out->push_back( r );
-            rocketnet_message_client_release( client, data );
         }
     }
 }
@@ -737,16 +742,19 @@ static void receive_view_is_the_record()
         const int channel = reliabilities[r] == ROCKETNET_RELIABILITY_UNRELIABLE ? 0 : 2;       // unreliable carries no channel: channel 0
         const uint8_t * data = NULL;
         int bytes = 0;
-        check( rocketnet_message_server_receive( pair.server, 0, channel, &data, &bytes ) == 1 );
+        int from = -1;
+        int delivered_channel = -1;
+        check( rocketnet_message_server_receive( pair.server, &from, &delivered_channel, &data, &bytes ) == 1 );
+        check( from == 0 && delivered_channel == channel );
         check( bytes == (int) sizeof( message ) );
         check( memcmp( data, message, sizeof( message ) ) == 0 );
         check( mo_in_batch( pair.net->server, data, bytes ) );                      // pointer identity: inside the transport's payload
         const uint8_t * again = NULL;
         int again_bytes = 0;
-        check( rocketnet_message_server_receive( pair.server, 0, channel, &again, &again_bytes ) == 0 );
+        check( rocketnet_message_server_receive( pair.server, NULL, NULL, &again, &again_bytes ) == 0 );
         check( again == NULL );
 
-        rocketnet_message_server_release( pair.server, 0, data );
+        rocketnet_message_server_release( pair.server, data );
         mo_step( &pair );
     }
 
@@ -786,13 +794,15 @@ static void release_returns_room()
         check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
         const uint8_t * data = NULL;
         int bytes = 0;
-        check( rocketnet_message_server_receive( pair.server, 0, 1, &data, &bytes ) == 1 );
+        int delivered_channel = -1;
+        check( rocketnet_message_server_receive( pair.server, NULL, &delivered_channel, &data, &bytes ) == 1 );
+        check( delivered_channel == 1 );
         check( slot->held == 1 );
         uint32_t live = 0;
         for ( uint32_t i = 0; i < region->window; i++ )
             live += region->receive_descriptors[i].live;
         check( live == 1 );
-        rocketnet_message_server_release( pair.server, 0, data );
+        rocketnet_message_server_release( pair.server, data );
         check( slot->held == 0 );
         pair.time += 0.01;
         check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
@@ -806,7 +816,7 @@ static void release_returns_room()
     {
         uint8_t stray[4] = { 0, 0, 0, 0 };
         const uint64_t before = rocketnet_api_misuse_count();
-        rocketnet_message_server_release( pair.server, 0, stray );
+        rocketnet_message_server_release( pair.server, stray );
         check( rocketnet_api_misuse_count() == before + 1 );
     }
 
@@ -833,7 +843,9 @@ static void release_returns_room()
         check( rocketnet_message_client_update( pair.clients[0], pair.time ) == ROCKETNET_UPDATE_OK );
         const uint8_t * data = NULL;
         int bytes = 0;
-        check( rocketnet_message_server_receive( pair.server, 0, 1, &data, &bytes ) == 1 );    // held, never released
+        int delivered_channel = -1;
+        check( rocketnet_message_server_receive( pair.server, NULL, &delivered_channel, &data, &bytes ) == 1 );    // held, never released
+        check( delivered_channel == 1 );
         check( slot->held == 1 );
         uint32_t live = 0;
         for ( uint32_t i = 0; i < region->window; i++ )
@@ -1742,7 +1754,7 @@ static void rnslots_witness_replays()
         check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
         const uint8_t * data = NULL;
         int bytes = 0;
-        check( rocketnet_message_server_receive( pair.server, 0, 0, &data, &bytes ) == 0 );
+        check( rocketnet_message_server_receive( pair.server, NULL, NULL, &data, &bytes ) == 0 );
         check( mo_server_slot( &pair, 0 )->connection_id == pair.net->slot_connection[0] );
         check( mo_server_slot( &pair, 0 )->region->channel_receive[0].ordered_read == 0 );
         check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY ) >= 1 );
@@ -1792,8 +1804,8 @@ static void rnslots_witness_replays()
         const uint8_t * first = NULL;
         const uint8_t * second = NULL;
         int bytes = 0;
-        check( rocketnet_message_server_receive( pair.server, 0, 0, &first, &bytes ) == 1 );
-        check( rocketnet_message_server_receive( pair.server, 0, 0, &second, &bytes ) == 1 );
+        check( rocketnet_message_server_receive( pair.server, NULL, NULL, &first, &bytes ) == 1 );
+        check( rocketnet_message_server_receive( pair.server, NULL, NULL, &second, &bytes ) == 1 );
 
         rn_message_connection_t * slot = mo_server_slot( &pair, 0 );
         int started = 0;
@@ -1812,8 +1824,8 @@ static void rnslots_witness_replays()
         rocketnet_message_server_send_packets( pair.server );
         check( pair.net->server->finishes == finishes );                            // nothing sent from an exhausted region
 
-        rocketnet_message_server_release( pair.server, 0, first );
-        rocketnet_message_server_release( pair.server, 0, second );
+        rocketnet_message_server_release( pair.server, first );
+        rocketnet_message_server_release( pair.server, second );
         pair.time += 0.01;
         check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
         check( slot->state == RN_MESSAGE_CONNECTION_FREE );
@@ -1865,7 +1877,7 @@ static void rnslots_witness_replays()
         check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
         const uint8_t * data = NULL;
         int bytes = 0;
-        check( rocketnet_message_server_receive( pair.server, 0, 0, &data, &bytes ) == 1 );
+        check( rocketnet_message_server_receive( pair.server, NULL, NULL, &data, &bytes ) == 1 );
         void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
         rocketnet_set_assert_callback( mo_assert_hook );
         mo_asserts = 0;
@@ -1951,16 +1963,19 @@ static void message_objects_client_clock_starts_at_first_update()
 
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_message_server_receive( server, 0, 1, &data, &bytes ) )
+        int delivered_channel = -1;
+        while ( rocketnet_message_server_receive( server, NULL, &delivered_channel, &data, &bytes ) )
         {
+            check( delivered_channel == 1 );
             std::vector<uint8_t> got( data, data + bytes );
             uint32_t id = 0;
             check( bytes == 16 && mo_verify( got, &id ) && id == 7 );
             server_got = true;
-            rocketnet_message_server_release( server, 0, data );
+            rocketnet_message_server_release( server, data );
         }
-        while ( rocketnet_message_client_receive( client, 1, &data, &bytes ) )
+        while ( rocketnet_message_client_receive( client, &delivered_channel, &data, &bytes ) )
         {
+            check( delivered_channel == 1 );
             std::vector<uint8_t> got( data, data + bytes );
             uint32_t id = 0;
             check( bytes == 16 && mo_verify( got, &id ) && id == 9 );

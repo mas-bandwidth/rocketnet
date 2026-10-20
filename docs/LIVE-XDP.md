@@ -265,9 +265,11 @@ every window. The channel-less modes 0, 2, 5 and 6 name all 32 channels; the
 modes 1, 3, 4 and 7 run on channels 0 to 30, because channel 31 carries the
 progress reports and the HELLO (below and section 6). That is
 2 x (4 x 32 + 4 x 31) = 504 streams per connection. Each update, the
-receiver polls every channel with `rocketnet_client_receive_message` on a client
-and `rocketnet_server_receive_message` on the server, and it releases every view
-before the next update (`sdk/rocketnet.h:889-892`).
+receiver drains its one receive queue, every channel's messages, each naming
+the channel it was delivered on: `rocketnet_client_receive_messages` (the batch
+form) on a client, and the message layer's `rocketnet_message_server_receive`
+on the server, which releases every view before the next update
+(`client.c:436-449`, `server.c:654-667`).
 The receive channel is checked against the sender's channel byte. Codes 1,
 3, 4 and 7 must arrive on the channel sent. Codes 0, 2, 5 and 6 arrive on
 channel 0, because their records carry no channel (`sdk/rocketnet.h:1716`;

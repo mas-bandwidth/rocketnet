@@ -55,17 +55,15 @@ static int run_frames( struct rocketnet_server_t * server, struct rocketnet_clie
         const uint8_t * data = NULL;
         int bytes = 0;
 
-        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+        while ( rocketnet_client_receive_message( client, &data, &bytes ) )
             rocketnet_client_release_message( client, data );
 
-        for ( int i = 0; i < max_clients; i++ )
         {
-            if ( !rocketnet_server_client_connected( server, i ) )
-                continue;
-            while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
+            uint64_t sender = 0;
+            while ( rocketnet_server_receive_message( server, &sender, &data, &bytes ) )
             {
                 printf( "server received: %.*s\n", bytes, (const char*) data );
-                rocketnet_server_release_message( server, i, data );
+                rocketnet_server_release_message( server, data );
                 if ( received )
                     ( *received )++;
             }

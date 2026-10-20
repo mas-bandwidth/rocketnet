@@ -190,12 +190,14 @@ static void public_step_driven_client_delivers_both_ways()
     {
         public_step_pump( &pair );
         const uint8_t * data = NULL; int bytes = 0;
-        while ( rocketnet_server_receive_message( pair.server, 0, 0, &data, &bytes ) )
+        uint64_t sender = ~0ULL;
+        while ( rocketnet_server_receive_message( pair.server, &sender, &data, &bytes ) )
         {
+            check( sender == 0 );
             check( at_server < 2 && bytes == 4 && memcmp( data, client_messages[at_server], 4 ) == 0 );
-            rocketnet_server_release_message( pair.server, 0, data ); at_server++;
+            rocketnet_server_release_message( pair.server, data ); at_server++;
         }
-        while ( rocketnet_client_receive_message( pair.client, 0, &data, &bytes ) )
+        while ( rocketnet_client_receive_message( pair.client, &data, &bytes ) )
         {
             check( at_client < 2 && bytes == 4 && memcmp( data, server_messages[at_client], 4 ) == 0 );
             rocketnet_client_release_message( pair.client, data ); at_client++;

@@ -61,17 +61,13 @@ static int exchange( struct rocketnet_server_t * server, const char * server_add
         // (2) receive and release every received message
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+        while ( rocketnet_client_receive_message( client, &data, &bytes ) )
             rocketnet_client_release_message( client, data );
-        for ( int i = 0; i < max_clients; i++ )
+        uint64_t sender = 0;
+        while ( rocketnet_server_receive_message( server, &sender, &data, &bytes ) )
         {
-            if ( !rocketnet_server_client_connected( server, i ) )
-                continue;
-            while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
-            {
-                received++;
-                rocketnet_server_release_message( server, i, data );
-            }
+            received++;
+            rocketnet_server_release_message( server, data );
         }
         // (3) run the game simulation for the frame: nothing to simulate here
         // (4) queue this frame's outgoing message, once the client is connected

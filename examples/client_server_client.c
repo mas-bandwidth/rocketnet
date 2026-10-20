@@ -154,7 +154,7 @@ int main( int argc, char ** argv )
         // (2) receive and release every received message
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+        while ( rocketnet_client_receive_message( client, &data, &bytes ) )
         {
             printf( "client received: %.*s\n", bytes, (const char*) data );
             rocketnet_client_release_message( client, data );

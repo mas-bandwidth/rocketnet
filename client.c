@@ -436,14 +436,18 @@ static int seen_test_and_set( stream_t * s, uint32_t sequence )
 
 static void receive_check( matrix_state_t * st, struct rocketnet_client_t * client )
 {
-    /* poll every channel; modes 0, 2, 5, 6 arrive on channel 0 */
-    for ( int channel = 0; channel < ROCKETNET_LIVE_NUM_CHANNELS; channel++ )
+    /* the one receive queue, in batches: each entry names the channel it was
+       delivered on; modes 0, 2, 5, 6 arrive on channel 0. The next batch call
+       or update releases a batch */
+    const struct rocketnet_received_messages_t * batch;
+    while ( ( batch = rocketnet_client_receive_messages( client ) ) && batch->num_messages > 0 )
     {
-        const uint8_t * data;
-        int bytes;
-        while ( rocketnet_client_receive_message( client, channel, &data, &bytes ) )
+        for ( int m = 0; m < batch->num_messages; m++ )
         {
-            if ( bytes < 1 ) { rocketnet_client_release_message( client, data ); continue; }
+            const uint8_t * data = batch->data[m];
+            const int bytes = batch->bytes[m];
+            const int channel = batch->channel[m];
+            if ( bytes < 1 ) continue;
             int tag = data[0];
             int mode = tag & 7;
             int recv_channel = ( mode == 0 || mode == 2 || mode == 5 || mode == 6 ) ? 0 : channel;
@@ -526,7 +530,6 @@ static void receive_check( matrix_state_t * st, struct rocketnet_client_t * clie
                     }
                 }
             }
-            rocketnet_client_release_message( client, data );
         }
     }
 }

@@ -23,7 +23,9 @@ holds `ROCKETNET_LOOPBACK_MAX_ENDPOINTS` endpoints, one server and up to
 all are connected. The header at this base still names the message calls
 start, finish, receive, release and send_packets; the lifecycle rename makes
 them `*_start_message`, `*_finish_message`, `*_receive_message`,
-`*_release_message` and `*_send_packets`.
+`*_release_message` and `*_send_packets`. The server takes its one receive
+queue across every client with the batch form,
+`rocketnet_server_receive_messages`: one call per batch, no call per message.
 
 ## Run it
 

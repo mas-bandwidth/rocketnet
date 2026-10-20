@@ -95,7 +95,7 @@ A RocketNet integration follows a strict lifecycle and per-frame call order:
    - Fill `struct rocketnet_client_config_t` with `rocketnet_client_default_config_sized(&client_config, sizeof(client_config))` (or `rocketnet_client_default_config(&client_config)`), call `rocketnet_client_create_sized` (or `rocketnet_client_create`), then call `rocketnet_client_connect(client, connect_token)` with a `ROCKETNET_CONNECT_TOKEN_BYTES`-byte connect token. The client connects using the token alone; the handshake begins on the first `rocketnet_client_update`.
 3. **Run the five-step frame loop in exact order every tick** (using the caller's monotonic `double time` in seconds):
    - **Step 1 — Update:** Call `rocketnet_client_update(client, time)` and `rocketnet_server_update(server, time)` first to pump the transport, process incoming packets and ACKs, and advance connection state.
-   - **Step 2 — Receive and release:** Drain every pending message on each channel with `rocketnet_client_receive_message` / `rocketnet_server_receive_message`, copy or process its payload, and release the view in the **same** frame before the next update with `rocketnet_client_release_message` / `rocketnet_server_release_message`. Read any ACK/loss receipts with `rocketnet_client_receipts` / `rocketnet_server_receipts`.
+   - **Step 2 — Receive and release:** Drain the one receive queue with `rocketnet_client_receive_message` / `rocketnet_server_receive_message`, as RakNet's `Receive` does: every channel's messages in one queue, and on the server one queue across all clients, each message naming its sender's client index (`sdk/rocketnet.h:1158`, `sdk/rocketnet.h:1350`). Copy or process its payload, and release the view in the **same** frame before the next update with `rocketnet_client_release_message` / `rocketnet_server_release_message`. The batch form, `rocketnet_client_receive_messages` / `rocketnet_server_receive_messages`, hands out the same queue in the same order as arrays of up to `ROCKETNET_RECEIVE_BATCH_MESSAGES` entries per call, with no call per message and no release call: the next batch call or update releases the batch (`sdk/rocketnet.h:1164`, `sdk/rocketnet.h:1356`). Read any ACK/loss receipts with `rocketnet_client_receipts` / `rocketnet_server_receipts`.
    - **Step 3 — Simulate:** Run the game simulation for the frame.
    - **Step 4 — Queue outgoing messages:** Reserve space in place with `rocketnet_client_start_message` / `rocketnet_server_start_message`, write the message bytes directly into the returned pointer, and commit with `rocketnet_client_finish_message` / `rocketnet_server_finish_message` (or cancel with `rocketnet_client_abort_message` / `rocketnet_server_abort_message`). To send one message to every connected client, loop over the slots with `rocketnet_server_client_connected` and start and finish a message for each.
    - **Step 5 — Send packets last:** Call `rocketnet_client_send_packets(client)` and `rocketnet_server_send_packets(server)` **last** so every message queued during the frame goes out on the wire in the same frame instead of waiting until the next tick.
@@ -206,31 +206,28 @@ int main( void )
 
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+        while ( rocketnet_client_receive_message( client, &data, &bytes ) )
         {
             if ( bytes == 4 && memcmp( data, "pong", 4 ) == 0 )
                 client_received_reply = 1;
             rocketnet_client_release_message( client, data );
         }
 
-        uint64_t slot = rocketnet_client_index( client );
-        if ( rocketnet_server_client_connected( server, slot ) )
+        uint64_t slot = 0;    /* the sender's client index */
+        while ( rocketnet_server_receive_message( server, &slot, &data, &bytes ) )
         {
-            while ( rocketnet_server_receive_message( server, slot, 0, &data, &bytes ) )
-            {
-                if ( bytes == 4 && memcmp( data, "ping", 4 ) == 0 )
-                    server_received_and_replied = 1;
-                rocketnet_server_release_message( server, slot, data );
+            if ( bytes == 4 && memcmp( data, "ping", 4 ) == 0 )
+                server_received_and_replied = 1;
+            rocketnet_server_release_message( server, data );
 
-                if ( server_received_and_replied )
-                {
-                    uint8_t * reply = rocketnet_server_start_message( server, slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
-                    if ( !reply )
-                        return 1;
-                    memcpy( reply, "pong", 4 );
-                    if ( rocketnet_server_finish_message( server, slot, 4 ) == 0 )
-                        return 1;
-                }
+            if ( server_received_and_replied )
+            {
+                uint8_t * reply = rocketnet_server_start_message( server, slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
+                if ( !reply )
+                    return 1;
+                memcpy( reply, "pong", 4 );
+                if ( rocketnet_server_finish_message( server, slot, 4 ) == 0 )
+                    return 1;
             }
         }
 

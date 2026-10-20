@@ -80,8 +80,7 @@ int main( void ) {
         // (2) receive and release every message, and read resolved ack receipts
         const uint8_t * data = NULL;
         int bytes = 0;
-        for ( int ch = 0; ch < NUM_MODES; ch++ )
-            while ( rocketnet_client_receive_message( client, ch, &data, &bytes ) )
+        while ( rocketnet_client_receive_message( client, &data, &bytes ) )
             {
                 CHECK( bytes == 2 && data[0] < NUM_MODES && data[1] >= 1 && data[1] <= NUM_MSGS );
                 struct mode_stats_t * s = &stats[data[0]];
@@ -94,8 +93,9 @@ int main( void ) {
                 rocketnet_client_release_message( client, data );
             }
         const int slot = rocketnet_client_index( client );
-        while ( slot >= 0 && rocketnet_server_receive_message( server, slot, 0, &data, &bytes ) )
-            rocketnet_server_release_message( server, slot, data );
+        uint64_t sender = 0;
+        while ( rocketnet_server_receive_message( server, &sender, &data, &bytes ) )
+            rocketnet_server_release_message( server, data );
         struct rocketnet_receipt_t receipts[32];
         const int n_rec = slot >= 0 ? rocketnet_server_receipts( server, slot, receipts, 32 ) : 0;
         for ( int r = 0; r < n_rec; r++ )

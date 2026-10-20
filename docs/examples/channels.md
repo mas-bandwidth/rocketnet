@@ -51,8 +51,9 @@ conditions held.
 - `rocketnet_init`, `rocketnet_term`
 - `rocketnet_server_dev_config_sized`, `rocketnet_server_create_sized`,
   `rocketnet_server_port`, `rocketnet_server_update`,
-  `rocketnet_server_client_connected`, `rocketnet_server_receive_message`,
-  `rocketnet_server_release_message`, `rocketnet_server_send_packets`,
+  `rocketnet_server_client_connected`, `rocketnet_server_receive_messages`
+  (the batch form of the server's one receive queue, each entry naming its
+  sender and the channel it was delivered on), `rocketnet_server_send_packets`,
   `rocketnet_server_destroy`
 - `rocketnet_client_default_config_sized`, `rocketnet_client_create_sized`,
   `rocketnet_client_state`, `rocketnet_client_update`,

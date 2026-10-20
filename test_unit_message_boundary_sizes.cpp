@@ -159,11 +159,14 @@ static void boundary_teardown(boundary_pair_t * pair) {
     rocketnet_reassembly_set_destroy(pair->net->reassembly); delete pair->net->server; delete pair->net->client; delete pair->net;
 }
 static void boundary_drain(boundary_pair_t * pair,std::vector<boundary_received_t> * got) {
-    for(int channel=0;channel<4;++channel) {
-        const uint8_t * data=NULL; int bytes=0;
-        while(rocketnet_message_server_receive(pair->server,0,channel,&data,&bytes)) {
-            boundary_received_t r; r.channel=channel; r.data.assign(data,data+bytes); got->push_back(r);
-            rocketnet_message_server_release(pair->server,0,data);
+    // the one receive queue, in batches: each entry names the channel it was delivered on
+    for(;;) {
+        const rocketnet_received_messages_t * batch=rocketnet_message_server_receive_messages(pair->server);
+        check(batch!=NULL);
+        if(!batch||batch->num_messages==0) break;
+        for(int i=0;i<batch->num_messages;++i) {
+            check(batch->client_index[i]==0);
+            boundary_received_t r; r.channel=batch->channel[i]; r.data.assign(batch->data[i],batch->data[i]+batch->bytes[i]); got->push_back(r);
         }
     }
 }

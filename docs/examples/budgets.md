@@ -61,7 +61,8 @@ arrived. `PASS` means all that held.
 - `rocketnet_init`, `rocketnet_term`
 - `rocketnet_server_dev_config`, `rocketnet_server_create`,
   `rocketnet_server_update`, `rocketnet_server_port`,
-  `rocketnet_server_receive_message`, `rocketnet_server_release_message`,
+  `rocketnet_server_receive_messages` (the batch form of the server's one
+  receive queue, each entry naming its sender and channel),
   `rocketnet_server_send_packets`, `rocketnet_server_destroy`
 - `rocketnet_client_default_config`, `rocketnet_client_create`,
   `rocketnet_client_state`, `rocketnet_client_update`,

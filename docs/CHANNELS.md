@@ -1297,8 +1297,8 @@ dropped at start message: `NULL`, counted once in `MESSAGE_SEND_NOT_CONNECTED`
 tla/ClientSession.tla DropSend); the server drops a send to a slot that is not
 CONNECTED the same way. Only the CONFIG control record, announced at create, is
 held, unnumbered, until CONNECTED. One client object makes one connection, like the
-transport. The client receives with `rocketnet_client_receive_message`, modelled on the
-transport's receive. CONNECTED is emitted
+transport. The client receives with `rocketnet_client_receive_message`, RakNet's
+`Receive`: one queue holding every channel's messages. CONNECTED is emitted
 when the transport first reports state 4. DISCONNECTED is emitted when the
 transport leaves state 4, or when the endpoint errors, in which case the
 object calls `rocketnet_client_disconnect`.
@@ -1331,14 +1331,32 @@ header; the internal transport and message layers are in
   its receipt serial, nonzero. `abort` gives the room back, and `send` is the
   copying convenience. The one
   copy on the path is THE COPIES (a), record to frame, in layer 6's writer.
-- **The receive.** `rocketnet_client_receive_message` or `rocketnet_server_receive_message` hands out the update's next message on
-  the channel as a const view and a length; `rocketnet_client_release_message` or `rocketnet_server_release_message` gives it back. Every view
+- **The receive.** One queue, as RakNet's `Receive`: a client's holds every
+  channel's messages, and a server's holds every client's, each message naming
+  its sender's client index. `rocketnet_client_receive_message` or
+  `rocketnet_server_receive_message` hands out the queue's next message as a
+  const view and a length; `rocketnet_client_release_message` or
+  `rocketnet_server_release_message` gives it back. The queue is the update's
+  deliveries connection by connection in index order, each connection's in its
+  delivery order, never filtered by channel
+  (`sdk/rocketnet_message_server.cpp:842-868`): ordered messages keep send
+  order within their channel and sender, and sequenced messages never go
+  backwards on theirs. The batch form, `rocketnet_client_receive_messages` or
+  `rocketnet_server_receive_messages`, hands out the same queue in the same
+  order as arrays of up to `ROCKETNET_RECEIVE_BATCH_MESSAGES` entries per call,
+  each naming its sender, channel, wire reliability, length and view; the next
+  batch call or update releases the batch
+  (`sdk/rocketnet_message_server.cpp:954-978`). Every view
   is released before the next update: update with one held asserts in a debug
   build and returns `ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED` in a release build,
   counted as `MESSAGE_NOT_RELEASED` (tla/RNSlots.tla, RejectUnreleasedUpdate).
   The views are taken back either way, so memory never grows from a held view.
+- **The send's channel** is RakNet's ordering channel: the types that are
+  neither ordered nor sequenced (UNRELIABLE, RELIABLE and their receipt types)
+  ignore it and accept any value, never refused
+  (`sdk/rocketnet_message_server.cpp:590-596`).
 - **UNRELIABLE.** A code 0 record carries no channel (13.2), so an unreliable
-  message is received on channel 0. It is one record in one packet, up to the
+  message is delivered on channel 0. It is one record in one packet, up to the
   payload capacity less the form byte and the record's three header bytes
   (1411). It shares the region's send descriptors and store with the ordered
   path, and is written after it, under the same budget; when a reliable packet
@@ -1404,7 +1422,7 @@ for ( ;; )                                                /* 2. receive and rele
 {
     const uint8_t * view = NULL;
     int view_bytes = 0;
-    if ( !rocketnet_client_receive_message( client, channel, &view, &view_bytes ) )
+    if ( !rocketnet_client_receive_message( client, &view, &view_bytes ) )
         break;
     /* process view */
     rocketnet_client_release_message( client, view );
@@ -1458,7 +1476,9 @@ covers the following protocol needs:
 
 - RakNet's `Send` maps to `rocketnet_client_start_message`/`rocketnet_client_finish_message`, or the server forms, which return a nonzero serial.
 - `Receive` and `DeallocatePacket` become `rocketnet_client_receive_message` and
-  `rocketnet_client_release_message`, or the server forms with a `client_index`.
+  `rocketnet_client_release_message`, or the server forms, whose one queue
+  across all clients names each message's sender in `client_index` as
+  `Packet::systemAddress` does.
 - Receipts and connection notices are lists. A consumer adapter can merge them into
   RakNet's single stream, so the interleaving I17 describes is reproduced above
   this layer.

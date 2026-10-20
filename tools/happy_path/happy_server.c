@@ -84,12 +84,12 @@ int main( int argc, char ** argv )
         rocketnet_server_update( server, now );
 
         // (2) receive and process every received message for this update
-        const int max_clients = rocketnet_server_max_clients( server );
-        for ( int i = 0; i < max_clients; i++ )
+        // from one queue across every client, each message naming its sender
         {
             const uint8_t * data = NULL;
             int bytes = 0;
-            while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
+            uint64_t sender = 0;
+            while ( rocketnet_server_receive_message( server, &sender, &data, &bytes ) )
             {
                 const int mode = bytes > 0 ? data[0] : -1;
                 const int ok = mode >= 0 && mode < 8 &&
@@ -103,7 +103,7 @@ int main( int argc, char ** argv )
                     bad = 1;
                 }
                 fflush( stdout );
-                rocketnet_server_release_message( server, i, data );
+                rocketnet_server_release_message( server, data );
             }
         }
 

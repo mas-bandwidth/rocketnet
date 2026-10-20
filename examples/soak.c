@@ -204,6 +204,12 @@ int main( int argc, char ** argv ) {
     for ( int c = 0; c < num_clients; c++ )
         CHECK( rocketnet_client_state( clients[c] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
     CHECK( rocketnet_server_num_connected_clients( server ) == num_clients );
+    // the server receives from one queue across every client, each message
+    // naming its sender's client index: this maps an index back to its client
+    int * index_client = (int *) calloc( (size_t) num_clients, sizeof( int ) );
+    CHECK( index_client != NULL );
+    for ( int c = 0; c < num_clients; c++ )
+        index_client[rocketnet_client_index( clients[c] )] = c;
     g_alloc.steady = true;
     const int soak_ticks = seconds * 60, drain_ticks = 90, stride = num_clients > 25 ? ( num_clients / 25 ) : 1;
     uint64_t sent_rel = 0, recv_rel = 0, sent_seq = 0, recv_seq = 0, corrupt = 0, gaps = 0;
@@ -217,12 +223,14 @@ int main( int argc, char ** argv ) {
             for ( int c = base; c < end; c++ ) {
                 // (1) update pumps the transport and takes in what arrived
                 CHECK( rocketnet_client_update( clients[c], sim_time ) == ROCKETNET_UPDATE_OK );
-                // (2) receive and release every received message
-                for ( int ch = 0; ch < 2; ch++ ) {
-                    const uint8_t * data = NULL; int bytes = 0;
-                    while ( rocketnet_client_receive_message( clients[c], ch, &data, &bytes ) ) {
-                        bool ok = soak_check_msg( data, bytes, seed, (uint64_t) c, ch, &s2c[c], &corrupt, &gaps );
-                        rocketnet_client_release_message( clients[c], data );
+                // (2) receive every received message, in batches from the one
+                // queue: each entry names its channel, and the next batch
+                // call or update releases the batch
+                const struct rocketnet_received_messages_t * batch;
+                while ( ( batch = rocketnet_client_receive_messages( clients[c] ) ) && batch->num_messages > 0 ) {
+                    for ( int m = 0; m < batch->num_messages; m++ ) {
+                        const int ch = batch->channel[m];
+                        bool ok = soak_check_msg( batch->data[m], batch->bytes[m], seed, (uint64_t) c, ch, &s2c[c], &corrupt, &gaps );
                         CHECK( ok );
                         if ( ch == 1 ) recv_rel++; else recv_seq++;
                     }
@@ -253,18 +261,21 @@ int main( int argc, char ** argv ) {
             double s0 = rocketnet_time();
             // (1) server update
             CHECK( rocketnet_server_update( server, sim_time ) == ROCKETNET_UPDATE_OK );
+            // (2) server receive, in batches from the one queue across every
+            // client: each entry names its sender and its channel
+            const struct rocketnet_received_messages_t * batch;
+            while ( ( batch = rocketnet_server_receive_messages( server ) ) && batch->num_messages > 0 ) {
+                for ( int m = 0; m < batch->num_messages; m++ ) {
+                    CHECK( batch->client_index[m] < (uint64_t) num_clients );
+                    const int c = index_client[batch->client_index[m]];
+                    const int ch = batch->channel[m];
+                    bool ok = soak_check_msg( batch->data[m], batch->bytes[m], seed, (uint64_t) c, ch, &c2s[c], &corrupt, &gaps );
+                    CHECK( ok );
+                    if ( ch == 1 ) recv_rel++; else recv_seq++;
+                }
+            }
             for ( int c = base; c < end; c++ ) {
                 uint64_t client_idx = (uint64_t) rocketnet_client_index( clients[c] );
-                // (2) server receive and release
-                for ( int ch = 0; ch < 2; ch++ ) {
-                    const uint8_t * data = NULL; int bytes = 0;
-                    while ( rocketnet_server_receive_message( server, (int) client_idx, ch, &data, &bytes ) ) {
-                        bool ok = soak_check_msg( data, bytes, seed, (uint64_t) c, ch, &c2s[c], &corrupt, &gaps );
-                        rocketnet_server_release_message( server, (int) client_idx, data );
-                        CHECK( ok );
-                        if ( ch == 1 ) recv_rel++; else recv_seq++;
-                    }
-                }
                 struct rocketnet_receipt_t recs[16];
                 int nrec = rocketnet_server_receipts( server, (int) client_idx, recs, 16 );
                 for ( int r = 0; r < nrec; r++ ) if ( recs[r].status == ROCKETNET_RECEIPT_STATUS_ACKED ) s2c[c].acked_events++;
@@ -348,7 +359,7 @@ cleanup:
     if ( clients ) for ( int c = 0; c < num_clients; c++ ) if ( clients[c] ) rocketnet_client_destroy( clients[c] );
     if ( server ) rocketnet_server_destroy( server );
     if ( inited ) rocketnet_term();
-    free( clients ); free( c2s ); free( s2c ); free( srv_us ); free( cli_us );
+    free( index_client ); free( clients ); free( c2s ); free( s2c ); free( srv_us ); free( cli_us );
     // PASS after the cleanup, so it stays the last line
     if ( exit_code == 0 )
         printf( "PASS\n" );

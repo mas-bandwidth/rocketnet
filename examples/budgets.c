@@ -102,18 +102,22 @@ int main( void )
             goto cleanup;
 
         // (2) receive and release every message; count the reliable ones,
-        // sent on channel 1, so the example checks none was lost
+        // sent on channel 1, so the example checks none was lost. The server
+        // takes its one queue in batches, each entry naming its channel; the
+        // next batch call or update releases a batch
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+        while ( rocketnet_client_receive_message( client, &data, &bytes ) )
             rocketnet_client_release_message( client, data );
         const int slot = rocketnet_client_index( client );
-        while ( rocketnet_server_receive_message( server, slot, 0, &data, &bytes ) )
-            rocketnet_server_release_message( server, slot, data );
-        while ( rocketnet_server_receive_message( server, slot, 1, &data, &bytes ) )
+        const struct rocketnet_received_messages_t * batch;
+        while ( ( batch = rocketnet_server_receive_messages( server ) ) && batch->num_messages > 0 )
         {
-            reliable_received++;
-            rocketnet_server_release_message( server, slot, data );
+            for ( int i = 0; i < batch->num_messages; i++ )
+            {
+                if ( batch->client_index[i] == (uint64_t) slot && batch->channel[i] == 1 )
+                    reliable_received++;
+            }
         }
 
         // (3) run the game simulation for the frame: nothing to simulate here

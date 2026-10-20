@@ -142,11 +142,12 @@ int main( int argc, char ** argv )
             break;
 
         // (2) receive and release every received message
-        for ( int i = 0; i < max_clients; i++ )
+        // one queue across every client, each message naming its sender
         {
             const uint8_t * data = NULL;
             int bytes = 0;
-            while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
+            uint64_t i = 0;
+            while ( rocketnet_server_receive_message( server, &i, &data, &bytes ) )
             {
                 printf( "server received: %.*s\n", bytes, (const char*) data );
                 uint8_t * out = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
@@ -156,7 +157,7 @@ int main( int argc, char ** argv )
                     if ( rocketnet_server_finish_message( server, i, bytes ) )
                         echoed = 1;
                 }
-                rocketnet_server_release_message( server, i, data );
+                rocketnet_server_release_message( server, data );
             }
         }
 
