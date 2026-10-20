@@ -643,6 +643,7 @@ if(ROCKETNET_BUILD_TESTS)
         functional/lifecycle_driver.cpp
         functional/cpp_transports.cpp
         functional/live_matrix.cpp
+        functional/posix_hard_killed_peer.cpp
         functional/posix_lifecycle_stress.cpp
         functional/posix_socket_errors.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
