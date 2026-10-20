@@ -600,4 +600,7 @@ void rocketnet_platform_set_network_lookups_for_testing( const struct rocketnet_
 // or NaN request, ROCKETNET_SLEEP_MAX_SECONDS for a longer or infinite one
 double rocketnet_sleep_clamp( double seconds );
 
+// Enumerate the actual ABI query table; NULL marks the end.
+const char * rocketnet_abi_layouts( size_t index );
+
 #endif // #ifndef ROCKETNET_INTERNAL_H

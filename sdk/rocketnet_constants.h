@@ -44,9 +44,10 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
 
 #define ROCKETNET_RECEIVE_PACKETS_PER_CLIENT                                16
 
-// the AF_XDP frame size; defined on every platform because the portable
-// frame and descriptor checks in rocketnet_xdp_frame.h and their unit cases
-// build everywhere
+// The XDP frame size is defined on every platform: the frame codec in
+// rocketnet_xdp_frame.h (rocketnet_xdp_receive_descriptor) and its unit cases
+// are portable and build in ./bin/test everywhere. The driver's own static
+// assert below and in rocketnet_server_socket_linux.cpp pin it where XDP is on.
 #define ROCKETNET_XDP_FRAME_SIZE                                          4096  // IMPORTANT: This *must* be 4096 or you will get packet corruption on read!
 
 #if ROCKETNET_XDP
@@ -61,6 +62,8 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
 ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_FRAME_SIZE >= ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES +
                          ROCKETNET_UDP_HEADER_BYTES + ROCKETNET_RECEIVE_CEILING,
                          "an XDP frame holds ethernet, the larger IP header, UDP and a full receive-ceiling packet" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_FRAME_SIZE == 4096,
+                         "the XDP UMEM frame the driver registers is 4096 bytes" );
 
 #endif // #if ROCKETNET_XDP
 

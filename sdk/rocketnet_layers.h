@@ -1094,12 +1094,10 @@ int rocketnet_server_transport_payload_connection_ids( struct rocketnet_server_t
 //
 // finish_packet returns the sealed wire size, or zero when the packet was
 // dropped instead (payload out of range, the connection gone, or a wire
-// frame it could not reserve) -- the sequences already taken are burned
-// either way, which the receiver's replay window tolerates. An unfragmented
-// payload burns one sequence; a fragmented one burns up to its fragment
-// count (14 at the default 16384-byte maximum payload), so a failed
-// fragmented send moves the receive-side loss figure by up to that count.
-// USAGE.md carries the worked arithmetic.
+// frame it could not reserve). The server assigns its session sequence only
+// after finish accepts the payload and reserves every wire frame, so a
+// refused or dropped finish takes no sequence and leaves no gap in the
+// client's receive-side loss stat. USAGE.md carries the worked arithmetic.
 
 /** @brief Describes a reserved packet payload lease.
  *
@@ -1118,7 +1116,7 @@ struct rocketnet_packet_context_t
     int payload_capacity;
     /** @brief Opaque id used to match this payload with an ACK. */
     uint64_t packet_id;
-    /** @brief Session sequence reserved for the first wire packet. */
+    /** @brief First wire sequence, populated by server finish_packet or client start_packet. */
     uint64_t sequence;
     /** @brief Server slot index for a server lease; -1 for a client lease. */
     int client_index;
