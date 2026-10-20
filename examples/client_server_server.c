@@ -68,10 +68,6 @@ static void write_hex( FILE * file, const char * label, const uint8_t * bytes, i
     fputc( '\n', file );
 }
 
-static const char * reason_name( int reason )
-{
-    return rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) reason );
-}
 
 int main( int argc, char ** argv )
 {
@@ -127,6 +123,7 @@ int main( int argc, char ** argv )
 
     printf( "server listening on 127.0.0.1:%d with protocol id 0x%llx\n", (int) rocketnet_server_port( server ), (unsigned long long) PROTOCOL_ID );
     printf( "server wrote %s for the client\n", KEY_FILE );
+    fflush( stdout );
 
     const double start = rocketnet_time();
 
@@ -171,7 +168,7 @@ int main( int argc, char ** argv )
             had_client = 1;
         else if ( had_client )
         {
-            printf( "server client disconnected (reason %s)\n", reason_name( rocketnet_server_disconnect_reason( server, 0 ) ) );
+            printf( "server client disconnected (reason %s)\n", rocketnet_disconnect_reason_name( rocketnet_server_disconnect_reason( server, 0 ) ) );
             break;
         }
 

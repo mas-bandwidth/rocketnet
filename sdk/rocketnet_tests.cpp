@@ -137,8 +137,13 @@ static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
 
 #define ROCKETNET_TEST_LOG_RING_LINES 32
 #define ROCKETNET_TEST_LOG_RING_LINE_BYTES 1024
+// a slot holds "<event>: <level>: " in front of a whole captured line: the
+// level name is at most 7 bytes (sdk/rocketnet.cpp:179), so 64 bytes hold
+// the prefix for any uint64 event ordinal
+#define ROCKETNET_TEST_LOG_RING_PREFIX_BYTES 64
+#define ROCKETNET_TEST_LOG_RING_SLOT_BYTES ( ROCKETNET_TEST_LOG_RING_PREFIX_BYTES + ROCKETNET_TEST_LOG_RING_LINE_BYTES )
 
-static char rocketnet_test_log_ring[ROCKETNET_TEST_LOG_RING_LINES][ROCKETNET_TEST_LOG_RING_LINE_BYTES];
+static char rocketnet_test_log_ring[ROCKETNET_TEST_LOG_RING_LINES][ROCKETNET_TEST_LOG_RING_SLOT_BYTES];
 
 static int rocketnet_test_log_ring_lines;
 
@@ -151,7 +156,9 @@ static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level
     (void) context;
     (void) length;
     char line[ROCKETNET_TEST_LOG_RING_LINE_BYTES];
-    snprintf( line, sizeof(line), "%s", message );
+    const int line_length = snprintf( line, sizeof(line), "%s", message );
+    if ( line_length < 0 || (size_t) line_length >= sizeof(line) )
+        return;
 
     if ( level == ROCKETNET_LOG_LEVEL_NONE )
     {
@@ -161,8 +168,10 @@ static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level
     }
 
     char * slot = rocketnet_test_log_ring[rocketnet_test_log_ring_lines % ROCKETNET_TEST_LOG_RING_LINES];
-    snprintf( slot, ROCKETNET_TEST_LOG_RING_LINE_BYTES, "%llu: %s: %s",
+    const int slot_length = snprintf( slot, ROCKETNET_TEST_LOG_RING_SLOT_BYTES, "%llu: %s: %s",
               (unsigned long long) rocketnet_test_log_ring_stamp, rocketnet_log_level_name( level ), line );
+    if ( slot_length < 0 || (size_t) slot_length >= ROCKETNET_TEST_LOG_RING_SLOT_BYTES )
+        return;
     rocketnet_test_log_ring_stamp++;
     rocketnet_test_log_ring_lines++;
 }
@@ -7317,7 +7326,6 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_log_level_name",
     "rocketnet_set_log_callback",
     "rocketnet_api_misuse_count",
-    "rocketnet_protocol_version",
     "rocketnet_time",
     "rocketnet_sleep",
     "rocketnet_set_allocator",
@@ -7473,7 +7481,6 @@ static const char * rocketnet_test_public_null_exempt_exports[] =
     "rocketnet_log_level_name",
     "rocketnet_set_log_callback",
     "rocketnet_api_misuse_count",
-    "rocketnet_protocol_version",
     "rocketnet_time",
     "rocketnet_sleep",
     "rocketnet_client_validate_config",
@@ -7536,7 +7543,6 @@ static const char * rocketnet_test_layer_exports[] =
     "rocketnet_random_uint32",
     "rocketnet_random_uint64",
     "rocketnet_random_bytes",
-    "rocketnet_protocol_version",
     "rocketnet_time",
     "rocketnet_sleep",
     "rocketnet_copy_string",
@@ -7808,7 +7814,6 @@ static const char * rocketnet_test_layer_null_exempt_exports[] =
     "rocketnet_random_uint8",
     "rocketnet_random_uint32",
     "rocketnet_random_uint64",
-    "rocketnet_protocol_version",
     "rocketnet_time",
     "rocketnet_sleep",
     "rocketnet_client_transport_state_name",

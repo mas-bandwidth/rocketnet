@@ -2,17 +2,28 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    Load: single-process many-client load harness. Stands up one message
-    server and N message clients (N up to ROCKETNET_MAX_CLIENTS = 1000) in
-    one process on loopback, connects every client within 10 seconds, drives
-    reliable, reliable-ordered, unreliable, and sequenced traffic across all
-    8 reliability and channel combinations for a configured duration, and
-    verifies five pass criteria:
+    Load: single-process many-client load harness driving the public API.
+    Stands up one public server (rocketnet_server_t) and N public clients
+    (rocketnet_client_t, N up to ROCKETNET_MAX_CLIENTS = 1000) in one process
+    on loopback, connects every client within 10 seconds, drives the light
+    profile (10 Hz updates, one message per client per update in each
+    direction: the client-to-server message rotates through all eight
+    reliability modes via client_next_combo, and the server-to-client
+    message is reliable-ordered) for a configured duration, and verifies
+    five pass criteria:
       1. connect_within_10s
       2. no_unexpected_disconnect
       3. reliable_delivery
       4. unreliable_integrity
       5. counters_agree
+
+    Configuration:
+    The server runs rocketnet_server_dev_config and each client runs
+    rocketnet_client_default_config, with the following explicit
+    non-default settings for the light profile:
+      - server.max_clients: set to the requested client count (default 1000)
+      - server.handshake_deadline_seconds: 10 (default 5, matching LOAD_CONNECT_DEADLINE_S)
+    All other configuration fields retain their default values.
 
     Linux. ROCKETNET_SERVER_TRANSPORT pins the server transport and
     ROCKETNET_CLIENT_TRANSPORT=portable the clients; the summary line's
@@ -30,12 +41,12 @@
                  guest booted with irqaffinity=0 isolcpus=1 nohz_full=1, on a
                  veth pair whose far end sits in its own namespace:
                  LOAD_SERVER_ADDRESS=<near address>:<port> binds the server
-                 (load.c:524; xdp discovers no port, sdk/rocketnet_drivers.inc:7)
+                 (load.c; xdp discovers no port, sdk/rocketnet_drivers.inc:7)
                  and LOAD_CLIENT_NETNS=/var/run/netns/<name> opens every client
-                 socket in the far namespace (load.c:597)
+                 socket in the far namespace.
     load raises RLIMIT_NOFILE to 65536 or the hard limit and refuses by name
-    when the result is below 2 fds per client plus 64 (load.c:217), so
-    `ulimit -n 512` fails a 1000-client run before it starts.
+    when the result is below 2 fds per client plus 64, so `ulimit -n 512`
+    fails a 1000-client run before it starts.
     .github/workflows/nightly-soak.yml runs `load 1000 60` once per cell.
 */
 
@@ -44,7 +55,6 @@
 #endif
 
 #include "rocketnet.h"
-#include "rocketnet_counters.h"
 #include <errno.h>
 #include <inttypes.h>
 #include <signal.h>
@@ -104,8 +114,6 @@ static long count_open_fds( void )
         return (long) handles;
     return -1;
 #elif defined(__APPLE__)
-    /* One proc_pidinfo call lists the open descriptors; a per-fd probe over a
-       65536-wide table every sample would itself load the run being measured. */
     const int bytes = proc_pidinfo( getpid(), PROC_PIDLISTFDS, 0, NULL, 0 );
     if ( bytes <= 0 )
         return -1;
@@ -412,6 +420,40 @@ static int cmp_double( const void * a, const void * b )
     return ( da > db ) - ( da < db );
 }
 
+static const char * server_counter_names[ROCKETNET_SERVER_COUNTER_COUNT] = {
+    "PACKETS_SENT",
+    "PACKETS_RECEIVED",
+    "BYTES_SENT",
+    "BYTES_RECEIVED",
+    "CLIENTS_CONNECTED",
+    "CLIENTS_DENIED_FULL",
+    "HANDSHAKES_OVER_BUDGET",
+    "PAYLOADS_RECEIVED",
+    "MESSAGES_RESENT",
+    "MESSAGES_DUPLICATE",
+    "RECEIPTS_ACKED",
+    "RECEIPTS_LOST",
+    "BUDGET_DROPS",
+    "MESSAGES_NOT_RELEASED",
+    "NOT_CONNECTED_DROPS"
+};
+
+static const char * client_counter_names[ROCKETNET_CLIENT_COUNTER_COUNT] = {
+    "PACKETS_SENT",
+    "PACKETS_RECEIVED",
+    "BYTES_SENT",
+    "BYTES_RECEIVED",
+    "PAYLOADS_RECEIVED",
+    "MESSAGES_RESENT",
+    "MESSAGES_DUPLICATE",
+    "RECEIPTS_ACKED",
+    "RECEIPTS_LOST",
+    "BUDGET_DROPS",
+    "SEND_DEFERRED",
+    "MESSAGES_NOT_RELEASED",
+    "NOT_CONNECTED_DROPS"
+};
+
 int main( int argc, char ** argv )
 {
     if ( argc < 3 || argc > 4 )
@@ -480,74 +522,54 @@ int main( int argc, char ** argv )
         fprintf( stderr, "load: rocketnet_init failed\n" );
         return 1;
     }
-    /* Start is sampled after rocketnet_init: init opens the process-wide random
-       source once and keeps it for the life of the process, so the baseline
-       holds it and start, peak and end measure what servers and clients add. */
     const long fds_start = count_open_fds();
     const long threads_start = count_threads();
     long fds_peak = fds_start;
     long threads_peak = threads_start;
-    /* silent unless ROCKETNET_LOG_LEVEL asks for logs (rocketnet_init applies it) */
     if ( !getenv( "ROCKETNET_LOG_LEVEL" ) )
         rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
-    struct rocketnet_server_transport_config_t server_tcfg;
-    rocketnet_server_transport_dev_config( &server_tcfg );
-    server_tcfg.max_clients = num_clients;
-    server_tcfg.max_payload_bytes = ROCKETNET_MAX_PAYLOAD_BYTES;
-    server_tcfg.num_reassembly_slots = 2;
-    server_tcfg.handshake_deadline_seconds = 10;
+    /* Public server and client configuration: default configs except the
+       explicit settings required by the light profile */
+    struct rocketnet_server_config_t server_config;
+    rocketnet_server_dev_config( &server_config );
+    server_config.max_clients = num_clients;
+    server_config.handshake_deadline_seconds = 10;
 
-    struct rocketnet_client_transport_config_t client_tcfg;
-    rocketnet_client_transport_default_config( &client_tcfg );
-    client_tcfg.max_payload_bytes = ROCKETNET_MAX_PAYLOAD_BYTES;
-    client_tcfg.num_reassembly_slots = 1;
+    struct rocketnet_client_config_t client_config;
+    rocketnet_client_default_config( &client_config );
 
-    struct rocketnet_message_config_t msg_cfg;
-    rocketnet_message_default_config( &msg_cfg );
-    msg_cfg.num_channels = LOAD_NUM_COMBOS;
-    msg_cfg.window_messages = 64;
-    msg_cfg.receive_ring_bytes = 16384;
-    msg_cfg.max_message_bytes = ROCKETNET_MESSAGE_SINGLE_BYTES;
-    msg_cfg.send_buffer_bytes = 32768;
-    msg_cfg.send_queue_messages = 64;
-    msg_cfg.packets_in_flight = 32;
-    msg_cfg.max_packets_per_update = 4;
-    msg_cfg.unreliable_deliveries = 64;
-    msg_cfg.sequenced_holds = 16;
-    msg_cfg.receipt_ring = 64;
-    msg_cfg.reliable_timeout_ms = 3000;
-
-    /* LOAD_SERVER_ADDRESS is the server's IPv4 bind, "host" or "host:port"
-       (default 127.0.0.1, port 0); the clients connect to that host on the
-       port the server reports */
+    char server_bind_buf[64];
     const char * server_bind = getenv( "LOAD_SERVER_ADDRESS" );
     if ( !server_bind || server_bind[0] == 0 )
-        server_bind = "127.0.0.1";
-    char server_host[48];
+        server_bind = "127.0.0.1:0";
+    else if ( !strchr( server_bind, ':' ) )
+    {
+        snprintf( server_bind_buf, sizeof( server_bind_buf ), "%s:0", server_bind );
+        server_bind = server_bind_buf;
+    }
+    char server_host[64];
     snprintf( server_host, sizeof( server_host ), "%s", server_bind );
     server_host[strcspn( server_host, ":" )] = 0;
 
-    int server_create_status = ROCKETNET_STATUS_OK;
-    struct rocketnet_message_server_t * server = rocketnet_message_server_create_ex(
-        NULL, server_bind, &server_tcfg, &msg_cfg, NULL, 0, 0, &server_create_status );
-    if ( !server )
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, server_bind, &server_config, NULL, 0 );
+    if ( !server || rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
-        fprintf( stderr, "load: failed to create message server (status=%d %s)\n",
-                 server_create_status,
-                 rocketnet_status_name( (enum rocketnet_status_t) server_create_status ) );
+        fprintf( stderr, "load: failed to create or start server\n" );
+        if ( server )
+            rocketnet_server_destroy( server );
         rocketnet_term();
         return 1;
     }
 
-    struct rocketnet_server_transport_t * server_transport = rocketnet_message_server_transport( server );
-    char server_address[64];
+    char server_address[96];
     snprintf( server_address, sizeof( server_address ), "%s:%d", server_host,
-              rocketnet_server_transport_port( server_transport ) );
+              (int) rocketnet_server_port( server ) );
 
-    struct rocketnet_message_client_t ** clients =
-        (struct rocketnet_message_client_t **) calloc( (size_t) num_clients, sizeof( *clients ) );
+    struct rocketnet_client_t ** clients =
+        (struct rocketnet_client_t **) calloc( (size_t) num_clients, sizeof( *clients ) );
     int * client_ever_connected = (int *) calloc( (size_t) num_clients, sizeof( int ) );
+    int * client_slot = (int *) calloc( (size_t) num_clients, sizeof( int ) );
     double * client_connect_seconds = (double *) malloc( (size_t) num_clients * sizeof( double ) );
     uint32_t * client_next_combo = (uint32_t *) calloc( (size_t) num_clients, sizeof( uint32_t ) );
     struct load_stream_state_t * c2s_streams = (struct load_stream_state_t *) calloc(
@@ -558,9 +580,11 @@ int main( int argc, char ** argv )
     size_t update_cap = 262144;
     size_t update_count = 0;
     uint64_t * update_us = (uint64_t *) malloc( update_cap * sizeof( uint64_t ) );
+    double * client_last_update = (double *) calloc( (size_t) num_clients, sizeof( double ) );
+    double * client_max_update_gap = (double *) calloc( (size_t) num_clients, sizeof( double ) );
 
     if ( !clients || !client_ever_connected || !client_connect_seconds || !client_next_combo ||
-         !c2s_streams || !s2c_streams || !update_us )
+         !c2s_streams || !s2c_streams || !update_us || !client_last_update || !client_max_update_gap )
     {
         fprintf( stderr, "load: allocation failed\n" );
         return 1;
@@ -571,10 +595,6 @@ int main( int argc, char ** argv )
     const uint64_t token_now = (uint64_t) time( NULL );
 
 #if defined(__linux__)
-    /* LOAD_CLIENT_NETNS (Linux, root) names a network namespace file, such as
-       /var/run/netns/<name>: each client socket is opened inside it and the
-       server stays in this process's own namespace, so a server bound to one
-       end of a veth pair (the xdp transport) is reached across the pair */
     int self_netns = -1;
     int client_netns = -1;
     const char * client_netns_path = getenv( "LOAD_CLIENT_NETNS" );
@@ -605,8 +625,12 @@ int main( int argc, char ** argv )
             fprintf( stderr, "load: failed to create dev connect token for client %d\n", i );
             return 1;
         }
-        clients[i] = rocketnet_message_client_create(
-            NULL, connect_token, &client_tcfg, &msg_cfg, NULL, 0, 0 );
+        clients[i] = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+        if ( !clients[i] || rocketnet_client_connect( clients[i], connect_token ) != ROCKETNET_STATUS_OK )
+        {
+            fprintf( stderr, "load: failed to create or connect client %d\n", i );
+            return 1;
+        }
 #if defined(__linux__)
         if ( client_netns >= 0 && setns( self_netns, CLONE_NEWNET ) != 0 )
         {
@@ -614,11 +638,6 @@ int main( int argc, char ** argv )
             return 1;
         }
 #endif
-        if ( !clients[i] )
-        {
-            fprintf( stderr, "load: failed to create client %d\n", i );
-            return 1;
-        }
         client_next_combo[i] = (uint32_t) ( i % LOAD_NUM_COMBOS );
     }
 #if defined(__linux__)
@@ -649,17 +668,20 @@ int main( int argc, char ** argv )
         connected_count = 0;
         for ( int i = 0; i < num_clients; i++ )
         {
-            rocketnet_message_client_update( clients[i], now );
-            rocketnet_message_client_send_packets( clients[i] );
-            const int st = rocketnet_message_client_state( clients[i] );
-            if ( st == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+            rocketnet_client_update( clients[i], now );
+            rocketnet_client_send_packets( clients[i] );
+            const enum rocketnet_client_state_t st = rocketnet_client_state( clients[i] );
+            if ( st == ROCKETNET_CLIENT_STATE_CONNECTED )
             {
+                /* the time this client is seen connected, read here rather
+                   than the sweep's now, so every client keeps its own time */
                 if ( client_connect_seconds[i] < 0.0 )
-                    client_connect_seconds[i] = now - start_time;
+                    client_connect_seconds[i] = rocketnet_time() - start_time;
                 client_ever_connected[i] = 1;
+                client_slot[i] = (int) rocketnet_client_index( clients[i] );
                 connected_count++;
             }
-            else if ( st < 0 || ( client_ever_connected[i] && st != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ) )
+            else if ( (int) st < 0 || ( client_ever_connected[i] && st != ROCKETNET_CLIENT_STATE_CONNECTED ) )
             {
                 unexpected_disconnects++;
             }
@@ -667,16 +689,16 @@ int main( int argc, char ** argv )
             if ( ( ( i + 1 ) & 63 ) == 0 || i + 1 == num_clients )
             {
                 const double t0 = rocketnet_time();
-                rocketnet_message_server_update( server, t0 );
+                rocketnet_server_update( server, t0 );
                 const double t1 = rocketnet_time();
                 if ( update_count < update_cap )
                     update_us[update_count++] = (uint64_t) ( ( t1 - t0 ) * 1e6 );
-                rocketnet_message_server_send_packets( server );
+                rocketnet_server_send_packets( server );
             }
         }
 
         if ( connected_count == num_clients &&
-             rocketnet_server_transport_num_connected_clients( server_transport ) == num_clients )
+             rocketnet_server_num_connected_clients( server ) == num_clients )
         {
             all_connected = 1;
             connect_elapsed = rocketnet_time() - start_time;
@@ -686,38 +708,35 @@ int main( int argc, char ** argv )
         if ( rocketnet_time() - start_time > LOAD_CONNECT_DEADLINE_S )
         {
             connect_elapsed = rocketnet_time() - start_time;
-            /* name each client still short of CONNECTED at the deadline (the first
-               eight), so a connect failure says which state the client sat in */
             int named = 0;
             for ( int i = 0; i < num_clients && named < 8; i++ )
             {
-                const int st = rocketnet_message_client_state( clients[i] );
-                if ( st != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+                const enum rocketnet_client_state_t st = rocketnet_client_state( clients[i] );
+                if ( st != ROCKETNET_CLIENT_STATE_CONNECTED )
                 {
                     fprintf( stderr, "load: client %d not connected at the deadline: state=%d %s\n",
-                             i, st, rocketnet_client_transport_state_name( st ) );
-                    struct rocketnet_client_transport_t * ct = rocketnet_message_client_transport( clients[i] );
-                    struct rocketnet_client_transport_stats_t cs;
-                    memset( &cs, 0, sizeof( cs ) );
-                    rocketnet_client_transport_stats( ct, &cs );
+                             i, (int) st, rocketnet_client_state_name( st ) );
                     fprintf( stderr, "load: client %d driver=%s packets_sent=%llu packets_received=%llu\n", i,
-                             rocketnet_client_transport_driver( ct ),
-                             (unsigned long long) cs.packets_sent, (unsigned long long) cs.packets_received );
-                    const struct rocketnet_counters_t * ctc = rocketnet_client_transport_counters( ct );
-                    for ( int k = 0; ctc && k < ROCKETNET_NUM_COUNTERS; k++ )
-                        if ( rocketnet_counter_value( ctc, k ) )
-                            fprintf( stderr, "load: client %d counter %s=%llu\n", i, rocketnet_counter_name( k ),
-                                     (unsigned long long) rocketnet_counter_value( ctc, k ) );
+                             rocketnet_client_transport_name( clients[i] ),
+                             (unsigned long long) rocketnet_client_counter( clients[i], ROCKETNET_CLIENT_COUNTER_PACKETS_SENT ),
+                             (unsigned long long) rocketnet_client_counter( clients[i], ROCKETNET_CLIENT_COUNTER_PACKETS_RECEIVED ) );
+                    for ( int k = 0; k < ROCKETNET_CLIENT_COUNTER_COUNT; k++ )
+                    {
+                        uint64_t v = rocketnet_client_counter( clients[i], (enum rocketnet_client_counter_t) k );
+                        if ( v )
+                            fprintf( stderr, "load: client %d counter %s=%llu\n", i, client_counter_names[k], (unsigned long long) v );
+                    }
                     named++;
                 }
             }
             fprintf( stderr, "load: server reports %d of %d clients connected at the deadline\n",
-                     rocketnet_server_transport_num_connected_clients( server_transport ), num_clients );
-            const struct rocketnet_counters_t * dtc = rocketnet_server_transport_counters( server_transport );
-            for ( int k = 0; dtc && k < ROCKETNET_NUM_COUNTERS; k++ )
-                if ( rocketnet_counter_value( dtc, k ) )
-                    fprintf( stderr, "load: server counter %s=%llu\n", rocketnet_counter_name( k ),
-                             (unsigned long long) rocketnet_counter_value( dtc, k ) );
+                     rocketnet_server_num_connected_clients( server ), num_clients );
+            for ( int k = 0; k < ROCKETNET_SERVER_COUNTER_COUNT; k++ )
+            {
+                uint64_t v = rocketnet_server_counter( server, (enum rocketnet_server_counter_t) k );
+                if ( v )
+                    fprintf( stderr, "load: server counter %s=%llu\n", server_counter_names[k], (unsigned long long) v );
+            }
             break;
         }
         const double sample_now = rocketnet_time();
@@ -729,95 +748,42 @@ int main( int argc, char ** argv )
         rocketnet_sleep( 0.001 );
     }
 
+    /* Step 2: Drive traffic for <seconds>, then 3.0s drain for in-flight delivery */
     const double traffic_start = rocketnet_time();
+    const double drain_seconds = 3.0;
     const double drop_at = duration_seconds * 0.25 < 1.0 ? duration_seconds * 0.25 : 1.0;
     int drop_injected = 0;
-    int send_cursor = 0;
-    int server_send_cursor = 0;
-    double last_send_batch_time = traffic_start;
-    /* each client's last update time and its longest gap between updates,
-       and the longest server update: printed with the first disconnects in
-       traffic, they say whether a client was starved of updates by this
-       loop's cadence (a gap near the 3 s reliable timeout) or timed out
-       while updated on time */
-    double * client_last_update = (double *) calloc( (size_t) num_clients, sizeof( double ) );
-    double * client_max_update_gap = (double *) calloc( (size_t) num_clients, sizeof( double ) );
     double max_server_update_s = 0.0;
     double max_server_update_at = 0.0;
 
-    /* Step 2: Drive traffic for <seconds>, then 1.0s drain for in-flight delivery */
-    const double drain_seconds = 3.0;
+    const char * profile = getenv( "LOAD_PROFILE" );
+    if ( profile && profile[0] != 0 && strcmp( profile, "light" ) != 0 && strcmp( profile, "default" ) != 0 )
+    {
+        fprintf( stderr, "load: LOAD_PROFILE=%s is not light or default\n", profile );
+        return 2;
+    }
+
+    double next_slice_time = traffic_start;
+    static int client_update_cursor = 0;
+
     while ( !quit )
     {
         const double now = rocketnet_time();
         const double elapsed = now - traffic_start;
-        const int in_traffic_window = ( elapsed < duration_seconds );
         if ( elapsed >= duration_seconds + drain_seconds )
             break;
 
-        if ( drop_one && !drop_injected && elapsed >= drop_at )
-            drop_injected = 1;
+        const int in_traffic_window = ( elapsed < duration_seconds );
 
-        /* Pace sends every 20ms so all 8 reliability/channel combinations are exercised across all clients */
-        if ( in_traffic_window && ( now - last_send_batch_time >= 0.020 ) )
+        if ( drop_one && !drop_injected && ( elapsed >= drop_at ) )
         {
-            last_send_batch_time = now;
-            const int batch = num_clients < 32 ? num_clients : 32;
-            for ( int b = 0; b < batch; b++ )
-            {
-                const int idx = send_cursor;
-                send_cursor = ( send_cursor + 1 ) % num_clients;
-                if ( drop_injected && idx == 0 )
-                    continue;
-                if ( rocketnet_message_client_state( clients[idx] ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
-                    continue;
-
-                const uint32_t combo = client_next_combo[idx] % LOAD_NUM_COMBOS;
-                client_next_combo[idx]++;
-                const int channel = (int) combo;
-                const int reliability = (int) combo;
-
-                struct load_stream_state_t * st = &c2s_streams[(size_t) idx * LOAD_NUM_COMBOS + combo];
-                if ( st->sent_count + 1 < LOAD_MAX_SEQ_TRACKED )
-                {
-                    const uint32_t next_seq = st->sent_count + 1;
-                    uint8_t payload[LOAD_PAYLOAD_BYTES];
-                    build_message( payload, LOAD_MAGIC_CLIENT_TO_SV, (uint32_t) idx, combo, next_seq );
-                    if ( rocketnet_message_client_send( clients[idx], channel, reliability, payload, LOAD_PAYLOAD_BYTES ) != 0 )
-                    {
-                        st->sent_count = next_seq;
-                        c2s_sent_total++;
-                    }
-                }
-            }
-
-            /* Also send server -> client reliable-ordered messages on channel 3 (including to client 0 under drop-one) */
-            const int sv_batch = num_clients < 16 ? num_clients : 16;
-            for ( int b = 0; b < sv_batch; b++ )
-            {
-                const int target_idx = ( drop_injected && b == 0 ) ? 0 : server_send_cursor;
-                if ( !( drop_injected && b == 0 ) )
-                    server_send_cursor = ( server_send_cursor + 1 ) % num_clients;
-
-                const int sv_slot = rocketnet_client_transport_client_index( rocketnet_message_client_transport( clients[target_idx] ) );
-                struct load_stream_state_t * sv_st = &s2c_streams[target_idx];
-                if ( sv_slot >= 0 && sv_st->sent_count + 1 < LOAD_MAX_SEQ_TRACKED &&
-                     rocketnet_server_transport_is_client_connected( server_transport, sv_slot ) )
-                {
-                    const uint32_t next_seq = sv_st->sent_count + 1;
-                    uint8_t payload[LOAD_PAYLOAD_BYTES];
-                    build_message( payload, LOAD_MAGIC_SV_TO_CLIENT, (uint32_t) target_idx, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, next_seq );
-                    if ( rocketnet_message_server_send( server, sv_slot, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, payload, LOAD_PAYLOAD_BYTES ) != 0 )
-                    {
-                        sv_st->sent_count = next_seq;
-                    }
-                }
-            }
+            rocketnet_client_destroy( clients[0] );
+            clients[0] = NULL;
+            drop_injected = 1;
         }
 
-        /* Update a slice of up to 200 clients per tick, then run one server update */
+        /* Update a slice of 100 clients every 10 ms so each client updates at 10 Hz */
         const int slice = num_clients < 100 ? num_clients : 100;
-        static int client_update_cursor = 0;
         for ( int k = 0; k < slice; k++ )
         {
             const int i = client_update_cursor;
@@ -828,11 +794,12 @@ int main( int argc, char ** argv )
                 if ( client_last_update[i] > 0.0 && update_time - client_last_update[i] > client_max_update_gap[i] )
                     client_max_update_gap[i] = update_time - client_last_update[i];
                 client_last_update[i] = update_time;
-                rocketnet_message_client_update( clients[i], rocketnet_time() );
+                rocketnet_client_update( clients[i], update_time );
 
+                /* Receive server -> client reliable-ordered messages on channel 3 */
                 const uint8_t * data = NULL;
                 int bytes = 0;
-                while ( rocketnet_message_client_receive( clients[i], ROCKETNET_RELIABILITY_RELIABLE_ORDERED, &data, &bytes ) )
+                while ( rocketnet_client_receive_message( clients[i], (int) ROCKETNET_RELIABILITY_RELIABLE_ORDERED, &data, &bytes ) )
                 {
                     uint32_t msg_client = 0, msg_combo = 0, msg_seq = 0;
                     if ( !verify_message( data, bytes, LOAD_MAGIC_SV_TO_CLIENT, &msg_client, &msg_combo, &msg_seq ) ||
@@ -848,35 +815,81 @@ int main( int argc, char ** argv )
                         sv_st->recv_count++;
                         sv_st->max_seq_seen = msg_seq;
                     }
-                    rocketnet_message_client_release( clients[i], data );
+                    rocketnet_client_release_message( clients[i], data );
                 }
 
-                struct rocketnet_message_receipt_t receipts[16];
-                (void) rocketnet_message_client_receipts( clients[i], receipts, 16 );
+                struct rocketnet_receipt_t receipts[16];
+                (void) rocketnet_client_receipts( clients[i], receipts, 16 );
 
-                rocketnet_message_client_send_packets( clients[i] );
-            }
+                /* On each update, send one message rotating through all eight
+                   reliability modes, and server queues one reliable-ordered to client */
+                if ( in_traffic_window &&
+                     rocketnet_client_state( clients[i] ) == ROCKETNET_CLIENT_STATE_CONNECTED )
+                {
+                    const uint32_t combo = client_next_combo[i] % LOAD_NUM_COMBOS;
+                    client_next_combo[i]++;
+                    struct load_stream_state_t * cst = &c2s_streams[(size_t) i * LOAD_NUM_COMBOS + combo];
+                    uint8_t payload[LOAD_PAYLOAD_BYTES];
+                    if ( cst->sent_count + 1 < LOAD_MAX_SEQ_TRACKED )
+                    {
+                        const uint32_t next_seq = cst->sent_count + 1;
+                        build_message( payload, LOAD_MAGIC_CLIENT_TO_SV, (uint32_t) i, combo, next_seq );
+                        uint8_t * out = rocketnet_client_start_message( clients[i], (int) combo, (enum rocketnet_reliability_t) combo, LOAD_PAYLOAD_BYTES );
+                        if ( out )
+                        {
+                            memcpy( out, payload, LOAD_PAYLOAD_BYTES );
+                            if ( rocketnet_client_finish_message( clients[i], LOAD_PAYLOAD_BYTES ) != 0 )
+                            {
+                                cst->sent_count = next_seq;
+                                c2s_sent_total++;
+                            }
+                        }
+                    }
 
-            const int st = rocketnet_message_client_state( clients[i] );
-            if ( client_ever_connected[i] && st != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
-            {
-                /* name the first eight disconnects seen in traffic: the client, its
-                   state, its disconnect reason and when, on stderr */
-                if ( unexpected_disconnects < 8 )
-                    fprintf( stderr, "load: client %d left CONNECTED at t=%.3f: state=%d %s reason=%s\n",
-                             i, rocketnet_time() - traffic_start, st, rocketnet_client_transport_state_name( st ),
-                             rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t)
-                                 rocketnet_message_client_disconnect_reason( clients[i] ) ) );
-                if ( unexpected_disconnects < 8 )
-                    fprintf( stderr, "load: client %d last updated %.3f s ago, longest update gap %.3f s; longest server update %.3f s at t=%.3f\n",
-                             i, rocketnet_time() - client_last_update[i], client_max_update_gap[i], max_server_update_s, max_server_update_at );
-                unexpected_disconnects++;
+                    const uint64_t sv_slot = rocketnet_client_index( clients[i] );
+                    struct load_stream_state_t * sv_st = &s2c_streams[i];
+                    if ( sv_st->sent_count + 1 < LOAD_MAX_SEQ_TRACKED &&
+                         rocketnet_server_client_connected( server, sv_slot ) )
+                    {
+                        const uint32_t next_seq = sv_st->sent_count + 1;
+                        build_message( payload, LOAD_MAGIC_SV_TO_CLIENT, (uint32_t) i, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, next_seq );
+                        uint8_t * out = rocketnet_server_start_message( server, sv_slot, (int) ROCKETNET_RELIABILITY_RELIABLE_ORDERED, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, LOAD_PAYLOAD_BYTES );
+                        if ( out )
+                        {
+                            memcpy( out, payload, LOAD_PAYLOAD_BYTES );
+                            if ( rocketnet_server_finish_message( server, sv_slot, LOAD_PAYLOAD_BYTES ) != 0 )
+                            {
+                                sv_st->sent_count = next_seq;
+                            }
+                        }
+                    }
+                }
+
+                rocketnet_client_send_packets( clients[i] );
+
+                const enum rocketnet_client_state_t st = rocketnet_client_state( clients[i] );
+                if ( client_ever_connected[i] && st != ROCKETNET_CLIENT_STATE_CONNECTED )
+                {
+                    const int sv_slot = client_slot[i];
+                    const enum rocketnet_disconnect_reason_t sv_reason = rocketnet_server_disconnect_reason( server, (uint64_t) sv_slot );
+                    if ( unexpected_disconnects < 8 )
+                    {
+                        fprintf( stderr, "load: client %d (slot %d) left CONNECTED at t=%.3f: state=%d %s client_reason=%s server_reason=%s\n",
+                                 i, sv_slot, rocketnet_time() - traffic_start, (int) st, rocketnet_client_state_name( st ),
+                                 rocketnet_disconnect_reason_name( rocketnet_client_disconnect_reason( clients[i] ) ),
+                                 rocketnet_disconnect_reason_name( sv_reason ) );
+                        fprintf( stderr, "load: client %d last updated %.3f s ago, longest update gap %.3f s; longest server update %.3f s at t=%.3f\n",
+                                 i, rocketnet_time() - client_last_update[i], client_max_update_gap[i], max_server_update_s, max_server_update_at );
+                    }
+                    unexpected_disconnects++;
+                    client_ever_connected[i] = 0;
+                }
             }
 
             if ( k + 1 == slice )
             {
                 const double t0 = rocketnet_time();
-                rocketnet_message_server_update( server, t0 );
+                rocketnet_server_update( server, t0 );
                 const double t1 = rocketnet_time();
                 if ( update_count < update_cap )
                     update_us[update_count++] = (uint64_t) ( ( t1 - t0 ) * 1e6 );
@@ -888,11 +901,13 @@ int main( int argc, char ** argv )
 
                 for ( int s = 0; s < num_clients; s++ )
                 {
+                    if ( !rocketnet_server_client_connected( server, (uint64_t) s ) )
+                        continue;
                     for ( int ch = 0; ch < LOAD_NUM_COMBOS; ch++ )
                     {
                         const uint8_t * sdata = NULL;
                         int sbytes = 0;
-                        while ( rocketnet_message_server_receive( server, s, ch, &sdata, &sbytes ) )
+                        while ( rocketnet_server_receive_message( server, (uint64_t) s, ch, &sdata, &sbytes ) )
                         {
                             c2s_received_total++;
                             uint32_t msg_client = 0, msg_combo = 0, msg_seq = 0;
@@ -947,11 +962,11 @@ int main( int argc, char ** argv )
                                     cst->recv_count++;
                                 }
                             }
-                            rocketnet_message_server_release( server, s, sdata );
+                            rocketnet_server_release_message( server, (uint64_t) s, sdata );
                         }
                     }
                 }
-                rocketnet_message_server_send_packets( server );
+                rocketnet_server_send_packets( server );
             }
         }
 
@@ -960,11 +975,15 @@ int main( int argc, char ** argv )
             sample_resources( &fds_peak, &threads_peak );
             next_resource_sample = now + 0.25;
         }
-        rocketnet_sleep( 0.001 );
+
+        next_slice_time += 0.010;
+        const double left = next_slice_time - rocketnet_time();
+        if ( left > 0.0 )
+            rocketnet_sleep( left );
     }
 
     /* Final verification of all 5 criteria */
-    if ( rocketnet_server_transport_num_connected_clients( server_transport ) != num_clients )
+    if ( rocketnet_server_num_connected_clients( server ) != num_clients )
         unexpected_disconnects++;
 
     for ( int i = 0; i < num_clients; i++ )
@@ -980,44 +999,24 @@ int main( int argc, char ** argv )
         }
         const struct load_stream_state_t * sv_st = &s2c_streams[i];
         if ( sv_st->recv_count != sv_st->sent_count || sv_st->max_seq_seen != sv_st->sent_count )
+        {
             reliable_errors++;
+        }
     }
 
     uint64_t client_counted_drops = 0;
     for ( int i = 0; i < num_clients; i++ )
     {
-        const struct rocketnet_counters_t * cc = rocketnet_message_client_counters( clients[i] );
-        if ( cc )
+        if ( clients[i] )
         {
-            client_counted_drops += rocketnet_counter_value( cc, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET );
-            client_counted_drops += rocketnet_counter_value( cc, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
+            client_counted_drops += rocketnet_client_counter( clients[i], ROCKETNET_CLIENT_COUNTER_BUDGET_DROPS );
+            client_counted_drops += rocketnet_client_counter( clients[i], ROCKETNET_CLIENT_COUNTER_NOT_CONNECTED_DROPS );
         }
     }
 
     uint64_t server_counted_drops = 0;
-    const struct rocketnet_counters_t * sc = rocketnet_message_server_counters( server );
-    if ( sc )
-    {
-        server_counted_drops += rocketnet_counter_value( sc, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL );
-        server_counted_drops += rocketnet_counter_value( sc, ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE );
-        server_counted_drops += rocketnet_counter_value( sc, ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED );
-        server_counted_drops += rocketnet_counter_value( sc, ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL );
-    }
-
-    const struct rocketnet_counters_t * stc = rocketnet_server_transport_counters( server_transport );
-    if ( stc )
-    {
-        if ( rocketnet_counter_value( stc, ROCKETNET_COUNTER_CLIENT_DISCONNECTED ) > 0 ||
-             rocketnet_counter_value( stc, ROCKETNET_COUNTER_SERVER_DISCONNECTED_CLIENT ) > 0 ||
-             rocketnet_counter_value( stc, ROCKETNET_COUNTER_CLIENT_TIMED_OUT ) > 0 )
-        {
-            unexpected_disconnects++;
-            for ( int k = 0; k < ROCKETNET_NUM_COUNTERS; k++ )
-                if ( rocketnet_counter_value( stc, k ) )
-                    fprintf( stderr, "load: server counter at end %s=%llu\n", rocketnet_counter_name( k ),
-                             (unsigned long long) rocketnet_counter_value( stc, k ) );
-        }
-    }
+    server_counted_drops += rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_BUDGET_DROPS );
+    server_counted_drops += rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_NOT_CONNECTED_DROPS );
 
     const uint64_t total_counted_drops = client_counted_drops + server_counted_drops;
     const int crit1_connect_within_10s = ( all_connected && connect_elapsed <= LOAD_CONNECT_DEADLINE_S ) ? 1 : 0;
@@ -1026,38 +1025,28 @@ int main( int argc, char ** argv )
     const int crit4_unreliable_integrity = ( unreliable_errors == 0 ) ? 1 : 0;
     const int crit5_counters_agree = ( c2s_sent_total == c2s_received_total + total_counted_drops ) ? 1 : 0;
 
-    /* counters_agree failed: name where the uncounted messages went. Every
-       nonzero counter of the server transport, the message server, and the
-       sums over the clients' transports and message clients, then the sent
-       and received counts per combo. */
     if ( !crit5_counters_agree )
     {
-        static uint64_t client_transport_sum[ROCKETNET_NUM_COUNTERS];
-        static uint64_t client_message_sum[ROCKETNET_NUM_COUNTERS];
-        memset( client_transport_sum, 0, sizeof( client_transport_sum ) );
-        memset( client_message_sum, 0, sizeof( client_message_sum ) );
+        static uint64_t client_counter_sum[ROCKETNET_CLIENT_COUNTER_COUNT];
+        memset( client_counter_sum, 0, sizeof( client_counter_sum ) );
         for ( int i = 0; i < num_clients; i++ )
         {
-            const struct rocketnet_counters_t * ctc = rocketnet_client_transport_counters( rocketnet_message_client_transport( clients[i] ) );
-            const struct rocketnet_counters_t * cmc = rocketnet_message_client_counters( clients[i] );
-            for ( int k = 0; k < ROCKETNET_NUM_COUNTERS; k++ )
+            if ( clients[i] )
             {
-                if ( ctc )
-                    client_transport_sum[k] += rocketnet_counter_value( ctc, k );
-                if ( cmc )
-                    client_message_sum[k] += rocketnet_counter_value( cmc, k );
+                for ( int k = 0; k < ROCKETNET_CLIENT_COUNTER_COUNT; k++ )
+                    client_counter_sum[k] += rocketnet_client_counter( clients[i], (enum rocketnet_client_counter_t) k );
             }
         }
-        for ( int k = 0; k < ROCKETNET_NUM_COUNTERS; k++ )
+        for ( int k = 0; k < ROCKETNET_SERVER_COUNTER_COUNT; k++ )
         {
-            if ( stc && rocketnet_counter_value( stc, k ) )
-                fprintf( stderr, "load: counters_agree server transport %s=%llu\n", rocketnet_counter_name( k ), (unsigned long long) rocketnet_counter_value( stc, k ) );
-            if ( sc && rocketnet_counter_value( sc, k ) )
-                fprintf( stderr, "load: counters_agree message server %s=%llu\n", rocketnet_counter_name( k ), (unsigned long long) rocketnet_counter_value( sc, k ) );
-            if ( client_transport_sum[k] )
-                fprintf( stderr, "load: counters_agree client transports %s=%llu\n", rocketnet_counter_name( k ), (unsigned long long) client_transport_sum[k] );
-            if ( client_message_sum[k] )
-                fprintf( stderr, "load: counters_agree message clients %s=%llu\n", rocketnet_counter_name( k ), (unsigned long long) client_message_sum[k] );
+            uint64_t v = rocketnet_server_counter( server, (enum rocketnet_server_counter_t) k );
+            if ( v )
+                fprintf( stderr, "load: counters_agree server %s=%llu\n", server_counter_names[k], (unsigned long long) v );
+        }
+        for ( int k = 0; k < ROCKETNET_CLIENT_COUNTER_COUNT; k++ )
+        {
+            if ( client_counter_sum[k] )
+                fprintf( stderr, "load: counters_agree client sum %s=%llu\n", client_counter_names[k], (unsigned long long) client_counter_sum[k] );
         }
         for ( uint32_t combo = 0; combo < LOAD_NUM_COMBOS; combo++ )
         {
@@ -1068,7 +1057,8 @@ int main( int argc, char ** argv )
                 combo_sent += c2s_streams[(size_t) i * LOAD_NUM_COMBOS + combo].sent_count;
                 combo_received += c2s_streams[(size_t) i * LOAD_NUM_COMBOS + combo].recv_count;
             }
-            fprintf( stderr, "load: counters_agree combo=%u sent=%llu received=%llu\n", combo, (unsigned long long) combo_sent, (unsigned long long) combo_received );
+            if ( combo_sent || combo_received )
+                fprintf( stderr, "load: counters_agree combo=%u sent=%llu received=%llu\n", combo, (unsigned long long) combo_sent, (unsigned long long) combo_received );
         }
     }
 
@@ -1122,8 +1112,8 @@ int main( int argc, char ** argv )
     char server_driver[32];
     char client_driver[32];
     {
-        const char * sd = rocketnet_server_transport_driver( server_transport );
-        const char * cd = clients[0] ? rocketnet_client_transport_driver( rocketnet_message_client_transport( clients[0] ) ) : NULL;
+        const char * sd = rocketnet_server_transport_name( server );
+        const char * cd = clients[0] ? rocketnet_client_transport_name( clients[0] ) : NULL;
         snprintf( server_driver, sizeof( server_driver ), "%s", sd ? sd : "none" );
         snprintf( client_driver, sizeof( client_driver ), "%s", cd ? cd : "none" );
     }
@@ -1131,11 +1121,12 @@ int main( int argc, char ** argv )
     for ( int i = 0; i < num_clients; i++ )
     {
         if ( clients[i] )
-            rocketnet_message_client_destroy( clients[i] );
+            rocketnet_client_destroy( clients[i] );
     }
-    rocketnet_message_server_destroy( server );
+    rocketnet_server_destroy( server );
     free( clients );
     free( client_ever_connected );
+    free( client_slot );
     free( client_connect_seconds );
     free( client_next_combo );
     free( c2s_streams );
