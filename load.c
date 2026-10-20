@@ -611,11 +611,22 @@ int main( int argc, char ** argv )
                 {
                     fprintf( stderr, "load: client %d not connected at the deadline: state=%d %s\n",
                              i, st, rocketnet_client_transport_state_name( st ) );
+                    const struct rocketnet_counters_t * ctc =
+                        rocketnet_client_transport_counters( rocketnet_message_client_transport( clients[i] ) );
+                    for ( int k = 0; ctc && k < ROCKETNET_NUM_COUNTERS; k++ )
+                        if ( rocketnet_counter_value( ctc, k ) )
+                            fprintf( stderr, "load: client %d counter %s=%llu\n", i, rocketnet_counter_name( k ),
+                                     (unsigned long long) rocketnet_counter_value( ctc, k ) );
                     named++;
                 }
             }
             fprintf( stderr, "load: server reports %d of %d clients connected at the deadline\n",
                      rocketnet_server_transport_num_connected_clients( server_transport ), num_clients );
+            const struct rocketnet_counters_t * dtc = rocketnet_server_transport_counters( server_transport );
+            for ( int k = 0; dtc && k < ROCKETNET_NUM_COUNTERS; k++ )
+                if ( rocketnet_counter_value( dtc, k ) )
+                    fprintf( stderr, "load: server counter %s=%llu\n", rocketnet_counter_name( k ),
+                             (unsigned long long) rocketnet_counter_value( dtc, k ) );
             break;
         }
         const double sample_now = rocketnet_time();
