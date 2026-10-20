@@ -558,6 +558,25 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
 #define ROCKETNET_MESSAGE_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_message_config_t, server_send_kbps ) + sizeof( int ), sizeof( int ) )
 #define ROCKETNET_MESSAGE_CONFIG_KNOWN_BYTES ROCKETNET_MESSAGE_CONFIG_BYTES_1, ROCKETNET_MESSAGE_CONFIG_BYTES_2
 
+// The platform's network lookups, for unit tests only. On Linux,
+// rocketnet_platform_init (sdk/rocketnet_platform.cpp:391) classifies the
+// connection with get_connection_type (sdk/rocketnet_platform.cpp:1763):
+// getifaddrs (:1774), an AF_INET ioctl socket (:1782) and a netlink route
+// dump (:1851). rocketnet_platform_client_ipv6_available
+// (sdk/rocketnet_platform.cpp:4345) opens and closes an AF_INET6 socket
+// (:4361). With a table set, each reads its entry instead and opens nothing
+// (:391, :4352); NULL, the default, runs the real lookups. The unit suite sets
+// a fake before rocketnet_init (test.cpp:106) so ./bin/test opens no socket.
+// Not exported.
+
+struct rocketnet_platform_network_lookups_t
+{
+    int ( *connection_type )( void );
+    bool ( *ipv6_available )( void );
+};
+
+void rocketnet_platform_set_network_lookups_for_testing( const struct rocketnet_platform_network_lookups_t * lookups );
+
 // The public config structs in rocketnet.h are written out field by field;
 // the tables above are the declarations the parse, the validation, the env
 // surface and the ABI descriptors derive from. sdk/rocketnet_config.cpp

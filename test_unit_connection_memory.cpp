@@ -604,6 +604,90 @@ static void reassembly_geometry_refuses_bad_arguments_and_budget()
     cm_restore();
 }
 
+// RNConnectionMemory Use requires ~exhausted for every way a send takes room,
+// the large-message span path too (rn_region_send_alloc_span). A region
+// exhausted by its descriptor table, with one descriptor then returned, still
+// refuses a span: nothing is taken, and each refusal counts
+// MESSAGE_MEMORY_EXHAUSTED exactly as rn_region_send_alloc does.
+static void exhausted_region_refuses_spans()
+{
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.send_queue_messages = 16;
+    check( config.max_message_bytes >= (int) RN_SPAN_MIN_BYTES );
+
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+
+    uint32_t descriptors[16];
+    for ( int i = 0; i < 16; i++ )
+    {
+        descriptors[i] = rn_region_send_alloc( region, 10 );
+        check( descriptors[i] != RN_DESCRIPTOR_NONE );
+    }
+    check( rn_region_send_alloc( region, 10 ) == RN_DESCRIPTOR_NONE );
+    check( rn_region_exhausted( region ) );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 1 );
+
+    // room returns (an ack), and the span ring is empty: a span would fit
+    rn_region_send_free( region, descriptors[3] );
+    check( region->descriptors_free == 1 );
+    check( region->span_first == RN_DESCRIPTOR_NONE );
+
+    check( rn_region_send_alloc_span( region, (int) RN_SPAN_MIN_BYTES ) == RN_DESCRIPTOR_NONE );
+    check( region->descriptors_free == 1 );                         // nothing taken
+    check( region->span_first == RN_DESCRIPTOR_NONE );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 2 );
+
+    check( rn_region_send_alloc_span( region, (int) RN_SPAN_MIN_BYTES ) == RN_DESCRIPTOR_NONE );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 3 );
+    check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
+
+    rn_arena_destroy( arena );
+}
+
+// RNConnectionMemory Reuse: the reset clears the sticky state, and the span
+// path takes room again.
+static void span_granted_after_reset()
+{
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.send_queue_messages = 16;
+
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+
+    for ( int i = 0; i < 16; i++ )
+        check( rn_region_send_alloc( region, 10 ) != RN_DESCRIPTOR_NONE );
+    check( rn_region_send_alloc( region, 10 ) == RN_DESCRIPTOR_NONE );
+    check( rn_region_exhausted( region ) );
+    check( rn_region_send_alloc_span( region, (int) RN_SPAN_MIN_BYTES ) == RN_DESCRIPTOR_NONE );
+
+    rn_region_reset( region );
+    check( !rn_region_exhausted( region ) );
+
+    const uint64_t before = counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED];
+    const uint32_t d = rn_region_send_alloc_span( region, (int) RN_SPAN_MIN_BYTES );
+    check( d != RN_DESCRIPTOR_NONE );
+    check( region->descriptors_free == 15 );
+    check( region->span_first == d );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == before );
+
+    rn_region_send_free( region, d );
+    check( region->descriptors_free == 16 );
+    check( region->span_first == RN_DESCRIPTOR_NONE );
+
+    rn_arena_destroy( arena );
+}
+
 REGISTER_UNIT_TEST( memory_isolation_between_slots );
 REGISTER_UNIT_TEST( reassembly_geometry_refuses_bad_arguments_and_budget );
 REGISTER_UNIT_TEST( exhaustion_is_a_kick_with_its_reason );
@@ -612,3 +696,5 @@ REGISTER_UNIT_TEST( user_block_is_used_and_nothing_else );
 REGISTER_UNIT_TEST( connection_memory_no_allocation_after_create );
 REGISTER_UNIT_TEST( exhausted_region_refuses_sends_until_reset );
 REGISTER_UNIT_TEST( receive_without_room_exhausts_the_region );
+REGISTER_UNIT_TEST( exhausted_region_refuses_spans );
+REGISTER_UNIT_TEST( span_granted_after_reset );

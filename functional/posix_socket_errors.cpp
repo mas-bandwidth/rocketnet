@@ -310,6 +310,28 @@ static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char 
     else
         unsetenv( "ROCKETNET_PUMP" );
 
+    // each cell names the drivers it tests, so a transport pin in the
+    // environment (ROCKETNET_SERVER_TRANSPORT, ROCKETNET_CLIENT_TRANSPORT)
+    // is lifted for the two creates below and restored after them, as
+    // posix_cell_begin does (functional/posix_lifecycle_stress.cpp:492).
+    // under a pin the ladder grants the pinned driver, and a gso or io_uring
+    // cell casts pair->driver to its own driver type
+    // (posix_native_counter, functional/posix_socket_errors.cpp:101;
+    // posix_linux_uring_fail_sends, functional/posix_socket_errors.cpp:1309)
+
+    char saved_server_transport[64] = "";
+    char saved_client_transport[64] = "";
+    const char * pinned_server = getenv( "ROCKETNET_SERVER_TRANSPORT" );
+    const char * pinned_client = getenv( "ROCKETNET_CLIENT_TRANSPORT" );
+    const bool server_pinned = pinned_server != NULL;
+    const bool client_pinned = pinned_client != NULL;
+    if ( server_pinned )
+        snprintf( saved_server_transport, sizeof(saved_server_transport), "%s", pinned_server );
+    if ( client_pinned )
+        snprintf( saved_client_transport, sizeof(saved_client_transport), "%s", pinned_client );
+    unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
+    unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
+
     rocketnet_platform_socket_t * before[POSIX_MAX_SOCKETS];
 
     struct rocketnet_server_transport_config_t server_config;
@@ -320,6 +342,8 @@ static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char 
     int num_before = posix_snapshot( before );
     pair->server = rocketnet_server_transport_create( NULL, ipv6 ? "[::1]" : "127.0.0.1", &server_config );
     posix_check( pair->server != NULL );
+    if ( strcmp( server_driver, "auto" ) != 0 )
+        posix_check( strcmp( rocketnet_server_transport_driver( pair->server ), server_driver ) == 0 );
     pair->native = posix_native_kind( server_driver );
     if ( pair->native != POSIX_NATIVE_NONE )
         pair->driver = rocketnet_server_transport_driver_for_testing( pair->server );
@@ -347,6 +371,11 @@ static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char 
     pair->client = rocketnet_client_transport_create( NULL, token, &client_config, rocketnet_platform_time() );
     posix_check( pair->client != NULL );
     pair->client_socket = posix_new_socket( before, num_before );
+
+    if ( server_pinned )
+        setenv( "ROCKETNET_SERVER_TRANSPORT", saved_server_transport, 1 );
+    if ( client_pinned )
+        setenv( "ROCKETNET_CLIENT_TRANSPORT", saved_client_transport, 1 );
 
     const double start = rocketnet_platform_time();
     const double deadline = start + 10.0;
@@ -736,7 +765,7 @@ void rocketnet_test_posix_client_receive_weather()
 static void posix_send_seam_socket( int ipv6, const char * pump )
 {
     rocketnet_address_t bind_address;
-    rocketnet_address_parse( &bind_address, ipv6 ? "::" : "0.0.0.0" );
+    rocketnet_address_parse( &bind_address, ipv6 ? "::1" : "127.0.0.1" );
     rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_with_pump( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0,
                                                                                       ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE, pump );
     posix_check( socket != NULL );
@@ -986,7 +1015,7 @@ static void posix_burst_drain_thread( void * context )
 void rocketnet_test_posix_send_burst()
 {
     rocketnet_address_t server_bind;
-    rocketnet_address_parse( &server_bind, "0.0.0.0" );
+    rocketnet_address_parse( &server_bind, "127.0.0.1" );
     rocketnet_platform_socket_t * server = rocketnet_platform_socket_create( NULL, &server_bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0,
                                                                              ROCKETNET_SOCKET_SEND_BUFFER_SIZE, 8 * 1024 * 1024 );
     posix_check( server != NULL );
@@ -1004,7 +1033,7 @@ void rocketnet_test_posix_send_burst()
     for ( int candidate = POSIX_BURST_BYTES; candidate <= 64 * 1024 && send_buffer == 0; candidate += 64 )
     {
         rocketnet_address_t probe_bind;
-        rocketnet_address_parse( &probe_bind, "0.0.0.0" );
+        rocketnet_address_parse( &probe_bind, "127.0.0.1" );
         rocketnet_platform_socket_t * probe = rocketnet_platform_socket_create( NULL, &probe_bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, candidate, 4096 );
         posix_check( probe != NULL );
         memset( packet[0], 0xff, POSIX_BURST_BYTES );
@@ -1042,7 +1071,7 @@ void rocketnet_test_posix_send_burst()
     for ( uint32_t sender_index = 0; sender_index < POSIX_BURST_SENDERS; sender_index++ )
     {
         rocketnet_address_t sender_bind;
-        rocketnet_address_parse( &sender_bind, "0.0.0.0" );
+        rocketnet_address_parse( &sender_bind, "127.0.0.1" );
         rocketnet_platform_socket_t * sender = rocketnet_platform_socket_create( NULL, &sender_bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, send_buffer, 4096 );
         posix_check( sender != NULL );
         pump = rocketnet_platform_socket_pump( sender );
