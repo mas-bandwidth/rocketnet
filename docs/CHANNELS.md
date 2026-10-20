@@ -1353,14 +1353,25 @@ header; the internal transport and message layers are in
   packets one frame at a time from the transport's `start_packet`, ordered
   progress and retransmits first, then unreliable, and calls the transport's
   `send_packets`.
-- **Admission.** The transport's batches carry a client index but no
-  connection tag. An entry is admitted only for a slot bound before this
-  update's transport update and still bound to the same connection after it;
-  a slot bound or dropped by this update discards its entries, counted as
-  `MESSAGE_STALE_CONNECTION_ENTRY`. The connection id is the transport's
-  `client_id` for the slot, so a reconnect of the same client id into the same
-  slot inside one transport update is not told apart; a per-entry connection
-  tag from the transport (P9b) closes it.
+- **Admission.** Observe reads each slot's connection from
+  `rocketnet_server_transport_client_connection_id` (P9a;
+  `rn_server_link_connection`, `sdk/rocketnet_message_server.cpp:949`), which
+  differs for every connection a slot holds, so a reconnect of the same client
+  id into the same slot inside one transport update resets the slot and
+  announces its CONFIG (`sdk/rocketnet_message_server.cpp:500`). Each entry of
+  the payload and acked batches carries the connection it was received for
+  (P9b): the server's link reads
+  `rocketnet_server_transport_payload_connection_ids` and
+  `rocketnet_server_transport_acked_connection_ids`
+  (`sdk/rocketnet_message_server.cpp:956`, `:963`), and the client's link
+  tags every entry with 1, the id its object binds its one connection to at
+  create (`sdk/rocketnet_message_client.cpp:75`,
+  `sdk/rocketnet_message_server.cpp:301`). `rn_message_admit`
+  (`sdk/rocketnet_message_server.cpp:392`) hands the entry's id to
+  `rn_slots_admit`, which applies it only when that id is the slot's binding
+  (`sdk/rocketnet_slots.cpp:54`): an entry of another connection, or for a
+  free slot, is discarded and counted as `MESSAGE_STALE_CONNECTION_ENTRY`, and
+  a slot bound in this update keeps its own first entries.
 - **Exhaustion** (R5). A start the region has no room for, or a record the
   receive side cannot place, ends the connection with
   `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED`: the server disconnects
