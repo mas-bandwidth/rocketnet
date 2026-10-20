@@ -176,3 +176,78 @@ jobs:
 
       - name: External driver backend
         run: python tools/check_driver_extension.py build --config Release
+
+  # THE WINDOWS TOOLCHAIN MATRIX: clang-cl x64, built and tested, and an MSVC
+  # ARM64 cross build, build-checked only.
+  #
+  # Game engines on Windows also build with clang-cl, so the LLVM toolset
+  # builds the static and shared libraries, test.exe and functional.exe, runs
+  # both suites, and runs the DLL consumer, package and export checks against
+  # that build. Each build writes its binaries under its own build directory
+  # (CMAKE_RUNTIME_OUTPUT_DIRECTORY), so neither replaces the MSVC x64
+  # binaries in bin/. The ARM64 leg cross-builds the static and shared
+  # libraries with MSVC, checks that rocketnet.dll is an ARM64 image and checks
+  # its exports; nothing runs on ARM64 because no ARM64 runner exists.
+  #
+  # Measured on the fleet Windows runner, one job at a time: clang-cl configure
+  # 17s, clean build 144s, test.exe 8s, functional.exe 20-25s, consumer and
+  # export checks 6s, about 3.5 minutes; the ARM64 configure took 12s, and its
+  # library build is not yet timed because it does not yet compile.
+  # The runner needs the Visual Studio LLVM toolset (clang-cl) and the MSVC
+  # ARM64 build tools besides the MSVC x64 tools.
+
+  windows-toolchains:
+    name: windows / clang-cl x64 and MSVC ARM64 cross
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    timeout-minutes: 45
+    strategy:
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-windows-toolchains-${{ matrix.ref }}
+      cancel-in-progress: true
+    defaults:
+      run:
+        shell: bash
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Configure clang-cl x64
+        run: cmake -B build-clang -T ClangCL -A x64 "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/build-clang/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/build-clang/bin"
+
+      - name: Build clang-cl x64
+        run: cmake --build build-clang --config Release --parallel 4
+
+      - name: Unit suite (clang-cl)
+        run: ./build-clang/bin/Release/test.exe
+
+      - name: Functional suite (clang-cl)
+        timeout-minutes: 20
+        run: ./build-clang/bin/Release/functional.exe
+
+      - name: C and C++ consumers of the clang-cl libraries
+        run: python tools/check_dll_consumer.py --build build-clang
+
+      - name: Install and relocate the clang-cl SDK; run C/C++ static/shared consumers
+        run: python tools/check_package.py build-clang --config Release
+
+      - name: Production library boundary (clang-cl)
+        run: python tools/check_exports.py build-clang/bin/Release/rocketnet.dll build-clang/Release/rocketnet.lib
+
+      - name: Configure MSVC ARM64 cross build
+        run: cmake -B build-arm64 -A ARM64 "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/build-arm64/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/build-arm64/bin"
+
+      - name: Build the ARM64 static and shared libraries
+        run: cmake --build build-arm64 --config Release --parallel 4 --target rocketnet rocketnet_shared rocketnet_dev rocketnet_shared_dev
+
+      - name: rocketnet.dll is an ARM64 image with the production exports
+        run: |
+          set -o pipefail
+          vs=$("/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe" -latest -products '*' -property installationPath | tr -d '\r')
+          dumpbin=$(ls "$(cygpath "$vs")"/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe | tail -1)
+          "$dumpbin" //nologo //headers build-arm64/bin/Release/rocketnet.dll | tr -d '\r' | tee arm64-headers.txt | grep -i machine
+          grep -q 'AA64 machine (ARM64)' arm64-headers.txt
+          python tools/check_exports.py build-arm64/bin/Release/rocketnet.dll build-arm64/Release/rocketnet.lib
