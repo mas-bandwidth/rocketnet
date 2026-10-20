@@ -133,6 +133,7 @@ MCRNUringDriver.cfg	MCRNUringDriver.tla	pass	-	check	rnuringdriver	required	-
 MCRNUringDriverBrokenResetBeforeReap.cfg	MCRNUringDriver.tla	invariant	NoReuseWhileKernelOwned	check	rnuringdriver	required	-
 MCRNUringDriverBrokenOneBank.cfg	MCRNUringDriver.tla	invariant	ExposedStable	check	rnuringdriver	required	-
 MCRNUringDriverBrokenUnboundedReap.cfg	MCRNUringDriver.tla	invariant	ReapWithinBudget	check	rnuringdriver	required	-
+MCRNUringDriverBrokenNoRearmRetry.cfg	MCRNUringDriver.tla	temporal	ReceiveLiveness	check	rnuringdriver	required	-
 MCFragmentsAndAcks.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	bench	committed-instance-safety-over-budget
 MCFragmentsAndAcksLive.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	bench	committed-instance-liveness-over-budget
 MCFragmentsAndAcksLiveSmall.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	required	-
