@@ -683,7 +683,8 @@
     /* exhausted: an operation found no room, the region took its sticky */ \
     /* exhausted state, and the connection is disconnected with the reason */ \
     /* ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED (tla/RNConnectionMemory.tla, */ \
-    /* Exhaust). Counted once per exhausted connection, on the owner's */ \
+    /* Exhaust). Counted once at the transition to exhausted and again on */ \
+    /* each send refused while the region stays exhausted, on the owner's */ \
     /* counters, beside the refusal's own counter (MESSAGE_SEND_STORE_FULL or */ \
     /* MESSAGE_SEND_QUEUE_FULL). appended: indices are the contract. */ \
     /** @brief ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED: Counts the exhaustion of a connection's message memory region once, plus each send refused while the region stays exhausted; an exhausted connection is then disconnected. Unit: occurrences. Class: refusal; family: none. */ \
