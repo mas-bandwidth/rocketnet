@@ -355,6 +355,21 @@ static void rn_message_object_close_in_place( rn_message_object_t * object )
     rn_message_connection_cancel_pending( object, object->pending_connection );
 }
 
+// RNSlots ResetCancel: a queued-path start still pending on a connection its
+// update resets is cancelled before that reset, as kick cancels it, so the
+// recarved region holds none of it and later starts on every connection are
+// not refused by it. Counted in MESSAGE_SEND_REFUSED; its finish then returns
+// 0 (rn_message_object_finish: pending_connection is -1).
+
+static void rn_message_connection_cancel_at_reset( rn_message_object_t * object, int index )
+{
+    if ( object->pending_connection != index )
+        return;
+    rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
+    rocketnet_info( "message start pending on connection %d at its reset: the start is cancelled", index );
+    rn_message_connection_cancel_pending( object, index );
+}
+
 void rn_message_object_kick( struct rn_message_object_t * object, int index, int reason )
 {
     // RNSlots Kick, RNConnectionMemory Kick: the transport ends the connection
@@ -380,13 +395,16 @@ void rn_message_object_kick( struct rn_message_object_t * object, int index, int
 // ---------------------------------------------------------------
 
 // RNSlots Admit: an entry is applied only to the connection it was received
-// for. The transport tags no batch entry with its connection (P9b is a later
-// card), so the entry id is the slot's client id as the transport reports it.
-// A slot bound or dropped by this update cannot identify its entries: they
-// are presented with no tag (0, which no connection carries) and discarded
-// (CHANNELS 10.2, 11.5).
+// for. The link tags each entry with the transport's id of that connection
+// (payload_connection, acked_connection: P9b), and rn_slots_admit applies it
+// only when that id is the slot's binding from this update's Observe, so an
+// entry of a connection that ended inside the update is discarded and a slot
+// bound in this update keeps its own first entries. A link with no tag
+// function presents the slot's binding, or no tag (0, which no connection
+// carries) when Observe bound or dropped the slot in this update, which
+// discards it (CHANNELS 10.2, 11.5).
 
-static rn_message_connection_t * rn_message_admit( rn_message_object_t * object, const int * client_index, int k )
+static rn_message_connection_t * rn_message_admit( rn_message_object_t * object, const int * client_index, uint64_t (*entry_connection)( void * transport, int k ), int k )
 {
     const int index = client_index ? client_index[k] : 0;
     if ( index < 0 || index >= object->num_connections )
@@ -395,7 +413,8 @@ static rn_message_connection_t * rn_message_admit( rn_message_object_t * object,
         return NULL;
     }
     rn_message_connection_t * connection = &object->connections[index];
-    const uint64_t entry_connection_id = object->slots.changed[index] ? 0 : connection->connection_id;
+    const uint64_t entry_connection_id = entry_connection ? entry_connection( object->link.transport, k )
+                                                          : ( object->slots.changed[index] ? 0 : connection->connection_id );
     if ( rn_slots_admit( &object->slots, index, entry_connection_id ) != RN_SLOTS_APPLY )
     {
         rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY );
@@ -455,6 +474,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         // slots machine sees the slot free until Observe reads the transport
         if ( connection->state == RN_MESSAGE_CONNECTION_KICKED )
         {
+            rn_message_connection_cancel_at_reset( object, i );     // RNSlots ResetCancel (kick cancelled it already)
             if ( object->is_server )
                 rocketnet_server_connection_reset( object, i );
             else
@@ -479,6 +499,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         // the server's disconnect) is recorded before the reset, which keeps it
         if ( object->link.end_reason )
             object->connections[0].disconnect_reason = object->link.end_reason( object->link.transport );
+        rn_message_connection_cancel_at_reset( object, 0 );         // RNSlots ResetCancel
         rocketnet_client_connection_reset( object );
         rn_slots_observe( &object->slots, 0, 0 );
     }
@@ -496,6 +517,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
             if ( action == RN_SLOTS_NONE )
                 continue;
 
+            rn_message_connection_cancel_at_reset( object, i );     // RNSlots ResetCancel
             rocketnet_server_connection_reset( object, i );
 
             if ( action == RN_SLOTS_RESET )
@@ -516,7 +538,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         const int count = object->link.acked( object->link.transport, &client_index, &packet_ids );
         for ( int k = 0; k < count; k++ )
         {
-            rn_message_connection_t * connection = rn_message_admit( object, client_index, k );
+            rn_message_connection_t * connection = rn_message_admit( object, client_index, object->link.acked_connection, k );
             if ( connection )
                 rn_endpoint_on_acked( connection, packet_ids[k], time );   // RNEndpoint OnAcked
         }
@@ -539,7 +561,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         const int count = object->link.payloads( object->link.transport, &client_index, &payload_data, &payload_bytes );
         for ( int k = 0; k < count; k++ )
         {
-            rn_message_connection_t * connection = rn_message_admit( object, client_index, k );
+            rn_message_connection_t * connection = rn_message_admit( object, client_index, object->link.payload_connection, k );
             if ( connection )
                 rn_endpoint_on_payload( connection, payload_data[k], payload_bytes[k], NULL, 0, NULL, time );    // RNEndpoint OnPayload
         }
@@ -597,6 +619,9 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
         rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED );
         return NULL;
     }
+    // one start pending per object: a second is refused until the first is
+    // finished or aborted, or a reset of its connection cancels it
+    // (rn_message_connection_cancel_at_reset, RNSlots ResetCancel)
     if ( object->pending_connection >= 0 )
     {
         rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
@@ -695,7 +720,9 @@ int rn_message_server_send_fits( struct rocketnet_message_server_t * server, int
 uint32_t rn_message_object_finish( struct rn_message_object_t * object, int index, int bytes )
 {
     // RNChannel Enqueue's second half: the message joins its channel's queue
-    // in FIFO order and takes its receipt serial (7.4: nonzero for every send)
+    // in FIFO order and takes its receipt serial (7.4: nonzero for every send).
+    // 0 when no start is pending on this connection, a start a reset of the
+    // connection cancelled included (rn_message_connection_cancel_at_reset)
     if ( index < 0 || index >= object->num_connections || object->pending_connection != index )
         return 0;
 
@@ -938,13 +965,28 @@ static void rn_server_link_send_packets( void * transport )
     rocketnet_server_transport_send_packets( (rocketnet_server_transport_t *) transport );
 }
 
+// P9a: the transport's id of the connection in the slot, 0 while it is free;
+// a reconnect into the slot has a new id even with the same client id and
+// inside one update, so Observe resets the slot for it
 static uint64_t rn_server_link_connection( void * transport, int client_index )
 {
-    rocketnet_server_transport_t * server = (rocketnet_server_transport_t *) transport;
-    if ( !rocketnet_server_transport_is_client_connected( server, client_index ) )
-        return 0;
-    const uint64_t id = rocketnet_server_transport_client_id( server, client_index );
-    return id != 0 ? id : 1;
+    return rocketnet_server_transport_client_connection_id( (rocketnet_server_transport_t *) transport, client_index );
+}
+
+// P9b: the connection each batch entry was received for, parallel to the
+// batch's client index array
+static uint64_t rn_server_link_payload_connection( void * transport, int k )
+{
+    const uint64_t * connection_id = NULL;
+    const int count = rocketnet_server_transport_payload_connection_ids( (rocketnet_server_transport_t *) transport, &connection_id );
+    return connection_id && k >= 0 && k < count ? connection_id[k] : 0;
+}
+
+static uint64_t rn_server_link_acked_connection( void * transport, int k )
+{
+    const uint64_t * connection_id = NULL;
+    const int count = rocketnet_server_transport_acked_connection_ids( (rocketnet_server_transport_t *) transport, &connection_id );
+    return connection_id && k >= 0 && k < count ? connection_id[k] : 0;
 }
 
 static void rn_server_link_disconnect( void * transport, int client_index )
@@ -969,6 +1011,8 @@ void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_s
     link->update = rn_server_link_update;
     link->payloads = rn_server_link_payloads;
     link->acked = rn_server_link_acked;
+    link->payload_connection = rn_server_link_payload_connection;
+    link->acked_connection = rn_server_link_acked_connection;
     link->max_payload_bytes = rn_server_link_max_payload_bytes;
     link->start_packet = rn_server_link_start_packet;
     link->finish_packet = rn_server_link_finish_packet;
