@@ -574,10 +574,23 @@ if(ROCKETNET_BUILD_TESTS)
         if(ROCKETNET_CLANG)
             execute_process(COMMAND "${CMAKE_C_COMPILER}" -dumpmachine
                 OUTPUT_VARIABLE ROCKETNET_MULTIARCH OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+            # -dumpmachine names the compiler's target triple, which for clang is
+            # x86_64-pc-linux-gnu while the distribution's asm headers sit under
+            # the multiarch directory (x86_64-linux-gnu). Use the triple's
+            # directory when it exists, otherwise the implicit include directory
+            # that actually carries asm/types.h.
+            set(ROCKETNET_MULTIARCH_INCLUDE "/usr/include/${ROCKETNET_MULTIARCH}")
+            if(NOT EXISTS "${ROCKETNET_MULTIARCH_INCLUDE}")
+                find_path(ROCKETNET_MULTIARCH_ASM_DIR asm/types.h
+                    PATHS ${CMAKE_C_IMPLICIT_INCLUDE_DIRECTORIES} NO_DEFAULT_PATH)
+                if(ROCKETNET_MULTIARCH_ASM_DIR)
+                    set(ROCKETNET_MULTIARCH_INCLUDE "${ROCKETNET_MULTIARCH_ASM_DIR}")
+                endif()
+            endif()
             set(ROCKETNET_XDP_FILTER_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/server_xdp_filter_test.o")
             add_custom_command(OUTPUT "${ROCKETNET_XDP_FILTER_OBJECT}"
                 COMMAND "${ROCKETNET_CLANG}" -D__linux__ -D__BPF__ -ffreestanding -O2 -g
-                    "-I/usr/include/${ROCKETNET_MULTIARCH}" "-I${CMAKE_CURRENT_SOURCE_DIR}/sdk"
+                    "-I${ROCKETNET_MULTIARCH_INCLUDE}" "-I${CMAKE_CURRENT_SOURCE_DIR}/sdk"
                     -target bpf -c "${CMAKE_CURRENT_SOURCE_DIR}/server_xdp/server_xdp.c"
                     -o "${ROCKETNET_XDP_FILTER_OBJECT}"
                 DEPENDS ${ROCKETNET_XDP_SOURCES}
