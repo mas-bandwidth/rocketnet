@@ -252,6 +252,13 @@ jobs:
         if: contains(matrix.leg, 'b')
         run: ./bin/test
 
+      # The unit suite opens no socket: ./bin/test runs under strace and the
+      # check fails, naming the first opener, on any socket() call
+      # (tools/check_unit_no_sockets.sh).
+      - name: Unit suite opens no socket
+        if: runner.os == 'Linux' && contains(matrix.leg, 'b')
+        run: bash tools/check_unit_no_sockets.sh ./bin/test
+
       - name: Run unit tests with the driver pin preserved
         if: contains(matrix.leg, 'b')
         run: ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/test
@@ -410,6 +417,15 @@ jobs:
         if: runner.os == 'Linux'
         run: python3 tools/check_transport_matrix.py
 
+      # tools/check_platform_policy.py exits 1 when a docs/PLATFORMS.md row
+      # does not match its named workflow (check_row, :139) or when functional/
+      # holds a wildcard address literal outside WILDCARD_ALLOWED (:30,
+      # check_wildcard_binds :185). It reads files only, so one leg per Linux
+      # row runs it.
+      - name: Check the platform policy and functional/ wildcard binds
+        if: runner.os == 'Linux' && contains(matrix.leg, 'a')
+        run: python3 tools/check_platform_policy.py
+
       - name: Check export source gate
         if: runner.os == 'Linux'
         run: python3 tools/test_check_exports.py
@@ -492,6 +508,47 @@ jobs:
       - name: Provisioning script selftest
         if: runner.os == 'Linux' && (contains(matrix.leg, 'b'))
         run: bash scripts/rocketnet-provision selftest
+
+  # sdk/rocketnet_server_socket_linux.cpp:1807 initializes UMEM ring sizes.
+  # libxdp 1.4 rejects zeroed ring sizes; 1.6 accepts them, so pin this XDP cell.
+  xdp-libxdp-1-4:
+    name: XDP / libxdp 1.4 / Debug
+    runs-on: [self-hosted, Linux, X64, fleet, libxdp-1-4]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the XDP functional cell (Debug)
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(pkg-config --modversion libxdp)
+          echo "libxdp $version"
+          case "$version" in 1.4.*) ;; *) echo "libxdp-1-4 requires libxdp 1.4.x"; exit 1 ;; esac
+          cmake -B build -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build --target functional --parallel 2
+      - name: XDP max size on IPv4 and IPv6 in the runner kernel guest
+        shell: bash
+        run: |
+          set -euo pipefail
+          vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
+          command -v vng
+          test -r "$vm_kernel"
+          test -w /dev/kvm
+          cat > build/xdp-libxdp-1-4.sh <<'GUEST'
+          uname -r
+          failed=0
+          for case in xdp_max_size_both_ways_ipv4 xdp_max_size_both_ways_ipv6; do
+            log="build/libxdp-1-4.$case.log"
+            sudo ./bin/functional --run "$case" > "$log" 2>&1
+            rc=$?
+            cat "$log"
+            echo "CASE $case EXIT $rc"
+            if [ "$rc" != 0 ] || ! grep -qx "$case" "$log" || grep -q '\[SKIPPED' "$log"; then failed=1; fi
+          done
+          exit "$failed"
+          GUEST
+          timeout 120 vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
+            sh build/xdp-libxdp-1-4.sh
 
   # The windows leg (#81's baseline doctrine): the portable driver built with
   # MSVC — the first machine ever to compile the windows arm — and the full

@@ -14,7 +14,7 @@
 // events, and admit says whether a batch entry belongs to the slot's current
 // connection. No time, no allocation and no transport call: the caller feeds
 // observe from the transport's slot accessor and admit from the entry's
-// connection tag (or, until the transport tags entries, from no tag at all).
+// connection tag; every batch entry carries its connection's id.
 //
 // Header only state, so the object embeds it in its one allocation.
 

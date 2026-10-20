@@ -13,9 +13,12 @@
 (* Actions:                                                                *)
 (*   Connect(s, c)  a client takes a Free slot                             *)
 (*   Use(s)         a send, receive or hold takes room in the region       *)
-(*   Release(s)     an acked send or a released delivery gives room back   *)
-(*   Exhaust(s)     an operation finds no room: the region's sticky        *)
-(*                  exhausted state, reason MESSAGE_MEMORY_EXHAUSTED       *)
+(*   UseSpan(s, n)  a large send takes n records of room at once (a span)  *)
+(*   Release(s)     an acked send, an abort or a released delivery gives   *)
+(*                  room back; also while exhausted, since it takes none   *)
+(*   Exhaust(s)     an operation finds no room for what it asks: the       *)
+(*                  region's sticky exhausted state, reason                *)
+(*                  MESSAGE_MEMORY_EXHAUSTED                               *)
 (*   Kick(s)        the owner disconnects the exhausted connection with    *)
 (*                  that reason (the server kicks the slot; a client       *)
 (*                  disconnects itself)                                    *)
@@ -23,8 +26,8 @@
 (*   Reuse(s)       the slot is freed and its region reset                 *)
 (*                                                                         *)
 (* Reset = FALSE makes Reuse skip the reset; CarryOn = TRUE lets an        *)
-(* exhausted connection keep using and releasing.  Each must fail; those   *)
-(* are the reversed witnesses.                                             *)
+(* exhausted connection keep taking room (Use, UseSpan).  Each must fail;  *)
+(* those are the reversed witnesses.                                       *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -89,19 +92,33 @@ Use(s) ==
     /\ records' = [records EXCEPT ![s] = @ \cup {owner[s]}]
     /\ UNCHANGED <<state, owner, exhausted, reason>>
 
-\* rn_region_send_free (an ack) or a delivery released by the application
-Release(s) ==
+\* rn_region_send_alloc_span finding room: one large send takes n records
+\* (a descriptor and a span), under the same guard as Use
+UseSpan(s, n) ==
     /\ state[s] = "Connected"
     /\ ~exhausted[s] \/ CarryOn
+    /\ used[s] + n <= Capacity
+    /\ used' = [used EXCEPT ![s] = @ + n]
+    /\ records' = [records EXCEPT ![s] = @ \cup {owner[s]}]
+    /\ UNCHANGED <<state, owner, exhausted, reason>>
+
+\* rn_region_send_free (an ack or an abort) or a delivery released by the
+\* application. Not guarded by ~exhausted: an ack that arrives between
+\* Exhaust and Kick frees room (rn_endpoint_on_acked does not read the
+\* exhausted state), and that room is never taken again before Reuse,
+\* because Use and UseSpan refuse while exhausted.
+Release(s) ==
+    /\ state[s] = "Connected"
     /\ used[s] > 0
     /\ used' = [used EXCEPT ![s] = @ - 1]
     /\ UNCHANGED <<state, owner, exhausted, reason, records>>
 
-\* rn_region_exhaust: an operation that cannot get room sets the sticky state
+\* rn_region_exhaust: an operation that cannot get the room it asks for (one
+\* record, or a span of n) sets the sticky state
 Exhaust(s) ==
     /\ state[s] = "Connected"
     /\ ~exhausted[s]
-    /\ used[s] = Capacity
+    /\ \E n \in 1..Capacity : used[s] + n > Capacity
     /\ exhausted' = [exhausted EXCEPT ![s] = TRUE]
     /\ reason' = [reason EXCEPT ![s] = Exhausted]
     /\ UNCHANGED <<state, owner, used, records>>
@@ -138,6 +155,7 @@ Next ==
     \E s \in Slots :
         \/ \E c \in Clients : Connect(s, c)
         \/ Use(s)
+        \/ \E n \in 2..Capacity : UseSpan(s, n)
         \/ Release(s)
         \/ Exhaust(s)
         \/ Kick(s)
@@ -168,8 +186,9 @@ ReusedSlotStartsClean ==
                                 /\ records[s] = {}
         /\ state[s] = "Connected" => records[s] \subseteq {owner[s]}
 
-\* from exhausted, the only step that changes the slot is Kick to Disconnected
-\* with the reason kept: no further use, release or delivery
+\* from exhausted, the slot takes no further room: the steps that change it
+\* are Kick to Disconnected with the reason kept, and a Release that gives
+\* one record back and changes nothing else
 ExhaustionOnlyLeadsToDisconnect ==
     [][\A s \in Slots :
           (exhausted[s] /\ state[s] = "Connected") =>
@@ -177,6 +196,12 @@ ExhaustionOnlyLeadsToDisconnect ==
               \/ /\ state'[s] = "Disconnected"
                  /\ reason'[s] = Exhausted
                  /\ used'[s] = used[s]
+                 /\ records'[s] = records[s]
+              \/ /\ used'[s] = used[s] - 1
+                 /\ state'[s] = state[s]
+                 /\ owner'[s] = owner[s]
+                 /\ exhausted'[s] = exhausted[s]
+                 /\ reason'[s] = reason[s]
                  /\ records'[s] = records[s]
       ]_vars
 
