@@ -250,7 +250,11 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server );
 static bool get_interface_mac_address( const char * interface_name, uint8_t * mac_address ) 
 {
     char path[256];
-    snprintf( path, sizeof(path), "/sys/class/net/%s/address", interface_name );
+    const int path_length = snprintf( path, sizeof(path), "/sys/class/net/%s/address", interface_name );
+    if ( path_length < 0 || (size_t) path_length >= sizeof(path) )
+    {
+        return false;
+    }
     FILE * file = fopen(path, "r");
     if ( !file )
     {

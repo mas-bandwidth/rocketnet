@@ -315,6 +315,8 @@ enum rocketnet_reliability_t
 /// @brief A receipt's outcome, the status field of struct rocketnet_receipt_t.
 enum rocketnet_receipt_status_t
 {
+    /// A zero-filled receipt: no outcome has been written.
+    ROCKETNET_RECEIPT_STATUS_NONE                               = 0,
     /// The peer's transport acknowledged the packet. This does not mean the
     /// peer application read the message.
     ROCKETNET_RECEIPT_STATUS_ACKED                              = 1,
@@ -329,11 +331,12 @@ enum rocketnet_receipt_status_t
 /// MESSAGE_MEMORY_EXHAUSTED: the connection's region had no room for an
 /// operation it must not drop (docs/CHANNELS.md 4). A server disconnects that
 /// client's slot with this reason and resets the slot's region; a client
-/// disconnects itself.
+/// disconnects itself. Value 2 is reserved and is not a reason.
 enum rocketnet_disconnect_reason_t
 {
     ROCKETNET_DISCONNECT_REASON_NONE                            = 0,   ///< No connection has ended, or the connection is up
     ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH                 = 1,   ///< The two ends' WIRE config fields differ
+    // 2 is reserved and is not a reason.
     ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION              = 3,   ///< The peer sent what the protocol forbids
     ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT                = 4,   ///< A reliable message went unacknowledged past reliable_timeout_ms
     ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED        = 5,   ///< The connection's region had no room for an operation it must not drop
@@ -477,6 +480,25 @@ enum rocketnet_server_client_stat_t
     ROCKETNET_SERVER_CLIENT_STAT_BANDWIDTH_RECEIVED,    ///< Kbps (1000 bit/s) received from this client
     ROCKETNET_SERVER_CLIENT_STAT_BANDWIDTH_ACKED,       ///< Kbps (1000 bit/s) of sent packets this client acknowledged
     ROCKETNET_SERVER_CLIENT_STAT_COUNT
+};
+
+// The library and its callers are built without -fshort-enums. Each public
+// enum is the size of int. A build that shortens one fails here.
+struct rocketnet_public_enums_are_int
+{
+    char status[sizeof(enum rocketnet_status_t) == sizeof(int) ? 1 : -1];
+    char log_level[sizeof(enum rocketnet_log_level_t) == sizeof(int) ? 1 : -1];
+    char reliability[sizeof(enum rocketnet_reliability_t) == sizeof(int) ? 1 : -1];
+    char receipt_status[sizeof(enum rocketnet_receipt_status_t) == sizeof(int) ? 1 : -1];
+    char disconnect_reason[sizeof(enum rocketnet_disconnect_reason_t) == sizeof(int) ? 1 : -1];
+    char update_result[sizeof(enum rocketnet_update_result_t) == sizeof(int) ? 1 : -1];
+    char client_state[sizeof(enum rocketnet_client_state_t) == sizeof(int) ? 1 : -1];
+    char client_counter[sizeof(enum rocketnet_client_counter_t) == sizeof(int) ? 1 : -1];
+    char client_stat[sizeof(enum rocketnet_client_stat_t) == sizeof(int) ? 1 : -1];
+    char server_counter[sizeof(enum rocketnet_server_counter_t) == sizeof(int) ? 1 : -1];
+    char server_stat[sizeof(enum rocketnet_server_stat_t) == sizeof(int) ? 1 : -1];
+    char server_client_counter[sizeof(enum rocketnet_server_client_counter_t) == sizeof(int) ? 1 : -1];
+    char server_client_stat[sizeof(enum rocketnet_server_client_stat_t) == sizeof(int) ? 1 : -1];
 };
 
 /// -----------------------------------------
@@ -932,8 +954,9 @@ struct rocketnet_receipt_t
     /// @brief Identify the send whose outcome is reported.
     uint32_t serial;
     /// @brief State whether the peer transport acknowledged or missed it: a
-    /// rocketnet_receipt_status_t value, ROCKETNET_RECEIPT_STATUS_ACKED or
-    /// ROCKETNET_RECEIPT_STATUS_LOSS, held in a fixed 32-bit field.
+    /// rocketnet_receipt_status_t value held in a fixed 32-bit field. A
+    /// zero-filled receipt is ROCKETNET_RECEIPT_STATUS_NONE. The library writes
+    /// ROCKETNET_RECEIPT_STATUS_ACKED or ROCKETNET_RECEIPT_STATUS_LOSS.
     uint32_t status;
 };
 

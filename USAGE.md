@@ -450,7 +450,8 @@ void server_frame( struct rocketnet_server_t * server, int client_index, int cha
 Every send returns a serial. `rocketnet_client_receipts` and
 `rocketnet_server_receipts` copy this update's outcomes into a caller array, up
 to its capacity, and return the copied count. Each entry carries the serial and
-`ROCKETNET_RECEIPT_STATUS_ACKED` or `ROCKETNET_RECEIPT_STATUS_LOSS`. Repeated calls see the
+a status. A zero-filled receipt reads `ROCKETNET_RECEIPT_STATUS_NONE`. The library
+writes `ROCKETNET_RECEIPT_STATUS_ACKED` or `ROCKETNET_RECEIPT_STATUS_LOSS`. Repeated calls see the
 same list until the next update. A full receipt ring drops its oldest entry;
 the `receipt_ring` config field sets its size.
 
@@ -509,7 +510,8 @@ slot and its client, `rocketnet_server_num_connected_clients` counts them, and
 `rocketnet_server_disconnect_client` ends one deliberately.
 `rocketnet_server_disconnect_reason` reports how a slot's last connection
 ended. The reason is an `enum rocketnet_disconnect_reason_t`, named by
-`rocketnet_disconnect_reason_name`. A client whose server disconnected it,
+`rocketnet_disconnect_reason_name`. Value 2 is reserved and is not a reason.
+A client whose server disconnected it,
 stopped, or was destroyed reads `ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED`
 once its update accepts the server's disconnect packet, until its next
 connection reaches CONNECTED; a deliberate `rocketnet_client_disconnect` and a
