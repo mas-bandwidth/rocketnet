@@ -1,6 +1,6 @@
 # test/pcapng: the pcapng corpus
 
-Real rocketnet traffic, captured in the functional tier and replayed into the packet readers in the unit tier. The captures come from the functional channel harness only, over the in-repo network simulator: never a real network, never a deployed server. Nothing of console sockets or web support is captured.
+Real rocketnet traffic, captured in the functional tier and replayed into the packet readers in the unit tier. The captures come from the functional channel harness only, over the in-repo network simulator: never a real network, never a deployed server.
 
 ## Files
 
@@ -103,7 +103,7 @@ python3 tools/pcapng.py summary test/pcapng/*.pcapng
 | `hostile_prefilter` | every `fuzz/corpus/prefilter_*` seed less its selector byte, client to server: empty, too short, wrong epoch, wrong filter value, reserved type, an all-zero request, and three well-sized session packets |
 | `fragment_seeds` | every `fuzz/corpus/fragment_*` seed's records as kind-2 records, alternating connections as the fuzz harness does |
 
-The harness now sends a type 9 fragment (via `rocketnet_client_protocol_write_fragments` and the server mirror), a standalone type 8 ack (once the ack debt reaches the threshold; the eliciting payloads are valid message payloads and are read, never refused), a denied (when the server has no free slot) and the full redundant disconnect burst (type 6, every copy) from either end, so those four types reach the readers from the functional harness as well as through `fragment_seeds` and the regressions. No captured case is left undone.
+The harness sends a type 9 fragment (via `rocketnet_client_protocol_write_fragments` and the server mirror), a standalone type 8 ack (once the ack debt reaches the threshold; the eliciting payloads are valid message payloads and are read, never refused), a denied (when the server has no free slot) and the full redundant disconnect burst (type 6, every copy) from either end, so those four types reach the readers from the functional harness as well as through `fragment_seeds` and the regressions. No captured case is left undone.
 
 ## The caps
 

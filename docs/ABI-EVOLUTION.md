@@ -46,10 +46,8 @@ revision 1 prefix (so a binary built before the sized forms existed keeps
 working against a newer library), and a caller that wants a later field uses
 the sized forms.
 
-This document names public client and server types and entry points from
-`sdk/rocketnet.h`. Where it refers to internal transport or message-layer
-details, those names live in `sdk/rocketnet_layers.h`; a game does not call
-them.
+This document names the public client and server types and entry points in
+[sdk/rocketnet.h](../sdk/rocketnet.h).
 
 ## 2. The Choice: A Size Argument, Not a Leading Size Field
 
@@ -57,15 +55,14 @@ Two forms are common for this. The SDK uses the size argument.
 
 | | Size argument (chosen) | Leading size field |
 | :--- | :--- | :--- |
-| Today's layout | Unchanged: every config struct keeps its revision 1 layout | Changes: a `size` member goes first and every offset moves, an incompatible change at revision 1 |
+| The revision 1 layout | Unchanged: every config struct keeps its revision 1 layout | Changes: a `size` member goes first and every offset moves, an incompatible change at revision 1 |
 | Existing callers | Compile and run unchanged on the unsized entry points | Must be rebuilt, and must set the field |
 | Forgetting it | Not possible on a sized call: the size is a parameter | A zeroed or stale `size` reads as an unknown size, or worse, as a wrong known one |
 | C | `rocketnet_client_default_config_sized( &config, sizeof( config ) )` | `config.size = sizeof( config );` before every use |
-| C#, other FFI | The binding passes `Marshal.SizeOf<T>()` (or the language's equivalent) as one more integer argument; the struct marshals as a plain blittable struct | The binding sets a field the marshaller does not know is special; a struct copied or defaulted by the runtime carries `size = 0` |
 | One struct, two calls | The default call and the create call each carry the size, so neither depends on what the other left in the struct | The size travels in the struct, so a struct defaulted by one library revision and passed to another carries the first one's size |
 
 The size argument keeps revision 1 binary-identical, so `ROCKETNET_ABI_VERSION`
-stays 1, and it keeps the struct a plain value type for every FFI binding. Its
+stays 1, and it keeps the struct a plain value type. Its
 cost is a second entry point per config call; the leading field's cost is an
 incompatible change now and a field every caller must remember forever.
 
@@ -106,19 +103,15 @@ revision keeps its value when the struct grows past it.
 
 ## 4. Every Public Struct, Its Sizes per Revision
 
-Sizes are bytes on every supported target (64-bit Linux x86_64 and s390x,
-macOS arm64, Windows x86_64; `docs/PLATFORMS.md`). On any target,
+Sizes are bytes on every supported target (Linux x86_64, macOS arm64,
+Windows x86_64) and on the s390x byte-order check target
+([docs/PLATFORMS.md](PLATFORMS.md)). On any target,
 `rocketnet_abi_type_size` is the authority.
 
 | Struct | Direction | Sized |
 | :--- | :--- | :--- |
 | `rocketnet_client_config_t` | in | yes |
 | `rocketnet_server_config_t` | in | yes |
-| the client stat enum | out | no |
-| the server stat enum | out | no |
-| the per-client stat enum | out | no |
-| `rocketnet_packet_context_t` | in and out | no |
-| `rocketnet_frame_sync_stats_t` | out | no |
 | `rocketnet_receipt_t` | out, in an array | no |
 
 The client and server configs carry the message fields directly. A field added
@@ -127,14 +120,13 @@ keeps the old size and reads the old prefix. The frozen sizes per revision and o
 public header and in `rocketnet_abi_type_size`, which is the
 authority for a given build; this document does not repeat the numbers.
 
-Revision 2 appends the four development link-simulator controls to both the
-client and server configs. Their `BYTES_2` formulas end at
-`simulated_duplicate_percent` and remain frozen when later revisions grow.
-
-Revision 1 is the layout of the first release that carries the sized entry
-points. `time_callback` joins the client config before that release, so it is
-part of revision 1, not a revision of its own; a revision is added only for a
-layout that a release has already shipped with the sized entry points.
+Revision 1 ends at `reliable_timeout_ms` (`ROCKETNET_CLIENT_CONFIG_BYTES_1`,
+`ROCKETNET_SERVER_CONFIG_BYTES_1`): it is the prefix the unsized entry points
+read and write. Revision 2 is the full v1.0.0 layout: it appends the four
+development link-simulator controls to both the client and server configs, and
+its `BYTES_2` formulas end at `simulated_duplicate_percent`. Both revisions ship
+in v1.0.0 and both sizes stay in the known-size lists; each formula stays frozen
+when a later revision grows the struct.
 
 The structs marked "no" have no sized entry points, so their revision 1 layout
 is frozen: a field added to one of them is an incompatible change until its
@@ -147,13 +139,14 @@ does not grow.
 
 `sdk/rocketnet_abi.cpp` answers `rocketnet_abi_type_size`,
 `rocketnet_abi_field_count`, `rocketnet_abi_field_offset` and
-`rocketnet_abi_field_size` for the first eight structs above, with offsets and
+`rocketnet_abi_field_size` for the structs above and the library's internal
+transport and message types, with offsets and
 sizes taken from the compiler. A binding compares them against its own
 declarations before its first call. They pin this rule three ways:
 
-- `static_assert`s in `sdk/rocketnet_abi.cpp` require each config's revision 1
-  size formula to equal the compiler's `sizeof`, so a formula wrong for a
-  target fails the build there.
+- `static_assert`s in `sdk/rocketnet_abi.cpp` require the newest revision's
+  size formula of each internal transport and message config to equal the
+  compiler's `sizeof`, so a formula wrong for a target fails the build there.
 - `sized_config_accepts_every_known_size` (`test_unit_sized_config.cpp`)
   requires each known-size list to be strictly growing and to end at the size
   `rocketnet_abi_type_size` reports, so a revision added without its size, or
@@ -222,26 +215,20 @@ count, and a member with no internal counter and no code path is not admitted.
 ## 9. The Lifecycle API: ABI 1 at v1.0.0
 
 `ROCKETNET_ABI_VERSION` is 1 at v1.0.0 (soname `librocketnet.so.1`), the
-first released ABI. The lifecycle API changed the calling contract once
-before 1.0.0; no earlier ABI was released, so the release starts at 1:
+first released ABI. Its calling contract is:
 
 - `rocketnet_client_create` and `rocketnet_client_create_sized` take no
-  connect token; the token moves to the new `rocketnet_client_connect`.
-- `rocketnet_server_create` and `_sized` bind nothing; the new
+  connect token; `rocketnet_client_connect` takes it.
+- `rocketnet_server_create` and `_sized` bind nothing;
   `rocketnet_server_start`, `rocketnet_server_stop` and
   `rocketnet_server_running` run the transport, and
-  `rocketnet_server_disconnect_all_clients` is new.
+  `rocketnet_server_disconnect_all_clients` disconnects every client.
 - Every public client index is `uint64_t` (`rocketnet_client_index` returns
   one; every server call taking a client index or destination id takes one).
-- The message calls are renamed verb first, noun last (`_start_message`,
-  `_finish_message`, `_abort_message`, `_receive_message`,
-  `_release_message`, `_send_packets`); the public broadcast call is
-  removed; `rocketnet_init_ex`, `rocketnet_term_ex` and
-  `rocketnet_allocator_ex` leave the public header and `tools/exports.txt`.
+- The message calls name the verb first and the noun last
+  (`_start_message`, `_finish_message`, `_abort_message`,
+  `_receive_message`, `_release_message`, `_send_packets`).
 - `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`, `SERVER_NOT_STOPPED` and
-  `FLOW_ID_RESERVED` append before `ROCKETNET_NUM_STATUS_CODES` (section 1's
+  `FLOW_ID_RESERVED` stand before `ROCKETNET_NUM_STATUS_CODES` (section 1's
   append-only rule).
-
-No public struct's layout changes, so every config revision and known-size
-list above is unchanged.
 

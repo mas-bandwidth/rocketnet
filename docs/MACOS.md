@@ -6,8 +6,8 @@ App Nap, what socket errors and ICMP do, the file-descriptor limit, the
 application firewall prompt, debugging, and the commands that verify a Mac, in
 order.
 
-Each claim names the file that backs it. A section whose hardening work has not
-landed says **pending** and makes no claim. Every command on this page is run
+Each claim names the file that backs it. A section whose hardening work is not yet proved
+says **pending** and makes no claim. Every command on this page is run
 on an Apple-silicon Mac with the Command Line Tools and no Xcode; a command
 that needs more than that says what it needs. The support tiers themselves are
 in [PLATFORMS.md](PLATFORMS.md); this page does not widen them.

@@ -1,7 +1,5 @@
 # ServerSession: the server object's life, its slots across clients, and the per-slot reset
 
-> STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
-
 `tla/ServerSession.tla` models the server object over its life: create (STOPPED, no transport
 bound), start, clients connecting into free slots, sending and receiving, leaving by their own
 disconnect, a timeout, a denial during the handshake, `disconnect_client` or
@@ -9,8 +7,7 @@ disconnect, a timeout, a denial during the handshake, `disconnect_client` or
 destroy. The handshake packet by packet is `tla/ServerConnection.tla`, which this module does
 not extend; this one models each slot's life across many clients and the one per-slot `Reset(i)`
 between them. `tla/MCServerSession.tla` and its cfg files are the instances; every run is a row
-in `tla/RUNS.tsv` (group `serversession`). Line numbers below are at `14993f6` (the base of this
-change).
+in `tla/RUNS.tsv` (group `serversession`).
 
 ## What the model covers
 
@@ -18,23 +15,25 @@ change).
 
 | Variable | Code | Meaning |
 |---|---|---|
-| `state` | `struct rocketnet_server_transport_t` (`sdk/rocketnet_server_transport.cpp:183`); `ROCKETNET_SERVER_TRANSPORT_RUNNING`, `_STOPPING`, `_STOPPED` (`sdk/rocketnet.h:1156-1160`) | `NONE` (no object), `STOPPED`, `RUNNING`, `STOPPING` |
-| `slot[i].st`, `slot[i].sess` | `struct rocketnet_client_slots_t` (`sdk/rocketnet_client_slots.cpp:14`): `connected[i]`, assigned by `rocketnet_client_slots_assign` (`:163`) and freed by `rocketnet_client_slots_release` (`:251`) | `FREE`, `HANDSHAKE` (a mapping is open for the slot), `CONNECTED`; the session tag of the slot's client |
-| `slot[i].rec[f]` | the slot's per-connection state: the encryption mapping (`sdk/rocketnet_encryption_map.cpp`), the slot record, and the message layer's connection (`rn_message_connection_reset`, `sdk/rocketnet_message_server.cpp:127`) | one field per row of the reset inventory, each 0 (Init) or the tag of the session that wrote it |
-| `slot[i].reason` | `rocketnet_message_server_disconnect_reason` (`sdk/rocketnet.h:2400`) | kept through the reset, cleared to NONE when the slot's next client is established |
-| `kept.used` | the used-token history, `rocketnet_used_token_history_check` and `_record` (`sdk/rocketnet_token_tables.cpp:229`, `:241`), held at `sdk/rocketnet_server_protocol.h:63` | server-wide, never per slot; per run: fresh at each start (a start builds a new server transport, which creates the history), kept across slot resets and the stop within the run (standard/TRANSPORT.md t13.4) |
-| `kept.keys`, `kept.config`, `kept.lifetime` | the cookie key and server keys (rotation at `sdk/rocketnet_server_protocol.cpp:382`), the config, the lifetime counters (`sdk/rocketnet.h:1687-1690`) | kept across slots, stops and starts; fresh only at create |
+| `state` | `struct rocketnet_server_transport_t` (`sdk/rocketnet_server_transport.cpp`); `ROCKETNET_SERVER_TRANSPORT_RUNNING`, `_STOPPING`, `_STOPPED` (`sdk/rocketnet.h`) | `NONE` (no object), `STOPPED`, `RUNNING`, `STOPPING` |
+| `slot[i].st`, `slot[i].sess` | `struct rocketnet_client_slots_t` (`sdk/rocketnet_client_slots.cpp`): `connected[i]`, assigned by `rocketnet_client_slots_assign` and freed by `rocketnet_client_slots_release` | `FREE`, `HANDSHAKE` (a mapping is open for the slot), `CONNECTED`; the session tag of the slot's client |
+| `slot[i].rec[f]` | the slot's per-connection state: the encryption mapping (`sdk/rocketnet_encryption_map.cpp`), the slot record, and the message layer's connection (`rocketnet_message_connection_reset`, `sdk/rocketnet_connection_reset.cpp`) | one field per row of the reset inventory, each 0 (Init) or the tag of the session that wrote it |
+| `slot[i].reason` | `rocketnet_message_server_disconnect_reason` (`sdk/rocketnet.h`), returned by `rocketnet_server_disconnect_reason` | kept through the reset, cleared to NONE when the slot's next client is established |
+| `kept.used` | the used-token history, `rocketnet_used_token_history_check` and `rocketnet_used_token_history_record` (`sdk/rocketnet_token_tables.cpp`), held in `struct rocketnet_server_protocol_t` (`sdk/rocketnet_server_protocol.h`) | server-wide, never per slot; per run: fresh at each start (a start builds a new server transport, which creates the history), kept across slot resets and the stop within the run (standard/TRANSPORT.md t13.4) |
+| `kept.keys`, `kept.config`, `kept.lifetime` | the cookie key and server keys (rotation in `rocketnet_server_protocol_rotate_cookie_key_if_due`, `sdk/rocketnet_server_protocol.cpp`), the config, the lifetime counters | kept across slots, stops and starts; fresh only at create |
 | `draining` | `disconnect_all_clients` in progress | no client is accepted until every slot is free |
 | `link` | the path from the clients | the session tags of client packets in flight (lossy: `Lose`) |
 
-`stop` exists (`rocketnet_server_transport_stop`, `sdk/rocketnet_server_transport.cpp:1306`, sets
-STOPPING), as do create (`:696`), destroy (`:1269`) and `disconnect_client` (`:2362`, over
-`rocketnet_server_protocol_disconnect_client`, `sdk/rocketnet_server_protocol.cpp:1920`). A
-server created STOPPED with no transport bound, `start`, start again after stop, and
-`disconnect_all_clients` do not exist at `14993f6`; the card
-rocketnet-client-connect-disconnect-reconnect writes them, and the card
-rocketnet-per-connection-reset-is-complete writes the one per-slot reset function and the
-inventory each field below stands for, citing this model.
+In the transport (`sdk/rocketnet_server_transport.cpp`), `rocketnet_server_transport_stop` sets
+STOPPING; create is `rocketnet_server_transport_create`, destroy
+`rocketnet_server_transport_destroy`, and `rocketnet_server_transport_disconnect_client` runs
+over `rocketnet_server_protocol_disconnect_client` (`sdk/rocketnet_server_protocol.cpp`). The
+public server is this lifecycle object: `rocketnet_server_create` makes it stopped with no
+transport bound, `rocketnet_server_start` and `rocketnet_server_stop` run it, it can start
+again after a stop, and `rocketnet_server_disconnect_all_clients` drains every slot. The
+code cites this model where the server is defined (`sdk/rocketnet_api.cpp`), and the one
+per-slot reset function and the inventory each field below stands for are in
+`sdk/rocketnet_connection_reset.h`.
 
 **The per-slot record** (`Fields`), grouped by the step that writes it:
 
@@ -52,18 +51,18 @@ transport (`sdk/rocketnet_api.cpp:1149`, `sdk/rocketnet_message_server.cpp:1035`
 transport creates an empty history (`sdk/rocketnet_server_transport.cpp:1439`), stop destroys
 it with the transport (`sdk/rocketnet_api.cpp:1187`, `sdk/rocketnet_server_transport.cpp:1513`),
 and the slot reset (`rocketnet_server_connection_reset`, `sdk/rocketnet_connection_reset.cpp:61`)
-does not touch it (line numbers at `dc2ff1f9`). The model's `Start` empties `kept.used`; every
+does not touch it. The model's `Start` empties `kept.used`; every
 `Reset(i)` and the stop keep it. Every request in this model comes from its own address, the
 replay case the history exists for, so a token in the history is refused (`TokenAdmitsOnce`:
 one connection per token per run); the standard binds a token to its first source address,
 and a re-presentation from that same address is not modelled here. A token used before a stop
 is admitted again after the next start; `MCServerSessionReadmitAfterStart.cfg` proves that
 state reachable. The
-restart sentences under _Keys_ and _Per-connection keys_ (`STANDARD.md:189`, `:1058`) make key
+restart sentences under _Keys_ and _Per-connection keys_ ([t2.2 Key inventory](../standard/TRANSPORT.md#t2.2), [t7 Key schedule](../standard/TRANSPORT.md#t7)) make key
 freshness independent of the history: the session nonce is chosen when the mapping is created,
-so a restart can never recreate a key. STANDARD.md:189 has the server generate its cookie key "at start"; the
-model keeps the keys as one value fresh at create and unchanged by stop and start, as the card
-lists them kept. A cookie key regenerated at each start instead would invalidate only
+so a restart can never recreate a key. [t2.2 Key inventory](../standard/TRANSPORT.md#t2.2) has the server generate its cookie key "at start"; the
+model keeps the keys as one value fresh at create and unchanged by stop and start, as the reset inventory
+keeps them across slots. A cookie key regenerated at each start instead would invalidate only
 outstanding cookies, which no slot record holds, so no property here depends on the choice.
 
 **Actions.**

@@ -12,7 +12,10 @@ the schedule alone. The code is `rn_window_ack_resend_delay`,
 `rn_ordered_write` (`sdk/rocketnet_channel.cpp`), `rn_message_ordered_due`
 (`sdk/rocketnet_message_server.cpp`) and the attempts rule of
 `rocketnet_message_validate_config` (`sdk/rocketnet_config.cpp`); each cites
-the module. The model was written before the code.
+the module. The rule is the one
+[m9.2](../standard/MESSAGES.md#m9)
+and [m9.3](../standard/MESSAGES.md#m9)
+of the message standard state.
 
 `tla/MCRNResendTiming.tla` and `tla/MCRNResendTiming.cfg` are the small
 instance. `tla/MCRNResendTimingBrokenBackoff.cfg` and
@@ -51,7 +54,7 @@ shape; and `phase`, the step of the update.
 Two switches are definitions with the one-record defaults, overridden in a
 configuration (`Chunk <- ChunkInFlight`, `OneFifo <- OneFifoTwoDelays`):
 `Chunk` puts the chunk in flight (otherwise it starts acked and the module is
-the one-record timing of the first cut), and `OneFifo` puts both classes in
+the one-record timing), and `OneFifo` puts both classes in
 one FIFO (the broken shape).
 
 Actions:
@@ -118,13 +121,13 @@ distinct states and every invariant holds.
 | Configuration | Rule removed | Expected failure |
 |---|---|---|
 | `MCRNResendTimingBrokenOneFifo.cfg` | one FIFO per class: both classes in one FIFO ordered by last send, walked from its head and stopped at the first record not due, at the defaults | `SmallNeverHeldByChunk`, exit 12: the chunk is sent first, then the small record, both at 0; a sample moves `rto` to 200 ms; at 100 ms the small record is due (`min(rto, resend_interval)`) and the chunk at the head is not (`rto`), so the walk stops and the update ends with the small record unsent. Any `rto` above 100 ms does the same. |
-| `MCRNResendTimingBrokenBackoff.cfg` | the first version's schedule: `RtoInitial = 10` (1000 ms), `RtoMax = 20` (2000 ms), no cap (`Interval = RtoMax`), back-off doubling to 8 | `AttemptsBeforeTimeout`, exit 12: a sample at the first tick sets `rto` to 1.5 s, the record is sent at 0, 1.5 and 4.5 s, and the next send is due at 10.5 s, after the timeout: three sends where four are owed. Any `rto` above 10/7 s does the same. |
+| `MCRNResendTimingBrokenBackoff.cfg` | a back-off schedule: `RtoInitial = 10` (1000 ms), `RtoMax = 20` (2000 ms), no cap (`Interval = RtoMax`), back-off doubling to 8 | `AttemptsBeforeTimeout`, exit 12: a sample at the first tick sets `rto` to 1.5 s, the record is sent at 0, 1.5 and 4.5 s, and the next send is due at 10.5 s, after the timeout: three sends where four are required. Any `rto` above 10/7 s does the same. |
 
 The witness passes `ConfigAccepted` (`10 s >= 4 × 2 s`), so validation
 alone does not keep the property; the delay without back-off does. The unit
 test `resend_timing_witness_replays` (`test_unit_resend_timing.cpp`)
 replays this schedule against the code (the same config, one RTT sample of
-500 ms, which drives the first version's `rto` to exactly 1.5 s, and no ack
+500 ms, which drives that schedule's `rto` to exactly 1.5 s, and no ack
 of the record after) and asserts at least four sends
 before `reliable_timeout`; at the rule's 100 ms cap the code sends the
 record every 100 ms until the timeout.

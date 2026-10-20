@@ -1,20 +1,18 @@
 # RNFilterEpochs: the receiver's filter epoch window
 
-> STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
-
 `tla/RNFilterEpochs.tla` is the receiver side of the keyed filter value's
-generations (`STANDARD.md`, "The keyed filter value"): the table of live
-magics a keyed receiver holds, the backend handing it the next generation,
+generations ([t5.1 Keyed epochs (optional extension)](../standard/TRANSPORT.md#t5.1)):
+the table of live magics a keyed receiver holds, the backend handing it the next generation,
 the oldest retired when the table is full, and the verdict on a packet's
 epoch byte. The cookie key rotation in `tla/RNSecurityTables.tla` is the
 worked example of a rotating-key machine; this module is the filter's own.
 
 Rocketnet 1.0 is unkeyed: `rocketnet_prefilter_check`
 (`sdk/rocketnet_protocol.cpp`) refuses every epoch but 0 on a comparison.
-The model is written before the code that implements the keyed form; the
-code card `rocketnet-filter-epoch-window` names its functions after the
-actions (Install, Retire, Check) and cites this module. Until then the
-`rn-filter-epochs` row of `tla/COVERAGE.tsv` is `owed`.
+The keyed form is an optional extension that the SDK does not implement, so
+the `rn-filter-epochs` row of `tla/COVERAGE.tsv` is `owed`: the module
+specifies the receiver's table for an implementation of t5.1, whose
+functions would be named after the actions (Install, Retire, Check).
 
 `tla/MCRNFilterEpochs.tla` and `tla/MCRNFilterEpochs.cfg` are the small
 instance. `tla/MCRNFilterEpochsBrokenAcceptZero.cfg` and
@@ -112,10 +110,10 @@ states (19,907 generated, depth 18) and every invariant holds.
 
 | Configuration | Rule removed | Expected failure |
 |---|---|---|
-| `MCRNFilterEpochsBrokenAcceptZero.cfg` | epoch 0 refused when keyed: `AcceptZero <- AcceptZeroBroken`, a fallback to the unkeyed constant | `NeverKeyedAtZero`, exit 12: from the initial state a check of epoch 0 with no key is accepted. `STANDARD.md` requires a keyed deployment to reject epoch 0, since a fallback an attacker can select is not a filter. |
-| `MCRNFilterEpochsBrokenWrapToZero.cfg` | the wrap to 1: `WrapTo <- WrapToZero`, the generation after `N` is 0 | `WrapSkipsZero`, exit 12: installs 1, 2, 3, a retire, 4, a retire, then the fifth install hands generation 0 into the table beside 3 and 4. `STANDARD.md` wraps 255 to 1 and never makes zero a generation. |
+| `MCRNFilterEpochsBrokenAcceptZero.cfg` | epoch 0 refused when keyed: `AcceptZero <- AcceptZeroBroken`, a fallback to the unkeyed constant | `NeverKeyedAtZero`, exit 12: from the initial state a check of epoch 0 with no key is accepted. t5.1 requires a receiver that accepts keyed epochs not to accept the unkeyed filter epoch 0, since a fallback an attacker can select is not a filter. |
+| `MCRNFilterEpochsBrokenWrapToZero.cfg` | the wrap to 1: `WrapTo <- WrapToZero`, the generation after `N` is 0 | `WrapSkipsZero`, exit 12: installs 1, 2, 3, a retire, 4, a retire, then the fifth install hands generation 0 into the table beside 3 and 4. t5.1 wraps the last keyed filter epoch (255) back to the first (1), and the unkeyed filter epoch 0 never names a generation. |
 
-Both traces were checked by hand against `STANDARD.md`. Neither has code to
-replay against yet: `rocketnet_prefilter_check` holds no generation table
-and refuses every nonzero epoch, so the keyed rule and its unit test
-replaying these witnesses are the code card's.
+Both traces were checked by hand against t5.1. Neither replays against the
+SDK: `rocketnet_prefilter_check` holds no generation table and refuses every
+nonzero epoch, so a keyed implementation would carry the unit test that
+replays these witnesses.

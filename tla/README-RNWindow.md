@@ -1,7 +1,8 @@
 # RNWindow: the reliable window
 
-`tla/RNWindow.tla` is the message layer's reliable window, CHANNELS layer 3
-(`docs/CHANNELS.md` sections 6, 13.5 and 15): a sender numbering records late under the count
+`tla/RNWindow.tla` is the message layer's reliable window
+([m5](../standard/MESSAGES.md#m5) and
+[m7](../standard/MESSAGES.md#m7) of the message standard): a sender numbering records late under the count
 bound `n < U' + W`, its sent-packet map and acks, and a receiver with `R`, the received
 bitset, the descriptors and their live flags, holds, the delivered list, the update
 boundary, and the reconstruction of the 24-bit wire number. Both directions run through
@@ -12,16 +13,19 @@ once and, on the ordered channel, in order, under loss, resend duplicates, reord
 wraparound of the number space, with every table inside its bound; and, under fair links,
 every number is eventually acked and delivered.
 
-**The window code does not exist yet.** At `371e5a7` (main) nothing under `sdk/`
-implements layer 3: `git grep "SLOT_COLLISION\|received_bitset" -- 'sdk/*.cpp'` finds
-nothing on main or on any branch. What the code has is the wire codec, which writes and
-reads the number as a raw u24 (`sdk/rocketnet_message.h:22`, `:70`, `:110`;
-`sdk/rocketnet_message.cpp:202`, `:312`) and checks a block's fragment count against `W`
-(`sdk/rocketnet_message.cpp:357-361`, matching 13.3 check 7). The model is therefore the
-design, written before the code as the standing practice asks: the card
-`the-receive-window-accepts-each-reliable-number-once` builds to it, and the card
-`the-window-code-replays-every-rnwindow-and-rnring-witness` replays the traces below
-against that code. Every "the code does" below reads "the design says".
+The code is the sender window in `sdk/rocketnet_window_send.cpp`
+(`rn_window_send_init`, `rn_window_send_admit`, `rn_window_send_first_write`,
+`rn_window_send_first_write_block`, `rn_window_send_set_number`,
+`rn_window_send_mark_acked`, `rn_window_send_can_write_unreliable`), the
+receive window in `sdk/rocketnet_window_receive.cpp` (`rn_window_receive_init`,
+`rn_window_receive_accept`, `rn_window_duplicate`, `rn_window_receive_release`)
+and the sent-packet map and acks in `sdk/rocketnet_window_ack.cpp`
+(`rn_window_ack_init`, `rn_window_ack_on_ack`, `rn_window_ack_count`,
+`rn_window_ack_resend_fifo`). The wire codec (`sdk/rocketnet_message.h`,
+`sdk/rocketnet_message.cpp`) writes and reads the number as a raw u24 and checks
+a block's fragment count against `W` (check 7 of
+[m4 Receiver checks](../standard/MESSAGES.md#m4)). `test_unit_window_sequences.cpp`
+replays the model's operation sequences against that code.
 
 `tla/MCRNWindow.tla` holds the instance, and there are seven committed cases, each one
 inside tlacheck's 110 s budget:
@@ -36,11 +40,12 @@ The `"arbitrary"` loss run with liveness takes 14 minutes. It is a bench run, li
 
 ## What the module covers
 
-The sender (6.1, 6.2, 6.4):
+The sender ([m5.1](../standard/MESSAGES.md#m5),
+[m9.1](../standard/MESSAGES.md#m9)):
 
 - `next`: the next message number. A record takes it late, when it is first written, and
   only while `n < U' + W`. The block takes all its numbers at one moment under one check
-  of its last number (section 8).
+  of its last number ([m8 Blocks](../standard/MESSAGES.md#m8)).
 - `acked`: the acked flags of the per-number table. `U`, the oldest unacked number, and
   `U'`, the window base, are derived: `U' = U` except when `U` is inside the block and
   the block is not fully acked, when `U'` is the block's first number.
@@ -48,14 +53,15 @@ The sender (6.1, 6.2, 6.4):
   packet carried. When full, the oldest entry is evicted (`evicted` records that it
   happened); its numbers keep their state and stay resendable.
 
-The receiver (6.1, 6.3, 6.5, 13.5):
+The receiver ([m5.2](../standard/MESSAGES.md#m5),
+[m5.3](../standard/MESSAGES.md#m5), m7):
 
 - `R`: the lowest number not yet received. `rbits`: the received bitset, as the set of
   received numbers in `R .. R+W-1`; advancing `R` clears the bits below it.
 - `desc`: the descriptors indexed `n % W`, each `[num, live]`.
 - `held`: numbers held, waiting on an ordering predecessor or part of an incomplete
   block. `delivered`: the delivered list of the current update. A number is **live**
-  while it is in either (6.3 step 1).
+  while it is in either.
 - `phase` and `pending`: the update loop. Packets are opened while the batch is open
   (`"receive"`); `FixBatch` closes it; acks for the opened ids leave only after that
   (`"process"`); `EndUpdate` expires the delivered list and reopens the batch.
@@ -65,7 +71,7 @@ The receiver (6.1, 6.3, 6.5, 13.5):
   `NumMod = 4` and numbers `0..4`, so `4` is sent as `0` and the numbers really wrap.
 
 Ghosts: `everDelivered` and `dup` (for `DeliveredOnce`), `violations` (which of the
-receiver's 6.5 checks fired), `evicted`, and `misread` (a wire number was reconstructed as
+receiver's m5.2 rule 8 checks fired), `evicted`, and `misread` (a wire number was reconstructed as
 a different number).
 
 Actions, one per operation and per outside event:
@@ -75,8 +81,8 @@ Actions, one per operation and per outside event:
 | `NumberRecord` | sender | gives `next` to a record under the count bound; the block takes `BlockLen` numbers at once |
 | `WritePacket(S, pid)` | sender | writes a packet with a fresh id carrying any set of unacked numbered records, first sends and resends alike (the RTO firing); records it in the map, evicting the oldest entry when full; `Fwd!Send` |
 | `ReceiveAck(q)` | sender | `Rev!Deliver`; every id of `q` still in the map marks its numbers acked and leaves the map; other ids are ignored |
-| `OpenPacket(p)` | receiver | `Fwd!Deliver`; the id joins `pending` (P2); each wire number is reconstructed against `R` (a misread is recorded and nothing else happens); then `Accept`: 6.5 per number (duplicate dropped, outside the window or slot live with another number is a violation), accepted numbers set bits, claim descriptors, advance `R`; then 7.2 dispatch: unordered delivered now, ordered delivered when every ordered predecessor is received (draining holds), else held |
-| `FixBatch` | receiver | the batch is fixed; no more opens this update (P6) |
+| `OpenPacket(p)` | receiver | `Fwd!Deliver`; the id joins `pending` ([m1.4](../standard/MESSAGES.md#m1.4) rule 2); each wire number is reconstructed against `R` (a misread is recorded and nothing else happens); then `Accept`: m5.2 rule 8 per number (duplicate dropped, outside the window or slot live with another number is a violation), accepted numbers set bits, claim descriptors, advance `R`; then m7 dispatch: unordered delivered now, ordered delivered when every ordered predecessor is received (draining holds), else held |
+| `FixBatch` | receiver | the batch is fixed; no more opens this update (m1.4 rule 6) |
 | `SendAck` | receiver | `Rev!Send(pending)` after the batch is fixed |
 | `EndUpdate` | receiver | the delivered list expires; its descriptors stop being live |
 | `FwdEnvironment`, `RevEnvironment` | the paths | `Link!Environment` on each direction |
@@ -84,11 +90,11 @@ Actions, one per operation and per outside event:
 The RTO is abstract: any unacked number may be resent at any time, so `last_send`, the
 resend FIFO and the RTT estimator have no counterpart. Blocks appear only as their effect
 on `U'` and on the receiver's holds. One ordered channel is modelled abstractly: the
-numbers in `Ordered` are on it in number order (layer 6 first-writes a channel's records
-in ordering order), the block is one ordered message at one ordering slot, every other
+numbers in `Ordered` are on it in number order (the scheduler first-writes a channel's
+records in ordering order, `tla/RNScheduler.tla`), the block is one ordered message at one ordering slot, every other
 number is unordered (code 2).
 
-Packet ids never repeat in the transport (P4). A finite model cannot mint ids forever,
+Packet ids never repeat in the transport (m9.1: every send takes a fresh sequence). A finite model cannot mint ids forever,
 so an id is reused only once no copy of it exists anywhere: not in the map, not pending,
 not on either wire. When no id is free the write waits, like Link's `Capacity`: a
 model-size knob, never a loss.
@@ -97,18 +103,18 @@ model-size knob, never a loss.
 
 - `TypeOK`, and `TablesBounded`: `Len(smap) <= P`; `next <= U' + W` and at most `W`
   unacked numbers (the per-number table); the bitset inside `R .. R+W-1`; at most `W`
-  live numbers (descriptors, holds and the delivered list of 6.3 step 4); the links
+  live numbers (descriptors, holds and the delivered list); the links
   inside `Capacity`.
-- `ReceiverNeverOutsideWindow`: a correct sender never trips 6.5's outside-window check.
+- `ReceiverNeverOutsideWindow`: a correct sender never trips the outside-window check of m5.2 rule 8.
 - `NoSlotCollision`: no two live numbers share a slot `n % W`, and the receiver's own
   slot check never fires.
-- `AckedImpliesReceived`: an acked number was received (P2 carried through the map).
+- `AckedImpliesReceived`: an acked number was received (m1.4 rule 2 carried through the map).
 - `DeliveredOnce`: no number is delivered twice, and only numbered records are delivered.
 - `OrderedDeliveredInOrder`: an ordered number is delivered only once every ordered number
   below it, and the rest of its block, has been delivered too. Deliveries in one step are
-  a set; the code drains them in ordering order (7.2).
+  a set; the code drains them in ordering order (m7.2 rule 6).
 - `WireNumberReconstructs`: every wire number the receiver read was reconstructed as
-  itself (13.5).
+  itself (m5.3).
 - `HeldIsUnreleasable`: a held number is received and has an unreceived ordered
   predecessor; the descriptors name the live numbers.
 
@@ -120,7 +126,7 @@ model-size knob, never a loss.
   `everDelivered` and `next` only grow and `Nums` is finite, so in this instance each is
   the same as its per-number form `\A n : (n < next) ~> (n \in acked)`. The single
   `<>` form is one tableau branch for TLC instead of one per number per property: the
-  draft's nine branches took 46 minutes on 25,738 states.
+  nine-branch form took 46 minutes on 25,738 states.
 
 ### Fairness
 
@@ -143,18 +149,18 @@ value exhausts TLC's tableau.
 ## What the module abstracts away
 
 - The byte bound and the ring (`RNRing`, the sibling model). Channels beyond the one
-  abstract ordered channel, sequenced delivery, receipts (layer 4). Fragment contents
-  and the split (layer 5). The scheduler (layer 6): its first-write order is assumed as
+  abstract ordered channel, sequenced delivery, receipts (`RNReceipts`). Fragment contents
+  and the split. The scheduler (`RNScheduler`): its first-write order is assumed as
   "number order is ordering order".
 - Real time: the RTO, backoff, the RTT estimator, `reliable_timeout`. Any unacked number
   is due at any moment.
-- The transport: only P2 and P6 remain, as the receiver's ack and update rules. Its
+- The transport: only m1.4 rules 2 and 6 remain, as the receiver's ack and update rules. Its
   replay window (which drops a packet seen before or more than 4096 sequences old) is not
   modelled; Link's duplication and reordering reach the receiver unfiltered, which is a
   stronger adversary than the transport lets through, except where it matters for
   wraparound (below).
 - The receiver reconstructs every number of a packet against the `R` the packet found;
-  the code will reconstruct record by record as `R` advances inside the packet. Both
+  the code reconstructs record by record as `R` advances inside the packet (m5.2 rule 7). Both
   values lie in one window, and `WireNumberReconstructs` holds for the reading the model
   makes.
 
@@ -165,12 +171,10 @@ The model's operation sequences are also driven in C++ by
 with `REGISTER_UNIT_TEST`). An independent reference of count, `U'`, ring
 occupancy, descriptor ownership and delivery is compared with the sender and
 receiver window operations after every action. Those operations are
-`rn_window_send_*` and `rn_window_receive_*`. A tree that has
-`sdk/rocketnet_window_send.h` drives that code. This base does not have those
-files yet, so the test compiles the landed admit, `U'` and receive rules and
-drives them. The count bound and the ring floor both read `U'`, not `U`.
-Putting `U` in either place is the pre-fix sender: the partial-block count
-probe and the floor-at-`U` probe go red.
+`rn_window_send_*` and `rn_window_receive_*` in `sdk/rocketnet_window_send.cpp`
+and `sdk/rocketnet_window_receive.cpp`. The count bound and the ring floor
+both read `U'`, not `U`. A sender that puts `U` in either place fails: the
+partial-block count probe and the floor-at-`U` probe go red.
 
 Every sequence of write, block, ack, release and retransmit of length six at
 `W = 8` is walked (the operations take any power-of-two width; the message
@@ -182,7 +186,7 @@ has released a held record, and the 24-bit wrap. After every action the test
 asserts `n < U' + W`, that live ring spans are disjoint and inside `B`, that an
 ack does not free a held record, and that each reliable number is delivered
 once. A failed check prints a replayable seed and the action list. No open
-window-sequence defect card is known on this base, so the test carries no
+window-sequence defect is known, so the test carries no
 expected-fail marker.
 
 On a Linux bench with the TLA+ tools (`tla2tools.jar`, TLC 2.19 or later), from `tla/`:
@@ -199,8 +203,9 @@ include. Without it a copy that is not yet due never becomes due.
 
 ### Every run
 
-TLC 2.19 on hetzner2, 2026-10-13, `-workers 4 -Xmx6g`. The `tla/RUNS.tsv` records are not
-written by hand. They are owed to `tlacheck run --group rnwindow`.
+TLC 2.19 on Linux, `-workers 4 -Xmx6g`. The committed cases are the `rnwindow`
+rows of `tla/CASES.tsv`; `tla/RUNS.tsv` holds no `rnwindow` record, so the
+figures below are TLC's own output, recorded by hand.
 
 Committed cases:
 
@@ -232,8 +237,8 @@ Bench runs (each is `MCRNWindow.cfg` with the changes named):
 ## What TLC found
 
 Every counterexample was replayed by hand through the module's actions and through the
-argument of CHANNELS.md 6.3 and 13.5. The window code does not exist yet, so none of
-them is a defect in code. The traces are written `id{numbers}` for a packet. The
+argument of m5.2 and m5.3. Each is a reversed witness or a limit of the model's
+assumptions, not a defect in the code. The traces are written `id{numbers}` for a packet. The
 committed instance is `W = 2`, Link capacity 2, `"alternate"` loss both ways (the 1st,
 3rd, 5th ... send on each link is lost), `NumMod = 4`, numbers `0..4`, the block
 `{1, 2}`, `Ordered = {0, 1, 2, 4}`. The state counts are TLC's trace lengths, the
@@ -252,17 +257,17 @@ TLC: `Invariant NoSlotCollision is violated`, 33 states.
    through. In the next update `0{1}` is opened: `R = 2`, but `2` is missing, so `1` is
    **held**, `desc[1] = [1, live]`. That ack is lost. `1{1}` arrives later as a
    duplicate and its ack `{1}` lands: `acked = {0, 1}`, `U = 2`.
-3. `2` is inside a block whose first fragment is acked and whose second is not, so the
-   design's `U'` is `1`. The witness sets `U' = U = 2`, and `3` is numbered:
-   `3 < 2 + 2`. Under the design the check is `3 < 1 + 2`, false.
+3. `2` is inside a block whose first fragment is acked and whose second is not, so
+   `U'` is `1` (m5.1 rule 3). The witness sets `U' = U = 2`, and `3` is numbered:
+   `3 < 2 + 2`. Under the rule the check is `3 < 1 + 2`, false.
 4. `1{3}` is opened in the next update: `3 < R + W = 4` is inside the window, but
    `3 % 2 = 1` and `desc[1]` is live with the held `1`. The receiver's slot check fires.
 
-Through 6.3 step 2: `m = 3 = n + W` with `n = 1`. The argument needs every block
+Against the slot argument: `m = 3 = n + W` with `n = 1`. The argument needs every block
 containing a number at or below `n` fully acked when `m` was numbered, and the witness is
 the sender numbering `m` without that.
 
-### Witness 2: dropping P6 (`MCRNWindowBrokenSameUpdateReply.cfg`)
+### Witness 2: replies opened in the same update (`MCRNWindowBrokenSameUpdateReply.cfg`)
 
 TLC: `Invariant NoSlotCollision is violated`, 16 states.
 
@@ -271,12 +276,12 @@ TLC: `Invariant NoSlotCollision is violated`, 16 states.
    was fixed, which the witness allows: `0` delivered, `desc[0]` live.
 2. The first ack is lost. A resend `0{0}` is opened as a duplicate, and the ack `{0}`
    lands: `acked = {0}`, `U' = 1`.
-3. The block takes `1` and `2`, correctly: `0` is acked, so by P2 it was opened. `0{2}`
+3. The block takes `1` and `2`, correctly: `0` is acked, so by m1.4 rule 2 it was opened. `0{2}`
    gets through and is opened in the same update. `2 % 2 = 0`, and `desc[0]` is still
    live with `0`, whose delivered list has not yet expired. The slot check fires.
 
-Through 6.3 step 2: "By P6, `m` arrives in a later update, after that update's delivered
-list expired." Remove P6 and `m = 2` arrives while `n = 0` is still delivered in the
+Against the slot argument: by m1.4 rule 6, `m` arrives in a later update, after the
+delivered list of the update that elicited it expired. Without that rule `m = 2` arrives while `n = 0` is still delivered in the
 update whose ack elicited it.
 
 ### Witness 3: unsigned reconstruction (`MCRNWindowBrokenHalfRange.cfg`)
@@ -289,7 +294,7 @@ TLC: `Invariant WireNumberReconstructs is violated`, 8 states.
 3. `0{0}` is opened. Its wire value is `0`; unsigned, `R + ((0 - 1) % 4) = 1 + 3 = 4`.
    The signed half range gives `d = 3 >= 2`, so `1 + 3 - 4 = 0`, a duplicate, dropped.
 
-A duplicate after a resend is the normal case (6.5), so an unsigned reading misreads one
+A duplicate after a resend is the normal case (m5.2 rule 9), so an unsigned reading misreads one
 on every lossless resend. With `W` at most `2^20` and `2^24` on the wire, the unsigned
 reading puts the duplicate about `2^24` ahead, outside the window: a correct peer would be
 disconnected for `MESSAGE_NUMBER_OUTSIDE_WINDOW`.
@@ -304,7 +309,7 @@ TLC: `Invariant OrderedDeliveredInOrder is violated`, 19 states.
    once, although `1` (an ordered predecessor, and the rest of its block) has not
    arrived: `everDelivered = {0, 2}`, and `OrderedPred(2) = {0, 1}` is not inside it.
 
-With the hold (7.2), `2` is held until `1` arrives, then both are released together in
+With the hold (m7.2 rule 2), `2` is held until `1` arrives, then both are released together in
 number order.
 
 ### Witness 5: duplicates taken as fresh (`MCRNWindowBrokenDropDuplicates.cfg`)
@@ -313,7 +318,7 @@ TLC: `Invariant DeliveredOnce is violated`, 8 states.
 
 1. `0`'s first write is lost; `1{0}` is opened: `0` delivered, `R = 1`.
 2. The next write is lost; `0{0}` gets through and is opened: `0 < R`, a duplicate under
-   6.5, but the witness takes it as fresh and delivers it again: `dup = TRUE`.
+   m5.2 rule 8, but the witness takes it as fresh and delivers it again: `dup = TRUE`.
 
 ### Wraparound under reordering: the half range rests on the transport's replay window
 
@@ -330,34 +335,33 @@ needs only reordering, no duplication):
    below the half range, so it reads as `4`, which is inside the window. The resend of
    `0` would be accepted as message `4`.
 
-This is the model being honest about what 13.5 assumes, not a defect in the design or in
-any code: the half range reads a value correctly only while it lies within `2^23` of `R`.
-13.5 argues that "every live value lies within `W` of its reference", which covers live
-numbers but not a stale resend still in flight. On a FIFO path a stale copy is at most `W`
+This is the model being honest about what m5.3 assumes, not a defect in the rule or in
+the code: the half range reads a value correctly only while it lies within `2^23` of `R`.
+Every live number lies within `W` of `R`, but a stale resend still in flight need not. On a FIFO path a stale copy is at most `W`
 behind `R` (any packet opened before it was written before it, so `R <= n + W`), and the
 committed runs prove `NumMod = 2W` enough there. Under reordering the age of a copy is
 bounded only by the transport. Its replay window refuses any packet
 `ROCKETNET_REPLAY_WINDOW_BITS = ROCKETNET_HISTORY_PACKETS` sequences or more behind the
 highest it has opened, and any packet it has seen before
-(`sdk/rocketnet_replay.cpp:32-39`, `sdk/rocketnet_replay.h:26`). That constant is 4096 by
-default and at most 32768 (`sdk/rocketnet_history.h:8,13`). A 1416-byte payload carries
+(`rocketnet_replay_already_received` in `sdk/rocketnet_replay.cpp`). That constant is 4096 by
+default and at most 32768 (`sdk/rocketnet_history.h`). A 1416-byte payload carries
 at most 202 numbered records (a code 2 record is at least a 6-byte header and 1 data
-byte, 13.2), and a block numbers up to 911 fragments at once. So in the worst case a copy
+byte, [m3 Record format](../standard/MESSAGES.md#m3)), and a block numbers up to 911 fragments at once. So in the worst case a copy
 that survives the replay window is
 `W + 32767 × 202 + 911 <= 7,668,421 ≈ 7.3 × 2^20` behind `R`, under `2^23`.
 This rests on transport sequences rising in packet write order. A sequence is taken at
-`start_packet` by an atomic increment (`sdk/rocketnet_client_protocol.cpp:1068`,
-`sdk/rocketnet_server_protocol.cpp:1524`), so this layer must fill a connection's
-packets in the order it started them, as `write_packets` (9.3) does. The safety margin is
-real, but it comes from the transport's replay window and the payload size. 13.5 now says
-so. With `NumMod = 10` (no aliasing possible at these sizes) the same duplication and
+`start_packet` by an atomic increment (`sdk/rocketnet_client_protocol.cpp`,
+`sdk/rocketnet_server_protocol.cpp`), so this layer must fill a connection's
+packets in the order it started them, as m1.4 rule 8 requires. The safety margin is
+real, but it comes from the transport's replay window and the payload size. m5.3 states
+it: the `stale copy bound` row of m5.4 is 7668421. With `NumMod = 10` (no aliasing possible at these sizes) the same duplication and
 reordering run passes every other invariant (48,089,524 distinct states).
 
-### Two fairness gaps in the first draft (model errors, fixed)
+### Two fairness gaps (model errors, fixed)
 
 Both under `Pattern = "alternate"` both ways, `Spec`, at `W = 3`, each found in seconds.
 
-1. **The lost first write was never forced.** The draft had only the "goes through" form
+1. **The lost first write was never forced.** The model first had only the "goes through" form
    of the write. Lasso of 3 states: `0` is numbered, then the receiver's update loop turns
    forever and nothing is ever written. Under `"alternate"` the first send is lost, so a
    write of `0` would leave the wire unchanged, the "through" form is not enabled, and
@@ -370,7 +374,7 @@ Both under `Pattern = "alternate"` both ways, `Spec`, at `W = 3`, each found in 
    forces nothing. The transport puts its ack block in every packet of every update, so the
    plain ack send is strongly fair, and so is the plain write.
 
-### The abstract RTO evicts its own acks (model-size artefact with a design note)
+### The abstract RTO evicts its own acks (model-size artefact)
 
 With both plain sends strongly fair, `"alternate"` under head fairness alone gave a
 130-state lasso in which `0`, `1` and `2` are acked and delivered but `3` is written
@@ -380,15 +384,15 @@ abstract RTO is due at every moment), so the opened packet's id has been evicted
 ack lands and the ack is ignored, as 6.4 says. Every ack in the lasso names an evicted id.
 
 This is the model's RTO outpacing the ack path, which the real RTO (above the RTT, RFC
-6298 with back-off) does not do. `AcksLand` excludes it. The design note for the code
-card: `P` must exceed the packets a connection writes in one RTT, resends included, or a
-sender under back-off can evict its own acks and stall until `reliable_timeout`; section
-14 now says so (sizing `P`).
+6298, [m9.2](../standard/MESSAGES.md#m9)) does not do.
+`AcksLand` excludes it. `P` must exceed the packets a connection writes in one RTT,
+resends included, or a sender can evict its own acks and stall until
+`reliable_timeout`.
 
 ### A model error the DeliveredOnce witness found
 
 The first run of `MCRNWindowBrokenDropDuplicates.cfg` stopped on "Successor state is not
-completely specified ... dup". The draft wrote `dup' = dup \/ (now \cap everDelivered #
+completely specified ... dup". The model first wrote `dup' = dup \/ (now \cap everDelivered #
 {})`, which parses as `(dup' = dup) \/ (...)`: when a duplicate is delivered TLC may take
 the second disjunct and leave `dup'` unassigned. With every guarding rule on, the second
 disjunct is never true, so no run of the committed model was affected; it would have hidden

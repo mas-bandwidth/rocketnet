@@ -28,9 +28,8 @@ keep it inside the private report.
 ## Versions that receive fixes
 
 The newest tagged minor release line receives security fixes in a patch release;
-the first line is 1.0.x. Until the first tag exists there is no supported
-release, and the development branch and untagged commits are not supported for
-production use. Older minor lines are not maintained: a fix ships in the newest
+the supported release line is 1.0.x. The development branch and untagged commits
+are not supported for production use. Older minor lines are not maintained: a fix ships in the newest
 line and upgrading is the remedy. An advisory always names the affected versions
 and the first fixed version.
 
@@ -64,8 +63,7 @@ This policy covers the rocketnet library and its wire protocol. The threat model
 the guarantees, and the explicit non-goals are normative in
 [standard/TRANSPORT.md](standard/TRANSPORT.md) and
 [standard/MESSAGES.md](standard/MESSAGES.md), each under **Security
-considerations**. In that
-document's terms, session traffic has forward secrecy while the handshake does
+considerations**. In the terms of those two sections, session traffic has forward secrecy while the handshake does
 not; a sealed box proves nothing about its sender; connection-request replay is a
 denial of service against one client rather than an authentication break; no
 response may be larger than the packet that provoked it; and volumetric floods
@@ -73,11 +71,11 @@ and attackers holding valid tokens are answered by the backend, not by this
 layer. Those sections are the authority; this file does not restate their
 reasoning.
 
-The connect-token create and expire checks read the application's clock: by
-default the wall clock, or with `game_clock_epoch` set, that epoch plus the time
-the caller passes. The application already supplies the clock every other
-deadline reads, so the token clock has the same trust; the expire check stays
-and only its clock source changes.
+The connect-token create and expire checks read the system wall clock, in Unix
+seconds, on the client and on the server; every other deadline reads the game
+clock the application passes to update. A host whose wall clock is wrong
+refuses valid tokens or accepts expired ones, so keep server clocks
+synchronized.
 
 The following are in scope for a report: packet parsing and generation, the
 connect handshake and token handling, replay and acknowledgement state, fragment

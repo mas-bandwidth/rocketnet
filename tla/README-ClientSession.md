@@ -6,8 +6,8 @@ path out of a connection, disconnect back to DISCONNECTED, connect again, and de
 handshake packet by packet is `tla/ClientConnection.tla`, which this module does not extend;
 this one models what that one does not: the per-connection state one connection writes and the
 one `Reset` that clears it before the next connection. `tla/MCClientSession.tla` and its cfg
-files are the instances; every run is a row in `tla/RUNS.tsv` (group `clientsession`). Line
-numbers below are at `14993f6` (the base of this change).
+files are the instances; every run is a row in `tla/RUNS.tsv` (group `clientsession`). The
+code is cited by file and symbol.
 
 ## What the model covers
 
@@ -15,19 +15,19 @@ numbers below are at `14993f6` (the base of this change).
 
 | Variable | Code | Meaning |
 |---|---|---|
-| `st` | `struct rocketnet_client_transport_t` (`sdk/rocketnet_client_transport.cpp:120`), read by `rocketnet_client_transport_state` (`:1591`); the state codes are `ROCKETNET_CLIENT_TRANSPORT_STATE_*` (`sdk/rocketnet.h:705-716`) | `NONE` (no object), `DISCONNECTED`, the three handshake stages, `CONNECTED`, and the seven error states |
+| `st` | `struct rocketnet_client_transport_t` (`sdk/rocketnet_client_transport.cpp`), read by `rocketnet_client_transport_state`; the state codes are `ROCKETNET_CLIENT_TRANSPORT_STATE_*` (`sdk/rocketnet_layers.h`), which `ROCKETNET_CLIENT_STATE_*` in `sdk/rocketnet.h` mirror | `NONE` (no object), `DISCONNECTED`, the three handshake stages, `CONNECTED`, and the seven error states |
 | `cur` | ghost | the session tag of the connection in progress, 0 outside one |
-| `conn[f]` | the per-connection fields of `struct rocketnet_client_protocol_t` (`sdk/rocketnet_client_protocol.h:57`: the send sequences `:91-92`, the replay windows `:94-95`, the reassembly set `:136`) and the message layer above it | one field per row of the reset inventory, each 0 (Init) or the tag of the session that wrote it |
-| `reason` | `rocketnet_message_client_disconnect_reason` (`sdk/rocketnet.h:2324`) | the disconnect reason, kept through the reset, cleared to NONE when the next connection reaches CONNECTED |
+| `conn[f]` | the per-connection fields of `struct rocketnet_client_protocol_t` (`sdk/rocketnet_client_protocol.h`: the send sequences `send_sequence_handshake` and `send_sequence_session`, the replay windows `replay_handshake` and `replay_session`, the reassembly set `reassembly`) and the message layer above it | one field per row of the reset inventory, each 0 (Init) or the tag of the session that wrote it |
+| `reason` | `rocketnet_client_disconnect_reason` (`sdk/rocketnet.h`) | the disconnect reason, kept through the reset, cleared to NONE when the next connection reaches CONNECTED |
 | `kept` | the lifetime counters and the config | kept across connections; fresh only at create |
 | `link` | the path from the server | the session tags of server packets in flight (lossy: `Lose`) |
 
-The connect-without-token API (`create`, then `connect(token)`, `disconnect`, connect again)
-does not exist at `14993f6`: today the token is passed to `rocketnet_client_transport_create`
-(`sdk/rocketnet_client_transport.cpp:293`) and `rocketnet_client_transport_disconnect`
-(`:1618`) ends the object's only connection. The card rocketnet-client-connect-disconnect-reconnect
-writes that API and its single reset function; the card rocketnet-per-connection-reset-is-complete
-writes the reset inventory each field below stands for and cites this model.
+The public client is this session object: `rocketnet_client_create` makes it
+DISCONNECTED, `rocketnet_client_connect` starts a connection with a token, and
+`rocketnet_client_disconnect` ends it, so the client can connect again. The code cites this
+model where the client is defined and where End then Reset runs
+(`sdk/rocketnet_api.cpp`), and the reset inventory each field below stands for is in
+`sdk/rocketnet_connection_reset.h`.
 
 **The per-connection record** (`Fields`), grouped by the step that writes it:
 
@@ -87,7 +87,7 @@ the new session's first sequences (`replay_window`).
 Both traces were read step by step against the defect each constant names. With the Unreset
 instance and `INVARIANT ResetIsInit` instead, TLC fails `ResetIsInit` at the first reset (8
 states: a denial after a packet of session 1 opened leaves `replay_window = 1` in
-`CONNECTION_DENIED`); that run is a bench check, not a recorded case. With `SPECIFICATION Spec` (no
+`CONNECTION_DENIED`); that run is a manual check, not a recorded case. With `SPECIFICATION Spec` (no
 fairness) and the main constants, `ConnectReachesConnectedOrError` fails by stuttering in a
 handshake stage, so the property is not vacuous under `LiveSpec`.
 

@@ -15,27 +15,29 @@ names. See [docs/LINUX.md](LINUX.md) for the Linux build, transport ladder, kern
 
 | Operating system | Architecture | Compiler | Drivers | Tier | Workflow | Runner label |
 | --- | --- | --- | --- | --- | --- | --- |
-| Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | GCC 13 | portable, gso, xdp | supported | .github/workflows/ci.yml | self-hosted, Linux, X64, fleet |
+| Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | GCC 13 | portable, gso, io_uring, xdp | supported | .github/workflows/ci.yml | self-hosted, Linux, X64, fleet |
 | Ubuntu 24.04 (Linux, cross/QEMU) | s390x | s390x-linux-gnu-gcc | portable | supported | .github/workflows/ci.yml | ubuntu-24.04 |
 | [macOS 27 (self-hosted fleet)](MACOS.md) | arm64 | Apple Clang | portable, msgx | supported | .github/workflows/ci.yml | self-hosted, macOS, ARM64, rocketnet-macos |
-| Windows Server 2025 | x86_64 | MSVC | portable, iocp | supported | .github/workflows/ci.yml | windows-2025 |
-| Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | GCC | portable, gso, xdp | nightly | .github/workflows/nightly-leaks.yml | self-hosted, Linux, X64, fleet |
+| Windows Server 2025 | x86_64 | MSVC | portable, iocp, rio | supported | .github/workflows/ci.yml | windows-2025 |
+| Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | GCC | portable, gso, io_uring, xdp | nightly | .github/workflows/nightly-leaks.yml | self-hosted, Linux, X64, fleet |
 | Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | Clang | portable | nightly | .github/workflows/fuzz-nightly.yml | self-hosted, Linux, X64, fleet |
 | Ubuntu 24.04 (Linux, full-system guest) | s390x | GCC | portable | nightly | .github/workflows/nightly-bigendian-system.yml | self-hosted, Linux, X64, fleet |
 | [macOS 27 (self-hosted fleet)](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-soak.yml | self-hosted, macOS, ARM64, rocketnet-macos |
 | [macOS 27 (self-hosted fleet)](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-frame-budget.yml | self-hosted, macOS, ARM64, rocketnet-macos |
 | [macOS 27 (self-hosted fleet)](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-examples.yml | self-hosted, macOS, ARM64, rocketnet-macos |
-| Windows Server 2025 | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly-soak.yml | windows-2025 |
-| Windows Server 2025 | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly.yml | windows-2025 |
+| Windows Server 2025 | x86_64 | MSVC | portable, iocp, rio | nightly | .github/workflows/nightly-soak.yml | windows-2025 |
+| Windows Server 2025 | x86_64 | MSVC | portable, iocp, rio | nightly | .github/workflows/nightly.yml | windows-2025 |
 | Linux | arm64 | none | none | unsupported | - | - |
 | Windows | arm64 | none | none | unsupported | - | - |
 | [macOS](MACOS.md) | x86_64 | none | none | unsupported | - | - |
 
 The macOS rows link to [MACOS.md](MACOS.md), the guide for building, pinning
-and verifying on a Mac. The drivers column names the backends the row actually
-exercises or proves in CI. The registry (`rocketnet_drivers.inc`) also lists
-portable on every platform, gso and xdp on Linux, msgx on macOS and iocp on
-Windows. A driver that the row does not name is not part of that row's claim.
+and verifying on a Mac. The drivers column names the transports the row
+actually exercises or proves in CI. The registry (`rocketnet_drivers.inc`) also
+lists portable on every platform, gso, io_uring and xdp on Linux, msgx on
+macOS, iocp and rio on Windows, and in-memory loopback for pin-only use
+everywhere. A transport that the row does not name is not part of that row's
+claim.
 
 ## Policy rules
 
@@ -53,8 +55,8 @@ A supported row promises three things, and only these three:
    the label is present in that file.
 
 It does not promise another compiler, another architecture, another runner
-image, privileged XDP attach, line-rate measurements, or a driver the row does
-not name. In particular, the per-commit `big-endian` leg in `ci.yml`
+image, privileged XDP attach, line-rate measurements, or a transport the row
+does not name. In particular, the per-commit `big-endian` leg in `ci.yml`
 cross-compiles the library and suite for s390x and runs the wire and sodium
 checks under qemu-user; the socket-crossing suite runs on s390x only in the
 nightly full-system guest. The nightly row is how that suite is claimed.

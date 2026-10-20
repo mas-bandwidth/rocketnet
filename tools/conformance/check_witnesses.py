@@ -3,11 +3,13 @@
 #   RocketNet. Copyright 2026 Más Bandwidth LLC.
 #   Licensed under the GNU Affero General Public License v3.0
 
-"""Witness coverage for the behavioural MUSTs of STANDARD.md.
+"""Witness coverage for the behavioural MUSTs of the standard in standard/.
 
 docs/WITNESSES.tsv names, for each behavioural MUST, the anchor that would
-move if the rule moved: the STANDARD.md line, the TLA+ invariant (if one
-exists), the C++ function, and the test. This checker holds those anchors to
+move if the rule moved: the standard line (a document of standard/ and a line
+number, written TRANSPORT.md:1088), the TLA+ invariant (if one exists), the
+C++ function, and the test. A bare line number names no document and is a
+stale anchor. This checker holds those anchors to
 the tree. It fails when an anchor is stale -- the named line no longer
 carries the rule's keyword, or the function, test or invariant is gone.
 That is a coverage audit, not a behaviour test: it never runs the tests.
@@ -25,7 +27,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
-STANDARD = os.path.join(ROOT, "STANDARD.md")
+STANDARD_DIR = os.path.join(ROOT, "standard")
 TLA_DIR = os.path.join(ROOT, "tla")
 TSV = os.path.join(ROOT, "docs", "WITNESSES.tsv")
 
@@ -51,6 +53,25 @@ def read_tsv(path):
                                  % (len(cells), len(COLUMNS), cells))
             rows.append(cells)
     return rows
+
+
+def read_standard_line(anchor):
+    """Resolve DOC:LINE under standard/. Return (text, None) or (None, why)."""
+    document, _, number = anchor.rpartition(":")
+    if not document or not number:
+        return None, "standard_line %r is not DOC:LINE under standard/" % anchor
+    try:
+        line_number = int(number)
+    except ValueError:
+        return None, "standard_line %r has no line number" % anchor
+    path = os.path.normpath(os.path.join(STANDARD_DIR, document))
+    if os.path.dirname(path) != os.path.normpath(STANDARD_DIR) or not os.path.isfile(path):
+        return None, "standard/%s is not a document of standard/" % document
+    with open(path, "r", encoding="utf-8") as handle:
+        lines = handle.read().split("\n")
+    if line_number < 1 or line_number > len(lines):
+        return None, "standard/%s has no line %d" % (document, line_number)
+    return lines[line_number - 1], None
 
 
 def anchor_invariant_exists(name):
@@ -94,15 +115,12 @@ def anchor_test_exists(anchor):
 
 def run(root=None):
     """Verify every anchor. Return (exit_code, report_text)."""
-    global ROOT, STANDARD, TLA_DIR, TSV
+    global ROOT, STANDARD_DIR, TLA_DIR, TSV
     if root is not None:
         ROOT = root
-        STANDARD = os.path.join(ROOT, "STANDARD.md")
+        STANDARD_DIR = os.path.join(ROOT, "standard")
         TLA_DIR = os.path.join(ROOT, "tla")
         TSV = os.path.join(ROOT, "docs", "WITNESSES.tsv")
-
-    with open(STANDARD, "r", encoding="utf-8") as handle:
-        standard_lines = handle.read().split("\n")
 
     try:
         rows = read_tsv(TSV)
@@ -115,19 +133,14 @@ def run(root=None):
 
     for index, cells in enumerate(rows, start=2):
         standard_line, rule, invariant, code, test, tier = cells
-        where = "WITNESSES.tsv line %d (STANDARD.md line %s)" % (index, standard_line)
+        where = "WITNESSES.tsv line %d (standard/%s)" % (index, standard_line)
 
-        try:
-            line_number = int(standard_line)
-        except ValueError:
-            failures.append("%s: standard_line %r is not a number" % (where, standard_line))
-            continue
-        if line_number < 1 or line_number > len(standard_lines):
-            failures.append("%s: STANDARD.md has no line %d" % (where, line_number))
+        line_text, why = read_standard_line(standard_line)
+        if line_text is None:
+            failures.append("%s: %s" % (where, why))
             continue
 
         checked += 1
-        line_text = standard_lines[line_number - 1]
         if rule not in line_text:
             failures.append("%s: the line no longer carries the rule keyword %r -- "
                             "the rule moved or the anchor is stale" % (where, rule))
@@ -146,7 +159,7 @@ def run(root=None):
                 failures.append("%s: test anchor %r does not resolve" % (where, test))
 
         if tier == "none":
-            gaps.append((line_number, rule))
+            gaps.append((standard_line, rule))
 
     lines = []
     if failures:
@@ -161,8 +174,8 @@ def run(root=None):
 
     lines.append("WITNESSES conformance: %d rules, every named anchor resolves." % checked)
     lines.append("GAPS (tier none): %d" % len(gaps))
-    for line_number, rule in gaps:
-        lines.append("  - STANDARD.md:%d %s" % (line_number, rule))
+    for standard_line, rule in gaps:
+        lines.append("  - standard/%s %s" % (standard_line, rule))
     return 0, "\n".join(lines)
 
 

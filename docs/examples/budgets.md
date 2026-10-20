@@ -10,14 +10,16 @@ what a budget does when it is exceeded.
 1. Print the client send budget default (`ROCKETNET_DEFAULT_CLIENT_SEND_KBPS`)
    and the server per-client send budget default
    (`ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS`).
-2. Set the client's send budget lower in its config at create, then change it
-   again at run time with `rocketnet_client_set_send_kbps`.
-3. Queue a burst of unreliable messages far above the budget. Unreliable
-   messages over budget are dropped and counted, and the example prints the
-   over-budget drop counter
+2. Set the client's send budget to 10 kbps in its config at create
+   (`send_kbps`), then set it again at run time with
+   `rocketnet_client_set_send_kbps`, which returns 1 when it takes the rate.
+3. Queue a burst of 120 `ROCKETNET_RELIABILITY_UNRELIABLE` messages of 200 bytes on
+   channel 0, far above the budget. Unreliable messages over budget are
+   dropped and counted, and the example prints the over-budget drop counter
    (`ROCKETNET_CLIENT_COUNTER_BUDGET_DROPS`).
-4. Queue a burst of reliable messages of the same size. Reliable messages wait
-   for budget and are never dropped, and the example prints how many arrived.
+4. Queue a burst of 40 `ROCKETNET_RELIABILITY_RELIABLE_ORDERED` messages of the same size
+   on channel 1. Reliable messages wait for budget and are never dropped, and
+   the example prints how many arrived.
 
 The budget governs the wire, never the queue: reliable messages wait for
 budget and arrive, unreliable ones over budget are dropped and counted.
@@ -35,9 +37,9 @@ From the repository root, after the normal build:
 ./bin/example_budgets
 ```
 
-On Windows the binary is `bin\Release\example_budgets.exe`. The program finishes
-inside sixty seconds and prints `PASS` as its last line; any failure prints one
-`FAIL: ...` line and exits 1.
+On Windows the binary is `bin\Release\example_budgets.exe`. The program gives
+up after sixty seconds; on success it prints `PASS` as its last line, and on a
+failed check it prints one `FAIL: ...` line and exits 1.
 
 ## What the output means
 
@@ -52,18 +54,19 @@ PASS
 ```
 
 The first two lines are the defaults. The next two show the client's budget
-changed by config at create and by the runtime call. A nonzero `unreliable over-budget drops` line and `40/40` reliable arrivals mean the burst of
-unreliable messages was dropped and counted while every reliable message
-arrived. `PASS` means all that held.
+set by config at create and by the runtime call. A nonzero
+`unreliable over-budget drops` line and `40/40` reliable arrivals mean the
+burst of unreliable messages was dropped and counted while every reliable
+message arrived. `PASS` means all that held.
 
 ## Public calls it uses
 
 - `rocketnet_init`, `rocketnet_term`
-- `rocketnet_server_dev_config`, `rocketnet_server_create`,
+- `rocketnet_server_dev_config`, `rocketnet_server_create`, `rocketnet_server_start`,
   `rocketnet_server_update`, `rocketnet_server_port`,
   `rocketnet_server_receive_message`, `rocketnet_server_release_message`,
   `rocketnet_server_send_packets`, `rocketnet_server_destroy`
-- `rocketnet_client_default_config`, `rocketnet_client_create`,
+- `rocketnet_client_default_config`, `rocketnet_client_create`, `rocketnet_client_connect`,
   `rocketnet_client_state`, `rocketnet_client_update`,
   `rocketnet_client_set_send_kbps`, `rocketnet_client_start_message`,
   `rocketnet_client_finish_message`, `rocketnet_client_receive_message`,
