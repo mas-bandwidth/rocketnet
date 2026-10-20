@@ -79,6 +79,14 @@ static const mach_timebase_info_data_t & rocketnet_frame_sync_timebase()
     return timebase;
 }
 
+// This metadata-only probe verifies the scale is available before frame-sync
+// creation, without reading the live clock.
+int rocketnet_frame_sync_timebase_ready_for_testing()
+{
+    const mach_timebase_info_data_t & timebase = rocketnet_frame_sync_timebase();
+    return timebase.numer != 0 && timebase.denom != 0;
+}
+
 static void rocketnet_frame_sync_platform_init()
 {
     rocketnet_frame_sync_timebase();
