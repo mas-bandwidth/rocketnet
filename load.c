@@ -761,7 +761,16 @@ int main( int argc, char ** argv )
 
             const int st = rocketnet_message_client_state( clients[i] );
             if ( client_ever_connected[i] && st != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+            {
+                /* name the first eight disconnects seen in traffic: the client, its
+                   state, its disconnect reason and when, on stderr */
+                if ( unexpected_disconnects < 8 )
+                    fprintf( stderr, "load: client %d left CONNECTED at t=%.3f: state=%d %s reason=%s\n",
+                             i, rocketnet_time() - traffic_start, st, rocketnet_client_transport_state_name( st ),
+                             rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t)
+                                 rocketnet_message_client_disconnect_reason( clients[i] ) ) );
                 unexpected_disconnects++;
+            }
 
             if ( k + 1 == slice )
             {
@@ -897,6 +906,10 @@ int main( int argc, char ** argv )
              rocketnet_counter_value( stc, ROCKETNET_COUNTER_CLIENT_TIMED_OUT ) > 0 )
         {
             unexpected_disconnects++;
+            for ( int k = 0; k < ROCKETNET_NUM_COUNTERS; k++ )
+                if ( rocketnet_counter_value( stc, k ) )
+                    fprintf( stderr, "load: server counter at end %s=%llu\n", rocketnet_counter_name( k ),
+                             (unsigned long long) rocketnet_counter_value( stc, k ) );
         }
     }
 
