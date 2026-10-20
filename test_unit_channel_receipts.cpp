@@ -235,7 +235,7 @@ static void receipts_listed_per_update_by_the_c_api()
                                                                                                      ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 );
     rocketnet_unit_check( client != NULL );
     rocketnet_unit_check( rocketnet_message_client_update( client, 0.005 ) == ROCKETNET_UPDATE_OK );
-    rocketnet_message_client_send_packets( client );                               // the connection's CONFIG goes first and is acked (CHANNELS.md 10.3)
+    rocketnet_message_client_send_packets( client );                               // the connection's CONFIG goes first and is acked (standard/MESSAGES.md m11)
     transport.ack_packet = transport.sent_packet;
     rocketnet_unit_check( rocketnet_message_client_update( client, 0.005 ) == ROCKETNET_UPDATE_OK );
     transport.sent_count = 0;
@@ -297,7 +297,7 @@ static void promoted_type5_block_replays_last_index_and_reliable_loss_witnesses(
     rocketnet_unit_check( client != NULL );
     rn_message_connection_t * connection = &client->object.connections[0];
     rocketnet_unit_check( rocketnet_message_client_update( client, 1.0 ) == ROCKETNET_UPDATE_OK );
-    rocketnet_message_client_send_packets( client );                               // the connection's CONFIG goes first and is acked (CHANNELS.md 10.3)
+    rocketnet_message_client_send_packets( client );                               // the connection's CONFIG goes first and is acked (standard/MESSAGES.md m11)
     transport.ack_packet = transport.sent_packet;
     rocketnet_unit_check( rocketnet_message_client_update( client, 1.0 ) == ROCKETNET_UPDATE_OK );
     transport.sent_count = 0;

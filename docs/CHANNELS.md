@@ -1850,7 +1850,7 @@ rule of 10.2; `FALSE` is the old rule, applying by slot after `observe`.
 
 ```tla
 ---------------------------- MODULE RNSlots ----------------------------
-\* One server slot over the transport's update loop (CHANNELS.md 10.2, 11.1).
+\* One server slot over the transport's update loop (sections 10.2 and 11.1).
 \* The transport may release and reassign the slot many times between two
 \* object updates; every batch entry (payload or acked id) is tagged with the
 \* connection id it was received for. Acked ids may be deferred to a later

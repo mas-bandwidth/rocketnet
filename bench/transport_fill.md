@@ -1,7 +1,7 @@
 # Driver interface cost checks
 
 These are CPU microbenchmarks for a native interface change, separate from the
-NIC campaign in `PROTOCOL.md`. They do not certify packet delivery rate,
+NIC campaign. They do not certify packet delivery rate,
 send/receive throughput, latency tails, or line-rate operation.
 
 `transport_fill.cpp` uses only `rocketnet.h`. It establishes a real encrypted
