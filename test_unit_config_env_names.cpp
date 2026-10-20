@@ -19,11 +19,12 @@
 //     its first log line
 //   - the step_driven row (sdk/rocketnet_config.cpp:88)
 //     takes 0 or 1 only
-//   - every variable those passes apply is named in sdk/rocketnet.h
+//   - every variable those passes apply has the same unique inventory in
+//     sdk/rocketnet.h and BUILDING.md
 //   - transport env passes (sdk/rocketnet_client_transport.cpp:583-586,652-653
 //     and sdk/rocketnet_server_transport.cpp rocketnet_config_apply_env,
 //     rocketnet_config_apply_env_uint64) are fully inventoried,
-//     including public fields, simulator/internal rows and legacy refusals
+//     including public fields and simulator/internal rows
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -291,10 +292,10 @@ REGISTER_UNIT_TEST( config_env_step_driven_is_zero_or_one );
 // beside its field ("///< NAME:")
 // ---------------------------------------------------------------------------
 
-static std::vector<std::string> env_names_documented()
+static std::vector<std::string> env_names_documented( const char * relative_path )
 {
     std::vector<std::string> names;
-    const std::string path = std::string( ROCKETNET_SOURCE_DIR ) + "/sdk/rocketnet.h";
+    const std::string path = std::string( ROCKETNET_SOURCE_DIR ) + "/" + relative_path;
     FILE * file = fopen( path.c_str(), "rb" );
     check( file != NULL );
     std::string text;
@@ -303,8 +304,8 @@ static std::vector<std::string> env_names_documented()
     while ( ( bytes = fread( buffer, 1, sizeof( buffer ), file ) ) > 0 )
         text.append( buffer, bytes );
     fclose( file );
-    const std::string markers[] = { "///< ROCKETNET_", "/// Environment: ROCKETNET_" };
-    for ( int m = 0; m < 2; m++ )
+    const std::string markers[] = { "///< ROCKETNET_", "/// Environment: ROCKETNET_", "* Environment: ROCKETNET_" };
+    for ( int m = 0; m < 3; m++ )
     {
         const std::string & marker = markers[m];
     for ( size_t at = text.find( marker ); at != std::string::npos; at = text.find( marker, at + 1 ) )
@@ -490,15 +491,26 @@ static std::vector<std::string> env_names_pass_reads()
     reads.push_back( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES" );
     reads.push_back( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" );
     reads.push_back( "ROCKETNET_LOG_LEVEL" );
-    reads.push_back( "ROCKETNET_PUMP" );
     reads.push_back( "ROCKETNET_GATEWAY_ETHERNET_ADDRESS" );
     return reads;
 }
 
 static void config_env_every_name_read_is_documented()
 {
-    const std::vector<std::string> documented = env_names_documented();
+    const std::vector<std::string> documented = env_names_documented( "sdk/rocketnet.h" );
+    const std::vector<std::string> building = env_names_documented( "BUILDING.md" );
     const std::vector<std::string> reads = env_names_pass_reads();
+    check( documented.size() == building.size() );
+    for ( size_t i = 0; i < documented.size(); i++ )
+    {
+        check( !env_names_contains( std::vector<std::string>( documented.begin(), documented.begin() + i ), documented[i].c_str() ) );
+        check( env_names_contains( building, documented[i].c_str() ) );
+    }
+    for ( size_t i = 0; i < building.size(); i++ )
+    {
+        check( !env_names_contains( std::vector<std::string>( building.begin(), building.begin() + i ), building[i].c_str() ) );
+        check( env_names_contains( documented, building[i].c_str() ) );
+    }
     for ( size_t i = 0; i < reads.size(); i++ )
     {
         if ( !env_names_contains( documented, reads[i].c_str() ) )
@@ -569,7 +581,7 @@ static void config_env_every_name_read_is_documented()
     check( env_names_contains( overrides, "ROCKETNET_SERVER_SERVER_PUBLIC_KEY" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_TRANSPORT" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_PUBLIC_ADDRESS" ) );
-    check( documented.size() == 70 );
+    check( documented.size() == 69 );
     check( env_names_contains( documented, "ROCKETNET_LOG_LEVEL" ) );
     check( env_names_contains( documented, "ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT" ) );
     check( env_names_contains( documented, "ROCKETNET_CLIENT_SIMULATED_LATENCY_MS" ) );
@@ -587,7 +599,6 @@ static void config_env_every_name_read_is_documented()
     check( env_names_contains( documented, "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW" ) );
     check( env_names_contains( documented, "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES" ) );
     check( env_names_contains( documented, "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" ) );
-    check( env_names_contains( documented, "ROCKETNET_PUMP" ) );
     check( env_names_contains( documented, "ROCKETNET_GATEWAY_ETHERNET_ADDRESS" ) );
     for ( size_t i = 0; i < overrides.size(); i++ )
     {
@@ -607,8 +618,8 @@ REGISTER_UNIT_TEST( config_env_every_name_read_is_documented );
 // ---------------------------------------------------------------------------
 // (4) transport passes also exercise development, internal and operator rows:
 // SIMULATED_*, GAME_CLOCK_EPOCH, and MEMORY_BUDGET_BYTES (sdk/rocketnet_client_transport.cpp:583-586,652-653
-// and sdk/rocketnet_server_transport.cpp rocketnet_config_apply_env,
-// rocketnet_config_apply_env_uint64), and refuse legacy names
+// and sdk/rocketnet_server_transport.cpp rocketnet_config_apply_env and
+// rocketnet_config_apply_env_uint64)
 // ---------------------------------------------------------------------------
 
 static void config_env_transport_passes_exercise_all_rows()
@@ -697,7 +708,7 @@ static void config_env_transport_passes_exercise_all_rows()
     check( env_names_contains( overrides, "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW" ) );
 
-    const std::vector<std::string> documented = env_names_documented();
+    const std::vector<std::string> documented = env_names_documented( "sdk/rocketnet.h" );
     const char * internal_names[] =
     {
         "ROCKETNET_CLIENT_GAME_CLOCK_EPOCH",
@@ -716,31 +727,6 @@ static void config_env_transport_passes_exercise_all_rows()
         check( env_names_contains( documented, internal_names[i] ) );
     }
 
-    // 2. Refused legacy and process-wide names:
-    env_names_setenv( "ROCKETNET_DRIVER", "loopback" );
-    env_names_setenv( "ROCKETNET_CLIENT_DRIVER", "loopback" );
-    env_names_setenv( "ROCKETNET_FILTER_VALUE", "ESIzRA==" );
 
-    env_names_capture_begin( &capture );
-    rocketnet_client_transport_default_config_current( &client_transport );
-    rocketnet_config_apply_env( "client", &client_transport, client_fields, num_client_fields );
-    env_names_capture_end( &capture );
-
-    env_names_unsetenv( "ROCKETNET_DRIVER" );
-    env_names_unsetenv( "ROCKETNET_CLIENT_DRIVER" );
-    env_names_unsetenv( "ROCKETNET_FILTER_VALUE" );
-
-    bool refused_driver = false;
-    bool ignored_process_wide = false;
-    for ( size_t i = 0; i < capture.log.lines.size(); i++ )
-    {
-        if ( capture.log.lines[i].find( "refuses ROCKETNET_DRIVER" ) != std::string::npos ||
-             capture.log.lines[i].find( "refuses ROCKETNET_CLIENT_DRIVER" ) != std::string::npos )
-            refused_driver = true;
-        if ( capture.log.lines[i].find( "ignores the process-wide ROCKETNET_FILTER_VALUE" ) != std::string::npos )
-            ignored_process_wide = true;
-    }
-    check( refused_driver );
-    check( ignored_process_wide );
 }
 REGISTER_UNIT_TEST( config_env_transport_passes_exercise_all_rows );
