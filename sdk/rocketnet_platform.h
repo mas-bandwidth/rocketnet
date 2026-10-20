@@ -437,18 +437,17 @@ uint64_t rocketnet_platform_receive_resets();
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
-#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 /**
  * @brief Counts the datagrams this socket's sends dropped.
  *
  * Every sendto, sendmmsg and per-packet tail of a sendmsg_x batch that
- * answers -1 drops its datagram and increments the count, including the test
- * seam's injected errors. Monotonic for the socket's life.
+ * answers -1 (SOCKET_ERROR on Windows) drops its datagram and increments the
+ * count, including the test seam's injected errors. Monotonic for the
+ * socket's life.
  * @param socket Live socket; must be non-NULL.
  * @return Number of dropped datagrams since the socket was created.
  */
 uint64_t rocketnet_platform_socket_send_failures( struct rocketnet_platform_socket_t * socket );
-#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 /**
@@ -487,6 +486,18 @@ int rocketnet_platform_sockets_for_testing( struct rocketnet_platform_socket_t *
  * "portable" or "msgx"; a degraded path is visible here. Do not free it.
  */
 const char * rocketnet_platform_socket_pump( struct rocketnet_platform_socket_t * socket );
+
+#if ROCKETNET_DEVELOPMENT
+// Test seams, compiled only into the development library (DRIVERS.md, ICMP
+// errors). inject_receive_errno makes the next recvmsg or recvmsg_x on any
+// socket return -1 with that errno instead of reading, leaving the queue
+// untouched; it is defined where the darwin pumps are. The server transport's
+// platform socket is its portable or msgx driver's socket, NULL for any
+// other driver.
+void rocketnet_platform_inject_receive_errno_for_testing( int error );
+struct rocketnet_server_transport_t;
+struct rocketnet_platform_socket_t * rocketnet_server_transport_platform_socket_for_testing( struct rocketnet_server_transport_t * server_transport );
+#endif // #if ROCKETNET_DEVELOPMENT
 
 #ifdef __cplusplus
 }
@@ -951,7 +962,7 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
     {
         void * context;
         bool ipv6;
-        bool msgx;                  // the batched sendmsg_x/recvmsg_x pump is eligible (probed at create, macOS only)
+        bool msgx;                  // the batched sendmsg_x/recvmsg_x pump is eligible (first batch call probes support, macOS only)
         double msgx_down_until;     // a hard refusal pauses the msgx pump until this time; the next batch call after it is the re-probe
         rocketnet_platform_socket_handle_t handle;
         uint64_t send_failures;     // datagrams a failed send dropped; atomic, monotonic
@@ -1001,6 +1012,7 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
         void * context;
         bool ipv6;
         rocketnet_platform_socket_handle_t handle;
+        uint64_t send_failures;     // datagrams a failed send dropped; atomic, monotonic
     };
 
     struct rocketnet_platform_thread_t

@@ -171,9 +171,10 @@ static bool rocketnet_rio_address_write( const rocketnet_address_t * input, bool
     return false;
 }
 
-// a source from its SOCKADDR_INET, a v4-mapped IPv6 source normalized to
-// IPv4 here, exactly once
-static bool rocketnet_rio_address_read( const SOCKADDR_INET * in, rocketnet_address_t * address )
+// a source from its SOCKADDR_INET; an IPv4-mapped IPv6 source passes the one
+// receive rule, rocketnet_address_accept_received_source: canonicalised to
+// IPv4 on the dual-stack socket, refused on any other
+static bool rocketnet_rio_address_read( const SOCKADDR_INET * in, bool dual_stack, rocketnet_address_t * address )
 {
     memset( address, 0, sizeof(*address) );
     if ( in->si_family == AF_INET )
@@ -189,9 +190,7 @@ static bool rocketnet_rio_address_read( const SOCKADDR_INET * in, rocketnet_addr
         address->port = ntohs( in->Ipv6.sin6_port );
         for ( int i = 0; i < 8; ++i )
             address->data.ipv6[i] = (uint16_t) ( ( in->Ipv6.sin6_addr.s6_addr[i * 2] << 8 ) | in->Ipv6.sin6_addr.s6_addr[i * 2 + 1] );
-        if ( rocketnet_address_is_ipv4_in_ipv6( address ) )
-            rocketnet_address_convert_ipv6_to_ipv4( address );
-        return true;
+        return rocketnet_address_accept_received_source( address, dual_stack );
     }
     return false;
 }
@@ -537,7 +536,7 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
         if ( fail_stage == 6 ) goto failed;
     }
 
-    if ( !rocketnet_rio_address_read( &address, bind_address ) ) goto failed;
+    if ( !rocketnet_rio_address_read( &address, rio->ipv6, bind_address ) ) goto failed;
     rocketnet_info( "rio transport: port %d, %d receive slices, %d send frames per phase, %llu registered bytes", bind_address->port,
                     ROCKETNET_RIO_RECEIVES, ROCKETNET_RIO_SEND_QUEUE_SIZE, (unsigned long long) rio->layout.total_bytes );
     return rio;
@@ -716,7 +715,7 @@ static void rocketnet_rio_complete_receive( rocketnet_server_rio_t * rio, const 
         rocketnet_rio_bank_t * bank = &rio->banks[rio->fill_bank];
         if ( bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES || bytes > ROCKETNET_RECEIVE_CEILING )
             rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE );
-        else if ( !rocketnet_rio_address_read( rocketnet_rio_receive_address( rio, slice ), &from ) )
+        else if ( !rocketnet_rio_address_read( rocketnet_rio_receive_address( rio, slice ), rio->ipv6, &from ) )
             rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_FAILED );
         else if ( bank->num_packets >= ROCKETNET_RIO_RECEIVES )
             rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW );

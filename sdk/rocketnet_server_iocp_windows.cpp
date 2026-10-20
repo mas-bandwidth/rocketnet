@@ -158,7 +158,10 @@ static int rocketnet_iocp_address_write( const rocketnet_address_t * input, bool
     return 0;
 }
 
-static bool rocketnet_iocp_address_read( const sockaddr_storage * storage, int bytes, rocketnet_address_t * address )
+// a source from its sockaddr; an IPv4-mapped IPv6 source passes the one
+// receive rule, rocketnet_address_accept_received_source: canonicalised to
+// IPv4 on the dual-stack socket, refused on any other
+static bool rocketnet_iocp_address_read( const sockaddr_storage * storage, int bytes, bool dual_stack, rocketnet_address_t * address )
 {
     memset( address, 0, sizeof(*address) );
     if ( storage->ss_family == AF_INET && bytes >= (int) sizeof(sockaddr_in) )
@@ -176,9 +179,7 @@ static bool rocketnet_iocp_address_read( const sockaddr_storage * storage, int b
         address->port = ntohs( from->sin6_port );
         for ( int i = 0; i < 8; ++i )
             address->data.ipv6[i] = (uint16_t) ( ( from->sin6_addr.s6_addr[i * 2] << 8 ) | from->sin6_addr.s6_addr[i * 2 + 1] );
-        if ( rocketnet_address_is_ipv4_in_ipv6( address ) )
-            rocketnet_address_convert_ipv6_to_ipv4( address );
-        return true;
+        return rocketnet_address_accept_received_source( address, dual_stack );
     }
     return false;
 }
@@ -261,7 +262,7 @@ static void rocketnet_iocp_publish_uro( rocketnet_server_iocp_t * iocp, rocketne
 {
     rocketnet_address_t from;
     if ( !success || bytes == 0 || ( op->message.dwFlags & MSG_TRUNC ) ||
-         !rocketnet_iocp_address_read( &op->address, op->message.namelen, &from ) )
+         !rocketnet_iocp_address_read( &op->address, op->message.namelen, iocp->ipv6, &from ) )
     {
         iocp->counters[ROCKETNET_IOCP_RECEIVE_DROPPED].fetch_add( 1, std::memory_order_relaxed );
         return;
@@ -377,7 +378,7 @@ static void rocketnet_iocp_worker( void * argument )
             }
             else if ( running && success && bytes > 0 && bytes <= ROCKETNET_RECEIVE_CEILING &&
                  buffer->num_packets < ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE &&
-                 rocketnet_iocp_address_read( &op->address, op->address_bytes, &from ) )
+                 rocketnet_iocp_address_read( &op->address, op->address_bytes, iocp->ipv6, &from ) )
             {
                 const int index = buffer->num_packets++;
                 buffer->from[index] = from;
@@ -601,7 +602,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
         if ( !rocketnet_iocp_post_receive( iocp, &iocp->receives[i] ) ) goto failed;
         if ( fail_stage == 4 ) goto failed;
     }
-    if ( !rocketnet_iocp_address_read( &address, address_bytes, bind_address ) ) goto failed;
+    if ( !rocketnet_iocp_address_read( &address, address_bytes, iocp->ipv6, bind_address ) ) goto failed;
     rocketnet_info( "iocp transport: %d workers on port %d, USO %s, URO %s", num_workers, bind_address->port,
         ( iocp->features.load() & ROCKETNET_IOCP_FEATURE_USO ) ? "yes" : "no (WSASendTo per datagram)",
         ( iocp->features.load() & ROCKETNET_IOCP_FEATURE_URO ) ? "yes" : "no (WSARecvFrom per datagram)" );
