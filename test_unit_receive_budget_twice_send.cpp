@@ -98,6 +98,7 @@ REGISTER_UNIT_TEST( receive_budget_twice_send_rio );
 #if defined(__linux__) && defined(ROCKETNET_URING_REAP_TEST_HOOKS)
 
 #include "rocketnet_uring_codec.h"
+#include <errno.h>
 
 #define RB_FAKE_CAPACITY ( 1 << 18 )
 
