@@ -221,10 +221,11 @@ static posix_resource_counts_t posix_stable_counts()
 // onto the portable pump) against every client cell (portable, msgx). The
 // forced cell requests msgx first and lets ROCKETNET_PUMP=portable refuse that
 // rung, so the ladder grants portable; the grant is checked, not assumed.
-// The override is read at socket create (sdk/rocketnet_platform.cpp:4548 in
-// rocketnet_platform_socket_create_with_pump), so posix_server_create sets it
-// around the server create only: a msgx client in the same cell keeps the
-// darwin batch pump instead of being refused by the server's override.
+// ROCKETNET_PUMP=portable turns the msgx pump off for every create in the
+// process, client and server alike (rocketnet_platform_socket_create_with_pump
+// in sdk/rocketnet_platform.cpp refuses a required msgx while it is set), so
+// posix_server_create sets it around the server create only and the client
+// cell keeps its own pump.
 struct posix_cell_t
 {
     const char * name;
@@ -531,7 +532,6 @@ static void posix_cell_begin( const posix_cell_t * cell, posix_env_guard_t * ser
     posix_env_clear( server_guard, "ROCKETNET_SERVER_TRANSPORT" );
     posix_env_clear( client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
     posix_env_clear( pump_guard, "ROCKETNET_PUMP" );
-    // ROCKETNET_PUMP is set around the server create only (posix_server_create)
 #if defined(__linux__) && ROCKETNET_XDP
     if ( cell->xdp )
         posix_xdp_setup();
@@ -1091,7 +1091,18 @@ void rocketnet_test_posix_destroy_under_traffic_100()
 // of which this moves.
 static void posix_heap_keep( bool keep )
 {
-#if defined(__GLIBC__)
+#if defined(__SANITIZE_ADDRESS__)
+    (void) keep;
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+    (void) keep;
+#elif defined(__GLIBC__)
+    posix_check( mallopt( M_MMAP_MAX, keep ? 0 : 65536 ) == 1 );
+    posix_check( mallopt( M_TRIM_THRESHOLD, keep ? INT_MAX : 128 * 1024 ) == 1 );
+#else
+    (void) keep;
+#endif
+#elif defined(__GLIBC__)
     posix_check( mallopt( M_MMAP_MAX, keep ? 0 : 65536 ) == 1 );
     posix_check( mallopt( M_TRIM_THRESHOLD, keep ? INT_MAX : 128 * 1024 ) == 1 );
 #else
