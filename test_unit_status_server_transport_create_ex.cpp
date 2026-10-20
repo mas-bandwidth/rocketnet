@@ -281,6 +281,7 @@ static void server_transport_create_ex_reports_every_status()
         struct rocketnet_server_transport_config_t config;
         production_config( &config );
         strcpy( config.driver, "loopback" );
+        config.max_clients = 1;
 
         int reached_success = 0;
         int out_of_memory = 0;

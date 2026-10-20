@@ -326,17 +326,26 @@ struct rocketnet_frame_sync_t * rocketnet_frame_sync_create_ex( void * context, 
     }
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    frame_sync->waitable_timer = CreateWaitableTimerExW( NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS );
+    frame_sync->waitable_timer = rocketnet_platform_priority_calls_current()->create_waitable_timer( CREATE_WAITABLE_TIMER_HIGH_RESOLUTION );
     if ( !frame_sync->waitable_timer )
     {
         rocketnet_info( "frame sync: high resolution waitable timer unavailable, using standard" );
-        frame_sync->waitable_timer = CreateWaitableTimerExW( NULL, NULL, 0, TIMER_ALL_ACCESS );
+        frame_sync->waitable_timer = rocketnet_platform_priority_calls_current()->create_waitable_timer( 0 );
     }
     if ( !frame_sync->waitable_timer )
     {
         if ( status )
             *status = ROCKETNET_STATUS_TIMER_CREATE_FAILED;
         rocketnet_error( "frame sync: could not create waitable timer (%lu)", (unsigned long) GetLastError() );
+        rocketnet_free( context, frame_sync );
+        return NULL;
+    }
+#else
+    if ( !rocketnet_platform_priority_calls_current()->create_waitable_timer( 0 ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_TIMER_CREATE_FAILED;
+        rocketnet_error( "frame sync: could not create timer" );
         rocketnet_free( context, frame_sync );
         return NULL;
     }
