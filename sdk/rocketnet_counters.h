@@ -864,15 +864,17 @@
     /* A fitting unreliable message (docs/OUTGOING-BUILD.md) that was not */ \
     /* written in place in a packet buffer and took the queued path, with */ \
     /* its one copy into the frame at send_packets: the transport gave no */ \
-    /* frame (a client not yet connected, a full send ring), unreliable */ \
-    /* messages already waited in the connection's queue, the send budget */ \
-    /* could not pay it at start, or the update's max_packets_per_update */ \
-    /* was spent (in-place and queued packets count against it together), */ \
-    /* one packet of it being kept for the write pass while reliable work */ \
-    /* is due. The queued path then sends it, or drops it over budget and */ \
-    /* counts MESSAGE_UNRELIABLE_OVER_BUDGET. EXPECTED: a client's sends */ \
-    /* before CONNECTED take it. Counted on the owner's counters, once per */ \
-    /* message. appended: indices are the contract. */ \
+    /* frame (a full send ring), unreliable messages already waited in the */ \
+    /* connection's queue, the send budget could not pay it at start, or */ \
+    /* the update's max_packets_per_update was spent (in-place and queued */ \
+    /* packets count against it together), one packet of it being kept for */ \
+    /* the write pass while reliable work is due. The queued path then */ \
+    /* sends it, or drops it over budget and counts */ \
+    /* MESSAGE_UNRELIABLE_OVER_BUDGET. EXPECTED: a full send ring and a */ \
+    /* spent budget are normal. A send before CONNECTED never reaches it: */ \
+    /* it is dropped and counts MESSAGE_SEND_NOT_CONNECTED. Counted on the */ \
+    /* owner's counters, once per message. appended: indices are the */ \
+    /* contract. */ \
     /** @brief ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK: Counts fitting unreliable messages that took the queued path instead of being written in place in a packet buffer; one count per message, on the owner's counters. Unit: messages. Class: expected; family: none. */ \
     X( MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK, EXPECTED, NONE ) \
     \
@@ -895,7 +897,18 @@
     /* without its first fragment the kernel never reassembles the */ \
     /* datagram. REFUSAL. appended: indices are the contract. */ \
     /** @brief ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_FIRST_FRAGMENT: Counts first IP fragments of datagrams to the server address and port that the kernel prefilter dropped. Unit: occurrences. Class: refusal; family: none. */ \
-    X( XDP_KERNEL_DROPPED_FIRST_FRAGMENT, REFUSAL, NONE )
+    X( XDP_KERNEL_DROPPED_FIRST_FRAGMENT, REFUSAL, NONE ) \
+    \
+    /* An application send on a connection that is not CONNECTED: a client */ \
+    /* whose transport has not reached CONNECTED or has left it, a server */ \
+    /* slot with no CONNECTED client (standard/MESSAGES.md m1.5; */ \
+    /* tla/ClientSession.tla DropSend, tla/ServerSession.tla */ \
+    /* ServerDropSend). The start returns NULL and nothing is held for a */ \
+    /* later send. EXPECTED: a game sends every frame, so its sends from */ \
+    /* create to CONNECTED take it. Counted on the owner's counters, once */ \
+    /* per dropped start. appended: indices are the contract. */ \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED: Counts application message starts dropped because the connection was not CONNECTED; one count per dropped start, on the owner's counters. Unit: messages. Class: expected; family: none. */ \
+    X( MESSAGE_SEND_NOT_CONNECTED, EXPECTED, NONE )
 
 /**
  * @brief Integer indices for the cumulative protocol counters.

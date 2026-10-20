@@ -2104,48 +2104,6 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
     return rocketnet_platform_socket_create_internal( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size, ROCKETNET_PUMP_MODE_AUTO );
 }
 
-// a dual-stack IPv6 socket bound to port 0 can be handed a port that an
-// IPv4 socket already holds on a specific address (127.0.0.1:P): the
-// kernel's ephemeral pick for an AF_INET6 socket does not check the IPv4
-// binds, while an explicit dual-stack bind to P refuses with EADDRINUSE.
-// A client so bound sends from P, and the replies to 127.0.0.1:P are
-// delivered to the IPv4 socket instead (posix_connect_disconnect_1000 in
-// functional/posix_lifecycle_stress.cpp:499, red printed at :321; the client stays in
-// REQUESTING_COOKIE and the server counts WRONG_DIRECTION). So the port is
-// picked by an IPv4 port-0 bind and then bound explicitly, where the kernel
-// checks both families; a port taken in between refuses and the pick runs
-// again. Returns 0 when bound, -1 to fall back to the plain port-0 bind.
-
-static int rocketnet_platform_bind_dual_stack_ephemeral( int handle, sockaddr_in6 * socket_address )
-{
-    for ( int attempt = 0; attempt < 16; attempt++ )
-    {
-        const int probe = ::socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
-        if ( probe < 0 )
-            break;
-        sockaddr_in probe_address;
-        memset( &probe_address, 0, sizeof( probe_address ) );
-        probe_address.sin_family = AF_INET;
-        uint16_t port = 0;
-        if ( bind( probe, (sockaddr*) &probe_address, sizeof( probe_address ) ) == 0 )
-        {
-            socklen_t length = sizeof( probe_address );
-            if ( getsockname( probe, (sockaddr*) &probe_address, &length ) == 0 )
-                port = ntohs( probe_address.sin_port );
-        }
-        close( probe );
-        if ( port == 0 )
-            break;
-        socket_address->sin6_port = htons( port );
-        if ( bind( handle, (sockaddr*) socket_address, sizeof( *socket_address ) ) == 0 )
-            return 0;
-        if ( errno != EADDRINUSE )
-            break;
-    }
-    socket_address->sin6_port = 0;
-    return -1;
-}
-
 static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, int pump_mode )
 {
     rocketnet_assert( address );
@@ -2225,13 +2183,7 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
         }
         socket_address.sin6_port = rocketnet_platform_htons( address->port );
 
-        int bind_result = -1;
-        if ( address->port == 0 )
-            bind_result = rocketnet_platform_bind_dual_stack_ephemeral( socket->handle, &socket_address );
-        if ( bind_result != 0 )
-            bind_result = bind( socket->handle, (sockaddr*) &socket_address, sizeof( socket_address ) );
-
-        if ( bind_result < 0 )
+        if ( bind( socket->handle, (sockaddr*) &socket_address, sizeof( socket_address ) ) < 0 )
         {
             rocketnet_error( "failed to bind socket (ipv6)" );
             rocketnet_platform_socket_destroy( socket );
@@ -3290,7 +3242,6 @@ extern void rocketnet_free( void * context, void * p );
 
 static int get_connection_type();
 
-static int timer_initialized = 0;
 static LARGE_INTEGER timer_frequency;
 static LARGE_INTEGER timer_start;
 static int connection_type = ROCKETNET_CONNECTION_TYPE_UNKNOWN;
@@ -4036,7 +3987,7 @@ static int get_connection_type()
     IP_ADAPTER_ADDRESSES * address = addresses;
     while ( address )
     {
-        if ( address->IfType == IF_TYPE_IEEE80211 && address->OperStatus == NET_IF_OPER_STATUS_UP )
+        if ( address->IfType == IF_TYPE_IEEE80211 && address->OperStatus == IfOperStatusUp )
         {
             result = ROCKETNET_CONNECTION_TYPE_WIFI;
             break;

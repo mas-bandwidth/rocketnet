@@ -3,6 +3,15 @@ project(rocketnet VERSION 1.0.0 LANGUAGES C CXX)
 if(MSVC)
     add_compile_options(/utf-8)
 endif()
+# clang-cl does not map #pragma warning(disable:4996) (rocketnet_platform.h,
+# rocketnet.cpp) to its own deprecation warning, so the CRT deprecations that
+# MSVC silences there are silenced here for clang-cl alone. The vendored
+# sodium amalgamation keeps helpers its configuration does not call; clang-cl
+# reports them where MSVC at /W3 does not.
+if(MSVC AND CMAKE_C_COMPILER_ID STREQUAL "Clang")
+    add_compile_options(-Wno-deprecated-declarations)
+    set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/sodium/sodium.c" PROPERTIES COMPILE_OPTIONS "-Wno-unused-function")
+endif()
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include(CheckCCompilerFlag)
@@ -64,6 +73,15 @@ include(cmake/RocketNetDependencies.cmake)
 
 if(NOT ROCKETNET_USE_SYSTEM_SODIUM)
     set(ROCKETNET_SODIUM_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/sodium/sodium.c")
+    # the vendor has no configure step, so sodium_memzero (sodium/sodium.c:176)
+    # falls to its volatile byte loop unless a HAVE_ macro names the platform
+    # wipe; glibc and musl have explicit_bzero, the wipe libsodium's own
+    # configure picks there. The byte loop spends ~125 ms on the 56 MB server
+    # transport that rocketnet_server_transport_destroy wipes through
+    # rocketnet_clear_and_free (sdk/rocketnet.cpp:488).
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set_property(SOURCE "${ROCKETNET_SODIUM_SOURCE}" APPEND PROPERTY COMPILE_DEFINITIONS HAVE_EXPLICIT_BZERO=1)
+    endif()
 endif()
 function(rocketnet_use_sodium target)
     if(ROCKETNET_USE_SYSTEM_SODIUM)
@@ -312,7 +330,15 @@ if(ROCKETNET_BUILD_TESTS)
     # Every test_unit_<topic>.cpp at the repository root registers with
     # REGISTER_UNIT_TEST from test_unit_registry.h and is built into ./bin/test.
     file( GLOB ROCKETNET_UNIT_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_*.cpp" )
-    add_executable(test test.cpp test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
+    # test_unit_driver_loopback.cpp compiles sdk/rocketnet_server_transport.cpp
+    # into the suite, so its object goes first on the link line. lld-link loads
+    # an archive member as soon as an earlier object references one of its
+    # symbols, and the library's copy of the transport would then define every
+    # transport symbol a second time; link.exe searches archives only after
+    # every object, so it links in either order.
+    set(ROCKETNET_UNIT_TRANSPORT_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_driver_loopback.cpp")
+    list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_TRANSPORT_SOURCE}")
+    add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} test.cpp test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
     target_compile_definitions(test PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1)
     if(WIN32)
         # The RIO overflow seam (test_unit_rio_overflow_seam.cpp) compiles into
