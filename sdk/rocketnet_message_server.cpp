@@ -842,11 +842,15 @@ static void rn_message_connection_write( rn_message_object_t * object, int index
 // second, and the second round takes the rest of each pass still open. The
 // next update starts at the first connection the transport refused a frame
 // to, in the first round if any, else in the second; with no refusal the start
-// stays. A capacity of K frames per update so reaches every connection with a
-// send waiting within ceil(N / K) updates of N connections. A refused plan
-// writes nothing and its reliable records stay due (rn_message_connection_write). Any
-// refusal in an update, here or at an in-place start, sets send_constrained
-// for the next update, which sends every unreliable message through this pass.
+// stays. With no in-place starts, K frames per update reach every waiting
+// connection within ceil(N / K) updates of N connections; in-place starts
+// add at most the initial update before a refusal constrains them
+// (tla/RNServerSendFair.tla:105,108). These service bounds fit the connection
+// timeout only when its tick interval and timeout allow that many updates.
+// A refused plan writes nothing and its reliable records stay due
+// (rn_message_connection_write). Any refusal in an update, here or at an
+// in-place start, sets send_constrained for the next update, which sends
+// every unreliable message through this pass.
 
 static bool rn_message_connection_sends( const rn_message_object_t * object, int index )
 {
