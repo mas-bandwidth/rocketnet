@@ -9,8 +9,8 @@
 // uapi headers and non-Linux platforms compile the body out. This is the
 // byte-level counterpart of sdk/rocketnet_xdp_frame.h: the byte-level parts
 // of the driver (completion tags, the multishot recvmsg buffer layout, the
-// source address conversion) are written and unit tested here first, and the
-// driver card links liburing for the ring itself.
+// source address conversion) are written and unit tested here, and the
+// driver links liburing for the ring itself.
 
 #ifndef ROCKETNET_URING_CODEC_H
 #define ROCKETNET_URING_CODEC_H
