@@ -354,3 +354,105 @@ static void client_link_without_end_reason_reads_none()
     server_disconnected_fake_case( 1, ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
 }
 REGISTER_UNIT_TEST( client_link_without_end_reason_reads_none );
+
+// A server disconnect ends the slot in every query and send at once, before
+// the next update: rocketnet_server_disconnect_client and
+// rocketnet_server_disconnect_all_clients go through the message layer's kick
+// (tla/RNSlots.tla PublicDisconnect), as the client's disconnect does. The
+// slot reads not connected, a start on it is dropped and counted in
+// NOT_CONNECTED_DROPS, and an in-place start opened on it before the
+// disconnect is cancelled, so its finish returns 0. Each failing line is
+// printed before the case fails, so a run shows every one.
+
+static int server_disconnect_now_failures = 0;
+
+#define server_disconnect_now_check( condition )                                                         \
+do                                                                                                       \
+{                                                                                                        \
+    if ( !(condition) )                                                                                  \
+    {                                                                                                    \
+        printf( "check failed: ( %s ), file %s, line %d\n", #condition, __FILE__, __LINE__ );          \
+        server_disconnect_now_failures++;                                                                \
+    }                                                                                                    \
+} while ( 0 )
+
+static void server_disconnect_now_case( bool all )
+{
+    rocketnet_set_quiet( 1 );
+    server_disconnected_identity_t identity;
+    server_disconnected_identity( &identity );
+    double time = 1000.0;
+    server_disconnected_now = time;
+    rocketnet_server_t * server = server_disconnected_server_create( &identity );
+    rocketnet_client_t * client = server_disconnected_client_create();
+    rocketnet_client_t * other = all ? server_disconnected_client_create() : NULL;
+    const uint64_t index = server_disconnected_connect( &identity, server, client, 0x5F00ULL + ( all ? 1 : 0 ), 300,
+                                                        ROCKETNET_DISCONNECT_REASON_NONE, &time );
+    const uint64_t other_index = all ? server_disconnected_connect( &identity, server, other, 0x5F10ULL, 300,
+                                                                    ROCKETNET_DISCONNECT_REASON_NONE, &time ) : index;
+    check( rocketnet_server_num_connected_clients( server ) == ( all ? 2 : 1 ) );
+
+    // an in-place start, open when the disconnect comes
+    rn_message_object_t * object = &rocketnet_server_message_server( server )->object;
+    check( rocketnet_server_start_message( server, index, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 16 ) != NULL );
+    check( object->in_place == 1 );
+    check( object->pending_connection == (int) index );
+    const uint64_t drops = rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_NOT_CONNECTED_DROPS );
+
+    if ( all )
+        rocketnet_server_disconnect_all_clients( server );
+    else
+        rocketnet_server_disconnect_client( server, index );
+
+    // before the next update
+    server_disconnect_now_failures = 0;
+    server_disconnect_now_check( rocketnet_server_num_connected_clients( server ) == 0 );
+    server_disconnect_now_check( rocketnet_server_client_id( server, index ) == 0 );
+    server_disconnect_now_check( !rocketnet_server_client_connected( server, index ) );
+    server_disconnect_now_check( !rocketnet_server_client_connected( server, other_index ) );
+    server_disconnect_now_check( object->in_place == 0 );
+    server_disconnect_now_check( object->pending_connection == -1 );
+    server_disconnect_now_check( rocketnet_server_finish_message( server, index, 16 ) == 0 );
+    server_disconnect_now_check( rocketnet_server_start_message( server, index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 16 ) == NULL );
+    server_disconnect_now_check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_NOT_CONNECTED_DROPS ) == drops + 1 );
+    server_disconnect_now_check( rocketnet_server_start_message( server, other_index, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 16 ) == NULL );
+    server_disconnect_now_check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_NOT_CONNECTED_DROPS ) == drops + 2 );
+    check( server_disconnect_now_failures == 0 );
+
+    // the disconnect reaches the client as SERVER_DISCONNECTED, and the
+    // server's reason for the slot reads NONE across the next updates
+    rocketnet_server_send_packets( server );
+    check( rocketnet_client_update( client, time ) == ROCKETNET_UPDATE_OK );
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    check( rocketnet_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
+    if ( all )
+    {
+        check( rocketnet_client_update( other, time ) == ROCKETNET_UPDATE_OK );
+        check( rocketnet_client_state( other ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+        check( rocketnet_client_disconnect_reason( other ) == ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
+    }
+    for ( int i = 0; i < 4; i++ )
+        server_disconnected_pump( server, client, &time );
+    check( !rocketnet_server_client_connected( server, index ) );
+    check( !rocketnet_server_client_connected( server, other_index ) );
+    check( rocketnet_server_num_connected_clients( server ) == 0 );
+    check( rocketnet_server_disconnect_reason( server, index ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rocketnet_server_disconnect_reason( server, other_index ) == ROCKETNET_DISCONNECT_REASON_NONE );
+
+    if ( other )
+        rocketnet_client_destroy( other );
+    rocketnet_client_destroy( client );
+    rocketnet_server_destroy( server );
+}
+
+static void server_disconnect_client_ends_slot_at_once()
+{
+    server_disconnect_now_case( false );
+}
+REGISTER_UNIT_TEST( server_disconnect_client_ends_slot_at_once );
+
+static void server_disconnect_all_clients_ends_slots_at_once()
+{
+    server_disconnect_now_case( true );
+}
+REGISTER_UNIT_TEST( server_disconnect_all_clients_ends_slots_at_once );
