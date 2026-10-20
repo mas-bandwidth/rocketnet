@@ -2580,6 +2580,7 @@ int rocketnet_server_transport_finish_packet( rocketnet_server_transport_t * ser
     }
     const int result = rocketnet_server_transport_finish_packet_unchecked( server_transport, &trusted, payload_bytes, backend_id );
     context->frame = NULL;
+    context->sequence = trusted.sequence;
     return result;
 }
 
