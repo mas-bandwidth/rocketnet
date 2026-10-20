@@ -16,9 +16,13 @@ The two scripts:
 
 The six cells. Each server transport is paired with the matching client
 transport (ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT):
-  portable-impaired       portable-clean
-  msgx-impaired           msgx-clean
-  msgx-degraded-impaired  msgx-degraded-clean   (msgx with ROCKETNET_PUMP=portable)
+  portable-impaired       portable-clean        server portable, client portable
+  msgx-impaired           msgx-clean            server msgx, client msgx
+  msgx-degraded-impaired  msgx-degraded-clean   ROCKETNET_PUMP=portable, both
+                          ends auto: each ladder absorbs the forced pump as an
+                          msgx refusal and grants its degraded rung (a pinned
+                          msgx under the forced pump is refused loudly)
+The impaired cells run first, then the clean ones.
 An impaired cell turns the link simulator on at both ends through the env
 overlay (ROCKETNET_SERVER_SIMULATED_* and ROCKETNET_CLIENT_SIMULATED_*): loss
 5 percent, latency 30 ms, jitter 20 ms, duplicate 2 percent. A clean cell
@@ -72,16 +76,21 @@ IMPAIRMENT = {
     "SIMULATED_DUPLICATE_PERCENT": "2",
 }
 
+# (cell label, server transport, client transport, ROCKETNET_PUMP). The
+# degraded cell forces the portable pump: the server ladder absorbs it as an
+# msgx refusal (a pinned msgx is refused loudly, never falls), so the server
+# runs the auto ladder and lands on its degraded grant; the client ladder
+# does the same, so the client runs auto too.
 TRANSPORTS = [
-    ("portable", "portable", None),
-    ("msgx", "msgx", None),
-    ("msgx-degraded", "msgx", "portable"),
+    ("portable", "portable", "portable", None),
+    ("msgx", "msgx", "msgx", None),
+    ("msgx-degraded", "auto", "auto", "portable"),
 ]
 
 CELLS = []
-for _label, _transport, _pump in TRANSPORTS:
-    for _impaired in (True, False):
-        CELLS.append(("%s-%s" % (_label, "impaired" if _impaired else "clean"), _transport, _pump, _impaired))
+for _impaired in (True, False):
+    for _label, _server, _client, _pump in TRANSPORTS:
+        CELLS.append(("%s-%s" % (_label, "impaired" if _impaired else "clean"), _server, _client, _pump, _impaired))
 
 SUITES = ("functional", "load", "soak", "soak_sim", "transport_memory", "load_1000", "test_lifecycle")
 
@@ -117,14 +126,14 @@ def wait_quiet(limit):
         time.sleep(5)
 
 
-def cell_env(transport, pump, impaired):
+def cell_env(server, client, pump, impaired):
     env = dict(os.environ)
     for key in list(env):
         if key.startswith("ROCKETNET_SERVER_SIMULATED_") or key.startswith("ROCKETNET_CLIENT_SIMULATED_"):
             del env[key]
     env.pop("ROCKETNET_PUMP", None)
-    env["ROCKETNET_SERVER_TRANSPORT"] = transport
-    env["ROCKETNET_CLIENT_TRANSPORT"] = transport
+    env["ROCKETNET_SERVER_TRANSPORT"] = server
+    env["ROCKETNET_CLIENT_TRANSPORT"] = client
     if pump:
         env["ROCKETNET_PUMP"] = pump
     if impaired:
@@ -166,20 +175,21 @@ def parse(log_text):
     }
 
 
-def run_cell(args, name, transport, pump, impaired):
+def run_cell(args, name, server, client, pump, impaired):
     log_path = os.path.join(args.out, name + ".log")
     csv_path = os.path.join(args.out, name + ".csv")
     verdict_path = os.path.join(args.out, name + ".verdict")
-    env = cell_env(transport, pump, impaired)
+    env = cell_env(server, client, pump, impaired)
     command = ["leaks", "--atExit", "--", args.soak, "--seconds", str(args.seconds)]
-    print("soak_matrix: %s: %s (transport %s%s, %s)" % (
-        name, " ".join(command), transport, ", ROCKETNET_PUMP=" + pump if pump else "",
+    print("soak_matrix: %s: %s (server %s, client %s%s, %s)" % (
+        name, " ".join(command), server, client, ", ROCKETNET_PUMP=" + pump if pump else "",
         "impaired" if impaired else "clean"), flush=True)
     started = time.monotonic()
 
     def soak_finished():
         with open(log_path) as f:
-            return "\nsoak finished:" in f.read()
+            text = f.read()
+        return "\nsoak finished:" in text or "soak: failed to create" in text
 
     leaks_note = ""
     with open(log_path, "w") as log:
@@ -187,7 +197,8 @@ def run_cell(args, name, transport, pump, impaired):
         soak_pid = child_pid(leaks_proc.pid, time.monotonic() + 30)
         # the watch ends when soak prints its verdict: after that the process
         # only exits, and leaks holds it at exit while it scans
-        rows = resource_watch.watch(soak_pid, csv_path, args.interval, until=soak_finished) if soak_pid else []
+        rows = resource_watch.watch(soak_pid, csv_path, args.interval, stop_after=args.seconds + 300,
+                                    until=soak_finished) if soak_pid else []
         elapsed = time.monotonic() - started
         try:
             leaks_rc = leaks_proc.wait(timeout=args.leaks_timeout)
@@ -281,13 +292,13 @@ def main(argv):
     os.makedirs(args.out, exist_ok=True)
 
     rows = []
-    for name, transport, pump, impaired in CELLS:
+    for name, server, client, pump, impaired in CELLS:
         if args.cell and name not in args.cell:
             continue
         if args.wait_quiet > 0 and not wait_quiet(args.wait_quiet):
             print("soak_matrix: %s: NOT RUN: another suite kept the machine busy" % name, flush=True)
             continue
-        rows.append(run_cell(args, name, transport, pump, impaired))
+        rows.append(run_cell(args, name, server, client, pump, impaired))
     table(rows)
     return 0 if rows and all(r["pass"] for r in rows) else 1
 
