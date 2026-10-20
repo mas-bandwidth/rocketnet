@@ -239,7 +239,7 @@ system `leaks` tool on a Release build without sanitizers. The script sets
 `/usr/bin/leaks --atExit --`, failing on any leak with its stack. leaks
 returns its own status, not the target's, so each binary first runs once on
 its own with the same environment and fails the check when it exits non-zero
-(`run_leaks_quiet`, tools/macos/leaks_run.py:140). It runs the
+(`run_leaks_quiet`, tools/macos/leaks_run.py:142). It runs the
 lifecycle and functional suites and a 100000 iteration soak under every
 transport pin, and `--self-test` proves that a scratch binary leaking one
 allocation turns the check red:
@@ -251,22 +251,25 @@ allocation turns the check red:
 
 `leaks --atExit` needs Developer Mode. The script prints
 `DevToolsSecurity -status` first and exits 2 when it reports disabled
-(`check_developer_mode`, tools/macos/leaks_run.py:88). Each leaks call runs in
+(`check_developer_mode`, tools/macos/leaks_run.py:90). Each leaks call runs in
 its own process group and is killed with its target after `--timeout` seconds,
-120 by default (`run_group`, tools/macos/leaks_run.py:125). The pins are
+120 by default (`run_group`, tools/macos/leaks_run.py:127). The pins are
 the four transport pairs and both ends on auto with `ROCKETNET_PUMP=portable`
-(`PINS`, tools/macos/leaks_run.py:59).
+(`PINS`, tools/macos/leaks_run.py:61).
 
 leaks reads a target's writable memory and prints allocation stacks only when
 the target is debuggable, so the script ad-hoc signs each binary with the
 `com.apple.security.get-task-allow` entitlement before it runs it
-(`make_debuggable`, tools/macos/leaks_run.py:105), and a run whose output says
-the process is not debuggable fails (tools/macos/leaks_run.py:170).
+(`make_debuggable`, tools/macos/leaks_run.py:107), and a run whose output says
+the process is not debuggable fails (tools/macos/leaks_run.py:174).
 `./bin/functional` runs each case in a child process that leaks does not see,
 so the matrix runs every case of the `rocketnet_functional_tests` table on its
-own as `./bin/functional --run <case>` under leaks, `--jobs` at a time, 8 by
+own as `./bin/functional --run <case>` under leaks with
+`ROCKETNET_TEST_VERBOSE=1`, so `--run` runs the case in its own process
+rather than a forked child leaks would not see (test/suite_runner.h:413),
+`--jobs` at a time, 8 by
 default (`functional_cases` and `run_functional`,
-tools/macos/leaks_run.py:196 and :213). The table holds rows for other
+tools/macos/leaks_run.py:200 and :217). The table holds rows for other
 platforms behind `#if`; a case this build does not hold answers
 `unknown functional test` with exit 2 on its plain run
 (functional/rocketnet_functional_tests.cpp:8787), and the matrix lists

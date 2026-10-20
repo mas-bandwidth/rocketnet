@@ -24,7 +24,9 @@ run whose output says the process "is not debuggable" fails.
 
 ./bin/functional runs each case in a child it spawns, and leaks sees only the
 process it launched, so the matrix runs every functional case on its own as
-./bin/functional --run <case> under leaks, --jobs at a time (default 8, the
+./bin/functional --run <case> under leaks, with ROCKETNET_TEST_VERBOSE=1 so
+--run runs the case in its own process rather than in a forked child
+(test/suite_runner.h:413), --jobs at a time (default 8, the
 suite runner's own cap). The case names are read from the
 rocketnet_functional_tests table in functional/rocketnet_functional_tests.cpp;
 the table holds rows for other platforms behind #if, and a case this build
@@ -144,6 +146,8 @@ def run_leaks_quiet(binary, args, env_extra, timeout, lines, skip_unknown=False)
     for name in PIN_VARIABLES:
         env.pop(name, None)
     env.update(env_extra)
+    # without it, --run forks the case into a child that leaks never sees
+    env["ROCKETNET_TEST_VERBOSE"] = "1"
     name = " ".join([str(binary)] + list(args))
     say("leaks_run.py: %s" % " ".join("%s=%s" % item for item in env_extra.items()))
     # leaks returns its own status, so the target status comes from a plain run first
