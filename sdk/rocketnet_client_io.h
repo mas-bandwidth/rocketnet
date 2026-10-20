@@ -37,13 +37,13 @@ void rocketnet_client_io_wipe( void * data, size_t bytes );
 // test's thread.
 
 #define ROCKETNET_CLIENT_IO_BATCH 64
-// The I/O wait's timeout is a guard behind the event wake, never a cadence:
-// a key retire, stop, a hand-off and an owed return each set the wake, which
-// ends the wait at once (wake calls below at :182, :297, :310 and :327). The
-// model's IoGuard (tla/RNClientIo.tla) has no fairness and every liveness
-// property, WakeEndsWait among them, holds without it, so the timeout only
-// bounds the stall of a missed event wake. At 1 ms each idle client woke
-// 1000 times a second at user-interactive class (docs/CLIENT-IO.md, macOS
+// The I/O wait's timeout is a guard behind the event wake, never a cadence: a key retire,
+// stop, a hand-off and an owed return each set the wake, which ends the wait at once (the
+// wake calls in rocketnet_client_io_retire_keys, rocketnet_client_io_stop,
+// rocketnet_client_io_hand_off and rocketnet_client_io_return below). The model's IoGuard
+// (tla/RNClientIo.tla) has no fairness and every liveness property, WakeEndsWait among them,
+// holds without it, so the timeout only bounds the stall of a missed event wake. At 1 ms each
+// idle client woke 1000 times a second at user-interactive class (docs/CLIENT-IO.md, macOS
 // timing and App Nap).
 #define ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS 0.100
 #define ROCKETNET_CLIENT_IO_NUM_BUFFERS 2      // two receive buffers, no third (the design's receive path)

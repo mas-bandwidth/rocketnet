@@ -452,31 +452,44 @@ What the numbers show:
   process activity above is what keeps the game's own frame loop on time.
 
 **What the case asserts.** Two conditions are gated
-(`functional/macos_client_timing.cpp:401` to `:405`): at the default class and
+(`functional/macos_client_timing.cpp:414` to `:419`): at the default class and
 with a background game thread, the client stays connected for the whole 60 s
 with zero timeouts and the I/O thread's receive lag p99 is under 5 ms
-(`MACOS_TIMING_LAG_BOUND`, `functional/macos_client_timing.cpp:77`). The
+(`MACOS_TIMING_LAG_BOUND`, `functional/macos_client_timing.cpp:78`). The
 receive lag is the time from the server's send to the first I/O thread
-receive call at or after it (`functional/macos_client_timing.cpp:358`): how
-fast the event wake answers a datagram, whatever the guard timeout. The wake
-interval is printed and not asserted; with the 100 ms guard it follows the
-server's 10 ms send. At the
+receive call at or after it (`functional/macos_client_timing.cpp:365`): how
+fast the event wake answers a datagram, whatever the guard timeout. Both gated
+conditions also assert the I/O thread's wake rate, every wake since the client
+was created over the whole run, at most twice the event rate
+(`MACOS_TIMING_WAKE_RATE_BOUND`, `functional/macos_client_timing.cpp:83`: one
+wake per 10 ms server send and one per 60 Hz update, so 320 a second;
+`functional/macos_client_timing.cpp:387`). The wake interval is printed and
+not asserted; with the 100 ms guard it follows the server's 10 ms send. At the
 default class receive-to-update p99 is also at most two update intervals plus
-10 ms (43.3 ms at 60 Hz, `functional/macos_client_timing.cpp:368`), the
+10 ms (43.3 ms at 60 Hz, `functional/macos_client_timing.cpp:375`), the
 receive handoff's floor. With a background game thread the game loop's own
 sleep is coalesced, so its end-to-end latency is printed and not asserted.
 
 Under `taskpolicy -b` the case is measured only: it prints the same line with
 `status=MEASURED`, `lag_within` and `latency_within`, and returns before the
-checks (`functional/macos_client_timing.cpp:398`). Its numbers are a report
+checks (`functional/macos_client_timing.cpp:411`). Its numbers are a report
 of what a throttled process sees, never a pass or a fail.
 
 The receive lag gate's red proof: the I/O wait planted to pass `readable`
 false (`sdk/rocketnet_client_io.h:496`), so a datagram ends the wait only
 through the guard, fails the default-class case at its own check
-(`check failed: lag_within at line 403`) with lag p99 100.2 ms, the guard;
+(`check failed: lag_within`) with lag p99 100.2 ms, the guard;
 restored, lag p99 is 0.22 to 0.27 ms at the default class and 0.23 ms with a
 background game thread, on a lightly loaded Mac Studio.
+
+The wake rate gate's red proof: the guard planted back at 1 ms
+(`ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS 0.001`, `sdk/rocketnet_client_io.h:48`)
+fails the default-class case at its own check (`check failed: wake_rate_within
+at line 417`) with 49002 wakes, 813.3 a second against the bound of 320;
+restored to 100 ms, 9078 wakes, 150.7 a second, and the case passes, on a Mac
+mini (Apple silicon) shared with other suites. A 1 ms guard is a cadence: each
+idle client wakes about 1000 times a second at user-interactive class (the
+1000-client load measurement above).
 
 There is no planted-class red proof. The I/O thread's bounded wait is a
 kevent timeout (`sdk/rocketnet_platform.cpp:3302`), and its wakes are not

@@ -70,6 +70,10 @@ ulimit -n 65536
 ./bin/load 1000 60
 ```
 
+### Nightly runner limit
+
+The `soak-macos` job in `.github/workflows/nightly-soak.yml` raises the step's soft limit with `ulimit -n 65536`, falling back to `ulimit -n "$(ulimit -Hn)"`. A job step cannot raise its hard limit: the runner's launchd job sets it. The fleet's macOS runner job sets `SoftResourceLimits` `NumberOfFiles` to `65536` in its launchd plist and inherits the session's hard limit, `unlimited` (`launchctl print gui/<uid>/<label>` lists `maxfiles (soft) => 65536`; `launchctl limit maxfiles` prints the session's soft and hard values). On a runner whose hard limit is below the run's need, the step fails with the named-limit message above, never a partial run; the fix is a `HardResourceLimits` `NumberOfFiles` entry in that runner's launchd plist and a reload of the job, not a change to the step.
+
 ### Connect-deadline diagnostics
 
 When the connect phase reaches its 10-second deadline with a client short of `CONNECTED`, `bin/load` names up to eight such clients on stderr before the summary line (`load.c:688-722`): each one's transport state, its driver, the wire datagrams it has sent and received, and its nonzero transport counters, then the server's connected count and every nonzero server transport counter:

@@ -241,7 +241,10 @@ jobs:
       # is the auto ladder under ROCKETNET_PUMP=portable, where the msgx rung refuses
       # and the ladder falls to portable (a pinned msgx under that override refuses
       # to create, by design). Each run must pass, name the expected granted driver,
-      # and end with the fd and thread counts it started with.
+      # and end with the fd and thread counts it started with. A step cannot raise its
+      # hard RLIMIT_NOFILE: the runner's launchd plist sets it (SoftResourceLimits and
+      # HardResourceLimits NumberOfFiles); with a hard limit below the run's need, load
+      # exits 1 naming the limit (docs/LOAD.md, Nightly runner limit).
       - name: Many-client load (1000 clients, every server cell)
         timeout-minutes: 20
         run: |
