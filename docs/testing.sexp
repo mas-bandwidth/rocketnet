@@ -18,7 +18,7 @@
 ; ci.yml run on this branch (run 39258743834, head 3ce29a1) was red on Linux
 ; and ran no macOS or Windows rows.
 ;
-; Recorded 2026-10-20 at sprint/rocketnet-proof 661769e8.
+; Recorded 2026-10-20 at sprint/rocketnet-proof 67b4d16c.
 (:title "RocketNet v1.0.0 testing"
  :text ("Every test RocketNet runs for v1.0.0, by platform and by transport. ✅ is landed on the release branch and shown green on that platform by its card or by CI; ❌ is not yet: in progress, not landed, or not carded. — does not apply. Each table's complete row is the share of ✅ among the cells that apply; in the transport table each transport counts once. Under each table, every ❌ names the card behind it, or no card.")
  :areas
@@ -102,7 +102,7 @@
    :rows
    ((:feature "Transport family matrix (IPv4, IPv6 and dual stack, each transport pinned)"
      :cells (((portable n) (iocp n) (rio n)) ((msgx n) (portable n)) ((portable y) (gso n) (io_uring n) (xdp y)))
-     :evidence "Linux: portable: rocketnet-linux-pinned-portable-functional-green e73c217; xdp: rocketnet-r1-ci-xdp-cell-on-libxdp-1-4 cce78fa"
+     :evidence "Linux: portable: rocketnet-linux-pinned-portable-functional-green 4e1be4e8; xdp: rocketnet-r1-ci-xdp-cell-on-libxdp-1-4 0e7beac5"
      :pending ((Windows "rocketnet-windows-ci-green-at-base (ready)")
                (macOS "msgx: rocketnet-macos-msgx-forced-portable-client-creates (working); portable: rocketnet-macos-ci-green-at-base (ready)")
                (Linux "gso and io_uring: rocketnet-linux-ci-green-at-base (working)")))
@@ -113,7 +113,7 @@
                (Linux "rocketnet-linux-transport-matrix-repeat (waiting)")))
     (:feature "Functional suite on each server transport (pinned, or the default ladder)"
      :cells (((portable y) (iocp y) (rio y)) ((msgx y) (portable n)) ((portable y) (gso y) (io_uring n) (xdp y)))
-     :evidence "Windows: functional.exe passes on the default (portable), iocp and rio under App Verifier, rocketnet-win-app-verifier 7457d35b; macOS: ./bin/functional on the default ladder (msgx), rocketnet-macos-client-timing-under-app-nap a2c4ac1f; Linux: ./bin/functional on the default ladder (gso), rocketnet-linux-lifecycle-stress-t 8a68c102; portable: rocketnet-linux-pinned-portable-functional-green e73c217; xdp in a guest: rocketnet-r1-ci-xdp-cell-on-libxdp-1-4 cce78fa"
+     :evidence "Windows: functional.exe passes on the default (portable), iocp and rio under App Verifier, rocketnet-win-app-verifier 7457d35b; macOS: ./bin/functional on the default ladder (msgx), rocketnet-macos-client-timing-under-app-nap a2c4ac1f; Linux: ./bin/functional on the default ladder (gso), rocketnet-linux-lifecycle-stress-t 8a68c102; portable: rocketnet-linux-pinned-portable-functional-green 4e1be4e8; xdp in a guest: rocketnet-r1-ci-xdp-cell-on-libxdp-1-4 0e7beac5"
      :pending ((macOS "portable: rocketnet-macos-ci-green-at-base (ready)")
                (Linux "io_uring: rocketnet-linux-ci-green-at-base (working)")))
     (:feature "Hard-killed peer or ICMP error never stalls receive"
