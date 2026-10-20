@@ -464,8 +464,8 @@ static int posix_count( const posix_cell_t * cell, int count )
 // and 32768 by default), so a port 0 bind by another socket on the host is
 // never given it; with an ephemeral port, a client or server another case
 // creates between one destroy and the next create can hold it, and the
-// create is refused (TRANSPORT_LADDER_EXHAUSTED, printed at
-// functional/posix_lifecycle_stress.cpp:568). 0 when none binds.
+// create is refused (TRANSPORT_LADDER_EXHAUSTED, printed by
+// posix_server_create). 0 when none binds.
 static unsigned posix_fixed_loopback_port()
 {
     const unsigned first = 20000;
@@ -1141,7 +1141,7 @@ POSIX_LINUX_CELL_CASES( posix_destroy_under_traffic_100 )
     macOS record (Darwin arm64, macOS 27.0.1, Apple clang 21.0.0, Debug
     build, the tree with posix_fixed_loopback_port). Each run is one
     ./bin/functional --run <case> over the six macOS cells
-    (functional/posix_lifecycle_stress.cpp:248-253); every cell of every run
+    (posix_cells); every cell of every run
     printed fds 4 -> 4 and threads 1 -> 1. Seconds per run, all PASS:
 
         case                                 r1    r2    r3    r4    r5
@@ -1163,20 +1163,19 @@ POSIX_LINUX_CELL_CASES( posix_destroy_under_traffic_100 )
 
     The red proof, each a scratch build that is not kept, each run as
     ./bin/functional --run posix_client_create_destroy_1000 and failing at
-    posix_case_result (functional/posix_lifecycle_stress.cpp:772):
+    posix_case_result:
 
-    - the macOS socket destroy skips its close (sdk/rocketnet_platform.cpp:2467):
+    - the macOS rocketnet_platform_socket_destroy skips its close:
       [server portable, client portable] FAIL fds 4 -> 1004, threads 1 -> 1.
-    - the macOS thread join skips pthread_join (sdk/rocketnet_platform.cpp:3103)
+    - the macOS rocketnet_platform_thread_join skips pthread_join
       and the thread, its function returned, does not exit:
       [server portable, client portable] FAIL fds 4 -> 4, threads 1 -> 1001.
 
-    The thread count is pti_threadnum (posix_threads,
-    functional/posix_lifecycle_stress.cpp:151-158), the threads alive in the
-    task. A skipped join of a thread that then exits leaves no live thread
+    The thread count is pti_threadnum (posix_threads), the threads alive in
+    the task. A skipped join of a thread that then exits leaves no live thread
     and the case stays green, threads 1 -> 1 in every cell. A
-    skipped join in the client destroy (sdk/rocketnet_client_transport.cpp:1098)
+    skipped join in rocketnet_client_transport_destroy
     lets destroy free the client while its I/O thread still steps it, and the
     process ends in SIGSEGV in rocketnet_client_io_step, called from
-    rocketnet_client_io_thread_function (sdk/rocketnet_client_io.h:497).
+    rocketnet_client_io_thread_function.
 */
