@@ -12,8 +12,6 @@
 // Codes 1 and 4 follow RNChannelTypes!Dispatch and !Drain. A code-4 hold
 // uses its receive descriptor and ring span; the high bit distinguishes that
 // descriptor index from a code-1 Ru hold without changing channel state.
-static const bool rn_channel_unreliable_sequenced_enabled = true;
-static const bool rn_channel_reliable_sequenced_enabled = true;
 static const uint32_t RN_SEQUENCED_RELIABLE_HOLD = 0x80000000u;
 
 // tla/RNChannelTypes.tla OpenPacket
@@ -194,13 +192,7 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
 
     const bool reliable = record->code == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED;
-    if ( ( reliable && !rn_channel_reliable_sequenced_enabled ) ||
-         ( !reliable && ( record->code != ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED ||
-                          !rn_channel_unreliable_sequenced_enabled ) ) )
-    {
-        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED );
-        return ROCKETNET_CHANNEL_DISPATCH_NONE;
-    }
+    // the mask is checked once, by wire code, in rn_channels_dispatch
 
     rn_region_t * region = channels->region;
     if ( record->channel >= channels->num_channels )
@@ -212,7 +204,8 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
     uint32_t number_slot = RN_DESCRIPTOR_NONE;
     if ( reliable && !rn_sequenced_descriptor( channels, record, &number_slot ) )
     {
-        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+        // the slot is live for another number (check 10, SLOT_COLLISION)
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION );
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
