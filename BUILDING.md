@@ -430,10 +430,8 @@ that degradation is internal to the transport, below the ladder; likewise the Da
 batch pump's live-refusal pause. The pre-#106 `ROCKETNET_PUMP=portable` override is
 absorbed into this system with its exact old meaning — the msgx pump off —
 honored and named in the logs, with `ROCKETNET_SERVER_TRANSPORT=portable` and
-`ROCKETNET_CLIENT_TRANSPORT=portable` as its successors;
-`ROCKETNET_SERVER_NUM_QUEUES` and `ROCKETNET_SERVER_NUM_OS_CPUS` likewise keep
-working as loudly-logged deprecated aliases of `ROCKETNET_NUM_XDP_QUEUES` and
-`ROCKETNET_NUM_OS_CPUS`. Run `./bin/functional` against each rung. The unit
+`ROCKETNET_CLIENT_TRANSPORT=portable` as its successors. Run `./bin/functional`
+against each rung. The unit
 suite, `./bin/test`, does not start a transport, so a transport pin does not change
 what it asserts.
 
