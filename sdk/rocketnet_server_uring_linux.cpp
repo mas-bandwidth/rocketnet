@@ -69,6 +69,9 @@
 
 #define ROCKETNET_URING_BANK_SIZE              ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS
 
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_BANK_SIZE >= ROCKETNET_URING_SEND_BUDGET,
+                         "receive budget twice send: one send reap fits the receive bank" );
+
 // completions taken per peek
 
 #define ROCKETNET_URING_CQE_BATCH                                          256

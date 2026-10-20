@@ -107,6 +107,42 @@ ASSUME /\ NumClients \in Nat \ {0} /\ NumAddrs \in Nat /\ NumAddrs >= NumClients
        /\ ClientIdCheckAtRequest \in BOOLEAN /\ ClientIdCheckAtResponse \in BOOLEAN
        /\ AddressIsIdentity \in BOOLEAN /\ ExpiredTokens \subseteq 1..NumTokens
 
+(***************************************************************************)
+(* Address families.  A connect token names one or two server addresses,   *)
+(* at most one per family (rocketnet_write_production_connect_token,        *)
+(* sdk/rocketnet_connect_token.cpp).  The server serves one family, the     *)
+(* family of its public address (sdk/rocketnet.h, the transport field of    *)
+(* rocketnet_server_config_t).  The client's host has IPv4, IPv6 or both.   *)
+(* The client selects the IPv6 address when the token names one and the     *)
+(* host has IPv6 or the token names no IPv4 address, else the IPv4 address  *)
+(* (rocketnet_client_protocol_pick_server_address,                          *)
+(* sdk/rocketnet_client_protocol.cpp); a selected family the host lacks     *)
+(* refuses the create (rocketnet_platform_client_bind_family returns NONE,  *)
+(* sdk/rocketnet_client_transport.cpp).  A request sent to a family the      *)
+(* server does not serve reaches no server.  The server accepts a token     *)
+(* when either flagged address is one it serves (AddressMatch = "either",   *)
+(* rocketnet_server_token_address_is_advertised,                            *)
+(* sdk/rocketnet_server_protocol.cpp); the reversed witness "ipv6only"       *)
+(* checks only the IPv6 address whenever its flag is set, the defect that   *)
+(* rule replaced.  These are definitions, so every run keeps its cfg; the   *)
+(* dual-family runs replace them (<- in the cfg) with MCServerConnection's  *)
+(* values.  The defaults reach the server, as every other run assumes.      *)
+(***************************************************************************)
+TokenFamilies == {"ipv4"}
+HostFamilies  == {"ipv4", "ipv6"}
+ServedFamily  == "ipv4"
+AddressMatch  == "either"
+
+PickFamily ==
+    IF "ipv6" \in TokenFamilies /\ ("ipv6" \in HostFamilies \/ "ipv4" \notin TokenFamilies)
+      THEN "ipv6" ELSE "ipv4"
+CreateSucceeds == PickFamily \in HostFamilies
+ReachesServer  == PickFamily = ServedFamily
+TokenAddressAdvertised ==
+    CASE AddressMatch = "either"   -> ServedFamily \in TokenFamilies
+      [] "ipv6" \in TokenFamilies -> ServedFamily = "ipv6"
+      [] OTHER                     -> ServedFamily = "ipv4"
+
 Clients == 1..NumClients
 Addrs   == 1..NumAddrs
 Tokens  == 1..NumTokens
@@ -281,7 +317,7 @@ Init ==
 \* rocketnet_client_protocol_connect, with the client's own token or any
 \* token the environment holds (TokenChoice)
 ClientConnect(c) ==
-    /\ cstate[c] <= 0 /\ cAtt[c] < MaxAttempts
+    /\ cstate[c] <= 0 /\ cAtt[c] < MaxAttempts /\ CreateSucceeds
     /\ \E t \in (IF TokenChoice = "own" THEN {c} ELSE Tokens) :
         /\ cTok' = [cTok EXCEPT ![c] = t]
         /\ cstate' = [cstate EXCEPT ![c] = 1] /\ cAtt' = [cAtt EXCEPT ![c] = @ + 1]
@@ -328,9 +364,12 @@ ClientPacket(c) ==
       [] cstate[c] = 3        -> [type |-> "response", from |-> cAddr[c], salt |-> SaltOf(c), nonce |-> cKeys[c]]
       [] cstate[c] = 4        -> [type |-> "keepalive", from |-> cAddr[c], salt |-> SaltOf(c), nonce |-> cKeys[c]]
 
+\* a client whose selected family the server does not serve sends to an
+\* address nobody serves
 ClientSend(c) ==
     /\ cstate[c] \in 1..4 /\ cSinceSend[c] = SendInterval
-    /\ ClientSendPacket(c, ClientPacket(c))
+    /\ IF ReachesServer THEN ClientSendPacket(c, ClientPacket(c))
+                        ELSE UNCHANGED <<c2sVars, cLostKinds>>
     /\ cSinceSend' = [cSinceSend EXCEPT ![c] = 0]
     /\ UNCHANGED <<cstate, cAtt, cTok, cAddr, cCookieAddr, cKeys, cMoves, cDiscPending, cDiscPkt,
                    serverVars, s2cVars>>
@@ -417,6 +456,8 @@ ServerRecvRequest(p) ==
                  /\ smap' = [smap EXCEPT ![p.from].sinceRecv = 0]
                  /\ UNCHANGED <<bound, churnDenied>>
             [] p.tok \in ExpiredTokens ->
+                 ServerSilent /\ UNCHANGED <<smap, bound, churnDenied>>
+            [] ~TokenAddressAdvertised ->
                  ServerSilent /\ UNCHANGED <<smap, bound, churnDenied>>
             [] ~p.cookie ->
                  ServerSendPacket([type |-> "cookie", to |-> p.from, salt |-> p.salt])
@@ -738,6 +779,12 @@ SessionNeverAnswered ==
 \* with a slot free and fair loss, every attempt connects (runs with one
 \* client, or as many slots and tokens as clients)
 Connects == \A c \in Clients : (cstate[c] = 1) ~> (cstate[c] = 4)
+
+\* a client whose host has one family connects with a token naming both
+\* families to a server serving the host's family
+OneFamilyHostConnects ==
+    (Cardinality(HostFamilies) = 1 /\ HostFamilies \subseteq TokenFamilies /\ ServedFamily \in HostFamilies)
+      => \A c \in Clients : <>(cstate[c] = 4)
 
 \* neither peer is left waiting for a packet nobody will send again: a
 \* half-open mapping is established or dies, and an unacknowledged slot is
