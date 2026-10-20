@@ -2587,7 +2587,7 @@ int rocketnet_server_socket_num_queues( struct rocketnet_server_socket_t * serve
 }
 
 // the driver's send_failures operation (sdk/rocketnet_driver.h:104): the frames
-// each queue's flush dropped because the codec refused to build them (:2877),
+// each queue's flush dropped because the codec refused to build them (:2936),
 // summed; each count is read under the send_mutex its xdp thread writes it
 // under
 
