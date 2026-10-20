@@ -1,6 +1,6 @@
 # RNSlots: connection tags and message views
 
-`RNSlots` extends the draft in `standard/MESSAGES.md` section 15.1. The object
+`RNSlots` models the server message object's slots. The object
 observes the transport's final slot owners, resets changed endpoints, and
 admits each payload or acknowledged packet id against its captured connection
 tag. A slot index never identifies a connection by itself.
@@ -62,8 +62,7 @@ connection; liveness makes that admissibility condition explicit.
 
 ## Action mapping for the objects implementation
 
-The endpoint and slots names below are the planned functions in
-`standard/MESSAGES.md` sections 10 and 11. The release and error-check rows name
+The endpoint and slots names below are the planned functions. The release and error-check rows name
 required object responsibilities; their final C API spelling belongs to the
 objects/API cards.
 

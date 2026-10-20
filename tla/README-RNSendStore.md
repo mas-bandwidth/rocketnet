@@ -1,7 +1,6 @@
 # RNSendStore
 
-One class of the message layer's send store: `standard/MESSAGES.md` sections 4 and 15,
-implemented by `rn_send_store_alloc` and `rn_send_store_free_checked` in
+One class of the message layer's send store, implemented by `rn_send_store_alloc` and `rn_send_store_free_checked` in
 `sdk/rocketnet_allocator.cpp`. The three classes share no state, so one class is
 the whole model.
 

@@ -82,10 +82,10 @@ is no liveness property here; the connection models above it carry those.
 | `GenuineIsAccepted` | F1 as the card states it | a genuine sequence inside the range that has not opened is never refused as already received |
 | `AckReportsOnlyReceived` | F1's second half (`sdk/rocketnet_ack.cpp` builds the block from the same window) | the ack block names only sequences that opened |
 | `ReceivedIsRefused` | TRANSPORT.md _Replay Protection_: "within the window accept a sequence only once" | everything that opened is refused thereafter |
-| `BelowFloorIsRefused` | TRANSPORT.md _Replay window sizing_: "an undersized window discards old legitimate packets; it never accepts a replay" | below the floor everything is refused |
+| `BelowFloorIsRefused` | standard/TRANSPORT.md t14: a sequence at or below the high-water mark minus the depth is refused | below the floor everything is refused |
 | `HighestIsReceived` | the assert at `sdk/rocketnet_ack.cpp:94` | the high-water mark is itself marked |
-| `NoAdvanceBeforeConnect` | TRANSPORT.md _Reading packets_, the slot gate before the mark (OV-34; the standard's rule, its PR pending) | the session window of a mapping without a slot never moves |
-| `AckReportsOnlyProcessed` | the harm behind OV-34, named by the STANDARD change | the ack block names only packets a slot processed |
+| `NoAdvanceBeforeConnect` | standard/TRANSPORT.md t10, the slot gate before the mark (OV-34) | the session window of a mapping without a slot never moves |
+| `AckReportsOnlyProcessed` | the harm behind OV-34, named by the standard | the ack block names only packets a slot processed |
 | `Monotone` (action property) | | the mark never goes backwards; a slot is never given up |
 
 `GenuineIsAccepted` and `AckReportsOnlyReceived` follow from `WindowIsTruth`; they are
@@ -221,15 +221,9 @@ nothing processed and `AckReportsOnlyProcessed` is violated. With the current or
 other invariant still holds (the window stays truthful about what opened), so the defect
 is not in the window but in what the window is then made to say.
 
-The rule is the standard's. The code's comment at `:957-960` follows the reading order
-TRANSPORT.md gave before this model: _Reading packets_ marked every opened session packet
-and _Processing session packets at the server_ then ignored the slotless one. The owner
-ruled that the standard changes first when correctness requires it, and it does here:
-TRANSPORT.md _Reading packets_ now ignores a session packet whose mapping has no slot
-after the open and before the replay-window mark, citing `NoAdvanceBeforeConnect`, and
-_Processing session packets at the server_ agrees (the TRANSPORT.md change is PR #207;
-the code fix is the card `rnfix-replay-advanced-after-connect-check-r2`, which needs that
-PR merged first). `GateBeforeAdvance = TRUE`, the committed run, is that rule.
+The rule is the standard's. standard/TRANSPORT.md t10
+ignores a session packet whose mapping has no slot after the open and before the
+replay-window mark, the rule `NoAdvanceBeforeConnect` checks. `GateBeforeAdvance = TRUE`, the committed run, is that rule.
 
 ## RUNS.tsv
 

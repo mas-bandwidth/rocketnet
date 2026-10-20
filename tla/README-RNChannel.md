@@ -1,6 +1,6 @@
 # RNChannel
 
-RNChannel checks a bounded message-layer instance of `standard/MESSAGES.md` §§6–9.
+RNChannel checks a bounded message-layer instance of `standard/MESSAGES.md` m5 to m9.
 It restates the relevant RNWindow actions and instantiates the unchanged Link
 module in each direction. It does not add a message ACK: opening a transport
 packet makes its ID ACKable, and a returned packet ACK marks every reliable
@@ -119,7 +119,7 @@ abstracts eventual reliable send-budget availability. Reliable messages are
 never discarded for budget, and code-0 budget drop is explicit and counted.
 No rate, latency, bandwidth-priority, zero-copy, or concrete memory-allocation
 claim follows from this model. Those implementation obligations remain in the
-design and their assigned cards. Neither `standard/MESSAGES.md` nor the TLA inventory is changed here.
+design and their assigned cards. `standard/MESSAGES.md` is not changed here.
 
 ## Reversed witnesses and measurements
 

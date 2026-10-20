@@ -1,7 +1,7 @@
 --------------------------- MODULE RNResendTiming ---------------------------
 (***************************************************************************)
-(* rocketnet: resend timing of reliable records (standard/MESSAGES.md m9.3  *)
-(* "RTO", "Resend" and "Giving up"; the code is                            *)
+(* rocketnet: resend timing of reliable records (standard/MESSAGES.md m9.2  *)
+(* and m9.3: the RTO, the resend delay and the reliable timeout; the code is *)
 (* rn_window_ack_resend_delay, rn_window_ack_chunk_resend_delay,           *)
 (* rn_window_ack_resend and rn_window_ack_check_timeout in                 *)
 (* sdk/rocketnet_window_ack.h and .cpp, rn_ordered_write in                *)

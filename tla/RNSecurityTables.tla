@@ -250,8 +250,8 @@ OneTokenOneLiveConnection == \A t \in Tokens : Cardinality({s \in slots : s.tok 
 ChurnNeverDenied == ~churnDenied
 \* A token is bound in the history only by a response that opened under
 \* it, from the address it binds, so a replay from an address that holds
-\* no keys binds nothing (TRANSPORT.md, Processing Connection Response
-\* Packets).  NoBindToNonHolder is its consequence for the attacker: no
+\* no keys binds nothing (TRANSPORT.md t12,
+\* rule 11).  NoBindToNonHolder is its consequence for the attacker: no
 \* address outside Holds[t] is ever bound to t.
 BoundOnlyToOpener == \A t \in Tokens : history[t] # None => history[t].opened
 NoBindToNonHolder == \A t \in Tokens : history[t] # None => history[t].addr \in Holds[t]

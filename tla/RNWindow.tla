@@ -1,7 +1,7 @@
 ----------------------------- MODULE RNWindow -----------------------------
 (***************************************************************************)
-(* rocketnet: the message layer's reliable window (standard/MESSAGES.md,   *)
-(* layer 3, sections 6 and 15).  Written before the window code exists:    *)
+(* rocketnet: the message layer's reliable window (standard/MESSAGES.md    *)
+(* m5 and m9).  Written before the window code exists:    *)
 (* the model is the design, and the code card that follows                 *)
 (* (the-receive-window-accepts-each-reliable-number-once) is built to it.  *)
 (*                                                                         *)
@@ -9,7 +9,7 @@
 (* forward link carries data packets (a packet id and the message numbers  *)
 (* it carries) and the reverse link carries acks (the packet ids the       *)
 (* receiver opened).  The transport underneath is abstracted to its two    *)
-(* preconditions, P2 and P6 of MESSAGES.md section 2:                      *)
+(* preconditions, P2 and P6 (MESSAGES.md m1.4, rules 2 and 6):            *)
 (*                                                                         *)
 (*   P2  opening a packet is what acks it: the receiver puts the id of     *)
 (*       every packet it opens into the next ack it sends, whatever this   *)

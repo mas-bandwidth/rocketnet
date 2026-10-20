@@ -1,6 +1,6 @@
 # RNEndpoint: two endpoints end to end, with CONFIG
 
-`RNEndpoint` is the model `standard/MESSAGES.md` section 15 plans for layer 7:
+`RNEndpoint` is the model of layer 7 and its CONFIG (`standard/MESSAGES.md` m11):
 two message endpoints, one at each end of a connection, joined by two
 instances of `tla/Link.tla` (`AB` carries a's packets to b, `BA` carries b's
 to a), with the transport's ack semantics and the CONFIG announcement of

@@ -20,8 +20,8 @@
 (* carries every client's packets to the server, S2C the server's packets  *)
 (* to every address.  A packet carries its source address (from) or its    *)
 (* destination (to); the link never reads either.  The server keys          *)
-(* everything on from (TRANSPORT.md, The client address is the connection  *)
-(* identity); a client receives only what is addressed to the address it   *)
+(* everything on from (TRANSPORT.md t12, rules 3 and 11: the source       *)
+(* address); a client receives only what is addressed to the address it   *)
 (* holds now, and a packet to an address nobody holds is delivered to the  *)
 (* void (received and discarded, so the link's fairness is never vacuous). *)
 (*                                                                         *)
@@ -659,7 +659,7 @@ OneClientPerSlot ==
          Cardinality({c \in Clients : cstate[c] \in {3, 4} /\ ClientKeys(c) = KeysOf(smap[slot[i].addr])}) <= 1
     /\ \A i, j \in UsedSlots : i # j => slot[i].addr # slot[j].addr
 
-\* a client id holds at most one slot (S:2647, S:2817)
+\* a client id holds at most one slot (TRANSPORT.md t12, rules 8 and 11)
 OneSlotPerClientId ==
     \A i, j \in UsedSlots : i # j => IdOf(slot[i].tok) # IdOf(slot[j].tok)
 
@@ -675,7 +675,7 @@ SlotMappingBijection ==
 
 \* a slot is assigned only on an opened response: a live mapping holds a
 \* slot only once established, so no amount of requests consumes one
-\* (S:2712-2715); and the map stays inside its capacity
+\* (TRANSPORT.md t12, rule 11); and the map stays inside its capacity
 NoSlotBeforeResponse == \A a \in Addrs : smap[a].slot # 0 => smap[a].est
 MappingsBounded      == NumMappings <= MapCap
 
@@ -726,7 +726,7 @@ PacketsReachOwnSlotOnly ==
                            /\ KeysOf(p) = KeysOf(smap[slot[i].addr])]_vars
 
 \* no receive sends but the ladder's own answer: a session packet never
-\* provokes a send (S:2852-2853; the keep-alive is timer driven)
+\* provokes a send (TRANSPORT.md t13.3; the keep-alive is timer driven)
 SessionNeverAnswered ==
     [][(\E p \in ClientPackets : p.type \in {"keepalive", "disconnect"} /\ C2S!Deliver(p))
          => s2cSent' = s2cSent]_vars

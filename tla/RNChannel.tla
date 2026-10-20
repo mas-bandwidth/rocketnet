@@ -2,7 +2,7 @@
 EXTENDS Naturals, Integers, Sequences, FiniteSets, TLC
 
 \* Bounded message-layer refinement of RNWindow's NumberRecord, WritePacket,
-\* OpenPacket, ReceiveAck, and receive/process update boundary (CHANNELS 6).
+\* OpenPacket, ReceiveAck, and receive/process update boundary (MESSAGES.md m5 and m9).
 \* Link is unchanged. Payload units are opaque model values, never serialized.
 CONSTANTS W, SendCapacity, P, MaxPid, Capacity, MaxDelay, Duplication,
           AckCapacity, Reordering, FwdPattern, RevPattern, BurstStart, BurstLen,

@@ -1,7 +1,7 @@
 ---------------------------- MODULE RNSlots ----------------------------
 \* Connection-tagged transport batches, region lifetime and object updates.
-\* MESSAGES.md 10.2 and 15.1 supply Observe/Admit; the exhaustion and explicit
-\* release rules extend that draft. Views require explicit Release before
+\* Observe/Admit are the slot observation; the exhaustion and explicit
+\* release rules extend it. Views require explicit Release before
 \* the next object update; an early update is rejected.
 EXTENDS Naturals, FiniteSets, Sequences
 

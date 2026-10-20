@@ -15,8 +15,8 @@ told apart by what the sender knows:
 | unacked, and `largest_acked_sequence >= seq + Threshold` | `SEND_HISTORY_LOST` | known path loss (RFC 9002 6.1.1, packet threshold 3), an outcome |
 | unacked, no such later ack | `SEND_HISTORY_OVERFLOW` | unknown fate: a silent peer, or a window too small for the path; a refusal of history that reads zero on a healthy path |
 
-The write never refuses the send (TRANSPORT.md "Replay window sizing": an
-implementation MUST NOT throttle sends to preserve history). The sum of the two
+The write never refuses the send: the model never throttles a send to preserve
+history. The sum of the two
 counts is the count of overwritten unacknowledged records the standard names.
 
 ## What the model has

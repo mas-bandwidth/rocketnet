@@ -1,7 +1,6 @@
 # RNBlocks: a block split, numbered, placed by index and delivered whole
 
-`tla/RNBlocks.tla` is layer 5 of `standard/MESSAGES.md` (section 8, blocks) and section
-15's `RNBlocks` row: the split at the fixed stride, the consecutive numbering, the
+`tla/RNBlocks.tla` is layer 5 of the message layer, blocks (`standard/MESSAGES.md` m8): the split at the fixed stride, the consecutive numbering, the
 one contiguous ring span, and the receiver's placement by index with whole
 delivery at one ordering slot. `tla/MCRNBlocks.tla` and `tla/MCRNBlocks.cfg` are
 the small instance; `tla/MCRNBlocksBrokenPlaceByArrival.cfg` is the reversed

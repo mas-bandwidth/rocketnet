@@ -180,7 +180,7 @@ TakeReceipt ==
       acked, smap, active, packetNums, opened, lost, openedNums, ackProof,
       age, evicted, outcomes, ringDropped, writes>>
 
-\* CHANNELS 6.4: a reliable number reaching first-send + reliable_timeout
+\* MESSAGES.md m9.3: a reliable number reaching first-send + reliable_timeout
 \* ends the connection even if other packets/traffic still make progress.
 Disconnect ==
  /\ live

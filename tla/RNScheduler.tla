@@ -1,7 +1,7 @@
 ---------------------------- MODULE RNScheduler ----------------------------
 (***************************************************************************)
 (* rocketnet: layer 6's scheduler, the order in which queued items are     *)
-(* first written into packets (standard/MESSAGES.md m10; the code is       *)
+(* first written into packets (standard/MESSAGES.md m9.4; the code is      *)
 (* rn_packet_builder_write in sdk/rocketnet_packet_builder.cpp).           *)
 (*                                                                         *)
 (* Three rules nest, outermost first:                                      *)

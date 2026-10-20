@@ -1,7 +1,7 @@
 # RNWindow: the reliable window
 
-`tla/RNWindow.tla` is the message layer's reliable window, CHANNELS layer 3
-(`standard/MESSAGES.md` m5 and m5.4): a sender numbering records late under the count
+`tla/RNWindow.tla` is the message layer's reliable window, layer 3
+(`standard/MESSAGES.md` m5 and m9): a sender numbering records late under the count
 bound `n < U' + W`, its sent-packet map and acks, and a receiver with `R`, the received
 bitset, the descriptors and their live flags, holds, the delivered list, the update
 boundary, and the reconstruction of the 24-bit wire number. Both directions run through

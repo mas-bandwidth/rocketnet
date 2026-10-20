@@ -77,17 +77,17 @@ Safety, checked under every loss pattern with no fairness:
 
 | Property | The rule |
 |---|---|
-| `OneClientPerSlot` | no two live clients in one slot: at most one client holds the keys a used slot's mapping opens under, and no two used slots share an address (S:342-351, the address is the connection identity) |
-| `OneSlotPerClientId` | a client id holds at most one slot (S:2647, S:2817) |
-| `SlotMappingBijection` | no slot without a live, established mapping behind it naming that slot, and no established mapping without the used slot it names bound to its address (S:3141-3144, slot reset destroys the mapping; S:2852-2853; the leak the audits suspect at the 2x mapping table) |
-| `NoSlotBeforeResponse` | a live mapping holds a slot only once established: no amount of requests consumes one (S:2712-2715) |
-| `MappingsBounded` | the map stays inside its capacity (S:2760-2764, the 2x table; `sdk/rocketnet_server_transport.cpp:821`) |
-| `OneConnectionPerToken` | the same token never admits two clients (S:2648, S:2788-2791) |
-| `NonceFresh` | no two live mappings share keys (S:32-33, no key or nonce outlives one connection; S:2656-2658) |
-| `StoredChallengeNeverReplaced` | every live mapping holds the one challenge fixed at its creation: the salt and nonce a request sees are the stored ones, never replaced (S:2691-2697) |
+| `OneClientPerSlot` | no two live clients in one slot: at most one client holds the keys a used slot's mapping opens under, and no two used slots share an address (standard/TRANSPORT.md t12, rules 3 and 11) |
+| `OneSlotPerClientId` | a client id holds at most one slot (standard/TRANSPORT.md t12, rules 8 and 11) |
+| `SlotMappingBijection` | no slot without a live, established mapping behind it naming that slot, and no established mapping without the used slot it names bound to its address (standard/TRANSPORT.md t13.4, slot reset destroys the mapping; t13.3; the leak the audits suspect at the 2x mapping table) |
+| `NoSlotBeforeResponse` | a live mapping holds a slot only once established: no amount of requests consumes one (standard/TRANSPORT.md t12, rule 11) |
+| `MappingsBounded` | the map stays inside its capacity (the 2x table; `sdk/rocketnet_server_transport.cpp:821`) |
+| `OneConnectionPerToken` | the same token never admits two clients (standard/TRANSPORT.md t12, rules 7 and 11) |
+| `NonceFresh` | no two live mappings share keys (standard/TRANSPORT.md t19, a key or nonce never outlives one connection; t12, rule 10) |
+| `StoredChallengeNeverReplaced` | every live mapping holds the one challenge fixed at its creation: the salt and nonce a request sees are the stored ones, never replaced (standard/TRANSPORT.md t12, rules 3 and 10) |
 | `TimeoutHonoured`, `DeadlineHonoured`, `HalfOpenIdleHonoured` | the idle timeout and the handshake deadline fire when due, for an established mapping and for a half-open one |
 | `PacketsReachOwnSlotOnly` | a client's packets never reach another client's slot: a client packet that touches a used slot (its record, or the mapping behind it) came from that slot's address and opened under that mapping's keys; after an address change the client's packets come from an address with no mapping, or another client's, and touch nothing |
-| `SessionNeverAnswered` | a session packet never provokes a send (S:2852-2853, a disconnect is never answered); the keep-alive is timer driven (S:2894, keep-alive generation reads the clocks, never an arrival) |
+| `SessionNeverAnswered` | a session packet never provokes a send (standard/TRANSPORT.md t13.3, a disconnect is never answered); the keep-alive is timer driven (t13.1, keep-alive generation reads the clocks, never an arrival) |
 | `TypeOK` | types, including both links' |
 
 Liveness, under the fairness described below:
@@ -104,8 +104,8 @@ Liveness, under the fairness described below:
 The class: a peer moves to a new state, sends the packet announcing it once, the packet is
 lost, and nobody ever sends it again. On the server the packets that announce a state are
 the cookie, the challenge, the denied and the establishing keep-alive. The first three are
-re-provoked by the client's own retransmission (S:2693-2705: every valid request is answered
-every time it arrives), so the server holds state to repeat them (the stored challenge) or
+re-provoked by the client's own retransmission (standard/TRANSPORT.md t12, rules 3 and 5: a valid
+request is answered every time it arrives), so the server holds state to repeat them (the stored challenge) or
 needs none (the cookie and the request-time denied are recomputed). The keep-alive is the
 one the server must re-send on its own timer, because the client in state 3 can only repeat
 its response, which a connected mapping ignores. `Connects` and `ServerNotStranded` are
@@ -131,7 +131,7 @@ the establishing keep-alive once at the response and never again. The code's beh
   the code has it, the refresh before the ladder.
 - **The tokens** do not expire inside a run, so the admitted set never forgets (the code's
   entries leave only by expiry); the used-token history binds without eviction, and
-  `History = "none"` is the flush the standard documents (S:2782-2786), checked as a separate
+  `History = "none"` is the flush of standard/TRANSPORT.md t12's bounded history, checked as a separate
   run so the admitted set is seen to carry the rule alone.
 - **The client id** is a function of the token: `IdOf(t) = t`, or `1` for every token with
   `SameId = TRUE` (one player holding two tokens).
@@ -340,7 +340,7 @@ and fixed on the way.
 8. **A shared token admits a second connection after a history flush** (`S-share-none`,
    `OneConnectionPerToken`, 22 states, the code's behaviour with `History = "none"`). Two
    clients at two addresses present one token. With the used-token history flushed between
-   the two requests (the eviction S:2782-2786 documents: an attacker holding
+   the two requests (the eviction a bounded history allows: an attacker holding
    `8 x max_clients` tokens pushes the first binding out), both requests pass the history
    (`sdk/rocketnet_server_protocol.cpp:437`) and the
    admitted-token check (`:516`, nobody has connected yet), and both get a mapping. The
@@ -352,9 +352,8 @@ and fixed on the way.
    id any more), a slot is free, and `:685` calls `rocketnet_admitted_token_set_add` with a
    token that is already present, which returns success without inserting
    (`sdk/rocketnet_token_tables.cpp:277-278`); the slot is assigned at `:710`. The token
-   admitted two connections. S:2647-2648 ("a token admits one connection") and
-   S:2788-2791 (the admitted set "is what makes 'a token admits one connection' true
-   rather than probabilistic") say it must not. The inventory's F9 named this shape and
+   admitted two connections. standard/TRANSPORT.md t12 (rules 7 and 11: the token is
+   bound to the first source address whose response opens) says it must not. The inventory's F9 named this shape and
    asked the handshake model to settle whether it is reachable; it is, under the history
    flush, within one handshake deadline of the first connection. The same instance with
    the history binding (`S-share-kept`) passes: the second client never gets a mapping.
@@ -367,7 +366,7 @@ and fixed on the way.
    `:678`, with its own counter (not a change to `add()`: `sdk/rocketnet_tests.cpp:2007-2008`
    asserts that `add` is idempotent, and a refusal from `add` would be counted under
    `ADMITTED_SET_FULL` at `:688`, which it is not); and the rung added to TRANSPORT.md's
-   response ladder, between the client-id bullet (S:2817) and the slot bullet (S:2818): "If
+   response ladder, between the client-id rung and the slot rung: "If
    this token's identifier is in the admitted-token set, ignore it."
 
    **Superseded 2026-10-18.** The admitted-token set is removed from the code

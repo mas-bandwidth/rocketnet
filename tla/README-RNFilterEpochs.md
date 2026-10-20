@@ -1,7 +1,7 @@
 # RNFilterEpochs: the receiver's filter epoch window
 
 `tla/RNFilterEpochs.tla` is the receiver side of the keyed filter value's
-generations (`TRANSPORT.md`, "The keyed filter value"): the table of live
+generations (`standard/TRANSPORT.md` t5.1): the table of live
 magics a keyed receiver holds, the backend handing it the next generation,
 the oldest retired when the table is full, and the verdict on a packet's
 epoch byte. The cookie key rotation in `tla/RNSecurityTables.tla` is the

@@ -12,7 +12,7 @@
 (* half-open mapping at its handshake deadline and an idle one at the      *)
 (* timeout (sdk/rocketnet_server_protocol.cpp).                            *)
 (*                                                                         *)
-(* States are the standard's numbers (TRANSPORT.md, Client State Machine;  *)
+(* States are the standard's numbers (TRANSPORT.md t11;                    *)
 (* sdk/rocketnet.h:398-409): -7 token expired, -6 invalid token, -5        *)
 (* connection timed out, -4 response timed out, -3 request timed out, -2   *)
 (* cookie request timed out, -1 denied, 0 disconnected, 1 requesting       *)
@@ -675,7 +675,7 @@ FragmentOnlyWhenConnected ==
     /\ (sReasm => sMap.live /\ sMap.slot)
 
 \* the machine steps forward one rung or fails; a positive state is entered
-\* from the rung below or, for 1, from a connect (S:2042-2045)
+\* from the rung below or, for 1, from a connect (TRANSPORT.md t11, rule 5)
 StepsForwardOrFails ==
     [][cstate' # cstate =>
          \/ cstate >= 1 /\ cstate' = cstate + 1
@@ -687,12 +687,12 @@ StepsForwardOrFails ==
 DisconnectIsTerminal ==
     [][(cstate <= 0 /\ cstate' > 0) => (cstate' = 1 /\ cAttempt' = cAttempt + 1)]_vars
 
-\* a terminal failure state changes only by a connect (S:2046); F8 breaks
+\* a terminal failure state changes only by a connect; F8 breaks
 \* it through disconnect()
 TerminalAbsorbing ==
     [][(cstate < 0 /\ cstate' # cstate) => cstate' = 1]_vars
 
-\* a timeout from waiting state N lands in -(N+1) (S:2074-2077)
+\* a timeout from waiting state N lands in -(N+1) (TRANSPORT.md t11, rule 8)
 TimeoutPairing ==
     [][(cstate \in 1..4 /\ cstate' \in {-2, -3, -4, -5}) => cstate' = -(cstate + 1)]_vars
 
@@ -720,15 +720,15 @@ AcceptedUnderLiveKeys ==
     [][\A p \in SessionPackets :
          AcceptsSession(p) => (cstate \in {3, 4} /\ KeysOf(p) = cKeys)]_vars
 
-\* no receive sends (S:2178-2182)
+\* no receive sends
 NoSendOnArrival ==
     [][(\E p \in ServerPackets : S2C!Deliver(p)) => c2sSent' = c2sSent]_vars
 
-\* the ephemeral secret is erased outside states 1 and 2 (S:1089-1092); F4
+\* the ephemeral secret is erased outside states 1 and 2 (TRANSPORT.md t7); F4
 EphemeralErasedOutsideHandshake == cstate \notin {1, 2} => ~cEph
 
-\* the session keys are gone once the attempt is over (S:2186, S:2216
-\* "releasing all state"); an observation, see README-ClientConnection.md
+\* the session keys are gone once the attempt is over (TRANSPORT.md
+\* t11.2, t11.3 and t13.3, release the connection state); an observation, see README-ClientConnection.md
 KeysErasedWhenDown == cstate <= 0 => cKeys = NoKeys
 
 (***************************************************************************)

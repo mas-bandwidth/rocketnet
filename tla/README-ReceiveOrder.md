@@ -8,9 +8,9 @@ multiplication, AEAD seal or open, signature verification and sealed-box open
 are crypto.
 
 The request path runs in the ruled order. Each rung maps to its code and
-STANDARD step in _Processing Connection Requests_:
+its step of standard/TRANSPORT.md t12:
 
-| Rung | Kind | Code | STANDARD step |
+| Rung | Kind | Code | t12 step |
 |---|---|---|---|
 | version | cheap | sdk/rocketnet_server_protocol.cpp version compare | version is not 0x4E7C1A93 |
 | timestamps | cheap | expire and timeout compares | expire timestamp, timeout seconds |

@@ -108,7 +108,7 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnriodriver` | 3 | Windows RIO server driver design: control with two liveness properties and two invariant witnesses |
 | `rnlivefleetrun` | 3 | Live fleet run lifecycle: control with one liveness property and two invariant witnesses |
 | `rnoutgoingbuild` | 4 | The outgoing build (docs/OUTGOING-BUILD.md): control with one action property and three witnesses: the copy step (`NoCopy`), an allowance of its own for in-place packets (`PacketQuota`), and no packet kept for due reliable work (`ReliableSentWithinOneUpdate`) |
-| `rnsimfaults` | 3 | The DST fault injector for crash, restart and clock skew (test/README.md section 7): control with one liveness and one action property, and two invariant witnesses |
+| `rnsimfaults` | 3 | The DST fault injector for crash, restart and clock skew: control with one liveness and one action property, and two invariant witnesses |
 | `rnclientreceivequit` | 5 | The client receive thread's quit-and-wake handshake with destroy: controls for linux, macOS and Windows (two invariants, one action property, one liveness property) and two witnesses: the wake sent before quit (`WokenSeesQuit`) and a wait with no timeout and no wake (`DestroyCompletes`) |
 
 The 47-case plan covers every root configuration. Other experiments described

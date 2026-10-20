@@ -10,7 +10,7 @@ as far as it drives the client. `tla/MCClientConnection.tla` and
 
 ## What the model covers
 
-**States** are the standard's numbers (TRANSPORT.md, _Client State Machine_;
+**States** are the standard's numbers (standard/TRANSPORT.md t11;
 `sdk/rocketnet.h:398-409`): -7 token expired, -5 connection timed out, -4 response
 timed out, -3 request timed out, -2 cookie request timed out, -1 denied, 0 disconnected,
 1 requesting cookie, 2 sending connection request, 3 sending connection response,
@@ -72,13 +72,13 @@ Safety, checked under every loss pattern with no fairness:
 | Property | The rule |
 |---|---|
 | `ConnectedMeansHandshake` | never connected without a completed handshake: state 4 holds a cookie, this attempt's committed keys, the index from a keep-alive, and no ephemeral |
-| `StepsForwardOrFails` | the machine climbs one rung at a time or fails; 1 is entered only by a connect (S:2042-2045) |
+| `StepsForwardOrFails` | the machine climbs one rung at a time or fails; 1 is entered only by a connect (standard/TRANSPORT.md t11, rule 5) |
 | `DisconnectIsTerminal` | a disconnect is terminal until the application reconnects: the only way out of a non-positive state is a fresh attempt |
 | `AcceptedUnderLiveKeys` | no packet is accepted outside the live session's keys: an accepted session packet opened under the held keys in state 3 or 4 |
 | `AtMostOneLiveSession` | the client accepts under at most one key pair, which is this attempt's; a slot the server holds for this attempt is under those keys or the client has thrown its keys away |
-| `TimeoutPairing` | a timeout from waiting state N lands in -(N+1) (S:2074-2077) |
+| `TimeoutPairing` | a timeout from waiting state N lands in -(N+1) (standard/TRANSPORT.md t11, rule 8) |
 | `TimeoutHonoured`, `DeadlineHonoured` | the idle timeout and the total deadline fire when due |
-| `NoSendOnArrival` | no receive sends (S:2178-2182) |
+| `NoSendOnArrival` | no receive sends |
 | `TypeOK` | types, including both links' |
 
 Liveness, under the fairness described below:
@@ -311,23 +311,24 @@ acknowledges one (`rocketnet_server_protocol_write_keep_alive_if_due`,
    sets the state and returns (`:201-221`); nothing on that path, nor on the denied
    path (`:612-614`), calls `sodium_memzero` on `client_ephemeral_secret_key`. The
    zeroing happens only at the challenge (`:509`), the integrity limit (`:66`) and
-   `disconnect` (`:1336`). S:1089-1092 is a MUST. The same trace reaches -7 and -1.
+   `disconnect` (`:1336`). standard/TRANSPORT.md t7 makes the erasure a MUST. The same trace reaches -7 and -1.
 5. **F8, `disconnect` rewrites a terminal state to 0** (`F8-terminal`,
    `TerminalAbsorbing`, 5 states): -2, then `AppDisconnect`, then 0. Replayed:
    `rocketnet_client_protocol_disconnect` (`:1332-1333`) sets `DISCONNECTED` from any
    state but 0; the transport's state-change callback fires only across an `update`
    (`sdk/rocketnet_client_transport.cpp:600-602`), so the change is never reported.
-   S:2046 says only `connect` leaves a terminal state. The inventory classes this as a
-   question; the invariant `DisconnectIsTerminal` (no way *up* from a non-positive
+   The model's `TerminalAbsorbing` says only `connect` leaves a terminal state, while
+   standard/TRANSPORT.md t11 rule 9 returns the client to disconnected (0) on a
+   disconnect from any state; the invariant `DisconnectIsTerminal` (no way *up* from a non-positive
    state but a connect) holds in every run, so the sideways move is the whole of it.
 6. **The session keys survive a failed or ended attempt** (`OBS-keys`,
    `KeysErasedWhenDown`, 11 states): the challenge commits the keys (state 9); two
    ticks later the client is -4 with `cKeys` still set. Replayed: `check_deadlines`
    (`:214-220`), `process_denied` (`:612-614`) and `process_disconnect` (`:963`) each
    set the state and nothing else; the keys are zeroed only at the integrity limit
-   (`:65`) and in `disconnect` (`:1335`). S:2186 and S:2216 say the client "releases
-   all connection state" on a denied and on a server disconnect. Not in the inventory;
-   an observation of the same shape as F4, with less exposure (the state gate refuses
+   (`:65`) and in `disconnect` (`:1335`). standard/TRANSPORT.md t11.2 (rule 6) and
+   t13.3 say the client releases the connection state on an accepted denial and on a
+   disconnect it accepts; an observation of the same shape as F4, with less exposure (the state gate refuses
    every session packet below 3, so the keys cannot be used, only read from memory).
 
 ### Model errors, fixed
@@ -369,8 +370,9 @@ The one packet either end sends without re-sending is the disconnect: ten copies
 (`DisconnectCopies` here), then the sender's state is gone
 (`rocketnet_client_protocol_disconnect`, `sdk/rocketnet_client_protocol.cpp:1309-1336`;
 `rocketnet_server_protocol_disconnect_client`, `sdk/rocketnet_server_protocol.cpp:1656-1676`).
-If every copy is lost the peer waits for its idle timeout, which S:2918-2924 states as
-the design ("losing all ten costs only a peer that waits for the timeout"). In this
+If every copy is lost the peer waits for its idle timeout, which standard/TRANSPORT.md t13.3
+allows: the burst is never retransmitted, so losing all of it costs only a peer that waits for
+the timeout. In this
 model that is `CrashedServerTimesOut` (`L-crash`): the client reaches -5. It is a
 bounded wait, not a packet nobody will send again, and it is not reported as a defect.
 
