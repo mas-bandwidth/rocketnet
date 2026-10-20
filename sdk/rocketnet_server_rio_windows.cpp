@@ -280,7 +280,14 @@ static bool rocketnet_rio_post_receive( rocketnet_server_rio_t * rio, int slice 
 #endif
     if ( !rio->rio.RIOReceiveEx( rio->request_queue, &data, 1, NULL, &address, NULL, NULL, 0,
                                  (PVOID) (uintptr_t) rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 0, (uint32_t) slice ) ) )
+    {
+        // a post refused with an ICMP report of an earlier send is counted
+        // with the reset statuses; a refused re-post waits on the retry list in
+        // rocketnet_rio_complete_receive (windows-udp-connreset audit, rio post)
+        if ( rocketnet_platform_receive_status_is_reset( WSAGetLastError() ) )
+            rocketnet_platform_count_receive_reset();
         return false;
+    }
     rio->posted_receives++;
     return true;
 }
