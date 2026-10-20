@@ -881,6 +881,14 @@
     /** @brief ROCKETNET_COUNTER_SEND_FAILED: Counts datagrams the transport's socket dropped because the send call failed (ENOBUFS from a full interface queue, EAGAIN from a full send buffer, a refused destination); the socket counts each one (sdk/rocketnet_platform.cpp:80) and the transport reads the driver's send_failures into this counter when the counters are read (sdk/rocketnet_client_transport.cpp:2020, sdk/rocketnet_server_transport.cpp:2764); a driver without send_failures leaves it zero. Appended: indices are the contract. Unit: datagrams. Class: refusal; family: none. */ \
     X( SEND_FAILED, REFUSAL, NONE ) \
     \
+    /* The kernel prefilter's PASSED_FRAGMENT (sdk/rocketnet_wire.h): IP */ \
+    /* fragments the XDP program handed to the kernel stack for */ \
+    /* reassembly, counted before any size, epoch or filter check. */ \
+    /* EXPECTED: a fragment is not a refusal. appended: indices are the */ \
+    /* contract. */ \
+    /** @brief ROCKETNET_COUNTER_XDP_KERNEL_PASSED_FRAGMENT: Counts IP fragments the kernel prefilter passed to the kernel stack. Unit: occurrences. Class: expected; family: none. */ \
+    X( XDP_KERNEL_PASSED_FRAGMENT, EXPECTED, NONE ) \
+    \
     /* An application send on a connection that is not CONNECTED: a client */ \
     /* whose transport has not reached CONNECTED or has left it, a server */ \
     /* slot with no CONNECTED client (standard/MESSAGES.md m1.5; */ \

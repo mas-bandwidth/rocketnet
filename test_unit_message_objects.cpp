@@ -812,7 +812,7 @@ static void release_returns_room()
 
     // update with a held view: the named error, the assert in a debug build,
     // and the views are taken back so nothing grows
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_set_assert_callback( mo_assert_hook );
     mo_asserts = 0;
 
@@ -1866,7 +1866,7 @@ static void rnslots_witness_replays()
         const uint8_t * data = NULL;
         int bytes = 0;
         check( rocketnet_message_server_receive( pair.server, 0, 0, &data, &bytes ) == 1 );
-        void (*saved_assert)( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
+        void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
         rocketnet_set_assert_callback( mo_assert_hook );
         mo_asserts = 0;
         pair.time += 0.01;

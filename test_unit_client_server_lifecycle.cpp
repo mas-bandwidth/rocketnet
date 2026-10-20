@@ -83,7 +83,7 @@ struct lifecycle_world_t
 static void lifecycle_world_create( lifecycle_world_t * world, int max_clients, int num_clients )
 {
     memset( world, 0, sizeof( *world ) );
-    rocketnet_quiet( 1 );
+    rocketnet_set_quiet( 1 );
     world->time = 1000.0;
     lifecycle_now = world->time;
     lifecycle_identity( &world->identity );
@@ -791,7 +791,7 @@ static void server_destination_flow_id_refused()
 
     // the flow refusal names FLOW_ID_RESERVED; an index merely out of range
     // (no flow bit) is refused without it
-    rocketnet_quiet( 0 );
+    rocketnet_set_quiet( 0 );
     rocketnet_set_log_callback( lifecycle_log_callback, NULL );
     lifecycle_flow_logs = 0;
     uint64_t misuse = rocketnet_api_misuse_count();
@@ -807,7 +807,7 @@ static void server_destination_flow_id_refused()
     check( rocketnet_server_finish_message( world.server, 5, 4 ) == 0 );
     check( lifecycle_flow_logs == 3 );
     rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_quiet( 1 );
+    rocketnet_set_quiet( 1 );
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_FLOW_ID_RESERVED ), "FLOW_ID_RESERVED" ) == 0 );
 
     // the slot's own index still works
@@ -861,7 +861,7 @@ static int lifecycle_unsetenv( const char * name ) { return unsetenv( name ); }
 
 static void config_max_packets_per_update_range()
 {
-    rocketnet_quiet( 1 );
+    rocketnet_set_quiet( 1 );
     lifecycle_identity_t identity;
     lifecycle_identity( &identity );
 
@@ -952,7 +952,7 @@ static void client_disconnect_reason_kept_until_next_connected()
 {
     lifecycle_world_t world;
     memset( &world, 0, sizeof( world ) );
-    rocketnet_quiet( 1 );
+    rocketnet_set_quiet( 1 );
     world.time = 1000.0;
     lifecycle_now = world.time;
     lifecycle_identity( &world.identity );

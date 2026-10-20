@@ -308,6 +308,7 @@ static const char * const counters_appended_names[] =
     "MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT",
     "MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK",
     "SEND_FAILED",
+    "XDP_KERNEL_PASSED_FRAGMENT",
     "MESSAGE_SEND_NOT_CONNECTED",
 };
 
@@ -854,7 +855,7 @@ static void counters_conservation_reports_the_first_unbalanced_family()
     // a NULL block is not conserved
     const uint64_t misuse_before = rocketnet_api_misuse_count();
 #if ROCKETNET_ASSERTS
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
     counters_expected_null_asserts = 0;
     rocketnet_set_assert_callback( counters_expected_null_assert );
 #endif

@@ -3927,6 +3927,7 @@ The registry of counters, in index order, is:
 | `MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT` | `expected` | `none` |
 | `MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK` | `expected` | `none` |
 | `SEND_FAILED` | `refusal` | `none` |
+| `XDP_KERNEL_PASSED_FRAGMENT` | `expected` | `none` |
 | `MESSAGE_SEND_NOT_CONNECTED` | `expected` | `none` |
 
 The vector below encodes the registry in index order. For each counter it holds
@@ -4044,8 +4045,8 @@ fd 00 00 00 be a9 a8 b8 00 4e 00 22 20 3f b1 00
 54 00 6a c0 70 be 00 08 00 17 6f 7f 78 00 08 00
 8b 6d 57 dc 00 00 00 bf 7a 1a af 01 00 00 9b 86
 1b 95 01 00 00 79 87 fe 4c 01 00 00 f9 84 f0 6e
-01 00 00 25 11 95 dc 00 00 00 1d 39 f1 61 01 00
-00
+01 00 00 25 11 95 dc 00 00 00 df ff a1 97 01 00
+00 1d 39 f1 61 01 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations

@@ -325,7 +325,7 @@ RocketNet's security model is documented in [SECURITY.md](SECURITY.md):
 RocketNet never clamps invalid configuration or silently ignores API misuse; every refusal is explicit and counted.
 
 - **Status codes (`enum rocketnet_status_t` and `rocketnet_status_name`):**
-  - `ROCKETNET_STATUS_OK` (`0`): operation succeeded (`ROCKETNET_NUM_STATUS_CODES` bounds the enum).
+  - `ROCKETNET_STATUS_OK` (`0`): operation succeeded (`ROCKETNET_STATUS_COUNT` bounds the enum).
   - `ROCKETNET_STATUS_ALREADY_INITIALIZED`, `ROCKETNET_STATUS_NOT_INITIALIZED`, `ROCKETNET_STATUS_LIVE_ALLOCATIONS`, `ROCKETNET_STATUS_PLATFORM_INIT_FAILED`, `ROCKETNET_STATUS_CRYPTO_INIT_FAILED`: lifecycle and allocator state codes for `rocketnet_init`, `rocketnet_term`, and `rocketnet_set_allocator`.
   - `ROCKETNET_STATUS_INVALID_ARGUMENT`, `ROCKETNET_STATUS_CONFIG_ENV_INVALID`, `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`, `ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED`, `ROCKETNET_STATUS_MISSING_KEYS`, `ROCKETNET_STATUS_INVALID_PROTOCOL_ID`, `ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE`, `ROCKETNET_STATUS_INVALID_ADDRESS`, `ROCKETNET_STATUS_INVALID_TRANSPORT_LIST`: argument and configuration validation failures (`rocketnet_client_validate_config`, `rocketnet_client_validate_config_sized`, `rocketnet_server_validate_config`, `rocketnet_server_validate_config_sized`).
   - `ROCKETNET_STATUS_INVALID_CONNECT_TOKEN`, `ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED`: client connect-token pre-send checks.

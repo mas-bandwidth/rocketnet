@@ -266,13 +266,24 @@ __inline int c99_snprintf(char *outBuf, size_t size, const char *format, ...)
     #endif
 #endif
 
+// The process-wide assert callback the rocketnet_assert macro calls. It is internal
+// and never exported: a caller installs a callback with rocketnet_set_assert_callback,
+// the only way in, and NULL there restores the default.
+#if defined( __GNUC__ ) || defined( __clang__ )
+    #define ROCKETNET_INTERNAL __attribute__((visibility("hidden")))
+#else
+    #define ROCKETNET_INTERNAL
+#endif
+
+extern ROCKETNET_INTERNAL rocketnet_assert_callback_t rn_assert_function;
+
 #if ROCKETNET_ASSERTS
 #define rocketnet_assert( condition )                                                            \
 do                                                                                          \
 {                                                                                           \
     if ( !(condition) )                                                                     \
     {                                                                                       \
-        rocketnet_assert_function_pointer( #condition, __FUNCTION__, __FILE__, __LINE__ );       \
+        rn_assert_function( #condition, __FUNCTION__, __FILE__, __LINE__ );                 \
     }                                                                                       \
 } while(0)
 #else

@@ -1575,7 +1575,7 @@ offset  size  field
 ```
 
 The receiver compares every field with its own values. Any difference is
-`ERROR_CONFIG_MISMATCH`. A version the receiver does not know is a mismatch
+`DISCONNECT_REASON_CONFIG_MISMATCH`. A version the receiver does not know is a mismatch
 too. Kinds other than 1 are reserved; they are `MESSAGE_BAD_CONTROL` until a
 version defines them.
 
