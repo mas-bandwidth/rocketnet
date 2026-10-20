@@ -397,8 +397,13 @@ int rn_region_exhausted_reason( const rn_region_t * region );     // ROCKETNET_D
 // this connection with: a server disconnects the slot
 // (rocketnet_server_transport_disconnect_client) and resets its region; a
 // client disconnects itself (rocketnet_client_transport_disconnect). An
-// exhausted connection does nothing else: no further send, delivery or
-// release is taken from its region before the kick.
+// exhausted connection takes no further room before the kick: both send
+// allocators refuse (rn_region_send_alloc, rocketnet_allocator.cpp:524;
+// rn_region_send_alloc_span, :696) and a payload is taken no further
+// (rn_ordered_receive, rocketnet_channel.cpp:1316). Room can still come back:
+// an ack (rn_endpoint_on_acked, rocketnet_endpoint.cpp:587) or an abort frees
+// through rn_region_send_free, and nothing takes that room again before the
+// reset (RNConnectionMemory Release, allowed while exhausted).
 int rn_connection_memory_decide( const rn_region_t * region );
 
 void rn_region_send_free( rn_region_t * region, uint32_t descriptor );
