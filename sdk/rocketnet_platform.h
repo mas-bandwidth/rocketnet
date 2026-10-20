@@ -443,6 +443,52 @@ void rocketnet_platform_set_recvmsg_error_for_testing( int error );
 void rocketnet_platform_set_recvmsg_x_error_for_testing( int error );
 #endif // #if ROCKETNET_DEVELOPMENT
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
+/**
+ * @brief True for an errno a UDP receive reports for one destination, not the socket.
+ *
+ * ECONNREFUSED, EHOSTUNREACH, ENETUNREACH, EHOSTDOWN, ENETDOWN (the ICMP
+ * error class, a pending SO_ERROR) and ENOBUFS. Every receive arm skips
+ * these, counts them with rocketnet_platform_count_receive_weather and keeps
+ * draining; none ends a drain or fails the socket.
+ * @param error A positive errno value.
+ * @return True when the receive skips the error.
+ */
+bool rocketnet_platform_receive_error_is_weather( int error );
+
+/**
+ * @brief Counts one skipped receive-weather errno, process wide.
+ * @return None.
+ */
+void rocketnet_platform_count_receive_weather();
+
+/**
+ * @brief The process-wide count of receive-weather errnos the receive arms skipped.
+ *
+ * Zero while every socket stays unconnected without IP_RECVERR/IPV6_RECVERR.
+ * @return The count since the process started.
+ */
+uint64_t rocketnet_platform_receive_weather_skipped();
+
+#if ROCKETNET_DEVELOPMENT
+/**
+ * @brief Injects one errno into the next recvmmsg call, the client pump's or a gso worker's.
+ *
+ * Tests only: the value is consumed by exactly one call and then cleared.
+ * Compiled into the development library only, never a release library.
+ * @param error A positive errno value, or zero to cancel.
+ * @return None.
+ */
+void rocketnet_platform_set_recvmmsg_error_for_testing( int error );
+
+/**
+ * @brief Takes the injected recvmmsg errno, clearing it; zero when none is set.
+ * @return The injected errno, or zero.
+ */
+int rocketnet_platform_take_recvmmsg_error_for_testing();
+#endif // #if ROCKETNET_DEVELOPMENT
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
+
 #ifdef __cplusplus
 }
 #endif

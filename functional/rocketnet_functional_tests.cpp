@@ -6951,7 +6951,7 @@ extern void rocketnet_test_posix_hard_killed_client();
 extern void rocketnet_test_posix_send_to_closed_port();
 extern void rocketnet_test_posix_client_server_gone();
 #endif
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 extern void rocketnet_test_posix_hard_killed_receive_errno_seam();
 #endif
 
@@ -8388,7 +8388,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "posix_send_to_closed_port", rocketnet_test_posix_send_to_closed_port },
     { "posix_client_server_gone", rocketnet_test_posix_client_server_gone },
 #endif
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "posix_hard_killed_receive_errno_seam", rocketnet_test_posix_hard_killed_receive_errno_seam },
 #endif
 };

@@ -410,6 +410,10 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
 // thread's flip lands only between passes and then drains the other buffer
 // with no lock held.
 
+// a pass skips at most this many receive errors, so an error that repeats
+// on every call can never hold the receive mutex
+#define ROCKETNET_GSO_RECV_WEATHER_SKIP_LIMIT 64
+
 static void rocketnet_server_gso_worker( void * data )
 {
     struct rocketnet_server_gso_queue_t * queue = (struct rocketnet_server_gso_queue_t*) data;
@@ -432,6 +436,8 @@ static void rocketnet_server_gso_worker( void * data )
 
         struct rocketnet_server_gso_recv_buffer_t * buffer = &queue->buffers[on_index];
 
+        int weather_skipped = 0;
+
         while ( buffer->num_packets < ROCKETNET_GSO_RECV_QUEUE_SIZE )
         {
             for ( int i = 0; i < ROCKETNET_GSO_RECV_BATCH; i++ )
@@ -447,7 +453,19 @@ static void rocketnet_server_gso_worker( void * data )
                 queue->messages[i].msg_hdr.msg_controllen = sizeof(queue->controls[i]);
             }
 
-            int count = recvmmsg( queue->fd, queue->messages, ROCKETNET_GSO_RECV_BATCH, MSG_DONTWAIT, NULL );
+            int count;
+#if ROCKETNET_DEVELOPMENT
+            const int injected = rocketnet_platform_take_recvmmsg_error_for_testing();
+            if ( injected != 0 )
+            {
+                errno = injected;
+                count = -1;
+            }
+            else
+#endif // #if ROCKETNET_DEVELOPMENT
+            {
+                count = recvmmsg( queue->fd, queue->messages, ROCKETNET_GSO_RECV_BATCH, MSG_DONTWAIT, NULL );
+            }
 
             // every recvmmsg counts, empty ones included -- an instrument
             // that hides the misses cannot argue the syscall win. the 1ms
@@ -455,6 +473,27 @@ static void rocketnet_server_gso_worker( void * data )
             // heartbeat, not the receive path.
 
             buffer->syscalls++;
+
+            if ( count < 0 && weather_skipped < ROCKETNET_GSO_RECV_WEATHER_SKIP_LIMIT )
+            {
+                // EINTR retries; an ICMP-class or buffer error (a pending
+                // SO_ERROR recvmmsg returns once, ahead of the queued
+                // datagrams) is about one destination, not this socket:
+                // count it, skip it and keep draining this pass. ending the
+                // pass here would leave the datagrams behind it queued.
+                const int error = errno;
+                if ( error == EINTR )
+                {
+                    weather_skipped++;
+                    continue;
+                }
+                if ( rocketnet_platform_receive_error_is_weather( error ) )
+                {
+                    weather_skipped++;
+                    rocketnet_platform_count_receive_weather();
+                    continue;
+                }
+            }
 
             if ( count <= 0 )
                 break;

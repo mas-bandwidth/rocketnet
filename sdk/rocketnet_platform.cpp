@@ -78,6 +78,7 @@ static bool rocketnet_platform_ipv6_socket_available_for_testing = true;
 #include "rocketnet_platform.h"
 #include <limits.h>
 #include "rocketnet_address.h"
+#include <atomic>
 
 #include <netdb.h>
 #include <sys/types.h>
@@ -552,6 +553,62 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
     }
 }
 
+// ICMP-class and buffer errnos a UDP receive can report. linux tells a UDP
+// socket of an ICMP error only when the socket is connected or sets
+// IP_RECVERR/IPV6_RECVERR, and every socket rocketnet opens is unconnected
+// and sets neither, so on linux these do not arise today. a socket that did
+// would see the error as a pending SO_ERROR, which the next recvfrom or
+// recvmmsg returns once, ahead of any queued datagram. they are weather
+// about one destination, never a failure of the socket: every receive arm
+// (portable recvfrom, the client recvmmsg pump, the gso worker, the io_uring
+// receive CQE) skips them, counts them and keeps draining.
+
+#define ROCKETNET_RECEIVE_WEATHER_SKIP_LIMIT 64
+
+bool rocketnet_platform_receive_error_is_weather( int error )
+{
+    return error == ECONNREFUSED || error == EHOSTUNREACH || error == ENETUNREACH ||
+           error == EHOSTDOWN || error == ENETDOWN || error == ENOBUFS;
+}
+
+static std::atomic<uint64_t> rocketnet_platform_receive_weather_count( 0 );
+
+void rocketnet_platform_count_receive_weather()
+{
+    rocketnet_platform_receive_weather_count.fetch_add( 1, std::memory_order_relaxed );
+}
+
+uint64_t rocketnet_platform_receive_weather_skipped()
+{
+    return rocketnet_platform_receive_weather_count.load( std::memory_order_relaxed );
+}
+
+#if ROCKETNET_DEVELOPMENT
+// the injected-errno seam (tests only): a nonzero value is consumed by the
+// next receive syscall on its path, so a test can prove the drain's handling
+// of an errno the host will not produce on demand. never compiled into a
+// release library.
+static std::atomic<int> rocketnet_platform_recvmsg_error_for_testing( 0 );
+static std::atomic<int> rocketnet_platform_recvmmsg_error_for_testing( 0 );
+
+void rocketnet_platform_set_recvmsg_error_for_testing( int error )
+{
+    rocketnet_platform_recvmsg_error_for_testing.store( error );
+}
+
+void rocketnet_platform_set_recvmmsg_error_for_testing( int error )
+{
+    rocketnet_platform_recvmmsg_error_for_testing.store( error );
+}
+
+int rocketnet_platform_take_recvmmsg_error_for_testing()
+{
+    if ( rocketnet_platform_recvmmsg_error_for_testing.load( std::memory_order_relaxed ) == 0 )
+        return 0;
+    return rocketnet_platform_recvmmsg_error_for_testing.exchange( 0 );
+}
+#endif // #if ROCKETNET_DEVELOPMENT
+
 int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * socket, rocketnet_address_t * from, void * packet_data, int max_packet_size )
 {
     rocketnet_assert( socket );
@@ -573,6 +630,7 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
 #endif
 
     int result;
+    int weather_skipped = 0;
 receive_again:
     for ( ;; )
     {
@@ -581,14 +639,42 @@ receive_again:
         int flags = socket->type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING ? MSG_DONTWAIT : 0;
         flags |= MSG_TRUNC;
 
-        result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, flags, (sockaddr*) &sockaddr_from, &from_length ) );
+#if ROCKETNET_DEVELOPMENT
+        const int injected = rocketnet_platform_recvmsg_error_for_testing.load( std::memory_order_relaxed ) != 0 ? rocketnet_platform_recvmsg_error_for_testing.exchange( 0 ) : 0;
+        if ( injected != 0 )
+        {
+            errno = injected;
+            result = -1;
+        }
+        else
+#endif // #if ROCKETNET_DEVELOPMENT
+        {
+            result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, flags, (sockaddr*) &sockaddr_from, &from_length ) );
+        }
 
         if ( result < 0 )
         {
-            if ( errno != EAGAIN && errno != EINTR )
+            const int error = errno;
+
+            if ( error == EINTR )
+                continue;
+
+            if ( error == EAGAIN || error == EWOULDBLOCK )
+                return 0;
+
+            if ( rocketnet_platform_receive_error_is_weather( error ) && weather_skipped < ROCKETNET_RECEIVE_WEATHER_SKIP_LIMIT )
             {
-                rocketnet_debug( "recvfrom failed with error %d", errno );
+                // an ICMP-class or buffer error is about one destination,
+                // not this socket: count it, skip it and keep reading.
+                // returning 0 here reads as "drained" and would hide every
+                // datagram queued behind the error until the next update.
+                weather_skipped++;
+                rocketnet_platform_count_receive_weather();
+                rocketnet_debug( "recvfrom error (%s). skipped", strerror( error ) );
+                continue;
             }
+
+            rocketnet_debug( "recvfrom failed with error %d", error );
             return 0;
         }
 
@@ -912,6 +998,7 @@ int rocketnet_platform_socket_receive_packets_mmsg( rocketnet_platform_socket_t 
     rocketnet_assert( max_packets > 0 );
 
     int total = 0;
+    int weather_skipped = 0;
 
     while ( total < max_packets )
     {
@@ -935,17 +1022,42 @@ int rocketnet_platform_socket_receive_packets_mmsg( rocketnet_platform_socket_t 
         }
 
         errno = 0;
-        int result = recvmmsg( socket->handle, msg, (unsigned int) want, MSG_DONTWAIT, NULL );
+        int result;
+#if ROCKETNET_DEVELOPMENT
+        const int injected = rocketnet_platform_take_recvmmsg_error_for_testing();
+        if ( injected != 0 )
+        {
+            errno = injected;
+            result = -1;
+        }
+        else
+#endif // #if ROCKETNET_DEVELOPMENT
+        {
+            result = recvmmsg( socket->handle, msg, (unsigned int) want, MSG_DONTWAIT, NULL );
+        }
         if ( result < 0 )
         {
-            if ( errno == EINTR )
+            const int error = errno;
+            if ( error == EINTR )
                 continue;
-            if ( errno == EAGAIN || errno == EWOULDBLOCK )
+            if ( error == EAGAIN || error == EWOULDBLOCK )
                 return total;
+
+            // an ICMP-class or buffer error (a pending SO_ERROR that
+            // recvmmsg returns once, ahead of the queued datagrams) is
+            // weather about one destination: count it, skip it and keep
+            // draining, as the per-packet receive does
+            if ( rocketnet_platform_receive_error_is_weather( error ) && weather_skipped < ROCKETNET_RECEIVE_WEATHER_SKIP_LIMIT )
+            {
+                weather_skipped++;
+                rocketnet_platform_count_receive_weather();
+                rocketnet_debug( "recvmmsg error (%s). skipped", strerror( error ) );
+                continue;
+            }
 
             // outside ordinary weather: stop draining, logged like the
             // per-packet receive
-            rocketnet_debug( "recvmmsg failed with error %d", errno );
+            rocketnet_debug( "recvmmsg failed with error %d", error );
             return total;
         }
 
