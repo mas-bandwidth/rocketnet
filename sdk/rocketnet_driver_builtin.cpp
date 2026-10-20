@@ -23,10 +23,19 @@ static int portable_receive( void * driver, rocketnet_address_t * from, uint8_t 
 {
     return rocketnet_platform_socket_receive_packets( (rocketnet_platform_socket_t*) driver, from, data, stride, bytes, count );
 }
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+static uint64_t portable_send_failures( void * driver )
+{
+    return rocketnet_platform_socket_send_failures( (rocketnet_platform_socket_t*) driver );
+}
+#endif
 static const rocketnet_server_driver_operations_t portable_server_operations =
 {
     ROCKETNET_DRIVER_FLUSH_ON_UPDATE, portable_create, portable_destroy, synchronous_stop,
-    NULL, NULL, NULL, NULL, NULL, portable_send, portable_receive
+    NULL, NULL, NULL, NULL, NULL, portable_send, portable_receive, NULL, NULL, NULL, NULL, NULL
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+    , portable_send_failures
+#endif
 };
 #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 // The portable client on a platform with the client I/O wake: an eight-callback
@@ -106,10 +115,17 @@ static bool portable_io_client_wait( void * driver, bool readable, double timeou
 { struct portable_io_client_t * client = (struct portable_io_client_t*) driver; return rocketnet_platform_wake_wait( client->wake, readable, timeout_seconds ); }
 static void portable_io_client_wake( void * driver )
 { struct portable_io_client_t * client = (struct portable_io_client_t*) driver; rocketnet_platform_wake_set( client->wake ); }
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+static uint64_t portable_io_client_send_failures( void * driver )
+{ struct portable_io_client_t * client = (struct portable_io_client_t*) driver; return rocketnet_platform_socket_send_failures( client->socket ); }
+#endif
 static const rocketnet_client_driver_operations_t portable_client_operations =
 {
     portable_io_client_create, portable_io_client_destroy, portable_io_client_send, portable_io_client_receive,
     portable_io_client_send_batch, portable_io_client_receive_batch, portable_io_client_wait, portable_io_client_wake
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+    , portable_io_client_send_failures
+#endif
 };
 #else // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 static void * portable_client_create( void * context, const rocketnet_client_driver_config_t * config, rocketnet_address_t * bind )

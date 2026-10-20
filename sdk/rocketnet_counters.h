@@ -612,7 +612,22 @@
     /* counts MESSAGE_UNRELIABLE_OVER_BUDGET. EXPECTED: a client's sends */ \
     /* before CONNECTED take it. Counted on the owner's counters, once per */ \
     /* message. appended: indices are the contract. */ \
-    X( MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK, EXPECTED, NONE )
+    X( MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK, EXPECTED, NONE ) \
+    \
+    /* A datagram the platform's send call dropped: sendto, sendmmsg or a */ \
+    /* sendmsg_x batch's per-packet tail answered -1, so the bytes never */ \
+    /* left the host. The transport surfaces the socket's monotonic count. */ \
+    /* REFUSAL: a full interface queue (ENOBUFS), a full send buffer */ \
+    /* (EAGAIN) and a refused destination are all off the clean path. */ \
+    /* appended: indices are the contract. */ \
+    X( SEND_FAILED, REFUSAL, NONE ) \
+    \
+    /* The kernel prefilter's PASSED_FRAGMENT (sdk/rocketnet_wire.h): IP */ \
+    /* fragments the XDP program handed to the kernel stack for */ \
+    /* reassembly, counted before any size, epoch or filter check. */ \
+    /* EXPECTED: a fragment is not a refusal. appended: indices are the */ \
+    /* contract. */ \
+    X( XDP_KERNEL_PASSED_FRAGMENT, EXPECTED, NONE )
 
 enum
 {

@@ -6733,8 +6733,10 @@ void rocketnet_test_client_io_linux_mmsg_batch_round_trip()
 
     rocketnet_check( rocketnet_platform_socket_receive_packets_mmsg( receiver, from, receive_data[0], stride, packet_bytes, 64 ) == 0 );
 
-    // One recvmmsg result with a truncated datagram followed by two kept
-    // datagrams exercises both chunk indexing and rejection compaction.
+    // One recvmmsg result with a truncated datagram followed by two more
+    // exercises chunk indexing: the truncated one reports its true size
+    // with its stride-sized prefix in the slot, as the per-packet path does,
+    // so the prefilter counts it as too large.
     uint8_t truncated_data[16];
     memset( truncated_data, 'T', sizeof(truncated_data) );
     uint8_t kept_data[2] = { 0xA1, 0xB2 };
@@ -6755,9 +6757,12 @@ void rocketnet_test_client_io_linux_mmsg_batch_round_trip()
     rocketnet_address_t compact_from[3];
     int compact_bytes[3];
     const int compact_received = rocketnet_platform_socket_receive_packets_mmsg( receiver, compact_from, compact_receive_data[0], sizeof(compact_receive_data[0]), compact_bytes, 3 );
-    rocketnet_check( compact_received == 2 );
-    rocketnet_check( rocketnet_address_equal( &compact_from[0], &sender_bind ) && compact_bytes[0] == 1 && compact_receive_data[0][0] == kept_data[0] );
-    rocketnet_check( rocketnet_address_equal( &compact_from[1], &sender_bind ) && compact_bytes[1] == 1 && compact_receive_data[1][0] == kept_data[1] );
+    rocketnet_check( compact_received == 3 );
+    rocketnet_check( rocketnet_address_equal( &compact_from[0], &sender_bind ) && compact_bytes[0] == (int) sizeof(truncated_data) );
+    for ( int j = 0; j < (int) sizeof(compact_receive_data[0]); j++ )
+        rocketnet_check( compact_receive_data[0][j] == 'T' );
+    rocketnet_check( rocketnet_address_equal( &compact_from[1], &sender_bind ) && compact_bytes[1] == 1 && compact_receive_data[1][0] == kept_data[0] );
+    rocketnet_check( rocketnet_address_equal( &compact_from[2], &sender_bind ) && compact_bytes[2] == 1 && compact_receive_data[2][0] == kept_data[1] );
 
     // A kernel-refused entry drops by itself and the unsent suffix is retried.
     uint8_t retry_byte = 0x5A;
@@ -8180,6 +8185,22 @@ void rocketnet_test_client_receive_thread_quit_wake_before_wait_returns()
 
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
+#if !defined(_WIN32) && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+void rocketnet_test_posix_server_receive_weather();
+void rocketnet_test_posix_client_receive_weather();
+void rocketnet_test_posix_platform_send_seam();
+void rocketnet_test_posix_transport_send_seam();
+void rocketnet_test_posix_send_burst();
+#if defined(__linux__)
+void rocketnet_test_linux_gso_sendmmsg_errors();
+void rocketnet_test_linux_gso_recvmmsg_errors();
+void rocketnet_test_linux_uring_receive_cqe_errors();
+void rocketnet_test_linux_uring_send_cqe_errors();
+void rocketnet_test_linux_xdp_receive_weather_ipv4();
+void rocketnet_test_linux_xdp_receive_weather_ipv6();
+#endif
+#endif
+
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config },
@@ -8246,6 +8267,21 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "client_io_windows_handoff_round_trip", rocketnet_functional_skip_client_io_windows_handoff_round_trip },
 #endif
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#if !defined(_WIN32) && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+    { "test_posix_server_receive_weather", rocketnet_test_posix_server_receive_weather },
+    { "test_posix_client_receive_weather", rocketnet_test_posix_client_receive_weather },
+    { "test_posix_platform_send_seam", rocketnet_test_posix_platform_send_seam },
+    { "test_posix_transport_send_seam", rocketnet_test_posix_transport_send_seam },
+    { "test_posix_send_burst", rocketnet_test_posix_send_burst },
+#if defined(__linux__)
+    { "test_linux_gso_sendmmsg_errors", rocketnet_test_linux_gso_sendmmsg_errors },
+    { "test_linux_gso_recvmmsg_errors", rocketnet_test_linux_gso_recvmmsg_errors },
+    { "test_linux_uring_receive_cqe_errors", rocketnet_test_linux_uring_receive_cqe_errors },
+    { "test_linux_uring_send_cqe_errors", rocketnet_test_linux_uring_send_cqe_errors },
+    { "test_linux_xdp_receive_weather_ipv4", rocketnet_test_linux_xdp_receive_weather_ipv4 },
+    { "test_linux_xdp_receive_weather_ipv6", rocketnet_test_linux_xdp_receive_weather_ipv6 },
+#endif
+#endif
     { "test_platform_batch_pump_refused_destination", rocketnet_test_platform_batch_pump_refused_destination },
     { "test_platform_pump_zero_length_chaff", rocketnet_test_platform_pump_zero_length_chaff },
 #else // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS

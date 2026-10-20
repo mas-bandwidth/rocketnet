@@ -12,11 +12,14 @@
     queue; traffic for any other port passes untouched.
 
     Both address families take the same checks in the same order: IPv4, and
-    IPv6 with UDP directly after the fixed header. An IPv6 frame whose next
-    header is an extension header (hop-by-hop, routing, fragment,
-    destination options, AH, ESP) passes to the kernel stack and is counted,
-    never parsed and never dropped; every other IPv6 next header, ICMPv6
-    and its neighbor discovery above all, passes untouched.
+    IPv6 with UDP directly after the fixed header. Every IP fragment (IPv4
+    with more-fragments set or a nonzero offset, IPv6 with a fragment
+    header) passes to the kernel stack for reassembly and is counted before
+    any size, epoch or filter check. An IPv6 frame whose next header is any
+    other extension header (hop-by-hop, routing, destination options, AH,
+    ESP) passes to the kernel stack and is counted, never parsed and never
+    dropped; every other IPv6 next header, ICMPv6 and its neighbor discovery
+    above all, passes untouched.
 
     USAGE:
 
@@ -260,6 +263,17 @@ SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
                 return XDP_DROP;
             }
 
+            // a fragment (more-fragments set or a nonzero offset) is the
+            // kernel's to reassemble: only the first carries the UDP header,
+            // and none is a whole datagram
+
+            if ( ip->frag_off & __constant_htons( 0x3fff ) )
+            {
+                debug_printf( "ipv4 fragment" );
+                server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_PASSED_FRAGMENT );
+                return XDP_PASS;
+            }
+
             if ( ip->ihl == 5 && ip->protocol == IPPROTO_UDP ) // UDP only
             {
                 struct udphdr * udp = (void*) ip + sizeof(struct iphdr);
@@ -316,6 +330,15 @@ SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
 
                     return server_xdp_udp( ctx, udp, data_end, config, address_match, 6, &ip6->saddr );
                 }
+            }
+            else if ( ip6->nexthdr == IPPROTO_FRAGMENT )
+            {
+                // a fragment is the kernel's to reassemble, counted as the
+                // IPv4 fragments are
+
+                debug_printf( "ipv6 fragment" );
+                server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_PASSED_FRAGMENT );
+                return XDP_PASS;
             }
             else if ( server_xdp_is_ipv6_extension( ip6->nexthdr ) )
             {

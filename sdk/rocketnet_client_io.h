@@ -416,8 +416,6 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                 break;
             for ( int i = 0; i < got; i++ )
             {
-                if ( packet_bytes[i] < ROCKETNET_PREFILTER_BYTES || packet_bytes[i] > ROCKETNET_RECEIVE_CEILING )
-                    continue;
                 (void) rocketnet_client_receive_handshake_io_receive( handshake );
                 const int index = buffer->num_packets;
                 buffer->from[index] = from[i];
@@ -440,18 +438,15 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                 ROCKETNET_MAX_PACKET_BYTES );
             if ( bytes == 0 )
                 break;
-            if ( bytes >= ROCKETNET_PREFILTER_BYTES && bytes <= ROCKETNET_RECEIVE_CEILING )
-            {
-                (void) rocketnet_client_receive_handshake_io_receive( handshake );
-                const int index = buffer->num_packets;
-                buffer->from[index] = from;
-                buffer->receive_time[index] = now;
-                buffer->packet_data[index] = packet_data;
-                buffer->packet_bytes[index] = (size_t) bytes;
-                rocketnet_client_io_decrypt_datagram( io, &buffer->from[index], buffer->packet_data[index],
-                    (int) buffer->packet_bytes[index], &buffer->verdict[index], &buffer->sequence[index] );
-                buffer->num_packets++;
-            }
+            (void) rocketnet_client_receive_handshake_io_receive( handshake );
+            const int index = buffer->num_packets;
+            buffer->from[index] = from;
+            buffer->receive_time[index] = now;
+            buffer->packet_data[index] = packet_data;
+            buffer->packet_bytes[index] = (size_t) bytes;
+            rocketnet_client_io_decrypt_datagram( io, &buffer->from[index], buffer->packet_data[index],
+                (int) buffer->packet_bytes[index], &buffer->verdict[index], &buffer->sequence[index] );
+            buffer->num_packets++;
             io->fill_slots++;
             worked = true;
         }
