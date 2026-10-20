@@ -59,23 +59,19 @@ int rocketnet_signature_verify_budget_allow( struct rocketnet_signature_verify_b
     if ( budget->failure_count < ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET )
         return 1;
 
-    // the budget is spent: skip a source that has already failed this window,
-    // and note whether a free slot remains for a source that has not.
-    int empty_slot = -1;
+    // the budget is spent: refuse a source that has already failed this
+    // window. a source with no recorded failure is verified, whether or not
+    // the table has a free slot to remember it: refusing it would refuse
+    // every honest first-time client once forging sources fill the table
+    // (tla/RNSecurityTables.tla HonestConnectsUnderFlood). the verifies such
+    // sources cost are bounded by the per-update handshake work budget, which
+    // runs before this gate, and each needs a valid cookie for its own address.
     for ( int i = 0; i < ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS; i++ )
     {
-        if ( budget->sources[i].fail_count == 0 )
-            empty_slot = i;
-        else if ( rocketnet_address_equal( &budget->sources[i].address, source ) )
+        if ( budget->sources[i].fail_count > 0 &&
+             rocketnet_address_equal( &budget->sources[i].address, source ) )
             return 0;
     }
-
-    // a first-time source is verified while a free slot can remember it. when
-    // the table is full, verifying one would fail and be forgotten, letting
-    // one cookie re-verify forever by churning fresh addresses, so refuse it
-    // instead.
-    if ( empty_slot == -1 )
-        return 0;
 
     return 1;
 }
@@ -100,9 +96,9 @@ void rocketnet_signature_verify_budget_record_failure( struct rocketnet_signatur
 
     // a source's count is durable for the window: it is only ever reset by
     // the window rolling over, never displaced. when the table is full the
-    // failure is already counted in the global total above but the source is
-    // not tracked, and the gate has refused a first-time source it cannot
-    // remember, so a counted source cannot be re-verified by churn.
+    // failure is counted in the global total above but the source is not
+    // tracked, so that source is verified again on its next request; those
+    // verifies are bounded by the per-update handshake work budget.
     for ( int i = 0; i < ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS; i++ )
     {
         if ( budget->sources[i].fail_count == 0 )
