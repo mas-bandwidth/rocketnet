@@ -200,6 +200,39 @@ static void uring_codec_recvmsg_refuses_truncation_and_short_buffers()
 #endif
 }
 
+static void uring_codec_recvmsg_refuses_negative_lengths()
+{
+#if ROCKETNET_URING_CODEC_ACTIVE
+    const uint8_t * name;
+    const uint8_t * payload;
+    int name_bytes;
+    int payload_bytes;
+
+    // a negative msg_controllen must be refused before any arithmetic uses it
+    uint8_t buf[64];
+    memset( buf, 0, sizeof( buf ) );
+    put_u32_le( buf + 0, 16 );
+    put_u32_le( buf + 4, 0 );
+    put_u32_le( buf + 8, 0 );
+    put_u32_le( buf + 12, 0 );
+    rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
+        buf, (int) sizeof( buf ), 32, -8,
+        &name, &name_bytes, &payload, &payload_bytes ) == ROCKETNET_URING_RECV_SHORT_BUFFER );
+
+    // a negative msg_namelen must be refused the same way
+    rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
+        buf, (int) sizeof( buf ), -32, 0,
+        &name, &name_bytes, &payload, &payload_bytes ) == ROCKETNET_URING_RECV_SHORT_BUFFER );
+
+    // both negative
+    rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
+        buf, (int) sizeof( buf ), -16, -8,
+        &name, &name_bytes, &payload, &payload_bytes ) == ROCKETNET_URING_RECV_SHORT_BUFFER );
+#else
+    printf( "uring_codec_recvmsg_refuses_negative_lengths [SKIPPED the io_uring codec needs Linux uapi with IORING_RECV_MULTISHOT]\n" );
+#endif
+}
+
 static void uring_codec_sockaddr_normalizes_v4_mapped()
 {
 #if ROCKETNET_URING_CODEC_ACTIVE
@@ -270,4 +303,5 @@ static void uring_codec_sockaddr_normalizes_v4_mapped()
 REGISTER_UNIT_TEST( uring_codec_tag_round_trips );
 REGISTER_UNIT_TEST( uring_codec_recvmsg_parses_name_and_payload );
 REGISTER_UNIT_TEST( uring_codec_recvmsg_refuses_truncation_and_short_buffers );
+REGISTER_UNIT_TEST( uring_codec_recvmsg_refuses_negative_lengths );
 REGISTER_UNIT_TEST( uring_codec_sockaddr_normalizes_v4_mapped );

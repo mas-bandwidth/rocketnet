@@ -81,12 +81,113 @@ def _table_names(path):
     return all_names, paired_names
 
 
+LINUX_GUARD_RE = re.compile(
+    r"^\s*#\s*if\s+(?:defined\s*\(\s*__linux__\s*\)|defined\s+__linux__|__linux__)\s*$"
+)
+RAW_STRING_START_RE = re.compile(r'(?:u8|u|U|L)?R"([^ ()\\\t\r\n]{0,16})\(')
+
+
+def _mask_comments_and_literals(text):
+    # Preserve line boundaries and hide comment/string contents before guard
+    # matching, so directive-looking examples cannot change source inventory.
+    output = list(text)
+
+    def blank(start, end):
+        for index in range(start, end):
+            if output[index] != "\n":
+                output[index] = " "
+
+    index = 0
+    length = len(text)
+    while index < length:
+        raw = RAW_STRING_START_RE.match(text, index)
+        if raw:
+            terminator = ")" + raw.group(1) + '"'
+            end = text.find(terminator, raw.end())
+            end = length if end < 0 else end + len(terminator)
+            blank(index, end)
+            index = end
+            continue
+        if text.startswith("//", index):
+            end = text.find("\n", index)
+            end = length if end < 0 else end
+            blank(index, end)
+            index = end
+            continue
+        if text.startswith("/*", index):
+            end = text.find("*/", index + 2)
+            end = length if end < 0 else end + 2
+            blank(index, end)
+            index = end
+            continue
+        if text[index] in ("\"", "'"):
+            quote = text[index]
+            end = index + 1
+            while end < length:
+                if text[end] == "\\":
+                    end += 2
+                    continue
+                if text[end] == quote:
+                    end += 1
+                    break
+                end += 1
+            blank(index, end)
+            index = end
+            continue
+        index += 1
+    return "".join(output)
+
+def _without_linux_guarded_blocks(text):
+    # Unit registrations inside __linux__ guards exist only in the Linux
+    # registry. Select that branch on Linux and its #else branch elsewhere;
+    # nested unrelated conditions remain conservatively inventoried in both
+    # branches, as they were before this platform-aware filtering.
+    is_linux = sys.platform.startswith("linux")
+    output = []
+    active = True
+    stack = []
+    source_lines = text.splitlines(keepends=True)
+    directive_lines = _mask_comments_and_literals(text).splitlines(keepends=True)
+    for line, directive_line in zip(source_lines, directive_lines):
+        if IF_RE.match(directive_line):
+            parent_active = active
+            if LINUX_GUARD_RE.match(directive_line):
+                stack.append(("linux", parent_active))
+                active = parent_active and is_linux
+                continue
+            stack.append(("other", parent_active))
+            if active:
+                output.append(line)
+            continue
+        if ELSE_RE.match(directive_line) or ELIF_RE.match(directive_line):
+            if stack and stack[-1][0] == "linux":
+                active = stack[-1][1] and not is_linux
+                continue
+            if active:
+                output.append(line)
+            continue
+        if ENDIF_RE.match(directive_line):
+            if stack:
+                kind, parent_active = stack.pop()
+                if kind == "linux":
+                    active = parent_active
+                    continue
+                active = parent_active
+            if active:
+                output.append(line)
+            continue
+        if active:
+            output.append(line)
+    return "".join(output)
+
+
 def _register_names(path):
     names = []
     try:
         text = path.read_text()
     except OSError:
         return names
+    text = _without_linux_guarded_blocks(text)
     for m in REGISTER_RE.finditer(text):
         names.append(m.group(1))
     return names
