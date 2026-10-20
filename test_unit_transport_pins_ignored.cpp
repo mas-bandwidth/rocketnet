@@ -21,6 +21,24 @@
 
 void rocketnet_unit_prepare();
 
+static void pins_set( const char * name, const char * value )
+{
+#if defined(_WIN32)
+    _putenv_s( name, value );
+#else
+    setenv( name, value, 1 );
+#endif
+}
+
+static void pins_clear( const char * name )
+{
+#if defined(_WIN32)
+    _putenv_s( name, "" );
+#else
+    unsetenv( name );
+#endif
+}
+
 static double pins_ignored_clock = 1000.0;
 
 static double pins_ignored_time_callback( void * )
@@ -41,8 +59,8 @@ static void unit_transport_pins_ignored()
     if ( had_client )
         snprintf( saved_client, sizeof( saved_client ), "%s", orig_client );
 
-    setenv( "ROCKETNET_SERVER_TRANSPORT", "io_uring", 1 );
-    setenv( "ROCKETNET_CLIENT_TRANSPORT", "io_uring", 1 );
+    pins_set( "ROCKETNET_SERVER_TRANSPORT", "io_uring" );
+    pins_set( "ROCKETNET_CLIENT_TRANSPORT", "io_uring" );
 
     // the suite's isolation step: clears the pins for the run
     rocketnet_unit_prepare();
@@ -111,13 +129,13 @@ static void unit_transport_pins_ignored()
     rocketnet_public_link_simulator_test_development( 0 );
 
     if ( had_server )
-        setenv( "ROCKETNET_SERVER_TRANSPORT", saved_server, 1 );
+        pins_set( "ROCKETNET_SERVER_TRANSPORT", saved_server );
     else
-        unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
+        pins_clear( "ROCKETNET_SERVER_TRANSPORT" );
     if ( had_client )
-        setenv( "ROCKETNET_CLIENT_TRANSPORT", saved_client, 1 );
+        pins_set( "ROCKETNET_CLIENT_TRANSPORT", saved_client );
     else
-        unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
+        pins_clear( "ROCKETNET_CLIENT_TRANSPORT" );
 
     printf( "unit_transport_pins_ignored\n" );
 }
