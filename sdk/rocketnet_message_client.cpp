@@ -70,6 +70,15 @@ static uint64_t rn_client_link_connection( void * transport, int client_index )
     return rocketnet_client_transport_state( (rocketnet_client_transport_t *) transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ? 1 : 0;
 }
 
+// the client transport holds one connection, which the object binds at
+// create with the id 1 (rn_message_object_create): every entry is that one's
+static uint64_t rn_client_link_entry_connection( void * transport, int k )
+{
+    (void) transport;
+    (void) k;
+    return 1;
+}
+
 static void rn_client_link_disconnect( void * transport, int client_index )
 {
     (void) client_index;
@@ -107,6 +116,8 @@ void rn_message_client_link( struct rn_message_link_t * link, struct rocketnet_c
     link->update = rn_client_link_update;
     link->payloads = rn_client_link_payloads;
     link->acked = rn_client_link_acked;
+    link->payload_connection = rn_client_link_entry_connection;
+    link->acked_connection = rn_client_link_entry_connection;
     link->max_payload_bytes = rn_client_link_max_payload_bytes;
     link->start_packet = rn_client_link_start_packet;
     link->finish_packet = rn_client_link_finish_packet;

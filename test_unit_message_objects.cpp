@@ -45,6 +45,7 @@ struct mo_packet_t
 {
     uint64_t id;
     int slot;
+    uint64_t connection;                            // the slot's connection when the packet was sent (P9b)
     int bytes;
     alignas( 16 ) uint8_t data[ROCKETNET_MAX_PAYLOAD_BYTES];
 };
@@ -69,12 +70,15 @@ struct mo_endpoint_t
     std::vector<uint8_t *> batch_data;
     std::vector<int> batch_bytes;
     std::vector<int> batch_slot;
+    std::vector<uint64_t> batch_connection;
 
     // acks: ids this endpoint opened, reported to the sender at its next update
     std::vector<uint64_t> acks_inbox;               // ids the peer opened of this endpoint's sends
     std::vector<int> acks_inbox_slot;
+    std::vector<uint64_t> acks_inbox_connection;
     std::vector<uint64_t> acked;                    // this update's acked batch
     std::vector<int> acked_slot;
+    std::vector<uint64_t> acked_connection;
 
     // what this endpoint finished, for the pointer-identity checks
     std::vector<mo_packet_t> sent_log;
@@ -169,10 +173,12 @@ static void mo_update( void * transport, double time )
     // the transport's acked packet ids: what the peer opened since the last update
     e->acked.clear();
     e->acked_slot.clear();
+    e->acked_connection.clear();
     if ( !net->hold_acks )
     {
         e->acked.swap( e->acks_inbox );
         e->acked_slot.swap( e->acks_inbox_slot );
+        e->acked_connection.swap( e->acks_inbox_connection );
     }
 
     // the batch: the last one is gone, the wire's packets are opened once each
@@ -180,6 +186,7 @@ static void mo_update( void * transport, double time )
     e->batch_data.clear();
     e->batch_bytes.clear();
     e->batch_slot.clear();
+    e->batch_connection.clear();
     e->batch.reserve( e->inbound.size() );
     for ( size_t i = 0; i < e->inbound.size(); i++ )
     {
@@ -195,6 +202,7 @@ static void mo_update( void * transport, double time )
         {
             sender->acks_inbox.push_back( p.id );
             sender->acks_inbox_slot.push_back( p.slot );
+            sender->acks_inbox_connection.push_back( p.connection );
         }
     }
     e->inbound.clear();
@@ -203,6 +211,7 @@ static void mo_update( void * transport, double time )
         e->batch_data.push_back( e->batch[i].data );
         e->batch_bytes.push_back( e->batch[i].bytes );
         e->batch_slot.push_back( e->batch[i].slot );
+        e->batch_connection.push_back( e->batch[i].connection );
     }
 }
 
@@ -273,6 +282,7 @@ static int mo_finish_packet( void * transport, rocketnet_packet_context_t * cont
     mo_packet_t packet;
     packet.id = e->frame_id[f];
     packet.slot = e->frame_slot[f];
+    packet.connection = e->net->slot_connection[packet.slot];
     packet.bytes = payload_bytes;
     memcpy( packet.data, e->frames[f] + MO_PAYLOAD_INDEX, (size_t) payload_bytes );         // the wire: the transport's own business
     if ( e->net->keep_log )
@@ -317,6 +327,21 @@ static uint64_t mo_connection( void * transport, int client_index )
     return e->connected ? 1 : 0;
 }
 
+// the connection each batch entry was received for (P9b): the server's are
+// the slot's connection when the packet was sent; the client holds one
+// connection, which its object binds as 1
+static uint64_t mo_payload_connection( void * transport, int k )
+{
+    mo_endpoint_t * e = (mo_endpoint_t *) transport;
+    return e->is_server ? e->batch_connection[(size_t) k] : 1;
+}
+
+static uint64_t mo_acked_connection( void * transport, int k )
+{
+    mo_endpoint_t * e = (mo_endpoint_t *) transport;
+    return e->is_server ? e->acked_connection[(size_t) k] : 1;
+}
+
 static void mo_disconnect( void * transport, int client_index )
 {
     mo_endpoint_t * e = (mo_endpoint_t *) transport;
@@ -343,6 +368,8 @@ static rn_message_link_t mo_link( mo_endpoint_t * e )
     link.update = mo_update;
     link.payloads = mo_payloads;
     link.acked = mo_acked;
+    link.payload_connection = mo_payload_connection;
+    link.acked_connection = mo_acked_connection;
     link.start_packet = mo_start_packet;
     link.finish_packet = mo_finish_packet;
     link.abort_packet = mo_abort_packet;
@@ -2589,6 +2616,271 @@ static void send_budget_env_refused_before_the_socket()
     check( rn_message_object_send_kbps_env_valid( 1 ) );
 }
 
+// ---------------------------------------------------------------------------
+// slots are keyed on the transport's connection id (P9a), and each batch entry
+// is admitted by the connection it was received for (P9b): tla/RNSlots.tla
+// NoCrossConnectionApply, NoOwnEntryDropped, ReusedSlotStartsClean, and the
+// reversed witness tla/MCRNSlotsBrokenClientIdAsConnection.cfg
+// ---------------------------------------------------------------------------
+
+// A slot bound in this update keeps its own first entries (NoOwnEntryDropped):
+// the client's first packet is on the wire before the server's update that
+// observes its connection, and the record in it is delivered in that update.
+static void slot_bound_this_update_keeps_its_first_payload()
+{
+    rocketnet_message_config_t config;
+    mo_config( &config );
+    mo_pair_t pair;
+    mo_pair_setup( &pair, 1, &config );                                         // the slot's connection is up; the server has not updated
+    pair.time += 0.01;
+    check( rocketnet_message_client_update( pair.clients[0], pair.time ) == ROCKETNET_UPDATE_OK );
+    mo_send_up( &pair, 0, 0, 7 );
+    check( pair.net->server->inbound.size() >= 1 );
+    const uint64_t stale = mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY );
+    check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
+    check( mo_server_slot( &pair, 0 )->connection_id == pair.net->slot_connection[0] );
+    const uint8_t * data = NULL;
+    int bytes = 0;
+    check( rocketnet_message_server_receive( pair.server, 0, 0, &data, &bytes ) == 1 );
+    uint32_t id = 0;
+    check( data && mo_verify( std::vector<uint8_t>( data, data + bytes ), &id ) && id == 7 );
+    rocketnet_message_server_release( pair.server, 0, data );
+    check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY ) == stale );
+    mo_pair_teardown( &pair );
+}
+
+// An entry stamped with a previous connection's id is dropped and counted
+// (NoCrossConnectionApply), in an update after the one that observed the new
+// connection: connection A's payload, and the transport's ack of a packet the
+// server sent to A, each reach the batch one update after B took the slot.
+static void previous_connection_payload_dropped_after_reconnect()
+{
+    rocketnet_message_config_t config;
+    mo_config( &config );
+    {
+        mo_pair_t pair;
+        mo_pair_setup( &pair, 1, &config );
+        mo_step( &pair );
+        mo_step( &pair );
+        const uint64_t a = pair.net->slot_connection[0];
+        mo_send_up( &pair, 0, 0, 1 );                                           // A's record, on the wire
+        std::vector<mo_packet_t> late;
+        late.swap( pair.net->server->inbound );                                 // held past B's connect
+        check( late.size() >= 1 && late[0].connection == a );
+        mo_net_connect( pair.net, 0 );                                          // B takes the slot
+        check( pair.net->slot_connection[0] != a );
+        pair.time += 0.01;
+        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );     // Observe binds B
+        check( mo_server_slot( &pair, 0 )->connection_id == pair.net->slot_connection[0] );
+        const uint64_t stale = mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY );
+        pair.net->server->inbound.swap( late );
+        pair.time += 0.01;
+        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
+        const uint8_t * data = NULL;
+        int bytes = 0;
+        check( rocketnet_message_server_receive( pair.server, 0, 0, &data, &bytes ) == 0 );          // never applied to B
+        check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY ) == stale + 1 );
+        mo_pair_teardown( &pair );
+    }
+}
+
+static void previous_connection_ack_dropped_after_reconnect()
+{
+    rocketnet_message_config_t config;
+    mo_config( &config );
+    {
+        mo_pair_t pair;
+        mo_pair_setup( &pair, 1, &config );
+        mo_step( &pair );
+        mo_step( &pair );
+        const uint64_t a = pair.net->slot_connection[0];
+        uint8_t message[100];
+        mo_fill( message, 9, sizeof( message ) );
+        check( rocketnet_message_server_send( pair.server, 0, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
+        rocketnet_message_server_send_packets( pair.server );
+        pair.net->hold_acks = true;                                             // A's ack is deferred past B's connect
+        pair.time += 0.01;
+        check( rocketnet_message_client_update( pair.clients[0], pair.time ) == ROCKETNET_UPDATE_OK );     // A opens it
+        const size_t held = pair.net->server->acks_inbox.size();               // this packet's ack, and any of A's earlier ones
+        check( held >= 1 );
+        for ( size_t i = 0; i < held; i++ )
+            check( pair.net->server->acks_inbox_connection[i] == a );
+        mo_net_connect( pair.net, 0 );                                          // B takes the slot
+        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );     // Observe binds B
+        check( mo_server_slot( &pair, 0 )->connection_id == pair.net->slot_connection[0] );
+        const uint64_t stale = mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY );
+        pair.net->hold_acks = false;
+        pair.time += 0.01;
+        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );     // A's acks in the batch
+        check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY ) == stale + held );
+        mo_pair_teardown( &pair );
+    }
+}
+
+// A client disconnects and a new connection with the same client id takes the
+// same slot inside one server update (ReusedSlotStartsClean): the public
+// server and clients over the in-memory loopback transport, step driven, time
+// from 1000.0. The server's slot is reset for the new connection and announces
+// its CONFIG to it, so the two exchange messages from a fresh start.
+
+#define RECONNECT_PROTOCOL 0x7A11C1C1E5EED0A1ULL
+#define RECONNECT_CLIENT_ID 0x5107ULL
+
+static double reconnect_now = 1000.0;
+static double reconnect_clock( void * ) { return reconnect_now; }
+
+struct reconnect_world_t
+{
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    rocketnet_server_t * server;
+    rocketnet_client_t * clients[2];
+    double time;
+};
+
+static void reconnect_pump( reconnect_world_t * world, double dt = 0.01 )
+{
+    reconnect_now = world->time;
+    for ( int i = 0; i < 2; i++ )
+    {
+        check( rocketnet_client_update( world->clients[i], world->time ) == ROCKETNET_UPDATE_OK );
+        rocketnet_client_send_packets( world->clients[i] );
+    }
+    check( rocketnet_server_update( world->server, world->time ) == ROCKETNET_UPDATE_OK );
+    rocketnet_server_send_packets( world->server );
+    world->time += dt;
+}
+
+static void reconnect_connect( reconnect_world_t * world, int client )
+{
+    char address[64];
+    snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) rocketnet_server_port( world->server ) );
+    const char * addresses[] = { address };
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    check( rocketnet_write_production_connect_token( world->backend_secret, world->server_public,
+        RECONNECT_PROTOCOL, addresses, 1, RECONNECT_CLIENT_ID, 1000, 1ULL << 40, 300, NULL,
+        token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_client_connect( world->clients[client], token ) == ROCKETNET_STATUS_OK );
+}
+
+// Both directions on channel 0, values counted from 0 in order: a slot that
+// kept the last connection's sequence state, or a client that never received
+// the server's CONFIG, does not deliver them.
+static int reconnect_exchange( reconnect_world_t * world, int client, uint8_t tag, int want )
+{
+    rocketnet_client_t * c = world->clients[client];
+    for ( int i = 0; i < want; i++ )
+    {
+        uint8_t * up = rocketnet_client_start_message( c, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 2 );
+        check( up != NULL );
+        if ( up ) { up[0] = tag; up[1] = (uint8_t) i; check( rocketnet_client_finish_message( c, 2 ) != 0 ); }
+        uint8_t * down = rocketnet_server_start_message( world->server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 2 );
+        check( down != NULL );
+        if ( down ) { down[0] = tag; down[1] = (uint8_t) i; check( rocketnet_server_finish_message( world->server, 0, 2 ) != 0 ); }
+    }
+    int at_server = 0, at_client = 0;
+    for ( int step = 0; step < 300 && ( at_server < want || at_client < want ); step++ )
+    {
+        reconnect_pump( world );
+        const uint8_t * data = NULL;
+        int bytes = 0;
+        while ( rocketnet_server_receive_message( world->server, 0, 0, &data, &bytes ) )
+        {
+            check( bytes == 2 && data[0] == tag && data[1] == (uint8_t) at_server );
+            rocketnet_server_release_message( world->server, 0, data );
+            at_server++;
+        }
+        while ( rocketnet_client_receive_message( c, 0, &data, &bytes ) )
+        {
+            check( bytes == 2 && data[0] == tag && data[1] == (uint8_t) at_client );
+            rocketnet_client_release_message( c, data );
+            at_client++;
+        }
+    }
+    return at_server == want && at_client == want;
+}
+
+static void same_client_id_reconnect_in_one_update_resets_the_slot()
+{
+    reconnect_world_t world;
+    memset( &world, 0, sizeof( world ) );
+    rocketnet_set_quiet( 1 );
+    world.time = 1000.0;
+    reconnect_now = world.time;
+    uint8_t seed[32];
+    for ( int i = 0; i < 32; i++ )
+        seed[i] = (uint8_t) ( 0x5A ^ i );
+    check( rocketnet_generate_backend_keypair_from_seed( seed, world.backend_public, world.backend_secret ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_generate_server_keypair( world.server_public, world.server_secret ) == ROCKETNET_STATUS_OK );
+
+    rocketnet_server_config_t server_config;
+    rocketnet_server_default_config( &server_config );
+    server_config.protocol_id = RECONNECT_PROTOCOL;
+    server_config.max_clients = 1;                                              // the new connection can only take slot 0
+    memcpy( server_config.backend_public_key, world.backend_public, sizeof( server_config.backend_public_key ) );
+    memcpy( server_config.server_public_key, world.server_public, sizeof( server_config.server_public_key ) );
+    memcpy( server_config.server_secret_key, world.server_secret, sizeof( server_config.server_secret_key ) );
+    server_config.transport = "loopback";
+    world.server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    check( world.server != NULL );
+    check( rocketnet_server_start( world.server ) == ROCKETNET_STATUS_OK );
+    for ( int i = 0; i < 2; i++ )
+    {
+        rocketnet_client_config_t client_config;
+        rocketnet_client_default_config( &client_config );
+        client_config.transport = "loopback";
+        client_config.step_driven = true;
+        client_config.time_callback = reconnect_clock;
+        world.clients[i] = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+        check( world.clients[i] != NULL );
+    }
+
+    // A and B hold tokens for one client id. Both are challenged; A's
+    // response connects first, and B's responses are ignored while A holds
+    // that id, so B waits in its response state.
+    reconnect_connect( &world, 0 );
+    reconnect_connect( &world, 1 );
+    for ( int i = 0; i < 400 && rocketnet_client_state( world.clients[0] ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
+        reconnect_pump( &world );
+    check( rocketnet_client_state( world.clients[0] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    check( rocketnet_client_index( world.clients[0] ) == 0 );
+    check( rocketnet_server_client_id( world.server, 0 ) == RECONNECT_CLIENT_ID );
+    check( reconnect_exchange( &world, 0, 0xA1, 3 ) );
+    check( rocketnet_client_state( world.clients[1] ) == ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE );
+    check( rocketnet_server_counter( world.server, ROCKETNET_SERVER_COUNTER_CLIENTS_CONNECTED ) == 1 );
+
+    // A disconnects; in the next server update its disconnect is processed
+    // and then B's response, which takes slot 0 with the same client id. B's
+    // response is due (its resend interval has passed) in that same pump.
+    world.time += 0.25;
+    rocketnet_client_disconnect( world.clients[0] );
+    reconnect_pump( &world );
+    check( rocketnet_server_counter( world.server, ROCKETNET_SERVER_COUNTER_CLIENTS_CONNECTED ) == 2 );
+    check( rocketnet_server_client_connected( world.server, 0 ) != 0 );
+    check( rocketnet_server_client_id( world.server, 0 ) == RECONNECT_CLIENT_ID );
+
+    for ( int i = 0; i < 400 && rocketnet_client_state( world.clients[1] ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
+        reconnect_pump( &world );
+    check( rocketnet_client_state( world.clients[1] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    check( rocketnet_client_index( world.clients[1] ) == 0 );
+
+    // the slot started clean and B received the server's CONFIG: the exchange
+    // runs from 0 in order, and B is still connected after the CONFIG wait
+    check( reconnect_exchange( &world, 1, 0xB2, 3 ) );
+    const double until = world.time + (double) server_config.reliable_timeout_ms / 1000.0 + 1.0;
+    while ( world.time < until && rocketnet_client_state( world.clients[1] ) == ROCKETNET_CLIENT_STATE_CONNECTED )
+        reconnect_pump( &world, 0.05 );
+    check( rocketnet_client_state( world.clients[1] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    check( rocketnet_client_disconnect_reason( world.clients[1] ) == ROCKETNET_DISCONNECT_REASON_NONE );
+
+    for ( int i = 0; i < 2; i++ )
+        rocketnet_client_destroy( world.clients[i] );
+    rocketnet_server_destroy( world.server );
+}
+
+
 REGISTER_UNIT_TEST( ordered_and_unreliable_end_to_end_in_memory );
 REGISTER_UNIT_TEST( server_kicks_exhausted_client_others_unaffected );
 REGISTER_UNIT_TEST( client_disconnects_itself_on_exhaustion );
@@ -2613,3 +2905,7 @@ REGISTER_UNIT_TEST( unreliable_over_a_lossy_link_arrives_intact_at_most_once );
 REGISTER_UNIT_TEST( send_room_watch_crosses_once_and_rearms_below_half );
 REGISTER_UNIT_TEST( send_room_warns_in_debug_builds_only );
 REGISTER_UNIT_TEST( pending_start_cancelled_by_slot_reset );
+REGISTER_UNIT_TEST( slot_bound_this_update_keeps_its_first_payload );
+REGISTER_UNIT_TEST( previous_connection_payload_dropped_after_reconnect );
+REGISTER_UNIT_TEST( previous_connection_ack_dropped_after_reconnect );
+REGISTER_UNIT_TEST( same_client_id_reconnect_in_one_update_resets_the_slot );
