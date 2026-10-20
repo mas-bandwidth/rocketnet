@@ -958,10 +958,13 @@ static inline void rocketnet_dst_check_conservation( struct rocketnet_dst_check_
                                                      const struct rocketnet_counters_t * counters,
                                                      const char * end )
 {
-    char report[256];
+    // "<end>: <report>" fits the check state's detail[256] (dst_checks.h:120):
+    // end is "server" or "clients" (dst_harness.h:1264-1265), and the report
+    // is one counter name and two u64 (sdk/rocketnet_counters.cpp:137)
+    char report[240];
     if ( !rocketnet_counters_conserved( counters, report, sizeof(report) ) )
     {
-        char what[320];
+        char what[256];
         snprintf( what, sizeof(what), "%s: %s", end, report );
         rocketnet_dst_check_fail( st, "conservation", what );
     }
