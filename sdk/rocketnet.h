@@ -175,7 +175,7 @@
 
 /// Send budgets are kilobits per second of wire bytes (1 kbps = 1000 bit/s),
 /// per connection: the defaults of the config's send_kbps and
-/// per_client_send_kbps.
+/// per_client_send_kbps, each connection's starting rate.
 
 #ifndef ROCKETNET_DEFAULT_CLIENT_SEND_KBPS
 /// @brief Default client send budget in decimal kilobits per second per connection.
@@ -381,6 +381,7 @@ enum rocketnet_client_counter_t
     ROCKETNET_CLIENT_COUNTER_BUDGET_DROPS,          ///< Messages: unreliable messages dropped because the send budget was spent
     ROCKETNET_CLIENT_COUNTER_SEND_DEFERRED,         ///< Hand-offs: sends that left with the next hand-off to the send thread
     ROCKETNET_CLIENT_COUNTER_MESSAGES_NOT_RELEASED, ///< Messages: received messages still held when an update was refused
+    ROCKETNET_CLIENT_COUNTER_NOT_CONNECTED_DROPS,   ///< Messages: sends dropped because the connection was not CONNECTED
     ROCKETNET_CLIENT_COUNTER_COUNT
 };
 
@@ -419,6 +420,7 @@ enum rocketnet_server_counter_t
     ROCKETNET_SERVER_COUNTER_RECEIPTS_LOST,         ///< Receipts: sends with a receipt that were lost
     ROCKETNET_SERVER_COUNTER_BUDGET_DROPS,          ///< Messages: unreliable messages dropped because a client's send budget was spent
     ROCKETNET_SERVER_COUNTER_MESSAGES_NOT_RELEASED, ///< Messages: received messages still held when an update was refused
+    ROCKETNET_SERVER_COUNTER_NOT_CONNECTED_DROPS,   ///< Messages: sends dropped because the connection was not CONNECTED
     ROCKETNET_SERVER_COUNTER_COUNT
 };
 
@@ -607,15 +609,21 @@ ROCKETNET_EXPORT void rocketnet_set_log_callback( rocketnet_log_callback_t callb
 /// It counts exactly these: a NULL argument a call refuses (a NULL client's
 /// state included); a create before rocketnet_init; a refused
 /// rocketnet_set_allocator; an update time that is not finite or goes
-/// backwards; a release of a pointer that is not a held view, or a release on
-/// a client with no connection; an in-place start message still open at update
-/// or send_packets; a connect from a state other than DISCONNECTED; a start
-/// message or finish message on a client that is not CONNECTED; and a destination id with
-/// ROCKETNET_FLOW_ID_BIT set. A send refused for its own arguments (a second
-/// start message while one is pending, a finish message whose bytes_written
-/// is out of range, a
-/// channel or reliability out of range, a server slot with no client) is not
-/// counted here: it returns NULL or 0 and logs.
+/// backwards; a release of a pointer that is not a held view, a release on a
+/// client with no connection, or a server release to an index at or past
+/// max_clients or on a stopped server; an in-place start message still open at
+/// update or send_packets; a connect from a state other than DISCONNECTED; a
+/// server start while running, and a server update or send_packets while
+/// stopped; a server start message or finish message to an index at or past
+/// max_clients; and a destination id with ROCKETNET_FLOW_ID_BIT set. A send
+/// refused for its own arguments (a second start message while one is pending,
+/// a finish message whose bytes_written is out of range, a channel or
+/// reliability out of range) is not counted here: it returns NULL or 0 and
+/// logs. A send on a connection that is not CONNECTED (a client in any other
+/// state, a server index below max_clients with no CONNECTED client, a stopped
+/// server) is not counted here either: it is a normal drop, counted in
+/// ROCKETNET_CLIENT_COUNTER_NOT_CONNECTED_DROPS or
+/// ROCKETNET_SERVER_COUNTER_NOT_CONNECTED_DROPS.
 /// @return Relaxed atomic diagnostic count; this read does not synchronize SDK work.
 ROCKETNET_EXPORT uint64_t rocketnet_api_misuse_count( void );
 
@@ -705,7 +713,7 @@ struct rocketnet_client_config_t
     const char * transport;                         ///< ROCKETNET_CLIENT_TRANSPORT: the candidate list; NULL is "auto"
     void (*state_change_callback)( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state );   ///< No env form; NULL is none
     double (*time_callback)( void * context );      ///< No env form: the receive stamp clock, read once at create; NULL is the platform clock
-    int send_kbps;                                  ///< ROCKETNET_CLIENT_SEND_KBPS: the send budget, kbps; default 1000; 0 or less disables the budget in this direction (client to server), NOT RECOMMENDED; above ROCKETNET_SEND_BUDGET_MAX_KBPS is refused
+    int send_kbps;                                  ///< ROCKETNET_CLIENT_SEND_KBPS: the send budget, kbps; default 1000; the starting rate of each connection; 0 or less sets the budget to its ceiling, ROCKETNET_SEND_BUDGET_MAX_KBPS (10 Gbit/s), NOT RECOMMENDED; above ROCKETNET_SEND_BUDGET_MAX_KBPS is refused
     int num_channels;                               ///< ROCKETNET_CLIENT_NUM_CHANNELS: the channels messages are sent and received on; WIRE; 1 .. ROCKETNET_MAX_CHANNELS; default 32
     int window_messages;                            ///< ROCKETNET_CLIENT_WINDOW_MESSAGES: reliable messages in flight per channel set; WIRE, power of two; 64 .. 1 << 20; default 1024
     int receive_ring_bytes;                         ///< ROCKETNET_CLIENT_RECEIVE_RING_BYTES: the receive ring for reassembled messages; WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
@@ -762,7 +770,7 @@ struct rocketnet_server_config_t
     int handshake_deadline_seconds;                 ///< ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS: 1 .. 60; default 5
     const char * transport;                         ///< ROCKETNET_SERVER_TRANSPORT: the candidate list; NULL is "auto"; every transport, xdp included, serves IPv4 and IPv6, one family per server (the family of its public address)
     const char * public_address;                    ///< ROCKETNET_SERVER_PUBLIC_ADDRESS: "a.b.c.d:port" or "[v6]:port"; NULL is the create call's address
-    int per_client_send_kbps;                       ///< ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS: each client's send budget, kbps; default 10000; 0 or less disables the budget in this direction (server to each client), NOT RECOMMENDED; above ROCKETNET_SEND_BUDGET_MAX_KBPS is refused
+    int per_client_send_kbps;                       ///< ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS: each client's send budget, kbps; default 10000; the starting rate of each client connection; 0 or less sets the budget to its ceiling, ROCKETNET_SEND_BUDGET_MAX_KBPS (10 Gbit/s), NOT RECOMMENDED; above ROCKETNET_SEND_BUDGET_MAX_KBPS is refused
     int num_channels;                               ///< ROCKETNET_SERVER_NUM_CHANNELS: the channels messages are sent and received on; WIRE; 1 .. ROCKETNET_MAX_CHANNELS; default 32
     int window_messages;                            ///< ROCKETNET_SERVER_WINDOW_MESSAGES: reliable messages in flight per channel set; WIRE, power of two; 64 .. 1 << 20; default 1024
     int receive_ring_bytes;                         ///< ROCKETNET_SERVER_RECEIVE_RING_BYTES: the receive ring for reassembled messages; WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
@@ -1047,13 +1055,18 @@ ROCKETNET_EXPORT const char * rocketnet_client_transport_name( const struct rock
 ///     }
 ///
 /// The pointer is valid until finish message or abort message; one start
-/// message is pending per object at a time. Messages flow only while
-/// CONNECTED: in every other state start message returns NULL and finish
-/// message 0, counted. A NULL client is a counted no-op that
+/// message is pending per object at a time. A message is sent only while the
+/// client is CONNECTED (rocketnet_client_state). In every other state the send
+/// is dropped: start message returns NULL, logs nothing and adds 1 to
+/// ROCKETNET_CLIENT_COUNTER_NOT_CONNECTED_DROPS (not
+/// rocketnet_api_misuse_count), and finish message returns 0. The drop is
+/// normal, never misuse, and nothing is held for a later send. The same
+/// if ( out ) that covers the other NULL returns covers it, so game code sends
+/// from create on with no state check. A NULL client is a counted no-op that
 /// returns NULL.
 ROCKETNET_EXPORT uint8_t * rocketnet_client_start_message( struct rocketnet_client_t * client, int channel, enum rocketnet_reliability_t reliability, int bytes );
 
-/// The queued message's receipt serial, nonzero; 0 when no start message is pending or bytes_written is outside 1 to the bytes started. For a message written in place, finish message completes and stages that packet buffer, with no copy. A NULL client is a counted no-op that returns 0.
+/// The queued message's receipt serial, nonzero; 0 when no start message is pending (a start dropped because the client was not CONNECTED included: that drop was counted at start, in ROCKETNET_CLIENT_COUNTER_NOT_CONNECTED_DROPS) or bytes_written is outside 1 to the bytes started. For a message written in place, finish message completes and stages that packet buffer, with no copy. A NULL client is a counted no-op that returns 0.
 ROCKETNET_EXPORT uint32_t rocketnet_client_finish_message( struct rocketnet_client_t * client, int bytes_written );
 
 /// A NULL client is a counted no-op.
@@ -1076,7 +1089,7 @@ ROCKETNET_EXPORT void rocketnet_client_release_message( struct rocketnet_client_
 /// or an input is invalid; it is not an error status.
 ROCKETNET_EXPORT int rocketnet_client_receipts( struct rocketnet_client_t * client, struct rocketnet_receipt_t * out, int capacity );
 
-/// ROCKETNET_STATUS_OK when the budget took the new rate, from now on. 0 or less disables the budget in this direction, client to server (NOT RECOMMENDED); a positive value up to ROCKETNET_SEND_BUDGET_MAX_KBPS caps it; above the maximum returns ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE with the rate unchanged; a client with no connection returns ROCKETNET_STATUS_INVALID_ARGUMENT. A NULL client is a counted no-op that returns ROCKETNET_STATUS_INVALID_ARGUMENT.
+/// ROCKETNET_STATUS_OK when the budget took the new rate, from now on. 0 or less sets the budget to its ceiling, ROCKETNET_SEND_BUDGET_MAX_KBPS (10 Gbit/s), NOT RECOMMENDED; a positive value up to ROCKETNET_SEND_BUDGET_MAX_KBPS caps it; above the maximum returns ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE with the rate unchanged; a client that is not CONNECTED (a handshake state included) returns ROCKETNET_STATUS_INVALID_ARGUMENT with nothing changed and is not counted as misuse: the config's send_kbps sets a connection's starting rate. A NULL client is a counted no-op that returns ROCKETNET_STATUS_INVALID_ARGUMENT.
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_set_send_kbps( struct rocketnet_client_t * client, int kbps );
 
 /// A counter by its enum; 0 for a value outside the enum. A NULL client is a counted no-op that returns 0.
@@ -1228,12 +1241,21 @@ ROCKETNET_EXPORT enum rocketnet_disconnect_reason_t rocketnet_server_disconnect_
 /// destination_id is a client index today. An id with ROCKETNET_FLOW_ID_BIT
 /// set is a flow id, reserved for a future flow feature and refused for now
 /// (NULL, 0 or nothing, counted; ROCKETNET_STATUS_FLOW_ID_RESERVED in the log).
-/// To send to every connected client, loop over the slots. The pointer is
-/// valid until finish message or abort message; one start message is pending
-/// per object at a time. A NULL server is a counted no-op that returns NULL.
+/// An index at or past max_clients is a counted misuse. A message is sent only
+/// to a client index whose connection is CONNECTED
+/// (rocketnet_server_client_connected). A send to an index below max_clients
+/// with no CONNECTED client, running server or stopped, is dropped: start
+/// message returns NULL, logs nothing and adds 1 to
+/// ROCKETNET_SERVER_COUNTER_NOT_CONNECTED_DROPS (not
+/// rocketnet_api_misuse_count), and finish message returns 0. The drop is
+/// normal, never misuse, and nothing is held for a later send; the same
+/// if ( out ) covers it. To send to every connected client, loop over the
+/// slots. The pointer is valid until finish message or abort message; one
+/// start message is pending per object at a time. A NULL server is a counted
+/// no-op that returns NULL.
 ROCKETNET_EXPORT uint8_t * rocketnet_server_start_message( struct rocketnet_server_t * server, uint64_t destination_id, int channel, enum rocketnet_reliability_t reliability, int bytes );
 
-/// The queued message's receipt serial, nonzero; 0 when no start message is pending, bytes_written is outside 1 to the bytes started, or destination_id is not a connected client. For a message written in place, finish message completes and stages that packet buffer, with no copy. A NULL server is a counted no-op that returns 0.
+/// The queued message's receipt serial, nonzero; 0 when no start message is pending, bytes_written is outside 1 to the bytes started, destination_id is a flow id or an index at or past max_clients (counted misuse), or the server is stopped or the slot is not CONNECTED (a normal drop, counted nowhere). For a message written in place, finish message completes and stages that packet buffer, with no copy. A NULL server is a counted no-op that returns 0.
 ROCKETNET_EXPORT uint32_t rocketnet_server_finish_message( struct rocketnet_server_t * server, uint64_t destination_id, int bytes_written );
 
 /// A NULL server is a counted no-op.
@@ -1258,7 +1280,7 @@ ROCKETNET_EXPORT void rocketnet_server_release_message( struct rocketnet_server_
 /// or an input is invalid; it is not an error status.
 ROCKETNET_EXPORT int rocketnet_server_receipts( struct rocketnet_server_t * server, uint64_t client_index, struct rocketnet_receipt_t * out, int capacity );
 
-/// ROCKETNET_STATUS_OK when the client's budget took the new rate, from now on. 0 or less disables the budget in this direction, server to that client (NOT RECOMMENDED); a positive value up to ROCKETNET_SEND_BUDGET_MAX_KBPS caps it; above the maximum returns ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE with the rate unchanged. A slot with no client, or a stopped server, returns ROCKETNET_STATUS_INVALID_ARGUMENT; a flow id returns ROCKETNET_STATUS_FLOW_ID_RESERVED. A NULL server is a counted no-op that returns ROCKETNET_STATUS_INVALID_ARGUMENT.
+/// ROCKETNET_STATUS_OK when the client's budget took the new rate, from now on (the slot must hold a CONNECTED client). 0 or less sets the budget to its ceiling, ROCKETNET_SEND_BUDGET_MAX_KBPS (10 Gbit/s), NOT RECOMMENDED; a positive value up to ROCKETNET_SEND_BUDGET_MAX_KBPS caps it; above the maximum returns ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE with the rate unchanged. An index at or past max_clients, a slot below max_clients with no CONNECTED client, or a stopped server returns ROCKETNET_STATUS_INVALID_ARGUMENT with nothing changed; a slot that is not CONNECTED is not counted as misuse: the config's per_client_send_kbps sets each connection's starting rate. A flow id returns ROCKETNET_STATUS_FLOW_ID_RESERVED. A NULL server is a counted no-op that returns ROCKETNET_STATUS_INVALID_ARGUMENT.
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_set_send_kbps( struct rocketnet_server_t * server, uint64_t client_index, int kbps );
 
 /// A counter by its enum; 0 for a value outside the enum. A NULL server is a counted no-op that returns 0.
