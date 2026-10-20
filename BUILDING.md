@@ -8,13 +8,19 @@ archive contains no test suite. Review intentional ABI changes in the list as
 part of the same change. `ROCKETNET_ABI_VERSION` identifies SDK calling/layout
 compatibility separately from the wire version; see the ABI rules below.
 
+Deploying a server on Linux: [docs/LINUX.md](docs/LINUX.md) covers the build, the `xdp -> gso -> io_uring -> portable` transport ladder and pinning, what `gso`, `io_uring` and `xdp` need from the host, socket errors and ICMP, the fd and memlock limits for 1000 clients, containers, and how to verify a host.
+
 rocketnet builds on Linux and macOS with CMake 3.20 or later, and on Windows with
 CMake 4.2 or later (the Windows block below says why). On Linux and macOS the
 Makefile is the front door:
 
     make
 
-Binaries and libraries land in `bin/`. Run the unit suite with:
+Binaries and libraries land in `bin/`. On macOS, [docs/MACOS.md](docs/MACOS.md)
+is the guide: the build, the two transports and how to pin them, the client's
+threads and App Nap, socket errors, the file-descriptor limit, the application
+firewall prompt, lldb, fuzz corpus replay, and the commands that verify a Mac.
+Run the unit suite with:
 
     ./bin/test
 
@@ -328,7 +334,7 @@ environment variables (precedence: default < struct < env). The old names
 `ROCKETNET_CLIENT_DRIVER` are refused aloud and never applied:
 
     ./bin/functional                                # auto: the platform's recommended ladder
-                                                #   (linux: xdp,gso,portable — falls on refusal)
+                                                #   (linux: xdp,gso,io_uring,portable — falls on refusal)
     ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional
                                                 # a one-element list is a pin: that transport
                                                 #   or loud failure, never a silent fall
