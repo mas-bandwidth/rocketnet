@@ -106,6 +106,29 @@ struct rocketnet_encryption_mapping_t * rocketnet_encryption_map_entry( struct r
 
 const struct rocketnet_address_t * rocketnet_encryption_map_address( const struct rocketnet_encryption_map_t * map, int index );
 
+// The token claim: records the mapping's connect token identifier and links
+// the index on a second chain keyed by a per-run SipHash of that identifier,
+// so a request for the same token from another address is found in constant
+// expected time. A mapping leaves its token chain when it is removed. At most
+// once per mapping.
+
+void rocketnet_encryption_map_claim_token( struct rocketnet_encryption_map_t * map, int index, const uint8_t * token_identifier );
+
+// Returns the index of a live half-open mapping (no client slot assigned, its
+// handshake deadline not yet reached at current_time) that claimed this token
+// identifier from an address other than this one, or -1. The claim lives
+// exactly as long as the half-open mapping: to its handshake deadline, or to
+// an earlier removal.
+
+int rocketnet_encryption_map_find_token_claim( const struct rocketnet_encryption_map_t * map,
+                                               const uint8_t * token_identifier,
+                                               const struct rocketnet_address_t * address,
+                                               double current_time );
+
+// 1 when every slot holds a live mapping, so add would return -1
+
+int rocketnet_encryption_map_full( const struct rocketnet_encryption_map_t * map );
+
 // Removes a mapping, zeroing all key material before the slot is freed.
 
 void rocketnet_encryption_map_remove( struct rocketnet_encryption_map_t * map, int index );

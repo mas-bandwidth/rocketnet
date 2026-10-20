@@ -493,6 +493,32 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
+    // the token claim: a live half-open mapping created for this token from
+    // another address refuses it here, before any asymmetric work, until that
+    // mapping reaches its handshake deadline or is removed. one token buys one
+    // half-open mapping, not one per source port. the binding at the response
+    // (rocketnet_server_process_connection_response) stays the lasting one
+    // (tla/ReceiveOrder.tla, OneHalfOpenPerToken and CheapRefusalsFirst).
+
+    if ( rocketnet_encryption_map_find_token_claim( server->encryption_map, token_identifier, from, current_time ) != -1 )
+    {
+        rocketnet_debug( "server ignored connection request. connect token claimed by a half-open mapping from a different address" );
+        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
+    // the capacity check: a full encryption map could not take the mapping
+    // this request would create, so it is refused before the signature, the
+    // seal open and the keypair (tla/ReceiveOrder.tla, CheapRefusalsFirst)
+
+    if ( rocketnet_encryption_map_full( server->encryption_map ) )
+    {
+        rocketnet_debug( "server ignored connection request. encryption mapping table is full" );
+        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING]++;
+        counters[ROCKETNET_COUNTER_MAPPING_TABLE_FULL]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
     // the authenticity check: the signature, and only the signature. the
     // per-source failed-verify budget gates it, so one valid cookie cannot
     // buy unlimited Ed25519 verifies from one address.
@@ -569,7 +595,9 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
     // no used-token history record here: a request proves nothing about who
     // holds the token's keys, so the binding waits for a response that opens
     // under the handshake key (STANDARD.md, Processing Connection Response
-    // Packets; tla/RNSecurityTables.tla, BoundOnlyToOpener)
+    // Packets; tla/RNSecurityTables.tla, BoundOnlyToOpener). the mapping this
+    // request creates claims the token only until its handshake deadline
+    // (rocketnet_encryption_map_claim_token below).
 
     {
         // the server's contribution to the key schedule: a fresh session
@@ -653,7 +681,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         memcpy( mapping->client_ephemeral_public_key, client_ephemeral_public_key, ROCKETNET_KEY_BYTES );
         mapping->client_id = private_data->client_id;
         memcpy( mapping->user_data, private_data->user_data, ROCKETNET_USER_DATA_BYTES );
-        memcpy( mapping->token_identifier, token_identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES );
+        rocketnet_encryption_map_claim_token( server->encryption_map, index, token_identifier );
         mapping->token_expire_timestamp = token_expire_timestamp;
         mapping->timeout_seconds = timeout_seconds;
         mapping->last_receive_time = current_time;

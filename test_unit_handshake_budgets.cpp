@@ -22,6 +22,7 @@
 #include "rocketnet_read_write.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_test_vectors.h"
+#include "rocketnet_crypto_tally.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -227,3 +228,156 @@ static void handshake_budgets_pinned()
 }
 
 REGISTER_UNIT_TEST( handshake_budgets_pinned );
+
+// one connect token, many source addresses. The token is minted once and the
+// same signed data and signature are presented from each address with that
+// address's own valid return cookie, which is what an on-path observer or a
+// token holder with many source ports can send. The first address is
+// admitted to a half-open mapping; while that mapping lives, every other
+// address is refused before the signature, the seal open and the keypair
+// (sdk/rocketnet_server_protocol.cpp, the token claim rung; tla/ReceiveOrder.tla
+// OneHalfOpenPerToken). A full encryption map refuses a fresh token before
+// any of that work too (the capacity rung). Once the first mapping passes
+// its handshake deadline and is swept, the token is admitted from another
+// address.
+
+static void one_token_build_request( uint8_t * request,
+                                     const struct rocketnet_connect_token_t * token,
+                                     const struct rocketnet_address_t * address,
+                                     const uint8_t * cookie_key )
+{
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt,
+                                               rocketnet_test_client_eph_public,
+                                               token->signed_connect_data, token->signature );
+
+    const uint64_t cookie_expire = ROCKETNET_TEST_CREATE_TS + 3;
+    uint8_t cookie_mac[ROCKETNET_COOKIE_MAC_BYTES];
+    check( rocketnet_generate_cookie_mac( cookie_mac, address, rocketnet_test_salt, cookie_expire, cookie_key ) );
+    uint8_t * cookie = request + ROCKETNET_PREFILTER_BYTES;
+    rocketnet_write_uint64( &cookie, cookie_expire );
+    memcpy( cookie, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES );
+}
+
+static uint64_t one_token_crypto_spent()
+{
+    return rocketnet_crypto_tally.signature_verify + rocketnet_crypto_tally.seal_open +
+           rocketnet_crypto_tally.keypair + rocketnet_crypto_tally.scalarmult;
+}
+
+static void handshake_one_token_one_address()
+{
+    struct budgets_server_t test;
+    budgets_server_setup( &test );
+
+    const int capacity = 8;     // budgets_server_setup's encryption map
+
+    struct rocketnet_signed_connect_data_t signed_fields;
+    struct rocketnet_connect_token_private_t private_fields;
+    budgets_fill_vector_fields( &signed_fields, &private_fields );
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
+    struct rocketnet_connect_token_t token;
+    rocketnet_read_connect_token( &token, token_data );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint64_t * counters = test.counters.values;
+
+    // the first address: admitted, one half-open mapping, full crypto spent
+
+    struct rocketnet_address_t first;
+    check( rocketnet_address_parse( &first, "10.2.0.1:50000" ) );
+    one_token_build_request( request, &token, &first, test.server.cookie_key );
+    uint64_t spent_before = one_token_crypto_spent();
+    int result = rocketnet_server_protocol_process_connection_request( &test.server, &first,
+                                                request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                response, &response_bytes );
+    check( result == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    check( one_token_crypto_spent() > spent_before );
+    check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 1 );
+
+    // the same token from every other source port: refused before any crypto,
+    // unanswered, and no second mapping
+
+    for ( int i = 2; i <= capacity + 1; i++ )
+    {
+        struct rocketnet_address_t address;
+        char addr_str[64];
+        snprintf( addr_str, sizeof(addr_str), "10.2.0.%d:%d", i, 50000 + i );
+        check( rocketnet_address_parse( &address, addr_str ) );
+        one_token_build_request( request, &token, &address, test.server.cookie_key );
+
+        spent_before = one_token_crypto_spent();
+        response_bytes = 0;
+        result = rocketnet_server_protocol_process_connection_request( &test.server, &address,
+                                                request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                response, &response_bytes );
+        check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
+        check( response_bytes == 0 );
+        check( one_token_crypto_spent() == spent_before );
+    }
+
+    check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 1 );
+    check( counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] == (uint64_t) capacity );
+
+    // other tokens fill the map; the next fresh token is refused before any
+    // crypto, unanswered and counted as a full mapping table
+
+    for ( int i = 1; i < capacity; i++ )
+    {
+        struct rocketnet_address_t address;
+        char addr_str[64];
+        snprintf( addr_str, sizeof(addr_str), "10.3.0.%d:50000", i );
+        check( rocketnet_address_parse( &address, addr_str ) );
+        budgets_build_request( request, i, &address, test.server.cookie_key );
+        result = rocketnet_server_protocol_process_connection_request( &test.server, &address,
+                                                request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                response, &response_bytes );
+        check( result == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    }
+    check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == capacity );
+
+    {
+        struct rocketnet_address_t address;
+        check( rocketnet_address_parse( &address, "10.3.1.1:50000" ) );
+        budgets_build_request( request, capacity, &address, test.server.cookie_key );
+        spent_before = one_token_crypto_spent();
+        response_bytes = 0;
+        result = rocketnet_server_protocol_process_connection_request( &test.server, &address,
+                                                request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                response, &response_bytes );
+        check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
+        check( response_bytes == 0 );
+        check( one_token_crypto_spent() == spent_before );
+        check( counters[ROCKETNET_COUNTER_MAPPING_TABLE_FULL] == 1 );
+        check( counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING] == 1 );
+    }
+
+    // past the handshake deadline the sweep removes every half-open mapping
+    // and the claim with it: the token is admitted from a second address
+
+    rocketnet_server_protocol_update( &test.server, 1000.0 + test.server.handshake_deadline_seconds );
+    check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 0 );
+
+    {
+        struct rocketnet_address_t second;
+        check( rocketnet_address_parse( &second, "10.2.0.2:50002" ) );
+        one_token_build_request( request, &token, &second, test.server.cookie_key );
+        result = rocketnet_server_protocol_process_connection_request( &test.server, &second,
+                                                request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                ROCKETNET_TEST_CREATE_TS, 1000.0 + test.server.handshake_deadline_seconds,
+                                                response, &response_bytes );
+        check( result == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+        check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 1 );
+    }
+
+    budgets_server_teardown( &test );
+}
+
+REGISTER_UNIT_TEST( handshake_one_token_one_address );

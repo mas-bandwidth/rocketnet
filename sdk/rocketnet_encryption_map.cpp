@@ -26,6 +26,10 @@ struct rocketnet_encryption_map_t
     struct rocketnet_address_t * address;                   // hot: walked by find
     int * live;                                             // hot: parallel to address
     struct rocketnet_encryption_mapping_t * mapping;        // cold: same index
+
+    int * token_bucket_head;                                // num_buckets, -1 when empty: chains by token identifier
+    int * token_next;                                       // capacity: token chain link
+    int * token_linked;                                     // capacity: 1 while the index is on a token chain
 };
 
 uint64_t rocketnet_encryption_map_allocation_bytes(int capacity)
@@ -33,7 +37,8 @@ uint64_t rocketnet_encryption_map_allocation_bytes(int capacity)
     if (capacity < 1) return 0;
     const uint64_t n = (uint64_t)capacity;
     return rocketnet_memory_allocations({sizeof(rocketnet_encryption_map_t), 2*n*sizeof(int),
-        n*sizeof(int), n*sizeof(rocketnet_address_t), n*sizeof(int), n*sizeof(rocketnet_encryption_mapping_t)});
+        n*sizeof(int), n*sizeof(rocketnet_address_t), n*sizeof(int), n*sizeof(rocketnet_encryption_mapping_t),
+        2*n*sizeof(int), n*sizeof(int), n*sizeof(int)});
 }
 
 struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * context, int capacity )
@@ -62,20 +67,30 @@ struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * cont
     map->address = (struct rocketnet_address_t*) rocketnet_malloc( context, sizeof(struct rocketnet_address_t) * (size_t) capacity );
     map->live = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) capacity );
     map->mapping = (struct rocketnet_encryption_mapping_t*) rocketnet_malloc( context, sizeof(struct rocketnet_encryption_mapping_t) * (size_t) capacity );
+    map->token_bucket_head = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) map->num_buckets );
+    map->token_next = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) capacity );
+    map->token_linked = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) capacity );
 
-    if ( !map->bucket_head || !map->next || !map->address || !map->live || !map->mapping )
+    if ( !map->bucket_head || !map->next || !map->address || !map->live || !map->mapping ||
+         !map->token_bucket_head || !map->token_next || !map->token_linked )
     {
         rocketnet_free( context, map->bucket_head );
         rocketnet_free( context, map->next );
         rocketnet_free( context, map->address );
         rocketnet_free( context, map->live );
         rocketnet_free( context, map->mapping );
+        rocketnet_free( context, map->token_bucket_head );
+        rocketnet_free( context, map->token_next );
+        rocketnet_free( context, map->token_linked );
         rocketnet_free( context, map );
         return NULL;
     }
 
     for ( int i = 0; i < map->num_buckets; i++ )
+    {
         map->bucket_head[i] = -1;
+        map->token_bucket_head[i] = -1;
+    }
 
     for ( int i = 0; i < capacity; i++ )
         map->next[i] = i + 1 < capacity ? i + 1 : -1;
@@ -84,6 +99,9 @@ struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * cont
     memset( map->address, 0, sizeof(struct rocketnet_address_t) * (size_t) capacity );
     memset( map->live, 0, sizeof(int) * (size_t) capacity );
     memset( map->mapping, 0, sizeof(struct rocketnet_encryption_mapping_t) * (size_t) capacity );
+    for ( int i = 0; i < capacity; i++ )
+        map->token_next[i] = -1;
+    memset( map->token_linked, 0, sizeof(int) * (size_t) capacity );
 
     return map;
 }
@@ -97,6 +115,9 @@ void rocketnet_encryption_map_destroy( struct rocketnet_encryption_map_t * map )
     rocketnet_free( map->context, map->address );
     rocketnet_free( map->context, map->live );
     rocketnet_free( map->context, map->mapping );
+    rocketnet_free( map->context, map->token_bucket_head );
+    rocketnet_free( map->context, map->token_next );
+    rocketnet_free( map->context, map->token_linked );
     rocketnet_free( map->context, map );
 }
 
@@ -108,6 +129,15 @@ static int rocketnet_encryption_map_bucket( const struct rocketnet_encryption_ma
 
     uint8_t hash[crypto_shorthash_BYTES];
     crypto_shorthash( hash, address_bytes, (size_t) address_bytes_length, map->hash_key );
+    uint64_t value;
+    memcpy( &value, hash, 8 );
+    return (int) ( value % (uint64_t) map->num_buckets );
+}
+
+static int rocketnet_encryption_map_token_bucket( const struct rocketnet_encryption_map_t * map, const uint8_t * token_identifier )
+{
+    uint8_t hash[crypto_shorthash_BYTES];
+    crypto_shorthash( hash, token_identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES, map->hash_key );
     uint64_t value;
     memcpy( &value, hash, 8 );
     return (int) ( value % (uint64_t) map->num_buckets );
@@ -177,11 +207,71 @@ const struct rocketnet_address_t * rocketnet_encryption_map_address( const struc
     return &map->address[index];
 }
 
+void rocketnet_encryption_map_claim_token( struct rocketnet_encryption_map_t * map, int index, const uint8_t * token_identifier )
+{
+    rocketnet_assert( map );
+    rocketnet_assert( token_identifier );
+    rocketnet_assert( index >= 0 && index < map->capacity );
+    rocketnet_assert( map->live[index] );
+    rocketnet_assert( !map->token_linked[index] );
+
+    memcpy( map->mapping[index].token_identifier, token_identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES );
+
+    int bucket = rocketnet_encryption_map_token_bucket( map, token_identifier );
+    map->token_next[index] = map->token_bucket_head[bucket];
+    map->token_bucket_head[bucket] = index;
+    map->token_linked[index] = 1;
+}
+
+int rocketnet_encryption_map_find_token_claim( const struct rocketnet_encryption_map_t * map,
+                                               const uint8_t * token_identifier,
+                                               const struct rocketnet_address_t * address,
+                                               double current_time )
+{
+    rocketnet_assert( map );
+    rocketnet_assert( token_identifier );
+    rocketnet_assert( address );
+
+    int bucket = rocketnet_encryption_map_token_bucket( map, token_identifier );
+    for ( int i = map->token_bucket_head[bucket]; i != -1; i = map->token_next[i] )
+    {
+        const struct rocketnet_encryption_mapping_t * mapping = &map->mapping[i];
+        if ( mapping->client_index == -1 &&
+             current_time < mapping->handshake_deadline &&
+             sodium_memcmp( mapping->token_identifier, token_identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES ) == 0 &&
+             !rocketnet_address_equal( &map->address[i], address ) )
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int rocketnet_encryption_map_full( const struct rocketnet_encryption_map_t * map )
+{
+    rocketnet_assert( map );
+    return map->free_head == -1;
+}
+
 void rocketnet_encryption_map_remove( struct rocketnet_encryption_map_t * map, int index )
 {
     rocketnet_assert( map );
     rocketnet_assert( index >= 0 && index < map->capacity );
     rocketnet_assert( map->live[index] );
+
+    if ( map->token_linked[index] )
+    {
+        int token_bucket = rocketnet_encryption_map_token_bucket( map, map->mapping[index].token_identifier );
+        int * link = &map->token_bucket_head[token_bucket];
+        while ( *link != index )
+        {
+            rocketnet_assert( *link != -1 );
+            link = &map->token_next[*link];
+        }
+        *link = map->token_next[index];
+        map->token_next[index] = -1;
+        map->token_linked[index] = 0;
+    }
 
     int bucket = rocketnet_encryption_map_bucket( map, &map->address[index] );
     if ( map->bucket_head[bucket] == index )
