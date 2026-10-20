@@ -519,11 +519,11 @@ The table picks out:
 | Figure | Counters |
 |---|---|
 | resends | `MESSAGE_RESENT` |
-| ack-window wraps | sent-history and message-window wraps, computed (section 6); `SEND_HISTORY_LOST` (`:514`) and `SEND_HISTORY_OVERFLOW` (`:395`, must be 0) |
-| fragment and block drops | `FRAGMENT_PAYLOAD_ABANDONED`, `CLIENT_FRAGMENT_PAYLOAD_ABANDONED` (`:350`), `MESSAGE_BAD_BLOCK` (must be 0) |
-| backpressure | the runner's `paced`; `MESSAGE_WINDOW_STALL` (`:452`); `MESSAGE_SEND_QUEUE_FULL` and `MESSAGE_SEND_STORE_FULL` (0) |
-| decrypt and replay refusals | `PAYLOAD_DID_NOT_OPEN`, `PAYLOAD_ALREADY_RECEIVED` (`:161-162`) and their siblings for every packet type; `XDP_KERNEL_DROPPED_REPLAYED` (`:570`) |
-| XDP kernel verdicts | `XDP_KERNEL_REDIRECTED` (`:543`) and every `XDP_KERNEL_DROPPED_*` |
+| ack-window wraps | sent-history and message-window wraps, computed (section 6); `SEND_HISTORY_LOST` and `SEND_HISTORY_OVERFLOW` (must be 0) |
+| fragment and block drops | `FRAGMENT_PAYLOAD_ABANDONED`, `CLIENT_FRAGMENT_PAYLOAD_ABANDONED`, `MESSAGE_BAD_BLOCK` (must be 0) |
+| backpressure | the runner's `paced`; `MESSAGE_WINDOW_STALL`; `MESSAGE_SEND_QUEUE_FULL` and `MESSAGE_SEND_STORE_FULL` (0) |
+| decrypt and replay refusals | `PAYLOAD_DID_NOT_OPEN`, `PAYLOAD_ALREADY_RECEIVED` and their siblings for every packet type; `XDP_KERNEL_DROPPED_REPLAYED` |
+| XDP kernel verdicts | `XDP_KERNEL_REDIRECTED` and every `XDP_KERNEL_DROPPED_*` |
 | conservation | `rocketnet_counters_conserved` on both sides at every snapshot (`soak.c`) |
 
 **Resident memory.** Each program reads its own resident set each minute:

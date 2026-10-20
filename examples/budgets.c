@@ -106,13 +106,16 @@ int main( void )
         int bytes = 0;
         while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
             rocketnet_client_release_message( client, data );
-        const int slot = rocketnet_client_index( client );
-        while ( rocketnet_server_receive_message( server, slot, 0, &data, &bytes ) )
-            rocketnet_server_release_message( server, slot, data );
-        while ( rocketnet_server_receive_message( server, slot, 1, &data, &bytes ) )
+        if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
-            reliable_received++;
-            rocketnet_server_release_message( server, slot, data );
+            const int slot = rocketnet_client_index( client );
+            while ( rocketnet_server_receive_message( server, slot, 0, &data, &bytes ) )
+                rocketnet_server_release_message( server, slot, data );
+            while ( rocketnet_server_receive_message( server, slot, 1, &data, &bytes ) )
+            {
+                reliable_received++;
+                rocketnet_server_release_message( server, slot, data );
+            }
         }
 
         // (3) run the game simulation for the frame: nothing to simulate here

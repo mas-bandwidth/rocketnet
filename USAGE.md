@@ -236,20 +236,20 @@ the allocation; a block of at least the reported size, aligned to
 
 ### Server memory footprint
 
-A default 1,000-client server requires approximately 1.52 GB (1,595,804,800 bytes)
+A default 1,000-client server requires approximately 1.52 GB (1,595,804,864 bytes)
 of memory, which scales to approximately 1.52 MB (1,595,776 bytes) per client slot.
 This memory figure can be measured directly using `rocketnet_server_required_memory`:
 
 ```c
 struct rocketnet_server_config_t config;
 rocketnet_server_default_config( &config );
-size_t bytes_1000 = rocketnet_server_required_memory( &config ); // 1,595,804,800 bytes (~1.52 GB)
+size_t bytes_1000 = rocketnet_server_required_memory( &config ); // 1,595,804,864 bytes (~1.52 GB)
 
 config.max_clients = 1;
-size_t bytes_1 = rocketnet_server_required_memory( &config );    // 1,608,640 bytes (~1.53 MB)
+size_t bytes_1 = rocketnet_server_required_memory( &config );    // 1,608,704 bytes (~1.53 MB)
 
 config.max_clients = 2;
-size_t bytes_2 = rocketnet_server_required_memory( &config );    // 3,204,416 bytes (~3.06 MB)
+size_t bytes_2 = rocketnet_server_required_memory( &config );    // 3,204,480 bytes (~3.06 MB)
 // Per-client delta: bytes_2 - bytes_1 = 1,595,776 bytes (~1.52 MB)
 ```
 

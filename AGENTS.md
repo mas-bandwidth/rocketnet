@@ -213,23 +213,26 @@ int main( void )
             rocketnet_client_release_message( client, data );
         }
 
-        uint64_t slot = rocketnet_client_index( client );
-        if ( rocketnet_server_client_connected( server, slot ) )
+        if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
-            while ( rocketnet_server_receive_message( server, slot, 0, &data, &bytes ) )
+            uint64_t slot = rocketnet_client_index( client );
+            if ( rocketnet_server_client_connected( server, slot ) )
             {
-                if ( bytes == 4 && memcmp( data, "ping", 4 ) == 0 )
-                    server_received_and_replied = 1;
-                rocketnet_server_release_message( server, slot, data );
-
-                if ( server_received_and_replied )
+                while ( rocketnet_server_receive_message( server, slot, 0, &data, &bytes ) )
                 {
-                    uint8_t * reply = rocketnet_server_start_message( server, slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
-                    if ( !reply )
-                        return 1;
-                    memcpy( reply, "pong", 4 );
-                    if ( rocketnet_server_finish_message( server, slot, 4 ) == 0 )
-                        return 1;
+                    if ( bytes == 4 && memcmp( data, "ping", 4 ) == 0 )
+                        server_received_and_replied = 1;
+                    rocketnet_server_release_message( server, slot, data );
+
+                    if ( server_received_and_replied )
+                    {
+                        uint8_t * reply = rocketnet_server_start_message( server, slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
+                        if ( !reply )
+                            return 1;
+                        memcpy( reply, "pong", 4 );
+                        if ( rocketnet_server_finish_message( server, slot, 4 ) == 0 )
+                            return 1;
+                    }
                 }
             }
         }
