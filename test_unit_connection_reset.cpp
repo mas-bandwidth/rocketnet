@@ -1142,7 +1142,6 @@ static void connection_reset_client_disconnect_behind_a_deferred_hand_off_reache
     rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
     snprintf( config.driver, sizeof(config.driver), "%s", "loopback" );
-    config.step_driven = 1;
     config.time_callback = reset_io_time;
     reset_env_pin_t pin;
     reset_env_pin_set_aside( &pin, "ROCKETNET_CLIENT_TRANSPORT" );
