@@ -62,6 +62,11 @@
 
 #define ROCKETNET_URING_BANK_SIZE              ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS
 
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECV_BUFFERS >= 2 * ROCKETNET_URING_SEND_QUEUE_SIZE,
+                         "io_uring receive buffer ring per queue holds at least twice the send queue budget" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_BANK_SIZE >= 2 * ROCKETNET_URING_SEND_QUEUE_SIZE,
+                         "io_uring receive bank holds at least twice the send queue budget" );
+
 // completions taken per peek
 
 #define ROCKETNET_URING_CQE_BATCH                                          256

@@ -55,6 +55,10 @@
 
 // XDP umem frame size must match libxdp expectation
 static_assert( ROCKETNET_XDP_FRAME_SIZE == 4096, "ROCKETNET_XDP_FRAME_SIZE must be 4096" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_RECV_QUEUE_SIZE >= 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE,
+                         "XDP receive queue holds at least twice the send queue budget" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE,
+                         "server process batch holds at least twice the XDP send queue budget" );
 
 struct alignas(64) rocketnet_server_socket_send_packet_info_t
 {

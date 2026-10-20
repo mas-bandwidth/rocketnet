@@ -46,14 +46,20 @@ struct rocketnet_server_gso_t;
 // send staging: one phase's worth of slots, the same budget as the xdp
 // driver's send queue. each slot is a frame-stride wire packet.
 
-#define ROCKETNET_GSO_SEND_QUEUE_SIZE                             ( 4096 * 4 )
+#define ROCKETNET_GSO_SEND_QUEUE_SIZE                                     4096
 
-// receive staging per queue per buffer: half the process array, so two
-// queues at full tilt cover a whole drain and a single flooded queue fills
-// its pair between drains and drops counted -- correct behaviour under
-// flood, ample at design load where the reuseport hash spreads flows
+// receive staging per queue per buffer: twice the send staging budget and
+// half the process array, so two queues at full tilt cover a whole drain and
+// a single flooded queue fills its pair between drains and drops counted --
+// correct behaviour under flood, ample at design load where the reuseport
+// hash spreads flows
 
 #define ROCKETNET_GSO_RECV_QUEUE_SIZE                                     8192
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_GSO_RECV_QUEUE_SIZE >= 2 * ROCKETNET_GSO_SEND_QUEUE_SIZE,
+                         "GSO receive queue per socket holds at least twice the send queue budget" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCKETNET_GSO_SEND_QUEUE_SIZE,
+                         "server process batch holds at least twice the GSO send queue budget" );
 
 // recvmmsg geometry: how many kernel messages one call drains, and how big
 // one message's buffer is. with GRO on, one message is a coalesced run of
@@ -68,7 +74,10 @@ struct rocketnet_server_gso_t;
 // super-datagram (the kernel's UDP_MAX_SEGMENTS is 64), and a total-bytes
 // cap keeping every super-datagram inside the 16-bit UDP payload space
 
-#define ROCKETNET_GSO_SEND_BATCH                                           128
+#define ROCKETNET_GSO_SEND_BATCH                                            32
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_GSO_RECV_BATCH >= 2 * ROCKETNET_GSO_SEND_BATCH,
+                         "GSO recvmmsg batch holds at least twice the sendmmsg batch" );
 #define ROCKETNET_GSO_MAX_SEGMENTS                                          64
 #define ROCKETNET_GSO_MAX_SUPER_BYTES                                    65000
 

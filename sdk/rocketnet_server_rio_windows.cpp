@@ -39,6 +39,10 @@ static std::atomic<uint64_t> rocketnet_rio_leaked_regions{0};
 
 static_assert( ROCKETNET_RIO_RECEIVE_SLICE_BYTES >= ROCKETNET_RECEIVE_CEILING + 1, "receive detects oversize datagrams" );
 static_assert( ROCKETNET_RIO_RECEIVES <= ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS, "a whole bank fits the process view" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_RIO_RECEIVES >= 2 * ROCKETNET_RIO_SEND_QUEUE_SIZE,
+                         "RIO receive slice pool and bank hold at least twice the per-phase send queue budget" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCKETNET_RIO_SEND_QUEUE_SIZE,
+                         "server process batch holds at least twice the RIO send queue budget" );
 
 // a receive bank: the model's fillBank and exposed. Its capacity is the
 // number of slices (BankCapacity == Slices).

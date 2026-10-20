@@ -82,6 +82,10 @@ struct rocketnet_server_gso_send_info_t
 };
 
 static_assert( sizeof(rocketnet_server_gso_send_info_t) == 64, "one send info per cache line" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_GSO_RECV_QUEUE_SIZE >= 2 * ROCKETNET_GSO_SEND_QUEUE_SIZE,
+                         "GSO receive queue per socket holds at least twice the send queue budget" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_GSO_RECV_BATCH >= 2 * ROCKETNET_GSO_SEND_BATCH,
+                         "GSO recvmmsg batch holds at least twice the sendmmsg batch" );
 
 struct rocketnet_server_gso_send_buffer_t
 {

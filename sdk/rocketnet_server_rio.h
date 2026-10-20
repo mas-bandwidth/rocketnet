@@ -4,6 +4,7 @@
 */
 #pragma once
 
+#include "rocketnet_constants.h"
 #include "rocketnet_packet_batch.h"
 #include "rocketnet_wire.h"
 
@@ -30,9 +31,14 @@
 // RIOSendEx and RIOReceiveEx). Elsewhere the module is not compiled: only
 // rocketnet_server_rio_available() is defined, and it is false.
 
-#define ROCKETNET_RIO_SEND_QUEUE_SIZE 16384
+#define ROCKETNET_RIO_SEND_QUEUE_SIZE 2048
 #define ROCKETNET_RIO_RECEIVES 4096
 #define ROCKETNET_RIO_RECEIVE_SLICE_BYTES 2048
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_RIO_RECEIVES >= 2 * ROCKETNET_RIO_SEND_QUEUE_SIZE,
+                         "RIO receive slice pool and bank hold at least twice the per-phase send queue budget" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCKETNET_RIO_SEND_QUEUE_SIZE,
+                         "server process batch holds at least twice the RIO send queue budget" );
 
 struct rocketnet_server_rio_t;
 

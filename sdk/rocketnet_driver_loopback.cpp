@@ -18,6 +18,11 @@ enum
     ROCKETNET_LOOPBACK_LAST_PORT = 65535
 };
 
+ROCKETNET_STATIC_ASSERT( ROCKETNET_LOOPBACK_QUEUE_PACKETS >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS,
+                         "loopback endpoint queue holds at least twice the server send batch budget" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_LOOPBACK_QUEUE_PACKETS >= 2 * ROCKETNET_CLIENT_PAYLOAD_RING_SIZE,
+                         "loopback endpoint queue holds at least twice the client send payload ring budget" );
+
 struct rocketnet_loopback_packet_t
 {
     rocketnet_address_t from;

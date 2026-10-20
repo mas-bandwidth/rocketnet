@@ -72,6 +72,28 @@ calls them on the main thread once per update, after packet processing, and
 nothing else writes the driver's replay map. XDP is the only built-in backend
 that reports it.
 
+## Per-update send and receive budgets
+
+Every built-in driver (`portable`, `msgx`, `loopback`, `gso`, `io_uring`,
+`xdp`, `iocp`, `rio`) is budgeted to receive at least twice as many packets in
+one update as it can send in one update (`receive_capacity >= 2 * send_budget`),
+enforced at compile time with `ROCKETNET_STATIC_ASSERT` beside each driver's
+constants and checked in `test_unit_receive_budget_twice_send.cpp`. One
+endpoint sending at its maximum per-update budget can never overwhelm a peer's
+receive staging, ring or per-update process batch (`ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS` =
+`ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE` = 16000) on a single tick.
+
+| Driver | Send budget per update / flush | Receive capacity per update / queue | Server process batch (`MAX_PROCESS_PACKETS`) | Ratio (receive : send) |
+| --- | --- | --- | --- | --- |
+| `portable` | `ROCKETNET_SERVER_MAX_SEND_PACKETS` = 256 per batch (`ROCKETNET_SERVER_PAYLOAD_RING_SIZE` = 256 payloads; client `ROCKETNET_CLIENT_PAYLOAD_RING_SIZE` = 256) | `ROCKETNET_SERVER_MAX_RECEIVE_PACKETS` = 512 per batch; `ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE` = 16000 per update (client `ROCKETNET_NUM_CLIENT_PACKETS` = 1024) | 16000 | 2.0x per batch, 62.5x per update (4.0x on client) |
+| `msgx` | `ROCKETNET_MSGX_SEND_BATCH` = 32 per `sendmsg_x` call; buffered batch 256 | `ROCKETNET_MSGX_RECV_BATCH` = 64 per `recvmsg_x` call; buffered batch 512, per-update 16000 (client 1024) | 16000 | 2.0x per syscall and per batch, 62.5x per update (4.0x on client) |
+| `loopback` | `ROCKETNET_SERVER_MAX_SEND_PACKETS` = 256 (`512` combined control + payload; client `256`) | `ROCKETNET_LOOPBACK_QUEUE_PACKETS` = 1024 per endpoint; server per-update 16000 | 16000 | 4.0x of send batch (2.0x of combined server send; 4.0x on client) |
+| `gso` | `ROCKETNET_GSO_SEND_QUEUE_SIZE` = 4096 (`ROCKETNET_GSO_SEND_BATCH` = 32) | `ROCKETNET_GSO_RECV_QUEUE_SIZE` = 8192 per queue (32768 across 4 default queues; `ROCKETNET_GSO_RECV_BATCH` = 64) | 16000 | 2.0x per queue (8.0x across 4 default queues; 3.91x process batch; 2.0x syscall batch) |
+| `io_uring` | `ROCKETNET_URING_SEND_QUEUE_SIZE` = 2048 | `ROCKETNET_URING_RECV_BUFFERS` = 4096 per queue (16384 across 4 default queues); `ROCKETNET_URING_BANK_SIZE` = 16000 | 16000 | 2.0x per queue (8.0x across 4 default queues; 7.8125x bank and process batch) |
+| `xdp` | `ROCKETNET_XDP_SEND_QUEUE_SIZE` = 4096 | `ROCKETNET_XDP_RECV_QUEUE_SIZE` = 16384 per queue | 16000 | 4.0x per queue (3.91x process batch) |
+| `iocp` | `ROCKETNET_IOCP_SEND_QUEUE_SIZE` = 2048 | `ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE` = 4096 per worker | 16000 | 2.0x per worker (7.8125x process batch) |
+| `rio` | `ROCKETNET_RIO_SEND_QUEUE_SIZE` = 2048 per phase | `ROCKETNET_RIO_RECEIVES` = 4096 slices and bank slots | 16000 | 2.0x slices and bank (7.8125x process batch) |
+
 ## UDP coalescing
 
 The coalescing rules live once, in `sdk/rocketnet_coalesce.h`: a receive split

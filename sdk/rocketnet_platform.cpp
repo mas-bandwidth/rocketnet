@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet_memory.h"
+#include "rocketnet_constants.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_route.h"
 #include <limits.h>
@@ -2007,11 +2008,13 @@ typedef ssize_t (*rocketnet_recvmsg_x_fn)( int s, struct rocketnet_msghdr_x_t * 
 static rocketnet_sendmsg_x_fn rocketnet_sendmsg_x = NULL;
 static rocketnet_recvmsg_x_fn rocketnet_recvmsg_x = NULL;
 
-// the seam batch: how many messages one syscall carries. matches the
-// transport's own batch shape; chunking inside the pump keeps the stack
-// arrays small and bounded.
+// the seam batch: how many messages one syscall carries. one recvmsg_x
+// drains ROCKETNET_MSGX_RECV_BATCH (2 * ROCKETNET_MSGX_SEND_BATCH) while
+// one sendmsg_x submits ROCKETNET_MSGX_SEND_BATCH; chunking inside the pump
+// keeps the stack arrays small and bounded.
 
-#define ROCKETNET_MSGX_BATCH 32
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MSGX_RECV_BATCH >= 2 * ROCKETNET_MSGX_SEND_BATCH,
+                         "msgx receive syscall batch holds at least twice the send syscall batch" );
 
 // ---------------------------------------------------
 
@@ -2928,14 +2931,14 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
     while ( total < max_packets )
     {
         int want = max_packets - total;
-        if ( want > ROCKETNET_MSGX_BATCH )
-            want = ROCKETNET_MSGX_BATCH;
+        if ( want > ROCKETNET_MSGX_RECV_BATCH )
+            want = ROCKETNET_MSGX_RECV_BATCH;
 
         const int chunk_base = total;
 
-        sockaddr_storage addresses[ROCKETNET_MSGX_BATCH];
-        struct iovec iov[ROCKETNET_MSGX_BATCH][2];
-        struct rocketnet_msghdr_x_t msg[ROCKETNET_MSGX_BATCH];
+        sockaddr_storage addresses[ROCKETNET_MSGX_RECV_BATCH];
+        struct iovec iov[ROCKETNET_MSGX_RECV_BATCH][2];
+        struct rocketnet_msghdr_x_t msg[ROCKETNET_MSGX_RECV_BATCH];
         memset( msg, 0, sizeof(msg) );
         for ( int i = 0; i < want; i++ )
         {

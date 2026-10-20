@@ -71,8 +71,10 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
 #error driver selection is runtime now (#106): drop ROCKETNET_SERVER_XDP / ROCKETNET_SERVER_GSO and select with config driver or ROCKETNET_SERVER_TRANSPORT
 #endif // #if defined( ROCKETNET_SERVER_XDP ) || defined( ROCKETNET_SERVER_GSO )
 
-#define ROCKETNET_SERVER_MAX_RECEIVE_PACKETS 256
-#define ROCKETNET_SERVER_MAX_SEND_PACKETS    256
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS,
+                         "portable server receive batch holds at least twice the send batch" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ( ROCKETNET_SERVER_MAX_SEND_PACKETS + ROCKETNET_SERVER_PAYLOAD_RING_SIZE ),
+                         "portable server per-update receive budget holds at least twice the combined send budget" );
 
 struct rocketnet_server_send_buffer_t
 {

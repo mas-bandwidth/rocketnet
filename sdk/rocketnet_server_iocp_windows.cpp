@@ -53,6 +53,10 @@ struct alignas(MEMORY_ALLOCATION_ALIGNMENT) rocketnet_iocp_operation_t
 static_assert( offsetof( rocketnet_iocp_operation_t, overlapped ) == 0, "completion identifies its operation" );
 static_assert( offsetof( rocketnet_iocp_operation_t, free_entry ) % MEMORY_ALLOCATION_ALIGNMENT == 0, "Windows SList alignment" );
 static_assert( ROCKETNET_RECEIVE_CEILING + 1 <= ROCKETNET_FRAME_STRIDE, "receive detects oversize datagrams" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE >= 2 * ROCKETNET_IOCP_SEND_QUEUE_SIZE,
+                         "IOCP receive queue per worker holds at least twice the send queue budget" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCKETNET_IOCP_SEND_QUEUE_SIZE,
+                         "server process batch holds at least twice the IOCP send queue budget" );
 
 struct rocketnet_iocp_receive_buffer_t
 {

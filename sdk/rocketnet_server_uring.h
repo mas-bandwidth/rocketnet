@@ -40,10 +40,10 @@ struct rocketnet_server_uring_t;
 
 #define ROCKETNET_URING_ENTRIES                                           4096
 
-// send staging: one phase's worth of frame-stride slots, the gso driver's
-// budget
+// send staging: one phase's worth of frame-stride slots, sized so each
+// queue's receive buffer ring holds at least twice the send budget
 
-#define ROCKETNET_URING_SEND_QUEUE_SIZE                           ( 4096 * 4 )
+#define ROCKETNET_URING_SEND_QUEUE_SIZE                                   2048
 
 // receive: per queue a provided buffer ring of this many buffers of this many
 // bytes. one buffer holds the multishot recvmsg header, the reserved name
@@ -51,6 +51,11 @@ struct rocketnet_server_uring_t;
 
 #define ROCKETNET_URING_RECV_BUFFERS                                      4096
 #define ROCKETNET_URING_RECV_BUFFER_BYTES                                 2048
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECV_BUFFERS >= 2 * ROCKETNET_URING_SEND_QUEUE_SIZE,
+                         "io_uring receive buffer ring per queue holds at least twice the send queue budget" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCKETNET_URING_SEND_QUEUE_SIZE,
+                         "server process batch holds at least twice the io_uring send queue budget" );
 
 // counters, readable any time from the main thread; indexes into the array
 // rocketnet_server_uring_counters fills

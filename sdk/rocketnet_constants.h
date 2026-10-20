@@ -44,12 +44,10 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
 
 #define ROCKETNET_RECEIVE_PACKETS_PER_CLIENT                                16
 
-#if ROCKETNET_XDP
-
 #define ROCKETNET_XDP_NUM_BUFFERS                                            2
 #define ROCKETNET_XDP_NUM_FRAMES                                         65536
 #define ROCKETNET_XDP_FRAME_SIZE                                          4096  // IMPORTANT: This *must* be 4096 or you will get packet corruption on read!
-#define ROCKETNET_XDP_SEND_QUEUE_SIZE                             ( 4096 * 4 )
+#define ROCKETNET_XDP_SEND_QUEUE_SIZE                             ( 1024 * 4 )
 #define ROCKETNET_XDP_RECV_QUEUE_SIZE                             ( 4096 * 4 )
 #define ROCKETNET_XDP_FILL_QUEUE_SIZE                                     2048
 #define ROCKETNET_XDP_SEND_BATCH_SIZE                                       32
@@ -57,13 +55,37 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
 ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_FRAME_SIZE >= ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES +
                          ROCKETNET_UDP_HEADER_BYTES + ROCKETNET_RECEIVE_CEILING,
                          "an XDP frame holds ethernet, the larger IP header, UDP and a full receive-ceiling packet" );
-
-#endif // #if ROCKETNET_XDP
+ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_RECV_QUEUE_SIZE >= 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE,
+                         "XDP receive queue holds at least twice the send queue budget" );
 
 #define ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS        ( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS )
 
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE,
+                         "server process batch holds at least twice the XDP send queue budget" );
+
 // One update reads at most ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS packets (16 * 1000 = 16000), bounding its work. This equals the payload-batch capacity; batches share one bound and one storage cap.
 #define ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE   ( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS )
+
+// Buffered server send and receive batch sizes (portable and msgx drivers).
+// One receive batch holds at least twice the send batch, and the per-update
+// receive budget holds at least twice the combined control + payload send budget.
+#define ROCKETNET_SERVER_MAX_SEND_PACKETS                                  256
+#define ROCKETNET_SERVER_MAX_RECEIVE_PACKETS   ( 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS )
+#define ROCKETNET_SERVER_PAYLOAD_RING_SIZE           ROCKETNET_SERVER_MAX_SEND_PACKETS
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS,
+                         "portable server receive batch holds at least twice the send batch" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ( ROCKETNET_SERVER_MAX_SEND_PACKETS + ROCKETNET_SERVER_PAYLOAD_RING_SIZE ),
+                         "portable server per-update receive budget holds at least twice the combined send budget" );
+
+// Darwin sendmsg_x / recvmsg_x syscall batch sizes: one receive syscall drains
+// at least twice as many datagrams as one send syscall submits.
+#define ROCKETNET_MSGX_SEND_BATCH                                           32
+#define ROCKETNET_MSGX_RECV_BATCH              ( 2 * ROCKETNET_MSGX_SEND_BATCH )
+#define ROCKETNET_MSGX_BATCH                           ROCKETNET_MSGX_SEND_BATCH
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MSGX_RECV_BATCH >= 2 * ROCKETNET_MSGX_SEND_BATCH,
+                         "msgx receive syscall batch holds at least twice the send syscall batch" );
 
 // the send frame layout. every slot a transport hands out is a 16-aligned
 // root; the wire packet begins at the wire offset inside it and the payload
@@ -121,6 +143,10 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE == ROCK
 #define ROCKETNET_SEND_ARENA_SLOTS                                          16
 
 #define ROCKETNET_NUM_CLIENT_PACKETS                                      1024
+#define ROCKETNET_CLIENT_PAYLOAD_RING_SIZE     256
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_NUM_CLIENT_PACKETS >= 2 * ROCKETNET_CLIENT_PAYLOAD_RING_SIZE,
+                         "client receive ring holds at least twice the client send payload ring" );
 
 // Packet-count history budget, shared with receive-side ACK/replay history.
 // There is no time-based expiration, send quota or ACK cadence assumption.
