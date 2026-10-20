@@ -232,7 +232,7 @@ struct rocketnet_server_transport_t
 
     // the driver's receive_drops totals as last read: each read adds only the
     // growth since to PREFILTER_TOO_SHORT and PREFILTER_TOO_LARGE, which the
-    // protocol's own prefilter also counts into (sdk/rocketnet_server_protocol.cpp:1227)
+    // protocol's own prefilter also counts into (sdk/rocketnet_server_protocol.cpp:1255)
     uint64_t driver_receive_too_short = 0;
     uint64_t driver_receive_too_large = 0;
 

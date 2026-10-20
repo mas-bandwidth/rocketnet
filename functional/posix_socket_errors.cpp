@@ -67,7 +67,7 @@ static void posix_check_impl( bool condition, const char * text, const char * fi
 // protocol's prefilter and counts in the driver's own RECEIVE_DROPPED_SIZE,
 // and the transport reads the same drops into PREFILTER_TOO_SHORT and
 // PREFILTER_TOO_LARGE through the driver's receive_drops operation
-// (sdk/rocketnet_server_transport.cpp:2756-2765)
+// (sdk/rocketnet_server_transport.cpp:2774-2786)
 
 void * rocketnet_server_transport_driver_for_testing( struct rocketnet_server_transport_t * server_transport );
 
@@ -507,7 +507,7 @@ static bool posix_valid_matches( int index, const uint8_t * payload, int bytes )
 }
 
 // the counters are read through the call each time: the server folds its
-// driver's own drop counts in on that call (sdk/rocketnet_server_transport.cpp:2756-2765)
+// driver's own drop counts in on that call (sdk/rocketnet_server_transport.cpp:2774-2786)
 
 static const struct rocketnet_counters_t * posix_pair_counters( struct posix_pair_t * pair, int at_server )
 {
@@ -1304,7 +1304,7 @@ static void posix_linux_dropped_flush( struct posix_pair_t * pair, void (*fail)(
     *dropped_out = dropped;
 
     // the transport's SEND_FAILED reads the driver's own send drops (its
-    // send_failures operation, sdk/rocketnet_server_transport.cpp:2751-2752), so it moves by exactly the dropped count
+    // send_failures operation, sdk/rocketnet_server_transport.cpp:2771-2773), so it moves by exactly the dropped count
 
     const uint64_t transport_failed = rocketnet_server_transport_counters( pair->server )->values[ROCKETNET_COUNTER_SEND_FAILED] - transport_failed_before;
     if ( transport_failed != dropped )

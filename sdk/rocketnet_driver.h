@@ -107,7 +107,7 @@ struct rocketnet_server_driver_operations_t
     // driver's life: too_short below the smallest packet a server reads,
     // too_large above the receive ceiling or truncated. The transport adds
     // each one's growth to PREFILTER_TOO_SHORT and PREFILTER_TOO_LARGE when
-    // its counters are read (sdk/rocketnet_server_transport.cpp:2756-2765).
+    // its counters are read (sdk/rocketnet_server_transport.cpp:2774-2786).
     void (*receive_drops)( void * driver, uint64_t * too_short, uint64_t * too_large );
 };
 
