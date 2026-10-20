@@ -1032,6 +1032,22 @@ jobs:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
         run: ./bin/functional
+      # A red in this step at BASE is the asan allocator rejecting the glibc
+      # heap-keeping calls in functional/posix_lifecycle_stress.cpp:1045-1046
+      # (posix_heap_keep asserts mallopt(M_MMAP_MAX,...) == 1 and
+      # mallopt(M_TRIM_THRESHOLD,...) == 1, which return 0 under asan's
+      # allocator). Every posix_* cell fails there the same way. The fix is
+      # to tolerate asan there and is carried as a proposed diff on its own
+      # card, not in this file:
+      #
+      #     -#if defined(__GLIBC__)
+      #     +#if defined(__GLIBC__) && !defined(__SANITIZE_ADDRESS__)
+      #
+      # Under tsan the functional step is red in the same file for a second
+      # reason: posix_stable_counts (functional/posix_lifecycle_stress.cpp:196-208)
+      # reads one more thread (1 -> 2) after the sanitizer runtime starts a
+      # thread inside the forked test process, so the before and after counts
+      # do not match. That fix is carried on its own card as well.
 
       - name: Allocation lifecycle under sanitizers
         if: matrix.leg == 'functional suite'
