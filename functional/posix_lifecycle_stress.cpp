@@ -1127,24 +1127,28 @@ POSIX_LINUX_CELL_CASES( posix_destroy_under_traffic_100 )
 #endif // #if !defined(_WIN32)
 
 /*
-    macOS record (Darwin arm64, Apple clang 21.0.0, Debug build). Each run is
-    one ./bin/functional --run <case> over the six macOS cells
+    macOS record (Darwin arm64, macOS 27.0.1, Apple clang 21.0.0, Debug
+    build, the tree with posix_fixed_loopback_port). Each run is one
+    ./bin/functional --run <case> over the six macOS cells
     (functional/posix_lifecycle_stress.cpp:248-253); every cell of every run
     printed fds 4 -> 4 and threads 1 -> 1. Seconds per run, all PASS:
 
-        case                                 r1     r2    r3    r4    r5
-        posix_init_term_1000                 43.5   24    PASS  24    25
-        posix_server_create_destroy_1000     432    564   PASS  608   463
-        posix_client_create_destroy_1000     69     60    PASS  59    64
-        posix_server_restart_same_port_100   64     67    PASS  56    41
-        posix_connect_disconnect_1000        89     79    75    81    86
-        posix_destroy_under_traffic_100      132    131   126   112   133
+        case                                 r1    r2    r3    r4    r5
+        posix_init_term_1000                 8     9     9     8     9
+        posix_server_create_destroy_1000     156   150   149   149   149
+        posix_client_create_destroy_1000     24    24    24    24    24
+        posix_server_restart_same_port_100   20    19    20    20    20
+        posix_connect_disconnect_1000        50    51    50    51    50
+        posix_destroy_under_traffic_100      75    72    73    72    73
 
-    r3's first four cases passed with no time recorded. Outside the five
-    runs, one run made while other processes ran the same suites on the host
-    went red once, in posix_server_restart_same_port_100 [server msgx forced
-    portable, client msgx], with TRANSPORT_LADDER_EXHAUSTED at the client
-    create, and passed when rerun alone.
+    On the same tree and host ./bin/test is rc=0 (18 s) and ./bin/functional
+    is rc=0 (161 s). Before posix_fixed_loopback_port, a full ./bin/functional
+    on that host went red in posix_server_restart_same_port_100 [server msgx,
+    client portable]: its fixed port, 50920, came from a port 0 bind and so
+    from the ephemeral range, and the next server create there was refused
+    with TRANSPORT_LADDER_EXHAUSTED while the suite's other cases bound port 0
+    sockets. Five earlier runs of all six cases on macOS 27.2 (the tree
+    before that change) passed with the same flat counts.
 
     The red proof, each a scratch build that is not kept, each run as
     ./bin/functional --run posix_client_create_destroy_1000 and failing at
