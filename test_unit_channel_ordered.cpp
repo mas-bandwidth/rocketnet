@@ -543,7 +543,7 @@ static void small_packed_and_resent_until_packet_acked()
     feed_acks( a, acks, now );
     check( a->ordered.send.U == 4 );
     check( a->region->descriptors_free == a->region->queue );
-    check( a->ordered.ack.has_rtt == 1 && rn_window_ack_resend_delay( &a->ordered.ack ) <= 0.1 );
+    check( a->ordered.ack.has_rtt == 1 && rn_window_ack_resend_delay( &a->ordered.ack ) == a->ordered.ack.rto );
 
     now += 5.0;
     wire_packet_t after[4];
