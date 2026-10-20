@@ -16,9 +16,9 @@ contents:
   `Finished` or `Kernel`. A `bytes` flag says whether finish recorded bytes
   or abort zeroed them. `idx` is the reservation index. `kown` is the set of
   slots whose frame and msghdr the kernel owns, from the moment of submit to
-  the moment of the send CQE. `pending` is the set of slots this
-  `send_packets` submitted whose CQE has not been reaped yet. `sending` is
-  true while the main thread is inside `send_packets`.
+  the moment of the send CQE. `pending` is the set of slots submitted, by
+  this `send_packets` or an earlier one, whose CQE has not been reaped yet.
+  `sending` is true while the main thread is inside `send_packets`.
 - **Receive.** Each ring buffer is in one of three states: `Ring`, `Filled`
   or `Copied`. `bufdg` is the datagram last filled into each buffer.
   `copied` is the set of datagrams copied out into a bank. The banks are
@@ -30,9 +30,18 @@ contents:
   `Cancel` (the CQE of the cancel SQE). A set is enough because each CQE
   is unique while it is pending.
 - **Phase:** `Running`, `Destroying` or `Freed`.
+- **Calls and the budget.** `call` is the main thread's call: `none`,
+  `send` (from `Submit` to `ResetIndex` or `SendReturn`) or `recv` (from
+  `RecvBegin` to `Swap`). `work` counts the CQEs the current call has
+  reaped, and `Budget` is how many one call may reap
+  (`ROCKETNET_URING_SEND_BUDGET` and `ROCKETNET_URING_RECEIVE_BUDGET` in
+  the code, one constant here). While running, the main thread reaps only
+  inside a call; destroy's drain reaps outside the budget, and its rounds
+  are bounded in the code (`ROCKETNET_URING_DESTROY_MAX_ROUNDS`), not here.
 
-Two constants act as rule switches and carry the reversed witnesses:
-`ResetWaitsForReap` and `ReapIntoFill`. Both are `TRUE` in the rule.
+Three constants act as rule switches and carry the reversed witnesses:
+`ResetWaitsForReap`, `ReapIntoFill` and `BoundedReap`. All are `TRUE` in the
+rule.
 
 ## Each action against THE DESIGN
 
@@ -41,14 +50,16 @@ Two constants act as rule switches and carry the reversed witnesses:
 | `Reserve` | start_packet reserves the next slot with one atomic fetch_add; it returns NULL, with no step, when the staging is full |
 | `Finish(s)` | finish records the bytes |
 | `Abort(s)` | abort zeroes them; send_packets then skips the slot |
-| `Submit` | send_packets, with the fill threads joined (no slot still `Reserved`), adds one SENDMSG SQE for each slot with bytes > 0 and submits; from then on the kernel owns those frames |
+| `Submit` | send_packets, with the fill threads joined (no slot still `Reserved`), adds one SENDMSG SQE for each slot with bytes > 0 not submitted by an earlier call and submits; from then on the kernel owns those frames. The send call begins (`call = "send"`, `work = 0`) |
 | `KernelComplete(s)` | the kernel finishes the send (any res, where a negative one counts SEND_DROPPED) and posts the send CQE |
 | `KernelFill(b)` | the armed multishot RECVMSG fills a provided ring buffer and posts a receive CQE |
 | `KernelStop` | a CQE without IORING_CQE_F_MORE ends the multishot (ENOBUFS among the causes) |
-| `Reap(c)` | the main thread reaps one CQE, inside send_packets or outside it. A send CQE frees nothing by itself; it only removes the slot from `pending`. A receive CQE is copied into the **fill** bank. `Term` re-arms the multishot while the driver is running and never during destroy |
+| `Reap(c)` | the main thread reaps one CQE inside a send or receive call, counted in `work`, and under `BoundedReap` only while `work < Budget`; or in destroy's drain. A send CQE frees nothing by itself; it only removes the slot from `pending`. A receive CQE is copied into the **fill** bank. `Term` re-arms the multishot while the driver is running and never during destroy |
 | `ReturnBuffer(b)` | after the copy, the buffer goes back to the ring |
-| `ResetIndex` | send_packets resets the reservation index to 0 only when no slot is `Kernel` owned and every send it submitted has its CQE reaped; the call returns |
-| `Swap` | receive_packets: the old fill bank becomes the exposed bank and the new fill bank is emptied |
+| `ResetIndex` | send_packets resets the reservation index to 0 only when no slot is `Kernel` owned and every send submitted has its CQE reaped; the call returns |
+| `SendReturn` | send_packets returns with some send still without its CQE, once its budget is spent or the cq is empty after its one wait: the index and every slot stay as they are, and a later call retires the rest (`SEND_DEFERRED`). Only under `BoundedReap` |
+| `RecvBegin` | receive_packets begins; its reaps count against the budget |
+| `Swap` | the end of receive_packets, once its reap stops (the cq is empty, or under `BoundedReap` the budget is spent): the old fill bank becomes the exposed bank and the new fill bank is emptied |
 | `TransportReads` | the transport reads the views of the exposed bank. A read changes no driver state, so here it is a stutter; what the read relies on is ExposedStable |
 | `Destroy` | cancels every multishot receive: the cancel posts its own CQE, and an armed multishot ends with a `Term` |
 | `Free` | destroy's drain ends: once no slot is kernel owned, the cq is empty and the multishot is disarmed, slots, banks and the ring are freed |
@@ -68,6 +79,9 @@ Invariants:
   datagram is in `copied`.
 - `FreedOnlyWhenDrained`: in `Freed` there is no kernel-owned slot, no
   `Filled` buffer, and the cq is empty.
+- `ReapWithinBudget`: `work <= Budget`, so every Reap step of a send or
+  receive call ends within the call's budget, however many CQEs the kernel
+  keeps posting.
 
 Liveness, under `SpecFair`:
 
@@ -80,14 +94,20 @@ Liveness, under `SpecFair`:
 - **`Reap(c)`, per CQE.** A CQ is FIFO, so a pending CQE is never starved
   by later ones. With a single disjunctive fairness on Reap, TLC could pick
   `Term` forever while a send CQE waits.
+- **`Reap(SendCqe(s))`, strongly.** The budget disables every Reap at the
+  end of each call, so weak fairness no longer reaches a send CQE: with
+  weak fairness only, TLC found a loop of one-CQE calls that each reaped a
+  fresh `Term` (KernelStop, re-arm, KernelStop) while a send CQE waited,
+  failing `SubmittedEventuallyFree`. In the code the CQ is FIFO and the
+  send CQE is older than every later `Term`, so the next call reaps it
+  first: the loop is an artifact of the model's set-valued cq, and strong
+  fairness on the send CQEs states the FIFO order the code has.
 - **`ReturnBuffer(b)`.**
-- **`ResetIndex`.** This is the end of send_packets, which does not return
-  without it.
+- **`Finish(s) \/ Abort(s)` and `Submit`.** The game finishes what it
+  reserves and keeps calling `send_packets`, so a deferred send is retired
+  by a later call.
+- **`ResetIndex`, `SendReturn` and `Swap`.** A call that may end does end.
 - **`Free`.** This is destroy's drain.
-
-The brief names fairness of KernelComplete, Reap and the drain. ResetIndex
-and ReturnBuffer are steps of send_packets and of the reap, so they get
-fairness too.
 
 ## What the model leaves out
 
@@ -103,34 +123,32 @@ fairness too.
 ## The small instance and the runs
 
 `MCRNUringDriver.tla` extends the module with no overrides. The constants
-are `Slots = 2`, `Buffers = 2` and `MaxSteps = 2` (two datagrams, two bank
-swaps). The three cases form group `rnuringdriver` in `CASES.tsv`.
+are `Slots = 2`, `Buffers = 2`, `MaxSteps = 2` (two datagrams, two bank
+swaps) and `Budget = 1` (a call reaps one CQE, so deferral is exercised at
+every call). The four cases form group `rnuringdriver` in `CASES.tsv`.
 
 To run them from the rocketnet checkout, with `$job`, `$jar` and `$java`
 as in `tla/README.md`:
 
 ```sh
-for i in 0 1 2; do
+for i in 0 1 2 3; do
   "$job/tlacheck" run --root . --jar "$jar" --java "$java" \
-    --group rnuringdriver --shards 3 --shard "$i" --workers 2 --timeout 110s \
+    --group rnuringdriver --shards 4 --shard "$i" --workers 2 --timeout 110s \
     --dir "$job/rnuringdriver-$i"
 done
 "$job/tlacheck" merge --root . --keep tla/RUNS.tsv \
   --out "$job/RUNS.tsv" "$job"/rnuringdriver-*/RUNS.tsv
 ```
 
-Outcomes measured on hulk (linux-amd64, Java 21.0.12.1, the pinned JAR,
-2026-10-17):
+Outcomes measured on a linux-amd64 bench (Java 21.0.12.1, the pinned JAR,
+2026-10-20):
 
 | Case | Expected | Exit | Generated | Distinct | Seconds |
 |---|---|---:|---:|---:|---:|
-| `MCRNUringDriver.cfg` | pass (5 invariants, 2 properties) | 0 | 119869 | 31373 | 67.5 |
-| `MCRNUringDriverBrokenResetBeforeReap.cfg` | `NoReuseWhileKernelOwned` | 12 | 1007 | 459 | 6.6 |
-| `MCRNUringDriverBrokenOneBank.cfg` | `ExposedStable` | 12 | 27 | 22 | 6.1 |
-
-`MaxSteps = 3` also passed when run by hand with raw TLC: 194972 distinct
-states in 2 min 51 s, over the 110 s record budget. That run is not a
-record. Under the budget rule, the committed instance is `MaxSteps = 2`.
+| `MCRNUringDriver.cfg` | pass (6 invariants, 2 properties) | 0 | 329423 | 90259 | 53.7 |
+| `MCRNUringDriverBrokenResetBeforeReap.cfg` | `NoReuseWhileKernelOwned` | 12 | 732 | 360 | 0.7 |
+| `MCRNUringDriverBrokenOneBank.cfg` | `ExposedStable` | 12 | 110 | 67 | 0.7 |
+| `MCRNUringDriverBrokenUnboundedReap.cfg` | `ReapWithinBudget` | 12 | 964 | 457 | 0.7 |
 
 ## Counterexamples, checked by hand against THE DESIGN
 
@@ -154,13 +172,14 @@ reservation index to 0". The trace is a real defect of the broken rule, not
 a model artifact.
 
 **BrokenOneBank** (`ReapIntoFill = FALSE`): Reap copies a receive CQE into
-the exposed bank. TLC printed three states:
+the exposed bank. TLC printed four states:
 
 1. Init.
-2. `KernelFill(1)`: buffer 1 is `Filled` with datagram 1, and its receive
+2. `Submit`: a send_packets call with nothing staged begins.
+3. `KernelFill(1)`: buffer 1 is `Filled` with datagram 1, and its receive
    CQE is in cq.
-3. `Reap`: buffer 1 is `Copied` and exposed = {1}, while snap = {} and
-   gen = 0.
+4. `Reap`: inside that call, buffer 1 is `Copied` and exposed = {1}, while
+   snap = {} and gen = 0.
 
 By hand, against the design: the transport is reading the views of the
 exposed bank of generation 0, and no receive_packets has run. Under the
@@ -168,6 +187,25 @@ broken rule, a datagram reaped by the main thread lands in that bank, so
 the bank the transport is reading changes under it. The design forbids
 this with "Receive CQEs ... always go to the fill bank". This is a real
 defect.
+
+**BrokenUnboundedReap** (`BoundedReap = FALSE`): a call reaps until the cq
+is empty, the loop `rocketnet_server_uring_reap_available` ran before the
+budget. TLC printed six states:
+
+1. Init.
+2. `Submit`: a send_packets call begins (`work = 0`).
+3. `KernelFill(1)` and 4. `KernelFill(2)`: two datagrams arrive, two
+   receive CQEs are in cq.
+5. `Reap`: `work = 1`.
+6. `Reap`: `work = 2`, past `Budget = 1`.
+
+By hand, against the code before the budget: the same two CQEs reaped in
+one call is what `reap_available`'s `while ( true )` did in receive_packets
+and in a send_packets that submitted anything (an empty send_packets reaped
+nothing there; the model lets any call reap, which over-approximates it).
+With the kernel posting a CQE per arriving datagram and the buffer going
+back to the ring at each reap, that loop has no bound: the defect the
+budget removes. The trace is a real defect of the broken rule.
 
 Each witness fails on exactly its declared invariant (exit 12), and the
 control passes every invariant and both liveness properties.

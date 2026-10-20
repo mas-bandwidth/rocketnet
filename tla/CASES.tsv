@@ -128,6 +128,7 @@ MCRNFilterEpochsBrokenWrapToZero.cfg	MCRNFilterEpochs.tla	invariant	WrapSkipsZer
 MCRNUringDriver.cfg	MCRNUringDriver.tla	pass	-	check	rnuringdriver	required	-
 MCRNUringDriverBrokenResetBeforeReap.cfg	MCRNUringDriver.tla	invariant	NoReuseWhileKernelOwned	check	rnuringdriver	required	-
 MCRNUringDriverBrokenOneBank.cfg	MCRNUringDriver.tla	invariant	ExposedStable	check	rnuringdriver	required	-
+MCRNUringDriverBrokenUnboundedReap.cfg	MCRNUringDriver.tla	invariant	ReapWithinBudget	check	rnuringdriver	required	-
 MCFragmentsAndAcks.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	bench	committed-instance-safety-over-budget
 MCFragmentsAndAcksLive.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	bench	committed-instance-liveness-over-budget
 MCFragmentsAndAcksLiveSmall.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	required	-
@@ -170,6 +171,8 @@ MCRNEndpointBrokenOrderIgnored.cfg	MCRNEndpoint.tla	invariant	OrderedInOrder	ign
 MCRNXdpReplay.cfg	MCRNXdpReplay.tla	pass	-	check	rnxdpreplay	required	-
 MCRNXdpReplayBrokenKernelAdvances.cfg	MCRNXdpReplay.tla	invariant	FreshGenuineNeverDropped	check	rnxdpreplay	required	-
 MCRNXdpReplayBrokenNoForget.cfg	MCRNXdpReplay.tla	invariant	NewSessionNeverDroppedByOldMark	check	rnxdpreplay	required	-
+MCRNXdpReceiveRing.cfg	MCRNXdpReceiveRing.tla	pass	-	check	rnxdpreceivering	required	-
+MCRNXdpReceiveRingBrokenNoCancel.cfg	MCRNXdpReceiveRing.tla	invariant	FrameConservation	check	rnxdpreceivering	required	-
 MCRNRioDriver.cfg	MCRNRioDriver.tla	pass	-	check	rnriodriver	required	-
 MCRNRioDriverBrokenSwitchWithoutDrain.cfg	MCRNRioDriver.tla	invariant	NoReserveIntoPostedPhase	check	rnriodriver	required	-
 MCRNRioDriverBrokenFreeBeforeDrain.cfg	MCRNRioDriver.tla	invariant	FreedOnlyWhenDrained	check	rnriodriver	required	-
