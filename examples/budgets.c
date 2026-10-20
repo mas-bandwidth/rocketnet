@@ -87,6 +87,7 @@ int main( void )
     int reliable_received = 0;
     int unreliable_sent = 0;
     int reliable_sent = 0;
+    int runtime_budget_set = 0;
     const double start = rocketnet_time();
 
     while ( rocketnet_time() - start < 60.0 )
@@ -103,17 +104,9 @@ int main( void )
         // sent on channel 1, so the example checks none was lost. The server
         // takes its one queue in batches, each entry naming its channel; the
         // next batch call or update releases a batch
-        const uint8_t * data = NULL;
-        int bytes = 0;
         struct rocketnet_message_batch_t incoming;
         while ( rocketnet_client_receive_messages( client, &incoming ) )
-        {
-            for ( int i = 0; i < incoming.num_messages; i++ )
-            {
-                data = incoming.data[i];
-                bytes = incoming.bytes[i];
-            }
-        }
+            ;
         const int slot = rocketnet_client_index( client );
         struct rocketnet_message_batch_t batch;
         while ( rocketnet_server_receive_messages( server, &batch ) )
@@ -130,11 +123,18 @@ int main( void )
         // (4) queue this frame's outgoing messages, once connected
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
+            // set-send-kbps needs a CONNECTED client, so the runtime call waits
+            // for the handshake; the config's send_kbps set the starting rate
+            if ( !runtime_budget_set )
+            {
+                const enum rocketnet_status_t status = rocketnet_client_set_send_kbps( client, CLIENT_SEND_KBPS );
+                CHECK( status == ROCKETNET_STATUS_OK );
+                printf( "runtime set-send-kbps returned %d\n", (int) status );
+                runtime_budget_set = 1;
+            }
             // unreliable messages over budget are dropped and counted at send
             if ( !unreliable_sent )
             {
-                CHECK( rocketnet_client_set_send_kbps( client, CLIENT_SEND_KBPS ) == ROCKETNET_STATUS_OK );
-                printf( "runtime set-send-kbps returned 1\n" );
                 CHECK( send_burst( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, UNRELIABLE_COUNT ) );
                 unreliable_sent = 1;
             }
