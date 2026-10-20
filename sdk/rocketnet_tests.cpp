@@ -12267,9 +12267,11 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
                 // checks termination only (the driver list's CONTENT is
                 // parsed by the ladder at create, which this walk never
                 // reaches), so a per-field special case here would be
-                // decoration
+                // decoration. the value is cut to the field's capacity, so
+                // the 16-byte interface_name row takes "value-under-tes"
 
-                snprintf( value_string, sizeof(value_string), "value-under-test" );
+                const size_t capacity = (size_t) field->size < sizeof(value_string) ? (size_t) field->size : sizeof(value_string);
+                snprintf( value_string, capacity, "value-under-test" );
             }
             break;
 

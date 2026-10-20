@@ -24,6 +24,11 @@
 #include <limits.h>
 #include <string.h>
 
+#if defined( __linux__ )
+#include <net/if.h>
+ROCKETNET_STATIC_ASSERT( sizeof( ( (struct rocketnet_server_transport_config_t *) 0 )->interface_name ) == IFNAMSIZ, "an interface name holds IFNAMSIZ bytes with its terminator" );
+#endif
+
 // ---------------------------------------------------------------
 //                     the contracts this file keeps
 // ---------------------------------------------------------------
@@ -189,6 +194,8 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     if ( !rn_copy_config_string( transport->driver, sizeof( transport->driver ), config->transport, "auto", "server", "transport" ) )
         return false;
     if ( !rn_copy_config_string( transport->public_address, sizeof( transport->public_address ), config->public_address, "", "server", "public_address" ) )
+        return false;
+    if ( !rn_copy_config_string( transport->interface_name, sizeof( transport->interface_name ), config->interface_name, "", "server", "interface_name" ) )
         return false;
 
     rocketnet_message_default_config( message );
@@ -925,6 +932,7 @@ static void rn_server_config_from_transport_current( struct rocketnet_server_con
     config->simulated_duplicate_percent = transport->simulated_duplicate_percent;
     config->transport = NULL;
     config->public_address = NULL;
+    config->interface_name = NULL;
     config->per_client_send_kbps = ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS;
     struct rocketnet_message_config_t message;
     rocketnet_message_default_config( &message );

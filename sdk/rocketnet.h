@@ -1113,6 +1113,19 @@ struct rocketnet_server_config_t
     const char * transport;                         // ROCKETNET_SERVER_TRANSPORT: the candidate list; NULL is "auto"; every transport, xdp included, serves IPv4 and IPv6, one family per server (the family of its public address)
     /** @brief ROCKETNET_SERVER_PUBLIC_ADDRESS: "a.b.c.d:port" or "[v6]:port"; NULL is the create call's address */
     const char * public_address;                    // ROCKETNET_SERVER_PUBLIC_ADDRESS: "a.b.c.d:port" or "[v6]:port"; NULL is the create call's address
+    /**
+     * @brief ROCKETNET_SERVER_INTERFACE_NAME: a network interface name; NULL or "" is none; at most 15 bytes, IFNAMSIZ (16) with its terminator.
+     *
+     * rocketnet_server_validate_config() refuses a name of 16 bytes or more
+     * with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE and one error line naming the
+     * field; rocketnet_server_required_memory() returns 0 for it and
+     * rocketnet_server_create() returns NULL. A longer environment value is
+     * refused at rocketnet_server_start() (ROCKETNET_STATUS_CONFIG_ENV_INVALID)
+     * with one error line naming the variable. That length check is the only
+     * read of this field: the xdp transport finds its interface from the
+     * public address.
+     */
+    const char * interface_name;                    // ROCKETNET_SERVER_INTERFACE_NAME: NULL or "" is none; at most 15 bytes (IFNAMSIZ 16 with the terminator); refused at validation when longer; only that check reads it
     /** @brief ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS: each client's send budget, kbps; default 10000; 0 or less disables the budget in this direction (server to each client), NOT RECOMMENDED; above ROCKETNET_SEND_BUDGET_MAX_KBPS is refused */
     int per_client_send_kbps;                       // ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS: each client's send budget, kbps; default 10000; 0 or less disables the budget in this direction (server to each client), NOT RECOMMENDED; above ROCKETNET_SEND_BUDGET_MAX_KBPS is refused
     /** @brief ROCKETNET_SERVER_NUM_CHANNELS: the channels messages are sent and received on; WIRE; 1 .. ROCKETNET_MAX_CHANNELS; default 32 */

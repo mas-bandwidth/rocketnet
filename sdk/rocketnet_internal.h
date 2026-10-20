@@ -499,7 +499,8 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
     INT_FIELD(    simulated_jitter_ms,         0,                         0, 60000,                                            0 )                          \
     INT_FIELD(    simulated_duplicate_percent, 0,                         0, 100,                                              0 )                          \
     INT_FIELD(    simulated_drop_every_nth,    0,                         2, 1000000,                                          ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
-    INT_FIELD(    simulated_reverse_window,    0,                         2, 64,                                               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT )
+    INT_FIELD(    simulated_reverse_window,    0,                         2, 64,                                               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
+    STRING_FIELD( interface_name,              16,                    "",                                                  0 )
 
 /** @brief Size in bytes of the server transport config before game_clock_epoch. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, handshake_deadline_seconds ) + sizeof( int ), sizeof( uint64_t ) )
@@ -507,10 +508,12 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, game_clock_epoch ) + sizeof( uint64_t ), sizeof( uint64_t ) )
 /** @brief Size in bytes of the server transport config with the public link simulator fields, before the deterministic drop and reverse patterns. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2_PRE_PATTERNS ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, simulated_duplicate_percent ) + sizeof( int ), sizeof( uint64_t ) )
-/** @brief Current known server transport config size, in bytes: the deterministic drop and reverse patterns. */
+/** @brief Size in bytes of the server transport config with the deterministic drop and reverse patterns, before interface_name. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, simulated_reverse_window ) + sizeof( int ), sizeof( uint64_t ) )
-/** @brief Current known server transport config size, in bytes. */
-#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2_PRE_PATTERNS, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2
+/** @brief Current known server transport config size, in bytes: interface_name. */
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, interface_name ) + 16, sizeof( uint64_t ) )
+/** @brief Every known server transport config size, in bytes, oldest first. */
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2_PRE_PATTERNS, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3
 
 #if ROCKETNET_MAX_CHANNELS < 1 || ROCKETNET_MAX_CHANNELS > 65536
 #error ROCKETNET_MAX_CHANNELS must be between 1 and 65536

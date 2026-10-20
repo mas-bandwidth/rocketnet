@@ -737,6 +737,8 @@ struct rocketnet_server_transport_config_t
     int simulated_duplicate_percent;                // development only: simulated duplicate 0..100, 0 off
     int simulated_drop_every_nth;                   // development only: drop every Nth outgoing datagram (2 .. 1000000), counted from the first send; 0 off
     int simulated_reverse_window;                   // development only: reverse each window of W outgoing datagrams (2 .. 64), flushed whole at the end of each send_packets; 0 off
+    /** @brief NUL-terminated network interface name, at most 15 bytes (IFNAMSIZ 16 with the terminator); empty is none. Only the length check at validation reads it. */
+    char interface_name[16];                        // at most 15 bytes; "" is none; a longer env value is refused
 };
 
 // a NULL config is a counted no-op.
