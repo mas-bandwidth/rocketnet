@@ -6165,91 +6165,8 @@ void rocketnet_test_client_server_lossy_wire()
     rocketnet_counters_assert_conserved( &client_counters );
 }
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-static size_t swarm_rss_allocations;
-static size_t swarm_rss_requested_bytes;
-static size_t swarm_rss_live_bytes;
-static size_t swarm_rss_peak_bytes;
-static size_t swarm_rss_sizes[64];
-static size_t swarm_rss_size_counts[64];
-
-static void * swarm_rss_malloc( void *, size_t bytes )
-{
-    void * memory = HeapAlloc( GetProcessHeap(), 0, bytes );
-    if ( memory )
-    {
-        swarm_rss_allocations++;
-        for ( int i = 0; i < 64; ++i )
-        {
-            if ( swarm_rss_size_counts[i] == 0 || swarm_rss_sizes[i] == bytes )
-            {
-                swarm_rss_sizes[i] = bytes;
-                swarm_rss_size_counts[i]++;
-                break;
-            }
-        }
-        swarm_rss_requested_bytes += bytes;
-        swarm_rss_live_bytes += HeapSize( GetProcessHeap(), 0, memory );
-        if ( swarm_rss_live_bytes > swarm_rss_peak_bytes )
-            swarm_rss_peak_bytes = swarm_rss_live_bytes;
-    }
-    return memory;
-}
-
-static void swarm_rss_free( void *, void * memory )
-{
-    if ( memory )
-    {
-        swarm_rss_live_bytes -= HeapSize( GetProcessHeap(), 0, memory );
-        HeapFree( GetProcessHeap(), 0, memory );
-    }
-}
-
-// The Windows Debug CRT malloc fills every block it returns, which touches every
-// page of the swarm's server ACK history and reassembly sets, sized for all 1000
-// clients up front. rocketnet_test_swarm touches only the parts its traffic
-// uses; HeapAlloc returns the block unfilled, so untouched pages stay out of the
-// resident set. Every buffer keeps its size.
-static void swarm_rss_allocator_begin()
-{
-    swarm_rss_allocations = 0;
-    swarm_rss_requested_bytes = 0;
-    swarm_rss_live_bytes = 0;
-    swarm_rss_peak_bytes = 0;
-    memset( swarm_rss_sizes, 0, sizeof( swarm_rss_sizes ) );
-    memset( swarm_rss_size_counts, 0, sizeof( swarm_rss_size_counts ) );
-    rocketnet_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_allocator_ex( swarm_rss_malloc, swarm_rss_free ) == ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
-}
-
-static void swarm_rss_allocator_end()
-{
-    rocketnet_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
-    rocketnet_check( swarm_rss_live_bytes == 0 );
-    // Opt-in allocation receipt for a directly selected case, never normal
-    // suite output. HeapSize measures allocated bytes, not resident pages.
-    if ( getenv( "ROCKETNET_TEST_RSS_PROFILE" ) )
-    {
-        printf( "swarm allocations=%llu requested_bytes=%llu peak_heap_bytes=%llu\n",
-                (unsigned long long) swarm_rss_allocations,
-                (unsigned long long) swarm_rss_requested_bytes,
-                (unsigned long long) swarm_rss_peak_bytes );
-        for ( int i = 0; i < 64 && swarm_rss_size_counts[i]; ++i )
-            printf( "swarm allocation_bytes=%llu calls=%llu\n",
-                    (unsigned long long) swarm_rss_sizes[i],
-                    (unsigned long long) swarm_rss_size_counts[i] );
-    }
-    rocketnet_check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
-}
-#endif
-
 void rocketnet_test_swarm()
 {
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    swarm_rss_allocator_begin();
-#endif
     // ALWAYS BE LOADED: a thousand real clients against one server, in
     // memory on a direct wire, with churn -- most connect and stay, some
     // connect and leave, some abandon mid-handshake so the deadline reclaim
@@ -6512,9 +6429,6 @@ void rocketnet_test_swarm()
     rocketnet_free( NULL, clients );
     rocketnet_free( NULL, addresses );
     rocketnet_test_server_teardown( &test );
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    swarm_rss_allocator_end();
-#endif
     rocketnet_counters_assert_conserved( &client_counters );
 }
 
