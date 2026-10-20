@@ -34,8 +34,7 @@
 // 7.5 admits a type; a disabled type is refused on send
 // (ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED) and counted as a violation
 // on receive (ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED). Each later type's
-// case lives in its own file so its card runs
-// without touching this one:
+// case lives in its own file:
 //
 //   sdk/rocketnet_channel_reliable.cpp    code 2
 //   sdk/rocketnet_channel_sequenced.cpp   codes 1 and 4
@@ -64,7 +63,7 @@
 
 // what a dispatch did with one record (docs/CHANNELS.md 7.2)
 
-#define ROCKETNET_CHANNEL_DISPATCH_NONE                         0   // nothing: refused, counted, or held by a later card
+#define ROCKETNET_CHANNEL_DISPATCH_NONE                         0   // nothing: refused or counted
 #define ROCKETNET_CHANNEL_DISPATCH_DELIVERED                    1   // a view into the batch, or a delivery from the ring
 #define ROCKETNET_CHANNEL_DISPATCH_HELD                         2   // kept ahead of its turn, live (7.2, 7.3)
 #define ROCKETNET_CHANNEL_DISPATCH_STALE                        3   // dropped, counted (7.3)
@@ -259,8 +258,6 @@ void rn_channels_end_update_sequenced( struct rn_channels_t * channels );
 // RNReceipts EffectiveKind: returns wire code 2 or 3 for public receipt
 // types 6 or 7, and -1 for every other type. No wire receipt code is sent.
 int rn_channels_reliable_receipt_base( int type );
-
-int rn_channels_dispatch_receipt( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out );
 
 // Counts one receive violation on the owner's counters, once per record:
 // ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED for a code its mask does not

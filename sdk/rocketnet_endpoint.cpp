@@ -241,7 +241,7 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
     }
     else
     {
-        // the remaining types are refused until their cards enable them (7.5)
+        // a type outside the enabled mask is refused (7.5)
         if ( reliability >= 0 && reliability < ROCKETNET_CHANNEL_NUM_TYPES )
             rn_channels_send_check( &endpoint->ordered.channels, reliability, (uint32_t) channel );
         else
@@ -563,8 +563,8 @@ uint32_t rn_endpoint_send( struct rn_endpoint_t * endpoint, const uint8_t * data
                            int reliability, int priority, int channel, uint32_t serial )
 {
     // tla/RNEndpoint.tla Send (10.1): start, the one copy, finish. Per-send
-    // priority is the four-priorities card's (9.3): MEDIUM is the one level
-    // a send takes today, and any other is refused.
+    // priority (9.3): MEDIUM is the one level a send takes, and any other is
+    // refused.
     if ( !data || priority != ROCKETNET_PRIORITY_MEDIUM )
     {
         rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
@@ -597,7 +597,7 @@ void rn_endpoint_on_payload( struct rn_endpoint_t * endpoint, const uint8_t * pa
     // tla/RNEndpoint.tla OnPayload (RNChannel OpenPacket, DeliverMessage):
     // layer 2's reader, then each record through the window and the dispatch
     // (13.3). A violation is held for rn_endpoint_error. The CONFIG
-    // comparison (ConfigCompare) is the CONFIG card's, inside the dispatch.
+    // comparison (ConfigCompare) runs inside the dispatch.
     (void) now;
     const uint32_t before = rn_ordered_deliveries( &endpoint->ordered );
     rn_ordered_receive( &endpoint->ordered, payload, bytes );
