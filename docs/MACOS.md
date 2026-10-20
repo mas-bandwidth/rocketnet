@@ -92,8 +92,11 @@ same operation tables (`sdk/rocketnet_driver_builtin.cpp`,
 **msgx** is the darwin batch pump over `sendmsg_x` and `recvmsg_x`
 (`sdk/rocketnet_platform.cpp`, the block that opens "The darwin batch pump").
 The two symbols are resolved with `dlsym` at platform init, with no link-time
-reference, so their absence is never a load failure. At socket create, a
-non-blocking socket with both symbols runs one real `recvmsg_x` as a probe; a
+reference, so their absence is never a load failure. macOS resolves them
+with `dlsym`; iOS keeps the portable pump and omits `msgx` from its built-in
+resource plan because the private symbols are not resolved there. At socket
+create, a non-blocking socket with both symbols runs `recvmsg_x` with
+`MSG_PEEK` as a probe, so it leaves queued traffic available to the pump. A
 result of zero or more, or `EAGAIN`/`EWOULDBLOCK`, grants the pump, and any
 other errno leaves that socket on the portable per-packet loop (the probe block
 under `#if TARGET_OS_OSX` in `rocketnet_platform_socket_create_internal`).

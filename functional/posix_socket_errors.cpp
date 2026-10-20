@@ -61,6 +61,10 @@ static void posix_check_impl( bool condition, const char * text, const char * fi
 
 #define posix_check( condition ) posix_check_impl( (condition), #condition, __FILE__, __LINE__ )
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+void rocketnet_platform_set_msgx_probe_test_hook( void (*hook)( int socket ) );
+#endif
+
 // ---------------------------------------------------
 // the Linux native server drivers (gso, io_uring) own their sockets, so no
 // platform socket appears for them; their size pass runs before the
@@ -831,6 +835,59 @@ static void posix_send_seam_socket( int ipv6, const char * pump )
     rocketnet_platform_socket_destroy( socket );
 }
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+static void posix_msgx_probe_send_datagram( int handle )
+{
+    struct sockaddr_storage storage;
+    socklen_t address_bytes = sizeof(storage);
+    posix_check( getsockname( handle, (struct sockaddr*) &storage, &address_bytes ) == 0 );
+    posix_check( storage.ss_family == AF_INET );
+
+    struct sockaddr_in * address = (struct sockaddr_in*) &storage;
+    address->sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+
+    const int sender = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    posix_check( sender >= 0 );
+    static const uint8_t payload[] = { 0x4d, 0x53, 0x47, 0x58, 0x01 };
+    posix_check( sendto( sender, payload, sizeof(payload), 0, (struct sockaddr*) address, sizeof(*address) ) == (ssize_t) sizeof(payload) );
+    close( sender );
+}
+
+static void posix_msgx_create_probe_keeps_first_datagram()
+{
+    const int reservation = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    posix_check( reservation >= 0 );
+    struct sockaddr_in reserved_address;
+    memset( &reserved_address, 0, sizeof(reserved_address) );
+    reserved_address.sin_family = AF_INET;
+    reserved_address.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+    posix_check( bind( reservation, (struct sockaddr*) &reserved_address, sizeof(reserved_address) ) == 0 );
+    socklen_t address_bytes = sizeof(reserved_address);
+    posix_check( getsockname( reservation, (struct sockaddr*) &reserved_address, &address_bytes ) == 0 );
+    const uint16_t port = ntohs( reserved_address.sin_port );
+    close( reservation );
+
+    rocketnet_address_t bind_address;
+    rocketnet_address_parse( &bind_address, "127.0.0.1" );
+    bind_address.port = port;
+    rocketnet_platform_set_msgx_probe_test_hook( posix_msgx_probe_send_datagram );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_with_pump(
+        NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0,
+        ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE, "msgx" );
+    rocketnet_platform_set_msgx_probe_test_hook( NULL );
+    posix_check( socket != NULL );
+    posix_check( strcmp( rocketnet_platform_socket_pump( socket ), "msgx" ) == 0 );
+
+    uint8_t received[16];
+    rocketnet_address_t from;
+    const int bytes = rocketnet_platform_socket_receive_packet( socket, &from, received, sizeof(received) );
+    static const uint8_t payload[] = { 0x4d, 0x53, 0x47, 0x58, 0x01 };
+    posix_check( bytes == (int) sizeof(payload) );
+    posix_check( memcmp( received, payload, sizeof(payload) ) == 0 );
+    rocketnet_platform_socket_destroy( socket );
+}
+#endif
+
 void rocketnet_test_posix_platform_send_seam()
 {
     for ( int ipv6 = 0; ipv6 < 2; ipv6++ )
@@ -840,6 +897,9 @@ void rocketnet_test_posix_platform_send_seam()
         posix_send_seam_socket( ipv6, "msgx" );
 #endif
     }
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    posix_msgx_create_probe_keeps_first_datagram();
+#endif
 }
 
 // ---------------------------------------------------

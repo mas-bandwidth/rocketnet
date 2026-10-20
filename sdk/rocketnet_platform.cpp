@@ -2026,6 +2026,16 @@ typedef ssize_t (*rocketnet_recvmsg_x_fn)( int s, struct rocketnet_msghdr_x_t * 
 static rocketnet_sendmsg_x_fn rocketnet_sendmsg_x = NULL;
 static rocketnet_recvmsg_x_fn rocketnet_recvmsg_x = NULL;
 
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+typedef void (*rocketnet_msgx_probe_test_hook_t)( int socket );
+static rocketnet_msgx_probe_test_hook_t rocketnet_msgx_probe_test_hook = NULL;
+
+void rocketnet_platform_set_msgx_probe_test_hook( rocketnet_msgx_probe_test_hook_t hook )
+{
+    rocketnet_msgx_probe_test_hook = hook;
+}
+#endif
+
 // the seam batch: how many messages one syscall carries. matches the
 // transport's own batch shape; chunking inside the pump keeps the stack
 // arrays small and bounded.
@@ -2430,10 +2440,9 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
 
     // the batch pump probe: resolved symbols, a non-blocking socket (the
     // pump's spin discipline assumes it), no environment override, and one
-    // real recvmsg_x against the just-bound socket -- a live syscall
-    // answers EAGAIN (or delivers, if the socket bound a fixed port that
-    // already had traffic queued: that consumes one datagram, priced as
-    // the UDP loss it is), and anything else (ENOSYS on a kernel that
+    // real recvmsg_x with MSG_PEEK against the just-bound socket -- a live
+    // syscall answers EAGAIN (or observes an already queued datagram without
+    // consuming it), and anything else (ENOSYS on a kernel that
     // dropped the syscall, EOPNOTSUPP, EINVAL on an ABI drift) leaves the
     // socket on the portable pump. degradation is silent above the seam.
 
@@ -2442,6 +2451,11 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
         const char * pump_override = rocketnet_platform_getenv( "ROCKETNET_PUMP" );
         if ( !pump_override || strcmp( pump_override, "portable" ) != 0 )
         {
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+            if ( rocketnet_msgx_probe_test_hook )
+                rocketnet_msgx_probe_test_hook( socket->handle );
+#endif
+
             uint8_t probe_data[64];
             struct sockaddr_storage probe_name;
             struct iovec probe_iov;
@@ -2455,7 +2469,7 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
             probe_msg.msg_iovlen = 1;
 
             errno = 0;
-            ssize_t probe_result = rocketnet_recvmsg_x( socket->handle, &probe_msg, 1, 0 );
+            ssize_t probe_result = rocketnet_recvmsg_x( socket->handle, &probe_msg, 1, MSG_PEEK );
             if ( probe_result >= 0 || errno == EAGAIN || errno == EWOULDBLOCK )
             {
                 socket->msgx = true;
