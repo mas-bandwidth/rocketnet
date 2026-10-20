@@ -75,6 +75,12 @@ struct rocketnet_server_socket_send_buffer_t
 
     std::atomic<int> num_packets{0};
 
+    // finish and abort refuse a packet index below this: 0 for a generation
+    // acquired empty, the packet count already published for a generation
+    // reopened by rocketnet_send_handoff_t::reopen (rocketnet_send_handoff.h),
+    // so a pointer from before that publish never rewrites a published packet
+    int finish_base;
+
     uint8_t padding_1[4096];
 
     int packet_start_index;
@@ -2100,7 +2106,7 @@ int rocketnet_server_socket_state( rocketnet_server_socket_t * server_socket )
     return server_socket->state;
 }
 
-static void rocketnet_server_socket_acquire_send_buffer( rocketnet_server_xdp_socket_t * socket );
+static void rocketnet_server_socket_acquire_send_buffer( rocketnet_server_xdp_socket_t * socket, bool reopen );
 
 uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, int queue, const rocketnet_address_t * to, const uint8_t * destination_mac )
 {
@@ -2111,8 +2117,10 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
     {
         // Slow path after both generations were queued. A worker may have
         // retired one since the last flush; recovery needs no extra update.
+        // When it has not, the newest queued generation is reopened and
+        // staging continues after its packets.
         rocketnet_platform_mutex_acquire( &socket->send_mutex );
-        rocketnet_server_socket_acquire_send_buffer( socket );
+        rocketnet_server_socket_acquire_send_buffer( socket, true );
         flow_index = socket->send_flow_index.load( std::memory_order_relaxed );
         rocketnet_platform_mutex_release( &socket->send_mutex );
         if ( flow_index < 0 ) return NULL;
@@ -2198,7 +2206,7 @@ void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * s
     // failing closed turns a contract violation into a lost packet instead
     // of an out-of-bounds write
 
-    if ( packet_index < 0 || packet_index >= ROCKETNET_XDP_SEND_QUEUE_SIZE )
+    if ( packet_index < send_buffer->finish_base || packet_index >= ROCKETNET_XDP_SEND_QUEUE_SIZE )
         return;
 
     // the packet is complete wire bytes as the protocol wrote them; nothing
@@ -2225,7 +2233,7 @@ void rocketnet_server_socket_abort_packet( struct rocketnet_server_socket_t * se
 
     const int packet_index = (int) ( offset / ROCKETNET_XDP_FRAME_SIZE );
 
-    if ( packet_index < 0 || packet_index >= ROCKETNET_XDP_SEND_QUEUE_SIZE )
+    if ( packet_index < send_buffer->finish_base || packet_index >= ROCKETNET_XDP_SEND_QUEUE_SIZE )
         return;
 
     send_buffer->packet_info[packet_index].packet_bytes = 0;
@@ -2233,15 +2241,33 @@ void rocketnet_server_socket_abort_packet( struct rocketnet_server_socket_t * se
 
 // With send_mutex held. Only an unowned producer generation can acquire;
 // publish its index after resetting the retired buffer for concurrent fills.
-static void rocketnet_server_socket_acquire_send_buffer( rocketnet_server_xdp_socket_t * socket )
+// With reopen (the start_packet slow path, a packet needing storage now) and
+// no generation free, the newest queued generation the worker has not started
+// is taken back unreset: its published packets stay queued, and finish_base
+// keeps them out of reach of finish and abort.
+static void rocketnet_server_socket_acquire_send_buffer( rocketnet_server_xdp_socket_t * socket, bool reopen )
 {
     if ( socket->send_flow_index.load( std::memory_order_relaxed ) >= 0 ) return;
-    const int index = socket->send_handoff.acquire();
+    int index = socket->send_handoff.acquire();
     if ( index >= 0 )
     {
         auto * buffer = &socket->send_buffer[index];
         buffer->num_packets = 0;
         buffer->packet_start_index = 0;
+        buffer->finish_base = 0;
+        socket->send_flow_index.store( index, std::memory_order_release );
+        return;
+    }
+    if ( !reopen )
+        return;
+    index = socket->send_handoff.reopen();
+    if ( index >= 0 )
+    {
+        auto * buffer = &socket->send_buffer[index];
+        int published = buffer->num_packets.load( std::memory_order_relaxed );
+        if ( published > ROCKETNET_XDP_SEND_QUEUE_SIZE )
+            published = ROCKETNET_XDP_SEND_QUEUE_SIZE;
+        buffer->finish_base = published;
         socket->send_flow_index.store( index, std::memory_order_release );
     }
 }
@@ -2258,7 +2284,7 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
             socket->send_handoff.publish();
             socket->send_flow_index.store( -1, std::memory_order_relaxed );
         }
-        rocketnet_server_socket_acquire_send_buffer( socket );
+        rocketnet_server_socket_acquire_send_buffer( socket, false );
         rocketnet_platform_mutex_release( &socket->send_mutex );
     }
 }
@@ -2392,7 +2418,7 @@ bool rocketnet_server_socket_test_inactive_generation()
     static const uint8_t test_gateway_mac[ETH_ALEN] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x02 };
     rocketnet_xdp_reply_macs_reset(&server->reply_macs, test_gateway_mac);
     rocketnet_platform_mutex_create(&socket->send_mutex);
-    rocketnet_server_socket_acquire_send_buffer(socket);
+    rocketnet_server_socket_acquire_send_buffer(socket, false);
     rocketnet_address_t to = {};
     to.type = ROCKETNET_ADDRESS_IPV4;
     uint8_t * packets[ROCKETNET_XDP_NUM_BUFFERS] = {};
@@ -2412,28 +2438,49 @@ bool rocketnet_server_socket_test_inactive_generation()
         valid &= socket->send_buffer[generation].packet_info[1].packet_bytes == 0;
         rocketnet_server_socket_send_packets(server);
     }
-    valid &= socket->send_flow_index.load() == -1;
+    // a failed check names its own line on stderr
+    auto expect = [&valid](bool condition, int line)
+    {
+        if (!condition)
+            fprintf(stderr, "rocketnet_server_socket_test_inactive_generation: check failed at %s:%d\n", __FILE__, line);
+        valid &= condition;
+    };
+    expect(socket->send_flow_index.load() == -1, __LINE__);
     if (valid)
     {
-        // Both generations belong to the worker. The sanitizer negative control
-        // detects inactive-buffer pointer formation; the length assertions
-        // below separately check preservation of published packet metadata.
-        uint64_t refused_id;
-        valid &= rocketnet_server_socket_start_packet(server, &to, &refused_id) == NULL;
+        // Both generations belong to the worker, and it has started neither
+        // (no worker runs here): two flushes inside one worker latency. A
+        // packet staged now is not refused; the newest queued generation is
+        // reopened and the packet lands after its two published packets.
+        uint64_t reopened_id;
+        uint8_t * reopened = rocketnet_server_socket_start_packet(server, &to, &reopened_id);
+        expect(reopened == socket->send_buffer[1].packet_data[2], __LINE__);
+        expect(socket->send_handoff.front() == 0, __LINE__);
+        // Pointers from before the last flip never rewrite a published
+        // packet: one into the other generation is out of range, one into the
+        // reopened generation is below its finish_base.
         rocketnet_server_socket_finish_packet(server, ids[0], packets[0], 17);
         rocketnet_server_socket_abort_packet(server, ids[1], packets[1]);
         for (int generation = 0; generation < ROCKETNET_XDP_NUM_BUFFERS; ++generation)
-            valid &= socket->send_buffer[generation].packet_info[0].packet_bytes == size_t(64 + generation);
+            expect(socket->send_buffer[generation].packet_info[0].packet_bytes == size_t(64 + generation), __LINE__);
+        if (reopened)
+        {
+            rocketnet_server_socket_finish_packet(server, reopened_id, reopened, 90);
+            expect(socket->send_buffer[1].packet_info[2].packet_bytes == 90, __LINE__);
+        }
+        // The flush queues the reopened generation again, with all three.
         rocketnet_server_socket_send_packets(server);
-        valid &= socket->send_flow_index.load() == -1;
+        expect(socket->send_flow_index.load() == -1, __LINE__);
+        expect(socket->send_buffer[1].num_packets.load() == 3, __LINE__);
         socket->send_handoff.retire(); // No worker exists; retire one copied generation.
+        expect(socket->send_handoff.front() == 1, __LINE__);
         uint64_t id;
         uint8_t * packet = rocketnet_server_socket_start_packet(server, &to, &id);
-        valid &= packet == packets[0];
+        expect(packet == packets[0], __LINE__);
         if (packet)
         {
             rocketnet_server_socket_finish_packet(server, id, packet, 100);
-            valid &= socket->send_buffer[0].packet_info[0].packet_bytes == 100;
+            expect(socket->send_buffer[0].packet_info[0].packet_bytes == 100, __LINE__);
         }
     }
     rocketnet_platform_mutex_destroy(&socket->send_mutex);
