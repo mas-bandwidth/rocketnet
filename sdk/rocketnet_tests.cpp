@@ -71,6 +71,8 @@
 #include <thread>
 #include <vector>
 
+#include "../test/suite_runner.h"
+
 // the request path's cookie mac generations, on this thread since it
 // started: defined in rocketnet_server_protocol.cpp, read here as the
 // gate-cost test's instrument.
@@ -6331,6 +6333,56 @@ void rocketnet_test_client_server_lossy_wire()
     rocketnet_counters_assert_conserved( &client_counters );
 }
 
+// test_swarm's server: ROCKETNET_MAX_CLIENTS clients, the transport's map
+// ratios (ROCKETNET_ENCRYPTION_MAP_RATIO 2, ROCKETNET_USED_TOKEN_HISTORY_RATIO
+// 8), four reassembly slots of 16384 bytes and a delivered capacity of four
+// per client. The case and its bound read these, so they cannot drift apart.
+
+enum
+{
+    ROCKETNET_SWARM_CLIENTS = ROCKETNET_MAX_CLIENTS,
+    ROCKETNET_SWARM_ENCRYPTION_MAP = ROCKETNET_SWARM_CLIENTS * 2,
+    ROCKETNET_SWARM_TOKEN_HISTORY = ROCKETNET_SWARM_CLIENTS * 8,
+    ROCKETNET_SWARM_REASSEMBLY_SLOTS = 4,
+    ROCKETNET_SWARM_PAYLOAD_BYTES = 16384,
+    ROCKETNET_SWARM_DELIVERED = ROCKETNET_SWARM_CLIENTS * 4,
+    ROCKETNET_SWARM_RSS_MARGIN_MB = 32
+};
+
+// test_swarm's peak resident bound. The swarm is a full-capacity server: its
+// ACK history and reassembly are allocated for every client up front, by
+// design, and the Windows Debug CRT fills every block it returns, so the
+// whole allocation is resident there. The bound is the sum of the server
+// memory plan's own per-component accounting for the components the swarm
+// creates (the functions rocketnet_server_transport_memory_plan adds up,
+// each with rocketnet_allocation_overhead per block), plus its client
+// protocols and addresses, plus a stated 32 MiB margin for the process
+// itself. The swarm creates no transport, send arena or driver, so those
+// plan terms are left out. A regression above the plan fails the case.
+
+static long rocketnet_test_swarm_rss_bound_mb()
+{
+    const int n = ROCKETNET_SWARM_CLIENTS;
+    const uint64_t parts[] =
+    {
+        rocketnet_encryption_map_allocation_bytes( ROCKETNET_SWARM_ENCRYPTION_MAP ),
+        rocketnet_token_table_allocation_bytes( ROCKETNET_SWARM_TOKEN_HISTORY ),
+        rocketnet_client_slots_allocation_bytes( n ),
+        rocketnet_server_acks_allocation_bytes( n ),
+        rocketnet_memory_allocations( { rocketnet_reassembly_memory_required( n, ROCKETNET_SWARM_REASSEMBLY_SLOTS,
+                                          ROCKETNET_SWARM_PAYLOAD_BYTES, ROCKETNET_SWARM_DELIVERED ) } ),
+        rocketnet_memory_allocations( { (uint64_t) n * sizeof( struct rocketnet_client_protocol_t ),
+                                        (uint64_t) n * sizeof( struct rocketnet_address_t ) } ),
+    };
+    uint64_t planned = 0;
+    for ( uint64_t bytes : parts )
+        if ( !bytes || !rocketnet_memory_add( planned, 1, bytes ) )
+            return 0;
+    return suite_rss_bound_mb( planned, ROCKETNET_SWARM_RSS_MARGIN_MB );
+}
+
+SUITE_CASE_RSS_BOUND( test_swarm, rocketnet_test_swarm_rss_bound_mb );
+
 void rocketnet_test_swarm()
 {
     // ALWAYS BE LOADED: a thousand real clients against one server, in
@@ -6340,7 +6392,7 @@ void rocketnet_test_swarm()
     // the whole time. The counters must account for every packet exactly,
     // and the reasons that must never fire must be exactly zero at the end.
 
-    const int num_clients = 1000;
+    const int num_clients = ROCKETNET_SWARM_CLIENTS;
     const int num_garbage_senders = 50;
 
     struct rocketnet_test_server_t test;
@@ -6351,10 +6403,11 @@ void rocketnet_test_swarm()
     rocketnet_server_acks_destroy( test.server.acks );
     rocketnet_reassembly_set_destroy( test.server.reassembly );
     test.server.client_slots = rocketnet_client_slots_create( NULL, num_clients );
-    test.server.encryption_map = rocketnet_encryption_map_create( NULL, num_clients * 2 );
-    test.server.used_token_history = rocketnet_used_token_history_create( NULL, num_clients * 8 );
+    test.server.encryption_map = rocketnet_encryption_map_create( NULL, ROCKETNET_SWARM_ENCRYPTION_MAP );
+    test.server.used_token_history = rocketnet_used_token_history_create( NULL, ROCKETNET_SWARM_TOKEN_HISTORY );
     test.server.acks = rocketnet_server_acks_create( NULL, num_clients );
-    test.server.reassembly = rocketnet_reassembly_set_create( NULL, num_clients, 4, 16384, num_clients * 4 );
+    test.server.reassembly = rocketnet_reassembly_set_create( NULL, num_clients, ROCKETNET_SWARM_REASSEMBLY_SLOTS,
+                                                              ROCKETNET_SWARM_PAYLOAD_BYTES, ROCKETNET_SWARM_DELIVERED );
     rocketnet_check( test.server.client_slots && test.server.encryption_map && test.server.used_token_history && test.server.acks && test.server.reassembly );
     rocketnet_reassembly_set_begin_update( test.server.reassembly );
 
