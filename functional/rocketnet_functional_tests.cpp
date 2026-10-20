@@ -8258,6 +8258,26 @@ extern void windows_connreset_send_to_closed_port_rio_ipv6();
 extern void windows_client_connreset_server_gone_ipv4();
 extern void windows_client_connreset_server_gone_ipv6();
 extern void windows_connreset_child_client();
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_hard_killed_client_portable_ipv4, "windows_connreset_hard_killed_client_portable_ipv4", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_hard_killed_client_portable_ipv6, "windows_connreset_hard_killed_client_portable_ipv6", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_hard_killed_client_iocp_ipv4, "windows_connreset_hard_killed_client_iocp_ipv4", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_hard_killed_client_iocp_ipv6, "windows_connreset_hard_killed_client_iocp_ipv6", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_hard_killed_client_iocp_plain_ipv4, "windows_connreset_hard_killed_client_iocp_plain_ipv4", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_hard_killed_client_iocp_plain_ipv6, "windows_connreset_hard_killed_client_iocp_plain_ipv6", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_hard_killed_client_rio_ipv4, "windows_connreset_hard_killed_client_rio_ipv4", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_hard_killed_client_rio_ipv6, "windows_connreset_hard_killed_client_rio_ipv6", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_send_to_closed_port_portable_ipv4, "windows_connreset_send_to_closed_port_portable_ipv4", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_send_to_closed_port_portable_ipv6, "windows_connreset_send_to_closed_port_portable_ipv6", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_send_to_closed_port_iocp_ipv4, "windows_connreset_send_to_closed_port_iocp_ipv4", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_send_to_closed_port_iocp_ipv6, "windows_connreset_send_to_closed_port_iocp_ipv6", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_send_to_closed_port_iocp_plain_ipv4, "windows_connreset_send_to_closed_port_iocp_plain_ipv4", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_send_to_closed_port_iocp_plain_ipv6, "windows_connreset_send_to_closed_port_iocp_plain_ipv6", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_send_to_closed_port_rio_ipv4, "windows_connreset_send_to_closed_port_rio_ipv4", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_send_to_closed_port_rio_ipv6, "windows_connreset_send_to_closed_port_rio_ipv6", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_client_connreset_server_gone_ipv4, "windows_client_connreset_server_gone_ipv4", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_client_connreset_server_gone_ipv6, "windows_client_connreset_server_gone_ipv6", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_child_client, "windows_connreset_child_client", "windows only: the Winsock connection-reset cases are not built on this platform" )
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 // A destroyed client's receive thread always exits: destroy stores quit and
@@ -8789,6 +8809,26 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "windows_client_connreset_server_gone_ipv4", windows_client_connreset_server_gone_ipv4 },
     { "windows_client_connreset_server_gone_ipv6", windows_client_connreset_server_gone_ipv6 },
     { "windows_connreset_child_client", windows_connreset_child_client },
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "windows_connreset_hard_killed_client_portable_ipv4", rocketnet_functional_skip_windows_connreset_hard_killed_client_portable_ipv4 },
+    { "windows_connreset_hard_killed_client_portable_ipv6", rocketnet_functional_skip_windows_connreset_hard_killed_client_portable_ipv6 },
+    { "windows_connreset_hard_killed_client_iocp_ipv4", rocketnet_functional_skip_windows_connreset_hard_killed_client_iocp_ipv4 },
+    { "windows_connreset_hard_killed_client_iocp_ipv6", rocketnet_functional_skip_windows_connreset_hard_killed_client_iocp_ipv6 },
+    { "windows_connreset_hard_killed_client_iocp_plain_ipv4", rocketnet_functional_skip_windows_connreset_hard_killed_client_iocp_plain_ipv4 },
+    { "windows_connreset_hard_killed_client_iocp_plain_ipv6", rocketnet_functional_skip_windows_connreset_hard_killed_client_iocp_plain_ipv6 },
+    { "windows_connreset_hard_killed_client_rio_ipv4", rocketnet_functional_skip_windows_connreset_hard_killed_client_rio_ipv4 },
+    { "windows_connreset_hard_killed_client_rio_ipv6", rocketnet_functional_skip_windows_connreset_hard_killed_client_rio_ipv6 },
+    { "windows_connreset_send_to_closed_port_portable_ipv4", rocketnet_functional_skip_windows_connreset_send_to_closed_port_portable_ipv4 },
+    { "windows_connreset_send_to_closed_port_portable_ipv6", rocketnet_functional_skip_windows_connreset_send_to_closed_port_portable_ipv6 },
+    { "windows_connreset_send_to_closed_port_iocp_ipv4", rocketnet_functional_skip_windows_connreset_send_to_closed_port_iocp_ipv4 },
+    { "windows_connreset_send_to_closed_port_iocp_ipv6", rocketnet_functional_skip_windows_connreset_send_to_closed_port_iocp_ipv6 },
+    { "windows_connreset_send_to_closed_port_iocp_plain_ipv4", rocketnet_functional_skip_windows_connreset_send_to_closed_port_iocp_plain_ipv4 },
+    { "windows_connreset_send_to_closed_port_iocp_plain_ipv6", rocketnet_functional_skip_windows_connreset_send_to_closed_port_iocp_plain_ipv6 },
+    { "windows_connreset_send_to_closed_port_rio_ipv4", rocketnet_functional_skip_windows_connreset_send_to_closed_port_rio_ipv4 },
+    { "windows_connreset_send_to_closed_port_rio_ipv6", rocketnet_functional_skip_windows_connreset_send_to_closed_port_rio_ipv6 },
+    { "windows_client_connreset_server_gone_ipv4", rocketnet_functional_skip_windows_client_connreset_server_gone_ipv4 },
+    { "windows_client_connreset_server_gone_ipv6", rocketnet_functional_skip_windows_client_connreset_server_gone_ipv6 },
+    { "windows_connreset_child_client", rocketnet_functional_skip_windows_connreset_child_client },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 };
 
