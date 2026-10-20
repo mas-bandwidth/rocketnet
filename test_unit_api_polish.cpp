@@ -255,11 +255,11 @@ static void api_polish_lookups_say_unknown()
 {
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_OK ), "OK" ) == 0 );
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_FLOW_ID_RESERVED ), "FLOW_ID_RESERVED" ) == 0 );
-    check( strcmp( rocketnet_status_name( ROCKETNET_NUM_STATUS_CODES ), "unknown" ) == 0 );
+    check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_COUNT ), "unknown" ) == 0 );
     check( strcmp( rocketnet_status_name( (rocketnet_status_t) -1 ), "unknown" ) == 0 );
 
     check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_NONE ), "none" ) == 0 );
-    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_WARN ), "warning" ) == 0 );
+    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_WARN ), "warn" ) == 0 );
     check( strcmp( rocketnet_log_level_name( (rocketnet_log_level_t) 6 ), "unknown" ) == 0 );
     check( strcmp( rocketnet_log_level_name( (rocketnet_log_level_t) -1 ), "unknown" ) == 0 );
 
