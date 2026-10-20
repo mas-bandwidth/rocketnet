@@ -6,7 +6,7 @@
 ; A cell is y only when the test has landed on sprint/rocketnet-proof and the
 ; card that landed it, or a CI run on that branch, shows it green on that
 ; platform. Work in progress and cards not yet landed are n, and :pending
-; names the card and its column (working, review, waiting). A test with no
+; names the card and its column (working, review, waiting, ready). A test with no
 ; card at all is n, marked "no card" until a card is drafted for it. The
 ; table of transports puts the transports a test ran on each platform in one
 ; cell: Linux portable, gso, io_uring and xdp; macOS msgx and portable;
@@ -31,8 +31,10 @@
      :evidence "Windows: test.exe Release green on the Windows member, rocketnet-driver-create-reports-out-of-memory b3162561; macOS and Linux: ./bin/test green Debug and Release, rocketnet-driver-create-reports-out-of-memory b3162561")
     (:feature "Functional suite (./bin/functional)" :cells (y y y)
      :evidence "Windows: functional.exe Release green, rocketnet-functional-builds-on-windows 85a98401, 10 of 10 runs in rocketnet-functional-tokens-use-the-test-clock d59e30de; macOS: ./bin/functional green, rocketnet-macos-client-timing-under-app-nap a2c4ac1f; Linux: ./bin/functional green, rocketnet-linux-lifecycle-stress-t 8a68c102 and every landing's Linux gate")
-    (:feature "Functional suite green every run (20 of 20)" :cells (n - -)
-     :pending ((Windows "rocketnet-windows-suite-stable (working)")))
+    (:feature "Functional suite repeated, zero flakes" :cells (n n n)
+     :pending ((Windows "rocketnet-windows-suite-stable (working): 20 of 20 runs")
+               (macOS "rocketnet-macos-transport-matrix-repeat (waiting): every cell fifty times")
+               (Linux "rocketnet-linux-transport-matrix-repeat (waiting): every cell fifty times")))
     (:feature "Sanitizers (ASan, UBSan, TSan; MSVC ASan on Windows)" :cells (n n n)
      :pending ((Windows "rocketnet-win-msvc-asan (working)")
                (macOS "rocketnet-macos-sanitizers-and-leaks (working)")
@@ -73,7 +75,7 @@
      :pending ((Windows "rocketnet-example-ack-receipts-debug-assert (working): example_budgets fails at this branch since sends drop until connected")
                (macOS "rocketnet-example-ack-receipts-debug-assert (working)")
                (Linux "rocketnet-example-ack-receipts-debug-assert (working)")))
-    (:feature "1000 clients, load harness (three runs per transport)" :cells (n n y)
+    (:feature "1000 clients, load harness" :cells (n n y)
      :evidence "Linux: ./bin/load 1000 60 passes all five criteria three times on portable, gso, gso plain and io_uring, once on xdp in a guest, rocketnet-linux-load-1000-clients 33f45ea9"
      :pending ((Windows "rocketnet-win-load-1000-clients (waiting)")
                (macOS "rocketnet-macos-load-1000-clients-t (review)")))
@@ -87,8 +89,8 @@
                (Linux "rocketnet-linux-soak-per-transport (working)")))
     (:feature "Nightlies (every nightly job's steps green on this branch)" :cells (y n n)
      :evidence "Windows: build-and-test-windows-debug and soak-windows run step by step green, rocketnet-win-nightlies-on-fleet-runner f2dae0dc"
-     :pending ((macOS "rocketnet-macos-nightlies-green-at-base (new)")
-               (Linux "rocketnet-linux-nightlies-green-at-base (new)")))
+     :pending ((macOS "rocketnet-macos-nightlies-green-at-base and rocketnet-macos-nightly-soak-green-at-base (new)")
+               (Linux "rocketnet-linux-nightlies-green-at-base and rocketnet-linux-nightly-soak-green-at-base (new)")))
     (:feature "CI (ci.yml, every step green on this branch)" :cells (n n n)
      :pending ((Windows "rocketnet-windows-ci-green-at-base (new): the last run on this branch ran no Windows row")
                (macOS "rocketnet-macos-ci-green-at-base (new): the last run on this branch ran no macOS row")
@@ -108,11 +110,11 @@
      :pending ((Windows "rocketnet-win-transport-matrix-repeat (waiting)")
                (macOS "rocketnet-macos-transport-matrix-repeat (waiting)")
                (Linux "rocketnet-linux-transport-matrix-repeat (waiting)")))
-    (:feature "Functional suite with the server transport pinned"
-     :cells (((portable y) (iocp y) (rio y)) ((msgx y) (portable n)) ((portable n) (gso y) (io_uring n)))
-     :evidence "Windows: functional.exe passes on the default (portable), iocp and rio under App Verifier, rocketnet-win-app-verifier 7457d35b; macOS: ./bin/functional on the default ladder (msgx), rocketnet-macos-client-timing-under-app-nap a2c4ac1f; Linux: ./bin/functional on the default ladder (gso), rocketnet-linux-lifecycle-stress-t 8a68c102 (xdp runs its own cases in a guest, in the matrix row)"
+    (:feature "Functional suite on each server transport (pinned, or the default ladder)"
+     :cells (((portable y) (iocp y) (rio y)) ((msgx y) (portable n)) ((portable n) (gso y) (io_uring n) (xdp n)))
+     :evidence "Windows: functional.exe passes on the default (portable), iocp and rio under App Verifier, rocketnet-win-app-verifier 7457d35b; macOS: ./bin/functional on the default ladder (msgx), rocketnet-macos-client-timing-under-app-nap a2c4ac1f; Linux: ./bin/functional on the default ladder (gso), rocketnet-linux-lifecycle-stress-t 8a68c102"
      :pending ((macOS "portable: rocketnet-macos-ci-green-at-base (new)")
-               (Linux "portable: rocketnet-linux-pinned-portable-functional-green (review); io_uring: rocketnet-linux-ci-green-at-base (new)")))
+               (Linux "portable: rocketnet-linux-pinned-portable-functional-green (review); io_uring: rocketnet-linux-ci-green-at-base (new); xdp runs only its own cases, in a guest: rocketnet-r1-ci-xdp-cell-on-libxdp-1-4 (working)")))
     (:feature "Hard-killed peer or ICMP error never stalls receive"
      :cells (((portable n) (iocp n) (rio n)) ((msgx n) (portable n)) ((portable n) (gso n) (io_uring n) (xdp n)))
      :pending ((Windows "rocketnet-windows-udp-connreset-never-stalls-receive (working)")

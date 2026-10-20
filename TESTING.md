@@ -12,7 +12,7 @@ One row per test feature, one column per platform.
 |---|:---:|:---:|:---:|
 | Unit suite (./bin/test) | ✅ | ✅ | ✅ |
 | Functional suite (./bin/functional) | ✅ | ✅ | ✅ |
-| Functional suite green every run (20 of 20) | ❌ | — | — |
+| Functional suite repeated, zero flakes | ❌ | ❌ | ❌ |
 | Sanitizers (ASan, UBSan, TSan; MSVC ASan on Windows) | ❌ | ❌ | ❌ |
 | Leaks (LSan, the leaks tool, App Verifier's leak layer) | ✅ | ❌ | ❌ |
 | libFuzzer (corpus replay and fuzz runs) | ❌ | ❌ | ✅ |
@@ -26,14 +26,16 @@ One row per test feature, one column per platform.
 | Toolchain matrix (clang-cl and ARM64 on Windows; gcc and clang on Linux) | ✅ | — | ❌ |
 | Application Verifier | ✅ | — | — |
 | Examples (run_examples.py) | ❌ | ❌ | ❌ |
-| 1000 clients, load harness (three runs per transport) | ❌ | ❌ | ✅ |
+| 1000 clients, load harness | ❌ | ❌ | ✅ |
 | 1000 light clients (10 Hz, 1 packet per update) | ❌ | ❌ | ❌ |
 | Soak (30 minutes per transport under impairment) | ❌ | ✅ | ❌ |
 | Nightlies (every nightly job's steps green on this branch) | ✅ | ❌ | ❌ |
 | CI (ci.yml, every step green on this branch) | ❌ | ❌ | ❌ |
-| complete | 37% | 35% | 44% |
+| complete | 37% | 33% | 41% |
 
-- Functional suite green every run (20 of 20), Windows: rocketnet-windows-suite-stable (working)
+- Functional suite repeated, zero flakes, Windows: rocketnet-windows-suite-stable (working): 20 of 20 runs
+- Functional suite repeated, zero flakes, macOS: rocketnet-macos-transport-matrix-repeat (waiting): every cell fifty times
+- Functional suite repeated, zero flakes, Linux: rocketnet-linux-transport-matrix-repeat (waiting): every cell fifty times
 - Sanitizers (ASan, UBSan, TSan; MSVC ASan on Windows), Windows: rocketnet-win-msvc-asan (working)
 - Sanitizers (ASan, UBSan, TSan; MSVC ASan on Windows), macOS: rocketnet-macos-sanitizers-and-leaks (working)
 - Sanitizers (ASan, UBSan, TSan; MSVC ASan on Windows), Linux: rocketnet-linux-sanitizers-green-at-base (new): the last ci.yml run on this branch was red in asan + ubsan and tsan
@@ -53,15 +55,15 @@ One row per test feature, one column per platform.
 - Examples (run_examples.py), Windows: rocketnet-example-ack-receipts-debug-assert (working): example_budgets fails at this branch since sends drop until connected
 - Examples (run_examples.py), macOS: rocketnet-example-ack-receipts-debug-assert (working)
 - Examples (run_examples.py), Linux: rocketnet-example-ack-receipts-debug-assert (working)
-- 1000 clients, load harness (three runs per transport), Windows: rocketnet-win-load-1000-clients (waiting)
-- 1000 clients, load harness (three runs per transport), macOS: rocketnet-macos-load-1000-clients-t (review)
+- 1000 clients, load harness, Windows: rocketnet-win-load-1000-clients (waiting)
+- 1000 clients, load harness, macOS: rocketnet-macos-load-1000-clients-t (review)
 - 1000 light clients (10 Hz, 1 packet per update), Windows: rocketnet-load-light-profile-windows (new)
 - 1000 light clients (10 Hz, 1 packet per update), macOS: rocketnet-load-light-profile-macos (new)
 - 1000 light clients (10 Hz, 1 packet per update), Linux: rocketnet-load-light-profile-linux (new)
 - Soak (30 minutes per transport under impairment), Windows: rocketnet-win-soak-per-transport (waiting)
 - Soak (30 minutes per transport under impairment), Linux: rocketnet-linux-soak-per-transport (working)
-- Nightlies (every nightly job's steps green on this branch), macOS: rocketnet-macos-nightlies-green-at-base (new)
-- Nightlies (every nightly job's steps green on this branch), Linux: rocketnet-linux-nightlies-green-at-base (new)
+- Nightlies (every nightly job's steps green on this branch), macOS: rocketnet-macos-nightlies-green-at-base and rocketnet-macos-nightly-soak-green-at-base (new)
+- Nightlies (every nightly job's steps green on this branch), Linux: rocketnet-linux-nightlies-green-at-base and rocketnet-linux-nightly-soak-green-at-base (new)
 - CI (ci.yml, every step green on this branch), Windows: rocketnet-windows-ci-green-at-base (new): the last run on this branch ran no Windows row
 - CI (ci.yml, every step green on this branch), macOS: rocketnet-macos-ci-green-at-base (new): the last run on this branch ran no macOS row
 - CI (ci.yml, every step green on this branch), Linux: rocketnet-linux-ci-green-at-base (new): the last run on this branch was red
@@ -76,7 +78,7 @@ One row per test, one column per platform; each cell names the transports the te
 |---|:---:|:---:|:---:|
 | Transport family matrix (IPv4, IPv6 and dual stack, each transport pinned) | portable ❌, iocp ❌, rio ❌ | msgx ❌, portable ❌ | portable ❌, gso ❌, io_uring ❌, xdp ❌ |
 | Every matrix cell fifty times, zero flakes | portable ❌, iocp ❌, rio ❌ | msgx ❌, portable ❌ | portable ❌, gso ❌, io_uring ❌, xdp ❌ |
-| Functional suite with the server transport pinned | portable ✅, iocp ✅, rio ✅ | msgx ✅, portable ❌ | portable ❌, gso ✅, io_uring ❌ |
+| Functional suite on each server transport (pinned, or the default ladder) | portable ✅, iocp ✅, rio ✅ | msgx ✅, portable ❌ | portable ❌, gso ✅, io_uring ❌, xdp ❌ |
 | Hard-killed peer or ICMP error never stalls receive | portable ❌, iocp ❌, rio ❌ | msgx ❌, portable ❌ | portable ❌, gso ❌, io_uring ❌, xdp ❌ |
 | Socket error paths | portable ❌, iocp ❌, rio ❌ | msgx ✅, portable ✅ | portable ✅, gso ✅, io_uring ✅, xdp ✅ |
 | Lifecycle stress | portable ❌, iocp ❌, rio ❌ | msgx ❌, portable ❌ | portable ✅, gso ✅, io_uring ✅, xdp ✅ |
@@ -94,8 +96,8 @@ One row per test, one column per platform; each cell names the transports the te
 - Every matrix cell fifty times, zero flakes, Windows: rocketnet-win-transport-matrix-repeat (waiting)
 - Every matrix cell fifty times, zero flakes, macOS: rocketnet-macos-transport-matrix-repeat (waiting)
 - Every matrix cell fifty times, zero flakes, Linux: rocketnet-linux-transport-matrix-repeat (waiting)
-- Functional suite with the server transport pinned, macOS: portable: rocketnet-macos-ci-green-at-base (new)
-- Functional suite with the server transport pinned, Linux: portable: rocketnet-linux-pinned-portable-functional-green (review); io_uring: rocketnet-linux-ci-green-at-base (new)
+- Functional suite on each server transport (pinned, or the default ladder), macOS: portable: rocketnet-macos-ci-green-at-base (new)
+- Functional suite on each server transport (pinned, or the default ladder), Linux: portable: rocketnet-linux-pinned-portable-functional-green (review); io_uring: rocketnet-linux-ci-green-at-base (new); xdp runs only its own cases, in a guest: rocketnet-r1-ci-xdp-cell-on-libxdp-1-4 (working)
 - Hard-killed peer or ICMP error never stalls receive, Windows: rocketnet-windows-udp-connreset-never-stalls-receive (working)
 - Hard-killed peer or ICMP error never stalls receive, macOS: rocketnet-macos-hard-killed-peer-never-stalls-receive (working)
 - Hard-killed peer or ICMP error never stalls receive, Linux: rocketnet-linux-hard-killed-peer-never-stalls-receive (review)
