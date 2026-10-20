@@ -437,9 +437,10 @@ added to its cfg): 5,924,703 states generated, 1,422,444 distinct, depth 43, no 
 states in 138.2 s; with `bitsChecked` collapsed to a caught-up flag (the reconcile
 starting at `WindowLow` every time, which is equivalent because the reconcile is
 idempotent) and the ghosts kept it is 1,147,728 in 117.8 s. No encoding of the bitmap
-state keeps that instance inside 110 s on a loaded bench, so it is `bench` debt
-(`pattern-alternate-committed-instance-safety-over-budget`), like the other three pattern
-rows; its recorded run, with the three invariants, passes in 41.0 s on an idle bench.
+state keeps that instance inside 110 s on a loaded bench, but on an idle bench its recorded
+run, with the three invariants, finishes in 41.0 s, inside the gate budget, so
+`MCFragmentsAndAcksPatAlternate.cfg` is a required check (its CASES.tsv row gates) rather than
+`bench` debt; the other three pattern rows stay over budget and remain bench debt.
 
 ## What TLC found
 
