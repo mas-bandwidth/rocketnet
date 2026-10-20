@@ -382,8 +382,8 @@ static void test_entries_carry_connection_id(bool staged)
             uint8_t * payload = rocketnet_server_transport_packet_payload(server, &context, &capacity);
             CHECK(payload && capacity >= 8);
             memset(payload, 0x50 + k, 8);
-            CHECK(rocketnet_server_transport_finish_packet(server, &context, 8) > 0);
             sequences[c][k] = context.sequence;
+            CHECK(rocketnet_server_transport_finish_packet(server, &context, 8) > 0);
         }
     }
     rocketnet_server_transport_send_packets(server);
