@@ -4241,8 +4241,8 @@ static int get_connection_type_query( void * buffer, unsigned long * bytes )
 static int get_connection_type()
 {
     // a refused allocation, an error, or ROCKETNET_PLATFORM_ADAPTERS_ATTEMPTS
-    // overflows in a row end rocketnet_platform_adapters_fetch with NULL
-    // (above), and the connection type is unknown
+    // overflows in a row end rocketnet_platform_adapters_fetch with NULL, and
+    // the connection type is unknown
     IP_ADAPTER_ADDRESSES * addresses = (IP_ADAPTER_ADDRESSES*) rocketnet_platform_adapters_fetch( rocketnet_global_context, 15000, get_connection_type_query );
     if ( !addresses )
         return ROCKETNET_CONNECTION_TYPE_UNKNOWN;

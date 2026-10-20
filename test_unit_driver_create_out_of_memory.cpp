@@ -91,12 +91,15 @@ struct driver_oom_allocator_t
     int calls;
     int fail_at;
     int refuse_through;
+    size_t asked_bytes[2]; // the sizes of the last two requests, newest last
 };
 
 static void * driver_oom_allocate( void * context, size_t bytes )
 {
     driver_oom_allocator_t * state = (driver_oom_allocator_t*) context;
     const int call = ++state->calls;
+    state->asked_bytes[0] = state->asked_bytes[1];
+    state->asked_bytes[1] = bytes;
     if ( state->fail_at == call || call <= state->refuse_through )
         return NULL;
     void * base = malloc( bytes + 128 );
@@ -504,6 +507,9 @@ static void platform_adapters_fetch_is_bounded()
         check( buffer != NULL );
         check( driver_oom_query_calls == 2 );
         check( state.live == 1 );
+        // the retry asks for the size the query named: 128 more bytes than the
+        // first attempt, whatever overhead rocketnet_malloc adds to both
+        check( state.asked_bytes[1] - state.asked_bytes[0] == 256 - 128 );
         memset( buffer, 0, 256 );
         rocketnet_free( &state, buffer );
         check( state.live == 0 );
@@ -524,8 +530,8 @@ static void platform_adapters_fetch_is_bounded()
 
 // platform init under an allocator that refuses every request (until it gives
 // way): init completes, and platform discovery asks no more than the bound. On
-// Windows the one allocator request in rocketnet_platform_init is the first
-// attempt of get_connection_type, so the count is exactly one and the
+// Windows the one allocator request in rocketnet_init_ex is the first attempt
+// of get_connection_type, made from rocketnet_platform_init, so the count is exactly one and the
 // connection type is unknown; elsewhere the case checks the bound only.
 static void platform_init_survives_a_refusing_allocator()
 {
