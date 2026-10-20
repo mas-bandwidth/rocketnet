@@ -1979,7 +1979,6 @@ static int get_connection_type()
 #include <SystemConfiguration/SystemConfiguration.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <TargetConditionals.h>
-#include <pthread/qos.h>
 #include <dlfcn.h>
 #include <sys/event.h>
 #include <time.h>
@@ -3060,12 +3059,6 @@ static void * thread_function_shim( void * data )
     rocketnet_platform_thread_func_t real_thread_function = shim_data->real_thread_function;
     rocketnet_platform_thread_self = shim_data->thread;
     rocketnet_free( context, data );
-
-    // An explicit class at thread start, before the thread's loop: the
-    // library's threads never run below the class the receive cadence needs,
-    // whatever class the creating thread has (docs/CLIENT-IO.md, macOS timing
-    // and App Nap).
-    pthread_set_qos_class_self_np( QOS_CLASS_USER_INTERACTIVE, 0 );
 
     real_thread_function( real_thread_data );
     return NULL;
