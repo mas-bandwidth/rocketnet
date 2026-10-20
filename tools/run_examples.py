@@ -4,20 +4,28 @@
 Finds the example_<name> binaries under the given build directory (and the
 repository bin/ directory), runs an example made of a <name>_server and
 <name>_client pair as server then client, and every other example alone.
+Each pair runs in its own fresh temporary working directory on a free UDP
+port it picks and passes through ROCKETNET_EXAMPLE_PORT, so two runs at once
+never collide; a server that fails to bind is retried on a new port, at most
+three tries.
 Each process gets a 120-second timeout and must exit 0 with PASS as its last
 line. Prints one PASS example_<name> line per example; exits 1 on a failure.
 """
 
 import argparse
 import os
+import shutil
+import socket
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES = ROOT / "examples"
 TIMEOUT_SECONDS = 120
+PORT_TRIES = 3
 
 
 def binary_dirs(build, config):
@@ -88,19 +96,51 @@ def kill(process):
         return "", ""
 
 
+def free_udp_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
 def run_pair(base, server_binary, client_binary):
+    for attempt in range(1, PORT_TRIES + 1):
+        port = free_udp_port()
+        workdir = tempfile.mkdtemp(prefix=f"rocketnet_example_{base}_")
+        try:
+            ok = run_pair_once(base, server_binary, client_binary, port, workdir)
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+        if ok != "bind":
+            return ok
+        again = ", picking another port" if attempt < PORT_TRIES else ""
+        print(f"example_{base}: server could not bind 127.0.0.1:{port} (try {attempt} of {PORT_TRIES}){again}")
+    return failure(base, f"server could not bind a free port in {PORT_TRIES} tries")
+
+
+def run_pair_once(base, server_binary, client_binary, port, workdir):
+    env = dict(os.environ)
+    env["ROCKETNET_EXAMPLE_PORT"] = str(port)
     server = subprocess.Popen(
         [str(server_binary)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        cwd=workdir,
+        env=env,
     )
     time.sleep(0.5)
+    if server.poll() is not None and server.returncode != 0:
+        server_out, server_err = server.communicate()
+        if "FAIL: server != NULL" in server_out:
+            return "bind"
+        return failure(base, f"server exited {server.returncode}\n{server_out}{server_err}")
     client = subprocess.Popen(
         [str(client_binary)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        cwd=workdir,
+        env=env,
     )
 
     try:
