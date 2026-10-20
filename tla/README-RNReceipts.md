@@ -25,7 +25,12 @@ layer implementation exists.
   ACKs of evicted map entries acknowledge no numbers. Duplicate/unknown
   events with no live transport slot are stuttering inputs.
 - `Tick` ages sent, unacked numbers. `SweepLoss` scans eligible type-5
-  descriptors after their one-RTO deadline or map eviction. Its retained
+  descriptors at their receipt deadline or after map eviction. The deadline
+  `ReceiptDeadline` is RakNet's `ReceiptRTO`, as
+  `rn_window_ack_receipt_loss_delay` (`sdk/rocketnet_window_ack.h`) takes
+  min( 2 * estimated rtt + 4 * deviation + 30 ms, 2 s ), 2 s while the rtt is
+  unknown, each smoothed 5% per ack, with no back-off, floored by the public
+  `rto_min_ms`. Its retained
   outcome suppresses a late ACK. `Disconnect` represents the documented
   `RELIABLE_TIMEOUT` error when a sent, still-unacked reliable number
   reaches its first-send deadline, even if other traffic progresses.
@@ -84,6 +89,8 @@ that prunes transitions or hides violations.
   for an issued receipt serial. `ReceiptProgress` supplies the eventual half.
 - `LossOnlyForUnreliableReceipt`: only effective type 5 emits LOSS; large
   type 5, and the promoted type 0 and type 1 twins, are reliable and excluded.
+- `LossOnlyAfterReceiptDeadline`: a LOSS outcome comes from map eviction or
+  from a first fragment aged at least `ReceiptDeadline`, never at `RTO` alone.
 - `PromotedIsTwin` and `PromotedNeverLoses`: each promoted source maps to
   its declared twin (0 to 2, 1 to 4, 5 to 6) and never emits LOSS.
 - `PromotionTable`: the twin mapping covers every unreliable source mode.
@@ -114,18 +121,23 @@ property, plus `TypeOK`. They must exit 12 and identify that property.
   carries fragment `<<2,1>>`; open and packet ACK leave only that last index
   in `acked`. `EmitAck(2)` then violates
   `BlockAckedOnlyWhenAllFragmentsAcked`, with `<<2,0>>` still unacked.
-- `BrokenTwoOutcomes`: the nine-state trace chooses single-record type 5.
-  The sends and packet write are followed by `Tick` to RTO 1, transport
-  open, then `SweepLoss(2)`. Its late transport ACK matches the retained
+- `BrokenTwoOutcomes`: the ten-state trace chooses single-record type 5.
+  The sends and packet write are followed by two `Tick` steps to the receipt
+  deadline 2, transport open, then `SweepLoss(2)`. Its late transport ACK matches the retained
   map entry. `EmitAck(2)` appends ACKED after LOSS, violating
   `ExactlyOneOutcomePerReceiptSerial` even though the full one-entry ring
   now contains only ACKED. Generation history catches what the ring hides.
 - `BrokenReliableLoss`: the six-state trace chooses a two-fragment type-5
   message promoted to effective type 6. Fragment `<<2,0>>` is written;
-  `Tick` reaches RTO 1. The broken `SweepLoss(2)` emits LOSS for this reliable
-  block, violating `LossOnlyForUnreliableReceipt` before its reliable timeout
-  at 2. Actual types 6 and 7 share this checked rule; the enumerated witness
+  two `Tick` steps reach the receipt deadline 2. The broken `SweepLoss(2)`
+  emits LOSS for this reliable block, violating `LossOnlyForUnreliableReceipt`
+  before its reliable timeout at 3. Actual types 6 and 7 share this checked rule; the enumerated witness
   selects the promoted type first.
+- `BrokenLossAtRto`: the six-state trace chooses single-record type 5. The
+  sends and packet write are followed by one `Tick` to RTO 1, and the broken
+  `SweepLoss(2)` emits LOSS at the resend RTO, before the receipt deadline 2,
+  violating `LossOnlyAfterReceiptDeadline`. This is the sweep that compares
+  the send time with the rto alone.
 
 The measured traces and their exact state counts are recorded with the run
 records and the task's raw TLC evidence. No witness uses an unrelated type
@@ -145,7 +157,7 @@ The deliberate receipt differences are:
 1. A block waits for all fragment numbers, rather than firing on the
    highest-index fragment alone (study 7.3).
 2. Sent-map eviction explicitly produces unreliable LOSS in addition to
-   the RTO sweep; the reference receipt history is separate from its
+   the receipt-deadline sweep; the reference receipt history is separate from its
    datagram history (study 6.1 and 7.3).
 3. The fixed receipt ring drops/counts its oldest event when full. The
    reference puts five-byte notification messages on its output queue;
@@ -157,6 +169,9 @@ The deliberate receipt differences are:
    module does not recreate the reference reliability layer's datagram
    ACK/NAK machinery. Reliable first-send timeout maps to the documented
    endpoint error/disconnect path.
+6. Unreliable LOSS waits for the receipt deadline, RakNet's own RTO with the
+   public floor. The reference reports LOSS when its own RTO passes without
+   the ack (study 7.3 and 10).
 
 Ordering, sequencing, wire encoding, bandwidth scheduling, allocator and
 zero-copy implementation differences remain in their own design/model cards.
@@ -165,14 +180,14 @@ This receipt module does not claim to validate those unrelated semantics.
 ## Reproduction
 
 Use the exact runner and JAR pin in `tla/README.md`, on a Linux bench. The
-four registered cases belong to `rnreceipts`. Run shards 0 through 3 with
-`--shards 4 --shard N --workers 2 --timeout 110s`, each in a private output
+five registered cases belong to `rnreceipts`. Run them with `--group rnreceipts --workers 2 --timeout 110s`, each in a private output
 directory; witnesses use one worker automatically. Merge their measured
 records with `tlacheck merge --keep tla/RUNS.tsv`, then require
 `tlacheck groups --root . --stale` to print `[]`. Keep superseded records
 verbatim in `RUNS-HISTORY.tsv`; never edit fingerprints or measurements.
 
 Measured final outcomes (generated/distinct, elapsed seconds): fixed
-72,559/25,028, 10.274; last-index 421/250, 0.988; two-outcomes 1,599/755,
-1.073; reliable-loss 155/96, 0.970. The fixed run completes temporal checking;
-the three witnesses each exit 12 with precisely their declared invariant.
+117,375/40,009, 11.737; last-index 407/245, 0.728; two-outcomes 2,696/1,306,
+0.797; reliable-loss 370/222, 0.714; loss-at-rto 134/85, 0.697. The fixed run
+completes temporal checking; the four witnesses each exit 12 with precisely
+their declared invariant.

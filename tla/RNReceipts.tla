@@ -22,10 +22,18 @@ EXTENDS Naturals, Sequences, FiniteSets
 \* Fragments have independent numbers but share their message's serial.
 \* Outcomes are ghost emission history; ring is the bounded application queue.
 \* Dropping its oldest event is counted and never permits a second emission.
-CONSTANTS MaxPid, MapCapacity, ReceiptCapacity, RTO, ReliableTimeout,
-          BrokenLastIndexAck, BrokenTwoOutcomes, BrokenReliableLoss
+\* ReceiptRTO is RakNet's RTO in Tick units (2 s while the RTT is unknown,
+\* else min( 2 * estimated RTT + 4 * deviation + 30 ms, 2 s ), with the public
+\* rto_min_ms as its floor); a type-5 receipt's deadline is that RTO, which is
+\* independent of the resend timer (rn_window_ack_receipt_loss_delay,
+\* sdk/rocketnet_window_ack.h). BrokenLossAtRto is the reversed witness:
+\* LOSS at the resend RTO alone.
+CONSTANTS MaxPid, MapCapacity, ReceiptCapacity, RTO, ReceiptRTO, ReliableTimeout,
+          BrokenLastIndexAck, BrokenTwoOutcomes, BrokenReliableLoss, BrokenLossAtRto
 
 Serials == 1..3
+ReceiptDeadline == IF ReceiptRTO > RTO THEN ReceiptRTO ELSE RTO
+LossAge == IF BrokenLossAtRto THEN RTO ELSE ReceiptDeadline
 ReceiptSerials == 2..3
 Pids == 0..MaxPid
 Nums == ReceiptSerials \X (0..1)
@@ -160,13 +168,14 @@ EmitAck(s) ==
       acked, smap, active, packetNums, opened, lost, openedNums, ackProof,
       age, evicted, writes>>
 
-\* Per-update deadline sweep, one eligible descriptor at a time. Its tombstone
-\* (outcomes) suppresses a late ACK even while the map's reliable references live.
+\* Per-update deadline sweep, one eligible descriptor at a time, at the
+\* receipt deadline (rn_window_ack_receipt_sweep). Its tombstone (outcomes)
+\* suppresses a late ACK even while the map's reliable references live.
 SweepLoss(s) ==
  /\ live /\ s \in Issued /\ outcomes[s] = <<>> /\ ~Complete(s)
  /\ Parts(s) \cap sentNums # {}
  /\ (EffectiveKind(s) = 5 \/ BrokenReliableLoss)
- /\ (age[<<s,0>>] >= RTO \/ s \in evicted)
+ /\ (age[<<s,0>>] >= LossAge \/ s \in evicted)
  /\ outcomes' = [outcomes EXCEPT ![s] = <<"LOSS">>]
  /\ ring' = AddRing(s,"LOSS")
  /\ ringDropped' = ringDropped + IF Len(ring) = ReceiptCapacity THEN 1 ELSE 0
@@ -220,6 +229,10 @@ TypeOK ==
 ExactlyOneOutcomePerReceiptSerial == \A s \in Serials :
  Len(outcomes[s]) <= 1 /\ (outcomes[s] # <<>> => s \in Issued \cap ReceiptSerials)
 LossOnlyForUnreliableReceipt == \A s \in ReceiptSerials : Has(s,"LOSS") => EffectiveKind(s) = 5
+\* A type-5 LOSS by sweep comes only at the receipt deadline, never at the
+\* resend RTO alone; map eviction is the other LOSS source. age only grows.
+LossOnlyAfterReceiptDeadline == \A s \in ReceiptSerials :
+    Has(s,"LOSS") => (s \in evicted \/ age[<<s,0>>] >= ReceiptDeadline)
 PromotedIsTwin == \A s \in ReceiptSerials :
     Kind(s) \in PromotionSources /\ Large => EffectiveKind(s) = Twin(Kind(s))
 PromotedNeverLoses == \A s \in ReceiptSerials :

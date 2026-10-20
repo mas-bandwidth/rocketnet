@@ -133,6 +133,31 @@ static inline double rn_window_ack_resend_delay( const rn_window_ack_t * ack )
     return ack->rto;
 }
 
+// RakNet's rto (docs/RAKNET-RELIABILITY.md 9 "RTO", CC.cpp:288-314): the
+// + 30 ms term, the 2 s cap, and the 2 s value while the round-trip time is
+// unknown. These are the fixed constants of the receipt deadline; the formula
+// around them adapts to the path.
+#define RN_RTO_ADD_S                      0.030
+#define RN_RTO_UNKNOWN_S                  2.0
+#define RN_RTO_CAP_S                      2.0
+
+// The receipt deadline of an UNRELIABLE_WITH_ACK_RECEIPT packet, in seconds
+// after its send: RakNet's rto from rn_window_ack_compute_rto, 2 s while the
+// round-trip time is unknown. The floor is the public rto_min_ms, default 0
+// (no floor, matching RakNet); the cap is RN_RTO_CAP_S. It is independent of
+// the resend timer, so an acknowledgement that arrives after the resend rto
+// but before this deadline reports ACKED (tla/RNReceipts.tla
+// LossOnlyAfterReceiptDeadline). It is never below the resend rto: when the
+// configured rto_max_ms is above RN_RTO_CAP_S, the resend rto may exceed the
+// capped formula, and the deadline then follows it.
+static inline double rn_window_ack_receipt_loss_delay( const rn_window_ack_t * ack )
+{
+    if ( !ack->has_rtt )
+        return RN_RTO_UNKNOWN_S;
+    const double deadline = rn_window_ack_compute_rto( ack->srtt, ack->rttvar, ack->rto_min, RN_RTO_CAP_S );
+    return deadline > ack->rto ? deadline : ack->rto;
+}
+
 // The resend delay of a chunk of a block uses the same adaptive RTO,
 // so a large block on a long path is not sent again before its acks can
 // return (docs/CHANNELS.md 6.4 "Resend"; tla/RNResendTiming.tla Delay("c")).

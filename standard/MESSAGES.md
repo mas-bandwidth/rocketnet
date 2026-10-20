@@ -2962,8 +2962,18 @@ promotion defined here and in [m2 Payload forms and sender size rules](#m2).
 3. A type-6 or type-7 receipt reports ACKED when all reliable numbers for its
    send are acknowledged. A type-5 send that remains unreliable reports ACKED
    when its carrying packet is acknowledged and LOSS when it is lost, refused
-   by the send budget, or expires without an acknowledgement. These outcomes
-   are API semantics and are not carried on the wire.
+   by the send budget, or expires without an acknowledgement. The packet
+   expires at its send time plus RakNet's RTO: the fixed 2 s value while the
+   round-trip time is unknown, and otherwise
+   min( 2 x estimated RTT + 4 x its deviation + 30 ms, 2 s ), with the
+   estimate and the deviation moving 5% toward every acknowledged sample and
+   no back-off. The two fixed constants are 30 ms and 2 s. The public config
+   field `rto_min_ms` is the deadline's floor; its default 0 disables the
+   floor, which matches RakNet's no-floor formula, and a caller may raise it
+   (for example to 100 ms). The deadline is never below the resend RTO. An
+   acknowledgement that arrives after the resend RTO
+   but before this expiry reports ACKED. These outcomes are API semantics and
+   are not carried on the wire.
 
 ```vector m12.promotion
 public type: 5 (unreliable with ack receipt)

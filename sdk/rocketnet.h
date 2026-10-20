@@ -285,6 +285,18 @@ enum rocketnet_reliability_t
     /// Send once and report whether the carrying packet is acknowledged. A
     /// larger message is sent as a reliable block and can report ACKED only. A
     /// single-packet message can report ACKED or LOSS.
+    ///
+    /// The receipt deadline is RakNet's rto, measured from the send: 2 s while
+    /// the round-trip time is unknown, and otherwise
+    /// min( 2 x estimated rtt + 4 x its deviation + 30 ms, 2 s ), with the
+    /// estimate and the deviation moving 5% toward every acknowledged sample
+    /// and no back-off (rn_window_ack_compute_rto,
+    /// sdk/rocketnet_window_ack.h). The public config field rto_min_ms is its
+    /// floor: default 0 disables it, which matches RakNet's no-floor formula;
+    /// a caller may raise it (for example to 100 ms). The deadline is never
+    /// below the resend rto. It is independent of the resend
+    /// timer: an acknowledgement that arrives after the resend rto but before
+    /// it reports ACKED.
     ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT           = 5,
     /// Resend until acknowledged and report an ACKED receipt. Delivery is
     /// once without channel ordering. A connection failure does not produce a
