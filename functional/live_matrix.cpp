@@ -647,20 +647,6 @@ static void live_matrix_connect( struct live_matrix_t * m )
     }
 }
 
-// the server alone runs the clock across a gap: no wall time passes
-static void live_matrix_advance( struct live_matrix_t * m, double seconds, int stop_when_slot_empty )
-{
-    const double step = 0.05;
-    for ( double passed = 0.0; passed < seconds; passed += step )
-    {
-        m->offset += step;
-        live_matrix_check( rocketnet_message_server_update( m->server, live_matrix_now( m ) ) == ROCKETNET_UPDATE_OK );
-        rocketnet_message_server_send_packets( m->server );
-        if ( stop_when_slot_empty && !rocketnet_message_server_client_connected( m->server, 0 ) )
-            return;
-    }
-}
-
 // ---------------------------------------------------------------
 //                     the over-maximum start (section 4)
 // ---------------------------------------------------------------

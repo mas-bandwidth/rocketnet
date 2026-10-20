@@ -75,19 +75,6 @@ struct sim_schedule_t
     struct rocketnet_address_t rx_from;
 };
 
-static void sim_write_u32_le( uint8_t * out, uint32_t value )
-{
-    out[0] = (uint8_t) ( value & 0xff );
-    out[1] = (uint8_t) ( ( value >> 8 ) & 0xff );
-    out[2] = (uint8_t) ( ( value >> 16 ) & 0xff );
-    out[3] = (uint8_t) ( ( value >> 24 ) & 0xff );
-}
-
-static uint32_t sim_read_u32_le( const uint8_t * in )
-{
-    return (uint32_t) in[0] | ( (uint32_t) in[1] << 8 ) | ( (uint32_t) in[2] << 16 ) | ( (uint32_t) in[3] << 24 );
-}
-
 static void sim_write_u64_le( uint8_t * out, uint64_t value )
 {
     for ( int i = 0; i < 8; i++ )
