@@ -216,11 +216,17 @@ static void platform_socket_hygiene_dual_stack_accepts_mapped()
     memset( &from, 0, sizeof(from) );
     uint8_t packet[64];
     const int bytes = platform_socket_hygiene_receive_scripted( true, &script, &from, packet, (int) sizeof(packet) );
+#if defined(__OpenBSD__)
+    // OpenBSD keeps IPv6 sockets IPv6-only, so a mapped source is refused.
+    rocketnet_unit_check( bytes == 0 );
+    rocketnet_unit_check( script.calls == 2 );
+#else
     rocketnet_unit_check( bytes == 5 );
     rocketnet_unit_check( script.calls == 1 );
     rocketnet_unit_check( from.type == ROCKETNET_ADDRESS_IPV4 );
     rocketnet_unit_check( from.data.ipv4[0] == 1 && from.data.ipv4[1] == 2 && from.data.ipv4[2] == 3 && from.data.ipv4[3] == 4 );
     rocketnet_unit_check( from.port == 40000 );
+#endif
 }
 
 REGISTER_UNIT_TEST( platform_socket_hygiene_mapped_source_decision );
