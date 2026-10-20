@@ -111,7 +111,12 @@ def judge(cell, log_text, exit_code, wall, sanitized):
     reasons = {k: int(v) for k, v in summary.items() if k.startswith("ROCKETNET_CLIENT_STATE_")}
     reconnects = int(summary.get("reconnects", "0"))
     problems = []
-    if exit_code != 0:
+    # under --sanitized the watcher's own exit 1 for a growing or short
+    # verdict is not judged; the soak's failure still is, and the watcher
+    # names it as "RESOURCE-WATCH command exit=N" (resource_watch.py main)
+    watch_only = (sanitized and exit_code == 1 and watch is not None and watch.group(1) != "flat"
+                  and "RESOURCE-WATCH command exit=" not in log_text)
+    if exit_code != 0 and not watch_only:
         problems.append("exit=%d" % exit_code)
     if not finished:
         problems.append("no finished line")
