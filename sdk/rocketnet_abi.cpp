@@ -41,6 +41,7 @@ static const abi_field_t server_config_fields[] =
     FIELD(unreliable_deliveries) FIELD(sequenced_holds) FIELD(receipt_ring) FIELD(resend_delay_initial_ms)
     FIELD(resend_delay_min_ms) FIELD(resend_delay_max_ms) FIELD(reliable_timeout_ms)
     FIELD(simulated_loss_percent) FIELD(simulated_latency_ms) FIELD(simulated_jitter_ms) FIELD(simulated_duplicate_percent)
+    FIELD(second_public_address)
 };
 #undef ABI_TYPE
 
@@ -231,7 +232,8 @@ const char * rocketnet_abi_layouts( size_t index )
 // this target.
 
 static_assert( ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_2 == sizeof( struct rocketnet_client_transport_config_t ), "client transport config revision 2 size" );
-static_assert( ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2 == sizeof( struct rocketnet_server_transport_config_t ), "server transport config revision 2 size" );
+static_assert( ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2 < ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3, "server transport config revisions must grow" );
+static_assert( ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3 == sizeof( struct rocketnet_server_transport_config_t ), "server transport config revision 3 size" );
 static_assert( ROCKETNET_MESSAGE_CONFIG_BYTES_2 == sizeof( struct rocketnet_message_config_t ), "message config revision 2 size" );
 
 static const size_t rocketnet_client_transport_config_known_bytes[] = { ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES };

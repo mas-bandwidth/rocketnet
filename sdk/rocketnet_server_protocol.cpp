@@ -145,8 +145,14 @@ static int rocketnet_server_request_cookie_mac( uint8_t * mac,
 static int rocketnet_server_address_is_advertised( const struct rocketnet_server_protocol_t * server,
                                                    struct rocketnet_address_t * addr )
 {
+    // dual_stack: a server bound at the IPv6 wildcard ("[::]"), which
+    // advertises the IPv6 wildcard beside the IPv4 wildcard. A server that
+    // names both families (second_public_address) advertises the two named
+    // addresses and is not dual_stack here.
+    static const uint16_t ipv6_wildcard[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
     const int dual_stack = server->advertised_ipv4.type == ROCKETNET_ADDRESS_IPV4 &&
-                           server->advertised_ipv6.type == ROCKETNET_ADDRESS_IPV6;
+                           server->advertised_ipv6.type == ROCKETNET_ADDRESS_IPV6 &&
+                           memcmp( server->advertised_ipv6.data.ipv6, ipv6_wildcard, sizeof( ipv6_wildcard ) ) == 0;
 
     if ( addr->type == ROCKETNET_ADDRESS_IPV6 && rocketnet_address_is_ipv4_in_ipv6( addr ) )
         rocketnet_address_convert_ipv6_to_ipv4( addr );
@@ -169,41 +175,66 @@ static int rocketnet_server_address_is_advertised( const struct rocketnet_server
     return 0;
 }
 
-// whether the token names an address this server advertises: either flagged
-// address matches, so a token naming both families reaches a server that
-// serves one of them (tla/ServerConnection.tla TokenAddressAdvertised).
+// The arrival family's token address (tla/ServerConnection.tla
+// TokenAddressAdvertised). A v4-mapped source is canonicalised to IPv4
+// first. The token's other-family address is not consulted. A token with
+// no IPv4 flag whose IPv6 address is v4-mapped is that IPv4 address.
+
+static void rocketnet_server_read_token_address( struct rocketnet_address_t * addr, int ipv6, const uint8_t * signed_connect_data )
+{
+    memset( addr, 0, sizeof( *addr ) );
+    if ( ipv6 )
+    {
+        const uint8_t * p = signed_connect_data + ROCKETNET_SIGNED_OFFSET_IPV6;
+        addr->type = ROCKETNET_ADDRESS_IPV6;
+        for ( int i = 0; i < 8; i++ )
+            addr->data.ipv6[i] = rocketnet_read_uint16( &p );
+        addr->port = rocketnet_read_uint16( &p );
+        return;
+    }
+    const uint8_t * p = signed_connect_data + ROCKETNET_SIGNED_OFFSET_IPV4;
+    addr->type = ROCKETNET_ADDRESS_IPV4;
+    for ( int i = 0; i < 4; i++ )
+        addr->data.ipv4[i] = *p++;
+    addr->port = rocketnet_read_uint16( &p );
+}
 
 static int rocketnet_server_token_address_is_advertised( const struct rocketnet_server_protocol_t * server,
+                                                         const struct rocketnet_address_t * from,
                                                          uint8_t address_flags,
                                                          const uint8_t * signed_connect_data )
 {
+    struct rocketnet_address_t arrival = *from;
+    if ( arrival.type == ROCKETNET_ADDRESS_IPV6 && rocketnet_address_is_ipv4_in_ipv6( &arrival ) )
+        rocketnet_address_convert_ipv6_to_ipv4( &arrival );
+
     struct rocketnet_address_t addr;
 
-    if ( address_flags & ROCKETNET_ADDRESS_FLAG_IPV6 )
+    if ( arrival.type == ROCKETNET_ADDRESS_IPV4 )
     {
-        const uint8_t * p = signed_connect_data + ROCKETNET_SIGNED_OFFSET_IPV6;
-        memset( &addr, 0, sizeof(addr) );
-        addr.type = ROCKETNET_ADDRESS_IPV6;
-        for ( int i = 0; i < 8; i++ )
-            addr.data.ipv6[i] = rocketnet_read_uint16( &p );
-        addr.port = rocketnet_read_uint16( &p );
-        if ( rocketnet_server_address_is_advertised( server, &addr ) )
-            return 1;
+        if ( address_flags & ROCKETNET_ADDRESS_FLAG_IPV4 )
+        {
+            rocketnet_server_read_token_address( &addr, 0, signed_connect_data );
+            return rocketnet_server_address_is_advertised( server, &addr );
+        }
+        if ( address_flags & ROCKETNET_ADDRESS_FLAG_IPV6 )
+        {
+            rocketnet_server_read_token_address( &addr, 1, signed_connect_data );
+            if ( addr.type == ROCKETNET_ADDRESS_IPV6 && rocketnet_address_is_ipv4_in_ipv6( &addr ) )
+            {
+                rocketnet_address_convert_ipv6_to_ipv4( &addr );
+                return rocketnet_server_address_is_advertised( server, &addr );
+            }
+        }
+        return 0;
     }
 
-    if ( address_flags & ROCKETNET_ADDRESS_FLAG_IPV4 )
-    {
-        const uint8_t * p = signed_connect_data + ROCKETNET_SIGNED_OFFSET_IPV4;
-        memset( &addr, 0, sizeof(addr) );
-        addr.type = ROCKETNET_ADDRESS_IPV4;
-        for ( int i = 0; i < 4; i++ )
-            addr.data.ipv4[i] = *p++;
-        addr.port = rocketnet_read_uint16( &p );
-        if ( rocketnet_server_address_is_advertised( server, &addr ) )
-            return 1;
-    }
-
-    return 0;
+    if ( arrival.type != ROCKETNET_ADDRESS_IPV6 || ( address_flags & ROCKETNET_ADDRESS_FLAG_IPV6 ) == 0 )
+        return 0;
+    rocketnet_server_read_token_address( &addr, 1, signed_connect_data );
+    if ( rocketnet_address_is_ipv4_in_ipv6( &addr ) )
+        return 0;
+    return rocketnet_server_address_is_advertised( server, &addr );
 }
 
 static int rocketnet_server_process_opened_request( struct rocketnet_server_protocol_t * server,
@@ -382,11 +413,10 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    // the token's server address must be one this server advertises; on a
-    // dual-stack server a v4-mapped token address normalises to IPv4 and
-    // matches the loopback or wildcard the IPv4 client addressed
+    // TokenAddressAdvertised: the arrival family's token address is one
+    // this server advertises. The other family in the token is not read.
 
-    if ( !rocketnet_server_token_address_is_advertised( server, address_flags, signed_connect_data ) )
+    if ( !rocketnet_server_token_address_is_advertised( server, from, address_flags, signed_connect_data ) )
     {
         rocketnet_debug( "server ignored connection request. token names no address this server is advertised at" );
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED]++;

@@ -138,17 +138,20 @@ public header and in `rocketnet_abi_type_size`, which is the
 authority for a given build; this document does not repeat the numbers.
 
 The client and server configs have one revision. Revision 1 is the whole
-struct, through the four development link-simulator controls. Its
-`ROCKETNET_CLIENT_CONFIG_BYTES_1` and `ROCKETNET_SERVER_CONFIG_BYTES_1`
-formulas end at `simulated_duplicate_percent` (both in `sdk/rocketnet.h`).
-A `static_assert` requires each to equal the struct's `sizeof`
-(`sdk/rocketnet_abi.cpp:6-7`).
+struct: the client config through the four development link-simulator
+controls, the server config through `second_public_address`, which follows
+them. `ROCKETNET_CLIENT_CONFIG_BYTES_1` ends at `simulated_duplicate_percent`
+and `ROCKETNET_SERVER_CONFIG_BYTES_1` ends at `second_public_address` (both in
+`sdk/rocketnet.h`). A `static_assert` requires each to equal the struct's
+`sizeof` (`sdk/rocketnet_abi.cpp:6-7`).
+`ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED` is appended immediately
+before `ROCKETNET_STATUS_COUNT`.
 
 Revision 1 is the layout of the first release that carries the sized entry
-points. `time_callback` and the `simulated_*` controls join the configs before
-that release, so they are part of revision 1, not revisions of their own; a
-revision is added only for a layout that a release has already shipped with
-the sized entry points.
+points. `time_callback`, the `simulated_*` controls and `second_public_address`
+join the configs before that release, so they are part of revision 1, not
+revisions of their own; a revision is added only for a layout that a release
+has already shipped with the sized entry points.
 
 The structs marked "no" have no sized entry points, so their revision 1 layout
 is frozen: a field added to one of them is an incompatible change until its

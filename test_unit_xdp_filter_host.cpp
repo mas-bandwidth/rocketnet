@@ -403,6 +403,19 @@ static void xdp_host_ipv6_rocketnet_packet_redirects()
     xdp_host_run_rows( rows );
 }
 
+// Both configured destinations redirect. A third address passes.
+static void xdp_host_both_destinations_redirect_and_a_third_passes()
+{
+    std::vector<xdp_host_row_t> rows;
+    rows.push_back( xdp_host_row( "ipv4 destination of a two-family config", 4 ) );
+    rows.push_back( xdp_host_row( "ipv6 destination of a two-family config", 6 ) );
+    static const uint8_t third[4] = { 192, 0, 2, 11 };
+    xdp_host_row_t other = xdp_host_row( "a third address passes", 4 );
+    other.frame.destination = third;
+    rows.push_back( xdp_host_expect( other, XDP_HOST_PASS, XDP_HOST_NO_COUNTER ) );
+    xdp_host_run_rows( rows );
+}
+
 static void xdp_host_redirect_needs_a_populated_slot()
 {
     std::vector<xdp_host_row_t> rows;
@@ -1493,6 +1506,7 @@ static void xdp_host_udp_length_drops()
 
 XDP_HOST_SKIPPED( xdp_host_ipv4_rocketnet_packet_redirects )
 XDP_HOST_SKIPPED( xdp_host_ipv6_rocketnet_packet_redirects )
+XDP_HOST_SKIPPED( xdp_host_both_destinations_redirect_and_a_third_passes )
 XDP_HOST_SKIPPED( xdp_host_redirect_needs_a_populated_slot )
 XDP_HOST_SKIPPED( xdp_host_unconfigured_passes )
 XDP_HOST_SKIPPED( xdp_host_other_port_passes )
@@ -1561,6 +1575,7 @@ static void xdp_queue_default_matches_memory_plan()
 
 REGISTER_UNIT_TEST( xdp_host_ipv4_rocketnet_packet_redirects );
 REGISTER_UNIT_TEST( xdp_host_ipv6_rocketnet_packet_redirects );
+REGISTER_UNIT_TEST( xdp_host_both_destinations_redirect_and_a_third_passes );
 REGISTER_UNIT_TEST( xdp_host_redirect_needs_a_populated_slot );
 REGISTER_UNIT_TEST( xdp_host_unconfigured_passes );
 REGISTER_UNIT_TEST( xdp_host_other_port_passes );

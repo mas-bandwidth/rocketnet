@@ -995,6 +995,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
 
     char struct_public_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     memcpy( struct_public_address, effective_config.public_address, sizeof(struct_public_address) );
+    char struct_second_public_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    memcpy( struct_second_public_address, effective_config.second_public_address, sizeof(struct_second_public_address) );
 
     int num_config_fields = 0;
     const struct rocketnet_config_field_t * config_fields = rocketnet_server_transport_config_fields( &num_config_fields );
@@ -1057,14 +1059,18 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
 
     bool consuming_env_public_address = false;
 
-    if ( strncmp( effective_config.public_address, struct_public_address, sizeof(struct_public_address) ) != 0 )
+    const bool env_public_address_changed = strncmp( effective_config.public_address, struct_public_address, sizeof(struct_public_address) ) != 0;
+    const bool env_second_public_address_changed = strncmp( effective_config.second_public_address, struct_second_public_address, sizeof(struct_second_public_address) ) != 0;
+    if ( env_public_address_changed || env_second_public_address_changed )
     {
-        // the env layer (or its deprecated alias) set it
+        // the env layer set one or both related addresses; they are consumed
+        // together so a later create cannot inherit half of a dual-family pair
 
         if ( env_public_address_consumed.load() )
         {
-            rocketnet_info( "the public_address env override was consumed by an earlier server create in this process. using the create parameters" );
+            rocketnet_info( "the public address env overrides were consumed by an earlier server create in this process. using the create parameters" );
             memcpy( effective_config.public_address, struct_public_address, sizeof(struct_public_address) );
+            memcpy( effective_config.second_public_address, struct_second_public_address, sizeof(struct_second_public_address) );
         }
         else
         {
@@ -1127,11 +1133,56 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         return NULL;
     }
 
-    rocketnet_address_t bind_address = public_address;
-    if ( bind_address.type == ROCKETNET_ADDRESS_IPV4 )
-        memset( bind_address.data.ipv4, 0, sizeof(bind_address.data.ipv4) );
+    // ServedFamilies is one address, or both when second_public_address names
+    // the other family on the same port (both 0, or equal). A second address
+    // of the first's family, on another port, or that does not parse is one
+    // log line and INVALID_ADDRESS.
+    rocketnet_address_t second_address;
+    memset( &second_address, 0, sizeof( second_address ) );
+    int serves_both = 0;
+    if ( config->second_public_address[0] != '\0' )
+    {
+        if ( !rocketnet_address_parse( &second_address, config->second_public_address ) )
+        {
+            if ( status )
+                *status = ROCKETNET_STATUS_INVALID_ADDRESS;
+            rocketnet_error( "server second_public_address does not parse" );
+            return NULL;
+        }
+        if ( second_address.type == public_address.type )
+        {
+            if ( status )
+                *status = ROCKETNET_STATUS_INVALID_ADDRESS;
+            rocketnet_error( "server second_public_address is the same family as the public address" );
+            return NULL;
+        }
+        if ( second_address.port != public_address.port )
+        {
+            if ( status )
+                *status = ROCKETNET_STATUS_INVALID_ADDRESS;
+            rocketnet_error( "server second_public_address is on a different port from the public address" );
+            return NULL;
+        }
+        serves_both = 1;
+    }
+
+    rocketnet_address_t bind_address;
+    if ( serves_both )
+    {
+        // Both families share the IPv6 wildcard on the one port, with
+        // IPV6_V6ONLY off: the bind a "[::]" server takes.
+        memset( &bind_address, 0, sizeof( bind_address ) );
+        bind_address.type = ROCKETNET_ADDRESS_IPV6;
+        bind_address.port = public_address.port;
+    }
     else
-        memset( bind_address.data.ipv6, 0, sizeof(bind_address.data.ipv6) );
+    {
+        bind_address = public_address;
+        if ( bind_address.type == ROCKETNET_ADDRESS_IPV4 )
+            memset( bind_address.data.ipv4, 0, sizeof(bind_address.data.ipv4) );
+        else
+            memset( bind_address.data.ipv6, 0, sizeof(bind_address.data.ipv6) );
+    }
 
     // the operator memory budget (#155): each candidate's pre-allocation plan
     // is compared to the budget before any allocation, and a candidate whose
@@ -1255,6 +1306,11 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     bool port_zero_refused_seen[ROCKETNET_NUM_DRIVERS];
     memset( port_zero_refused_seen, 0, sizeof(port_zero_refused_seen) );
 
+    // Opens only, not port-zero skips. TRANSPORT_FAMILIES_UNSUPPORTED is the
+    // start status when every open refused for that reason.
+    int open_refusals = 0;
+    int families_unsupported_refusals = 0;
+
     for ( int i = 0; i < ladder.num_candidates && granted_driver < 0; i++ )
     {
         const int candidate = ladder.candidates[i];
@@ -1341,6 +1397,12 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
                 rocketnet_server_transport_destroy( server_transport );
                 return NULL;
             }
+            if ( granted_driver < 0 )
+            {
+                open_refusals++;
+                if ( driver_status == ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED )
+                    families_unsupported_refusals++;
+            }
         }
 
         if ( granted_driver < 0 )
@@ -1396,8 +1458,14 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         }
 
         if ( status )
-            *status = ( port_zero_refused_names[0] != '\0' ) ? ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED
-                                                             : ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED;
+        {
+            if ( port_zero_refused_names[0] != '\0' )
+                *status = ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED;
+            else if ( open_refusals > 0 && families_unsupported_refusals == open_refusals )
+                *status = ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED;
+            else
+                *status = ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED;
+        }
         rocketnet_server_transport_destroy( server_transport );
         return NULL;
     }
@@ -1424,6 +1492,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
 
     if ( public_address.port == 0 )
         public_address.port = bind_address.port;
+    if ( serves_both && second_address.port == 0 )
+        second_address.port = bind_address.port;
 
     server_transport->bind_address = bind_address;
     server_transport->public_address = public_address;
@@ -1476,7 +1546,22 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     memcpy( protocol->server_public_key, config->server_public_key, 32 );
     memcpy( protocol->server_secret_key, config->server_secret_key, 32 );
 
-    if ( public_address.type == ROCKETNET_ADDRESS_IPV4 )
+    if ( serves_both )
+    {
+        // The named addresses, not the wildcard bind. ReachesServer is the
+        // arrival family being one of these.
+        if ( public_address.type == ROCKETNET_ADDRESS_IPV4 )
+        {
+            protocol->advertised_ipv4 = public_address;
+            protocol->advertised_ipv6 = second_address;
+        }
+        else
+        {
+            protocol->advertised_ipv6 = public_address;
+            protocol->advertised_ipv4 = second_address;
+        }
+    }
+    else if ( public_address.type == ROCKETNET_ADDRESS_IPV4 )
     {
         protocol->advertised_ipv4 = public_address;
     }
