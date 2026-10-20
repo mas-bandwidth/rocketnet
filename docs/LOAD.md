@@ -78,9 +78,20 @@ load: server reports 999 of 1000 clients connected at the deadline
 load: server counter CONNECTION_REQUEST_NO_COOKIE=1035
 ```
 
+### Traffic-phase disconnect diagnostics
+
+For each of the first eight clients that leave `CONNECTED` during traffic, `bin/load` prints, after the line naming the client and its disconnect reason, when that client was last updated, the longest gap between two of its updates, and the longest single server update with its time into traffic (`load.c:742-745`, `load.c:785-787`, `load.c:798-802`):
+
+```
+load: client 432 left CONNECTED at t=6.496: state=0 disconnected reason=server disconnected
+load: client 432 last updated 0.000 s ago, longest update gap 2.127 s; longest server update 0.291 s at t=4.003
+```
+
+One loop thread updates every client in slices of 100 with a server update after each slice, so an update gap near the 3-second reliable timeout means the loop starved the client of updates; a short gap means the client timed out while it was updated on time.
+
 ### Dual-stack client ports
 
-A client bound dual-stack (`[::]:0`) that talks to an IPv4 server needs a port no IPv4 socket on the host holds: darwin lets a dual-stack socket bind a port an IPv4 socket already holds and delivers IPv4 datagrams for that port to the IPv4 socket, so the client sends but never hears the server, and sits in `requesting cookie` until its deadline. The darwin socket create takes a port-0 dual-stack bind's port from an IPv4 probe socket's pick and binds it explicitly while the probe holds it (`sdk/rocketnet_platform.cpp:2102-2171`). A run while another process holds 4000 IPv4 wildcard sockets bound at port 0 passes the 1000-client connect criterion; the same run with the platform taking the kernel's own dual-stack pick names 241 clients short of `CONNECTED`.
+Darwin lets a dual-stack socket (`[::]:0`) take an ephemeral port an IPv4 socket on the host already holds, and delivers IPv4 datagrams for that port to the IPv4 socket, so a dual-stack client of an IPv4 server sends but never hears the server and sits in `requesting cookie` until its deadline. On macOS the client of an IPv4 server binds an IPv4 socket (`sdk/rocketnet_client_transport.cpp:790-799`), and an IPv4 socket's ephemeral port is never one another IPv4 socket holds. `load` connects its clients to `127.0.0.1` (`load.c:501`), so every load client takes that IPv4 bind.
 
 ### Server cells
 

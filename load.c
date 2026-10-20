@@ -650,6 +650,15 @@ int main( int argc, char ** argv )
     int send_cursor = 0;
     int server_send_cursor = 0;
     double last_send_batch_time = traffic_start;
+    /* each client's last update time and its longest gap between updates,
+       and the longest server update: printed with the first disconnects in
+       traffic, they say whether a client was starved of updates by this
+       loop's cadence (a gap near the 3 s reliable timeout) or timed out
+       while updated on time */
+    double * client_last_update = (double *) calloc( (size_t) num_clients, sizeof( double ) );
+    double * client_max_update_gap = (double *) calloc( (size_t) num_clients, sizeof( double ) );
+    double max_server_update_s = 0.0;
+    double max_server_update_at = 0.0;
 
     /* Step 2: Drive traffic for <seconds>, then 1.0s drain for in-flight delivery */
     const double drain_seconds = 3.0;
@@ -730,6 +739,10 @@ int main( int argc, char ** argv )
             client_update_cursor = ( client_update_cursor + 1 ) % num_clients;
             if ( !( drop_injected && i == 0 ) )
             {
+                const double update_time = rocketnet_time();
+                if ( client_last_update[i] > 0.0 && update_time - client_last_update[i] > client_max_update_gap[i] )
+                    client_max_update_gap[i] = update_time - client_last_update[i];
+                client_last_update[i] = update_time;
                 rocketnet_message_client_update( clients[i], rocketnet_time() );
 
                 const uint8_t * data = NULL;
@@ -769,6 +782,9 @@ int main( int argc, char ** argv )
                              i, rocketnet_time() - traffic_start, st, rocketnet_client_transport_state_name( st ),
                              rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t)
                                  rocketnet_message_client_disconnect_reason( clients[i] ) ) );
+                if ( unexpected_disconnects < 8 )
+                    fprintf( stderr, "load: client %d last updated %.3f s ago, longest update gap %.3f s; longest server update %.3f s at t=%.3f\n",
+                             i, rocketnet_time() - client_last_update[i], client_max_update_gap[i], max_server_update_s, max_server_update_at );
                 unexpected_disconnects++;
             }
 
@@ -779,6 +795,11 @@ int main( int argc, char ** argv )
                 const double t1 = rocketnet_time();
                 if ( update_count < update_cap )
                     update_us[update_count++] = (uint64_t) ( ( t1 - t0 ) * 1e6 );
+                if ( t1 - t0 > max_server_update_s )
+                {
+                    max_server_update_s = t1 - t0;
+                    max_server_update_at = t0 - traffic_start;
+                }
 
                 for ( int s = 0; s < num_clients; s++ )
                 {
@@ -989,6 +1010,8 @@ int main( int argc, char ** argv )
     free( c2s_streams );
     free( s2c_streams );
     free( update_us );
+    free( client_last_update );
+    free( client_max_update_gap );
     rocketnet_term();
 
     const long fds_end = count_open_fds();
