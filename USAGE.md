@@ -346,7 +346,10 @@ A send the connection's region has no room for ends the connection with
 `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED`: the server disconnects that
 client, and the client disconnects itself. The send budget governs the wire,
 never the queue. A reliable message waits for budget and is never dropped; an
-unreliable message over budget is dropped and counted.
+unreliable message over budget is dropped and counted. A refused start spends
+its session sequence even though nothing is sent, and this is harmless: the
+burned sequence is never opened by the receiver, never named in an ack block,
+and never resends.
 
 ```c
 #include "rocketnet.h"
