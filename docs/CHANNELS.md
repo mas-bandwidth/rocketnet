@@ -1339,14 +1339,14 @@ header; the internal transport and message layers are in
   `rocketnet_server_release_message` gives it back. The queue is the update's
   deliveries connection by connection in index order, each connection's in its
   delivery order, never filtered by channel
-  (`sdk/rocketnet_message_server.cpp:866-892`): ordered messages keep send
+  (`sdk/rocketnet_message_server.cpp:870-896`): ordered messages keep send
   order within their channel and sender, and sequenced messages never go
   backwards on theirs. The batch form, `rocketnet_client_receive_messages` or
   `rocketnet_server_receive_messages`, hands out the same queue in the same
   order as arrays of up to `ROCKETNET_RECEIVE_BATCH_MESSAGES` entries per call,
   each naming its sender, channel, wire reliability, length and view; the next
   batch call or update releases the batch
-  (`sdk/rocketnet_message_server.cpp:978-1002`). Every view
+  (`sdk/rocketnet_message_server.cpp:982-1006`). Every view
   is released before the next update: update with one held asserts in a debug
   build and returns `ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED` in a release build,
   counted as `MESSAGE_NOT_RELEASED` (tla/RNSlots.tla, RejectUnreleasedUpdate).
@@ -1354,7 +1354,7 @@ header; the internal transport and message layers are in
 - **The send's channel** is RakNet's ordering channel: the types that are
   neither ordered nor sequenced (UNRELIABLE, RELIABLE and their receipt types)
   ignore it and accept any value, never refused
-  (`sdk/rocketnet_message_server.cpp:608-614`).
+  (`sdk/rocketnet_message_server.cpp:612-618`).
 - **UNRELIABLE.** A code 0 record carries no channel (13.2), so an unreliable
   message is delivered on channel 0. It is one record in one packet, up to the
   payload capacity less the form byte and the record's three header bytes
@@ -1373,15 +1373,15 @@ header; the internal transport and message layers are in
   `send_packets`.
 - **Admission.** Observe reads each slot's connection from
   `rocketnet_server_transport_client_connection_id` (P9a;
-  `rn_server_link_connection`, `sdk/rocketnet_message_server.cpp:972`), which
+  `rn_server_link_connection`, `sdk/rocketnet_message_server.cpp:1076`), which
   differs for every connection a slot holds, so a reconnect of the same client
   id into the same slot inside one transport update resets the slot and
-  announces its CONFIG (`sdk/rocketnet_message_server.cpp:517`). Each entry of
+  announces its CONFIG (`sdk/rocketnet_message_server.cpp:521`). Each entry of
   the payload and acked batches carries the connection it was received for
   (P9b): the server's link reads
   `rocketnet_server_transport_payload_connection_ids` and
   `rocketnet_server_transport_acked_connection_ids`
-  (`sdk/rocketnet_message_server.cpp:979`, `:986`), and the client's link
+  (`sdk/rocketnet_message_server.cpp:1083`, `:1090`), and the client's link
   tags every entry with 1, the id its object binds its one connection to at
   create (`sdk/rocketnet_message_client.cpp:75`,
   `sdk/rocketnet_message_server.cpp:301`). `rn_message_admit`
@@ -1478,7 +1478,7 @@ Why a connection ended is read with `rocketnet_client_disconnect_reason` and
 the client only, `SERVER_DISCONNECTED`: the client accepted the server's
 disconnect packet (`rocketnet_server_disconnect_client`, `rocketnet_server_stop`
 or `rocketnet_server_destroy`), recorded by the client terminal check in
-`rn_message_object_update` (`sdk/rocketnet_message_server.cpp:501-502`). A
+`rn_message_object_update` (`sdk/rocketnet_message_server.cpp:505-506`). A
 deliberate `rocketnet_client_disconnect` and a connection timeout read `NONE`.
 
 **Consumer adapter boundary.** The RakNet-style adapter discussed in the

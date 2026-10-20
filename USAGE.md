@@ -348,7 +348,7 @@ sequenced within it, independently of every other channel, and a channel at or
 past the config's `num_channels` refuses them. UNRELIABLE, RELIABLE and the
 other two receipt types ignore it, as RakNet's `ReliabilityLayer::Send` does:
 any channel is accepted for them, never refused, and they travel with no
-channel (`sdk/rocketnet_message_server.cpp:608-614`).
+channel (`sdk/rocketnet_message_server.cpp:612-618`).
 
 A send the connection's region has no room for ends the connection with
 `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED`: the server disconnects that
@@ -397,7 +397,7 @@ out the queue's next message of the update as a const view and its length. The
 queue holds the update's messages client by client in index order, each
 client's in the order its connection delivered them: ordered messages in send
 order within their channel, and a sequenced message never older than one before
-it on its channel (`sdk/rocketnet_message_server.cpp:866-892`). The view is
+it on its channel (`sdk/rocketnet_message_server.cpp:870-896`). The view is
 valid until the next update, and every received message must be released with
 `rocketnet_client_release_message` or `rocketnet_server_release_message` before the next
 update. Copy anything kept past the update. Updating with a view still held
@@ -415,7 +415,7 @@ messages, one array per field (`client_index`, `channel`, `reliability`,
 `num_messages` 0 when the queue is empty. A batch and its views are valid until
 the next batch call or update, which releases them: there is no release call.
 The two forms share the queue, so a message handed out by one is never handed
-out by the other (`sdk/rocketnet_message_server.cpp:978-1002`).
+out by the other (`sdk/rocketnet_message_server.cpp:982-1006`).
 
 ```c
 #include "rocketnet.h"

@@ -70,7 +70,7 @@ Ready(m) ==
 ReadySet == {m \in Messages : Ready(m)}
 \* The application's one receive queue (RakPeer::Receive): rxQueue is the
 \* update's deliveries in delivery order, every channel's together, never
-\* filtered by channel (sdk/rocketnet_message_server.cpp:866-892); EndUpdate
+\* filtered by channel (sdk/rocketnet_message_server.cpp, rn_message_object_next); EndUpdate
 \* ends the update's views and moves the queue into trace, what the
 \* application has received on each channel in earlier updates. Trace(c) is
 \* everything received on channel c, the queue's projection included.
