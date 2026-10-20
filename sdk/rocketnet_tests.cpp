@@ -8199,11 +8199,24 @@ void rocketnet_test_public_api_null()
 }
 
 // The version is one integer, and the library and the header agree on it.
+// The text form is the integers plus the prerelease: "1.0.0-preview-1" for
+// v1.0.0-preview-1, "1.0.0" for a final release, "dev" in a development build.
 
 void rocketnet_test_version_is_one_integer()
 {
     rocketnet_check( rocketnet_version() == ROCKETNET_VERSION );
     rocketnet_check( ROCKETNET_VERSION == ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH );
+#if ROCKETNET_DEVELOPMENT
+    rocketnet_check( strcmp( ROCKETNET_VERSION_FULL, "dev" ) == 0 );
+    rocketnet_check( strcmp( ROCKETNET_VERSION_PRERELEASE, "" ) == 0 );
+#else // #if ROCKETNET_DEVELOPMENT
+    char expected[64];
+    if ( ROCKETNET_VERSION_PRERELEASE[0] != '\0' )
+        snprintf( expected, sizeof( expected ), "%d.%d.%d-%s", ROCKETNET_VERSION_MAJOR, ROCKETNET_VERSION_MINOR, ROCKETNET_VERSION_PATCH, ROCKETNET_VERSION_PRERELEASE );
+    else
+        snprintf( expected, sizeof( expected ), "%d.%d.%d", ROCKETNET_VERSION_MAJOR, ROCKETNET_VERSION_MINOR, ROCKETNET_VERSION_PATCH );
+    rocketnet_check( strcmp( ROCKETNET_VERSION_FULL, expected ) == 0 );
+#endif // #if ROCKETNET_DEVELOPMENT
 }
 
 void rocketnet_test_public_api_null_is_a_counted_no_op()

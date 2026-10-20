@@ -382,7 +382,7 @@ The normative standard in standard/: standard/TRANSPORT.md (the t sections) and 
 
 ## Keys and backends (planned)
 
-What customers need to run their own connect-token backend: their own keypairs, the guide, and working example backends in Go and C#. Planned after v1.0.0.
+What customers need to run their own connect-token backend: their own keypairs, the guide, and working example backends in Go and C#. Planned after v1.0.0-preview-1.
 
 | feature | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
@@ -393,9 +393,9 @@ What customers need to run their own connect-token backend: their own keypairs, 
 
 [Source data](docs/roadmap.sexp)
 
-## Correctness after v1.0.0 (later)
+## Correctness after v1.0.0-preview-1 (later)
 
-Correctness work that follows the v1.0.0 milestone, by the owner's call.
+Correctness work that follows the v1.0.0-preview-1 milestone, by the owner's call.
 
 | feature | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
@@ -406,7 +406,7 @@ Correctness work that follows the v1.0.0 milestone, by the owner's call.
 
 ## Hardening and long testing (planned)
 
-Soaks, load, stress, matrices, fuzzing, sanitizers, nightlies and the TLA+ ledger are planned after v1.0.0. Each row keeps its whole brief and its latest head.
+Soaks, load, stress, matrices, fuzzing, sanitizers, nightlies and the TLA+ ledger are planned after v1.0.0-preview-1. Each row keeps its whole brief and its latest head.
 
 | feature | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
