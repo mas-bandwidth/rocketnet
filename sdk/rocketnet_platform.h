@@ -508,10 +508,10 @@ int rocketnet_platform_socket_receive_packets_mmsg( struct rocketnet_platform_so
 // runs makes the next wait return at once. Platforms that define
 // ROCKETNET_PLATFORM_HAS_WAKE implement it; elsewhere create returns NULL.
 // Linux builds the eventfd wake; macOS and iOS build the kqueue wake
-// (docs/CLIENT-IO.md "The wake" and its macOS and iOS card), so the msgx
+// (docs/CLIENT-IO.md "The wake"), so the msgx
 // client runs on the I/O thread there. Windows builds the event wake,
 // WSAEventSelect FD_READ beside a manual-reset event (docs/CLIENT-IO.md
-// "The wake" and its Windows card), so the portable client runs on the I/O
+// "The wake"), so the portable client runs on the I/O
 // thread there.
 #if ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined(__linux__) ) || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #define ROCKETNET_PLATFORM_HAS_WAKE 1

@@ -317,7 +317,6 @@ enum rocketnet_disconnect_reason_t
 {
     ROCKETNET_DISCONNECT_REASON_NONE                            = 0,   ///< No connection has ended, or the connection is up
     ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH                 = 1,   ///< The two ends' WIRE config fields differ
-    ROCKETNET_DISCONNECT_REASON_CONFIG_TIMEOUT                  = 2,   ///< The config exchange did not finish in time
     ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION              = 3,   ///< The peer sent what the protocol forbids
     ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT                = 4,   ///< A reliable message went unacknowledged past reliable_timeout_ms
     ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED        = 5,   ///< The connection's region had no room for an operation it must not drop
@@ -662,7 +661,7 @@ ROCKETNET_EXPORT uint64_t rocketnet_protocol_version( void );
 /// @brief Returns monotonic elapsed time in seconds from an unspecified process-local origin. @return Nondecreasing platform clock value; use the same clock for all time-taking calls.
 ROCKETNET_EXPORT double rocketnet_time( void );
 
-/// @brief Suspends the calling thread for a requested duration. @param seconds Duration in seconds; provide a finite nonnegative value representable by the platform. This blocks the calling thread.
+/// @brief Suspends the calling thread for a requested duration. @param seconds Duration in seconds; a negative, zero or NaN value returns at once, and a value above 2000 seconds sleeps 2000 seconds. This blocks the calling thread.
 ROCKETNET_EXPORT void rocketnet_sleep( double seconds );
 
 /// -----------------------------------------
