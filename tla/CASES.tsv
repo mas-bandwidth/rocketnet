@@ -97,6 +97,7 @@ MCRNSlotsBrokenNoResetOnReuse.cfg	MCRNSlots.tla	invariant	ReusedSlotStartsClean	
 MCRNSlotsBrokenKickCarriesOn.cfg	MCRNSlots.tla	action	ExhaustionOnlyLeadsToDisconnect	ignore-terminal	rnslots	required	-
 MCRNSlotsBrokenReleaseIgnored.cfg	MCRNSlots.tla	temporal	EveryReliableDelivered	ignore-terminal	rnslots	required	-
 MCRNSlotsBrokenUpdateWithHeldViews.cfg	MCRNSlots.tla	invariant	UpdateRequiresReleasedViews	ignore-terminal	rnslots	required	-
+MCRNSlotsBrokenPendingAcrossReset.cfg	MCRNSlots.tla	invariant	NoPendingAcrossReset	ignore-terminal	rnslots	required	-
 MCRNSlotsExhaustion.cfg	MCRNSlots.tla	pass	-	ignore-terminal	rnslots	required	-
 MCRNChannelTypes.cfg	MCRNChannelTypes.tla	pass	-	ignore-terminal	rnchanneltypes	required	-
 MCRNChannelBrokenSequencedBackwards.cfg	MCRNChannelTypes.tla	invariant	SequencedNeverBackwards	ignore-terminal	rnchanneltypes	required	-
