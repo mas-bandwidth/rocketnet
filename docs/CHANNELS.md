@@ -1438,6 +1438,16 @@ internal (`sdk/rocketnet_layers.h`). The counters this document names are `MESSA
 `MESSAGE_MEMORY_EXHAUSTED`, plus one
 counter for each violation in section 13.3.
 
+Why a connection ended is read with `rocketnet_client_disconnect_reason` and
+`rocketnet_server_disconnect_reason`, an `enum rocketnet_disconnect_reason_t`
+(`sdk/rocketnet.h:338-347`): `NONE`, `CONFIG_MISMATCH`, `CONFIG_TIMEOUT`,
+`PROTOCOL_VIOLATION`, `RELIABLE_TIMEOUT`, `MESSAGE_MEMORY_EXHAUSTED`, and, on
+the client only, `SERVER_DISCONNECTED`: the client accepted the server's
+disconnect packet (`rocketnet_server_disconnect_client`, `rocketnet_server_stop`
+or `rocketnet_server_destroy`), recorded by the client terminal check in
+`rn_message_object_update` (`sdk/rocketnet_message_server.cpp:477-478`). A
+deliberate `rocketnet_client_disconnect` and a connection timeout read `NONE`.
+
 **Consumer adapter boundary.** The RakNet-style adapter discussed in the
 study's §13 is outside RocketNet's library deliverable. The native C API
 covers the following protocol needs:

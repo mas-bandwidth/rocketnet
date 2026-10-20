@@ -8209,6 +8209,79 @@ void rocketnet_test_client_receive_thread_quit_wake_before_wait_returns()
 
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
+// A real client and server over the portable transport on 127.0.0.1 (port
+// 0): the server disconnects the connected client, and the client reads
+// ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED once its update accepts the
+// server's disconnect packet, DISCONNECTED and not timed out.
+
+static void rocketnet_test_public_client_reads_server_disconnected()
+{
+    struct rocketnet_server_config_t server_config;
+    rocketnet_server_dev_config( &server_config );
+    server_config.max_clients = 2;
+    server_config.transport = "portable";
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
+    rocketnet_check( server );
+
+    char server_address[64];
+    snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, 78, (uint64_t) time( NULL ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_client_config_t client_config;
+    rocketnet_client_default_config( &client_config );
+    client_config.transport = "portable";
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    if ( client && rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_client_destroy( client );
+        client = NULL;
+    }
+    rocketnet_check( client );
+
+    const double wall_start = rocketnet_time();
+    while ( rocketnet_time() - wall_start < 10.0 )
+    {
+        const double now = 1000.0 + ( rocketnet_time() - wall_start );
+        rocketnet_check( rocketnet_server_update( server, now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_check( rocketnet_client_update( client, now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_client_send_packets( client );
+        rocketnet_server_send_packets( server );
+        if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
+             rocketnet_server_client_connected( server, rocketnet_client_index( client ) ) )
+            break;
+        rocketnet_sleep( 0.005 );
+    }
+    rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_NONE );
+
+    const uint64_t index = rocketnet_client_index( client );
+    rocketnet_server_disconnect_client( server, index );
+    rocketnet_server_send_packets( server );
+
+    // well inside the connection timeout: the disconnect packet ends it
+    const double disconnect_start = rocketnet_time();
+    while ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED && rocketnet_time() - disconnect_start < 2.0 )
+    {
+        const double now = 1000.0 + ( rocketnet_time() - wall_start );
+        rocketnet_check( rocketnet_server_update( server, now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_server_send_packets( server );
+        rocketnet_check( rocketnet_client_update( client, now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_sleep( 0.005 );
+    }
+    rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    rocketnet_check( rocketnet_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
+    rocketnet_check( !rocketnet_server_client_connected( server, index ) );
+
+    rocketnet_client_destroy( client );
+    rocketnet_server_destroy( server );
+}
+
 #if !defined(_WIN32) && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 void rocketnet_test_posix_server_receive_weather();
 void rocketnet_test_posix_client_receive_weather();
@@ -8330,6 +8403,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_server_handshake_deadline_from_config", rocketnet_test_server_handshake_deadline_from_config },
     { "test_config_precedence", rocketnet_test_config_precedence },
     { "test_public_client_server_queries", rocketnet_test_public_client_server_queries },
+    { "public_client_reads_server_disconnected", rocketnet_test_public_client_reads_server_disconnected },
     { "test_server_driver_pin_portable", rocketnet_test_server_driver_pin_portable },
     { "test_server_driver_pin_loopback", rocketnet_test_server_driver_pin_loopback },
     { "test_driver_env_pins_loopback", rocketnet_test_driver_env_pins_loopback },
