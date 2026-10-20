@@ -1,10 +1,9 @@
 # RNScheduler: the order items are first written in
 
-`tla/RNScheduler.tla` is layer 6's scheduler (docs/CHANNELS.md 9.2): the order
-in which the packet builder takes queued items into packets. The code is
+`tla/RNScheduler.tla` is the message layer's scheduler: the order in which
+the packet builder takes queued items into packets. The code is
 `rn_packet_builder_write` in `sdk/rocketnet_packet_builder.cpp`; each of its
-scheduler functions names the action it implements. The model was written
-before the code.
+scheduler functions names the action it implements.
 
 `tla/MCRNScheduler.tla` and `tla/MCRNScheduler.cfg` are the small instance.
 The two `tla/MCRNSchedulerBroken*.cfg` files are the reversed witnesses. The
@@ -15,7 +14,8 @@ in `tla/RUNS.tsv`.
 
 Three orders nest, outermost first.
 
-1. **The budget's class order** (owner rule R6): retransmits and ordered
+1. **The budget's class order**
+   ([m9.4 Send budget](../standard/MESSAGES.md#m9)): retransmits and ordered
    progress, then new reliable items, then unreliable items. A lower class is
    taken only when no higher class has an item it may write now, whatever
    the priorities. A LOW retransmit goes before an IMMEDIATE new reliable
@@ -23,7 +23,7 @@ Three orders nest, outermost first.
 2. **RakNet's four priorities inside a class.** Each level has a clock. The
    level with the smallest clock goes next and its clock advances by its
    stride: 1, 5, 14 and 35 for IMMEDIATE, HIGH, MEDIUM and LOW
-   (`(1 << p) * (p + 1) + p`, docs/RAKNET-RELIABILITY.md 5.3). A clock behind
+   (`(1 << p) * (p + 1) + p`, as RakNet's scheduler does). A clock behind
    the last level taken counts as that level's clock (RakNet's pull-forward).
    A tie goes to the more urgent level. When nothing is queued the clocks
    reset to RakNet's seeds 0, 3, 10 and 27. Under a backlog adjacent levels
@@ -38,8 +38,10 @@ priority boosts the whole channel and never reorders it.
 **The window stall.** A new reliable item takes a message number when it is
 first written, and at most W numbers are outstanding. A full window holds the
 new-reliable class back. It never holds back retransmits (already numbered)
-or unreliable items (never numbered, I13). In the code the window is layer
-3's and the caller offers only items the window admits; the builder has no
+or unreliable items (never numbered,
+[m5.1 Sender numbering](../standard/MESSAGES.md#m5) rule 1). In the code the
+window is the sender window's (`rn_window_send_admit` in
+`sdk/rocketnet_window_send.cpp`) and the caller offers only items it admits; the builder has no
 window gate, so it cannot block unreliable items on one.
 
 ## What the module covers
@@ -62,8 +64,8 @@ Actions: `Queue` (the application queues the next item of the scenario
 nothing more can be written: leftover unreliable items are dropped and
 counted, the budget refills, the next update's unreliable items arrive, and
 with nothing queued the clocks reset), `Ack(i)` and `Lose(i)` (the
-transport's packet ack or loss for the packet that carried item `i`, owner
-rule R1; a loss queues the item again as a retransmit).
+transport's packet ack or loss for the packet that carried item `i`; a loss
+queues the item again as a retransmit).
 
 Properties:
 
@@ -108,17 +110,16 @@ clocks and the round-robin cursor to their values at the packet's start.
 ## Differences from RakNet
 
 1. **The class order is outside priority.** RakNet keeps one heap for every
-   reliability and lets the weight alone decide (study 5.3). Here priority
+   reliability and lets the weight alone decide. Here priority
    orders items only inside one budget class: retransmits and ordered
    progress, then new reliable, then unreliable, whatever their priorities
-   (R6). An IMMEDIATE unreliable item waits behind a LOW reliable one.
+   (m9.4). An IMMEDIATE unreliable item waits behind a LOW reliable one.
 2. **Priority boosts the whole channel; channels stay FIFO.** RakNet orders
    each message by its own weight, so a later high-priority send on a channel
-   can be pulled before an earlier low-priority one (docs/CHANNELS.md 17.3
-   item 3). Here a channel is offered only at its head, at the best priority
+   can be pulled before an earlier low-priority one. Here a channel is offered only at its head, at the best priority
    among its queued items.
 3. **Round robin across channels within a level.** RakNet pulls a level's
-   messages in push order, one global FIFO (17.3 item 4).
+   messages in push order, one global FIFO.
 4. **The clock advances at take, not at push.** RakNet gives each message a
    weight when it is pushed and advances that level's next weight then. Here
    a level's clock advances by its stride when an item of that level is
@@ -135,11 +136,12 @@ clocks and the round-robin cursor to their values at the packet's start.
 7. **Ties go to the more urgent level.** RakNet's heap leaves equal weights in
    an unspecified order.
 8. **IMMEDIATE is not immediate.** RakNet's only immediate behaviour is a
-   network-thread wake (study 5.3, "Code vs comment"); here every priority is
+   network-thread wake; here every priority is
    written at the next update, inside the budget.
 9. **Out of range is never taken.** An item whose priority is not 0 to 3 is
-   never written by the builder; the C API is to refuse it at send (17.3
-   item 10).
+   never written by the builder, and the message endpoint's send
+   (`rn_endpoint_send`, `sdk/rocketnet_endpoint.cpp`) refuses any priority
+   other than `ROCKETNET_PRIORITY_MEDIUM`, counted `MESSAGE_SEND_REFUSED`.
 
 ## Abstractions in the model
 

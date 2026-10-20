@@ -1,16 +1,14 @@
 # RNUringDriver: the io_uring server driver
 
 `RNUringDriver.tla` models the io_uring server driver
-(`sdk/rocketnet_server_uring_linux.cpp`) **before the code exists**. It
-follows THE DESIGN of card `rocketnet-io-uring-driver-core`. Once that card
-lands, the driver cites this module, and the `io-uring-driver` row in
-`COVERAGE.tsv` moves from `owed` to `current`.
+`sdk/rocketnet_server_uring_linux.cpp`, which cites this module: each function
+that implements one of its actions names the action.
 
 ## The abstraction
 
 The driver owns one io_uring, and only the main thread uses it. The model
-keeps the three state machines of the design and abstracts away the
-contents:
+keeps the driver's three state machines (send slots, receive buffers,
+completions) and abstracts away the contents:
 
 - **Send slots.** Each slot is in one of four states: `Free`, `Reserved`,
   `Finished` or `Kernel`. A `bytes` flag says whether finish recorded bytes
@@ -34,9 +32,9 @@ contents:
 Two constants act as rule switches and carry the reversed witnesses:
 `ResetWaitsForReap` and `ReapIntoFill`. Both are `TRUE` in the rule.
 
-## Each action against THE DESIGN
+## Each action against the code
 
-| Action | Design sentence it models |
+| Action | What the driver does |
 |---|---|
 | `Reserve` | start_packet reserves the next slot with one atomic fetch_add; it returns NULL, with no step, when the staging is full |
 | `Finish(s)` | finish records the bytes |
@@ -53,6 +51,34 @@ Two constants act as rule switches and carry the reversed witnesses:
 | `Destroy` | cancels every multishot receive: the cancel posts its own CQE, and an armed multishot ends with a `Term` |
 | `Free` | destroy's drain ends: once no slot is kernel owned, the cq is empty and the multishot is disarmed, slots, banks and the ring are freed |
 | `Done` | the driver is gone; the stutter at the end of a run |
+
+In `sdk/rocketnet_server_uring_linux.cpp`, `Reserve` is
+`rocketnet_server_uring_start_packet`, `Finish(s)` is
+`rocketnet_server_uring_finish_packet`, `Abort(s)` is
+`rocketnet_server_uring_abort_packet`, `Submit`, `Reap` and `ResetIndex` are
+`rocketnet_server_uring_send_packets`, `Reap(c)` is
+`rocketnet_server_uring_reap_cqe` (the receive case
+`rocketnet_server_uring_receive_cqe`, the `Term` case re-arming through
+`rocketnet_server_uring_arm` unless destroying), `ReturnBuffer(b)` is the
+`io_uring_buf_ring_add` at the end of `rocketnet_server_uring_receive_cqe`,
+`Swap` is `rocketnet_server_uring_receive_packets`, `TransportReads` is
+`rocketnet_server_uring_process_packets`, and `Destroy` and `Free` are
+`rocketnet_server_uring_destroy`.
+
+Where the code refines the model: one multishot per queue where the model
+has one in all; `Submit` runs in chunks no larger than the room left in the
+SQ, interleaved with
+`Reap`, with sends in flight capped at `ROCKETNET_URING_ENTRIES`; a cancel
+that finds no request is sent again; and destroy's wait is bounded
+(`ROCKETNET_URING_DESTROY_WAIT_ROUNDS`). A destroy that gives up never
+reaches `Free`: it exits the ring and closes the sockets but leaks the
+kernel-visible memory rather than freeing it, counted by
+`rocketnet_server_uring_leaked_bytes` and
+`rocketnet_server_uring_leaked_drivers`, so `FreedOnlyWhenDrained` holds on
+both branches. `test_server_uring_probe` (including the give-up branch,
+through `rocketnet_server_uring_test_stall_destroy`) and
+`test_server_uring_wire_ipv4` in `functional/rocketnet_functional_tests.cpp`
+exercise the driver.
 
 ## Properties
 
@@ -85,9 +111,9 @@ Liveness, under `SpecFair`:
   without it.
 - **`Free`.** This is destroy's drain.
 
-The brief names fairness of KernelComplete, Reap and the drain. ResetIndex
-and ReturnBuffer are steps of send_packets and of the reap, so they get
-fairness too.
+KernelComplete, Reap and the drain are what the kernel and destroy
+provide. ResetIndex and ReturnBuffer are steps of send_packets and of the
+reap, so they get fairness too.
 
 ## What the model leaves out
 
@@ -95,7 +121,8 @@ fairness too.
 - The GSO-style SO_REUSEPORT socket group. The N queues are folded into
   one multishot receive. Each queue arms and re-arms on its own in the same
   way, and the banks are shared.
-- SQ-full handling and partial submits. The ENOBUFS counter and the
+- SQ-full handling and partial submits (the chunked submit above). The
+  ENOBUFS counter and the
   SEND_DROPPED counter are counts only, so they are not modelled.
 - How the fill threads share the work. Their concurrency reaches the model
   only through the single fetch_add.
@@ -119,8 +146,7 @@ done
   --out "$job/RUNS.tsv" "$job"/rnuringdriver-*/RUNS.tsv
 ```
 
-Outcomes measured on hulk (linux-amd64, Java 21.0.12.1, the pinned JAR,
-2026-10-17):
+Outcomes measured on Linux (linux-amd64, Java 21.0.12.1, the pinned JAR):
 
 | Case | Expected | Exit | Generated | Distinct | Seconds |
 |---|---|---:|---:|---:|---:|
@@ -132,7 +158,7 @@ Outcomes measured on hulk (linux-amd64, Java 21.0.12.1, the pinned JAR,
 states in 2 min 51 s, over the 110 s record budget. That run is not a
 record. Under the budget rule, the committed instance is `MaxSteps = 2`.
 
-## Counterexamples, checked by hand against THE DESIGN
+## Counterexamples, checked by hand against the code
 
 **BrokenResetBeforeReap** (`ResetWaitsForReap = FALSE`): ResetIndex may run
 right after Submit. TLC printed six states:
@@ -145,12 +171,13 @@ right after Submit. TLC printed six states:
    are still {1}.
 6. `Reserve`: slot 1 is `Reserved` while 1 is still in kown.
 
-By hand, against the design: send_packets submitted slot 1's SENDMSG, and
+By hand, against the code: send_packets submitted slot 1's SENDMSG, and
 until its CQE the kernel owns slot 1's frame and msghdr. A reset before the
 reap lets the next start_packet's fetch_add return slot 1, and a fill
-thread then writes the frame the kernel is still sending. That is the
-corruption the design rules out with "only then does it reset the
-reservation index to 0". The trace is a real defect of the broken rule, not
+thread then writes the frame the kernel is still sending.
+`rocketnet_server_uring_send_packets` rules that out by reaping until every
+send of the call has its CQE before it resets the reservation index to 0.
+The trace is a real defect of the broken rule, not
 a model artifact.
 
 **BrokenOneBank** (`ReapIntoFill = FALSE`): Reap copies a receive CQE into
@@ -162,12 +189,13 @@ the exposed bank. TLC printed three states:
 3. `Reap`: buffer 1 is `Copied` and exposed = {1}, while snap = {} and
    gen = 0.
 
-By hand, against the design: the transport is reading the views of the
+By hand, against the code: the transport is reading the views of the
 exposed bank of generation 0, and no receive_packets has run. Under the
 broken rule, a datagram reaped by the main thread lands in that bank, so
-the bank the transport is reading changes under it. The design forbids
-this with "Receive CQEs ... always go to the fill bank". This is a real
-defect.
+the bank the transport is reading changes under it.
+`rocketnet_server_uring_receive_cqe` always copies into the fill bank,
+whether the CQE is reaped from receive_packets or inside send_packets. This
+is a real defect.
 
 Each witness fails on exactly its declared invariant (exit 12), and the
 control passes every invariant and both liveness properties.

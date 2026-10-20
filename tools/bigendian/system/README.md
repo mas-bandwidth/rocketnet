@@ -1,6 +1,6 @@
 # Full-system big-endian run
 
-The nightly job `.github/workflows/nightly-bigendian-system.yml` is this procedure. A hand run uses the same steps. The suite inside the guest is functional: it opens sockets and starts real drivers.
+The nightly job `.github/workflows/nightly-bigendian-system.yml` is this procedure. A hand run uses the same steps. The suite inside the guest is functional: it opens sockets and starts real transports.
 
 ## What the image is, and how it is verified
 

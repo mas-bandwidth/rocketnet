@@ -5,7 +5,7 @@ server gets on a given kernel and why, how to pin one, what `gso`, `io_uring`
 and `xdp` need from the host, how socket errors and ICMP behave, the fd and
 memlock limits for 1000 clients, what each transport needs inside a container,
 and the commands that verify a host. Every claim names the file and line that
-backs it; a section whose proof is still an open card says **pending**.
+backs it; a section whose proof is not yet in place says **pending**.
 
 ## 1. Build
 
@@ -346,10 +346,9 @@ What each path does with the errors it can see:
   again (section 5); a submit error other than `EINTR`, `EAGAIN` or `EBUSY` is
   logged (`sdk/rocketnet_server_uring_linux.cpp:623-624`).
 
-**Pending:** the cards that prove these paths under load,
-`rocketnet-linux-hard-killed-peer-never-stalls-receive` (a peer killed
-mid-burst never stalls receive for the others, per transport) and
-`rocketnet-linux-socket-error-paths`, have not landed.
+**Pending:** these paths are not yet proved under load: a peer killed
+mid-burst never stalls receive for the others, per transport, and the socket
+error paths.
 
 ## 8. Limits for 1000 clients
 
