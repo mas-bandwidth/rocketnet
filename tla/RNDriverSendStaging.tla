@@ -33,7 +33,6 @@ EXTENDS Naturals, FiniteSets
 CONSTANTS MaxFrames,                \* the abstract frames are 1..MaxFrames
           MaxStaged,                \* the staging capacity, in frames
           MaxBurst,                 \* the most frames one disconnect seals
-          RetainProducer,          \* XDP keeps its final producer generation
           DisconnectAdvancesStaged  \* commit through disconnect advances staged
 
 ASSUME MaxFrames \in Nat \ {0} /\ MaxStaged \in 1..MaxFrames
