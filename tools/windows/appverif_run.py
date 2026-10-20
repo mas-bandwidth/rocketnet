@@ -134,7 +134,7 @@ def unissued_stop_code(output: str):
     for line in output.splitlines():
         line = line.strip()
         if line.startswith(UNISSUED_STOP_PREFIX) and line.endswith(UNISSUED_STOP_SUFFIX):
-            return line[len(UNISSUED_STOP_PREFIX):-len(UNISSUED_STOP_SUFFIX)].upper()
+            return line[len(UNISSUED_STOP_PREFIX):-len(UNISSUED_STOP_SUFFIX)].lower()
     return None
 
 
@@ -146,7 +146,7 @@ def configure_stops(appverif: str, image_name: str, codes: list) -> int:
     the last call named, so there are at most len(codes) + 1 calls; any other
     failure raises.
     """
-    remaining = [code.upper() for code in codes]
+    remaining = list(codes)
     configured = 0
     for _ in range(len(codes) + 1):
         if not remaining:
@@ -162,11 +162,12 @@ def configure_stops(appverif: str, image_name: str, codes: list) -> int:
             break
         output = proc.stdout + "\n" + proc.stderr
         code = unissued_stop_code(output)
-        if code not in remaining:
+        lowered = [entry.lower() for entry in remaining]
+        if code not in lowered:
             raise RuntimeError(
                 f"appverif -configure failed (exit {proc.returncode}): {' '.join(output.split())}"
             )
-        index = remaining.index(code)
+        index = lowered.index(code)
         configured += index
         remaining = remaining[index + 1:]
     if remaining:
@@ -181,7 +182,9 @@ def logtofile_enabled() -> bool:
     import winreg
 
     try:
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, GLOBAL_SETTINGS_KEY) as key:
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE, GLOBAL_SETTINGS_KEY, 0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY
+        ) as key:
             value, _ = winreg.QueryValueEx(key, "LogToFile")
     except FileNotFoundError:
         return False
@@ -296,8 +299,6 @@ def terminate_process_tree(process: subprocess.Popen) -> None:
     # TREE_EXIT_WAIT_SECONDS is a process left alive.
     output = stopped.stdout + "\n" + stopped.stderr
     named = [int(pid) for pid in re.findall(r"ERROR: The process with PID (\d+)", output)]
-    if stopped.returncode != 0 and not named and process.pid not in pids_running([process.pid]):
-        return
     if stopped.returncode != 0 and not named:
         raise RuntimeError(f"taskkill failed to stop process tree {process.pid} (exit {stopped.returncode}): {' '.join(output.split())}")
     deadline = time.monotonic() + TREE_EXIT_WAIT_SECONDS

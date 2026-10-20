@@ -129,9 +129,11 @@ new support claim:
   leg on `self-hosted, Windows, X64, rocketnet-windows`.
 - `nightly.yml` runs `windows-driver-extension` and `windows-toolchains` on
   `self-hosted, Windows, X64, rocketnet-windows`. `windows-toolchains`
-  configures the clang-cl build with `CMAKE_COMPILE_WARNING_AS_ERROR=ON`, so
-  any clang-cl compiler warning fails the job, including one MSVC does not
-  give.
+  configures the clang-cl build with `CMAKE_COMPILE_WARNING_AS_ERROR=ON`
+  (CMake 3.24 or later), so any clang-cl compiler warning fails the job,
+  including one MSVC does not give. The warnings `CMakeLists.txt` silences for
+  clang-cl (`-Wdeprecated-declarations`, and `-Wunused-function` for
+  `sodium/sodium.c`) stay silenced.
 - `ci.yml`'s `platform-selftests` job runs on the
   `self-hosted, Linux, X64, fleet` and
   `self-hosted, macOS, ARM64, rocketnet-macos` labels.
