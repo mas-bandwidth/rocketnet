@@ -17,6 +17,7 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
 #include "rocketnet_connect_token.h"
+#include "rocketnet_counters.h"
 
 #include <stdio.h>
 #include <stdlib.h>
