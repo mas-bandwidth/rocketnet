@@ -552,7 +552,7 @@ int main( int argc, char ** argv )
     snprintf( server_host, sizeof( server_host ), "%s", server_bind );
     server_host[strcspn( server_host, ":" )] = 0;
 
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, server_bind, &server_config, NULL, 0, NULL );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, server_bind, &server_config, NULL, 0 );
     if ( !server || rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         fprintf( stderr, "load: failed to create or start server\n" );
@@ -625,7 +625,7 @@ int main( int argc, char ** argv )
             fprintf( stderr, "load: failed to create dev connect token for client %d\n", i );
             return 1;
         }
-        clients[i] = rocketnet_client_create( NULL, &client_config, NULL, 0, NULL );
+        clients[i] = rocketnet_client_create( NULL, &client_config, NULL, 0 );
         if ( !clients[i] || rocketnet_client_connect( clients[i], connect_token ) != ROCKETNET_STATUS_OK )
         {
             fprintf( stderr, "load: failed to create or connect client %d\n", i );
