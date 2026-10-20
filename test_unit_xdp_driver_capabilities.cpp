@@ -12,6 +12,10 @@
 // The AF_XDP bind config asks for zero copy in the bind flags, never in the
 // attach flags, and its fallback asks for copy. The config is built and read;
 // no socket is opened.
+//
+// The umem config sizes the fill and completion rings: non-zero powers of
+// two (libxdp 1.4.2 hands a zero size to the kernel, which refuses it), the
+// fill ring at least the fill entries the server reserves at start.
 
 #include "test_unit_registry.h"
 
@@ -61,7 +65,33 @@ static void xdp_socket_config_requests_zero_copy_at_bind()
     check( config.tx_size == ROCKETNET_XDP_SEND_QUEUE_SIZE );
 }
 
+static bool power_of_two( uint32_t value )
+{
+    return value != 0 && ( value & ( value - 1 ) ) == 0;
+}
+
+static void xdp_umem_config_sizes_fill_and_completion_rings()
+{
+    struct xsk_umem_config config;
+    memset( &config, 0xFF, sizeof(config) );
+
+    rocketnet_xdp_umem_config( &config );
+
+    check( power_of_two( config.fill_size ) );
+    check( power_of_two( config.comp_size ) );
+    check( config.fill_size >= ROCKETNET_XDP_FILL_QUEUE_SIZE );
+    check( config.frame_size == ROCKETNET_XDP_FRAME_SIZE );
+    check( config.frame_headroom == 0 );
+    check( config.flags == 0 );
+}
+
 #else
+
+static void xdp_umem_config_sizes_fill_and_completion_rings()
+{
+    printf( "xdp_umem_config_sizes_fill_and_completion_rings [SKIPPED AF_XDP is Linux only]\n" );
+    fflush( stdout );
+}
 
 static void xdp_socket_config_requests_zero_copy_at_bind()
 {
@@ -79,3 +109,4 @@ static void prefilter_counters_xdp_driver_reports_them()
 
 REGISTER_UNIT_TEST( prefilter_counters_xdp_driver_reports_them );
 REGISTER_UNIT_TEST( xdp_socket_config_requests_zero_copy_at_bind );
+REGISTER_UNIT_TEST( xdp_umem_config_sizes_fill_and_completion_rings );

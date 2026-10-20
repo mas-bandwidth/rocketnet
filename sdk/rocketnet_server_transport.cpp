@@ -39,6 +39,10 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
 #include "rocketnet_memory.h"
 
 #include <sodium.h>
+
+// defined in rocketnet_driver_loopback.cpp: true when the last loopback create
+// on this thread failed because an allocation returned NULL; reading clears it
+bool rocketnet_loopback_create_out_of_memory();
 #include <atomic>
 #include <memory.h>
 #include <string.h>
@@ -1288,6 +1292,22 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
             if ( rocketnet_server_driver_open( definition && definition->backend ? definition->backend->server : NULL, context,
                     &driver_config, &bind_address, &server_transport->io ) )
                 granted_driver = candidate;
+
+            // a rung that failed for want of memory is not a refusal: the
+            // create ends with OUT_OF_MEMORY and never falls to the next
+            // candidate. Only the loopback driver reports this
+            // (rocketnet_loopback_create_out_of_memory in
+            // rocketnet_driver_loopback.cpp); every other driver's create
+            // returns NULL for any failure, which reads here as a refusal
+
+            if ( granted_driver < 0 && candidate == ROCKETNET_DRIVER_LOOPBACK && rocketnet_loopback_create_out_of_memory() )
+            {
+                rocketnet_error( "server transport create: the %s transport could not allocate its endpoint", rocketnet_driver_name( candidate ) );
+                if ( status )
+                    *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
+                rocketnet_server_transport_destroy( server_transport );
+                return NULL;
+            }
         }
 
         if ( granted_driver < 0 )
@@ -2748,6 +2768,16 @@ uint64_t rocketnet_server_transport_client_connection_id( struct rocketnet_serve
     rocketnet_assert( server_transport );
     return rocketnet_server_protocol_connection_id( &server_transport->protocol, client_index );
 }
+
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+// development library only: the driver instance behind the transport, for a
+// functional case that drives a native driver's test seam
+void * rocketnet_server_transport_driver_for_testing( struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_assert( server_transport );
+    return server_transport->io.instance;
+}
+#endif
 
 const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct rocketnet_server_transport_t * server_transport )
 {

@@ -28,7 +28,8 @@ fi
 
 case "$1" in
     identifiers)
-        IDS="$(grep -o -E '\b(rocketnet_[a-z0-9_]+|ROCKETNET_[A-Z0-9_]+)\b' "$AGENTS_MD" | sort -u)"
+        TEXT="$(awk -F'`' '{ for (i = 1; i <= NF; i++) { if (i % 2 == 1) printf "%s ", $i; else if ($i !~ /\// && $i !~ /\.(cpp|h)(:[0-9]+)?$/) printf "%s ", $i } printf "\n" }' "$AGENTS_MD")"
+        IDS="$(printf '%s\n' "$TEXT" | grep -o -E '\b(rocketnet_[a-z0-9_]+|ROCKETNET_[A-Z0-9_]+)\b' | sort -u)"
         if [ -z "$IDS" ]; then
             echo "error: no rocketnet identifiers found in $AGENTS_MD" >&2
             exit 1
