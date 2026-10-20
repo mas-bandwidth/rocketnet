@@ -156,10 +156,10 @@ row per field of both public structs.
 | rto_min_ms | ROCKETNET_CLIENT_RTO_MIN_MS | int | `10` | refuses the create unless `1..60000` |
 | rto_max_ms | ROCKETNET_CLIENT_RTO_MAX_MS | int | `250` | refuses the create unless `10..60000` |
 | reliable_timeout_ms | ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS | int | `10000` | refuses the create unless `1000..600000` |
-| simulated_loss_percent | ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT | int | `0` | refuses the create unless `0..100` |
-| simulated_latency_ms | ROCKETNET_CLIENT_SIMULATED_LATENCY_MS | int | `0` | refuses the create unless `0..10000` |
-| simulated_jitter_ms | ROCKETNET_CLIENT_SIMULATED_JITTER_MS | int | `0` | refuses the create unless `0..10000` |
-| simulated_duplicate_percent | ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT | int | `0` | refuses the create unless `0..100` |
+| simulated_loss_percent | ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT | int | `0` | refuses the create unless `0..100`; development only, and a production library refuses any nonzero value |
+| simulated_latency_ms | ROCKETNET_CLIENT_SIMULATED_LATENCY_MS | int | `0` | refuses the create unless `0..60000`; development only, and a production library refuses any nonzero value |
+| simulated_jitter_ms | ROCKETNET_CLIENT_SIMULATED_JITTER_MS | int | `0` | refuses the create unless `0..60000`; development only, and a production library refuses any nonzero value |
+| simulated_duplicate_percent | ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT | int | `0` | refuses the create unless `0..100`; development only, and a production library refuses any nonzero value |
 | protocol_id | ROCKETNET_SERVER_PROTOCOL_ID | uint64_t | `0` | a non-decimal value, or one past the type: refuses the create |
 | max_clients | ROCKETNET_SERVER_MAX_CLIENTS | int | `1000` | refuses the create unless `1..1000` |
 | filter_value | ROCKETNET_SERVER_FILTER_VALUE | uint8_t[4], base64 | `b7 59 01 00` (test filter) | not exactly 4 bytes, or invalid base64: refuses the create |
@@ -190,10 +190,10 @@ row per field of both public structs.
 | rto_min_ms | ROCKETNET_SERVER_RTO_MIN_MS | int | `10` | refuses the create unless `1..60000` |
 | rto_max_ms | ROCKETNET_SERVER_RTO_MAX_MS | int | `250` | refuses the create unless `10..60000` |
 | reliable_timeout_ms | ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS | int | `10000` | refuses the create unless `1000..600000` |
-| simulated_loss_percent | ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT | int | `0` | refuses the create unless `0..100` |
-| simulated_latency_ms | ROCKETNET_SERVER_SIMULATED_LATENCY_MS | int | `0` | refuses the create unless `0..10000` |
-| simulated_jitter_ms | ROCKETNET_SERVER_SIMULATED_JITTER_MS | int | `0` | refuses the create unless `0..10000` |
-| simulated_duplicate_percent | ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT | int | `0` | refuses the create unless `0..100` |
+| simulated_loss_percent | ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT | int | `0` | refuses the create unless `0..100`; development only, and a production library refuses any nonzero value |
+| simulated_latency_ms | ROCKETNET_SERVER_SIMULATED_LATENCY_MS | int | `0` | refuses the create unless `0..60000`; development only, and a production library refuses any nonzero value |
+| simulated_jitter_ms | ROCKETNET_SERVER_SIMULATED_JITTER_MS | int | `0` | refuses the create unless `0..60000`; development only, and a production library refuses any nonzero value |
+| simulated_duplicate_percent | ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT | int | `0` | refuses the create unless `0..100`; development only, and a production library refuses any nonzero value |
 
 The message fields marked WIRE must be identical on both ends; the connection
 verifies them. The cross rules are in [docs/CHANNELS.md](docs/CHANNELS.md)
@@ -207,12 +207,12 @@ fields in the public configuration structs:
 | Variable | Type | Default | Description |
 |---|---|---|---|
 | `ROCKETNET_CLIENT_GAME_CLOCK_EPOCH` / `ROCKETNET_SERVER_GAME_CLOCK_EPOCH` | uint64, unix seconds | `0` (wall clock) | Sets `game_clock_epoch`, the unix time at the game clock's zero, for the connect-token expiry check; `0` reads the host wall clock. |
-| `ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH` / `ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH` | uint64, `2..1000000` | `0` (off) | Development only: drop every Nth outgoing datagram. |
+| `ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH` / `ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH` | int, `2..1000000` | `0` (off) | Development only: drop every Nth outgoing datagram. |
 | `ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW` / `ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW` | int, `2..64` | `0` (off) | Development only: reverse each window of W outgoing datagrams. |
 | `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES` | uint64 | `0` (unlimited) | Enforces an upper bound on server transport memory plans; over-budget candidates are skipped, and `rocketnet_server_start` (which creates the transport) fails with `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED` only when no candidate fits. |
 | `ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES` | uint64 | `0` (unlimited) | Enforces an upper bound on client transport memory plans; over-budget candidates are skipped, and `rocketnet_client_connect` (which creates the transport) fails with `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED` only when no candidate fits. |
 | `ROCKETNET_GATEWAY_ETHERNET_ADDRESS` | string (`xx:xx:xx:xx:xx:xx`) | auto-discovered | Sets the gateway MAC address for Linux AF_XDP server sockets when automatic gateway ARP discovery cannot resolve it. |
-| `ROCKETNET_LOG_LEVEL` | int / string (`0..5` or `none`..`spam`) | `info` (`3`) | Sets process-wide log verbosity: `none` (`0`), `error` (`1`), `warn` (`2`), `info` (`3`), `debug` (`4`), `spam` (`5`). |
+| `ROCKETNET_LOG_LEVEL` | int (`0..5`) | `info` (`3`) | Sets process-wide log verbosity: `none` (`0`), `error` (`1`), `warn` (`2`), `info` (`3`), `debug` (`4`), `spam` (`5`). Only a whole-string integer in `0..5` is accepted; the names are output names, not accepted inputs, and a word is ignored with a warning. |
 
 ## Create, connect, start, stop and destroy
 

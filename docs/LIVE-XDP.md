@@ -618,11 +618,11 @@ uplink, by the 2026-10-18 ruling; not blocked.**
 
 **How the transport finds the NIC.** It looks up the interface that carries the
 server's public IPv4 address (`sdk/rocketnet_server_socket_linux.cpp`).
-The address must be IPv4: the pre-flight refuses anything else (`:706-718`).
+The address must be global: the pre-flight resolves the UP interface that carries it (`rocketnet_server_socket_find_interface`) and refuses an address no such interface carries, or an IPv6 link-local one.
 The transport binds that interface and no other. The attach is native, falling
-back to SKB mode (`:1335-1352`). Each queue binds an AF_XDP socket. The bind
+back to SKB mode (`rocketnet_server_socket_create`). Each queue binds an AF_XDP socket. The bind
 asks for no explicit mode, so the kernel gives zero copy where the transport
-supports it and copy otherwise (`:1487-1493`, see section 15). The run
+supports it and copy otherwise (`rocketnet_xdp_socket_config`, see section 15). The run
 records which it got.
 
 **The pre-flight.** It refuses unless the machine is provisioned:
@@ -634,9 +634,9 @@ records which it got.
 
 `scripts/rocketnet-provision` is the setup, hand-run once for the game
 (`scripts/rocketnet-provision:8-16`). The run uses only its `verify` mode,
-which mutates nothing (`:98`). It never runs provision mode on this NIC.
+which mutates nothing. It never runs provision mode on this NIC.
 Provision mode unloads XDP, rewrites IRQ affinity and runs `ethtool -L`,
-which resets the NIC's queues under the ssh session (`:54-66`).
+which resets the NIC's queues under the ssh session.
 If verify fails, the run stops and the owner decides.
 
 **The NIC driver.** It must be the out-of-tree i40e, built from source
@@ -649,25 +649,25 @@ reports its own release number.
 **Proof that XDP passes everything that is not ours** (`server_xdp/server_xdp.c`):
 
 - **Port or address mismatch:** a UDP datagram to any other port, or to any
-  other destination address, returns `XDP_PASS` (`:126-128`). That is the
+  other destination address, returns `XDP_PASS` (`server_xdp_udp`). That is the
   server's port-and-address gate.
 - **Unconfigured:** with no configuration, or port 0, every UDP frame passes
-  (`:271-275`).
+  (`server_xdp_config` returns NULL).
 - **Non-UDP IPv4:** any non-UDP IPv4 frame, or one with IP options
-  (`ihl != 5`), skips the UDP branch at `:263` and reaches `return XDP_PASS`
-  at `:336`. That covers ssh (TCP), ICMP and anything else.
-- **IPv6:** IPv6 with an extension header passes at `:320-329`. Any other
-  non-UDP IPv6, such as ICMPv6 and neighbour discovery, passes at `:331-336`.
-- **Non-IP frames,** ARP above all, pass at `:336`.
+  (`ihl != 5`), skips the UDP branch and reaches `return XDP_PASS`
+  (`server_xdp_filter`). That covers ssh (TCP), ICMP and anything else.
+- **IPv6:** IPv6 with an extension header passes (`server_xdp_is_ipv6_extension`). Any other
+  non-UDP IPv6, such as ICMPv6 and neighbour discovery, passes (`server_xdp_filter`).
+- **Non-IP frames,** ARP above all, pass (`server_xdp_filter`).
 - **The overlay:** the tailnet's WireGuard datagrams go to their own port,
-  not the server's, and pass at `:126-128`.
+  not the server's, and pass (`server_xdp_udp`).
 
 The program returns `XDP_DROP` in three places outside our port:
 
-- an IPv4 frame too short for its IPv4 header (`:257-261`);
-- an IPv6 frame too short for its IPv6 header (`:287-291`);
+- an IPv4 frame too short for its IPv4 header (`server_xdp_filter`);
+- an IPv6 frame too short for its IPv6 header (`server_xdp_filter`);
 - a frame for our port that fails the server's own checks
-  (`:137-182`).
+  (`server_xdp_udp`).
 
 The first two are malformed frames that no stack could deliver. So
 everything the machine needs (ssh, the tailnet, ARP, ICMP, DNS) passes.
@@ -690,7 +690,7 @@ file run over ssh under a timeout (section 12):
 2. **Arm the dead-man timer** before loading anything. The command needs no
    file on the machine, so a missing script can never turn it into a no-op:
    `systemd-run --unit=rn-live-deadman --on-active=15min /bin/sh -c "systemctl kill rn-live-server; ip link set dev <nic> xdp off; ip link set dev <nic> xdpgeneric off"`.
-   The second `off` covers an attach that fell back to SKB mode (`:1345`).
+   The second `off` covers an attach that fell back to SKB mode (`rocketnet_server_socket_create`).
    `server-arm.sh` writes the NIC name in, then reads the timer back with
    `systemctl list-timers rn-live-deadman` before it returns. The
    orchestrator cancels the timer only after it has confirmed that no
@@ -915,7 +915,7 @@ matrix code, and a loopback functional test that CI runs on every platform.
     over-maximum refusals, and the E_m and receive-channel assertions of
     sections 4 and 5.
 - Touches: `CMakeLists.txt` (the functional source list; the
-  unit glob at `:295` already picks the new file up).
+  unit glob already picks the new file up).
 - Gate: `make && ./bin/test && ./bin/functional`.
 
 **Card 2: `rocketnet-live-xdp-fleet-runner`.** The client runner, the server
@@ -924,8 +924,8 @@ mode and the orchestration script.
 - Touches:
   - `client.c`, `server.c`: the `--matrix` mode and the flags of section 2.
   - `sdk/rocketnet_connect_token.h`, `sdk/rocketnet_connect_token.cpp`:
-    `ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS`, replacing the literal at
-    `:285`.
+    `ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS`, replacing the hardcoded
+    timeout.
   - `docs/LIVE-XDP.md`: as built.
   - `tla/COVERAGE.tsv`: `live-fleet-run` to current, naming the script's
     functions.
@@ -989,7 +989,7 @@ mode and the orchestration script.
 7. **The AF_XDP bind mode.** `xsk_config.xdp_flags = XDP_ZEROCOPY`
    (`sdk/rocketnet_server_socket_linux.cpp`) puts a bind-flag constant
    in the attach-flags field. With `XSK_LIBBPF_FLAGS__INHIBIT_PROG_LOAD`
-   (`:1491`) it does not request zero copy at bind; the kernel picks zero
+   it does not request zero copy at bind; the kernel picks zero
    copy where the transport supports it and copy otherwise. The run records
    the mode it got. A fix belongs to its own card.
 8. **The provision script.** `rocketnet-provision` in provision mode mutates
