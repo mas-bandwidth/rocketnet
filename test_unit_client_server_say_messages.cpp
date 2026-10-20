@@ -136,8 +136,8 @@ static const allowlist_row_t allowlist[] =
     { F_API, "packets_in_flight", "PACKET FILTER AND ACK TRACKING" },
 
     // PACKET BUILD CAP: how many packets the message layer builds per update.
-    { F_H, "max_packets_per_update", "PACKET BUILD CAP" },
-    { F_API, "max_packets_per_update", "PACKET BUILD CAP" },
+    { F_H, "packets_per_update", "PACKET BUILD CAP" },
+    { F_API, "packets_per_update", "PACKET BUILD CAP" },
 
     // LINK CALLBACK TO THE TRANSPORT: hands a frame to the transport.
     { F_C, "packet_ids", "LINK CALLBACK TO THE TRANSPORT" },

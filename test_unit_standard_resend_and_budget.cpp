@@ -23,7 +23,7 @@
 #define check rocketnet_unit_check
 
 // ---------------------------------------------------------------------------
-// m9.resend-trace: the sent-packet map, the RakNet adaptive RTO, and the
+// m9.resend-trace: the sent-packet map, the RakNet adaptive resend delay, and the
 // reliable timeout over two paths, time an argument from 1000.0.
 // ---------------------------------------------------------------------------
 
@@ -81,7 +81,7 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
         if ( capacity < 16 )
             return -1;
 
-        // short path: a 20 ms sample gives the RakNet RTO of 150 ms.
+        // short path: a 20 ms sample gives the RakNet resend delay of 150 ms.
         {
             resend_trace_fixture_t f;
             resend_trace_open( &f );
@@ -99,7 +99,7 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
             resend_trace_close( &f );
         }
 
-        // long path: a 400 ms sample is capped at the default 2 s adaptive RTO.
+        // long path: a 400 ms sample is capped at the default 2 s adaptive resend delay.
         {
             resend_trace_fixture_t f;
             resend_trace_open( &f );
@@ -194,7 +194,7 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
     return -1;
 }
 
-// Re-pin m9 because the trace now waits for the RakNet adaptive RTO.
+// Re-pin m9 because the trace now waits for the RakNet adaptive resend delay.
 static const rn_standard_vector_t standard_resend_and_budget_table[] =
 {
     RN_STANDARD_VECTOR( "m9.resend-trace", "0000000100010400000001" ),

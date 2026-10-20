@@ -3620,16 +3620,16 @@ an input ([t1.4 Conventions](#t1.4)).
    ack debt is nonzero, using a standalone ack if no other session packet
    carries it, and MUST NOT wait for a packet threshold or keep-alive cadence.
 10. A reliable-message sender MUST retransmit an unacknowledged message only
-    when its adaptive retransmission timeout (RTO) expires. Before any RTT
-    sample, the RTO is 2 seconds by default. For the first RTT sample, the
+    when its adaptive resend delay expires. Before any RTT
+    sample, the resend delay is 2 seconds by default. For the first RTT sample, the
     sender MUST set both its smoothed RTT and deviation to that sample. For
     each later sample, deviation MUST move 5 percent toward the absolute
     difference between the prior smoothed RTT and the sample, then smoothed
     RTT MUST move 5 percent toward the sample.
-    The RTO is 2 * smoothed_RTT + 4 * deviation + 30 ms, capped by the
+    The resend delay is 2 * smoothed_RTT + 4 * deviation + 30 ms, capped by the
     configured maximum (2 seconds by default) and raised to the configured
     minimum (0 by default). A nonzero minimum is an implementation option.
-    The sender MUST NOT back off the RTO after retransmission.
+    The sender MUST NOT back off the resend delay after retransmission.
 11. A server SHOULD enforce the handshake work budget after the cookie of a
     connection request validates and before any asymmetric operation. When it
     does, a request past the budget MUST be refused with no reply and counted
@@ -4334,10 +4334,10 @@ by differencing two snapshots and a zero still means that the event never
 happened. See [t18 Error handling and counters](#t18).
 
 
-### Create-time maximum-RTO message reserve
+### Create-time maximum-resend delay message reserve
 
 Each connection adds a local payload reserve to its configured message-region
-headroom at CREATE. Let `R = ceil(send_kbps * 125 * rto_max_ms / 1000)` bytes.
+headroom at CREATE. Let `R = ceil(send_kbps * 125 * resend_delay_max_ms / 1000)` bytes.
 Client and server creation use their respective resolved per-connection budgets,
 including an explicit creation override. Generic connection sizing conservatively
 uses the larger configured budget. A zero/unlimited budget has no finite reserve.
@@ -4355,5 +4355,5 @@ the corresponding fixed pools, or larger messages in the span arena. Arbitrarily
 tiny records can exhaust bounded descriptors or padding capacity; they retain
 MESSAGE_MEMORY_EXHAUSTED and disconnect behavior. Raising the runtime send budget
 after CREATE does not enlarge this allocation; configure the intended maximum
-budget before creation. The full-budget regression retains one maximum RTO of
+budget before creation. The full-budget regression retains one maximum resend delay of
 payload without acknowledgments at both default client and server budgets.

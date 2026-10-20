@@ -10,7 +10,7 @@
 #include <string.h>
 
 // Layer 3 of the message layer: the sent-packet map, the resend FIFO, RTT,
-// RTO, resend delay, failed-send recovery, and reliable timeout (docs/CHANNELS.md
+// RTT estimation, resend delay, failed-send recovery, and reliable timeout (docs/CHANNELS.md
 // section 6.4; TLA+ actions Init, WritePacket, WriteOldest, ReceiveAck and
 // invariants TablesBounded and EveryReliableAckedAndDelivered in
 // tla/RNWindow.tla).
@@ -352,14 +352,14 @@ void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_regi
     memset( ack, 0, sizeof(*ack) );
     ack->send = send;
     ack->region = region;
-    ack->rto_initial = (double) config->rto_initial_ms / 1000.0;
-    ack->rto_min = (double) config->rto_min_ms / 1000.0;
-    ack->rto_max = (double) config->rto_max_ms / 1000.0;
+    ack->resend_delay_initial = (double) config->resend_delay_initial_ms / 1000.0;
+    ack->resend_delay_min = (double) config->resend_delay_min_ms / 1000.0;
+    ack->resend_delay_max = (double) config->resend_delay_max_ms / 1000.0;
     ack->reliable_timeout = (double) config->reliable_timeout_ms / 1000.0;
 
     ack->srtt = 0.0;
     ack->rttvar = 0.0;
-    ack->rto = ack->rto_initial;                // tla/RNResendTiming.tla Init: rto = RtoInitial
+    ack->resend_delay = ack->resend_delay_initial;                // tla/RNResendTiming.tla Init: resend_delay = ResendDelayInitial
     ack->has_rtt = 0;
     ack->has_oldest = 0;
     ack->error = ROCKETNET_DISCONNECT_REASON_NONE;
@@ -571,7 +571,7 @@ void rn_window_ack_commit_receipt_packet( rn_window_ack_t * ack, uint64_t packet
 }
 
 // Processes one acked transport sequence `packet_id` at time `now`
-// (docs/CHANNELS.md 6.4 "Ack" and "RTO"; tla/RNWindow.tla ReceiveAck,
+// (docs/CHANNELS.md 6.4 "Ack" and "resend delay"; tla/RNWindow.tla ReceiveAck,
 // tla/RNResendTiming.tla Sample).
 int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now )
 {
@@ -604,10 +604,10 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
         ack->rttvar = 0.95 * ack->rttvar + 0.05 * diff;
         ack->srtt = 0.95 * ack->srtt + 0.05 * rtt;
     }
-    // RakNet's RTO is min(2*RTT + 4*deviation + 30 ms, configured max).
+    // RakNet's resend delay is min(2*RTT + 4*deviation + 30 ms, configured max).
     // The first deviation is the first sample; the optional configured floor applies
     // (docs/RAKNET-RELIABILITY.md:667-668, 686-695).
-    ack->rto = rn_window_ack_compute_rto( ack->srtt, ack->rttvar, ack->rto_min, ack->rto_max );
+    ack->resend_delay = rn_window_ack_compute_resend_delay( ack->srtt, ack->rttvar, ack->resend_delay_min, ack->resend_delay_max );
 
     // 2. For each referenced message number n that is still unacked (n >= U):
     //    unlink from resend FIFO, free its chunk in S (and its descriptor in Q
@@ -696,7 +696,7 @@ void rn_window_ack_receipt_sweep( rn_window_ack_t * ack, double now )
     while ( ack->receipt_sweep < ack->pkt_tail )
     {
         rn_sent_packet_t * entry = &ack->region->sent_packets[ack->receipt_sweep % ack->region->packets];
-        if ( entry->packet_id != 0 && now < entry->send_time + ack->rto )
+        if ( entry->packet_id != 0 && now < entry->send_time + ack->resend_delay )
             break;
         if ( entry->packet_id != 0 )
             rn_window_ack_receipt_resolve( ack, entry, ROCKETNET_RECEIPT_STATUS_LOSS );
@@ -751,7 +751,7 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
     const uint32_t W = region->window;
     // Negative sentinel: guarantees now >= last_send + rn_window_ack_resend_delay
     // for all now >= 0.0, while marking a failed-send retry apart from a resend.
-    const double due_now_sentinel = -( ack->rto_max + 1.0 );
+    const double due_now_sentinel = -( ack->resend_delay_max + 1.0 );
 
     for ( uint32_t i = count; i > 0; i-- )
     {

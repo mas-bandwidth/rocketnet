@@ -39,8 +39,8 @@ int main( void )
     CHECK( rocketnet_server_dev_config_sized( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
     server_config.max_clients = 1;
     server_config.transport = "loopback";
-    server_config.rto_initial_ms = 120;
-    server_config.rto_min_ms = 120;
+    server_config.resend_delay_initial_ms = 120;
+    server_config.resend_delay_min_ms = 120;
     server = rocketnet_server_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ), NULL, 0 );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
@@ -55,8 +55,8 @@ int main( void )
     CHECK( rocketnet_client_default_config_sized( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
     client_config.transport = "loopback";
     client_config.simulated_loss_percent = 35;
-    client_config.rto_initial_ms = 120;
-    client_config.rto_min_ms = 120;
+    client_config.resend_delay_initial_ms = 120;
+    client_config.resend_delay_min_ms = 120;
     client = rocketnet_client_create_sized( NULL, &client_config, sizeof( client_config ), NULL, 0 );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
