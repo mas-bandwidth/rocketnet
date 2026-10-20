@@ -154,7 +154,7 @@ bool rocketnet_config_validate_public_link_simulator( const char * transport_nam
 
 bool rocketnet_public_link_simulator_development( void );
 
-#if ROCKETNET_FILTER_EPOCH_TEST_HOOKS
+#if ROCKETNET_LINK_SIMULATOR_TEST_HOOKS
 void rocketnet_public_link_simulator_test_development( int enabled );
 #endif
 

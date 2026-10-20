@@ -244,16 +244,40 @@ void rocketnet_test_config_out_of_range_refuses_create()
 // UDP socket binds 127.0.0.1:0, rocketnet_platform_socket_create writes the
 // port the OS gave into the address, and the socket is closed before the
 // port is returned. Two suites on one machine then never name the same port.
+// The grant is retried up to three times on address-in-use: the same port must
+// still be free a moment later, when the caller's server binds it, so a second
+// bind proves the port before it is handed out. If another process takes it in
+// the gap, the proof refuses with address-in-use and another port is chosen.
 
 uint16_t rocketnet_test_free_port()
 {
-    rocketnet_address_t address;
-    rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1:0" ) );
-    struct rocketnet_platform_socket_t * scratch = rocketnet_platform_socket_create( NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, 65536, 65536 );
-    rocketnet_check( scratch );
-    rocketnet_check( address.port != 0 );
-    rocketnet_platform_socket_destroy( scratch );
-    return address.port;
+    static const int kFreePortTries = 3;
+    uint16_t port = 0;
+    for ( int attempt = 0; attempt < kFreePortTries; ++attempt )
+    {
+        rocketnet_address_t address;
+        rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1:0" ) );
+        struct rocketnet_platform_socket_t * scratch = rocketnet_platform_socket_create( NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, 65536, 65536 );
+        rocketnet_check( scratch );
+        rocketnet_check( address.port != 0 );
+
+        char probe_address[64];
+        snprintf( probe_address, sizeof( probe_address ), "127.0.0.1:%d", (int) address.port );
+        rocketnet_address_t probe;
+        rocketnet_check( rocketnet_address_parse( &probe, probe_address ) );
+
+        rocketnet_platform_socket_destroy( scratch );
+
+        struct rocketnet_platform_socket_t * held = rocketnet_platform_socket_create( NULL, &probe, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, 65536, 65536 );
+        if ( held )
+        {
+            port = address.port;
+            rocketnet_platform_socket_destroy( held );
+            break;
+        }
+    }
+    rocketnet_check( port != 0 );
+    return port;
 }
 
 // "127.0.0.1:<port>" with a port from rocketnet_test_free_port
@@ -261,4 +285,29 @@ uint16_t rocketnet_test_free_port()
 void rocketnet_test_free_loopback_address( char * buffer, size_t buffer_size )
 {
     snprintf( buffer, buffer_size, "127.0.0.1:%d", (int) rocketnet_test_free_port() );
+}
+
+// Create a server transport on a free loopback port. The free-port grant and
+// the create are one retried operation: the grant proves the port with a
+// second bind, but another process can take it in the gap before this create
+// binds it, so a create refused on address-in-use is retried with a new free
+// port, up to three times. Any other refusal is final and returned as NULL.
+
+struct rocketnet_server_transport_t * rocketnet_test_server_transport_create_on_free_port(
+    const struct rocketnet_server_transport_config_t * config )
+{
+    static const int kServerCreateTries = 3;
+    for ( int attempt = 0; attempt < kServerCreateTries; ++attempt )
+    {
+        char address[64];
+        rocketnet_test_free_loopback_address( address, sizeof( address ) );
+        int status = ROCKETNET_STATUS_OK;
+        struct rocketnet_server_transport_t * server =
+            rocketnet_server_transport_create_ex( NULL, address, config, rocketnet_platform_time(), &status );
+        if ( server )
+            return server;
+        if ( status != ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED )
+            return NULL;
+    }
+    return NULL;
 }

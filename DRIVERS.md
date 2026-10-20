@@ -142,6 +142,26 @@ concurrently with sends; both calls borrow their buffers synchronously. Destroy
 runs after that thread has joined and must release any additional backend-owned
 work. Client fast-path I/O is not required by this interface.
 
+## ICMP errors
+
+A UDP send to a peer that died hard comes back as ICMP port or host
+unreachable. A BSD stack reports such an error to the next receive or send on a
+connected socket as ECONNREFUSED, EHOSTUNREACH or ENETUNREACH. The portable and
+msgx sockets are never connected, so on macOS the kernel does not route these
+errors to them. The receive arms still treat ECONNREFUSED, EHOSTUNREACH,
+ENETUNREACH, EHOSTDOWN, ENETDOWN, ENOBUFS and EINTR as weather
+(`rocketnet_platform_receive_weather` in `sdk/rocketnet_platform.cpp`): the
+portable arm (`rocketnet_platform_socket_receive_packet`) and the msgx arm
+(`rocketnet_platform_socket_receive_packets`) skip the error and keep
+draining. The error is never fatal, never ends a drain, and never
+pauses the msgx pump. EAGAIN ends a drain, because the queue is empty. Any other
+receive errno pauses the msgx pump with one warning per pause
+(`rocketnet_msgx_pause`). The send side
+already classes the same errnos as weather. A backend's receive keeps the same
+contract: one peer's death never stalls or degrades another peer's traffic.
+The functional cases in functional/posix_hard_killed_peer.cpp hold this per
+transport cell, and an injected-errno seam covers each receive arm.
+
 ## Server network threads and their priority
 
 The library sets the server thread priority on each network thread a server
@@ -426,3 +446,14 @@ The Linux connection-type label is an IPv4 main-table heuristic. It does not
 model policy routing or multipath entries without a direct output-interface
 attribute, and may report the wired fallback for those configurations. This
 label does not choose the transport route or limit IPv6 endpoint support.
+
+## Bounded server payload sends
+
+Unstaged server transports reserve at least one payload slot per configured
+client, with a minimum of 256 slots. A lower test capacity exercises contention.
+The message send pass starts after the last served connection and offers one
+frame per connection per round. Full capacity leaves queued reliable work due
+for the next update. In-place unreliable writes use only surplus capacity above
+a complete round of connected peers; otherwise they join the queue so application call order cannot
+starve another connection or that connection's reliable work. Control packets
+use the transport's separate send path.
