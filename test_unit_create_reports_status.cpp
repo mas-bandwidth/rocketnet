@@ -79,9 +79,9 @@ static void create_status_release( void * context, void * pointer )
 static void create_reports_status_success()
 {
     struct rocketnet_client_config_t client_config;
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_client_default_config_sized)( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
     struct rocketnet_server_config_t server_config;
-    check( rocketnet_server_dev_config( &server_config ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_server_dev_config_sized)( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
     server_config.max_clients = 4;
 
     enum rocketnet_status_t status = ROCKETNET_STATUS_COUNT;
@@ -120,9 +120,9 @@ static void create_reports_status_not_initialized()
     check( !rocketnet_library_initialized() );
 
     struct rocketnet_client_config_t client_config;
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_client_default_config_sized)( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
     struct rocketnet_server_config_t server_config;
-    check( rocketnet_server_dev_config( &server_config ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_server_dev_config_sized)( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
 
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
     check( rocketnet_client_create( NULL, &client_config, NULL, 0, &status ) == NULL );
@@ -150,9 +150,9 @@ REGISTER_UNIT_TEST( create_reports_status_not_initialized );
 static void create_reports_status_invalid_argument()
 {
     struct rocketnet_client_config_t client_config;
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_client_default_config_sized)( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
     struct rocketnet_server_config_t server_config;
-    check( rocketnet_server_dev_config( &server_config ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_server_dev_config_sized)( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
     server_config.max_clients = 4;
 
     // an unknown config size, before any other check
@@ -199,9 +199,9 @@ REGISTER_UNIT_TEST( create_reports_status_invalid_argument );
 static void create_reports_status_prefix_size()
 {
     struct rocketnet_client_config_t client_config;
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_client_default_config_sized)( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
     struct rocketnet_server_config_t server_config;
-    check( rocketnet_server_dev_config( &server_config ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_server_dev_config_sized)( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
     server_config.max_clients = 4;
 
     // a smaller known size reads the caller's prefix and defaults the tail
@@ -239,7 +239,7 @@ REGISTER_UNIT_TEST( create_reports_status_prefix_size );
 static void create_reports_status_invalid_address()
 {
     struct rocketnet_server_config_t server_config;
-    check( rocketnet_server_dev_config( &server_config ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_server_dev_config_sized)( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
     server_config.max_clients = 4;
 
     char address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH + 32];
@@ -261,7 +261,7 @@ static void create_reports_status_config_refusals()
 {
     // a field out of range
     struct rocketnet_client_config_t client_config;
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_client_default_config_sized)( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
     client_config.num_channels = 0;
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
     check( rocketnet_client_create( NULL, &client_config, NULL, 0, &status ) == NULL );
@@ -271,7 +271,7 @@ static void create_reports_status_config_refusals()
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 
     struct rocketnet_server_config_t server_config;
-    check( rocketnet_server_dev_config( &server_config ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_server_dev_config_sized)( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
     server_config.max_clients = 0;
     status = ROCKETNET_STATUS_OK;
     check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, &status ) == NULL );
@@ -281,13 +281,13 @@ static void create_reports_status_config_refusals()
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 
     // a transport list that does not parse
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_client_default_config_sized)( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
     client_config.transport = "no-such-transport";
     status = ROCKETNET_STATUS_OK;
     check( rocketnet_client_create( NULL, &client_config, NULL, 0, &status ) == NULL );
     check( status == ROCKETNET_STATUS_INVALID_TRANSPORT_LIST );
 
-    check( rocketnet_server_dev_config( &server_config ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_server_dev_config_sized)( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
     server_config.max_clients = 4;
     server_config.transport = "no-such-transport";
     status = ROCKETNET_STATUS_OK;
@@ -296,7 +296,7 @@ static void create_reports_status_config_refusals()
 
     // a config whose reassembly geometry is over the memory budget: the
     // server trigger (max clients x max slots) the transport case proves
-    check( rocketnet_server_dev_config( &server_config ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_server_dev_config_sized)( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
     server_config.max_clients = ROCKETNET_MAX_CLIENTS;
     server_config.num_reassembly_slots = 256;
     status = ROCKETNET_STATUS_OK;
@@ -314,7 +314,7 @@ static void create_reports_status_config_refusals()
     // and every larger field value is refused as CONFIG_OUT_OF_RANGE first.
     // The server case above proves the code; here the largest client
     // geometry validates and creates.
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_client_default_config_sized)( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
     client_config.num_reassembly_slots = 256;
     client_config.max_payload_bytes = 305408;
     check( rocketnet_client_validate_config( &client_config ) == ROCKETNET_STATUS_OK );
@@ -325,7 +325,7 @@ static void create_reports_status_config_refusals()
     rocketnet_client_destroy( budget_client );
 
     // a malformed environment override: CONFIG_ENV_INVALID, client and server
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_client_default_config_sized)( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
     const char * prior_client = getenv( "ROCKETNET_CLIENT_SEND_KBPS" );
     check( create_status_setenv( "ROCKETNET_CLIENT_SEND_KBPS", "not-a-number" ) == 0 );
     status = ROCKETNET_STATUS_OK;
@@ -334,7 +334,7 @@ static void create_reports_status_config_refusals()
     if ( prior_client ) check( create_status_setenv( "ROCKETNET_CLIENT_SEND_KBPS", prior_client ) == 0 );
     else check( create_status_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" ) == 0 );
 
-    check( rocketnet_server_dev_config( &server_config ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_server_dev_config_sized)( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
     server_config.max_clients = 4;
     const char * prior_server = getenv( "ROCKETNET_SERVER_MAX_CLIENTS" );
     check( create_status_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "not-a-number" ) == 0 );
@@ -359,9 +359,9 @@ static void create_reports_status_out_of_memory()
     check( init_status == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_config_t client_config;
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_client_default_config_sized)( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
     struct rocketnet_server_config_t server_config;
-    check( rocketnet_server_dev_config( &server_config ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_server_dev_config_sized)( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
     server_config.max_clients = 4;
 
     // walk every allocation client create makes: each failure is
@@ -415,9 +415,9 @@ REGISTER_UNIT_TEST( create_reports_status_out_of_memory );
 static void create_reports_status_null_status()
 {
     struct rocketnet_client_config_t client_config;
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_client_default_config_sized)( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
     struct rocketnet_server_config_t server_config;
-    check( rocketnet_server_dev_config( &server_config ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_server_dev_config_sized)( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
     server_config.max_clients = 4;
 
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0, NULL );
@@ -434,10 +434,13 @@ static void create_reports_status_null_status()
 }
 REGISTER_UNIT_TEST( create_reports_status_null_status );
 
-// ---- a NULL config through the convenience macros ---------------------------
-// The macros are NULL-safe: this case compiles in C++ (this file) and the
-// same calls in tools/header_alone/main.c compile as C99 and as C++11, each
-// under -pedantic -Werror (tools/check_public_header.py).
+// ---- a NULL config -----------------------------------------------------------
+// A NULL config is the defaults: this case compiles in C++ (this file) and
+// the same calls in tools/header_alone/main.c compile as C99 and as C++11,
+// each under -pedantic -Werror (tools/check_public_header.py). A server with
+// a NULL config is not created here: its default client count sizes a block
+// far past the unit suite's memory bound, so the server side is exercised
+// through validate_config and required_memory below.
 
 static void create_reports_status_null_config_macro()
 {
@@ -446,12 +449,6 @@ static void create_reports_status_null_config_macro()
     check( client != NULL );
     check( status == ROCKETNET_STATUS_OK );
     rocketnet_client_destroy( client );
-
-    status = ROCKETNET_STATUS_COUNT;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, NULL, 0, &status );
-    check( server != NULL );
-    check( status == ROCKETNET_STATUS_OK );
-    rocketnet_server_destroy( server );
 
     check( rocketnet_client_validate_config( NULL ) == ROCKETNET_STATUS_OK );
     check( rocketnet_server_validate_config( NULL ) == ROCKETNET_STATUS_OK );

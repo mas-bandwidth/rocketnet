@@ -181,8 +181,8 @@ declarations before its first call. They pin this rule three ways:
 
 ## 7. Sized Queries
 
-Each config-reading query has one sized form with a same-named convenience
-macro passing `sizeof(*config)`; no unsized form remains. The sized
+Each config-reading query has an unsized form and a `_sized` form taking
+`sizeof(*config)`. The sized
 validation and required-memory calls accept each entry in the config's
 known-size list and refuse every other non-NULL size with the standard
 size-mismatch log (required-memory returns 0). `rocketnet_server_dev_config`
@@ -192,8 +192,9 @@ existing default or counted-no-op behavior.
 The client and server creates return a handle or `NULL` and write the
 outcome through a final status out-parameter (the owner ruling of 2026-10-20,
 section 9): `ROCKETNET_STATUS_OK` with the handle, or the refusal's code with
-NULL. One sized form per side remains; the `_sized` creates are removed, and
-the same-named convenience macros pass `sizeof(*config)`.
+NULL. The four creates remain: `rocketnet_client_create`,
+`rocketnet_client_create_sized`, `rocketnet_server_create` and
+`rocketnet_server_create_sized`, each with the final status out-parameter.
 
 ## 8. The Public Counter and Stat Enums
 
@@ -229,12 +230,12 @@ first released ABI. The lifecycle API changed the calling contract once
 before 1.0.0; no earlier ABI was released, so the release starts at 1:
 
 - `rocketnet_client_create` takes no connect token and reports through a
-  final status out-parameter (the owner ruling of 2026-10-20: one sized form
-  per side, `_sized` removed, same-named convenience macro passing
-  `sizeof(*config)`; the same holds for `rocketnet_server_create` and for
-  the `default_config`/`validate_config` pair on each side;
-  `sdk/rocketnet.h:1031`, `sdk/rocketnet.h:1220`,
-  `sdk/rocketnet_api.cpp:529`, `sdk/rocketnet_api.cpp:1228`); the token moves
+  final status out-parameter (the owner ruling of 2026-10-20; the same holds
+  for `rocketnet_client_create_sized`, `rocketnet_server_create` and
+  `rocketnet_server_create_sized`;
+  `sdk/rocketnet.h:1079`, `sdk/rocketnet.h:1084`, `sdk/rocketnet.h:1269`,
+  `sdk/rocketnet.h:1274`, `sdk/rocketnet_api.cpp:561`,
+  `sdk/rocketnet_api.cpp:1302`); the token moves
   to the new `rocketnet_client_connect`.
 - `rocketnet_server_create` binds nothing; the new
   `rocketnet_server_start`, `rocketnet_server_stop` and
