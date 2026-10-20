@@ -40,7 +40,7 @@
        io_uring_wait_cqe often returns without a syscall at all -- this
        harness counts every one of them as an enter, which OVERSTATES
        the ZC row's syscall column. Treat that column as an ordering,
-       and take the real counts from strace -c (bench/PROTOCOL.md).
+       and take the real counts from strace -c.
 
     BENCH_FAULT=sqe-exhausted / recv-errno / send-refused force the
     abort paths so their loudness can be watched (bench/selftest.sh).

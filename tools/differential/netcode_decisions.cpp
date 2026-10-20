@@ -30,7 +30,7 @@
       agree            both libraries reach the same decision
       rocketnet-weaker netcode refuses, rocketnet admits (a finding)
       rocketnet-stricter rocketnet refuses, netcode admits (judged against
-                        REQUIREMENTS.md: no property weaker than netcode 1.02)
+                        no property weaker than netcode 1.02)
 */
 
 #include <stdio.h>
@@ -172,7 +172,7 @@ static int differential_handshake( struct rocketnet_server_protocol_t * server,
 }
 
 // The replay case. The server binds a token to its source when a connection
-// response opens, never at the request (STANDARD.md; tla/RNSecurityTables.tla,
+// response opens, never at the request (standard/TRANSPORT.md; tla/RNSecurityTables.tla,
 // BoundOnlyToOpener), so "a token already admitted" means a handshake driven
 // through response open: a first client holding the token connects and the
 // server admits it. A second client holding the same token then connects

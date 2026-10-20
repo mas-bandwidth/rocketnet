@@ -85,7 +85,7 @@ struct replay_window_ref_t
 
     // AlreadyReceived (tla/ReplayWindow.tla:100-103); the code's
     // rocketnet_replay_already_received, sdk/rocketnet_replay.cpp:27-40.
-    // STANDARD.md:1539-1541 (Replay Protection).
+    // standard/TRANSPORT.md t14 (Replay protection).
     int already_received( uint64_t s ) const
     {
         if ( s > highest )
@@ -118,7 +118,7 @@ struct replay_window_ref_t
     }
 
     // Advance (tla/ReplayWindow.tla:133-140); the code's rocketnet_replay_advance,
-    // sdk/rocketnet_replay.cpp:42-70. STANDARD.md:1498-1501 (Reading packets).
+    // sdk/rocketnet_replay.cpp:42-70. standard/TRANSPORT.md t10 (Receive processing).
     void advance( uint64_t s )
     {
         if ( s > highest )
@@ -144,7 +144,7 @@ struct replay_window_ref_t
     }
 
     // Receive (tla/ReplayWindow.tla:162-170); the session receive gate,
-    // sdk/rocketnet_server_protocol.cpp:962-972. STANDARD.md:1486-1494
+    // sdk/rocketnet_server_protocol.cpp:962-972. standard/TRANSPORT.md t10
     // (Reading packets: a slotless mapping is ignored before the mark).
     void receive( uint64_t s )
     {
@@ -278,7 +278,7 @@ static void TestReplayWindowModelTrace()
 // F1 (rnfix-replay-long-skip-clears-window-r2, rocketnet#189): the
 // ClearedWords = Words rule (tla/ReplayWindow.tla:53-54) -- an advance of at
 // least the window width forgets everything, so a genuine in-range packet is
-// never refused as already received. STANDARD.md:1539-1541. At BASE
+// never refused as already received. standard/TRANSPORT.md t14. At BASE
 // sdk/rocketnet_replay.cpp:56-59 clears only window[0..3] and the stale bit
 // for 300 reads as received (README-ReplayWindow.md "What TLC found" 1).
 static void TestReplayLongSkipClearsTheWholeWindow()
@@ -310,7 +310,7 @@ static void TestReplayLongSkipClearsTheWholeWindow()
 // OV-34 (rnfix-replay-advanced-after-connect-check-r2): the GateBeforeAdvance
 // rule (tla/ReplayWindow.tla:56-57, 162-170) -- a mapping without a slot never
 // moves its session window, so the server checks the slot before the mark.
-// STANDARD.md:1486-1494. At BASE sdk/rocketnet_server_protocol.cpp:962
+// standard/TRANSPORT.md t10. At BASE sdk/rocketnet_server_protocol.cpp:962
 // advances before :967 checks client_index, so the window moves.
 static void TestSlotlessPacketNeverMovesTheSessionWindow()
 {

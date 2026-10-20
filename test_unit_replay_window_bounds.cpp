@@ -5,7 +5,7 @@
 
 // The message tier's half-range reconstruction is safe only while the
 // transport replay window stays inside its two published bounds and remains
-// a multiple of the 64-bit ring words (STANDARD.md _Numbers_ and _Replay
+// a multiple of the 64-bit ring words (standard/TRANSPORT.md _Numbers_ and _Replay
 // window sizing_). This pins the compiled depth to those macros.
 
 #include "test_unit_registry.h"

@@ -3,8 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The receive handoff of docs/CLIENT-IO.md _The receive path_, driven in the
-// orders tla/RNClientIo.tla allows on one thread: no sockets, no real time.
+// The receive handoff, driven in the orders tla/RNClientIo.tla allows on one thread: no sockets, no real time.
 // ExposedStable pins the buffer update holds against every I/O-side action
 // until update's next action; NoReceiveStall pins the return at the end of
 // every update, so a batch read while update holds the other buffer reaches

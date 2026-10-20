@@ -5,7 +5,7 @@
 
 // The client transport's wiring of the I/O core (sdk/rocketnet_client_io.h)
 // against the fake client driver (test/fake_client_driver.h): a driver with
-// wait and wake runs the I/O thread design of docs/CLIENT-IO.md, any other
+// wait and wake runs the I/O thread design, any other
 // keeps the BASE path. The transport is created step-driven: no I/O thread,
 // no socket, no real time; the test calls rocketnet_client_io_step in place
 // of the thread, and the clock is a test clock from 1000.0 (RNClientIo
@@ -146,7 +146,7 @@ static void client_io_backend_with_wait_uses_io_thread()
 
 REGISTER_UNIT_TEST( client_io_backend_with_wait_uses_io_thread );
 
-// docs/CLIENT-IO.md client_io_handoff_never_waits, on the protocol packet
+// client_io_handoff_never_waits, on the protocol packet
 // update builds (send_packet needs a connected session, which needs a server):
 // two updates with no I/O step between both return; the second hand-off finds
 // ring 0 still HandedOff and is deferred (CLIENT_SEND_DEFERRED 1, nothing
