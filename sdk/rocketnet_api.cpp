@@ -629,7 +629,6 @@ const char * rocketnet_disconnect_reason_name( enum rocketnet_disconnect_reason_
     {
         case ROCKETNET_DISCONNECT_REASON_NONE:                      return "none";
         case ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH:           return "config mismatch";
-        case ROCKETNET_DISCONNECT_REASON_CONFIG_TIMEOUT:            return "config timeout";
         case ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION:        return "protocol violation";
         case ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT:          return "reliable timeout";
         case ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED:  return "message memory exhausted";

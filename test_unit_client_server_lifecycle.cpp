@@ -735,7 +735,7 @@ static void client_disconnect_reason_kept_until_next_connected()
     for ( int i = 0; i < 2000 && rocketnet_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_NONE; i++ )
         lifecycle_pump( &world );
     const int reason = rocketnet_client_disconnect_reason( client );
-    check( reason == ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH || reason == ROCKETNET_DISCONNECT_REASON_CONFIG_TIMEOUT );
+    check( reason == ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH || reason == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
     check( rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED );
     rocketnet_client_disconnect( client );
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );

@@ -325,7 +325,6 @@ enum rocketnet_disconnect_reason_t
 {
     ROCKETNET_DISCONNECT_REASON_NONE                            = 0,   ///< no connection has ended, or the connection is up
     ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH                 = 1,   ///< the two ends' WIRE config fields differ
-    ROCKETNET_DISCONNECT_REASON_CONFIG_TIMEOUT                  = 2,   ///< the config exchange did not finish in time
     ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION              = 3,   ///< the peer sent what the protocol forbids
     ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT                = 4,   ///< a reliable message went unacknowledged past reliable_timeout_ms
     ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED        = 5    ///< the connection's region had no room for an operation it must not drop

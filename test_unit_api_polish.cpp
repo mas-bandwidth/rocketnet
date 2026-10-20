@@ -170,7 +170,7 @@ static_assert( ROCKETNET_RELIABILITY_UNRELIABLE == 0 && ROCKETNET_RELIABILITY_UN
                ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT == 6 && ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT == 7, "ruling 3: reliability values" );
 static_assert( ROCKETNET_RECEIPT_STATUS_ACKED == 1 && ROCKETNET_RECEIPT_STATUS_LOSS == 2, "ruling 3: receipt values" );
 static_assert( ROCKETNET_DISCONNECT_REASON_NONE == 0 && ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH == 1 &&
-               ROCKETNET_DISCONNECT_REASON_CONFIG_TIMEOUT == 2 && ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION == 3 &&
+               ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION == 3 &&
                ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT == 4 && ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED == 5, "ruling 3: disconnect reason values" );
 static_assert( ROCKETNET_UPDATE_OK == 0 && ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED == -1, "ruling 3: update values" );
 static_assert( rn_same<decltype( rocketnet_client_update( NULL, 1000.0 ) ), rocketnet_update_result_t>::value, "ruling 3: client update" );
