@@ -20,7 +20,7 @@
 
 // The lifecycle card that lands after this one renames start, finish, receive,
 // release and send_packets to *_start_message, *_finish_message,
-// *_receive_message, *_release_message and *_send_messages. The header at this
+// *_receive_message, *_release_message and *_send_packets. The header at this
 // base still declares the old names, so this example uses them.
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
@@ -45,9 +45,9 @@ static int run_frames( struct rocketnet_server_t * server, struct rocketnet_clie
 
         // (1) update pumps the transport and takes in what arrived
 
-        if ( rocketnet_server_update( server, now ) != ROCKETNET_MESSAGE_OK )
+        if ( rocketnet_server_update( server, now ) != ROCKETNET_UPDATE_OK )
             return -1;
-        if ( rocketnet_client_update( client, now ) != ROCKETNET_MESSAGE_OK )
+        if ( rocketnet_client_update( client, now ) != ROCKETNET_UPDATE_OK )
             return -1;
 
         // (2) receive and release every received message
@@ -55,17 +55,17 @@ static int run_frames( struct rocketnet_server_t * server, struct rocketnet_clie
         const uint8_t * data = NULL;
         int bytes = 0;
 
-        while ( rocketnet_client_receive( client, 0, &data, &bytes ) )
-            rocketnet_client_release( client, data );
+        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+            rocketnet_client_release_message( client, data );
 
         for ( int i = 0; i < max_clients; i++ )
         {
             if ( !rocketnet_server_client_connected( server, i ) )
                 continue;
-            while ( rocketnet_server_receive( server, i, 0, &data, &bytes ) )
+            while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
             {
                 printf( "server received: %.*s\n", bytes, (const char*) data );
-                rocketnet_server_release( server, i, data );
+                rocketnet_server_release_message( server, i, data );
                 if ( received )
                     ( *received )++;
             }
@@ -78,16 +78,16 @@ static int run_frames( struct rocketnet_server_t * server, struct rocketnet_clie
         if ( send && !sent && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
             const int message_bytes = (int) strlen( message );
-            uint8_t * buffer = rocketnet_client_start( client, 0, ROCKETNET_RELIABLE_ORDERED, message_bytes );
+            uint8_t * buffer = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message_bytes );
             if ( !buffer )
                 return -1;
             memcpy( buffer, message, (size_t) message_bytes );
-            if ( !rocketnet_client_finish( client, message_bytes ) )
+            if ( !rocketnet_client_finish_message( client, message_bytes ) )
                 return -1;
             sent = 1;
         }
 
-        // (5) send_packets (send_messages after the lifecycle rename) is last,
+        // (5) send_packets is last,
         // after this frame's messages are queued, so this frame's messages
         // leave this frame
 
@@ -114,7 +114,7 @@ int main( void )
     char server_address[64];
     int result = 1;
 
-    CHECK( rocketnet_init( NULL ) );
+    CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     // the server takes the published development keys, the loopback pin, and
     // an ephemeral port that is read back below
@@ -124,6 +124,11 @@ int main( void )
     server_config.transport = "loopback";
 
     server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
     CHECK( server != NULL );
 
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
@@ -142,9 +147,14 @@ int main( void )
         // instead of reading the wall clock. A real backend stamps the current
         // time.
 
-        CHECK( rocketnet_write_dev_connect_token( server_address, (uint64_t) round, 4102444800ull, connect_token ) );
+        CHECK( rocketnet_write_dev_connect_token( server_address, (uint64_t) round, 4102444800ull, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-        client = rocketnet_client_create( NULL, connect_token, &client_config, NULL, 0 );
+        client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+        if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
+        {
+            rocketnet_client_destroy( client );
+            client = NULL;
+        }
         CHECK( client != NULL );
 
         int received = 0;
@@ -155,12 +165,15 @@ int main( void )
         client = NULL;
     }
 
-    printf( "PASS\n" );
     result = 0;
 
 cleanup:
     rocketnet_client_destroy( client );
     rocketnet_server_destroy( server );
     rocketnet_term();
+    // destroy ends a live connection and logs it, so PASS is printed after
+    // the cleanup to stay the last line
+    if ( result == 0 )
+        printf( "PASS\n" );
     return result;
 }

@@ -56,7 +56,7 @@ int main( void )
     int had_client = 0;
     int echoed = 0;
 
-    CHECK( rocketnet_init( NULL ) );
+    CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     // a deployment mints the backend keypair in the backend and gives servers
     // only the public half; here the server bootstraps it so the separate
@@ -74,6 +74,11 @@ int main( void )
     memcpy( config.server_secret_key, server_secret_key, sizeof( config.server_secret_key ) );
 
     server = rocketnet_server_create( NULL, "127.0.0.1:40000", &config, NULL, 0 );
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
     CHECK( server != NULL );
 
     FILE * keys = fopen( KEY_FILE, "w" );
@@ -93,7 +98,7 @@ int main( void )
         const int max_clients = rocketnet_server_max_clients( server );
 
         // (1) update pumps the transport and takes in what arrived
-        if ( rocketnet_server_update( server, now ) != ROCKETNET_MESSAGE_OK )
+        if ( rocketnet_server_update( server, now ) != ROCKETNET_UPDATE_OK )
             break;
 
         // (2) receive and release every received message
@@ -101,17 +106,17 @@ int main( void )
         {
             const uint8_t * data = NULL;
             int bytes = 0;
-            while ( rocketnet_server_receive( server, i, 0, &data, &bytes ) )
+            while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
             {
                 printf( "server received: %.*s\n", bytes, (const char*) data );
-                uint8_t * out = rocketnet_server_start( server, i, 0, ROCKETNET_RELIABLE_ORDERED, bytes );
+                uint8_t * out = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
                 if ( out )
                 {
                     memcpy( out, data, (size_t) bytes );
-                    if ( rocketnet_server_finish( server, i, bytes ) )
+                    if ( rocketnet_server_finish_message( server, i, bytes ) )
                         echoed = 1;
                 }
-                rocketnet_server_release( server, i, data );
+                rocketnet_server_release_message( server, i, data );
             }
         }
 
@@ -119,7 +124,7 @@ int main( void )
 
         // (4) this frame's echo is queued above, as each message arrives
 
-        // (5) send_packets (send_messages after the lifecycle rename) is last,
+        // (5) send_packets is last,
         // after this frame's messages are queued, so they leave this frame
 
         rocketnet_server_send_packets( server );
@@ -136,11 +141,14 @@ int main( void )
     }
 
     CHECK( had_client && echoed );
-    printf( "PASS\n" );
     result = 0;
 
 cleanup:
     rocketnet_server_destroy( server );
     rocketnet_term();
+    // destroy ends a live connection and logs it, so PASS is printed after
+    // the cleanup to stay the last line
+    if ( result == 0 )
+        printf( "PASS\n" );
     return result;
 }

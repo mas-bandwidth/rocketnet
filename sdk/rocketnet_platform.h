@@ -211,6 +211,39 @@ uint16_t rocketnet_platform_preferred_client_port();
  */
 bool rocketnet_platform_client_dual_stack();
 
+/**
+ * @brief Reports whether this host can create an IPv6 UDP socket.
+ *
+ * A host with IPv6 disabled (for example ipv6.disable=1 or a container with
+ * no IPv6 stack) refuses socket(AF_INET6) with EAFNOSUPPORT. The client reads
+ * this before choosing its bind family so an IPv4 server stays reachable.
+ * @return true when an IPv6 socket can be created; otherwise false.
+ */
+bool rocketnet_platform_client_ipv6_available();
+
+/**
+ * @brief Overrides the IPv6 availability probe for tests.
+ *
+ * Off unless a test sets it. With false, socket creation for an IPv6 address
+ * fails as it would on a host with no IPv6 stack, so the client bind-family
+ * choice is exercised on any build host.
+ * @param available true to probe the host normally; false to report no IPv6.
+ * @return None.
+ */
+void rocketnet_platform_set_ipv6_socket_available_for_testing( bool available );
+
+/**
+ * @brief Chooses the client bind family from the server family and platform.
+ *
+ * @param server_address_type ROCKETNET_ADDRESS_IPV4 or ROCKETNET_ADDRESS_IPV6.
+ * @param ipv6_available Whether an IPv6 socket can be created on this host.
+ * @param dual_stack Whether IPv6 sockets also carry IPv4-mapped peers.
+ * @return IPv6 when the server needs it or an IPv4 server can use dual stack;
+ * IPv4 when only IPv4 is possible; ROCKETNET_ADDRESS_NONE when the server is
+ * IPv6 and this host has no IPv6 stack.
+ */
+int rocketnet_platform_client_bind_family( int server_address_type, bool ipv6_available, bool dual_stack );
+
 #ifdef __cplusplus
 }
 #endif
@@ -528,6 +561,33 @@ void rocketnet_platform_thread_join( struct rocketnet_platform_thread_t * thread
 void rocketnet_platform_thread_destroy( struct rocketnet_platform_thread_t * thread );
 
 /**
+ * @brief Waits on the calling thread's wake for at most the given duration.
+ *
+ * Returns when the duration passes or when rocketnet_platform_thread_wake has
+ * been called for the calling thread; once woken, every later wait returns at
+ * once. The wake is an explicit signal, so a woken thread does not depend on
+ * its wait's timeout firing. POSIX waits on a condition variable, macOS and
+ * iOS on a mach semaphore (the primitive usleep waits on there, so the
+ * per-wait cost matches usleep). Windows sleeps for the duration and its wake
+ * is a no-op, so a Windows thread observes a quit flag within one wait. Called
+ * on a thread that thread_create did not start, it sleeps for the duration.
+ * @param time Requested seconds; must be positive.
+ * @return None.
+ */
+void rocketnet_platform_thread_wait( double time );
+
+/**
+ * @brief Wakes a live thread's current thread_wait and every later one.
+ *
+ * Any thread may call it, before or during the target's wait. A thread that
+ * polls a quit flag between waits stores the flag first, then wakes, then
+ * joins.
+ * @param thread Live thread handle; must be non-NULL.
+ * @return None.
+ */
+void rocketnet_platform_thread_wake( struct rocketnet_platform_thread_t * thread );
+
+/**
  * @brief Requests the platform's client-thread scheduling priority.
  *
  * Call on a live thread. Operating-system permissions can prevent the request;
@@ -693,6 +753,12 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
         void * context;
         /** @brief Native thread handle. */
         pthread_t handle;
+        /** @brief Guards woken for thread_wait and thread_wake. */
+        pthread_mutex_t wake_mutex;
+        /** @brief Signalled by thread_wake; waited on by thread_wait. */
+        pthread_cond_t wake_cond;
+        /** @brief Set once by thread_wake; never cleared. */
+        bool woken;
     };
 
     /** @brief Stores a POSIX mutex and whether its initialization succeeded. */
@@ -710,6 +776,7 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
 
     #include <pthread.h>
     #include <unistd.h>
+    #include <mach/mach_types.h>
 
     typedef int rocketnet_platform_socket_handle_t;
 
@@ -726,6 +793,8 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
     {
         void * context;
         pthread_t handle;
+        mach_port_t wake_semaphore;     // a mach semaphore: thread_wait waits on it, thread_wake signals it
+        int woken;                      // set once by thread_wake (atomic store), never cleared
     };
 
     struct rocketnet_platform_mutex_t

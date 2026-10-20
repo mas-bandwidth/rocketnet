@@ -79,14 +79,21 @@ static bool loopback_is_wildcard( const rocketnet_address_t & address )
     return false;
 }
 
-static rocketnet_address_t loopback_sender_address( const rocketnet_address_t & bind )
+// the source address a datagram from this endpoint carries. a wildcard bind
+// sends from its loopback. an endpoint bound to the IPv6 wildcard is dual
+// stack, like a socket with IPV6_V6ONLY off: it serves IPv4 peers too, and
+// its datagrams to an IPv4 peer come from the IPv4 loopback on its port, so
+// the IPv4 client sees the reply from the address it sent to.
+
+static rocketnet_address_t loopback_sender_address( const rocketnet_address_t & bind, const rocketnet_address_t & to )
 {
     rocketnet_address_t from = bind;
     if ( !loopback_is_wildcard( bind ) )
         return from;
     memset( &from.data, 0, sizeof( from.data ) );
-    if ( bind.type == ROCKETNET_ADDRESS_IPV4 )
+    if ( bind.type == ROCKETNET_ADDRESS_IPV4 || to.type == ROCKETNET_ADDRESS_IPV4 )
     {
+        from.type = ROCKETNET_ADDRESS_IPV4;
         from.data.ipv4[0] = 127;
         from.data.ipv4[3] = 1;
     }
@@ -96,6 +103,10 @@ static rocketnet_address_t loopback_sender_address( const rocketnet_address_t & 
     }
     return from;
 }
+
+// the endpoint a datagram to this address reaches: the endpoint bound at its
+// family and port, else, for an IPv4 address, a dual-stack endpoint bound to
+// the IPv6 wildcard on that port.
 
 static rocketnet_loopback_endpoint_t * loopback_find_destination( rocketnet_loopback_state_t & state, const rocketnet_address_t & to )
 {
@@ -228,7 +239,7 @@ static void loopback_send( void * driver, const rocketnet_address_t * to, const 
     }
     rocketnet_loopback_packet_t * packet = &dst->packets[dst->tail % ROCKETNET_LOOPBACK_QUEUE_PACKETS];
     packet->bytes = bytes;
-    packet->from = loopback_sender_address( sender->bind );
+    packet->from = loopback_sender_address( sender->bind, *to );
     memcpy( packet->data, data, (size_t) bytes );
     ++dst->tail;
     ++dst->count;
@@ -254,7 +265,7 @@ static void loopback_server_send_batch( void * driver, const rocketnet_platform_
         }
         rocketnet_loopback_packet_t * slot = &dst->packets[dst->tail % ROCKETNET_LOOPBACK_QUEUE_PACKETS];
         slot->bytes = packet.packet_bytes;
-        slot->from = loopback_sender_address( sender->bind );
+        slot->from = loopback_sender_address( sender->bind, *packet.to );
         memcpy( slot->data, packet.packet_data, (size_t) packet.packet_bytes );
         ++dst->tail;
         ++dst->count;

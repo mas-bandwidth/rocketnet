@@ -70,4 +70,7 @@ void rocketnet_client_slots_confirm( struct rocketnet_client_slots_t * slots, in
 
 void rocketnet_client_slots_release( struct rocketnet_client_slots_t * slots, int client_index );
 
+// Unit-test poison/release/reuse witness for the private slot arrays.
+bool rocketnet_client_slots_reset_witness_for_test();
+
 #endif // #ifndef ROCKETNET_CLIENT_SLOTS_H

@@ -27,7 +27,11 @@
 #include "rocketnet_test_vectors.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_fragment.h"
+#if defined(ROCKETNET_USE_SYSTEM_SODIUM)
+#include <sodium.h>
+#else
 #include "sodium/sodium.h"
+#endif
 #include "dst_checks.h"
 
 #include <stdint.h>

@@ -31,7 +31,7 @@ static const char happy_pattern[] = "rocketnet-happy-path";
 
 int main( int argc, char ** argv )
 {
-    if ( !rocketnet_init( NULL ) )
+    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;
@@ -51,7 +51,7 @@ int main( int argc, char ** argv )
     }
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    if ( !rocketnet_write_dev_connect_token( address, 1234, (uint64_t) time( NULL ), connect_token ) )
+    if ( rocketnet_write_dev_connect_token( address, 1234, (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to write dev connect token\n" );
         rocketnet_term();
@@ -62,7 +62,12 @@ int main( int argc, char ** argv )
     rocketnet_client_default_config( &config );
     config.transport = "portable";
 
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, connect_token, &config, NULL, 0 );
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL, 0 );
+    if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_client_destroy( client );
+        client = NULL;
+    }
     if ( !client )
     {
         printf( "error: failed to create client\n" );
@@ -93,7 +98,7 @@ int main( int argc, char ** argv )
         }
 
         // (1) update pumps the transport and takes in what arrived
-        if ( rocketnet_client_update( client, now ) != ROCKETNET_MESSAGE_OK )
+        if ( rocketnet_client_update( client, now ) != ROCKETNET_UPDATE_OK )
         {
             printf( "error: client update failed\n" );
             exit_code = 1;
@@ -103,8 +108,8 @@ int main( int argc, char ** argv )
         // (2) receive and process every received message for this update
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive( client, 0, &data, &bytes ) )
-            rocketnet_client_release( client, data );
+        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+            rocketnet_client_release_message( client, data );
 
         const int state = rocketnet_client_state( client );
         if ( state < 0 )
@@ -129,7 +134,7 @@ int main( int argc, char ** argv )
             {
                 if ( next_mode != skip_mode )
                 {
-                    uint8_t * payload = rocketnet_client_start( client, 0, next_mode, payload_bytes );
+                    uint8_t * payload = rocketnet_client_start_message( client, 0, next_mode, payload_bytes );
                     if ( !payload )
                     {
                         printf( "error: client could not start mode %d\n", next_mode );
@@ -138,7 +143,7 @@ int main( int argc, char ** argv )
                     }
                     payload[0] = (uint8_t) next_mode;
                     memcpy( payload + 1, happy_pattern, pattern_bytes );
-                    serials[next_mode] = rocketnet_client_finish( client, payload_bytes );
+                    serials[next_mode] = rocketnet_client_finish_message( client, payload_bytes );
                     if ( serials[next_mode] == 0 )
                     {
                         printf( "error: client could not finish mode %d\n", next_mode );
@@ -163,7 +168,7 @@ int main( int argc, char ** argv )
                 for ( int mode = 5; mode <= 7; mode++ )
                 {
                     if ( serials[mode] != 0 && receipts[i].serial == serials[mode] &&
-                         receipts[i].status == ROCKETNET_RECEIPT_ACKED && !acked[mode] )
+                         receipts[i].status == ROCKETNET_RECEIPT_STATUS_ACKED && !acked[mode] )
                     {
                         acked[mode] = 1;
                         printf( "receipt mode %d acked\n", mode );
@@ -183,7 +188,7 @@ int main( int argc, char ** argv )
                 done = 1;
         }
 
-        // (5) send_packets (send_messages after the lifecycle rename) is last,
+        // (5) send_packets is last,
         // after this frame's messages are queued, so this frame's messages
         // leave this frame
         rocketnet_client_send_packets( client );

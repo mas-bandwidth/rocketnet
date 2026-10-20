@@ -82,7 +82,7 @@ jobs:
               return
             fi
             if [ "$full" != "$major.$minor.$patch" ]; then
-              echo "::error::ROCKETNET_VERSION_FULL ($full) does not match ROCKETNET_VERSION_MAJOR/MINOR/PATCH_INT ($major.$minor.$patch) in the $branch_name branch of sdk/rocketnet.h."
+              echo "::error::ROCKETNET_VERSION_FULL ($full) does not match ROCKETNET_VERSION_MAJOR/MINOR/PATCH ($major.$minor.$patch) in the $branch_name branch of sdk/rocketnet.h."
               fail=1
             fi
           }

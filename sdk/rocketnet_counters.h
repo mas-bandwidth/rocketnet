@@ -682,7 +682,7 @@
     /* a connection's message memory (its region, docs/CHANNELS.md 4) was */ \
     /* exhausted: an operation found no room, the region took its sticky */ \
     /* exhausted state, and the connection is disconnected with the reason */ \
-    /* ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED (tla/RNConnectionMemory.tla, */ \
+    /* ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED (tla/RNConnectionMemory.tla, */ \
     /* Exhaust). Counted once per exhausted connection, on the owner's */ \
     /* counters, beside the refusal's own counter (MESSAGE_SEND_STORE_FULL or */ \
     /* MESSAGE_SEND_QUEUE_FULL). appended: indices are the contract. */ \
@@ -748,7 +748,7 @@
     \
     /* RELIABLE_ORDERED's receive path (docs/CHANNELS.md 7.2, 8): each is a */ \
     /* wire violation, counted once per record, and each ends the */ \
-    /* connection with ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION. A record */ \
+    /* connection with ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION. A record */ \
     /* whose channel is at or past this end's count; a block fragment whose */ \
     /* count or index disagrees with the block's first-seen count, or whose */ \
     /* count is above ceil(max_message_bytes / F), or whose length is not F */ \
@@ -774,7 +774,7 @@
     X( MESSAGE_SEND_REFUSED, REFUSAL, NONE ) \
     /** @brief ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY: Counts batch entries ignored because the connection in that slot has changed. Unit: occurrences. Class: expected; family: none. */ \
     X( MESSAGE_STALE_CONNECTION_ENTRY, EXPECTED, NONE ) \
-    /** @brief ROCKETNET_COUNTER_MESSAGE_NOT_RELEASED: Counts the number of held messages each update while a received message view remains held; the update continues and returns ROCKETNET_ERROR_MESSAGE_NOT_RELEASED. Unit: messages. Class: refusal; family: none. */ \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_NOT_RELEASED: Counts the number of held messages each update while a received message view remains held; the update continues and returns ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED. Unit: messages. Class: refusal; family: none. */ \
     X( MESSAGE_NOT_RELEASED, REFUSAL, NONE ) \
     \
     /* The kernel prefilter counters (sdk/rocketnet_wire.h */ \
@@ -858,7 +858,22 @@
     /** @brief ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED: Counts UNRELIABLE_SEQUENCED sends too big for one packet's record, promoted to their reliable twin; one count per promoted send. Unit: occurrences. Class: expected; family: none. */ \
     X( MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED, EXPECTED, NONE ) \
     /** @brief ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT: Counts UNRELIABLE_WITH_ACK_RECEIPT sends too big for one packet's record, promoted to their reliable twin; one count per promoted send. Unit: occurrences. Class: expected; family: none. */ \
-    X( MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT, EXPECTED, NONE )
+    X( MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT, EXPECTED, NONE ) \
+    \
+    /* A fitting unreliable message (docs/OUTGOING-BUILD.md) that was not */ \
+    /* written in place in a packet buffer and took the queued path, with */ \
+    /* its one copy into the frame at send_packets: the transport gave no */ \
+    /* frame (a client not yet connected, a full send ring), unreliable */ \
+    /* messages already waited in the connection's queue, the send budget */ \
+    /* could not pay it at start, or the update's max_packets_per_update */ \
+    /* was spent (in-place and queued packets count against it together), */ \
+    /* one packet of it being kept for the write pass while reliable work */ \
+    /* is due. The queued path then sends it, or drops it over budget and */ \
+    /* counts MESSAGE_UNRELIABLE_OVER_BUDGET. EXPECTED: a client's sends */ \
+    /* before CONNECTED take it. Counted on the owner's counters, once per */ \
+    /* message. appended: indices are the contract. */ \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK: Counts fitting unreliable messages that took the queued path instead of being written in place in a packet buffer; one count per message, on the owner's counters. Unit: messages. Class: expected; family: none. */ \
+    X( MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK, EXPECTED, NONE )
 
 /**
  * @brief Integer indices for the cumulative protocol counters.

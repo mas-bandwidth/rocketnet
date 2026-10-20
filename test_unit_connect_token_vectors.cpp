@@ -627,8 +627,9 @@ static void tampered_vector_refused()
 // The unit suite links the release archive, whose development minting helper
 // is compiled out; the development shared library built beside it carries the
 // writer, so load that library and mint through its own symbol.
-typedef int ( *ctv_dev_token_writer_t )( const char * server_address_string, uint64_t client_id,
-                                         uint64_t current_timestamp, uint8_t * connect_token );
+typedef enum rocketnet_status_t ( *ctv_dev_token_writer_t )( const char * server_address_string, uint64_t client_id,
+                                                             uint64_t current_timestamp, uint8_t * connect_token,
+                                                             size_t connect_token_bytes );
 
 static ctv_dev_token_writer_t ctv_dev_token_writer()
 {
@@ -662,7 +663,7 @@ static void dev_connect_token_timeout_is_the_named_constant()
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
 
     ctv_dev_token_writer_t write_dev = ctv_dev_token_writer();
-    rocketnet_unit_check( write_dev( "127.0.0.1:40000", 1, now, token ) == 1 );
+    rocketnet_unit_check( write_dev( "127.0.0.1:40000", 1, now, token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_connect_token_t read_token;
     rocketnet_read_connect_token( &read_token, token );
