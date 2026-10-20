@@ -2960,12 +2960,13 @@ promotion defined here and in [m2 Payload forms and sender size rules](#m2).
    send are acknowledged. A type-5 send that remains unreliable reports ACKED
    when its carrying packet is acknowledged and LOSS when it is lost, refused
    by the send budget, or expires without an acknowledgement. The packet
-    expires at its send time plus the adaptive RTO, the larger of the sender's
-    unclamped RTO and its clamped resend RTO, and
-    `ROCKETNET_RECEIPT_RTO_UNKNOWN_MS` until the first RTT sample. An
-    acknowledgement that arrives after the resend RTO and before that expiry
-    reports ACKED. These outcomes are API semantics and are not carried on the
-    wire.
+   expires at its send time plus RakNet's RTO: 2 s while the round-trip time
+   is unknown, and otherwise the smaller of
+   2 x estimated RTT + 4 x its deviation + 30 ms and 2 s, with the estimate
+   and the deviation moving 5% toward every acknowledged sample and no
+   back-off, never below the resend RTO. An acknowledgement that arrives
+   after the resend RTO and before that expiry reports ACKED. These outcomes
+   are API semantics and are not carried on the wire.
 
 ```vector m12.promotion
 public type: 5 (unreliable with ack receipt)

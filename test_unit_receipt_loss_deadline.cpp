@@ -5,9 +5,12 @@
 
 // UNRELIABLE_WITH_ACK_RECEIPT: a delivered message whose packet ACK arrives
 // after the resend rto, and before the receipt deadline, reports ACKED, never
-// LOSS (tla/RNReceipts.tla SweepLoss, LossOnlyAfterReceiptDeadline). Two
-// endpoints back to back, time a loop variable from 1000.0 in whole
-// milliseconds. No socket, no clock, no transport.
+// LOSS (tla/RNReceipts.tla SweepLoss, LossOnlyAfterReceiptDeadline). The
+// deadline is RakNet's rto: 2 s while the rtt is unknown, else
+// min( 2 x estimated rtt + 4 x deviation + 30 ms, 2 s ), the estimate and the
+// deviation smoothed 5% per ack, never below the resend rto. Two endpoints
+// back to back, time a loop variable from 1000.0 in whole milliseconds. No
+// socket, no clock, no transport.
 
 #include <string.h>
 
@@ -61,6 +64,12 @@ struct rld_sender_t
     int acked[RLD_MAX_SENDS];
     int lost[RLD_MAX_SENDS];
 };
+
+// the estimator is floating point, so the cases read it within a nanosecond
+static void rld_near( double value, double expected )
+{
+    check( value > expected - 1e-9 && value < expected + 1e-9 );
+}
 
 static double rld_now( int ms )
 {
@@ -273,12 +282,12 @@ struct rld_ack_fixture_t
     rn_window_ack_t ack;
 };
 
-static void rld_ack_fixture_init( rld_ack_fixture_t * f, int rto_initial_ms, int rto_max_ms )
+static void rld_ack_fixture_init( rld_ack_fixture_t * f, int rto_min_ms, int rto_max_ms )
 {
     memset( f, 0, sizeof( *f ) );
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.rto_initial_ms = rto_initial_ms;
+    config.rto_min_ms = rto_min_ms;
     config.rto_max_ms = rto_max_ms;
     config.reliable_timeout_ms = 60000;                         // validation: at least four resends of the rto fit
     f->arena = rn_arena_create( NULL, &config, 1, &f->counters );
@@ -296,54 +305,108 @@ static int rld_ack_fixture_outcomes( rld_ack_fixture_t * f, rocketnet_message_re
     return n;
 }
 
-// DONE-WHEN (2): an unacknowledged receipt packet reports LOSS at its send
-// time plus the adaptive rto, the larger of the unclamped rto and the clamped
-// resend rto, not the resend rto alone and not one millisecond before.
-static void receipt_loss_deadline_is_the_adaptive_rto()
+// one rtt sample of `rtt` seconds taken at f->ack's next packet id, its receipt
+// drained, so a later packet's deadline is read against this path
+static void rld_ack_fixture_sample( rld_ack_fixture_t * f, double rtt, uint64_t packet_id )
 {
-    rld_ack_fixture_t f;
-    rld_ack_fixture_init( &f, 100, 250 );
-    rn_window_ack_receipt_begin_update( &f.ack );
     rocketnet_message_receipt_t out[16];
-    // a 300 ms rtt sample: srtt 0.3, rttvar 0.15, unclamped rto 0.675 s,
-    // clamped resend rto 0.25 s, so the deadline is 0.675 s.
     const uint32_t seed = 7;
     const double send = 1000.0;
-    rn_window_ack_commit_receipt_packet( &f.ack, 11, &seed, 1, send );
-    check( rn_window_ack_on_ack( &f.ack, 11, send + 0.300 ) == 1 );
-    check( rld_ack_fixture_outcomes( &f, out ) == 1 );         // drain the seed's ACKED
-    const uint32_t serial = 8;
-    rn_window_ack_commit_receipt_packet( &f.ack, 12, &serial, 1, send );
-    rn_window_ack_receipt_sweep( &f.ack, send + f.ack.rto );                // the clamped rto alone is not the deadline
+    rn_window_ack_commit_receipt_packet( &f->ack, packet_id, &seed, 1, send );
+    check( rn_window_ack_on_ack( &f->ack, packet_id, send + rtt ) == 1 );
+    check( rld_ack_fixture_outcomes( f, out ) == 1 );          // drain the seed's ACKED
+}
+
+// DONE-WHEN (2): while the rtt is unknown the deadline is RakNet's rto of 2 s
+// (docs/RAKNET-RELIABILITY.md 9 "RTO"), not the resend rto and not a fixed
+// deadline beside it.
+static void receipt_loss_deadline_unknown_rtt_is_two_seconds()
+{
+    rld_ack_fixture_t f;
+    rld_ack_fixture_init( &f, 10, 250 );
+    rn_window_ack_receipt_begin_update( &f.ack );
+    rocketnet_message_receipt_t out[16];
+    const uint32_t serial = 5;
+    const double send = 1000.0;
+    check( rn_window_ack_receipt_loss_delay( &f.ack ) == 2.0 );
+    rn_window_ack_commit_receipt_packet( &f.ack, 11, &serial, 1, send );
+    rn_window_ack_receipt_sweep( &f.ack, send + 1.999 );
     check( rld_ack_fixture_outcomes( &f, out ) == 0 );
-    rn_window_ack_receipt_sweep( &f.ack, send + 0.674 );
-    check( rld_ack_fixture_outcomes( &f, out ) == 0 );
-    rn_window_ack_receipt_sweep( &f.ack, send + 0.675 );
+    rn_window_ack_receipt_sweep( &f.ack, send + 2.0 );
     check( rld_ack_fixture_outcomes( &f, out ) == 1 );
     check( out[0].serial == serial && out[0].status == ROCKETNET_RECEIPT_STATUS_LOSS );
-    check( rn_window_ack_on_ack( &f.ack, 12, send + 0.676 ) == 1 );  // the late ack stutters
+    rn_arena_destroy( f.arena );
+}
+
+// DONE-WHEN (2): with a 300 ms rtt the deadline is RakNet's rto of
+// 2 x 0.3 + 4 x 0.15 + 30 ms = 1.23 s, past the clamped resend rto of 250 ms,
+// and a late ack before it is ACKED.
+static void receipt_loss_deadline_is_the_raknet_rto()
+{
+    rld_ack_fixture_t f;
+    rld_ack_fixture_init( &f, 10, 250 );
+    rn_window_ack_receipt_begin_update( &f.ack );
+    rocketnet_message_receipt_t out[16];
+    const double send = 1000.0;
+    rld_ack_fixture_sample( &f, 0.300, 11 );
+    rld_near( f.ack.rsrtt, 0.300 );                            // the first sample is the estimate
+    rld_near( f.ack.rdev, 0.150 );                             // and half of it is the deviation
+    check( f.ack.rto == 0.250 );                               // the resend rto is clamped to rto_max
+    rld_near( rn_window_ack_receipt_loss_delay( &f.ack ), 1.230 );
+    const uint32_t serial = 8;
+    rn_window_ack_commit_receipt_packet( &f.ack, 12, &serial, 1, send );
+    rn_window_ack_receipt_sweep( &f.ack, send + f.ack.rto );    // the resend rto alone is not the deadline
+    check( rld_ack_fixture_outcomes( &f, out ) == 0 );
+    rn_window_ack_receipt_sweep( &f.ack, send + 1.229 );
+    check( rld_ack_fixture_outcomes( &f, out ) == 0 );
+    rn_window_ack_receipt_sweep( &f.ack, send + 1.230 );
+    check( rld_ack_fixture_outcomes( &f, out ) == 1 );
+    check( out[0].serial == serial && out[0].status == ROCKETNET_RECEIPT_STATUS_LOSS );
+    check( rn_window_ack_on_ack( &f.ack, 12, send + 1.231 ) == 1 );  // the late ack stutters
     check( rld_ack_fixture_outcomes( &f, out ) == 0 );
     check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS] == 1 );
     check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED] == 1 );
     rn_arena_destroy( f.arena );
 }
 
-// DONE-WHEN (2): the deadline is never below the resend rto. With an
-// unclamped adaptive rto below the rto floor, LOSS waits for the rto, and an
-// ack before it is ACKED.
+// DONE-WHEN (2): the estimate and the deviation move 5% toward every sample
+// (CC.cpp:210-222), so a 200 ms sample after a 100 ms one gives
+// rsrtt 0.105, rdev 0.0525 and a deadline of 0.45 s, and the 2 s cap holds a
+// slow path at 2 s.
+static void receipt_loss_deadline_smooths_five_percent()
+{
+    rld_ack_fixture_t f;
+    rld_ack_fixture_init( &f, 10, 250 );
+    rn_window_ack_receipt_begin_update( &f.ack );
+    rld_ack_fixture_sample( &f, 0.100, 11 );
+    rld_ack_fixture_sample( &f, 0.200, 12 );
+    rld_near( f.ack.rsrtt, 0.105 );
+    rld_near( f.ack.rdev, 0.0525 );
+    rld_near( rn_window_ack_receipt_loss_delay( &f.ack ), 0.450 );
+
+    // a 600 ms path: 2 x 0.6 + 4 x 0.3 + 30 ms is 2.43 s, capped at 2 s
+    rld_ack_fixture_t g;
+    rld_ack_fixture_init( &g, 10, 250 );
+    rn_window_ack_receipt_begin_update( &g.ack );
+    rld_ack_fixture_sample( &g, 0.600, 11 );
+    check( rn_window_ack_receipt_loss_delay( &g.ack ) == 2.0 );
+    rn_arena_destroy( g.arena );
+    rn_arena_destroy( f.arena );
+}
+
+// DONE-WHEN (2): the deadline is never below the resend rto. With a 1 ms rtt
+// RakNet's rto is 34 ms, under a 100 ms rto floor, so the deadline is the
+// floor, and an ack before it is ACKED.
 static void receipt_loss_deadline_never_below_the_rto()
 {
     rld_ack_fixture_t f;
     rld_ack_fixture_init( &f, 100, 250 );
     rn_window_ack_receipt_begin_update( &f.ack );
     rocketnet_message_receipt_t out[16];
-    // a 1 ms rtt sample: unclamped rto 2.25 ms, below the 10 ms rto floor, so
-    // the clamped resend rto (10 ms) is the deadline.
-    const uint32_t seed = 7;
     const double send = 1000.0;
-    rn_window_ack_commit_receipt_packet( &f.ack, 21, &seed, 1, send );
-    check( rn_window_ack_on_ack( &f.ack, 21, send + 0.001 ) == 1 );
-    check( rld_ack_fixture_outcomes( &f, out ) == 1 );         // drain the seed's ACKED
+    rld_ack_fixture_sample( &f, 0.001, 21 );
+    check( f.ack.rto == 0.100 );                               // clamped up to rto_min
+    check( rn_window_ack_receipt_loss_delay( &f.ack ) == 0.100 );
     const uint32_t serials[2] = { 8, 9 };
     rn_window_ack_commit_receipt_packet( &f.ack, 22, &serials[0], 1, send );
     rn_window_ack_commit_receipt_packet( &f.ack, 23, &serials[1], 1, send );
@@ -358,5 +421,7 @@ static void receipt_loss_deadline_never_below_the_rto()
 
 REGISTER_UNIT_TEST( receipt_loss_deadline_long_path_reports_acked );
 REGISTER_UNIT_TEST( receipt_loss_deadline_slow_acking_peer_reports_acked );
-REGISTER_UNIT_TEST( receipt_loss_deadline_is_the_adaptive_rto );
+REGISTER_UNIT_TEST( receipt_loss_deadline_unknown_rtt_is_two_seconds );
+REGISTER_UNIT_TEST( receipt_loss_deadline_is_the_raknet_rto );
+REGISTER_UNIT_TEST( receipt_loss_deadline_smooths_five_percent );
 REGISTER_UNIT_TEST( receipt_loss_deadline_never_below_the_rto );

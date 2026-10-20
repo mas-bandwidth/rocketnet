@@ -22,15 +22,17 @@ EXTENDS Naturals, Sequences, FiniteSets
 \* Fragments have independent numbers but share their message's serial.
 \* Outcomes are ghost emission history; ring is the bounded application queue.
 \* Dropping its oldest event is counted and never permits a second emission.
-\* AdaptiveRTO is the unclamped adaptive RTO in Tick units. A type-5 receipt's
-\* deadline is the larger of it and the resend RTO, independent of the resend
-\* timer (rn_window_ack_receipt_loss_delay, sdk/rocketnet_window_ack.h).
-\* BrokenLossAtRto is the reversed witness: LOSS at RTO alone.
-CONSTANTS MaxPid, MapCapacity, ReceiptCapacity, RTO, AdaptiveRTO, ReliableTimeout,
+\* ReceiptRTO is RakNet's RTO in Tick units (2 s while the RTT is unknown,
+\* else min( 2 * estimated RTT + 4 * deviation + 30 ms, 2 s ); a type-5
+\* receipt's deadline is that RTO, never below the resend RTO and independent
+\* of the resend timer (rn_window_ack_receipt_loss_delay,
+\* sdk/rocketnet_window_ack.h). BrokenLossAtRto is the reversed witness:
+\* LOSS at the resend RTO alone.
+CONSTANTS MaxPid, MapCapacity, ReceiptCapacity, RTO, ReceiptRTO, ReliableTimeout,
           BrokenLastIndexAck, BrokenTwoOutcomes, BrokenReliableLoss, BrokenLossAtRto
 
 Serials == 1..3
-ReceiptDeadline == IF AdaptiveRTO > RTO THEN AdaptiveRTO ELSE RTO
+ReceiptDeadline == IF ReceiptRTO > RTO THEN ReceiptRTO ELSE RTO
 LossAge == IF BrokenLossAtRto THEN RTO ELSE ReceiptDeadline
 ReceiptSerials == 2..3
 Pids == 0..MaxPid
