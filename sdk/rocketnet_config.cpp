@@ -120,6 +120,7 @@ struct rocketnet_client_transport_config_table_t
     ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V1( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CLIENT_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
     uint64_t step_driven;
     ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V2( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
+    ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V3( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CLIENT_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
 };
 
 #undef ROCKETNET_CLIENT_CONFIG_STRUCT_UINT64
@@ -760,7 +761,9 @@ bool rocketnet_config_validate_public_link_simulator( const char * transport_nam
         "simulated_loss_percent",
         "simulated_latency_ms",
         "simulated_jitter_ms",
-        "simulated_duplicate_percent"
+        "simulated_duplicate_percent",
+        "simulated_drop_every_nth",
+        "simulated_reverse_window"
     };
 
     for ( int i = 0; i < num_fields; i++ )
