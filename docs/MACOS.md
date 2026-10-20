@@ -94,12 +94,16 @@ same operation tables (`sdk/rocketnet_driver_builtin.cpp`,
 The two symbols are resolved with `dlsym` at platform init, with no link-time
 reference, so their absence is never a load failure. At socket create a
 non-blocking socket with both symbols becomes an `msgx` candidate; create reads
-nothing. The first real batch call is the functional probe: a `recvmsg_x` there
-delivers what it reads, so a fixed-port bind that already has a datagram queued
-keeps it. A result of zero or more, or `EAGAIN`/`EWOULDBLOCK`, keeps the pump;
+nothing. The macOS `recvmsg_x` rejects `MSG_PEEK` with `EINVAL`, so create
+cannot peek at queued traffic. The first real batch call is the functional
+probe: a `recvmsg_x` there delivers what it reads, so a fixed-port bind that
+already has a datagram queued keeps it. A result of zero or more, or
+`EAGAIN`/`EWOULDBLOCK`, keeps the pump;
 any other errno pauses it and that same call finishes on the portable
 per-packet loop, losing nothing (`rocketnet_msgx_pause`, the receive block in
-`rocketnet_platform_socket_receive_packets`).
+`rocketnet_platform_socket_receive_packets`). The functional case
+`test_posix_platform_send_seam` queues one datagram on the bound socket between
+bind and that first batch call and requires the socket to deliver it.
 
 At runtime a send errno that is ordinary UDP weather (`EAGAIN`, `EWOULDBLOCK`,
 `ENOBUFS`, `ECONNREFUSED`, `EHOSTUNREACH`, `ENETUNREACH`, `EMSGSIZE`,

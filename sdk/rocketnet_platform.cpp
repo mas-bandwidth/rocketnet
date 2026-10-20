@@ -2441,8 +2441,9 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
 
     // the batch pump: resolved symbols, a non-blocking socket (the pump's
     // spin discipline assumes it) and no environment override make this
-    // socket an msgx candidate. nothing is read at create: the first real
-    // batch call is the functional probe, so a fixed-port bind that already
+    // socket an msgx candidate. nothing is read at create: recvmsg_x rejects
+    // MSG_PEEK, so a peek cannot decide the pump, and the first real batch
+    // call is the functional probe instead. a fixed-port bind that already
     // has a datagram queued keeps it -- the receive that decides the pump
     // also delivers what it read. a refusal there pauses the pump and the
     // same call finishes portable, so nothing is lost either way.
