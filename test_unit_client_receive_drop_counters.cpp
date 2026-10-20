@@ -13,7 +13,10 @@
 // check (sdk/rocketnet_client_transport.cpp:1106-1110), whatever its size,
 // and one from the server reaches the prefilter
 // (sdk/rocketnet_client_protocol.cpp:1248-1253), which counts
-// PREFILTER_TOO_SHORT or PREFILTER_TOO_LARGE; per-packet and batch.
+// PREFILTER_TOO_SHORT or PREFILTER_TOO_LARGE; per-packet and batch. With a
+// link pattern configured the client runs no I/O core and update receives
+// from the driver itself (sdk/rocketnet_client_transport.cpp:1405-1407); that
+// receive keeps every datagram too, so the same counters count the same drops.
 
 #include "test_unit_registry.h"
 #include "test/fake_client_driver.h"
@@ -194,6 +197,51 @@ static void drop_counters_run( bool batch )
     rocketnet_client_transport_destroy( transport );
     delete driver;
 }
+
+// a step-driven client with a link pattern configured: no I/O core, so update
+// receives from the driver on the caller's thread and processes the records raw
+static void client_receive_counts_prefilter_drops_without_io_core()
+{
+    rocketnet_client_driver_operations_t operations = rocketnet_fake_client_operations_io;
+    operations.receive = drop_counters_receive;
+
+    drop_counters_driver_t * driver = new drop_counters_driver_t();
+    drop_counters_clock_t clock = { 1000.0 };
+
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    drop_counters_token( token );
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config( &config );
+    config.time_callback = drop_counters_time;
+    config.step_driven = true;
+    config.simulated_drop_every_nth = 1000;
+    rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven( &clock, token, &config, clock.now, &operations, driver );
+    check( transport != NULL );
+
+    const uint64_t short_before = drop_counters_value( transport, ROCKETNET_COUNTER_PREFILTER_TOO_SHORT );
+    const uint64_t large_before = drop_counters_value( transport, ROCKETNET_COUNTER_PREFILTER_TOO_LARGE );
+
+    const char * server = "127.0.0.1:40000";
+    const int short_sizes[] = { 1, ROCKETNET_PREFILTER_BYTES - 1 };
+    for ( size_t i = 0; i < sizeof(short_sizes) / sizeof(short_sizes[0]); i++ )
+        drop_counters_push( driver, server, short_sizes[i] );
+    const int large_sizes[] = { ROCKETNET_RECEIVE_CEILING + 1, 1500, 9000, 65507 };
+    for ( size_t i = 0; i < sizeof(large_sizes) / sizeof(large_sizes[0]); i++ )
+        drop_counters_push( driver, server, large_sizes[i] );
+    drop_counters_push( driver, "127.0.0.1:40001", 2 );
+
+    clock.now = 1000.1;
+    rocketnet_client_transport_update( transport, clock.now );
+    check( driver->head == driver->count );
+    check( drop_counters_value( transport, ROCKETNET_COUNTER_PREFILTER_TOO_SHORT ) - short_before == 2 );
+    check( drop_counters_value( transport, ROCKETNET_COUNTER_PREFILTER_TOO_LARGE ) - large_before == 4 );
+    check( drop_counters_value( transport, ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE ) == 1 );
+
+    rocketnet_client_transport_destroy( transport );
+    delete driver;
+}
+
+REGISTER_UNIT_TEST( client_receive_counts_prefilter_drops_without_io_core );
 
 static void client_receive_counts_prefilter_and_foreign_source_drops_per_packet()
 {

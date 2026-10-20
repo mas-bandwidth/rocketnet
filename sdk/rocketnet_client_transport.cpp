@@ -2137,11 +2137,14 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
         if ( packet_bytes == 0 )
             break;
 
-        // a cheap size sanity on the receive thread; the full checks and
-        // their counters run on the update thread
+        // every datagram is kept with its true size, a runt or an oversize
+        // one too, as the I/O core keeps it (sdk/rocketnet_client_io.h:390-396):
+        // the update thread's prefilter refuses it and counts
+        // PREFILTER_TOO_SHORT or PREFILTER_TOO_LARGE
+        // (sdk/rocketnet_protocol.cpp:176-180). An oversize datagram's bytes
+        // past scratch were never written, so only scratch's prefix is copied.
 
-        if ( packet_bytes < ROCKETNET_PREFILTER_BYTES || packet_bytes > ROCKETNET_RECEIVE_CEILING )
-            continue;
+        const int copy_bytes = packet_bytes < ROCKETNET_MAX_PACKET_BYTES ? packet_bytes : ROCKETNET_MAX_PACKET_BYTES;
 
         const double receive_time = ( client_transport->step_in_update && rocketnet_client_link_patterns( client_transport ) )
             ? client_transport->time
@@ -2159,7 +2162,7 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
         {
             const int index = receive_buffer->num_packets;
 
-            memcpy( receive_buffer->data + index * ROCKETNET_FRAME_SIZE, scratch, packet_bytes );
+            memcpy( receive_buffer->data + index * ROCKETNET_FRAME_SIZE, scratch, (size_t) copy_bytes );
 
             receive_buffer->from[index] = from;
             receive_buffer->receive_time[index] = receive_time;
