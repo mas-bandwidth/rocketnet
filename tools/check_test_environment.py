@@ -84,6 +84,16 @@ def _table_names(path):
 LINUX_GUARD_RE = re.compile(
     r"^\s*#\s*if\s+(?:defined\s*\(\s*__linux__\s*\)|defined\s+__linux__|__linux__)\s*$"
 )
+BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+
+
+def _mask_block_comments(text):
+    # Preserve line boundaries so a directive-looking line in a comment is
+    # never mistaken for a compiler guard.
+    return BLOCK_COMMENT_RE.sub(
+        lambda match: "".join("\n" if char == "\n" else " " for char in match.group()),
+        text,
+    )
 
 
 def _without_linux_guarded_blocks(text):
@@ -95,10 +105,12 @@ def _without_linux_guarded_blocks(text):
     output = []
     active = True
     stack = []
-    for line in text.splitlines(keepends=True):
-        if IF_RE.match(line):
+    source_lines = text.splitlines(keepends=True)
+    directive_lines = _mask_block_comments(text).splitlines(keepends=True)
+    for line, directive_line in zip(source_lines, directive_lines):
+        if IF_RE.match(directive_line):
             parent_active = active
-            if LINUX_GUARD_RE.match(line):
+            if LINUX_GUARD_RE.match(directive_line):
                 stack.append(("linux", parent_active))
                 active = parent_active and is_linux
                 continue
@@ -106,14 +118,14 @@ def _without_linux_guarded_blocks(text):
             if active:
                 output.append(line)
             continue
-        if ELSE_RE.match(line) or ELIF_RE.match(line):
+        if ELSE_RE.match(directive_line) or ELIF_RE.match(directive_line):
             if stack and stack[-1][0] == "linux":
                 active = stack[-1][1] and not is_linux
                 continue
             if active:
                 output.append(line)
             continue
-        if ENDIF_RE.match(line):
+        if ENDIF_RE.match(directive_line):
             if stack:
                 kind, parent_active = stack.pop()
                 if kind == "linux":
