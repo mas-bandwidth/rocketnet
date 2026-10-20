@@ -57,7 +57,7 @@ PASS
 ```
 
 The `info:`, `warning:` and `error:` lines are the library's own log lines,
-which the example turns on with `rocketnet_log_level`: they say which
+which the example turns on with `rocketnet_set_log_level`: they say which
 candidate was granted and why the others were skipped or refused. The `chose` line is the public query
 (`rocketnet_server_transport_name`). Here `xdp` is refused because the server
 asks for an ephemeral port (`127.0.0.1:0`), which `xdp` cannot discover. `PASS`
@@ -81,7 +81,7 @@ variable and the value it displaced.
 
 ## Public calls it uses
 
-- Lifecycle: `rocketnet_init`, `rocketnet_term`, `rocketnet_log_level`
+- Lifecycle: `rocketnet_init`, `rocketnet_term`, `rocketnet_set_log_level`
 - Server: `rocketnet_server_dev_config`, `rocketnet_server_create`, `rocketnet_server_start`, `rocketnet_server_port`, `rocketnet_server_transport_name`, `rocketnet_server_update`, `rocketnet_server_max_clients`, `rocketnet_server_client_connected`, `rocketnet_server_receive_message`, `rocketnet_server_release_message`, `rocketnet_server_send_packets`, `rocketnet_server_destroy`
 - Client: `rocketnet_client_default_config`, `rocketnet_client_create`, `rocketnet_client_connect`, `rocketnet_client_update`, `rocketnet_client_state`, `rocketnet_client_start_message`, `rocketnet_client_finish_message`, `rocketnet_client_receive_message`, `rocketnet_client_release_message`, `rocketnet_client_send_packets`, `rocketnet_client_disconnect`, `rocketnet_client_destroy`
 - Development token: `rocketnet_write_dev_connect_token`

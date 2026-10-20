@@ -15,10 +15,10 @@ in `tla/RUNS.tsv` (group `serversession`).
 
 | Variable | Code | Meaning |
 |---|---|---|
-| `state` | `struct rocketnet_server_transport_t` (`sdk/rocketnet_server_transport.cpp`); `ROCKETNET_SERVER_TRANSPORT_RUNNING`, `_STOPPING`, `_STOPPED` (`sdk/rocketnet.h`) | `NONE` (no object), `STOPPED`, `RUNNING`, `STOPPING` |
+| `state` | `struct rocketnet_server_transport_t` (`sdk/rocketnet_server_transport.cpp`); `ROCKETNET_SERVER_TRANSPORT_RUNNING`, `_STOPPING`, `_STOPPED` (`sdk/rocketnet_layers.h`) | `NONE` (no object), `STOPPED`, `RUNNING`, `STOPPING` |
 | `slot[i].st`, `slot[i].sess` | `struct rocketnet_client_slots_t` (`sdk/rocketnet_client_slots.cpp`): `connected[i]`, assigned by `rocketnet_client_slots_assign` and freed by `rocketnet_client_slots_release` | `FREE`, `HANDSHAKE` (a mapping is open for the slot), `CONNECTED`; the session tag of the slot's client |
 | `slot[i].rec[f]` | the slot's per-connection state: the encryption mapping (`sdk/rocketnet_encryption_map.cpp`), the slot record, and the message layer's connection (`rocketnet_message_connection_reset`, `sdk/rocketnet_connection_reset.cpp`) | one field per row of the reset inventory, each 0 (Init) or the tag of the session that wrote it |
-| `slot[i].reason` | `rocketnet_message_server_disconnect_reason` (`sdk/rocketnet.h`), returned by `rocketnet_server_disconnect_reason` | kept through the reset, cleared to NONE when the slot's next client is established |
+| `slot[i].reason` | `rocketnet_message_server_disconnect_reason` (`sdk/rocketnet_layers.h`), returned by `rocketnet_server_disconnect_reason` | kept through the reset, cleared to NONE when the slot's next client is established |
 | `kept.used` | the used-token history, `rocketnet_used_token_history_check` and `rocketnet_used_token_history_record` (`sdk/rocketnet_token_tables.cpp`), held in `struct rocketnet_server_protocol_t` (`sdk/rocketnet_server_protocol.h`) | server-wide, never per slot; per run: fresh at each start (a start builds a new server transport, which creates the history), kept across slot resets and the stop within the run (standard/TRANSPORT.md t13.4) |
 | `kept.keys`, `kept.config`, `kept.lifetime` | the cookie key and server keys (rotation in `rocketnet_server_protocol_rotate_cookie_key_if_due`, `sdk/rocketnet_server_protocol.cpp`), the config, the lifetime counters | kept across slots, stops and starts; fresh only at create |
 | `draining` | `disconnect_all_clients` in progress | no client is accepted until every slot is free |

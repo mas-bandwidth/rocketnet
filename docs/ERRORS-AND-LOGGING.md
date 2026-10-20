@@ -56,10 +56,10 @@ misuse count.
    `ROCKETNET_NUM_STATUS_CODES`.
 4. **Runtime introspection**:
    - `int rocketnet_num_status_codes( void )` returns `ROCKETNET_NUM_STATUS_CODES` (allocation-free and safe before init).
-   - `const char * rocketnet_status_string( int status )` returns the static ASCII
-     name without the `ROCKETNET_STATUS_` prefix (for example,
+   - `const char * rocketnet_status_name( enum rocketnet_status_t status )` returns
+     the static ASCII name without the `ROCKETNET_STATUS_` prefix (for example,
      `"INVALID_CONNECT_TOKEN"`) for `0 <= status < ROCKETNET_NUM_STATUS_CODES`,
-     and `NULL` (without asserting) for out-of-range values.
+     and `"unknown"` (never `NULL`, without asserting) for any other value.
 
 ```c
 enum rocketnet_status_t

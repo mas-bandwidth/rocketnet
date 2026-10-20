@@ -10,7 +10,7 @@ static development library. Each page lives in `docs/examples/`.
 | [client_server_server](client_server_server.c), [client_server_client](client_server_client.c) | two processes over real UDP with production Ed25519/X25519 keys, a matchmaker stub, and a signed connect token | [client_server.md](../docs/examples/client_server.md) |
 | [reliability](reliability.c) | all eight reliability modes side by side under simulated loss and jitter, showing delivery, order, and receipt outcomes | [reliability.md](../docs/examples/reliability.md) |
 | [channels](channels.c) | independent channels so a stalled reliable-ordered chat stream never blocks time-critical position updates | [channels.md](../docs/examples/channels.md) |
-| [ack_receipts](ack_receipts.c) | `ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT` and `rocketnet_client_receipts` reporting `ACKED` or `LOSS` per snapshot | [ack_receipts.md](../docs/examples/ack_receipts.md) |
+| [ack_receipts](ack_receipts.c) | `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT` and `rocketnet_client_receipts` reporting `ACKED` or `LOSS` per snapshot | [ack_receipts.md](../docs/examples/ack_receipts.md) |
 | [big_messages](big_messages.c) | a 200 KB reliable message fragmented and reassembled, plus an oversize unreliable send promoted to reliable | [big_messages.md](../docs/examples/big_messages.md) |
 | [budgets](budgets.c) | per-connection send budgets in kbps, runtime `rocketnet_client_set_send_kbps`, reliable waiting, and unreliable over-budget drops | [budgets.md](../docs/examples/budgets.md) |
 | [config_env](config_env.c) | configuration precedence (`DEFAULT < STRUCT < ENV`) and refusal of an out-of-range environment override | [config_env.md](../docs/examples/config_env.md) |
