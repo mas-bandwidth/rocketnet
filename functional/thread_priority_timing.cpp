@@ -50,8 +50,13 @@
 #include <sched.h>
 #endif
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#include <dirent.h>
+#endif
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #include <mach-o/dyld.h>
+#include <pthread/qos.h>
 #include <spawn.h>
 #include <sys/wait.h>
 extern char ** environ;
@@ -93,6 +98,7 @@ struct priority_timing_wakes_t
     uint64_t dropped;
     int io_policy;      // POSIX: the scheduling policy; Windows: GetThreadPriority
     int io_priority;    // POSIX: the scheduling priority
+    int io_qos;         // macOS: the QoS class, pthread_get_qos_class_np; elsewhere -1
     double * intervals;
     uint64_t num_intervals;
 };
@@ -114,6 +120,42 @@ static void priority_timing_read_self( int * policy, int * priority )
 #endif
 }
 
+// the calling thread's QoS class on macOS (the library sets none: the one
+// macOS call is pthread_setschedparam SCHED_RR); -1 elsewhere
+static int priority_timing_read_qos()
+{
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    qos_class_t qos = QOS_CLASS_UNSPECIFIED;
+    int relative = 0;
+    if ( pthread_get_qos_class_np( pthread_self(), &qos, &relative ) != 0 )
+        return -1;
+    return (int) qos;
+#else
+    return -1;
+#endif
+}
+
+static const char * priority_timing_qos_name( int qos )
+{
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    switch ( qos )
+    {
+        case QOS_CLASS_USER_INTERACTIVE: return "USER_INTERACTIVE";
+        case QOS_CLASS_USER_INITIATED: return "USER_INITIATED";
+        case QOS_CLASS_DEFAULT: return "DEFAULT";
+        case QOS_CLASS_UTILITY: return "UTILITY";
+        case QOS_CLASS_BACKGROUND: return "BACKGROUND";
+        case QOS_CLASS_UNSPECIFIED: return "UNSPECIFIED";
+        default: return "other";
+    }
+#else
+    (void) qos;
+    return "none";
+#endif
+}
+
+uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time );
+
 static double priority_timing_time_callback( void * context )
 {
     (void) context;
@@ -122,6 +164,7 @@ static double priority_timing_time_callback( void * context )
     if ( w->calls == 0 )
     {
         priority_timing_read_self( &w->io_policy, &w->io_priority );
+        w->io_qos = priority_timing_read_qos();
         w->group_start = now;
         w->wakes = 1;
     }
@@ -183,6 +226,7 @@ static priority_timing_stats_t priority_timing_stats( std::vector<double> & valu
 // the warnings the library logs, counted: one line per refused call kind
 static std::atomic<int> priority_timing_refusal_lines{ 0 };
 static std::atomic<int> priority_timing_iocp_workers{ -1 };
+static std::atomic<int> priority_timing_gso_queues{ 0 };
 static char priority_timing_first_refusal[512];
 
 static void priority_timing_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
@@ -197,6 +241,9 @@ static void priority_timing_log( void * context, enum rocketnet_log_level_t leve
     int workers = 0;
     if ( sscanf( message, "iocp transport: %d workers", &workers ) == 1 )
         priority_timing_iocp_workers.store( workers );
+    int queues = 0;
+    if ( sscanf( message, "gso transport: %d queue", &queues ) == 1 )
+        priority_timing_gso_queues.store( queues );
     if ( level <= ROCKETNET_LOG_LEVEL_ERROR )
         printf( "%s\n", message );
 }
@@ -282,6 +329,50 @@ static int priority_timing_time_critical_threads()
 }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+// every thread of this process whose policy is SCHED_RR, read from
+// /proc/self/task/<tid>/stat (field 41, policy)
+static int priority_timing_sched_rr_threads()
+{
+    DIR * dir = opendir( "/proc/self/task" );
+    if ( !dir )
+        return -1;
+    int count = 0;
+    struct dirent * entry;
+    while ( ( entry = readdir( dir ) ) != NULL )
+    {
+        if ( entry->d_name[0] == '.' )
+            continue;
+        char path[300];
+        snprintf( path, sizeof( path ), "/proc/self/task/%s/stat", entry->d_name );
+        FILE * file = fopen( path, "r" );
+        if ( !file )
+            continue;
+        char line[2048];
+        const size_t bytes = fread( line, 1, sizeof( line ) - 1, file );
+        fclose( file );
+        line[bytes] = '\0';
+        // fields after the command's closing parenthesis start at field 3
+        char * rest = strrchr( line, ')' );
+        if ( !rest )
+            continue;
+        int field = 3;
+        char * save = NULL;
+        for ( char * token = strtok_r( rest + 1, " ", &save ); token; token = strtok_r( NULL, " ", &save ), ++field )
+        {
+            if ( field == 41 )
+            {
+                if ( atoi( token ) == SCHED_RR )
+                    count++;
+                break;
+            }
+        }
+    }
+    closedir( dir );
+    return count;
+}
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
 static void priority_timing_run( const char * condition, int spinners, bool readback )
 {
     const double seconds = priority_timing_seconds();
@@ -298,6 +389,10 @@ static void priority_timing_run( const char * condition, int spinners, bool read
 
     const double start = rocketnet_platform_time();
 
+    // the server create makes one priority call per server network thread
+    // (the GSO queue threads on Linux, the IOCP workers on Windows)
+    const uint64_t refusals_before_server = rocketnet_get_thread_priority_refusals();
+
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 1;
@@ -305,6 +400,7 @@ static void priority_timing_run( const char * condition, int spinners, bool read
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_config, priority_timing_game_time( start ), &status );
     priority_timing_require( server != NULL );
     priority_timing_require( status == ROCKETNET_STATUS_OK );
+    const uint64_t server_refusals = rocketnet_get_thread_priority_refusals() - refusals_before_server;
 
     char server_address[64];
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_transport_port( server ) );
@@ -321,8 +417,13 @@ static void priority_timing_run( const char * condition, int spinners, bool read
     client_config.time_callback = priority_timing_time_callback;
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    priority_timing_require( rocketnet_write_dev_connect_token( server_address, 1, (uint64_t) time( NULL ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    priority_timing_require( rocketnet_write_dev_connect_token( server_address, 1, rocketnet_functional_token_timestamp( server_config.game_clock_epoch, priority_timing_game_time( start ) ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    // the client create makes the client network thread's priority call
+    // (rocketnet_client_transport_create, after its thread create): the
+    // refusals it adds are counted around the create alone
+    const uint64_t refusals_before_client = rocketnet_get_thread_priority_refusals();
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, &client_config, priority_timing_game_time( start ) );
+    const uint64_t client_refusals = rocketnet_get_thread_priority_refusals() - refusals_before_client;
     priority_timing_require( client != NULL );
 
     double next = rocketnet_platform_time();
@@ -384,6 +485,11 @@ static void priority_timing_run( const char * condition, int spinners, bool read
     (void) readback;
 #endif
 
+    int sched_rr_threads = -1;
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    sched_rr_threads = priority_timing_sched_rr_threads();
+#endif
+
     priority_timing_spin_stop.store( true );
     for ( size_t i = 0; i < load.size(); ++i )
         load[i].join();
@@ -401,11 +507,13 @@ static void priority_timing_run( const char * condition, int spinners, bool read
     std::vector<double> wakes( wake_storage.begin(), wake_storage.begin() + (ptrdiff_t) priority_timing_wakes.num_intervals );
     const priority_timing_stats_t w = priority_timing_stats( wakes );
 
-    printf( "thread_priority_timing condition=%s priority=%s seconds=%.1f spinners=%d io_sched=%s io_priority=%d "
+    printf( "thread_priority_timing condition=%s priority=%s seconds=%.1f spinners=%d io_sched=%s io_priority=%d io_qos=%s client_refusals=%llu server_refusals=%llu gso_queues=%d sched_rr_threads=%d "
             "wakes=%llu wake_dropped=%llu gap_ms p50=%.3f p99=%.3f max=%.3f received=%llu server_sent=%llu "
             "timeouts=%llu refusals=%llu refusal_lines=%d iocp_workers=%d time_critical_threads=%d\n",
             condition, enabled ? "on" : "off", measured_seconds, spinners,
             priority_timing_policy_name( priority_timing_wakes.io_policy ), priority_timing_wakes.io_priority,
+            priority_timing_qos_name( priority_timing_wakes.io_qos ), (unsigned long long) client_refusals,
+            (unsigned long long) server_refusals, priority_timing_gso_queues.load(), sched_rr_threads,
             (unsigned long long) priority_timing_wakes.wakes, (unsigned long long) priority_timing_wakes.dropped,
             w.p50 * 1000.0, w.p99 * 1000.0, w.max * 1000.0,
             (unsigned long long) received, (unsigned long long) server_state.sent,
@@ -417,6 +525,37 @@ static void priority_timing_run( const char * condition, int spinners, bool read
 
     priority_timing_require( stayed );
     priority_timing_require( timeouts == 0 );
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    // macOS: the library sets no QoS class on its threads, on or off; the I/O
+    // thread's class, read inside it, is never the USER_INTERACTIVE a
+    // library call would give it
+    priority_timing_require( priority_timing_wakes.io_qos != (int) QOS_CLASS_USER_INTERACTIVE );
+#endif
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+    // POSIX: on, the client network thread made its one call,
+    // pthread_setschedparam SCHED_RR at sched_get_priority_min( SCHED_RR ):
+    // either granted (read back inside the I/O thread) or refused (counted
+    // during the client create). off, neither
+    const bool io_granted = priority_timing_wakes.io_policy == SCHED_RR && priority_timing_wakes.io_priority == sched_get_priority_min( SCHED_RR );
+    if ( enabled )
+        priority_timing_require( io_granted || client_refusals >= 1 );
+    else
+        priority_timing_require( !io_granted && client_refusals == 0 );
+#endif
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    // Linux: every library network thread, the client thread and each GSO
+    // queue thread, made its one call: on, each is either SCHED_RR (read back
+    // from /proc) or a counted refusal; off, none is either
+    const int network_threads = 1 + priority_timing_gso_queues.load();
+    priority_timing_require( sched_rr_threads >= 0 );
+    if ( enabled )
+        priority_timing_require( sched_rr_threads + (int) ( client_refusals + server_refusals ) == network_threads );
+    else
+        priority_timing_require( sched_rr_threads == 0 && client_refusals + server_refusals == 0 );
+#endif
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( readback )
