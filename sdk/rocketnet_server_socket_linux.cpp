@@ -119,7 +119,6 @@ struct rocketnet_server_xdp_socket_t
 
     int queue;
     int num_os_cpus;
-    int num_queues;
 
     uint8_t padding_1[4096];
 
@@ -644,16 +643,6 @@ static uint64_t alloc_receive_frame( rocketnet_server_xdp_socket_t * socket )
     return frame;
 }
 
-static void free_receive_frame( rocketnet_server_xdp_socket_t * socket, uint64_t frame )
-{
-    const uint64_t region_begin = (uint64_t)ROCKETNET_XDP_NUM_FRAMES / 2 * ROCKETNET_XDP_FRAME_SIZE;
-    const uint64_t region_end = (uint64_t)ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
-    if ( !rocketnet_xdp_free_list_push( socket->receive_frames, &socket->num_free_receive_frames, ROCKETNET_XDP_NUM_FRAMES / 2, frame, region_begin, region_end ) )
-    {
-        rocketnet_error( "xdp receive frame dropped: %llu", (unsigned long long)frame );
-    }
-}
-
 static void rocketnet_server_socket_xdp_thread_function( void * data );
 
 // Removes the private build directory created by mkdtemp. The path is always
@@ -796,11 +785,6 @@ void rocketnet_server_socket_forbid_commit()
 void rocketnet_server_socket_allow_commit()
 {
     rocketnet_server_socket_commit_forbidden_flag.store( false );
-}
-
-bool rocketnet_server_socket_commit_forbidden()
-{
-    return rocketnet_server_socket_commit_forbidden_flag.load();
 }
 
 // cpu list helpers for the boot-tier checks: "1-7,9" style lists as
@@ -1802,7 +1786,6 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
 
         socket->queue = queue;
-        socket->num_queues = num_queues;
         socket->num_os_cpus = num_os_cpus;
 
         // allocate umem
@@ -2121,12 +2104,6 @@ int rocketnet_server_socket_state( rocketnet_server_socket_t * server_socket )
 {
     rocketnet_assert( server_socket );
     return server_socket->state;
-}
-
-uint64_t rocketnet_server_socket_id( rocketnet_server_socket_t * server_socket )
-{
-    rocketnet_assert( server_socket );
-    return server_socket->server_id;
 }
 
 static void rocketnet_server_socket_acquire_send_buffer( rocketnet_server_xdp_socket_t * socket, bool reopen );

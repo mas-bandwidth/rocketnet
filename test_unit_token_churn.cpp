@@ -305,7 +305,6 @@ static void server_refuses_a_token_connected_now()
     }
 
     check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED] == 0 );      // retired with the set
-    check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED] == 0 );     // retired with the set
 
     tc_client_destroy( &c );
     tc_client_destroy( &a );
