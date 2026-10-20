@@ -9,8 +9,18 @@
 
     The macOS counters use libproc (proc_pidinfo PROC_PIDLISTFDS and
     PROC_PIDTASKINFO pti_threadnum); the Linux counters read /proc/self/fd,
-    /proc/self/task and the locked memory (VmLck in /proc/self/status, which
-    the xdp umem moves). The cases share one shape: a resource is created and
+    /proc/self/task and the umem-sized memory: the summed size of the
+    anonymous mappings in /proc/self/maps at least one xdp umem in size. An xdp
+    umem is a posix_memalign block of ROCKETNET_XDP_NUM_FRAMES *
+    ROCKETNET_XDP_FRAME_SIZE bytes per queue, freed with free() at destroy
+    (sdk/rocketnet_server_socket_linux.cpp:1716-1718 and :1999), with no mlock,
+    so it moves neither VmLck nor VmPin; the kernel charges its pin to the
+    user's RLIMIT_MEMLOCK account. glibc maps a block that large with mmap, so
+    it is in a mapping of its own size or more (the kernel may merge an
+    adjacent anonymous mapping into it) while the server lives, and the free
+    unmaps it. Outside an xdp server's life no anonymous mapping in these
+    cells is that large, so the count reads zero, and the xdp server create
+    case checks that a live server moves it by at least one umem. The cases share one shape: a resource is created and
     destroyed repeatedly in a cell (server transport, client transport or
     both), and the process must end the cell exactly as it started it.
 
@@ -106,7 +116,7 @@ struct posix_resource_counts_t
 {
     int fds;
     int threads;
-    long locked_kb;
+    long umem_kb;
 };
 
 static int posix_open_file_descriptors()
@@ -160,26 +170,36 @@ static int posix_threads()
 #endif
 }
 
-// VmLck from /proc/self/status, in kB: memory a cell locks and never unlocks
-// (the xdp umem) is a difference. macOS reads zero.
-static long posix_locked_kb()
+// The kB in the anonymous mappings of /proc/self/maps that are at least one
+// xdp umem in size: the mappings that hold the umem buffers (see the
+// header), so a leaked umem is a difference. Zero without xdp, and on
+// macOS.
+#if defined(__linux__) && ROCKETNET_XDP
+static const unsigned long long posix_umem_bytes = (unsigned long long) ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
+#endif
+
+static long posix_umem_kb()
 {
-#if defined(__linux__)
-    FILE * file = fopen( "/proc/self/status", "r" );
+#if defined(__linux__) && ROCKETNET_XDP
+    FILE * file = fopen( "/proc/self/maps", "r" );
     if ( !file )
         return -1;
-    char line[256];
-    long locked = -1;
+    char line[1024];
+    unsigned long long total = 0;
     while ( fgets( line, sizeof( line ), file ) )
     {
-        if ( strncmp( line, "VmLck:", 6 ) == 0 )
-        {
-            locked = strtol( line + 6, NULL, 10 );
-            break;
-        }
+        unsigned long long low = 0, high = 0, offset = 0, inode = 0;
+        char perms[8], device[32];
+        int consumed = 0;
+        if ( sscanf( line, "%llx-%llx %7s %llx %31s %llu %n", &low, &high, perms, &offset, device, &inode, &consumed ) < 6 )
+            continue;
+        const char * path = line + consumed;
+        const bool anonymous = inode == 0 && ( path[0] == '\0' || path[0] == '\n' );
+        if ( anonymous && high - low >= posix_umem_bytes )
+            total += high - low;
     }
     fclose( file );
-    return locked;
+    return (long) ( total / 1024 );
 #else
     return 0;
 #endif
@@ -190,7 +210,7 @@ static posix_resource_counts_t posix_read_counts()
     posix_resource_counts_t counts;
     counts.fds = posix_open_file_descriptors();
     counts.threads = posix_threads();
-    counts.locked_kb = posix_locked_kb();
+    counts.umem_kb = posix_umem_kb();
     return counts;
 }
 
@@ -205,7 +225,7 @@ static posix_resource_counts_t posix_stable_counts()
     {
         rocketnet_platform_sleep( 0.001 );
         const posix_resource_counts_t current = posix_read_counts();
-        if ( current.fds == previous.fds && current.threads == previous.threads && current.locked_kb == previous.locked_kb )
+        if ( current.fds == previous.fds && current.threads == previous.threads && current.umem_kb == previous.umem_kb )
             return current;
         previous = current;
     }
@@ -719,14 +739,14 @@ static bool posix_wait_server_empty( rocketnet_server_transport_t * server, doub
 static void posix_case_result( const char * name, const posix_cell_t * cell, const posix_resource_counts_t * before,
                                const posix_resource_counts_t * after, double seconds )
 {
-    printf( "%s [%s]: fds %d -> %d, threads %d -> %d, locked kB %ld -> %ld, %.3fs\n", name, cell->name,
-            before->fds, after->fds, before->threads, after->threads, before->locked_kb, after->locked_kb, seconds );
+    printf( "%s [%s]: fds %d -> %d, threads %d -> %d, umem kB %ld -> %ld, %.3fs\n", name, cell->name,
+            before->fds, after->fds, before->threads, after->threads, before->umem_kb, after->umem_kb, seconds );
     fflush( stdout );
-    if ( before->fds < 0 || before->threads < 0 || before->locked_kb < 0 ||
-         before->fds != after->fds || before->threads != after->threads || before->locked_kb != after->locked_kb )
+    if ( before->fds < 0 || before->threads < 0 || before->umem_kb < 0 ||
+         before->fds != after->fds || before->threads != after->threads || before->umem_kb != after->umem_kb )
     {
-        printf( "%s [%s]: FAIL resource count moved (fds %d -> %d, threads %d -> %d, locked kB %ld -> %ld)\n", name, cell->name,
-                before->fds, after->fds, before->threads, after->threads, before->locked_kb, after->locked_kb );
+        printf( "%s [%s]: FAIL resource count moved (fds %d -> %d, threads %d -> %d, umem kB %ld -> %ld)\n", name, cell->name,
+                before->fds, after->fds, before->threads, after->threads, before->umem_kb, after->umem_kb );
         fflush( stdout );
         exit( 1 );
     }
@@ -782,6 +802,19 @@ void rocketnet_test_posix_server_create_destroy_1000()
         for ( int i = 0; i < count; i++ )
         {
             rocketnet_server_transport_t * server = posix_server_create( cell, posix_bind_address( cell ), 4 );
+
+            // a live xdp server holds at least one umem, so the umem count
+            // sees it: a count that cannot move cannot catch a leaked umem
+            if ( i == 0 && cell->xdp )
+            {
+                const posix_resource_counts_t live = posix_stable_counts();
+                printf( "posix_server_create_destroy_1000 live server [%s]: umem kB %ld -> %ld\n", cell->name, before.umem_kb, live.umem_kb );
+                fflush( stdout );
+#if defined(__linux__) && ROCKETNET_XDP
+                posix_check( live.umem_kb >= before.umem_kb + (long) ( posix_umem_bytes / 1024 ) );
+#endif
+            }
+
             rocketnet_server_transport_destroy( server );
 
             // a leak per cycle exhausts a kernel limit long before the last of
@@ -1019,8 +1052,11 @@ void rocketnet_test_posix_destroy_under_traffic_100()
 // faults and ~0.12 s of system time a gso create on a 64-core Linux member.
 // A per-cell case serves those allocations from the main heap and keeps the
 // heap untrimmed, so a create after the first reuses resident pages. The
-// counts read file descriptors, threads and locked memory, none of which
-// this moves.
+// xdp cell keeps the default: with mmap allowed, glibc maps its umem block
+// fresh and unmaps it at free, where a kept heap would serve the block from
+// the heap and keep it after the free, out of the umem count. The other
+// cells' counts read file descriptors, threads and umem-sized mappings,
+// none of which this moves.
 static void posix_heap_keep( bool keep )
 {
 #if defined(__GLIBC__)
@@ -1035,7 +1071,7 @@ static void posix_heap_keep( bool keep )
 void rocketnet_test_##case_name##_##driver()                                                                        \
 {                                                                                                                   \
     posix_only_server_driver = #driver;                                                                             \
-    posix_heap_keep( true );                                                                                        \
+    posix_heap_keep( strcmp( #driver, "xdp" ) != 0 );                                                               \
     rocketnet_test_##case_name();                                                                                   \
     posix_heap_keep( false );                                                                                       \
     posix_only_server_driver = NULL;                                                                                \
