@@ -384,7 +384,7 @@ if(ROCKETNET_BUILD_TESTS)
     # compiles the SDK once more with ROCKETNET_MAX_CHANNELS=512 for every file
     # (RakNet promotion rule: oversize unreliable sends promote to their twin).
     add_executable(test_wide
-        test.cpp test_channels.cpp test_unit_unreliable_promotion.cpp
+        test.cpp test_channels.cpp test_unit_unreliable_promotion.cpp test_unit_channel_violation_counters.cpp
         sdk/rocketnet_tests.cpp ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
     add_dependencies(test_wide rocketnet_xdp_header)
     target_compile_definitions(test_wide PRIVATE ROCKETNET_MAX_CHANNELS=512
