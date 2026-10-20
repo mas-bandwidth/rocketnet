@@ -245,38 +245,23 @@ A counter member is wired to the internal counter of the same meaning in
 `sdk/rocketnet_counters.h`; the query is the public face of that internal
 count, and a member with no internal counter and no code path is not admitted.
 
-## 9. The Lifecycle API: ABI 1 at v1.0.0
+## 9. The lifecycle API in ABI 1
 
-`ROCKETNET_ABI_VERSION` is 1 at v1.0.0 (soname `librocketnet.so.1`), the
-first released ABI. The lifecycle API changed the calling contract once
-before 1.0.0; no earlier ABI was released, so the release starts at 1:
+`ROCKETNET_ABI_VERSION` is 1 at v1.0.0 (soname `librocketnet.so.1`).
+Client creation returns a disconnected object and connection begins with
+`rocketnet_client_connect`. Server creation returns a stopped object;
+`rocketnet_server_start`, `rocketnet_server_stop` and
+`rocketnet_server_running` control its transport. Public client indices and
+destination ids are `uint64_t`. Message calls use the verb-first names
+`start_message`, `finish_message`, `abort_message`, `receive_messages` and
+`send_packets`. The endpoint-wide receive queue uses
+`rocketnet_message_batch_t` and needs no release call.
 
-- `rocketnet_client_create` and `rocketnet_client_create_sized` take no
-  connect token and report through a final nullable status out-parameter; the
-  token moves to the new `rocketnet_client_connect`. The same status contract
-  applies to `rocketnet_server_create` and `rocketnet_server_create_sized`.
-- `rocketnet_server_create` and `_sized` bind nothing; the new
-  `rocketnet_server_start`, `rocketnet_server_stop` and
-  `rocketnet_server_running` run the transport, and
-  `rocketnet_server_disconnect_all_clients` is new.
-- Every public client index is `uint64_t` (`rocketnet_client_index` returns
-  one; every server call taking a client index or destination id takes one).
-- The message calls are renamed verb first, noun last (`_start_message`,
-  `_finish_message`, `_abort_message`, `_receive_message`,
-  `_release_message`, `_send_packets`); the public broadcast call is
-  removed; `rocketnet_init_ex`, `rocketnet_term_ex` and
-  `rocketnet_allocator_ex` leave the public header and `tools/exports.txt`.
-- `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`, `SERVER_NOT_STOPPED` and
-  `FLOW_ID_RESERVED` append before `ROCKETNET_STATUS_COUNT` (section 1's
-  append-only rule).
-- The assert callback has one way in, `rocketnet_set_assert_callback` (NULL
-  restores the default), as netcode.h has only its setter: the writable
-  global pointer the header used to declare leaves the public header and
-  `tools/exports.txt`, and the pointer the library calls is internal and not
-  exported. `rocketnet_set_quiet` replaces the quiet switch under the set_
-  naming, and the status count is `ROCKETNET_STATUS_COUNT`, like every other
-  `_COUNT`. Removing and renaming these exports before the first release keeps
-  ABI 1: no released binary was ever linked against the old names.
+Create functions take a nullable status out-parameter, so a NULL result has a
+specific `rocketnet_status_t`. The public allocator and assert callbacks are
+installed through their setter functions. Public enum counts and exported
+symbols follow the append-only rules above.
+
 ## 10. Public enums are int-sized, and zero is a named receipt status
 
 The library and its callers are built without `-fshort-enums`. Every public

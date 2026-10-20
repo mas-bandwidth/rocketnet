@@ -20,11 +20,7 @@ budget, the server's tick, and message latency in frames.
 Every run is in memory over the `loopback` transport: the in-memory transport
 holds `ROCKETNET_LOOPBACK_MAX_ENDPOINTS` endpoints, one server and up to
 `ROCKETNET_MAX_CLIENTS` clients. Clients join 50 a frame; timing starts once
-all are connected. The header at this base still names the message calls
-start, finish, receive, release and send_packets; the lifecycle rename makes
-them `*_start_message`, `*_finish_message`, `*_receive_messages` and `*_send_packets`. Both ends pump
-`*_receive_messages` until it returns false: one call per batch, no call per
-message.
+all are connected.
 
 ## Run it
 

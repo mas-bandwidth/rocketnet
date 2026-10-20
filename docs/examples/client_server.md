@@ -89,10 +89,8 @@ can be deleted after a run.
   `rocketnet_server_finish_message`, `rocketnet_server_send_packets`, `rocketnet_server_disconnect_reason`,
   `rocketnet_server_destroy`
 - `rocketnet_client_default_config`, `rocketnet_client_create`, `rocketnet_client_state`,
-  `rocketnet_client_state_name`, `rocketnet_client_update`, `rocketnet_client_receive_messages`, `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
+  `rocketnet_client_state_name`, `rocketnet_client_update`, `rocketnet_client_receive_messages`,
+  `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
   `rocketnet_client_send_packets`, `rocketnet_client_disconnect`, `rocketnet_client_disconnect_reason`,
   `rocketnet_client_destroy`
 - `rocketnet_time`, `rocketnet_sleep`
-The header at this base names start, finish, receive, release and `send_packets`
-without the `*_message` suffix a later lifecycle card introduces, so the
-examples use the header's names.

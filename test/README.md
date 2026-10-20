@@ -33,3 +33,23 @@ of 256 MiB and 1.5 times the largest measured case, never over 1 GiB); the
 environment variable of the same name overrides it with a positive value. A sanitizer build
 prints the peaks and enforces no bound unless that variable sets one, because
 sanitizer shadow memory is not the case's own footprint.
+
+A case that intentionally constructs a full-capacity server can declare a
+larger case-specific bound beside its registration:
+
+```cpp
+static long my_case_rss_bound_mb()
+{
+    return suite_rss_bound_mb( planned_server_bytes, 64 );
+}
+SUITE_CASE_RSS_BOUND( my_case, my_case_rss_bound_mb );
+```
+
+The function computes its bound from the SDK memory plan for the exact config
+the case uses, then adds a stated process margin with `suite_rss_bound_mb`.
+Without `ROCKETNET_TEST_MAX_CASE_RSS_MB`, the runner uses that declared bound
+for the named case and the suite-wide bound for every other case. A positive
+environment override still applies uniformly. Sanitizer builds continue to
+report without enforcing a bound unless the environment sets one. A declared
+plan of zero falls back to the suite-wide bound, so a refused memory plan
+cannot silently disable the check.

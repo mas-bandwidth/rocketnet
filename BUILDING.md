@@ -112,6 +112,17 @@ verifying loopback scale up to 1000 concurrent clients across five pass criteria
 (`connect_within_10s`, `no_unexpected_disconnect`, `reliable_delivery`,
 `unreliable_integrity`, and `counters_agree`).
 
+The soak test runs the public API under load until stopped, or for a bound:
+
+    ./bin/soak --seconds 60
+    ./bin/soak 10000
+
+The examples build into `bin/` with everything else. Check and run them from
+the repository root ([examples/README.md](examples/README.md) lists them):
+
+    python3 tools/check_examples.py
+    python3 tools/run_examples.py --build build
+
 ### Test binaries and their tiers
 
 Every test binary is in exactly one tier. A unit binary opens no socket,
@@ -129,12 +140,12 @@ named functional, never as a unit step.
 | `functional` | functional | real sockets and transports | CI `Run functional suite` |
 | `test_serialize` | functional | sleep-wait loops (test_serialize.cpp:58) | `./bin/functional` (the `execs` tables in `main`, functional/main.cpp) |
 | `test_transport_control` | functional | creates a server transport on a loopback socket and reads `rocketnet_time()` (test_transport_control.cpp:172,217) | `./bin/functional` |
-| `test_xdp` | functional | the AF_XDP driver | `./bin/functional` on Linux |
+| `test_xdp` | functional | the AF_XDP transport | `./bin/functional` on Linux |
 | `test_xdp_filter` | functional | loads the XDP program with BPF_PROG_TEST_RUN; root | by hand |
 | `test_msgx` | functional | a loopback socket and sleep-wait loops (test_msgx.cpp:31-44,59) | `./bin/functional` on macOS |
 | `test_iocp` | functional | loopback sockets, threads and sleep-wait loops (test_iocp.cpp:96,293,360) | `functional.exe` on Windows |
 | `test_lifecycle` | functional | threads, `time(NULL)` tokens, and real server and client transports (test_lifecycle.cpp:155,546,590,618) | CI `Functional: lifecycle binary` |
-| `test_driver` | functional | netlink route reads, and the portable driver on loopback sockets with sleep-wait loops (test_driver.cpp:193-217) | CI `Functional: native driver contract` |
+| `test_transport` | functional | netlink route reads, and the portable transport on loopback sockets with sleep-wait loops (`test_driver.cpp`) | CI `Functional: native transport contract` |
 
 The channel cases in `./bin/functional` (`functional/channel_*.cpp`) run on
 `rocketnet_channel_harness_t` (functional/channel_harness.h): the in-memory
@@ -614,9 +625,10 @@ suite, `./bin/test`, does not start a transport, so a transport pin does not cha
 what it asserts.
 
 The SDK test suite temporarily clears config overrides derived from both
-config tables, then restores them on return. `ROCKETNET_SERVER_TRANSPORT` and
-`ROCKETNET_CLIENT_TRANSPORT` remain intentional test pins;
-`ROCKETNET_TEST_VERBOSE` keeps its diagnostic meaning. Passing ordinary runs print test names and
+config tables, then restores them on return.
+`ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT` remain intentional
+test pins; `ROCKETNET_TEST_VERBOSE`
+keeps its diagnostic meaning. Passing ordinary runs print test names and
 explicitly named platform skips. Failures retain the captured diagnostic log.
 
 ### Windows IOCP server

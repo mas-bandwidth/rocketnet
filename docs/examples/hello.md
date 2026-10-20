@@ -14,20 +14,14 @@ over the in-memory `loopback` transport, which needs no socket and no network.
 5. Send one `ROCKETNET_RELIABILITY_RELIABLE_ORDERED` message from the client to the
    server with `rocketnet_client_start_message`, a `memcpy` into the returned buffer,
    and `rocketnet_client_finish_message`.
-6. Receive and print it on the server, release the view, disconnect the
+6. Receive and print it on the server, disconnect the
    client, and destroy both ends.
 7. Connect a second client with a second development token, then disconnect
    it, showing that a server keeps serving after one client leaves.
 
-Each frame runs the calls in the order a game does: update, receive and
-release, simulate, queue, then send last. Sending last is what makes this
+Each frame runs the calls in the order a game does: update, drain the one
+receive queue, simulate, queue, then send last. Sending last is what makes this
 frame's messages leave this frame instead of waiting a frame.
-
-The lifecycle card that lands after this one renames start, finish, receive,
-release and send_packets to `*_start_message`, `*_finish_message`,
-`*_receive_messages` and `*_send_packets`. The header at
-this base still declares the old names, so the example uses them and says so
-in the source comment.
 
 ## Run it
 

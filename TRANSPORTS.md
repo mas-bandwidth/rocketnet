@@ -1,8 +1,11 @@
-# Native transport transports
+# Native transports
 
 The public transport API in `rocketnet.h` is independent of the backend.
-Native transports implement `rocketnet_driver.h`; they do not add binding or
-wire-format rules. For Linux transport selection, pinning, host requirements (`xdp`, `gso`, `io_uring`, `portable`) and host verification, see [docs/LINUX.md](docs/LINUX.md).
+Native transports implement the internal transport interface in
+`sdk/rocketnet_driver.h`; they do not add binding or wire-format rules. For
+Linux transport selection, pinning, host requirements (`xdp`, `gso`,
+`io_uring`, `portable`) and host verification, see
+[docs/LINUX.md](docs/LINUX.md).
 
 `rocketnet_drivers.inc` is the built-in registry. Each row supplies a name,
 bound-port discovery property, backend record, platform mask, and server/client
@@ -22,11 +25,11 @@ one pin-only row. It is in-process, carries datagrams through memory with no
 socket and no system network call, and serves tests and examples; it is never
 chosen by auto. Its process-wide table is `ROCKETNET_LOOPBACK_MAX_ENDPOINTS`
 records of 72 bytes each (72,072 bytes) under one mutex. Each live endpoint
-allocates its queue at create, `ROCKETNET_LOOPBACK_QUEUE_PACKETS` x
-`sizeof(rocketnet_loopback_packet_t)` = 1,531,904 bytes, so a full table of
-live endpoints is about 1,533,435,904 bytes. The cost is paid only by a process
-that instantiates the loopback transport, which is tests and examples, never a
-game on auto. Lookups scan the table linearly under the mutex.
+allocates its full `ROCKETNET_LOOPBACK_QUEUE_PACKETS` queue at create, so
+runtime sends never allocate or grow it. A process using loopback must budget
+for every live endpoint's complete queue capacity. The cost is paid only by a
+process that explicitly instantiates loopback, which is tests and examples,
+never a game on auto. Lookups scan the table linearly under the mutex.
 
 The names `rocketnet_server_uring_available`, `rocketnet_server_uring_leaked_bytes`
 and `rocketnet_server_uring_leaked_transports` are internal transport helpers
@@ -74,16 +77,16 @@ that reports it.
 
 ## Per-update send and receive budgets
 
-Every driver receives at least twice what it sends in one update:
+Every transport receives at least twice what it sends in one update:
 `receive_capacity >= 2 * send_budget`, checked by
 `test_unit_receive_budget_twice_send.cpp` and locked by a
-`ROCKETNET_STATIC_ASSERT` beside each driver's constants. The send budget
+`ROCKETNET_STATIC_ASSERT` beside each transport’s constants. The send budget
 is what one update stages or submits; the receive capacity is the bank,
 ring, staging or completion budget the send path can fill while it waits.
 The server process batch `ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS`
-(`sdk/rocketnet_constants.h`, 16000) bounds every driver's drain.
+(`sdk/rocketnet_constants.h`, 16000) bounds every transport drain.
 
-| Driver | Send budget | Receive capacity |
+| Transport | Send budget | Receive capacity |
 | --- | --- | --- |
 | portable | 256–1000, max `ROCKETNET_SERVER_MAX_SEND_PACKETS` (`sdk/rocketnet_constants.h:87`) | 16000 per update (`sdk/rocketnet_constants.h:81`) |
 | msgx | portable batch256–1000 (`sdk/rocketnet_constants.h:87`) | 16000 per update (`sdk/rocketnet_constants.h:81`) |
@@ -465,7 +468,7 @@ that resolves to no MAC is refused at start and counted as
 ## Embedded XDP source maintenance
 
 The XDP frame codec (`sdk/rocketnet_xdp_frame.h`) synthesises Ethernet + IP +
-UDP for both address families: IPv4 byte-identical to the historical builder
+UDP for both address families: IPv4 byte-identical to the canonical builder
 (ihl 5, DF set, ttl 64, header checksum, UDP checksum 0) and IPv6 with the
 mandatory UDP checksum (RFC 8200 section 8.1) computed in software over the
 pseudo-header. Hardware TX checksum offload (AF_XDP TX metadata, kernel 6.8
@@ -502,7 +505,7 @@ MSVC unit suite on Windows, the cases print `SKIPPED`. When the filter adopts
 a new kernel header, helper or map, the shim follows in the same change, with
 the helper's kernel source cited. `xdp_host_every_counter_has_a_case` fails
 when a `ROCKETNET_SERVER_XDP_COUNTER_*` has no row that moves it. To reproduce
-a historical filter, configure with
+the compatible filter, configure with
 `-DROCKETNET_XDP_FILTER_HOST_SOURCE=<path>`; the default is the shipped file.
 
 The XDP program is compiled at build time and loaded from memory. On Linux,
@@ -555,7 +558,7 @@ use the transport's separate send path.
 
 ## Receive lengths and truncated datagrams
 
-Buffered drivers write at most the supplied capacity or per-packet stride,
+Buffered transports write at most the supplied capacity or per-packet stride,
 but return each datagram's original length, up to 65535 bytes. A larger byte
 count does not grant access to bytes beyond that buffer. Client batch
 compaction copies only the stored prefix; the prefilter counts oversized
@@ -563,5 +566,5 @@ reports without reading that prefix. The buffered server counts oversized
 reports before invoking an application admission callback, so that callback
 never sees a claimed length beyond its available storage. Negative lengths,
 lengths beyond 65535, and returned packet counts outside the requested range
-remain driver faults. A zero byte count in a batch is a received empty
+remain transport faults. A zero byte count in a batch is a received empty
 datagram; zero from a single-packet receive means drained.

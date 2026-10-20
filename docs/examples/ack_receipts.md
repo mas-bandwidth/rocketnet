@@ -11,7 +11,7 @@ Sending with `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT` gives each snap
 3. Read `rocketnet_client_receipts` each frame after `rocketnet_client_update` and match each `rocketnet_receipt_t` serial back to the update that sent it.
 4. Print `ACKED` (`ROCKETNET_RECEIPT_STATUS_ACKED`) or `LOSS` (`ROCKETNET_RECEIPT_STATUS_LOSS`) for each update and verify that all 20 sends receive exactly one receipt.
 
-Each frame runs the five steps in game-loop order: update, receive and release (plus receipts), simulate, queue outgoing messages, and `send_packets` last.
+Each frame runs the five steps in game-loop order: update, drain the receive queue (plus receipts), simulate, queue outgoing messages, and `send_packets` last.
 
 ## Run it
 

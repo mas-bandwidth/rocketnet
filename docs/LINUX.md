@@ -5,7 +5,7 @@ server gets on a given kernel and why, how to pin one, what `gso`, `io_uring`
 and `xdp` need from the host, how socket errors and ICMP behave, the fd and
 memlock limits for 1000 clients, what each transport needs inside a container,
 and the commands that verify a host. Every claim names the file and line that
-backs it; a section whose proof is still an open card says **pending**.
+backs it; a section whose executable proof is unavailable says **pending**.
 
 ## 1. Build
 
@@ -16,8 +16,8 @@ and, on Debian or Ubuntu, the packages CI installs: `cmake`, `build-essential`,
 
 libbpf and libxdp are required: configure stops without them
 (`cmake/RocketNetDependencies.cmake:19-31`). liburing is optional: without it
-the `io_uring` driver is built to refuse and configure prints
-`liburing not found: the io_uring server driver is built to refuse`
+the `io_uring` transport is built to refuse and configure prints
+`liburing not found: the io_uring server transport is built to refuse`
 (`cmake/RocketNetDependencies.cmake:32-50`, `CMakeLists.txt:22`). The libbpf
 floor is 1.0 (`BUILDING.md:479-482`).
 
@@ -52,16 +52,16 @@ shared libraries into `bin/` (`CMakeLists.txt:34-38`), and `make` reconfigures
 
 The executables this guide runs: `./bin/test` (the unit suite, no sockets,
 `BUILDING.md:23-34`), `./bin/functional` (real sockets and real transports,
-`BUILDING.md:36-48`), `./bin/test_driver` (registry order and driver contract,
-`DRIVERS.md:145-151`), `./bin/test_lifecycle`, `./bin/transport_memory`
-(`BUILDING.md:284-303`) and `./bin/test_xdp_filter` (`DRIVERS.md:256-270`).
+`BUILDING.md:36-48`), `./bin/test_transport` (registry order and transport contract,
+`TRANSPORTS.md:145-151`), `./bin/test_lifecycle`, `./bin/transport_memory`
+(`BUILDING.md:284-303`) and `./bin/test_xdp_filter` (`TRANSPORTS.md:256-270`).
 
 ## 2. The transport ladder
 
 `sdk/rocketnet_drivers.inc:5-12` is the registry. Each row carries a name, a
 platform mask and a server and client preference rank; a lower nonzero rank
 comes first in `auto`, zero means the endpoint does not have that transport
-(`DRIVERS.md:7-11`, `sdk/rocketnet_driver.cpp:84-100`). The Linux rows:
+(`TRANSPORTS.md:7-11`, `sdk/rocketnet_driver.cpp:84-100`). The Linux rows:
 
 | transport | server rank | client rank | row |
 | --- | ---: | ---: | --- |
@@ -72,12 +72,12 @@ comes first in `auto`, zero means the endpoint does not have that transport
 | `loopback` | pin only | pin only | `sdk/rocketnet_drivers.inc:10` |
 
 So the Linux server `auto` order is **xdp → gso → io_uring → portable**
-(`DRIVERS.md:188-189`), and `./bin/test_driver` fails if it is anything else
-(`test_driver.cpp:111-116`). A build without liburing has no `io_uring` in the
-list: xdp → gso → portable (`test_driver.cpp:115-116`, `DRIVERS.md:183-186`).
+(`TRANSPORTS.md:188-189`), and `./bin/test_transport` fails if it is anything else
+(`test_driver.cpp`). A build without liburing has no `io_uring` in the
+list: xdp → gso → portable (`test_driver.cpp`, `TRANSPORTS.md:183-186`).
 `loopback` is in-process, never chosen by `auto`, and selected only by name
-(`DRIVERS.md:18-23`, `sdk/rocketnet_driver.h:13`). The Linux client has one
-transport in `auto`, `portable` (`test_driver.cpp:125-130`); on Linux it
+(`TRANSPORTS.md:18-23`, `sdk/rocketnet_driver.h:13`). The Linux client has one
+transport in `auto`, `portable` (`test_driver.cpp`); on Linux it
 batches with `sendmmsg`/`recvmmsg` and waits on an eventfd beside its socket
 (`sdk/rocketnet_driver_builtin.cpp:54`, `:87-100`,
 `sdk/rocketnet_platform.cpp:645-668`).
@@ -89,7 +89,7 @@ host where `gso` refuses. To run `io_uring`, pin it (section 3).
 grant wins (`sdk/rocketnet_server_transport.cpp:1182-1186`,
 `:1209-1300`). Each refusal logs a warning,
 `server transport <name> refused. trying the next candidate`
-(`sdk/rocketnet_server_transport.cpp:1283-1284`), and the driver logs why
+(`sdk/rocketnet_server_transport.cpp:1283-1284`), and the transport logs why
 before it (for example the `xdp pre-flight: ...` lines in section 6). A port-0
 public address refuses `xdp`, which binds the port it is given and discovers
 nothing (`sdk/rocketnet_drivers.inc:7` third column,
@@ -133,12 +133,12 @@ Every other server config field has the overlay `ROCKETNET_SERVER_<FIELD>`
 (`sdk/rocketnet.h:805`, `sdk/rocketnet_internal.h:480-481`).
 
 CI's transport matrix pins each Linux server transport against the portable
-client on four cases, `driver_env_pin_is_honoured` among them, which proves
+client on four cases, `transport_env_pin_is_honoured` among them, which proves
 the pinned transport is the one granted (`.github/workflows/ci.yml:280-305`,
 `:321`, `:358`). The same matrix, `xdp` aside (section 6):
 
 ```sh
-for pair in "portable portable" "gso portable" "io_uring portable" "loopback loopback"; do set -- $pair; for c in test_transport_udp_loopback test_transport_ipv6_loopback test_transport_dual_stack_ipv4_client driver_env_pin_is_honoured; do ROCKETNET_SERVER_TRANSPORT=$1 ROCKETNET_CLIENT_TRANSPORT=$2 ./bin/functional --run $c >/dev/null || { echo "FAIL $1/$2 $c"; break 2; }; echo "ok $1/$2 $c"; done; done
+for pair in "portable portable" "gso portable" "io_uring portable" "loopback loopback"; do set -- $pair; for c in test_transport_udp_loopback test_transport_ipv6_loopback test_transport_dual_stack_ipv4_client transport_env_pin_is_honoured; do ROCKETNET_SERVER_TRANSPORT=$1 ROCKETNET_CLIENT_TRANSPORT=$2 ./bin/functional --run $c >/dev/null || { echo "FAIL $1/$2 $c"; break 2; }; echo "ok $1/$2 $c"; done; done
 ```
 
 ## 4. gso
@@ -162,7 +162,7 @@ refuses either is a tier, not an error: no `UDP_SEGMENT` means plain
 probe but refuses a live GSO send (`EINVAL`, `EIO`, `EOPNOTSUPP`) logs
 `gso transport: live GSO send refused (...). degrading to plain sendmmsg` and
 resends that batch as plain packets (`sdk/rocketnet_server_gso_linux.cpp:1024-1033`).
-The degradation is inside the driver, below the ladder (`BUILDING.md:350-353`).
+The degradation is inside the transport, below the ladder (`BUILDING.md:350-353`).
 
 ## 5. io_uring
 
@@ -190,12 +190,12 @@ a completion queue twice that (`sdk/rocketnet_server_uring.h:39-41`,
 `ROCKETNET_URING_SEND_WAIT_SECONDS`; sends still pending when the call returns
 stay in the completion queue for a later call and are counted
 `SEND_DEFERRED`, so a send flush never waits unboundedly
-(`sdk/rocketnet_server_uring_linux.cpp:28-33`, `DRIVERS.md:176-179`).
+(`sdk/rocketnet_server_uring_linux.cpp:28-33`, `TRANSPORTS.md:176-179`).
 
 **What the host needs.**
 
 - liburing at build time (section 1). A build without it keeps the row with no
-  platform, so the name is skipped (`DRIVERS.md:183-186`).
+  platform, so the name is skipped (`TRANSPORTS.md:183-186`).
 - A kernel that accepts the ring, `SENDMSG`, `RECVMSG`, `ASYNC_CANCEL` and a
   provided buffer ring. `rocketnet_server_uring_available()` probes this once
   (`sdk/rocketnet_server_uring_linux.cpp:383-421`); on no, create logs
@@ -208,10 +208,10 @@ stay in the completion queue for a later call and are counted
   `io_uring_group`, 2 as disabled (Linux
   `Documentation/admin-guide/sysctl/kernel.rst`, `io_uring_disabled`). CI
   offers the `io_uring` cell only when the value is 0
-  (`.github/workflows/ci.yml:324-333`). The driver does not read the sysctl;
+  (`.github/workflows/ci.yml:324-333`). The transport does not read the sysctl;
   a refusing kernel shows up as the probe refusal above.
 - Enough `RLIMIT_MEMLOCK` for the ring and the provided buffer rings, which
-  depends on the kernel. The driver never raises the limit (no `setrlimit` in
+  depends on the kernel. The transport never raises the limit (no `setrlimit` in
   `sdk/rocketnet_server_uring_linux.cpp`) and refuses at create when the kernel
   will not grant the memory. Measured with
   `bash -c 'ulimit -l <KiB> && ./bin/transport_memory 1000 1416 16 io_uring 0'`:
@@ -280,7 +280,7 @@ boot tier is verified, never performed (`scripts/rocketnet-provision:25`).
   family on the same port, and `xdp` carries both destinations when both
   addresses are on that interface (`sdk/rocketnet_server_socket_linux.cpp:1848`).
   Two interfaces refuse with `TRANSPORT_FAMILIES_UNSUPPORTED`
-  (`sdk/rocketnet_server_socket_linux.cpp:1479`). One interface still takes one
+  (`sdk/rocketnet_server_socket_linux.cpp:1479`). One interface takes one
   XDP program.
 
 Checks that need no root, as CI runs them
@@ -293,7 +293,7 @@ python3 tools/check_xdp_archive.py
 
 Live AF_XDP runs as root only inside a virtme-ng guest of the host's own
 kernel, never on the host (`.github/workflows/ci.yml:290-295`, `:335-349`;
-`DRIVERS.md:260-270`). The guest needs `vng`, a readable
+`TRANSPORTS.md:260-270`). The guest needs `vng`, a readable
 `~/vm-kernels/vmlinuz-$(uname -r)` and a writable `/dev/kvm`
 (`.github/workflows/ci.yml:339-345`). The command is one quoted string so
 older and newer `vng` releases pass it to the guest shell alike:
@@ -304,7 +304,7 @@ vng --run "$HOME/vm-kernels/vmlinuz-$(uname -r)" --memory 1536M --cpus 3 --appen
 ```
 
 `test_xdp_filter` judges the BPF program with the kernel's verifier and
-`BPF_PROG_TEST_RUN` (`DRIVERS.md:256-261`), on the same `server_xdp.o` the
+`BPF_PROG_TEST_RUN` (`TRANSPORTS.md:256-261`), on the same `server_xdp.o` the
 library embeds. In a 1536M guest with two isolated CPUs and no clang on
 `PATH`, all 17 cases print `ok`, including `xdp_on_link_reply_reaches_the_peer`
 and `xdp_create_fails_part_way_tears_down`.
@@ -322,7 +322,7 @@ socket only when the socket is connected or has `IP_RECVERR` set (Linux
 (`sdk/rocketnet_platform.cpp:526`, `:540`, `:817`). So a dead or unreachable
 peer produces no error on the receive path of `portable`, `gso` or
 `io_uring`. On `xdp`, ICMP is not UDP, so the XDP program passes it to the
-kernel stack (`DRIVERS.md:216-218`). This command shows the kernel rule on
+kernel stack (`TRANSPORTS.md:216-218`). This command shows the kernel rule on
 the host:
 
 ```sh
@@ -436,7 +436,7 @@ ulimit -l
 dpkg-query -W cmake build-essential clang libbpf-dev libxdp-dev liburing-dev xxd
 make JOBS=4
 ./bin/test
-./bin/test_driver
+./bin/test_transport
 ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/test_lifecycle
 ./bin/functional
 python3 tools/check_memory.py ./bin/transport_memory

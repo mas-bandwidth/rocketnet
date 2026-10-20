@@ -5,6 +5,11 @@ messages over UDP. A message is an opaque byte buffer: RocketNet moves it,
 fragments it when it is large, and reports whether it arrived. It does not
 serialize it.
 
+No public `rocketnet.h` call blocks. Each call does bounded work; the main
+frame calls and create are designed to be unnoticeable in a game profiler.
+Soak, load and profiling campaigns are planned hardening work, not completed
+first-deliverable claims.
+
 The authority for every name, field, default and environment variable is
 [sdk/rocketnet.h](sdk/rocketnet.h). This file is the narrative: how a frame is
 ordered, how messages are sent and received, what the counters mean, and how
@@ -123,9 +128,9 @@ token is accepted when its address of the arrival family is one the server
 advertises (`TokenAddressAdvertised`).
 
 `public_address` on the server displaces the address passed to create.
-`second_public_address` is the other family on that same port. The environment
-form of `public_address` applies to the first server create in the process
-only.
+`second_public_address` is the other family on that same port.
+`ROCKETNET_SERVER_PUBLIC_ADDRESS` and `ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS`
+apply together to the first server start in the process only.
 
 ### Environment overrides
 
@@ -154,9 +159,9 @@ row per field of both public structs.
 | unreliable_deliveries | ROCKETNET_CLIENT_UNRELIABLE_DELIVERIES | int | `256` | refuses the create unless `1..65536` |
 | sequenced_holds | ROCKETNET_CLIENT_SEQUENCED_HOLDS | int | `16` | refuses the create unless `0..4096` |
 | receipt_ring | ROCKETNET_CLIENT_RECEIPT_RING | int | `256` | refuses the create unless `16..65536` |
-| resend_delay_initial_ms | ROCKETNET_CLIENT_RESEND_DELAY_INITIAL_MS | int | `100` | refuses the create unless `10..60000` |
-| resend_delay_min_ms | ROCKETNET_CLIENT_RESEND_DELAY_MIN_MS | int | `10` | refuses the create unless `1..60000` |
-| resend_delay_max_ms | ROCKETNET_CLIENT_RESEND_DELAY_MAX_MS | int | `250` | refuses the create unless `10..60000` |
+| resend_delay_initial_ms | ROCKETNET_CLIENT_RESEND_DELAY_INITIAL_MS | int | `2000` | refuses the create unless `10..60000` |
+| resend_delay_min_ms | ROCKETNET_CLIENT_RESEND_DELAY_MIN_MS | int | `0` (disabled) | refuses the create unless `0..60000` |
+| resend_delay_max_ms | ROCKETNET_CLIENT_RESEND_DELAY_MAX_MS | int | `2000` | refuses the create unless `10..60000` |
 | reliable_timeout_ms | ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS | int | `10000` | refuses the create unless `1000..600000` |
 | simulated_loss_percent | ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT | int | `0` | refuses the create unless `0..100`; development only, and a production library refuses any nonzero value |
 | simulated_latency_ms | ROCKETNET_CLIENT_SIMULATED_LATENCY_MS | int | `0` | refuses the create unless `0..60000`; development only, and a production library refuses any nonzero value |
@@ -176,6 +181,7 @@ row per field of both public structs.
 | handshake_deadline_seconds | ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS | int | `5` | refuses the create unless `1..60` |
 | transport | ROCKETNET_SERVER_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, or a list with no usable candidate: refuses the create |
 | public_address | ROCKETNET_SERVER_PUBLIC_ADDRESS | const char * | `NULL` | an address that does not parse: refuses the create |
+| second_public_address | ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS | const char * | `NULL` | an address that does not parse or duplicates the first address family: refuses the create |
 | per_client_send_kbps | ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS | int | `10000` | a non-integer, or above `10000000`: refuses the create; `0` or less sets the budget to its ceiling, `ROCKETNET_SEND_BUDGET_MAX_KBPS` (10 Gbit/s), NOT RECOMMENDED; each client connection's starting rate |
 | num_channels | ROCKETNET_SERVER_NUM_CHANNELS | int | `32` | refuses the create unless `1..32` |
 | window_messages | ROCKETNET_SERVER_WINDOW_MESSAGES | int | `1024` | refuses the create unless `64..1048576` and a power of two |
@@ -188,9 +194,9 @@ row per field of both public structs.
 | unreliable_deliveries | ROCKETNET_SERVER_UNRELIABLE_DELIVERIES | int | `256` (per client per update) | refuses the create unless `1..65536` |
 | sequenced_holds | ROCKETNET_SERVER_SEQUENCED_HOLDS | int | `16` | refuses the create unless `0..4096` |
 | receipt_ring | ROCKETNET_SERVER_RECEIPT_RING | int | `256` | refuses the create unless `16..65536` |
-| resend_delay_initial_ms | ROCKETNET_SERVER_RESEND_DELAY_INITIAL_MS | int | `100` | refuses the create unless `10..60000` |
-| resend_delay_min_ms | ROCKETNET_SERVER_RESEND_DELAY_MIN_MS | int | `10` | refuses the create unless `1..60000` |
-| resend_delay_max_ms | ROCKETNET_SERVER_RESEND_DELAY_MAX_MS | int | `250` | refuses the create unless `10..60000` |
+| resend_delay_initial_ms | ROCKETNET_SERVER_RESEND_DELAY_INITIAL_MS | int | `2000` | refuses the create unless `10..60000` |
+| resend_delay_min_ms | ROCKETNET_SERVER_RESEND_DELAY_MIN_MS | int | `0` (disabled) | refuses the create unless `0..60000` |
+| resend_delay_max_ms | ROCKETNET_SERVER_RESEND_DELAY_MAX_MS | int | `2000` | refuses the create unless `10..60000` |
 | reliable_timeout_ms | ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS | int | `10000` | refuses the create unless `1000..600000` |
 | simulated_loss_percent | ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT | int | `0` | refuses the create unless `0..100`; development only, and a production library refuses any nonzero value |
 | simulated_latency_ms | ROCKETNET_SERVER_SIMULATED_LATENCY_MS | int | `0` | refuses the create unless `0..60000`; development only, and a production library refuses any nonzero value |
@@ -219,8 +225,10 @@ fields in the public configuration structs:
 
 ## Create, connect, start, stop and destroy
 
-`rocketnet_client_create` takes the config and an optional caller memory
-block, and makes a client in `DISCONNECTED`. `rocketnet_client_connect` starts
+`rocketnet_client_create` takes the config, an optional caller memory block,
+and a nullable status out-parameter, and makes a client in `DISCONNECTED`.
+It returns a client with `ROCKETNET_STATUS_OK`, or NULL with the specific
+refusal status. `rocketnet_client_connect` starts
 a connection with a connect token: a client connects with a token, never an
 address, and the token names the server, carries the keys and is the
 credential. The attempt's clock starts at the next update.
@@ -229,8 +237,10 @@ the client to `DISCONNECTED`, ready to connect again with a new token; connect
 anywhere else is refused with `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`. A
 negative state says how the last attempt ended and stays until disconnect.
 
-`rocketnet_server_create` takes the bind address and the config and binds
-nothing: the server starts stopped. `rocketnet_server_start` binds the
+`rocketnet_server_create` takes the bind address, config, optional caller
+memory block and nullable status out-parameter. It returns a stopped server
+with `ROCKETNET_STATUS_OK`, or NULL with the specific refusal status, and binds
+nothing. `rocketnet_server_start` binds the
 transport and accepts clients; `rocketnet_server_stop` disconnects every
 client, resets every slot and releases the transport, and the server can
 start again. Clients are identified by index (`uint64_t`),
@@ -330,8 +340,8 @@ the server:
 
 1. `rocketnet_client_update` or `rocketnet_server_update` pumps the transport
    and takes in what arrived.
-2. Receive and release every received message with the receive and release
-   calls.
+2. Drain the endpoint's one receive queue with `rocketnet_client_receive_messages`
+   or `rocketnet_server_receive_messages`.
 3. Run the game simulation for the frame.
 4. Queue this frame's outgoing messages with start message and finish message.
 5. Call `rocketnet_client_send_packets` or `rocketnet_server_send_packets`
@@ -352,15 +362,11 @@ void client_frame( struct rocketnet_client_t * client, double time )
     /* 1. pump the transport and take in what arrived */
     rocketnet_client_update( client, time );
 
-    /* 2. receive every delivered message, a batch per call, until false */
+    /* 2. drain the one receive queue */
     struct rocketnet_message_batch_t batch;
     while ( rocketnet_client_receive_messages( client, &batch ) )
-    {
         for ( int i = 0; i < batch.num_messages; i++ )
-        {
-            /* process batch.data[i] and batch.bytes[i] */
-        }
-    }
+            process_message( batch.channel[i], batch.reliability[i], batch.data[i], batch.bytes[i] );
 
     /* 3. run the game simulation for this frame */
 
@@ -377,10 +383,8 @@ void client_frame( struct rocketnet_client_t * client, double time )
 The server runs the same block with `rocketnet_server_update`,
 `rocketnet_server_receive_messages`,
 `rocketnet_server_start_message`, `rocketnet_server_finish_message` and
-`rocketnet_server_send_packets`; its receive step drains one queue across
-every client, each message naming its sender's client index.
-`rocketnet_client_update` and `rocketnet_server_update` return
-`ROCKETNET_UPDATE_OK`; the receive's batch is released by the update.
+`rocketnet_server_send_packets`. Each server batch entry names its
+`client_index`. Client batch entries use client index 0.
 
 ## Sending messages
 
@@ -476,27 +480,14 @@ changes nothing; that is not misuse.
 
 ## Receiving messages
 
-Receiving is RakNet's `Receive`, pumped: one call fills a batch, and the
-caller calls again until it returns false. A client has one queue holding every
-channel's messages; a server has one queue across all its clients.
 `rocketnet_client_receive_messages` and `rocketnet_server_receive_messages`
-fill the caller's `struct rocketnet_message_batch_t` with up to
-`ROCKETNET_RECEIVE_BATCH_MESSAGES` next messages, one array per field:
-`client_index` (the sending client's index on a server; on a client, index = 0,
-the server), `channel`, `reliability`, `bytes` and `data`, with the count in
-`num_messages`. Each returns true when it filled at least one message and false
-when nothing is pending. There is no per-update cap: what one call does not
-return waits for the next call in the same update, in order
-(`sdk/rocketnet_message_server.cpp:1012-1039`). The queue holds the update's
-messages client by client in index order, each client's in the order its
-connection delivered them: ordered messages in send order within their channel,
-and a sequenced message never older than one before it on its channel
-(`sdk/rocketnet_message_server.cpp:870-896`).
-
-The `data` pointers point into the library's storage, delivered and
-reassembled, and are never copied. They are valid until the next receive call
-or the next update of the same client or server, whichever comes first; that
-call releases them, and there is no release call. Copy anything kept longer.
+return the next `rocketnet_message_batch_t` from one endpoint-wide queue. A
+batch contains up to `ROCKETNET_RECEIVE_BATCH_MESSAGES` (`256`) entries. Each
+entry names `client_index`, `channel`, `reliability`, `bytes`, and `data`; the
+client's entries use client index 0. Keep calling until the function returns
+false. A data pointer is valid until the next receive call or the next update
+on that endpoint, whichever comes first. Process or copy every entry first;
+there is no release call.
 
 ```c
 #include "rocketnet.h"
@@ -506,14 +497,13 @@ void server_frame( struct rocketnet_server_t * server, uint64_t client_index, in
     /* 1. pump the transport and take in what arrived */
     rocketnet_server_update( server, time );
 
-    /* 2. receive every delivered message, from every client, a batch per call */
+    /* 2. drain the one receive queue */
     struct rocketnet_message_batch_t batch;
     while ( rocketnet_server_receive_messages( server, &batch ) )
     {
         for ( int i = 0; i < batch.num_messages; i++ )
-        {
-            /* process batch.data[i] and batch.bytes[i] from batch.client_index[i] */
-        }
+            process_message( batch.client_index[i], batch.channel[i],
+                             batch.reliability[i], batch.data[i], batch.bytes[i] );
     }
 
     /* 3. run the game simulation for this frame */

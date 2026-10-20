@@ -18,8 +18,8 @@ The example then pins a name no transport has. The library refuses it with one
 error line listing the valid names, and the program prints that the refusal was
 expected. Every successful server is proved with a client that connects, sends
 one reliable-ordered message, and disconnects.
-Each frame runs the calls in the order a game does: update, receive and
-release, simulate, queue, then send last. Sending last is what makes this
+Each frame runs the calls in the order a game does: update, drain the one
+receive queue, simulate, queue, then send last. Sending last is what makes this
 frame's messages leave this frame instead of waiting a frame.
 
 ## Run it
@@ -73,9 +73,3 @@ variable and the value it displaced.
 - Client: `rocketnet_client_default_config`, `rocketnet_client_create`, `rocketnet_client_update`, `rocketnet_client_state`, `rocketnet_client_start_message`, `rocketnet_client_finish_message`, `rocketnet_client_receive_messages`, `rocketnet_client_send_packets`, `rocketnet_client_disconnect`, `rocketnet_client_destroy`
 - Development token: `rocketnet_write_dev_connect_token`
 - Time: `rocketnet_time`, `rocketnet_sleep`
-
-The lifecycle card that lands after this one renames start, finish, receive,
-release and send_packets to `*_start_message`, `*_finish_message`,
-`*_receive_messages` and `*_send_packets`. The header at
-this base still declares the old names, so the example uses them; it does not
-use a copying send.

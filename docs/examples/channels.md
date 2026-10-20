@@ -17,11 +17,9 @@ Games put different traffic on different channels so a lost reliable message
 4. Verify that every chat message is delivered in exact order `1..8` and that
    position updates never go backwards.
 
-Each frame follows the standard loop order: `update`, `receive` and `release`,
-simulation, `start` and `finish`, and `send_packets` last so queued messages
-leave in the same frame. The header at this base still declares `start`,
-`finish`, `receive`, `release` and `send_packets` (renamed to `*_message` /
-`*_messages` by the lifecycle card), so the example uses the header names.
+Each frame follows the standard loop order: `update`, drain the one receive
+queue, simulation, `start_message` and `finish_message`, and `send_packets`
+last so queued messages leave in the same frame.
 
 ## Run it
 
@@ -51,9 +49,8 @@ conditions held.
 - `rocketnet_init`, `rocketnet_term`
 - `rocketnet_server_dev_config_sized`, `rocketnet_server_create_sized`,
   `rocketnet_server_port`, `rocketnet_server_update`,
-  `rocketnet_server_client_connected`, `rocketnet_server_receive_messages`
-  (the server's one receive queue, pumped, each entry naming its sender and
-  the channel it was delivered on), `rocketnet_server_send_packets`,
+  `rocketnet_server_client_connected`, `rocketnet_server_receive_messages`,
+  `rocketnet_server_send_packets`,
   `rocketnet_server_destroy`
 - `rocketnet_client_default_config_sized`, `rocketnet_client_create_sized`,
   `rocketnet_client_state`, `rocketnet_client_update`,

@@ -1,114 +1,76 @@
-# RocketNet Requirements
+# RocketNet requirements
 
-The hard set, locked 2026-08-26. The requirements below define RocketNet's
-intended capabilities. Everything here is a requirement, not a preference.
+RocketNet is a low-level client/server UDP transport and message library for a
+single server with up to 1,000 connected players. The public surface is a C ABI
+in `sdk/rocketnet.h`; no C++ type crosses it.
 
-* Replacement for RakNet that isn't IO bound. On Linux this means AF_XDP plus
-  non-root alternatives; on Windows completion ports plus whatever else gets
-  past IO bounds; on mac the equivalent, to be surveyed.
+## Public integration
 
-* The zero copy machinery for sending and receiving packets quickly.
+- Messages are opaque byte buffers. Serialization and game simulation belong
+  to the caller.
+- Public calls perform bounded work and do not block. Create and the main frame
+  calls are intended to be unnoticeable in a game profiler.
+- Ordinary memory, whether allocated at create or during a documented runtime
+  lifecycle, uses the caller allocator. Capacity and failure are bounded and
+  reported; no component may hide an allocation outside those hooks.
+- The caller supplies monotonic time to update and follows the five-step frame
+  order documented in `AGENTS.md` and `USAGE.md`.
+- The API reports specific create, lifecycle and configuration refusals through
+  `rocketnet_status_t` and exposes counters for runtime outcomes.
+- The public config has one whole-struct revision, sized entry points for ABI
+  compatibility, documented defaults and strict validation.
 
-* A public C API on top of the library underneath. The library stays the
-  loose C-like C++ we do — no rewrite in C.
+## Connection and security
 
-  The C API is for C to call: an `extern "C"` interface with real,
-  non-mangled symbols, consumable from many languages without C++ nonsense.
-  No C++ types cross that surface. The public C API and ABI, including their
-  entry points, exports, calling conventions, layouts, version contract,
-  headers, build artifacts and tests, remain required. RocketNet does not
-  include a C# library integration.
+- A client connects with a signed connect token minted by the application's
+  backend. The backend and game server share no secret; servers verify the
+  backend's public signing key.
+- A token fits in one 1,500-byte MTU packet and names one server with one IPv4
+  address, one IPv6 address, or one of each.
+- A server may serve IPv4, IPv6 or both. The request must arrive on a family and
+  advertised address present in the token.
+- One active token is bound to one source address and one live connection. One
+  client id occupies at most one live server slot.
+- Session traffic is authenticated and encrypted with per-connection keys,
+  includes replay protection, and provides no property weaker than netcode
+  1.02's security baseline.
+- Development builds provide explicit development keys and token helpers. A
+  production start requires application-supplied keys.
+- Player-hosted servers remain possible because token verification needs a
+  backend public key rather than a backend/server shared secret.
 
-* Development works out of the box, with no backend, no configuration and no
-  copying keys between machines. Run the server, point the client at its
-  address, connected. This is achieved with published test keys — both the
-  backend signing keypair and the server key exchange keypair are fixed values
-  printed in the standard and embedded in the library, used by default, so the
-  developer configures nothing and the default path is the working path. The
-  security comes from the keys being public rather than from a flag being off:
-  a deployment that ships with them has an authorization system anyone can
-  forge, which fails loudly, where a mode flag that disables checks fails
-  silently. Nothing else is relaxed; the development path runs the same
-  handshake, sealing and replay protection that ships.
+## Messages
 
-* Example backend code in Go for creating connect tokens. That is
-  the backend integration story: a customer runs their own backend, and
-  minting a token is the only thing it has to do for us. Go needs no
-  dependency for the signing half — Ed25519 is in its standard library — and
-  sealed boxes are in `nacl/box`.
+- The eight `rocketnet_reliability_t` modes cover unreliable, sequenced,
+  reliable, ordered and receipt-bearing delivery across up to 32 channels.
+- Sending uses reserve, write and finish or abort. Receiving drains one
+  endpoint-wide `rocketnet_message_batch_t` queue with no release call.
+- Fragmentation and reassembly carry messages up to the configured maximum
+  within fixed storage.
+- Reliable work is retained until delivery or the reliable timeout. Unreliable
+  work may be dropped only at documented bounded resources and is counted.
+- Receipt serials report terminal ACK or loss for receipt-bearing messages.
 
-* Everything is byte buffers, no structure. To the caller these are "packets" it
-  can send. RocketNet does not own serialization.
+## Platforms and transports
 
-* Super fast, reliable, maintained, bug free.
+- Linux, macOS and Windows are supported.
+- Runtime transport selection uses `transport`: automatic order, one pinned
+  name, or an explicit ordered list. A pin fails loudly when unavailable.
+- Linux includes portable UDP plus GSO, io_uring and AF_XDP server transports
+  when their build and host requirements are available.
+- macOS includes portable and msgx transports. Windows includes portable,
+  IOCP and RIO server transports where available.
+- Socket transports support multiple server instances distinguished by address
+  and port. A transport documents any stronger interface or privilege
+  ownership requirement.
+- The caller can supply allocation, logging and assertion hooks. Ordinary
+  memory uses the caller allocator.
 
-* Flows, on the server, for world chunks (squares on a top-down map; players
-  subscribe to chunks near their player): create flow, destroy flow, client
-  subscribe/unsubscribe on the server, and packets sent to a flow by id reach
-  every subscriber. That covers the broadcast case.
+## First-deliverable boundary
 
-* Three packet disciplines, all byte buffers to the caller: reliable-ordered
-  packets, unreliable packets, and most recent state only packets.
-
-* Player-hosted servers are supported by the security model.
-
-* Connection is netcode style: connect with connect tokens — but the tokens
-  must not exclude player hosted servers by requiring a secret shared
-  between the backend and the servers.
-
-* No security property weaker than netcode 1.02. That is the absolute
-  minimum baseline, and a change that buys something new at the cost of an
-  existing guarantee is a defect.
-
-* The connect token fits in a single 1500 MTU packet. Because of that it
-  names one server, at up to two addresses — an IPv4 one and an IPv6 one,
-  each optional. netcode's list of up to 32 candidate servers per token was
-  a mistake; failover is a fresh token from the
-  backend, which has better information than any stale candidate list.
-
-* Crypto is sodium, ruled 2026-08-26 after the hydrogen evaluation: gutted
-  to what the protocol needs, vendored as the two-file flatten netcode and
-  yojimbo already carry, extended with Ed25519 signatures and sealed boxes
-  for the public key token design. Hydrogen was feasible and loses on crypto
-  pedigree, backend interop, per-packet overhead (36 vs 16 bytes), and the
-  missing associated data parameter. XDP crypto stays a nice to have,
-  reachable later via a proton style kernel module for either library.
-  Interim, so construction moves quickly: brew libsodium as is on the dev
-  box; the gutted two-file vendor lands later, before anything ships.
-
-* Scale: 1000 players or above on a single server.
-
-* 1.0 endpoints are IP addresses only — an IPv4 or IPv6 address and a port —
-  ruled 2026-08-26. There is no requirement for exotic transports with
-  arbitrary string addresses. Endpoints as opaque strings, freeing transports
-  to name whatever they route by, remain a future direction under a new
-  protocol version; nothing in 1.0 is shaped for them.
-
-* IPv6, designed in properly from day one: a server listens on both IPv4
-  and IPv6 addresses, and clients connect over either family. A reasonable
-  upgrade in 2026 — netcode ended up being patched to support this;
-  RocketNet does not repeat that.
-
-* Multiple servers per physical box is common and supported. A server is
-  addressed by address and port; nothing in the library may assume it owns
-  the machine. Transports declare their sharing model: socket transports
-  run many servers per box, one port each. AF_XDP is a single server per
-  box design — that is a property of that transport, the end.
-
-## The shape this adds up to
-
-A big fat connect token connect server, netcode style, with zero copy send
-and receive that is not IO bound on any platform. Once that stands,
-reliable-ordered packets and most recent packets are added on top.
-
-## Order of operations
-
-1. The minimal secure connect: netcode-style connect tokens on public key
-   crypto, exchanging signed and encrypted packets. Crypto per the sodium
-   ruling above.
-
-2. A few different platform transports, implemented to learn what the shape
-   is. Make it easy to add new transports.
-
-3. With the public key, non IO bound, zero copy netcode standing:
-   reliability, flows, broadcast and all that, at the end.
+The first deliverable contains the public client/server API, secure connection,
+message reliability, runtime transports, examples, short functional gates and
+formal models for its bounded state machines. Server subscription flows,
+backend-wide identity coordination, rotating keyed prefilters, long soak,
+large load and performance profiling are planned work and are not current API
+or performance claims.
