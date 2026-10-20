@@ -4,6 +4,7 @@
 // no sleep, no clock.
 
 #include "test_unit_registry.h"
+#include "test/suite_runner.h"
 
 #include "rocketnet_driver.h"
 #include "rocketnet_address.h"
@@ -237,7 +238,7 @@ static void driver_loopback_full_queue_drops_and_counts()
     printf( "driver_loopback_full_queue_drops_and_counts\n" );
 }
 
-// The allocator hook for driver_loopback_queue_grows_from_a_small_create: it
+// The allocator hook for driver_loopback_runtime_does_not_allocate: it
 // counts the bytes rocketnet_malloc asks for and passes every call to
 // rocketnet_default_malloc_function and rocketnet_default_free_function, so
 // the platform allocator (and its Debug fill) is unchanged. A small header in
@@ -245,9 +246,11 @@ static void driver_loopback_full_queue_drops_and_counts()
 
 enum { LOOPBACK_COUNT_HEADER = 16 };
 static size_t g_loopback_live_bytes;
+static size_t g_loopback_allocation_calls;
 
 static void * loopback_count_malloc( void * context, size_t bytes )
 {
+    ++g_loopback_allocation_calls;
     uint8_t * block = (uint8_t*) rocketnet_default_malloc_function( context, bytes + LOOPBACK_COUNT_HEADER );
     if ( !block )
         return NULL;
@@ -267,14 +270,12 @@ static void loopback_count_free( void * context, void * memory )
     rocketnet_default_free_function( context, block );
 }
 
-// An endpoint allocates ROCKETNET_LOOPBACK_QUEUE_INITIAL_PACKETS datagrams of
-// queue at create, measured at the allocator hook, and grows to
-// ROCKETNET_LOOPBACK_QUEUE_PACKETS only as datagrams queue. A queue filled to
-// ROCKETNET_LOOPBACK_QUEUE_PACKETS drops and counts every datagram past it
-// and drains in arrival order, as driver_loopback_full_queue_drops_and_counts
-// pins without the measurement.
+// Full-size datagrams exercise both send/receive paths through two complete
+// fill/drain rounds, including ring wrap and drops beyond the fixed ceiling.
+// Count calls, not live bytes: a temporary allocation followed by a free must
+// still fail the no-runtime-allocation contract.
 
-static void driver_loopback_queue_grows_from_a_small_create()
+static void driver_loopback_runtime_does_not_allocate()
 {
     rocketnet_unit_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_allocator_ex( loopback_count_malloc, loopback_count_free ) == ROCKETNET_STATUS_OK );
@@ -292,7 +293,7 @@ static void driver_loopback_queue_grows_from_a_small_create()
     rocketnet_server_driver_t server = {};
     rocketnet_unit_check( rocketnet_server_driver_open( backend->server, NULL, &server_setup, &server_address, &server ) );
     const size_t server_create_bytes = g_loopback_live_bytes - live_before;
-    rocketnet_unit_check( server_create_bytes == rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_INITIAL_PACKETS ) + overhead );
+    rocketnet_unit_check( server_create_bytes == rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) + overhead );
 
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
@@ -303,38 +304,50 @@ static void driver_loopback_queue_grows_from_a_small_create()
     rocketnet_unit_check( rocketnet_client_driver_open( backend->client, NULL, &client_setup, &client_address, &client ) );
     rocketnet_unit_check( g_loopback_live_bytes - live_before == 2 * server_create_bytes );
 
-    const int total = ROCKETNET_LOOPBACK_QUEUE_PACKETS + 5;
-    uint8_t data[4];
-    rocketnet_address_t to = server_address;
-    set_ipv4_loopback( to );
-    for ( int i = 0; i < total; ++i )
+    const size_t allocation_calls_after_create = g_loopback_allocation_calls;
+    uint8_t data[ROCKETNET_RECEIVE_CEILING];
+    memset( data, 0xa5, sizeof( data ) );
+    rocketnet_address_t to_server = server_address;
+    rocketnet_address_t to_client = client_address;
+    set_ipv4_loopback( to_server );
+    set_ipv4_loopback( to_client );
+    for ( int round = 0; round < 2; ++round )
     {
-        data[0] = (uint8_t) ( i & 0xff );
-        data[1] = (uint8_t) ( ( i >> 8 ) & 0xff );
-        data[2] = (uint8_t) ( ( i >> 16 ) & 0xff );
-        data[3] = 0;
-        client.operations->send( client.instance, &to, data, 4 );
+        for ( int i = 0; i < ROCKETNET_LOOPBACK_QUEUE_PACKETS + 5; ++i )
+        {
+            const uint32_t sequence = (uint32_t) ( round * ROCKETNET_LOOPBACK_QUEUE_PACKETS + i );
+            memcpy( data, &sequence, sizeof( sequence ) );
+            client.operations->send( client.instance, &to_server, data, sizeof( data ) );
+            rocketnet_platform_send_t packet = { &to_client, data, sizeof( data ) };
+            server.operations->send_batch( server.instance, &packet, 1 );
+        }
+        rocketnet_unit_check( g_loopback_allocation_calls == allocation_calls_after_create );
+        rocketnet_unit_check( rocketnet_loopback_endpoint_dropped( server.instance ) == (uint64_t) ( round + 1 ) * 5 );
+        rocketnet_unit_check( rocketnet_loopback_endpoint_dropped( client.instance ) == (uint64_t) ( round + 1 ) * 5 );
+        for ( int i = 0; i < ROCKETNET_LOOPBACK_QUEUE_PACKETS; ++i )
+        {
+            const uint32_t sequence = (uint32_t) ( round * ROCKETNET_LOOPBACK_QUEUE_PACKETS + i );
+            memcpy( data, &sequence, sizeof( sequence ) );
+            uint8_t received[ROCKETNET_RECEIVE_CEILING];
+            int bytes = 0;
+            rocketnet_address_t from;
+            rocketnet_unit_check( server.operations->receive_batch( server.instance, &from, received, sizeof( received ), &bytes, 1 ) == 1 );
+            rocketnet_unit_check( bytes == (int) sizeof( data ) );
+            rocketnet_unit_check( memcmp( data, received, sizeof( data ) ) == 0 );
+            rocketnet_unit_check( from.port == client_address.port );
+            rocketnet_unit_check( client.operations->receive( client.instance, &from, received, sizeof( received ) ) == (int) sizeof( data ) );
+            rocketnet_unit_check( memcmp( data, received, sizeof( data ) ) == 0 );
+            rocketnet_unit_check( from.port == server_address.port );
+        }
+        rocketnet_unit_check( g_loopback_allocation_calls == allocation_calls_after_create );
     }
-    rocketnet_unit_check( rocketnet_loopback_endpoint_dropped( server.instance ) == 5 );
-    rocketnet_unit_check( g_loopback_live_bytes - live_before ==
-                          server_create_bytes + rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) + overhead );
-
-    for ( int i = 0; i < ROCKETNET_LOOPBACK_QUEUE_PACKETS; ++i )
-    {
-        uint8_t buf[4];
-        int bytes = 0;
-        rocketnet_address_t from;
-        rocketnet_unit_check( server.operations->receive_batch( server.instance, &from, buf, 4, &bytes, 1 ) == 1 );
-        rocketnet_unit_check( bytes == 4 );
-        const uint32_t v = (uint32_t) buf[0] | ( (uint32_t) buf[1] << 8 ) | ( (uint32_t) buf[2] << 16 );
-        rocketnet_unit_check( v == (uint32_t) i );
-    }
-    {
-        uint8_t buf[4];
-        int bytes = 0;
-        rocketnet_address_t from;
-        rocketnet_unit_check( server.operations->receive_batch( server.instance, &from, buf, 4, &bytes, 1 ) == 0 );
-    }
+    uint8_t received[ROCKETNET_RECEIVE_CEILING];
+    int bytes = 0;
+    rocketnet_address_t from;
+    rocketnet_unit_check( server.operations->receive_batch( server.instance, &from, received, sizeof( received ), &bytes, 1 ) == 0 );
+    rocketnet_unit_check( client.operations->receive( client.instance, &from, received, sizeof( received ) ) == 0 );
+    rocketnet_unit_check( g_loopback_allocation_calls == allocation_calls_after_create );
+    rocketnet_unit_check( g_loopback_live_bytes - live_before == 2 * server_create_bytes );
 
     rocketnet_server_driver_close( &server );
     rocketnet_client_driver_close( &client );
@@ -343,7 +356,7 @@ static void driver_loopback_queue_grows_from_a_small_create()
     rocketnet_unit_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
-    printf( "driver_loopback_queue_grows_from_a_small_create\n" );
+    printf( "driver_loopback_runtime_does_not_allocate\n" );
 }
 
 static void driver_loopback_destroy_frees_the_port()
@@ -607,6 +620,21 @@ static void server_counts_zero_length_datagram_as_too_short()
     rocketnet_server_transport_destroy( server );
     printf( "server_counts_zero_length_datagram_as_too_short\n" );
 }
+
+// Both endpoint-count cases intentionally fill the process-wide table. Use
+// the same full-queue byte calculation as loopback_create, including each
+// SDK allocation header, plus 32 MiB for the executable, CRT bookkeeping,
+// static endpoint table and the cases' small driver/address/batch arrays.
+// The workload and endpoint counts stay unchanged. Native Debug fills every
+// allocation; an additional unplanned 64 MiB must exceed this bound.
+static long loopback_full_table_rss_bound_mb()
+{
+    const uint64_t endpoint_bytes = rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) + rocketnet_allocation_overhead();
+    return suite_rss_bound_mb( (uint64_t) ROCKETNET_LOOPBACK_MAX_ENDPOINTS * endpoint_bytes, 32 );
+}
+
+SUITE_CASE_RSS_BOUND( driver_loopback_holds_max_clients_plus_server, loopback_full_table_rss_bound_mb );
+SUITE_CASE_RSS_BOUND( driver_loopback_refuses_past_max_endpoints, loopback_full_table_rss_bound_mb );
 
 static void driver_loopback_holds_max_clients_plus_server()
 {
@@ -908,7 +936,7 @@ REGISTER_UNIT_TEST( driver_loopback_binds_and_discovers_a_port );
 REGISTER_UNIT_TEST( driver_loopback_exchanges_both_ways );
 REGISTER_UNIT_TEST( driver_loopback_dual_stack_serves_ipv4_and_ipv6 );
 REGISTER_UNIT_TEST( driver_loopback_full_queue_drops_and_counts );
-REGISTER_UNIT_TEST( driver_loopback_queue_grows_from_a_small_create );
+REGISTER_UNIT_TEST( driver_loopback_runtime_does_not_allocate );
 REGISTER_UNIT_TEST( driver_loopback_destroy_frees_the_port );
 REGISTER_UNIT_TEST( server_counts_zero_length_datagram_as_too_short );
 REGISTER_UNIT_TEST( driver_loopback_holds_max_clients_plus_server );

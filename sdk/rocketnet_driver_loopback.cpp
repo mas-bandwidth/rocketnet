@@ -34,7 +34,6 @@ struct rocketnet_loopback_endpoint_t
     uint32_t head;
     uint32_t tail;
     uint32_t count;
-    uint32_t capacity;
     rocketnet_loopback_packet_t * packets;
     bool live;
 };
@@ -132,46 +131,17 @@ static rocketnet_loopback_endpoint_t * loopback_find_destination( rocketnet_loop
     return NULL;
 }
 
-// Grows a full queue toward ROCKETNET_LOOPBACK_QUEUE_PACKETS, doubling its
-// capacity and moving the queued datagrams to the front in arrival order.
-// Returns false when the queue is already at ROCKETNET_LOOPBACK_QUEUE_PACKETS
-// or the allocation is refused; the caller then drops the datagram and counts
-// it, as at the ceiling. Called with the table mutex held.
-
-static bool loopback_queue_grow( rocketnet_loopback_endpoint_t * ep )
-{
-    if ( ep->capacity >= ROCKETNET_LOOPBACK_QUEUE_PACKETS )
-        return false;
-    uint32_t capacity = ep->capacity * 2;
-    if ( capacity > ROCKETNET_LOOPBACK_QUEUE_PACKETS )
-        capacity = ROCKETNET_LOOPBACK_QUEUE_PACKETS;
-    rocketnet_loopback_packet_t * packets = (rocketnet_loopback_packet_t*) rocketnet_malloc( ep->context,
-        sizeof( rocketnet_loopback_packet_t ) * capacity );
-    if ( !packets )
-        return false;
-    for ( uint32_t i = 0; i < ep->count; ++i )
-        packets[i] = ep->packets[( ep->head + i ) % ep->capacity];
-    rocketnet_free( ep->context, ep->packets );
-    ep->packets = packets;
-    ep->capacity = capacity;
-    ep->head = 0;
-    ep->tail = ep->count;
-    return true;
-}
-
-// The queue slot the next datagram to this endpoint goes in, or NULL when it
-// is dropped: the queue holds ROCKETNET_LOOPBACK_QUEUE_PACKETS datagrams, or
-// it is full below that and could not grow. Counts the drop.
+// The next queue slot, or NULL after counting a drop at the fixed ceiling.
+// All queue storage is allocated at create; traffic never allocates.
 
 static rocketnet_loopback_packet_t * loopback_queue_tail( rocketnet_loopback_endpoint_t * dst )
 {
-    if ( dst->count >= ROCKETNET_LOOPBACK_QUEUE_PACKETS ||
-         ( dst->count == dst->capacity && !loopback_queue_grow( dst ) ) )
+    if ( dst->count >= ROCKETNET_LOOPBACK_QUEUE_PACKETS )
     {
         ++dst->dropped;
         return NULL;
     }
-    return &dst->packets[dst->tail % dst->capacity];
+    return &dst->packets[dst->tail % ROCKETNET_LOOPBACK_QUEUE_PACKETS];
 }
 
 size_t rocketnet_loopback_queue_bytes( int packets )
@@ -235,10 +205,9 @@ static void * loopback_create( void * context, rocketnet_address_t * bind )
 
     rocketnet_loopback_endpoint_t * ep = &state.endpoints[slot];
     ep->packets = (rocketnet_loopback_packet_t*) rocketnet_malloc( context,
-        sizeof( rocketnet_loopback_packet_t ) * ROCKETNET_LOOPBACK_QUEUE_INITIAL_PACKETS );
+        rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) );
     if ( !ep->packets )
         return NULL;
-    ep->capacity = ROCKETNET_LOOPBACK_QUEUE_INITIAL_PACKETS;
     ep->context = context;
     ep->bind = *bind;
     ep->dropped = 0;
@@ -325,7 +294,7 @@ static int loopback_server_receive_batch( void * driver, rocketnet_address_t * f
     int received = 0;
     while ( received < count && ep->count > 0 )
     {
-        rocketnet_loopback_packet_t * packet = &ep->packets[ep->head % ep->capacity];
+        rocketnet_loopback_packet_t * packet = &ep->packets[ep->head % ROCKETNET_LOOPBACK_QUEUE_PACKETS];
         if ( stride <= 0 || packet->bytes <= 0 || packet->bytes > stride )
         {
             ++ep->dropped;
@@ -350,7 +319,7 @@ static int loopback_client_receive( void * driver, rocketnet_address_t * from, u
     rocketnet_platform_mutex_guard( &state.mutex );
     if ( ep->count == 0 )
         return 0;
-    rocketnet_loopback_packet_t * packet = &ep->packets[ep->head % ep->capacity];
+    rocketnet_loopback_packet_t * packet = &ep->packets[ep->head % ROCKETNET_LOOPBACK_QUEUE_PACKETS];
     if ( packet->bytes > capacity )
     {
         ++ep->dropped;

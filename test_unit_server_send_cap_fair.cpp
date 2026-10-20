@@ -477,7 +477,7 @@ static void send_capacity_default_config( rocketnet_server_transport_config_t * 
 // rocketnet_server_transport_memory_plan's total for the case's
 // configuration, planned with the portable driver because the plan has no
 // row for the loopback driver, plus one loopback endpoint's create-time queue
-// (rocketnet_loopback_queue_bytes at ROCKETNET_LOOPBACK_QUEUE_INITIAL_PACKETS),
+// (rocketnet_loopback_queue_bytes at ROCKETNET_LOOPBACK_QUEUE_PACKETS),
 // plus a stated 32 MiB margin for the process itself. A regression above the
 // plan fails the case.
 static long send_capacity_default_rss_bound_mb()
@@ -487,7 +487,7 @@ static long send_capacity_default_rss_bound_mb()
     rocketnet_server_memory_plan_t plan;
     if ( !rocketnet_server_transport_memory_plan( &config, "portable", plan ) )
         return 0;
-    const uint64_t endpoint = rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_INITIAL_PACKETS ) + rocketnet_allocation_overhead();
+    const uint64_t endpoint = rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) + rocketnet_allocation_overhead();
     return suite_rss_bound_mb( plan.total_bytes + endpoint, 32 );
 }
 
