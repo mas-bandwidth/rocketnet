@@ -4,11 +4,14 @@
 The script enables the Handles, Heaps, Locks, Memory, TLS, Threadpool and Leak
 layers for the executable's image name, sets every stop those layers issue to
 log to the verifier log file without a debugger (a stop ends the run with
-STATUS_VERIFIER_STOP after it is logged), runs the executable, exports the verifier log to XML and disables verification
-for the image again on every exit path. It exits non-zero when the executable
-fails, when the log is not exported, or when the log holds any verifier stop,
-printing one line per stop with
-its layer, stop code and top frames.
+STATUS_VERIFIER_STOP after it is logged), runs the executable, exports the
+verifier log of every process the run starts with that image name (one log per
+process: the suite runners start one child per case) to XML and disables
+verification for the image again on every exit path. It exits non-zero when the
+executable fails, when no log is exported, or when any log holds a verifier
+stop, printing one line per stop with its layer, stop code and top frames.
+--xml FILE keeps the most recent log at FILE and the Nth log before it at FILE's
+stem plus .N.
 
 usage: python tools/windows/appverif_run.py [--xml FILE] [--timeout SECONDS] -- EXE [ARGS...]
 
@@ -143,6 +146,41 @@ def parse_stops(xml_path: Path) -> list:
     return stops
 
 
+def log_path_for(xml_path: Path, offset: int) -> Path:
+    if offset == 0:
+        return xml_path
+    return xml_path.with_name(f"{xml_path.stem}.{-offset}{xml_path.suffix}")
+
+
+def export_logs(appverif: str, image_name: str, exe_path: Path, xml_path: Path) -> list:
+    """Export every verifier log of the image, the most recent first.
+
+    appverif keeps one log per process, and `-export log` exports only the most
+    recent one; Log=-N names the Nth log before it and fails once no log is
+    left. Every process the run starts with this image name (the suite runners
+    start one child per case) has its own log. The logs are deleted before the
+    run, so every log exported belongs to it.
+    """
+    paths = []
+    offset = 0
+    while True:
+        path = log_path_for(xml_path, offset)
+        if path.exists():
+            path.unlink()
+        proc = appverif_call(
+            appverif,
+            [
+                "-export", "log", "-for", image_name,
+                "-with", f"To={path}", f"Symbols={exe_path.parent}", f"Log={offset}",
+            ],
+            check=False,
+        )
+        if proc.returncode != 0 or not path.is_file():
+            return paths
+        paths.append(path)
+        offset -= 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Run an executable under Application Verifier Basics and fail on any stop."
@@ -204,19 +242,12 @@ def main() -> int:
             timed_out = True
         elapsed = time.monotonic() - start
 
-        if xml_path.exists():
-            xml_path.unlink()
-        appverif_call(
-            appverif,
-            [
-                "-export", "log", "-for", image_name,
-                "-with", f"To={xml_path}", f"Symbols={exe_path.parent}",
-            ],
-            check=False,
-        )
-        if not xml_path.is_file():
-            raise RuntimeError(f"verifier log for {image_name} was not exported to {xml_path}")
-        stops = parse_stops(xml_path)
+        log_paths = export_logs(appverif, image_name, exe_path, xml_path)
+        if not log_paths:
+            raise RuntimeError(f"no verifier log for {image_name} was exported to {xml_path}")
+        for log_path in log_paths:
+            stops.extend(parse_stops(log_path))
+        print(f"appverif_run: {image_name} exported {len(log_paths)} verifier logs, one per process")
     except RuntimeError as error:
         print(f"appverif_run: {error}", file=sys.stderr)
         exit_code = exit_code if exit_code not in (None, 0) else 2
