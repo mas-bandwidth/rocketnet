@@ -607,6 +607,12 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
 
+      # rocketnet.h alone under MSVC cl, and a C and a C++ client and server
+      # built from only the header and the prebuilt static library (seconds)
+      - name: Check the public header is clean and self-contained
+        if: matrix.leg == 'a'
+        run: python tools/check_public_header.py --build build --config Release
+
       - name: Replay the fuzz corpora without libFuzzer
         shell: bash
         run: |

@@ -10,8 +10,17 @@ See [BUILDING.md](BUILDING.md). Binaries land in `bin/`, and on Windows in
 
 ## Documentation
 
+- [AGENTS.md](AGENTS.md) — guide for AI coding agents integrating RocketNet into a game.
 - [USAGE.md](USAGE.md) — how to drive it: the frame, the delivered-batch and
   burned-sequence contracts, configuration, and driver selection.
+- [docs/LINUX.md](docs/LINUX.md) — the Linux server guide: the transport ladder
+  (`xdp`, `gso`, `io_uring`, `portable`) and pinning, host requirements,
+  provisioning, socket errors and ICMP, limits, containers, and verifying a host.
+- [docs/MACOS.md](docs/MACOS.md) — building on macOS, the msgx and portable
+  transports, App Nap and QoS, socket errors, the firewall prompt, lldb and
+  verification on a Mac.
+- [docs/PLATFORMS.md](docs/PLATFORMS.md) — supported, nightly, and unsupported platform rows and the CI workflows that prove them.
+- [DRIVERS.md](DRIVERS.md) — native transport driver registry, capabilities, and extension interface.
 - [sdk/rocketnet.h](sdk/rocketnet.h) — the public header, and the authority
   wherever a contract is written down.
 - [examples/README.md](examples/README.md) — the feature-focused examples series, starting with hello.
