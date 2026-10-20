@@ -94,12 +94,12 @@ jobs:
         run: ./bin/Debug/test_iocp.exe
 
       - name: Run functional suite
-        timeout-minutes: 60
+        timeout-minutes: 20
         shell: bash
         run: ./bin/Debug/functional.exe
 
       - name: Functional suite with IOCP selected
-        timeout-minutes: 60
+        timeout-minutes: 20
         shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: iocp
