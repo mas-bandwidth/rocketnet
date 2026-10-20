@@ -60,7 +60,7 @@ The targets a Mac programmer uses: `bin/test` (unit suite), `bin/functional`
 (functional suite; it also runs `test_msgx`, `test_serialize` and
 `test_transport_control` as sibling executables, `functional/main.cpp`),
 `bin/test_msgx` (built only on Apple, `CMakeLists.txt`, the `if(APPLE)` block
-that adds it), `bin/test_lifecycle`, `bin/test_driver`, the
+that adds it), `bin/test_lifecycle`, `bin/test_transport`, the
 `bin/example_*` programs, `bin/soak`, `bin/soak_sim`, `bin/load` and
 `bin/transport_memory`.
 
@@ -394,7 +394,7 @@ make JOBS=4
 ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional
 ./bin/test_msgx
 ./bin/test_lifecycle
-./bin/test_driver
+./bin/test_transport
 ./bin/example_transports
 
 for pair in portable:portable portable:msgx msgx:portable msgx:msgx loopback:loopback; do
