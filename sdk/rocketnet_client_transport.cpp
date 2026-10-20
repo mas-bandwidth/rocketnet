@@ -1190,11 +1190,14 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 }
 
 // destroy bounds its two waits on the transport's own clock (docs/CLIENT-IO.md
-// _Stop and destroy order_). A live I/O thread sends a handed-off ring in one
-// step (microseconds; the I/O guard timeout is 1 ms), so a transport that has
-// not reached Sent within a second has a stuck driver. Two seconds is an
-// order of magnitude of headroom; destroy is off the frame path, so the bound
-// never delays a live shutdown.
+// _Stop and destroy order_; tla/RNClientIo.tla Timeout and DestroyWait). A
+// live I/O thread sends a handed-off ring in one step (microseconds; the I/O
+// guard timeout is 1 ms), so a transport that has not reached Sent within a
+// second has a stuck driver. Two seconds is an order of magnitude of headroom;
+// destroy is off the frame path, so the bound never delays a live shutdown.
+// The join is bounded by the I/O thread's stop check, not by this clock: a
+// thread stuck inside the driver's send never reaches the check, so the join
+// is unbounded in that case.
 const double ROCKETNET_CLIENT_DESTROY_HANDOFF_WAIT_SECONDS = 2.0;
 const double ROCKETNET_CLIENT_DESTROY_STEP_WAIT_SECONDS = 2.0;
 
@@ -1272,7 +1275,9 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
         else if ( client_transport->step_driven || client_transport->step_in_update )
         {
             // the step loop is bounded the same way: a core that never reaches
-            // EXITED (a ring stuck in flight) must not hang destroy.
+            // EXITED (a ring stuck in flight) must not hang destroy. In this
+            // mode there is no thread to join, so the transport is freed with
+            // no other thread able to touch it.
             const double deadline = client_transport->time_callback( client_transport->context ) +
                                     ROCKETNET_CLIENT_DESTROY_STEP_WAIT_SECONDS;
             while ( rocketnet_client_io_step( io, false ) != ROCKETNET_CLIENT_IO_EXITED )

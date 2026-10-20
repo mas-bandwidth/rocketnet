@@ -263,16 +263,21 @@ live shutdown. On expiry destroy gives up, logs a warning, counts the
 committed slots it drops under `SEND_RING_FULL`, and continues to Stop. Then
 it stores quit and wakes the I/O thread. The I/O thread finishes every
 handed-off ring (so the disconnect burst is sent), sends nothing new, and
-exits. The main thread joins it (the join is bounded by the thread's stop
-check: `rocketnet_client_io_step` returns EXITED once quit is set and no ring
-is in flight), then closes the transport, then frees the transport. Nothing is
-freed while the I/O thread can touch it (`FreedOnlyAfterJoin`); a committed
-slot is either handed off or, if the other ring never reaches Sent before the
-deadline, dropped and counted as above (`CommittedEventuallyHandedOff` becomes
-"eventually handed off or dropped at the deadline"). In the step-driven unit
-mode there is no I/O thread: `destroy` calls `rocketnet_client_io_step(
-transport, false )` itself in place of the sleep and the join, so the order is
-tested with no real time.
+exits. The main thread joins it, then closes the transport, then frees the
+transport. What bounds the join is the I/O thread's stop check, which runs
+between steps: `rocketnet_client_io_step` returns EXITED once quit is set and
+no ring is in flight (`sdk/rocketnet_client_io.h`, the `quitting` load at the
+top of the step and `IoExit`). A thread stuck inside the driver's `send` never
+reaches that check, so the join itself is unbounded in that case; the deadline
+bounds the last hand-off's wait, not the join. Nothing is freed while the I/O
+thread can touch it (`FreedOnlyAfterJoin`); a committed slot is either handed
+off or, if the other ring never reaches Sent before the deadline, dropped and
+counted as above (`CommittedEventuallyHandedOff` becomes "eventually handed
+off or dropped at the deadline"). In the step-driven unit mode there is no I/O
+thread: `destroy` calls `rocketnet_client_io_step( transport, false )` itself
+in place of the sleep and the join, and the exit loop breaks at its own
+deadline with no thread left to touch the transport, so the order is tested
+with no real time.
 
 ## The interface
 
@@ -676,17 +681,24 @@ is `waitReadable`. `MCRNClientIo.cfg` checks `TypeOK`, `NoReuseBeforeSent`,
 `ExposedStable`, `FreedOnlyAfterJoin`, `HandOffNeverWaits` (the main thread
 never blocks on the I/O thread), `FullWaitsOnWake` (a blocked I/O thread with
 a full buffer waits on the wake alone) and `NoReceiveStall` (while the
-transport runs, datagrams in the I/O thread's buffer always have a next step
-toward update), and under weak fairness of the I/O thread, the join, a game
+transport runs and destroy has not begun, datagrams in the I/O thread's
+buffer always have a next step toward update), and under weak fairness of the I/O thread, the join, a game
 thread's finish of its packet, the reopen, the hand-off and update's two
 receive steps `HandedOffEventuallySent`, `CommittedEventuallyHandedOff` (a
-committed slot, deferred or not, is eventually handed to the I/O thread),
-`StopEventuallyJoins`, `FilledEventuallyExposed` (a buffer of received
-datagrams is eventually exposed) and `ArrivedEventuallyDelivered` (every
-datagram that arrives reaches update). The five reversed witnesses,
+committed slot, deferred or not, is eventually handed to the I/O thread, or
+dropped by destroy at the deadline and counted), `StopEventuallyJoins`,
+`FilledEventuallyExposed` (a buffer of received datagrams is eventually
+exposed), `ArrivedEventuallyDelivered` (every datagram that arrives reaches
+update) and `DestroyCompletes` (once destroy has begun it reaches Stop, Join
+and Free). Destroy's last hand-off waits in `DestroyWait`; the transport clock
+is `now`, capped at `Deadline`, and `Timeout` at the deadline drops the
+committed slots of the Filling ring into `dropped` and continues to Stop,
+Join and Free (`DroppedAtDeadline`). The five reversed witnesses,
 `MCRNClientIoBrokenReuseBeforeSent.cfg`,
 `MCRNClientIoBrokenSwapWhileReading.cfg`,
 `MCRNClientIoBrokenReceiveStall.cfg`,
 `MCRNClientIoBrokenHandOffWaits.cfg` and
 `MCRNClientIoBrokenFullWaitReadable.cfg`, each violate exactly their declared
-invariant.
+invariant; `MCRNClientIoBrokenDestroyWaitsForever.cfg` removes the fairness of
+the wait's two exits (`SpecNoDeadline`) and fails `DestroyCompletes`, the
+reversed witness of the deadline.
