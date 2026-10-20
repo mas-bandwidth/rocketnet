@@ -231,12 +231,11 @@ static void rocketnet_platform_network_thread_priority( rocketnet_platform_threa
 
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
-#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
-
-// A POSIX send that answers -1 drops its datagram: the drop is counted on the
-// socket that made it, so a caller can price what the kernel refused (ENOBUFS
-// from a full interface queue, EAGAIN from a full send buffer, a refused
-// destination). Atomic: the client's I/O thread and the main thread both read.
+// A send that answers -1 (SOCKET_ERROR on Windows) drops its datagram: the
+// drop is counted on the socket that made it, so a caller can price what the
+// kernel refused (ENOBUFS from a full interface queue, EAGAIN from a full send
+// buffer, a refused destination). Atomic: the client's I/O thread and the
+// main thread both read.
 
 static inline void rocketnet_platform_note_send_failure( rocketnet_platform_socket_t * socket )
 {
@@ -246,10 +245,8 @@ static inline void rocketnet_platform_note_send_failure( rocketnet_platform_sock
 uint64_t rocketnet_platform_socket_send_failures( rocketnet_platform_socket_t * socket )
 {
     rocketnet_assert( socket );
-    return __atomic_load_n( &socket->send_failures, __ATOMIC_RELAXED );
+    return rocketnet_platform_atomic_load_u64( &socket->send_failures );
 }
-
-#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 // Test-only send-failure seam, compiled into the development library only.
 // The next N sendto and sendmsg_x calls on one socket report the chosen errno
@@ -3852,6 +3849,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
         return NULL;
 
     s->context = context;
+    s->send_failures = 0;
 
     rocketnet_assert( address );
     rocketnet_assert( address->type != ROCKETNET_ADDRESS_NONE );
@@ -3883,6 +3881,18 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
     BOOL bNewBehavior = FALSE;
     DWORD dwBytesReturned = 0;
     WSAIoctl( s->handle, SIO_UDP_CONNRESET, &bNewBehavior, sizeof(bNewBehavior), NULL, 0, &dwBytesReturned, NULL, NULL );
+
+    // own the port exclusively: without SO_EXCLUSIVEADDRUSE another local
+    // process binds the same port with SO_REUSEADDR and takes its datagrams.
+    // set before bind, as the IOCP and RIO drivers do.
+
+    BOOL exclusive = TRUE;
+    if ( setsockopt( s->handle, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*)( &exclusive ), sizeof( exclusive ) ) != 0 )
+    {
+        rocketnet_error( "failed to set socket exclusive address use" );
+        rocketnet_platform_socket_destroy( s );
+        return NULL;
+    }
 
     // set ipv6 sockets as dual stack
 
@@ -4033,6 +4043,22 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket )
     rocketnet_free( socket->context, socket );
 }
 
+// A Winsock sendto that answers SOCKET_ERROR drops its datagram: count it on
+// the socket, and log the error WSAGetLastError() reports (Winsock leaves
+// errno untouched), read by the caller before any other call can replace it.
+static void rocketnet_platform_windows_send_failed( rocketnet_platform_socket_t * socket, const rocketnet_address_t * to, int error )
+{
+    rocketnet_platform_note_send_failure( socket );
+    char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    rocketnet_address_to_string( to, address_string );
+    char error_string[256] = { 0 };
+    const DWORD length = FormatMessageA( FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, (DWORD) error,
+        MAKELANGID( LANG_NEUTRAL, SUBLANG_DEFAULT ), error_string, (DWORD) sizeof( error_string ), NULL );
+    for ( DWORD i = length; i > 0 && ( error_string[i - 1] == '\r' || error_string[i - 1] == '\n' || error_string[i - 1] == ' ' ); --i )
+        error_string[i - 1] = '\0';
+    rocketnet_debug( "sendto (%s) failed: WSA error %d: %s", address_string, error, error_string );
+}
+
 void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket, const rocketnet_address_t * input_to, const void * packet_data, int packet_bytes )
 {
     rocketnet_assert( socket );
@@ -4061,14 +4087,8 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
         }
         socket_address.sin6_port = rocketnet_platform_htons( to.port );
         int result = sendto( socket->handle, (char*)(packet_data), packet_bytes, 0, (sockaddr*)(&socket_address), sizeof(sockaddr_in6) );
-        if ( result < 0 )
-        {
-            char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-            rocketnet_address_to_string( &to, address_string );
-            char error_string[256] = { 0 };
-            strerror_s( error_string, sizeof(error_string), errno );
-            rocketnet_debug( "sendto (%s) failed: %s", address_string, error_string );
-        }
+        if ( result == SOCKET_ERROR )
+            rocketnet_platform_windows_send_failed( socket, &to, WSAGetLastError() );
     }
     else
     {
@@ -4077,14 +4097,8 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
             sockaddr_in socket_address;
             rocketnet_platform_address_to_sockaddr_in( &to, &socket_address );
             int result = sendto( socket->handle, (const char*)(packet_data), packet_bytes, 0, (sockaddr*)(&socket_address), sizeof(sockaddr_in) );
-            if ( result < 0 )
-            {
-                char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-                rocketnet_address_to_string( &to, address_string );
-                char error_string[256] = { 0 };
-                strerror_s( error_string, sizeof(error_string), errno );
-                rocketnet_debug( "sendto (%s) failed: %s", address_string, error_string );
-            }
+            if ( result == SOCKET_ERROR )
+                rocketnet_platform_windows_send_failed( socket, &to, WSAGetLastError() );
         }
         else
         {

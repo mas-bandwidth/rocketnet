@@ -409,18 +409,17 @@ void rocketnet_platform_socket_send_packets( struct rocketnet_platform_socket_t 
  */
 int rocketnet_platform_socket_receive_packets( struct rocketnet_platform_socket_t * socket, struct rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets );
 
-#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 /**
  * @brief Counts the datagrams this socket's sends dropped.
  *
  * Every sendto, sendmmsg and per-packet tail of a sendmsg_x batch that
- * answers -1 drops its datagram and increments the count, including the test
- * seam's injected errors. Monotonic for the socket's life.
+ * answers -1 (SOCKET_ERROR on Windows) drops its datagram and increments the
+ * count, including the test seam's injected errors. Monotonic for the
+ * socket's life.
  * @param socket Live socket; must be non-NULL.
  * @return Number of dropped datagrams since the socket was created.
  */
 uint64_t rocketnet_platform_socket_send_failures( struct rocketnet_platform_socket_t * socket );
-#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 /**
@@ -973,6 +972,7 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
         void * context;
         bool ipv6;
         rocketnet_platform_socket_handle_t handle;
+        uint64_t send_failures;     // datagrams a failed send dropped; atomic, monotonic
     };
 
     struct rocketnet_platform_thread_t
