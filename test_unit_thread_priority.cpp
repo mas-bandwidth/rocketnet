@@ -131,6 +131,9 @@ static void priority_fake_install( bool fail )
     priority_fake_table.time_begin_period = priority_fake_time_begin_period;
     priority_fake_table.time_end_period = priority_fake_time_end_period;
     priority_fake_table.timer_frequency = priority_fake_timer_frequency;
+    priority_fake_table.mutex_init = rocketnet_platform_priority_calls_real()->mutex_init;
+    priority_fake_table.platform_start = rocketnet_platform_priority_calls_real()->platform_start;
+    priority_fake_table.create_waitable_timer = rocketnet_platform_priority_calls_real()->create_waitable_timer;
     priority_fake_count = 0;
     priority_fake_fail = fail;
     memset( priority_fake_calls, 0, sizeof( priority_fake_calls ) );
