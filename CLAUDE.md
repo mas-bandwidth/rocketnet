@@ -13,8 +13,8 @@ layouts with no schema or bit-packing dependency.
 
 The public client and server objects own connection, security, message and
 transport state. Public calls do bounded work and do not block. All regular
-memory is planned and allocated at create through the caller allocator; frame
-calls do not allocate. Background transport threads communicate through
+memory uses the caller allocator, including documented runtime allocation;
+capacity, failure and lifetime remain explicit. Background transport threads communicate through
 bounded handoffs and are invisible to the public frame order.
 
 ## Layers
@@ -55,8 +55,9 @@ keys. Never weaken the production handshake to make an example convenient.
 - Preserve one source of truth for constants, config defaults, environment
   names and status values.
 - Refuse invalid configuration; do not clamp or silently fall back from a pin.
-- Preserve fixed capacity and overflow-safe size planning before allocation.
-- Use `rocketnet_malloc` and `rocketnet_free` for ordinary memory.
+- Preserve bounded capacity and overflow-safe size planning before allocation.
+- Use `rocketnet_malloc` and `rocketnet_free` for every ordinary allocation,
+  including runtime allocation. Document which call allocates and frees it.
 - Pass time into state machines; do not read wall time inside protocol logic.
 - Keep packet parsing bounded and validate every peer-controlled length and
   index before use.

@@ -10,8 +10,9 @@ in `sdk/rocketnet.h`; no C++ type crosses it.
   to the caller.
 - Public calls perform bounded work and do not block. Create and the main frame
   calls are intended to be unnoticeable in a game profiler.
-- An endpoint allocates its bounded storage at create. Frame calls allocate
-  nothing.
+- Ordinary memory, whether allocated at create or during a documented runtime
+  lifecycle, uses the caller allocator. Capacity and failure are bounded and
+  reported; no component may hide an allocation outside those hooks.
 - The caller supplies monotonic time to update and follows the five-step frame
   order documented in `AGENTS.md` and `USAGE.md`.
 - The API reports specific create, lifecycle and configuration refusals through

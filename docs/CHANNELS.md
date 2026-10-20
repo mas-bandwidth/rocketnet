@@ -62,8 +62,9 @@ capacity, protocol failures and API misuse. The enum comments in
 ## Memory and failure
 
 Message stores, queues, delivery batches, receipt rings, replay windows and
-reassembly slots are allocated at create from the public config. Frame calls
-allocate nothing and do not block. Exhausting connection message memory ends
+reassembly slots have bounded capacity derived from the public config. Their
+storage lifecycle uses the caller allocator and a refused allocation is
+reported. Message frame calls do not block. Exhausting connection message memory ends
 that connection with
 `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED`. Unreliable work may be
 dropped at its documented bounded queues; reliable work is retained until it
