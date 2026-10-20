@@ -23,7 +23,10 @@ if [ "$RUNS" -lt 2 ]; then
     exit 2
 fi
 
-WORK="$(mktemp -d)"
+# the runs keep their reports under build/, inside the checkout
+WORK="$ROOT/build/docs-deterministic.$$"
+rm -rf "$WORK"
+mkdir -p "$WORK"
 trap 'rm -rf "$WORK"' EXIT INT TERM
 
 run=1
