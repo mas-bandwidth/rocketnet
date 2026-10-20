@@ -257,16 +257,26 @@ static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char 
     posix_check( pair->client != NULL );
     pair->client_socket = posix_new_socket( before, num_before );
 
-    const double deadline = rocketnet_platform_time() + 10.0;
+    const double start = rocketnet_platform_time();
+    const double deadline = start + 10.0;
+    int connect_updates = 0;
     while ( rocketnet_platform_time() < deadline )
     {
         posix_pair_update( pair );
+        connect_updates++;
         if ( rocketnet_client_transport_state( pair->client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( pair->server ) == 1 )
             break;
         rocketnet_platform_sleep( 0.001 );
     }
     pair->client_index = rocketnet_client_transport_client_index( pair->client );
+    if ( pair->client_index < 0 )
+    {
+        printf( "connect did not complete: ipv%d server=%s client=%s client state %d, server connected %d, %d updates in %.3f s\n",
+                ipv6 ? 6 : 4, server_driver, client_driver, (int) rocketnet_client_transport_state( pair->client ),
+                rocketnet_server_transport_num_connected_clients( pair->server ), connect_updates, rocketnet_platform_time() - start );
+        fflush( stdout );
+    }
     posix_check( pair->client_index >= 0 );
     posix_pair_check_connected( pair );
 }
