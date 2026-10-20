@@ -308,11 +308,6 @@ static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char 
     pair->server_pump = server_pump;
     pair->client_pump = client_pump;
 
-    if ( pump_override )
-        setenv( "ROCKETNET_PUMP", pump_override, 1 );
-    else
-        unsetenv( "ROCKETNET_PUMP" );
-
     // each cell names the drivers it tests, so a transport pin in the
     // environment (ROCKETNET_SERVER_TRANSPORT, ROCKETNET_CLIENT_TRANSPORT)
     // is lifted for the two creates below and restored after them, as
@@ -408,7 +403,6 @@ static void posix_pair_destroy( struct posix_pair_t * pair )
 {
     rocketnet_client_transport_destroy( pair->client );
     rocketnet_server_transport_destroy( pair->server );
-    unsetenv( "ROCKETNET_PUMP" );
 }
 
 // ---------------------------------------------------
@@ -709,7 +703,7 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_dri
 
     printf( "  %s %s server=%s%s client=%s%s: pump %s/%s too_short %llu too_large %llu wrong_epoch %llu wrong_value %llu driver_size %llu valid %d\n",
             at_server ? "server-cell" : "client-cell", ipv6 ? "ipv6" : "ipv4", server_driver, posix_weather_note, client_driver,
-            pump_override ? " ROCKETNET_PUMP=portable" : "", pair.server_pump ? pair.server_pump : server_driver, pair.client_pump,
+            pump_override ? " forced-portable" : "", pair.server_pump ? pair.server_pump : server_driver, pair.client_pump,
             (unsigned long long) expect.too_short, (unsigned long long) expect.too_large,
             (unsigned long long) expect.wrong_epoch, (unsigned long long) expect.wrong_value,
             (unsigned long long) expect.driver_size, valid_seen );
@@ -740,7 +734,6 @@ void rocketnet_test_posix_server_receive_weather()
         posix_weather_cell( ipv6, 1, "portable", "portable", NULL, "portable", "portable" );
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
         posix_weather_cell( ipv6, 1, "msgx", "portable", NULL, posix_msgx_pump(), "portable" );
-        posix_weather_cell( ipv6, 1, "auto", "portable", "portable", "portable", "portable" );
 #endif
 #if defined(__linux__)
         // gso, then gso forced to its plain tiers (no UDP_SEGMENT, no

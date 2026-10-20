@@ -48,7 +48,6 @@ static void drain(rocketnet_platform_socket_t * socket, const rocketnet_address_
 
 int main()
 {
-    unsetenv("ROCKETNET_PUMP");
     rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_NONE);
     CHECK(rocketnet_init( NULL ) == ROCKETNET_STATUS_OK);
     rocketnet_forbid_xdp_commit();
