@@ -1086,7 +1086,7 @@ void rocketnet_test_transport_start_finish_shape()
     rocketnet_check( ( (uintptr_t) ( frame + context.payload_index ) % 16 ) == 0 );
     rocketnet_check( context.payload_capacity == ROCKETNET_MAX_PAYLOAD_BYTES );
     rocketnet_check( context.payload_capacity % 8 == 0 );
-    rocketnet_check( context.sequence > 0 );
+    rocketnet_check( context.sequence == 0 );
 
     // Packet metadata is a view, never authority over native storage.
     int checked_capacity = 0;
@@ -1876,10 +1876,11 @@ void rocketnet_test_transport_update_time_clamped()
 
 void rocketnet_test_transport_packet_loss_stats()
 {
-    // packet loss measured under a lossy sequence, deterministically: a
-    // sequence started and aborted on the server is burned unsent, so the
-    // client sees a gap in the session sequence over a perfect wire. clean
-    // traffic first proves zero; the burns prove loss shows up.
+    // packet loss measured under a lossy sequence, deterministically: the
+    // server assigns a sequence only when finish commits the payload, so an
+    // aborted start leaves no gap and the client sees zero loss over a
+    // perfect wire. clean traffic proves zero first, and the aborts stay
+    // at zero.
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
@@ -1943,8 +1944,9 @@ void rocketnet_test_transport_packet_loss_stats()
     rocketnet_client_transport_stats( client, &client_stats );
     rocketnet_check( client_stats.packet_loss == 0.0f );
 
-    // burn ten sequences unsent, then enough delivered traffic to carry the
-    // loss tracker's sweep past its safety margin
+    // abort ten starts on the server: each takes no sequence, then enough
+    // delivered traffic carries the loss tracker's sweep past its safety
+    // margin
 
     for ( int i = 0; i < 10; i++ )
     {
@@ -1964,8 +1966,7 @@ void rocketnet_test_transport_packet_loss_stats()
     }
 
     rocketnet_client_transport_stats( client, &client_stats );
-    rocketnet_check( client_stats.packet_loss > 0.0f );
-    rocketnet_check( client_stats.packet_loss < 100.0f );
+    rocketnet_check( client_stats.packet_loss == 0.0f );
 
     rocketnet_client_transport_disconnect( client );
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
@@ -8760,19 +8761,34 @@ void rocketnet_functional_prepare()
         rocketnet_functional_environment = new rocketnet_test_environment_t();
 }
 
-int rocketnet_functional_test_count()
+// the hard-killed peer and ICMP-error cases (functional/posix_hard_killed_peer.cpp)
+// are a generated table of their own, one case per transport cell, after the
+// static table
+
+int rocketnet_posix_hard_killed_peer_test_count();
+const char * rocketnet_posix_hard_killed_peer_test_name( int index );
+void rocketnet_posix_hard_killed_peer_test_run( int index );
+
+static int rocketnet_functional_static_test_count()
 {
     return (int) ( sizeof( rocketnet_functional_tests ) / sizeof( rocketnet_functional_tests[0] ) );
 }
 
+int rocketnet_functional_test_count()
+{
+    return rocketnet_functional_static_test_count() + rocketnet_posix_hard_killed_peer_test_count();
+}
+
 const char * rocketnet_functional_test_name( int index )
 {
+    if ( index >= rocketnet_functional_static_test_count() )
+        return rocketnet_posix_hard_killed_peer_test_name( index - rocketnet_functional_static_test_count() );
     return rocketnet_functional_tests[index].name;
 }
 
 int rocketnet_functional_run_named( const char * name )
 {
-    for ( int i = 0; i < rocketnet_functional_test_count(); i++ )
+    for ( int i = 0; i < rocketnet_functional_static_test_count(); i++ )
     {
         if ( strcmp( rocketnet_functional_tests[i].name, name ) != 0 )
             continue;
@@ -8780,6 +8796,16 @@ int rocketnet_functional_run_named( const char * name )
         rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s", name );
         fflush( stdout );
         rocketnet_functional_tests[i].function();
+        return 0;
+    }
+    for ( int i = 0; i < rocketnet_posix_hard_killed_peer_test_count(); i++ )
+    {
+        if ( strcmp( rocketnet_posix_hard_killed_peer_test_name( i ), name ) != 0 )
+            continue;
+        rocketnet_test_log_ring_clear();
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s", name );
+        fflush( stdout );
+        rocketnet_posix_hard_killed_peer_test_run( i );
         return 0;
     }
     fprintf( stderr, "unknown functional test %s\n", name );
