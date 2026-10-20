@@ -33,6 +33,20 @@ template<int NumBuffers> struct rocketnet_send_handoff_t
         ++count;
         filling = -1;
     }
+    // tla/SendHandoff.tla: reopen takes the newest queued generation, never
+    // the front. The producer asks for storage while every generation is
+    // queued (two flushes inside one worker latency). The newest queued
+    // generation is not the front, so the worker has not started it: hand it
+    // back to the producer, which stages after its packets until the next
+    // publish. -1 when only the front is queued. The caller tries acquire
+    // first.
+    int reopen()
+    {
+        if (filling >= 0) return filling;
+        if (count < 2) return -1;
+        --count;
+        return filling = queued[(head + count) % NumBuffers];
+    }
     int front() const { return count ? queued[head] : -1; }
     void retire()
     {

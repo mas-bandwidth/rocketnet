@@ -796,14 +796,25 @@ or `Pending` (user, awaiting a fill reservation). Each send frame is in one of `
   keeps the batch (`:2334-2355`).
 - Main thread: `send_packets` publishes a non-empty filling generation and acquires the
   next (`:1883-1897`). A fill thread may acquire on the slow path when both are queued
-  (`:1766-1775`).
+  (`:1766-1775`). When no generation is free, `start_packet`'s slow path reopens the
+  newest queued generation and continues after its packets (`send_handoff.h:43`); the
+  front is never reopened.
 
 **Rules.**
 - `INV FrameConservation`: every UMEM frame has exactly one owner at every step
   (comment `:2159-2170`; `pending_frames.h:6-7`).
 - `INV ReleaseConsumedOnly`: the RX release covers exactly the consumed descriptors.
 - `INV HandoffNoOverwrite`: a full queue refuses new storage without overwriting a
-  queued generation (`send_handoff.h:8`).
+  queued generation (`send_handoff.h:8`); `tla/SendHandoff.tla` keeps the free,
+  filling and queued sets partitioned.
+- `INV ReopenedPrivate`: the generation reopen hands back is no longer queued and is
+  never the one in flight (`send_handoff.h:43`, `tla/SendHandoff.tla`).
+- `INV FrontNeverReopened`: reopen takes the newest queued generation, never the front
+  the worker may be draining (`send_handoff.h:43`, `tla/SendHandoff.tla`).
+- `INV PublishedPacketsStable`: a finish through a pointer from before a reopen does
+  not rewrite a packet already published (`tla/SendHandoff.tla`).
+- `LIVE EveryQueuedGenerationCompletes`: under fairness of publish, take and retire,
+  every generation that reaches the queue is retired (`tla/SendHandoff.tla`).
 - `INV RetireAfterCopy`: a generation is retired only after its last packet is in UMEM
   (`:2318-2319`).
 - `LIVE FramesReturn`: if the kernel drains the fill and TX rings fairly, every Pending
