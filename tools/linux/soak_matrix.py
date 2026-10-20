@@ -200,7 +200,7 @@ def run_xdp(cell, args):
              "--seconds", str(args.seconds), "--interval", str(args.interval),
              "--soak", args.soak, "--out", args.out] + (["--sanitized"] if args.sanitized else [])
     command = ["timeout", str(args.seconds + 600), "vng", "--run", vm_kernel, "--memory", "2048M", "--cpus", "2",
-               "--append", "irqaffinity=0 isolcpus=1 nohz_full=1", "--rwdir", ROOT, "--", "sudo"] + inner
+               "--append", "irqaffinity=0 isolcpus=1 nohz_full=1", "--rwdir", ROOT, "--rwdir", args.out, "--", "sudo"] + inner
     start = time.monotonic()
     with open(os.path.join(args.out, cell + ".vm.log"), "w") as vm_log:
         subprocess.call(command, stdout=vm_log, stderr=subprocess.STDOUT, cwd=ROOT)
