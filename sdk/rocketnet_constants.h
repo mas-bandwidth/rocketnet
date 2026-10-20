@@ -143,10 +143,9 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE == ROCK
 
 #define ROCKETNET_INTEGRITY_LIMIT                               ( 1ULL << 36 )
 
-// the ack debt threshold from the standard's timing table: a standalone ack
-// goes out at this many eliciting packets received since the last block sent
+// Any accepted eliciting packet makes an ack due on the next update.
 
-#define ROCKETNET_ACK_DEBT_THRESHOLD                                      64
+#define ROCKETNET_ACK_DEBT_THRESHOLD                                       1
 
 // the per-client statistics recompute runs round-robin, a sixth of the
 // slots per update, every slot covered -- the reference's amortization
