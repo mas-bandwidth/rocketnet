@@ -6,9 +6,11 @@
     Stands up one public server (rocketnet_server_t) and N public clients
     (rocketnet_client_t, N up to ROCKETNET_MAX_CLIENTS = 1000) in one process
     on loopback, connects every client within 10 seconds, drives the light
-    profile (10 Hz updates, one reliable-ordered message per client per update
-    in each direction) for a configured duration, and verifies five pass
-    criteria:
+    profile (10 Hz updates, one message per client per update in each
+    direction: the client-to-server message rotates through all eight
+    reliability modes via client_next_combo, and the server-to-client
+    message is reliable-ordered) for a configured duration, and verifies
+    five pass criteria:
       1. connect_within_10s
       2. no_unexpected_disconnect
       3. reliable_delivery
@@ -16,8 +18,9 @@
       5. counters_agree
 
     Configuration:
-    Both server and clients run default configurations with the following
-    explicit non-default settings for the light profile:
+    The server runs rocketnet_server_dev_config and each client runs
+    rocketnet_client_default_config, with the following explicit
+    non-default settings for the light profile:
       - server.max_clients: set to the requested client count (default 1000)
       - server.handshake_deadline_seconds: 10 (default 5, matching LOAD_CONNECT_DEADLINE_S)
     All other configuration fields retain their default values.
@@ -368,6 +371,19 @@ static int combo_is_reliable_every( uint32_t combo )
            combo == ROCKETNET_RELIABILITY_RELIABLE_ORDERED ||
            combo == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT ||
            combo == ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT;
+}
+
+static int combo_is_ordered( uint32_t combo )
+{
+    return combo == ROCKETNET_RELIABILITY_RELIABLE_ORDERED ||
+           combo == ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT;
+}
+
+static int combo_is_unreliable_family( uint32_t combo )
+{
+    return combo == ROCKETNET_RELIABILITY_UNRELIABLE ||
+           combo == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
+           combo == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
 }
 
 struct load_stream_state_t
@@ -803,11 +819,13 @@ int main( int argc, char ** argv )
                 struct rocketnet_receipt_t receipts[16];
                 (void) rocketnet_client_receipts( clients[i], receipts, 16 );
 
-                /* On each update, send one reliable-ordered message and server queues one to client */
+                /* On each update, send one message rotating through all eight
+                   reliability modes, and server queues one reliable-ordered to client */
                 if ( in_traffic_window &&
                      rocketnet_client_state( clients[i] ) == ROCKETNET_CLIENT_STATE_CONNECTED )
                 {
-                    const uint32_t combo = ROCKETNET_RELIABILITY_RELIABLE_ORDERED;
+                    const uint32_t combo = client_next_combo[i] % LOAD_NUM_COMBOS;
+                    client_next_combo[i]++;
                     struct load_stream_state_t * cst = &c2s_streams[(size_t) i * LOAD_NUM_COMBOS + combo];
                     uint8_t payload[LOAD_PAYLOAD_BYTES];
                     if ( cst->sent_count + 1 < LOAD_MAX_SEQ_TRACKED )
@@ -833,7 +851,7 @@ int main( int argc, char ** argv )
                     {
                         const uint32_t next_seq = sv_st->sent_count + 1;
                         build_message( payload, LOAD_MAGIC_SV_TO_CLIENT, (uint32_t) i, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, next_seq );
-                        uint8_t * out = rocketnet_server_start_message( server, sv_slot, (int) combo, (enum rocketnet_reliability_t) combo, LOAD_PAYLOAD_BYTES );
+                        uint8_t * out = rocketnet_server_start_message( server, sv_slot, (int) ROCKETNET_RELIABILITY_RELIABLE_ORDERED, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, LOAD_PAYLOAD_BYTES );
                         if ( out )
                         {
                             memcpy( out, payload, LOAD_PAYLOAD_BYTES );
@@ -883,27 +901,67 @@ int main( int argc, char ** argv )
                 {
                     if ( !rocketnet_server_client_connected( server, (uint64_t) s ) )
                         continue;
-                    const uint8_t * sdata = NULL;
-                    int sbytes = 0;
-                    while ( rocketnet_server_receive_message( server, (uint64_t) s, (int) ROCKETNET_RELIABILITY_RELIABLE_ORDERED, &sdata, &sbytes ) )
+                    for ( int ch = 0; ch < LOAD_NUM_COMBOS; ch++ )
                     {
-                        c2s_received_total++;
-                        uint32_t msg_client = 0, msg_combo = 0, msg_seq = 0;
-                        if ( !verify_message( sdata, sbytes, LOAD_MAGIC_CLIENT_TO_SV, &msg_client, &msg_combo, &msg_seq ) ||
-                             msg_client >= (uint32_t) num_clients || msg_combo != ROCKETNET_RELIABILITY_RELIABLE_ORDERED )
+                        const uint8_t * sdata = NULL;
+                        int sbytes = 0;
+                        while ( rocketnet_server_receive_message( server, (uint64_t) s, ch, &sdata, &sbytes ) )
                         {
-                            reliable_errors++;
-                        }
-                        else
-                        {
-                            struct load_stream_state_t * cst = &c2s_streams[(size_t) msg_client * LOAD_NUM_COMBOS + msg_combo];
-                            const int dup = stream_seen_test_and_set( cst, msg_seq );
-                            if ( dup != 0 || msg_seq != cst->recv_count + 1 )
+                            c2s_received_total++;
+                            uint32_t msg_client = 0, msg_combo = 0, msg_seq = 0;
+                            if ( !verify_message( sdata, sbytes, LOAD_MAGIC_CLIENT_TO_SV, &msg_client, &msg_combo, &msg_seq ) ||
+                                 msg_client >= (uint32_t) num_clients || msg_combo >= LOAD_NUM_COMBOS )
+                            {
                                 reliable_errors++;
-                            cst->recv_count++;
-                            cst->max_seq_seen = msg_seq;
+                                unreliable_errors++;
+                            }
+                            else
+                            {
+                                const int expected_rx_ch = ( msg_combo == ROCKETNET_RELIABILITY_UNRELIABLE ||
+                                                             msg_combo == ROCKETNET_RELIABILITY_RELIABLE ||
+                                                             msg_combo == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT ||
+                                                             msg_combo == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT ) ? 0 : (int) msg_combo;
+                                struct load_stream_state_t * cst = &c2s_streams[(size_t) msg_client * LOAD_NUM_COMBOS + msg_combo];
+                                const int dup = stream_seen_test_and_set( cst, msg_seq );
+
+                                if ( ch != expected_rx_ch )
+                                {
+                                    if ( combo_is_unreliable_family( msg_combo ) )
+                                        unreliable_errors++;
+                                    else
+                                        reliable_errors++;
+                                }
+                                else if ( combo_is_unreliable_family( msg_combo ) )
+                                {
+                                    if ( dup != 0 )
+                                        unreliable_errors++;
+                                    if ( msg_combo == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED && msg_seq <= cst->max_seq_seen )
+                                        unreliable_errors++;
+                                    if ( msg_seq > cst->max_seq_seen )
+                                        cst->max_seq_seen = msg_seq;
+                                    cst->recv_count++;
+                                }
+                                else if ( msg_combo == ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED )
+                                {
+                                    if ( dup != 0 || msg_seq <= cst->max_seq_seen )
+                                        reliable_errors++;
+                                    else
+                                        cst->max_seq_seen = msg_seq;
+                                    cst->recv_count++;
+                                }
+                                else if ( combo_is_reliable_every( msg_combo ) )
+                                {
+                                    if ( dup != 0 )
+                                        reliable_errors++;
+                                    if ( combo_is_ordered( msg_combo ) && msg_seq != cst->recv_count + 1 )
+                                        reliable_errors++;
+                                    if ( msg_seq > cst->max_seq_seen )
+                                        cst->max_seq_seen = msg_seq;
+                                    cst->recv_count++;
+                                }
+                            }
+                            rocketnet_server_release_message( server, (uint64_t) s, sdata );
                         }
-                        rocketnet_server_release_message( server, (uint64_t) s, sdata );
                     }
                 }
                 rocketnet_server_send_packets( server );
