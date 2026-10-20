@@ -933,10 +933,10 @@ void rocketnet_test_posix_transport_send_seam()
 struct posix_burst_drain_t
 {
     rocketnet_platform_socket_t * socket;
-    volatile bool stop;
-    volatile bool running;
-    volatile uint64_t received;
-    volatile uint64_t duplicates;
+    std::atomic<bool> stop;
+    std::atomic<bool> running;
+    std::atomic<uint64_t> received;
+    std::atomic<uint64_t> duplicates;
     bool seen[POSIX_BURST_SENDERS][POSIX_BURST_PACKETS];
 };
 
