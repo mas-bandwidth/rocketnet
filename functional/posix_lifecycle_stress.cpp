@@ -33,9 +33,20 @@
     clock plus the send intervals the wait has skipped (its time_callback and
     the time every update is given), and the wait skips one interval each
     time the client's state moves, so the next update sends at once. The
-    skip is Linux only: the macOS cells keep the platform clock.
+    skip runs on every platform. A connect that does not complete prints the
+    client's state, its packets sent and received, the server's packets and
+    cookie requests received during that connect, and every nonzero counter
+    of both ends, so a stall names the side that stopped.
+
+    posix_connect_disconnect_1000 holds 1024 IPv4 sockets on loopback
+    ephemeral ports while its clients cycle, as a host's other programs hold
+    them. A client whose socket shares a port with one of them never hears
+    its server, since the IPv4 datagrams to that port reach the held socket.
+    Darwin gives a dual stack IPv6 socket such a port, so the macOS client of
+    an IPv4 server binds an IPv4 socket (sdk/rocketnet_client_transport.cpp:796).
 */
 
+#include "rocketnet_counters.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
 
@@ -55,6 +66,7 @@
 #include <vector>
 
 #include <netinet/in.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 
 #if defined(__APPLE__)
@@ -531,12 +543,10 @@ static double posix_client_clock_callback( void * context )
     return posix_client_clock_now( (posix_client_clock_t*) context );
 }
 
-#if defined(__linux__)
 static void posix_client_clock_skip( posix_client_clock_t * clock )
 {
     clock->skipped.fetch_add( 1, std::memory_order_acq_rel );
 }
-#endif
 
 static rocketnet_client_transport_t * posix_client_create( const posix_cell_t * cell, const char * server_address,
                                                            posix_client_clock_t * clock )
@@ -585,13 +595,78 @@ static const char * posix_server_address( const posix_cell_t * cell, rocketnet_s
     return buffer;
 }
 
+// IPv4 sockets held on loopback ephemeral ports while the clients cycle, as
+// a host's other programs hold them (a VPN daemon's wildcard IPv4 socket was
+// the one met). A client bound to a port one of these holds never hears its
+// server: the IPv4 datagrams to that port reach the held socket.
+#define POSIX_HELD_IPV4_PORTS 1024
+
+static void posix_hold_ipv4_ports( int * sockets, int count )
+{
+    struct rlimit limit;
+    posix_check( getrlimit( RLIMIT_NOFILE, &limit ) == 0 );
+    const rlim_t wanted = (rlim_t) count + 1024;
+    if ( limit.rlim_cur < wanted )
+    {
+        limit.rlim_cur = limit.rlim_max < wanted ? limit.rlim_max : wanted;
+        posix_check( setrlimit( RLIMIT_NOFILE, &limit ) == 0 );
+    }
+    for ( int i = 0; i < count; i++ )
+    {
+        sockets[i] = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+        posix_check( sockets[i] >= 0 );
+        struct sockaddr_in address;
+        memset( &address, 0, sizeof( address ) );
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+        posix_check( bind( sockets[i], (struct sockaddr*) &address, sizeof( address ) ) == 0 );
+    }
+}
+
+static void posix_release_ipv4_ports( const int * sockets, int count )
+{
+    for ( int i = 0; i < count; i++ )
+        close( sockets[i] );
+}
+
+// a stalled connect prints the client's state and every nonzero counter of
+// the client and the server, so a stall names the side that stopped
+static void posix_print_counters( const char * side, const struct rocketnet_counters_t * counters )
+{
+    for ( int i = 0; i < rocketnet_num_counters(); i++ )
+    {
+        const uint64_t value = rocketnet_counter_value( counters, i );
+        if ( value != 0 )
+            printf( "  %s %s = %llu\n", side, rocketnet_counter_name( i ), (unsigned long long) value );
+    }
+}
+
+static void posix_print_stall( rocketnet_server_transport_t * server, rocketnet_client_transport_t * client,
+                               uint64_t server_received_before, uint64_t server_no_cookie_before )
+{
+    const int state = rocketnet_client_transport_state( client );
+    struct rocketnet_client_transport_stats_t stats;
+    rocketnet_client_transport_stats( client, &stats );
+    const struct rocketnet_counters_t * server_counters = rocketnet_server_transport_counters( server );
+    printf( "connect stalled: client state %s (%d), server connected clients %d\n", rocketnet_client_transport_state_name( state ),
+            state, rocketnet_server_transport_num_connected_clients( server ) );
+    printf( "  this connect: client packets sent %llu, received %llu; server packets received %llu, cookie requests %llu\n",
+            (unsigned long long) stats.packets_sent, (unsigned long long) stats.packets_received,
+            (unsigned long long) ( rocketnet_counter_value( server_counters, ROCKETNET_COUNTER_PACKETS_RECEIVED ) - server_received_before ),
+            (unsigned long long) ( rocketnet_counter_value( server_counters, ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE ) - server_no_cookie_before ) );
+    posix_print_counters( "client", rocketnet_client_transport_counters( client ) );
+    posix_print_counters( "server", rocketnet_server_transport_counters( server ) );
+    fflush( stdout );
+}
+
 static bool posix_wait_connected( rocketnet_server_transport_t * server, rocketnet_client_transport_t * client,
                                   posix_client_clock_t * clock, double seconds )
 {
     const double deadline = rocketnet_platform_time() + seconds;
-#if defined(__linux__)
     int previous_state = rocketnet_client_transport_state( client );
-#endif
+    const struct rocketnet_counters_t * server_counters = rocketnet_server_transport_counters( server );
+    const uint64_t server_received_before = rocketnet_counter_value( server_counters, ROCKETNET_COUNTER_PACKETS_RECEIVED );
+    const uint64_t server_no_cookie_before = rocketnet_counter_value( server_counters, ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE );
     while ( rocketnet_platform_time() < deadline )
     {
         rocketnet_client_transport_update( client, posix_client_clock_now( clock ) );
@@ -601,8 +676,10 @@ static bool posix_wait_connected( rocketnet_server_transport_t * server, rocketn
         if ( state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
             return true;
         if ( state < ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+        {
+            posix_print_stall( server, client, server_received_before, server_no_cookie_before );
             return false;
-#if defined(__linux__)
+        }
         if ( state != previous_state )
         {
             // the state moved: the next update sends without waiting out the
@@ -612,9 +689,9 @@ static bool posix_wait_connected( rocketnet_server_transport_t * server, rocketn
             posix_client_clock_skip( clock );
             continue;
         }
-#endif
         rocketnet_platform_sleep( 0.0002 );
     }
+    posix_print_stall( server, client, server_received_before, server_no_cookie_before );
     return false;
 }
 
@@ -813,19 +890,25 @@ void rocketnet_test_posix_connect_disconnect_1000()
         char server_address[64];
         posix_server_address( cell, server, server_address, sizeof( server_address ) );
 
+        static int held_ports[POSIX_HELD_IPV4_PORTS];
+        posix_hold_ipv4_ports( held_ports, POSIX_HELD_IPV4_PORTS );
+
         const double start = posix_now_seconds();
         const int count = posix_count( cell, 1000 );
         for ( int i = 0; i < count; i++ )
         {
             posix_client_clock_t clock;
             rocketnet_client_transport_t * client = posix_client_create( cell, server_address, &clock );
-            posix_check( posix_wait_connected( server, client, &clock, 5.0 ) );
+            if ( !posix_wait_connected( server, client, &clock, 5.0 ) )
+                printf( "%s [%s]: connect stalled at cycle %d\n", case_name, cell->name, i );
+            posix_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
             rocketnet_client_transport_disconnect( client );
             posix_check( posix_wait_server_empty( server, 5.0 ) );
             rocketnet_client_transport_destroy( client );
         }
         const double seconds = posix_now_seconds() - start;
 
+        posix_release_ipv4_ports( held_ports, POSIX_HELD_IPV4_PORTS );
         rocketnet_server_transport_destroy( server );
         const posix_resource_counts_t after = posix_stable_counts();
 
