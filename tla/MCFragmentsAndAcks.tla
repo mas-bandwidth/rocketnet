@@ -23,4 +23,9 @@ SpecSafety == Init /\ [][Next]_vars
 \* tautology at this packet-set size (README-FragmentsAndAcks.md).
 SpecLinkFair == Init /\ [][Next]_vars /\ Fairness /\ D2R!Fairness /\ R2D!Fairness
 
+\* Behaviors that never send an ack. An ack step does not change
+\* reassembly, and the batch-full schedule sends none, so this keeps
+\* every fragment schedule and drops the ack interleaving.
+AckLinkIdle == r2dSent = 0
+
 =============================================================================
