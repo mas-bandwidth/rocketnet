@@ -1,109 +1,88 @@
 # RocketNet v1.0.0-preview-1
 
-> Release draft: publish after the final API review and unit and functional
-> tests are green on Windows, macOS and Linux.
+Release draft. Final API review and the release unit and functional checks
+on Linux, macOS and Windows are still pending. No release tag has been made.
 
-Low-level client/server UDP transport library.
+RocketNet is a client/server UDP library for multiplayer games. It provides
+a C API that can be called from C or C++. Your game supplies message bytes,
+drives the frame loop and decides what those messages mean.
 
-This preview finalizes the public C API. Unit and functional tests pass on
-Windows, macOS and Linux. Longer soak, load and performance testing remains
-part of the work toward 1.0.0.
+## What is in this preview
 
-## The public API
+- Encrypted connections established with backend-signed connect tokens.
+- Reliable and unreliable messages, with ordering, sequencing and optional
+  delivery receipts across independent channels.
+- Message fragmentation and reassembly within configured limits.
+- In-place message writes through start, finish and abort calls.
+- Batch receives, connection state, traffic statistics and send budgets.
+- A development library with token creation and a network simulator for
+  latency, jitter, loss and duplication.
+- Static and shared libraries, CMake package support and example programs.
 
-Include `rocketnet.h` from C or C++ and link RocketNet. Initialize once with
-`rocketnet_init`, create the endpoints, and destroy them before
-`rocketnet_term`.
+The game loop has five steps. Update each endpoint, drain received messages,
+simulate the game, write outgoing messages, then send packets. Consume or
+copy each received batch before the next receive or update invalidates it.
 
-Fill each config with `rocketnet_client_default_config` or
-`rocketnet_server_default_config` before changing fields. These inline helpers
-set the first field, `config_bytes`, to the size of the caller's struct.
-A zeroed config is refused with `ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED`.
-There is one default config for each endpoint, used in development and
-production. Create allocates through the configured allocator;
-`rocketnet_client_required_memory` and `rocketnet_server_required_memory`
-report the endpoint block sizes.
+Initialize each config with its default-config function before setting the
+fields your game needs. Check status results and connection state. The
+public header describes valid ranges, defaults and ownership.
 
-The frame loop is update, receive, simulate, write outgoing messages, then
-send packets. Update returns `void`; read connection state and stats to see
-what happened. Start a message, write its bytes in place, and finish or abort
-it. Server finish and abort act on the pending message and take no destination.
-A refused finish aborts that pending message so the next start can proceed.
+## Connecting players
 
-Client failure states are negative, `DISCONNECTED` is zero, and `CONNECTED`
-is the highest state. Read the reason a client connection ended from its
-state. Client indexes are `int`; `rocketnet_client_index` returns `-1` when
-not connected. The server send destination is `uint64_t`, with the high bit
-reserved for future flow IDs; those IDs are refused in this preview.
+Your backend authenticates a player and returns an opaque connect-token
+string. The client passes that string to RocketNet. Keep the backend's
+signing secret on the backend.
 
-Read the current stats with `rocketnet_client_stats`, `rocketnet_server_stats` and
-`rocketnet_server_client_stats`, each filling its matching struct. Client
-and server stats include the process-wide API misuse and thread-priority
-refusal counters.
+A server generates a keypair when it is created. Register its public key
+and reachable addresses with your backend before issuing tokens for it.
+Development builds provide a published backend key and a token helper for
+local testing. Those development credentials are not production credentials.
 
-A send budget of `0` selects the default. `ROCKETNET_SEND_KBPS_UNLIMITED`
-selects no send budget; negative rates are refused. Configure logging
-with `rocketnet_log_level`, `rocketnet_quiet` and `rocketnet_log_function`.
-Use `rocketnet_assert_function` for assertion handling and install a custom
-allocator with `rocketnet_allocator` before initialization.
+## Platforms and transports
 
-The network simulator is a development feature. A development library has
-`rocketnet_client_network_simulator` and `rocketnet_server_network_simulator`,
-which add latency, jitter, packet loss and duplication to outgoing packets,
-and the `ROCKETNET_DEV_CLIENT_*` and `ROCKETNET_DEV_SERVER_*` environment
-variables that set the same values at create. The config structs are the same
-in development and production builds; a production library has neither the
-calls nor the variables.
+The desktop targets are Linux, macOS and Windows. The source includes these
+transports. Availability depends on the build and the host configuration.
 
-## Starting a server
+| Platform | Network transports |
+| --- | --- |
+| Linux | portable UDP, GSO, io_uring, AF_XDP |
+| macOS | portable UDP, msgx |
+| Windows | portable UDP, IOCP, RIO |
 
-Supply your backend's Ed25519 public key through
-`ROCKETNET_SERVER_BACKEND_PUBLIC_KEY`, base64-encoded, and your nonzero
-protocol ID through `ROCKETNET_SERVER_PROTOCOL_ID`, in decimal. You can also
-set these fields in the config; the environment overrides them. Keep the
-backend's signing secret on the backend.
+An in-process loopback transport is available for local integration tests.
+AF_XDP requires host provisioning and separate privileged validation. A
+successful ordinary test run does not establish AF_XDP attachment or
+line-rate throughput. See the [platform support policy](PLATFORMS.md) and
+[transport guide](../TRANSPORTS.md) for the supported configurations.
 
-Initialize the server config and call `rocketnet_server_create` with the
-server address and a status out-parameter. Check both the returned pointer
-and status. Create generates a fresh server keypair and leaves the server
-stopped. Call `rocketnet_server_start` and check its status before accepting
-clients.
+## Known issues and remaining work
 
-Read the public key with `rocketnet_server_public_key`. Once started, read
-its addresses with `rocketnet_server_ipv4_address` and
-`rocketnet_server_ipv6_address`, using buffers of
-`ROCKETNET_MAX_ADDRESS_STRING_BYTES`. A getter returns false when the server
-does not serve that family.
+This is a preview for integration and feedback. The final deliverable still
+includes hardening, longer testing and performance work.
 
-Register the public key and served addresses with your backend over your
-own authenticated channel. The backend issues connect tokens for that key
-and those addresses. The C API does not generate production connect tokens
-or expose key-generation calls. A new server object has a new keypair;
-register its public key before issuing tokens for it.
+- Frame-time targets are not yet established under a 1000-client game load.
+  Slot scans, memory resets and packet processing can cause frame spikes.
+- Client disconnect and destruction wait for the network thread to exit.
+  No shutdown time bound is promised.
+- Large server configurations can require substantial memory. Size the
+  endpoint blocks before creating them and choose limits for your game.
+- Long soaks, sustained per-transport load and privileged AF_XDP throughput
+  remain separate validation work.
+- The example soak has a known failure when many clients disconnect at once.
+  Reconnect and UDP-loopback functional cases have also shown timing failures
+  under heavy host load.
+- Protocol refusal paths, token-claim behavior and low-rate reliable-message
+  timeouts still have follow-up work recorded in the roadmap.
 
-## Connecting in development
+The [Known issues table](../ROADMAP.md#known-issues-addressed-in-the-final-deliverable)
+records the individual issues and the planned fixes. Consult it before
+choosing a deployment configuration.
 
-Build against the development library with `ROCKETNET_DEVELOPMENT` enabled.
-Use the same default config helpers. Set the server's backend public key to
-the published development key `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` from
-`rocketnet.h`
-and choose a nonzero protocol ID shared with the tokens. Start the server
-and read its generated public key and served addresses as above.
+## Getting started
 
-Call `rocketnet_create_dev_connect_token` with the IPv4 address, IPv6 address,
-server public key, lifetime in seconds, idle timeout in seconds, client ID,
-protocol ID, current Unix timestamp, optional user data, and output string.
-Pass `NULL` for an address family the server does not serve, but supply at
-least one family. Use a `char` buffer of
-`ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES` for the result and check the status.
+Use [BUILDING.md](../BUILDING.md) to build and link the library, the
+[examples](../examples/README.md) to try the frame loop, and
+[rocketnet.h](../sdk/rocketnet.h) for the API contract.
 
-Pass the resulting opaque base64 string directly to
-`rocketnet_client_connect`. The client takes a `const char *`; it does not
-need to decode the token. Drive update and send packets to complete the
-connection. Production clients receive the same kind of string from the
-backend. A production server refuses the published development key.
-
-Known issues: see [ROADMAP.md, Known issues](../ROADMAP.md#known-issues-addressed-in-the-final-deliverable).
-
-See [BUILDING.md](../BUILDING.md) to build and link, and
-[sdk/rocketnet.h](../sdk/rocketnet.h) for the full API contract.
+The release label is `v1.0.0-preview-1`. CMake's numeric package version is
+`1.0.0`; its exported version string carries the full preview label.

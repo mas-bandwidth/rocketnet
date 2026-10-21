@@ -66,30 +66,33 @@ jobs:
             major="$3"
             minor="$4"
             patch="$5"
-            prerelease="$6"
             if [ -z "$full" ] || [ -z "$major" ] || [ -z "$minor" ] || [ -z "$patch" ]; then
               echo "::error::Could not extract the $branch_name version from sdk/rocketnet.h (FULL='$full', MAJOR/MINOR/PATCH='$major.$minor.$patch') — the version macros moved and this check did not follow."
               fail=1
               return
             fi
-            echo "$branch_name: ROCKETNET_VERSION_FULL=$full  MAJOR.MINOR.PATCH=$major.$minor.$patch  PRERELEASE='$prerelease'"
-            if [ "$full" = "dev" ]; then
+            echo "$branch_name: ROCKETNET_VERSION_FULL=$full  MAJOR.MINOR.PATCH=$major.$minor.$patch"
+            if [ "$branch_name" = "development" ]; then
               # the development branch names itself rather than numbering
               # itself; its integers are the 255.255.255 sentinel
-              if [ "$major.$minor.$patch" != "255.255.255" ]; then
-                echo "::error::The development version is \"dev\" but its integers are $major.$minor.$patch, not the 255.255.255 sentinel."
+              if [ "$full" != "dev" ] || [ "$major.$minor.$patch" != "255.255.255" ]; then
+                echo "::error::The development version must be \"dev\" with the 255.255.255 sentinel (got $full and $major.$minor.$patch)."
                 fail=1
               fi
               return
             fi
-            # a release is MAJOR.MINOR.PATCH, or MAJOR.MINOR.PATCH-PRERELEASE
-            # (v1.0.0-preview-1): the prerelease rides beside the integers
-            expected="$major.$minor.$patch"
-            if [ -n "$prerelease" ]; then
-              expected="$expected-$prerelease"
+            # Derive the optional prerelease from FULL; there is no public
+            # prerelease macro in the final API.
+            if [[ ! "$full" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(-([0-9A-Za-z][0-9A-Za-z.-]*))?$ ]]; then
+              echo "::error::Invalid shipping ROCKETNET_VERSION_FULL: $full"
+              fail=1
+              return
             fi
-            if [ "$full" != "$expected" ]; then
-              echo "::error::ROCKETNET_VERSION_FULL ($full) does not start with ROCKETNET_VERSION_MAJOR/MINOR/PATCH ($expected) in the $branch_name branch of sdk/rocketnet.h."
+            numeric="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+            prerelease="${BASH_REMATCH[5]:-}"
+            echo "shipping prerelease: $prerelease"
+            if [ "$numeric" != "$major.$minor.$patch" ]; then
+              echo "::error::ROCKETNET_VERSION_FULL ($full) does not match ROCKETNET_VERSION_MAJOR/MINOR/PATCH ($major.$minor.$patch)."
               fail=1
             fi
           }
@@ -99,20 +102,18 @@ jobs:
           shipping_major=$(awk '/#if !ROCKETNET_DEVELOPMENT/,/#else/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_MAJOR[[:space:]]+([0-9]+).*/\1/p' | head -n1)
           shipping_minor=$(awk '/#if !ROCKETNET_DEVELOPMENT/,/#else/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_MINOR[[:space:]]+([0-9]+).*/\1/p' | head -n1)
           shipping_patch=$(awk '/#if !ROCKETNET_DEVELOPMENT/,/#else/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_PATCH[[:space:]]+([0-9]+).*/\1/p' | head -n1)
-          shipping_prerelease=$(printf '%s' "$shipping_full" | sed -nE 's/^[0-9]+\.[0-9]+\.[0-9]+-?//p')
 
           dev_full=$(awk '/#else \/\/\/? !ROCKETNET_DEVELOPMENT/,/#endif \/\/\/? !ROCKETNET_DEVELOPMENT/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_FULL[[:space:]]+"([^"]+)".*/\1/p' | head -n1)
           dev_major=$(awk '/#else \/\/\/? !ROCKETNET_DEVELOPMENT/,/#endif \/\/\/? !ROCKETNET_DEVELOPMENT/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_MAJOR[[:space:]]+([0-9]+).*/\1/p' | head -n1)
           dev_minor=$(awk '/#else \/\/\/? !ROCKETNET_DEVELOPMENT/,/#endif \/\/\/? !ROCKETNET_DEVELOPMENT/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_MINOR[[:space:]]+([0-9]+).*/\1/p' | head -n1)
           dev_patch=$(awk '/#else \/\/\/? !ROCKETNET_DEVELOPMENT/,/#endif \/\/\/? !ROCKETNET_DEVELOPMENT/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_PATCH[[:space:]]+([0-9]+).*/\1/p' | head -n1)
-          dev_prerelease=""
 
-          check_branch "shipping" "$shipping_full" "$shipping_major" "$shipping_minor" "$shipping_patch" "$shipping_prerelease"
-          check_branch "development" "$dev_full" "$dev_major" "$dev_minor" "$dev_patch" "$dev_prerelease"
+          check_branch "shipping" "$shipping_full" "$shipping_major" "$shipping_minor" "$shipping_patch"
+          check_branch "development" "$dev_full" "$dev_major" "$dev_minor" "$dev_patch"
 
           case "${GITHUB_REF:-}" in
             refs/tags/*)
-              tag_version="${GITHUB_REF_NAME#v}"
+              tag_version="$GITHUB_REF_NAME"
               echo "release tag: $tag_version"
               if [ "$tag_version" != "$shipping_full" ]; then
                 echo "::error::Tag $GITHUB_REF_NAME does not match the shipping version $shipping_full in sdk/rocketnet.h — bump the header as part of the release."
@@ -187,10 +188,14 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-          version=$(sed -nE 's/.*ROCKETNET_VERSION_FULL[[:space:]]+"([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)".*/\1/p' sdk/rocketnet.h | head -n1)
-          tag_version="${newest_tag#v}"
+          version=$(sed -nE 's/.*ROCKETNET_VERSION_FULL[[:space:]]+"(v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)".*/\1/p' sdk/rocketnet.h | head -n1)
+          if [ -z "$version" ]; then
+            echo "::error::Could not extract the v-prefixed shipping version from sdk/rocketnet.h."
+            exit 1
+          fi
+          tag_version="$newest_tag"
           if [ "$version" = "$tag_version" ]; then
             echo "::error::main carries $count wire-affecting commit(s) past $newest_tag and the shipping version is still $version — nothing announces that a release is owed. Bump the version and tag a release (or revert the wire change). The commit list is in the job summary."
             exit 1
           fi
-          echo "::warning::main carries $count wire-affecting commit(s) past $newest_tag. The version is already bumped to $version — tag v$version when the release is ready. The commit list is in the job summary."
+          echo "::warning::main carries $count wire-affecting commit(s) past $newest_tag. The version is already bumped to $version — tag $version when the release is ready. The commit list is in the job summary."
