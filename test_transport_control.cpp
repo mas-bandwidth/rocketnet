@@ -50,7 +50,7 @@ struct control_fixture_t
     uint8_t * lease_frames;
     int lease_starts;
     rocketnet_address_t reserved_to;
-    uint8_t frame[ROCKETNET_FRAME_STRIDE];
+    alignas(16) uint8_t frame[ROCKETNET_FRAME_STRIDE];
     rocketnet_server_socket_process_packets_t received;
     int feed_count;
     rocketnet_address_t feed_from[4];
