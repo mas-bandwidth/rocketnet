@@ -9,6 +9,13 @@
 #include <math.h>
 #include <string.h>
 
+#if defined(ROCKETNET_ACK_COST_TEST_HOOKS)
+// Unit-library instrumentation only: no production state or per-ACK writes.
+static thread_local rn_ack_cost_t rn_ack_cost;
+void rn_window_ack_cost_reset() { memset( &rn_ack_cost, 0, sizeof(rn_ack_cost) ); }
+rn_ack_cost_t rn_window_ack_cost_read() { return rn_ack_cost; }
+#endif
+
 // Layer 3 of the message layer: the sent-packet map, the resend FIFO, RTT,
 // RTT estimation, resend delay, failed-send recovery, and reliable timeout (docs/CHANNELS.md
 // section 6.4; TLA+ actions Init, WritePacket, WriteOldest, ReceiveAck and
@@ -625,6 +632,9 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
         if ( slot->acked || slot->number < send->U || slot->number >= send->next || (uint32_t) slot->number != ref_u32 )
             continue;
 
+#if defined(ROCKETNET_ACK_COST_TEST_HOOKS)
+        rn_ack_cost.completed_numbers++;
+#endif
         rn_resend_fifo_unlink( ack, slot_index );
 
         if ( slot->descriptor != RN_DESCRIPTOR_NONE && slot->descriptor < region->queue )
@@ -632,10 +642,15 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
             const uint32_t d = slot->descriptor;
             const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
             uint32_t chain_index = 0;
-            if ( descriptor->in_use && descriptor->fragments > 1 )
+            // Spans release on the final distinct ACK and never use a chain
+            // index. Only legacy chunk-backed blocks need the live rank.
+            if ( descriptor->in_use && descriptor->fragments > 1 && !( descriptor->flags & RN_SEND_FLAG_SPAN ) )
             {
                 for ( uint16_t j = 0; j < slot->fragment; j++ )
                 {
+#if defined(ROCKETNET_ACK_COST_TEST_HOOKS)
+                    rn_ack_cost.predecessor_visits++;
+#endif
                     const uint64_t prev_num = slot->number - (uint64_t) ( slot->fragment - j );
                     const rn_send_number_t * prev_slot = &region->send_numbers[prev_num & ( W - 1 )];
                     if ( prev_slot->descriptor == d && prev_slot->number == prev_num && !prev_slot->acked )
