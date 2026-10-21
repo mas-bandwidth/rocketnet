@@ -223,6 +223,53 @@ struct rocketnet_server_payloads_t
     int payload_bytes[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
 };
 
+// Immutable, compact input for one ACK statistics calculation. Only the older
+// half of each packet ring is read by update_stats. The main thread gathers
+// those spans; the worker never sees a live endpoint or protocol pointer.
+struct rocketnet_server_stats_snapshot_t
+{
+    uint64_t highest_sent, highest_received;
+    uint64_t sent_base, received_base;
+    int sent_count, received_count;
+    float rtt_history[ROCKETNET_RTT_HISTORY_SIZE];
+    rocketnet_sent_packet_record_t sent[ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2];
+    rocketnet_received_packet_record_t received[ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE / 2];
+};
+
+struct rocketnet_server_stats_result_t
+{
+    float rtt, jitter, packet_loss, sent_kbps, received_kbps, acked_kbps;
+};
+
+struct rocketnet_server_stats_job_t
+{
+    int slot;
+    uint64_t connection_id;
+    rocketnet_server_stats_snapshot_t input;
+    rocketnet_server_stats_result_t output;
+};
+
+enum { ROCKETNET_STATS_BANK_FREE, ROCKETNET_STATS_BANK_READY, ROCKETNET_STATS_BANK_RUNNING, ROCKETNET_STATS_BANK_DONE };
+struct rocketnet_server_stats_bank_t
+{
+    std::atomic<int> state;
+    uint64_t ordinal;
+    int count;
+    rocketnet_server_stats_job_t jobs[ROCKETNET_CLIENT_STATS_SLOTS_PER_UPDATE];
+};
+
+struct rocketnet_server_stats_worker_t
+{
+    rocketnet_server_stats_bank_t * banks[2];
+    rocketnet_ack_endpoint_t * scratch;
+    rocketnet_platform_wake_t * wake;
+    rocketnet_platform_thread_t * thread;
+    std::atomic<bool> quit, exited;
+    std::atomic<uint64_t> completed;
+    bool manual;
+    uint64_t next_submit, next_publish, published, busy_skips;
+};
+
 struct rocketnet_server_transport_t
 {
     // the cache-line-aligned members lead, each a whole number of cache
@@ -264,6 +311,7 @@ struct rocketnet_server_transport_t
     uint64_t transport_receive_too_large = 0;
 
     struct rocketnet_server_protocol_t protocol;
+    rocketnet_server_stats_worker_t * stats_worker;
 
     // the portable path's buffers ride the struct on every platform now
     // that the transport is runtime: about a megabyte a staged grant never
@@ -320,6 +368,202 @@ struct rocketnet_server_transport_t
     // the end of its data -- this is the last member, so the slack is real.
     uint8_t payload_storage[ROCKETNET_RECEIVE_PAYLOAD_BYTES*ROCKETNET_MAX_PAYLOADS_PER_UPDATE + 8];
 };
+
+static void rocketnet_server_stats_snapshot( const rocketnet_ack_endpoint_t * endpoint,
+                                             rocketnet_server_stats_snapshot_t * out )
+{
+    out->highest_sent = endpoint->highest_sequence;
+    out->highest_received = endpoint->highest_received_sequence;
+    out->sent_base = out->highest_sent >= ROCKETNET_SENT_PACKET_BUFFER_SIZE ?
+        out->highest_sent - ROCKETNET_SENT_PACKET_BUFFER_SIZE + 1 : 1;
+    out->received_base = out->highest_received >= ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE ?
+        out->highest_received - ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE + 1 : 1;
+    out->sent_count = out->highest_sent >= out->sent_base ?
+        (int) ( out->highest_sent - out->sent_base + 1 ) : 0;
+    if ( out->sent_count > ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2 )
+        out->sent_count = ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2;
+    out->received_count = out->highest_received >= out->received_base ?
+        (int) ( out->highest_received - out->received_base + 1 ) : 0;
+    if ( out->received_count > ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE / 2 )
+        out->received_count = ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE / 2;
+    memcpy( out->rtt_history, endpoint->rtt_history, sizeof(out->rtt_history) );
+    const int sent_start = (int) ( out->sent_base % ROCKETNET_SENT_PACKET_BUFFER_SIZE );
+    const int sent_first = out->sent_count < ROCKETNET_SENT_PACKET_BUFFER_SIZE - sent_start ?
+        out->sent_count : ROCKETNET_SENT_PACKET_BUFFER_SIZE - sent_start;
+    memcpy( out->sent, endpoint->sent + sent_start, (size_t) sent_first * sizeof(out->sent[0]) );
+    memcpy( out->sent + sent_first, endpoint->sent,
+            (size_t) (out->sent_count - sent_first) * sizeof(out->sent[0]) );
+    const int received_start = (int) ( out->received_base % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
+    const int received_first = out->received_count < ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE - received_start ?
+        out->received_count : ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE - received_start;
+    memcpy( out->received, endpoint->received + received_start,
+            (size_t) received_first * sizeof(out->received[0]) );
+    memcpy( out->received + received_first, endpoint->received,
+            (size_t) (out->received_count - received_first) * sizeof(out->received[0]) );
+}
+
+static void rocketnet_server_stats_compute( const rocketnet_server_stats_snapshot_t * input,
+                                            rocketnet_ack_endpoint_t * scratch,
+                                            rocketnet_server_stats_result_t * output )
+{
+    rocketnet_ack_endpoint_reset( scratch );
+    scratch->highest_sequence = input->highest_sent;
+    scratch->highest_received_sequence = input->highest_received;
+    memcpy( scratch->rtt_history, input->rtt_history, sizeof(input->rtt_history) );
+    const int sent_start = (int) ( input->sent_base % ROCKETNET_SENT_PACKET_BUFFER_SIZE );
+    const int sent_first = input->sent_count < ROCKETNET_SENT_PACKET_BUFFER_SIZE - sent_start ?
+        input->sent_count : ROCKETNET_SENT_PACKET_BUFFER_SIZE - sent_start;
+    memcpy( scratch->sent + sent_start, input->sent, (size_t) sent_first * sizeof(input->sent[0]) );
+    memcpy( scratch->sent, input->sent + sent_first,
+            (size_t) (input->sent_count - sent_first) * sizeof(input->sent[0]) );
+    const int received_start = (int) ( input->received_base % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
+    const int received_first = input->received_count < ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE - received_start ?
+        input->received_count : ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE - received_start;
+    memcpy( scratch->received + received_start, input->received,
+            (size_t) received_first * sizeof(input->received[0]) );
+    memcpy( scratch->received, input->received + received_first,
+            (size_t) (input->received_count - received_first) * sizeof(input->received[0]) );
+    rocketnet_ack_endpoint_update_stats( scratch );
+    *output = {scratch->rtt, scratch->jitter, scratch->packet_loss,
+               scratch->bandwidth_sent_kbps, scratch->bandwidth_received_kbps,
+               scratch->bandwidth_acked_kbps};
+}
+
+static bool rocketnet_server_stats_worker_step( rocketnet_server_stats_worker_t * worker )
+{
+    rocketnet_server_stats_bank_t * chosen = NULL;
+    for ( int i = 0; i < 2; ++i )
+    {
+        rocketnet_server_stats_bank_t * bank = worker->banks[i];
+        if ( bank && bank->state.load(std::memory_order_acquire) == ROCKETNET_STATS_BANK_READY &&
+             (!chosen || bank->ordinal < chosen->ordinal) )
+            chosen = bank;
+    }
+    if ( !chosen )
+        return false;
+    int expected = ROCKETNET_STATS_BANK_READY;
+    if ( !chosen->state.compare_exchange_strong(expected, ROCKETNET_STATS_BANK_RUNNING,
+                                                 std::memory_order_acq_rel) )
+        return false;
+    for ( int i = 0; i < chosen->count; ++i )
+        rocketnet_server_stats_compute( &chosen->jobs[i].input, worker->scratch, &chosen->jobs[i].output );
+    worker->completed.fetch_add(1, std::memory_order_relaxed);
+    chosen->state.store(ROCKETNET_STATS_BANK_DONE, std::memory_order_release);
+    return true;
+}
+
+static void rocketnet_server_stats_worker_entry( void * arg )
+{
+    rocketnet_server_stats_worker_t * worker = (rocketnet_server_stats_worker_t*) arg;
+    while ( !worker->quit.load(std::memory_order_acquire) )
+        if ( !rocketnet_server_stats_worker_step(worker) )
+            rocketnet_platform_wake_wait(worker->wake, false, 0.1);
+    worker->exited.store(true, std::memory_order_release);
+}
+
+#if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS)
+static bool rocketnet_server_stats_manual_next = false;
+static bool rocketnet_server_stats_fail_thread_next = false;
+void rocketnet_server_transport_set_stats_worker_manual_for_test( bool enabled )
+{
+    rocketnet_server_stats_manual_next = enabled;
+}
+void rocketnet_server_transport_fail_stats_worker_thread_for_test()
+{
+    rocketnet_server_stats_fail_thread_next = true;
+}
+bool rocketnet_server_transport_stats_worker_step_for_test( rocketnet_server_transport_t * server )
+{
+    return server && server->stats_worker && server->stats_worker->manual &&
+        server->state == ROCKETNET_SERVER_TRANSPORT_RUNNING &&
+        !server->stats_worker->quit.load(std::memory_order_acquire) &&
+        rocketnet_server_stats_worker_step(server->stats_worker);
+}
+bool rocketnet_server_transport_stats_worker_status_for_test( const rocketnet_server_transport_t * server,
+    uint64_t * submitted, uint64_t * completed, uint64_t * published, uint64_t * busy_skips )
+{
+    if ( !server || !server->stats_worker ) return false;
+    const rocketnet_server_stats_worker_t * worker = server->stats_worker;
+    if ( submitted ) *submitted = worker->next_submit;
+    if ( completed ) *completed = worker->completed.load(std::memory_order_acquire);
+    if ( published ) *published = worker->published;
+    if ( busy_skips ) *busy_skips = worker->busy_skips;
+    return true;
+}
+#endif
+
+static void rocketnet_server_stats_worker_stop( rocketnet_server_stats_worker_t * worker )
+{
+    if ( !worker ) return;
+    worker->quit.store(true, std::memory_order_release);
+    if ( worker->wake )
+        rocketnet_platform_wake_set(worker->wake);
+}
+
+static void rocketnet_server_stats_worker_destroy( void * context, rocketnet_server_stats_worker_t * worker )
+{
+    if ( !worker ) return;
+    rocketnet_server_stats_worker_stop(worker);
+    if ( worker->thread )
+    {
+        rocketnet_platform_thread_join(worker->thread);
+        rocketnet_platform_thread_destroy(worker->thread);
+    }
+    if ( worker->wake )
+        rocketnet_platform_wake_destroy(worker->wake);
+    if ( worker->scratch )
+        rocketnet_clear_and_free(context, worker->scratch, sizeof(*worker->scratch));
+    for ( int i = 0; i < 2; ++i )
+        if ( worker->banks[i] )
+        {
+            worker->banks[i]->~rocketnet_server_stats_bank_t();
+            rocketnet_clear_and_free(context, worker->banks[i], sizeof(*worker->banks[i]));
+        }
+    worker->~rocketnet_server_stats_worker_t();
+    rocketnet_clear_and_free(context, worker, sizeof(*worker));
+}
+
+static int rocketnet_server_stats_worker_create( void * context, rocketnet_server_stats_worker_t ** out,
+                                                bool manual, bool fail_thread )
+{
+    *out = NULL;
+    rocketnet_server_stats_worker_t * worker =
+        (rocketnet_server_stats_worker_t*) rocketnet_malloc(context, sizeof(rocketnet_server_stats_worker_t));
+    if ( !worker ) return ROCKETNET_STATUS_OUT_OF_MEMORY;
+    new (worker) rocketnet_server_stats_worker_t();
+    worker->banks[0] = worker->banks[1] = NULL;
+    worker->scratch = NULL;
+    worker->wake = NULL;
+    worker->thread = NULL;
+    worker->quit.store(false, std::memory_order_relaxed);
+    worker->exited.store(false, std::memory_order_relaxed);
+    worker->completed.store(0, std::memory_order_relaxed);
+    worker->manual = false;
+    worker->next_submit = worker->next_publish = worker->published = worker->busy_skips = 0;
+    *out = worker;
+    for ( int i = 0; i < 2; ++i )
+    {
+        worker->banks[i] = (rocketnet_server_stats_bank_t*) rocketnet_malloc(context, sizeof(rocketnet_server_stats_bank_t));
+        if ( !worker->banks[i] ) return ROCKETNET_STATUS_OUT_OF_MEMORY;
+        new (worker->banks[i]) rocketnet_server_stats_bank_t();
+        worker->banks[i]->state.store(ROCKETNET_STATS_BANK_FREE, std::memory_order_relaxed);
+    }
+    worker->scratch = (rocketnet_ack_endpoint_t*) rocketnet_malloc(context, sizeof(rocketnet_ack_endpoint_t));
+    if ( !worker->scratch ) return ROCKETNET_STATUS_OUT_OF_MEMORY;
+    rocketnet_ack_endpoint_reset(worker->scratch);
+    worker->manual = manual;
+    if ( worker->manual )
+    {
+        worker->exited.store(true, std::memory_order_relaxed);
+        return ROCKETNET_STATUS_OK;
+    }
+    worker->wake = rocketnet_platform_wake_create(context, NULL);
+    if ( !worker->wake ) return ROCKETNET_STATUS_OUT_OF_MEMORY;
+    if ( !fail_thread )
+        worker->thread = rocketnet_platform_thread_create(context, rocketnet_server_stats_worker_entry, worker);
+    if ( !worker->thread ) return ROCKETNET_STATUS_THREAD_CREATE_FAILED;
+    return ROCKETNET_STATUS_OK;
+}
 
 void rocketnet_server_transport_poison_slot_for_test( struct rocketnet_server_transport_t * server, int client_index )
 {
@@ -822,12 +1066,22 @@ bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_con
     {
         if (!bytes || !rocketnet_memory_add(plan.protocol_bytes, 1, bytes)) return false;
     }
+    const uint64_t stats_bytes = rocketnet_memory_allocations({
+        sizeof(rocketnet_server_stats_worker_t), sizeof(rocketnet_server_stats_bank_t),
+        sizeof(rocketnet_server_stats_bank_t), sizeof(rocketnet_ack_endpoint_t)});
+    const uint64_t wake_bytes = rocketnet_platform_wake_allocation_bytes();
+    const uint64_t thread_bytes = rocketnet_platform_thread_allocation_bytes();
+    if (!stats_bytes || !wake_bytes || !thread_bytes ||
+        !rocketnet_memory_add(plan.protocol_bytes, 1, stats_bytes) ||
+        !rocketnet_memory_add(plan.protocol_bytes, 1, wake_bytes) ||
+        !rocketnet_memory_add(plan.protocol_bytes, 1, thread_bytes)) return false;
     plan.reassembly_bytes = rocketnet_reassembly_memory_required_delivered(clients, slots, payload,
         rocketnet_server_reassembly_delivered_capacity(clients, slots),
         rocketnet_server_reassembly_delivered_bytes(clients, slots, payload));
     if (!plan.reassembly_bytes || !rocketnet_memory_add(plan.reassembly_bytes, 4, rocketnet_allocation_overhead())) return false;
     plan.send_arena_bytes = rocketnet_send_arena_allocation_bytes(ROCKETNET_SEND_ARENA_SLOTS, (payload + 15) & ~15);
     if (!rocketnet_builtin_server_memory_plan(config, transport, plan)) return false;
+    plan.worker_threads++;
     if (!plan.transport_bytes || !plan.send_arena_bytes || !plan.transport_io_bytes) return false;
     for (uint64_t bytes : {plan.transport_bytes, plan.protocol_bytes, plan.reassembly_bytes,
         plan.send_arena_bytes, plan.transport_io_bytes, plan.umem_bytes, plan.registered_region_bytes})
@@ -991,6 +1245,15 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
                                                                            const struct rocketnet_server_transport_config_t * config,
                                                                            double time, int * status )
 {
+#if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS)
+    const bool manual_stats_worker = rocketnet_server_stats_manual_next;
+    const bool fail_stats_thread = rocketnet_server_stats_fail_thread_next;
+    rocketnet_server_stats_manual_next = false;
+    rocketnet_server_stats_fail_thread_next = false;
+#else
+    const bool manual_stats_worker = false;
+    const bool fail_stats_thread = false;
+#endif
     // docs/ERRORS-AND-LOGGING.md 2.1 and the settled Q2: a NULL required
     // argument is a logged INVALID_ARGUMENT and a NULL return in debug and
     // release (S1).
@@ -1661,6 +1924,19 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         return NULL;
     }
 
+    // All asynchronous stats storage and its wake/thread are ready before
+    // exposing a running transport. Failure refuses startup; update never
+    // falls back to synchronous recomputation.
+    const int stats_status = rocketnet_server_stats_worker_create(context, &server_transport->stats_worker,
+                                                                 manual_stats_worker, fail_stats_thread);
+    if ( stats_status != ROCKETNET_STATUS_OK )
+    {
+        if ( status ) *status = stats_status;
+        rocketnet_error("server transport create: stats worker initialization failed");
+        rocketnet_server_transport_abort_create(server_transport);
+        return NULL;
+    }
+
     if ( status )
         *status = ROCKETNET_STATUS_OK;
     return server_transport;
@@ -1675,6 +1951,9 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
     rocketnet_assert( rocketnet_server_transport_stopped( server_transport ) );
     if ( !rocketnet_server_transport_stopped( server_transport ) )
         return;
+
+    rocketnet_server_stats_worker_destroy(server_transport->context, server_transport->stats_worker);
+    server_transport->stats_worker = NULL;
 
     if ( server_transport->protocol.encryption_map )
         rocketnet_encryption_map_destroy( server_transport->protocol.encryption_map );
@@ -1718,6 +1997,7 @@ void rocketnet_server_transport_stop( struct rocketnet_server_transport_t * serv
         return;
     server_transport->state = ROCKETNET_SERVER_TRANSPORT_STOPPING;
     server_transport->packet_leases.reset();
+    rocketnet_server_stats_worker_stop(server_transport->stats_worker);
     rocketnet_server_transport_io_stop( &server_transport->io );
 }
 
@@ -1725,7 +2005,10 @@ bool rocketnet_server_transport_stopped( const struct rocketnet_server_transport
 {
     if ( !rocketnet_api_null_guard( server_transport ) || server_transport->state == ROCKETNET_SERVER_TRANSPORT_RUNNING )
         return false;
-    return rocketnet_server_transport_io_stopped( &server_transport->io );
+    return rocketnet_server_transport_io_stopped( &server_transport->io ) &&
+        (!server_transport->stats_worker ||
+         !server_transport->stats_worker->thread ||
+         server_transport->stats_worker->exited.load(std::memory_order_acquire));
 }
 
 // A failed create cannot return a live partially constructed object. This
@@ -1734,8 +2017,9 @@ bool rocketnet_server_transport_stopped( const struct rocketnet_server_transport
 static void rocketnet_server_transport_abort_create( struct rocketnet_server_transport_t * transport )
 {
     transport->state = ROCKETNET_SERVER_TRANSPORT_STOPPING;
+    rocketnet_server_stats_worker_stop(transport->stats_worker);
     rocketnet_server_transport_io_stop( &transport->io );
-    while ( !rocketnet_server_transport_io_stopped( &transport->io ) )
+    while ( !rocketnet_server_transport_stopped( transport ) )
         rocketnet_platform_sleep( 0.001 );
     rocketnet_server_transport_destroy( transport );
 }
@@ -1842,9 +2126,9 @@ static void rocketnet_server_update_stats( struct rocketnet_server_transport_t *
     }
 }
 
-// Keep the modulo-phase publication schedule, but visit only the chosen
-// phase's slots. The phase count scales with capacity so no update examines
-// more than 20 slots; free slots do not touch cold ACK histories.
+#if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS)
+// Historical pure selection fixture. Production uses the asynchronous batch
+// path below; this seam remains only until the worker fixture replaces it.
 static int rocketnet_server_update_client_stats( const rocketnet_client_slots_t * slots,
                                                  rocketnet_server_acks_t * acks )
 {
@@ -1865,10 +2149,80 @@ static int rocketnet_server_update_client_stats( const rocketnet_client_slots_t 
     }
     return updated;
 }
+#endif
+
+static void rocketnet_server_stats_publish_and_submit( rocketnet_server_transport_t * server )
+{
+    rocketnet_server_stats_worker_t * worker = server->stats_worker;
+    if ( !worker ) return;
+    // Publication precedes submission. Even a test-mode job completed inline
+    // after this point cannot be observed until a later update.
+    for ( int bank_index = 0; bank_index < 2; ++bank_index )
+    {
+        rocketnet_server_stats_bank_t * bank = worker->banks[bank_index];
+        if ( bank->state.load(std::memory_order_acquire) != ROCKETNET_STATS_BANK_DONE ||
+             bank->ordinal != worker->next_publish )
+            continue;
+        for ( int i = 0; i < bank->count; ++i )
+        {
+            rocketnet_server_stats_job_t * job = &bank->jobs[i];
+            if ( job->connection_id == 0 ||
+                 !rocketnet_client_slots_connected(server->protocol.client_slots, job->slot) ||
+                 server->protocol.connection_ids[job->slot] != job->connection_id )
+                continue;
+            rocketnet_ack_endpoint_t * live = &server->protocol.acks->endpoints[job->slot];
+            live->rtt = job->output.rtt;
+            live->jitter = job->output.jitter;
+            live->packet_loss = job->output.packet_loss;
+            live->bandwidth_sent_kbps = job->output.sent_kbps;
+            live->bandwidth_received_kbps = job->output.received_kbps;
+            live->bandwidth_acked_kbps = job->output.acked_kbps;
+            worker->published++;
+        }
+        worker->next_publish++;
+        bank->state.store(ROCKETNET_STATS_BANK_FREE, std::memory_order_release);
+        break; // at most one completed batch applies per update
+    }
+    rocketnet_server_stats_bank_t * free_bank = NULL;
+    for ( int i = 0; i < 2; ++i )
+        if ( worker->banks[i]->state.load(std::memory_order_acquire) == ROCKETNET_STATS_BANK_FREE )
+        {
+            free_bank = worker->banks[i];
+            break;
+        }
+    if ( !free_bank )
+    {
+        worker->busy_skips++;
+        return;
+    }
+    const int max_clients = rocketnet_client_slots_max_clients(server->protocol.client_slots);
+    const int phases = (max_clients + ROCKETNET_CLIENT_STATS_SLOTS_PER_UPDATE - 1) /
+                       ROCKETNET_CLIENT_STATS_SLOTS_PER_UPDATE;
+    const int phase = (int)(worker->next_submit % (uint64_t)phases);
+    free_bank->ordinal = worker->next_submit;
+    free_bank->count = 0;
+    for ( int slot = phase; slot < max_clients; slot += phases )
+    {
+        if ( !rocketnet_client_slots_connected(server->protocol.client_slots, slot) )
+            continue;
+        const uint64_t connection_id = server->protocol.connection_ids[slot];
+        if ( !connection_id )
+            continue;
+        rocketnet_assert(free_bank->count < ROCKETNET_CLIENT_STATS_SLOTS_PER_UPDATE);
+        rocketnet_server_stats_job_t * job = &free_bank->jobs[free_bank->count++];
+        job->slot = slot;
+        job->connection_id = connection_id;
+        rocketnet_server_stats_snapshot(&server->protocol.acks->endpoints[slot], &job->input);
+    }
+    worker->next_submit++;
+    free_bank->state.store(ROCKETNET_STATS_BANK_READY, std::memory_order_release);
+    if ( worker->wake )
+        rocketnet_platform_wake_set(worker->wake);
+}
 
 #if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS)
-// Counts actual cold endpoint calls through the production selection path.
-// The fixture owns its pure slots/acks; no transport, I/O or clock is needed.
+// Historical pure fixture only; the production path below submits immutable
+// snapshots to the worker and applies them on a later update.
 int rocketnet_server_transport_test_update_client_stats( const rocketnet_client_slots_t * slots,
                                                         rocketnet_server_acks_t * acks )
 {
@@ -2225,7 +2579,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     const int max_clients = rocketnet_client_slots_max_clients( server_transport->protocol.client_slots );
     // Statistics cover connected slots even when the send pool is exhausted.
-    rocketnet_server_update_client_stats( server_transport->protocol.client_slots, acks );
+    rocketnet_server_stats_publish_and_submit( server_transport );
 
     const int first_client = server_transport->maintenance_next_client;
     for ( int offset = 0; offset < max_clients; offset++ )

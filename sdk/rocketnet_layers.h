@@ -913,7 +913,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
  * @param config [in] Optional full server configuration; NULL selects defaults, which require application keys.
  * @param time [in] Finite monotonic initial time in seconds.
  * @param status [out] Optional status destination; receives OK or the specific refusal code.
- * @return A caller-owned server transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, MISSING_KEYS, INVALID_PROTOCOL_ID, DEV_KEYS_IN_RELEASE, INVALID_TRANSPORT_LIST, INVALID_ADDRESS, TRANSPORT_PORT_ZERO_UNSUPPORTED, TRANSPORT_FAMILIES_UNSUPPORTED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, or MUTEX_CREATE_FAILED. TRANSPORT_FAMILIES_UNSUPPORTED is the status when every candidate that opened refused because it cannot serve both named families. A transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate; nothing the create allocated stays live. Correct the reported cause before retrying. Every failure logs an error line except two: when a simulated loss, latency, jitter, or duplicate setting is non-zero, a failed link-simulator allocation (OUT_OF_MEMORY) or a failed link-simulator mutex creation (MUTEX_CREATE_FAILED) returns without logging.
+ * @return A caller-owned server transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, MISSING_KEYS, INVALID_PROTOCOL_ID, DEV_KEYS_IN_RELEASE, INVALID_TRANSPORT_LIST, INVALID_ADDRESS, TRANSPORT_PORT_ZERO_UNSUPPORTED, TRANSPORT_FAMILIES_UNSUPPORTED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, MUTEX_CREATE_FAILED, or THREAD_CREATE_FAILED. The ACK stats worker is created before success is returned; its allocation or thread refusal has no synchronous update fallback. TRANSPORT_FAMILIES_UNSUPPORTED is the status when every candidate that opened refused because it cannot serve both named families. A transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate; nothing the create allocated stays live. Correct the reported cause before retrying. Every failure logs an error line except two: when a simulated loss, latency, jitter, or duplicate setting is non-zero, a failed link-simulator allocation (OUT_OF_MEMORY) or a failed link-simulator mutex creation (MUTEX_CREATE_FAILED) returns without logging.
  * @code
  * // context, address, config, status, time, and dt are supplied by the game.
  * rocketnet_init( NULL, NULL, NULL );
@@ -1422,6 +1422,16 @@ void rocketnet_server_transport_set_create_send_capacity_for_test( int packets )
 int rocketnet_server_transport_send_capacity( const struct rocketnet_server_transport_t * server_transport );
 /** @brief Returns the payload frames that may still start this update. */
 int rocketnet_server_transport_send_capacity_available( const struct rocketnet_server_transport_t * server_transport );
+
+#if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS)
+// Deterministic internal seam: the next create uses an inline stats worker.
+// step computes one submitted immutable batch; only a later update publishes.
+void rocketnet_server_transport_set_stats_worker_manual_for_test( bool enabled );
+bool rocketnet_server_transport_stats_worker_step_for_test( struct rocketnet_server_transport_t * server_transport );
+bool rocketnet_server_transport_stats_worker_status_for_test( const struct rocketnet_server_transport_t * server_transport,
+    uint64_t * submitted, uint64_t * completed, uint64_t * published, uint64_t * busy_skips );
+void rocketnet_server_transport_fail_stats_worker_thread_for_test();
+#endif
 
 // -----------------------------------------
 //                         frame sync
