@@ -14,6 +14,8 @@
 // thread, no sleep, and time is an argument starting at 1000.0.
 
 #include "test_unit_registry.h"
+#include "sdk/rocketnet_connect_token.h"
+#include "sdk/rocketnet_base64.h"
 #include "sdk/rocketnet.h"
 #include "rocketnet_internal.h"
 #include "sdk/rocketnet_message_object.h"
@@ -27,9 +29,9 @@
 struct server_disconnected_identity_t
 {
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret[64];
     uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret[sizeof( rocketnet_dev_server_secret_key )];
 };
 
 static double server_disconnected_now = 1000.0;
@@ -44,18 +46,17 @@ static void server_disconnected_identity( server_disconnected_identity_t * ident
     check( rocketnet_generate_server_keypair( identity->server_public, identity->server_secret ) == ROCKETNET_STATUS_OK );
 }
 
-static rocketnet_server_t * server_disconnected_server_create( const server_disconnected_identity_t * identity )
+static rocketnet_server_t * server_disconnected_server_create( server_disconnected_identity_t * identity )
 {
     rocketnet_server_config_t config;
     rocketnet_server_default_config( &config );
     config.protocol_id = SERVER_DISCONNECTED_PROTOCOL;
     config.max_clients = 2;
     memcpy( config.backend_public_key, identity->backend_public, sizeof( config.backend_public_key ) );
-    memcpy( config.server_public_key, identity->server_public, sizeof( config.server_public_key ) );
-    memcpy( config.server_secret_key, identity->server_secret, sizeof( config.server_secret_key ) );
     config.transport = "loopback";
     rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL );
     check( server != NULL );
+    rocketnet_server_public_key( server, identity->server_public );
     check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
     return server;
 }
@@ -73,14 +74,16 @@ static rocketnet_client_t * server_disconnected_client_create()
 }
 
 static void server_disconnected_token( const server_disconnected_identity_t * identity, uint16_t port, uint64_t client_id,
-                                       int32_t timeout_seconds, uint8_t * token )
+                                       int32_t timeout_seconds, char * token_string )
 {
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     char address[64];
     snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) port );
     const char * addresses[] = { address };
     check( rocketnet_write_production_connect_token( identity->backend_secret, identity->server_public,
         SERVER_DISCONNECTED_PROTOCOL, addresses, 1, client_id, 1000, 1ULL << 40, timeout_seconds, NULL,
         token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 }
 
 // One step: the client, then the server (when there is one).
@@ -105,7 +108,7 @@ static int server_disconnected_connect( const server_disconnected_identity_t * i
                                         rocketnet_client_t * client, uint64_t client_id, int32_t timeout_seconds,
                                         rocketnet_client_state_t state_before, double * time )
 {
-    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     server_disconnected_token( identity, rocketnet_server_port( server ), client_id, timeout_seconds, token );
     check( rocketnet_client_state( client ) == state_before );
     check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );

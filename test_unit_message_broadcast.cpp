@@ -28,6 +28,7 @@
 
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_allocator.h"
+#include "sdk/rocketnet_connect_token.h"
 #include "sdk/rocketnet_message_object.h"
 #include "sdk/rocketnet_send_budget.h"
 
