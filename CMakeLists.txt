@@ -163,6 +163,9 @@ function(rocketnet_use_sodium target)
     if(ROCKETNET_USE_SYSTEM_SODIUM)
         target_link_libraries(${target} PRIVATE RocketNet::Sodium)
     else()
+        # Only this build owns the privately prefixed RNG state in sodium.c.
+        # The lifecycle source must never close an application's system sodium.
+        target_compile_definitions(${target} PRIVATE ROCKETNET_BUNDLED_SODIUM=1)
         target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/sodium")
     endif()
 endfunction()

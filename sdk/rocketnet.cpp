@@ -773,6 +773,14 @@ int rocketnet_term_ex()
         rocketnet_error( "destroy all objects and allocations before terminating rocketnet" );
         return ROCKETNET_STATUS_LIVE_ALLOCATIONS;
     }
+    // macOS's bundled sysrandom keeps /dev/urandom open after sodium_init.
+    // The caller must quiesce all library calls before term, and the private
+    // bundled copy belongs to this SDK. A system libsodium may be shared with
+    // the application, so never close its process-global RNG here.
+#if defined(ROCKETNET_BUNDLED_SODIUM) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    if ( randombytes_close() != 0 )
+        rocketnet_warn( "could not close bundled sodium random source" );
+#endif
     rocketnet_platform_term();
     rocketnet_global_context = NULL;
     std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
