@@ -162,7 +162,7 @@ static void test_dev_keys_warn_on_every_start()
         check( status == ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE );
 #else
         if ( srv )
-            rocketnet_server_transport_destroy( srv );
+            rocketnet_server_transport_destroy( (struct rocketnet_server_transport_t *) srv );
 #endif
     }
 

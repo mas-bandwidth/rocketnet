@@ -365,6 +365,7 @@
     (:feature "The receipt read returns how many outcomes it copied, not how many there were when the caller's buffer is too short (ring overflow is counted, in receipts_dropped). The final deliverable returns the available count." :cells (n n n))
     (:feature "Connect over whichever family works: send connection requests to the token's IPv4 and IPv6 addresses and keep the first that answers (TLA+ first)." :cells (n n n))
     (:feature "Backend keygen, connect-token minting and a reference server registration in Go and C#." :cells (n n n))
+    (:feature "Public header refinement pass before 1.0.0: names, structure and doc comments may still change." :cells (n n n))
     (:feature "Client connect from a handshake or token failure state (CONNECTION_DENIED .. CONNECT_TOKEN_EXPIRED) is refused until rocketnet_client_disconnect; the final deliverable lets connect start over from any failure state (TLA+ first)." :cells (n n n))
     (:feature "The *_name lookups return two forms: status names are the enum suffix (\"OK\") and the client state, log level and disconnect reason names are lower-case words. The final deliverable returns the upper-case enum suffix from all four." :cells (n n n))
     (:feature "The public header still carries the internal wide-channel build switch (ROCKETNET_INTERNAL_WIDE_BUILD and its ROCKETNET_MAX_CHANNELS override). The final deliverable moves it into an internal header." :cells (n n n))

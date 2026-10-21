@@ -25,7 +25,7 @@ in-memory `loopback` transport, so it needs no socket and no network.
    compare `rocketnet_client_stats_t.receipts_acked`. The send completes
    reliably with exactly one ACKED receipt, so the field rises by one.
 
-The public stats snapshot exposes the acknowledged receipt the promotion
+The public stats expose the acknowledged receipt the promotion
 produces. Oversize unreliable messages use the reliable path rather than being
 refused; selecting the receipt mode determines whether the sender receives an
 outcome.

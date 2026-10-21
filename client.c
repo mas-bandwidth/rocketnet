@@ -120,7 +120,7 @@ static void usage( const char * prog )
     printf( "  --channels C             channel count to drive, 1 to 32 (default 32)\n" );
     printf( "  --send-kbps K            client send budget in kbps\n" );
     printf( "  --update-hz H            main loop update rate in Hz\n" );
-    printf( "  --counters-every S       snapshot counters every S seconds (default 60)\n" );
+    printf( "  --counters-every S       print counters every S seconds (default 60)\n" );
     printf( "  --results PATH           where result lines go\n" );
     printf( "  --status PATH            one line per state change\n" );
     printf( "  --self-test-result FILE  write a sample result file without any socket and exit\n" );
@@ -611,7 +611,7 @@ static double quantile( const double * values, int count, double q )
 static long resident_kb( void );
 
 // section 7: every counter by name, message and transport counters summed.
-static void snapshot_counters( matrix_state_t * st, struct rocketnet_client_t * client, double seconds )
+static void sample_counters( matrix_state_t * st, struct rocketnet_client_t * client, double seconds )
 {
     if ( !client ) return;
     struct rocketnet_message_client_t * message_client = (struct rocketnet_message_client_t *) client;
@@ -788,7 +788,7 @@ static void run_matrix( opts_t * o )
         }
 
         // section 7: counters and RSS at start
-        snapshot_counters( &st, client, rocketnet_time() - st.run_start );
+        sample_counters( &st, client, rocketnet_time() - st.run_start );
 
         if ( status )
             fprintf( status, "client\tconnecting\n" );
@@ -924,7 +924,7 @@ static void run_matrix( opts_t * o )
             if ( rocketnet_time() - last_counters >= o->counters_every )
             {
                 last_counters = rocketnet_time();
-                snapshot_counters( &st, client, rocketnet_time() - st.run_start );
+                sample_counters( &st, client, rocketnet_time() - st.run_start );
             }
             rocketnet_sleep( step );
         }
@@ -977,7 +977,7 @@ static void run_matrix( opts_t * o )
             }
 
         // section 7: counters and RSS at exit of the window
-        snapshot_counters( &st, client, rocketnet_time() - st.run_start );
+        sample_counters( &st, client, rocketnet_time() - st.run_start );
 
         /* the disconnect: alternating clean and silent drop, final clean */
         if ( is_final || ( window % 2 ) == 0 )

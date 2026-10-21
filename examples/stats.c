@@ -4,7 +4,7 @@
 
     Stats: how a game's debug overlay reads connection quality. A server and a
     client in one process over loopback exchange a little traffic, then print
-    state, RTT, jitter, loss, bandwidth and counters from one stats snapshot
+    state, RTT, jitter, loss, bandwidth and counters from one stats call
     per call, then how the connection ended on both ends.
 
     Run it from the repository root: ./bin/example_stats
@@ -22,8 +22,8 @@ static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] 
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
-// One call copies a snapshot of every client stat into a struct the caller
-// owns; read the fields from the snapshot, not with a call per field.
+// One call copies the current value of every client stat into a struct the caller
+// owns; read the fields from the struct, not with a call per field.
 static int print_client_stats( const struct rocketnet_client_t * client )
 {
     struct rocketnet_client_stats_t stats;

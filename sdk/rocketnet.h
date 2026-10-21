@@ -399,8 +399,8 @@ enum rocketnet_client_state_t
 ///                              Stats
 /// -----------------------------------------
 
-/// A client's stats, filled by rocketnet_client_stats in one consistent
-/// snapshot. The counts are monotonic over the client's life, across
+/// A client's stats, filled by rocketnet_client_stats with the current
+/// stats. The counts are monotonic over the client's life, across
 /// connections, and start at 0 at create, except api_misuse and
 /// thread_priority_refusals, which are process-wide and do not reset. The measured values cover the
 /// current connection, rates over the trailing second, and read 0 with no
@@ -437,8 +437,8 @@ struct rocketnet_client_stats_t
     double bandwidth_received_kbps;         ///< Kbps (1000 bit/s) received
 };
 
-/// A server's stats over all its clients, filled by rocketnet_server_stats in
-/// one consistent snapshot. The counts are monotonic over the server's life,
+/// A server's stats over all its clients, filled by rocketnet_server_stats
+/// with the current stats. The counts are monotonic over the server's life,
 /// across starts and stops, and start at 0 at create, except api_misuse and
 /// thread_priority_refusals, which are process-wide and do not reset. The rates are the whole
 /// socket's over the trailing second, and read 0 while stopped.
@@ -468,8 +468,8 @@ struct rocketnet_server_stats_t
     double bandwidth_received_kbps;         ///< Kbps (1000 bit/s) received
 };
 
-/// One client slot's stats, filled by rocketnet_server_client_stats in one
-/// consistent snapshot. The values cover the slot's current connection and go
+/// One client slot's stats, filled by rocketnet_server_client_stats with
+/// the current stats. The values cover the slot's current connection and go
 /// back to 0 when a new connection takes the slot; rates cover the trailing
 /// second.
 
@@ -1140,7 +1140,7 @@ ROCKETNET_EXPORT int rocketnet_client_receipts( struct rocketnet_client_t * clie
 /// ROCKETNET_STATUS_OK when the budget took the new rate, from now on. 0 is the default rate, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS; a positive value below ROCKETNET_SEND_BUDGET_MAX_KBPS caps it, and ROCKETNET_SEND_BUDGET_MAX_KBPS is no send budget (the transport's 10 Gbit/s ceiling); a negative value returns ROCKETNET_STATUS_INVALID_ARGUMENT and above the maximum returns ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, each with the rate unchanged; a client that is not CONNECTED (a handshake state included) returns ROCKETNET_STATUS_INVALID_ARGUMENT with nothing changed and is not counted as misuse: the config's send_kbps sets a connection's starting rate. A NULL client is a counted no-op that returns ROCKETNET_STATUS_INVALID_ARGUMENT.
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_set_send_kbps( struct rocketnet_client_t * client, int kbps );
 
-/// Fills stats with one consistent snapshot of the client's stats. A NULL
+/// Fills stats with the client's current stats. A NULL
 /// stats is a counted no-op. A NULL client is a counted no-op that fills only
 /// the process-wide fields, api_misuse and thread_priority_refusals, and zeroes
 /// the rest.
@@ -1350,13 +1350,13 @@ ROCKETNET_EXPORT int rocketnet_server_receipts( struct rocketnet_server_t * serv
 /// ROCKETNET_STATUS_OK when the client's budget took the new rate, from now on (the slot must hold a CONNECTED client). 0 is the default rate, ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS; a positive value below ROCKETNET_SEND_BUDGET_MAX_KBPS caps it, and ROCKETNET_SEND_BUDGET_MAX_KBPS is no send budget (the transport's 10 Gbit/s ceiling); a negative value returns ROCKETNET_STATUS_INVALID_ARGUMENT and above the maximum returns ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, each with the rate unchanged. A slot with no CONNECTED client, or a stopped server, returns ROCKETNET_STATUS_INVALID_ARGUMENT with nothing changed and is not counted as misuse: the config's per_client_send_kbps sets each connection's starting rate. A client_index outside 0 .. max_clients - 1 is counted misuse and returns ROCKETNET_STATUS_INVALID_ARGUMENT. A NULL server is a counted no-op that returns ROCKETNET_STATUS_INVALID_ARGUMENT.
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_set_send_kbps( struct rocketnet_server_t * server, int client_index, int kbps );
 
-/// Fills stats with one consistent snapshot of the server's stats. A NULL
+/// Fills stats with the server's current stats. A NULL
 /// stats is a counted no-op. A NULL server is a counted no-op that fills only
 /// the process-wide fields, api_misuse and thread_priority_refusals, and zeroes
 /// the rest.
 ROCKETNET_EXPORT void rocketnet_server_stats( const struct rocketnet_server_t * server, struct rocketnet_server_stats_t * stats );
 
-/// Fills stats with one consistent snapshot of one client slot's stats; a
+/// Fills stats with one client slot's current stats; a
 /// free slot or a stopped server zeroes it. A NULL server, or a client_index
 /// outside 0 .. max_clients - 1, is counted misuse and zeroes it; a NULL stats
 /// is a counted no-op.

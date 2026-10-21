@@ -588,7 +588,7 @@ the `receipt_ring` config field sets its size.
 
 ## Counters and stats
 
-Three calls each fill a caller struct with one consistent snapshot:
+Three calls each fill a caller struct with the current stats:
 `rocketnet_client_stats` fills `struct rocketnet_client_stats_t`,
 `rocketnet_server_stats` fills `struct rocketnet_server_stats_t`, and
 `rocketnet_server_client_stats` fills `struct rocketnet_server_client_stats_t`

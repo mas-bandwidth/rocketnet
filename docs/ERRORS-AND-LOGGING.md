@@ -265,7 +265,7 @@ that its network threads run at the default priority.
 ### 4.1 The Stats Surface a Game Uses
 
 A game reads counts and measurements through three calls in `sdk/rocketnet.h`,
-each filling a caller struct with one consistent snapshot:
+each filling a caller struct with the current stats:
 `rocketnet_client_stats` (`struct rocketnet_client_stats_t`),
 `rocketnet_server_stats` (`struct rocketnet_server_stats_t`) and
 `rocketnet_server_client_stats` (`struct rocketnet_server_client_stats_t`, one

@@ -73,7 +73,7 @@ static void usage( void )
         "  --max-clients N         max_clients, set explicitly (the run uses 1000)\n"
         "  --max-packets-per-update N  the message config's packets_per_update\n"
         "  --update-hz H           update rate of the main loop\n"
-        "  --counters-every S      snapshot counters, RSS and transport stats every S seconds\n"
+        "  --counters-every S      print counters, RSS and transport stats every S seconds\n"
         "  --results PATH          where the result lines go\n"
         "  --status PATH           one line per state change, for the orchestrator\n"
         "  --transport T           pin the transport (e.g. xdp); the in-tree transport refuses\n"

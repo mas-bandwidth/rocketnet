@@ -36,9 +36,9 @@ state. Client indexes are `int`; `rocketnet_client_index` returns `-1` when
 not connected. The server send destination is `uint64_t`, with the high bit
 reserved for future flow IDs; those IDs are refused in this preview.
 
-Read snapshots with `rocketnet_client_stats`, `rocketnet_server_stats` and
+Read the current stats with `rocketnet_client_stats`, `rocketnet_server_stats` and
 `rocketnet_server_client_stats`, each filling its matching struct. Client
-and server snapshots include the process-wide API misuse and thread-priority
+and server stats include the process-wide API misuse and thread-priority
 refusal counters.
 
 A send budget of `0` selects the default. `ROCKETNET_SEND_BUDGET_MAX_KBPS`

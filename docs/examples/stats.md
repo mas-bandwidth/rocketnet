@@ -3,7 +3,7 @@
 How a game's debug overlay reads connection quality: a server and a client in
 one process over the in-memory `loopback` transport. The client connects,
 exchanges a little traffic, then prints the client's and the server's state and
-counters. Each stats call copies one snapshot of every counter and stat into a
+counters. Each stats call copies the current value of every counter and stat into a
 struct the caller owns, and the program reads the fields from that struct.
 
 ## What it shows
