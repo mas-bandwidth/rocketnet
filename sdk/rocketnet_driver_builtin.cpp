@@ -37,6 +37,10 @@ struct portable_server_t
     std::atomic<bool> quit{false};
     std::atomic<bool> exited{false};
     std::atomic<uint64_t> dropped{0};
+#if defined(ROCKETNET_PORTABLE_TX_TEST_HOOKS)
+    bool stop_publish_saw_quit = false;
+    bool force_publish_busy = false;
+#endif
     int producer = 0; // main thread only
     int free_index[PORTABLE_TX_BANKS] = {1, 2, 0};
     int free_head = 0;
@@ -52,6 +56,11 @@ struct portable_server_t
 static bool portable_tx_publish( portable_server_t * server )
 {
     if ( server->bank[server->producer].count == 0 ) return true;
+#if defined(ROCKETNET_PORTABLE_TX_TEST_HOOKS)
+    if ( server->stopping.load( std::memory_order_relaxed ) && server->quit.load( std::memory_order_relaxed ) )
+        server->stop_publish_saw_quit = true;
+    if ( server->force_publish_busy ) return false;
+#endif
     if ( !rocketnet_platform_mutex_try_acquire( &server->mutex ) ) return false;
     if ( server->free_count == 0 )
     {
@@ -233,6 +242,59 @@ static uint64_t portable_send_failures( void * transport )
 }
 static uint64_t portable_socket_send_failures( void * transport )
 { return rocketnet_platform_socket_send_failures( (rocketnet_platform_socket_t*) transport ); }
+#if defined(ROCKETNET_PORTABLE_TX_TEST_HOOKS)
+// No socket or worker: each path is forced at an exact ownership transition.
+bool rocketnet_portable_tx_test_handoff()
+{
+#if !defined(ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE)
+    return true;
+#else
+    void * storage = rocketnet_malloc( NULL, sizeof( portable_server_t ) );
+    if ( !storage ) return false;
+    portable_server_t * server = new (storage) portable_server_t();
+    if ( !rocketnet_platform_mutex_create( &server->mutex ) )
+    {
+        portable_server_cleanup( server );
+        return false;
+    }
+    server->wake = rocketnet_platform_wake_create( NULL, NULL );
+    if ( !server->wake )
+    {
+        portable_server_cleanup( server );
+        return false;
+    }
+    rocketnet_address_t to = {};
+    to.type = ROCKETNET_ADDRESS_IPV4;
+    to.port = 1234;
+    uint8_t bytes[4] = { 1, 2, 3, 4 };
+    rocketnet_platform_send_t send = { &to, bytes, 4 };
+    portable_send( server, &send, 1 );
+    bytes[0] = 99;
+    to.port = 5678;
+    bool valid = server->ready_count == 1 && server->bank[0].count == 1 &&
+        server->bank[0].data[0][0] == 1 && server->bank[0].to[0].port == 1234;
+    // A contended publish retains the complete producer; a later try moves
+    // it, and the worker may inspect bank 0 independently of caller storage.
+    server->force_publish_busy = true;
+    portable_send( server, &send, 1 );
+    valid &= server->producer == 1 && server->bank[1].count == 1;
+    server->force_publish_busy = false;
+    valid &= portable_tx_publish( server ) && server->ready_count == 2;
+    // Stop must expose the last bank before quit permits an empty-ready exit.
+    portable_send( server, &send, 1 );
+    valid &= server->bank[2].count == 1 && server->ready_count == 2;
+    for ( int i = 1; i < PORTABLE_TX_CAPACITY; ++i ) portable_send( server, &send, 1 );
+    portable_send( server, &send, 1 ); // full producer and no free bank: one drop
+    valid &= server->bank[2].count == PORTABLE_TX_CAPACITY && server->dropped.load() == 1;
+    portable_stop( server );
+    valid &= !server->stop_publish_saw_quit && server->quit.load() &&
+        server->ready_count == 2 && server->bank[2].count == 0 &&
+        server->dropped.load() == (uint64_t) PORTABLE_TX_CAPACITY + 1;
+    portable_server_cleanup( server );
+    return valid;
+#endif
+}
+#endif
 static const rocketnet_server_transport_io_operations_t portable_server_operations =
 {
     ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE, portable_create, portable_destroy, portable_stop, portable_stopped,
