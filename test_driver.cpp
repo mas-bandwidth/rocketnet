@@ -37,7 +37,7 @@ static void test_transport_lifecycle()
     CHECK(rocketnet_address_parse(&bind, "127.0.0.1:0"));
     const rocketnet_address_t original = bind;
     rocketnet_server_transport_config_t config;
-    rocketnet_server_transport_dev_config(&config);
+    rocketnet_server_transport_default_config(&config);
     const rocketnet_server_transport_io_config_t setup = { "fixture", &config, "127.0.0.1:0", NULL };
     lifecycle_t state = {};
 
@@ -176,7 +176,7 @@ static void test_buffered_transport()
 {
     const rocketnet_transport_backend_t * backend = rocketnet_transport_definition(ROCKETNET_TRANSPORT_PORTABLE)->backend;
     rocketnet_server_transport_config_t server_config;
-    rocketnet_server_transport_dev_config(&server_config);
+    rocketnet_server_transport_default_config(&server_config);
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config(&client_config);
     const rocketnet_server_transport_io_config_t server_setup = { "portable", &server_config, "127.0.0.1:0", NULL };

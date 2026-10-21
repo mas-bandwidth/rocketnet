@@ -537,7 +537,7 @@ void rocketnet_platform_socket_set_receive_hook( struct rocketnet_platform_socke
  */
 const char * rocketnet_platform_socket_pump( struct rocketnet_platform_socket_t * socket );
 
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
 // Test seams, compiled only into the development library (TRANSPORTS.md, ICMP
 // errors). inject_receive_errno makes the next recvmsg or recvmsg_x on any
 // socket return -1 with that errno instead of reading, leaving the queue
@@ -547,7 +547,7 @@ const char * rocketnet_platform_socket_pump( struct rocketnet_platform_socket_t 
 void rocketnet_platform_inject_receive_errno_for_testing( int error );
 struct rocketnet_server_transport_t;
 struct rocketnet_platform_socket_t * rocketnet_server_transport_platform_socket_for_testing( struct rocketnet_server_transport_t * server_transport );
-#endif // #if ROCKETNET_DEVELOPMENT
+#endif // #if ROCKETNET_DEV
 
 #ifdef __cplusplus
 }

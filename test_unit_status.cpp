@@ -41,7 +41,7 @@ static const struct
     { ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED, "MEMORY_BUDGET_EXCEEDED" },
     { ROCKETNET_STATUS_MISSING_KEYS, "MISSING_KEYS" },
     { ROCKETNET_STATUS_INVALID_PROTOCOL_ID, "INVALID_PROTOCOL_ID" },
-    { ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE, "DEV_KEYS_IN_RELEASE" },
+    { ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION, "DEV_KEYS_IN_PRODUCTION" },
     { ROCKETNET_STATUS_INVALID_ADDRESS, "INVALID_ADDRESS" },
     { ROCKETNET_STATUS_INVALID_TRANSPORT_LIST, "INVALID_TRANSPORT_LIST" },
     { ROCKETNET_STATUS_INVALID_CONNECT_TOKEN, "INVALID_CONNECT_TOKEN" },
@@ -57,14 +57,16 @@ static const struct
     { ROCKETNET_STATUS_FLOW_ID_RESERVED, "FLOW_ID_RESERVED" },
     { ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED, "TRANSPORT_FAMILIES_UNSUPPORTED" },
     { ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED, "CONFIG_NOT_INITIALIZED" },
+    { ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION, "TEST_PACKET_FILTER_IN_PRODUCTION" },
+    { ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION, "DEV_CONNECT_TOKEN_IN_PRODUCTION" },
 };
 
 static void test_status_names_cover_every_code()
 {
     const int num_codes = (int) ( sizeof( status_expected ) / sizeof( status_expected[0] ) );
     check( ROCKETNET_STATUS_OK == 0 );
-    check( ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED == -27 );
-    check( num_codes == 28 );
+    check( ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION == -29 );
+    check( num_codes == 30 );
 
     for ( int i = 0; i < num_codes; i++ )
     {
@@ -86,8 +88,8 @@ REGISTER_UNIT_TEST( test_status_names_cover_every_code );
 static void test_status_name_out_of_range_is_unknown()
 {
     check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) 1 ), "UNKNOWN" ) == 0 );
-    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) -28 ), "UNKNOWN" ) == 0 );
-    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) -29 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) -30 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) -31 ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) INT_MIN ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) INT_MAX ), "UNKNOWN" ) == 0 );
 }

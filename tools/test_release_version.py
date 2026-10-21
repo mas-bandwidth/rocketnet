@@ -20,14 +20,14 @@ check = textwrap.dedent(workflow[start:end])
 extract = next(line.strip() for line in workflow.splitlines() if line.strip().startswith('version=$(sed '))
 def fixture(full, numeric='1.0.0', dev_full='dev', dev_numeric='255.255.255'):
     # Final public API deliberately has no VERSION_PRERELEASE macro.
-    lines = ['#if !ROCKETNET_DEVELOPMENT']
+    lines = ['#if !ROCKETNET_DEV']
     for label, numbers in [(full, numeric), (dev_full, dev_numeric)]:
         if len(lines) > 1:
-            lines.append('#else // !ROCKETNET_DEVELOPMENT')
+            lines.append('#else // !ROCKETNET_DEV')
         lines.append('#define ROCKETNET_VERSION_FULL "' + label + '"')
         for part, value in zip(('MAJOR', 'MINOR', 'PATCH'), numbers.split('.')):
             lines.append('#define ROCKETNET_VERSION_' + part + ' ' + value)
-    lines.append('#endif // !ROCKETNET_DEVELOPMENT')
+    lines.append('#endif // !ROCKETNET_DEV')
     return '\n'.join(lines) + '\n'
 
 

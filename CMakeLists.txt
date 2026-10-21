@@ -43,7 +43,13 @@ option(ROCKETNET_BUILD_EXAMPLES "Build the client/server examples" ${ROCKETNET_T
 option(ROCKETNET_BUILD_TOOLS "Build keygen and soak tools" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_IO_URING "Build the io_uring server transport against liburing when it is found (Linux)" ON)
 option(ROCKETNET_SANITIZE_ADDRESS "Build every target with AddressSanitizer" OFF)
-option(ROCKETNET_TEST_DEVELOPMENT "Build the unit test library with ROCKETNET_DEVELOPMENT=1, so ./bin/test runs the development paths" OFF)
+# ROCKETNET_DEV (sdk/rocketnet.h): ON, the default, builds rocketnet,
+# rocketnet_shared and the unit suite's hook library as development libraries
+# (ROCKETNET_DEV=1). A production build is -DROCKETNET_DEV=OFF: the installed
+# libraries then carry no simulator, test seam, development key or token
+# minting, and refuse the development keys, tokens and test packet filter.
+# rocketnet_dev and rocketnet_shared_dev are ROCKETNET_DEV=1 in every build.
+option(ROCKETNET_DEV "Build rocketnet, rocketnet_shared and the unit test library with ROCKETNET_DEV=1 (OFF for production)" ON)
 if(ROCKETNET_SANITIZE_ADDRESS)
     if(MSVC)
         add_compile_options(/fsanitize=address /Zi)
@@ -286,12 +292,12 @@ endfunction()
 # Explicit STATIC: a parent's BUILD_SHARED_LIBS must not change the target's meaning.
 add_library(rocketnet STATIC ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 add_library(rocketnet_shared SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
-# The development library: the same source compiled with ROCKETNET_DEVELOPMENT=1,
+# The development library: the same source compiled with ROCKETNET_DEV=1,
 # so the dev flow (examples, functional suite, soak, serialize) keeps the
 # development token minting and accepts the published development keys that the
 # production library refuses. Never installed: it is a build-tree dev aid.
 add_library(rocketnet_dev STATIC ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
-# The development shared library: the same source with ROCKETNET_DEVELOPMENT=1,
+# The development shared library: the same source with ROCKETNET_DEV=1,
 # for native development-mode loopback and ABI checks. Never
 # installed; the production shared library must not carry the minting symbol.
 add_library(rocketnet_shared_dev SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
@@ -302,6 +308,9 @@ add_library(rocketnet_shared_dev SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_S
 set(rocketnet_test_hook_targets)
 if(ROCKETNET_BUILD_TESTS)
     add_library(rocketnet_test_hooks STATIC EXCLUDE_FROM_ALL ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
+    # ROCKETNET_TEST_SEAMS (sdk/rocketnet_test_seams.h) is PUBLIC so the suite's
+    # own sources see the seams this library carries.
+    target_compile_definitions(rocketnet_test_hooks PUBLIC ROCKETNET_TEST_SEAMS=1)
     target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1 ROCKETNET_RECEIVE_TEST_HOOKS=1)
     set(rocketnet_test_hook_targets rocketnet_test_hooks)
 endif()
@@ -364,11 +373,12 @@ foreach(target rocketnet rocketnet_dev rocketnet_shared rocketnet_shared_dev ${r
     set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_compile_features(${target} PRIVATE cxx_std_11)
     rocketnet_warning_floor(${target})
-    if(target STREQUAL "rocketnet_dev" OR target STREQUAL "rocketnet_shared_dev" OR
-       (ROCKETNET_TEST_DEVELOPMENT AND target STREQUAL "rocketnet_test_hooks"))
-        target_compile_definitions(${target} PUBLIC ROCKETNET_DEVELOPMENT=1)
+    # PUBLIC: a consumer's rocketnet.h must see the value its library was
+    # built with, and the header's default is 1.
+    if(ROCKETNET_DEV OR target STREQUAL "rocketnet_dev" OR target STREQUAL "rocketnet_shared_dev")
+        target_compile_definitions(${target} PUBLIC ROCKETNET_DEV=1)
     else()
-        target_compile_definitions(${target} PRIVATE ROCKETNET_DEVELOPMENT=0)
+        target_compile_definitions(${target} PUBLIC ROCKETNET_DEV=0)
     endif()
     if(ROCKETNET_TRANSPORT_REGISTRY_HEADER)
         target_compile_definitions(${target} PRIVATE "ROCKETNET_TRANSPORT_REGISTRY_HEADER=\"${ROCKETNET_TRANSPORT_REGISTRY_HEADER}\"")
@@ -538,7 +548,7 @@ if(ROCKETNET_BUILD_TESTS)
         sdk/rocketnet_tests.cpp ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
     add_dependencies(test_wide rocketnet_xdp_header)
     target_compile_definitions(test_wide PRIVATE ROCKETNET_MAX_CHANNELS=512
-        ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1
+        ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_TEST_SEAMS=1
         $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
     target_include_directories(test_wide PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/sdk"
@@ -775,7 +785,7 @@ if(ROCKETNET_BUILD_TOOLS)
     # build in ci.yml.
     foreach(harness rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured)
         add_executable(fuzz_replay_${harness} fuzz/replay_main.cpp fuzz/${harness}.cpp)
-        target_compile_definitions(fuzz_replay_${harness} PRIVATE ROCKETNET_DEVELOPMENT=1)
+        target_compile_definitions(fuzz_replay_${harness} PRIVATE ROCKETNET_DEV=1)
         target_compile_features(fuzz_replay_${harness} PRIVATE cxx_std_17)
         target_include_directories(fuzz_replay_${harness} PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}/sodium"

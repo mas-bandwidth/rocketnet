@@ -11,8 +11,8 @@
     beside client and server under ROCKETNET_BUILD_EXAMPLES.
 */
 
-#if !defined( ROCKETNET_DEVELOPMENT )
-#define ROCKETNET_DEVELOPMENT 1
+#if !defined( ROCKETNET_DEV )
+#define ROCKETNET_DEV 1
 #endif
 
 #include "rocketnet.h"

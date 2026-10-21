@@ -77,7 +77,7 @@ them.
 Status codes follow these rules:
 
 1. `ROCKETNET_STATUS_OK = 0` is the sole success value.
-2. Every failure code is negative, dense from `-1` to `-27`. `status < 0`
+2. Every failure code is negative, dense from `-1` to `-29`. `status < 0`
    means the call failed.
 3. There is no count value. `rocketnet_status_name` maps each code by value.
    It returns a static ASCII identifier, for example `"INVALID_CONNECT_TOKEN"`,
@@ -102,7 +102,7 @@ enum rocketnet_status_t
     ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED             = -9,
     ROCKETNET_STATUS_MISSING_KEYS                       = -10,
     ROCKETNET_STATUS_INVALID_PROTOCOL_ID                = -11,
-    ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE                = -12,
+    ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION                = -12,
     ROCKETNET_STATUS_INVALID_ADDRESS                    = -13,
     ROCKETNET_STATUS_INVALID_TRANSPORT_LIST             = -14,
 
@@ -123,7 +123,11 @@ enum rocketnet_status_t
     ROCKETNET_STATUS_SERVER_NOT_STOPPED                 = -24,
     ROCKETNET_STATUS_FLOW_ID_RESERVED                   = -25,
     ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED     = -26,
-    ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED             = -27
+    ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED             = -27,
+
+    // production builds (ROCKETNET_DEV=0) refuse the development values
+    ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION   = -28,
+    ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION    = -29
 };
 ```
 
@@ -144,11 +148,16 @@ return the token and transport codes: `CLIENT_NOT_DISCONNECTED`,
 `ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED` is -26: a transport returns it
 when it cannot serve both named families, and start returns it when every
 candidate that opened refused for that reason.
-`ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED` is -27, the last code: a config whose
+`ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED` is -27: a config whose
 `config_bytes` is 0 or smaller than the field itself, one that skipped its
 default_config call, is refused with it before any other check
 (`docs/ABI-EVOLUTION.md`). Its string is `CONFIG_NOT_INITIALIZED`
 (`rocketnet_status_name` in `sdk/rocketnet.cpp`).
+`ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION` is -28: a production build
+(`ROCKETNET_DEV=0`) refuses the published test packet filter at client and
+server create. `ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION` is -29, the
+last code: a production client refuses, at connect, a token sealed to the
+published development server key.
 
 ### 2.2 Reporting
 

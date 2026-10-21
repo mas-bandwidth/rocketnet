@@ -104,7 +104,7 @@ jobs:
           mkdir -p bin
           clang++ -g -O1 -std=c++17 \
             -ffp-contract=off \
-            -DROCKETNET_DEVELOPMENT=1 \
+            -DROCKETNET_DEV=1 \
             -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
             -Isodium -Isdk -Itest "${{ fromJSON(matrix.leg).source }}" build-fuzz/librocketnet_dev.a \
             -lbpf -lxdp -luring -lpthread \
@@ -215,7 +215,7 @@ jobs:
           mkdir -p bin
           "$ROCKETNET_FUZZ_CXX" -g -O1 -std=c++17 \
             -ffp-contract=off \
-            -DROCKETNET_DEVELOPMENT=1 \
+            -DROCKETNET_DEV=1 \
             -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
             -Isodium -Isdk -Itest "${{ fromJSON(matrix.leg).source }}" build-fuzz/librocketnet_dev.a \
             -lpthread \

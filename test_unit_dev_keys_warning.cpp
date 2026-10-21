@@ -5,7 +5,7 @@
 
 // The development keys are public and must never serve production: an
 // implementation must warn on every start that uses them, at each end that
-// can tell, and a release build must refuse them on the server. This case
+// can tell, and a production build (ROCKETNET_DEV=0) must refuse them on the server. This case
 // captures the log through the preformatted callback (as test_unit_logging.cpp
 // does), with no socket, and asserts the warning level, the line, and that a
 // non-development key logs no such line.
@@ -139,7 +139,7 @@ static int test_unset_environment( const char * name )
 
 static void test_dev_keys_warn_on_every_start()
 {
-    // the server, development keys: a warning on create, and in a release
+    // the server, development keys: a warning on create, and in a production
     // build (the unit suite's build) the published keys are refused.
     // The create pins the loopback transport on port 0: the development-keys
     // warn is raised before the transport ladder
@@ -157,9 +157,9 @@ static void test_dev_keys_warn_on_every_start()
         check( g_dev_warn_level == ROCKETNET_LOG_LEVEL_WARN );
         check( strstr( g_dev_warn_buf, DEV_KEY_WARN_PHRASE ) != NULL );
         stop_capture();
-#if !ROCKETNET_DEVELOPMENT
+#if !ROCKETNET_DEV
         check( srv == NULL );
-        check( status == ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE );
+        check( status == ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION );
 #else
         if ( srv )
             rocketnet_server_transport_destroy( (struct rocketnet_server_transport_t *) srv );

@@ -756,10 +756,40 @@ void rocketnet_public_link_simulator_test_development( int enabled )
 bool rocketnet_public_link_simulator_development( void )
 {
 #if ROCKETNET_LINK_SIMULATOR_TEST_HOOKS
-    return ROCKETNET_DEVELOPMENT != 0 || rocketnet_public_link_simulator_test_hook;
+    return ROCKETNET_DEV != 0 || rocketnet_public_link_simulator_test_hook;
 #else
-    return ROCKETNET_DEVELOPMENT != 0;
+    return ROCKETNET_DEV != 0;
 #endif
+}
+
+#if ROCKETNET_TEST_SEAMS && !ROCKETNET_DEV
+static bool rocketnet_development_values_refused_test_hook = false;
+void rocketnet_development_values_refused_test_enable( int enabled )
+{
+    rocketnet_development_values_refused_test_hook = enabled != 0;
+}
+#endif // #if ROCKETNET_TEST_SEAMS && !ROCKETNET_DEV
+
+bool rocketnet_development_values_refused( void )
+{
+#if ROCKETNET_DEV
+    return false;
+#elif ROCKETNET_TEST_SEAMS
+    return rocketnet_development_values_refused_test_hook;
+#else
+    return true;
+#endif
+}
+
+bool rocketnet_config_packet_filter_refused( const char * side, const uint8_t * filter )
+{
+    rocketnet_assert( side );
+    rocketnet_assert( filter );
+    static const uint8_t test_filter[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    if ( !rocketnet_development_values_refused() || memcmp( filter, test_filter, sizeof( test_filter ) ) != 0 )
+        return false;
+    rocketnet_error( "%s packet_filter is the published test filter; a production build (ROCKETNET_DEV=0) refuses it: set your own in the config or ROCKETNET_%s_PACKET_FILTER", side, side[0] == 'c' ? "CLIENT" : "SERVER" );
+    return true;
 }
 
 bool rocketnet_config_validate_public_link_simulator( const char * transport_name, const void * config, const struct rocketnet_config_field_t * fields, int num_fields, bool development )

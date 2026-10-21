@@ -23,7 +23,7 @@
       ./bin/instruction_count <client_frame|server_tick> [setup]
 */
 
-#define ROCKETNET_DEVELOPMENT 1
+#define ROCKETNET_DEV 1
 #include "rocketnet.h"
 #include "rocketnet_driver_loopback.h"
 #include "rocketnet_internal.h"

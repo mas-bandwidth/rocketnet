@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet_memory.h"
+#include "rocketnet_test_seams.h"
 #include "rocketnet_client_slots.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connection_reset.h"
@@ -301,6 +302,7 @@ void rocketnet_client_slots_release( struct rocketnet_client_slots_t * slots, in
     rocketnet_debug( "server released client slot %d", client_index );
 }
 
+#if ROCKETNET_TEST_SEAMS
 bool rocketnet_client_slots_inventory_matches_for_test( char * failure, size_t failure_bytes )
 {
 #define SLOT_MEMBER( field, declaration ) ROCKETNET_RESET_MEMBER( rocketnet_client_slots_t, field, -1 ),
@@ -314,7 +316,9 @@ bool rocketnet_client_slots_inventory_matches_for_test( char * failure, size_t f
                                               sizeof(rocketnet_client_slots_t), alignof(rocketnet_client_slots_t),
                                               failure, failure_bytes );
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
+#if ROCKETNET_TEST_SEAMS
 bool rocketnet_client_slots_reset_witness_for_test()
 {
     rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, 1 );
@@ -341,3 +345,4 @@ bool rocketnet_client_slots_reset_witness_for_test()
     rocketnet_client_slots_destroy( slots );
     return clean;
 }
+#endif // #if ROCKETNET_TEST_SEAMS

@@ -152,12 +152,16 @@ jobs:
       matrix:
         include:
           # linux x64
-          - { os: ubuntu-24.04, build_type: Debug,   leg: ab, runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: ubuntu-24.04, build_type: Release, leg: a, runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: ubuntu-24.04, build_type: Release, leg: b, runner: '["self-hosted","Linux","X64","fleet"]' }
+          # dev: the ROCKETNET_DEV setting. Debug rows build the default
+          # development library (ON); Release rows build the production library
+          # (OFF), so every OS runs the suite both ways and the production
+          # boundary checks read a production library.
+          - { os: ubuntu-24.04, build_type: Debug,   leg: ab, dev: 'ON',  runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: ubuntu-24.04, build_type: Release, leg: a,  dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: ubuntu-24.04, build_type: Release, leg: b,  dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
           # macOS Apple silicon on the fleet's darwin runner (mini-m5-1-rocketnet-1, label rocketnet-macos; rowan-tools fleet/runners.tsv)
-          - { os: macos-15, build_type: Debug,   leg: ab, runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
-          - { os: macos-15, build_type: Release, leg: ab, runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
+          - { os: macos-15, build_type: Debug,   leg: ab, dev: 'ON',  runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
+          - { os: macos-15, build_type: Release, leg: ab, dev: 'OFF', runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
     steps:
 
       - uses: actions/checkout@v4
@@ -205,12 +209,12 @@ jobs:
 
       - name: Build (Release, through the Makefile)
         if: matrix.build_type == 'Release'
-        run: make
+        run: make ROCKETNET_DEV=${{ matrix.dev }}
 
       - name: Build (Debug)
         if: matrix.build_type == 'Debug'
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Debug
+          cmake -B build -DCMAKE_BUILD_TYPE=Debug -DROCKETNET_DEV=${{ matrix.dev }}
           cmake --build build --parallel
 
       - name: Check the floating-point floor on every compiler invocation
@@ -413,7 +417,7 @@ jobs:
         run: ./bin/test_lifecycle
 
       - name: Check production library boundary
-        if: contains(matrix.leg, 'a')
+        if: contains(matrix.leg, 'a') && matrix.dev == 'OFF'
         run: |
           if [ "${{ runner.os }}" = "macOS" ]; then
             python3 tools/check_exports.py bin/librocketnet.dylib build/librocketnet.a
@@ -670,8 +674,11 @@ jobs:
         # Uses the Python and CMake on the fleet Windows runner's job PATH.
         run: python tools/check_xdp_archive.py --committed-only
 
+      # leg (a) runs the suites on the default development library
+      # (ROCKETNET_DEV=ON); leg (b) checks the production library
+      # (ROCKETNET_DEV=OFF) as a consumer sees it.
       - name: Configure
-        run: cmake -B build -A x64
+        run: cmake -B build -A x64 -DROCKETNET_DEV=${{ matrix.leg == 'b' && 'OFF' || 'ON' }}
 
       - name: Build
         run: cmake --build build --config Release --parallel
@@ -1265,7 +1272,7 @@ jobs:
           for src in rocketnet_fuzz rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_message; do
             clang++ -g -O1 -std=c++17 \
               -ffp-contract=off \
-              -DROCKETNET_DEVELOPMENT=1 -DNDEBUG \
+              -DROCKETNET_DEV=1 -DNDEBUG \
               -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
               -Isodium -Isdk -Itest "fuzz/${src}.cpp" build-fuzz/librocketnet_dev.a \
               -lbpf -lxdp -luring -lpthread \

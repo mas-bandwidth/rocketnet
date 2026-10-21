@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet_memory.h"
+#include "rocketnet_test_seams.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_route.h"
 #include <atomic>
@@ -173,10 +174,12 @@ static bool rocketnet_platform_ipv6_socket_available_for_testing = true;
 // connection-type lookup and IPv6 probe; a unit test's table replaces both.
 static std::atomic<const rocketnet_platform_network_lookups_t *> rocketnet_platform_network_lookups_override{ NULL };
 
+#if ROCKETNET_TEST_SEAMS
 void rocketnet_platform_set_network_lookups_for_testing( const rocketnet_platform_network_lookups_t * lookups )
 {
     rocketnet_platform_network_lookups_override.store( lookups, std::memory_order_release );
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
 // Network-thread priority (docs/CLIENT-IO.md, TRANSPORTS.md). The calls and their
 // values are the flow library's (flow_platform.cpp), unchanged; each platform
@@ -195,21 +198,25 @@ static const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_c
     return calls ? calls : rocketnet_platform_priority_calls_real();
 }
 
+#if ROCKETNET_TEST_SEAMS
 void rocketnet_platform_set_priority_calls_for_testing( const rocketnet_platform_priority_calls_t * calls )
 {
     rocketnet_platform_priority_calls_override.store( calls, std::memory_order_release );
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
 const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls_current()
 {
     return rocketnet_platform_priority_calls();
 }
 
+#if ROCKETNET_TEST_SEAMS
 void rocketnet_platform_thread_priority_reset_logged_for_testing()
 {
     for ( int i = 0; i < ROCKETNET_PLATFORM_PRIORITY_CALL_COUNT; ++i )
         rocketnet_platform_thread_priority_logged[i].store( false, std::memory_order_relaxed );
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
 void rocketnet_platform_set_thread_priority_enabled( bool enabled )
 {
@@ -2756,7 +2763,7 @@ static bool rocketnet_platform_receive_weather( int error )
            error == EHOSTDOWN || error == ENETDOWN || error == ENOBUFS || error == EINTR;
 }
 
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
 
 // the test seam (development builds only, never the production library):
 // the next recvmsg or recvmsg_x on any socket returns -1 with this errno
@@ -2774,18 +2781,18 @@ static int rocketnet_platform_take_receive_errno_for_testing()
     return rocketnet_platform_receive_errno_for_testing.exchange( 0 );
 }
 
-#endif // #if ROCKETNET_DEVELOPMENT
+#endif // #if ROCKETNET_DEV
 
 static ssize_t rocketnet_platform_recvmsg( int handle, struct msghdr * msg )
 {
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
     const int injected = rocketnet_platform_take_receive_errno_for_testing();
     if ( injected != 0 )
     {
         errno = injected;
         return -1;
     }
-#endif // #if ROCKETNET_DEVELOPMENT
+#endif // #if ROCKETNET_DEV
     return recvmsg( handle, msg, 0 );
 }
 
@@ -3231,7 +3238,7 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
 
         errno = 0;
         ssize_t result;
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
         const int injected = rocketnet_platform_take_receive_errno_for_testing();
         if ( injected != 0 )
         {
@@ -3239,7 +3246,7 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
             result = -1;
         }
         else
-#endif // #if ROCKETNET_DEVELOPMENT
+#endif // #if ROCKETNET_DEV
         result = rocketnet_recvmsg_x( socket->handle, msg, (u_int) want, 0 );
         if ( result < 0 )
         {
@@ -4756,10 +4763,12 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 
 // ----------------------------------------------------------------
 
+#if ROCKETNET_TEST_SEAMS
 void rocketnet_platform_set_ipv6_socket_available_for_testing( bool available )
 {
     rocketnet_platform_ipv6_socket_available_for_testing = available;
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
 bool rocketnet_platform_client_ipv6_available()
 {

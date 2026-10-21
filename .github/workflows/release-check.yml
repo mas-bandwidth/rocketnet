@@ -51,7 +51,7 @@ jobs:
 
       # rocketnet's version lives in one header and in two branches of it:
       # the shipping version and the development version, selected by
-      # ROCKETNET_DEVELOPMENT. BOTH branches are checked, because the one
+      # ROCKETNET_DEV. BOTH branches are checked, because the one
       # that is not compiled today is the one that drifts.
 
       - name: Check the version sites agree
@@ -98,15 +98,15 @@ jobs:
           }
 
           # the two branches, in file order: the shipping one first
-          shipping_full=$(awk '/#if !ROCKETNET_DEVELOPMENT/,/#else/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_FULL[[:space:]]+"([^"]+)".*/\1/p' | head -n1)
-          shipping_major=$(awk '/#if !ROCKETNET_DEVELOPMENT/,/#else/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_MAJOR[[:space:]]+([0-9]+).*/\1/p' | head -n1)
-          shipping_minor=$(awk '/#if !ROCKETNET_DEVELOPMENT/,/#else/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_MINOR[[:space:]]+([0-9]+).*/\1/p' | head -n1)
-          shipping_patch=$(awk '/#if !ROCKETNET_DEVELOPMENT/,/#else/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_PATCH[[:space:]]+([0-9]+).*/\1/p' | head -n1)
+          shipping_full=$(awk '/#if !ROCKETNET_DEV/,/#else/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_FULL[[:space:]]+"([^"]+)".*/\1/p' | head -n1)
+          shipping_major=$(awk '/#if !ROCKETNET_DEV/,/#else/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_MAJOR[[:space:]]+([0-9]+).*/\1/p' | head -n1)
+          shipping_minor=$(awk '/#if !ROCKETNET_DEV/,/#else/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_MINOR[[:space:]]+([0-9]+).*/\1/p' | head -n1)
+          shipping_patch=$(awk '/#if !ROCKETNET_DEV/,/#else/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_PATCH[[:space:]]+([0-9]+).*/\1/p' | head -n1)
 
-          dev_full=$(awk '/#else \/\/\/? !ROCKETNET_DEVELOPMENT/,/#endif \/\/\/? !ROCKETNET_DEVELOPMENT/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_FULL[[:space:]]+"([^"]+)".*/\1/p' | head -n1)
-          dev_major=$(awk '/#else \/\/\/? !ROCKETNET_DEVELOPMENT/,/#endif \/\/\/? !ROCKETNET_DEVELOPMENT/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_MAJOR[[:space:]]+([0-9]+).*/\1/p' | head -n1)
-          dev_minor=$(awk '/#else \/\/\/? !ROCKETNET_DEVELOPMENT/,/#endif \/\/\/? !ROCKETNET_DEVELOPMENT/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_MINOR[[:space:]]+([0-9]+).*/\1/p' | head -n1)
-          dev_patch=$(awk '/#else \/\/\/? !ROCKETNET_DEVELOPMENT/,/#endif \/\/\/? !ROCKETNET_DEVELOPMENT/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_PATCH[[:space:]]+([0-9]+).*/\1/p' | head -n1)
+          dev_full=$(awk '/#else \/\/\/? !ROCKETNET_DEV/,/#endif \/\/\/? !ROCKETNET_DEV/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_FULL[[:space:]]+"([^"]+)".*/\1/p' | head -n1)
+          dev_major=$(awk '/#else \/\/\/? !ROCKETNET_DEV/,/#endif \/\/\/? !ROCKETNET_DEV/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_MAJOR[[:space:]]+([0-9]+).*/\1/p' | head -n1)
+          dev_minor=$(awk '/#else \/\/\/? !ROCKETNET_DEV/,/#endif \/\/\/? !ROCKETNET_DEV/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_MINOR[[:space:]]+([0-9]+).*/\1/p' | head -n1)
+          dev_patch=$(awk '/#else \/\/\/? !ROCKETNET_DEV/,/#endif \/\/\/? !ROCKETNET_DEV/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_PATCH[[:space:]]+([0-9]+).*/\1/p' | head -n1)
 
           check_branch "shipping" "$shipping_full" "$shipping_major" "$shipping_minor" "$shipping_patch"
           check_branch "development" "$dev_full" "$dev_major" "$dev_minor" "$dev_patch"

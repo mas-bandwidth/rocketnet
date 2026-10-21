@@ -86,9 +86,9 @@ class CheckExportsSourceTest(unittest.TestCase):
 
     def test_dev_block_declaration_ignored(self):
         header_text = HEADER.read_text().replace(
-            "#endif /// #if ROCKETNET_DEVELOPMENT",
+            "#endif /// #if ROCKETNET_DEV",
             "ROCKETNET_EXPORT_FUNC int rocketnet_fixture_export( void * p );\n"
-            "#endif /// #if ROCKETNET_DEVELOPMENT",
+            "#endif /// #if ROCKETNET_DEV",
         )
         header_copy = Path(self.tmp.name) / "rocketnet.h"
         header_copy.write_text(header_text)
@@ -138,6 +138,44 @@ class CheckHeaderExportsTest(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn("rocketnet_version", err)
 
+
+
+class CheckExportsDevelopmentCodeTest(unittest.TestCase):
+    """A production build (ROCKETNET_DEV=0) carries no development or test code."""
+
+    def test_test_seams_and_simulator_are_development_symbols(self):
+        defined = {
+            "__Z45rocketnet_client_slots_reset_witness_for_testv",
+            "__Z34rocketnet_network_simulator_createPviy",
+            "_rocketnet_dev_server_secret_key",
+            "rocketnet_server_transport_dev_config",
+            "rocketnet_server_transport_set_test_timestamp",
+            "_rocketnet_platform_set_priority_calls_for_testing",
+        }
+        self.assertEqual(check_exports.development_symbols(defined), sorted(defined))
+
+    def test_production_symbols_are_not_development_symbols(self):
+        defined = {
+            "_rocketnet_dev_server_public_key",
+            "_rocketnet_dev_backend_public_key",
+            "__Z43rocketnet_public_link_simulator_developmentv",
+            "__Z38rocketnet_config_packet_filter_refusedPKcPKh",
+            "rocketnet_client_create",
+        }
+        self.assertEqual(check_exports.development_symbols(defined), [])
+
+    def test_dev_server_secret_key_is_read_from_its_definition(self):
+        key = check_exports.dev_server_secret_key(REPO_ROOT / "sdk" / "rocketnet_connect_token.cpp")
+        self.assertEqual(len(key), 32)
+        self.assertEqual(key[:4], bytes([0x6f, 0xfb, 0x8f, 0x73]))
+
+    def test_files_holding_finds_the_key_bytes(self):
+        with tempfile.TemporaryDirectory(dir=REPO_ROOT) as tmp:
+            key = bytes(range(32))
+            holder, clean = Path(tmp) / "holder.a", Path(tmp) / "clean.a"
+            holder.write_bytes(b"prefix" + key + b"suffix")
+            clean.write_bytes(b"prefix" + key[:31] + b"suffix")
+            self.assertEqual(check_exports.files_holding(key, [holder, clean]), [str(holder)])
 
 if __name__ == "__main__":
     unittest.main()

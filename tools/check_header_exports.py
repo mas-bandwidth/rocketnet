@@ -24,7 +24,7 @@ def header_export_names(header_path):
             elif line.startswith("#endif"):
                 development -= 1
             continue
-        if line == "#if ROCKETNET_DEVELOPMENT":
+        if line == "#if ROCKETNET_DEV":
             development = 1
             continue
         if line.startswith("#"):
