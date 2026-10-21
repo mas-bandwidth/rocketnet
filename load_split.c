@@ -558,8 +558,8 @@ static int split_print_receipt( const char * role, uint64_t run_id, int total, i
     return pass;
 }
 
-static int split_server_run( int total, int duration, uint64_t run_id, const char * bind_address,
-                             const char * advertise_host, double aggregate_limit_kbps )
+static int split_server_run( int total, int duration, uint64_t run_id, const char * server_endpoint,
+                             const char * ready_ipv4, double aggregate_limit_kbps )
 {
     struct split_result_t result = { 0 };
     result.duration_target = duration;
@@ -586,7 +586,7 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
     struct rocketnet_server_config_t config;
     split_server_config(&config, total);
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    server = rocketnet_server_create(NULL, bind_address, NULL, &config, &create_status);
+    server = rocketnet_server_create(NULL, server_endpoint, NULL, &config, &create_status);
     if ( !server || rocketnet_server_start(server) != ROCKETNET_STATUS_OK ) goto cleanup;
     snprintf(transport, sizeof(transport), "%s", rocketnet_server_transport_name(server));
     clients = (struct split_server_client_t *) calloc((size_t) total, sizeof(*clients));
@@ -601,7 +601,7 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
     printf("split_ready: schema=split_v1 role=server run_id=%016" PRIx64 " total=%d "
            "duration_s=%d profile=default payload_bytes=32 rate_target_hz=1 "
            "address=%s:%u key=%s transport=%s startup_utc_s=%" PRIu64 "\n",
-           run_id, total, duration, advertise_host, (unsigned) rocketnet_server_port(server),
+           run_id, total, duration, ready_ipv4, (unsigned) rocketnet_server_port(server),
            key_hex, transport, result.startup_utc_s);
     fflush(stdout);
 
@@ -1244,7 +1244,7 @@ static void split_usage( void )
     fprintf(stderr, "usage:\n"
             "  load_split plan-server <total>\n"
             "  load_split plan-client-shard <total> <local-count>\n"
-            "  load_split server <total> <seconds> <run-id-16hex> <bind-ipv4:port> <advertise-ipv4> <aggregate-limit-kbps>\n"
+            "  load_split server <total> <seconds> <run-id-16hex> <server-ipv4:port> <ready-ipv4> <aggregate-limit-kbps>\n"
             "  load_split client-shard <total> <seconds> <run-id-16hex> <first> <count> <server-ipv4:port> <server-key-64hex> <aggregate-limit-kbps>\n");
 }
 

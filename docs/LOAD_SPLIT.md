@@ -33,12 +33,21 @@ pre-term/post-term handle and thread phase pairs and require successful
 `rocketnet_term`.
 
 Generate a fresh nonzero 16-digit hexadecimal run ID. Start the dedicated
-server first, using an address it can bind and an IPv4 address reachable by
-the client machines:
+server first, using its concrete client-reachable IPv4 endpoint. The first
+address argument is passed to `rocketnet_server_create` and establishes the
+server's protocol-advertised address. The second argument supplies the IPv4
+host printed in `split_ready`; it must name the same address. It does not
+override the SDK's advertised address. Replace `192.0.2.10` in this example
+with the server's actual client-reachable IPv4 address:
 
 ```text
-load_split server 1000 60 0123456789abcdef 0.0.0.0:40000 192.0.2.10 80000
+load_split server 1000 60 0123456789abcdef 192.0.2.10:40000 192.0.2.10 80000
 ```
+
+Do not pass `0.0.0.0:40000` as the first argument while publishing a concrete
+LAN address in readiness. Clients put the readiness endpoint in their connect
+tokens, and the server rejects a token whose IPv4 endpoint differs from its
+protocol-advertised endpoint, before issuing a connection cookie.
 
 Capture its single `split_ready:` line. It supplies the actual address/port
 and public key. Launch one or more client shards on other machines with the
