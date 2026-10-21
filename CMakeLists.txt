@@ -556,6 +556,7 @@ if(ROCKETNET_BUILD_TESTS)
     add_dependencies(test_wide rocketnet_xdp_header)
     target_compile_definitions(test_wide PRIVATE ROCKETNET_MAX_CHANNELS=512
         ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1
+        ROCKETNET_STATS_MANUAL_TEST_HOOKS=1
         $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
     target_include_directories(test_wide PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/sdk"

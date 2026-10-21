@@ -1271,7 +1271,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     const int manual_override = -1;
     const bool fail_stats_thread = false;
 #endif
-#if defined(ROCKETNET_LOOPBACK_TEST_HOOKS)
+#if defined(ROCKETNET_LOOPBACK_TEST_HOOKS) || defined(ROCKETNET_STATS_MANUAL_TEST_HOOKS)
     // This build drives in-memory unit fixtures whose cleanup queries
     // completion immediately; it has no OS worker or clock in that path.
     const bool default_manual_stats_worker = true;
