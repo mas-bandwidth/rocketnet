@@ -41,6 +41,14 @@
 // development server key (rocketnet_dev_server_public_key) that the server
 // transport dev config carries, under ROCKETNET_DEV_PROTOCOL_ID.
 
+// The bytes of rocketnet_dev_server_public_key. That array has C++ linkage, so
+// MSVC decorates its name and a C program cannot link it.
+static const uint8_t client_dev_server_public_key[32] =
+{
+    0x3d, 0x24, 0x90, 0x88, 0x9d, 0x37, 0x4c, 0x29, 0x6f, 0xab, 0x1d, 0x57,
+    0x70, 0xcb, 0x71, 0x47, 0x6a, 0x06, 0xf7, 0x4e, 0xf2, 0xf2, 0x54, 0x0c,
+    0xf2, 0x21, 0x5f, 0x76, 0x14, 0xf4, 0x80, 0x1c};
+
 static int dev_token_base64_value( char c )
 {
     if ( c >= 'A' && c <= 'Z' ) return c - 'A';
@@ -55,7 +63,7 @@ static int dev_token_binary( const char * address, uint64_t client_id, uint64_t 
 {
     char text[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     const int ipv6 = ( address[0] == '[' );
-    if ( rocketnet_create_dev_connect_token( ipv6 ? NULL : address, ipv6 ? address : NULL, rocketnet_dev_server_public_key,
+    if ( rocketnet_create_dev_connect_token( ipv6 ? NULL : address, ipv6 ? address : NULL, client_dev_server_public_key,
                                              ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS, ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS,
                                              client_id, ROCKETNET_DEV_PROTOCOL_ID, timestamp, NULL, text ) != ROCKETNET_STATUS_OK )
         return 0;
@@ -758,7 +766,7 @@ static void run_matrix( opts_t * o )
         char connect_token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
         const int address_is_ipv6 = ( o->address[0] == '[' );
         if ( rocketnet_create_dev_connect_token( address_is_ipv6 ? NULL : o->address, address_is_ipv6 ? o->address : NULL,
-                                                 rocketnet_dev_server_public_key,
+                                                 client_dev_server_public_key,
                                                  ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS, ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS,
                                                  rocketnet_random_uint64(), ROCKETNET_DEV_PROTOCOL_ID, (uint64_t) now, NULL, connect_token ) != ROCKETNET_STATUS_OK )
         {
