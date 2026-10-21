@@ -516,6 +516,10 @@ static void test_loopback_transport_reliable_ordered_survives_loss_and_reorder()
     check( sstats.packets_received == cstats.packets_sent - cstats.packets_sent / 7 );
     check( cstats.packets_received == sstats.packets_sent - sstats.packets_sent / 7 );
 
+    rocketnet_client_transport_stop( pair.client );
+    rn_test_client_transport_wait_stopped( pair.client );
+    rocketnet_server_transport_stop( pair.server );
+    check( rocketnet_server_transport_stopped( pair.server ) );
     rn_message_object_destroy( client );
     rn_message_object_destroy( server );
     rocketnet_public_link_simulator_test_development( 0 );

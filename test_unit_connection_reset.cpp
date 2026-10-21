@@ -3,6 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "test/portable_crt.h"
 
@@ -450,8 +451,8 @@ static void reset_loopback_destroy( reset_loopback_t * f )
 {
     for ( int i = 0; i < RESET_LOOPBACK_MAX_CLIENTS; i++ )
         if ( f->clients[i] )
-            rocketnet_message_client_destroy( f->clients[i] );
-    rocketnet_message_server_destroy( f->server );
+            rn_test_message_client_stop_and_destroy( f->clients[i] );
+    rn_test_message_server_stop_and_destroy( f->server );
 }
 
 static void reset_loopback_slot_reuse_scenario()
@@ -483,7 +484,7 @@ static void reset_loopback_slot_reuse_scenario()
     check( rocketnet_message_client_state( f.clients[0] ) <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
     check( rocketnet_client_transport_reset_witness_for_test( rocketnet_message_client_transport( f.clients[0] ) ) );
 
-    rocketnet_message_client_destroy( f.clients[0] );
+    rn_test_message_client_stop_and_destroy( f.clients[0] );
     f.clients[0] = NULL;
     const int b_slot = reset_loopback_connect( &f, 1, 0xB001 );
     check( b_slot == a_slot );
@@ -684,7 +685,7 @@ static void reset_loopback_server_sweep_timeout_scenario()
     check( rocketnet_server_transport_counters( transport )->values[ROCKETNET_COUNTER_CLIENT_TIMED_OUT] == timed_out_before + 1 );
     reset_server_slot_clean( f.server, a_slot );
 
-    rocketnet_message_client_destroy( f.clients[0] );
+    rn_test_message_client_stop_and_destroy( f.clients[0] );
     f.clients[0] = NULL;
     const int b_slot = reset_loopback_connect( &f, 1, 0xB003 );
     check( b_slot == a_slot );
@@ -821,7 +822,7 @@ static void reset_loopback_client_denied_scenario()
     }
     check( rocketnet_message_client_state( denied ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED );
     reset_client_transport_clean( transport );
-    rocketnet_message_client_destroy( denied );
+    rn_test_message_client_stop_and_destroy( denied );
     reset_loopback_destroy( &f );
 }
 
@@ -981,7 +982,7 @@ static void reset_loopback_explicit_server_disconnect_reason_scenario()
     check( rocketnet_message_server_disconnect_reason( f.server, slot ) == ROCKETNET_DISCONNECT_REASON_NONE );
     check( rocketnet_message_server_disconnect_reason( f.server, 1 - slot ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
-    rocketnet_message_client_destroy( f.clients[0] );
+    rn_test_message_client_stop_and_destroy( f.clients[0] );
     f.clients[0] = NULL;
     const int reused = reset_loopback_connect( &f, 1, 0xE002 );
     check( reused == slot );
@@ -1019,7 +1020,7 @@ static void reset_loopback_server_reliable_timeout_reason_scenario( const rocket
     check( rocketnet_message_server_update( f.server, f.now ) == ROCKETNET_UPDATE_OK );
     check( rocketnet_message_server_disconnect_reason( f.server, slot ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
 
-    rocketnet_message_client_destroy( f.clients[0] );
+    rn_test_message_client_stop_and_destroy( f.clients[0] );
     f.clients[0] = NULL;
     const int reused = reset_loopback_connect( &f, 1, 0xE102, config );
     check( reused == slot );
@@ -1059,7 +1060,7 @@ static void reset_loopback_client_reliable_timeout_reason_scenario( const rocket
     // BASE has no reconnect operation on an existing client object. A newly
     // established real client starts with NONE; the retained old object above
     // is kept separate so this does not pretend a same-object reconnect.
-    rocketnet_message_client_destroy( f.clients[0] );
+    rn_test_message_client_stop_and_destroy( f.clients[0] );
     f.clients[0] = NULL;
     reset_loopback_wait_for_server_connection_state_clean( &f );
     reset_loopback_connect( &f, 1, 0xE202, config );
