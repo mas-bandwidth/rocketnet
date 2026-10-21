@@ -570,10 +570,12 @@ static int rocketnet_server_stats_worker_create( void * context, rocketnet_serve
         worker->exited.store(true, std::memory_order_relaxed);
         return ROCKETNET_STATUS_OK;
     }
+    // The test refusal is consumed before opening native wake handles, so a
+    // deterministic allocation/cleanup test never depends on OS readiness.
+    if ( fail_thread ) return ROCKETNET_STATUS_THREAD_CREATE_FAILED;
     worker->wake = rocketnet_platform_wake_create(context, NULL);
     if ( !worker->wake ) return ROCKETNET_STATUS_OUT_OF_MEMORY;
-    if ( !fail_thread )
-        worker->thread = rocketnet_platform_thread_create(context, rocketnet_server_stats_worker_entry, worker);
+    worker->thread = rocketnet_platform_thread_create(context, rocketnet_server_stats_worker_entry, worker);
     if ( !worker->thread ) return ROCKETNET_STATUS_THREAD_CREATE_FAILED;
     return ROCKETNET_STATUS_OK;
 }
