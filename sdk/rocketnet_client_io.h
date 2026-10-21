@@ -567,9 +567,9 @@ bool rocketnet_client_transport_uses_io_thread( const rocketnet_client_transport
 // Unit tests only: a client transport on the caller's transport operations (the
 // transport's create receives transport_context) with no I/O thread. When the
 // operations have wait and wake the caller runs rocketnet_client_io_step on
-// rocketnet_client_transport_client_io in place of the thread, and destroy
-// runs the step in place of the sleep and the join (docs/CLIENT-IO.md _Stop
-// and destroy order_). Returns NULL on any create refusal.
+// rocketnet_client_transport_client_io in place of the thread. After stop,
+// explicit steps or transport_update advance completion; stopped only polls,
+// and destroy requires completion. Returns NULL on any create refusal.
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven( void * context, const uint8_t * connect_token,
     const struct rocketnet_client_transport_config_t * config, double time,
     const rocketnet_client_transport_io_operations_t * operations, void * transport_context );

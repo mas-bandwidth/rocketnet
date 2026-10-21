@@ -2279,7 +2279,7 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
     {
         // the burst is sealed into slots of the Filling ring and handed off
         // like any packet: deferred when the other ring is busy, retried by
-        // the next update, and handed off by destroy at the latest
+        // the next update, or published as the final ring by stop
         // (docs/CLIENT-IO.md _The protocol packet and disconnect_)
         for ( int i = 0; i < burst_count; i++ )
             rocketnet_client_transport_io_commit_packet( client_transport, burst + i * ROCKETNET_SEND_BUDGET, burst_bytes );
@@ -2476,7 +2476,7 @@ static void rocketnet_client_thread_function( void * data )
     rocketnet_client_transport_t * client_transport = (rocketnet_client_transport_t*) data;
 
     // quit is read with acquire on every iteration; the wait between polls is
-    // bounded at 1 ms and destroy's thread_wake ends it at once (POSIX)
+    // bounded at 1 ms. Stop does not acquire the platform wake mutex.
     while ( !client_transport->quit.load( std::memory_order_acquire ) )
     {
         rocketnet_client_transport_flush_disconnect( client_transport );
