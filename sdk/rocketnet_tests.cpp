@@ -15221,7 +15221,9 @@ void rocketnet_test_public_dev_connect_token_round_trip()
     rocketnet_check( memcmp( server_key, zero, sizeof( zero ) ) != 0 );
 
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
-    rocketnet_check( rocketnet_create_dev_connect_token( address, NULL, server_key, 30, 10, 0x1234, ROCKETNET_DEV_PROTOCOL_ID, 1000, NULL, token ) == ROCKETNET_STATUS_OK );
+    // the token's create stamp is a fixed time far past any test run, so the
+    // client's expiry check at connect passes with no clock read here
+    rocketnet_check( rocketnet_create_dev_connect_token( address, NULL, server_key, 30, 10, 0x1234, ROCKETNET_DEV_PROTOCOL_ID, 4000000000ULL, NULL, token ) == ROCKETNET_STATUS_OK );
     rocketnet_check( strlen( token ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
     rocketnet_check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
     rocketnet_check( rocketnet_client_state( client ) > ROCKETNET_CLIENT_STATE_DISCONNECTED );
