@@ -68,6 +68,12 @@ class MacMemoryTests(unittest.TestCase):
 
 
 class ReceiptTests(unittest.TestCase):
+    def test_population_default_and_requested_mismatch(self):
+        result = profile.parse_load(SUMMARY, "portable", "portable")
+        self.assertEqual(result["expected_clients"], 1000)
+        with self.assertRaisesRegex(ValueError, "population"):
+            profile.parse_load(SUMMARY, "portable", "portable", expected_clients=999)
+
     def test_explicit_phase_pairs_allow_runtime_resources_to_close_at_term(self):
         result = profile.parse_load(PHASE_SUMMARY, "portable", "portable")
         self.assertEqual(result["resource_baseline_schema"], "phase_pairs_v1")
@@ -142,7 +148,7 @@ class ReceiptTests(unittest.TestCase):
 
 
 class ProvenanceTests(unittest.TestCase):
-    def run_fake(self, wrong_source=False, missing_binary=False):
+    def run_fake(self, wrong_source=False, missing_binary=False, clients=None, rate=None):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             source = (root / "source").resolve()
@@ -158,7 +164,7 @@ class ProvenanceTests(unittest.TestCase):
                 raise AssertionError(argv)
 
             def fake_run(argv, cwd, env, timeout):
-                seen.append(argv)
+                seen.append((argv, dict(env)))
                 if argv[:2] == ["cmake", "-S"]:
                     build_dir = output / "build"
                     build_dir.mkdir()
@@ -174,14 +180,19 @@ class ProvenanceTests(unittest.TestCase):
                         binary.chmod(0o755)
                     return 0, "built", "", False
                 self.assertEqual(argv[:1], [str(output / "bin" / "load")])
-                return 0, SUMMARY, "", False
+                connected = 1000 if clients is None else clients
+                return 0, SUMMARY.replace("connected=1000", f"connected={connected}"), "", False
 
             args = ["profile_1000_load.py", "--mode", "timings", "--source", str(source),
                     "--output", str(output), "--expected-head", HEAD,
                     "--server-transport", "portable", "--seconds", "60"]
+            if clients is not None:
+                args += ["--clients", str(clients)]
+            if rate is not None:
+                args += ["--messages-per-client-second", str(rate)]
             with mock.patch.object(sys, "argv", args), mock.patch.object(profile, "command", fake_command), \
                  mock.patch.object(profile, "run_capture", fake_run), \
-                 mock.patch.object(profile, "preflight", lambda _: {"failures": []}), \
+                 mock.patch.object(profile, "preflight", lambda *_: {"failures": []}), \
                  contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                 code = profile.main()
             receipt = json.loads((output / "receipt.json").read_text())
@@ -191,7 +202,7 @@ class ProvenanceTests(unittest.TestCase):
         code, receipt, seen = self.run_fake()
         self.assertEqual(code, 0)
         self.assertEqual(receipt["verdict"], "COLLECTED_NOT_QUALIFIED")
-        self.assertEqual(seen[1][-2:], ["--parallel", "4"])
+        self.assertEqual(seen[1][0][-2:], ["--parallel", "4"])
         self.assertEqual(receipt["runs"][0]["command"][0], receipt["binary"])
         self.assertEqual(len(receipt["runs"]), 3)
         self.assertIn("binary_sha256", receipt)
@@ -209,6 +220,38 @@ class ProvenanceTests(unittest.TestCase):
         self.assertEqual(receipt["verdict"], "INCOMPLETE")
         self.assertIn("load binary missing", receipt["error"])
         self.assertEqual(len(seen), 2)
+
+    def test_population_and_rate_are_passed_and_recorded(self):
+        code, receipt, seen = self.run_fake(clients=64, rate=2.5)
+        self.assertEqual(code, 0)
+        self.assertEqual(receipt["clients"], 64)
+        self.assertEqual(receipt["max_supported_clients"], 1000)
+        self.assertEqual(receipt["messages_per_client_second"], 2.5)
+        self.assertEqual(receipt["rate_environment"], {"LOAD_MESSAGES_PER_CLIENT_SECOND": "2.5"})
+        self.assertEqual(receipt["runs"][0]["load"]["expected_clients"], 64)
+        self.assertEqual(receipt["runs"][0]["command"][1:3], ["64", "60"])
+        self.assertEqual(seen[2][1]["LOAD_MESSAGES_PER_CLIENT_SECOND"], "2.5")
+
+    def test_default_rate_preserves_unset_environment(self):
+        code, receipt, seen = self.run_fake()
+        self.assertEqual(code, 0)
+        self.assertIsNone(receipt["messages_per_client_second"])
+        self.assertEqual(receipt["rate_environment"], {})
+        self.assertEqual(receipt["messages_per_client_second_source"],
+                         "harness default; environment unset")
+        self.assertNotIn("LOAD_MESSAGES_PER_CLIENT_SECOND", seen[2][1])
+
+
+class ArgumentTests(unittest.TestCase):
+    def test_clients_and_rate_require_positive_values(self):
+        for value in ("0", "-1", "1.5", "nope"):
+            with self.subTest(clients=value), self.assertRaises(profile.argparse.ArgumentTypeError):
+                profile.positive_integer(value)
+        for value in ("0", "-0.1", "nan", "inf", "-inf", "nope"):
+            with self.subTest(rate=value), self.assertRaises(profile.argparse.ArgumentTypeError):
+                profile.positive_finite_rate(value)
+        self.assertEqual(profile.positive_integer("17"), 17)
+        self.assertEqual(profile.positive_finite_rate("0.125"), 0.125)
 
 
 if __name__ == "__main__":

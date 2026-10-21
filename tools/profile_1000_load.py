@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture honest 1000-client Release load timing or macOS CPU samples.
+"""Capture honest Release load timing or macOS CPU samples.
 
 This collects the load harness's per-call timing summaries and resource
 counts. Its measured call set is incomplete, so the script never emits an
@@ -22,7 +22,8 @@ import sys
 import time
 
 CLIENTS = 1000
-MIN_FD_HARD = 2 * CLIENTS + 64
+MAX_CLIENTS = 1000
+FD_MARGIN = 64
 MIN_TOTAL_BYTES = 14 * 1024**3
 MIN_AVAILABLE_BYTES = 12 * 1024**3
 MIN_DISK_BYTES = 8 * 1024**3
@@ -82,7 +83,7 @@ def mac_memory():
     return total, available
 
 
-def preflight(out_dir):
+def preflight(out_dir, clients=CLIENTS):
     system = platform.system()
     if system == "Linux":
         total, available = linux_memory()
@@ -104,8 +105,9 @@ def preflight(out_dir):
         failures.append("available memory below 12 GiB")
     if disk < MIN_DISK_BYTES:
         failures.append("free output disk below 8 GiB")
-    if hard != resource.RLIM_INFINITY and hard < MIN_FD_HARD:
-        failures.append(f"hard fd limit below {MIN_FD_HARD}")
+    min_fd_hard = 2 * clients + FD_MARGIN
+    if hard != resource.RLIM_INFINITY and hard < min_fd_hard:
+        failures.append(f"hard fd limit below {min_fd_hard}")
     if load1 > cores / 4:
         failures.append("one-minute load exceeds cores/4")
     result["failures"] = failures
@@ -176,7 +178,7 @@ def validate_resource_baseline(fields):
     return schema
 
 
-def parse_load(stdout, server_transport, client_transport):
+def parse_load(stdout, server_transport, client_transport, expected_clients=CLIENTS):
     summaries = [line for line in stdout.splitlines()
                  if line.startswith("load: connected=") and "verdict=" in line]
     if len(summaries) != 1:
@@ -185,7 +187,7 @@ def parse_load(stdout, server_transport, client_transport):
     fields = dict(pairs)
     if len(fields) != len(pairs):
         raise ValueError("duplicate fields in final load summary")
-    if fields.get("connected") != "1000" or fields.get("verdict") != "PASS":
+    if fields.get("connected") != str(expected_clients) or fields.get("verdict") != "PASS":
         raise ValueError("population or load verdict failed")
     if any(fields.get(name) != "PASS" for name in CRITERIA):
         raise ValueError("one or more load criteria failed")
@@ -228,7 +230,8 @@ def parse_load(stdout, server_transport, client_transport):
                                     p99_upper_us=p99, max_us=maximum,
                                     overbudget_count=overbudget,
                                     status="UNMEASURED" if count == 0 else "MEASURED")
-    return dict(raw=summaries[0], fields=fields, resource_baseline_schema=resource_baseline_schema,
+    return dict(raw=summaries[0], fields=fields, expected_clients=expected_clients,
+                resource_baseline_schema=resource_baseline_schema,
                 server_update_p99_us=server_p99,
                 server_update_under_100us=server_p99 < 100.0,
                 reported_frame_calls=reported_calls,
@@ -241,6 +244,26 @@ def parse_load(stdout, server_transport, client_transport):
                 every_main_call_budget="UNMEASURED")
 
 
+def positive_integer(value):
+    try:
+        parsed = int(value, 10)
+    except (TypeError, ValueError) as error:
+        raise argparse.ArgumentTypeError("must be a positive integer") from error
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
+def positive_finite_rate(value):
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as error:
+        raise argparse.ArgumentTypeError("must be a positive finite rate") from error
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive finite rate")
+    return parsed
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--mode", choices=("timings", "samples"), required=True)
@@ -250,6 +273,8 @@ def main():
     p.add_argument("--server-transport", required=True)
     p.add_argument("--client-transport", default="portable")
     p.add_argument("--seconds", type=int, default=60)
+    p.add_argument("--clients", type=positive_integer, default=CLIENTS)
+    p.add_argument("--messages-per-client-second", type=positive_finite_rate)
     args = p.parse_args()
     if args.seconds < 60:
         p.error("use at least 60 seconds of traffic")
@@ -261,7 +286,14 @@ def main():
     record = dict(mode=args.mode, source=str(source), build_dir=str(build_dir),
                   binary=str(binary), requested_head=args.expected_head,
                   server_transport=args.server_transport,
-                  client_transport=args.client_transport, clients=CLIENTS,
+                  client_transport=args.client_transport, clients=args.clients,
+                  max_supported_clients=MAX_CLIENTS,
+                  messages_per_client_second=args.messages_per_client_second,
+                  messages_per_client_second_source=("harness default; environment unset"
+                                                     if args.messages_per_client_second is None else
+                                                     "LOAD_MESSAGES_PER_CLIENT_SECOND"),
+                  rate_environment=({} if args.messages_per_client_second is None else
+                                    {"LOAD_MESSAGES_PER_CLIENT_SECOND": str(args.messages_per_client_second)}),
                   seconds=args.seconds, started_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
     try:
         head = command(["git", "rev-parse", "HEAD"], source)
@@ -269,7 +301,7 @@ def main():
         record["head"] = head
         if head != args.expected_head or status:
             raise ValueError("source is dirty or differs from expected head")
-        record["preflight"] = preflight(out)
+        record["preflight"] = preflight(out, args.clients)
         if record["preflight"]["failures"]:
             raise ValueError("capacity guard: " + "; ".join(record["preflight"]["failures"]))
         if args.mode == "samples" and platform.system() != "Darwin":
@@ -303,14 +335,16 @@ def main():
         env = os.environ.copy()
         env.update(LOAD_PROFILE="light", ROCKETNET_SERVER_TRANSPORT=args.server_transport,
                    ROCKETNET_CLIENT_TRANSPORT=args.client_transport)
+        if args.messages_per_client_second is not None:
+            env["LOAD_MESSAGES_PER_CLIENT_SECOND"] = str(args.messages_per_client_second)
         runs = 3 if args.mode == "timings" else 1
         record["runs"] = []
         for index in range(runs):
-            guard = preflight(out)
+            guard = preflight(out, args.clients)
             if guard["failures"]:
                 raise ValueError(f"capacity guard before run {index + 1}: {guard['failures']}")
             run = dict(index=index + 1, preflight=guard)
-            argv = [str(binary), str(CLIENTS), str(args.seconds)]
+            argv = [str(binary), str(args.clients), str(args.seconds)]
             if args.mode == "samples":
                 trace = out / "time-profiler.trace"
                 argv = ["xcrun", "xctrace", "record", "--template", "Time Profiler",
@@ -319,6 +353,8 @@ def main():
                         "--target-stdin", "/dev/null", "--env", "LOAD_PROFILE=light",
                         "--env", f"ROCKETNET_SERVER_TRANSPORT={args.server_transport}",
                         "--env", f"ROCKETNET_CLIENT_TRANSPORT={args.client_transport}",
+                        *([] if args.messages_per_client_second is None else
+                          ["--env", f"LOAD_MESSAGES_PER_CLIENT_SECOND={args.messages_per_client_second}"]),
                         "--launch", "--"] + argv
             run["command"] = argv
             exit_code, stdout, stderr, timed_out = run_capture(argv, source, env,
@@ -331,13 +367,13 @@ def main():
             if timed_out:
                 raise ValueError(f"run {index + 1} timed out; process group killed")
             if args.mode == "timings":
-                run["load"] = parse_load(stdout, args.server_transport, args.client_transport)
+                run["load"] = parse_load(stdout, args.server_transport, args.client_transport, args.clients)
             else:
                 target_stdout = out / "load-samples.stdout.log"
                 if not target_stdout.is_file():
                     raise ValueError("xctrace did not preserve target load stdout")
                 run["load"] = parse_load(target_stdout.read_text(), args.server_transport,
-                                         args.client_transport)
+                                         args.client_transport, args.clients)
                 if not trace.is_dir():
                     raise ValueError("xctrace did not create the Time Profiler trace")
                 run["trace"] = str(trace)
