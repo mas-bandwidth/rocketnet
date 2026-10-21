@@ -795,6 +795,9 @@ static void test_connection_reset_server_slot_reuse_is_clean()
     const int a = reset_server_assign( &f, "198.51.100.1:4000", 1 );
     const rocketnet_ack_endpoint_t fresh_ack = f.server.acks->endpoints[a];
     memset( &f.server.acks->endpoints[a], 0xA5, sizeof(f.server.acks->endpoints[a]) );
+    // The stats producer binding belongs to the transport lifetime. Poison
+    // connection state, but retain the valid binding that reset must keep.
+    f.server.acks->endpoints[a].stats_delta = fresh_ack.stats_delta;
     rocketnet_reassembly_slot_t fresh_slots[2];
     memcpy( fresh_slots, f.server.reassembly->slots + a * f.server.reassembly->num_slots, sizeof(fresh_slots) );
     memset( f.server.reassembly->slots + a * f.server.reassembly->num_slots, 0xA5, sizeof(fresh_slots) );
