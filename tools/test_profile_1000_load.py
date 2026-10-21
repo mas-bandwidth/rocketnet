@@ -5,6 +5,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -207,7 +208,7 @@ class ReceiptTests(unittest.TestCase):
 
 class ProvenanceTests(unittest.TestCase):
     def run_fake(self, wrong_source=False, missing_binary=False, clients=None, rate=None,
-                 load_profile=None, include_overhead=True):
+                 load_profile=None, include_overhead=True, ambient=None):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             source = (root / "source").resolve()
@@ -275,7 +276,8 @@ class ProvenanceTests(unittest.TestCase):
                          "--transport-overhead-evidence",
                          f"synthetic {HEAD} {profile.platform.system()} portable "
                          f"{1000 if clients is None else clients} clients measured receipt"]
-            with mock.patch.object(sys, "argv", args), mock.patch.object(profile, "command", fake_command), \
+            with mock.patch.dict(os.environ, ambient or {}, clear=False), \
+                 mock.patch.object(sys, "argv", args), mock.patch.object(profile, "command", fake_command), \
                  mock.patch.object(profile, "run_capture", fake_run), \
                  mock.patch.object(profile, "preflight", lambda *_: {"failures": []}), \
                  contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -337,6 +339,46 @@ class ProvenanceTests(unittest.TestCase):
         self.assertEqual(receipt["messages_per_client_second_source"],
                          "harness default; environment unset")
         self.assertNotIn("LOAD_MESSAGES_PER_CLIENT_SECOND", seen[3][1])
+
+    def test_inherited_harness_environment_cannot_change_run(self):
+        code, receipt, seen = self.run_fake(
+            ambient={"LOAD_PLAN_ONLY": "1", "LOAD_MESSAGES_PER_CLIENT_SECOND": "99"})
+        self.assertEqual(code, 0)
+        self.assertEqual(receipt["messages_per_client_second"], None)
+        self.assertEqual(seen[2][1]["LOAD_PLAN_ONLY"], "1")
+        self.assertNotIn("LOAD_MESSAGES_PER_CLIENT_SECOND", seen[2][1])
+        self.assertNotIn("LOAD_PLAN_ONLY", seen[3][1])
+        self.assertNotIn("LOAD_MESSAGES_PER_CLIENT_SECOND", seen[3][1])
+
+    def test_explicit_rate_replaces_inherited_rate(self):
+        code, receipt, seen = self.run_fake(
+            rate=1.234567, ambient={"LOAD_MESSAGES_PER_CLIENT_SECOND": "99",
+                                    "LOAD_PLAN_ONLY": "1"})
+        self.assertEqual(code, 0)
+        self.assertEqual(receipt["messages_per_client_second"], 1.234567)
+        self.assertEqual(seen[3][1]["LOAD_MESSAGES_PER_CLIENT_SECOND"], "1.234567")
+        self.assertNotIn("LOAD_PLAN_ONLY", seen[3][1])
+
+    def test_ambient_sdk_overrides_rejected_with_names_only(self):
+        secret = "private-config-value"
+        code, receipt, seen = self.run_fake(ambient={
+            "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS": secret,
+            "ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT": "3.5",
+            "ROCKETNET_SERVER_TRANSPORT": "ignored ambient transport",
+        })
+        self.assertEqual(code, 1)
+        self.assertIn("ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", receipt["error"])
+        self.assertIn("ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT", receipt["error"])
+        self.assertNotIn(secret, receipt["error"])
+        self.assertEqual(seen, [])
+
+    def test_explicit_transport_names_are_not_ambient_config_overrides(self):
+        names = profile.profile_environment_overrides({
+            "ROCKETNET_SERVER_TRANSPORT": "portable",
+            "ROCKETNET_CLIENT_TRANSPORT": "portable",
+            "ROCKETNET_CLIENT_SEND_KBPS": "32",
+        })
+        self.assertEqual(names, ["ROCKETNET_CLIENT_SEND_KBPS"])
 
     def test_uncalibrated_transport_overhead_fails_closed_before_build(self):
         code, receipt, seen = self.run_fake(include_overhead=False, load_profile="default")

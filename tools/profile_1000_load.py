@@ -40,6 +40,17 @@ EXPECTED_FRAME_CALLS = (
     "server_client_connected", "server_num_connected_clients",
     "server_receive_messages", "server_start_message", "server_finish_message",
 )
+PROFILE_ENV_TRANSPORTS = {"ROCKETNET_SERVER_TRANSPORT", "ROCKETNET_CLIENT_TRANSPORT"}
+PROFILE_ENV_IMPAIRMENT_PREFIX = "ROCKETNET_DEV_"
+
+
+def profile_environment_overrides(environment):
+    """Return ambient SDK settings that would change a claimed stock profile."""
+    return sorted(name for name, value in environment.items()
+                  if value and name not in PROFILE_ENV_TRANSPORTS and
+                  (name.startswith("ROCKETNET_CLIENT_") or
+                   name.startswith("ROCKETNET_SERVER_") or
+                   name.startswith(PROFILE_ENV_IMPAIRMENT_PREFIX)))
 
 
 def command(args, cwd=None):
@@ -382,6 +393,10 @@ def main():
                   transport_overhead_evidence=args.transport_overhead_evidence,
                   seconds=args.seconds, started_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
     try:
+        ambient_overrides = profile_environment_overrides(os.environ)
+        if ambient_overrides:
+            raise ValueError("ambient SDK profile overrides are unsupported: " +
+                             ", ".join(ambient_overrides))
         head = command(["git", "rev-parse", "HEAD"], source)
         status = command(["git", "status", "--porcelain"], source)
         record["head"] = head
@@ -423,6 +438,10 @@ def main():
         record["binary_sha256"] = sha256(binary)
         record["binary_provenance"] = "fresh Release CMake configure and target load build in this receipt"
         env = os.environ.copy()
+        # These variables belong to this harness. Inherited values must not
+        # silently turn a requested run into planning-only or alter its rate.
+        env.pop("LOAD_PLAN_ONLY", None)
+        env.pop("LOAD_MESSAGES_PER_CLIENT_SECOND", None)
         env.update(LOAD_PROFILE=args.profile, ROCKETNET_SERVER_TRANSPORT=args.server_transport,
                    ROCKETNET_CLIENT_TRANSPORT=args.client_transport)
         if args.messages_per_client_second is not None:
