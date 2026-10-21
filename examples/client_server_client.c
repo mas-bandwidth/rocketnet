@@ -24,6 +24,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
@@ -144,12 +145,12 @@ int main( int argc, char ** argv )
 
     // the matchmaker stub: a real backend mints with its own secret key on
     // its own server and returns the token to the game client; this one
-    // mints a development token. The fixed timestamp keeps the example off
-    // the wall clock; a backend stamps now.
+    // mints a development token, stamped now as a backend stamps it: the
+    // server refuses a token created in its future.
 
     const uint64_t protocol_id = EXAMPLE_PROTOCOL_ID + ( wrong_protocol ? 1 : 0 );
     CHECK( rocketnet_create_dev_connect_token( address, NULL, server_public_key, 30, 5, 0x0123456789abcdefull,
-                                               protocol_id, 4102444800ull, NULL, connect_token ) == ROCKETNET_STATUS_OK );
+                                               protocol_id, (uint64_t) time( NULL ), NULL, connect_token ) == ROCKETNET_STATUS_OK );
     rocketnet_client_default_config( &config );
     config.transport = "portable";
     config.state_change_callback = state_changed;

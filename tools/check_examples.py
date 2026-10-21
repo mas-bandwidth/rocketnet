@@ -23,6 +23,7 @@ ALLOWED_HEADERS = {
     "stdint.h",
     "stdbool.h",
     "inttypes.h",
+    "time.h",       # a development token is stamped now, as a backend stamps it
 }
 
 INCLUDE = re.compile(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]', re.M)

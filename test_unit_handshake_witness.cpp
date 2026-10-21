@@ -48,6 +48,7 @@
 #include "rocketnet_fragment.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_test_vectors.h"
+#include "rocketnet_crypto_tally.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -117,7 +118,6 @@ static void rocketnet_handshake_server_setup( struct rocketnet_handshake_server_
     rocketnet_unit_check( rocketnet_address_parse( &server->advertised_ipv4, "203.0.113.10:40000" ) );
     memcpy( server->cookie_key, rocketnet_test_cookie_key, 32 );
     server->cookie_lifetime_seconds = 3;
-    server->max_token_lifetime_seconds = 600;
     server->handshake_deadline_seconds = 5.0;
     server->max_timeout_seconds = 0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
@@ -761,8 +761,9 @@ static void test_keep_alive_clock_counts_only_keep_alives()
 
 // ---------------------------------------------------------------------------
 // Create-skew refusal: a connect token created more than five seconds in the
-// future is refused as CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE, and only
-// while max_token_lifetime_seconds > 0
+// future is refused as CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE, always:
+// the fixture runs the production configuration, which has no token lifetime
+// limit and never had one
 // (sdk/rocketnet_server_protocol.cpp,
 // rocketnet_server_protocol_process_connection_request)
 // ---------------------------------------------------------------------------
@@ -816,34 +817,79 @@ static void test_token_created_within_skew_passes_the_rung()
     rocketnet_handshake_server_teardown( &test );
 }
 
-static void test_token_create_skew_unchecked_without_lifetime_cap()
+// ---------------------------------------------------------------------------
+// The claim is written only after the signature verifies
+// (sdk/rocketnet_server_protocol.cpp, rocketnet_used_token_history_claim_can_record
+// at the claim rung, rocketnet_used_token_history_claim_record after
+// rocketnet_verify_signed_connect_data; tla/ReceiveOrder.tla,
+// ClaimOnlyAfterSignature). A request whose signature fails touches nothing
+// in the claim table, so it cannot disturb a live claim either: here the
+// first address's valid request holds the claim (and is denied, the server
+// being full), a forged-signature request from that same address follows,
+// and the captured valid request from a second address must still be refused
+// at the claim rung, with no signature work. Before the split the forged
+// request wrote the claim and its failed signature released it, freeing the
+// token for the second address.
+// ---------------------------------------------------------------------------
+
+static int rocketnet_handshake_request_past_cookie( struct rocketnet_handshake_server_t * test,
+                                                    const struct rocketnet_address_t * from,
+                                                    uint8_t * request, uint8_t * response, int * response_bytes )
+{
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+    memset( request + ROCKETNET_PREFILTER_BYTES, 0, ROCKETNET_COOKIE_FIELD_BYTES );
+    rocketnet_unit_check( rocketnet_handshake_process_at( test, from, request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                          response, response_bytes, payload, &payload_bytes,
+                                                          &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    memcpy( request + ROCKETNET_PREFILTER_BYTES, response + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES, ROCKETNET_COOKIE_FIELD_BYTES );
+    return rocketnet_handshake_process_at( test, from, request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                           response, response_bytes, payload, &payload_bytes, &payload_client_index );
+}
+
+static void test_claim_written_only_after_signature_verifies()
 {
     struct rocketnet_handshake_server_t test;
     rocketnet_handshake_server_setup( &test );
-    test.server.max_token_lifetime_seconds = 0;
+
+    // a full server: every slot held by some other client id
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
+    for ( int i = 0; i < 4; i++ )
+        rocketnet_unit_check( rocketnet_client_slots_assign( test.server.client_slots, 0x7000ULL + (uint64_t) i, i, user_data ) == i );
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
-    rocketnet_handshake_build_request_with_create( request, 0x5A0CULL, rocketnet_test_salt,
-                                                   ROCKETNET_TEST_CREATE_TS + 6 );
-
+    rocketnet_handshake_build_request( request, 0xC1A1ULL, rocketnet_test_salt );
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
-    uint64_t before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED];
 
-    int result = rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
-                                                                        request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
-                                                                        ROCKETNET_TEST_CREATE_TS, 1000.0,
-                                                                        response, &response_bytes );
-    rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
-    rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == before );
+    // the first address's valid request claims the token, then is denied
+    rocketnet_unit_check( rocketnet_handshake_request_past_cookie( &test, &test.client_address, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_DENIED );
+
+    // the same request from the same address with its signature corrupted
+    uint8_t forged[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    memcpy( forged, request, sizeof(forged) );
+    forged[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES - 1] ^= 0x01;
+    const uint64_t bad_signatures = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY];
+    rocketnet_unit_check( rocketnet_handshake_request_past_cookie( &test, &test.client_address, forged, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] == bad_signatures + 1 );
+
+    // the captured valid request from a second address: the first address's
+    // claim still stands, so the claim rung refuses it before any signature
+    const uint64_t already_used = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED];
+    memset( &rocketnet_crypto_tally, 0, sizeof(rocketnet_crypto_tally) );
+    rocketnet_unit_check( rocketnet_handshake_request_past_cookie( &test, &test.second_address, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_unit_check( response_bytes == 0 );
+    rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] == already_used + 1 );
+    rocketnet_unit_check( rocketnet_crypto_tally.signature_verify == 0 );
 
     rocketnet_handshake_server_teardown( &test );
 }
 
 REGISTER_UNIT_TEST( test_client_ephemeral_erased_outside_handshake );
+REGISTER_UNIT_TEST( test_claim_written_only_after_signature_verifies );
 REGISTER_UNIT_TEST( test_token_created_past_skew_is_refused );
 REGISTER_UNIT_TEST( test_token_created_within_skew_passes_the_rung );
-REGISTER_UNIT_TEST( test_token_create_skew_unchecked_without_lifetime_cap );
 REGISTER_UNIT_TEST( test_disconnect_absorbs_terminal_state );
 REGISTER_UNIT_TEST( test_one_connection_per_token_after_history_flush );
 REGISTER_UNIT_TEST( test_server_repeats_keep_alive_while_idle );

@@ -823,7 +823,9 @@
     /* the indices are the contract. */ \
     /** @brief ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE: Counts requests refused because the token creation time is in the future. Unit: occurrences. Class: refusal; family: CONNECTION_REQUEST_RECEIVED. */ \
     X( CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
-    /** @brief ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG: Counts requests refused because the token lifetime exceeds its limit. Unit: occurrences. Class: refusal; family: CONNECTION_REQUEST_RECEIVED. */ \
+    /* retired with the maximum token lifetime, which was never configurable */ \
+    /* and always zero (no limit): keeps its index, always zero. */ \
+    /** @brief ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG: Counts retired counter slot; it stays zero now that no maximum token lifetime exists. Unit: occurrences. Class: refusal; family: CONNECTION_REQUEST_RECEIVED. */ \
     X( CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
     \
     /* A send the transport refused for want of a link-layer destination: the */ \

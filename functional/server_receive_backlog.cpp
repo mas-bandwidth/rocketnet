@@ -18,6 +18,9 @@
 #include <string>
 #include <vector>
 
+// functional/harness.inc: the token stamp from the clock that judges it
+uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time );
+
 #if defined(_WIN32)
 #include <stdlib.h>
 #else
@@ -167,7 +170,7 @@ void rocketnet_test_server_receive_keeps_up_with_max_clients()
     for ( int i = 0; i < max_clients; ++i )
     {
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-        server_receive_backlog_require( rocketnet_write_test_connect_token( server_address, (uint64_t) i + 1, 4102444800ull, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+        server_receive_backlog_require( rocketnet_write_test_connect_token( server_address, (uint64_t) i + 1, rocketnet_functional_token_timestamp( server_config.game_clock_epoch, time ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
         struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, &client_config, time );
         server_receive_backlog_require( client != NULL );
         clients.push_back( client );

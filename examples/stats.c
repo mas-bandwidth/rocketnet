@@ -19,6 +19,7 @@ static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] 
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <time.h>
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
@@ -152,7 +153,7 @@ int main( void )
     CHECK( server != NULL );
     CHECK( rocketnet_server_ipv4_address( server, server_address, sizeof( server_address ) ) );
     rocketnet_server_public_key( server, server_public_key );
-    CHECK( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, 4102444800ull, NULL, connect_token ) == ROCKETNET_STATUS_OK );
+    CHECK( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, (uint64_t) time( NULL ), NULL, connect_token ) == ROCKETNET_STATUS_OK );
     rocketnet_client_default_config( &client_config );
     client_config.transport = "loopback";
     enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;

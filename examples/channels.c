@@ -20,6 +20,7 @@ static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] 
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <time.h>
 
 // Uses the public API names as declared in sdk/rocketnet.h: client/server
 // start_message, finish_message, receive_messages (one batch, no release
@@ -77,7 +78,7 @@ int main( void )
 
     CHECK( rocketnet_server_ipv4_address( server, server_address, sizeof( server_address ) ) );
     rocketnet_server_public_key( server, server_public_key );
-    CHECK( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1ull, EXAMPLE_PROTOCOL_ID, 4102444800ull, NULL, connect_token ) == ROCKETNET_STATUS_OK );
+    CHECK( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1ull, EXAMPLE_PROTOCOL_ID, (uint64_t) time( NULL ), NULL, connect_token ) == ROCKETNET_STATUS_OK );
 
     CHECK( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
     client_config.transport = "loopback";

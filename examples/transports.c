@@ -22,6 +22,7 @@ static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] 
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <time.h>
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
@@ -48,7 +49,7 @@ static int exchange( struct rocketnet_server_t * server, const char * server_add
     rocketnet_client_default_config( &config );
     config.transport = "portable";   // the client side is portable; the server may be any transport
     rocketnet_server_public_key( server, server_public_key );   // the key the server made at create; the token carries it
-    if ( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, 4102444800ull, NULL, connect_token ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, (uint64_t) time( NULL ), NULL, connect_token ) != ROCKETNET_STATUS_OK )
         return 0;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     client = rocketnet_client_create( NULL, &config, &create_status );

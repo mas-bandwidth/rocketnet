@@ -21,6 +21,7 @@ static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] 
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <time.h>
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
@@ -80,8 +81,8 @@ int main( void )
     client_config.max_message_bytes = LIMIT_BYTES;
     client_config.receive_message_buffer_bytes = LIMIT_BYTES;
     // the token names the server and carries the keys; this development token
-    // expires thirty seconds after its timestamp, so it uses one far ahead
-    CHECK( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, 4102444800ull, NULL, connect_token ) == ROCKETNET_STATUS_OK );
+    // is stamped now, as a backend stamps it, and expires thirty seconds later
+    CHECK( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, (uint64_t) time( NULL ), NULL, connect_token ) == ROCKETNET_STATUS_OK );
     enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
     client = rocketnet_client_create( NULL, &client_config, &create_status_2 );
     if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
