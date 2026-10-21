@@ -1464,10 +1464,12 @@ ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * con
 /// Malformed strings return ROCKETNET_STATUS_INVALID_CONNECT_TOKEN without
 /// changing the client.
 ///
-/// Connect accepts DISCONNECTED and the connection-ended states
-/// SERVER_DISCONNECTED through MESSAGE_MEMORY_EXHAUSTED.
-/// Call disconnect first after a handshake or token failure.
-/// Other states return ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED.
+/// Connect accepts a client whose previous shutdown has completed. From a
+/// connection-ended state it first requests shutdown; while the worker still
+/// owns that attempt it returns ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED.
+/// Poll rocketnet_client_disconnected and retry, or explicitly call disconnect
+/// and wait for disconnected before connect. Call disconnect first after a
+/// handshake or token failure. Other active states are refused.
 ///
 /// Failed token checks set INVALID_CONNECT_TOKEN or CONNECT_TOKEN_EXPIRED.
 /// A socket or thread failure leaves the client DISCONNECTED.
@@ -1645,7 +1647,8 @@ ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * con
 
 /// Binds the transport and accepts up to max_clients clients.
 /// Returns ROCKETNET_STATUS_OK on success.
-/// A running server returns ROCKETNET_STATUS_SERVER_NOT_STOPPED.
+/// A running or still-stopping server returns ROCKETNET_STATUS_SERVER_NOT_STOPPED.
+/// Once stopped is true, start synchronously finalizes the old run before binding.
 /// Other failures return their status and leave the server stopped.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * server );
