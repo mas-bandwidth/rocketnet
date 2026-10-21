@@ -4098,6 +4098,7 @@ void transport_env_pin_is_honoured()
     {
         struct rocketnet_server_transport_config_t server_config;
         rocketnet_server_transport_dev_config( &server_config );
+        server_config.max_clients = 1;
         rocketnet_check( strcmp( server_config.transport, "auto" ) == 0 );
 
         struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) );
