@@ -1494,7 +1494,7 @@ void rocketnet_frame_sync_stats( struct rocketnet_frame_sync_t * frame_sync, str
 struct rocketnet_message_receipt_t
 {
     uint32_t serial;
-    uint32_t status;            // ROCKETNET_RECEIPT_STATUS_ACKED or ROCKETNET_RECEIPT_STATUS_LOSS
+    int32_t status;             // ROCKETNET_RECEIPT_STATUS_ACKED or ROCKETNET_RECEIPT_STATUS_LOSS
 };
 
 // The message config. Fields marked WIRE must be identical on both ends; the

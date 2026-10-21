@@ -220,7 +220,7 @@ static_assert( ROCKETNET_RELIABILITY_UNRELIABLE == 0 && ROCKETNET_RELIABILITY_UN
                ROCKETNET_RELIABILITY_RELIABLE == 2 && ROCKETNET_RELIABILITY_RELIABLE_ORDERED == 3 &&
                ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED == 4 && ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT == 5 &&
                ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT == 6 && ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT == 7, "ruling 3: reliability values" );
-static_assert( ROCKETNET_RECEIPT_STATUS_NONE == 0 && ROCKETNET_RECEIPT_STATUS_ACKED == 1 && ROCKETNET_RECEIPT_STATUS_LOSS == 2, "ruling 3: receipt values" );
+static_assert( ROCKETNET_RECEIPT_STATUS_NONE == 0 && ROCKETNET_RECEIPT_STATUS_ACKED == 1 && ROCKETNET_RECEIPT_STATUS_LOSS == -1, "ruling 3: receipt values, the loss negative" );
 static_assert( ROCKETNET_DISCONNECT_REASON_NONE == 0 && ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH == -1 &&
                ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION == -2 &&
                ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT == -3 && ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED == -4 &&
@@ -341,7 +341,7 @@ static void test_api_polish_zero_receipt_and_dense_reasons()
 {
     struct rocketnet_receipt_t receipt;
     memset( &receipt, 0, sizeof( receipt ) );
-    check( receipt.status == (uint32_t) ROCKETNET_RECEIPT_STATUS_NONE );
+    check( receipt.status == ROCKETNET_RECEIPT_STATUS_NONE );
 
     const enum rocketnet_disconnect_reason_t reasons[] =
     {

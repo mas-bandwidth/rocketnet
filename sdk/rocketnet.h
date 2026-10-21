@@ -419,21 +419,22 @@ enum rocketnet_reliability_t
 };
 
 /// A receipt's outcome, the status field of struct rocketnet_receipt_t.
+/// LOSS is negative, like every failure.
 
 enum rocketnet_receipt_status_t
 {
+    /// The message was not acknowledged, and it is not resent.
+
+    ROCKETNET_RECEIPT_STATUS_LOSS                               = -1,
+
     /// A zero-filled receipt. No outcome has been written.
 
-    ROCKETNET_RECEIPT_STATUS_NONE                               = 0,
+    ROCKETNET_RECEIPT_STATUS_NONE                               =  0,
 
     /// The peer acknowledged the message. This does not mean the peer
     /// application read it.
 
-    ROCKETNET_RECEIPT_STATUS_ACKED                              = 1,
-
-    /// The message was not acknowledged, and it is not resent.
-
-    ROCKETNET_RECEIPT_STATUS_LOSS                               = 2
+    ROCKETNET_RECEIPT_STATUS_ACKED                              =  1
 };
 
 /// Why the connection in a server's client slot ended. What

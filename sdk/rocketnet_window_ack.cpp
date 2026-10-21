@@ -438,7 +438,7 @@ static void rn_window_ack_gaps_measure( rn_window_ack_t * ack, uint32_t slot_ind
 // RNReceipts EmitAck/SweepLoss: an outcome is an accounting event, not a
 // message-level ACK. A full ring discards its oldest event, never its history.
 // tla/RNReceipts.tla EmitAck
-static void rn_window_ack_receipt_emit( rn_window_ack_t * ack, uint32_t serial, uint32_t status )
+static void rn_window_ack_receipt_emit( rn_window_ack_t * ack, uint32_t serial, int32_t status )
 {
     if ( serial == 0 )
         return;
@@ -464,7 +464,7 @@ void rn_window_ack_receipt_emit_loss( rn_window_ack_t * ack, uint32_t serial )
     rn_window_ack_receipt_emit( ack, serial, ROCKETNET_RECEIPT_STATUS_LOSS );
 }
 
-static void rn_window_ack_receipt_resolve( rn_window_ack_t * ack, rn_sent_packet_t * entry, uint32_t status )
+static void rn_window_ack_receipt_resolve( rn_window_ack_t * ack, rn_sent_packet_t * entry, int32_t status )
 {
     const uint32_t max_refs = ack->region->sent_ref_entries;
     for ( uint32_t i = 0; i < entry->unreliable_receipts; i++ )

@@ -187,7 +187,7 @@ struct rn_sequenced_hold_t              // 16 + ROCKETNET_MAX_PACKET_PAYLOAD_BYT
 struct rn_receipt_t                     // 16 bytes: the receipt ring, Rq entries (7.4)
 {
     uint32_t serial;
-    uint32_t status;                    // ROCKETNET_RECEIPT_*
+    int32_t status;                     // ROCKETNET_RECEIPT_STATUS_*
     uint32_t reserved[2];
 };
 
