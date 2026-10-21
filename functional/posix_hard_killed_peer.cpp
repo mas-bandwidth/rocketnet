@@ -29,6 +29,7 @@
 */
 
 #include "rocketnet_internal.h"
+#include "rocketnet_connect_token.h"
 #include "rocketnet_layers.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
@@ -73,7 +74,7 @@ static void posix_hard_killed_check( bool condition, const char * expression, co
 static const double POSIX_HK_TICK = 1.0 / 60.0;
 static const double POSIX_HK_GAP_BOUND = POSIX_HK_TICK + 0.050;
 
-// the development token's timeout (rocketnet_write_dev_connect_token) and the
+// the development token's timeout (rocketnet_write_test_connect_token) and the
 // server config's handshake deadline: the normal times the dead slot frees
 // in and the fifth client connects in
 
@@ -140,7 +141,7 @@ static struct rocketnet_server_transport_t * posix_hk_server_create( const posix
 static struct rocketnet_client_transport_t * posix_hk_client_create( const char * server_address, uint64_t client_id )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    posix_hard_killed_require( rocketnet_write_dev_connect_token( server_address, client_id, (uint64_t) time( NULL ), token, sizeof(token) ) == ROCKETNET_STATUS_OK );
+    posix_hard_killed_require( rocketnet_write_test_connect_token( server_address, client_id, (uint64_t) time( NULL ), token, sizeof(token) ) == ROCKETNET_STATUS_OK );
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, NULL, rocketnet_platform_time() );
     posix_hard_killed_require( client );
     return client;

@@ -60,6 +60,7 @@
 
 #include "rocketnet_counters.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_connect_token.h"
 #include "rocketnet_platform.h"
 
 #if !defined(_WIN32)
@@ -572,7 +573,7 @@ static rocketnet_client_transport_t * posix_client_create( const posix_cell_t * 
     rocketnet_server_transport_dev_config( &server_config );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    posix_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(),
+    posix_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(),
                                                     rocketnet_functional_token_timestamp( server_config.game_clock_epoch, 1000.0 ),
                                                     token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
 

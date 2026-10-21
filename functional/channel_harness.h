@@ -31,6 +31,7 @@
 #define ROCKETNET_CHANNEL_HARNESS_H
 
 #include "rocketnet_internal.h"
+#include "rocketnet_connect_token.h"
 #include "rocketnet_allocator.h"
 #include "rocketnet_message_object.h"
 #include "rocketnet_network_simulator.h"
@@ -873,7 +874,7 @@ static inline int rocketnet_channel_harness_create_with_config( rocketnet_channe
     // client protocol
     rocketnet_client_protocol_init( &h->client, &h->client_counters );
 
-    if ( rocketnet_write_dev_connect_token( "203.0.113.10:40000", 0xA11CE, h->unix_ts, token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_write_test_connect_token( "203.0.113.10:40000", 0xA11CE, h->unix_ts, token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
         goto failed;
     if ( !rocketnet_client_protocol_connect( &h->client, token, h->now, h->unix_ts ) )
         goto failed;
