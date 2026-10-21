@@ -14,6 +14,7 @@ from pathlib import Path
 import platform
 import re
 import resource
+import signal
 import shutil
 import subprocess
 import sys
@@ -96,6 +97,23 @@ def sha256(path):
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             h.update(block)
     return h.hexdigest()
+
+
+def run_capture(argv, source, env, timeout):
+    """Keep partial output and kill the whole launched family on timeout."""
+    proc = subprocess.Popen(argv, cwd=source, env=env, text=True,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            start_new_session=True)
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return proc.returncode, stdout, stderr, False
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        stdout, stderr = proc.communicate()
+        return proc.returncode, stdout, stderr, True
 
 
 def parse_load(stdout, server_transport, client_transport):
@@ -196,13 +214,17 @@ def main():
                         "--env", f"ROCKETNET_CLIENT_TRANSPORT={args.client_transport}",
                         "--launch", "--"] + argv
             run["command"] = argv
-            proc = subprocess.run(argv, cwd=source, env=env, text=True, capture_output=True,
-                                  timeout=args.seconds + 180)
-            (out / f"run-{index + 1}.stdout.log").write_text(proc.stdout)
-            (out / f"run-{index + 1}.stderr.log").write_text(proc.stderr)
-            run["exit"] = proc.returncode
+            exit_code, stdout, stderr, timed_out = run_capture(argv, source, env,
+                                                                args.seconds + 180)
+            (out / f"run-{index + 1}.stdout.log").write_text(stdout)
+            (out / f"run-{index + 1}.stderr.log").write_text(stderr)
+            run["exit"] = exit_code
+            run["timed_out"] = timed_out
+            record["runs"].append(run)
+            if timed_out:
+                raise ValueError(f"run {index + 1} timed out; process group killed")
             if args.mode == "timings":
-                run["load"] = parse_load(proc.stdout, args.server_transport, args.client_transport)
+                run["load"] = parse_load(stdout, args.server_transport, args.client_transport)
             else:
                 target_stdout = out / "load-samples.stdout.log"
                 if not target_stdout.is_file():
@@ -213,9 +235,8 @@ def main():
                     raise ValueError("xctrace did not create the Time Profiler trace")
                 run["trace"] = str(trace)
                 run["load_stdout"] = str(target_stdout)
-            record["runs"].append(run)
-            if proc.returncode != 0:
-                raise ValueError(f"run {index + 1} exited {proc.returncode}")
+            if exit_code != 0:
+                raise ValueError(f"run {index + 1} exited {exit_code}")
         record["verdict"] = "COLLECTED_NOT_QUALIFIED"
     except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError) as error:
         record["verdict"] = "INCOMPLETE"
