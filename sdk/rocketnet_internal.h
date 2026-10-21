@@ -93,6 +93,11 @@ int rocketnet_allocator_ex( void * (*malloc_function)( void * context, size_t by
 struct rocketnet_message_client_t * rocketnet_client_message_client( struct rocketnet_client_t * client );
 struct rocketnet_message_server_t * rocketnet_server_message_server( struct rocketnet_server_t * server );
 
+// The address a created server serves for one family, after the
+// environment overrides. Writes it and returns true, or returns false when
+// the server does not serve that family. Reads no socket.
+bool rocketnet_server_served_address( const struct rocketnet_server_t * server, int family, char * address, size_t address_bytes );
+
 // For tests that build the layers by hand: a public client holding an
 // existing connection, and a public server holding an existing running
 // message server; destroy destroys what was adopted. The adopted object has

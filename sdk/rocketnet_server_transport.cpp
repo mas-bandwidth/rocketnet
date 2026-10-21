@@ -1014,20 +1014,6 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     else
         rocketnet_server_transport_default_config_current( &effective_config );
 
-    // the env layer's public_address is snapshotted against so its SCOPE
-    // can be enforced below: the env override redirects the FIRST server
-    // create in the process and is then consumed -- an operator's deployed
-    // binary has one server transport and gets exactly the redirect they
-    // asked for, while a process with many creates (the test suite, a
-    // soak) is not wholesale redirected by one ambient variable. the
-    // struct field keeps per-create scope: a caller who sets it in code
-    // said what they meant, every time.
-
-    char struct_public_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-    memcpy( struct_public_address, effective_config.public_address, sizeof(struct_public_address) );
-    char struct_second_public_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-    memcpy( struct_second_public_address, effective_config.second_public_address, sizeof(struct_second_public_address) );
-
     int num_config_fields = 0;
     const struct rocketnet_config_field_t * config_fields = rocketnet_server_transport_config_fields( &num_config_fields );
 
@@ -1071,42 +1057,12 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
 
 
     // the config's public_address, when set, displaces the create call's
-    // address parameter HERE, before anything reads it -- so the address
-    // the ladder verifies, the address the granted transport binds, and the
-    // address connect tokens validate against can never diverge. the env
-    // layer's version of it is first-create-consumes, per the scope note
-    // above.
-
-    // the env override's consumption flag: atomic because two transports
-    // in one process is a blessed case and nothing serializes creates, and
-    // CONSUMED ONLY AFTER A FULLY SUCCESSFUL CREATE -- a first create that
-    // refuses (bad keys, exhausted ladder) must not eat the deployed
-    // binary's redirect on the retry. two concurrent first creates racing
-    // the same override is unsupported and stated: creates are setup acts,
-    // not fill-phase acts.
-
-    static std::atomic<bool> env_public_address_consumed( false );
-
-    bool consuming_env_public_address = false;
-
-    const bool env_public_address_changed = strncmp( effective_config.public_address, struct_public_address, sizeof(struct_public_address) ) != 0;
-    const bool env_second_public_address_changed = strncmp( effective_config.second_public_address, struct_second_public_address, sizeof(struct_second_public_address) ) != 0;
-    if ( env_public_address_changed || env_second_public_address_changed )
-    {
-        // the env layer set one or both related addresses; they are consumed
-        // together so a later create cannot inherit half of a dual-family pair
-
-        if ( env_public_address_consumed.load() )
-        {
-            rocketnet_info( "the public address env overrides were consumed by an earlier server create in this process. using the create parameters" );
-            memcpy( effective_config.public_address, struct_public_address, sizeof(struct_public_address) );
-            memcpy( effective_config.second_public_address, struct_second_public_address, sizeof(struct_second_public_address) );
-        }
-        else
-        {
-            consuming_env_public_address = true;
-        }
-    }
+    // address parameter here, before anything reads it. The address the
+    // ladder verifies, the address the transport binds and the address
+    // connect tokens validate against are then the same one. The field has
+    // no environment override. The public create reads the served
+    // addresses from ROCKETNET_SERVER_IPV4_ADDRESS and
+    // ROCKETNET_SERVER_IPV6_ADDRESS.
 
     if ( config->public_address[0] != '\0' )
     {
@@ -1677,14 +1633,6 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         rocketnet_error( "server transport create: could not allocate protocol storage" );
         rocketnet_server_transport_destroy( server_transport );
         return NULL;
-    }
-
-    // the env public_address is consumed only now, with the create whole
-
-    if ( consuming_env_public_address )
-    {
-        bool expected = false;
-        env_public_address_consumed.compare_exchange_strong( expected, true );
     }
 
     if ( status )

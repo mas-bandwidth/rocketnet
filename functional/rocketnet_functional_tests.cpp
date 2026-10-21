@@ -5042,8 +5042,8 @@ void rocketnet_test_transport_all_skipped_uses_auto()
     rocketnet_test_env_restore( &transport_guard );
 }
 
-// the public address env override feeds the one resolved address create
-// uses everywhere, scoped to the first create in the process
+// the transport create takes its address as given. The served address env
+// overrides are read at the public create.
 
 void rocketnet_test_config_env_aliases()
 {
@@ -5051,7 +5051,6 @@ void rocketnet_test_config_env_aliases()
     rocketnet_test_env_clear( &transport_guard, "ROCKETNET_SERVER_TRANSPORT" );
 
     struct rocketnet_server_transport_config_t config;
-    struct rocketnet_server_transport_t * server;
 
     // the served address is read at the public create
     // (ROCKETNET_SERVER_IPV4_ADDRESS, test_server_address_environment_applies_to_every_server);

@@ -1119,6 +1119,23 @@ struct rocketnet_message_server_t * rocketnet_server_message_server( struct rock
     return server ? server->running : NULL;
 }
 
+bool rocketnet_server_served_address( const struct rocketnet_server_t * server, int family, char * address, size_t address_bytes )
+{
+    if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( address ) || address_bytes == 0 )
+        return false;
+    const char * served[2] = { server->address, server->transport.second_public_address };
+    for ( int i = 0; i < 2; i++ )
+    {
+        struct rocketnet_address_t parsed;
+        if ( served[i][0] != '\0' && rocketnet_address_parse( &parsed, served[i] ) && parsed.type == family )
+        {
+            rocketnet_copy_string( address, served[i], address_bytes );
+            return true;
+        }
+    }
+    return false;
+}
+
 struct rocketnet_server_t * rocketnet_server_adopt( void * context, struct rocketnet_message_server_t * running )
 {
     if ( !rocketnet_api_null_guard( running ) )
@@ -1305,6 +1322,10 @@ static enum rocketnet_status_t rn_server_addresses( const char * ipv4_address, c
         rocketnet_error( "server create refused: ROCKETNET_SERVER_IPV%s_ADDRESS is too long", ipv4_found < 0 ? "4" : "6" );
         return ROCKETNET_STATUS_CONFIG_ENV_INVALID;
     }
+    if ( ipv4_found == 1 && ipv4_env[0] == '\0' )
+        rocketnet_info( "server config ignores empty ROCKETNET_SERVER_IPV4_ADDRESS (set a value, or unset the variable)" );
+    if ( ipv6_found == 1 && ipv6_env[0] == '\0' )
+        rocketnet_info( "server config ignores empty ROCKETNET_SERVER_IPV6_ADDRESS (set a value, or unset the variable)" );
     if ( ipv4_found == 1 && ipv4_env[0] != '\0' )
     {
         rocketnet_info( "server config override ROCKETNET_SERVER_IPV4_ADDRESS=%s (displaces %s)", ipv4_env, ipv4_address ? ipv4_address : "none" );

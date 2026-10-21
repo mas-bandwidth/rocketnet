@@ -15,7 +15,7 @@ The version lives in one file, `sdk/rocketnet.h`, in two branches selected by
   `ROCKETNET_VERSION_FULL "dev"` and the `255.255.255` integer sentinel.
 
 The first release is **v1.0.0-preview-1**: `ROCKETNET_VERSION_FULL` is
-`"1.0.0-preview-1"` and the integers are `1.0.0`. The integers, `ROCKETNET_VERSION`, the CMake project
+`"v1.0.0-preview-1"` and the integers are `1.0.0`. The integers, `ROCKETNET_VERSION`, the CMake project
 `VERSION` and the installed package's `RocketNetConfigVersion.cmake` stay
 numeric (`1.0.0`), because those are compared; the label rides beside them.
 `CMakeLists.txt` reads `ROCKETNET_VERSION_FULL` from the header into

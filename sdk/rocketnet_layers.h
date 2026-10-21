@@ -734,14 +734,9 @@ typedef int (*rocketnet_server_admission_callback_t)( void * context, const stru
 // client slot.
 //
 // public_address, empty by default, displaces the create call's address
-// parameter when set -- struct or ROCKETNET_PUBLIC_ADDRESS (deprecated alias:
-// ROCKETNET_SERVER_PUBLIC_ADDRESS) -- so the address the transport ladder
-// verifies, the address the transport binds, and the address connect tokens
-// validate against are always the same one. the ENV form is scoped to the
-// first server create in the process and then consumed, loudly: the
-// deployed binary's one server gets its redirect, and a multi-transport
-// process is never wholesale redirected by one ambient variable. the
-// struct form is per create.
+// parameter when set, so the address the transport ladder verifies, the
+// address the transport binds and the address connect tokens validate
+// against are always the same one. It has no environment override.
 //
 // The handshake deadline is fixed at the challenge, never refreshed, and
 // discharged on connect.
