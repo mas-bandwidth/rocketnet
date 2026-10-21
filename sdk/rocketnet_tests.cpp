@@ -8079,7 +8079,7 @@ void rocketnet_test_public_api_null()
         rocketnet_check( client_stats.payloads_received == 0 && client_stats.messages_resent == 0 && client_stats.messages_duplicated == 0 );
         rocketnet_check( client_stats.receipts_acked == 0 && client_stats.receipts_lost == 0 && client_stats.messages_dropped_over_budget == 0 );
         rocketnet_check( client_stats.messages_dropped_not_connected == 0 );
-        rocketnet_check( client_stats.rtt == 0.0 && client_stats.jitter == 0.0 && client_stats.packet_loss == 0.0 );
+        rocketnet_check( client_stats.rtt_ms == 0.0 && client_stats.jitter_ms == 0.0 && client_stats.packet_loss_percent == 0.0 );
         rocketnet_check( client_stats.packets_sent_per_second == 0.0 && client_stats.packets_received_per_second == 0.0 );
         rocketnet_check( client_stats.bandwidth_sent_kbps == 0.0 && client_stats.bandwidth_received_kbps == 0.0 );
     }
@@ -8132,7 +8132,7 @@ void rocketnet_test_public_api_null()
         memset( &slot_stats, 0xA5, sizeof( slot_stats ) );
         RN_TEST_ONE_MISUSE( rocketnet_server_client_stats( NULL, 0, &slot_stats ) );
         rocketnet_check( slot_stats.packets_sent == 0 && slot_stats.packets_received == 0 && slot_stats.bytes_sent == 0 && slot_stats.bytes_received == 0 );
-        rocketnet_check( slot_stats.rtt == 0.0 && slot_stats.jitter == 0.0 && slot_stats.packet_loss == 0.0 );
+        rocketnet_check( slot_stats.rtt_ms == 0.0 && slot_stats.jitter_ms == 0.0 && slot_stats.packet_loss_percent == 0.0 );
         rocketnet_check( slot_stats.bandwidth_sent_kbps == 0.0 && slot_stats.bandwidth_received_kbps == 0.0 && slot_stats.bandwidth_acked_kbps == 0.0 );
     }
 

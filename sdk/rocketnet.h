@@ -8,9 +8,7 @@
 /// RocketNet provides a C API for clients and servers that exchange UDP
 /// messages.
 ///
-/// Main frame calls take less than 0.1 ms each. Create calls may take longer.
-/// Client disconnect and destroy wait for the network thread to exit. These
-/// waits have no promised time bound.
+/// Client disconnect and destroy wait for the network thread to exit.
 ///
 /// Buffer sizes use size_t.
 /// Message sizes, counts, and client indexes use int.
@@ -621,17 +619,17 @@ struct rocketnet_client_stats_t
 
     /// Round-trip time in milliseconds.
 
-    double rtt;
+    double rtt_ms;
 
     /// Receive jitter in milliseconds.
     /// Moving average of changes in the interval between packet arrivals.
 
-    double jitter;
+    double jitter_ms;
 
     /// Receive-side packet loss as a percentage.
     /// Missing share of the server's packet sequence over the trailing second.
 
-    double packet_loss;
+    double packet_loss_percent;
 
     /// Packets per second sent.
 
@@ -773,17 +771,17 @@ struct rocketnet_server_client_stats_t
     /// Round-trip time in milliseconds.
     /// This is the smallest recent sample.
 
-    double rtt;
+    double rtt_ms;
 
     /// Round-trip jitter in milliseconds.
     /// This is the mean excess over the smallest recent sample.
 
-    double jitter;
+    double jitter_ms;
 
     /// Send-side packet loss as a percentage.
     /// This is the unacknowledged share of recent packets sent to this client.
 
-    double packet_loss;
+    double packet_loss_percent;
 
     /// Kilobits per second sent to this client.
 
@@ -843,8 +841,10 @@ ROCKETNET_EXPORT uint32_t rocketnet_version( void );
 /// Initializes the library, platform and crypto state. Call before creating
 /// clients or servers. Do not race this call with term.
 ///
-/// malloc_function and free_function are the allocator for every library
-/// allocation. NULL for both selects the system allocator. Passing only one
+/// All allocations go through this allocator, except platform-specific
+/// allocations that must be made in a particular way. Examples are AF_XDP
+/// UMEM, io_uring rings, RIO buffers and thread stacks.
+/// NULL for both selects the system allocator. Passing only one
 /// returns ROCKETNET_STATUS_INVALID_ARGUMENT. Both must be thread-safe.
 /// malloc_function returns memory aligned for any fundamental type, or NULL.
 /// The library aligns its blocks to ROCKETNET_ALLOCATION_ALIGNMENT itself, so
@@ -1523,7 +1523,7 @@ ROCKETNET_EXPORT void rocketnet_client_disconnect( struct rocketnet_client_t * c
 
 ROCKETNET_EXPORT enum rocketnet_client_state_t rocketnet_client_state( const struct rocketnet_client_t * client );
 
-/// Returns a state name such as "CONNECTED" or "INVALID".
+/// Returns a state name such as "CONNECTED" or "DISCONNECTED".
 /// Returns "UNKNOWN" for an invalid value.
 
 ROCKETNET_EXPORT const char * rocketnet_client_state_name( enum rocketnet_client_state_t state );

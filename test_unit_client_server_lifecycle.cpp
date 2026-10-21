@@ -872,7 +872,7 @@ static void test_server_client_index_round_trips_as_int()
         struct rocketnet_receipt_t receipts[4];
         check( rocketnet_server_receipts( world.server, index, receipts, 4 ) >= 0 );
         (void) rn_server_client_stats_of( world.server, index ).packets_sent;
-        (void) rn_server_client_stats_of( world.server, index ).rtt;
+        (void) rn_server_client_stats_of( world.server, index ).rtt_ms;
         lifecycle_exchange( &world, i, (uint8_t) ( 0x70 + i ), 1 );
         // an index past max_clients, and a negative one, name no client
         check( rocketnet_server_client_connected( world.server, index + 3 ) == 0 );
