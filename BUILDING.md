@@ -614,17 +614,20 @@ list in both directions against the SDK reads and the public header.
 ## Server transports
 
 Transport selection is runtime: one build carries every transport its
-platform has. Linux servers have xdp (privileged), gso (SO_REUSEPORT +
-sendmmsg/recvmmsg + UDP GSO/GRO, non-root), io_uring and portable. macOS has
-msgx and portable. Windows servers have portable, iocp and rio. loopback is on
-every platform and is selected only by name. The transport walks an ordered candidate
+platform has. Linux production servers have xdp (privileged), gso (SO_REUSEPORT +
+sendmmsg/recvmmsg + UDP GSO/GRO, non-root) and io_uring; macOS production
+servers have msgx; Windows production servers have iocp and rio. The portable
+server is available only in development builds; its client side remains
+available on every platform. Loopback is on every platform and is selected
+only by name. The transport walks an ordered candidate
 list at create. The list rides the config's transport field or the
 per-endpoint `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
 environment variables (precedence: default < struct < env):
 
     ./bin/functional                                # auto: the platform's recommended ladder
-                                                #   (linux: xdp,gso,io_uring,portable — falls on refusal)
+                                                #   (production linux: xdp,gso,io_uring — falls on refusal)
     ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional
+                                                #   portable server requires a development build
                                                 # a one-element list is a pin: that transport
                                                 #   or loud failure, never a silent fall
     ROCKETNET_SERVER_TRANSPORT=gso,portable ./bin/functional  # exactly these, exactly this order
@@ -633,14 +636,17 @@ Names known but absent on a platform — or not applicable to an endpoint, like
 `gso` for a client — are skipped with a log line, so one fleet-wide value deploys
 everywhere; a list whose every name is skipped falls to that endpoint's own auto
 order, loudly, rather than bricking an endpoint the value was not addressing.
+An explicit server pin of `portable` in a production build refuses with
+`ROCKETNET_STATUS_INVALID_TRANSPORT_LIST` instead of falling to auto.
 Unknown names refuse loudly at create. The granted transport is reported by
 the transport name query on each client and server, and the create log line. Queue-count bounds are per transport, refused loudly and never
 clamped: the xdp transport takes any `num_xdp_queues` from 1, the gso transport refuses
 past its 32-queue geometry. The GSO transport still probes UDP_SEGMENT and UDP_GRO at
 create and degrades to plain sendmmsg/recvmmsg batching where a kernel lacks them —
 that degradation is internal to the transport, below the ladder; likewise the Darwin
-batch pump's live-refusal pause. Select the portable pump through
-`ROCKETNET_SERVER_TRANSPORT=portable` and `ROCKETNET_CLIENT_TRANSPORT=portable`.
+batch pump's live-refusal pause. Select the portable server in a development
+build with `ROCKETNET_SERVER_TRANSPORT=portable`; select the client's portable
+side with `ROCKETNET_CLIENT_TRANSPORT=portable` in either build.
 Run `./bin/functional`
 against each rung. The unit
 suite, `./bin/test`, does not start a transport, so a transport pin does not change
@@ -675,8 +681,8 @@ buffer, and 2048 send frames across all workers. These are resource bounds,
 not timing or packet-rate requirements. A send frame still owned by the OS is
 unavailable to the next fill, even after an application flush.
 
-Windows `auto` tries portable, then iocp, then rio. iocp is granted by auto only
-when portable refuses. Windows CI runs both configurations, plus
+Windows production server `auto` tries iocp, then rio; development builds
+try portable first. Windows CI runs both configurations, plus
 completion-lifetime, allocation-failure and shutdown tests with IOCP selected.
 Compilation and loopback correctness do not establish NIC
 line-rate performance; that requires measurements on suitable Windows hardware.

@@ -984,11 +984,14 @@ ROCKETNET_EXPORT void rocketnet_sleep( double seconds );
 ///
 /// Transport is a comma-separated list tried from left to right at client
 /// connect or server start. The first transport that starts wins. "auto" is
-/// the default, including NULL or an empty string. Linux servers try
-/// xdp,gso,io_uring,portable. io_uring requires build support. macOS servers
-/// try msgx,portable. Windows servers try portable,iocp,rio. macOS
-/// clients try msgx,portable. Other clients try portable. Loopback is selected
-/// by name, never by auto. A one-name list selects only that transport.
+/// the default, including NULL or an empty string. Development servers try
+/// xdp,gso,io_uring,portable on Linux; msgx,portable on macOS; and
+/// portable,iocp,rio on Windows. Production servers exclude portable and
+/// try xdp,gso,io_uring on Linux; msgx on macOS; and iocp,rio on Windows.
+/// io_uring requires build support. macOS clients try msgx,portable; other
+/// clients try portable. Loopback is selected by name, never by auto. An
+/// explicit server pin of "portable" refuses in production. A one-name list
+/// otherwise selects only that transport.
 /// Unsupported names are skipped with a log.
 /// Unknown names refuse the list and report valid names.
 ///

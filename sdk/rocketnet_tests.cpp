@@ -13529,6 +13529,44 @@ void rocketnet_test_transport_ladder_parse()
     rocketnet_check( ladder.num_candidates == 2 );
 }
 
+void rocketnet_test_portable_server_release_gate()
+{
+    int server_count = 0;
+    int client_count = 0;
+    const int * servers = rocketnet_server_transport_io_availability( &server_count );
+    const int * clients = rocketnet_client_transport_io_availability( &client_count );
+    bool portable_server = false;
+    bool portable_client = false;
+    for ( int i = 0; i < server_count; ++i )
+        portable_server |= servers[i] == ROCKETNET_TRANSPORT_PORTABLE;
+    for ( int i = 0; i < client_count; ++i )
+        portable_client |= clients[i] == ROCKETNET_TRANSPORT_PORTABLE;
+
+    // Production excludes only the portable server side of this driver.
+    rocketnet_check( portable_server == ( ROCKETNET_DEVELOPMENT != 0 ) );
+    rocketnet_check( portable_client );
+
+    struct rocketnet_transport_ladder_t ladder;
+    rocketnet_check( rocketnet_transport_ladder_parse( "auto", servers, server_count, &ladder ) );
+    bool portable_in_auto = false;
+    for ( int i = 0; i < ladder.num_candidates; ++i )
+        portable_in_auto |= ladder.candidates[i] == ROCKETNET_TRANSPORT_PORTABLE;
+    rocketnet_check( portable_in_auto == ( ROCKETNET_DEVELOPMENT != 0 ) );
+
+#if !ROCKETNET_DEVELOPMENT
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_default_config_current( &config );
+    memcpy( config.backend_public_key, rocketnet_test_backend_public_key, 32 );
+    memcpy( config.server_public_key, rocketnet_test_server_public_key, 32 );
+    memcpy( config.server_secret_key, rocketnet_test_server_secret_key, 32 );
+    config.protocol_id = 0x12345678;
+    snprintf( config.transport, sizeof( config.transport ), " portable " );
+    int status = ROCKETNET_STATUS_OK;
+    rocketnet_check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status ) == NULL );
+    rocketnet_check( status == ROCKETNET_STATUS_INVALID_TRANSPORT_LIST );
+#endif
+}
+
 
 
 // #109: a port-zero public address asks the KERNEL for a port, so it only
@@ -14986,6 +15024,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_handshake_deadline_is_configured", rocketnet_test_handshake_deadline_is_configured },
     { "test_config_validation", rocketnet_test_config_validation },
     { "test_transport_ladder_parse", rocketnet_test_transport_ladder_parse },
+    { "test_portable_server_release_gate", rocketnet_test_portable_server_release_gate },
     { "test_server_port_zero_needs_a_discovering_transport", rocketnet_test_server_port_zero_needs_a_discovering_transport },
 #if ROCKETNET_XDP
     { "test_xdp_transport_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
