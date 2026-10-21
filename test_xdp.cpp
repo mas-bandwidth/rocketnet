@@ -7,6 +7,7 @@
 
 bool rocketnet_server_socket_test_inactive_generation();
 bool rocketnet_server_socket_test_replay_marks();
+bool rocketnet_server_socket_test_send_failures_without_mutex();
 
 int main()
 {
@@ -15,6 +16,7 @@ int main()
     rocketnet_server_socket_forbid_commit();
     const bool passed = rocketnet_server_socket_test_inactive_generation();
     const bool replay_passed = rocketnet_server_socket_test_replay_marks();
+    const bool send_failures_passed = rocketnet_server_socket_test_send_failures_without_mutex();
     rocketnet_term();
     if (!passed)
     {
@@ -29,6 +31,13 @@ int main()
         return 1;
     }
     printf("test_xdp_transport_replay_marks_buffered_and_committed\n");
+
+    if (!send_failures_passed)
+    {
+        fprintf(stderr, "native XDP send-failure query check failed\n");
+        return 1;
+    }
+    printf("test_xdp_transport_send_failures_without_mutex\n");
 
     // a umem frame holds the largest datagram a receiver accepts, with the
     // ethernet header and the larger (IPv6) IP header in front of it

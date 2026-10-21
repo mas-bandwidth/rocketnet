@@ -164,12 +164,12 @@ struct rocketnet_server_xdp_socket_t
     // frames the flush did not send because the codec refused to build them
     // (a destination of the family this server does not serve); written by
     // this queue's xdp thread under send_mutex
-    uint64_t send_refused_build;
+    std::atomic<uint64_t> send_refused_build{0};
 
     // staged packets the flush did not copy because their length is 0 or
     // past ROCKETNET_RECEIVE_CEILING (rocketnet_xdp_send_copy); written by
     // this queue's xdp thread under send_mutex
-    uint64_t send_refused_length;
+    std::atomic<uint64_t> send_refused_length{0};
 
     uint8_t padding_5[4096];
 
@@ -2796,7 +2796,8 @@ int rocketnet_server_socket_num_queues( struct rocketnet_server_socket_t * serve
 
 // The transport's send_failures operation sums frames each queue's flush drops
 // because the copy rejects their length or the codec refuses to build them.
-// Read both counts under the send_mutex used by their XDP writer.
+// The worker publishes these counts atomically so a request/query never waits
+// behind its send mutex while it copies a batch into UMEM.
 
 uint64_t rocketnet_server_socket_send_failures( struct rocketnet_server_socket_t * server_socket )
 {
@@ -2805,12 +2806,39 @@ uint64_t rocketnet_server_socket_send_failures( struct rocketnet_server_socket_t
     for ( int queue = 0; queue < server_socket->num_queues; queue++ )
     {
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
-        rocketnet_platform_mutex_acquire( &socket->send_mutex );
-        failures += socket->send_refused_length + socket->send_refused_build;
-        rocketnet_platform_mutex_release( &socket->send_mutex );
+        failures += socket->send_refused_length.load( std::memory_order_relaxed ) +
+                    socket->send_refused_build.load( std::memory_order_relaxed );
     }
     return failures;
 }
+
+#if defined(ROCKETNET_XDP_TESTS)
+bool rocketnet_server_socket_test_send_failures_without_mutex()
+{
+    // A query must be valid even while the worker owns the send mutex. These
+    // synthetic queues deliberately have no mutexes to acquire.
+    void * server_storage = rocketnet_malloc( NULL, sizeof(rocketnet_server_socket_t) );
+    void * queue_storage = rocketnet_malloc( NULL, sizeof(rocketnet_server_xdp_socket_t) );
+    if ( !server_storage || !queue_storage )
+    {
+        rocketnet_free( NULL, queue_storage );
+        rocketnet_free( NULL, server_storage );
+        return false;
+    }
+    auto * server = new (server_storage) rocketnet_server_socket_t();
+    auto * queue = new (queue_storage) rocketnet_server_xdp_socket_t();
+    server->num_queues = 1;
+    server->socket = queue;
+    queue->send_refused_length.store( 5 );
+    queue->send_refused_build.store( 7 );
+    const bool valid = rocketnet_server_socket_send_failures( server ) == 12;
+    queue->~rocketnet_server_xdp_socket_t();
+    server->~rocketnet_server_socket_t();
+    rocketnet_free( NULL, queue_storage );
+    rocketnet_free( NULL, server_storage );
+    return valid;
+}
+#endif
 
 void rocketnet_server_socket_xdp_counters( struct rocketnet_server_socket_t * server_socket, uint64_t * counters )
 {
@@ -2854,7 +2882,11 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
     {
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
 
-        rocketnet_platform_mutex_acquire( &socket->receive_mutex );
+        // The worker can hold this mutex across a whole receive batch. Leave
+        // this queue staged for the next call instead of waiting on the game
+        // thread; its counter and buffers stay unchanged on a failed try.
+        if ( !rocketnet_platform_mutex_try_acquire( &socket->receive_mutex ) )
+            continue;
         {
             socket->receive_counter++;
         }
@@ -3136,7 +3168,10 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
                         const rocketnet_address_t * source = &socket->server_address;
                         if ( socket->serves_both )
                             source = send_buffer->packet_info[i].to.type == ROCKETNET_ADDRESS_IPV4 ? &socket->ipv4_address : &socket->ipv6_address;
-                        const int copied_bytes = rocketnet_xdp_send_copy( packet_data, ROCKETNET_XDP_FRAME_SIZE, send_buffer->packet_info[i].to.type, send_buffer->packet_data[i] + ROCKETNET_FRAME_WIRE_OFFSET, send_buffer->packet_info[i].packet_bytes, &socket->send_refused_length );
+                        uint64_t refused_length = 0;
+                        const int copied_bytes = rocketnet_xdp_send_copy( packet_data, ROCKETNET_XDP_FRAME_SIZE, send_buffer->packet_info[i].to.type, send_buffer->packet_data[i] + ROCKETNET_FRAME_WIRE_OFFSET, send_buffer->packet_info[i].packet_bytes, &refused_length );
+                        if ( refused_length )
+                            socket->send_refused_length.fetch_add( refused_length, std::memory_order_relaxed );
 
                         const int frame_bytes = ( copied_bytes < 0 ) ? 0 : rocketnet_xdp_frame_build( packet_data, ROCKETNET_XDP_FRAME_SIZE, socket->server_ethernet_address, send_buffer->packet_info[i].destination_mac, source, &send_buffer->packet_info[i].to, copied_bytes );
                         if ( copied_bytes < 0 )
@@ -3146,7 +3181,7 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
                         else if ( frame_bytes <= 0 )
                         {
                             free_send_frame( socket, frame );
-                            socket->send_refused_build++;
+                            socket->send_refused_build.fetch_add( 1, std::memory_order_relaxed );
                         }
                         else
                         {
