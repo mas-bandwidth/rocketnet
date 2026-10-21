@@ -42,6 +42,7 @@
 */
 
 #include "rocketnet_internal.h"
+#include "rocketnet_connect_token.h"
 #include "rocketnet_platform.h"
 
 #include <algorithm>
@@ -237,7 +238,7 @@ static void macos_timing_run( const char * condition, bool lower_game_thread, bo
     client_config.time_callback = macos_timing_time_callback;
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    macos_timing_require( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    macos_timing_require( rocketnet_write_test_connect_token( server_address, 1, 4102444800ull, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, &client_config, macos_timing_game_time( start ) );
     macos_timing_require( client != NULL );
 

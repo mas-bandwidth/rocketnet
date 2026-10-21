@@ -633,7 +633,7 @@ static void live_matrix_flush( struct live_matrix_t * m )
 static void live_matrix_connect( struct live_matrix_t * m )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    live_matrix_check( rocketnet_write_dev_connect_token( m->server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( 0, live_matrix_now( m ) ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    live_matrix_check( rocketnet_write_test_connect_token( m->server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( 0, live_matrix_now( m ) ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     m->client = rocketnet_message_client_create_ex( NULL, token, NULL, &m->message_config, NULL, 0, LIVE_MATRIX_SEND_KBPS, NULL, 1 );
     live_matrix_check( m->client );
 
