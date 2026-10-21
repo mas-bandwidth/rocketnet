@@ -305,8 +305,10 @@ static std::vector<std::string> env_names_documented( const char * relative_path
     while ( ( bytes = fread( buffer, 1, sizeof( buffer ), file ) ) > 0 )
         text.append( buffer, bytes );
     fclose( file );
-    const std::string markers[] = { "///< ROCKETNET_", "/// Environment: ROCKETNET_", "* Environment: ROCKETNET_" };
-    for ( int m = 0; m < 3; m++ )
+    // the header names a variable beside its field or in an Environment: line;
+    // docs/ENVIRONMENT.md names each in the first cell of a table row
+    const std::string markers[] = { "///< ROCKETNET_", "/// Environment: ROCKETNET_", "* Environment: ROCKETNET_", "| `ROCKETNET_" };
+    for ( int m = 0; m < 4; m++ )
     {
         const std::string & marker = markers[m];
     for ( size_t at = text.find( marker ); at != std::string::npos; at = text.find( marker, at + 1 ) )
@@ -318,6 +320,24 @@ static std::vector<std::string> env_names_documented( const char * relative_path
         if ( end > begin )
             names.push_back( text.substr( begin, end - begin ) );
     }
+    }
+    return names;
+}
+
+// every public env name: the ones sdk/rocketnet.h names beside the config
+// fields, then the ones docs/ENVIRONMENT.md names that the structs do not carry,
+// each once (ROCKETNET_LOG_LEVEL is in both)
+static std::vector<std::string> env_names_public()
+{
+    std::vector<std::string> names = env_names_documented( "sdk/rocketnet.h" );
+    const std::vector<std::string> extra = env_names_documented( "docs/ENVIRONMENT.md" );
+    for ( size_t i = 0; i < extra.size(); i++ )
+    {
+        bool seen = false;
+        for ( size_t j = 0; j < names.size(); j++ )
+            seen = seen || names[j] == extra[i];
+        if ( !seen )
+            names.push_back( extra[i] );
     }
     return names;
 }
@@ -537,7 +557,7 @@ static std::vector<std::string> env_names_pass_reads()
 
 static void test_config_env_every_name_read_is_documented()
 {
-    const std::vector<std::string> documented = env_names_documented( "sdk/rocketnet.h" );
+    const std::vector<std::string> documented = env_names_public();
     const std::vector<std::string> building = env_names_documented( "BUILDING.md" );
     const std::vector<std::string> reads = env_names_pass_reads();
     check( documented.size() == building.size() );
@@ -554,7 +574,7 @@ static void test_config_env_every_name_read_is_documented()
     for ( size_t i = 0; i < reads.size(); i++ )
     {
         if ( !env_names_contains( documented, reads[i].c_str() ) )
-            printf( "read but not documented in sdk/rocketnet.h: %s\n", reads[i].c_str() );
+            printf( "read but not documented in sdk/rocketnet.h or docs/ENVIRONMENT.md: %s\n", reads[i].c_str() );
         check( env_names_contains( documented, reads[i].c_str() ) );
     }
     check( env_names_contains( documented, "ROCKETNET_CLIENT_SEND_KBPS" ) );
@@ -622,7 +642,8 @@ static void test_config_env_every_name_read_is_documented()
     check( env_names_contains( overrides, "ROCKETNET_SERVER_BACKEND_PUBLIC_KEY" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_TRANSPORT" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_PUBLIC_ADDRESS" ) );
-    check( documented.size() == 59 );
+    check( documented.size() == 68 );
+    check( !env_names_contains( documented, "ROCKETNET_SERVER_SERVER_SECRET_KEY" ) );
     check( env_names_contains( documented, "ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS" ) );
     check( env_names_contains( documented, "ROCKETNET_LOG_LEVEL" ) );
     check( env_names_contains( documented, "ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT" ) );
@@ -645,13 +666,13 @@ static void test_config_env_every_name_read_is_documented()
     for ( size_t i = 0; i < overrides.size(); i++ )
     {
         if ( !env_names_contains( documented, overrides[i].c_str() ) )
-            printf( "read but not documented in sdk/rocketnet.h: %s\n", overrides[i].c_str() );
+            printf( "read but not documented in sdk/rocketnet.h or docs/ENVIRONMENT.md: %s\n", overrides[i].c_str() );
         check( env_names_contains( documented, overrides[i].c_str() ) );
     }
     for ( size_t i = 0; i < documented.size(); i++ )
     {
         if ( !env_names_contains( reads, documented[i].c_str() ) )
-            printf( "documented in sdk/rocketnet.h but not read by any pass: %s\n", documented[i].c_str() );
+            printf( "documented in sdk/rocketnet.h or docs/ENVIRONMENT.md but not read by any pass: %s\n", documented[i].c_str() );
         check( env_names_contains( reads, documented[i].c_str() ) );
     }
 }
@@ -750,7 +771,7 @@ static void test_config_env_transport_passes_exercise_all_rows()
     check( env_names_contains( overrides, "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW" ) );
 
-    const std::vector<std::string> documented = env_names_documented( "sdk/rocketnet.h" );
+    const std::vector<std::string> documented = env_names_public();
     const char * internal_names[] =
     {
         "ROCKETNET_CLIENT_GAME_CLOCK_EPOCH",
@@ -765,7 +786,7 @@ static void test_config_env_transport_passes_exercise_all_rows()
     for ( size_t i = 0; i < sizeof( internal_names ) / sizeof( internal_names[0] ); i++ )
     {
         if ( !env_names_contains( documented, internal_names[i] ) )
-            printf( "read but not documented in sdk/rocketnet.h: %s\n", internal_names[i] );
+            printf( "read but not documented in sdk/rocketnet.h or docs/ENVIRONMENT.md: %s\n", internal_names[i] );
         check( env_names_contains( documented, internal_names[i] ) );
     }
 
