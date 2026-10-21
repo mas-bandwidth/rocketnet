@@ -2,21 +2,20 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    Client/server server: real UDP on loopback with production keys. The
-    server generates the backend signing keypair and its own server keypair
-    through the public keygen calls, writes the backend secret and its server
-    public key to one small key file, and listens on 127.0.0.1 at the port
-    from --port <n>, else the ROCKETNET_EXAMPLE_PORT environment variable,
-    else the default 40000. The
-    separate client process plays the backend, reads that file, mints a
-    production connect token, connects, and sends one reliable-ordered
-    message. The server echoes it and exits after its first client
-    disconnects.
+    Client/server server: real UDP on loopback. The server takes the
+    published development backend key, makes its own server keypair at
+    create, writes its public key to one small key file, and listens on
+    127.0.0.1 at the port from --port <n>, else the ROCKETNET_EXAMPLE_PORT
+    environment variable, else the default 40000. The separate client process
+    plays the backend: it reads that file, mints a development connect token
+    for this server, connects, and sends one reliable-ordered message. The
+    server echoes it and exits after its first client disconnects.
 
     Run the server first, then the client. See docs/examples/client_server.md.
 */
 
 #include "rocketnet.h"
+#include "dev_keys.h"
 
 #include <stdio.h>
 #include <stdint.h>
@@ -25,7 +24,6 @@
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
-#define PROTOCOL_ID 0x636c69656e747331ull
 #define KEY_FILE "client_server.keys"
 #define DEFAULT_PORT 40000
 
@@ -102,10 +100,8 @@ int main( int argc, char ** argv )
 {
     struct rocketnet_server_config_t config;
     struct rocketnet_server_t * server = NULL;
-    uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
     int result = 1;
     int had_client = 0;
     int echoed = 0;
@@ -125,20 +121,16 @@ int main( int argc, char ** argv )
 
     CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
-    // a deployment mints the backend keypair in the backend and gives servers
-    // only the public half; here the server bootstraps it so the separate
-    // client process can play the backend from the key file
-
-    CHECK( rocketnet_generate_backend_keypair( backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
-    CHECK( rocketnet_generate_server_keypair( server_public_key, server_secret_key ) == ROCKETNET_STATUS_OK );
+    // a deployment's server takes its own backend's public key; this one
+    // takes the published development backend key (rocketnet.h), whose
+    // tokens rocketnet_create_dev_connect_token mints. The server keypair is
+    // the server's own, made at create.
 
     rocketnet_server_default_config( &config );
-    config.protocol_id = PROTOCOL_ID;
+    config.protocol_id = EXAMPLE_PROTOCOL_ID;
     config.max_clients = 1;
     config.transport = "portable";
-    memcpy( config.backend_public_key, backend_public_key, sizeof( config.backend_public_key ) );
-    memcpy( config.server_public_key, server_public_key, sizeof( config.server_public_key ) );
-    memcpy( config.server_secret_key, server_secret_key, sizeof( config.server_secret_key ) );
+    memcpy( config.backend_public_key, dev_backend_public_key, sizeof( config.backend_public_key ) );
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     server = rocketnet_server_create( NULL, address, &config, &create_status );
@@ -150,13 +142,16 @@ int main( int argc, char ** argv )
     }
     CHECK( server != NULL );
 
+    // the backend registers each server's public key; here the key file
+    // carries it to the client process, which plays the backend
+
+    rocketnet_server_public_key( server, server_public_key );
     FILE * keys = example_fopen( KEY_FILE, "w" );
     CHECK( keys != NULL );
-    write_hex( keys, "backend_secret", backend_secret_key, ROCKETNET_BACKEND_SECRET_KEY_BYTES );
     write_hex( keys, "server_public", server_public_key, ROCKETNET_SERVER_PUBLIC_KEY_BYTES );
     CHECK( fclose( keys ) == 0 );
 
-    printf( "server listening on 127.0.0.1:%d with protocol id 0x%llx\n", (int) rocketnet_server_port( server ), (unsigned long long) PROTOCOL_ID );
+    printf( "server listening on 127.0.0.1:%d with protocol id 0x%llx\n", (int) rocketnet_server_port( server ), (unsigned long long) EXAMPLE_PROTOCOL_ID );
     printf( "server wrote %s for the client\n", KEY_FILE );
     fflush( stdout );
 

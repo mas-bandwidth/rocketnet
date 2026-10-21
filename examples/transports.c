@@ -16,6 +16,9 @@
 #include "rocketnet.h"
 #include "dev_keys.h"
 
+// the published development backend key, from rocketnet.h (development builds)
+static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
+
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
@@ -27,7 +30,8 @@
 static int exchange( struct rocketnet_server_t * server, const char * server_address )
 {
     struct rocketnet_client_config_t config;
-    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    char connect_token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     struct rocketnet_client_t * client = NULL;
     const double start = rocketnet_time();
     int sent = 0;
@@ -35,7 +39,8 @@ static int exchange( struct rocketnet_server_t * server, const char * server_add
     int ok = 0;
     rocketnet_client_default_config( &config );
     config.transport = "portable";   // the client side is portable; the server may be any transport
-    if ( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
+    rocketnet_server_public_key( server, server_public_key );   // the key the server made at create; the token carries it
+    if ( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, 4102444800ull, NULL, connect_token ) != ROCKETNET_STATUS_OK )
         return 0;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     client = rocketnet_client_create( NULL, &config, &create_status );
@@ -97,15 +102,13 @@ static int exchange( struct rocketnet_server_t * server, const char * server_add
 static int create_and_prove( const char * label, const char * transport )
 {
     struct rocketnet_server_config_t config;
-    char server_address[64];
+    char server_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
     struct rocketnet_server_t * server;
     int ok;
-    // the published development keys (dev_keys.h); a real server brings its own keys, recommended through the ROCKETNET_SERVER_* environment variables, or set in code
+    // the published development backend key (rocketnet.h) and the examples protocol id (dev_keys.h); the server makes its own keypair at create. A real server brings its own backend key, recommended through ROCKETNET_SERVER_BACKEND_PUBLIC_KEY, or set in code
     rocketnet_server_default_config( &config );
-    config.protocol_id = EXAMPLE_DEV_PROTOCOL_ID;
-    memcpy( config.backend_public_key, example_dev_backend_public_key, sizeof( config.backend_public_key ) );
-    memcpy( config.server_public_key, example_dev_server_public_key, sizeof( config.server_public_key ) );
-    memcpy( config.server_secret_key, example_dev_server_secret_key, sizeof( config.server_secret_key ) );
+    config.protocol_id = EXAMPLE_PROTOCOL_ID;
+    memcpy( config.backend_public_key, dev_backend_public_key, sizeof( config.backend_public_key ) );
     config.max_clients = 2;
     config.transport = transport;
     enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
@@ -118,7 +121,11 @@ static int create_and_prove( const char * label, const char * transport )
     }
     if ( !server )
         return 0;
-    snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
+    if ( !rocketnet_server_ipv4_address( server, server_address, sizeof( server_address ) ) )
+    {
+        rocketnet_server_destroy( server );
+        return 0;
+    }
     printf( "%s chose %s\n", label, rocketnet_server_transport_name( server ) );
     ok = exchange( server, server_address );
     rocketnet_server_destroy( server );
@@ -144,12 +151,10 @@ int main( void )
     CHECK( create_and_prove( "list", "xdp,gso,portable" ) );
     // an impossible pin: a name no transport has, refused loudly by the
     // library, with the valid names in its error line
-    // the published development keys (dev_keys.h); a real server brings its own keys, recommended through the ROCKETNET_SERVER_* environment variables, or set in code
+    // the published development backend key (rocketnet.h) and the examples protocol id (dev_keys.h); the server makes its own keypair at create. A real server brings its own backend key, recommended through ROCKETNET_SERVER_BACKEND_PUBLIC_KEY, or set in code
     rocketnet_server_default_config( &config );
-    config.protocol_id = EXAMPLE_DEV_PROTOCOL_ID;
-    memcpy( config.backend_public_key, example_dev_backend_public_key, sizeof( config.backend_public_key ) );
-    memcpy( config.server_public_key, example_dev_server_public_key, sizeof( config.server_public_key ) );
-    memcpy( config.server_secret_key, example_dev_server_secret_key, sizeof( config.server_secret_key ) );
+    config.protocol_id = EXAMPLE_PROTOCOL_ID;
+    memcpy( config.backend_public_key, dev_backend_public_key, sizeof( config.backend_public_key ) );
     config.max_clients = 2;
     config.transport = "not-a-transport";
     {

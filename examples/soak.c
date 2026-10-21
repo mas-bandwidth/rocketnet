@@ -13,6 +13,9 @@
 #include "rocketnet.h"
 #include "dev_keys.h"
 
+// the published development backend key, from rocketnet.h (development builds)
+static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
+
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -168,12 +171,10 @@ int main( int argc, char ** argv ) {
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
     struct rocketnet_server_config_t s_cfg;
     struct rocketnet_client_config_t c_cfg;
-    // the published development keys (dev_keys.h); a real server brings its own keys, recommended through the ROCKETNET_SERVER_* environment variables, or set in code
+    // the published development backend key (rocketnet.h) and the examples protocol id (dev_keys.h); the server makes its own keypair at create. A real server brings its own backend key, recommended through ROCKETNET_SERVER_BACKEND_PUBLIC_KEY, or set in code
     rocketnet_server_default_config( &s_cfg );
-    s_cfg.protocol_id = EXAMPLE_DEV_PROTOCOL_ID;
-    memcpy( s_cfg.backend_public_key, example_dev_backend_public_key, sizeof( s_cfg.backend_public_key ) );
-    memcpy( s_cfg.server_public_key, example_dev_server_public_key, sizeof( s_cfg.server_public_key ) );
-    memcpy( s_cfg.server_secret_key, example_dev_server_secret_key, sizeof( s_cfg.server_secret_key ) );
+    s_cfg.protocol_id = EXAMPLE_PROTOCOL_ID;
+    memcpy( s_cfg.backend_public_key, dev_backend_public_key, sizeof( s_cfg.backend_public_key ) );
     CHECK( rocketnet_client_default_config( &c_cfg ) == ROCKETNET_STATUS_OK );
     s_cfg.max_clients = num_clients; c_cfg.step_driven = true; s_cfg.transport = c_cfg.transport = transport_name;
     s_cfg.per_client_send_kbps = c_cfg.send_kbps = 100000; s_cfg.max_message_bytes = c_cfg.max_message_bytes = 2048;
@@ -192,11 +193,13 @@ int main( int argc, char ** argv ) {
         server = NULL;
     }
     CHECK( server != NULL );
-    char addr[64];
-    snprintf( addr, sizeof( addr ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
+    char addr[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+    uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    CHECK( rocketnet_server_ipv4_address( server, addr, sizeof( addr ) ) );
+    rocketnet_server_public_key( server, server_public_key );
     for ( uint64_t c = 0; c < (uint64_t) num_clients; c++ ) {
-        uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-        CHECK( rocketnet_write_dev_connect_token( addr, c + 1, 4102444800ULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+        char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+        CHECK( rocketnet_create_dev_connect_token( addr, NULL, server_public_key, 30, 10, c + 1, EXAMPLE_PROTOCOL_ID, 4102444800ULL, NULL, token ) == ROCKETNET_STATUS_OK );
         enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
         clients[c] = rocketnet_client_create( NULL, &c_cfg, &create_status_2 );
         if ( !clients[c] ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );

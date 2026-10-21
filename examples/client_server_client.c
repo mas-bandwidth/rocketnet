@@ -3,8 +3,8 @@
     Licensed under the GNU Affero General Public License v3.0
 
     Client/server client: the matchmaker stub and the client in one program.
-    The stub holds the backend signing key and the server's public key from
-    the key file the server writes, and mints a production connect token. The
+    The stub reads the server's public key from the key file the server
+    writes and mints a development connect token for that server. The
     client connects over real UDP on loopback, sends one reliable-ordered
     message, receives the echo, prints its state changes, disconnects, and
     prints the state that says how the connection ended.
@@ -19,6 +19,7 @@
 */
 
 #include "rocketnet.h"
+#include "dev_keys.h"
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -26,7 +27,6 @@
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
-#define PROTOCOL_ID 0x636c69656e747331ull
 #define DEFAULT_PORT 40000
 #define KEY_FILE "client_server.keys"
 
@@ -137,10 +137,8 @@ int main( int argc, char ** argv )
     snprintf( address, sizeof( address ), "127.0.0.1:%d", port );
     struct rocketnet_client_config_t config;
     struct rocketnet_client_t * client = NULL;
-    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    const char * server_addresses[1] = { address };
+    char connect_token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     int result = 1;
     int sent = 0;
     int received = 0;
@@ -159,8 +157,7 @@ int main( int argc, char ** argv )
         FILE * keys = example_fopen( KEY_FILE, "r" );
         if ( keys )
         {
-            have_keys = read_hex( keys, "backend_secret", backend_secret_key, ROCKETNET_BACKEND_SECRET_KEY_BYTES ) &&
-                        read_hex( keys, "server_public", server_public_key, ROCKETNET_SERVER_PUBLIC_KEY_BYTES );
+            have_keys = read_hex( keys, "server_public", server_public_key, ROCKETNET_SERVER_PUBLIC_KEY_BYTES );
             fclose( keys );
         }
         if ( !have_keys )
@@ -168,14 +165,14 @@ int main( int argc, char ** argv )
     }
     CHECK( have_keys );
 
-    // the matchmaker stub: a real backend runs this on its own server, keeps
-    // the secret key, and returns the token to the game client. The fixed
-    // timestamps keep the example off the wall clock; a backend stamps now.
+    // the matchmaker stub: a real backend mints with its own secret key on
+    // its own server and returns the token to the game client; this one
+    // mints a development token. The fixed timestamp keeps the example off
+    // the wall clock; a backend stamps now.
 
-    const uint64_t protocol_id = PROTOCOL_ID + ( wrong_protocol ? 1 : 0 );
-    CHECK( rocketnet_write_production_connect_token( backend_secret_key, server_public_key, protocol_id,
-                                                     server_addresses, 1, 0x0123456789abcdefull, 0, 4102444800ull, 5, NULL,
-                                                     connect_token, sizeof( connect_token ) ) == ROCKETNET_STATUS_OK );
+    const uint64_t protocol_id = EXAMPLE_PROTOCOL_ID + ( wrong_protocol ? 1 : 0 );
+    CHECK( rocketnet_create_dev_connect_token( address, NULL, server_public_key, 30, 5, 0x0123456789abcdefull,
+                                               protocol_id, 4102444800ull, NULL, connect_token ) == ROCKETNET_STATUS_OK );
     rocketnet_client_default_config( &config );
     config.transport = "portable";
     config.state_change_callback = state_changed;
