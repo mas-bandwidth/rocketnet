@@ -27,6 +27,8 @@
 // after lease insertion, so that refusal also leaves no gap.
 
 #include "test_unit_registry.h"
+#include "sdk/rocketnet_connect_token.h"
+#include "sdk/rocketnet_base64.h"
 #include "test/portable_crt.h"
 
 #include "rocketnet_ack.h"
@@ -232,9 +234,9 @@ static bool sequence_burn_pair_setup( struct sequence_burn_pair_t * pair )
 
     const uint64_t protocol_id = 0x6275726e73657173ULL;
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret_key[64];
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret_key[sizeof( rocketnet_dev_server_secret_key )];
     rocketnet_unit_check( rocketnet_generate_backend_keypair( backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_generate_server_keypair( server_public_key, server_secret_key ) == ROCKETNET_STATUS_OK );
 
@@ -763,9 +765,9 @@ static bool sequence_burn_message_pair_setup( struct sequence_burn_message_pair_
 
     const uint64_t protocol_id = 0x6275726e6d736773ULL;
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret_key[64];
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret_key[sizeof( rocketnet_dev_server_secret_key )];
     rocketnet_unit_check( rocketnet_generate_backend_keypair( backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_generate_server_keypair( server_public_key, server_secret_key ) == ROCKETNET_STATUS_OK );
 

@@ -246,9 +246,9 @@ static void secrets_wiped_free( void * context, void * p )
 struct secrets_wiped_identity_t
 {
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret[64];
     uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret[sizeof( rocketnet_dev_server_secret_key )];
 };
 
 static double secrets_wiped_now = 1000.0;

@@ -24,6 +24,7 @@
 // loopback create/connect.
 
 #include "test_unit_registry.h"
+#include "sdk/rocketnet_base64.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_config.h"
@@ -705,9 +706,9 @@ static void public_config_bytes_newer_larger_ignores_the_tail()
 struct public_config_identity_t
 {
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret[64];
     uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret[sizeof( rocketnet_dev_server_secret_key )];
 };
 
 static double public_config_now = 1000.0;

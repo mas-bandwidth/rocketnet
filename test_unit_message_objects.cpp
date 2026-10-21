@@ -23,6 +23,8 @@
 #include <vector>
 
 #include "test_unit_registry.h"
+#include "sdk/rocketnet_connect_token.h"
+#include "sdk/rocketnet_base64.h"
 
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_allocator.h"
@@ -2893,9 +2895,9 @@ static double reconnect_clock( void * ) { return reconnect_now; }
 struct reconnect_world_t
 {
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret[64];
     uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret[sizeof( rocketnet_dev_server_secret_key )];
     rocketnet_server_t * server;
     rocketnet_client_t * clients[2];
     double time;

@@ -8,6 +8,8 @@
 // update time from 1000.0, and no test sleeps or opens a socket.
 
 #include "test_unit_registry.h"
+#include "sdk/rocketnet_connect_token.h"
+#include "sdk/rocketnet_base64.h"
 #include "test/fake_client_driver.h"
 #include "test/portable_crt.h"
 #include "sdk/rocketnet.h"
@@ -36,9 +38,9 @@ struct public_step_pair_t
 struct public_step_identity_t
 {
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret[64];
     uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret[sizeof( rocketnet_dev_server_secret_key )];
 };
 
 static int public_step_thread_count()

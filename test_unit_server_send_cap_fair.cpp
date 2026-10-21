@@ -13,6 +13,8 @@
 // reliable echoes must arrive in order at every client without a disconnect.
 
 #include "test_unit_registry.h"
+#include "sdk/rocketnet_connect_token.h"
+#include "sdk/rocketnet_base64.h"
 #include "sdk/rocketnet.h"
 #include "rocketnet_internal.h"
 #include "sdk/rocketnet_counters.h"
@@ -40,9 +42,9 @@ static double fair_clock( void * ) { return fair_now; }
 struct fair_identity_t
 {
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret[64];
     uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret[sizeof( rocketnet_dev_server_secret_key )];
 };
 
 static void fair_identity( fair_identity_t * identity )
@@ -96,8 +98,6 @@ static void fair_world_create( fair_world_t * world, int num_clients, int capaci
     server_config.protocol_id = FAIR_PROTOCOL;
     server_config.max_clients = max_clients;
     memcpy( server_config.backend_public_key, world->identity.backend_public, sizeof( server_config.backend_public_key ) );
-    memcpy( server_config.server_public_key, world->identity.server_public, sizeof( server_config.server_public_key ) );
-    memcpy( server_config.server_secret_key, world->identity.server_secret, sizeof( server_config.server_secret_key ) );
     server_config.transport = "loopback";
     fair_message_config( &server_config, NULL );
     if ( max_clients >= 256 )
@@ -112,6 +112,7 @@ static void fair_world_create( fair_world_t * world, int num_clients, int capaci
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     world->server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &create_status );
     check( world->server != NULL );
+    rocketnet_server_public_key( world->server, world->identity.server_public );
     check( create_status == ROCKETNET_STATUS_OK );
     check( rocketnet_server_start( world->server ) == ROCKETNET_STATUS_OK );
     check( rocketnet_server_running( world->server ) == 1 );
@@ -143,14 +144,16 @@ static void fair_world_destroy( fair_world_t * world )
     rocketnet_server_destroy( world->server );
 }
 
-static void fair_token( fair_world_t * world, uint64_t client_id, uint8_t * token )
+static void fair_token( fair_world_t * world, uint64_t client_id, char * token_string )
 {
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     char address[64];
     snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) rocketnet_server_port( world->server ) );
     const char * addresses[] = { address };
     check( rocketnet_write_production_connect_token( world->identity.backend_secret, world->identity.server_public,
         FAIR_PROTOCOL, addresses, 1, client_id, 1000, 1ULL << 40, 300, NULL,
         token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 }
 
 static void fair_update_clients( fair_world_t * world )
@@ -173,7 +176,7 @@ static void fair_server_update( fair_world_t * world )
 
 static void fair_connect( fair_world_t * world, int client, uint64_t client_id )
 {
-    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     fair_token( world, client_id, token );
     check( rocketnet_client_connect( world->clients[client], token ) == ROCKETNET_STATUS_OK );
     for ( int step = 0; step < 400 && rocketnet_client_state( world->clients[client] ) != ROCKETNET_CLIENT_STATE_CONNECTED; step++ )
@@ -514,7 +517,7 @@ static void test_server_send_capacity_default_covers_clients()
 {
     rocketnet_server_transport_config_t config;
     send_capacity_default_config( &config );
-    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret_key[64];
     check( rocketnet_generate_backend_keypair( config.backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
     check( rocketnet_generate_server_keypair( config.server_public_key, config.server_secret_key ) == ROCKETNET_STATUS_OK );
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
