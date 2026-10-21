@@ -495,7 +495,7 @@ socket-buffer reservation. The current default Linux worker topology is:
 
 | transport | sockets | I/O workers | stats workers | total stacks |
 | --- | --- | --- | --- | --- |
-| portable (development server) | 1 | 0 | 1 | 1 |
+| portable (development server) | 1 | 1 | 1 | 2 |
 | gso | 4 | 4 | 1 | 5 |
 | io_uring | 4 | 0 | 1 | 1 |
 | xdp | 7 | 7 | 1 | 8 |

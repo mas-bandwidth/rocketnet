@@ -396,7 +396,10 @@ loopback server and checks the allocator against the plan
 (`bench/transport_memory.cpp:65-113`, `BUILDING.md:294-303`). At 1000 clients,
 1416-byte payloads and 16 reassembly slots the plans are 483,668,499 bytes
 (`portable`), 625,876,730 (`gso`), 594,710,098 (`io_uring`) and 4,269,352,940
-(`xdp`, 7 queues, of which 1,879,048,192 UMEM). The plan excludes OS stacks,
+(`xdp`, 7 queues, of which 1,879,048,192 UMEM). The portable total is a
+pre-TX-worker figure: its current plan includes the three server TX banks, wake
+and thread. Use the exact-build probe below for current capacity planning. The
+plan excludes OS stacks,
 kernel queues, loader and application memory
 (`sdk/rocketnet_server_transport.cpp:1117`, `BUILDING.md:247-255`).
 

@@ -119,10 +119,14 @@ pause is the re-probe (`rocketnet_msgx_send_weather`, `rocketnet_msgx_pause`,
 paused while another batches. `rocketnet_platform_socket_pump` reports the live
 pump, so a paused socket reads as `portable`.
 
-**portable** is the per-packet `sendto` / `recvmsg` loop
+**portable** uses per-packet `sendto` / `recvmsg` calls
 (`rocketnet_platform_socket_send_packet` and
 `rocketnet_platform_socket_receive_packet` in the macOS section of
-`sdk/rocketnet_platform.cpp`).
+`sdk/rocketnet_platform.cpp`). For the portable server, the caller copies
+borrowed, sealed send frames into one of three owned TX banks outside the lock;
+a try-lock publishes bank indices to the send worker, which makes the
+per-packet send calls. Receive syscalls and shared protocol work remain on the caller.
+This does not change the `msgx` pump or portable client path.
 
 ### Pinning a transport
 
