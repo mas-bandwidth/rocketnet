@@ -92,6 +92,11 @@ else
 fi
 
 COVFLAGS="-fprofile-instr-generate -fcoverage-mapping"
+# continuous mode (%c) on Linux needs the counters relocated at run time;
+# without it the runtime cannot map them and writes an empty profile
+if [ "$(uname -s)" = "Linux" ]; then
+    COVFLAGS="$COVFLAGS -mllvm -runtime-counter-relocation"
+fi
 if [ ! -f "$BUILD/CMakeCache.txt" ]; then
     GENERATOR=()
     command -v ninja >/dev/null 2>&1 && GENERATOR=(-G Ninja)
