@@ -365,12 +365,21 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * transport,
     // nothing: the committed slots stay in the Filling ring and leave with the
     // next hand-off (RNClientIo HandOff and Defer), so every payload arrives.
 
+    // This fixture exercises the native client's I/O hand-off, including when
+    // the surrounding suite selects loopback. Keep its UDP peer and native
+    // client selection local; the transport-matrix fixtures still honour pins.
+    struct rocketnet_test_env_guard_t server_guard, client_guard;
+    rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_test_env_clear( &client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
+
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
+    snprintf( server_config.transport, sizeof(server_config.transport), "portable" );
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config );
     rocketnet_check( server );
+    rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), "portable" ) == 0 );
 
     char server_address[64];
     snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
@@ -384,6 +393,7 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * transport,
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
     rocketnet_check( client );
+    rocketnet_check( strcmp( rocketnet_client_transport_io_name( client ), transport ) == 0 );
 
     double start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 5.0 )
@@ -565,6 +575,9 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * transport,
     rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 0 );
 
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+
+    rocketnet_test_env_restore( &client_guard );
+    rocketnet_test_env_restore( &server_guard );
 }
 
 void rocketnet_test_client_io_linux_handoff_round_trip()
