@@ -564,7 +564,13 @@ static void rocketnet_server_link_send( rocketnet_server_transport_t * transport
                                         const rocketnet_address_t * to,
                                         const uint8_t * packet_data, int packet_bytes )
 {
-    rocketnet_platform_mutex_acquire( &transport->link_simulator_mutex );
+    // Datagram staging is best effort. In particular, a shutdown burst must
+    // never wait for a producer that still owns the simulator lock.
+    if ( !rocketnet_platform_mutex_try_acquire( &transport->link_simulator_mutex ) )
+    {
+        rocketnet_platform_atomic_add_u64( &transport->counters.values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
+        return;
+    }
     rocketnet_network_simulator_send( transport->link_simulator, &transport->link_simulator_from,
                                       to, packet_data, packet_bytes, transport->time );
     rocketnet_platform_mutex_release( &transport->link_simulator_mutex );
@@ -603,7 +609,8 @@ static void rocketnet_server_link_flush( rocketnet_server_transport_t * transpor
 {
     if ( !transport->link_simulator || !rocketnet_network_simulator_patterns_active( transport->link_simulator ) )
         return;
-    rocketnet_platform_mutex_acquire( &transport->link_simulator_mutex );
+    if ( !rocketnet_platform_mutex_try_acquire( &transport->link_simulator_mutex ) )
+        return; // retain queued simulator packets; the next ordinary flush may retry
     rocketnet_network_simulator_flush_window( transport->link_simulator );
     rocketnet_platform_mutex_release( &transport->link_simulator_mutex );
 }
