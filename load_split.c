@@ -316,7 +316,7 @@ static void split_receive_c2s( struct split_result_t * result, struct split_serv
         if ( duplicate != 0 ) result->duplicate_errors++;
         if ( combo_is_ordered(message.combo) && message.seq != stream->recv_count + 1 )
             result->order_errors++;
-        if ( message.combo == ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED &&
+        if ( message.combo == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED &&
              message.seq <= stream->max_seq_seen )
             result->order_errors++;
         if ( message.seq > stream->max_seq_seen ) stream->max_seq_seen = message.seq;
