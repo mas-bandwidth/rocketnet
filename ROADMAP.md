@@ -447,6 +447,10 @@ What v1.0.0-preview-1 does not yet meet, one row per issue: what it is today, an
 | Connect over whichever family works: send connection requests to the token's IPv4 and IPv6 addresses and keep the first that answers (TLA+ first). | ❌ | ❌ | ❌ |
 | Backend keygen, connect-token minting and a reference server registration in Go and C#. | ❌ | ❌ | ❌ |
 | Public header refinement pass before 1.0.0: names, structure and doc comments may still change. | ❌ | ❌ | ❌ |
+| The receive path still accepts a datagram up to 1472 bytes (a 1439-byte payload), above the 1416-byte ROCKETNET_MAX_PACKET_PAYLOAD_BYTES every sender writes; the standard test vectors depend on the larger bound. The final deliverable refuses anything above the send bound and regenerates the vectors. | ❌ | ❌ | ❌ |
+| The config field max_payload_bytes bounds the largest message, but max_message_bytes is already the name of a different field, so the rename to the message name waits. The final deliverable gives each of the two fields a name that says which limit it is. | ❌ | ❌ | ❌ |
+| Internal identifiers still use the old payload, ring, slot and window names that the public header no longer uses. The final deliverable renames them to the public terms in one pass. | ❌ | ❌ | ❌ |
+| The internal headers have no extern "C" blocks, so a C tool cannot include them. The final deliverable adds them where a C caller needs one. | ❌ | ❌ | ❌ |
 | Client connect from a handshake or token failure state (CONNECTION_DENIED .. CONNECT_TOKEN_EXPIRED) is refused until rocketnet_client_disconnect; the final deliverable lets connect start over from any failure state (TLA+ first). | ❌ | ❌ | ❌ |
 | The *_name lookups return two forms: status names are the enum suffix ("OK") and the client state, log level and disconnect reason names are lower-case words. The final deliverable returns the upper-case enum suffix from all four. | ❌ | ❌ | ❌ |
 | A Linux build with XDP off still needs the BPF and XDP development libraries. The final deliverable makes them optional when XDP is off. | ❌ | — | — |

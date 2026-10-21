@@ -638,7 +638,7 @@ struct rocketnet_client_stats_t
 
     uint64_t receipts_lost;
 
-    /// Receipts: outcomes dropped, oldest first, because the receipt ring was full
+    /// Receipts: outcomes dropped, oldest first, because the receipt queue was full
 
     uint64_t receipts_dropped;
 
@@ -747,7 +747,7 @@ struct rocketnet_server_stats_t
 
     uint64_t receipts_lost;
 
-    /// Receipts: outcomes dropped, oldest first, because a client's receipt ring was full
+    /// Receipts: outcomes dropped, oldest first, because a client's receipt queue was full
 
     uint64_t receipts_dropped;
 
@@ -1147,7 +1147,7 @@ struct rocketnet_client_config_t
 
     int reliable_messages_in_flight;
 
-    /// ROCKETNET_CLIENT_RECEIVE_MESSAGE_BUFFER_BYTES: the receive ring for reassembled messages; WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
+    /// ROCKETNET_CLIENT_RECEIVE_MESSAGE_BUFFER_BYTES: the receive buffer for reassembled messages; WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
 
     int receive_message_buffer_bytes;
 
@@ -1179,7 +1179,7 @@ struct rocketnet_client_config_t
 
     int sequenced_messages_held;
 
-    /// ROCKETNET_CLIENT_MAX_MESSAGE_RECEIPTS: receipt outcomes held for rocketnet_client_receipts; a full ring drops its oldest, counted in receipts_dropped; 16 .. 1 << 16; default 256
+    /// ROCKETNET_CLIENT_MAX_MESSAGE_RECEIPTS: receipt outcomes held for rocketnet_client_receipts; a full queue drops its oldest, counted in receipts_dropped; 16 .. 1 << 16; default 256
 
     int max_message_receipts;
 
@@ -1308,7 +1308,7 @@ struct rocketnet_server_config_t
 
     int reliable_messages_in_flight;
 
-    /// ROCKETNET_SERVER_RECEIVE_MESSAGE_BUFFER_BYTES: the receive ring for reassembled messages; WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
+    /// ROCKETNET_SERVER_RECEIVE_MESSAGE_BUFFER_BYTES: the receive buffer for reassembled messages; WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
 
     int receive_message_buffer_bytes;
 
@@ -1340,7 +1340,7 @@ struct rocketnet_server_config_t
 
     int sequenced_messages_held;
 
-    /// ROCKETNET_SERVER_MAX_MESSAGE_RECEIPTS: receipt outcomes held per client for rocketnet_server_receipts; a full ring drops its oldest, counted in receipts_dropped; per client; 16 .. 1 << 16; default 256
+    /// ROCKETNET_SERVER_MAX_MESSAGE_RECEIPTS: receipt outcomes held per client for rocketnet_server_receipts; a full queue drops its oldest, counted in receipts_dropped; per client; 16 .. 1 << 16; default 256
 
     int max_message_receipts;
 
@@ -1436,7 +1436,7 @@ struct rocketnet_server_config_t
 struct rocketnet_message_batch_t;
 
 /// @brief One outcome for a send's nonzero receipt serial.
-/// Receipts are copied into caller storage after an update. A full receipt ring
+/// Receipts are copied into caller storage after an update. A full receipt queue
 /// drops its oldest entry; copy any result needed beyond the next update.
 
 struct rocketnet_receipt_t
@@ -1707,7 +1707,7 @@ ROCKETNET_EXPORT const struct rocketnet_message_batch_t * rocketnet_client_recei
 /// update; the entries stay the same until the next update, and a read does
 /// not consume them, so a second call copies the same ones. When capacity is
 /// smaller than the outcomes the update produced, the first capacity are
-/// copied. A full receipt ring drops its oldest outcome, counted in the
+/// copied. A full receipt queue drops its oldest outcome, counted in the
 /// receipts_dropped stat. A capacity below 1 returns 0; a NULL client or out
 /// is a counted no-op that returns 0.
 
