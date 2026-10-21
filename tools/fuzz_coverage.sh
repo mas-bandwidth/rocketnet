@@ -18,6 +18,10 @@
 #   FUZZ_COV_BUILD   the coverage build directory (default build-fuzz-cov)
 #   FUZZ_COV_OUT     where profiles and reports go (default a fresh temp dir)
 #   FUZZ_COV_JOBS    build parallelism (default 8)
+#   FUZZ_COV_SETUP   1 counts the pair targets' one-time create, connect and
+#                    snapshot as covered (default 0: the pair harnesses zero
+#                    their counters once setup is done, so their numbers are
+#                    what inputs reach; ROCKETNET_FUZZ_COVERAGE_INPUTS_ONLY)
 #   SLOT             a command prefix for the heavy steps, e.g. the studio's
 #                    studio-slot.sh (default empty)
 #   LLVM_PROFDATA / LLVM_COV   the tools (default xcrun's on macOS, else
@@ -41,6 +45,11 @@ BUILD="${FUZZ_COV_BUILD:-build-fuzz-cov}"
 OUT="${FUZZ_COV_OUT:-$(mktemp -d)}"
 JOBS="${FUZZ_COV_JOBS:-8}"
 SLOT="${SLOT:-}"
+if [ "${FUZZ_COV_SETUP:-0}" = "1" ]; then
+    export ROCKETNET_FUZZ_COVERAGE_INPUTS_ONLY=0
+else
+    export ROCKETNET_FUZZ_COVERAGE_INPUTS_ONLY=1
+fi
 
 if [ -z "${LLVM_PROFDATA:-}" ]; then
     if command -v xcrun >/dev/null 2>&1; then LLVM_PROFDATA="xcrun llvm-profdata"; else LLVM_PROFDATA="llvm-profdata"; fi

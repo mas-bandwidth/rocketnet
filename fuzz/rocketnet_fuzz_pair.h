@@ -708,6 +708,23 @@ static inline void rocketnet_fuzz_snapshot_restore( struct rocketnet_fuzz_pair_t
     pair->allocations_after_create = rocketnet_fuzz_allocations;
 }
 
+// ROCKETNET_FUZZ_COVERAGE_INPUTS_ONLY=1, in a build with source-based
+// coverage: the one-time create, connect and snapshot run before any input
+// and would count as covered code no input drove, so the profile counters
+// are zeroed once the snapshots are taken (tools/fuzz_coverage.sh sets it).
+#if defined( __clang__ ) && !defined( _WIN32 )
+extern "C" void __llvm_profile_reset_counters( void ) __attribute__(( weak ));
+#endif
+
+static inline void rocketnet_fuzz_coverage_reset_after_setup()
+{
+#if defined( __clang__ ) && !defined( _WIN32 )
+    char value[8];
+    if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_COVERAGE_INPUTS_ONLY", value, sizeof( value ) ) && value[0] == '1' && __llvm_profile_reset_counters )
+        __llvm_profile_reset_counters();
+#endif
+}
+
 // The pair for one input, freshly created (connected false: the handshake
 // has not started) or carried through the handshake. The first call creates,
 // connects and snapshots; it aborts if the deterministic pair does not create
@@ -722,6 +739,7 @@ static inline void rocketnet_fuzz_pair_acquire( struct rocketnet_fuzz_pair_t * p
         rocketnet_fuzz_pair_require( rocketnet_fuzz_num_blocks == rocketnet_fuzz_snapshot_blocks, "connect allocates nothing" );
         rocketnet_fuzz_snapshot_take( pair, ROCKETNET_FUZZ_SNAPSHOT_CONNECTED );
         rocketnet_fuzz_snapshots_taken = true;
+        rocketnet_fuzz_coverage_reset_after_setup();
     }
     rocketnet_fuzz_snapshot_restore( pair, connected ? ROCKETNET_FUZZ_SNAPSHOT_CONNECTED : ROCKETNET_FUZZ_SNAPSHOT_CREATED );
 }
