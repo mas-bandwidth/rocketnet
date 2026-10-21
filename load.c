@@ -99,6 +99,256 @@
 #define LOAD_MAGIC_SV_TO_CLIENT 0x524E5356u
 #define LOAD_CONNECT_DEADLINE_S 10.0
 #define LOAD_MAX_SEQ_TRACKED    4096u
+#define LOAD_TIMING_BUCKET_NS   1000ULL
+#define LOAD_TIMING_MAX_BUCKET_US 100000ULL
+#define LOAD_TIMING_BUCKET_COUNT ( LOAD_TIMING_MAX_BUCKET_US + 1 )
+
+enum load_timing_call_t
+{
+    LOAD_TIMING_CLIENT_UPDATE,
+    LOAD_TIMING_CLIENT_SEND_PACKETS,
+    LOAD_TIMING_CLIENT_STATE,
+    LOAD_TIMING_CLIENT_INDEX,
+    LOAD_TIMING_CLIENT_RECEIVE_MESSAGES,
+    LOAD_TIMING_CLIENT_RECEIPTS,
+    LOAD_TIMING_CLIENT_START_MESSAGE,
+    LOAD_TIMING_CLIENT_FINISH_MESSAGE,
+    LOAD_TIMING_SERVER_UPDATE,
+    LOAD_TIMING_SERVER_SEND_PACKETS,
+    LOAD_TIMING_SERVER_CLIENT_CONNECTED,
+    LOAD_TIMING_SERVER_NUM_CONNECTED_CLIENTS,
+    LOAD_TIMING_SERVER_RECEIVE_MESSAGES,
+    LOAD_TIMING_SERVER_START_MESSAGE,
+    LOAD_TIMING_SERVER_FINISH_MESSAGE,
+    LOAD_TIMING_SERVER_DISCONNECT_REASON,
+    LOAD_TIMING_CLOCK_PAIR,
+    LOAD_TIMING_CALL_COUNT
+};
+
+struct load_timing_t
+{
+    uint64_t * buckets;
+    int enabled;
+    uint64_t count[LOAD_TIMING_CALL_COUNT];
+    uint64_t max_ns[LOAD_TIMING_CALL_COUNT];
+    uint64_t overbudget_count[LOAD_TIMING_CALL_COUNT];
+};
+
+static const char * load_timing_names[LOAD_TIMING_CALL_COUNT] =
+{
+    "client_update",
+    "client_send_packets",
+    "client_state",
+    "client_index",
+    "client_receive_messages",
+    "client_receipts",
+    "client_start_message",
+    "client_finish_message",
+    "server_update",
+    "server_send_packets",
+    "server_client_connected",
+    "server_num_connected_clients",
+    "server_receive_messages",
+    "server_start_message",
+    "server_finish_message",
+    "server_disconnect_reason",
+    "clock_pair"
+};
+
+static uint64_t load_clock_ns( void )
+{
+#if defined(_WIN32)
+    LARGE_INTEGER counter;
+    static LARGE_INTEGER frequency;
+    if ( frequency.QuadPart == 0 && !QueryPerformanceFrequency( &frequency ) )
+    {
+        fprintf( stderr, "load: QueryPerformanceFrequency failed; timing incomplete\n" );
+        exit( 2 );
+    }
+    if ( !QueryPerformanceCounter( &counter ) )
+    {
+        fprintf( stderr, "load: QueryPerformanceCounter failed; timing incomplete\n" );
+        exit( 2 );
+    }
+    const uint64_t ticks = (uint64_t) counter.QuadPart;
+    const uint64_t hz = (uint64_t) frequency.QuadPart;
+    return ticks / hz * 1000000000ULL + ticks % hz * 1000000000ULL / hz;
+#else
+    struct timespec value;
+    if ( clock_gettime( CLOCK_MONOTONIC, &value ) != 0 )
+    {
+        fprintf( stderr, "load: clock_gettime failed; timing incomplete\n" );
+        exit( 2 );
+    }
+    return (uint64_t) value.tv_sec * 1000000000ULL + (uint64_t) value.tv_nsec;
+#endif
+}
+
+static void load_timing_record( struct load_timing_t * timing, enum load_timing_call_t call, uint64_t start_ns )
+{
+    const uint64_t end_ns = load_clock_ns();
+    const uint64_t elapsed_ns = end_ns >= start_ns ? end_ns - start_ns : 0;
+    const uint64_t bucket = elapsed_ns / LOAD_TIMING_BUCKET_NS;
+    const uint64_t bounded_bucket = bucket <= LOAD_TIMING_MAX_BUCKET_US ? bucket : LOAD_TIMING_MAX_BUCKET_US;
+    timing->buckets[(size_t) call * (size_t) LOAD_TIMING_BUCKET_COUNT + (size_t) bounded_bucket]++;
+    timing->count[call]++;
+    if ( elapsed_ns > timing->max_ns[call] )
+        timing->max_ns[call] = elapsed_ns;
+    if ( elapsed_ns >= 100000ULL )
+        timing->overbudget_count[call]++;
+}
+
+static int load_timing_init( struct load_timing_t * timing )
+{
+    memset( timing, 0, sizeof( *timing ) );
+    const size_t bucket_count = (size_t) LOAD_TIMING_BUCKET_COUNT;
+    if ( bucket_count > SIZE_MAX / (size_t) LOAD_TIMING_CALL_COUNT / sizeof( uint64_t ) )
+        return 0;
+    timing->buckets = (uint64_t *) calloc( bucket_count * (size_t) LOAD_TIMING_CALL_COUNT, sizeof( uint64_t ) );
+    return timing->buckets != NULL;
+}
+
+static uint64_t load_timing_quantile_upper_us( const struct load_timing_t * timing, enum load_timing_call_t call, unsigned percentile )
+{
+    const uint64_t count = timing->count[call];
+    if ( count == 0 )
+        return 0;
+    const uint64_t target = count * percentile / 100;
+    uint64_t seen = 0;
+    const uint64_t offset = (uint64_t) call * LOAD_TIMING_BUCKET_COUNT;
+    for ( uint64_t bucket = 0; bucket <= LOAD_TIMING_MAX_BUCKET_US; bucket++ )
+    {
+        seen += timing->buckets[(size_t) ( offset + bucket )];
+        if ( seen > target )
+        {
+            if ( bucket == LOAD_TIMING_MAX_BUCKET_US )
+                return ( timing->max_ns[call] + 999ULL ) / 1000ULL;
+            return bucket + 1;
+        }
+    }
+    return ( timing->max_ns[call] + 999ULL ) / 1000ULL;
+}
+
+static void load_timing_print( const struct load_timing_t * timing )
+{
+    for ( int call = 0; call < LOAD_TIMING_CLOCK_PAIR; call++ )
+    {
+        printf( " frame_%s_count=%" PRIu64 " frame_%s_p50_upper_us=%" PRIu64
+                " frame_%s_p99_upper_us=%" PRIu64 " frame_%s_max_us=%.3f frame_%s_overbudget_count=%" PRIu64,
+                load_timing_names[call], timing->count[call],
+                load_timing_names[call], load_timing_quantile_upper_us( timing, (enum load_timing_call_t) call, 50 ),
+                load_timing_names[call], load_timing_quantile_upper_us( timing, (enum load_timing_call_t) call, 99 ),
+                load_timing_names[call], (double) timing->max_ns[call] / 1000.0,
+                load_timing_names[call], timing->overbudget_count[call] );
+    }
+    printf( " clock_pair_count=%" PRIu64 " clock_pair_p50_upper_us=%" PRIu64
+            " clock_pair_p99_upper_us=%" PRIu64 " clock_pair_max_us=%.3f clock_pair_overbudget_count=%" PRIu64,
+            timing->count[LOAD_TIMING_CLOCK_PAIR],
+            load_timing_quantile_upper_us( timing, LOAD_TIMING_CLOCK_PAIR, 50 ),
+            load_timing_quantile_upper_us( timing, LOAD_TIMING_CLOCK_PAIR, 99 ),
+            (double) timing->max_ns[LOAD_TIMING_CLOCK_PAIR] / 1000.0,
+            timing->overbudget_count[LOAD_TIMING_CLOCK_PAIR] );
+}
+
+#define LOAD_TIMED_VOID( timing, call, expression ) do { \
+    if ( (timing)->enabled ) { \
+        const uint64_t load_timing_start_ns = load_clock_ns(); \
+        expression; \
+        load_timing_record( (timing), (call), load_timing_start_ns ); \
+    } else { expression; } \
+} while ( 0 )
+
+#define LOAD_TIMED_VALUE( timing, call, output, expression ) do { \
+    if ( (timing)->enabled ) { \
+        const uint64_t load_timing_start_ns = load_clock_ns(); \
+        (output) = (expression); \
+        load_timing_record( (timing), (call), load_timing_start_ns ); \
+    } else { (output) = (expression); } \
+} while ( 0 )
+
+static enum rocketnet_client_state_t timed_client_state( struct load_timing_t * timing, struct rocketnet_client_t * client )
+{
+    enum rocketnet_client_state_t result;
+    LOAD_TIMED_VALUE( timing, LOAD_TIMING_CLIENT_STATE, result, rocketnet_client_state( client ) );
+    return result;
+}
+
+static int timed_client_index( struct load_timing_t * timing, struct rocketnet_client_t * client )
+{
+    int result;
+    LOAD_TIMED_VALUE( timing, LOAD_TIMING_CLIENT_INDEX, result, rocketnet_client_index( client ) );
+    return result;
+}
+
+static int timed_server_num_connected_clients( struct load_timing_t * timing, struct rocketnet_server_t * server )
+{
+    int result;
+    LOAD_TIMED_VALUE( timing, LOAD_TIMING_SERVER_NUM_CONNECTED_CLIENTS, result, rocketnet_server_num_connected_clients( server ) );
+    return result;
+}
+
+static int timed_server_client_connected( struct load_timing_t * timing, struct rocketnet_server_t * server, int client_index )
+{
+    int result;
+    LOAD_TIMED_VALUE( timing, LOAD_TIMING_SERVER_CLIENT_CONNECTED, result, rocketnet_server_client_connected( server, client_index ) );
+    return result;
+}
+
+static const struct rocketnet_message_batch_t * timed_client_receive_messages( struct load_timing_t * timing, struct rocketnet_client_t * client )
+{
+    const struct rocketnet_message_batch_t * result;
+    LOAD_TIMED_VALUE( timing, LOAD_TIMING_CLIENT_RECEIVE_MESSAGES, result, rocketnet_client_receive_messages( client ) );
+    return result;
+}
+
+static const struct rocketnet_message_batch_t * timed_server_receive_messages( struct load_timing_t * timing, struct rocketnet_server_t * server )
+{
+    const struct rocketnet_message_batch_t * result;
+    LOAD_TIMED_VALUE( timing, LOAD_TIMING_SERVER_RECEIVE_MESSAGES, result, rocketnet_server_receive_messages( server ) );
+    return result;
+}
+
+static int timed_client_receipts( struct load_timing_t * timing, struct rocketnet_client_t * client, struct rocketnet_receipt_t * receipts, int capacity )
+{
+    int result;
+    LOAD_TIMED_VALUE( timing, LOAD_TIMING_CLIENT_RECEIPTS, result, rocketnet_client_receipts( client, receipts, capacity ) );
+    return result;
+}
+
+static uint8_t * timed_client_start_message( struct load_timing_t * timing, struct rocketnet_client_t * client, int channel, enum rocketnet_reliability_t reliability, int bytes )
+{
+    uint8_t * result;
+    LOAD_TIMED_VALUE( timing, LOAD_TIMING_CLIENT_START_MESSAGE, result, rocketnet_client_start_message( client, channel, reliability, bytes ) );
+    return result;
+}
+
+static int timed_client_finish_message( struct load_timing_t * timing, struct rocketnet_client_t * client, int bytes )
+{
+    int result;
+    LOAD_TIMED_VALUE( timing, LOAD_TIMING_CLIENT_FINISH_MESSAGE, result, rocketnet_client_finish_message( client, bytes ) );
+    return result;
+}
+
+static uint8_t * timed_server_start_message( struct load_timing_t * timing, struct rocketnet_server_t * server, uint64_t client_id, int channel, enum rocketnet_reliability_t reliability, int bytes )
+{
+    uint8_t * result;
+    LOAD_TIMED_VALUE( timing, LOAD_TIMING_SERVER_START_MESSAGE, result, rocketnet_server_start_message( server, client_id, channel, reliability, bytes ) );
+    return result;
+}
+
+static int timed_server_finish_message( struct load_timing_t * timing, struct rocketnet_server_t * server, int bytes )
+{
+    int result;
+    LOAD_TIMED_VALUE( timing, LOAD_TIMING_SERVER_FINISH_MESSAGE, result, rocketnet_server_finish_message( server, bytes ) );
+    return result;
+}
+
+static enum rocketnet_disconnect_reason_t timed_server_disconnect_reason( struct load_timing_t * timing, struct rocketnet_server_t * server, int client_index )
+{
+    enum rocketnet_disconnect_reason_t result;
+    LOAD_TIMED_VALUE( timing, LOAD_TIMING_SERVER_DISCONNECT_REASON, result, rocketnet_server_disconnect_reason( server, client_index ) );
+    return result;
+}
 
 static volatile sig_atomic_t quit = 0;
 
@@ -410,13 +660,6 @@ static int stream_seen_test_and_set( struct load_stream_state_t * st, uint32_t s
     return 0;
 }
 
-static int cmp_u64( const void * a, const void * b )
-{
-    const uint64_t ua = *(const uint64_t *) a;
-    const uint64_t ub = *(const uint64_t *) b;
-    return ( ua > ub ) - ( ua < ub );
-}
-
 static int cmp_double( const void * a, const void * b )
 {
     const double da = *(const double *) a;
@@ -537,6 +780,18 @@ int main( int argc, char ** argv )
 #endif
     signal( SIGINT, interrupt_handler );
 
+    struct load_timing_t timing;
+    if ( !load_timing_init( &timing ) )
+    {
+        fprintf( stderr, "load: timing histogram allocation failed\n" );
+        return 1;
+    }
+    for ( int i = 0; i < 10000; i++ )
+    {
+        const uint64_t start_ns = load_clock_ns();
+        load_timing_record( &timing, LOAD_TIMING_CLOCK_PAIR, start_ns );
+    }
+
     if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
     {
         fprintf( stderr, "load: rocketnet_init failed\n" );
@@ -568,10 +823,12 @@ int main( int argc, char ** argv )
 
     if ( light_profile )
     {
-        /* Each endpoint emits one 32-byte message per 100 ms. The eight
-           reliability cases rotate across updates, so 2.56 kbps is the
-           payload rate in each direction. 64 kbps leaves 25x payload-only
-           headroom for protocol and acknowledgement traffic. */
+        /* At 1000 clients each endpoint emits one 32-byte message per
+           100 ms; the eight reliability cases rotate across updates, so
+           payload is 2.56 kbps per direction and 64 kbps is 25x that rate.
+           The 100-client slice runs every 10 ms: at 1..100 clients each
+           client updates at 100 Hz (25.6 kbps payload; 2.5x budget headroom).
+           Intermediate populations follow the number of slices per round. */
         server_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
         server_config.max_fragmented_messages = 1;
         server_config.per_client_send_kbps = 64;
@@ -645,14 +902,11 @@ int main( int argc, char ** argv )
     struct load_stream_state_t * s2c_streams = (struct load_stream_state_t *) calloc(
         (size_t) num_clients, sizeof( struct load_stream_state_t ) );
 
-    size_t update_cap = 262144;
-    size_t update_count = 0;
-    uint64_t * update_us = (uint64_t *) malloc( update_cap * sizeof( uint64_t ) );
     double * client_last_update = (double *) calloc( (size_t) num_clients, sizeof( double ) );
     double * client_max_update_gap = (double *) calloc( (size_t) num_clients, sizeof( double ) );
 
     if ( !clients || !client_ever_connected || !client_connect_seconds || !client_next_combo ||
-         !c2s_streams || !s2c_streams || !update_us || !client_last_update || !client_max_update_gap )
+         !c2s_streams || !s2c_streams || !client_last_update || !client_max_update_gap )
     {
         fprintf( stderr, "load: allocation failed\n" );
         return 1;
@@ -742,9 +996,9 @@ int main( int argc, char ** argv )
         connected_count = 0;
         for ( int i = 0; i < num_clients; i++ )
         {
-            rocketnet_client_update( clients[i], now );
-            rocketnet_client_send_packets( clients[i] );
-            const enum rocketnet_client_state_t st = rocketnet_client_state( clients[i] );
+            LOAD_TIMED_VOID( &timing, LOAD_TIMING_CLIENT_UPDATE, rocketnet_client_update( clients[i], now ) );
+            LOAD_TIMED_VOID( &timing, LOAD_TIMING_CLIENT_SEND_PACKETS, rocketnet_client_send_packets( clients[i] ) );
+            const enum rocketnet_client_state_t st = timed_client_state( &timing, clients[i] );
             if ( st == ROCKETNET_CLIENT_STATE_CONNECTED )
             {
                 /* the time this client is seen connected, read here rather
@@ -752,7 +1006,7 @@ int main( int argc, char ** argv )
                 if ( client_connect_seconds[i] < 0.0 )
                     client_connect_seconds[i] = rocketnet_time() - start_time;
                 client_ever_connected[i] = 1;
-                client_slot[i] = rocketnet_client_index( clients[i] );
+                client_slot[i] = timed_client_index( &timing, clients[i] );
                 connected_count++;
             }
             else if ( (int) st < 0 || ( client_ever_connected[i] && st != ROCKETNET_CLIENT_STATE_CONNECTED ) )
@@ -763,16 +1017,14 @@ int main( int argc, char ** argv )
             if ( ( ( i + 1 ) & 63 ) == 0 || i + 1 == num_clients )
             {
                 const double t0 = rocketnet_time();
-                rocketnet_server_update( server, t0 );
+                LOAD_TIMED_VOID( &timing, LOAD_TIMING_SERVER_UPDATE, rocketnet_server_update( server, t0 ) );
                 const double t1 = rocketnet_time();
-                if ( update_count < update_cap )
-                    update_us[update_count++] = (uint64_t) ( ( t1 - t0 ) * 1e6 );
-                rocketnet_server_send_packets( server );
+                LOAD_TIMED_VOID( &timing, LOAD_TIMING_SERVER_SEND_PACKETS, rocketnet_server_send_packets( server ) );
             }
         }
 
         if ( connected_count == num_clients &&
-             rocketnet_server_num_connected_clients( server ) == num_clients )
+             timed_server_num_connected_clients( &timing, server ) == num_clients )
         {
             all_connected = 1;
             connect_elapsed = rocketnet_time() - start_time;
@@ -785,7 +1037,7 @@ int main( int argc, char ** argv )
             int named = 0;
             for ( int i = 0; i < num_clients && named < 8; i++ )
             {
-                const enum rocketnet_client_state_t st = rocketnet_client_state( clients[i] );
+                const enum rocketnet_client_state_t st = timed_client_state( &timing, clients[i] );
                 if ( st != ROCKETNET_CLIENT_STATE_CONNECTED )
                 {
                     fprintf( stderr, "load: client %d not connected at the deadline: state=%d %s\n",
@@ -804,7 +1056,7 @@ int main( int argc, char ** argv )
                 }
             }
             fprintf( stderr, "load: server reports %d of %d clients connected at the deadline\n",
-                     rocketnet_server_num_connected_clients( server ), num_clients );
+                     timed_server_num_connected_clients( &timing, server ), num_clients );
             uint64_t server_values[LOAD_SERVER_COUNTERS];
             server_counter_values( server, server_values );
             for ( int k = 0; k < LOAD_SERVER_COUNTERS; k++ )
@@ -825,6 +1077,7 @@ int main( int argc, char ** argv )
 
     /* Step 2: Drive traffic for <seconds>, then 3.0s drain for in-flight delivery */
     const double traffic_start = rocketnet_time();
+    timing.enabled = 1;
     const double drain_seconds = 3.0;
     const double drop_at = duration_seconds * 0.25 < 1.0 ? duration_seconds * 0.25 : 1.0;
     int drop_injected = 0;
@@ -850,7 +1103,8 @@ int main( int argc, char ** argv )
             drop_injected = 1;
         }
 
-        /* Update a slice of 100 clients every 10 ms so each client updates at 10 Hz */
+        /* Visit a slice of up to 100 clients every 10 ms. Per-client rate is
+           100 Hz for <=100 clients and 10 Hz at 1000 clients. */
         const int slice = num_clients < 100 ? num_clients : 100;
         for ( int k = 0; k < slice; k++ )
         {
@@ -862,10 +1116,10 @@ int main( int argc, char ** argv )
                 if ( client_last_update[i] > 0.0 && update_time - client_last_update[i] > client_max_update_gap[i] )
                     client_max_update_gap[i] = update_time - client_last_update[i];
                 client_last_update[i] = update_time;
-                rocketnet_client_update( clients[i], update_time );
+                LOAD_TIMED_VOID( &timing, LOAD_TIMING_CLIENT_UPDATE, rocketnet_client_update( clients[i], update_time ) );
 
                 const struct rocketnet_message_batch_t * batch = NULL;
-                while ( ( batch = rocketnet_client_receive_messages( clients[i] ) ) != NULL )
+                while ( ( batch = timed_client_receive_messages( &timing, clients[i] ) ) != NULL )
                 {
                     for ( int j = 0; j < batch->num_messages; j++ )
                     {
@@ -889,12 +1143,12 @@ int main( int argc, char ** argv )
                 }
 
                 struct rocketnet_receipt_t receipts[16];
-                (void) rocketnet_client_receipts( clients[i], receipts, 16 );
+                (void) timed_client_receipts( &timing, clients[i], receipts, 16 );
 
                 /* On each update, send one message rotating through all eight
                    reliability modes, and server queues one reliable-ordered to client */
                 if ( in_traffic_window &&
-                     rocketnet_client_state( clients[i] ) == ROCKETNET_CLIENT_STATE_CONNECTED )
+                     timed_client_state( &timing, clients[i] ) == ROCKETNET_CLIENT_STATE_CONNECTED )
                 {
                     const uint32_t combo = client_next_combo[i] % LOAD_NUM_COMBOS;
                     client_next_combo[i]++;
@@ -904,11 +1158,11 @@ int main( int argc, char ** argv )
                     {
                         const uint32_t next_seq = cst->sent_count + 1;
                         build_message( payload, LOAD_MAGIC_CLIENT_TO_SV, (uint32_t) i, combo, next_seq );
-                        uint8_t * out = rocketnet_client_start_message( clients[i], (int) combo, (enum rocketnet_reliability_t) combo, LOAD_PAYLOAD_BYTES );
+                        uint8_t * out = timed_client_start_message( &timing, clients[i], (int) combo, (enum rocketnet_reliability_t) combo, LOAD_PAYLOAD_BYTES );
                         if ( out )
                         {
                             memcpy( out, payload, LOAD_PAYLOAD_BYTES );
-                            if ( rocketnet_client_finish_message( clients[i], LOAD_PAYLOAD_BYTES ) != 0 )
+                            if ( timed_client_finish_message( &timing, clients[i], LOAD_PAYLOAD_BYTES ) != 0 )
                             {
                                 cst->sent_count = next_seq;
                                 c2s_sent_total++;
@@ -916,18 +1170,18 @@ int main( int argc, char ** argv )
                         }
                     }
 
-                    const int sv_slot = rocketnet_client_index( clients[i] );   /* -1 until CONNECTED */
+                    const int sv_slot = timed_client_index( &timing, clients[i] );   /* -1 until CONNECTED */
                     struct load_stream_state_t * sv_st = &s2c_streams[i];
                     if ( sv_st->sent_count + 1 < LOAD_MAX_SEQ_TRACKED && sv_slot >= 0 &&
-                         rocketnet_server_client_connected( server, sv_slot ) )
+                         timed_server_client_connected( &timing, server, sv_slot ) )
                     {
                         const uint32_t next_seq = sv_st->sent_count + 1;
                         build_message( payload, LOAD_MAGIC_SV_TO_CLIENT, (uint32_t) i, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, next_seq );
-                        uint8_t * out = rocketnet_server_start_message( server, (uint64_t) sv_slot, (int) ROCKETNET_RELIABILITY_RELIABLE_ORDERED, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, LOAD_PAYLOAD_BYTES );
+                        uint8_t * out = timed_server_start_message( &timing, server, (uint64_t) sv_slot, (int) ROCKETNET_RELIABILITY_RELIABLE_ORDERED, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, LOAD_PAYLOAD_BYTES );
                         if ( out )
                         {
                             memcpy( out, payload, LOAD_PAYLOAD_BYTES );
-                            if ( rocketnet_server_finish_message( server, LOAD_PAYLOAD_BYTES ) != 0 )
+                            if ( timed_server_finish_message( &timing, server, LOAD_PAYLOAD_BYTES ) != 0 )
                             {
                                 sv_st->sent_count = next_seq;
                             }
@@ -935,13 +1189,13 @@ int main( int argc, char ** argv )
                     }
                 }
 
-                rocketnet_client_send_packets( clients[i] );
+                LOAD_TIMED_VOID( &timing, LOAD_TIMING_CLIENT_SEND_PACKETS, rocketnet_client_send_packets( clients[i] ) );
 
-                const enum rocketnet_client_state_t st = rocketnet_client_state( clients[i] );
+                const enum rocketnet_client_state_t st = timed_client_state( &timing, clients[i] );
                 if ( client_ever_connected[i] && st != ROCKETNET_CLIENT_STATE_CONNECTED )
                 {
                     const int sv_slot = client_slot[i];
-                    const enum rocketnet_disconnect_reason_t sv_reason = rocketnet_server_disconnect_reason( server, sv_slot );
+                    const enum rocketnet_disconnect_reason_t sv_reason = timed_server_disconnect_reason( &timing, server, sv_slot );
                     if ( unexpected_disconnects < 8 )
                     {
                         fprintf( stderr, "load: client %d (slot %d) left CONNECTED at t=%.3f: state=%d %s server_reason=%s\n",
@@ -958,10 +1212,8 @@ int main( int argc, char ** argv )
             if ( k + 1 == slice )
             {
                 const double t0 = rocketnet_time();
-                rocketnet_server_update( server, t0 );
+                LOAD_TIMED_VOID( &timing, LOAD_TIMING_SERVER_UPDATE, rocketnet_server_update( server, t0 ) );
                 const double t1 = rocketnet_time();
-                if ( update_count < update_cap )
-                    update_us[update_count++] = (uint64_t) ( ( t1 - t0 ) * 1e6 );
                 if ( t1 - t0 > max_server_update_s )
                 {
                     max_server_update_s = t1 - t0;
@@ -969,7 +1221,7 @@ int main( int argc, char ** argv )
                 }
 
                 const struct rocketnet_message_batch_t * batch = NULL;
-                while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
+                while ( ( batch = timed_server_receive_messages( &timing, server ) ) != NULL )
                 {
                     for ( int j = 0; j < batch->num_messages; j++ )
                     {
@@ -1029,7 +1281,7 @@ int main( int argc, char ** argv )
                         }
                     }
                 }
-                rocketnet_server_send_packets( server );
+                LOAD_TIMED_VOID( &timing, LOAD_TIMING_SERVER_SEND_PACKETS, rocketnet_server_send_packets( server ) );
             }
         }
 
@@ -1046,7 +1298,7 @@ int main( int argc, char ** argv )
     }
 
     /* Final verification of all 5 criteria */
-    if ( rocketnet_server_num_connected_clients( server ) != num_clients )
+    if ( timed_server_num_connected_clients( &timing, server ) != num_clients )
         unexpected_disconnects++;
 
     for ( int i = 0; i < num_clients; i++ )
@@ -1134,14 +1386,8 @@ int main( int argc, char ** argv )
         }
     }
 
-    uint64_t p50_us = 0;
-    uint64_t p99_us = 0;
-    if ( update_count > 0 )
-    {
-        qsort( update_us, update_count, sizeof( uint64_t ), cmp_u64 );
-        p50_us = update_us[( update_count * 50 ) / 100];
-        p99_us = update_us[( update_count * 99 ) / 100];
-    }
+    const uint64_t p50_us = load_timing_quantile_upper_us( &timing, LOAD_TIMING_SERVER_UPDATE, 50 );
+    const uint64_t p99_us = load_timing_quantile_upper_us( &timing, LOAD_TIMING_SERVER_UPDATE, 99 );
     int connected_samples = 0;
     for ( int i = 0; i < num_clients; i++ )
     {
@@ -1203,7 +1449,6 @@ int main( int argc, char ** argv )
     free( client_next_combo );
     free( c2s_streams );
     free( s2c_streams );
-    free( update_us );
     free( client_last_update );
     free( client_max_update_gap );
     rocketnet_term();
@@ -1221,7 +1466,7 @@ int main( int argc, char ** argv )
                 "server_update_p50_us=%" PRIu64 " server_update_p99_us=%" PRIu64 " rss_mb=%.2f "
                 "server_transport_io=%s client_transport_io=%s "
                 "fd_limit_soft=%s fd_limit_hard=%s fds_start=%ld fds_peak=%ld fds_end=%ld "
-                "threads_start=%ld threads_peak=%ld threads_end=%ld verdict=PASS\n",
+                "threads_start=%ld threads_peak=%ld threads_end=%ld verdict=PASS",
                 connected_count, connect_elapsed, connect_p50_s, connect_max_s,
                 profile_name, client_public_required_bytes, server_public_required_bytes,
                 c2s_sent_total, c2s_received_total, total_counted_drops,
@@ -1230,6 +1475,8 @@ int main( int argc, char ** argv )
                 fd_limit_soft_text, fd_limit_hard_text,
                 fds_start, fds_peak, fds_end,
                 threads_start, threads_peak, threads_end );
+        load_timing_print( &timing );
+        putchar( '\n' );
     }
     else
     {
@@ -1242,7 +1489,7 @@ int main( int argc, char ** argv )
                 "server_transport_io=%s client_transport_io=%s "
                 "fd_limit_soft=%s fd_limit_hard=%s fds_start=%ld fds_peak=%ld fds_end=%ld "
                 "threads_start=%ld threads_peak=%ld threads_end=%ld "
-                "failed_criterion=%s verdict=FAIL\n",
+                "failed_criterion=%s verdict=FAIL",
                 connected_count, connect_elapsed, connect_p50_s, connect_max_s,
                 profile_name, client_public_required_bytes, server_public_required_bytes,
                 crit1_connect_within_10s ? "PASS" : "FAIL",
@@ -1257,7 +1504,10 @@ int main( int argc, char ** argv )
                 fds_start, fds_peak, fds_end,
                 threads_start, threads_peak, threads_end,
                 failed_criterion );
+        load_timing_print( &timing );
+        putchar( '\n' );
     }
 
+    free( timing.buckets );
     return pass ? 0 : 1;
 }
