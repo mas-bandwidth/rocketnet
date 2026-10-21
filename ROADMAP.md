@@ -73,7 +73,7 @@ The unreliable connection layer the message layer runs over: connection state, s
 
 ## Reliability modes
 
-The eight RakNet reliabilities, per send, over the connection layer's per-packet acks.
+The eight reliability modes, per send, over the connection layer's per-packet acks.
 
 | feature | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
@@ -85,7 +85,7 @@ The eight RakNet reliabilities, per send, over the connection layer's per-packet
 | UNRELIABLE_WITH_ACK_RECEIPT | ✅ | ✅ | ✅ |
 | RELIABLE_WITH_ACK_RECEIPT | ✅ | ✅ | ✅ |
 | RELIABLE_ORDERED_WITH_ACK_RECEIPT | ✅ | ✅ | ✅ |
-| Oversize unreliable sends are promoted to their reliable twin, as RakNet does, and said so | ✅ | ✅ | ✅ |
+| Oversize unreliable sends are promoted to their reliable twin, and said so | ✅ | ✅ | ✅ |
 | complete | 100% | 100% | 100% |
 
 [Source data](docs/roadmap.sexp)
@@ -319,12 +319,11 @@ The C surface in sdk/rocketnet.h and what a consumer needs to use it.
 | Connection layer C surface: rocketnet_client_transport_* and rocketnet_server_transport_* | ✅ | ✅ | ✅ |
 | Root header pure C: the client and server with their functions, the address type, nothing else | ✅ | ✅ | ✅ |
 | Message objects in C: rocketnet_message_client_* and rocketnet_message_server_* | ✅ | ✅ | ✅ |
-| ABI revision and layout queries | ✅ | ✅ | ✅ |
 | Installable CMake package with C and C++ consumers | ✅ | ✅ | ✅ |
 | Vendored sodium, no system libsodium | ✅ | ✅ | ✅ |
 | Structured create errors and FFI-safe logging | ✅ | ✅ | ✅ |
 | Transports are named transports throughout: the rocketnet_*_transport_* calls, ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT, and the documentation | ✅ | ❌ | ❌ |
-| One receive queue per client and one per server, every channel's messages in RakNet's order, pumped in batches with no release call | ✅ | ❌ | ❌ |
+| One receive queue per client and one per server, every channel's messages in delivery order, pumped in batches with no release call | ✅ | ❌ | ❌ |
 | Create returns NULL and a status code that names why it refused | ✅ | ❌ | ❌ |
 | A server serves IPv4, IPv6 or both on one port | ✅ | ❌ | ❌ |
 | One environment variable per setting, current names only: retired names are not read | ✅ | ❌ | ❌ |
@@ -337,7 +336,7 @@ The C surface in sdk/rocketnet.h and what a consumer needs to use it.
 | API reference comments: reliability | ✅ | — | — |
 | USAGE.md: the client and server API, with worked usage | ✅ | — | — |
 | The docs job fails on any undocumented public symbol (later) | ❌ | — | — |
-| complete | 95% | 69% | 69% |
+| complete | 95% | 67% | 67% |
 
 [Source data](docs/roadmap.sexp)
 
@@ -444,11 +443,20 @@ What v1.0.0-preview-1 does not yet meet, one row per issue: what it is today, an
 | The example soak can fail when many clients disconnect at once: the server still counts connected clients after the disconnect pass. The final deliverable fixes the disconnect path and runs the example soak green on every platform. | ❌ | ❌ | ❌ |
 | The full client I/O TLA+ model needs a configuration that fits the CI time budget. The final deliverable splits it into configurations that each finish within the budget. | ❌ | — | — |
 | The reconnect churn and UDP loopback functional cases showed rare timing failures under heavy machine load. The final deliverable makes them independent of machine load. | ❌ | ❌ | ❌ |
-| A refused finish leaves its start pending, which blocks later sends on that client or server until an abort. The final deliverable cancels the start on a refused finish and reports why it was refused. | ❌ | ❌ | ❌ |
-| The receipt list does not say when the caller's buffer was too short, and receipts dropped from a full internal ring are not counted in the public counters. The final deliverable reports the available count and counts the overflow. | ❌ | ❌ | ❌ |
-| A connect token that holds both an IPv4 and an IPv6 address picks IPv6 whenever an IPv6 socket opens, even on a host with no working IPv6 route, with no fallback. The final deliverable adds a family choice and a tested fallback. | ❌ | ❌ | ❌ |
+| The receipt read returns how many outcomes it copied, not how many there were when the caller's buffer is too short (ring overflow is counted, in receipts_dropped). The final deliverable returns the available count. | ❌ | ❌ | ❌ |
+| Connect over whichever family works: send connection requests to the token's IPv4 and IPv6 addresses and keep the first that answers (TLA+ first). | ❌ | ❌ | ❌ |
+| Backend keygen, connect-token minting and a reference server registration in Go and C#. | ❌ | ❌ | ❌ |
+| Public header refinement pass before 1.0.0: names, structure and doc comments may still change. | ❌ | ❌ | ❌ |
+| The receive path still accepts a datagram up to 1472 bytes (a 1439-byte payload), above the 1416-byte ROCKETNET_MAX_PACKET_PAYLOAD_BYTES every sender writes; the standard test vectors depend on the larger bound. The final deliverable refuses anything above the send bound and regenerates the vectors. | ❌ | ❌ | ❌ |
+| The config field max_payload_bytes bounds the largest message, but max_message_bytes is already the name of a different field, so the rename to the message name waits. The final deliverable gives each of the two fields a name that says which limit it is. | ❌ | ❌ | ❌ |
+| Internal identifiers still use the old payload, ring, slot and window names that the public header no longer uses. The final deliverable renames them to the public terms in one pass. | ❌ | ❌ | ❌ |
+| The two config fields max_payload_bytes (the largest payload the transport fragments) and max_message_bytes (the largest message) are still separate; the final deliverable merges them into one max_message_bytes with one maximum, ROCKETNET_MAX_MESSAGE_BYTES, and states the max_payload_bytes limit through a define rather than the literal 305408. | ❌ | ❌ | ❌ |
+| The client and the server measure packet_loss and jitter differently: the client measures loss of the server packets it receives and the change in arrival gaps, the server measures unacknowledged sends and round-trip spread. The final deliverable gives each stat one definition on both ends. | ❌ | ❌ | ❌ |
+| The development network simulator takes effect on a client connection at the next connect, and on a server at the next start, unless that connection already runs a simulator; the final deliverable applies it at once on a live connection too. | ❌ | ❌ | ❌ |
+| The internal headers have no extern "C" blocks, so a C tool cannot include them. The final deliverable adds them where a C caller needs one. | ❌ | ❌ | ❌ |
+| Client connect from a handshake or token failure state (CONNECTION_DENIED .. CONNECT_TOKEN_EXPIRED) is refused until rocketnet_client_disconnect; the final deliverable lets connect start over from any failure state (TLA+ first). | ❌ | ❌ | ❌ |
+| The *_name lookups return two forms: status names are the enum suffix ("OK") and the client state, log level and disconnect reason names are lower-case words. The final deliverable returns the upper-case enum suffix from all four. | ❌ | ❌ | ❌ |
 | A Linux build with XDP off still needs the BPF and XDP development libraries. The final deliverable makes them optional when XDP is off. | ❌ | — | — |
-| The receive batch struct is missing from the ABI layout queries. The final deliverable adds it, so bindings can check its layout. | ❌ | ❌ | ❌ |
 | The public header carries a large volume of comments, some citing internal design references; the examples are longer than they need to be; the build has many targets. The final deliverable states each rule once in the header, shortens the examples and trims the build targets. | ❌ | — | — |
 | complete | 0% | 0% | 0% |
 
