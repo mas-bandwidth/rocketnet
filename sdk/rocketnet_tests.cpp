@@ -12407,6 +12407,8 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
     for ( int i = 0; i < num_fields; i++ )
     {
         const struct rocketnet_config_field_t * field = &fields[i];
+        if ( ( field->flags & ROCKETNET_CONFIG_NO_ENV ) != 0 )
+            continue;                                   // the public server makes its own keypair: no env form
 
         char env_name[128];
         rocketnet_check( rocketnet_config_env_var_name_for( transport_name, field->name, env_name, sizeof(env_name) ) );
@@ -13657,7 +13659,7 @@ static void rocketnet_test_config_bytes_exact_fields( const char * name, void * 
     for ( int i = 0; i < num_fields; ++i )
     {
         const rocketnet_config_field_t * field = &fields[i];
-        if ( field->kind != ROCKETNET_CONFIG_KIND_BYTES )
+        if ( field->kind != ROCKETNET_CONFIG_KIND_BYTES || ( field->flags & ROCKETNET_CONFIG_NO_ENV ) != 0 )
             continue;
         rocketnet_check( field->size >= 1 && field->size <= 256 );
         char env_name[256];
@@ -13733,29 +13735,17 @@ void rocketnet_test_config_override_logging()
     rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 
     rocketnet_check( config.max_clients == 77 );
-    rocketnet_check( memcmp( config.server_secret_key, secret_bytes, 32 ) == 0 );
 
     // the non-secret override logs the variable, the value, and what it
-    // displaced; the secret override logs redacted on both sides and the
-    // secret's encoding appears nowhere in the log
+    // displaced. The server's keypair has no env form (the public server
+    // makes its own at create): the secret key variable is not read, so the
+    // key is untouched and its encoding appears nowhere in the log
 
     rocketnet_check( strstr( rocketnet_test_captured_log, "ROCKETNET_SERVER_MAX_CLIENTS=77" ) != NULL );
     rocketnet_check( strstr( rocketnet_test_captured_log, "(displaces 1000)" ) != NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "ROCKETNET_SERVER_SERVER_SECRET_KEY=(redacted)" ) != NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "(displaces (redacted))" ) != NULL );
+    rocketnet_check( memcmp( config.server_secret_key, secret_bytes, 32 ) != 0 );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "ROCKETNET_SERVER_SERVER_SECRET_KEY" ) == NULL );
     rocketnet_check( strstr( rocketnet_test_captured_log, secret_base64 ) == NULL );
-
-    // the failure path redacts too: a mistyped secret is still a secret
-
-    setenv( "ROCKETNET_SERVER_SERVER_SECRET_KEY", "not!valid!base64!secret!material!!", 1 );
-    rocketnet_server_transport_default_config( &config );
-    rocketnet_test_captured_log[0] = '\0';
-    rocketnet_log_function( rocketnet_test_capture_log, NULL );
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
-    rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
-    rocketnet_log_level( saved_level );
-    rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "not!valid!base64!secret!material!!" ) == NULL );
 
     rocketnet_test_env_restore( &clients_guard );
     rocketnet_test_env_restore( &secret_guard );
