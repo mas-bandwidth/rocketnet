@@ -195,8 +195,8 @@ int main( void )
     result = 0;
 
 cleanup:
-    // destroy ends a live connection and logs it, so PASS is printed after
-    // the cleanup to stay the last line
+    // CLI cleanup helpers wait for shutdown completion before destroy.
+    // PASS is printed afterward so it stays the last line
     rn_cli_client_stop_and_destroy( client );
     rn_cli_server_stop_and_destroy( server );
     rocketnet_term();
