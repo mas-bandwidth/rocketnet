@@ -94,7 +94,7 @@ target_link_libraries(game PRIVATE rocketnet)
 
 A RocketNet integration follows a strict lifecycle and per-frame call order:
 
-1. **Initialize the library once per process:** Call `rocketnet_init(NULL)`; it returns `ROCKETNET_STATUS_OK` on success or a `rocketnet_status_t` refusal.
+1. **Initialize the library once per process:** Call `rocketnet_init(NULL, NULL, NULL)`; it returns `ROCKETNET_STATUS_OK` on success or a negative `rocketnet_status_t` refusal. The second and third arguments are the allocator's malloc and free functions; NULL for both is the system allocator, and passing only one is refused with `ROCKETNET_STATUS_INVALID_ARGUMENT`.
 2. **Create the server and client:**
    - Fill `struct rocketnet_server_config_t` with `rocketnet_server_default_config(&server_config)`, set `protocol_id` and `backend_public_key` into it (a development build can use `ROCKETNET_DEV_BACKEND_PUBLIC_KEY`), call `rocketnet_server_create` with the address and a status out-parameter (it writes the refusal's code on NULL; `rocketnet_status_name` names it), then call `rocketnet_server_start(server)`. Create generates a fresh server keypair and starts stopped; start binds the transport and accepts clients. Read `rocketnet_server_public_key` and the served IPv4/IPv6 addresses, then register them with the backend over an authenticated channel before it issues tokens.
    - Fill `struct rocketnet_client_config_t` with `rocketnet_client_default_config(&client_config)`, call `rocketnet_client_create` with a status out-parameter (it writes the refusal's code on NULL), then call `rocketnet_client_connect(client, connect_token)` with an opaque NUL-terminated base64 connect-token string. The client connects using the token alone; the handshake begins on the first `rocketnet_client_update`.
@@ -108,7 +108,7 @@ A RocketNet integration follows a strict lifecycle and per-frame call order:
 
 ### Compilable loopback integration example
 
-Link this example with `rocketnet_dev`, which supplies
+Link this example with the development library, which supplies
 `ROCKETNET_DEVELOPMENT=1`. The development key and token helper are available
 only in that build. Production clients receive token strings from a backend.
 
@@ -122,7 +122,7 @@ only in that build. Production clients receive token strings from a backend.
 
 int main( void )
 {
-    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
         return 1;
 
     int result = 1;
@@ -168,7 +168,7 @@ int main( void )
     const double dt = 1.0 / 60.0;
     int client_sent = 0;
     int client_received_reply = 0;
-    for ( int tick = 0; tick < 120 && !client_received_reply; tick++, time += dt )
+    for ( int tick = 0; tick < 300 && !client_received_reply; tick++, time += dt )
     {
         rocketnet_client_update( client, time );
         rocketnet_server_update( server, time );
@@ -209,6 +209,9 @@ int main( void )
         }
         rocketnet_client_send_packets( client );
         rocketnet_server_send_packets( server );
+
+        /* Wait for the next frame. The I/O threads run in real time. */
+        rocketnet_sleep( dt );
     }
     result = client_received_reply ? 0 : 1;
 
@@ -325,7 +328,7 @@ A real server starts as follows:
    authenticated channel. It signs tokens for this protocol and seals them to
    the server's key. Register again when creating a new server object.
 
-In development, link `rocketnet_dev` and initialize the server's backend key
+In development, link the development library and initialize the server's backend key
 from `ROCKETNET_DEV_BACKEND_PUBLIC_KEY`. Call
 `rocketnet_create_dev_connect_token` with the served IPv4 and IPv6 addresses
 (`NULL` for an unavailable family, but not both), generated server public key,
@@ -348,14 +351,14 @@ failure. See [standard/TRANSPORT.md](standard/TRANSPORT.md) for the wire format.
 RocketNet refuses invalid configuration rather than clamping it. Check returned status codes, pointers and serials. Only the misuse cases listed in `sdk/rocketnet.h` increment `api_misuses`; a refusal is not automatically misuse.
 
 - **Status codes (`enum rocketnet_status_t` and `rocketnet_status_name`):**
-  - `ROCKETNET_STATUS_OK` (`0`): operation succeeded (`ROCKETNET_STATUS_COUNT`, `28`, bounds the enum).
-  - `ROCKETNET_STATUS_ALREADY_INITIALIZED`, `ROCKETNET_STATUS_NOT_INITIALIZED`, `ROCKETNET_STATUS_LIVE_ALLOCATIONS`, `ROCKETNET_STATUS_PLATFORM_INIT_FAILED`, `ROCKETNET_STATUS_CRYPTO_INIT_FAILED`: lifecycle and allocator state codes for `rocketnet_init`, `rocketnet_term`, and `rocketnet_allocator`.
+  - `ROCKETNET_STATUS_OK` (`0`): operation succeeded. Every failure is negative, from `-1` to `-27`, so `status < 0` means the call failed.
+  - `ROCKETNET_STATUS_ALREADY_INITIALIZED`, `ROCKETNET_STATUS_NOT_INITIALIZED`, `ROCKETNET_STATUS_LIVE_ALLOCATIONS`, `ROCKETNET_STATUS_PLATFORM_INIT_FAILED`, `ROCKETNET_STATUS_CRYPTO_INIT_FAILED`: lifecycle and allocator state codes for `rocketnet_init` and `rocketnet_term`.
   - `ROCKETNET_STATUS_INVALID_ARGUMENT`, `ROCKETNET_STATUS_CONFIG_ENV_INVALID`, `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`, `ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED`, `ROCKETNET_STATUS_MISSING_KEYS`, `ROCKETNET_STATUS_INVALID_PROTOCOL_ID`, `ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE`, `ROCKETNET_STATUS_INVALID_ADDRESS`, `ROCKETNET_STATUS_INVALID_TRANSPORT_LIST`: argument and configuration refusals, written to the status out-parameter of `rocketnet_client_create` and `rocketnet_server_create` (create is the one check of a config) or returned by the call that refuses.
   - `ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED` (`27`): a config whose `config_bytes` is `0` or too small, one that skipped `rocketnet_client_default_config` or `rocketnet_server_default_config`.
   - `ROCKETNET_STATUS_INVALID_CONNECT_TOKEN`, `ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED`: client connect-token pre-send checks.
   - `ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED`, `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED`, `ROCKETNET_STATUS_OUT_OF_MEMORY`, `ROCKETNET_STATUS_MUTEX_CREATE_FAILED`, `ROCKETNET_STATUS_THREAD_CREATE_FAILED`, `ROCKETNET_STATUS_TIMER_CREATE_FAILED`: transport candidate ladder and OS resource failures.
   - `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`, `ROCKETNET_STATUS_SERVER_NOT_STOPPED`, `ROCKETNET_STATUS_FLOW_ID_RESERVED`, `ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED`: lifecycle and destination refusals from `rocketnet_client_connect`, `rocketnet_server_start`, and server sends.
-- **`NULL` and `0` returns as refused calls:** Functions returning pointers (`rocketnet_client_create`, `rocketnet_server_create`, `rocketnet_client_start_message`, `rocketnet_server_start_message`) return `NULL` when refused. Functions returning counts, booleans, or receipt serials (`rocketnet_client_finish_message`, `rocketnet_server_finish_message`, `rocketnet_client_receive_messages`, `rocketnet_server_receive_messages`) return `0` when refused. `rocketnet_client_set_send_kbps` and `rocketnet_server_set_send_kbps` return `enum rocketnet_status_t` like the lifecycle calls: `0` is `ROCKETNET_STATUS_OK` (the new rate took), and a refusal is a nonzero status (`ROCKETNET_STATUS_INVALID_ARGUMENT` for a negative rate, a NULL handle or a connection that is not CONNECTED, client handshake states and a server slot with no CONNECTED client included); a rate of `0` sets the default rate. API misuse that the library records increments a process-wide count, read from the `api_misuses` field of `struct rocketnet_client_stats_t` or `struct rocketnet_server_stats_t`; the API misuse comment under Lifecycle and logging in sdk/rocketnet.h is the full list. It includes a `NULL` handle passed to a call, a server start message to an index at or past `max_clients`, a destination id with `ROCKETNET_FLOW_ID_BIT` set, an in-place start left open across `update` or `send_packets`, and lifecycle or allocator misuse (a create before `rocketnet_init`, a repeated server start, a refused allocator replacement, an unusable update time). A send on a connection that is not CONNECTED (a client in any state but `ROCKETNET_CLIENT_STATE_CONNECTED`, a server index below `max_clients` with no CONNECTED client, a stopped server) is a normal drop, not misuse: it is counted in the `messages_dropped_not_connected` field of the client or server stats. A second `start`, an out-of-range channel or an oversized message is counted in the library's internal send-refusal counters instead, not in `api_misuses`; a bad `bytes_written` is refused with `0` and aborts the pending start, so a later start is never blocked.
+- **`NULL` and `0` returns as refused calls:** Functions returning pointers (`rocketnet_client_create`, `rocketnet_server_create`, `rocketnet_client_start_message`, `rocketnet_server_start_message`) return `NULL` when refused. Functions returning counts, booleans, or receipt serials (`rocketnet_client_finish_message`, `rocketnet_server_finish_message`, `rocketnet_client_receive_messages`, `rocketnet_server_receive_messages`) return `0` when refused. `rocketnet_client_set_send_kbps` and `rocketnet_server_set_send_kbps` return `enum rocketnet_status_t` like the lifecycle calls: `0` is `ROCKETNET_STATUS_OK` (the new rate took), and a refusal is a negative status (`ROCKETNET_STATUS_INVALID_ARGUMENT` for a negative rate, a NULL handle or a connection that is not CONNECTED, client handshake states and a server slot with no CONNECTED client included); a rate of `0` sets the default rate. API misuse that the library records increments a process-wide count, read from the `api_misuses` field of `struct rocketnet_client_stats_t` or `struct rocketnet_server_stats_t`; the API misuse comment under Lifecycle and logging in sdk/rocketnet.h is the full list. It includes a `NULL` handle passed to a call, a server start message to an index at or past `max_clients`, a destination id with `ROCKETNET_FLOW_ID_BIT` set, an in-place start left open across `update` or `send_packets`, and lifecycle or allocator misuse (a create before `rocketnet_init`, a repeated server start, an init with only one allocator function, an unusable update time). A send on a connection that is not CONNECTED (a client in any state but `ROCKETNET_CLIENT_STATE_CONNECTED`, a server index below `max_clients` with no CONNECTED client, a stopped server) is a normal drop, not misuse: it is counted in the `messages_dropped_not_connected` field of the client or server stats. A second `start`, an out-of-range channel or an oversized message is counted in the library's internal send-refusal counters instead, not in `api_misuses`; a bad `bytes_written` is refused with `0` and aborts the pending start, so a later start is never blocked.
 - **Update returns nothing:** `rocketnet_client_update` and `rocketnet_server_update` return `void`; what an update did is read from `rocketnet_client_state`, the server's per-client calls and the stats calls.
 - **Client states (`enum rocketnet_client_state_t`, `rocketnet_client_state`, `rocketnet_client_state_name`):**
   - Progress states: `ROCKETNET_CLIENT_STATE_DISCONNECTED` (`0`), `ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE` (`1`), `ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST` (`2`), `ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE` (`3`), `ROCKETNET_CLIENT_STATE_CONNECTED` (`4`).
@@ -386,7 +389,7 @@ RocketNet refuses invalid configuration rather than clamping it. Check returned 
 
 - **Use the `"loopback"` transport:** Set `server_config.transport = "loopback"` and `client_config.transport = "loopback"`. The `"loopback"` transport routes datagrams in memory across up to 1001 endpoints per process (one server and `ROCKETNET_MAX_CLIENTS` clients) without opening any OS socket or touching the network stack.
 - **Pass synthetic monotonic `time`:** Both `rocketnet_client_update(client, time)` and `rocketnet_server_update(server, time)` take `double time` in seconds as an explicit parameter. Start test clocks at a fixed value such as `1000.0` and advance by `1.0 / 60.0` per tick—never sleep or read wall-clock time in unit tests.
-- **Simulate packet loss, latency, jitter, and duplicates:** In builds linked against the development library, set the environment variables `ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT` / `ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT` (`0 .. 100`), `..._SIMULATED_LATENCY_MS`, `..._SIMULATED_JITTER_MS` and `..._SIMULATED_DUPLICATE_PERCENT` (`0 .. 100`) to exercise retransmission, ordering, and `ROCKETNET_RECEIPT_STATUS_LOSS` handling deterministically over `"loopback"`.
+- **Simulate packet loss, latency, jitter, and duplicates:** In builds linked against the development library, call `rocketnet_client_network_simulator` and `rocketnet_server_network_simulator`, or set the environment variables `ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT` / `ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT` (`0 .. 100`), `ROCKETNET_DEV_CLIENT_LATENCY_MS` / `ROCKETNET_DEV_SERVER_LATENCY_MS`, `ROCKETNET_DEV_CLIENT_JITTER_MS` / `ROCKETNET_DEV_SERVER_JITTER_MS` and `ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT` / `ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT` (`0 .. 100`), to exercise retransmission, ordering, and `ROCKETNET_RECEIPT_STATUS_LOSS` handling deterministically over `"loopback"`.
 
 ---
 

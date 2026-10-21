@@ -133,11 +133,11 @@ status out-parameter, so a NULL result has a specific `rocketnet_status_t`.
 Each makes one block through the allocator; `rocketnet_client_required_memory`
 and `rocketnet_server_required_memory` give its size. The process-wide
 allocator, assert function, log function, log level, quiet flag and thread
-priority switch are installed through `rocketnet_allocator`,
+priority switch are installed through `rocketnet_init`,
 `rocketnet_assert_function`, `rocketnet_log_function`, `rocketnet_log_level`,
 `rocketnet_quiet` and `rocketnet_thread_priority`. Public enum values and
-exported symbols follow the append-only rules: a new status code goes
-immediately before `ROCKETNET_STATUS_COUNT`, and no published value changes.
+exported symbols follow the append-only rules: a new status code takes the
+next negative value, and no published value changes.
 
 The backend signing keypair is separate from the server's X25519 keypair.
 Only the backend public key is supplied in `rocketnet_server_config_t`; the

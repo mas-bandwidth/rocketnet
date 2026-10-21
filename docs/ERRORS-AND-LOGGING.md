@@ -29,9 +29,8 @@ message, and increments `messages_dropped_not_connected`, never the misuse count
 
 | Public Entry Point | Return on Refusal |
 | :--- | :--- |
-| `rocketnet_init( context )` | the status code: `ALREADY_INITIALIZED`, `PLATFORM_INIT_FAILED` or `CRYPTO_INIT_FAILED` |
+| `rocketnet_init( context, malloc_fn, free_fn )` | the status code: `INVALID_ARGUMENT` for one allocator function without the other, `ALREADY_INITIALIZED`, `LIVE_ALLOCATIONS` for an allocator change while allocations are live, `PLATFORM_INIT_FAILED` or `CRYPTO_INIT_FAILED` |
 | `rocketnet_term( void )` | the status code: `NOT_INITIALIZED` or `LIVE_ALLOCATIONS`; nothing changes |
-| `rocketnet_allocator( malloc_fn, free_fn )` | the status code: `INVALID_ARGUMENT`, `ALREADY_INITIALIZED` or `LIVE_ALLOCATIONS` |
 | `rocketnet_client_default_config( config )` | `INVALID_ARGUMENT` for a NULL config, counted; `CONFIG_NOT_INITIALIZED` is never returned, because the inline call sets `config_bytes` first |
 | `rocketnet_client_required_memory( config )` | `0` for a refused config, a `config_bytes` too small included |
 | `rocketnet_client_create( context, config, status )` | `NULL` with one error line; `status` holds the refusal's code (`NOT_INITIALIZED`, `CONFIG_NOT_INITIALIZED`, `INVALID_ARGUMENT`, `CONFIG_ENV_INVALID`, `CONFIG_OUT_OF_RANGE`, `INVALID_TRANSPORT_LIST`, `MEMORY_BUDGET_EXCEEDED`, `OUT_OF_MEMORY`), or `OK` with the handle |
@@ -80,60 +79,53 @@ Status codes follow the same numbering discipline as `ROCKETNET_MESSAGE_VIOLATIO
 (`sdk/rocketnet_counters.h:37-350`):
 
 1. `ROCKETNET_STATUS_OK = 0` is the sole success value.
-2. Every failure code is a positive integer in `1 .. ROCKETNET_STATUS_COUNT - 1`.
-3. **Append-only stability law**: Once a code is published in a release, its
-   integer value and meaning are permanent. New codes append immediately before
-`ROCKETNET_STATUS_COUNT`. Reserved codes keep their numeric positions in the enum
-   and in `rocketnet_status_name` and are never renumbered or reassigned.
-4. Runtime introspection:
-   - `int rocketnet_num_status_codes(void)` returns `ROCKETNET_STATUS_COUNT`, 28.
-   - `const char * rocketnet_status_name(enum rocketnet_status_t status)` returns a static ASCII
-     identifier (for example, `"INVALID_CONNECT_TOKEN"`) for `0 <= status < ROCKETNET_STATUS_COUNT`,
-     and `"unknown"` (never `NULL`, without asserting) for any other value.
+2. Every failure code is negative, dense from `-1` to `-27`. `status < 0`
+   means the call failed.
+3. There is no count value. `rocketnet_status_name` maps each code by value.
+   It returns a static ASCII identifier, for example `"INVALID_CONNECT_TOKEN"`,
+   and `"UNKNOWN"` for any other value, never `NULL` and without asserting.
 
 ```c
 enum rocketnet_status_t
 {
     ROCKETNET_STATUS_OK                                 = 0,
 
-    // lifecycle and allocator state (rocketnet_init, rocketnet_term, rocketnet_allocator)
-    ROCKETNET_STATUS_ALREADY_INITIALIZED                = 1,
-    ROCKETNET_STATUS_NOT_INITIALIZED                    = 2,
-    ROCKETNET_STATUS_LIVE_ALLOCATIONS                   = 3,
-    ROCKETNET_STATUS_PLATFORM_INIT_FAILED               = 4,
-    ROCKETNET_STATUS_CRYPTO_INIT_FAILED                 = 5,
+    // lifecycle and allocator state (rocketnet_init, rocketnet_term)
+    ROCKETNET_STATUS_ALREADY_INITIALIZED                = -1,
+    ROCKETNET_STATUS_NOT_INITIALIZED                    = -2,
+    ROCKETNET_STATUS_LIVE_ALLOCATIONS                   = -3,
+    ROCKETNET_STATUS_PLATFORM_INIT_FAILED               = -4,
+    ROCKETNET_STATUS_CRYPTO_INIT_FAILED                 = -5,
 
     // caller arguments and configuration (client, server, message)
-    ROCKETNET_STATUS_INVALID_ARGUMENT                   = 6,
-    ROCKETNET_STATUS_CONFIG_ENV_INVALID                 = 7,
-    ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE                = 8,
-    ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED             = 9,
-    ROCKETNET_STATUS_MISSING_KEYS                       = 10,
-    ROCKETNET_STATUS_INVALID_PROTOCOL_ID                = 11,
-    ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE                = 12,
-    ROCKETNET_STATUS_INVALID_ADDRESS                    = 13,
-    ROCKETNET_STATUS_INVALID_TRANSPORT_LIST             = 14,
+    ROCKETNET_STATUS_INVALID_ARGUMENT                   = -6,
+    ROCKETNET_STATUS_CONFIG_ENV_INVALID                 = -7,
+    ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE                = -8,
+    ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED             = -9,
+    ROCKETNET_STATUS_MISSING_KEYS                       = -10,
+    ROCKETNET_STATUS_INVALID_PROTOCOL_ID                = -11,
+    ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE                = -12,
+    ROCKETNET_STATUS_INVALID_ADDRESS                    = -13,
+    ROCKETNET_STATUS_INVALID_TRANSPORT_LIST             = -14,
 
     // client connect token pre-send checks
-    ROCKETNET_STATUS_INVALID_CONNECT_TOKEN              = 15,
-    ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED              = 16,
+    ROCKETNET_STATUS_INVALID_CONNECT_TOKEN              = -15,
+    ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED              = -16,
 
     // transport candidate list and OS resources
-    ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED    = 17,
-    ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED         = 18,
-    ROCKETNET_STATUS_OUT_OF_MEMORY                      = 19,
-    ROCKETNET_STATUS_MUTEX_CREATE_FAILED                = 20,
-    ROCKETNET_STATUS_THREAD_CREATE_FAILED               = 21,
-    ROCKETNET_STATUS_TIMER_CREATE_FAILED                = 22,
+    ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED    = -17,
+    ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED         = -18,
+    ROCKETNET_STATUS_OUT_OF_MEMORY                      = -19,
+    ROCKETNET_STATUS_MUTEX_CREATE_FAILED                = -20,
+    ROCKETNET_STATUS_THREAD_CREATE_FAILED               = -21,
+    ROCKETNET_STATUS_TIMER_CREATE_FAILED                = -22,
 
     // object lifecycle (rocketnet_client_connect, rocketnet_server_start) and destinations
-    ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED            = 23,
-    ROCKETNET_STATUS_SERVER_NOT_STOPPED                 = 24,
-    ROCKETNET_STATUS_FLOW_ID_RESERVED                   = 25,
-    ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED     = 26,
-    ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED             = 27,
-
-    ROCKETNET_STATUS_COUNT                              = 28
+    ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED            = -23,
+    ROCKETNET_STATUS_SERVER_NOT_STOPPED                 = -24,
+    ROCKETNET_STATUS_FLOW_ID_RESERVED                   = -25,
+    ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED     = -26,
+    ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED             = -27
 };
 ```
 

@@ -17,7 +17,7 @@ checks the create status, and tears them down cleanly:
 
 int main( void )
 {
-    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
         return 1;
 
     struct rocketnet_server_config_t server_config;

@@ -31,9 +31,8 @@ live allocations is refused with `ROCKETNET_STATUS_LIVE_ALLOCATIONS` and
 logged, and a repeated termination returns `ROCKETNET_STATUS_NOT_INITIALIZED`. Startup,
 shutdown and process-wide logging setup are serialized with application work.
 
-Set custom allocator callbacks before initialization, with no live allocations.
-A refused `rocketnet_allocator` replacement returns its status; an accepted
-one returns `ROCKETNET_STATUS_OK`. Every refused API call logs one line and increments
+Pass custom allocator functions to `rocketnet_init`. NULL for both is the
+system allocator. Passing only one returns `ROCKETNET_STATUS_INVALID_ARGUMENT`. Every refused API call logs one line and increments
 the process-wide `api_misuses` count that the client and server stats structs
 carry.
 
@@ -48,7 +47,7 @@ refused before any I/O, so no socket opens.
 
 int main( void )
 {
-    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
         return 1;
 
     /* create clients and servers here */
@@ -263,7 +262,7 @@ start again. Clients are identified by an `int` index,
 Each client and server is one block that create allocates through the
 allocator. `rocketnet_client_required_memory` and
 `rocketnet_server_required_memory` report that block's size, so a program that
-wants every byte up front can install, with `rocketnet_allocator`, an allocator
+wants every byte up front can pass `rocketnet_init` an allocator
 over a block of its own, aligned to `ROCKETNET_ALLOCATION_ALIGNMENT`.
 
 ### Server memory footprint

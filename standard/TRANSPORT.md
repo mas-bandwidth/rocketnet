@@ -215,7 +215,7 @@ field's default.
 | server max_payload_bytes | `1416` | integer | `ROCKETNET_SERVER_MAX_PAYLOAD_BYTES` | 0 (the default), or the payload capacity row of [t3 Constants and registries](#t3) to the fragmented payload maximum |
 | server max_fragmented_messages | `8` | integer | `ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES` | 0 (the default), or 1 to the fragments per payload maximum row of [t3 Constants and registries](#t3) |
 | server transport | `"auto"` | string | `ROCKETNET_SERVER_TRANSPORT` | [t2.4 Transport selection](#t2.4) |
-| server public_address | `""` | string | `ROCKETNET_SERVER_PUBLIC_ADDRESS` | an address and port, or empty |
+| server ipv4_address and ipv6_address, create arguments | none | string | `ROCKETNET_SERVER_IPV4_ADDRESS` and `ROCKETNET_SERVER_IPV6_ADDRESS` | an address and port of that family, or NULL; not both NULL |
 | server max_timeout_seconds | `60` | integer | `ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS` | 1 to 3600 |
 | server handshake_deadline_seconds | `5` | integer | `ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS` | 1 to 60 |
 | client packet_filter | `none` | bytes[4] | `ROCKETNET_CLIENT_PACKET_FILTER` | 4 bytes; unset, the unkeyed filter value of [t5 Prefilter header](#t5) |

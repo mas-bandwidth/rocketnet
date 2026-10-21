@@ -374,8 +374,8 @@ ICMPv6 (neighbor discovery) above all, passes uncounted, as non-UDP IPv4
 does.
 
 The AF_XDP transport serves IPv4 and IPv6 end to end. A server serves one
-family, or both when `second_public_address` names the other family on the
-same port (`ServedFamilies`). The ladder offers `xdp` for one family, and for
+family, or both when `rocketnet_server_create` is given an IPv4 and an IPv6
+address on the same port (`ServedFamilies`). The ladder offers `xdp` for one family, and for
 both when the two addresses are on one interface. The receive loop dispatches
 each frame on its ethertype through `rocketnet_xdp_frame_receive`
 (`sdk/rocketnet_xdp_frame.h`): IPv4 at its offsets, IPv6 at the 40-byte fixed
@@ -391,8 +391,8 @@ the pre-flight find the interface carrying each address over `AF_INET` or
 family's gateway MAC comes from that family's default route and neighbour
 table; `ROCKETNET_GATEWAY_ETHERNET_ADDRESS` overrides both.
 
-`second_public_address` NULL or empty serves the public address's family. A
-second address of that family, on another port, or that does not parse is one
+A NULL `ipv4_address` or `ipv6_address` leaves that family unserved. An
+address not of its family, on another port, or that does not parse is one
 log line and `INVALID_ADDRESS` (`sdk/rocketnet_server_transport.cpp:1059-1079`).
 The two addresses share the IPv6 wildcard on the one port, with `IPV6_V6ONLY`
 off (`sdk/rocketnet_server_transport.cpp:1086`). `portable`
