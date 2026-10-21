@@ -17,7 +17,7 @@ spec.loader.exec_module(profile)
 
 
 HEAD = "a" * 40
-SUMMARY = ("load: connected=1000 connect_within_10s=PASS "
+SUMMARY = ("load: connected=1000 profile=light connect_within_10s=PASS "
            "no_unexpected_disconnect=PASS reliable_delivery=PASS "
            "unreliable_integrity=PASS counters_agree=PASS "
            "server_update_p99_us=51319 "
@@ -71,8 +71,13 @@ class ReceiptTests(unittest.TestCase):
     def test_population_default_and_requested_mismatch(self):
         result = profile.parse_load(SUMMARY, "portable", "portable")
         self.assertEqual(result["expected_clients"], 1000)
+        self.assertEqual(result["expected_profile"], "light")
         with self.assertRaisesRegex(ValueError, "population"):
             profile.parse_load(SUMMARY, "portable", "portable", expected_clients=999)
+
+    def test_profile_must_match_requested_profile(self):
+        with self.assertRaisesRegex(ValueError, "profile"):
+            profile.parse_load(SUMMARY, "portable", "portable", expected_profile="default")
 
     def test_explicit_phase_pairs_allow_runtime_resources_to_close_at_term(self):
         result = profile.parse_load(PHASE_SUMMARY, "portable", "portable")
@@ -148,7 +153,8 @@ class ReceiptTests(unittest.TestCase):
 
 
 class ProvenanceTests(unittest.TestCase):
-    def run_fake(self, wrong_source=False, missing_binary=False, clients=None, rate=None):
+    def run_fake(self, wrong_source=False, missing_binary=False, clients=None, rate=None,
+                 load_profile=None):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             source = (root / "source").resolve()
@@ -181,7 +187,10 @@ class ProvenanceTests(unittest.TestCase):
                     return 0, "built", "", False
                 self.assertEqual(argv[:1], [str(output / "bin" / "load")])
                 connected = 1000 if clients is None else clients
-                return 0, SUMMARY.replace("connected=1000", f"connected={connected}"), "", False
+                summary = SUMMARY.replace("connected=1000", f"connected={connected}")
+                if load_profile is not None:
+                    summary = summary.replace("profile=light", f"profile={load_profile}")
+                return 0, summary, "", False
 
             args = ["profile_1000_load.py", "--mode", "timings", "--source", str(source),
                     "--output", str(output), "--expected-head", HEAD,
@@ -190,6 +199,8 @@ class ProvenanceTests(unittest.TestCase):
                 args += ["--clients", str(clients)]
             if rate is not None:
                 args += ["--messages-per-client-second", str(rate)]
+            if load_profile is not None:
+                args += ["--profile", load_profile]
             with mock.patch.object(sys, "argv", args), mock.patch.object(profile, "command", fake_command), \
                  mock.patch.object(profile, "run_capture", fake_run), \
                  mock.patch.object(profile, "preflight", lambda *_: {"failures": []}), \
@@ -225,12 +236,21 @@ class ProvenanceTests(unittest.TestCase):
         code, receipt, seen = self.run_fake(clients=64, rate=2.5)
         self.assertEqual(code, 0)
         self.assertEqual(receipt["clients"], 64)
-        self.assertEqual(receipt["max_supported_clients"], 1000)
+        self.assertEqual(receipt["sdk_default_clients"], 1000)
+        self.assertEqual(receipt["profile"], "light")
         self.assertEqual(receipt["messages_per_client_second"], 2.5)
         self.assertEqual(receipt["rate_environment"], {"LOAD_MESSAGES_PER_CLIENT_SECOND": "2.5"})
         self.assertEqual(receipt["runs"][0]["load"]["expected_clients"], 64)
         self.assertEqual(receipt["runs"][0]["command"][1:3], ["64", "60"])
         self.assertEqual(seen[2][1]["LOAD_MESSAGES_PER_CLIENT_SECOND"], "2.5")
+        self.assertEqual(seen[2][1]["LOAD_PROFILE"], "light")
+
+    def test_default_profile_is_passed_and_recorded(self):
+        code, receipt, seen = self.run_fake(clients=4, load_profile="default")
+        self.assertEqual(code, 0)
+        self.assertEqual(receipt["profile"], "default")
+        self.assertEqual(receipt["runs"][0]["load"]["expected_profile"], "default")
+        self.assertEqual(seen[2][1]["LOAD_PROFILE"], "default")
 
     def test_default_rate_preserves_unset_environment(self):
         code, receipt, seen = self.run_fake()

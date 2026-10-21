@@ -22,7 +22,7 @@ import sys
 import time
 
 CLIENTS = 1000
-MAX_CLIENTS = 1000
+CURRENT_DEFAULT_CLIENTS = 1000
 FD_MARGIN = 64
 MIN_TOTAL_BYTES = 14 * 1024**3
 MIN_AVAILABLE_BYTES = 12 * 1024**3
@@ -178,7 +178,8 @@ def validate_resource_baseline(fields):
     return schema
 
 
-def parse_load(stdout, server_transport, client_transport, expected_clients=CLIENTS):
+def parse_load(stdout, server_transport, client_transport, expected_clients=CLIENTS,
+               expected_profile="light"):
     summaries = [line for line in stdout.splitlines()
                  if line.startswith("load: connected=") and "verdict=" in line]
     if len(summaries) != 1:
@@ -189,6 +190,8 @@ def parse_load(stdout, server_transport, client_transport, expected_clients=CLIE
         raise ValueError("duplicate fields in final load summary")
     if fields.get("connected") != str(expected_clients) or fields.get("verdict") != "PASS":
         raise ValueError("population or load verdict failed")
+    if fields.get("profile") != expected_profile:
+        raise ValueError("load profile differs from requested profile")
     if any(fields.get(name) != "PASS" for name in CRITERIA):
         raise ValueError("one or more load criteria failed")
     if fields.get("server_transport_io") != server_transport or fields.get("client_transport_io") != client_transport:
@@ -231,6 +234,7 @@ def parse_load(stdout, server_transport, client_transport, expected_clients=CLIE
                                     overbudget_count=overbudget,
                                     status="UNMEASURED" if count == 0 else "MEASURED")
     return dict(raw=summaries[0], fields=fields, expected_clients=expected_clients,
+                expected_profile=expected_profile,
                 resource_baseline_schema=resource_baseline_schema,
                 server_update_p99_us=server_p99,
                 server_update_under_100us=server_p99 < 100.0,
@@ -274,6 +278,7 @@ def main():
     p.add_argument("--client-transport", default="portable")
     p.add_argument("--seconds", type=int, default=60)
     p.add_argument("--clients", type=positive_integer, default=CLIENTS)
+    p.add_argument("--profile", choices=("default", "light"), default="light")
     p.add_argument("--messages-per-client-second", type=positive_finite_rate)
     args = p.parse_args()
     if args.seconds < 60:
@@ -287,7 +292,8 @@ def main():
                   binary=str(binary), requested_head=args.expected_head,
                   server_transport=args.server_transport,
                   client_transport=args.client_transport, clients=args.clients,
-                  max_supported_clients=MAX_CLIENTS,
+                  sdk_default_clients=CURRENT_DEFAULT_CLIENTS,
+                  profile=args.profile,
                   messages_per_client_second=args.messages_per_client_second,
                   messages_per_client_second_source=("harness default; environment unset"
                                                      if args.messages_per_client_second is None else
@@ -333,7 +339,7 @@ def main():
         record["binary_sha256"] = sha256(binary)
         record["binary_provenance"] = "fresh Release CMake configure and target load build in this receipt"
         env = os.environ.copy()
-        env.update(LOAD_PROFILE="light", ROCKETNET_SERVER_TRANSPORT=args.server_transport,
+        env.update(LOAD_PROFILE=args.profile, ROCKETNET_SERVER_TRANSPORT=args.server_transport,
                    ROCKETNET_CLIENT_TRANSPORT=args.client_transport)
         if args.messages_per_client_second is not None:
             env["LOAD_MESSAGES_PER_CLIENT_SECOND"] = str(args.messages_per_client_second)
@@ -350,7 +356,7 @@ def main():
                 argv = ["xcrun", "xctrace", "record", "--template", "Time Profiler",
                         "--output", str(trace), "--time-limit", f"{args.seconds + 30}s",
                         "--target-stdout", str(out / "load-samples.stdout.log"),
-                        "--target-stdin", "/dev/null", "--env", "LOAD_PROFILE=light",
+                        "--target-stdin", "/dev/null", "--env", f"LOAD_PROFILE={args.profile}",
                         "--env", f"ROCKETNET_SERVER_TRANSPORT={args.server_transport}",
                         "--env", f"ROCKETNET_CLIENT_TRANSPORT={args.client_transport}",
                         *([] if args.messages_per_client_second is None else
@@ -367,13 +373,14 @@ def main():
             if timed_out:
                 raise ValueError(f"run {index + 1} timed out; process group killed")
             if args.mode == "timings":
-                run["load"] = parse_load(stdout, args.server_transport, args.client_transport, args.clients)
+                run["load"] = parse_load(stdout, args.server_transport, args.client_transport,
+                                         args.clients, args.profile)
             else:
                 target_stdout = out / "load-samples.stdout.log"
                 if not target_stdout.is_file():
                     raise ValueError("xctrace did not preserve target load stdout")
                 run["load"] = parse_load(target_stdout.read_text(), args.server_transport,
-                                         args.client_transport, args.clients)
+                                         args.client_transport, args.clients, args.profile)
                 if not trace.is_dir():
                     raise ValueError("xctrace did not create the Time Profiler trace")
                 run["trace"] = str(trace)
