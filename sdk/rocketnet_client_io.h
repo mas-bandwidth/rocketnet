@@ -310,7 +310,10 @@ inline void rocketnet_client_io_stop( rocketnet_client_io_t * io )
 // HANDED_OFF result unbinds the ring for its next fill.
 inline int rocketnet_client_io_hand_off( rocketnet_client_io_t * io, uint64_t committed, const rocketnet_address_t * to )
 {
-    rocketnet_assert( !io->quit.load( std::memory_order_relaxed ) );
+    const bool quitting = io->quit.load( std::memory_order_acquire );
+    rocketnet_assert( !quitting );
+    if ( quitting )
+        return ROCKETNET_CLIENT_RINGS_EMPTY;
     const int ring = io->rings.fill;
     if ( committed > 0 && !io->to_held[ring] )
     {
