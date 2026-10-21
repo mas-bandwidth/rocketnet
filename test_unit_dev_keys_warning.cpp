@@ -149,7 +149,7 @@ static void dev_keys_warn_on_every_start()
     {
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_dev_config( &config );
-        strcpy( config.transport, "loopback" );
+        snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
         int status = -1;
         start_capture();
         void * srv = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status );

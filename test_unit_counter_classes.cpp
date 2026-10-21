@@ -790,7 +790,7 @@ static void counters_conservation_reports_the_first_unbalanced_family()
     // a fresh block is balanced, and says nothing
     struct rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
-    strcpy( report, "not written" );
+    snprintf( report, sizeof( report ), "%s", "not written" );
     check( rocketnet_counters_conserved( &counters, report, sizeof(report) ) == 1 );
     check( report[0] == '\0' );
 
@@ -895,7 +895,7 @@ static void counters_expect_fails_on_an_unnamed_move()
     char report[4096];
 
     // the two named moves, exactly: passes, and says nothing
-    strcpy( report, "not written" );
+    snprintf( report, sizeof( report ), "%s", "not written" );
     check( rocketnet_counters_expect_core( &before, &after,
                                            { { ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED, 1 },
                                              { ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SIZE, 1 } },

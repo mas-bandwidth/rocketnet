@@ -10,6 +10,7 @@
 
 #include "test_unit_registry.h"
 #include "test/fake_client_driver.h"
+#include "test/portable_crt.h"
 
 #include "rocketnet_address.h"
 
@@ -26,7 +27,7 @@ static void fake_client_transport_io_opens_with_all_eight()
     for ( int i = 0; i < 3; i++ )
     {
         rocketnet_fake_client_transport_io_t fake = {};
-        rocketnet_client_transport_io_config_t config = { "fake", NULL };
+        rocketnet_client_transport_io_config_t config = { "fake", NULL, NULL };
         rocketnet_address_t bind = {};
         rocketnet_client_transport_io_t transport = {};
         const bool opened = rocketnet_client_transport_io_open(
@@ -121,7 +122,7 @@ static void fake_client_wait_honors_readable()
 static void fake_client_io_table_opens_with_wait_and_wake()
 {
     rocketnet_fake_client_transport_io_t fake = {};
-    rocketnet_client_transport_io_config_t config = { "fake", NULL };
+    rocketnet_client_transport_io_config_t config = { "fake", NULL, NULL };
     rocketnet_address_t bind = {};
     rocketnet_client_transport_io_t transport = {};
     rocketnet_unit_check( rocketnet_client_transport_io_open(
@@ -222,8 +223,8 @@ struct fake_disconnect_env_guard_t
     {
         for ( int i = 0; i < 2; i++ )
         {
-            const char * prior = getenv( names[i] );
-            if ( prior )
+            char prior[4096];
+            if ( rocketnet_test_getenv( names[i], prior, sizeof( prior ) ) )
                 snprintf( saved[i], sizeof( saved[i] ), "%s", prior );
             rocketnet_unit_check( fake_disconnect_setenv( names[i], "" ) == 0 );
         }

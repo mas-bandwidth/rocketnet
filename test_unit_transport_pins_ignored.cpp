@@ -9,6 +9,7 @@
 // and expects CONNECTED. The environment it changed is restored on exit.
 
 #include "test_unit_registry.h"
+#include "test/portable_crt.h"
 
 #include "sdk/rocketnet.h"
 #include "rocketnet_internal.h"
@@ -50,10 +51,10 @@ static void unit_transport_pins_ignored()
 {
     char saved_server[64] = "";
     char saved_client[64] = "";
-    const char * orig_server = getenv( "ROCKETNET_SERVER_TRANSPORT" );
-    const char * orig_client = getenv( "ROCKETNET_CLIENT_TRANSPORT" );
-    const bool had_server = orig_server != NULL;
-    const bool had_client = orig_client != NULL;
+    char orig_server[4096];
+    char orig_client[4096];
+    const bool had_server = rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", orig_server, sizeof( orig_server ) ) != 0;
+    const bool had_client = rocketnet_test_getenv( "ROCKETNET_CLIENT_TRANSPORT", orig_client, sizeof( orig_client ) ) != 0;
     if ( had_server )
         snprintf( saved_server, sizeof( saved_server ), "%s", orig_server );
     if ( had_client )

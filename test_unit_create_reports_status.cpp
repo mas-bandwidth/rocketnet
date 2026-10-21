@@ -19,6 +19,7 @@
 // range case temporarily clears the two budget variables and restores them.
 
 #include "test_unit_registry.h"
+#include "test/portable_crt.h"
 
 #include "rocketnet.h"
 #include "rocketnet_internal.h"
@@ -41,6 +42,15 @@ static int create_status_unsetenv( const char * name ) { return _putenv_s( name,
 static int create_status_setenv( const char * name, const char * value ) { return setenv( name, value, 1 ); }
 static int create_status_unsetenv( const char * name ) { return unsetenv( name ); }
 #endif
+
+// Whether the variable is set; its value, or empty, in value.
+static bool create_status_getenv( const char * name, std::string & value )
+{
+    char buffer[4096];
+    const bool present = rocketnet_test_getenv( name, buffer, sizeof( buffer ) ) != 0;
+    value = buffer;
+    return present;
+}
 
 // ---- the fault-injecting allocator -----------------------------------------
 
@@ -285,12 +295,10 @@ static void create_reports_status_config_refusals()
     // A value supplied by the caller is a config-range refusal, even though
     // create also checks environment overrides. Keep the environment absent
     // for this distinction, then restore it for the process running the suite.
-    const char * client_env = getenv( "ROCKETNET_CLIENT_SEND_KBPS" );
-    const char * server_env = getenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" );
-    const std::string saved_client_env = client_env ? client_env : "";
-    const std::string saved_server_env = server_env ? server_env : "";
-    const bool had_client_env = client_env != NULL;
-    const bool had_server_env = server_env != NULL;
+    std::string saved_client_env;
+    std::string saved_server_env;
+    const bool had_client_env = create_status_getenv( "ROCKETNET_CLIENT_SEND_KBPS", saved_client_env );
+    const bool had_server_env = create_status_getenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", saved_server_env );
     check( create_status_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" ) == 0 );
     check( create_status_unsetenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" ) == 0 );
 
@@ -363,9 +371,8 @@ static void create_reports_status_config_refusals()
 
     // a malformed environment override: CONFIG_ENV_INVALID, client and server
     check( (rocketnet_client_default_config_sized)( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
-    const char * prior_client_value = getenv( "ROCKETNET_CLIENT_SEND_KBPS" );
-    const bool prior_client_present = prior_client_value != NULL;
-    const std::string prior_client = prior_client_present ? prior_client_value : "";
+    std::string prior_client;
+    const bool prior_client_present = create_status_getenv( "ROCKETNET_CLIENT_SEND_KBPS", prior_client );
     check( create_status_setenv( "ROCKETNET_CLIENT_SEND_KBPS", "not-a-number" ) == 0 );
     status = ROCKETNET_STATUS_OK;
     check( rocketnet_client_create( NULL, &client_config, NULL, 0, &status ) == NULL );
@@ -375,9 +382,8 @@ static void create_reports_status_config_refusals()
 
     check( (rocketnet_server_dev_config_sized)( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
     server_config.max_clients = 4;
-    const char * prior_server_value = getenv( "ROCKETNET_SERVER_MAX_CLIENTS" );
-    const bool prior_server_present = prior_server_value != NULL;
-    const std::string prior_server = prior_server_present ? prior_server_value : "";
+    std::string prior_server;
+    const bool prior_server_present = create_status_getenv( "ROCKETNET_SERVER_MAX_CLIENTS", prior_server );
     check( create_status_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "not-a-number" ) == 0 );
     status = ROCKETNET_STATUS_OK;
     check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, &status ) == NULL );

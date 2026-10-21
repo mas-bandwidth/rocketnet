@@ -19,6 +19,7 @@
 
 #pragma once
 
+#include "portable_crt.h"
 #include "time_scale.h"
 #include <algorithm>
 #include <chrono>
@@ -60,6 +61,13 @@ extern char **environ;
 // overrides it with a positive value.
 #define ROCKETNET_TEST_MAX_CASE_RSS_MB 698
 
+// Whether the environment variable is set (to a value of at most 4095 bytes).
+inline bool suite_env_is_set( const char * name )
+{
+    char value[4096];
+    return rocketnet_test_getenv( name, value, sizeof( value ) ) != 0;
+}
+
 struct suite_exec
 {
     const char *name;
@@ -90,7 +98,8 @@ struct suite_result
 // environment override: sanitizer shadow memory is not the case's footprint).
 inline long suite_max_case_rss_mb()
 {
-    if ( const char * env = std::getenv( "ROCKETNET_TEST_MAX_CASE_RSS_MB" ) )
+    char env[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_TEST_MAX_CASE_RSS_MB", env, sizeof( env ) ) )
     {
         const long requested = std::atol( env );
         if ( requested > 0 )
@@ -159,7 +168,7 @@ inline long suite_rss_bound_mb( uint64_t planned_bytes, long margin_mb )
 inline long suite_case_rss_mb( const std::string & name )
 {
     const long bound = suite_max_case_rss_mb();
-    if ( bound <= 0 || std::getenv( "ROCKETNET_TEST_MAX_CASE_RSS_MB" ) )
+    if ( bound <= 0 || suite_env_is_set( "ROCKETNET_TEST_MAX_CASE_RSS_MB" ) )
         return bound;
     for ( suite_case_rss_bound_t * entry = *suite_case_rss_bound_head(); entry != NULL; entry = entry->next )
     {
@@ -244,7 +253,8 @@ inline int suite_job_count()
     unsigned jobs = std::thread::hardware_concurrency();
     if ( jobs == 0 )
         jobs = 1;
-    if ( const char * env = std::getenv( "ROCKETNET_TEST_JOBS" ) )
+    char env[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_TEST_JOBS", env, sizeof( env ) ) )
     {
         const int requested = std::atoi( env );
         if ( requested > 0 )
@@ -259,7 +269,7 @@ inline void suite_print_summary( const std::vector<suite_result> & results, bool
 {
     // A passing run with no verbose switch prints no summary. A failure
     // still prints, and the unit suite (strict_names) is unchanged.
-    if ( !strict_names && std::getenv( "ROCKETNET_TEST_VERBOSE" ) == NULL )
+    if ( !strict_names && !suite_env_is_set( "ROCKETNET_TEST_VERBOSE" ) )
     {
         bool quiet = true;
         for ( size_t i = 0; i < results.size(); i++ )
@@ -477,12 +487,12 @@ inline int suite_main( int argc, char ** argv,
         // Under a suite run the parent already captures this process, so
         // stream straight through; a second capture would lose lines when the
         // parent kills the process group at the time limit.
-        if ( std::getenv( "ROCKETNET_TEST_SUITE_CAPTURE" ) != NULL )
+        if ( suite_env_is_set( "ROCKETNET_TEST_SUITE_CAPTURE" ) )
         {
             unsetenv( "ROCKETNET_TEST_SUITE_CAPTURE" );
             return worker( argv[2] );
         }
-        if ( !strict_names && std::getenv( "ROCKETNET_TEST_VERBOSE" ) == NULL )
+        if ( !strict_names && !suite_env_is_set( "ROCKETNET_TEST_VERBOSE" ) )
             return suite_run_names_only( worker, argv[2] );
         return worker( argv[2] );
     }
@@ -552,7 +562,7 @@ inline int suite_main( int argc, char ** argv,
         int out_fd;
         std::string output;
     };
-    const bool suite_capture = !strict_names && std::getenv( "ROCKETNET_TEST_VERBOSE" ) == NULL;
+    const bool suite_capture = !strict_names && !suite_env_is_set( "ROCKETNET_TEST_VERBOSE" );
     if ( suite_capture )
         setenv( "ROCKETNET_TEST_SUITE_CAPTURE", "1", 1 );
     std::vector<running_t> running;

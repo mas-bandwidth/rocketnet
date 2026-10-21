@@ -54,7 +54,7 @@ extern "C" {
  * return false when Winsock initialization fails.
  * @return true when initialization succeeds; false when platform startup fails.
  */
-bool rocketnet_platform_init();
+bool rocketnet_platform_init( void );
 
 /**
  * @brief Releases platform-wide resources after all users have stopped.
@@ -63,7 +63,7 @@ bool rocketnet_platform_init();
  * are joined. The function has no status result.
  * @return None.
  */
-void rocketnet_platform_term();
+void rocketnet_platform_term( void );
 
 // ----------------------------------------------------------------
 
@@ -73,7 +73,7 @@ void rocketnet_platform_term();
  * The result is one of the ROCKETNET_PLATFORM_* constants used by this build.
  * @return The platform identifier; this call has no failure result.
  */
-int rocketnet_platform_id();
+int rocketnet_platform_id( void );
 
 /**
  * @brief Returns the connection type detected during platform initialization.
@@ -82,7 +82,7 @@ int rocketnet_platform_id();
  * reported as ROCKETNET_CONNECTION_TYPE_UNKNOWN.
  * @return The detected connection type, or UNKNOWN when it cannot be detected.
  */
-int rocketnet_platform_connection_type();
+int rocketnet_platform_connection_type( void );
 
 /**
  * @brief Reads elapsed monotonic time in seconds.
@@ -91,7 +91,7 @@ int rocketnet_platform_connection_type();
  * initialization time and is suitable for measuring durations.
  * @return Elapsed seconds; no error status is reported.
  */
-double rocketnet_platform_time();
+double rocketnet_platform_time( void );
 
 /**
  * @brief Pauses the calling thread for the requested duration.
@@ -115,13 +115,17 @@ struct rocketnet_platform_sleep_split_t
 struct rocketnet_platform_sleep_split_t rocketnet_platform_sleep_split( double time );
 
 /**
- * @brief Looks up a process environment variable.
+ * @brief Copies a process environment variable's value into caller storage.
  *
  * @param var NUL-terminated variable name; must not be NULL.
- * @return A borrowed pointer to the value, or NULL when the variable is unset.
- * The pointer is owned by the process environment and must not be freed.
+ * @param buffer Receives the NUL-terminated value; left empty unless 1 is returned.
+ * @param size Bytes of buffer, at least 1. ROCKETNET_PLATFORM_GETENV_MAX_BYTES holds any value the SDK reads.
+ * @return 1 when the variable is set and its value was copied, 0 when it is
+ * unset, -1 when it is set but its value and terminator need more than size bytes.
  */
-const char * rocketnet_platform_getenv( const char * var );
+int rocketnet_platform_getenv( const char * var, char * buffer, size_t size );
+
+#define ROCKETNET_PLATFORM_GETENV_MAX_BYTES 4096
 
 /**
  * @brief Converts a 16-bit value from network byte order to host byte order.
@@ -215,7 +219,7 @@ bool rocketnet_platform_hostname_resolve( const char * hostname, const char * po
  * ephemeral port.
  * @return Preferred port, or zero for an ephemeral port.
  */
-uint16_t rocketnet_platform_preferred_client_port();
+uint16_t rocketnet_platform_preferred_client_port( void );
 
 /**
  * @brief Reports whether an IPv6 client socket can also use IPv4-mapped peers.
@@ -224,7 +228,7 @@ uint16_t rocketnet_platform_preferred_client_port();
  * report false because they keep IPv6 sockets IPv6-only.
  * @return true when dual-stack client sockets are supported; otherwise false.
  */
-bool rocketnet_platform_client_dual_stack();
+bool rocketnet_platform_client_dual_stack( void );
 
 /**
  * @brief Reports whether this host can create an IPv6 UDP socket.
@@ -234,7 +238,7 @@ bool rocketnet_platform_client_dual_stack();
  * this before choosing its bind family so an IPv4 server stays reachable.
  * @return true when an IPv6 socket can be created; otherwise false.
  */
-bool rocketnet_platform_client_ipv6_available();
+bool rocketnet_platform_client_ipv6_available( void );
 
 /**
  * @brief Overrides the IPv6 availability probe for tests.
@@ -447,15 +451,15 @@ bool rocketnet_platform_receive_status_is_reset( int status );
 
 // the process-wide count of reset statuses the receive paths skipped: zero
 // while the reports stay off
-void rocketnet_platform_count_receive_reset();
-uint64_t rocketnet_platform_receive_resets();
+void rocketnet_platform_count_receive_reset( void );
+uint64_t rocketnet_platform_receive_resets( void );
 
 // the process-wide count of zero-length datagrams the per-packet receive
 // (rocketnet_platform_socket_receive_packet) skipped: its 0 return means the
 // socket is drained, so a zero-length datagram is read past and counted here.
 // The batch receive hands one to the transport at 0 bytes instead, where the
 // prefilter counts it.
-uint64_t rocketnet_platform_receive_empties();
+uint64_t rocketnet_platform_receive_empties( void );
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 

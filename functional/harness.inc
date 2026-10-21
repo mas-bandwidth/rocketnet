@@ -37,6 +37,8 @@
 #include <string>
 #include <vector>
 
+#include "../test/portable_crt.h"
+
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 #include <sys/socket.h>
 #include <sys/select.h>
@@ -49,7 +51,8 @@
 
 static int setenv( const char * name, const char * value, int overwrite )
 {
-    if ( !overwrite && getenv( name ) != NULL )
+    size_t required = 0;
+    if ( !overwrite && getenv_s( &required, NULL, 0, name ) == 0 && required > 0 )
         return 0;
     return _putenv_s( name, value );
 }
@@ -147,11 +150,7 @@ struct rocketnet_test_env_guard_t
 static void rocketnet_test_env_save( struct rocketnet_test_env_guard_t * guard, const char * name )
 {
     guard->name = name;
-    const char * value = getenv( name );
-    guard->was_set = value != NULL;
-    guard->saved[0] = '\0';
-    if ( value )
-        snprintf( guard->saved, sizeof(guard->saved), "%s", value );
+    guard->was_set = rocketnet_test_getenv( name, guard->saved, sizeof(guard->saved) ) != 0;
 }
 
 static void rocketnet_test_env_clear( struct rocketnet_test_env_guard_t * guard, const char * name )
@@ -188,8 +187,9 @@ class rocketnet_test_environment_t
         if (strcmp(name, "ROCKETNET_SERVER_TRANSPORT") == 0) return;
         if (strcmp(name, "ROCKETNET_CLIENT_TRANSPORT") == 0) return;
         for (const auto & entry : entries) if (entry.name == name) return;
-        const char * value = getenv(name);
-        entries.push_back({name, value ? value : "", value != NULL});
+        char value[4096];
+        const bool present = rocketnet_test_getenv(name, value, sizeof(value)) != 0;
+        entries.push_back({name, value, present});
         rocketnet_check(unsetenv(name) == 0);
     }
 public:

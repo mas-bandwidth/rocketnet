@@ -65,10 +65,16 @@ struct ip_packet_t
 
 struct ip_net_t;
 
+// The bytes of ip_end_t after frames, used through refuse_start: no member
+// there needs padding before it, so a tail_pad of the rest to 16 leaves the
+// compiler none to add (MSVC C4324).
+#define IP_END_TAIL_BYTES ( sizeof( bool ) * IP_FRAMES + sizeof( uint64_t ) * IP_FRAMES + 13 * sizeof( std::vector<int> ) + 2 * sizeof( bool ) )
+
 struct ip_end_t
 {
     ip_net_t * net;
     bool is_server;
+    uint8_t head_pad[16 - sizeof( ip_net_t * ) - sizeof( bool )];      // frames starts at 16
     alignas( 16 ) uint8_t frames[IP_FRAMES][IP_PAYLOAD_INDEX + IP_ARENA_BYTES];
     bool used[IP_FRAMES];
     uint64_t frame_id[IP_FRAMES];
@@ -91,6 +97,7 @@ struct ip_end_t
 
     bool connected;
     bool refuse_start;                  // start_packet gives no frame while set (a full ring)
+    uint8_t tail_pad[( IP_END_TAIL_BYTES + 15 ) / 16 * 16 - IP_END_TAIL_BYTES];
 };
 
 struct ip_net_t

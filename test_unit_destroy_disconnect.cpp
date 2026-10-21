@@ -5,6 +5,7 @@
 
 #include "test_unit_registry.h"
 #include "test/fake_client_driver.h"
+#include "test/portable_crt.h"
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_internal.h"
 #include "sdk/rocketnet_client_io.h"
@@ -26,11 +27,8 @@
 
 extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
-enum
-{
-    DESTROY_DISCONNECT_PROTOCOL_ID = 0x44455354524F5901ULL,
-    DESTROY_DISCONNECT_MAX_CLIENTS = 4
-};
+static const uint64_t DESTROY_DISCONNECT_PROTOCOL_ID = 0x44455354524F5901ULL;
+static const int DESTROY_DISCONNECT_MAX_CLIENTS = 4;
 
 // the cases build both endpoints over the loopback transport their config
 // structs name (destroy_disconnect_server_create and
@@ -71,12 +69,12 @@ struct destroy_disconnect_env_guard_t
     {
         for ( int i = 0; i < NUM_NAMES; i++ )
         {
-            const char * prior = getenv( names[i] );
-            present[i] = prior && prior[0] != '\0';
+            char prior[4096];
+            present[i] = rocketnet_test_getenv( names[i], prior, sizeof( prior ) ) && prior[0] != '\0';
             if ( present[i] )
             {
                 check( strlen( prior ) < sizeof( saved[i] ) );
-                strncpy( saved[i], prior, sizeof( saved[i] ) - 1 );
+                memcpy( saved[i], prior, strlen( prior ) + 1 );
             }
             check( destroy_disconnect_unsetenv( names[i] ) == 0 );
         }
@@ -151,7 +149,7 @@ static void destroy_disconnect_mint_token( const destroy_disconnect_keys_t * key
         1000, 1030, 10, NULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 }
 
-static rocketnet_client_t * destroy_disconnect_client_create( const destroy_disconnect_keys_t * keys, uint16_t port, uint64_t client_id, double now )
+static rocketnet_client_t * destroy_disconnect_client_create( const destroy_disconnect_keys_t * keys, uint16_t port, uint64_t client_id )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     destroy_disconnect_mint_token( keys, port, client_id, token );
@@ -191,7 +189,7 @@ static int destroy_disconnect_connect_client( rocketnet_server_t * server, rocke
 
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
-            const int slot = rocketnet_client_index( client );
+            const int slot = (int) rocketnet_client_index( client );
             if ( rocketnet_server_client_connected( server, slot ) )
                 return slot;
         }
@@ -300,7 +298,7 @@ static void destroy_connected_client_sends_disconnect()
     // Reference client: explicit rocketnet_client_disconnect then destroy.
     double time_explicit = 1000.0;
     rocketnet_server_t * server_explicit = destroy_disconnect_server_create( &keys, time_explicit );
-    rocketnet_client_t * client_explicit = destroy_disconnect_client_create( &keys, rocketnet_server_port( server_explicit ), 0xC101ULL, time_explicit );
+    rocketnet_client_t * client_explicit = destroy_disconnect_client_create( &keys, rocketnet_server_port( server_explicit ), 0xC101ULL );
     const int slot_explicit = destroy_disconnect_connect_client( server_explicit, client_explicit, &time_explicit );
 
     const uint64_t * sc_explicit = destroy_disconnect_server_counters( server_explicit );
@@ -327,7 +325,7 @@ static void destroy_connected_client_sends_disconnect()
     // Destroyed connected client: rocketnet_client_destroy without prior disconnect.
     double time = 1000.0;
     rocketnet_server_t * server = destroy_disconnect_server_create( &keys, time );
-    rocketnet_client_t * client = destroy_disconnect_client_create( &keys, rocketnet_server_port( server ), 0xC102ULL, time );
+    rocketnet_client_t * client = destroy_disconnect_client_create( &keys, rocketnet_server_port( server ), 0xC102ULL );
     const int slot = destroy_disconnect_connect_client( server, client, &time );
     check( rocketnet_server_num_connected_clients( server ) == 1 );
 
@@ -383,7 +381,7 @@ static void destroy_server_sends_disconnect_to_every_connected_client()
 
     for ( int i = 0; i < NUM_CLIENTS; i++ )
     {
-        clients[i] = destroy_disconnect_client_create( &keys, port, 0xD200ULL + (uint64_t) i, time );
+        clients[i] = destroy_disconnect_client_create( &keys, port, 0xD200ULL + (uint64_t) i );
         slots[i] = destroy_disconnect_connect_client( server, clients[i], &time );
         check( slots[i] >= 0 && slots[i] < DESTROY_DISCONNECT_MAX_CLIENTS );
         check( rocketnet_client_state( clients[i] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
@@ -437,7 +435,7 @@ static void destroy_disconnect_public_client_destroy_sends_nothing( const destro
 {
     double time = 1000.0;
     rocketnet_server_t * server = destroy_disconnect_server_create( keys, time );
-    rocketnet_client_t * client = destroy_disconnect_client_create( keys, rocketnet_server_port( server ), client_id, time );
+    rocketnet_client_t * client = destroy_disconnect_client_create( keys, rocketnet_server_port( server ), client_id );
 
     if ( target_state != ROCKETNET_CLIENT_STATE_INVALID )
     {

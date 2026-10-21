@@ -111,13 +111,13 @@ int main( void )
         struct rocketnet_message_batch_t incoming;
         while ( rocketnet_client_receive_messages( client, &incoming ) )
             ;
-        const int slot = rocketnet_client_index( client );
+        const int slot = (int) rocketnet_client_index( client );
         struct rocketnet_message_batch_t batch;
         while ( rocketnet_server_receive_messages( server, &batch ) )
         {
             for ( int i = 0; i < batch.num_messages; i++ )
             {
-                if ( batch.client_index[i] == (uint64_t) slot && batch.channel[i] == 1 )
+                if ( batch.client_index[i] == slot && batch.channel[i] == 1 )
                     reliable_received++;
             }
         }

@@ -112,7 +112,7 @@ static void platform_socket_hygiene_descriptor_valid()
     // treating descriptor 0 as none/invalid and leaking it.
     // Valid descriptors are >= 0 (POSIX) and != INVALID_SOCKET (Windows).
     rocketnet_unit_check( rocketnet_platform_socket_handle_is_valid( 0 ) );
-    rocketnet_unit_check( !rocketnet_platform_socket_handle_is_valid( -1 ) );
+    rocketnet_unit_check( !rocketnet_platform_socket_handle_is_valid( (rocketnet_platform_socket_handle_t) -1 ) );
 }
 
 // The single-packet receive path drops a refused source and reads the next

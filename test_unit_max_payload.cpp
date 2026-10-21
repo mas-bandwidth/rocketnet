@@ -582,7 +582,7 @@ static void client_drops_reserved_and_wrong_direction_types()
                                                            out, (int) sizeof(out), &out_bytes ) );
         check( client_all_counters_sum( &pair.client_counters ) == before + 2 );
         check( pair.client_counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == packets_before + 1 + i );
-        check( pair.client_counters.values[ROCKETNET_COUNTER_RESERVED_TYPE] == i + 1 );
+        check( pair.client_counters.values[ROCKETNET_COUNTER_RESERVED_TYPE] == (uint64_t) ( i + 1 ) );
     }
 
     // a request or a response is the wrong direction for a client: the same
@@ -599,7 +599,7 @@ static void client_drops_reserved_and_wrong_direction_types()
                                                            out, (int) sizeof(out), &out_bytes ) );
         check( client_all_counters_sum( &pair.client_counters ) == before + 2 );
         check( pair.client_counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == packets_before + 4 + i );
-        check( pair.client_counters.values[ROCKETNET_COUNTER_WRONG_DIRECTION] == i + 1 );
+        check( pair.client_counters.values[ROCKETNET_COUNTER_WRONG_DIRECTION] == (uint64_t) ( i + 1 ) );
     }
 
     check( pair.client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );

@@ -50,7 +50,7 @@ static void uring_codec_tag_round_trips()
     t = rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, 65535, 0xffffffff );
     rocketnet_unit_check( rocketnet_uring_tag_kind( t ) == ROCKETNET_URING_TAG_RECV );
     rocketnet_unit_check( rocketnet_uring_tag_queue( t ) == 65535 );
-    rocketnet_unit_check( rocketnet_uring_tag_index( t ) == 0xffffffff );
+    rocketnet_unit_check( (uint32_t) rocketnet_uring_tag_index( t ) == 0xffffffffu );
 
     t = rocketnet_uring_tag( ROCKETNET_URING_TAG_CANCEL, 65535, 0 );
     rocketnet_unit_check( rocketnet_uring_tag_kind( t ) == ROCKETNET_URING_TAG_CANCEL );

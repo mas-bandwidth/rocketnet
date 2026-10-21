@@ -35,6 +35,7 @@
 // that count (sdk/rocketnet_driver.cpp:126), the same path these cases walk.
 
 #include "test_unit_registry.h"
+#include "test/portable_crt.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_driver.h"
@@ -50,7 +51,8 @@
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 static int setenv( const char * name, const char * value, int overwrite )
 {
-    if ( !overwrite && getenv( name ) != NULL )
+    size_t length = 0;
+    if ( !overwrite && getenv_s( &length, NULL, 0, name ) == 0 && length != 0 )
         return 0;
     return _putenv_s( name, value );
 }
@@ -71,10 +73,10 @@ struct transport_oom_env_pin_t
 
 static void transport_oom_env_set_aside( const char * name, transport_oom_env_pin_t * saved )
 {
-    const char * value = getenv( name );
-    saved->was_set = value != NULL;
+    char value[4096];
+    saved->was_set = rocketnet_test_getenv( name, value, sizeof(value) ) != 0;
     saved->value[0] = '\0';
-    if ( value )
+    if ( saved->was_set )
         snprintf( saved->value, sizeof(saved->value), "%s", value );
     unsetenv( name );
 }

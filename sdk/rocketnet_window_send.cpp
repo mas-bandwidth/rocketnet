@@ -129,6 +129,7 @@ uint32_t rn_window_send_first_write_block( rn_window_send_t * send, int code, ui
 {
     rocketnet_assert( send && send->region && first_number && ring_start );
     rocketnet_assert( code >= ROCKETNET_MESSAGE_CODE_RELIABLE && code <= ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED );
+    (void) code; // read only by the assert above
     const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     rocketnet_assert( bytes > F && bytes <= send->region->max_message_bytes );
     const uint32_t count = ( bytes + F - 1 ) / F;
@@ -192,5 +193,6 @@ int rn_window_send_mark_acked( rn_window_send_t * send, uint64_t number )
 int rn_window_send_can_write_unreliable( const rn_window_send_t * send )
 {
     rocketnet_assert( send && send->region );
+    (void) send; // read only by the assert above
     return 1;
 }

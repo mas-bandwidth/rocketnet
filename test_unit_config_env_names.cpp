@@ -32,6 +32,7 @@
 #include <string>
 #include <vector>
 #include "test_unit_registry.h"
+#include "test/portable_crt.h"
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_config.h"
 #include "sdk/rocketnet_allocator.h"
@@ -296,7 +297,7 @@ static std::vector<std::string> env_names_documented( const char * relative_path
 {
     std::vector<std::string> names;
     const std::string path = std::string( ROCKETNET_SOURCE_DIR ) + "/" + relative_path;
-    FILE * file = fopen( path.c_str(), "rb" );
+    FILE * file = rocketnet_test_fopen( path.c_str(), "rb" );
     check( file != NULL );
     std::string text;
     char buffer[4096];
@@ -448,7 +449,7 @@ static std::vector<std::string> env_names_set_candidates()
 static std::string env_names_read_file( const char * relative_path )
 {
     const std::string path = std::string( ROCKETNET_SOURCE_DIR ) + "/" + relative_path;
-    FILE * file = fopen( path.c_str(), "rb" );
+    FILE * file = rocketnet_test_fopen( path.c_str(), "rb" );
     check( file != NULL );
     std::string text;
     char buffer[4096];

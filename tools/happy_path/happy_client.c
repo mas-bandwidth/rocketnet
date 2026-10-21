@@ -21,6 +21,7 @@
 #endif
 
 #include "rocketnet.h"
+#include "../../test/portable_crt.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,13 +38,14 @@ int main( int argc, char ** argv )
         return 1;
     }
 
-    const char * address = getenv( "ROCKETNET_CLIENT_CONNECT_ADDRESS" );
-    if ( !address )
+    char address_buffer[256];
+    const char * address = address_buffer;
+    if ( !rocketnet_test_getenv( "ROCKETNET_CLIENT_CONNECT_ADDRESS", address_buffer, sizeof( address_buffer ) ) )
         address = argc > 1 ? argv[1] : "127.0.0.1:40000";
 
     int skip_mode = -1;
-    const char * broken = getenv( "HAPPY_PATH_BREAK" );
-    if ( broken && strncmp( broken, "client-skip-mode-", 17 ) == 0 )
+    char broken[256];
+    if ( rocketnet_test_getenv( "HAPPY_PATH_BREAK", broken, sizeof( broken ) ) && strncmp( broken, "client-skip-mode-", 17 ) == 0 )
     {
         skip_mode = atoi( broken + 17 );
         if ( skip_mode < 0 || skip_mode > 7 )
@@ -107,16 +109,10 @@ int main( int argc, char ** argv )
         }
 
         // (2) receive and process every received message for this update
-        const uint8_t * data = NULL;
-        int bytes = 0;
         struct rocketnet_message_batch_t batch;
         while ( rocketnet_client_receive_messages( client, &batch ) )
         {
-            for ( int i = 0; i < batch.num_messages; i++ )
-            {
-                data = batch.data[i];
-                bytes = batch.bytes[i];
-            }
+            // the server sends this client nothing, so there is nothing to read
         }
 
         const int state = rocketnet_client_state( client );

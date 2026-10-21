@@ -414,7 +414,7 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * transport,
         for ( int i = 0; i < PACKETS_PER_FRAME; i++ )
         {
             const int tag = frame * PACKETS_PER_FRAME + i;
-            struct rocketnet_packet_context_t context;
+            struct rocketnet_packet_context_t context = {};
             uint8_t * payload = NULL;
             const double fill_deadline = rocketnet_platform_time() + 5.0;
             while ( !payload && rocketnet_platform_time() < fill_deadline )
@@ -3631,27 +3631,14 @@ void rocketnet_test_public_client_server_queries()
             rocketnet_check( rocketnet_server_finish_message( server, rocketnet_client_index( client ), (int) sizeof( payload ) ) != 0 );
             exchanged++;
         }
-        const uint8_t * data = NULL;
-        int bytes = 0;
-        uint64_t sender = 0;
+        // drain both receive queues: this case checks the counters, not the payloads
         struct rocketnet_message_batch_t batch;
         while ( rocketnet_server_receive_messages( server, &batch ) )
         {
-            for ( int i = 0; i < batch.num_messages; i++ )
-            {
-                data = batch.data[i];
-                bytes = batch.bytes[i];
-                sender = batch.client_index[i];
-            }
         }
         struct rocketnet_message_batch_t incoming;
         while ( rocketnet_client_receive_messages( client, &incoming ) )
         {
-            for ( int i = 0; i < incoming.num_messages; i++ )
-            {
-                data = incoming.data[i];
-                bytes = incoming.bytes[i];
-            }
         }
         rocketnet_client_send_packets( client );
         rocketnet_server_send_packets( server );
@@ -3733,7 +3720,7 @@ void rocketnet_test_public_client_server_queries()
     rocketnet_check( rocketnet_server_stat( server, ROCKETNET_SERVER_STAT_BANDWIDTH_RECEIVED ) == (double) ss.bandwidth_received_kbps );
     rocketnet_check( rocketnet_server_stat( server, ROCKETNET_SERVER_STAT_COUNT ) == 0.0 );
 
-    const int slot = rocketnet_client_index( client );
+    const int slot = (int) rocketnet_client_index( client );
     rocketnet_check( rocketnet_server_client_connected( server, slot ) && rocketnet_server_client_id( server, slot ) == 77 );
     struct rocketnet_server_transport_client_stats_t cls;
     rocketnet_server_transport_client_stats( server_transport, slot, &cls );
@@ -3810,8 +3797,8 @@ void rocketnet_test_config_precedence()
 
 static bool rocketnet_test_skip_for_transport_env_pin( const char * test_name, const char * pin_name, const char * expected_transport )
 {
-    const char * pin = rocketnet_platform_getenv( pin_name );
-    if ( pin == NULL || pin[0] == '\0' || ( expected_transport && strcmp( pin, expected_transport ) == 0 ) )
+    char pin[256];
+    if ( !rocketnet_test_getenv( pin_name, pin, sizeof( pin ) ) || pin[0] == '\0' || ( expected_transport && strcmp( pin, expected_transport ) == 0 ) )
         return false;
 
     // A whole-suite pin skips only a selection check it contradicts.
@@ -4104,10 +4091,10 @@ void rocketnet_test_transport_env_pins_loopback()
 
 void transport_env_pin_is_honoured()
 {
-    const char * server_pin = rocketnet_platform_getenv( "ROCKETNET_SERVER_TRANSPORT" );
-    const char * client_pin = rocketnet_platform_getenv( "ROCKETNET_CLIENT_TRANSPORT" );
-    const bool has_server_pin = ( server_pin != NULL && server_pin[0] != '\0' );
-    const bool has_client_pin = ( client_pin != NULL && client_pin[0] != '\0' );
+    char server_pin[256];
+    char client_pin[256];
+    const bool has_server_pin = ( rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", server_pin, sizeof( server_pin ) ) && server_pin[0] != '\0' );
+    const bool has_client_pin = ( rocketnet_test_getenv( "ROCKETNET_CLIENT_TRANSPORT", client_pin, sizeof( client_pin ) ) && client_pin[0] != '\0' );
 
     if ( !has_server_pin && !has_client_pin )
     {
@@ -7098,26 +7085,23 @@ extern void rocketnet_test_lifecycle_transport();
 
 // a test a platform's build compiles out still registers its name, printing a
 // named skip instead of vanishing from the count (a skipped test is named and
-// logged, never silent)
-
-// clang warns about an unused static function defined in a main file (gcc and
-// MSVC do not), and on each platform the skips for the other platforms are
-// unreferenced, so the stub is marked unused where that attribute exists
-
-#if defined(__clang__) || defined(__GNUC__)
-#define ROCKETNET_FUNCTIONAL_SKIP_UNUSED __attribute__((unused))
-#else // #if defined(__clang__) || defined(__GNUC__)
-#define ROCKETNET_FUNCTIONAL_SKIP_UNUSED
-#endif // #if defined(__clang__) || defined(__GNUC__)
+// logged, never silent). Each skip is compiled under the same condition as
+// the table entry that registers it, so no build holds an unreferenced one.
 
 #define ROCKETNET_FUNCTIONAL_SKIP( fn, test_name, reason ) \
-    ROCKETNET_FUNCTIONAL_SKIP_UNUSED static void fn() \
+    static void fn() \
     { \
         rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, test_name " [SKIPPED " reason "]" ); \
     }
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_batch_pump_refused_destination, "test_platform_batch_pump_refused_destination", "on windows: posix raw-socket injector" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_pump_zero_length_chaff, "test_platform_pump_zero_length_chaff", "on windows: posix raw-socket injector" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_receive_thread_quit_wake_ends_a_long_wait, "client_receive_thread_quit_wake_ends_a_long_wait", "posix only: the windows receive thread sleeps and its quit wake is a no-op" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_receive_thread_quit_wake_before_wait_returns, "client_receive_thread_quit_wake_before_wait_returns", "posix only: the windows receive thread sleeps and its quit wake is a no-op" )
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_transport_io_pin_iocp, "test_server_transport_io_pin_iocp", "not on windows: the iocp transport is windows-only" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_transport_io_pin_rio, "test_server_transport_io_pin_rio", "not on windows: the rio transport is windows-only" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_rio_probe, "test_server_rio_probe", "not on windows: the rio transport is windows-only" )
@@ -7127,6 +7111,11 @@ ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_rio_wire_dual_stack,
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_rio_send_full, "test_server_rio_send_full", "not on windows: the rio transport is windows-only" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_iocp_uso_uro_probe, "test_server_iocp_uso_uro_probe", "not on windows: the iocp transport is windows-only" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_iocp_uso_wire, "test_server_iocp_uso_wire", "not on windows: the iocp transport is windows-only" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_windows_wakes_and_reads, "platform_wake_windows_wakes_and_reads", "windows only: the event wake is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_windows_handoff_round_trip, "client_io_windows_handoff_round_trip", "windows only: the portable client I/O event wake is not built on this platform" )
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_LINUX
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_transport_io_pin_gso, "test_server_transport_io_pin_gso", "linux only: the gso transport is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_transport_io_pin_io_uring, "test_server_transport_io_pin_io_uring", "linux only: the io_uring transport is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_transport_io_pin_xdp, "test_server_transport_io_pin_xdp", "linux only: the xdp transport is not built on this platform" )
@@ -7143,16 +7132,9 @@ ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_uring_wire_ipv6, "te
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_uring_wire_dual_stack, "test_server_uring_wire_dual_stack", "linux only: the io_uring transport is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_uring_send_overflow, "test_server_uring_send_overflow", "linux only: the io_uring transport is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_uring_receive_rearms_after_no_buffers, "test_server_uring_receive_rearms_after_no_buffers", "linux only: the io_uring transport is not built on this platform" )
-ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_transport_io_pin_msgx, "test_server_transport_io_pin_msgx", "mac only: the msgx transport is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_linux_wakes_and_reads, "platform_wake_linux_wakes_and_reads", "linux only: the eventfd wake is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_linux_handoff_round_trip, "client_io_linux_handoff_round_trip", "linux only: the portable client I/O wake is not built on this platform" )
-ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_apple_wakes_and_reads, "platform_wake_apple_wakes_and_reads", "mac and ios only: the kqueue wake is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_linux_mmsg_batch_round_trip, "client_io_linux_mmsg_batch_round_trip", "linux only: the mmsg batch pump is not built on this platform" )
-ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_apple_handoff_round_trip, "client_io_apple_handoff_round_trip", "mac and ios only: the msgx client I/O wake is not built on this platform" )
-ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_windows_wakes_and_reads, "platform_wake_windows_wakes_and_reads", "windows only: the event wake is not built on this platform" )
-ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_windows_handoff_round_trip, "client_io_windows_handoff_round_trip", "windows only: the portable client I/O event wake is not built on this platform" )
-ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_receive_thread_quit_wake_ends_a_long_wait, "client_receive_thread_quit_wake_ends_a_long_wait", "posix only: the windows receive thread sleeps and its quit wake is a no-op" )
-ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_receive_thread_quit_wake_before_wait_returns, "client_receive_thread_quit_wake_before_wait_returns", "posix only: the windows receive thread sleeps and its quit wake is a no-op" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_init_term_1000_portable, "posix_init_term_1000_portable", "linux only: the posix lifecycle stress cell is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_init_term_1000_gso, "posix_init_term_1000_gso", "linux only: the posix lifecycle stress cell is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_init_term_1000_io_uring, "posix_init_term_1000_io_uring", "linux only: the posix lifecycle stress cell is not built on this platform" )
@@ -7177,23 +7159,39 @@ ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_destroy_under_traffic
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_destroy_under_traffic_100_gso, "posix_destroy_under_traffic_100_gso", "linux only: the posix lifecycle stress cell is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_destroy_under_traffic_100_io_uring, "posix_destroy_under_traffic_100_io_uring", "linux only: the posix lifecycle stress cell is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_destroy_under_traffic_100_xdp, "posix_destroy_under_traffic_100_xdp", "linux only: the posix lifecycle stress cell is not built on this platform" )
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_LINUX
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_MAC
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_transport_io_pin_msgx, "test_server_transport_io_pin_msgx", "mac only: the msgx transport is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_init_term_1000, "posix_init_term_1000", "mac only: the posix lifecycle stress cell is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_server_create_destroy_1000, "posix_server_create_destroy_1000", "mac only: the posix lifecycle stress cell is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_client_create_destroy_1000, "posix_client_create_destroy_1000", "mac only: the posix lifecycle stress cell is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_server_restart_same_port_100, "posix_server_restart_same_port_100", "mac only: the posix lifecycle stress cell is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_connect_disconnect_1000, "posix_connect_disconnect_1000", "mac only: the posix lifecycle stress cell is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_destroy_under_traffic_100, "posix_destroy_under_traffic_100", "mac only: the posix lifecycle stress cell is not built on this platform" )
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_MAC
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_MAC && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_IOS
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_apple_wakes_and_reads, "platform_wake_apple_wakes_and_reads", "mac and ios only: the kqueue wake is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_apple_handoff_round_trip, "client_io_apple_handoff_round_trip", "mac and ios only: the msgx client I/O wake is not built on this platform" )
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_MAC && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_IOS
+
+#if defined(_WIN32) || !defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_server_receive_weather, "test_posix_server_receive_weather", "on windows: the posix socket-error injector is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_client_receive_weather, "test_posix_client_receive_weather", "on windows: the posix socket-error injector is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_platform_send_seam, "test_posix_platform_send_seam", "on windows: the posix socket-error injector is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_transport_send_seam, "test_posix_transport_send_seam", "on windows: the posix socket-error injector is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_send_burst, "test_posix_send_burst", "on windows: the posix socket-error injector is not built on this platform" )
+#endif // #if defined(_WIN32) || !defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+
+#if !defined(__linux__)
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_linux_gso_sendmmsg_errors, "test_linux_gso_sendmmsg_errors", "linux only: the gso/uring/xdp error injector is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_linux_gso_recvmmsg_errors, "test_linux_gso_recvmmsg_errors", "linux only: the gso/uring/xdp error injector is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_linux_uring_receive_cqe_errors, "test_linux_uring_receive_cqe_errors", "linux only: the gso/uring/xdp error injector is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_linux_uring_send_cqe_errors, "test_linux_uring_send_cqe_errors", "linux only: the gso/uring/xdp error injector is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_linux_xdp_receive_weather_ipv4, "test_linux_xdp_receive_weather_ipv4", "linux only: the gso/uring/xdp error injector is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_linux_xdp_receive_weather_ipv6, "test_linux_xdp_receive_weather_ipv6", "linux only: the gso/uring/xdp error injector is not built on this platform" )
+#endif // #if !defined(__linux__)
 
 
 // A maximum-size packet crosses a 1500-MTU link, whole and unfragmented, on
@@ -7216,8 +7214,9 @@ ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_linux_xdp_receive_weather_i
 
 static void rocketnet_test_max_size_packet_crosses( const char * host_env, const char * loopback_host, bool ipv6 )
 {
-    const char * host = rocketnet_platform_getenv( host_env );
-    if ( host == NULL || host[0] == '\0' )
+    char host_value[256];
+    const char * host = host_value;
+    if ( !rocketnet_test_getenv( host_env, host_value, sizeof( host_value ) ) || host_value[0] == '\0' )
         host = loopback_host;
 
     char bind_host[128];
@@ -7231,9 +7230,9 @@ static void rocketnet_test_max_size_packet_crosses( const char * host_env, const
     server_config.max_clients = 4;
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    const char * netns = rocketnet_platform_getenv( "ROCKETNET_TEST_MTU_SERVER_NETNS" );
+    char netns[4096];
     int self_ns = -1;
-    if ( netns != NULL && netns[0] != '\0' )
+    if ( rocketnet_test_getenv( "ROCKETNET_TEST_MTU_SERVER_NETNS", netns, sizeof( netns ) ) && netns[0] != '\0' )
     {
         self_ns = open( "/proc/self/ns/net", O_RDONLY );
         const int peer_ns = open( netns, O_RDONLY );
@@ -7473,8 +7472,8 @@ static bool rocketnet_xdp_veth_inside_virtme()
 
 static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name )
 {
-    const char * opt_in = rocketnet_platform_getenv( "ROCKETNET_TEST_XDP_VETH" );
-    const bool opted_in = opt_in != NULL && strcmp( opt_in, "1" ) == 0;
+    char opt_in[256];
+    const bool opted_in = rocketnet_test_getenv( "ROCKETNET_TEST_XDP_VETH", opt_in, sizeof( opt_in ) ) && strcmp( opt_in, "1" ) == 0;
     if ( geteuid() != 0 || !( opted_in || rocketnet_xdp_veth_inside_virtme() ) )
     {
         rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s [SKIPPED needs root inside a virtme-ng guest, or root and ROCKETNET_TEST_XDP_VETH=1: it makes a namespace and a veth pair and attaches XDP]", case_name );
@@ -9104,7 +9103,8 @@ static rocketnet_test_environment_t * rocketnet_functional_environment = NULL;
 
 void rocketnet_functional_prepare()
 {
-    if ( rocketnet_platform_getenv( "ROCKETNET_TEST_VERBOSE" ) == NULL )
+    char verbose[256];
+    if ( !rocketnet_test_getenv( "ROCKETNET_TEST_VERBOSE", verbose, sizeof( verbose ) ) )
     {
         rocketnet_test_suite_log_function = rocketnet_test_log_capture;
         rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );

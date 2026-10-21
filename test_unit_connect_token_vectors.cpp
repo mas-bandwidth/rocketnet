@@ -27,6 +27,7 @@
 #include "rocketnet_test_vectors.h"
 #include "test/wycheproof.h"
 #include "test/resource_file.h"
+#include "test/portable_crt.h"
 
 // Match the header to the sodium implementation linked into the SDK.
 #if defined(ROCKETNET_USE_SYSTEM_SODIUM)
@@ -431,8 +432,8 @@ static void vectors_regenerate_byte_identical()
 
     std::string path = ctv_path();
 
-    const char * regenerate = getenv( "ROCKETNET_REGENERATE_CONNECT_TOKEN_VECTORS" );
-    if ( regenerate && strcmp( regenerate, "1" ) == 0 )
+    char regenerate[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_REGENERATE_CONNECT_TOKEN_VECTORS", regenerate, sizeof( regenerate ) ) && strcmp( regenerate, "1" ) == 0 )
     {
         std::string temp = path + ".tmp";
         FILE * file = rocketnet_test_fopen( temp, "wb" );

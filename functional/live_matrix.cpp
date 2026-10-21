@@ -34,6 +34,7 @@
 #include "rocketnet_platform.h"
 
 #include "../test/live_verify.h"
+#include "../test/portable_crt.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1093,7 +1094,8 @@ void live_message_matrix_loopback()
     static struct live_matrix_t matrix;
     struct live_matrix_t * m = &matrix;
     memset( m, 0, sizeof( *m ) );
-    live_matrix_verbose = getenv( "ROCKETNET_TEST_VERBOSE" ) != NULL;
+    char verbose[256];
+    live_matrix_verbose = rocketnet_test_getenv( "ROCKETNET_TEST_VERBOSE", verbose, sizeof( verbose ) );
     memset( live_matrix_table_sent, 0, sizeof( live_matrix_table_sent ) );
     memset( live_matrix_table_received, 0, sizeof( live_matrix_table_received ) );
 

@@ -38,7 +38,7 @@ static void test_transport_lifecycle()
     const rocketnet_address_t original = bind;
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config(&config);
-    const rocketnet_server_transport_io_config_t setup = { "fixture", &config, "127.0.0.1:0" };
+    const rocketnet_server_transport_io_config_t setup = { "fixture", &config, "127.0.0.1:0", NULL };
     lifecycle_t state = {};
 
     // A malformed extension is refused before invoking its factory.
@@ -179,8 +179,8 @@ static void test_buffered_transport()
     rocketnet_server_transport_dev_config(&server_config);
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config(&client_config);
-    const rocketnet_server_transport_io_config_t server_setup = { "portable", &server_config, "127.0.0.1:0" };
-    const rocketnet_client_transport_io_config_t client_setup = { "portable", &client_config };
+    const rocketnet_server_transport_io_config_t server_setup = { "portable", &server_config, "127.0.0.1:0", NULL };
+    const rocketnet_client_transport_io_config_t client_setup = { "portable", &client_config, NULL };
     rocketnet_address_t server_address, client_address;
     CHECK(rocketnet_address_parse(&server_address, "127.0.0.1:0"));
     client_address = server_address;

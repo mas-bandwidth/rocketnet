@@ -77,7 +77,10 @@ double rocketnet_clamp_update_time( double last_good, double time, bool * clampe
 struct alignas(64) rocketnet_client_payload_slot_info_t
 {
     int wire_bytes;
+    uint8_t padding[64 - sizeof(int)]; // the rest of the cache line, explicit
 };
+
+static_assert( sizeof(rocketnet_client_payload_slot_info_t) == 64, "one client slot info per cache line" );
 
 struct rocketnet_client_payload_ring_t
 {
@@ -85,7 +88,8 @@ struct rocketnet_client_payload_ring_t
 
     volatile uint64_t num_packets;
 
-    uint8_t padding_1[4096];
+    // a page, plus the rest of num_packets' cache line, so info starts on a cache line
+    uint8_t padding_1[4096 + 64 - sizeof(uint64_t)];
 
     struct rocketnet_client_payload_slot_info_t info[ROCKETNET_CLIENT_PAYLOAD_RING_SIZE];
 
@@ -95,6 +99,13 @@ struct rocketnet_client_payload_ring_t
 
     uint8_t padding_3[4096];
 };
+
+static_assert( offsetof( rocketnet_client_payload_ring_t, info ) == 8192 + 64, "client ring info starts on a cache line with no implicit padding" );
+static_assert( offsetof( rocketnet_client_payload_ring_t, data ) % 16 == 0 &&
+               offsetof( rocketnet_client_payload_ring_t, data ) == offsetof( rocketnet_client_payload_ring_t, padding_2 ) + 4096,
+               "client ring data is 16-aligned with no implicit padding" );
+static_assert( sizeof(rocketnet_client_payload_ring_t) == offsetof( rocketnet_client_payload_ring_t, padding_3 ) + 4096,
+               "client ring has no implicit tail padding" );
 
 struct rocketnet_client_received_packets_t
 {
@@ -132,7 +143,14 @@ struct alignas(64) rocketnet_client_stats_frame_t
     no decision is named in connection_reset_inventory_covers_every_field.
 */
 #define ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS( X ) \
+    /* the cache-line-aligned members lead, each a whole number of cache */                                          \
+    /* lines, so the compiler inserts no alignment padding before any of them */                                     \
     X( packet_leases, rocketnet_packet_leases_t<1024> packet_leases )                                                \
+    /* two rings of one layout (docs/CLIENT-IO.md _The hand-off and the two */                                       \
+    /* rings_): game threads fill payload_ring[client_io.rings.fill]. The BASE */                                    \
+    /* path never hands off, so it fills ring 0 only. */                                                             \
+    X( payload_ring, struct rocketnet_client_payload_ring_t payload_ring[2] )                                        \
+    X( stats_frames, struct rocketnet_client_stats_frame_t stats_frames[ROCKETNET_NUM_CLIENT_STATS_FRAMES] )         \
     X( context, void * context )                                                                                     \
     X( bound_port, uint16_t bound_port )                                                                             \
     X( transport, int transport ) /* the granted transport (ROCKETNET_TRANSPORT_*), decided by the ladder at create */           \
@@ -157,10 +175,6 @@ struct alignas(64) rocketnet_client_stats_frame_t
     X( max_payload_bytes, int max_payload_bytes )                                                                    \
     X( send_arena, struct rocketnet_send_arena_t * send_arena )                                                      \
     X( reassembly, struct rocketnet_reassembly_set_t * reassembly )                                                  \
-    /* two rings of one layout (docs/CLIENT-IO.md _The hand-off and the two */                                       \
-    /* rings_): game threads fill payload_ring[client_io.rings.fill]. The BASE */                                    \
-    /* path never hands off, so it fills ring 0 only. */                                                             \
-    X( payload_ring, struct rocketnet_client_payload_ring_t payload_ring[2] )                                        \
     /* the I/O thread design (docs/CLIENT-IO.md): true when the granted */                                           \
     /* transport has wait and wake; step_driven when no I/O thread runs and the */                                      \
     /* caller calls rocketnet_client_io_step itself (unit tests) */                                                  \
@@ -175,7 +189,6 @@ struct alignas(64) rocketnet_client_stats_frame_t
     X( counters, struct rocketnet_counters_t counters )                                                              \
     X( protocol, struct rocketnet_client_protocol_t protocol )                                                       \
     X( client_stats, struct rocketnet_client_transport_stats_t client_stats )                                        \
-    X( stats_frames, struct rocketnet_client_stats_frame_t stats_frames[ROCKETNET_NUM_CLIENT_STATS_FRAMES] )         \
     X( current_stats_index, int current_stats_index )                                                                \
     X( packet_loss_tracker, struct rocketnet_packet_loss_tracker_t packet_loss_tracker )                             \
     X( jitter_tracker, struct rocketnet_jitter_tracker_t jitter_tracker )

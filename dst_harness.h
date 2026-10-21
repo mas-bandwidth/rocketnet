@@ -109,7 +109,7 @@ static inline uint64_t rocketnet_dst_substream_uniform( struct rocketnet_dst_sub
 static inline double rocketnet_dst_substream_real( struct rocketnet_dst_substream_t * stream )
 {
     const uint64_t draw = rocketnet_dst_substream_draw( stream );
-    return (double) ( draw >> 11 ) * 0x1p-53;
+    return (double) ( draw >> 11 ) * ( 1.0 / 9007199254740992.0 );   // 2^-53, exact
 }
 
 // The trace accumulator: FNV-1a 64 over fixed-width records appended in step
@@ -1206,7 +1206,7 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
                                                 entry->replay_session.highest_opened );
             }
         }
-        for ( int i = 0; i < w->num_clients; i++ )
+        for ( int i = 0; i < w->num_clients && i < ROCKETNET_DST_MAX_CLIENTS; i++ )   // the array bound, which num_clients never passes
         {
             rocketnet_dst_client_t * client = &w->client[i];
             const int terminal_explained = (int) k < (int) w->fault_steps + 1000;

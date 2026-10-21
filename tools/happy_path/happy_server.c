@@ -16,6 +16,7 @@
 #endif
 
 #include "rocketnet.h"
+#include "../../test/portable_crt.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,8 +44,9 @@ int main( int argc, char ** argv )
         return 1;
     }
 
-    const char * address = getenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS" );
-    if ( !address )
+    char address_buffer[256];
+    const char * address = address_buffer;
+    if ( !rocketnet_test_getenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS", address_buffer, sizeof( address_buffer ) ) )
         address = argc > 1 ? argv[1] : "127.0.0.1:0";
 
     struct rocketnet_server_config_t config;
@@ -87,17 +89,13 @@ int main( int argc, char ** argv )
         // (2) receive and process every received message for this update
         // from one queue across every client, each message naming its sender
         {
-            const uint8_t * data = NULL;
-            int bytes = 0;
-            uint64_t sender = 0;
             struct rocketnet_message_batch_t batch;
             while ( rocketnet_server_receive_messages( server, &batch ) )
             {
                 for ( int i = 0; i < batch.num_messages; i++ )
                 {
-                    data = batch.data[i];
-                    bytes = batch.bytes[i];
-                    sender = batch.client_index[i];
+                    const uint8_t * data = batch.data[i];
+                    const int bytes = batch.bytes[i];
                     const int mode = bytes > 0 ? data[0] : -1;
                     const int ok = mode >= 0 && mode < 8 &&
                                    bytes == payload_bytes &&

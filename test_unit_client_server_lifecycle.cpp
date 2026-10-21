@@ -763,16 +763,12 @@ static void connection_reset_client_reconnect_delivers()
         lifecycle_server_send( world.server, index, 0x5F, (uint8_t) i );
     }
     lifecycle_pump( &world );
-    const uint8_t * data = NULL;
-    int bytes = 0;
     uint64_t sender = 0;
     struct rocketnet_message_batch_t batch;
     while ( rocketnet_server_receive_messages( world.server, &batch ) )
     {
         for ( int i = 0; i < batch.num_messages; i++ )
         {
-            data = batch.data[i];
-            bytes = batch.bytes[i];
             sender = batch.client_index[i];
             check( sender == index );
         }

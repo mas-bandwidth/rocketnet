@@ -28,6 +28,16 @@
 #define DISCONNECT_BATCH 64
 #define MAX_TICKS 7200
 
+// MSVC deprecates fopen, so this uses fopen_s there
+static FILE * soak_fopen( const char * path, const char * mode ) {
+#if defined( _MSC_VER )
+    FILE * file = NULL;
+    return fopen_s( &file, path, mode ) == 0 ? file : NULL;
+#else
+    return fopen( path, mode );
+#endif
+}
+
 struct soak_alloc_t { uint64_t live_allocs, live_bytes, peak_bytes, steady_allocs; bool steady; };
 static struct soak_alloc_t g_alloc;
 
@@ -137,8 +147,9 @@ int main( int argc, char ** argv ) {
     if ( num_clients < 1 || num_clients > MAX_SOAK_CLIENTS || seconds < 1 || seconds * 60 > MAX_TICKS ) return 1;
     if ( pause_start ) {
         int pid = 0, ch = 0;
-        FILE * f = fopen( "/proc/self/stat", "r" );
-        if ( f ) { if ( fscanf( f, "%d", &pid ) != 1 ) pid = 0; fclose( f ); }
+        char line[64];
+        FILE * f = soak_fopen( "/proc/self/stat", "r" );
+        if ( f ) { if ( fgets( line, sizeof( line ), f ) ) pid = (int) strtol( line, NULL, 10 ); fclose( f ); }
         printf( "PAUSED pid=%d (press Enter to start)\n", pid );
         fflush( stdout );
         while ( ( ch = getchar() ) != 10 && ch != EOF ) {}
@@ -149,6 +160,7 @@ int main( int argc, char ** argv ) {
     double * srv_us = (double *) calloc( MAX_TICKS, sizeof( double ) );
     double * cli_us = (double *) calloc( MAX_TICKS, sizeof( double ) );
     struct rocketnet_server_t * server = NULL;
+    int * index_client = NULL;
     CHECK( c2s && s2c && clients && srv_us && cli_us );
     CHECK( rocketnet_set_allocator( soak_malloc, soak_free ) == ROCKETNET_STATUS_OK && rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
     inited = true;
@@ -211,7 +223,7 @@ int main( int argc, char ** argv ) {
     CHECK( rocketnet_server_num_connected_clients( server ) == num_clients );
     // the server receives from one queue across every client, each message
     // naming its sender's client index: this maps an index back to its client
-    int * index_client = (int *) calloc( (size_t) num_clients, sizeof( int ) );
+    index_client = (int *) calloc( (size_t) num_clients, sizeof( int ) );
     CHECK( index_client != NULL );
     for ( int c = 0; c < num_clients; c++ )
         index_client[rocketnet_client_index( clients[c] )] = c;
@@ -342,7 +354,7 @@ int main( int argc, char ** argv ) {
     qsort( cli_us, (size_t) soak_ticks, sizeof( double ), cmp_double );
     double srv_p50 = srv_us[soak_ticks / 2], srv_p99 = srv_us[( soak_ticks * 99 ) / 100], srv_max = srv_us[soak_ticks - 1];
     double cli_p50 = cli_us[soak_ticks / 2], cli_p99 = cli_us[( soak_ticks * 99 ) / 100], cli_max = cli_us[soak_ticks - 1];
-    FILE * fp = fopen( out_path, "w" );
+    FILE * fp = soak_fopen( out_path, "w" );
     CHECK( fp != NULL );
     const char * m_names[] = { "sent_reliable", "recv_reliable", "acked_reliable", "sent_sequenced", "recv_sequenced", "corrupt", "seq_gaps", "peak_bytes",
                                "server_tick_us_p50", "server_tick_us_p99", "server_tick_us_max", "client_frame_us_p50", "client_frame_us_p99", "client_frame_us_max",

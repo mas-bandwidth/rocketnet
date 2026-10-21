@@ -30,12 +30,41 @@
 #define DEFAULT_PORT 40000
 #define KEY_FILE "client_server.keys"
 
+// MSVC deprecates getenv and fopen, so these use getenv_s and fopen_s there.
+// example_getenv copies the variable into buffer and returns 1, or returns 0
+// when it is unset or does not fit.
+
+static int example_getenv( const char * name, char * buffer, size_t size )
+{
+#if defined( _MSC_VER )
+    size_t length = 0;
+    return getenv_s( &length, buffer, size, name ) == 0 && length > 0;
+#else
+    const char * value = getenv( name );
+    if ( !value || strlen( value ) >= size )
+        return 0;
+    memcpy( buffer, value, strlen( value ) + 1 );
+    return 1;
+#endif
+}
+
+static FILE * example_fopen( const char * path, const char * mode )
+{
+#if defined( _MSC_VER )
+    FILE * file = NULL;
+    return fopen_s( &file, path, mode ) == 0 ? file : NULL;
+#else
+    return fopen( path, mode );
+#endif
+}
+
 // the port comes from --port <n>, else ROCKETNET_EXAMPLE_PORT, else the
 // default; returns 0 for a value that is not 1 to 65535
 
 static int example_port( int argc, char ** argv, int * port )
 {
-    const char * text = getenv( "ROCKETNET_EXAMPLE_PORT" );
+    char environment[256];
+    const char * text = example_getenv( "ROCKETNET_EXAMPLE_PORT", environment, sizeof( environment ) ) ? environment : NULL;
     for ( int i = 1; i < argc; i++ )
     {
         if ( strcmp( argv[i], "--port" ) == 0 )
@@ -63,12 +92,18 @@ static int hex_value( char c )
     return -1;
 }
 
+// reads one line, the label, a space, then count bytes as hex digits
+
 static int read_hex( FILE * file, const char * label, uint8_t * bytes, int count )
 {
-    char read_label[32];
-    char text[129];
-    if ( fscanf( file, "%31s %128s", read_label, text ) != 2 || strcmp( read_label, label ) != 0 )
+    char line[256];
+    if ( !fgets( line, sizeof( line ), file ) )
         return 0;
+    line[strcspn( line, "\r\n" )] = '\0';
+    const size_t label_length = strlen( label );
+    if ( strncmp( line, label, label_length ) != 0 || line[label_length] != ' ' )
+        return 0;
+    const char * text = line + label_length + 1;
     if ( strlen( text ) != (size_t) count * 2 )
         return 0;
     for ( int i = 0; i < count; i++ )
@@ -121,7 +156,7 @@ int main( int argc, char ** argv )
     const double keys_start = rocketnet_time();
     while ( !have_keys && rocketnet_time() - keys_start < 10.0 )
     {
-        FILE * keys = fopen( KEY_FILE, "r" );
+        FILE * keys = example_fopen( KEY_FILE, "r" );
         if ( keys )
         {
             have_keys = read_hex( keys, "backend_secret", backend_secret_key, ROCKETNET_BACKEND_SECRET_KEY_BYTES ) &&

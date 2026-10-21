@@ -144,7 +144,7 @@ static void transport_results_open_io( transport_results_lie_t * lie, rocketnet_
     ops->receive_batch = batch ? transport_results_lie_receive_batch : NULL;
     ops->wait = NULL;
     ops->wake = NULL;
-    rocketnet_client_transport_io_config_t config = { "fake", NULL };
+    rocketnet_client_transport_io_config_t config = { "fake", NULL, NULL };
     rocketnet_address_t bind = {};
     rocketnet_unit_check( rocketnet_client_transport_io_open( ops, lie, &config, &bind, transport ) );
 
@@ -170,7 +170,7 @@ static void transport_results_open_io( transport_results_lie_t * lie, rocketnet_
     buffers[0] = new rocketnet_client_receive_buffer_t;
     buffers[1] = new rocketnet_client_receive_buffer_t;
     clock->now = 1000.0;
-    memset( io, 0, sizeof( *io ) );
+    // every caller passes io value-initialised: zeroed, as init expects
     rocketnet_client_io_init( io, transport, &view0, &view1, buffers, transport_results_time, clock );
 }
 
@@ -192,7 +192,7 @@ static void transport_results_client_batch_over_count_is_a_fault()
     rocketnet_client_transport_io_t transport = {};
     rocketnet_client_receive_buffer_t * buffers[2] = {};
     transport_results_clock_t clock;
-    rocketnet_client_io_t io;
+    rocketnet_client_io_t io = {};
     transport_results_open_io( &lie, &ops, &transport, &io, buffers, &clock, true );
 
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
@@ -216,7 +216,7 @@ static void transport_results_client_negative_byte_count_is_a_fault()
     rocketnet_client_transport_io_t transport = {};
     rocketnet_client_receive_buffer_t * buffers[2] = {};
     transport_results_clock_t clock;
-    rocketnet_client_io_t io;
+    rocketnet_client_io_t io = {};
     transport_results_open_io( &lie, &ops, &transport, &io, buffers, &clock, false );
 
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_IDLE );
@@ -236,7 +236,7 @@ static void transport_results_client_oversized_byte_count_is_a_fault()
     rocketnet_client_transport_io_t transport = {};
     rocketnet_client_receive_buffer_t * buffers[2] = {};
     transport_results_clock_t clock;
-    rocketnet_client_io_t io;
+    rocketnet_client_io_t io = {};
     transport_results_open_io( &lie, &ops, &transport, &io, buffers, &clock, false );
 
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_IDLE );
@@ -259,7 +259,7 @@ static void transport_results_client_batch_refuses_a_bad_byte_count()
     rocketnet_client_transport_io_t transport = {};
     rocketnet_client_receive_buffer_t * buffers[2] = {};
     transport_results_clock_t clock;
-    rocketnet_client_io_t io;
+    rocketnet_client_io_t io = {};
     transport_results_open_io( &lie, &ops, &transport, &io, buffers, &clock, true );
 
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
@@ -285,7 +285,7 @@ static void transport_results_client_truncated_batch_copies_only_prefix()
     rocketnet_client_transport_io_t transport = {};
     rocketnet_client_receive_buffer_t * buffers[2] = {};
     transport_results_clock_t clock;
-    rocketnet_client_io_t io;
+    rocketnet_client_io_t io = {};
     transport_results_open_io( &lie, &ops, &transport, &io, buffers, &clock, true );
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
     rocketnet_unit_check( io.transport_faults == 1 );
@@ -310,7 +310,7 @@ static void transport_results_client_batch_impossible_length_is_a_fault()
     rocketnet_client_transport_io_t transport = {};
     rocketnet_client_receive_buffer_t * buffers[2] = {};
     transport_results_clock_t clock;
-    rocketnet_client_io_t io;
+    rocketnet_client_io_t io = {};
     transport_results_open_io( &lie, &ops, &transport, &io, buffers, &clock, true );
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
     rocketnet_unit_check( io.transport_faults == 1 );
@@ -329,7 +329,7 @@ static void transport_results_client_without_wait_skips_the_call()
 {
     rocketnet_fake_client_transport_io_t fake = {};
     rocketnet_client_transport_io_t transport = {};
-    rocketnet_client_transport_io_config_t config = { "fake", NULL };
+    rocketnet_client_transport_io_config_t config = { "fake", NULL, NULL };
     rocketnet_address_t bind = {};
     rocketnet_unit_check( rocketnet_client_transport_io_open( &rocketnet_fake_client_operations_base, &fake, &config, &bind, &transport ) );
     rocketnet_unit_check( transport.operations->wait == NULL );
@@ -542,8 +542,8 @@ static void transport_results_loopback_matches_destination_or_wildcard()
     rocketnet_server_transport_dev_config( &server_config );
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
-    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL };
-    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config };
+    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
+    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
 
     rocketnet_address_t server_address, client_address;
     rocketnet_unit_check( rocketnet_address_parse( &server_address, "127.0.0.1:0" ) );

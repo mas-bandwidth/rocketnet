@@ -24,8 +24,12 @@ struct violation_packet_t
 {
     uint64_t id;
     int bytes;
+    uint8_t bytes_pad[16 - sizeof( uint64_t ) - sizeof( int )];                 // explicit: data starts 16-aligned
     alignas( 16 ) uint8_t data[ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t tail_pad[16 - ROCKETNET_MAX_PAYLOAD_BYTES % 16];                     // explicit: the size rounds up to 16
 };
+static_assert( sizeof( violation_packet_t ) == 16 + ( ROCKETNET_MAX_PAYLOAD_BYTES + 15 ) / 16 * 16, "no implicit padding" );
+static_assert( alignof( violation_packet_t ) == 16, "data is 16-aligned" );
 
 struct violation_node_t
 {

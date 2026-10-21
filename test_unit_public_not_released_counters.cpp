@@ -13,6 +13,7 @@
 // message layer under the public object.
 
 #include "test_unit_registry.h"
+#include "test/portable_crt.h"
 
 #include "sdk/rocketnet.h"
 #include "rocketnet_internal.h"
@@ -103,9 +104,9 @@ static bool public_not_released_pair_setup( struct public_not_released_pair_t * 
     memcpy( server_transport_config.server_secret_key, server_secret_key, sizeof( server_transport_config.server_secret_key ) );
     snprintf( server_transport_config.transport, sizeof( server_transport_config.transport ), "%s", "loopback" );
 
-    const char * pin = getenv( "ROCKETNET_SERVER_TRANSPORT" );
+    char pin[4096];
     char saved_pin[256];
-    const bool pinned = pin != NULL;
+    const bool pinned = rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", pin, sizeof( pin ) ) != 0;
     saved_pin[0] = '\0';
     if ( pinned )
         snprintf( saved_pin, sizeof( saved_pin ), "%s", pin );

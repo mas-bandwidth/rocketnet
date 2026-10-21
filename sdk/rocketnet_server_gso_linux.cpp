@@ -676,8 +676,8 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     // tiers (plain sendmmsg, plain recvmmsg) for a whole process, so a tool
     // such as load pins the gso plain cell without calling the hook above
 
-    const char * test_plain = rocketnet_platform_getenv( "ROCKETNET_TEST_GSO_PLAIN" );
-    if ( test_plain && strcmp( test_plain, "1" ) == 0 )
+    char test_plain[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
+    if ( rocketnet_platform_getenv( "ROCKETNET_TEST_GSO_PLAIN", test_plain, sizeof( test_plain ) ) > 0 && strcmp( test_plain, "1" ) == 0 )
         flags |= ROCKETNET_SERVER_GSO_DISABLE_SEGMENT | ROCKETNET_SERVER_GSO_DISABLE_GRO;
 #endif
 

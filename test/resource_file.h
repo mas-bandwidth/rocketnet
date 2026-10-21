@@ -67,7 +67,14 @@ inline FILE * rocketnet_test_fopen( const std::string & path, const char * mode 
     const std::wstring wide_mode = rocketnet_test_utf8_to_wide( mode );
     if ( wide_mode.empty() )
         return NULL;
+#if defined(_MSC_VER)
+    FILE * file = NULL;
+    if ( _wfopen_s( &file, wide.c_str(), wide_mode.c_str() ) != 0 )
+        return NULL;
+    return file;
+#else
     return _wfopen( wide.c_str(), wide_mode.c_str() );
+#endif
 #else
     return fopen( path.c_str(), mode );
 #endif

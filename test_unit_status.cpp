@@ -103,7 +103,7 @@ static void config_int_parse_refuses_out_of_range()
     check( out == 2147483647 );
 
     check( rocketnet_config_parse_int_value( "-2147483648", &out ) );
-    check( out == -2147483648 );
+    check( out == -2147483647 - 1 );
 
     out = 77;
     check( !rocketnet_config_parse_int_value( "2147483648", &out ) );

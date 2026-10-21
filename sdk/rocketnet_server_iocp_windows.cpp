@@ -23,10 +23,14 @@
 #include <stddef.h>
 #include <string.h>
 
-struct alignas(MEMORY_ALLOCATION_ALIGNMENT) rocketnet_iocp_operation_t
+// The 16-aligned members lead, each starting where the one before ends, so the
+// compiler inserts no alignment padding; the struct takes their alignment.
+struct rocketnet_iocp_operation_t
 {
     OVERLAPPED overlapped;
     SLIST_ENTRY free_entry;
+    alignas(16) char control[64];
+    alignas(16) uint8_t frame[ROCKETNET_FRAME_STRIDE];
     WSABUF buffer;
     sockaddr_storage address;
     int address_bytes;
@@ -46,35 +50,57 @@ struct alignas(MEMORY_ALLOCATION_ALIGNMENT) rocketnet_iocp_operation_t
     // receive's coalesced buffer, NULL on the per-datagram receive path.
     WSAMSG message;
     uint8_t * uro_data;
-    alignas(16) char control[64];
-    alignas(16) uint8_t frame[ROCKETNET_FRAME_STRIDE];
 };
 
 static_assert( offsetof( rocketnet_iocp_operation_t, overlapped ) == 0, "completion identifies its operation" );
 static_assert( offsetof( rocketnet_iocp_operation_t, free_entry ) % MEMORY_ALLOCATION_ALIGNMENT == 0, "Windows SList alignment" );
+static_assert( alignof( rocketnet_iocp_operation_t ) % MEMORY_ALLOCATION_ALIGNMENT == 0 && alignof( rocketnet_iocp_operation_t ) >= 16, "an operation keeps its allocation alignment" );
+static_assert( offsetof( rocketnet_iocp_operation_t, control ) == offsetof( rocketnet_iocp_operation_t, free_entry ) + sizeof( SLIST_ENTRY ) &&
+               offsetof( rocketnet_iocp_operation_t, control ) % 16 == 0, "control follows the SList entry with no implicit padding" );
+static_assert( offsetof( rocketnet_iocp_operation_t, frame ) == offsetof( rocketnet_iocp_operation_t, control ) + 64, "frame follows control with no implicit padding" );
 static_assert( ROCKETNET_RECEIVE_CEILING + 1 <= ROCKETNET_FRAME_STRIDE, "receive detects oversize datagrams" );
 
+// data leads, so its 16-alignment needs no padding before it
 struct rocketnet_iocp_receive_buffer_t
 {
+    alignas(16) uint8_t data[ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE][ROCKETNET_FRAME_STRIDE];
     int num_packets;
     rocketnet_address_t from[ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE];
     int packet_bytes[ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE];
-    alignas(16) uint8_t data[ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE][ROCKETNET_FRAME_STRIDE];
 };
+
+// the bytes of a worker's members, which pack with no padding between them
+#define ROCKETNET_IOCP_WORKER_MEMBER_BYTES ( 2 * sizeof( rocketnet_iocp_receive_buffer_t ) + sizeof( rocketnet_server_iocp_t * ) + \
+                                             sizeof( rocketnet_platform_thread_t * ) + sizeof( rocketnet_platform_mutex_t ) + sizeof( uint64_t ) )
+
+static_assert( ROCKETNET_IOCP_WORKER_MEMBER_BYTES % 64 != 0, "a worker's tail padding is a nonzero array" );
 
 struct alignas(64) rocketnet_iocp_worker_t
 {
+    rocketnet_iocp_receive_buffer_t buffers[2];
     rocketnet_server_iocp_t * owner;
     rocketnet_platform_thread_t * thread;
     // This mutex also joins a worker's reposts before shutdown cancels I/O.
     // Receive publication takes it once per completion batch, not per packet.
     rocketnet_platform_mutex_t mutex;
     uint64_t receive_counter;
-    rocketnet_iocp_receive_buffer_t buffers[2];
+    // the rest of the last cache line, explicit so the compiler adds no tail padding
+    uint8_t padding[64 - ROCKETNET_IOCP_WORKER_MEMBER_BYTES % 64];
 };
+
+static_assert( sizeof( rocketnet_iocp_worker_t ) == ROCKETNET_IOCP_WORKER_MEMBER_BYTES + 64 - ROCKETNET_IOCP_WORKER_MEMBER_BYTES % 64 &&
+               sizeof( rocketnet_iocp_worker_t ) % 64 == 0, "a worker has no implicit padding" );
 
 struct rocketnet_server_iocp_t
 {
+    // The aligned members lead: the two SList heads share the first cache
+    // line, explicitly padded out, and num_staged starts the second, so the
+    // compiler inserts no alignment padding before any of them.
+    alignas(MEMORY_ALLOCATION_ALIGNMENT) SLIST_HEADER free_sends;
+    alignas(MEMORY_ALLOCATION_ALIGNMENT) SLIST_HEADER retry_receives;
+    uint8_t slist_padding[64 - 2 * sizeof( SLIST_HEADER )];
+    alignas(64) std::atomic<uint64_t> num_staged{0};
+    int staged[ROCKETNET_IOCP_SEND_QUEUE_SIZE];
     void * context;
     SOCKET socket = INVALID_SOCKET;
     HANDLE port;
@@ -86,10 +112,6 @@ struct rocketnet_server_iocp_t
     std::atomic<bool> stopping{false};
     std::atomic<int> pending{0};
     std::atomic<int> active_workers{0};
-    alignas(MEMORY_ALLOCATION_ALIGNMENT) SLIST_HEADER free_sends;
-    alignas(MEMORY_ALLOCATION_ALIGNMENT) SLIST_HEADER retry_receives;
-    alignas(64) std::atomic<uint64_t> num_staged{0};
-    int staged[ROCKETNET_IOCP_SEND_QUEUE_SIZE];
     std::atomic<uint64_t> counters[ROCKETNET_IOCP_NUM_COUNTERS]{};
     rocketnet_server_socket_process_packets_t process;
     std::atomic<int> features{0};
@@ -106,6 +128,9 @@ struct rocketnet_server_iocp_t
     std::atomic<int> test_fault_status[ROCKETNET_IOCP_TEST_NUM_FAULTS]{};
 #endif
 };
+
+static_assert( offsetof( rocketnet_server_iocp_t, retry_receives ) == sizeof( SLIST_HEADER ) &&
+               offsetof( rocketnet_server_iocp_t, num_staged ) == 64, "the iocp's aligned members have no implicit padding" );
 
 // The fault seam (rocketnet_server_iocp_test_fail_next) exists only in the
 // test executable. Elsewhere the check is the constant false, so the

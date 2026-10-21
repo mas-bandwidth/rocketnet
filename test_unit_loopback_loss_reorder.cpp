@@ -16,6 +16,7 @@
 // (sprint/rocketnet-proof cac844d) before this change existed.
 
 #include "test_unit_registry.h"
+#include "test/portable_crt.h"
 
 #include "sdk/rocketnet.h"
 #include "rocketnet_internal.h"
@@ -227,7 +228,8 @@ static void loopback_run_fixed_trace( int latency_ms, struct loopback_trace_t * 
 
 static void loopback_print_trace( const char * name, const struct loopback_trace_t * t )
 {
-    if ( getenv( "ROCKETNET_LOOPBACK_PRINT_TRACE" ) == NULL )
+    char print_trace[256];
+    if ( !rocketnet_test_getenv( "ROCKETNET_LOOPBACK_PRINT_TRACE", print_trace, sizeof( print_trace ) ) )
         return;
     printf( "TRACE %s { %llu, %llu, %llu, %llu, %llu, %llu, %llu, %llu, UINT64_C( 0x%016llx ), UINT64_C( 0x%016llx ), %d }\n", name,
             (unsigned long long) t->client_packets_sent, (unsigned long long) t->client_packets_received,
@@ -298,9 +300,7 @@ static void loopback_drop_every_nth()
         rocketnet_client_transport_stats( pair.client, &cstats );
         rocketnet_server_transport_stats( pair.server, &sstats );
         const uint64_t client_sent_before = cstats.packets_sent;
-        const uint64_t server_received_before = sstats.packets_received;
         const uint64_t server_sent_before = sstats.packets_sent;
-        const uint64_t client_received_before = cstats.packets_received;
 
         uint8_t payload[4];
         const uint32_t seq = (uint32_t) ( i + 1 );

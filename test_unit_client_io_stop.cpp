@@ -32,7 +32,7 @@ static double client_io_stop_test_time( void * context )
 static void client_io_stop_test_open( rocketnet_fake_client_transport_io_t * fake,
     const rocketnet_client_transport_io_operations_t * operations, rocketnet_client_transport_io_t * transport )
 {
-    rocketnet_client_transport_io_config_t config = { "fake", NULL };
+    rocketnet_client_transport_io_config_t config = { "fake", NULL, NULL };
     rocketnet_address_t bind = {};
     rocketnet_unit_check( rocketnet_client_transport_io_open( operations, fake, &config, &bind, transport ) );
 }
@@ -282,7 +282,7 @@ static void destroy_wait_wake( void * driver )
 static const rocketnet_client_transport_io_operations_t destroy_wait_io_operations =
 {
     destroy_wait_create, destroy_wait_destroy, destroy_wait_send, destroy_wait_receive,
-    NULL, NULL, destroy_wait_wait, destroy_wait_wake
+    NULL, NULL, destroy_wait_wait, destroy_wait_wake, NULL
 };
 
 static void destroy_wait_token( uint8_t * token )

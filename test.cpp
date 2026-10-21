@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet_internal.h"
+#include "test/portable_crt.h"
 #include "test/suite_runner.h"
 #include "test_unit_registry.h"
 
@@ -230,16 +231,10 @@ int main( int argc, char ** argv )
     // cleared environment; a case that tests pin handling itself sets and
     // reads its own pins.
 
-    char saved_server_transport[64] = "";
-    char saved_client_transport[64] = "";
-    const char * pinned_server = getenv( "ROCKETNET_SERVER_TRANSPORT" );
-    const char * pinned_client = getenv( "ROCKETNET_CLIENT_TRANSPORT" );
-    const bool server_pinned = pinned_server != NULL;
-    const bool client_pinned = pinned_client != NULL;
-    if ( server_pinned )
-        snprintf( saved_server_transport, sizeof( saved_server_transport ), "%s", pinned_server );
-    if ( client_pinned )
-        snprintf( saved_client_transport, sizeof( saved_client_transport ), "%s", pinned_client );
+    char saved_server_transport[256] = "";
+    char saved_client_transport[256] = "";
+    const bool server_pinned = rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", saved_server_transport, sizeof( saved_server_transport ) ) != 0;
+    const bool client_pinned = rocketnet_test_getenv( "ROCKETNET_CLIENT_TRANSPORT", saved_client_transport, sizeof( saved_client_transport ) ) != 0;
 #if defined(_WIN32)
     _putenv_s( "ROCKETNET_SERVER_TRANSPORT", "" );
     _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", "" );

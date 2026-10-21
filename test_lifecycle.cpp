@@ -1,5 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. AGPL-3.0. */
 #include "rocketnet_internal.h"
+#include "test/portable_crt.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_test_vectors.h"
 #include "rocketnet_platform.h"
@@ -36,7 +37,8 @@
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 static int setenv( const char * name, const char * value, int overwrite )
 {
-    if ( !overwrite && getenv( name ) != NULL )
+    char existing[4096];
+    if ( !overwrite && rocketnet_test_getenv( name, existing, sizeof( existing ) ) )
         return 0;
     return _putenv_s( name, value );
 }
@@ -581,7 +583,7 @@ static void check_server_memory_budget( allocator_state & state )
     memset( config.server_secret_key, 0xCD, 32 );
     memset( config.backend_public_key, 0xEF, 32 );
     config.protocol_id = 1;
-    strcpy( config.transport, "portable" );
+    snprintf( config.transport, sizeof( config.transport ), "%s", "portable" );
     const uint64_t plan = rocketnet_server_transport_required_memory( &config, "portable" );
     check( plan > 0 );
 
