@@ -258,6 +258,7 @@ struct rocketnet_server_stats_bank_t
     rocketnet_server_stats_job_t jobs[ROCKETNET_CLIENT_STATS_SLOTS_PER_UPDATE];
 };
 
+
 struct rocketnet_server_stats_worker_t
 {
     rocketnet_server_stats_bank_t * banks[2];
@@ -490,6 +491,17 @@ bool rocketnet_server_transport_stats_worker_status_for_test( const rocketnet_se
     if ( busy_skips ) *busy_skips = worker->busy_skips;
     return true;
 }
+rocketnet_ack_endpoint_t * rocketnet_server_transport_stats_endpoint_for_test(
+    rocketnet_server_transport_t * server, int slot )
+{
+    if ( !server || !server->protocol.client_slots || !server->protocol.acks ||
+         !server->protocol.connection_ids || slot < 0 ||
+         slot >= rocketnet_client_slots_max_clients(server->protocol.client_slots) ||
+         !rocketnet_client_slots_connected(server->protocol.client_slots, slot) ||
+         !server->protocol.connection_ids[slot] )
+        return NULL;
+    return &server->protocol.acks->endpoints[slot];
+}
 #endif
 
 static void rocketnet_server_stats_worker_stop( rocketnet_server_stats_worker_t * worker )
@@ -499,6 +511,7 @@ static void rocketnet_server_stats_worker_stop( rocketnet_server_stats_worker_t 
     if ( worker->wake )
         rocketnet_platform_wake_set(worker->wake);
 }
+
 
 static void rocketnet_server_stats_worker_destroy( void * context, rocketnet_server_stats_worker_t * worker )
 {

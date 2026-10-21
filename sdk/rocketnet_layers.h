@@ -1424,6 +1424,7 @@ int rocketnet_server_transport_send_capacity( const struct rocketnet_server_tran
 int rocketnet_server_transport_send_capacity_available( const struct rocketnet_server_transport_t * server_transport );
 
 #if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS)
+struct rocketnet_ack_endpoint_t;
 // Deterministic internal seam: the next create uses an inline stats worker.
 // step computes one submitted immutable batch; only a later update publishes.
 void rocketnet_server_transport_set_stats_worker_manual_for_test( bool enabled );
@@ -1431,6 +1432,8 @@ bool rocketnet_server_transport_stats_worker_step_for_test( struct rocketnet_ser
 bool rocketnet_server_transport_stats_worker_status_for_test( const struct rocketnet_server_transport_t * server_transport,
     uint64_t * submitted, uint64_t * completed, uint64_t * published, uint64_t * busy_skips );
 void rocketnet_server_transport_fail_stats_worker_thread_for_test();
+struct rocketnet_ack_endpoint_t * rocketnet_server_transport_stats_endpoint_for_test(
+    struct rocketnet_server_transport_t * server_transport, int client_index );
 #endif
 
 // -----------------------------------------
