@@ -25,11 +25,11 @@ thread_local struct rocketnet_crypto_tally_t rocketnet_crypto_tally;
 // field stays exactly as it is, so a keyed filter can return later as a value
 // change, never a format change.
 
-void rocketnet_write_prefilter_header( uint8_t ** p, uint8_t packet_type, const uint8_t * filter_value )
+void rocketnet_write_prefilter_header( uint8_t ** p, uint8_t packet_type, const uint8_t * packet_filter )
 {
     rocketnet_write_uint8( p, packet_type );
     rocketnet_write_uint8( p, ROCKETNET_FILTER_EPOCH_UNKEYED );
-    rocketnet_write_bytes( p, filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+    rocketnet_write_bytes( p, packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
 }
 
 // maps a refusal code to its counter, so both receive paths attribute the
@@ -86,7 +86,7 @@ int rocketnet_prefilter_counter( int refusal_code )
     return ROCKETNET_COUNTER_PREFILTER_WRONG_VALUE;
 }
 
-int rocketnet_prefilter_check( const uint8_t * packet_data, int packet_bytes, const uint8_t * filter_value )
+int rocketnet_prefilter_check( const uint8_t * packet_data, int packet_bytes, const uint8_t * packet_filter )
 {
     if ( packet_bytes < ROCKETNET_PREFILTER_BYTES )
         return ROCKETNET_PREFILTER_TOO_SHORT;
@@ -101,8 +101,8 @@ int rocketnet_prefilter_check( const uint8_t * packet_data, int packet_bytes, co
     if ( packet_data[1] != ROCKETNET_FILTER_EPOCH_UNKEYED )
         return ROCKETNET_PREFILTER_WRONG_EPOCH;
 
-    if ( packet_data[2] != filter_value[0] || packet_data[3] != filter_value[1] ||
-         packet_data[4] != filter_value[2] || packet_data[5] != filter_value[3] )
+    if ( packet_data[2] != packet_filter[0] || packet_data[3] != packet_filter[1] ||
+         packet_data[4] != packet_filter[2] || packet_data[5] != packet_filter[3] )
         return ROCKETNET_PREFILTER_WRONG_VALUE;
 
     return packet_data[0];
@@ -168,7 +168,7 @@ static void rocketnet_sequence_nonce( uint8_t * nonce, uint64_t sequence )
 // safe in place.
 
 int rocketnet_write_sealed_payload_in_place( uint8_t * wire_start,
-                                             const uint8_t * filter_value,
+                                             const uint8_t * packet_filter,
                                              uint64_t sequence,
                                              const uint8_t * ack_block,
                                              int ack_block_bytes,
@@ -178,7 +178,7 @@ int rocketnet_write_sealed_payload_in_place( uint8_t * wire_start,
                                              const uint8_t * key )
 {
     rocketnet_assert( wire_start );
-    rocketnet_assert( filter_value );
+    rocketnet_assert( packet_filter );
     rocketnet_assert( ack_block );
     rocketnet_assert( connection_salt );
     rocketnet_assert( key );
@@ -194,7 +194,7 @@ int rocketnet_write_sealed_payload_in_place( uint8_t * wire_start,
         return 0;
 
     uint8_t * p = wire_start;
-    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_PAYLOAD_PACKET, filter_value );
+    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_PAYLOAD_PACKET, packet_filter );
     rocketnet_write_uint32( &p, (uint32_t) ( sequence & 0xFFFFFFFF ) );
 
     uint8_t * payload = wire_start + ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET;
@@ -225,7 +225,7 @@ int rocketnet_write_sealed_payload_in_place( uint8_t * wire_start,
 
 int rocketnet_write_sealed_packet( uint8_t * packet_data,
                                    uint8_t packet_type,
-                                   const uint8_t * filter_value,
+                                   const uint8_t * packet_filter,
                                    uint64_t sequence,
                                    const uint8_t * session_nonce,
                                    const uint8_t * data,
@@ -236,7 +236,7 @@ int rocketnet_write_sealed_packet( uint8_t * packet_data,
                                    const uint8_t * key )
 {
     rocketnet_assert( packet_data );
-    rocketnet_assert( filter_value );
+    rocketnet_assert( packet_filter );
     rocketnet_assert( connection_salt );
     rocketnet_assert( key );
 
@@ -256,7 +256,7 @@ int rocketnet_write_sealed_packet( uint8_t * packet_data,
         return 0;
 
     uint8_t * p = packet_data;
-    rocketnet_write_prefilter_header( &p, packet_type, filter_value );
+    rocketnet_write_prefilter_header( &p, packet_type, packet_filter );
     rocketnet_write_uint32( &p, (uint32_t) ( sequence & 0xFFFFFFFF ) );
 
     if ( session_nonce )
@@ -343,7 +343,7 @@ int rocketnet_open_sealed_packet( uint8_t * out_data,
 }
 
 void rocketnet_write_connection_request_packet( uint8_t * packet_data,
-                                                const uint8_t * filter_value,
+                                                const uint8_t * packet_filter,
                                                 const uint8_t * return_cookie,
                                                 const uint8_t * connection_salt,
                                                 const uint8_t * client_ephemeral_public_key,
@@ -351,14 +351,14 @@ void rocketnet_write_connection_request_packet( uint8_t * packet_data,
                                                 const uint8_t * signature )
 {
     rocketnet_assert( packet_data );
-    rocketnet_assert( filter_value );
+    rocketnet_assert( packet_filter );
     rocketnet_assert( connection_salt );
     rocketnet_assert( client_ephemeral_public_key );
     rocketnet_assert( signed_connect_data );
     rocketnet_assert( signature );
 
     uint8_t * p = packet_data;
-    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_REQUEST_PACKET, filter_value );
+    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_REQUEST_PACKET, packet_filter );
     if ( return_cookie )
         rocketnet_write_bytes( &p, return_cookie, ROCKETNET_COOKIE_FIELD_BYTES );
     else
@@ -371,18 +371,18 @@ void rocketnet_write_connection_request_packet( uint8_t * packet_data,
 }
 
 void rocketnet_write_connection_cookie_packet( uint8_t * packet_data,
-                                               const uint8_t * filter_value,
+                                               const uint8_t * packet_filter,
                                                const uint8_t * connection_salt,
                                                uint64_t cookie_expire_timestamp,
                                                const uint8_t * cookie_mac )
 {
     rocketnet_assert( packet_data );
-    rocketnet_assert( filter_value );
+    rocketnet_assert( packet_filter );
     rocketnet_assert( connection_salt );
     rocketnet_assert( cookie_mac );
 
     uint8_t * p = packet_data;
-    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_COOKIE_PACKET, filter_value );
+    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_COOKIE_PACKET, packet_filter );
     rocketnet_write_bytes( &p, connection_salt, ROCKETNET_CONNECTION_SALT_BYTES );
     rocketnet_write_uint64( &p, cookie_expire_timestamp );
     rocketnet_write_bytes( &p, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES );

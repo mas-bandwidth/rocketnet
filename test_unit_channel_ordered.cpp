@@ -75,10 +75,10 @@ struct wire_packet_t
     uint64_t id;
     int bytes;
     uint8_t bytes_pad[16 - sizeof( uint64_t ) - sizeof( int )];                 // explicit: data starts 16-aligned
-    alignas( 16 ) uint8_t data[ROCKETNET_MAX_PAYLOAD_BYTES];
-    uint8_t tail_pad[16 - ROCKETNET_MAX_PAYLOAD_BYTES % 16];                     // explicit: the size rounds up to 16
+    alignas( 16 ) uint8_t data[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    uint8_t tail_pad[16 - ROCKETNET_MAX_PACKET_PAYLOAD_BYTES % 16];                     // explicit: the size rounds up to 16
 };
-static_assert( sizeof( wire_packet_t ) == 16 + ( ROCKETNET_MAX_PAYLOAD_BYTES + 15 ) / 16 * 16, "no implicit padding" );
+static_assert( sizeof( wire_packet_t ) == 16 + ( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 15 ) / 16 * 16, "no implicit padding" );
 static_assert( alignof( wire_packet_t ) == 16, "data is 16-aligned" );
 
 struct delivered_t
@@ -110,14 +110,14 @@ struct node_t
 static void node_config( rocketnet_message_config_t * config, int window, int ring, int max_message, int store )
 {
     rocketnet_message_default_config( config );
-    config->window_messages = window;
-    config->receive_ring_bytes = ring;
+    config->reliable_messages_in_flight = window;
+    config->receive_message_buffer_bytes = ring;
     config->max_message_bytes = max_message;
-    config->send_buffer_bytes = store;
-    config->resend_delay_min_ms = 20;
-    config->resend_delay_initial_ms = 100;
-    config->resend_delay_max_ms = 400;
-    config->reliable_timeout_ms = 120000;
+    config->send_message_buffer_bytes = store;
+    config->message_resend_delay_min_ms = 20;
+    config->message_resend_delay_initial_ms = 100;
+    config->message_resend_delay_max_ms = 400;
+    config->reliable_message_timeout_ms = 120000;
 }
 
 static void node_setup( node_t * node, const rocketnet_message_config_t * config, int max_packets, bool budgeted = false, uint32_t kbps = 10000 )
@@ -179,7 +179,7 @@ static uint64_t send_message( node_t * node, uint32_t channel, uint32_t bytes, u
 
 static int write_packets( node_t * node, double now, wire_packet_t * out, int max_out )
 {
-    alignas( 16 ) static uint8_t frames[ROCKETNET_PACKET_BUILDER_MAX_PACKETS][ROCKETNET_MAX_PAYLOAD_BYTES];
+    alignas( 16 ) static uint8_t frames[ROCKETNET_PACKET_BUILDER_MAX_PACKETS][ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     uint8_t * pointers[ROCKETNET_PACKET_BUILDER_MAX_PACKETS];
     const int limit = max_out < ROCKETNET_PACKET_BUILDER_MAX_PACKETS ? max_out : ROCKETNET_PACKET_BUILDER_MAX_PACKETS;
     for ( int i = 0; i < limit; i++ )
@@ -273,7 +273,7 @@ static void sim_teardown( sim_t * sim )
 
 static void sim_send_data( sim_t * sim, int from, const wire_packet_t * packet )
 {
-    alignas( 16 ) uint8_t bytes[16 + ROCKETNET_MAX_PAYLOAD_BYTES];
+    alignas( 16 ) uint8_t bytes[16 + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     bytes[0] = 0;
     memcpy( bytes + 1, &packet->id, 8 );
     memcpy( bytes + 9, packet->data, (size_t) packet->bytes );
@@ -313,7 +313,7 @@ static void sim_tick( sim_t * sim, node_t * nodes[2], double dt )
 
     for ( int side = 0; side < 2; side++ )
     {
-        alignas( 16 ) static uint8_t bytes[16 + ROCKETNET_MAX_PAYLOAD_BYTES];
+        alignas( 16 ) static uint8_t bytes[16 + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
         rocketnet_address_t from;
         std::vector<uint64_t> acks_in;
         for ( int got = rocketnet_network_simulator_receive( sim->wire, &sim->address[side], sim->now, &from, bytes );
@@ -563,7 +563,7 @@ static void test_small_packed_and_resent_until_packet_acked()
     {
         rocketnet_message_config_t timed;
         node_config( &timed, 1024, 262144, 262144, 800000 );
-        timed.reliable_timeout_ms = 1000;
+        timed.reliable_message_timeout_ms = 1000;
         node_t * c = node_new( &timed, 4 );
         check( send_message( c, 0, 64 ) != 0 );
         wire_packet_t sent[4];
@@ -572,7 +572,7 @@ static void test_small_packed_and_resent_until_packet_acked()
         check( write_packets( c, 1.6, sent, 4 ) >= 0 );                  // resent, still inside the timeout
         check( rn_ordered_decide( &c->ordered ) == ROCKETNET_DISCONNECT_REASON_NONE );
         check( write_packets( c, 2.5, sent, 4 ) == 0 );                  // past it: nothing more is sent
-        check( rn_ordered_decide( &c->ordered ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
+        check( rn_ordered_decide( &c->ordered ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
         node_free( c );
     }
 
@@ -1069,7 +1069,7 @@ static void test_hostile_chunk_count_or_index_kicks()
         // the same record as a payload: the standard's check 7 refuses it whole, before any dispatch
         b = node_new( &config, 4 );
         rocketnet_message_writer_t writer;
-        alignas( 16 ) uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES];
+        alignas( 16 ) uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
         rocketnet_message_writer_begin( &writer, payload, ROCKETNET_MESSAGE_SINGLE_BYTES );
         chunk_record( &record, 0, 0, 0, 228, 0, chunk, (int) F );
         check( rocketnet_message_writer_add( &writer, &record ) );
@@ -1313,7 +1313,7 @@ static void test_hostile_small_at_held_ordering_is_refused_sim()
     sim_setup( &sim, 0.0f, 0.0f, 9 );
     sim.now = 1000.0;
 
-    alignas( 16 ) static uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES];
+    alignas( 16 ) static uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     rocketnet_message_writer_t writer;
     rocketnet_message_record_t record;
     wire_packet_t wp;
@@ -1584,14 +1584,14 @@ static void cm_free( void * context, void * p )
 static void cm_install()
 {
     rocketnet_term();
-    check( rocketnet_set_allocator( cm_malloc, cm_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( cm_malloc, cm_free ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
 static void cm_restore()
 {
     rocketnet_term();
-    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
@@ -1610,7 +1610,7 @@ static void test_ordered_no_allocation_after_create()
     rocketnet_message_config_t defaults;
     rocketnet_message_default_config( &defaults );
     check( defaults.max_message_bytes >= 262144 );
-    check( defaults.receive_ring_bytes >= defaults.max_message_bytes );
+    check( defaults.receive_message_buffer_bytes >= defaults.max_message_bytes );
     check( rocketnet_message_validate_config( NULL ) == 1 );
     rn_region_layout_t layout;
     check( rn_region_layout( NULL, &layout ) );
@@ -2048,7 +2048,7 @@ static void test_ordered_failed_send_at_zero_is_due_next_update()
     check( send_message( a, 0, 16 ) != 0 );
 
     // write at 0.0, then fail the packet in place of committing
-    alignas( 16 ) static uint8_t frames[ROCKETNET_PACKET_BUILDER_MAX_PACKETS][ROCKETNET_MAX_PAYLOAD_BYTES];
+    alignas( 16 ) static uint8_t frames[ROCKETNET_PACKET_BUILDER_MAX_PACKETS][ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     uint8_t * pointers[ROCKETNET_PACKET_BUILDER_MAX_PACKETS];
     pointers[0] = frames[0];
     check( rn_ordered_write( &a->ordered, 0.0, pointers, 1 ) == 1 );

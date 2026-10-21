@@ -31,7 +31,7 @@ struct rocketnet_fake_client_datagram_t
 {
     rocketnet_address_t address;
     int bytes;
-    uint8_t data[ROCKETNET_MAX_PACKET_BYTES];
+    uint8_t data[ROCKETNET_RECEIVE_PACKET_BYTES];
 };
 
 struct rocketnet_fake_client_transport_io_t

@@ -176,7 +176,7 @@ typedef struct rocketnet_dst_endpoint_t
     uint8_t frame[ROCKETNET_DST_MAX_PACKETS][ROCKETNET_FRAME_STRIDE];
     int frame_bytes[ROCKETNET_DST_MAX_PACKETS];
     int frame_peer[ROCKETNET_DST_MAX_PACKETS];
-    uint8_t (* payload)[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+    uint8_t (* payload)[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
     uint8_t * payload_ptr[ROCKETNET_DST_MAX_PAYLOADS];
     int payload_bytes[ROCKETNET_DST_MAX_PAYLOADS];
     int payload_client_index[ROCKETNET_DST_MAX_PAYLOADS];
@@ -268,7 +268,7 @@ static inline void rocketnet_dst_endpoint_payload( rocketnet_dst_endpoint_t * en
                                                    const uint8_t * data, int bytes )
 {
     if ( endpoint->payload_count >= ROCKETNET_DST_MAX_PAYLOADS || bytes <= 0 ||
-         bytes > ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES )
+         bytes > ROCKETNET_RECEIVE_PAYLOAD_BYTES )
     {
         rocketnet_dst_fail( endpoint->world, "payload_ring", "the delivery ring is full" );
         return;
@@ -322,7 +322,7 @@ static inline void rocketnet_dst_endpoint_update( void * transport, double time 
     struct rocketnet_address_t from;
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
-    uint8_t payload[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+    uint8_t payload[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
 
     if ( endpoint->is_server )
     {
@@ -435,7 +435,7 @@ static inline uint8_t * rocketnet_dst_endpoint_start_packet( void * transport, i
     memset( context, 0, sizeof(*context) );
     context->frame = wire_start;
     context->payload_index = ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET;
-    context->payload_capacity = ROCKETNET_MAX_PAYLOAD_BYTES;
+    context->payload_capacity = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
     context->packet_id = ++endpoint->next_packet_id;
     context->sequence = sequence;
     context->client_index = client_index;
@@ -676,7 +676,7 @@ static inline int rocketnet_dst_client_message_build( rocketnet_dst_world_t * w,
     rocketnet_dst_endpoint_link( &client_link, &client->endpoint );
     client->message = (struct rocketnet_message_client_t *) rn_message_object_create(
         NULL, &client_link, 0, 1, &w->message_config, NULL, 0,
-        ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, w->now );
+        ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, w->now );
     return client->message != NULL;
 }
 
@@ -952,7 +952,7 @@ static inline int rocketnet_dst_world_create( rocketnet_dst_world_t * w, uint64_
     rocketnet_dst_check_init( &w->check, seed, 0 );
     w->server.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     w->server.send_rate = 10.0;
-    memcpy( w->server.filter_value, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( w->server.packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( w->server.backend_public_key, rocketnet_test_backend_public_key, 32 );
     memcpy( w->server.server_public_key, rocketnet_test_server_public_key, 32 );
     memcpy( w->server.server_secret_key, rocketnet_test_server_secret_key, 32 );
@@ -978,8 +978,8 @@ static inline int rocketnet_dst_world_create( rocketnet_dst_world_t * w, uint64_
     w->server_endpoint.world = w;
     w->server_endpoint.is_server = 1;
     w->server_endpoint.pending_frame = -1;
-    w->server_endpoint.payload = (uint8_t (*)[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES])
-        malloc( sizeof( uint8_t[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES] ) * ROCKETNET_DST_MAX_PAYLOADS );
+    w->server_endpoint.payload = (uint8_t (*)[ROCKETNET_RECEIVE_PAYLOAD_BYTES])
+        malloc( sizeof( uint8_t[ROCKETNET_RECEIVE_PAYLOAD_BYTES] ) * ROCKETNET_DST_MAX_PAYLOADS );
     if ( !w->server_endpoint.payload )
         return 0;
     w->check.allocation_balance++;
@@ -991,7 +991,7 @@ static inline int rocketnet_dst_world_create( rocketnet_dst_world_t * w, uint64_
     rocketnet_dst_endpoint_link( &server_link, &w->server_endpoint );
     w->message_server = (struct rocketnet_message_server_t *) rn_message_object_create(
         NULL, &server_link, 1, ROCKETNET_DST_MAX_CLIENTS, &w->message_config, NULL, 0,
-        ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, w->now );
+        ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, w->now );
     if ( !w->message_server )
         return 0;
 
@@ -1006,8 +1006,8 @@ static inline int rocketnet_dst_world_create( rocketnet_dst_world_t * w, uint64_
         client->endpoint.world = w;
         client->endpoint.client_index = i;
         client->endpoint.pending_frame = -1;
-        client->endpoint.payload = (uint8_t (*)[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES])
-            malloc( sizeof( uint8_t[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES] ) * ROCKETNET_DST_MAX_PAYLOADS );
+        client->endpoint.payload = (uint8_t (*)[ROCKETNET_RECEIVE_PAYLOAD_BYTES])
+            malloc( sizeof( uint8_t[ROCKETNET_RECEIVE_PAYLOAD_BYTES] ) * ROCKETNET_DST_MAX_PAYLOADS );
         if ( !client->endpoint.payload )
             return 0;
         w->check.allocation_balance++;
@@ -1015,7 +1015,7 @@ static inline int rocketnet_dst_world_create( rocketnet_dst_world_t * w, uint64_
         rocketnet_dst_endpoint_link( &client_link, &client->endpoint );
         client->message = (struct rocketnet_message_client_t *) rn_message_object_create(
             NULL, &client_link, 0, 1, &w->message_config, NULL, 0,
-            ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, w->now );
+            ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, w->now );
         if ( !client->message )
             return 0;
     }

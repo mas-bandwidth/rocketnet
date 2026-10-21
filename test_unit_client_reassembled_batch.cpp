@@ -108,7 +108,7 @@ static void test_client_reassembled_batch_holds_half_received_load()
     struct rocketnet_server_protocol_t server;
     memset( &server, 0, sizeof(server) );
     server.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
-    memcpy( server.filter_value, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( server.packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server.backend_public_key, rocketnet_test_backend_public_key, 32 );
     memcpy( server.server_public_key, rocketnet_test_server_public_key, 32 );
     memcpy( server.server_secret_key, rocketnet_test_server_secret_key, 32 );

@@ -66,9 +66,9 @@ static struct rocketnet_message_limits_t rocketnet_fuzz_message_limits( int prof
     struct rocketnet_message_limits_t limits;
     limits.num_channels = 32;
     limits.enabled_codes = rocketnet_message_enabled_codes( 0x09 );
-    limits.window_messages = 1024;
+    limits.reliable_messages_in_flight = 1024;
     limits.max_message_bytes = 32768;
-    limits.receive_ring_bytes = 65536;
+    limits.receive_message_buffer_bytes = 65536;
     if ( profile == 1 )
     {
         limits.num_channels = 1024;
@@ -78,9 +78,9 @@ static struct rocketnet_message_limits_t rocketnet_fuzz_message_limits( int prof
     {
         limits.num_channels = 65536;
         limits.enabled_codes = 0x1F;
-        limits.window_messages = 2;
+        limits.reliable_messages_in_flight = 2;
         limits.max_message_bytes = 2 * ROCKETNET_MESSAGE_FRAGMENT_BYTES + 1;
-        limits.receive_ring_bytes = 4096;
+        limits.receive_message_buffer_bytes = 4096;
     }
     return limits;
 }
@@ -126,7 +126,7 @@ static void rocketnet_fuzz_message_payload( const uint8_t * payload, int bytes, 
             rocketnet_fuzz_require( r.data == cursor + rocketnet_message_record_header_bytes( &r ), "records follow one another" );
             cursor = r.data + r.bytes;
             if ( r.code != ROCKETNET_MESSAGE_CODE_UNRELIABLE && r.code != ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED )
-                rocketnet_fuzz_require( bytes <= ROCKETNET_MAX_PAYLOAD_BYTES, "reliable records only in unfragmented payloads" );
+                rocketnet_fuzz_require( bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, "reliable records only in unfragmented payloads" );
         }
         else
         {
@@ -180,7 +180,7 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
 
     // the codec allocates nothing and touches nothing else: no rocketnet_init
 
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     return 0;
 }
 

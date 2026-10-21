@@ -6,14 +6,19 @@ over the in-memory `loopback` transport, which needs no socket and no network.
 ## What it shows
 
 1. Initialize the library.
-2. Create a server with the published development keys, an ephemeral port,
-   and the `loopback` transport pinned in its config.
-3. Mint a development connect token for that server address.
+2. Fill a server config with `rocketnet_server_default_config`, copy
+   `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` into `backend_public_key`, select an
+   ephemeral port, and pin the `loopback` transport. Server create generates
+   the server's ephemeral sealing keypair.
+3. After start, read the bound address with `rocketnet_server_ipv4_address`
+   and the generated public key with `rocketnet_server_public_key`. Pass both
+   to `rocketnet_create_dev_connect_token`, which writes an opaque,
+   NUL-terminated base64 token string.
 4. Create a client pinned to `loopback`, then update both ends until the
    client reports `ROCKETNET_CLIENT_STATE_CONNECTED`.
 5. Send one `ROCKETNET_RELIABILITY_RELIABLE_ORDERED` message from the client to the
-   server with `rocketnet_client_start_message`, a `memcpy` into the returned buffer,
-   and `rocketnet_client_finish_message`.
+   server with `rocketnet_client_start_message`, the text written straight into the returned buffer,
+   and `rocketnet_client_finish_message` with the bytes written.
 6. Receive and print it on the server, disconnect the
    client, and destroy both ends.
 7. Connect a second client with a second development token, then disconnect
@@ -50,16 +55,17 @@ from the library and are not part of the check.
 ## Public calls it uses
 
 - `rocketnet_init`, `rocketnet_term`
-- `rocketnet_server_dev_config`, `rocketnet_server_create`,
-  `rocketnet_server_update`, `rocketnet_server_port`,
-  `rocketnet_server_max_clients`, `rocketnet_server_client_connected`,
-  `rocketnet_server_receive_messages`,
-  `rocketnet_server_send_packets`, `rocketnet_server_destroy`
+- `rocketnet_server_default_config`, `rocketnet_server_create`,
+  `rocketnet_server_start`, `rocketnet_server_destroy`,
+  `rocketnet_server_update`, `rocketnet_server_send_packets`,
+  `rocketnet_server_port`, `rocketnet_server_ipv4_address`,
+  `rocketnet_server_public_key`, `rocketnet_server_receive_messages`
 - `rocketnet_client_default_config`, `rocketnet_client_create`,
-  `rocketnet_client_state`, `rocketnet_client_update`,
+  `rocketnet_client_connect`, `rocketnet_client_destroy`,
+  `rocketnet_client_update`, `rocketnet_client_send_packets`,
+  `rocketnet_client_disconnect`, `rocketnet_client_state`,
   `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
-  `rocketnet_client_receive_messages`,
-  `rocketnet_client_send_packets`, `rocketnet_client_disconnect`,
-  `rocketnet_client_destroy`
-- `rocketnet_write_dev_connect_token` (development library only)
-- `rocketnet_time`, `rocketnet_sleep`
+  `rocketnet_client_receive_messages`
+- `rocketnet_create_dev_connect_token` and
+  `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` (development library only)
+- `rocketnet_status_name`, `rocketnet_time`, `rocketnet_sleep`

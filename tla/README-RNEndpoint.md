@@ -71,7 +71,7 @@ An end in error does nothing more: the object disconnects it (section 11).
 - **A configuration** is its `num_channels`, the field the instances vary.
   ConfigCompare compares the whole configuration value, which stands for the
   field-by-field comparison of section 13.4 (version, enabled mask,
-  `window_messages`, `receive_ring_bytes`, `max_message_bytes`,
+  `reliable_messages_in_flight`, `receive_message_buffer_bytes`, `max_message_bytes`,
   `fragment_bytes`): any differing field is the same mismatch.
 - **Duplicated packets** are the transport replay window's to drop
   (`ReplayWindow`), so the instances run Link with `Duplication = FALSE`.

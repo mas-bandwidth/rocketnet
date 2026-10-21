@@ -39,8 +39,8 @@ static void standard_config_record_default_body( struct rocketnet_message_config
     body->version = ROCKETNET_MESSAGE_CONFIG_VERSION;
     body->enabled = ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION & 0xFFu;
     body->num_channels = (uint32_t) config.num_channels;
-    body->window_messages = (uint32_t) config.window_messages;
-    body->receive_ring_bytes = (uint32_t) config.receive_ring_bytes;
+    body->reliable_messages_in_flight = (uint32_t) config.reliable_messages_in_flight;
+    body->receive_message_buffer_bytes = (uint32_t) config.receive_message_buffer_bytes;
     body->max_message_bytes = (uint32_t) config.max_message_bytes;
     body->fragment_bytes = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
 }
@@ -80,9 +80,9 @@ static int standard_config_record_generate( const char * id, uint8_t * out, int 
     else if ( strcmp( id, "m11.num-channels-mismatch" ) == 0 )
         body.num_channels = 16;
     else if ( strcmp( id, "m11.window-messages-mismatch" ) == 0 )
-        body.window_messages = 512;
+        body.reliable_messages_in_flight = 512;
     else if ( strcmp( id, "m11.receive-ring-bytes-mismatch" ) == 0 )
-        body.receive_ring_bytes = 131072;
+        body.receive_message_buffer_bytes = 131072;
     else if ( strcmp( id, "m11.max-message-bytes-mismatch" ) == 0 )
         body.max_message_bytes = 131072;
     else if ( strcmp( id, "m11.fragment-bytes-mismatch" ) == 0 )
@@ -98,8 +98,8 @@ static int standard_config_record_body_equal( const struct rocketnet_message_con
     return a->version == b->version &&
         a->enabled == b->enabled &&
         a->num_channels == b->num_channels &&
-        a->window_messages == b->window_messages &&
-        a->receive_ring_bytes == b->receive_ring_bytes &&
+        a->reliable_messages_in_flight == b->reliable_messages_in_flight &&
+        a->receive_message_buffer_bytes == b->receive_message_buffer_bytes &&
         a->max_message_bytes == b->max_message_bytes &&
         a->fragment_bytes == b->fragment_bytes;
 }
@@ -115,9 +115,9 @@ static void test_standard_config_record_vectors()
     {
         config.num_channels,
         rocketnet_message_enabled_codes( ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION ),
-        config.window_messages,
+        config.reliable_messages_in_flight,
         config.max_message_bytes,
-        config.receive_ring_bytes
+        config.receive_message_buffer_bytes
     };
     for ( int i = 0; i < count; ++i )
     {
@@ -153,9 +153,9 @@ static void test_standard_config_record_vectors()
         else if ( strcmp( standard_config_record_table[i].id, "m11.num-channels-mismatch" ) == 0 )
             expected.num_channels = 16;
         else if ( strcmp( standard_config_record_table[i].id, "m11.window-messages-mismatch" ) == 0 )
-            expected.window_messages = 512;
+            expected.reliable_messages_in_flight = 512;
         else if ( strcmp( standard_config_record_table[i].id, "m11.receive-ring-bytes-mismatch" ) == 0 )
-            expected.receive_ring_bytes = 131072;
+            expected.receive_message_buffer_bytes = 131072;
         else if ( strcmp( standard_config_record_table[i].id, "m11.max-message-bytes-mismatch" ) == 0 )
             expected.max_message_bytes = 131072;
         else if ( strcmp( standard_config_record_table[i].id, "m11.fragment-bytes-mismatch" ) == 0 )

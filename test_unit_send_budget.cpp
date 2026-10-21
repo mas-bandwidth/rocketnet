@@ -259,9 +259,9 @@ static void test_budgets_are_per_connection()
 {
     rocketnet_send_budget_t client;
     rocketnet_send_budget_t slot[2];
-    check( rocketnet_send_budget_init( &client, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 ) );
-    check( rocketnet_send_budget_init( &slot[0], ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, 0.0 ) );
-    check( rocketnet_send_budget_init( &slot[1], ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, 0.0 ) );
+    check( rocketnet_send_budget_init( &client, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 ) );
+    check( rocketnet_send_budget_init( &slot[0], ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, 0.0 ) );
+    check( rocketnet_send_budget_init( &slot[1], ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, 0.0 ) );
     check( client.kbps == 1000 && slot[0].kbps == 10000 && slot[1].kbps == 10000 );
 
     // drain slot 0
@@ -462,7 +462,7 @@ static uint8_t g_frame[ROCKETNET_FRAME_STRIDE];
 
 static void test_wire_bytes_match_the_transport()
 {
-    uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES] = { 1, 2, 3, 4 };
+    uint8_t packet_filter[ROCKETNET_FILTER_VALUE_BYTES] = { 1, 2, 3, 4 };
     uint8_t salt[ROCKETNET_CONNECTION_SALT_BYTES] = { 5, 6, 7, 8, 9, 10, 11, 12 };
     uint8_t test_key[32];
     for ( int i = 0; i < 32; i++ )
@@ -500,7 +500,7 @@ static void test_wire_bytes_match_the_transport()
             for ( int i = 0; i < payload_bytes; i++ )
                 payload[i] = (uint8_t) i;
 
-            const int sealed = rocketnet_write_sealed_payload_in_place( wire_start, filter_value, sequence,
+            const int sealed = rocketnet_write_sealed_payload_in_place( wire_start, packet_filter, sequence,
                                                                         ack_block, block_bytes, payload_bytes,
                                                                         0x1122334455667788ULL, salt, test_key );
             check( sealed > 0 );
@@ -583,13 +583,13 @@ static void counting_free( void * context, void * p )
 static void test_send_budget_no_allocation_after_create()
 {
     rocketnet_term();
-    check( rocketnet_set_allocator( counting_malloc, counting_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( counting_malloc, counting_free ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     rocketnet_send_budget_t budgets[4];
-    check( rocketnet_send_budget_init( &budgets[0], ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 ) );
+    check( rocketnet_send_budget_init( &budgets[0], ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 ) );
     for ( int i = 1; i < 4; i++ )
-        check( rocketnet_send_budget_init( &budgets[i], ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, 0.0 ) );
+        check( rocketnet_send_budget_init( &budgets[i], ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, 0.0 ) );
 
     // a live heap allocation through the hooks, so the counter is known to see them
     void * probe = rocketnet_malloc( NULL, 16 );

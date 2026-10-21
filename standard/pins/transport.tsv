@@ -51,10 +51,10 @@ ack block minimum	ROCKETNET_ACK_BLOCK_MIN_BYTES	7
 fragment header	ROCKETNET_FRAGMENT_HEADER_BYTES	6
 fragments per payload maximum	ROCKETNET_MAX_FRAGMENTS	256
 link MTU	ROCKETNET_LINK_MTU_BYTES	1500
-receive ceiling	ROCKETNET_MAX_PACKET_BYTES	1472
-maximum packet size limit	ROCKETNET_MAX_PACKET_BYTES	1472
-payload capacity	ROCKETNET_MAX_PAYLOAD_BYTES	1416
-received payload maximum	ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES	1439
+receive ceiling	ROCKETNET_RECEIVE_PACKET_BYTES	1472
+maximum packet size limit	ROCKETNET_RECEIVE_PACKET_BYTES	1472
+payload capacity	ROCKETNET_MAX_PACKET_PAYLOAD_BYTES	1416
+received payload maximum	ROCKETNET_RECEIVE_PAYLOAD_BYTES	1439
 fragment stride	ROCKETNET_MAX_FRAGMENT_BYTES	1413
 received fragment stride maximum	ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES	1433
 maximum packet size	ROCKETNET_SEND_BUDGET	1452
@@ -69,13 +69,13 @@ used-token history per slot	ROCKETNET_USED_TOKEN_HISTORY_RATIO	8
 server protocol_id	rn_pin_server_default_protocol_id	0
 server max_clients	rn_pin_server_default_max_clients	1000
 server max_clients limit	ROCKETNET_MAX_CLIENTS	1000
-server max_payload_bytes	ROCKETNET_MAX_PAYLOAD_BYTES	1416
-server num_reassembly_slots	ROCKETNET_DEFAULT_REASSEMBLY_SLOTS	8
+server max_payload_bytes	ROCKETNET_MAX_PACKET_PAYLOAD_BYTES	1416
+server max_fragmented_messages	ROCKETNET_DEFAULT_REASSEMBLY_SLOTS	8
 server transport	rn_pin_server_default_transport	"auto"
 server public_address	rn_pin_server_default_public_address	""
 server max_timeout_seconds	rn_pin_server_default_max_timeout_seconds	60
 server handshake_deadline_seconds	rn_pin_server_default_handshake_deadline_seconds	5
-client max_payload_bytes	ROCKETNET_MAX_PAYLOAD_BYTES	1416
-client num_reassembly_slots	ROCKETNET_DEFAULT_REASSEMBLY_SLOTS	8
+client max_payload_bytes	ROCKETNET_MAX_PACKET_PAYLOAD_BYTES	1416
+client max_fragmented_messages	ROCKETNET_DEFAULT_REASSEMBLY_SLOTS	8
 client transport	rn_pin_client_default_transport	"auto"
 fragmented payload maximum	ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES	361728

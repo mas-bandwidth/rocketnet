@@ -21,10 +21,10 @@
 #define STANDARD_PREFILTER_LONG_BYTES ( ROCKETNET_RECEIVE_CEILING + 1 )
 
 static void standard_prefilter_write_value( uint8_t * packet, uint8_t packet_type, uint8_t epoch,
-                                            const uint8_t * filter_value )
+                                            const uint8_t * packet_filter )
 {
     uint8_t * p = packet;
-    rocketnet_write_prefilter_header( &p, packet_type, filter_value );
+    rocketnet_write_prefilter_header( &p, packet_type, packet_filter );
     packet[1] = epoch;
 }
 

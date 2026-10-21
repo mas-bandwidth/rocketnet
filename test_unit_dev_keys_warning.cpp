@@ -59,14 +59,14 @@ static void start_capture()
     g_dev_warn_level = -1;
     g_dev_warn_buf[0] = '\0';
     g_level = -1;
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_SPAM );
-    rocketnet_set_log_callback( capture_callback, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );
+    rocketnet_log_function( capture_callback, NULL );
 }
 
 static void stop_capture()
 {
-    rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
 }
 
 // A connect token whose signed server key is the given 32 bytes. The client
@@ -162,7 +162,7 @@ static void test_dev_keys_warn_on_every_start()
         check( status == ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE );
 #else
         if ( srv )
-            rocketnet_server_transport_destroy( srv );
+            rocketnet_server_transport_destroy( (struct rocketnet_server_transport_t *) srv );
 #endif
     }
 

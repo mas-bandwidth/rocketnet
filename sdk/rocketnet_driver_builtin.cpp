@@ -248,7 +248,7 @@ static void * xdp_create( void * context, const rocketnet_server_transport_io_co
     const char * second = NULL;
     if ( config->transport && config->transport->second_public_address[0] != '\0' )
         second = config->transport->second_public_address;
-    return rocketnet_server_socket_create( context, config->public_address, config->transport->filter_value, queues, cpus, second, config->status );
+    return rocketnet_server_socket_create( context, config->public_address, config->transport->packet_filter, queues, cpus, second, config->status );
 }
 static bool xdp_stop( void * transport )
 {

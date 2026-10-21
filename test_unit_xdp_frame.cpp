@@ -149,7 +149,7 @@ static void test_ipv6_max_payload_is_1452_and_fits_1514()
 
     uint8_t frame[2048];
     memset( frame, 0xAB, sizeof(frame) );
-    const int payload = ROCKETNET_MAX_PACKET_BYTES_IPV6;
+    const int payload = ROCKETNET_MAX_PACKET_BYTES;
     rocketnet_unit_check( payload == 1452 );
     memcpy( frame + 62, frame + 1000, 0 ); // no-op; payload stays as placed
     int len = rocketnet_xdp_frame_build( frame, sizeof(frame), server_mac, gateway_mac, &src, &dst, payload );
@@ -164,13 +164,13 @@ static void test_ipv6_payload_over_budget_is_refused()
     rocketnet_unit_check( rocketnet_address_parse( &dst, "[2001:db8::2]:40001" ) );
 
     uint8_t frame[2048];
-    int len = rocketnet_xdp_frame_build( frame, sizeof(frame), server_mac, gateway_mac, &src, &dst, ROCKETNET_MAX_PACKET_BYTES_IPV6 + 1 );
+    int len = rocketnet_xdp_frame_build( frame, sizeof(frame), server_mac, gateway_mac, &src, &dst, ROCKETNET_MAX_PACKET_BYTES + 1 );
     rocketnet_unit_check( len == 0 );
 
     rocketnet_address_t s4, d4;
     rocketnet_unit_check( rocketnet_address_parse( &s4, "192.168.1.10:40000" ) );
     rocketnet_unit_check( rocketnet_address_parse( &d4, "192.168.1.20:40001" ) );
-    len = rocketnet_xdp_frame_build( frame, sizeof(frame), server_mac, gateway_mac, &s4, &d4, ROCKETNET_MAX_PACKET_BYTES + 1 );
+    len = rocketnet_xdp_frame_build( frame, sizeof(frame), server_mac, gateway_mac, &s4, &d4, ROCKETNET_RECEIVE_PACKET_BYTES + 1 );
     rocketnet_unit_check( len == 0 );
 
     // a family mismatch between the two addresses is refused too.
@@ -699,17 +699,17 @@ static void test_xdp_transport_ipv6_pin_reaches_the_xdp_transport_at_create()
     config.protocol_id = 1;
     strcpy( config.transport, "xdp" );
 
-    const enum rocketnet_log_level_t level = rocketnet_get_log_level();
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_DEBUG );
-    rocketnet_set_log_callback( xdp_ipv6_capture, NULL );
+    const enum rocketnet_log_level_t level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_DEBUG );
+    rocketnet_log_function( xdp_ipv6_capture, NULL );
     xdp_ipv6_family_refusals = 0;
     xdp_ipv6_barrier_lines = 0;
 
     int status = -1;
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "[2001:db8::10]:40000", &config, 1000.0, &status );
 
-    rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_set_log_level( level );
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( level );
     if ( pinned )
         setenv( "ROCKETNET_SERVER_TRANSPORT", saved, 1 );
 

@@ -29,11 +29,12 @@ There is no release call and no per-channel receive call.
 the returned storage and calls `finish_message` with the number written, or
 `abort_message`. Only one reservation may be open on an endpoint object.
 Finishing returns a nonzero receipt serial. A refused start returns NULL; a
-refused finish returns zero and leaves the reservation available to finish or
-abort as documented in the header.
+refused finish (a byte count outside 1 to the bytes started) returns zero and
+aborts the pending reservation, so the next start is never blocked.
 
-The server send calls take a destination id. Values below `max_clients` name a
-connected client slot. Values with `ROCKETNET_FLOW_ID_BIT` are reserved for the
+The server start call takes a `uint64_t` destination id; the server finish and
+abort calls take none, acting on the one pending start. Values below
+`max_clients` name a connected client slot. Values with `ROCKETNET_FLOW_ID_BIT` are reserved for the
 flow layer. Broadcast is an application loop over connected slots.
 
 ## Reliability
@@ -45,19 +46,21 @@ records are retransmitted until acknowledged or the reliable timeout ends the
 connection. Large messages use bounded fragmentation and reassembly sized at
 create.
 
-The resend delay starts at `resend_delay_initial_ms`, follows the shared RTT
-estimator, and remains within `resend_delay_min_ms` and
-`resend_delay_max_ms`. `reliable_timeout_ms` bounds the complete reliable
+The resend delay starts at `message_resend_delay_initial_ms`, follows the shared RTT
+estimator, and remains within `message_resend_delay_min_ms` and
+`message_resend_delay_max_ms`. `reliable_message_timeout_ms` bounds the complete reliable
 operation. `packets_per_update` bounds packet work per connection per update.
 
-## Receipts and counters
+## Receipts and stats
 
 Receipt-bearing sends report `ROCKETNET_RECEIPT_STATUS_ACKED` or
 `ROCKETNET_RECEIPT_STATUS_LOSS` through `rocketnet_client_receipts` or
 `rocketnet_server_receipts`. Receipt serials are scoped to their endpoint.
-Counters distinguish ordinary connection-state drops, budget drops, transport
-capacity, protocol failures and API misuse. The enum comments in
-`sdk/rocketnet.h` define each public counter and status exactly.
+The stats structs filled by `rocketnet_client_stats`, `rocketnet_server_stats`
+and `rocketnet_server_client_stats` distinguish ordinary connection-state drops
+(`messages_dropped_not_connected`), budget drops (`messages_dropped_over_budget`) and API misuse
+(`api_misuses`). The field and enum comments in `sdk/rocketnet.h` define each
+public stat and status exactly.
 
 ## Memory and failure
 
@@ -65,8 +68,9 @@ Message stores, queues, delivery batches, receipt rings, replay windows and
 reassembly slots have bounded capacity derived from the public config. Their
 storage lifecycle uses the caller allocator and a refused allocation is
 reported. Message frame calls do not block. Exhausting connection message memory ends
-that connection with
-`ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED`. Unreliable work may be
+that connection: the server's slot reads
+`ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED` and the client's state
+reads `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED`. Unreliable work may be
 dropped at its documented bounded queues; reliable work is retained until it
 is delivered or the connection reaches its timeout.
 

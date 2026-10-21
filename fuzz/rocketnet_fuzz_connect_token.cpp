@@ -166,7 +166,7 @@ static void rocketnet_fuzz_client_connect( const uint8_t * token_data, uint64_t 
     static struct rocketnet_client_protocol_t client;
     rocketnet_client_protocol_init( &client, &counters );
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    memcpy( client.filter_value, tag, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( client.packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
 
     const int connected = rocketnet_client_protocol_connect( &client, token_data, 100.0, current_timestamp );
 
@@ -189,7 +189,7 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
     if ( sodium_init() < 0 )
         abort();
 
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
     rocketnet_fuzz_build_base_token();
 

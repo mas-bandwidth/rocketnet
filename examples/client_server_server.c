@@ -2,21 +2,20 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    Client/server server: real UDP on loopback with production keys. The
-    server generates the backend signing keypair and its own server keypair
-    through the public keygen calls, writes the backend secret and its server
-    public key to one small key file, and listens on 127.0.0.1 at the port
-    from --port <n>, else the ROCKETNET_EXAMPLE_PORT environment variable,
-    else the default 40000. The
-    separate client process plays the backend, reads that file, mints a
-    production connect token, connects, and sends one reliable-ordered
-    message. The server echoes it and exits after its first client
-    disconnects.
+    Client/server server: real UDP on loopback. The server takes the
+    published development backend key, makes its own server keypair at
+    create, writes its public key to one small key file, and listens on
+    127.0.0.1 at the port from --port <n>, else the ROCKETNET_EXAMPLE_PORT
+    environment variable, else the default 40000. The separate client process
+    plays the backend: it reads that file, mints a development connect token
+    for this server, connects, and sends one reliable-ordered message. The
+    server echoes it and exits after its first client disconnects.
 
     Run the server first, then the client. See docs/examples/client_server.md.
 */
 
 #include "rocketnet.h"
+#include "dev_keys.h"
 
 #include <stdio.h>
 #include <stdint.h>
@@ -25,7 +24,14 @@
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
-#define PROTOCOL_ID 0x636c69656e747331ull
+// serialize a received message's bytes straight into a started message
+static int write_bytes( uint8_t * p, const uint8_t * data, int bytes )
+{
+    for ( int i = 0; i < bytes; i++ )
+        p[i] = data[i];
+    return bytes;
+}
+
 #define KEY_FILE "client_server.keys"
 #define DEFAULT_PORT 40000
 
@@ -102,10 +108,9 @@ int main( int argc, char ** argv )
 {
     struct rocketnet_server_config_t config;
     struct rocketnet_server_t * server = NULL;
-    uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    char served_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
     int result = 1;
     int had_client = 0;
     int echoed = 0;
@@ -125,23 +130,19 @@ int main( int argc, char ** argv )
 
     CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
-    // a deployment mints the backend keypair in the backend and gives servers
-    // only the public half; here the server bootstraps it so the separate
-    // client process can play the backend from the key file
-
-    CHECK( rocketnet_generate_backend_keypair( backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
-    CHECK( rocketnet_generate_server_keypair( server_public_key, server_secret_key ) == ROCKETNET_STATUS_OK );
+    // a deployment's server takes its own backend's public key; this one
+    // takes the published development backend key (rocketnet.h), whose
+    // tokens rocketnet_create_dev_connect_token mints. The server keypair is
+    // the server's own, made at create.
 
     rocketnet_server_default_config( &config );
-    config.protocol_id = PROTOCOL_ID;
+    config.protocol_id = EXAMPLE_PROTOCOL_ID;
     config.max_clients = 1;
     config.transport = "portable";
-    memcpy( config.backend_public_key, backend_public_key, sizeof( config.backend_public_key ) );
-    memcpy( config.server_public_key, server_public_key, sizeof( config.server_public_key ) );
-    memcpy( config.server_secret_key, server_secret_key, sizeof( config.server_secret_key ) );
+    memcpy( config.backend_public_key, dev_backend_public_key, sizeof( config.backend_public_key ) );
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    server = rocketnet_server_create( NULL, address, &config, NULL, 0, &create_status );
+    server = rocketnet_server_create( NULL, address, NULL, &config, &create_status );
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
@@ -150,13 +151,18 @@ int main( int argc, char ** argv )
     }
     CHECK( server != NULL );
 
+    // the backend registers each server's public key; here the key file
+    // carries it to the client process, which plays the backend
+
+    rocketnet_server_public_key( server, server_public_key );
+    CHECK( rocketnet_server_ipv4_address( server, served_address, sizeof( served_address ) ) );
     FILE * keys = example_fopen( KEY_FILE, "w" );
     CHECK( keys != NULL );
-    write_hex( keys, "backend_secret", backend_secret_key, ROCKETNET_BACKEND_SECRET_KEY_BYTES );
     write_hex( keys, "server_public", server_public_key, ROCKETNET_SERVER_PUBLIC_KEY_BYTES );
+    fprintf( keys, "server_ipv4 %s\n", served_address );
     CHECK( fclose( keys ) == 0 );
 
-    printf( "server listening on 127.0.0.1:%d with protocol id 0x%llx\n", (int) rocketnet_server_port( server ), (unsigned long long) PROTOCOL_ID );
+    printf( "server listening on 127.0.0.1:%d with protocol id 0x%llx\n", (int) rocketnet_server_port( server ), (unsigned long long) EXAMPLE_PROTOCOL_ID );
     printf( "server wrote %s for the client\n", KEY_FILE );
     fflush( stdout );
 
@@ -167,29 +173,27 @@ int main( int argc, char ** argv )
         const double now = 1000.0 + ( rocketnet_time() - start );
 
         // (1) update pumps the transport and takes in what arrived
-        if ( rocketnet_server_update( server, now ) != ROCKETNET_UPDATE_OK )
-            break;
+        rocketnet_server_update( server, now );
 
         // (2) receive and release every received message
         // one queue across every client, each message naming its sender
         {
             const uint8_t * data = NULL;
             int bytes = 0;
-            uint64_t i = 0;
-            struct rocketnet_message_batch_t batch;
-            while ( rocketnet_server_receive_messages( server, &batch ) )
+            int i = 0;
+            const struct rocketnet_message_batch_t * batch = NULL;
+            while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
             {
-                for ( int j = 0; j < batch.num_messages; j++ )
+                for ( int j = 0; j < batch->num_messages; j++ )
                 {
-                    data = batch.data[j];
-                    bytes = batch.bytes[j];
-                    i = batch.client_index[j];
+                    data = batch->data[j];
+                    bytes = batch->bytes[j];
+                    i = batch->client_index[j];
                     printf( "server received: %.*s\n", bytes, (const char*) data );
-                    uint8_t * out = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
+                    uint8_t * out = rocketnet_server_start_message( server, (uint64_t) i, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
                     if ( out )
                     {
-                        memcpy( out, data, (size_t) bytes );
-                        if ( rocketnet_server_finish_message( server, i, bytes ) )
+                        if ( rocketnet_server_finish_message( server, write_bytes( out, data, bytes ) ) )
                             echoed = 1;
                     }
                 }

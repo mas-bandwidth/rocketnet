@@ -20,8 +20,8 @@
 // Pure over a carved region (rn_region_t, layer 1) and a sender window
 // (rn_window_send_t, section 6.2): allocates nothing, takes no locks, and
 // reads no wall clock. Callers pass the update's monotonic time `now` in
-// seconds. Compiled with -ffp-contract=off (CMakeLists.txt) so RakNet 5%
-// floating-point arithmetic is deterministic across architectures.
+// seconds. Compiled with -ffp-contract=off (CMakeLists.txt) so the 5%
+// smoothing arithmetic is deterministic across architectures.
 //
 // Every table this layer touches lives inside the connection's fixed region:
 //   - region->sent_packets : P entries of 32 bytes (ring indexed by cursor % P)
@@ -78,13 +78,13 @@ struct rn_window_ack_t
     double resend_delay_max;                 // seconds (default 2.0)
     double reliable_timeout;        // seconds (default 10.0)
 
-    double srtt;                    // RakNet 5% smoothed RTT
-    double rttvar;                  // RakNet deviation estimate
+    double srtt;                    // 5% smoothed RTT
+    double rttvar;                  // deviation estimate
     double resend_delay;                     // adaptive resend delay; retries do not back off (tla/RNResendTiming.tla)
     uint8_t has_rtt;                // 0 before the first valid ack sample, 1 after
     uint8_t has_oldest;             // 1 while oldest_number is tracked at U
     uint16_t pad;
-    int error;                      // ROCKETNET_DISCONNECT_REASON_NONE or ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT
+    int error;                      // ROCKETNET_DISCONNECT_REASON_NONE or ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT
 
     // Two resend FIFOs over the one link array region->resend_fifo, one per
     // delay class (docs/CHANNELS.md 6.4 "Resend"; tla/RNResendTiming.tla
@@ -117,11 +117,11 @@ struct rn_window_ack_t
 #endif // #if ROCKETNET_DEVELOPMENT
 };
 
-// RakNet's first deviation equals the first RTT sample. Later deviation
+// The first deviation equals the first RTT sample. Later deviation
 // moves 5% toward the absolute error from the prior smoothed RTT, then
 // smoothed RTT moves 5% toward the ACK sample. Its resend delay is 2*srtt + 4*deviation + 30 ms,
-// bounded by the configured minimum and maximum; default minimum 0 matches RakNet
-// (docs/RAKNET-RELIABILITY.md:667-668, 686-695; CC.cpp:210-222, 288-314).
+// bounded by the configured minimum and maximum; default minimum 0 applies
+// no floor (standard/MESSAGES.md m9.2).
 static inline double rn_window_ack_compute_resend_delay( double srtt, double rttvar, double resend_delay_min, double resend_delay_max )
 {
     const double candidate = 2.0 * srtt + 4.0 * rttvar + 0.030;
@@ -165,7 +165,7 @@ static inline double rn_window_ack_class_delay( const rn_window_ack_t * ack, boo
 // ones already waiting, ahead of every number that was sent.
 void rn_window_ack_park( rn_window_ack_t * ack, uint32_t after, uint32_t slot_index );
 
-// Initializes the sent-packet map, resend FIFO, and RakNet RTT estimator over a
+// Initializes the sent-packet map, resend FIFO, and RTT estimator over a
 // carved region and an initialized sender window (docs/CHANNELS.md 6.4;
 // tla/RNWindow.tla Init). NULL config uses rocketnet_message_default_config.
 void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_region_t * region, const rocketnet_message_config_t * config );
@@ -220,7 +220,7 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
 // Checks the per-connection reliable timeout before resending (docs/CHANNELS.md
 // 6.4 "Giving up"). If U < next and the oldest unacked number at U has
 // now - first_send >= reliable_timeout, sets ack->error to
-// ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT and returns 1. Otherwise returns
+// ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT and returns 1. Otherwise returns
 // whether ack->error is already set.
 int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now );
 

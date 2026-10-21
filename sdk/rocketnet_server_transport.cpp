@@ -316,7 +316,7 @@ struct rocketnet_server_transport_t
     // +8: serialize's BitReader loads 8-byte windows at byte granularity, so
     // any buffer a ReadStream is bound over must extend at least 8 bytes past
     // the end of its data -- this is the last member, so the slack is real.
-    uint8_t payload_storage[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES*ROCKETNET_MAX_PAYLOADS_PER_UPDATE + 8];
+    uint8_t payload_storage[ROCKETNET_RECEIVE_PAYLOAD_BYTES*ROCKETNET_MAX_PAYLOADS_PER_UPDATE + 8];
 };
 
 void rocketnet_server_transport_poison_slot_for_test( struct rocketnet_server_transport_t * server, int client_index )
@@ -568,6 +568,20 @@ static void rocketnet_server_link_send( rocketnet_server_transport_t * transport
     rocketnet_platform_mutex_release( &transport->link_simulator_mutex );
 }
 
+// The development network simulator call on a running transport: reconfigures
+// the link simulator under its mutex when one is running; false when none
+// runs, and the settings then take effect at the next start.
+bool rocketnet_server_transport_network_simulator( struct rocketnet_server_transport_t * server_transport, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent )
+{
+    rocketnet_assert( server_transport );
+    if ( !server_transport->link_simulator )
+        return false;
+    rocketnet_platform_mutex_acquire( &server_transport->link_simulator_mutex );
+    rocketnet_network_simulator_config( server_transport->link_simulator, latency_ms / 1000.0, jitter_ms / 1000.0, (float) packet_loss_percent, (float) duplicate_percent );
+    rocketnet_platform_mutex_release( &server_transport->link_simulator_mutex );
+    return true;
+}
+
 static void rocketnet_server_link_send_batch( rocketnet_server_transport_t * transport,
                                               const rocketnet_platform_send_t * sends, int num_sends )
 {
@@ -781,8 +795,8 @@ bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_con
     if (!config) { rocketnet_server_transport_default_config(&defaults); config = &defaults; }
     const int clients = config->max_clients;
     const int payload = config->max_payload_bytes ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
-    const int slots = config->num_reassembly_slots ? config->num_reassembly_slots : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
-    if (clients < 1 || clients > ROCKETNET_MAX_CLIENTS || payload < ROCKETNET_MAX_PAYLOAD_BYTES ||
+    const int slots = config->max_fragmented_messages ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
+    if (clients < 1 || clients > ROCKETNET_MAX_CLIENTS || payload < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ||
         payload > ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES || slots < 1 || slots > ROCKETNET_MAX_FRAGMENTS ||
         config->num_xdp_queues < 0 || config->num_xdp_queues > 1024) return false;
 
@@ -1000,20 +1014,6 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     else
         rocketnet_server_transport_default_config_current( &effective_config );
 
-    // the env layer's public_address is snapshotted against so its SCOPE
-    // can be enforced below: the env override redirects the FIRST server
-    // create in the process and is then consumed -- an operator's deployed
-    // binary has one server transport and gets exactly the redirect they
-    // asked for, while a process with many creates (the test suite, a
-    // soak) is not wholesale redirected by one ambient variable. the
-    // struct field keeps per-create scope: a caller who sets it in code
-    // said what they meant, every time.
-
-    char struct_public_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-    memcpy( struct_public_address, effective_config.public_address, sizeof(struct_public_address) );
-    char struct_second_public_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-    memcpy( struct_second_public_address, effective_config.second_public_address, sizeof(struct_second_public_address) );
-
     int num_config_fields = 0;
     const struct rocketnet_config_field_t * config_fields = rocketnet_server_transport_config_fields( &num_config_fields );
 
@@ -1043,7 +1043,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     // Refuse large cross-field allocations before sockets, transports or arenas
     // are acquired. Independent field maxima do not define a usable budget.
     const int requested_payload = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
-    const int requested_slots = config->num_reassembly_slots > 0 ? config->num_reassembly_slots : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
+    const int requested_slots = config->max_fragmented_messages > 0 ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     const int requested_clients = config->max_clients > 0 ? config->max_clients : ROCKETNET_MAX_CLIENTS;
     if (!rocketnet_reassembly_memory_allowed_delivered(requested_clients, requested_slots, requested_payload,
             rocketnet_server_reassembly_delivered_capacity(requested_clients, requested_slots),
@@ -1057,42 +1057,12 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
 
 
     // the config's public_address, when set, displaces the create call's
-    // address parameter HERE, before anything reads it -- so the address
-    // the ladder verifies, the address the granted transport binds, and the
-    // address connect tokens validate against can never diverge. the env
-    // layer's version of it is first-create-consumes, per the scope note
-    // above.
-
-    // the env override's consumption flag: atomic because two transports
-    // in one process is a blessed case and nothing serializes creates, and
-    // CONSUMED ONLY AFTER A FULLY SUCCESSFUL CREATE -- a first create that
-    // refuses (bad keys, exhausted ladder) must not eat the deployed
-    // binary's redirect on the retry. two concurrent first creates racing
-    // the same override is unsupported and stated: creates are setup acts,
-    // not fill-phase acts.
-
-    static std::atomic<bool> env_public_address_consumed( false );
-
-    bool consuming_env_public_address = false;
-
-    const bool env_public_address_changed = strncmp( effective_config.public_address, struct_public_address, sizeof(struct_public_address) ) != 0;
-    const bool env_second_public_address_changed = strncmp( effective_config.second_public_address, struct_second_public_address, sizeof(struct_second_public_address) ) != 0;
-    if ( env_public_address_changed || env_second_public_address_changed )
-    {
-        // the env layer set one or both related addresses; they are consumed
-        // together so a later create cannot inherit half of a dual-family pair
-
-        if ( env_public_address_consumed.load() )
-        {
-            rocketnet_info( "the public address env overrides were consumed by an earlier server create in this process. using the create parameters" );
-            memcpy( effective_config.public_address, struct_public_address, sizeof(struct_public_address) );
-            memcpy( effective_config.second_public_address, struct_second_public_address, sizeof(struct_second_public_address) );
-        }
-        else
-        {
-            consuming_env_public_address = true;
-        }
-    }
+    // address parameter here, before anything reads it. The address the
+    // ladder verifies, the address the transport binds and the address
+    // connect tokens validate against are then the same one. The field has
+    // no environment override. The public create reads the served
+    // addresses from ROCKETNET_SERVER_IPV4_ADDRESS and
+    // ROCKETNET_SERVER_IPV6_ADDRESS.
 
     if ( config->public_address[0] != '\0' )
     {
@@ -1275,7 +1245,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     server_transport->send_capacity = rocketnet_server_test_create_send_capacity > 0 ?
         rocketnet_server_test_create_send_capacity : default_send_capacity;
     rocketnet_server_test_create_send_capacity = 0;
-    const int num_reassembly_slots = config->num_reassembly_slots > 0 ? config->num_reassembly_slots : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
+    const int max_fragmented_messages = config->max_fragmented_messages > 0 ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
 
     const int development_keys = memcmp( config->server_public_key, rocketnet_dev_server_public_key, 32 ) == 0 ||
                                  memcmp( config->backend_public_key, rocketnet_dev_backend_public_key, 32 ) == 0;
@@ -1557,7 +1527,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     struct rocketnet_server_protocol_t * protocol = &server_transport->protocol;
     protocol->protocol_id = config->protocol_id;
     protocol->send_rate = ROCKETNET_DEFAULT_SEND_RATE;
-    memcpy( protocol->filter_value, config->filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( protocol->packet_filter, config->packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( protocol->backend_public_key, config->backend_public_key, 32 );
     memcpy( protocol->server_public_key, config->server_public_key, 32 );
     memcpy( protocol->server_secret_key, config->server_secret_key, 32 );
@@ -1642,9 +1612,9 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     // slots -- not capacity x max payload
     // (rocketnet_server_reassembly_delivered_bytes).
 
-    protocol->reassembly = rocketnet_reassembly_set_create_delivered( context, max_clients, num_reassembly_slots, server_transport->max_payload_bytes,
-                                                                      rocketnet_server_reassembly_delivered_capacity( max_clients, num_reassembly_slots ),
-                                                                      rocketnet_server_reassembly_delivered_bytes( max_clients, num_reassembly_slots, server_transport->max_payload_bytes ) );
+    protocol->reassembly = rocketnet_reassembly_set_create_delivered( context, max_clients, max_fragmented_messages, server_transport->max_payload_bytes,
+                                                                      rocketnet_server_reassembly_delivered_capacity( max_clients, max_fragmented_messages ),
+                                                                      rocketnet_server_reassembly_delivered_bytes( max_clients, max_fragmented_messages, server_transport->max_payload_bytes ) );
     protocol->counters = &server_transport->counters;
 
     // the arena's slot stride stays 16-aligned so every root handed to a
@@ -1663,14 +1633,6 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         rocketnet_error( "server transport create: could not allocate protocol storage" );
         rocketnet_server_transport_destroy( server_transport );
         return NULL;
-    }
-
-    // the env public_address is consumed only now, with the create whole
-
-    if ( consuming_env_public_address )
-    {
-        bool expected = false;
-        env_public_address_consumed.compare_exchange_strong( expected, true );
     }
 
     if ( status )
@@ -1734,6 +1696,20 @@ int rocketnet_server_transport_state( struct rocketnet_server_transport_t * serv
         return 0;
     rocketnet_assert( server_transport );
     return server_transport->state;
+}
+
+bool rocketnet_server_transport_advertised_address( struct rocketnet_server_transport_t * server_transport, int family, struct rocketnet_address_t * address )
+{
+    if ( !rocketnet_api_null_guard( server_transport ) || !rocketnet_api_null_guard( address ) )
+        return false;
+    if ( server_transport->state != ROCKETNET_SERVER_TRANSPORT_RUNNING )
+        return false;
+    const struct rocketnet_address_t * advertised = family == ROCKETNET_ADDRESS_IPV4 ? &server_transport->protocol.advertised_ipv4 :
+                                                    family == ROCKETNET_ADDRESS_IPV6 ? &server_transport->protocol.advertised_ipv6 : NULL;
+    if ( !advertised || advertised->type != family )
+        return false;
+    *address = *advertised;
+    return true;
 }
 
 uint16_t rocketnet_server_transport_port( struct rocketnet_server_transport_t * server_transport )
@@ -1918,7 +1894,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             continue;
 
         uint8_t * payload = server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE ?
-            server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES : NULL;
+            server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_RECEIVE_PAYLOAD_BYTES : NULL;
 
         uint8_t payload_overflow[ROCKETNET_RECEIVE_CEILING];
         int payload_bytes = 0;
@@ -1937,7 +1913,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
                                          current_timestamp, current_time,
                                          response ? response : response_overflow, &response_bytes,
                                          payload ? payload : payload_overflow,
-                                         payload ? ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES : (int) sizeof(payload_overflow),
+                                         payload ? ROCKETNET_RECEIVE_PAYLOAD_BYTES : (int) sizeof(payload_overflow),
                                          &payload_bytes, &payload_client_index );
 
         // a packet that opened under a connection's keys teaches the transport
@@ -2076,7 +2052,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
                 continue;
 
             uint8_t * payload = server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE ?
-                server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES : NULL;
+                server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_RECEIVE_PAYLOAD_BYTES : NULL;
 
             uint8_t payload_overflow[ROCKETNET_RECEIVE_CEILING];
             int payload_bytes = 0;
@@ -2094,7 +2070,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
                                              current_timestamp, current_time,
                                              response ? response : response_overflow, &response_bytes,
                                              payload ? payload : payload_overflow,
-                                             payload ? ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES : (int) sizeof(payload_overflow),
+                                             payload ? ROCKETNET_RECEIVE_PAYLOAD_BYTES : (int) sizeof(payload_overflow),
                                              &payload_bytes, &payload_client_index );
 
             int wire_client_after = wire_client_before;
@@ -2348,7 +2324,7 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
 
     uint8_t * frame = NULL;
 
-    if ( request_bytes > ROCKETNET_MAX_PAYLOAD_BYTES )
+    if ( request_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
     {
         // above the wire's capacity: the arena backs the write, and
         // finish_packet splits into fragments -- or collapses to one wire
@@ -2423,7 +2399,7 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
 
     context->frame = frame;
     context->payload_index = ROCKETNET_FRAME_PAYLOAD_OFFSET;
-    context->payload_capacity = ROCKETNET_MAX_PAYLOAD_BYTES;
+    context->payload_capacity = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
     context->sequence = 0;
     context->client_index = client_index;
 
@@ -2609,7 +2585,7 @@ static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_serv
         return 0;
     }
 
-    if ( payload_bytes <= ROCKETNET_MAX_PAYLOAD_BYTES )
+    if ( payload_bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
     {
         struct rocketnet_server_fill_frame_t frame;
         if ( !rocketnet_server_reserve_fill_frame( server_transport, &to, context->client_index, &frame ) )
@@ -3162,3 +3138,4 @@ int rocketnet_server_transport_test_xdp_reflush()
     return flushes;
 }
 #endif
+

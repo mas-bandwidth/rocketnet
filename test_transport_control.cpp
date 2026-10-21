@@ -160,14 +160,14 @@ static rocketnet_server_socket_process_packets_t * receive(void * p)
     return &f->received;
 }
 
-static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketnet_server_transport_io_operations_t * operations, int clients, bool staged, int payload_limit = ROCKETNET_MAX_PAYLOAD_BYTES)
+static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketnet_server_transport_io_operations_t * operations, int clients, bool staged, int payload_limit = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES)
 {
     f->staged = staged;
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config(&config);
     config.max_clients = clients;
     config.max_payload_bytes = payload_limit;
-    config.num_reassembly_slots = 1;
+    config.max_fragmented_messages = 1;
     snprintf(config.transport, sizeof(config.transport), "%s", "portable");
     auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
     CHECK(server);
@@ -204,7 +204,7 @@ static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketn
     auto * mapping = rocketnet_encryption_map_entry(server->protocol.encryption_map, pending);
     mapping->challenge_packet[0] = ROCKETNET_CONNECTION_CHALLENGE_PACKET;
     uint8_t * cursor = f->request;
-    rocketnet_write_prefilter_header(&cursor, ROCKETNET_CONNECTION_REQUEST_PACKET, server->protocol.filter_value);
+    rocketnet_write_prefilter_header(&cursor, ROCKETNET_CONNECTION_REQUEST_PACKET, server->protocol.packet_filter);
     return server;
 }
 
@@ -405,7 +405,7 @@ static void test_entries_carry_connection_id(bool staged)
         memset(plaintext + block, 0xA0 + c, 4);
         CHECK(rocketnet_address_parse(&f->feed_from[c], "127.0.0.1:0")); f->feed_from[c].port = (uint16_t)( 1000 + c );
         f->feed_bytes[c] = rocketnet_write_sealed_packet(f->feed_data[c], ROCKETNET_CONNECTION_PAYLOAD_PACKET,
-            protocol->filter_value, 1, NULL, plaintext, block + 4, protocol->protocol_id,
+            protocol->packet_filter, 1, NULL, plaintext, block + 4, protocol->protocol_id,
             mapping->connection_salt, NULL, mapping->keys.session_client_to_server);
         CHECK(f->feed_bytes[c] > 0);
     }
@@ -466,7 +466,7 @@ static void test_entries_carry_connection_id(bool staged)
             memcpy(plaintext + block + ROCKETNET_FRAGMENT_HEADER_BYTES, fragmented + k * stride, (size_t) fragment_bytes);
             f->feed_from[k] = f->feed_from[c];
             f->feed_bytes[k] = rocketnet_write_sealed_packet(f->feed_data[k], ROCKETNET_CONNECTION_FRAGMENT_PACKET,
-                protocol->filter_value, 2 + (uint64_t) k, NULL, plaintext, block + ROCKETNET_FRAGMENT_HEADER_BYTES + fragment_bytes,
+                protocol->packet_filter, 2 + (uint64_t) k, NULL, plaintext, block + ROCKETNET_FRAGMENT_HEADER_BYTES + fragment_bytes,
                 protocol->protocol_id, mapping->connection_salt, NULL, mapping->keys.session_client_to_server);
             CHECK(f->feed_bytes[k] > 0);
         }
@@ -520,7 +520,7 @@ static void test_staged_link_address_hooks()
     memset(plaintext + block, 0xA0, 4);
     CHECK(rocketnet_address_parse(&f->feed_from[1], "127.0.0.1:1000"));
     f->feed_bytes[1] = rocketnet_write_sealed_packet(f->feed_data[1], ROCKETNET_CONNECTION_PAYLOAD_PACKET,
-        protocol->filter_value, 1, NULL, plaintext, block + 4, protocol->protocol_id,
+        protocol->packet_filter, 1, NULL, plaintext, block + 4, protocol->protocol_id,
         mapping->connection_salt, NULL, mapping->keys.session_client_to_server);
     CHECK(f->feed_bytes[1] > 0);
     f->feed_count = 2;
@@ -544,7 +544,7 @@ static void test_staged_link_address_hooks()
 
 int main(int argc, char ** argv)
 {
-    rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_NONE);
+    rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
     CHECK(rocketnet_init( NULL ) == ROCKETNET_STATUS_OK);
     rocketnet_forbid_xdp_commit();
     if (argc == 2)

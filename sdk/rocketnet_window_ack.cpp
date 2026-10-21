@@ -333,7 +333,7 @@ static void rn_window_ack_record_first_send( rn_window_ack_t * ack, rn_send_numb
 //                        Public operations
 // ----------------------------------------------------------------
 
-// Initializes the sent-packet map, resend FIFO, and RakNet RTT estimator
+// Initializes the sent-packet map, resend FIFO, and RTT estimator
 // (docs/CHANNELS.md 6.4; tla/RNWindow.tla Init).
 void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_region_t * region, const rocketnet_message_config_t * config )
 {
@@ -352,10 +352,10 @@ void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_regi
     memset( ack, 0, sizeof(*ack) );
     ack->send = send;
     ack->region = region;
-    ack->resend_delay_initial = (double) config->resend_delay_initial_ms / 1000.0;
-    ack->resend_delay_min = (double) config->resend_delay_min_ms / 1000.0;
-    ack->resend_delay_max = (double) config->resend_delay_max_ms / 1000.0;
-    ack->reliable_timeout = (double) config->reliable_timeout_ms / 1000.0;
+    ack->resend_delay_initial = (double) config->message_resend_delay_initial_ms / 1000.0;
+    ack->resend_delay_min = (double) config->message_resend_delay_min_ms / 1000.0;
+    ack->resend_delay_max = (double) config->message_resend_delay_max_ms / 1000.0;
+    ack->reliable_timeout = (double) config->reliable_message_timeout_ms / 1000.0;
 
     ack->srtt = 0.0;
     ack->rttvar = 0.0;
@@ -590,7 +590,7 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
 
     rn_window_ack_receipt_resolve( ack, entry, ROCKETNET_RECEIPT_STATUS_ACKED ); // RNReceipts ReceiveAck, EmitAck
 
-    // 1. One unambiguous RTT sample per acked packet_id (RakNet CC.cpp:210-222).
+    // 1. One unambiguous RTT sample per acked packet_id.
     const double rtt = now >= entry->send_time ? ( now - entry->send_time ) : 0.0;
     if ( !ack->has_rtt )
     {
@@ -604,9 +604,9 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
         ack->rttvar = 0.95 * ack->rttvar + 0.05 * diff;
         ack->srtt = 0.95 * ack->srtt + 0.05 * rtt;
     }
-    // RakNet's resend delay is min(2*RTT + 4*deviation + 30 ms, configured max).
+    // The resend delay is min(2*RTT + 4*deviation + 30 ms, configured max).
     // The first deviation is the first sample; the optional configured floor applies
-    // (docs/RAKNET-RELIABILITY.md:667-668, 686-695).
+    // (standard/MESSAGES.md m9.2).
     ack->resend_delay = rn_window_ack_compute_resend_delay( ack->srtt, ack->rttvar, ack->resend_delay_min, ack->resend_delay_max );
 
     // 2. For each referenced message number n that is still unacked (n >= U):
@@ -781,7 +781,7 @@ int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now )
     rn_window_ack_refresh_oldest( ack, now );
     if ( ack->has_oldest && ( now - ack->oldest_first_send ) >= ack->reliable_timeout )
     {
-        ack->error = ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT;
+        ack->error = ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT;
         return 1;
     }
     return 0;

@@ -9,6 +9,7 @@
 #include "rocketnet_fragment.h"
 #include "rocketnet_base64.h"
 #include "rocketnet_allocator.h"
+#include "rocketnet_send_budget.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -209,15 +210,15 @@ int rocketnet_message_validate_config_ex( const struct rocketnet_message_config_
         return 0;
     }
 
-    const int W = config->window_messages;
-    const int B = config->receive_ring_bytes;
+    const int W = config->reliable_messages_in_flight;
+    const int B = config->receive_message_buffer_bytes;
     const int F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     const int fragments = ( config->max_message_bytes + F - 1 ) / F;
 
     // the count bound and the ring index by number % W (6.1, 6.2)
     if ( ( W & ( W - 1 ) ) != 0 )
     {
-        rocketnet_error( "message config window_messages %d is not a power of two", W );
+        rocketnet_error( "message config reliable_messages_in_flight %d is not a power of two", W );
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;
@@ -226,7 +227,7 @@ int rocketnet_message_validate_config_ex( const struct rocketnet_message_config_
     // ring placements are multiples of 16 (4)
     if ( B % 16 != 0 )
     {
-        rocketnet_error( "message config receive_ring_bytes %d is not a multiple of 16", B );
+        rocketnet_error( "message config receive_message_buffer_bytes %d is not a multiple of 16", B );
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;
@@ -235,7 +236,7 @@ int rocketnet_message_validate_config_ex( const struct rocketnet_message_config_
     // a message that can never fit the receive ring could never be admitted (6.2 liveness)
     if ( config->max_message_bytes > B )
     {
-        rocketnet_error( "message config max_message_bytes %d is above receive_ring_bytes %d", config->max_message_bytes, B );
+        rocketnet_error( "message config max_message_bytes %d is above receive_message_buffer_bytes %d", config->max_message_bytes, B );
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;
@@ -244,45 +245,45 @@ int rocketnet_message_validate_config_ex( const struct rocketnet_message_config_
     // a block takes one number per fragment, all inside the window (8)
     if ( fragments > W )
     {
-        rocketnet_error( "message config max_message_bytes %d needs %d fragments, above window_messages %d", config->max_message_bytes, fragments, W );
+        rocketnet_error( "message config max_message_bytes %d needs %d fragments, above reliable_messages_in_flight %d", config->max_message_bytes, fragments, W );
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;
     }
 
     // the store's large class must hold one maximal block whole (4, 14)
-    const uint32_t large = rn_send_store_chunks_for( (uint64_t) config->send_buffer_bytes, RN_STORE_LARGE );
+    const uint32_t large = rn_send_store_chunks_for( (uint64_t) config->send_message_buffer_bytes, RN_STORE_LARGE );
     if ( large < (uint32_t) fragments )
     {
-        rocketnet_error( "message config send_buffer_bytes %d holds %u large chunks, below the %d a max_message_bytes %d block needs",
-                         config->send_buffer_bytes, large, fragments, config->max_message_bytes );
+        rocketnet_error( "message config send_message_buffer_bytes %d holds %u large chunks, below the %d a max_message_bytes %d block needs",
+                         config->send_message_buffer_bytes, large, fragments, config->max_message_bytes );
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;
     }
 
     // The initial timeout must sit inside the configured resend delay range.
-    if ( config->resend_delay_min_ms > config->resend_delay_max_ms )
+    if ( config->message_resend_delay_min_ms > config->message_resend_delay_max_ms )
     {
-        rocketnet_error( "message config resend_delay_min_ms %d is above resend_delay_max_ms %d", config->resend_delay_min_ms, config->resend_delay_max_ms );
+        rocketnet_error( "message config message_resend_delay_min_ms %d is above message_resend_delay_max_ms %d", config->message_resend_delay_min_ms, config->message_resend_delay_max_ms );
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;
     }
-    if ( config->resend_delay_initial_ms < config->resend_delay_min_ms || config->resend_delay_initial_ms > config->resend_delay_max_ms )
+    if ( config->message_resend_delay_initial_ms < config->message_resend_delay_min_ms || config->message_resend_delay_initial_ms > config->message_resend_delay_max_ms )
     {
-        rocketnet_error( "message config resend_delay_initial_ms %d is outside resend_delay_min_ms %d to resend_delay_max_ms %d", config->resend_delay_initial_ms, config->resend_delay_min_ms, config->resend_delay_max_ms );
+        rocketnet_error( "message config message_resend_delay_initial_ms %d is outside message_resend_delay_min_ms %d to message_resend_delay_max_ms %d", config->message_resend_delay_initial_ms, config->message_resend_delay_min_ms, config->message_resend_delay_max_ms );
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;
     }
 
-    // Reserve four initial resend delays before reliable_timeout_ms.
-    const int first_delay_ms = config->resend_delay_initial_ms;
-    if ( (int64_t) config->reliable_timeout_ms < (int64_t) ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS * (int64_t) first_delay_ms )
+    // Reserve four initial resend delays before reliable_message_timeout_ms.
+    const int first_delay_ms = config->message_resend_delay_initial_ms;
+    if ( (int64_t) config->reliable_message_timeout_ms < (int64_t) ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS * (int64_t) first_delay_ms )
     {
-        rocketnet_error( "message config reliable_timeout_ms %d fits fewer than %d sends of resend_delay_initial_ms %d",
-                         config->reliable_timeout_ms, ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS, config->resend_delay_initial_ms );
+        rocketnet_error( "message config reliable_message_timeout_ms %d fits fewer than %d sends of message_resend_delay_initial_ms %d",
+                         config->reliable_message_timeout_ms, ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS, config->message_resend_delay_initial_ms );
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;
@@ -623,6 +624,8 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
     for ( int i = 0; i < num_fields; i++ )
     {
         const struct rocketnet_config_field_t * field = &fields[i];
+        if ( ( field->flags & ROCKETNET_CONFIG_NO_ENV ) != 0 )
+            continue;
 
         char env_name[128];
         if ( !rocketnet_config_env_var_name_for( transport_name, field->name, env_name, sizeof(env_name) ) )

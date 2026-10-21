@@ -90,9 +90,9 @@ static struct rocketnet_message_limits_t channels_limits( int num_channels, uint
     struct rocketnet_message_limits_t limits;
     limits.num_channels = num_channels;
     limits.enabled_codes = enabled_codes;
-    limits.window_messages = 1024;
+    limits.reliable_messages_in_flight = 1024;
     limits.max_message_bytes = 32768;
-    limits.receive_ring_bytes = 65536;
+    limits.receive_message_buffer_bytes = 65536;
     return limits;
 }
 
@@ -139,7 +139,7 @@ static void channels_check_vector( const uint8_t * expected, int expected_bytes,
     uint8_t payload[2048];
     memset( payload, 0xCD, sizeof( payload ) );
     struct rocketnet_message_writer_t writer;
-    rocketnet_message_writer_begin( &writer, payload, ROCKETNET_MAX_PAYLOAD_BYTES );
+    rocketnet_message_writer_begin( &writer, payload, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
     for ( int i = 0; i < num_records; i++ )
         channels_check( rocketnet_message_writer_add( &writer, &records[i] ) == 1 );
     channels_check( rocketnet_message_writer_finish( &writer ) == expected_bytes );
@@ -236,8 +236,8 @@ static void channels_test_vectors()
         body.version = ROCKETNET_MESSAGE_CONFIG_VERSION;
         body.enabled = 0xff;
         body.num_channels = 32;
-        body.window_messages = 1024;
-        body.receive_ring_bytes = 262144;
+        body.reliable_messages_in_flight = 1024;
+        body.receive_message_buffer_bytes = 262144;
         body.max_message_bytes = 262144;
         body.fragment_bytes = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
         uint8_t config[ROCKETNET_MESSAGE_CONFIG_BYTES];
@@ -328,7 +328,7 @@ static void channels_test_violations()
         std::vector<uint8_t> past = channels_bytes( { 0x0A, 0x01, 0x00, 0, 0, 0, 0, 0, 0x02, 0x00, 0x01, 0x00, 0x41, 0x01 } );
         channels_check_violation( past, &all, ROCKETNET_MESSAGE_VIOLATION_BAD_BLOCK );
         struct rocketnet_message_limits_t narrow = all;
-        narrow.window_messages = 2;
+        narrow.reliable_messages_in_flight = 2;
         // the last of three fragments, at ring 144 so its block starts at 0
         std::vector<uint8_t> over_window = channels_bytes( { 0x0A, 0x01, 0x00, 0, 0, 0, 0x90, 0x00, 0x02, 0x00, 0x02, 0x00, 0x41, 0x01 } );
         channels_check_violation( over_window, &narrow, ROCKETNET_MESSAGE_VIOLATION_BAD_BLOCK );
@@ -362,10 +362,10 @@ static void channels_test_violations()
         channels_check_violation( below, &all, ROCKETNET_MESSAGE_VIOLATION_BAD_RING );
     }
 
-    // 9. bad size: a reliable record in a payload over ROCKETNET_MAX_PAYLOAD_BYTES; an unreliable one is fine there
+    // 9. bad size: a reliable record in a payload over ROCKETNET_MAX_PACKET_PAYLOAD_BYTES; an unreliable one is fine there
     {
         std::vector<uint8_t> big = channels_bytes( { 0x03, 0x00, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0x00 } );
-        const int length = ROCKETNET_MAX_PAYLOAD_BYTES - 12;
+        const int length = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 12;
         big[1] = (uint8_t) ( length & 0xFF );
         big[2] = (uint8_t) ( length >> 8 );
         big.insert( big.end(), length, 0x41 );
@@ -415,25 +415,25 @@ static void channels_test_single_zero_copy()
 {
     // a frame with the payload root at a 16-aligned payload_index, as start_packet hands back
 
-    alignas( 16 ) static uint8_t frame[64 + ROCKETNET_MAX_PAYLOAD_BYTES];
+    alignas( 16 ) static uint8_t frame[64 + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     const int payload_index = 32;
     uint8_t * payload = frame + payload_index;
     channels_check( ( (uintptr_t) payload & 15 ) == 0 );
 
-    channels_check( rocketnet_message_single_capacity( ROCKETNET_MAX_PAYLOAD_BYTES ) == ROCKETNET_MESSAGE_SINGLE_BYTES );
+    channels_check( rocketnet_message_single_capacity( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ) == ROCKETNET_MESSAGE_SINGLE_BYTES );
     channels_check( rocketnet_message_single_capacity( 1 ) == 0 );
     channels_check( rocketnet_message_single_capacity( 0 ) == 0 );
 
     // the application writes a packet-sized message in place at the root
     for ( int i = 0; i < ROCKETNET_MESSAGE_SINGLE_BYTES; i++ )
         payload[i] = (uint8_t) ( i ^ 0x5A );
-    channels_check( rocketnet_message_single_finish( payload, ROCKETNET_MAX_PAYLOAD_BYTES, ROCKETNET_MESSAGE_SINGLE_BYTES ) == ROCKETNET_MAX_PAYLOAD_BYTES );
+    channels_check( rocketnet_message_single_finish( payload, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, ROCKETNET_MESSAGE_SINGLE_BYTES ) == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
     channels_check( payload[ROCKETNET_MESSAGE_SINGLE_BYTES] == ROCKETNET_MESSAGE_FORM_SINGLE );
 
     // and the receiver reads it where it lies: the record's data is the payload root itself
     const struct rocketnet_message_limits_t limits = channels_limits( 32, rocketnet_message_enabled_codes( 0x09 ) );
     struct rocketnet_message_reader_t reader;
-    channels_check( rocketnet_message_reader_begin( &reader, payload, ROCKETNET_MAX_PAYLOAD_BYTES, &limits ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    channels_check( rocketnet_message_reader_begin( &reader, payload, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &limits ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
     struct rocketnet_message_record_t record;
     channels_check( rocketnet_message_reader_next( &reader, &record ) == 1 );
     channels_check( record.data == payload );
@@ -442,8 +442,8 @@ static void channels_test_single_zero_copy()
     channels_check( rocketnet_message_reader_next( &reader, &record ) == 0 );
 
     // refusals: empty, and no room left for the form byte
-    channels_check( rocketnet_message_single_finish( payload, ROCKETNET_MAX_PAYLOAD_BYTES, 0 ) == 0 );
-    channels_check( rocketnet_message_single_finish( payload, ROCKETNET_MAX_PAYLOAD_BYTES, ROCKETNET_MAX_PAYLOAD_BYTES ) == 0 );
+    channels_check( rocketnet_message_single_finish( payload, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, 0 ) == 0 );
+    channels_check( rocketnet_message_single_finish( payload, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ) == 0 );
 
     // a large SINGLE (the arena route) is legal: unreliable may ride fragments
     std::vector<uint8_t> large( 4097, 0x33 );
@@ -452,7 +452,7 @@ static void channels_test_single_zero_copy()
 
     // SINGLE is UNRELIABLE: a receiver that does not admit code 0 refuses it
     const struct rocketnet_message_limits_t ordered_only = channels_limits( 32, 1u << ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED );
-    channels_check( rocketnet_message_check_payload( payload, ROCKETNET_MAX_PAYLOAD_BYTES, &ordered_only ) == ROCKETNET_MESSAGE_VIOLATION_TYPE_NOT_ENABLED );
+    channels_check( rocketnet_message_check_payload( payload, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &ordered_only ) == ROCKETNET_MESSAGE_VIOLATION_TYPE_NOT_ENABLED );
 }
 
 // -----------------------------------------
@@ -604,7 +604,7 @@ static void channels_test_round_trip_and_never_overreads()
 
     for ( int iteration = 0; iteration < iterations; iteration++ )
     {
-        // build: either a packet of mixed records at most ROCKETNET_MAX_PAYLOAD_BYTES, or one
+        // build: either a packet of mixed records at most ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, or one
         // large unreliable record alone (L2.3), or a SINGLE message
 
         std::vector<rocketnet_message_record_t> sent;
@@ -653,7 +653,7 @@ static void channels_test_round_trip_and_never_overreads()
         else
         {
             struct rocketnet_message_writer_t writer;
-            rocketnet_message_writer_begin( &writer, payload, ROCKETNET_MAX_PAYLOAD_BYTES );
+            rocketnet_message_writer_begin( &writer, payload, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
             const int wanted = channels_random_range( &random, 1, 24 );
             for ( int i = 0; i < wanted; i++ )
             {
@@ -681,7 +681,7 @@ static void channels_test_round_trip_and_never_overreads()
                 }
             }
             length = rocketnet_message_writer_finish( &writer );
-            channels_check( length >= 4 && length <= ROCKETNET_MAX_PAYLOAD_BYTES );
+            channels_check( length >= 4 && length <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
         }
 
         // decode: the identity, in place
@@ -743,7 +743,7 @@ static void channels_test_round_trip_and_never_overreads()
     channels_check( mutations_parsed > 0 );
 
     // the mutations reach every check a record alone can fail; BAD_SIZE needs
-    // a reliable record past ROCKETNET_MAX_PAYLOAD_BYTES, which one byte cannot make, and
+    // a reliable record past ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, which one byte cannot make, and
     // BAD_CONTROL is the CONFIG body's
     for ( int v = ROCKETNET_MESSAGE_VIOLATION_BAD_FORM; v <= ROCKETNET_MESSAGE_VIOLATION_BAD_RING; v++ )
     {
@@ -1016,18 +1016,18 @@ static void test_channels_allocator_layout()
     rocketnet_message_default_config( &config );
     config.client_send_kbps = config.server_send_kbps = 0; // test explicit headroom without a finite send budget
     check( config.num_channels == 32 );
-    check( config.window_messages == 1024 );
-    check( config.receive_ring_bytes == 262144 );
+    check( config.reliable_messages_in_flight == 1024 );
+    check( config.receive_message_buffer_bytes == 262144 );
     check( config.max_message_bytes == 262144 );
 
     rn_region_layout_t layout;
     check( rn_region_layout( &config, &layout ) );
-    check( layout.formula_bytes == 1588480 );
-    check( layout.region_bytes == 1588480 );
-    check( rocketnet_message_connection_bytes( &config ) == 1588480 );
-    check( rocketnet_message_connection_bytes( NULL ) > 1588480 );
+    check( layout.formula_bytes == 1606912 );
+    check( layout.region_bytes == 1606912 );
+    check( rocketnet_message_connection_bytes( &config ) == 1606912 );
+    check( rocketnet_message_connection_bytes( NULL ) > 1606912 );
 
-    const uint64_t C = 32, W = 1024, B = 262144, Q = 1024, S = 800000, P = 256, Du = 256, Ru = 16, Rq = 256;
+    const uint64_t C = 32, W = 1024, B = 262144, Q = 1024, S = 800000, P = 256, Du = 1024, Ru = 16, Rq = 256;
     check( layout.bytes[RN_PART_CHANNEL_SEND] + layout.bytes[RN_PART_CHANNEL_RECEIVE] == 48 * C );
     check( layout.bytes[RN_PART_SEND_NUMBERS] == 32 * W );
     check( layout.bytes[RN_PART_RECEIVE_DESCRIPTORS] == 32 * W );
@@ -1038,7 +1038,7 @@ static void test_channels_allocator_layout()
     check( layout.bytes[RN_PART_SEND_STORE] == S );
     check( layout.bytes[RN_PART_SENT_PACKETS] + layout.bytes[RN_PART_SENT_INDEX] + layout.bytes[RN_PART_SENT_REFS] == 128 * P );
     check( layout.bytes[RN_PART_DELIVERIES] == 24 * ( W + Du ) );
-    check( layout.bytes[RN_PART_SEQUENCED_HOLDS] == ( 16 + ROCKETNET_MAX_PAYLOAD_BYTES ) * Ru );
+    check( layout.bytes[RN_PART_SEQUENCED_HOLDS] == ( 16 + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ) * Ru );
     check( layout.bytes[RN_PART_RECEIPTS] == 16 * Rq );
     check( layout.bytes[RN_PART_RESEND_FIFO] == 8 * W );
     check( layout.bytes[RN_PART_SEND_SPANS] == B );
@@ -1067,9 +1067,9 @@ static void test_channels_allocator_layout()
     // odd shapes pad, and the padding is all the region adds to the formula
 
     config.num_channels = 3;
-    config.unreliable_deliveries = 1;
-    config.sequenced_holds = 1;
-    config.receipt_ring = 17;
+    config.unreliable_messages_per_update = 1;
+    config.sequenced_messages_held = 1;
+    config.max_message_receipts = 17;
     check( rn_region_layout( &config, &layout ) );
     check( layout.region_bytes > layout.formula_bytes );
     check( layout.region_bytes - layout.formula_bytes < 64 * RN_NUM_PARTS );
@@ -1085,7 +1085,7 @@ static void test_channels_allocator_layout()
 
     // no sequenced holds is legal and takes no bytes
 
-    config.sequenced_holds = 0;
+    config.sequenced_messages_held = 0;
     check( rn_region_layout( &config, &layout ) );
     check( layout.bytes[RN_PART_SEQUENCED_HOLDS] == 0 );
 }
@@ -1104,14 +1104,14 @@ static void test_channels_allocator_validation()
     {
         { "num_channels 0",                         (int) offsetof( rocketnet_message_config_t, num_channels ), 0 },
         { "num_channels above the compile-time max", (int) offsetof( rocketnet_message_config_t, num_channels ), ROCKETNET_MAX_CHANNELS + 1 },
-        { "window not a power of two",              (int) offsetof( rocketnet_message_config_t, window_messages ), 1000 },
-        { "window below its minimum",               (int) offsetof( rocketnet_message_config_t, window_messages ), 32 },
-        { "ring not a multiple of 16",              (int) offsetof( rocketnet_message_config_t, receive_ring_bytes ), 262144 + 8 },
+        { "window not a power of two",              (int) offsetof( rocketnet_message_config_t, reliable_messages_in_flight ), 1000 },
+        { "window below its minimum",               (int) offsetof( rocketnet_message_config_t, reliable_messages_in_flight ), 32 },
+        { "ring not a multiple of 16",              (int) offsetof( rocketnet_message_config_t, receive_message_buffer_bytes ), 262144 + 8 },
         { "max message above the ring",             (int) offsetof( rocketnet_message_config_t, max_message_bytes ), 262144 + 16 },
-        { "store too small for a maximal block",    (int) offsetof( rocketnet_message_config_t, send_buffer_bytes ), 12288 },
+        { "store too small for a maximal block",    (int) offsetof( rocketnet_message_config_t, send_message_buffer_bytes ), 12288 },
         { "queue below its minimum",                (int) offsetof( rocketnet_message_config_t, send_queue_messages ), 15 },
-        { "resend_delay_initial above resend_delay_max",              (int) offsetof( rocketnet_message_config_t, resend_delay_initial_ms ), 3000 },
-        { "resend_delay_min above resend_delay_max",                  (int) offsetof( rocketnet_message_config_t, resend_delay_min_ms ), 3000 },
+        { "resend_delay_initial above resend_delay_max",              (int) offsetof( rocketnet_message_config_t, message_resend_delay_initial_ms ), 3000 },
+        { "resend_delay_min above resend_delay_max",                  (int) offsetof( rocketnet_message_config_t, message_resend_delay_min_ms ), 3000 },
     };
 
     for ( size_t i = 0; i < sizeof(rejected) / sizeof(rejected[0]); i++ )
@@ -1133,20 +1133,20 @@ static void test_channels_allocator_validation()
 
     // resend_delay_initial below resend_delay_min needs two fields: the default initial (2000 ms)
     // is above every single-field floor the range allows. Re-pinned for the
-    // RakNet default initial value.
+    // default initial value.
     rocketnet_message_default_config( &config );
-    config.resend_delay_initial_ms = 100;
-    config.resend_delay_min_ms = 150;
+    config.message_resend_delay_initial_ms = 100;
+    config.message_resend_delay_min_ms = 150;
     check( rocketnet_message_validate_config( &config ) == 0 );
     check( rocketnet_message_connection_bytes( &config ) == 0 );
 
     // ceil( max_message_bytes / F ) above W: a 64-message window holds at most 64 fragments
 
     rocketnet_message_default_config( &config );
-    config.window_messages = 64;
+    config.reliable_messages_in_flight = 64;
     config.max_message_bytes = 64 * ROCKETNET_MESSAGE_FRAGMENT_BYTES + 1;
-    config.receive_ring_bytes = 1 << 20;
-    config.send_buffer_bytes = 1 << 20;
+    config.receive_message_buffer_bytes = 1 << 20;
+    config.send_message_buffer_bytes = 1 << 20;
     check( rocketnet_message_validate_config( &config ) == 0 );
     config.max_message_bytes = 64 * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     check( rocketnet_message_validate_config( &config ) == 1 );
@@ -1155,7 +1155,7 @@ static void test_channels_allocator_validation()
 
     rocketnet_message_default_config( &config );
     config.max_message_bytes = 4 * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
-    config.send_buffer_bytes = 12288;               // a third of 12288 holds three 1152 chunks with their links
+    config.send_message_buffer_bytes = 12288;               // a third of 12288 holds three 1152 chunks with their links
     check( rocketnet_message_validate_config( &config ) == 0 );
     config.max_message_bytes = 3 * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     check( rocketnet_message_validate_config( &config ) == 1 );
@@ -1164,12 +1164,12 @@ static void test_channels_allocator_validation()
     // large class holds 18 chunks, a 32768-byte block needs 29 (section 4)
 
     rocketnet_message_default_config( &config );
-    config.window_messages = 256;
-    config.receive_ring_bytes = 32768;
-    config.send_buffer_bytes = 65536;
+    config.reliable_messages_in_flight = 256;
+    config.receive_message_buffer_bytes = 32768;
+    config.send_message_buffer_bytes = 65536;
     config.send_queue_messages = 256;
     config.packets_in_flight = 64;
-    config.unreliable_deliveries = 128;
+    config.unreliable_messages_per_update = 128;
     check( rocketnet_message_validate_config( &config ) == 0 );
     config.max_message_bytes = 18 * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     check( rocketnet_message_validate_config( &config ) == 1 );
@@ -1186,20 +1186,20 @@ static void test_channels_allocator_validation()
 
     rocketnet_message_default_config( &config );
     config.num_channels = 1;
-    config.window_messages = 64;
-    config.receive_ring_bytes = 4096;
+    config.reliable_messages_in_flight = 64;
+    config.receive_message_buffer_bytes = 4096;
     config.max_message_bytes = ROCKETNET_MESSAGE_SINGLE_BYTES;
-    config.send_buffer_bytes = 12288;
+    config.send_message_buffer_bytes = 12288;
     config.send_queue_messages = 16;
     config.packets_in_flight = 16;
     config.packets_per_update = 1;
-    config.unreliable_deliveries = 1;
-    config.sequenced_holds = 0;
-    config.receipt_ring = 16;
-    config.resend_delay_min_ms = 1;
-    config.resend_delay_initial_ms = 10;
-    config.resend_delay_max_ms = 10;
-    config.reliable_timeout_ms = 1000;
+    config.unreliable_messages_per_update = 1;
+    config.sequenced_messages_held = 0;
+    config.max_message_receipts = 16;
+    config.message_resend_delay_min_ms = 1;
+    config.message_resend_delay_initial_ms = 10;
+    config.message_resend_delay_max_ms = 10;
+    config.reliable_message_timeout_ms = 1000;
     check( rocketnet_message_validate_config( &config ) == 1 );
     check( rocketnet_message_connection_bytes( &config ) > 0 );
 
@@ -1521,7 +1521,7 @@ static void test_channels_allocator_arena()
         check( rn_region_contains( region, region->sent_index, sizeof(rn_sent_index_t) * (uint64_t) region->sent_index_entries ) );
         check( rn_region_contains( region, region->sent_refs, sizeof(uint32_t) * (uint64_t) region->sent_ref_entries ) );
         check( rn_region_contains( region, region->deliveries, sizeof(rn_delivery_t) * (uint64_t) region->delivery_entries ) );
-        check( rn_region_contains( region, region->sequenced_holds, sizeof(rn_sequenced_hold_t) * (uint64_t) region->holds ) );
+        check( rn_region_contains( region, region->sequenced_messages_held, sizeof(rn_sequenced_hold_t) * (uint64_t) region->holds ) );
         check( rn_region_contains( region, region->receipts, sizeof(rn_receipt_t) * (uint64_t) region->receipt_entries ) );
         check( rn_region_contains( region, region->resend_fifo, sizeof(rn_resend_link_t) * (uint64_t) region->window ) );
         check( !rn_region_contains( region, region->base + region->bytes, 1 ) );
@@ -1529,7 +1529,7 @@ static void test_channels_allocator_arena()
         check( region->held_entries == 2 * region->window );
         check( region->sent_index_entries == 2 * region->packets );
         check( region->sent_ref_entries == 16 * region->packets );
-        check( region->delivery_entries == region->window + (uint32_t) config.unreliable_deliveries );
+        check( region->delivery_entries == region->window + (uint32_t) config.unreliable_messages_per_update );
     }
 
     // the receiver's ring bounds check
@@ -1548,7 +1548,7 @@ static void test_channels_allocator_arena()
 
     // a refused config allocates nothing
 
-    config.window_messages = 1000;
+    config.reliable_messages_in_flight = 1000;
     check( rn_arena_create( NULL, &config, 1, &counters ) == NULL );
     check( rn_hook_mallocs == mallocs + 1 );
     rocketnet_message_default_config( &config );
@@ -1572,9 +1572,9 @@ static void test_channels_allocator_sizing()
     check( length > 0 && length < (int) sizeof(text) );
     check( (int) strlen( text ) == length );
     check( strstr( text, "48C + 104.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq" ) != NULL );
-    check( strstr( text, "region bytes 1588480" ) != NULL );
-    check( strstr( text, "formula bytes 1588480" ) != NULL );
-    check( strstr( text, "1000 connections 1588480000" ) != NULL );
+    check( strstr( text, "region bytes 1606912" ) != NULL );
+    check( strstr( text, "formula bytes 1606912" ) != NULL );
+    check( strstr( text, "1000 connections 1606912000" ) != NULL );
 
     // too small a buffer truncates and still reports the full length, as snprintf does
 
@@ -1584,18 +1584,18 @@ static void test_channels_allocator_sizing()
 
     // a refused config prints nothing and returns 0
 
-    config.receive_ring_bytes = 100;
+    config.receive_message_buffer_bytes = 100;
     check( rocketnet_message_connection_sizing( &config, 1, text, (int) sizeof(text) ) == 0 );
     check( text[0] == '\0' );
 
     // the print form logs the same lines at info level and returns the region bytes
 
     rocketnet_message_default_config( &config );
-    const enum rocketnet_log_level_t old_level = rocketnet_get_log_level();
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    const enum rocketnet_log_level_t old_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
     const int lines_before = rn_log_lines;
     check( rocketnet_message_print_connection_sizing( &config, 16 ) == rocketnet_message_connection_bytes( &config ) );
-    rocketnet_set_log_level( old_level );
+    rocketnet_log_level( old_level );
     check( rn_log_lines - lines_before >= 10 );
     check( strstr( rn_log_last, "16 connections" ) != NULL );
 }
@@ -1805,7 +1805,7 @@ static void rn_soak_write_and_receive( rn_soak_side_t * side, uint64_t tick )
 {
     rn_region_t * region = side->sender;
     rn_region_t * receiver = side->receiver;
-    uint8_t frame[ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
 
     for ( uint32_t c = 0; c < region->num_channels; c++ )
     {
@@ -1956,7 +1956,7 @@ static void rn_soak_write_and_receive( rn_soak_side_t * side, uint64_t tick )
 
             if ( receiver->holds > 0 )
             {
-                rn_sequenced_hold_t * hold = &receiver->sequenced_holds[descriptor->serial % receiver->holds];
+                rn_sequenced_hold_t * hold = &receiver->sequenced_messages_held[descriptor->serial % receiver->holds];
                 const uint32_t bytes = descriptor->bytes < (uint32_t) sizeof(hold->data) ? descriptor->bytes : (uint32_t) sizeof(hold->data);
                 memcpy( hold->data, delivery->data, bytes );
                 hold->bytes = bytes;
@@ -2259,7 +2259,7 @@ static void channels_single_expect_one_record( const uint8_t * payload, int byte
 
 static void test_channels_single_form_parses_as_one_code0_record()
 {
-    alignas( 16 ) static uint8_t frame[ROCKETNET_MAX_PAYLOAD_BYTES];
+    alignas( 16 ) static uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     static uint8_t message[ROCKETNET_MESSAGE_SINGLE_BYTES];
 
     // a message of 300 bytes and the largest the form carries: the message at
@@ -2420,7 +2420,7 @@ static void channels_window_receive_setup( channels_window_receive_rig_t * rig, 
     memset( rig, 0, sizeof(*rig) );
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.window_messages = 64;
+    config.reliable_messages_in_flight = 64;
     config.max_message_bytes = 32768;       // a block is at most W = 64 fragments (the cross rule of 14)
     rig->arena = rn_arena_create( NULL, &config, 1, &rig->counters );
     check( rig->arena );
@@ -2577,10 +2577,10 @@ static void test_channels_window_receive_over_the_lossy_simulator_leg( float los
     check( rocketnet_address_parse( &address, "127.0.0.1:40001" ) );
     rocketnet_network_simulator_config( wire, 0.02, 0.04, loss_percent, 30.0f );
     rocketnet_message_limits_t limits = channels_limits( 1, 1u << ROCKETNET_MESSAGE_CODE_RELIABLE );
-    limits.window_messages = 64;
+    limits.reliable_messages_in_flight = 64;
     double now = 0.0;
     alignas( 16 ) uint8_t packet[128];
-    alignas( 16 ) uint8_t received[ROCKETNET_MAX_PAYLOAD_BYTES * 2];
+    alignas( 16 ) uint8_t received[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES * 2];
 
     rn_trap_phase = "receive-window-wire";
     rn_trap_armed = 1;
@@ -2725,8 +2725,8 @@ static void test_channels_window_send_and_receive_over_the_lossy_simulator_leg( 
     rocketnet_counters_t counters = {};
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.window_messages = W;
-    config.receive_ring_bytes = B;
+    config.reliable_messages_in_flight = W;
+    config.receive_message_buffer_bytes = B;
     config.max_message_bytes = B;
     rn_arena_t * arena = rn_arena_create( NULL, &config, 2, &counters );
     check( arena );
@@ -2746,15 +2746,15 @@ static void test_channels_window_send_and_receive_over_the_lossy_simulator_leg( 
     check( rocketnet_address_parse( &address, "127.0.0.1:40002" ) );
     rocketnet_network_simulator_config( wire, 0.02, 0.04, loss_percent, 30.0f );
     rocketnet_message_limits_t limits = channels_limits( 1, 1u << ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED );
-    limits.window_messages = W;
+    limits.reliable_messages_in_flight = W;
     limits.max_message_bytes = B;
-    limits.receive_ring_bytes = B;
+    limits.receive_message_buffer_bytes = B;
 
     channels_window_exchange_record_t records[capacity] = {};
     uint8_t live[B] = {};
     uint8_t reserved[B] = {};
-    alignas( 16 ) uint8_t packet[ROCKETNET_MAX_PAYLOAD_BYTES];
-    alignas( 16 ) uint8_t received[ROCKETNET_MAX_PAYLOAD_BYTES * 2];
+    alignas( 16 ) uint8_t packet[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    alignas( 16 ) uint8_t received[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES * 2];
     uint64_t send_cursor = 0;
     int next_message = 0, accepted_total = 0, drained = 0;
     double now = 0.0;
@@ -3096,8 +3096,8 @@ static void test_channels_window_rtt_sample_is_unambiguous_across_resends()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.resend_delay_initial_ms = 200;
-    config.resend_delay_max_ms = 3000;                                   // so the resend delay formula shows unclamped
+    config.message_resend_delay_initial_ms = 200;
+    config.message_resend_delay_max_ms = 3000;                                   // so the resend delay formula shows unclamped
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -3169,7 +3169,7 @@ static void test_channels_window_eviction_keeps_numbers_resendable()
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.packets_in_flight = 16; // P = 16, 16P = 256
-    config.resend_delay_initial_ms = 200;
+    config.message_resend_delay_initial_ms = 200;
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -3229,8 +3229,8 @@ static void test_channels_window_resend_delay_never_backs_off()
     // not back off; an ack updates the samples and therefore the resend delay
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.resend_delay_initial_ms = 250;
-    config.resend_delay_max_ms = 2000;
+    config.message_resend_delay_initial_ms = 250;
+    config.message_resend_delay_max_ms = 2000;
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -3275,7 +3275,7 @@ static void test_channels_window_resend_walk_stops_at_the_first_not_due()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.resend_delay_initial_ms = 200;
+    config.message_resend_delay_initial_ms = 200;
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -3320,7 +3320,7 @@ static void test_channels_window_failed_send_marks_due_now()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.resend_delay_initial_ms = 200;
+    config.message_resend_delay_initial_ms = 200;
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -3374,7 +3374,7 @@ static void test_channels_window_reliable_timeout_enters_the_error_state()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.resend_delay_initial_ms = 250;
+    config.message_resend_delay_initial_ms = 250;
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -3410,7 +3410,7 @@ static void test_channels_window_reliable_timeout_enters_the_error_state()
 
     // At t = 15.00 (now - first_send == 10.0 == reliable_timeout): enters error state and stops resending.
     check( rn_window_ack_resend( &ack, 15.00, &next_pkt, out, 4 ) == 0 );
-    check( ack.error == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
+    check( ack.error == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
     check( rn_window_ack_check_timeout( &ack, 15.00 ) == 1 );
 
     rn_arena_destroy( arena );
@@ -3468,12 +3468,12 @@ static void channels_lossy_soak_send_wire_packet( rocketnet_network_simulator_t 
 {
     // Wire frame format inside the simulator: 8-byte little-endian packet_id
     // prefix followed by a Layer 2 RECORDS payload.
-    uint8_t frame[8 + ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t frame[8 + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     uint8_t * p = frame;
     rocketnet_write_uint64( &p, packet_id );
 
     rocketnet_message_writer_t writer;
-    rocketnet_message_writer_begin( &writer, frame + 8, ROCKETNET_MAX_PAYLOAD_BYTES );
+    rocketnet_message_writer_begin( &writer, frame + 8, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
     for ( uint32_t i = 0; i < count; i++ )
     {
         const uint64_t n = numbers[i];
@@ -3514,16 +3514,16 @@ static void test_channels_window_lossy_soak_leg( float loss_percent )
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.num_channels = 4;
-    config.window_messages = (int) W;
-    config.receive_ring_bytes = (int) B;
+    config.reliable_messages_in_flight = (int) W;
+    config.receive_message_buffer_bytes = (int) B;
     config.max_message_bytes = (int) ( 3 * F );
-    config.send_buffer_bytes = 65536;
+    config.send_message_buffer_bytes = 65536;
     config.send_queue_messages = 64;
     config.packets_in_flight = (int) P;
-    config.resend_delay_min_ms = 20;
-    config.resend_delay_initial_ms = 50;
-    config.resend_delay_max_ms = 400;
-    config.reliable_timeout_ms = 60000;
+    config.message_resend_delay_min_ms = 20;
+    config.message_resend_delay_initial_ms = 50;
+    config.message_resend_delay_max_ms = 400;
+    config.reliable_message_timeout_ms = 60000;
 
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
@@ -3553,15 +3553,15 @@ static void test_channels_window_lossy_soak_leg( float loss_percent )
     rocketnet_message_limits_t limits;
     limits.num_channels = config.num_channels;
     limits.enabled_codes = rocketnet_message_enabled_codes( 0x09 );
-    limits.window_messages = (int) W;
+    limits.reliable_messages_in_flight = (int) W;
     limits.max_message_bytes = config.max_message_bytes;
-    limits.receive_ring_bytes = (int) B;
+    limits.receive_message_buffer_bytes = (int) B;
 
     static channels_lossy_soak_record_t records[max_records];
     memset( records, 0, sizeof(records) );
     uint8_t live[8 * ROCKETNET_MESSAGE_FRAGMENT_BYTES];
     memset( live, 0, sizeof(live) );
-    uint8_t received[8 + ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t received[8 + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
 
     uint64_t next_packet_id = 1;
     int next_message = 0;
@@ -3851,16 +3851,16 @@ static void test_channels_window_lossy_soak_product_leg( float loss_percent )
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.num_channels = num_channels;
-    config.window_messages = 64;
-    config.receive_ring_bytes = (int) ( 128 * F );
+    config.reliable_messages_in_flight = 64;
+    config.receive_message_buffer_bytes = (int) ( 128 * F );
     config.max_message_bytes = (int) ( 3 * F );
-    config.send_buffer_bytes = 262144;
+    config.send_message_buffer_bytes = 262144;
     config.send_queue_messages = 256;
     config.packets_in_flight = 16;
-    config.resend_delay_min_ms = 20;
-    config.resend_delay_initial_ms = 50;
-    config.resend_delay_max_ms = 400;
-    config.reliable_timeout_ms = 60000;
+    config.message_resend_delay_min_ms = 20;
+    config.message_resend_delay_initial_ms = 50;
+    config.message_resend_delay_max_ms = 400;
+    config.reliable_message_timeout_ms = 60000;
 
     rocketnet_counters_t counters[2];
     memset( counters, 0, sizeof(counters) );
@@ -3887,12 +3887,12 @@ static void test_channels_window_lossy_soak_product_leg( float loss_percent )
     check( rocketnet_address_parse( &sender_addr, "127.0.0.1:41000" ) );
     check( rocketnet_address_parse( &receiver_addr, "127.0.0.1:41001" ) );
 
-    alignas( 16 ) static uint8_t frames[ROCKETNET_PACKET_BUILDER_MAX_PACKETS][ROCKETNET_MAX_PAYLOAD_BYTES];
+    alignas( 16 ) static uint8_t frames[ROCKETNET_PACKET_BUILDER_MAX_PACKETS][ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     uint8_t * pointers[ROCKETNET_PACKET_BUILDER_MAX_PACKETS];
     for ( int i = 0; i < ROCKETNET_PACKET_BUILDER_MAX_PACKETS; i++ )
         pointers[i] = frames[i];
 
-    uint8_t wire_bytes[8 + ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t wire_bytes[8 + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     uint64_t next_packet_id = 1;
     int packets_written = 0;
     int next_message = 0;
@@ -4425,12 +4425,12 @@ void rocketnet_channels_prepare( const char * name )
 {
     if ( !rocketnet_channels_is_allocator_test( name ) )
         return;
-    rocketnet_set_allocator( rn_test_malloc_hook, rn_test_free_hook );
+    rocketnet_allocator( rn_test_malloc_hook, rn_test_free_hook );
 }
 
 void rocketnet_channels_prepare_log( const char * name )
 {
     if ( !rocketnet_channels_is_allocator_test( name ) )
         return;
-    rocketnet_set_log_callback( rn_test_log_function, NULL );
+    rocketnet_log_function( rn_test_log_function, NULL );
 }

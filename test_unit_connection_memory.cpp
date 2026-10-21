@@ -27,7 +27,7 @@
 #define check rocketnet_unit_check
 
 // ---------------------------------------------------------------------------
-// The counting allocator: rocketnet_set_allocator accepts a replacement only on an
+// The counting allocator: rocketnet_allocator accepts a replacement only on an
 // uninitialized library with nothing live, so the worker's init is stopped,
 // the counter installed and the library started again; the restore reverses it.
 // ---------------------------------------------------------------------------
@@ -52,14 +52,14 @@ static void cm_free( void * context, void * p )
 static void cm_install()
 {
     rocketnet_term();
-    check( rocketnet_set_allocator( cm_malloc, cm_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( cm_malloc, cm_free ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
 static void cm_restore()
 {
     rocketnet_term();
-    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
@@ -126,8 +126,8 @@ static bool cm_bookkeeping_equal( const rn_region_t * a, const rn_region_t * b )
     if ( memcmp( a->resend_fifo, b->resend_fifo, sizeof(rn_resend_link_t) * a->window ) != 0 ) return false;
     for ( uint32_t h = 0; h < a->holds; h++ )
     {
-        const rn_sequenced_hold_t * x = &a->sequenced_holds[h];
-        const rn_sequenced_hold_t * y = &b->sequenced_holds[h];
+        const rn_sequenced_hold_t * x = &a->sequenced_messages_held[h];
+        const rn_sequenced_hold_t * y = &b->sequenced_messages_held[h];
         if ( x->bytes != y->bytes || x->ordering != y->ordering || x->sequencing != y->sequencing || x->channel != y->channel || x->used != y->used || x->code != y->code )
             return false;
     }
@@ -304,7 +304,7 @@ static void test_reused_slot_starts_clean()
     a->sent_index[0].used = 1;
     a->sent_refs[0] = 3;
     a->deliveries[0].bytes = 12;
-    a->sequenced_holds[0].used = 1;
+    a->sequenced_messages_held[0].used = 1;
     a->receipts[0].serial = 4;
     a->resend_fifo[0].next = 2;
     rn_region_exhaust( a );
@@ -562,13 +562,13 @@ static void test_receive_without_room_exhausts_the_region()
 
 // Reassembly geometry: an out-of-range argument (connections and slots at
 // least 1, slots at most ROCKETNET_MAX_FRAGMENTS, payload between
-// ROCKETNET_MAX_PAYLOAD_BYTES and ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,
+// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES and ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,
 // delivered at least 1) or an over-budget geometry is refused before any
 // allocation (sdk/rocketnet_fragment.cpp rocketnet_reassembly_memory_required,
 // rocketnet_reassembly_memory_allowed, rocketnet_reassembly_set_create).
 static void test_reassembly_geometry_refuses_bad_arguments_and_budget()
 {
-    const int MP = ROCKETNET_MAX_PAYLOAD_BYTES;
+    const int MP = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
 
     // a bad argument yields required 0 and allowed false
     const int bad[][4] = {

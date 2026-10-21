@@ -211,7 +211,7 @@ int main( int argc, char ** argv )
     randombytes_set_implementation( &dst_keys_implementation );
     if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
         return 1;
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
     uint64_t runs = 0;
     uint64_t failed = 0;

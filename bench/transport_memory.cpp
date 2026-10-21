@@ -72,14 +72,14 @@ int main(int argc, char ** argv)
     const char * transport = argc >= 5 ? argv[4] : "portable";
     const bool plan_only = argc == 7 && strcmp(argv[6], "--plan-only") == 0;
     if (argc == 7 && !plan_only) return 1;
-    rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_NONE);
+    rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config(&config);
     if (strlen(transport) >= sizeof(config.transport)) return 1;
     snprintf(config.transport, sizeof(config.transport), "%s", transport);
     config.max_clients = number(argv[1]);
     config.max_payload_bytes = number(argv[2]);
-    config.num_reassembly_slots = number(argv[3]);
+    config.max_fragmented_messages = number(argv[3]);
     config.num_xdp_queues = argc >= 6 ? number(argv[5]) : 0;
     rocketnet_server_memory_plan_t plan;
     if (!rocketnet_server_transport_memory_plan(&config, transport, plan))
@@ -88,13 +88,13 @@ int main(int argc, char ** argv)
         "\"planned_bytes\":%llu,\"transport_bytes\":%llu,\"protocol_bytes\":%llu,\"reassembly_bytes\":%llu,"
         "\"send_arena_bytes\":%llu,\"transport_allocator_bytes\":%llu,\"umem_bytes\":%llu,"
         "\"worker_threads\":%d,\"sockets\":%d,\"os_and_application_bytes\":null}\n",
-        transport, config.max_clients, config.max_payload_bytes, config.num_reassembly_slots,
+        transport, config.max_clients, config.max_payload_bytes, config.max_fragmented_messages,
         (unsigned long long)plan.total_bytes, (unsigned long long)plan.transport_bytes,
         (unsigned long long)plan.protocol_bytes, (unsigned long long)plan.reassembly_bytes,
         (unsigned long long)plan.send_arena_bytes, (unsigned long long)plan.transport_bytes,
         (unsigned long long)plan.umem_bytes, plan.worker_threads, plan.sockets);
     if (plan_only) return 0; // No init, sockets, worker threads or UMEM registration.
-    rocketnet_set_allocator(allocate, release);
+    rocketnet_allocator(allocate, release);
     if (rocketnet_init( NULL ) != ROCKETNET_STATUS_OK) return 1;
     rocketnet_forbid_xdp_commit();
     auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);

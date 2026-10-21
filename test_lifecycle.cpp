@@ -643,8 +643,8 @@ static void check_client_memory_budget( allocator_state & state )
 int main()
 {
     allocator_state state;
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
-    rocketnet_set_allocator( allocate, release );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_allocator( allocate, release );
     check( rocketnet_malloc( &state, SIZE_MAX ) == NULL );
     check( state.calls == 0 );
     rocketnet_server_transport_config_t memory_config;
@@ -659,7 +659,7 @@ int main()
     check(rocketnet_server_transport_required_memory(&memory_config, "portable") == 0);
     memory_config.max_clients = ROCKETNET_MAX_CLIENTS;
     memory_config.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES;
-    memory_config.num_reassembly_slots = ROCKETNET_MAX_FRAGMENTS;
+    memory_config.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS;
     // Planning a geometry larger than the component budget never allocates it.
     check(rocketnet_server_transport_required_memory(&memory_config, "portable") > default_memory);
     // The whole-host estimate is a plan too: it allocates nothing before init.
@@ -683,9 +683,9 @@ int main()
     client_memory_config.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES + 1;
     check(rocketnet_client_transport_required_memory(&client_memory_config, "portable") == 0);
     client_memory_config.max_payload_bytes = 0;
-    client_memory_config.num_reassembly_slots = ROCKETNET_MAX_FRAGMENTS + 1;
+    client_memory_config.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS + 1;
     check(rocketnet_client_transport_required_memory(&client_memory_config, "portable") == 0);
-    client_memory_config.num_reassembly_slots = 0;
+    client_memory_config.max_fragmented_messages = 0;
     client_memory_config.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES;
     check(rocketnet_client_transport_required_memory(&client_memory_config, "portable") > client_default_memory);
     check( state.calls == 0 );
@@ -697,13 +697,13 @@ int main()
         rocketnet_free( &state, p );
     }
     void * p = rocketnet_malloc( &state, 1 );
-    rocketnet_set_allocator( refuse_allocation, refuse_free ); // live allocation prevents replacement
+    rocketnet_allocator( refuse_allocation, refuse_free ); // live allocation prevents replacement
     rocketnet_free( &state, p );
     check( state.live == 0 );
     check( rocketnet_init( &state ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK );
     rocketnet_forbid_xdp_commit();
-    rocketnet_set_allocator( refuse_allocation, refuse_free ); // initialized library prevents replacement
+    rocketnet_allocator( refuse_allocation, refuse_free ); // initialized library prevents replacement
     p = rocketnet_malloc( &state, 16 );
     check( p );
     rocketnet_term(); // live allocation prevents premature shutdown
@@ -738,9 +738,9 @@ int main()
     rocketnet_term();
     rocketnet_term();
     check( state.live == 0 );
-    rocketnet_set_allocator( refuse_allocation, refuse_free );
+    rocketnet_allocator( refuse_allocation, refuse_free );
     check( rocketnet_malloc( NULL, 16 ) == NULL );
-    rocketnet_set_allocator( allocate, release );
+    rocketnet_allocator( allocate, release );
     check( rocketnet_init( &state ) == ROCKETNET_STATUS_OK );
     rocketnet_term();
     check( state.live == 0 );

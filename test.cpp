@@ -105,7 +105,7 @@ static int rocketnet_unit_worker( const char * name )
     if ( cleared != 0 || cleared_server != 0 || cleared_client != 0 )
         return 1;
 
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
     // allocator cases install their hooks here: replacement is refused after init
     rocketnet_channels_prepare( name );

@@ -98,7 +98,7 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
     (void) argv;
     if ( sodium_init() < 0 )
         abort();
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     return 0;
 }
 
@@ -125,7 +125,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     server.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     server.send_rate = 10.0;
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    memcpy( server.filter_value, tag, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( server.packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server.backend_public_key, rocketnet_dev_backend_public_key, 32 );
     memcpy( server.server_public_key, rocketnet_dev_server_public_key, 32 );
     memcpy( server.server_secret_key, rocketnet_dev_server_secret_key, 32 );
@@ -154,7 +154,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     memset( &client_counters, 0, sizeof(client_counters) );
     struct rocketnet_client_protocol_t client;
     rocketnet_client_protocol_init( &client, &client_counters );
-    memcpy( client.filter_value, tag, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( client.packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
 
     // the token the client connects with, minted with the real path
     uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
@@ -216,12 +216,12 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
         if ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED && ( action & 3 ) == 1 )
         {
             uint8_t packet[ROCKETNET_RECEIVE_CEILING];
-            uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES];
+            uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
             generate_payload( payload, payload_size );
             const int bytes = rocketnet_client_protocol_write_payload( &client, payload, payload_size, time, packet );
             if ( bytes > 0 )
                 rocketnet_network_simulator_send( simulator, &client_address, &server_address, packet, bytes, time );
-            payload_size = payload_size < ROCKETNET_MAX_PAYLOAD_BYTES ? payload_size + 1 : 1;
+            payload_size = payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? payload_size + 1 : 1;
         }
 
         // occasionally a fragmented payload, so reassembly soaks under the
@@ -229,7 +229,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
         if ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED && ( action & 3 ) == 2 )
         {
             static uint8_t fragmented_payload[16384];
-            const int fragmented_bytes = ROCKETNET_MAX_PAYLOAD_BYTES + 1 + ( fuzz_u16( &r ) % 4096 );
+            const int fragmented_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1 + ( fuzz_u16( &r ) % 4096 );
             generate_payload( fragmented_payload, fragmented_bytes );
             static uint8_t fragment_packets[16 * ROCKETNET_SEND_BUDGET];
             int fragment_packet_bytes[16];
@@ -294,7 +294,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
                         abort();
                     rocketnet_network_simulator_send( simulator, &server_address, &from, response, response_bytes, time );
                 }
-                if ( delivered_bytes > 0 && delivered_bytes > ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES )
+                if ( delivered_bytes > 0 && delivered_bytes > ROCKETNET_RECEIVE_PAYLOAD_BYTES )
                     abort();
             }
 
@@ -334,7 +334,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
                 uint8_t delivered[ROCKETNET_RECEIVE_CEILING];
                 int delivered_bytes = 0;
                 rocketnet_client_protocol_process_packet( &client, packet, bytes, time, delivered, sizeof(delivered), &delivered_bytes );
-                if ( delivered_bytes > 0 && delivered_bytes > ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES )
+                if ( delivered_bytes > 0 && delivered_bytes > ROCKETNET_RECEIVE_PAYLOAD_BYTES )
                     abort();
             }
         }

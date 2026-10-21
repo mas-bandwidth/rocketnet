@@ -23,7 +23,7 @@
 #define check rocketnet_unit_check
 
 // ---------------------------------------------------------------------------
-// m9.resend-trace: the sent-packet map, the RakNet adaptive resend delay, and the
+// m9.resend-trace: the sent-packet map, the adaptive resend delay, and the
 // reliable timeout over two paths, time an argument from 1000.0.
 // ---------------------------------------------------------------------------
 
@@ -81,7 +81,7 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
         if ( capacity < 16 )
             return -1;
 
-        // short path: a 20 ms sample gives the RakNet resend delay of 150 ms.
+        // short path: a 20 ms sample gives the adaptive resend delay of 150 ms.
         {
             resend_trace_fixture_t f;
             resend_trace_open( &f );
@@ -94,8 +94,8 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
             out[n++] = (uint8_t) resend_trace_pass( &f, t0 + 0.221 );
             out[n++] = (uint8_t) rn_window_ack_check_timeout( &f.ack, t0 + 9.999 );
             out[n++] = (uint8_t) rn_window_ack_check_timeout( &f.ack, t0 + 10.000 );
-            out[n++] = (uint8_t) f.ack.error;
-            check( f.ack.error == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
+            out[n++] = (uint8_t) rocketnet_disconnect_reason_standard_code( f.ack.error );
+            check( f.ack.error == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
             resend_trace_close( &f );
         }
 
@@ -124,7 +124,7 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
             return -1;
 
         rocketnet_send_budget_t budget;
-        check( rocketnet_send_budget_init( &budget, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 1000.0 ) );
+        check( rocketnet_send_budget_init( &budget, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 1000.0 ) );
 
         rocketnet_send_budget_begin_update( &budget, 1000.0 );
         out[n++] = (uint8_t) rocketnet_send_budget_admit( &budget, ROCKETNET_SEND_CLASS_NEW_RELIABLE, 1452 );
@@ -150,8 +150,8 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
         out[n++] = (uint8_t) rocketnet_send_budget_admit( &budget, ROCKETNET_SEND_CLASS_NEW_RELIABLE, 1452 );
 
         // a budget of 0 detaches the bucket and nothing is charged; the large
-        // state is promoted to RELIABLE_SEQUENCED (RakNet ReliabilityLayer
-        // promotion), so its first packet is no larger than one maximum packet
+        // state is promoted to RELIABLE_SEQUENCED (the promotion
+        // rule), so its first packet is no larger than one maximum packet
         {
             rocketnet_message_config_t config;
             rocketnet_message_default_config( &config );
@@ -161,7 +161,7 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
             rn_endpoint_config_t endpoint_config;
             memset( &endpoint_config, 0, sizeof( endpoint_config ) );
             endpoint_config.config = &config;
-            endpoint_config.send_kbps = ROCKETNET_DEFAULT_CLIENT_SEND_KBPS;
+            endpoint_config.send_kbps = ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS;
             endpoint_config.max_payload_bytes = 65536;
             rn_endpoint_t endpoint;
             rn_endpoint_init( &endpoint, rn_arena_region( arena, 0 ), &endpoint_config );
@@ -181,7 +181,7 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
             const int written = request > 0 ? rn_endpoint_write_packet( &endpoint, frame, (int) sizeof( frame ), 1, 1000.0 ) : 0;
             if ( written > 0 )
                 rn_endpoint_packet_sent( &endpoint, 1, written + 26, 1000.0 );
-            out[n++] = (uint8_t) ( written > ROCKETNET_MAX_PAYLOAD_BYTES );
+            out[n++] = (uint8_t) ( written > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
             out[n++] = (uint8_t) ( endpoint.unreliable_count == 0 );
             out[n++] = (uint8_t) ( endpoint.budget.bytes_spent == 0 );
             out[n++] = (uint8_t) ( endpoint.budget.unreliable_dropped == 0 );
@@ -194,7 +194,7 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
     return -1;
 }
 
-// Re-pin m9 because the trace now waits for the RakNet adaptive resend delay.
+// Re-pin m9 because the trace now waits for the adaptive resend delay.
 static const rn_standard_vector_t standard_resend_and_budget_table[] =
 {
     RN_STANDARD_VECTOR( "m9.resend-trace", "0000000100010400000001" ),

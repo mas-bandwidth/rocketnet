@@ -99,7 +99,7 @@ static void rcr_server_setup( struct rocketnet_server_protocol_t * server, struc
 {
     memset( server, 0, sizeof(*server) );
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
-    memcpy( server->filter_value, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( server->packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server->backend_public_key, rocketnet_test_backend_public_key, 32 );
     memcpy( server->server_public_key, rocketnet_test_server_public_key, 32 );
     memcpy( server->server_secret_key, rocketnet_test_server_secret_key, 32 );
@@ -378,7 +378,7 @@ static int rcr_seal( struct rcr_pair_t * pair, int to_server, uint8_t type, uint
     const uint8_t * key = key_override ? key_override :
                           ( to_server ? pair->client.keys.session_client_to_server : pair->client.keys.session_server_to_client );
     const uint64_t sealed_sequence = sequence ? sequence : 1;
-    const int bytes = rocketnet_write_sealed_packet( out, type, pair->client.filter_value, sealed_sequence, NULL,
+    const int bytes = rocketnet_write_sealed_packet( out, type, pair->client.packet_filter, sealed_sequence, NULL,
                                                      plaintext, plaintext_bytes,
                                                      pair->client.signed_fields.protocol_id, pair->client.connection_salt,
                                                      NULL, key );
@@ -576,7 +576,7 @@ static void rcr_run_row( const rcr_row_t * row )
             const int length = rcr_floor( type ) - ( row->defect == RCR_WRONG_SIZE ? 1 : 0 );
             memset( packet, 0, sizeof(packet) );
             uint8_t * p = packet;
-            rocketnet_write_prefilter_header( &p, type, pair.client.filter_value );
+            rocketnet_write_prefilter_header( &p, type, pair.client.packet_filter );
             bytes = length;
             sealed = false;
             break;
@@ -672,7 +672,7 @@ static int rcr_header_only( struct rcr_pair_t * pair, uint8_t type, int bytes, u
 {
     memset( out, 0, (size_t) bytes );
     uint8_t * p = out;
-    rocketnet_write_prefilter_header( &p, type, pair->client.filter_value );
+    rocketnet_write_prefilter_header( &p, type, pair->client.packet_filter );
     return bytes;
 }
 
@@ -688,7 +688,7 @@ static void test_client_handshake_receive_counters_move_exactly()
     rcr_pair_setup( &pair, RCR_STAGE_REQUESTING_COOKIE );
     {
         const uint8_t mac[ROCKETNET_COOKIE_MAC_BYTES] = { 0 };
-        rocketnet_write_connection_cookie_packet( packet, pair.client.filter_value, pair.client.connection_salt, 0, mac );
+        rocketnet_write_connection_cookie_packet( packet, pair.client.packet_filter, pair.client.connection_salt, 0, mac );
         before = pair.client_counters;
         check( rcr_to_client( &pair, packet, ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES ) );
         RCR_EXPECT( "cookie stored", &before, &pair.client_counters,
@@ -701,7 +701,7 @@ static void test_client_handshake_receive_counters_move_exactly()
     rcr_pair_setup( &pair, RCR_STAGE_DISCONNECTED );
     {
         const uint8_t mac[ROCKETNET_COOKIE_MAC_BYTES] = { 0 };
-        rocketnet_write_connection_cookie_packet( packet, pair.client.filter_value, pair.client.connection_salt, 0, mac );
+        rocketnet_write_connection_cookie_packet( packet, pair.client.packet_filter, pair.client.connection_salt, 0, mac );
         before = pair.client_counters;
         check( !rcr_to_client( &pair, packet, ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES ) );
         RCR_EXPECT( "cookie to a client that is not connecting", &before, &pair.client_counters,
@@ -762,7 +762,7 @@ static void test_client_handshake_receive_counters_move_exactly()
         rocketnet_derive_handshake_keys( &handshake, pair.client.token.client_to_server_key, pair.client.token.server_to_client_key,
                                          pair.client.connection_salt, session_nonce );
         const uint8_t small_order_point[ROCKETNET_KEY_BYTES] = { 0 };
-        bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_CHALLENGE_PACKET, pair.client.filter_value, 1,
+        bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_CHALLENGE_PACKET, pair.client.packet_filter, 1,
                                                session_nonce, small_order_point, ROCKETNET_KEY_BYTES,
                                                pair.client.signed_fields.protocol_id, pair.client.connection_salt,
                                                pair.client.client_ephemeral_public_key, handshake.handshake_server_to_client );

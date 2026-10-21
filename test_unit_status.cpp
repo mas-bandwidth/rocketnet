@@ -55,13 +55,14 @@ static const struct
     { ROCKETNET_STATUS_SERVER_NOT_STOPPED, "SERVER_NOT_STOPPED" },
     { ROCKETNET_STATUS_FLOW_ID_RESERVED, "FLOW_ID_RESERVED" },
     { ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED, "TRANSPORT_FAMILIES_UNSUPPORTED" },
+    { ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED, "CONFIG_NOT_INITIALIZED" },
 };
 
 static void test_status_names_cover_every_code()
 {
     check( ROCKETNET_STATUS_OK == 0 );
-    check( ROCKETNET_STATUS_COUNT == 27 );
-    check( rocketnet_num_status_codes() == ROCKETNET_STATUS_COUNT );
+    check( ROCKETNET_STATUS_COUNT == 28 );
+    check( ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED == 27 );
     check( sizeof( status_expected ) / sizeof( status_expected[0] ) == ROCKETNET_STATUS_COUNT );
 
     for ( int i = 0; i < ROCKETNET_STATUS_COUNT; i++ )
@@ -83,11 +84,11 @@ REGISTER_UNIT_TEST( test_status_names_cover_every_code );
 
 static void test_status_name_out_of_range_is_unknown()
 {
-    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) -1 ), "unknown" ) == 0 );
-    check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_COUNT ), "unknown" ) == 0 );
-    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) ( ROCKETNET_STATUS_COUNT + 1 ) ), "unknown" ) == 0 );
-    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) INT_MIN ), "unknown" ) == 0 );
-    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) INT_MAX ), "unknown" ) == 0 );
+    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) -1 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_COUNT ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) ( ROCKETNET_STATUS_COUNT + 1 ) ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) INT_MIN ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) INT_MAX ), "UNKNOWN" ) == 0 );
 }
 
 REGISTER_UNIT_TEST( test_status_name_out_of_range_is_unknown );

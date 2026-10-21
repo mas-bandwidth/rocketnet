@@ -83,21 +83,21 @@ static void check_message_validate_status()
 
     // the window count is not a power of two
     rocketnet_message_default_config( &config );
-    config.window_messages = 96;
+    config.reliable_messages_in_flight = 96;
     status = -1;
     check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 
     // ring placements are not multiples of 16
     rocketnet_message_default_config( &config );
-    config.receive_ring_bytes = 262145;
+    config.receive_message_buffer_bytes = 262145;
     status = -1;
     check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 
     // a maximal message cannot fit the receive ring
     rocketnet_message_default_config( &config );
-    config.receive_ring_bytes = 4096;
+    config.receive_message_buffer_bytes = 4096;
     config.max_message_bytes = 5000;
     status = -1;
     check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );
@@ -105,7 +105,7 @@ static void check_message_validate_status()
 
     // more fragments than the window holds
     rocketnet_message_default_config( &config );
-    config.window_messages = 64;
+    config.reliable_messages_in_flight = 64;
     config.max_message_bytes = 100000;
     status = -1;
     check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );
@@ -113,7 +113,7 @@ static void check_message_validate_status()
 
     // the large store class cannot hold a maximal block
     rocketnet_message_default_config( &config );
-    config.send_buffer_bytes = 12288;
+    config.send_message_buffer_bytes = 12288;
     config.max_message_bytes = 100000;
     status = -1;
     check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );
@@ -121,25 +121,25 @@ static void check_message_validate_status()
 
     // resend_delay_min above resend_delay_max
     rocketnet_message_default_config( &config );
-    config.resend_delay_min_ms = 3000;
+    config.message_resend_delay_min_ms = 3000;
     status = -1;
     check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 
     // resend_delay_initial outside the min/max clamp
     rocketnet_message_default_config( &config );
-    config.resend_delay_min_ms = 200;
-    config.resend_delay_initial_ms = 150;
+    config.message_resend_delay_min_ms = 200;
+    config.message_resend_delay_initial_ms = 150;
     status = -1;
     check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 
     // reliable_timeout too short for the resend budget
     rocketnet_message_default_config( &config );
-    config.resend_delay_min_ms = 200;
-    config.resend_delay_max_ms = 60000;
-    config.resend_delay_initial_ms = 5000;
-    config.reliable_timeout_ms = 10000;
+    config.message_resend_delay_min_ms = 200;
+    config.message_resend_delay_max_ms = 60000;
+    config.message_resend_delay_initial_ms = 5000;
+    config.reliable_message_timeout_ms = 10000;
     status = -1;
     check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );

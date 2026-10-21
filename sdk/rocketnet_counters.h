@@ -835,7 +835,7 @@
     \
     /* An UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT send */ \
     /* too big for one packet's record is promoted to its reliable twin, as */ \
-    /* RakNet's ReliabilityLayer does. EXPECTED: promotion is the normal path */ \
+    /* the promotion rule says. EXPECTED: promotion is the normal path */ \
     /* for a large unreliable send, one count per send. appended: indices are */ \
     /* the contract. */ \
     /** @brief ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE: Counts UNRELIABLE sends too big for one packet's record, promoted to their reliable twin; one count per promoted send. Unit: occurrences. Class: expected; family: none. */ \

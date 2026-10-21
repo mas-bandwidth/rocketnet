@@ -27,6 +27,8 @@
 // after lease insertion, so that refusal also leaves no gap.
 
 #include "test_unit_registry.h"
+#include "sdk/rocketnet_connect_token.h"
+#include "sdk/rocketnet_base64.h"
 #include "test/portable_crt.h"
 
 #include "rocketnet_ack.h"
@@ -208,7 +210,7 @@ REGISTER_UNIT_TEST( test_sequence_burn_receiver_block_skips_unopened );
 #define BURN_SETTLE_ROUNDS 30
 #define BURN_REFUSALS_PER_ROUND 3
 #define BURN_SMALL_BYTES 32
-#define BURN_ARENA_REQUEST ( ROCKETNET_MAX_PAYLOAD_BYTES + 600 )
+#define BURN_ARENA_REQUEST ( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 600 )
 
 enum sequence_burn_side_t { BURN_SIDE_SERVER = 0, BURN_SIDE_CLIENT = 1 };
 enum sequence_burn_kind_t { BURN_KIND_RING = 0, BURN_KIND_ARENA = 1 };
@@ -228,13 +230,13 @@ static bool sequence_burn_pair_setup( struct sequence_burn_pair_t * pair )
     memset( pair, 0, sizeof( *pair ) );
     pair->time = 1000.0;
     sequence_burn_clock = pair->time;
-    rocketnet_set_quiet( 1 );
+    rocketnet_quiet( 1 );
 
     const uint64_t protocol_id = 0x6275726e73657173ULL;
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret_key[64];
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret_key[sizeof( rocketnet_dev_server_secret_key )];
     rocketnet_unit_check( rocketnet_generate_backend_keypair( backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_generate_server_keypair( server_public_key, server_secret_key ) == ROCKETNET_STATUS_OK );
 
@@ -679,7 +681,7 @@ REGISTER_UNIT_TEST( test_sequence_burn_server_unreserved_fragment_finish_does_no
 // The message layer on the same loopback pair, default message config. Each
 // round the burning side sends one 8-byte reliable ordered message, and every
 // fourth round a 3,000-byte reliable ordered message (fragmented into
-// ROCKETNET_MAX_PAYLOAD_BYTES packets by the message layer). In the burn run,
+// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES packets by the message layer). In the burn run,
 // in each of those fourth rounds the first start_packet the message layer
 // makes finds the transport's payload ring full: the test's seam (the
 // object's link.start_packet, the one transport call the layer starts frames
@@ -759,13 +761,13 @@ static bool sequence_burn_message_pair_setup( struct sequence_burn_message_pair_
     memset( pair, 0, sizeof( *pair ) );
     pair->time = 1000.0;
     sequence_burn_clock = pair->time;
-    rocketnet_set_quiet( 1 );
+    rocketnet_quiet( 1 );
 
     const uint64_t protocol_id = 0x6275726e6d736773ULL;
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret_key[64];
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret_key[sizeof( rocketnet_dev_server_secret_key )];
     rocketnet_unit_check( rocketnet_generate_backend_keypair( backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_generate_server_keypair( server_public_key, server_secret_key ) == ROCKETNET_STATUS_OK );
 

@@ -89,7 +89,7 @@ outstanding cookies, which no slot record holds, so no property here depends on 
 | `Establish(i)` | the response opens: the token is recorded in the history, the slot is CONNECTED, its reason cleared |
 | `Deny(i)`, `SlotTimeout(i)`, `ClientLeaves(i)`, `DisconnectClient(i)` | a denial during the handshake; the slot's timeout; the client's own disconnect; `disconnect_client(i)` with its burst |
 | `ServerSend(i)` | message start/finish to a connected slot (the `sendbeforeconnected` defect also enables it for a FREE or HANDSHAKE slot) |
-| `ServerDropSend(i)` | message start to a slot that is not CONNECTED, on a running or a stopped server (`rocketnet_server_start_message` returns NULL and counts `ROCKETNET_SERVER_COUNTER_NOT_CONNECTED_DROPS`; the message layer's `MESSAGE_SEND_NOT_CONNECTED`): no slot field changes, nothing is held; the ghost `droppedIn` is the slot's state after a drop and `{}` after any other step (RN-2 m1.5) |
+| `ServerDropSend(i)` | message start to a slot that is not CONNECTED, on a running or a stopped server (`rocketnet_server_start_message` returns NULL and counts the `messages_dropped_not_connected` stat; the message layer's `MESSAGE_SEND_NOT_CONNECTED`): no slot field changes, nothing is held; the ghost `droppedIn` is the slot's state after a drop and `{}` after any other step (RN-2 m1.5) |
 | `ClientSend(s)`, `Deliver(s)`, `Lose(s)` | the client of any session ever started sends (also after its connection ended); the packet arrives at that session's slot (the same address reconnecting into the same slot is the worst case) and opens only under the keys it was sealed with, into a connected slot |
 
 Restart is `Stop`, `Start`. Every path out of a slot's connection goes through the one per-slot

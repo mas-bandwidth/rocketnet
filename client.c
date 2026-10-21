@@ -34,6 +34,52 @@
 #include <unistd.h>
 #endif
 
+// The internal client transport takes the binary token. The C-callable way to
+// mint one is the public string token decoded back to bytes:
+// rocketnet_write_test_connect_token (sdk/rocketnet_connect_token.h) has C++
+// linkage, so a C program cannot link it. Both seal to the fixed internal
+// development server key (rocketnet_dev_server_public_key) that the server
+// transport dev config carries, under ROCKETNET_DEV_PROTOCOL_ID.
+
+static int dev_token_base64_value( char c )
+{
+    if ( c >= 'A' && c <= 'Z' ) return c - 'A';
+    if ( c >= 'a' && c <= 'z' ) return c - 'a' + 26;
+    if ( c >= '0' && c <= '9' ) return c - '0' + 52;
+    if ( c == '+' || c == '-' ) return 62;
+    if ( c == '/' || c == '_' ) return 63;
+    return -1;
+}
+
+static int dev_token_binary( const char * address, uint64_t client_id, uint64_t timestamp, uint8_t * token, size_t token_bytes )
+{
+    char text[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    const int ipv6 = ( address[0] == '[' );
+    if ( rocketnet_create_dev_connect_token( ipv6 ? NULL : address, ipv6 ? address : NULL, rocketnet_dev_server_public_key,
+                                             ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS, ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS,
+                                             client_id, ROCKETNET_DEV_PROTOCOL_ID, timestamp, NULL, text ) != ROCKETNET_STATUS_OK )
+        return 0;
+    size_t written = 0;
+    uint32_t bits = 0;
+    int count = 0;
+    for ( const char * p = text; *p && *p != '='; p++ )
+    {
+        const int v = dev_token_base64_value( *p );
+        if ( v < 0 )
+            return 0;
+        bits = ( bits << 6 ) | (uint32_t) v;
+        count += 6;
+        if ( count >= 8 )
+        {
+            count -= 8;
+            if ( written >= token_bytes )
+                return 0;
+            token[written++] = (uint8_t) ( ( bits >> count ) & 0xFF );
+        }
+    }
+    return written == token_bytes;
+}
+
 static volatile int quit;
 
 void interrupt_handler( int signal )
@@ -74,7 +120,7 @@ static void usage( const char * prog )
     printf( "  --channels C             channel count to drive, 1 to 32 (default 32)\n" );
     printf( "  --send-kbps K            client send budget in kbps\n" );
     printf( "  --update-hz H            main loop update rate in Hz\n" );
-    printf( "  --counters-every S       snapshot counters every S seconds (default 60)\n" );
+    printf( "  --counters-every S       print counters every S seconds (default 60)\n" );
     printf( "  --results PATH           where result lines go\n" );
     printf( "  --status PATH            one line per state change\n" );
     printf( "  --self-test-result FILE  write a sample result file without any socket and exit\n" );
@@ -446,14 +492,14 @@ static void receive_check( matrix_state_t * st, struct rocketnet_client_t * clie
     /* the one receive queue, in batches: each entry names the channel it was
        delivered on; modes 0, 2, 5, 6 arrive on channel 0. The next batch call
        or update releases a batch */
-    struct rocketnet_message_batch_t batch;
-    while ( rocketnet_client_receive_messages( client, &batch ) )
+    const struct rocketnet_message_batch_t * batch = NULL;
+    while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
     {
-        for ( int m = 0; m < batch.num_messages; m++ )
+        for ( int m = 0; m < batch->num_messages; m++ )
         {
-            const uint8_t * data = batch.data[m];
-            const int bytes = batch.bytes[m];
-            const int channel = batch.channel[m];
+            const uint8_t * data = batch->data[m];
+            const int bytes = batch->bytes[m];
+            const int channel = batch->channel[m];
             if ( bytes < 1 ) continue;
             int tag = data[0];
             int mode = tag & 7;
@@ -565,7 +611,7 @@ static double quantile( const double * values, int count, double q )
 static long resident_kb( void );
 
 // section 7: every counter by name, message and transport counters summed.
-static void snapshot_counters( matrix_state_t * st, struct rocketnet_client_t * client, double seconds )
+static void sample_counters( matrix_state_t * st, struct rocketnet_client_t * client, double seconds )
 {
     if ( !client ) return;
     struct rocketnet_message_client_t * message_client = (struct rocketnet_message_client_t *) client;
@@ -705,8 +751,16 @@ static void run_matrix( opts_t * o )
         last_clock = now;
         r_event( res, o->label, window, "clock", "mint" );
 
-        uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-        if ( rocketnet_write_dev_connect_token( o->address, rocketnet_random_uint64(), (uint64_t) now, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
+        // bin/server is an internal message server on the transport dev config,
+        // so its server key is the fixed internal development server key
+        // (rocketnet_dev_server_public_key, sdk/rocketnet_connect_token.h): the
+        // client needs nothing from the server process to mint its token.
+        char connect_token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+        const int address_is_ipv6 = ( o->address[0] == '[' );
+        if ( rocketnet_create_dev_connect_token( address_is_ipv6 ? NULL : o->address, address_is_ipv6 ? o->address : NULL,
+                                                 rocketnet_dev_server_public_key,
+                                                 ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS, ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS,
+                                                 rocketnet_random_uint64(), ROCKETNET_DEV_PROTOCOL_ID, (uint64_t) now, NULL, connect_token ) != ROCKETNET_STATUS_OK )
         {
             r_fail( res, o->label, window, 0, 0, 0, 0, "token-mint-failed", 0, 0, "client", "-", "mint" );
             st.fails++;
@@ -719,7 +773,7 @@ static void run_matrix( opts_t * o )
         cc.packets_per_update = 64;     // the budget, section 2
 
         enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-        struct rocketnet_client_t * client = rocketnet_client_create( NULL, &cc, NULL, 0, &create_status );
+        struct rocketnet_client_t * client = rocketnet_client_create( NULL, &cc, &create_status );
         if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
         if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
         {
@@ -734,7 +788,7 @@ static void run_matrix( opts_t * o )
         }
 
         // section 7: counters and RSS at start
-        snapshot_counters( &st, client, rocketnet_time() - st.run_start );
+        sample_counters( &st, client, rocketnet_time() - st.run_start );
 
         if ( status )
             fprintf( status, "client\tconnecting\n" );
@@ -815,8 +869,8 @@ static void run_matrix( opts_t * o )
             if ( state < 0 )
             {
                 char excerpt[128];
-                snprintf( excerpt, sizeof(excerpt), "state=%s reason=%d", rocketnet_client_state_name( state ),
-                          rocketnet_client_disconnect_reason( client ) );
+                // a negative state names how the connection ended
+                snprintf( excerpt, sizeof(excerpt), "state=%s", rocketnet_client_state_name( state ) );
                 r_fail( res, o->label, window, 0, 0, 0, 0, "unexpected-disconnect", 0, state, "client",
                         "-", excerpt );
                 r_event( res, o->label, window, "unexpected-disconnect", rocketnet_client_state_name( state ) );
@@ -857,11 +911,11 @@ static void run_matrix( opts_t * o )
                 last_stat = rocketnet_time();
                 if ( st.rtt_count < 200000 )
                 {
-                    st.rtt[st.rtt_count] = rocketnet_client_stat( client, ROCKETNET_CLIENT_STAT_RTT );
-                    st.loss[st.loss_count] = rocketnet_client_stat( client, ROCKETNET_CLIENT_STAT_PACKET_LOSS );
+                    st.rtt[st.rtt_count] = rn_client_stats_of( client ).rtt;
+                    st.loss[st.loss_count] = rn_client_stats_of( client ).packet_loss;
                     r_stat( res, o->label, window, rocketnet_time() - w0,
                             st.rtt[st.rtt_count],
-                            rocketnet_client_stat( client, ROCKETNET_CLIENT_STAT_JITTER ),
+                            rn_client_stats_of( client ).jitter,
                             st.loss[st.loss_count] );
                     st.rtt_count++;
                     st.loss_count++;
@@ -870,7 +924,7 @@ static void run_matrix( opts_t * o )
             if ( rocketnet_time() - last_counters >= o->counters_every )
             {
                 last_counters = rocketnet_time();
-                snapshot_counters( &st, client, rocketnet_time() - st.run_start );
+                sample_counters( &st, client, rocketnet_time() - st.run_start );
             }
             rocketnet_sleep( step );
         }
@@ -923,17 +977,19 @@ static void run_matrix( opts_t * o )
             }
 
         // section 7: counters and RSS at exit of the window
-        snapshot_counters( &st, client, rocketnet_time() - st.run_start );
+        sample_counters( &st, client, rocketnet_time() - st.run_start );
 
         /* the disconnect: alternating clean and silent drop, final clean */
         if ( is_final || ( window % 2 ) == 0 )
         {
-            const int reason = !aborted ? rocketnet_client_disconnect_reason( client ) : ROCKETNET_DISCONNECT_REASON_NONE;
-            if ( !aborted && reason != ROCKETNET_DISCONNECT_REASON_NONE )
+            // a connection the server or the protocol ended reads as a
+            // negative state; before a clean close it must still be up
+            const int ended = !aborted ? rocketnet_client_state( client ) : ROCKETNET_CLIENT_STATE_CONNECTED;
+            if ( !aborted && ended < 0 )
             {
                 char excerpt[96];
-                snprintf( excerpt, sizeof(excerpt), "disconnect reason=%d before clean close", reason );
-                r_fail( res, o->label, window, 0, 0, 0, 0, "unexpected-disconnect-reason", 0, reason, "client", "-", excerpt );
+                snprintf( excerpt, sizeof(excerpt), "state=%s before clean close", rocketnet_client_state_name( (enum rocketnet_client_state_t) ended ) );
+                r_fail( res, o->label, window, 0, 0, 0, 0, "unexpected-disconnect-reason", 0, ended, "client", "-", excerpt );
                 r_event( res, o->label, window, "unexpected-disconnect", "reason" );
                 st.fails++;
             }
@@ -1023,8 +1079,10 @@ int main( int argc, char ** argv )
     // the development connect: mint a token locally against the published
     // development keys. a production client is handed its token by a backend.
 
+    // the binary token of the internal client transport, sealed to the fixed
+    // internal development server key that bin/server's transport dev config carries
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    if ( rocketnet_write_dev_connect_token( connect_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
+    if ( !dev_token_binary( connect_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, sizeof( connect_token ) ) )
     {
         printf( "error: failed to write dev connect token\n" );
         rocketnet_term();

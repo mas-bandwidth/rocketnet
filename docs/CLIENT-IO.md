@@ -19,7 +19,15 @@ must preserve these invariants:
 - a receive buffer is retired exactly once;
 - queue pressure refuses or defers work within fixed capacity and never turns
   a public call into a wait;
-- shutdown joins owned background work within the bounded destroy contract.
+- disconnect and destroy stop the I/O thread and return after it exits. The
+  API promises no time bound for that wait, including if a platform call stalls.
+
+The optional `time_callback` in the client config supplies receive-stamp time;
+it is not the game clock passed to update. It may run on the I/O thread and on
+the caller's thread during disconnect and destroy. Keep its function and
+context valid through destroy, and make it safe for those threads. The game
+clock supplied to time-taking API calls must be finite, nondecreasing, and
+consistent across calls.
 
 The executable invariants live in `tla/RNClientIo.tla`,
 `tla/RNClientIoDecrypt.tla`, the unit suite, and the functional transport

@@ -13,7 +13,7 @@ if(ROCKETNET_SOURCE_PATH)
     endif()
 else()
     find_package(RocketNet 1.0 CONFIG REQUIRED)
-    # the package's release label (1.0.0-preview-1) must be the installed
+    # the package's release label (v1.0.0-preview-1) must be the installed
     # header's ROCKETNET_VERSION_FULL; main.c compares the two
     if(NOT RocketNet_VERSION_STRING)
         message(FATAL_ERROR "RocketNet package carries no RocketNet_VERSION_STRING")

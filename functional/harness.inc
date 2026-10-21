@@ -83,7 +83,7 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double
 
 static char rocketnet_test_log_ring[ROCKETNET_FUNCTIONAL_LOG_RING_LINES][ROCKETNET_FUNCTIONAL_LOG_RING_SLOT_BYTES];
 static int rocketnet_test_log_ring_lines;
-static rocketnet_log_callback_t rocketnet_test_suite_log_function = NULL;
+static rocketnet_log_function_t rocketnet_test_suite_log_function = NULL;
 static char rocketnet_test_captured_log[16384];
 
 static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
@@ -207,7 +207,8 @@ public:
                 clear(name);
             }
         }
-        clear("ROCKETNET_SERVER_PUBLIC_ADDRESS");
+        clear("ROCKETNET_SERVER_IPV4_ADDRESS");
+        clear("ROCKETNET_SERVER_IPV6_ADDRESS");
         clear("ROCKETNET_SERVER_NUM_OS_CPUS");
         clear("ROCKETNET_GATEWAY_ETHERNET_ADDRESS");
     }

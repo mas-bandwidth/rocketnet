@@ -1,96 +1,82 @@
 # Client and server
 
-Two separate programs over real UDP on loopback, showing RocketNet's security
-model end to end with production keys.
+Use this flow to connect a development client and server in separate
+processes over UDP. Exchange the server's public information, with the
+published development backend key standing in for the game's backend.
 
-## The model
+## Connection flow
 
-The backend holds the Ed25519 backend secret key and gives the matching public
-key to every server. The server holds its own X25519 server secret key and the
-backend public key. The client's matchmaker stub holds the backend secret key
-and the server's public key, and mints a production connect token: signed by
-the backend, sealed to that server, naming the client id, protocol id, server
-address, expiry and timeout. The server accepts only a token it can verify,
-open, and find unexpired for its own protocol id, so another title is refused.
-The development token that `hello` uses is for development only.
+The server process:
 
-## The key file
+1. Calls `rocketnet_server_default_config`, sets its nonzero `protocol_id`, and
+   copies `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` into
+   `rocketnet_server_config_t.backend_public_key`.
+2. Calls `rocketnet_server_create`. Create generates a fresh X25519 sealing
+   keypair inside the server object; the application does not configure a
+   server public or secret key.
+3. Calls `rocketnet_server_start`, then reads the generated public key with
+   `rocketnet_server_public_key` and the bound address with
+   `rocketnet_server_ipv4_address` or `rocketnet_server_ipv6_address`.
+4. Makes that public key and address available to the development client by an
+   application-defined local channel. The server secret key remains inside the
+   server object and is wiped at destroy.
 
-The server generates the backend keypair and its own server keypair through the
-public keygen calls and writes `client_server.keys` in the working directory.
-The client reads it to play the backend. One small file is plainer than piping
-a key through the run script, which starts the pair with no arguments, and it
-keeps key material out of every log line. A deployment distributes these keys
-out of band.
+The client-side development token helper:
 
-## Run it
+1. Passes the server's public key and served address, token lifetime, timeout,
+   client id, protocol id, current Unix timestamp, and optional user data to
+   `rocketnet_create_dev_connect_token`.
+2. Receives an opaque NUL-terminated base64 string in a
+   `ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES` buffer.
+3. Passes that string directly to `rocketnet_client_connect`; it does not parse
+   or modify the token.
 
-From the repository root, after the normal build, in two terminals:
+`ROCKETNET_DEV_BACKEND_PUBLIC_KEY` and
+`rocketnet_create_dev_connect_token` exist only in the development library. A
+release server refuses the development key. In production, the game's backend
+owns token minting and returns the same kind of opaque token string; RocketNet
+does not expose production key-generation or token-minting calls.
+
+## Running the two programs
+
+Use sample sources and a library built against the same public header.
+
+From the repository root, after the normal build, start the server and then the
+client in separate terminals:
 
 ```sh
 ./bin/example_client_server_server
 ./bin/example_client_server_client
 ```
 
-The server listens on `127.0.0.1:40000`, receives one reliable-ordered message
-from the client, echoes it, and exits after its first client disconnects. Both
-programs finish in under ten seconds and print `PASS` as their last line.
-
-## The port
-
-Both programs take the port from `--port <n>`, else from the environment
-variable `ROCKETNET_EXAMPLE_PORT`, else the default `40000`; the server binds
-`127.0.0.1` at that port and the client's token names the same address. Give
-both the same port:
+Both programs use `--port <n>` when supplied and otherwise use port `40000`.
+Give both processes the same port:
 
 ```sh
 ./bin/example_client_server_server --port 41234
 ./bin/example_client_server_client --port 41234
 ```
 
-A value that is not 1 to 65535 prints a `FAIL` line and exits non-zero.
-`tools/run_examples.py --build build` runs the pair in that order, in a fresh
-temporary working directory, on a free UDP port it asks the operating system
-for and passes through `ROCKETNET_EXAMPLE_PORT`, so two runs at once never
-share a port or a key file. When the server cannot bind that port, because
-another process took it between the pick and the start, the script says so
-and picks again, at most three tries. To see the
-refusal, start a fresh server and run the client's own flag:
+The message exchange is: the client connects,
+sends one reliable-ordered message, receives the server's echo, disconnects,
+and reports failures with a nonzero exit status. Use `--wrong-protocol` to create the development token with a different protocol id and check
+that the connection is refused.
 
-```sh
-./bin/example_client_server_client --wrong-protocol
-```
-`--wrong-protocol` combines with `--port <n>` in either order.
-The client mints the token for another protocol id, the server ignores it, and
-the client prints `expected refusal:` with the refused state and then `PASS`.
-Stop that server when the run finishes.
+## Public calls in the final flow
 
-## What the output means
-
-```
-server received: hello from the client
-client received: hello from the client
-client state: connected -> disconnected
-client disconnect reason: none
-PASS
-```
-Each `client state:` line is a state change from the public callback. The
-server prints the message it received; the client prints the echo. The
-disconnect reason is `none` for a clean disconnect. Library log lines are
-informational and not part of the check. The key file is a local artifact and
-can be deleted after a run.
-## Public calls it uses
 - `rocketnet_init`, `rocketnet_term`
-- `rocketnet_generate_backend_keypair`, `rocketnet_generate_server_keypair`,
-  `rocketnet_write_production_connect_token`
-- `rocketnet_server_default_config`, `rocketnet_server_create`, `rocketnet_server_update`,
-  `rocketnet_server_port`, `rocketnet_server_max_clients`, `rocketnet_server_num_connected_clients`,
-  `rocketnet_server_receive_messages`, `rocketnet_server_start_message`,
-  `rocketnet_server_finish_message`, `rocketnet_server_send_packets`, `rocketnet_server_disconnect_reason`,
-  `rocketnet_server_destroy`
-- `rocketnet_client_default_config`, `rocketnet_client_create`, `rocketnet_client_state`,
-  `rocketnet_client_state_name`, `rocketnet_client_update`, `rocketnet_client_receive_messages`,
-  `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
-  `rocketnet_client_send_packets`, `rocketnet_client_disconnect`, `rocketnet_client_disconnect_reason`,
-  `rocketnet_client_destroy`
-- `rocketnet_time`, `rocketnet_sleep`
+- `rocketnet_server_default_config`, `rocketnet_server_create`,
+  `rocketnet_server_start`, `rocketnet_server_destroy`,
+  `rocketnet_server_public_key`, `rocketnet_server_ipv4_address`,
+  `rocketnet_server_ipv6_address`, `rocketnet_server_update`,
+  `rocketnet_server_send_packets`, `rocketnet_server_start_message`,
+  `rocketnet_server_finish_message`, `rocketnet_server_receive_messages`
+- `rocketnet_client_default_config`, `rocketnet_client_create`,
+  `rocketnet_client_connect`, `rocketnet_client_destroy`,
+  `rocketnet_client_update`, `rocketnet_client_send_packets`,
+  `rocketnet_client_disconnect`, `rocketnet_client_state`,
+  `rocketnet_client_state_name`, `rocketnet_client_start_message`,
+  `rocketnet_client_finish_message`, `rocketnet_client_receive_messages`
+- `rocketnet_create_dev_connect_token` and
+  `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` (development library only)
+- `rocketnet_status_name`, `rocketnet_time`, `rocketnet_sleep`

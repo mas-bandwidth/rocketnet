@@ -57,12 +57,13 @@ The model's reasons map to `enum rocketnet_disconnect_reason_t` (`sdk/rocketnet.
 (`6`), recorded by the message object's client terminal check
 (`sdk/rocketnet_message_server.cpp:477-478`) when the client transport counted the server's
 disconnect packet (`sdk/rocketnet_client_protocol.cpp:1202`, read by
-`sdk/rocketnet_message_client.cpp:89`). `ClientDisconnect`'s `CLIENT_DISCONNECTED` and a
-`Timer` end read `ROCKETNET_DISCONNECT_REASON_NONE` from `rocketnet_client_disconnect_reason`
-(`sdk/rocketnet_api.cpp:641`); the model names them apart, the API does not.
+`sdk/rocketnet_message_client.cpp:89`). The public API carries the reason in the client
+state: `SERVER_DISCONNECTED` reads `ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED` from
+`rocketnet_client_state`, a `Timer` end reads the timed-out state, and `ClientDisconnect`'s
+`CLIENT_DISCONNECTED` returns the client to `ROCKETNET_CLIENT_STATE_DISCONNECTED`.
 | `DisconnectFromError` | disconnect from an error state: back to DISCONNECTED, the reason kept |
 | `Send` | message start/finish, only while CONNECTED (the `queuebeforeconnected` defect also enables it in a handshake state) |
-| `DropSend` | message start outside CONNECTED (`rocketnet_client_start_message` returns NULL and counts `ROCKETNET_CLIENT_COUNTER_NOT_CONNECTED_DROPS`; the message layer's `MESSAGE_SEND_NOT_CONNECTED`, `rn_message_object_start` in `sdk/rocketnet_message_server.cpp`): no per-connection field changes, nothing is held; the ghost `droppedIn` is `{st}` after a drop and `{}` after any other step (RN-2 m1.5) |
+| `DropSend` | message start outside CONNECTED (`rocketnet_client_start_message` returns NULL and counts the `messages_dropped_not_connected` stat; the message layer's `MESSAGE_SEND_NOT_CONNECTED`, `rn_message_object_start` in `sdk/rocketnet_message_server.cpp`): no per-connection field changes, nothing is held; the ghost `droppedIn` is `{st}` after a drop and `{}` after any other step (RN-2 m1.5) |
 | `ServerSend(s)`, `Deliver(s)`, `Lose(s)` | the server's packets of any session ever started, delivered, or lost; a packet opens only under the session keys it was sealed with |
 
 Every path out of a connection goes through `End`, which applies the one `Reset`. Reconnect is

@@ -3,7 +3,8 @@
     Licensed under the GNU Affero General Public License v3.0
 
     The happy_path client: the real client binary. It mints a development
-    connect token for the server address the tool passes, connects over the
+    connect token for the server address and server public key (hex) the
+    tool passes, connects over the
     portable transport, sends one message on channel 0 for each of the eight
     reliability types, prints the receipt for the three receipt types, then
     disconnects cleanly and exits 0.
@@ -21,6 +22,7 @@
 #endif
 
 #include "rocketnet.h"
+#include "../../examples/dev_keys.h"
 #include "../../test/portable_crt.h"
 
 #include <stdio.h>
@@ -52,10 +54,30 @@ int main( int argc, char ** argv )
             skip_mode = -1;
     }
 
-    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    if ( rocketnet_write_dev_connect_token( address, 1234, (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
+    uint8_t server_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    const char * key_hex = argc > 2 ? argv[2] : "";
+    if ( strlen( key_hex ) != 2 * ROCKETNET_SERVER_PUBLIC_KEY_BYTES )
     {
-        printf( "error: failed to write dev connect token\n" );
+        printf( "error: expected the server public key as 64 hex characters\n" );
+        rocketnet_term();
+        return 1;
+    }
+    for ( int i = 0; i < ROCKETNET_SERVER_PUBLIC_KEY_BYTES; i++ )
+    {
+        unsigned int value = 0;
+        if ( sscanf( key_hex + 2 * i, "%2x", &value ) != 1 )
+        {
+            printf( "error: bad server public key\n" );
+            rocketnet_term();
+            return 1;
+        }
+        server_key[i] = (uint8_t) value;
+    }
+
+    char connect_token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    if ( rocketnet_create_dev_connect_token( address, NULL, server_key, 30, 10, 1234, EXAMPLE_PROTOCOL_ID, (uint64_t) time( NULL ), NULL, connect_token ) != ROCKETNET_STATUS_OK )
+    {
+        printf( "error: failed to create dev connect token\n" );
         rocketnet_term();
         return 1;
     }
@@ -65,7 +87,7 @@ int main( int argc, char ** argv )
     config.transport = "portable";
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL, 0, &create_status );
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &create_status );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
@@ -101,16 +123,11 @@ int main( int argc, char ** argv )
         }
 
         // (1) update pumps the transport and takes in what arrived
-        if ( rocketnet_client_update( client, now ) != ROCKETNET_UPDATE_OK )
-        {
-            printf( "error: client update failed\n" );
-            exit_code = 1;
-            break;
-        }
+        rocketnet_client_update( client, now );
 
         // (2) receive and process every received message for this update
-        struct rocketnet_message_batch_t batch;
-        while ( rocketnet_client_receive_messages( client, &batch ) )
+        const struct rocketnet_message_batch_t * batch = NULL;
+        while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
         {
             // the server sends this client nothing, so there is nothing to read
         }

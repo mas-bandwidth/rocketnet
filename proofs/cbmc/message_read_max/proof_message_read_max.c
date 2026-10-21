@@ -11,17 +11,17 @@
       rocketnet_message_reader_next on payloads of symbolic length in
       [0, PAYLOAD_BOUND] (default 24, the largest arbitrary multi-record
       bound that finishes within the nightly budget; override with
-      -DPAYLOAD_BOUND=1439 for the full ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES
+      -DPAYLOAD_BOUND=1439 for the full ROCKETNET_RECEIVE_PAYLOAD_BYTES
       bound). The payload pointer is either NULL or tail-aligned to the end
       of a stack buffer of size PAYLOAD_BOUND so any read 1 byte past the
       symbolic length bytes is an out-of-bounds object violation.
     - harness_message_reader_single_max: rocketnet_message_reader_begin and
       rocketnet_message_reader_next on payloads of symbolic length in
-      [0, ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES] (1439) for non-RECORDS
+      [0, ROCKETNET_RECEIVE_PAYLOAD_BYTES] (1439) for non-RECORDS
       payloads (single-message form, invalid form bytes, short and null
       inputs) at the full 1439-byte bound.
     - harness_message_read_config_body: rocketnet_message_read_config_body
-      on buffers of symbolic length in [0, ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES]
+      on buffers of symbolic length in [0, ROCKETNET_RECEIVE_PAYLOAD_BYTES]
       (1439), tail-aligned to the end of the stack object so any read past
       bytes fails bounds checking.
 */
@@ -62,7 +62,7 @@ unsigned int nondet_uint( void );
 #endif
 
 #ifndef CONFIG_BOUND
-#define CONFIG_BOUND ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES
+#define CONFIG_BOUND ROCKETNET_RECEIVE_PAYLOAD_BYTES
 #endif
 
 static int round16( int bytes )
@@ -75,12 +75,12 @@ static void fill_limits( struct rocketnet_message_limits_t * limits )
     limits->num_channels = nondet_int();
     __CPROVER_assume( limits->num_channels >= 1 && limits->num_channels <= 65536 );
     limits->enabled_codes = nondet_uint();
-    limits->window_messages = nondet_int();
-    __CPROVER_assume( limits->window_messages >= 1 && limits->window_messages <= 4096 );
+    limits->reliable_messages_in_flight = nondet_int();
+    __CPROVER_assume( limits->reliable_messages_in_flight >= 1 && limits->reliable_messages_in_flight <= 4096 );
     limits->max_message_bytes = nondet_int();
     __CPROVER_assume( limits->max_message_bytes >= 1 && limits->max_message_bytes <= 65536 );
-    limits->receive_ring_bytes = nondet_int();
-    __CPROVER_assume( limits->receive_ring_bytes >= 0 && limits->receive_ring_bytes <= 65536 );
+    limits->receive_message_buffer_bytes = nondet_int();
+    __CPROVER_assume( limits->receive_message_buffer_bytes >= 0 && limits->receive_message_buffer_bytes <= 65536 );
 }
 
 void harness_message_reader( void )
@@ -125,13 +125,13 @@ void harness_message_reader( void )
             const int last = record.fragment == record.fragments;
             const int span = (int) record.fragments * F + ( last ? round16( record.bytes ) : 16 );
             __CPROVER_assert( base >= 0, "block base is inside the ring" );
-            __CPROVER_assert( (long long) base * 16 + span <= limits.receive_ring_bytes,
+            __CPROVER_assert( (long long) base * 16 + span <= limits.receive_message_buffer_bytes,
                 "block span fits the ring" );
         }
         else if ( record.code == ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED
                   || record.code == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED )
         {
-            __CPROVER_assert( (long long) record.ring * 16 + round16( record.bytes ) <= limits.receive_ring_bytes,
+            __CPROVER_assert( (long long) record.ring * 16 + round16( record.bytes ) <= limits.receive_message_buffer_bytes,
                 "holdable span fits the ring" );
         }
 

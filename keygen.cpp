@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet_base64.h"
+#include "rocketnet_connect_token.h"     /* rocketnet_generate_backend_keypair: internal, an SDK tool */
 
 #include <sodium.h>
 
@@ -18,7 +19,7 @@ int main()
     }
 
     uint8_t public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t private_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t private_key[crypto_sign_SECRETKEYBYTES];     /* the Ed25519 signing secret, 64 bytes */
     if ( rocketnet_generate_backend_keypair( public_key, private_key ) != ROCKETNET_STATUS_OK )
     {
         fprintf( stderr, "error: failed to generate backend keypair\n" );

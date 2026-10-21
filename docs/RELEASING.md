@@ -28,8 +28,9 @@ have a `-PRERELEASE` suffix. The development label must be `dev`, with the
 sentinel integers. On a `v*` tag push, the complete tag must equal the
 shipping `ROCKETNET_VERSION_FULL`.
 
-Review public layout and calling-contract changes separately from the release
-label. Keep the installed libraries, export list and consumers consistent.
+An incompatible public layout or calling-contract change requires a major
+version bump. Follow [ABI evolution](ABI-EVOLUTION.md) and keep the installed
+libraries, export list and consumers consistent.
 
 ## The wire-change rule
 

@@ -142,7 +142,7 @@ static int code0_delivery_trace( rn_delivery_trace_t * trace )
     };
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.unreliable_deliveries = 2;
+    config.unreliable_messages_per_update = 2;
     return run_trace( &config, steps, (int) ( sizeof( steps ) / sizeof( steps[0] ) ), trace );
 }
 
@@ -172,7 +172,7 @@ static int code1_sequenced_trace( rn_delivery_trace_t * trace )
         { ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, 1, 0, 1, p, 1 },
         { ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 2, 0, 0, j, 1 },
         { ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 2, 1, 0, k, 1 },
-        { ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 2 + (uint32_t) config.window_messages, 0, 0, x, 1 },
+        { ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 2 + (uint32_t) config.reliable_messages_in_flight, 0, 0, x, 1 },
     };
     return run_trace( &config, steps, (int) ( sizeof( steps ) / sizeof( steps[0] ) ), trace );
 }
@@ -184,7 +184,7 @@ static int code1_hold_full_trace( rn_delivery_trace_t * trace )
     static const uint8_t x[] = { 0x78 }, y[] = { 0x79 }, z[] = { 0x7a }, o[] = { 0x6f };
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.sequenced_holds = 1;
+    config.sequenced_messages_held = 1;
     const rn_delivery_step_t steps[] =
     {
         { ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 1, 0, 0, x, 1 },

@@ -16,6 +16,7 @@
 #endif
 
 #include "rocketnet.h"
+#include "../../examples/dev_keys.h"
 #include "../../test/portable_crt.h"
 
 #include <stdio.h>
@@ -50,12 +51,16 @@ int main( int argc, char ** argv )
         address = argc > 1 ? argv[1] : "127.0.0.1:0";
 
     struct rocketnet_server_config_t config;
-    rocketnet_server_dev_config( &config );
+    // the published development backend key (rocketnet.h, development builds); a real server brings its own backend's key, recommended through ROCKETNET_SERVER_BACKEND_PUBLIC_KEY, or set in code
+    static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
+    rocketnet_server_default_config( &config );
+    config.protocol_id = EXAMPLE_PROTOCOL_ID;
+    memcpy( config.backend_public_key, dev_backend_public_key, sizeof( config.backend_public_key ) );
     config.max_clients = 1;
     config.transport = "portable";
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, address, &config, NULL, 0, &create_status );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, address, NULL, &config, &create_status );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -68,6 +73,13 @@ int main( int argc, char ** argv )
         return 1;
     }
 
+    // the server makes its own keypair: the client needs its public key to mint a token
+    uint8_t server_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    rocketnet_server_public_key( server, server_key );
+    printf( "server public key " );
+    for ( int i = 0; i < ROCKETNET_SERVER_PUBLIC_KEY_BYTES; i++ )
+        printf( "%02x", server_key[i] );
+    printf( "\n" );
     printf( "server started\n" );
     printf( "server transport %s\n", rocketnet_server_transport_name( server ) );
     fflush( stdout );
@@ -89,13 +101,13 @@ int main( int argc, char ** argv )
         // (2) receive and process every received message for this update
         // from one queue across every client, each message naming its sender
         {
-            struct rocketnet_message_batch_t batch;
-            while ( rocketnet_server_receive_messages( server, &batch ) )
+            const struct rocketnet_message_batch_t * batch = NULL;
+            while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
             {
-                for ( int i = 0; i < batch.num_messages; i++ )
+                for ( int i = 0; i < batch->num_messages; i++ )
                 {
-                    const uint8_t * data = batch.data[i];
-                    const int bytes = batch.bytes[i];
+                    const uint8_t * data = batch->data[i];
+                    const int bytes = batch->bytes[i];
                     const int mode = bytes > 0 ? data[0] : -1;
                     const int ok = mode >= 0 && mode < 8 &&
                                    bytes == payload_bytes &&

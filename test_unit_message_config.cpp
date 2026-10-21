@@ -46,7 +46,7 @@ struct mc_packet_t
     uint64_t id;
     int slot;
     int bytes;
-    alignas( 16 ) uint8_t data[ROCKETNET_MAX_PAYLOAD_BYTES];
+    alignas( 16 ) uint8_t data[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
 };
 
 struct mc_net_t;
@@ -58,7 +58,7 @@ struct mc_endpoint_t
     int slot;                                       // a client endpoint's slot on the server
 
     // send: frames handed out by start_packet, finished into `outbound`
-    alignas( 16 ) uint8_t frames[MC_MAX_FRAMES][MC_PAYLOAD_INDEX + ROCKETNET_MAX_PAYLOAD_BYTES];
+    alignas( 16 ) uint8_t frames[MC_MAX_FRAMES][MC_PAYLOAD_INDEX + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     bool frame_used[MC_MAX_FRAMES];
     uint64_t frame_id[MC_MAX_FRAMES];
     int frame_slot[MC_MAX_FRAMES];
@@ -225,7 +225,7 @@ static uint8_t * mc_start_packet( void * transport, int client_index, int reques
 {
     mc_endpoint_t * e = (mc_endpoint_t *) transport;
     memset( context, 0, sizeof( *context ) );
-    if ( request_bytes < 1 || request_bytes > ROCKETNET_MAX_PAYLOAD_BYTES )
+    if ( request_bytes < 1 || request_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
         return NULL;
     if ( e->is_server ? e->net->slot_connection[client_index] == 0 : !e->connected )
         return NULL;
@@ -238,7 +238,7 @@ static uint8_t * mc_start_packet( void * transport, int client_index, int reques
         e->frame_slot[f] = e->is_server ? client_index : e->slot;
         context->frame = e->frames[f];
         context->payload_index = MC_PAYLOAD_INDEX;
-        context->payload_capacity = ROCKETNET_MAX_PAYLOAD_BYTES;
+        context->payload_capacity = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
         context->packet_id = e->frame_id[f];
         context->client_index = client_index;
         return e->frames[f];
@@ -259,7 +259,7 @@ static int mc_finish_packet( void * transport, rocketnet_packet_context_t * cont
     mc_endpoint_t * e = (mc_endpoint_t *) transport;
     const int f = mc_frame_of( e, context );
     check( f >= 0 );
-    check( payload_bytes >= 1 && payload_bytes <= ROCKETNET_MAX_PAYLOAD_BYTES );
+    check( payload_bytes >= 1 && payload_bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
     e->frame_used[f] = false;
     if ( e->net->fail_finish > 0 )
     {
@@ -360,18 +360,18 @@ static void mc_config( rocketnet_message_config_t * config )
 {
     rocketnet_message_default_config( config );
     config->num_channels = 4;
-    config->window_messages = 64;
-    config->receive_ring_bytes = 65536;
+    config->reliable_messages_in_flight = 64;
+    config->receive_message_buffer_bytes = 65536;
     config->max_message_bytes = 16384;
-    config->send_buffer_bytes = 65536;
+    config->send_message_buffer_bytes = 65536;
     config->send_queue_messages = 64;
     config->packets_in_flight = 64;
     config->packets_per_update = 8;
-    config->unreliable_deliveries = 64;
-    config->resend_delay_initial_ms = 100;
-    config->resend_delay_min_ms = 20;
-    config->resend_delay_max_ms = 400;
-    config->reliable_timeout_ms = 120000;
+    config->unreliable_messages_per_update = 64;
+    config->message_resend_delay_initial_ms = 100;
+    config->message_resend_delay_min_ms = 20;
+    config->message_resend_delay_max_ms = 400;
+    config->reliable_message_timeout_ms = 120000;
 }
 
 // the clock every case starts at: never 0.0, so a time field left at zero
@@ -402,7 +402,7 @@ static rocketnet_message_client_t * mc_client_create( mc_net_t * net, int slot, 
 }
 
 static void mc_pair_setup( mc_pair_t * pair, int num_clients, const rocketnet_message_config_t * config = NULL,
-                           uint32_t client_kbps = ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, uint32_t server_kbps = ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS )
+                           uint32_t client_kbps = ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, uint32_t server_kbps = ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS )
 {
     rocketnet_message_config_t defaults;
     if ( !config )
@@ -609,23 +609,23 @@ static void test_message_config_mismatch_ends_both_connections()
     memset( &pair, 0, sizeof( pair ) );
     pair.net = mc_net_new();
     pair.num_clients = 1;
-    pair.server = mc_server_create( pair.net, &server_config, MC_MAX_SLOTS, ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS );
+    pair.server = mc_server_create( pair.net, &server_config, MC_MAX_SLOTS, ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
     check( pair.server );
-    pair.clients[0] = mc_client_create( pair.net, 0, &client_config, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS );
+    pair.clients[0] = mc_client_create( pair.net, 0, &client_config, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
     check( pair.clients[0] );
     mc_net_connect( pair.net, 0 );
     pair.time = MC_T0;
 
-    const enum rocketnet_log_level_t saved_level = rocketnet_get_log_level();
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
     g_mc_mismatch_lines = 0;
-    rocketnet_set_log_callback( mc_capture, NULL );
+    rocketnet_log_function( mc_capture, NULL );
 
     for ( int i = 0; i < 5; i++ )
         mc_step_client_first( &pair );
 
-    rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_set_log_level( saved_level );
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved_level );
 
     check( rocketnet_message_client_disconnect_reason( pair.clients[0] ) == ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH );
     check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH );
@@ -684,8 +684,8 @@ static void mc_check_first_record_is_config( const mc_endpoint_t * sender, const
     check( body.version == ROCKETNET_MESSAGE_CONFIG_VERSION );
     check( body.enabled == ( ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION & 0xFFu ) );
     check( body.num_channels == (uint32_t) config->num_channels );
-    check( body.window_messages == (uint32_t) config->window_messages );
-    check( body.receive_ring_bytes == (uint32_t) config->receive_ring_bytes );
+    check( body.reliable_messages_in_flight == (uint32_t) config->reliable_messages_in_flight );
+    check( body.receive_message_buffer_bytes == (uint32_t) config->receive_message_buffer_bytes );
     check( body.max_message_bytes == (uint32_t) config->max_message_bytes );
     check( body.fragment_bytes == ROCKETNET_MESSAGE_FRAGMENT_BYTES );
 }
@@ -813,7 +813,7 @@ static void test_message_config_never_received_is_reliable_timeout()
 {
     rocketnet_message_config_t config;
     mc_config( &config );
-    config.reliable_timeout_ms = 1000;
+    config.reliable_message_timeout_ms = 1000;
     mc_pair_t pair;
     mc_pair_setup( &pair, 1, &config );
     pair.net->drop_to_client = true;
@@ -832,11 +832,11 @@ static void test_message_config_never_received_is_reliable_timeout()
     // past reliable_timeout: the client ends it
     for ( int i = 0; i < 5; i++ )
         mc_step( &pair, NULL, NULL, 0.1 );
-    check( rocketnet_message_client_disconnect_reason( pair.clients[0] ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
+    check( rocketnet_message_client_disconnect_reason( pair.clients[0] ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
     check( pair.net->clients[0]->disconnects == 1 );
 
     // the server's CONFIG was never acked: it times out too (RNEndpoint Tick)
-    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
+    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
 
     mc_pair_teardown( &pair );
 }
@@ -849,17 +849,17 @@ static void test_config_vector_is_library_default()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    check( config.resend_delay_initial_ms == 2000 );
-    check( config.resend_delay_min_ms == 0 );
-    check( config.resend_delay_max_ms == 2000 );
+    check( config.message_resend_delay_initial_ms == 2000 );
+    check( config.message_resend_delay_min_ms == 0 );
+    check( config.message_resend_delay_max_ms == 2000 );
 
     // the body rn_ordered_announce_config writes for a NULL/default config
     struct rocketnet_message_config_body_t body;
     body.version = ROCKETNET_MESSAGE_CONFIG_VERSION;
     body.enabled = ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION & 0xFFu;
     body.num_channels = (uint32_t) config.num_channels;
-    body.window_messages = (uint32_t) config.window_messages;
-    body.receive_ring_bytes = (uint32_t) config.receive_ring_bytes;
+    body.reliable_messages_in_flight = (uint32_t) config.reliable_messages_in_flight;
+    body.receive_message_buffer_bytes = (uint32_t) config.receive_message_buffer_bytes;
     body.max_message_bytes = (uint32_t) config.max_message_bytes;
     body.fragment_bytes = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
 
@@ -878,9 +878,9 @@ static void test_config_vector_is_library_default()
 
     static const uint8_t expected[] = { 0x22, 0x1c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0xff, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00,
                                         0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x04, 0x00, 0x80, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 };
-    uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     struct rocketnet_message_writer_t writer;
-    rocketnet_message_writer_begin( &writer, payload, ROCKETNET_MAX_PAYLOAD_BYTES );
+    rocketnet_message_writer_begin( &writer, payload, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
     check( rocketnet_message_writer_add( &writer, &record ) == 1 );
     check( rocketnet_message_writer_finish( &writer ) == (int) sizeof( expected ) );
     check( memcmp( payload, expected, sizeof( expected ) ) == 0 );

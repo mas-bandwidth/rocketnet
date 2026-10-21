@@ -10,7 +10,7 @@ bool rocketnet_server_socket_test_replay_marks();
 
 int main()
 {
-    rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_NONE);
+    rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
     if (rocketnet_init( NULL ) != ROCKETNET_STATUS_OK) return 1;
     rocketnet_server_socket_forbid_commit();
     const bool passed = rocketnet_server_socket_test_inactive_generation();

@@ -19,7 +19,7 @@ naming `<struct>.<member>`.
 
 | Struct | Field | What it is | Decision | Reason |
 |---|---|---|---|---|
-| `rocketnet_client_protocol_t` | `filter_value`, `send_rate`, `counters` | configuration and lifetime counter owner | KEEP | public counters are monotonic over the client life |
+| `rocketnet_client_protocol_t` | `packet_filter`, `send_rate`, `counters` | configuration and lifetime counter owner | KEEP | public counters are monotonic over the client life |
 | | `state` | terminal state / disconnect reason | KEEP | observable until the next connection attempt |
 | | `token`, `signed_fields`, `server_address` | parsed attempt and peer | RESET | belongs to one attempt |
 | | `connection_salt`, ephemeral keypair, `return_cookie`, `has_cookie` | handshake material | RESET | secret and attempt material must not cross attempts |
@@ -45,7 +45,7 @@ naming `<struct>.<member>`.
 | | packet/message serials, ordering/sequencing indices, unreliable queue, pending start, write pass and send-budget accumulator | message send state | RESET | no work may cross connections |
 | | `views`, `cursors` | allocation pointers | KEEP | storage is fixed; pointed-to contents reset |
 | | `connection_id`, `state`, `held` | message slot binding | RESET | slot becomes free |
-| | `disconnect_reason` | last message-layer reason | KEEP | public API keeps it until the next establishment |
+| | `disconnect_reason` | last message-layer reason | KEEP | the public client state carries it until disconnect or the next connect |
 
 The disconnect burst is sealed before reset. The client transport copies the
 destination address locally, sends only that burst after reset, and retains no

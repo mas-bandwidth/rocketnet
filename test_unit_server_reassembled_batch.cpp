@@ -110,7 +110,7 @@ static void test_server_reassembled_batch_holds_legitimate_load()
     struct rocketnet_server_protocol_t server;
     memset( &server, 0, sizeof(server) );
     server.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
-    memcpy( server.filter_value, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( server.packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server.backend_public_key, rocketnet_test_backend_public_key, 32 );
     memcpy( server.server_public_key, rocketnet_test_server_public_key, 32 );
     memcpy( server.server_secret_key, rocketnet_test_server_secret_key, 32 );
@@ -339,7 +339,7 @@ static void test_server_reassembly_large_payload_small_geometry_fits_the_budget(
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_default_config( &config );
         config.max_clients = 1;
-        config.num_reassembly_slots = 8;
+        config.max_fragmented_messages = 8;
         config.max_payload_bytes = 70000;
         check( rocketnet_server_transport_required_memory( &config, "portable" ) != 0 );
 
@@ -361,13 +361,13 @@ static void test_server_reassembly_large_payload_small_geometry_fits_the_budget(
     // completions of small payloads never exceed capacity x aligned max
     {
         const int capacity = rocketnet_server_reassembly_delivered_capacity( 1, 1 );
-        const uint64_t bytes = rocketnet_server_reassembly_delivered_bytes( 1, 1, ROCKETNET_MAX_PAYLOAD_BYTES );
-        check( bytes <= (uint64_t) capacity * ROCKETNET_REASSEMBLY_DELIVERED_ALIGNED( ROCKETNET_MAX_PAYLOAD_BYTES ) );
+        const uint64_t bytes = rocketnet_server_reassembly_delivered_bytes( 1, 1, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+        check( bytes <= (uint64_t) capacity * ROCKETNET_REASSEMBLY_DELIVERED_ALIGNED( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ) );
     }
 
     // invalid geometry is zero
     check( rocketnet_server_reassembly_delivered_bytes( 0, 8, 16384 ) == 0 );
-    check( rocketnet_server_reassembly_delivered_bytes( 1, 8, ROCKETNET_MAX_PAYLOAD_BYTES - 1 ) == 0 );
+    check( rocketnet_server_reassembly_delivered_bytes( 1, 8, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 ) == 0 );
     check( rocketnet_server_reassembly_delivered_bytes( 1, 8, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES + 1 ) == 0 );
     check( rocketnet_reassembly_memory_required_delivered( 1, 8, 16384, 4, 16383 ) == 0 );
 

@@ -56,7 +56,7 @@ deployed_literal = $(shell sed -n 's/^#define $(1)[[:space:]]*\([0-9][0-9]*\).*/
 deployed_comment = $(shell sed -n 's/^#define $(1).*\/\/ \([0-9][0-9]*\).*/\1/p' $(SDK)/$(2) | head -1)
 
 REPLAY_WINDOW_BITS := $(call deployed_literal,ROCKETNET_HISTORY_PACKETS,rocketnet_history.h)
-MAX_PAYLOAD_BYTES := $(call deployed_literal,ROCKETNET_MAX_PAYLOAD_BYTES,rocketnet.h)
+MAX_PAYLOAD_BYTES := $(call deployed_literal,ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,rocketnet.h)
 MAX_FRAGMENT_BYTES := $(call deployed_comment,ROCKETNET_MAX_FRAGMENT_BYTES,rocketnet_fragment.h)
 MAX_FRAGMENTS := $(call deployed_literal,ROCKETNET_MAX_FRAGMENTS,rocketnet_fragment.h)
 MAX_FRAGMENTED_PAYLOAD_BYTES := $(shell expr $(MAX_FRAGMENTS) \* $(MAX_FRAGMENT_BYTES))
@@ -94,7 +94,7 @@ XDP_FRAME_SIZE := $(call deployed_literal,ROCKETNET_XDP_FRAME_SIZE,rocketnet_con
 #                      24 bytes. rocketnet_message_reader_begin / next read
 #                      no byte past the given length. An accepted holdable
 #                      record or block has its ring span inside
-#                      receive_ring_bytes. A refused payload yields no
+#                      receive_message_buffer_bytes. A refused payload yields no
 #                      record. The fixed-size config body reader refuses a
 #                      short buffer.
 #   xdp-free-list      proved: proof_xdp_free_list.c, unwind 5, capacity 3,
@@ -149,11 +149,11 @@ read-write: proof_read_write.c
 
 # Superseded by fragment_reassembly/. Not part of `all`.
 fragment-bounds: proof_fragment_bounds.c
-	@echo "fragment-bounds bound payload max 16 bytes, fragment 8 bytes deployed ROCKETNET_MAX_PAYLOAD_BYTES=$(MAX_PAYLOAD_BYTES) ROCKETNET_MAX_FRAGMENT_BYTES=$(MAX_FRAGMENT_BYTES) ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES=$(MAX_FRAGMENTED_PAYLOAD_BYTES); not proved above 16"
+	@echo "fragment-bounds bound payload max 16 bytes, fragment 8 bytes deployed ROCKETNET_MAX_PACKET_PAYLOAD_BYTES=$(MAX_PAYLOAD_BYTES) ROCKETNET_MAX_FRAGMENT_BYTES=$(MAX_FRAGMENT_BYTES) ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES=$(MAX_FRAGMENTED_PAYLOAD_BYTES); not proved above 16"
 	$(CBMC) $(CBMC_FLAGS) --unwind 64 -I$(SDK) proof_fragment_bounds.c
 
 message-read: proof_message_read.c
-	@echo "message-read bound payload 24 bytes deployed ROCKETNET_MAX_PAYLOAD_BYTES=$(MAX_PAYLOAD_BYTES)"
+	@echo "message-read bound payload 24 bytes deployed ROCKETNET_MAX_PACKET_PAYLOAD_BYTES=$(MAX_PAYLOAD_BYTES)"
 	$(CBMC) $(CBMC_FLAGS) --unwind 8 -DNDEBUG -I$(SDK) proof_message_read.c
 
 xdp-free-list: proof_xdp_free_list.c

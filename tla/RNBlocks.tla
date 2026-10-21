@@ -38,8 +38,8 @@
 (*                                                                         *)
 (* The reversed witness is a constant:                                     *)
 (*   PlaceByIndex = FALSE   a fragment is copied to base + have*F, the     *)
-(*                          next free place in arrival order: RakNet's     *)
-(*                          concatenation in list order (study 8.2).       *)
+(*                          next free place in arrival order: fragments    *)
+(*                          concatenated in the order they arrived.        *)
 (*                          TLC must fail DeliveredEqualsSent.             *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences, FiniteSets

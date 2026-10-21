@@ -197,7 +197,7 @@ static void windows_socket_errors_tick( windows_socket_errors_session_t * sessio
 {
     const double now = rocketnet_platform_time();
     session->sequence++;
-    uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
 
     rocketnet_client_transport_update( session->client, now );
     while ( rocketnet_client_transport_receive_packet( session->client, payload, (int) sizeof( payload ) ) > 0 )
@@ -252,7 +252,7 @@ static void windows_socket_errors_session_start( windows_socket_errors_session_t
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     snprintf( server_address, sizeof( server_address ), "%s:%d", windows_socket_errors_host( transport->ipv6 ), rocketnet_server_transport_port( session->server ) );
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    windows_socket_errors_require( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, sizeof( connect_token ) ) == ROCKETNET_STATUS_OK );
+    windows_socket_errors_require( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, sizeof( connect_token ) ) == ROCKETNET_STATUS_OK );
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "portable" );
@@ -601,7 +601,7 @@ static void windows_per_packet_receive_counts_empty_datagram( bool ipv6 )
     windows_socket_errors_sender_send( &sender, &real );
     windows_socket_errors_sender_close( &sender );
 
-    uint8_t packet[ROCKETNET_MAX_PACKET_BYTES];
+    uint8_t packet[ROCKETNET_RECEIVE_PACKET_BYTES];
     rocketnet_address_t from;
     const int first = rocketnet_platform_socket_receive_packet( socket, &from, packet, (int) sizeof( packet ) );
     const uint64_t empties = rocketnet_platform_receive_empties() - empties_before;

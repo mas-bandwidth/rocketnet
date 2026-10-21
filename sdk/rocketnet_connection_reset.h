@@ -26,7 +26,7 @@ struct rn_message_object_t;
 */
 
 #define ROCKETNET_CLIENT_PROTOCOL_CONNECTION_FIELDS( X ) \
-    X( KEEP, filter_value ) X( KEEP, send_rate ) X( KEEP, counters ) \
+    X( KEEP, packet_filter ) X( KEEP, send_rate ) X( KEEP, counters ) \
     X( KEEP, state ) \
     X( RESET, token ) X( RESET, signed_fields ) X( RESET, server_address ) \
     X( RESET, connection_salt ) X( RESET, client_ephemeral_public_key ) \

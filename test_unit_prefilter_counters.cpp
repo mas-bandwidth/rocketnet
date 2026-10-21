@@ -167,7 +167,7 @@ static void pcapng_free( void * context, void * p )
 static void pcapng_allocator_install()
 {
     rocketnet_term();
-    check( rocketnet_set_allocator( pcapng_malloc, pcapng_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( pcapng_malloc, pcapng_free ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
     pcapng_live_bytes = 0;
     pcapng_peak_bytes = 0;
@@ -176,7 +176,7 @@ static void pcapng_allocator_install()
 static void pcapng_allocator_restore()
 {
     rocketnet_term();
-    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
@@ -507,9 +507,9 @@ static pcapng_file_result_t pcapng_replay_file( const std::string & path )
     rocketnet_message_default_config( &config );
     replay.limits.num_channels = config.num_channels;
     replay.limits.enabled_codes = rocketnet_message_enabled_codes( ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION );
-    replay.limits.window_messages = config.window_messages;
+    replay.limits.reliable_messages_in_flight = config.reliable_messages_in_flight;
     replay.limits.max_message_bytes = config.max_message_bytes;
-    replay.limits.receive_ring_bytes = config.receive_ring_bytes;
+    replay.limits.receive_message_buffer_bytes = config.receive_message_buffer_bytes;
 
     // time comes from the file, never before the test clock's start
     for ( size_t i = 0; i < packets.size(); i++ )

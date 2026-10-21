@@ -317,7 +317,7 @@ static void standard_client_teardown( struct standard_client_t * fixture )
 
 static int standard_client_process( struct standard_client_t * fixture, const uint8_t * packet, int packet_bytes )
 {
-    uint8_t payload[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+    uint8_t payload[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
     int payload_bytes = 0;
     return rocketnet_client_protocol_process_packet( &fixture->client, packet, packet_bytes, standard_receive_time,
                                                      payload, (int) sizeof( payload ), &payload_bytes );
@@ -339,7 +339,7 @@ static void standard_server_setup( struct standard_server_t * fixture, bool add_
     memset( &fixture->counters, 0, sizeof( fixture->counters ) );
     rocketnet_unit_check( rocketnet_address_parse( &fixture->from, "198.51.100.7:56789" ) );
     fixture->server.protocol_id = standard_protocol_id;
-    memcpy( fixture->server.filter_value, standard_filter, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( fixture->server.packet_filter, standard_filter, ROCKETNET_FILTER_VALUE_BYTES );
     fixture->server.encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     fixture->server.client_slots = rocketnet_client_slots_create( NULL, 4 );
     fixture->server.counters = &fixture->counters;
@@ -364,7 +364,7 @@ static void standard_server_teardown( struct standard_server_t * fixture )
 static void standard_server_process( struct standard_server_t * fixture, const uint8_t * packet, int packet_bytes )
 {
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
-    uint8_t payload[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+    uint8_t payload[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
     int response_bytes = 0;
     int payload_bytes = 0;
     int payload_client_index = -1;

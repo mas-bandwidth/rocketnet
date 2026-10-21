@@ -60,6 +60,7 @@
 
 #include "rocketnet_counters.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_connect_token.h"
 #include "rocketnet_platform.h"
 
 #if !defined(_WIN32)
@@ -501,6 +502,7 @@ static void posix_env_restore( const posix_env_guard_t * guard, const char * nam
 
 static void posix_cell_begin( const posix_cell_t * cell, posix_env_guard_t * server_guard, posix_env_guard_t * client_guard )
 {
+    (void) cell;
     posix_env_clear( server_guard, "ROCKETNET_SERVER_TRANSPORT" );
     posix_env_clear( client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
 #if defined(__linux__) && ROCKETNET_XDP
@@ -571,7 +573,7 @@ static rocketnet_client_transport_t * posix_client_create( const posix_cell_t * 
     rocketnet_server_transport_dev_config( &server_config );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    posix_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(),
+    posix_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(),
                                                     rocketnet_functional_token_timestamp( server_config.game_clock_epoch, 1000.0 ),
                                                     token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
 

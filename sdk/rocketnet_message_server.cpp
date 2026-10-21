@@ -83,7 +83,7 @@ static bool rn_message_object_layout( const rocketnet_message_config_t * config,
     if ( arena_bytes == 0 )
         return false;
 
-    const uint64_t deliveries = (uint64_t) config->window_messages + (uint64_t) config->unreliable_deliveries;
+    const uint64_t deliveries = (uint64_t) config->reliable_messages_in_flight + (uint64_t) config->unreliable_messages_per_update;
     const uint64_t n = (uint64_t) num_connections;
 
     memset( layout, 0, sizeof( *layout ) );
@@ -579,9 +579,8 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
     if ( index < 0 || index >= object->num_connections )
         return NULL;
 
-    // the channel is RakNet's ordering channel: the types that are neither
-    // ordered nor sequenced ignore it (ReliabilityLayer::Send sets no
-    // orderingChannel for them) and travel with none (codes 0 and 2), so any
+    // the channel is the ordering channel: the types that are neither
+    // ordered nor sequenced ignore it (they have no ordering state) and travel with none (codes 0 and 2), so any
     // value is accepted for them, never refused, and taken as 0
     if ( reliability == ROCKETNET_RELIABILITY_UNRELIABLE || reliability == ROCKETNET_RELIABILITY_RELIABLE ||
          reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT || reliability == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT )
@@ -616,7 +615,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
     const bool unreliable = reliability == ROCKETNET_RELIABILITY_UNRELIABLE || reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
                             reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
     const int transport_max = unreliable && object->link.max_payload_bytes ?
-        object->link.max_payload_bytes( object->link.transport ) : ROCKETNET_MAX_PAYLOAD_BYTES;
+        object->link.max_payload_bytes( object->link.transport ) : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
 
     // RNOutgoingBuild StartInPlace: a fitting unreliable message takes a
     // transport frame and is written in it, its header's room in front and
@@ -727,7 +726,10 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
         int payload_bytes = 0;
         const uint32_t serial = rn_endpoint_in_place_finish( connection, object->in_place_payload, bytes, object->time, &payload_bytes );
         if ( serial == 0 )
-            return 0;                                           // the start stays pending
+        {
+            rn_message_connection_cancel_pending( object, index );     // a refused finish aborts its start: the object is never stuck
+            return 0;
+        }
         rocketnet_packet_context_t context = object->in_place_context;
         object->in_place = 0;
         object->in_place_payload = NULL;
@@ -747,7 +749,10 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
 
     const uint32_t serial = rn_endpoint_finish( &object->connections[index], bytes, 0 );   // RNEndpoint Send's second half
     if ( serial == 0 )
-        return 0;                                               // the start stays pending
+    {
+        rn_message_connection_cancel_pending( object, index );         // a refused finish aborts its start (tla/RNSlots.tla FinishPending)
+        return 0;
+    }
 
     object->pending_connection = -1;
     return serial;
@@ -857,7 +862,7 @@ flush:
 //                          receive and release
 // ---------------------------------------------------------------
 
-// RakPeer::Receive pops one return queue across every remote system. The
+// Receiving pops one queue across every connection. The
 // object's queue is the update's deliveries, connection by connection in index
 // order and each connection's in the order its channels delivered them
 // (rn_delivery_t entries are appended in dispatch order, the drain of an
@@ -865,7 +870,7 @@ flush:
 // filtered by channel, so an unordered type delivered on channel 0
 // (standard/MESSAGES.md, code 0 and code 2 carry no channel) is seen like
 // every other. Ordered and sequenced order holds within each channel of each
-// connection, as RakNet's ordering channels do per remote system.
+// connection, each connection's channels ordered on their own.
 
 static const rn_delivery_t * rn_message_object_next( struct rn_message_object_t * object, int * out_index, uint32_t * out_entry )
 {
@@ -973,7 +978,7 @@ static bool rn_message_connection_release_view( rn_message_connection_t * connec
 void rn_message_object_release( struct rn_message_object_t * object, const uint8_t * data )
 {
     // RNSlots Release: the view goes back, and with it the region's charge for
-    // the message at the next update's EndUpdate. RakNet's release takes the
+    // the message at the next update's EndUpdate. A release takes the
     // received message alone; the view is looked for in the connection the
     // queue is at first, then in every connection that holds one
     if ( !data )

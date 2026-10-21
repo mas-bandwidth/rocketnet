@@ -55,7 +55,7 @@ struct ep_packet_t
     double arrive;
     uint64_t id;
     int bytes;
-    uint8_t data[ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t data[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
 };
 
 struct ep_ack_t
@@ -111,17 +111,17 @@ static void ep_hash( uint64_t * trace, const void * data, size_t bytes )
 static void ep_config( rocketnet_message_config_t * config )
 {
     rocketnet_message_default_config( config );
-    config->window_messages = 64;
+    config->reliable_messages_in_flight = 64;
     config->send_queue_messages = 128;
     config->packets_in_flight = 64;
-    config->receive_ring_bytes = 65536;
+    config->receive_message_buffer_bytes = 65536;
     config->max_message_bytes = 65536;
-    config->send_buffer_bytes = 262144;
+    config->send_message_buffer_bytes = 262144;
     config->packets_per_update = 4;
-    config->resend_delay_min_ms = 20;
-    config->resend_delay_initial_ms = 100;
-    config->resend_delay_max_ms = 250;
-    config->reliable_timeout_ms = 600000;
+    config->message_resend_delay_min_ms = 20;
+    config->message_resend_delay_initial_ms = 100;
+    config->message_resend_delay_max_ms = 250;
+    config->reliable_message_timeout_ms = 600000;
 }
 
 static void ep_side_create( ep_side_t * side, const rocketnet_message_config_t * config )
@@ -133,7 +133,7 @@ static void ep_side_create( ep_side_t * side, const rocketnet_message_config_t *
     memset( &endpoint_config, 0, sizeof( endpoint_config ) );
     endpoint_config.config = config;
     endpoint_config.send_kbps = 100000;
-    endpoint_config.max_payload_bytes = ROCKETNET_MAX_PAYLOAD_BYTES;
+    endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
     rn_endpoint_init( &side->endpoint, rn_arena_region( side->arena, 0 ), &endpoint_config );
     side->next_packet_id = 1;
     side->next_index = 0;
@@ -299,7 +299,7 @@ static void ep_update( ep_side_t * side, ep_side_t * peer, double now, uint64_t 
         const int request = rn_endpoint_next_packet_bytes( endpoint, now );
         if ( request == 0 )
             break;
-        check( request > 0 && request <= ROCKETNET_MAX_PAYLOAD_BYTES );
+        check( request > 0 && request <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
         ep_packet_t packet;
         packet.id = side->next_packet_id++;
         const int bytes = rn_endpoint_write_packet( endpoint, packet.data, (int) sizeof( packet.data ), packet.id, now );
@@ -436,7 +436,7 @@ static void test_endpoint_back_to_back_over_lossy_array()
     // after the wait began, and the deadline names that time
     {
         const double start = 1000.0 + steps * EP_STEP;
-        const double timeout = (double) config.reliable_timeout_ms / 1000.0;
+        const double timeout = (double) config.reliable_message_timeout_ms / 1000.0;
         rn_endpoint_reset( &b->endpoint, start );
         rn_endpoint_config_tick( &b->endpoint, 0, start - 1.0 );   // the wait starts only once the transport is connected
         check( b->endpoint.config_wait_start < 0.0 );
@@ -446,7 +446,7 @@ static void test_endpoint_back_to_back_over_lossy_array()
         rn_endpoint_config_tick( &b->endpoint, 1, start + timeout * 0.5 );
         check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
         rn_endpoint_config_tick( &b->endpoint, 0, start + timeout );   // started, the wait times out whatever the transport says
-        check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
+        check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
         rn_endpoint_reset( &b->endpoint, start + timeout );
         check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
     }
@@ -506,7 +506,7 @@ static void ep_free( void * context, void * p )
 static void test_endpoint_never_allocates_or_reads_a_clock()
 {
     rocketnet_term();
-    check( rocketnet_set_allocator( ep_malloc, ep_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( ep_malloc, ep_free ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     rocketnet_message_config_t config;
@@ -568,7 +568,7 @@ static void test_endpoint_never_allocates_or_reads_a_clock()
     check( traces[0] == traces[1] );
 
     rocketnet_term();
-    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
@@ -588,7 +588,7 @@ static void test_endpoint_uncapped_large_sequenced_skips_the_bucket()
     memset( &endpoint_config, 0, sizeof( endpoint_config ) );
     endpoint_config.config = &config;
     endpoint_config.send_kbps = -1;
-    endpoint_config.max_payload_bytes = 4 * ROCKETNET_MAX_PAYLOAD_BYTES;
+    endpoint_config.max_payload_bytes = 4 * ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
     rn_endpoint_t endpoint;
     rn_endpoint_init( &endpoint, rn_arena_region( arena, 0 ), &endpoint_config );
     const double now = 1000.0;
@@ -609,7 +609,7 @@ static void test_endpoint_uncapped_large_sequenced_skips_the_bucket()
     rn_endpoint_begin_update( &endpoint );
     rn_endpoint_tick( &endpoint, now );
     rn_endpoint_config_tick( &endpoint, 1, now );
-    static uint8_t frame[4 * ROCKETNET_MAX_PAYLOAD_BYTES];
+    static uint8_t frame[4 * ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     uint64_t packet_id = 1;
     int large_written = 0;
     int bounded_packets_written = 0;
@@ -620,13 +620,13 @@ static void test_endpoint_uncapped_large_sequenced_skips_the_bucket()
             break;
         check( request > 0 && request <= (int) sizeof( frame ) );
         const int written = rn_endpoint_write_packet( &endpoint, frame, (int) sizeof( frame ), packet_id, now );
-        if ( written > ROCKETNET_MAX_PAYLOAD_BYTES )
+        if ( written > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
             large_written++;
         else if ( written > 0 )
             bounded_packets_written++;
         // An oversized code-1 send has been promoted and fragmented across
         // ordinary bounded reliable packets; uncapped budget still charges none.
-        if ( written > ROCKETNET_MAX_PAYLOAD_BYTES )
+        if ( written > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
             rn_endpoint_packet_sent( &endpoint, packet_id, written + 64, now );
         else if ( written > 0 )
             rn_endpoint_packet_sent( &endpoint, packet_id, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, written ), now );

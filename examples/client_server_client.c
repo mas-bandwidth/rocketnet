@@ -3,14 +3,14 @@
     Licensed under the GNU Affero General Public License v3.0
 
     Client/server client: the matchmaker stub and the client in one program.
-    The stub holds the backend signing key and the server's public key from
-    the key file the server writes, and mints a production connect token. The
+    The stub reads the server's public key from the key file the server
+    writes and mints a development connect token for that server. The
     client connects over real UDP on loopback, sends one reliable-ordered
-    message, receives the echo, prints its state changes and disconnect
-    reason, and disconnects.
+    message, receives the echo, prints its state changes, disconnects, and
+    prints the state that says how the connection ended.
 
-    The server address is 127.0.0.1 at the port from --port <n>, else the
-    ROCKETNET_EXAMPLE_PORT environment variable, else the default 40000.
+    The server's address and public key both come from that key file: the
+    server writes them once it has started, and no secret is in it.
 
     --wrong-protocol mints the token for another protocol id; the server
     refuses it, which shows the token is bound to the title. That refusal is
@@ -19,6 +19,7 @@
 */
 
 #include "rocketnet.h"
+#include "dev_keys.h"
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -26,27 +27,17 @@
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
-#define PROTOCOL_ID 0x636c69656e747331ull
-#define DEFAULT_PORT 40000
+// serialize text (without its terminator) straight into a started message
+static int write_text( uint8_t * p, const char * text, int bytes )
+{
+    for ( int i = 0; i < bytes; i++ )
+        p[i] = (uint8_t) text[i];
+    return bytes;
+}
+
 #define KEY_FILE "client_server.keys"
 
-// MSVC deprecates getenv and fopen, so these use getenv_s and fopen_s there.
-// example_getenv copies the variable into buffer and returns 1, or returns 0
-// when it is unset or does not fit.
-
-static int example_getenv( const char * name, char * buffer, size_t size )
-{
-#if defined( _MSC_VER )
-    size_t length = 0;
-    return getenv_s( &length, buffer, size, name ) == 0 && length > 0;
-#else
-    const char * value = getenv( name );
-    if ( !value || strlen( value ) >= size )
-        return 0;
-    memcpy( buffer, value, strlen( value ) + 1 );
-    return 1;
-#endif
-}
+// MSVC deprecates fopen, so this uses fopen_s there.
 
 static FILE * example_fopen( const char * path, const char * mode )
 {
@@ -58,33 +49,6 @@ static FILE * example_fopen( const char * path, const char * mode )
 #endif
 }
 
-// the port comes from --port <n>, else ROCKETNET_EXAMPLE_PORT, else the
-// default; returns 0 for a value that is not 1 to 65535
-
-static int example_port( int argc, char ** argv, int * port )
-{
-    char environment[256];
-    const char * text = example_getenv( "ROCKETNET_EXAMPLE_PORT", environment, sizeof( environment ) ) ? environment : NULL;
-    for ( int i = 1; i < argc; i++ )
-    {
-        if ( strcmp( argv[i], "--port" ) == 0 )
-        {
-            if ( i + 1 >= argc ) return 0;
-            text = argv[++i];
-        }
-    }
-    if ( !text )
-    {
-        *port = DEFAULT_PORT;
-        return 1;
-    }
-    char * end = NULL;
-    const long value = strtol( text, &end, 10 );
-    if ( end == text || *end != 0 || value < 1 || value > 65535 )
-        return 0;
-    *port = (int) value;
-    return 1;
-}
 static int hex_value( char c )
 {
     if ( c >= '0' && c <= '9' ) return c - '0';
@@ -115,6 +79,25 @@ static int read_hex( FILE * file, const char * label, uint8_t * bytes, int count
     }
     return 1;
 }
+// reads one line, the label, a space, then the text up to the end of the line
+
+static int read_text( FILE * file, const char * label, char * text, size_t text_bytes )
+{
+    char line[ROCKETNET_MAX_ADDRESS_STRING_BYTES + 64];
+    if ( !fgets( line, sizeof( line ), file ) )
+        return 0;
+    line[strcspn( line, "\r\n" )] = '\0';
+    const size_t label_length = strlen( label );
+    if ( strncmp( line, label, label_length ) != 0 || line[label_length] != ' ' )
+        return 0;
+    const char * value = line + label_length + 1;
+    const size_t value_length = strlen( value );
+    if ( value_length == 0 || value_length >= text_bytes )
+        return 0;
+    memcpy( text, value, value_length + 1 );
+    return 1;
+}
+
 static void state_changed( void * context, enum rocketnet_client_state_t previous, enum rocketnet_client_state_t current )
 {
     (void) context;
@@ -127,20 +110,11 @@ int main( int argc, char ** argv )
     for ( int i = 1; i < argc; i++ )
         if ( strcmp( argv[i], "--wrong-protocol" ) == 0 )
             wrong_protocol = 1;
-    int port = 0;
-    char address[32];
-    if ( !example_port( argc, argv, &port ) )
-    {
-        printf( "FAIL: the port is not 1 to 65535 (--port <n> or ROCKETNET_EXAMPLE_PORT)\n" );
-        return 1;
-    }
-    snprintf( address, sizeof( address ), "127.0.0.1:%d", port );
+    char address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
     struct rocketnet_client_config_t config;
     struct rocketnet_client_t * client = NULL;
-    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    const char * server_addresses[1] = { address };
+    char connect_token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     int result = 1;
     int sent = 0;
     int received = 0;
@@ -159,8 +133,8 @@ int main( int argc, char ** argv )
         FILE * keys = example_fopen( KEY_FILE, "r" );
         if ( keys )
         {
-            have_keys = read_hex( keys, "backend_secret", backend_secret_key, ROCKETNET_BACKEND_SECRET_KEY_BYTES ) &&
-                        read_hex( keys, "server_public", server_public_key, ROCKETNET_SERVER_PUBLIC_KEY_BYTES );
+            have_keys = read_hex( keys, "server_public", server_public_key, ROCKETNET_SERVER_PUBLIC_KEY_BYTES ) &&
+                        read_text( keys, "server_ipv4", address, sizeof( address ) );
             fclose( keys );
         }
         if ( !have_keys )
@@ -168,19 +142,19 @@ int main( int argc, char ** argv )
     }
     CHECK( have_keys );
 
-    // the matchmaker stub: a real backend runs this on its own server, keeps
-    // the secret key, and returns the token to the game client. The fixed
-    // timestamps keep the example off the wall clock; a backend stamps now.
+    // the matchmaker stub: a real backend mints with its own secret key on
+    // its own server and returns the token to the game client; this one
+    // mints a development token. The fixed timestamp keeps the example off
+    // the wall clock; a backend stamps now.
 
-    const uint64_t protocol_id = PROTOCOL_ID + ( wrong_protocol ? 1 : 0 );
-    CHECK( rocketnet_write_production_connect_token( backend_secret_key, server_public_key, protocol_id,
-                                                     server_addresses, 1, 0x0123456789abcdefull, 0, 4102444800ull, 5, NULL,
-                                                     connect_token, sizeof( connect_token ) ) == ROCKETNET_STATUS_OK );
+    const uint64_t protocol_id = EXAMPLE_PROTOCOL_ID + ( wrong_protocol ? 1 : 0 );
+    CHECK( rocketnet_create_dev_connect_token( address, NULL, server_public_key, 30, 5, 0x0123456789abcdefull,
+                                               protocol_id, 4102444800ull, NULL, connect_token ) == ROCKETNET_STATUS_OK );
     rocketnet_client_default_config( &config );
     config.transport = "portable";
     config.state_change_callback = state_changed;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    client = rocketnet_client_create( NULL, &config, NULL, 0, &create_status );
+    client = rocketnet_client_create( NULL, &config, &create_status );
     if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
@@ -195,18 +169,18 @@ int main( int argc, char ** argv )
         const double now = 1000.0 + ( rocketnet_time() - start );
 
         // (1) update pumps the transport and takes in what arrived
-        if ( rocketnet_client_update( client, now ) != ROCKETNET_UPDATE_OK ) break;
+        rocketnet_client_update( client, now );
 
         // (2) receive and release every received message
         const uint8_t * data = NULL;
         int bytes = 0;
-        struct rocketnet_message_batch_t batch;
-        while ( rocketnet_client_receive_messages( client, &batch ) )
+        const struct rocketnet_message_batch_t * batch = NULL;
+        while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
         {
-            for ( int i = 0; i < batch.num_messages; i++ )
+            for ( int i = 0; i < batch->num_messages; i++ )
             {
-                data = batch.data[i];
-                bytes = batch.bytes[i];
+                data = batch->data[i];
+                bytes = batch->bytes[i];
                 printf( "client received: %.*s\n", bytes, (const char*) data );
 
                 received = 1;
@@ -224,8 +198,7 @@ int main( int argc, char ** argv )
             uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message_bytes );
             if ( out )
             {
-                memcpy( out, message, (size_t) message_bytes );
-                sent = rocketnet_client_finish_message( client, message_bytes ) != 0;
+                sent = rocketnet_client_finish_message( client, write_text( out, message, message_bytes ) ) != 0;
             }
         }
 
@@ -246,7 +219,9 @@ int main( int argc, char ** argv )
 
     CHECK( wrong_protocol ? refused : received );
     rocketnet_client_disconnect( client );
-    printf( "client disconnect reason: %s\n", rocketnet_disconnect_reason_name( rocketnet_client_disconnect_reason( client ) ) );
+    // the state says how a connection ended: DISCONNECTED after our own
+    // disconnect, a negative state when the server or the protocol ended it
+    printf( "client state after disconnect: %s\n", rocketnet_client_state_name( rocketnet_client_state( client ) ) );
     result = 0;
 
 cleanup:

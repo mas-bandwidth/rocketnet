@@ -8,7 +8,7 @@ a demo and a profiling instrument, not a load claim.
 
 ## What it shows
 
-1. Install a counting allocator via `rocketnet_set_allocator` before `rocketnet_init`
+1. Install a counting allocator via `rocketnet_allocator` before `rocketnet_init`
    to verify `allocs/tick == 0` during the steady-state soak and zero leaks at teardown.
 2. Connect `--clients <n>` (1..1000, default 1000) to one server in a single
    process over `loopback` by default (1000 real UDP sockets in one process on
@@ -60,7 +60,23 @@ xctrace record --template 'Time Profiler' --output soak.trace --launch -- ./bin/
 
 ## Public calls it uses
 
-- `rocketnet_set_allocator`, `rocketnet_init`, `rocketnet_term`, `rocketnet_set_log_level`, `rocketnet_time`, `rocketnet_api_misuse_count`
-- `rocketnet_server_dev_config_sized`, `rocketnet_server_create_sized`, `rocketnet_server_port`, `rocketnet_server_num_connected_clients`, `rocketnet_server_update`, `rocketnet_server_receive_messages`, `rocketnet_server_receipts`, `rocketnet_server_start_message`, `rocketnet_server_finish_message`, `rocketnet_server_send_packets`, `rocketnet_server_counter`, `rocketnet_server_destroy`
-- `rocketnet_client_default_config_sized`, `rocketnet_client_create_sized`, `rocketnet_client_state`, `rocketnet_client_index`, `rocketnet_client_update`, `rocketnet_client_receive_messages`, `rocketnet_client_receipts`, `rocketnet_client_start_message`, `rocketnet_client_finish_message`, `rocketnet_client_send_packets`, `rocketnet_client_disconnect`, `rocketnet_client_destroy`
-- `rocketnet_write_dev_connect_token` (development library only)
+- `rocketnet_init`, `rocketnet_term`, `rocketnet_log_level`,
+  `rocketnet_allocator`
+- `rocketnet_server_default_config`, `rocketnet_server_create`,
+  `rocketnet_server_start`, `rocketnet_server_destroy`,
+  `rocketnet_server_update`, `rocketnet_server_send_packets`,
+  `rocketnet_server_port`, `rocketnet_server_ipv4_address`,
+  `rocketnet_server_public_key`, `rocketnet_server_num_connected_clients`,
+  `rocketnet_server_start_message`, `rocketnet_server_finish_message`,
+  `rocketnet_server_receive_messages`, `rocketnet_server_receipts`,
+  `rocketnet_server_stats`
+- `rocketnet_client_default_config`, `rocketnet_client_create`,
+  `rocketnet_client_connect`, `rocketnet_client_destroy`,
+  `rocketnet_client_update`, `rocketnet_client_send_packets`,
+  `rocketnet_client_disconnect`, `rocketnet_client_state`,
+  `rocketnet_client_index`, `rocketnet_client_start_message`,
+  `rocketnet_client_finish_message`, `rocketnet_client_receive_messages`,
+  `rocketnet_client_receipts`
+- `rocketnet_create_dev_connect_token` and
+  `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` (development library only)
+- `rocketnet_status_name`, `rocketnet_time`

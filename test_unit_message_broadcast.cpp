@@ -28,6 +28,7 @@
 
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_allocator.h"
+#include "sdk/rocketnet_connect_token.h"
 #include "sdk/rocketnet_message_object.h"
 #include "sdk/rocketnet_send_budget.h"
 
@@ -46,7 +47,7 @@ struct mb_packet_t
     uint64_t id;
     int slot;
     int bytes;
-    alignas( 16 ) uint8_t data[ROCKETNET_MAX_PAYLOAD_BYTES];
+    alignas( 16 ) uint8_t data[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
 };
 
 struct mb_net_t;
@@ -57,7 +58,7 @@ struct mb_endpoint_t
     bool is_server;
     int slot;
 
-    alignas( 16 ) uint8_t frames[MB_MAX_FRAMES][MB_PAYLOAD_INDEX + ROCKETNET_MAX_PAYLOAD_BYTES];
+    alignas( 16 ) uint8_t frames[MB_MAX_FRAMES][MB_PAYLOAD_INDEX + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     bool frame_used[MB_MAX_FRAMES];
     uint64_t frame_id[MB_MAX_FRAMES];
     int frame_slot[MB_MAX_FRAMES];
@@ -204,7 +205,7 @@ static uint8_t * mb_start_packet( void * transport, int client_index, int reques
 {
     mb_endpoint_t * e = (mb_endpoint_t *) transport;
     memset( context, 0, sizeof( *context ) );
-    if ( request_bytes < 1 || request_bytes > ROCKETNET_MAX_PAYLOAD_BYTES )
+    if ( request_bytes < 1 || request_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
         return NULL;
     if ( e->is_server ? e->net->slot_connection[client_index] == 0 : !e->connected )
         return NULL;
@@ -217,7 +218,7 @@ static uint8_t * mb_start_packet( void * transport, int client_index, int reques
         e->frame_slot[f] = e->is_server ? client_index : e->slot;
         context->frame = e->frames[f];
         context->payload_index = MB_PAYLOAD_INDEX;
-        context->payload_capacity = ROCKETNET_MAX_PAYLOAD_BYTES;
+        context->payload_capacity = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
         context->packet_id = e->frame_id[f];
         context->client_index = client_index;
         return e->frames[f];
@@ -238,7 +239,7 @@ static int mb_finish_packet( void * transport, rocketnet_packet_context_t * cont
     mb_endpoint_t * e = (mb_endpoint_t *) transport;
     const int f = mb_frame_of( e, context );
     check( f >= 0 );
-    check( payload_bytes >= 1 && payload_bytes <= ROCKETNET_MAX_PAYLOAD_BYTES );
+    check( payload_bytes >= 1 && payload_bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
     e->frame_used[f] = false;
     e->finishes++;
 
@@ -329,25 +330,25 @@ static void mb_config( rocketnet_message_config_t * config )
 {
     rocketnet_message_default_config( config );
     config->num_channels = 4;
-    config->window_messages = 64;
-    config->receive_ring_bytes = 65536;
+    config->reliable_messages_in_flight = 64;
+    config->receive_message_buffer_bytes = 65536;
     config->max_message_bytes = 16384;
-    config->send_buffer_bytes = 65536;
+    config->send_message_buffer_bytes = 65536;
     config->send_queue_messages = 64;
     config->packets_in_flight = 64;
     config->packets_per_update = 8;
-    config->unreliable_deliveries = 64;
-    config->resend_delay_initial_ms = 100;
-    config->resend_delay_min_ms = 20;
-    config->resend_delay_max_ms = 400;
-    config->reliable_timeout_ms = 120000;
+    config->unreliable_messages_per_update = 64;
+    config->message_resend_delay_initial_ms = 100;
+    config->message_resend_delay_min_ms = 20;
+    config->message_resend_delay_max_ms = 400;
+    config->reliable_message_timeout_ms = 120000;
 }
 
 static void mb_small_config( rocketnet_message_config_t * config )
 {
     mb_config( config );
     config->max_message_bytes = 3 * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
-    config->send_buffer_bytes = 12288;
+    config->send_message_buffer_bytes = 12288;
     config->send_queue_messages = 16;
 }
 
@@ -377,7 +378,7 @@ static rocketnet_message_client_t * mb_client_create( mb_net_t * net, int slot, 
 }
 
 static void mb_pair_setup( mb_pair_t * pair, int num_clients, const rocketnet_message_config_t * config = NULL,
-                           uint32_t client_kbps = ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, uint32_t server_kbps = ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS )
+                           uint32_t client_kbps = ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, uint32_t server_kbps = ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS )
 {
     rocketnet_message_config_t defaults;
     if ( !config )
@@ -591,7 +592,7 @@ static void mcr_free( void * context, void * p )
 static void test_message_client_create_refuses_budget_and_config()
 {
     rocketnet_term();
-    check( rocketnet_set_allocator( mcr_malloc, mcr_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( mcr_malloc, mcr_free ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     // a config whose required memory is zero: num_channels = 0 fails
@@ -615,7 +616,7 @@ static void test_message_client_create_refuses_budget_and_config()
     check( mcr_mallocs == before );
 
     rocketnet_term();
-    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
@@ -629,7 +630,7 @@ static void test_message_client_create_refuses_budget_and_config()
 static void test_message_server_create_refuses_budget_and_config()
 {
     rocketnet_term();
-    check( rocketnet_set_allocator( mcr_malloc, mcr_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( mcr_malloc, mcr_free ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     rocketnet_message_config_t bad;
@@ -647,7 +648,7 @@ static void test_message_server_create_refuses_budget_and_config()
     check( mcr_mallocs == before );
 
     rocketnet_term();
-    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 

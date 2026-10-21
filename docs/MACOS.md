@@ -191,7 +191,7 @@ That is the only thing the library sets on its macOS network threads: no QoS
 class (`thread_function_shim` in `sdk/rocketnet_platform.cpp` calls the thread
 function and nothing else), no `THREAD_TIME_CONSTRAINT_POLICY`, no pinning, and
 no App Nap call (a search of `sdk/` for `qos_class`, `NSProcessInfo` and
-`LSAppNapIsDisabled` finds nothing). `rocketnet_set_thread_priority( false )`
+`LSAppNapIsDisabled` finds nothing). `rocketnet_thread_priority( false )`
 turns the call off (`docs/CLIENT-IO.md`, Thread priority), and with it off the
 library makes no scheduling call on any thread. Apart from it, the only
 scheduling policy the SDK sets is the Mach time-constraint policy on the thread

@@ -9,6 +9,8 @@
 // opens a socket, or reads a clock. The clock starts at 1000.0.
 
 #include "test_unit_registry.h"
+#include "sdk/rocketnet_connect_token.h"
+#include "sdk/rocketnet_base64.h"
 
 #include "sdk/rocketnet.h"
 
@@ -46,9 +48,9 @@ static int both_families_unsetenv( const char * name ) { return unsetenv( name )
 struct both_families_identity_t
 {
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret[64];
     uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret[sizeof( rocketnet_dev_server_secret_key )];
 };
 
 static double both_families_now = 1000.0;
@@ -65,16 +67,14 @@ static void both_families_identity( both_families_identity_t * identity )
 
 static void both_families_fill( rocketnet_server_config_t * config, const both_families_identity_t * identity, int max_clients )
 {
-    check( rocketnet_server_dev_config_sized( config, sizeof( *config ) ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_server_default_config( config ) == ROCKETNET_STATUS_OK );
     config->protocol_id = BOTH_FAMILIES_PROTOCOL;
     config->max_clients = max_clients;
     memcpy( config->backend_public_key, identity->backend_public, sizeof( config->backend_public_key ) );
-    memcpy( config->server_public_key, identity->server_public, sizeof( config->server_public_key ) );
-    memcpy( config->server_secret_key, identity->server_secret, sizeof( config->server_secret_key ) );
     config->transport = "loopback";
 }
 
-static void both_families_client_config( rocketnet_client_config_t * config )
+static void both_families_client_config( rocketnet_client_test_config_t * config )
 {
     rocketnet_client_default_config( config );
     config->transport = "loopback";
@@ -82,25 +82,32 @@ static void both_families_client_config( rocketnet_client_config_t * config )
     config->time_callback = both_families_clock;
 }
 
-static void both_families_token( const both_families_identity_t * identity, uint64_t client_id, const char * address, uint8_t * token )
+static void both_families_token( const both_families_identity_t * identity, uint64_t client_id, const char * address, char * token_string )
 {
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     const char * addresses[] = { address };
     check( rocketnet_write_production_connect_token( identity->backend_secret, identity->server_public,
         BOTH_FAMILIES_PROTOCOL, addresses, 1, client_id, 1000, 1ULL << 40, 300, NULL,
         token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 }
 
-static enum rocketnet_status_t both_families_start( const both_families_identity_t * identity, const char * first, const char * second, struct rocketnet_server_t ** out )
+// creates with the IPv4 and IPv6 addresses, then starts; a refused create
+// returns its status with *out NULL
+static enum rocketnet_status_t both_families_start( both_families_identity_t * identity, const char * ipv4, const char * ipv6, struct rocketnet_server_t ** out )
 {
     rocketnet_server_config_t config;
     both_families_fill( &config, identity, 2 );
-    config.public_address = first;
-    config.second_public_address = second;
     both_families_now = 1000.0;
-    rocketnet_set_quiet( 1 );
-    enum rocketnet_status_t create_status = ROCKETNET_STATUS_COUNT;
-    struct rocketnet_server_t * server = rocketnet_server_create_sized( NULL, first, &config, sizeof( config ), NULL, 0, &create_status );
-    check( server != NULL );
+    rocketnet_quiet( 1 );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, ipv4, ipv6, &config, &create_status );
+    if ( !server )
+    {
+        *out = NULL;
+        return create_status;
+    }
+    rocketnet_server_public_key( server, identity->server_public );
     check( create_status == ROCKETNET_STATUS_OK );
     enum rocketnet_status_t status = rocketnet_server_start( server );
     *out = server;
@@ -148,58 +155,98 @@ static void test_server_refuses_an_unparseable_second_address()
 }
 REGISTER_UNIT_TEST( test_server_refuses_an_unparseable_second_address );
 
-static void test_public_address_environment_pair_is_consumed_together()
+// creates a stopped server with the IPv4 and IPv6 addresses. Nothing binds.
+static struct rocketnet_server_t * both_families_create( const both_families_identity_t * identity, const char * ipv4, const char * ipv6 )
 {
-    check( both_families_setenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS", "127.0.0.1:40000" ) == 0 );
-    check( both_families_setenv( "ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS", "[::1]:40000" ) == 0 );
+    rocketnet_server_config_t config;
+    both_families_fill( &config, identity, 2 );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OUT_OF_MEMORY;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, ipv4, ipv6, &config, &create_status );
+    check( server != NULL );
+    check( create_status == ROCKETNET_STATUS_OK );
+    return server;
+}
 
+static void both_families_check_served( const struct rocketnet_server_t * server, const char * ipv4, const char * ipv6 )
+{
+    char address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+    check( rocketnet_server_served_address( server, ROCKETNET_ADDRESS_IPV4, address, sizeof( address ) ) == ( ipv4 != NULL ) );
+    if ( ipv4 )
+        check( strcmp( address, ipv4 ) == 0 );
+    check( rocketnet_server_served_address( server, ROCKETNET_ADDRESS_IPV6, address, sizeof( address ) ) == ( ipv6 != NULL ) );
+    if ( ipv6 )
+        check( strcmp( address, ipv6 ) == 0 );
+}
+
+static void test_server_address_environment_applies_to_every_server()
+{
     both_families_identity_t identity;
     both_families_identity( &identity );
-    struct rocketnet_server_t * first = NULL;
-    enum rocketnet_status_t status = both_families_start( &identity, "127.0.0.1:39999", NULL, &first );
-    check( status == ROCKETNET_STATUS_OK );
-    check( rocketnet_server_port( first ) == 40000 );
-    both_families_stop( first );
+    rocketnet_quiet( 1 );
 
-    // Both address overrides belonged to the first successful create. The
-    // second create uses its own one-family address and port.
-    struct rocketnet_server_t * second = NULL;
-    status = both_families_start( &identity, "127.0.0.1:40001", NULL, &second );
-    check( status == ROCKETNET_STATUS_OK );
-    check( rocketnet_server_port( second ) == 40001 );
-    both_families_stop( second );
+    check( both_families_setenv( "ROCKETNET_SERVER_IPV4_ADDRESS", "10.1.2.3:50123" ) == 0 );
+    check( both_families_setenv( "ROCKETNET_SERVER_IPV6_ADDRESS", "[2001:db8::7]:50123" ) == 0 );
 
-    check( both_families_unsetenv( "ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS" ) == 0 );
-    check( both_families_unsetenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS" ) == 0 );
+    // two servers created while the variables are set both take them,
+    // whatever addresses their creates name
+    struct rocketnet_server_t * first = both_families_create( &identity, "127.0.0.1:0", NULL );
+    struct rocketnet_server_t * second = both_families_create( &identity, NULL, "[::1]:0" );
+    both_families_check_served( first, "10.1.2.3:50123", "[2001:db8::7]:50123" );
+    both_families_check_served( second, "10.1.2.3:50123", "[2001:db8::7]:50123" );
+    rocketnet_server_destroy( first );
+    rocketnet_server_destroy( second );
+
+    check( both_families_unsetenv( "ROCKETNET_SERVER_IPV4_ADDRESS" ) == 0 );
+    check( both_families_unsetenv( "ROCKETNET_SERVER_IPV6_ADDRESS" ) == 0 );
+
+    // unset, each server serves its create arguments again
+    struct rocketnet_server_t * third = both_families_create( &identity, "127.0.0.1:0", NULL );
+    both_families_check_served( third, "127.0.0.1:0", NULL );
+    rocketnet_server_destroy( third );
 }
-REGISTER_UNIT_TEST( test_public_address_environment_pair_is_consumed_together );
+REGISTER_UNIT_TEST( test_server_address_environment_applies_to_every_server );
+
+static void test_server_create_refuses_no_address()
+{
+    both_families_identity_t identity;
+    both_families_identity( &identity );
+    struct rocketnet_server_t * server = NULL;
+    const uint64_t misuse = rocketnet_api_misuse_count();
+    check( both_families_start( &identity, NULL, NULL, &server ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( server == NULL );
+    check( rocketnet_api_misuse_count() == misuse + 1 );
+    // each argument must be its own family
+    check( both_families_start( &identity, "[::1]:0", NULL, &server ) == ROCKETNET_STATUS_INVALID_ADDRESS );
+    check( both_families_start( &identity, NULL, "127.0.0.1:0", &server ) == ROCKETNET_STATUS_INVALID_ADDRESS );
+}
+REGISTER_UNIT_TEST( test_server_create_refuses_no_address );
 
 static void both_families_pump( struct rocketnet_server_t * server, struct rocketnet_client_t * ipv4, struct rocketnet_client_t * ipv6, double * time )
 {
     both_families_now = *time;
     if ( ipv4 )
     {
-        check( rocketnet_client_update( ipv4, *time ) == ROCKETNET_UPDATE_OK );
+        rocketnet_client_update( ipv4, *time );
         rocketnet_client_send_packets( ipv4 );
     }
     if ( ipv6 )
     {
-        check( rocketnet_client_update( ipv6, *time ) == ROCKETNET_UPDATE_OK );
+        rocketnet_client_update( ipv6, *time );
         rocketnet_client_send_packets( ipv6 );
     }
-    check( rocketnet_server_update( server, *time ) == ROCKETNET_UPDATE_OK );
+    rocketnet_server_update( server, *time );
     rocketnet_server_send_packets( server );
     *time += 0.01;
 }
 
 static struct rocketnet_client_t * both_families_connect_client( const both_families_identity_t * identity, uint64_t client_id, const char * address )
 {
-    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     both_families_token( identity, client_id, address, token );
-    rocketnet_client_config_t config;
+    rocketnet_client_test_config_t config;
     both_families_client_config( &config );
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_COUNT;
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL, 0, &create_status );
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &create_status );
     check( client != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
     check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
@@ -249,47 +296,47 @@ static void test_server_serves_ipv4_and_ipv6_clients_on_one_port()
     out = rocketnet_server_start_message( server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
     check( out != NULL );
     memcpy( out, to_ipv4, 4 );
-    check( rocketnet_server_finish_message( server, 0, 4 ) != 0 );
+    check( rocketnet_server_finish_message( server, 4 ) != 0 );
     out = rocketnet_server_start_message( server, 1, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
     check( out != NULL );
     memcpy( out, to_ipv6, 4 );
-    check( rocketnet_server_finish_message( server, 1, 4 ) != 0 );
+    check( rocketnet_server_finish_message( server, 4 ) != 0 );
 
     int got_ipv4 = 0, got_ipv6 = 0, got_from_ipv4 = 0, got_from_ipv6 = 0;
     for ( int step = 0; step < 400 && ( got_ipv4 < 1 || got_ipv6 < 1 || got_from_ipv4 < 1 || got_from_ipv6 < 1 ); step++ )
     {
         both_families_pump( server, ipv4, ipv6, &time );
-        struct rocketnet_message_batch_t batch;
-        while ( rocketnet_server_receive_messages( server, &batch ) )
+        const struct rocketnet_message_batch_t * batch = NULL;
+        while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
         {
-            for ( int i = 0; i < batch.num_messages; i++ )
+            for ( int i = 0; i < batch->num_messages; i++ )
             {
-                check( batch.channel[i] == 0 && batch.bytes[i] == 4 );
-                if ( batch.client_index[i] == 0 )
+                check( batch->channel[i] == 0 && batch->bytes[i] == 4 );
+                if ( batch->client_index[i] == 0 )
                 {
-                    check( memcmp( batch.data[i], from_ipv4, 4 ) == 0 );
+                    check( memcmp( batch->data[i], from_ipv4, 4 ) == 0 );
                     got_from_ipv4++;
                 }
                 else
                 {
-                    check( batch.client_index[i] == 1 && memcmp( batch.data[i], from_ipv6, 4 ) == 0 );
+                    check( batch->client_index[i] == 1 && memcmp( batch->data[i], from_ipv6, 4 ) == 0 );
                     got_from_ipv6++;
                 }
             }
         }
-        while ( rocketnet_client_receive_messages( ipv4, &batch ) )
+        while ( ( batch = rocketnet_client_receive_messages( ipv4 ) ) != NULL )
         {
-            for ( int i = 0; i < batch.num_messages; i++ )
+            for ( int i = 0; i < batch->num_messages; i++ )
             {
-                check( batch.channel[i] == 0 && batch.bytes[i] == 4 && memcmp( batch.data[i], to_ipv4, 4 ) == 0 );
+                check( batch->channel[i] == 0 && batch->bytes[i] == 4 && memcmp( batch->data[i], to_ipv4, 4 ) == 0 );
                 got_ipv4++;
             }
         }
-        while ( rocketnet_client_receive_messages( ipv6, &batch ) )
+        while ( ( batch = rocketnet_client_receive_messages( ipv6 ) ) != NULL )
         {
-            for ( int i = 0; i < batch.num_messages; i++ )
+            for ( int i = 0; i < batch->num_messages; i++ )
             {
-                check( batch.channel[i] == 0 && batch.bytes[i] == 4 && memcmp( batch.data[i], to_ipv6, 4 ) == 0 );
+                check( batch->channel[i] == 0 && batch->bytes[i] == 4 && memcmp( batch->data[i], to_ipv6, 4 ) == 0 );
                 got_ipv6++;
             }
         }
@@ -346,7 +393,7 @@ static void both_families_protocol_setup( struct both_families_protocol_t * test
     struct rocketnet_server_protocol_t * server = &test->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    memcpy( server->filter_value, tag, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( server->packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server->backend_public_key, rocketnet_test_backend_public_key, 32 );
     memcpy( server->server_public_key, rocketnet_test_server_public_key, 32 );
     memcpy( server->server_secret_key, rocketnet_test_server_secret_key, 32 );

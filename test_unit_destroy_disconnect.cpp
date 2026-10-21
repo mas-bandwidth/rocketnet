@@ -95,9 +95,9 @@ struct destroy_disconnect_env_guard_t
 struct destroy_disconnect_keys_t
 {
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret[RN_TEST_BACKEND_SECRET_KEY_BYTES];
     uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret[RN_TEST_SERVER_SECRET_KEY_BYTES];
 };
 
 static void destroy_disconnect_make_keys( destroy_disconnect_keys_t * keys )
@@ -129,7 +129,7 @@ static rocketnet_server_t * destroy_disconnect_server_create( const destroy_disc
     rn_message_server_link( &link, transport );
     rocketnet_message_server_t * running = (rocketnet_message_server_t *) rn_message_object_create(
         NULL, &link, 1, DESTROY_DISCONNECT_MAX_CLIENTS, NULL, NULL, 0,
-        ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, now );
+        ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, now );
     check( running != NULL );
 
     // the public server wraps the running message server: its destroy is
@@ -167,7 +167,7 @@ static rocketnet_client_t * destroy_disconnect_client_create( const destroy_disc
     rn_message_client_link( &link, transport );
     rocketnet_message_client_t * connection = (rocketnet_message_client_t *) rn_message_object_create(
         NULL, &link, 0, 1, NULL, NULL, 0,
-        ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 );
+        ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 );
     check( connection != NULL );
 
     // the public client wraps the message client: its destroy is
@@ -182,9 +182,9 @@ static int destroy_disconnect_connect_client( rocketnet_server_t * server, rocke
     for ( int i = 0; i < 200; i++ )
     {
         *time += 0.01;
-        check( rocketnet_client_update( client, *time ) == ROCKETNET_UPDATE_OK );
+        rocketnet_client_update( client, *time );
         rocketnet_client_send_packets( client );
-        check( rocketnet_server_update( server, *time ) == ROCKETNET_UPDATE_OK );
+        rocketnet_server_update( server, *time );
         rocketnet_server_send_packets( server );
 
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
@@ -252,7 +252,7 @@ static rocketnet_client_t * destroy_disconnect_observed_client_create( const des
     rn_message_client_link( &link, transport );
     rocketnet_message_client_t * connection = (rocketnet_message_client_t *) rn_message_object_create(
         NULL, &link, 0, 1, NULL, NULL, 0,
-        ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 );
+        ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 );
     check( connection != NULL );
 
     // the public client wraps the message client: its destroy is
@@ -291,7 +291,7 @@ static uint64_t destroy_disconnect_drain( void * endpoint, uint64_t * dropped )
 static void test_destroy_connected_client_sends_disconnect()
 {
     destroy_disconnect_env_guard_t env_guard;
-    rocketnet_set_quiet( 1 );
+    rocketnet_quiet( 1 );
     destroy_disconnect_keys_t keys;
     destroy_disconnect_make_keys( &keys );
 
@@ -302,16 +302,16 @@ static void test_destroy_connected_client_sends_disconnect()
     const int slot_explicit = destroy_disconnect_connect_client( server_explicit, client_explicit, &time_explicit );
 
     const uint64_t * sc_explicit = destroy_disconnect_server_counters( server_explicit );
-    const uint64_t explicit_rx_before = rocketnet_server_counter( server_explicit, ROCKETNET_SERVER_COUNTER_PACKETS_RECEIVED );
+    const uint64_t explicit_rx_before = rn_server_stats_of( server_explicit ).packets_received;
     const uint64_t explicit_disc_rx_before = sc_explicit[ROCKETNET_COUNTER_DISCONNECT_RECEIVED];
     const uint64_t explicit_disc_ok_before = sc_explicit[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED];
     const uint64_t explicit_timeout_before = sc_explicit[ROCKETNET_COUNTER_CLIENT_TIMED_OUT];
 
     rocketnet_client_disconnect( client_explicit );
-    check( rocketnet_server_update( server_explicit, time_explicit ) == ROCKETNET_UPDATE_OK );
+    rocketnet_server_update( server_explicit, time_explicit );
     check( !rocketnet_server_client_connected( server_explicit, slot_explicit ) );
 
-    const uint64_t explicit_rx_delta = rocketnet_server_counter( server_explicit, ROCKETNET_SERVER_COUNTER_PACKETS_RECEIVED ) - explicit_rx_before;
+    const uint64_t explicit_rx_delta = rn_server_stats_of( server_explicit ).packets_received - explicit_rx_before;
     const uint64_t explicit_disc_rx_delta = sc_explicit[ROCKETNET_COUNTER_DISCONNECT_RECEIVED] - explicit_disc_rx_before;
     const uint64_t explicit_disc_ok_delta = sc_explicit[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED] - explicit_disc_ok_before;
     check( explicit_rx_delta == (uint64_t) ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS );
@@ -330,7 +330,7 @@ static void test_destroy_connected_client_sends_disconnect()
     check( rocketnet_server_num_connected_clients( server ) == 1 );
 
     const uint64_t * sc = destroy_disconnect_server_counters( server );
-    const uint64_t rx_before = rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_PACKETS_RECEIVED );
+    const uint64_t rx_before = rn_server_stats_of( server ).packets_received;
     const uint64_t disc_rx_before = sc[ROCKETNET_COUNTER_DISCONNECT_RECEIVED];
     const uint64_t disc_ok_before = sc[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED];
     const uint64_t disc_open_fail_before = sc[ROCKETNET_COUNTER_DISCONNECT_DID_NOT_OPEN];
@@ -340,14 +340,14 @@ static void test_destroy_connected_client_sends_disconnect()
 
     // One server update after the client's destroy frees the slot on receipt
     // of the sealed disconnect burst, with zero open failures and no timeout.
-    check( rocketnet_server_update( server, time ) == ROCKETNET_UPDATE_OK );
+    rocketnet_server_update( server, time );
     check( !rocketnet_server_client_connected( server, slot ) );
     check( rocketnet_server_num_connected_clients( server ) == 0 );
     check( rocketnet_server_disconnect_reason( server, slot ) == ROCKETNET_DISCONNECT_REASON_NONE );
     check( sc[ROCKETNET_COUNTER_CLIENT_TIMED_OUT] == timeout_before );
     check( sc[ROCKETNET_COUNTER_DISCONNECT_DID_NOT_OPEN] == disc_open_fail_before );
 
-    const uint64_t rx_delta = rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_PACKETS_RECEIVED ) - rx_before;
+    const uint64_t rx_delta = rn_server_stats_of( server ).packets_received - rx_before;
     const uint64_t disc_rx_delta = sc[ROCKETNET_COUNTER_DISCONNECT_RECEIVED] - disc_rx_before;
     const uint64_t disc_ok_delta = sc[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED] - disc_ok_before;
     check( rx_delta == explicit_rx_delta );
@@ -367,7 +367,7 @@ REGISTER_UNIT_TEST( test_destroy_connected_client_sends_disconnect );
 static void test_destroy_server_sends_disconnect_to_every_connected_client()
 {
     destroy_disconnect_env_guard_t env_guard;
-    rocketnet_set_quiet( 1 );
+    rocketnet_quiet( 1 );
     destroy_disconnect_keys_t keys;
     destroy_disconnect_make_keys( &keys );
 
@@ -390,7 +390,7 @@ static void test_destroy_server_sends_disconnect_to_every_connected_client()
 
     // Drain any keep-alive packets queued for earlier clients while later clients connected.
     for ( int i = 0; i < NUM_CLIENTS; i++ )
-        check( rocketnet_client_update( clients[i], time ) == ROCKETNET_UPDATE_OK );
+        rocketnet_client_update( clients[i], time );
 
     uint64_t client_rx_before[NUM_CLIENTS] = {};
     uint64_t client_disc_rx_before[NUM_CLIENTS] = {};
@@ -398,7 +398,7 @@ static void test_destroy_server_sends_disconnect_to_every_connected_client()
     for ( int i = 0; i < NUM_CLIENTS; i++ )
     {
         const uint64_t * cc = destroy_disconnect_client_counters( clients[i] );
-        client_rx_before[i] = rocketnet_client_counter( clients[i], ROCKETNET_CLIENT_COUNTER_PACKETS_RECEIVED );
+        client_rx_before[i] = rn_client_stats_of( clients[i] ).packets_received;
         client_disc_rx_before[i] = cc[ROCKETNET_COUNTER_CLIENT_DISCONNECT_RECEIVED];
         client_disc_ok_before[i] = cc[ROCKETNET_COUNTER_CLIENT_DISCONNECT_ACCEPTED];
     }
@@ -407,12 +407,11 @@ static void test_destroy_server_sends_disconnect_to_every_connected_client()
 
     for ( int i = 0; i < NUM_CLIENTS; i++ )
     {
-        check( rocketnet_client_update( clients[i], time ) == ROCKETNET_UPDATE_OK );
-        check( rocketnet_client_state( clients[i] ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
-        check( rocketnet_client_disconnect_reason( clients[i] ) == ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
+        rocketnet_client_update( clients[i], time );
+        check( rocketnet_client_state( clients[i] ) == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED );
 
         const uint64_t * cc = destroy_disconnect_client_counters( clients[i] );
-        const uint64_t rx_delta = rocketnet_client_counter( clients[i], ROCKETNET_CLIENT_COUNTER_PACKETS_RECEIVED ) - client_rx_before[i];
+        const uint64_t rx_delta = rn_client_stats_of( clients[i] ).packets_received - client_rx_before[i];
         const uint64_t disc_rx_delta = cc[ROCKETNET_COUNTER_CLIENT_DISCONNECT_RECEIVED] - client_disc_rx_before[i];
         const uint64_t disc_ok_delta = cc[ROCKETNET_COUNTER_CLIENT_DISCONNECT_ACCEPTED] - client_disc_ok_before[i];
         check( rx_delta == (uint64_t) ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
@@ -427,7 +426,10 @@ static void test_destroy_server_sends_disconnect_to_every_connected_client()
 REGISTER_UNIT_TEST( test_destroy_server_sends_disconnect_to_every_connected_client );
 
 // Steps a public client against a loopback server until the client reaches
-// the target handshake state (or, for ROCKETNET_CLIENT_STATE_INVALID, not at
+// no handshake target: destroy at once, before any handshake state
+#define DESTROY_DISCONNECT_NO_TARGET ( (enum rocketnet_client_state_t) -100 )
+
+// the target handshake state (or, for DESTROY_DISCONNECT_NO_TARGET, not at
 // all: the client is destroyed right after create), hands off whatever the client has queued, and lets the server
 // read it. Then destroys the client with rocketnet_client_destroy and runs
 // one server update: the server must receive nothing across the destroy.
@@ -437,20 +439,20 @@ static void destroy_disconnect_public_client_destroy_sends_nothing( const destro
     rocketnet_server_t * server = destroy_disconnect_server_create( keys, time );
     rocketnet_client_t * client = destroy_disconnect_client_create( keys, rocketnet_server_port( server ), client_id );
 
-    if ( target_state != ROCKETNET_CLIENT_STATE_INVALID )
+    if ( target_state != DESTROY_DISCONNECT_NO_TARGET )
     {
         bool reached = false;
         for ( int i = 0; i < 200 && !reached; i++ )
         {
             time += 0.01;
-            check( rocketnet_client_update( client, time ) == ROCKETNET_UPDATE_OK );
+            rocketnet_client_update( client, time );
             if ( rocketnet_client_state( client ) == target_state )
             {
                 reached = true;
                 break;
             }
             rocketnet_client_send_packets( client );
-            check( rocketnet_server_update( server, time ) == ROCKETNET_UPDATE_OK );
+            rocketnet_server_update( server, time );
             rocketnet_server_send_packets( server );
         }
         check( reached );
@@ -459,12 +461,12 @@ static void destroy_disconnect_public_client_destroy_sends_nothing( const destro
 
     // hand off and read everything the client queued before the destroy
     rocketnet_client_send_packets( client );
-    check( rocketnet_server_update( server, time ) == ROCKETNET_UPDATE_OK );
-    const uint64_t rx_before = rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_PACKETS_RECEIVED );
+    rocketnet_server_update( server, time );
+    const uint64_t rx_before = rn_server_stats_of( server ).packets_received;
 
     rocketnet_client_destroy( client );
-    check( rocketnet_server_update( server, time ) == ROCKETNET_UPDATE_OK );
-    check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_PACKETS_RECEIVED ) == rx_before );
+    rocketnet_server_update( server, time );
+    check( rn_server_stats_of( server ).packets_received == rx_before );
 
     rocketnet_server_destroy( server );
 }
@@ -474,7 +476,7 @@ static void destroy_disconnect_public_client_destroy_sends_nothing( const destro
 static void test_destroy_without_live_connection_sends_nothing()
 {
     destroy_disconnect_env_guard_t env_guard;
-    rocketnet_set_quiet( 1 );
+    rocketnet_quiet( 1 );
     destroy_disconnect_keys_t keys;
     destroy_disconnect_make_keys( &keys );
 
@@ -527,7 +529,7 @@ static void test_destroy_without_live_connection_sends_nothing()
     // connection: right after create, while requesting a cookie, and while
     // sending the connection request. Before the session keys exist there is
     // nothing to seal, so the server receives nothing across the destroy.
-    destroy_disconnect_public_client_destroy_sends_nothing( &keys, 0xE320ULL, ROCKETNET_CLIENT_STATE_INVALID );
+    destroy_disconnect_public_client_destroy_sends_nothing( &keys, 0xE320ULL, DESTROY_DISCONNECT_NO_TARGET );
     destroy_disconnect_public_client_destroy_sends_nothing( &keys, 0xE321ULL, ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE );
     destroy_disconnect_public_client_destroy_sends_nothing( &keys, 0xE322ULL, ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST );
 
@@ -546,8 +548,8 @@ static void test_destroy_without_live_connection_sends_nothing()
         uint64_t dropped = 0;
         rocketnet_client_t * bystander = destroy_disconnect_observed_client_create( &keys, rocketnet_server_port( server ), 0xE302ULL, &observed, &endpoint );
         check( rocketnet_server_num_connected_clients( server ) == 0 );
-        check( rocketnet_server_update( server, time ) == ROCKETNET_UPDATE_OK );
-        check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_PACKETS_SENT ) == 0 );
+        rocketnet_server_update( server, time );
+        check( rn_server_stats_of( server ).packets_sent == 0 );
         check( destroy_disconnect_drain( endpoint, &dropped ) == 0 );
 
         rocketnet_server_destroy( server );
@@ -569,19 +571,19 @@ static void test_destroy_without_live_connection_sends_nothing()
         for ( int i = 0; i < 200 && !pending; i++ )
         {
             time += 0.01;
-            check( rocketnet_client_update( client, time ) == ROCKETNET_UPDATE_OK );
+            rocketnet_client_update( client, time );
             if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE )
             {
                 pending = true;
                 break;
             }
             rocketnet_client_send_packets( client );
-            check( rocketnet_server_update( server, time ) == ROCKETNET_UPDATE_OK );
+            rocketnet_server_update( server, time );
             rocketnet_server_send_packets( server );
         }
         check( pending );
         check( rocketnet_server_num_connected_clients( server ) == 0 );
-        check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_PACKETS_SENT ) > 0 );
+        check( rn_server_stats_of( server ).packets_sent > 0 );
         destroy_disconnect_drain( endpoint, &dropped );
 
         rocketnet_server_destroy( server );
@@ -613,18 +615,19 @@ static void test_destroy_without_live_connection_sends_nothing()
         rocketnet_server_disconnect_client( server, slots[1] );
         rocketnet_server_send_packets( server );
         time += 0.01;
-        check( rocketnet_server_update( server, time ) == ROCKETNET_UPDATE_OK );
+        rocketnet_server_update( server, time );
         rocketnet_server_send_packets( server );
-        check( rocketnet_client_update( clients[1], time ) == ROCKETNET_UPDATE_OK );
+        rocketnet_client_update( clients[1], time );
 
         check( !rocketnet_server_client_connected( server, slots[0] ) );
         check( !rocketnet_server_client_connected( server, slots[1] ) );
         check( rocketnet_server_num_connected_clients( server ) == 0 );
+        // the client that left reads DISCONNECTED; the one the server ended
+        // reads SERVER_DISCONNECTED
+        check( rocketnet_client_state( clients[0] ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+        check( rocketnet_client_state( clients[1] ) == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED );
         for ( int i = 0; i < NUM_CLIENTS; i++ )
-        {
-            check( rocketnet_client_state( clients[i] ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
             destroy_disconnect_drain( endpoints[i], &dropped[i] );
-        }
 
         rocketnet_server_destroy( server );
         for ( int i = 0; i < NUM_CLIENTS; i++ )

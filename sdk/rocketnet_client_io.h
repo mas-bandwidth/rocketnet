@@ -86,7 +86,7 @@ struct rocketnet_client_io_open_t
     uint8_t session_server_to_client[ROCKETNET_KEY_BYTES];
     uint64_t protocol_id;
     uint8_t connection_salt[ROCKETNET_CONNECTION_SALT_BYTES];
-    uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES];
+    uint8_t packet_filter[ROCKETNET_FILTER_VALUE_BYTES];
     rocketnet_address_t server_address;     // only the dialed server's datagrams are opened
     std::atomic<uint32_t> epoch;
     struct rocketnet_replay_protection_t replay;
@@ -139,7 +139,7 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
     memset( io->open.session_server_to_client, 0, sizeof( io->open.session_server_to_client ) );
     io->open.protocol_id = 0;
     memset( io->open.connection_salt, 0, sizeof( io->open.connection_salt ) );
-    memset( io->open.filter_value, 0, sizeof( io->open.filter_value ) );
+    memset( io->open.packet_filter, 0, sizeof( io->open.packet_filter ) );
     io->open.epoch.store( ROCKETNET_CLIENT_IO_EPOCH_NONE, std::memory_order_relaxed );
     memset( &io->open.replay, 0, sizeof( io->open.replay ) );
     io->open.loaded_epoch = ROCKETNET_CLIENT_IO_EPOCH_NONE;
@@ -154,7 +154,7 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
 // refused, so the main thread never writes the copy while the I/O thread may
 // read it.
 inline void rocketnet_client_io_publish_keys( rocketnet_client_io_t * io, const uint8_t * session_server_to_client,
-    uint64_t protocol_id, const uint8_t * connection_salt, const uint8_t * filter_value,
+    uint64_t protocol_id, const uint8_t * connection_salt, const uint8_t * packet_filter,
     const rocketnet_address_t * server_address )
 {
     if ( io->open.epoch.load( std::memory_order_relaxed ) != ROCKETNET_CLIENT_IO_EPOCH_NONE )
@@ -162,7 +162,7 @@ inline void rocketnet_client_io_publish_keys( rocketnet_client_io_t * io, const 
     memcpy( io->open.session_server_to_client, session_server_to_client, ROCKETNET_KEY_BYTES );
     io->open.protocol_id = protocol_id;
     memcpy( io->open.connection_salt, connection_salt, ROCKETNET_CONNECTION_SALT_BYTES );
-    memcpy( io->open.filter_value, filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( io->open.packet_filter, packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
     io->open.server_address = *server_address;
     io->open.epoch.store( ROCKETNET_CLIENT_IO_EPOCH_LIVE, std::memory_order_release );
 }
@@ -188,7 +188,7 @@ inline void rocketnet_client_io_drop_keys( rocketnet_client_io_t * io )
     rocketnet_client_io_wipe( io->open.session_server_to_client, sizeof( io->open.session_server_to_client ) );
     io->open.protocol_id = 0;
     rocketnet_client_io_wipe( io->open.connection_salt, sizeof( io->open.connection_salt ) );
-    rocketnet_client_io_wipe( io->open.filter_value, sizeof( io->open.filter_value ) );
+    rocketnet_client_io_wipe( io->open.packet_filter, sizeof( io->open.packet_filter ) );
     memset( &io->open.server_address, 0, sizeof( io->open.server_address ) );
     memset( &io->open.replay, 0, sizeof( io->open.replay ) );
 }
@@ -247,7 +247,7 @@ inline void rocketnet_client_io_decrypt_datagram( rocketnet_client_io_t * io, co
         return;
     if ( !rocketnet_address_equal( from, &io->open.server_address ) )
         return;
-    const int type = rocketnet_prefilter_check( packet_data, packet_bytes, io->open.filter_value );
+    const int type = rocketnet_prefilter_check( packet_data, packet_bytes, io->open.packet_filter );
     const int floor = rocketnet_client_io_session_floor( type );
     if ( floor == 0 )
         return;
@@ -487,13 +487,13 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
             const double now = io->time( io->time_context );
             uint8_t * packet_data = buffer->data + (size_t) io->fill_slots * ROCKETNET_FRAME_SIZE;
             const int bytes = io->transport->operations->receive( io->transport->instance, &from, packet_data,
-                ROCKETNET_MAX_PACKET_BYTES );
+                ROCKETNET_RECEIVE_PACKET_BYTES );
             if ( bytes == 0 )
                 break;
             if ( bytes < 0 || bytes > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
             {
                 io->transport_faults++;
-                if ( io->prefilter_too_large && bytes > ROCKETNET_MAX_PACKET_BYTES )
+                if ( io->prefilter_too_large && bytes > ROCKETNET_RECEIVE_PACKET_BYTES )
                     (*io->prefilter_too_large)++;
                 break;
             }

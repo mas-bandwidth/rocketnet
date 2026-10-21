@@ -126,7 +126,7 @@ static void test_hold_full_drops_and_counts()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.sequenced_holds = 1;
+    config.sequenced_messages_held = 1;
     rocketnet_counters_t counters = {};
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
     rocketnet_unit_check( arena != NULL );
@@ -151,7 +151,7 @@ static void test_large_future_state_drops_without_violation()
     rocketnet_unit_check( region != NULL );
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
-    uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES + 1] = {};
+    uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1] = {};
     rocketnet_message_record_t record;
     rn_delivery_t out;
     sequenced_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 1, 0, payload );
@@ -170,7 +170,7 @@ static void test_large_future_state_drops_without_violation()
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
     rocketnet_unit_check( sequenced_counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL] == before + 2 );
     rocketnet_unit_check( sequenced_counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED] == superseded );
-    rocketnet_unit_check( region->sequenced_holds[region->channel_receive[0].held_sequenced].data[0] == small );
+    rocketnet_unit_check( region->sequenced_messages_held[region->channel_receive[0].held_sequenced].data[0] == small );
     rn_region_reset( region );
 }
 
@@ -180,7 +180,7 @@ static void test_never_takes_a_reliable_number()
     // queue and reliable number state stay independent (RNChannelTypes!Enqueue).
     rn_message_link_t link = {};
     rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 1, NULL, NULL, 0,
-                                                               ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 );
+                                                               ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 );
     rocketnet_unit_check( object != NULL );
     rocketnet_message_client_t * client = (rocketnet_message_client_t *) object;
     rn_message_connection_t * connection = &object->connections[0];
@@ -235,8 +235,8 @@ static void test_large_state_promotes_to_reliable_sequenced()
     link.send_packets = sequenced_large_send_packets;
     rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 1, NULL, NULL, 0, 1, 0.0 );
     rocketnet_unit_check( object != NULL );
-    // An oversize unreliable send is promoted to its reliable twin (RakNet
-    // ReliabilityLayer), never dropped as unreliable.
+    // An oversize unreliable send is promoted to its reliable twin (the
+    // promotion rule), never dropped as unreliable.
     uint8_t * pointer = rn_message_object_start( object, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED,
                                                   ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES );
     rocketnet_unit_check( pointer != NULL );
@@ -280,7 +280,7 @@ static void sequenced_counting_free( void * context, void * memory )
 static void test_sequenced_no_allocation_after_create()
 {
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_set_allocator( sequenced_counting_malloc, sequenced_counting_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_allocator( sequenced_counting_malloc, sequenced_counting_free ) == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &sequenced_counters );
     rocketnet_unit_check( arena != NULL );
@@ -299,7 +299,7 @@ static void test_sequenced_no_allocation_after_create()
     rocketnet_unit_check( sequenced_allocations == after_create );
     rn_arena_destroy( arena );
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 

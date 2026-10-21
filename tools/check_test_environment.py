@@ -2,7 +2,7 @@
 """Run the SDK suite with hostile ambient config; require the netcode output.
 
 A passing run prints one line per test, its test_ lowercase snake_case name,
-then a blank line and "*** ALL TESTS PASSED ***", and nothing else. With the
+then a blank line, "*** ALL TESTS PASSED ***" and a blank line, and nothing else. With the
 unit binary (bin/test) the printed names must cover every name the sources
 register outside a preprocessor condition (registry tables and
 REGISTER_UNIT_TEST lines), and every printed name must be registered, so a
@@ -190,13 +190,13 @@ def exec_functional_names():
 
 
 def check_shape(lines, label):
-    # every line a test name, then a blank line and the passed line
-    if len(lines) < 3 or lines[-2:] != ["", PASSED_LINE]:
-        sys.exit("%s: the run does not end with a blank line and %r" % (label, PASSED_LINE))
-    bad = [line for line in lines[:-2] if not TEST_NAME_RE.fullmatch(line)]
+    # every line a test name, then a blank line, the passed line and a blank line
+    if len(lines) < 4 or lines[-3:] != ["", PASSED_LINE, ""]:
+        sys.exit("%s: the run does not end with a blank line, %r and a blank line" % (label, PASSED_LINE))
+    bad = [line for line in lines[:-3] if not TEST_NAME_RE.fullmatch(line)]
     if bad:
         sys.exit("%s: lines that are not test_ snake_case names: %s" % (label, "; ".join(bad[:10])))
-    return lines[:-2]
+    return lines[:-3]
 
 
 def assert_name_set(printed, registered, always, label, exec_names=None):

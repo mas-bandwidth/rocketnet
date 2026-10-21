@@ -108,7 +108,7 @@ static void client_io_decrypt_teardown( client_io_decrypt_fixture_t * f )
 static void client_io_decrypt_publish( client_io_decrypt_fixture_t * f )
 {
     rocketnet_client_io_publish_keys( &f->io, f->client.keys.session_server_to_client, f->client.signed_fields.protocol_id,
-                                      f->client.connection_salt, f->client.filter_value, &f->client.server_address );
+                                      f->client.connection_salt, f->client.packet_filter, &f->client.server_address );
 }
 
 // the plaintext of a payload: the minimum ack block and one payload byte
@@ -126,7 +126,7 @@ static int client_io_decrypt_push_payload_from( client_io_decrypt_fixture_t * f,
     uint8_t plaintext[64];
     const int plaintext_bytes = client_io_decrypt_plaintext( plaintext, payload_byte );
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
-    const int bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET, f->client.filter_value, sequence,
+    const int bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET, f->client.packet_filter, sequence,
                                                      NULL, plaintext, plaintext_bytes, client_io_decrypt_protocol_id,
                                                      f->client.connection_salt, NULL, f->key );
     check( bytes == ROCKETNET_PACKET_OVERHEAD_BYTES + plaintext_bytes );

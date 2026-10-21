@@ -505,7 +505,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
                 counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR]++;
                 return ROCKETNET_SERVER_PROCESS_IGNORED;
             }
-            rocketnet_write_connection_cookie_packet( response_packet, server->filter_value, connection_salt, fresh_expire, fresh_mac );
+            rocketnet_write_connection_cookie_packet( response_packet, server->packet_filter, connection_salt, fresh_expire, fresh_mac );
             *response_bytes = ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES;
             return ROCKETNET_SERVER_PROCESS_SEND_COOKIE;
         }
@@ -670,7 +670,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         if ( rocketnet_client_slots_num_free( server->client_slots ) <= 0 )
         {
             int denied_bytes = rocketnet_write_sealed_packet( response_packet, ROCKETNET_CONNECTION_DENIED_PACKET,
-                                                              server->filter_value, 1, session_nonce, NULL, 0,
+                                                              server->packet_filter, 1, session_nonce, NULL, 0,
                                                               server->protocol_id, connection_salt, NULL,
                                                               keys.handshake_server_to_client );
             sodium_memzero( &keys, sizeof(keys) );
@@ -744,7 +744,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         // for as long as the mapping lives
 
         int challenge_bytes = rocketnet_write_sealed_packet( mapping->challenge_packet, ROCKETNET_CONNECTION_CHALLENGE_PACKET,
-                                                             server->filter_value, mapping->send_sequence_handshake,
+                                                             server->packet_filter, mapping->send_sequence_handshake,
                                                              mapping->session_nonce,
                                                              mapping->server_ephemeral_public_key, ROCKETNET_KEY_BYTES,
                                                              server->protocol_id, mapping->connection_salt,
@@ -835,7 +835,7 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
         counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_SLOTS]++;
 
         int denied_bytes = rocketnet_write_sealed_packet( response_packet, ROCKETNET_CONNECTION_DENIED_PACKET,
-                                                          server->filter_value, mapping->send_sequence_handshake,
+                                                          server->packet_filter, mapping->send_sequence_handshake,
                                                           mapping->session_nonce, NULL, 0,
                                                           server->protocol_id, mapping->connection_salt, NULL,
                                                           mapping->keys.handshake_server_to_client );
@@ -1330,7 +1330,7 @@ int rocketnet_server_protocol_process_packet_capacity( struct rocketnet_server_p
         server->reassembly->completed_bytes = 0;
     }
 
-    int packet_type = rocketnet_prefilter_check( packet_data, packet_bytes, server->filter_value );
+    int packet_type = rocketnet_prefilter_check( packet_data, packet_bytes, server->packet_filter );
     if ( packet_type < 0 )
     {
         rocketnet_spam( "server dropped packet. failed prefilter" );
@@ -1386,7 +1386,7 @@ int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t
     return rocketnet_server_protocol_process_packet_capacity( server, from, packet_data, packet_bytes,
                                                               current_timestamp, current_time,
                                                               response_packet, response_bytes,
-                                                              out_payload, ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES,
+                                                              out_payload, ROCKETNET_RECEIVE_PAYLOAD_BYTES,
                                                               out_payload_bytes, out_payload_client_index );
 }
 
@@ -1545,7 +1545,7 @@ static int rocketnet_server_write_session_packet( struct rocketnet_server_protoc
     uint64_t sequence = mapping->send_sequence_session;
 
     int bytes = rocketnet_write_sealed_packet( out_packet, packet_type,
-                                               server->filter_value, sequence,
+                                               server->packet_filter, sequence,
                                                NULL, plaintext, block_bytes + type_data_bytes,
                                                server->protocol_id, mapping->connection_salt,
                                                NULL, mapping->keys.session_server_to_client );
@@ -1788,7 +1788,7 @@ int rocketnet_server_protocol_seal_payload_frame( struct rocketnet_server_protoc
     if ( !mapping )
         return 0;
 
-    if ( payload_bytes < 1 || payload_bytes > ROCKETNET_MAX_PAYLOAD_BYTES )
+    if ( payload_bytes < 1 || payload_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
         return 0;
 
     // the application's bytes come first: the block truncates to the
@@ -1801,7 +1801,7 @@ int rocketnet_server_protocol_seal_payload_frame( struct rocketnet_server_protoc
         block_capacity = ROCKETNET_ACK_BLOCK_MAX_BYTES;
     int ack_block_bytes = rocketnet_ack_block_build( ack_block, block_capacity, &mapping->replay_session );
 
-    int wire_bytes = rocketnet_write_sealed_payload_in_place( wire_start, server->filter_value, sequence,
+    int wire_bytes = rocketnet_write_sealed_payload_in_place( wire_start, server->packet_filter, sequence,
                                                               ack_block, ack_block_bytes,
                                                               payload_bytes, server->protocol_id,
                                                               mapping->connection_salt,
@@ -1834,14 +1834,14 @@ int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t 
     rocketnet_assert( payload_data );
     rocketnet_assert( out_packet );
 
-    if ( payload_bytes < 1 || payload_bytes > ROCKETNET_MAX_PAYLOAD_BYTES )
+    if ( payload_bytes < 1 || payload_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
         return 0;
 
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_server_connected_mapping( server, client_index );
     if ( !mapping )
         return 0;
 
-    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
 
     int block_capacity = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - payload_bytes;
     if ( block_capacity > ROCKETNET_ACK_BLOCK_MAX_BYTES )
@@ -1852,7 +1852,7 @@ int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t 
     uint64_t sequence = mapping->send_sequence_session;
 
     int bytes = rocketnet_write_sealed_packet( out_packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
-                                               server->filter_value, sequence,
+                                               server->packet_filter, sequence,
                                                NULL, plaintext, block_bytes + payload_bytes,
                                                server->protocol_id, mapping->connection_salt,
                                                NULL, mapping->keys.session_server_to_client );
@@ -1973,7 +1973,7 @@ int rocketnet_server_protocol_seal_fragment( struct rocketnet_server_protocol_t 
     memcpy( plaintext + block_bytes + ROCKETNET_FRAGMENT_HEADER_BYTES, fragment_data, (size_t) fragment_bytes );
 
     int bytes = rocketnet_write_sealed_packet( out_packet, ROCKETNET_CONNECTION_FRAGMENT_PACKET,
-                                               server->filter_value, sequence,
+                                               server->packet_filter, sequence,
                                                NULL, plaintext, block_bytes + ROCKETNET_FRAGMENT_HEADER_BYTES + fragment_bytes,
                                                server->protocol_id, mapping->connection_salt,
                                                NULL, mapping->keys.session_server_to_client );

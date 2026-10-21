@@ -74,15 +74,15 @@ class CheckExportsSourceTest(unittest.TestCase):
 
     def test_duplicate_table_entry_fails(self):
         tests_text = TESTS.read_text().replace(
-            "    \"rocketnet_abi_version\",\n",
-            "    \"rocketnet_abi_version\",\n    \"rocketnet_abi_version\",\n",
+            "    \"rocketnet_version\",\n",
+            "    \"rocketnet_version\",\n    \"rocketnet_version\",\n",
             1,
         )
         tests_copy = Path(self.tmp.name) / "rocketnet_tests.cpp"
         tests_copy.write_text(tests_text)
         code, err = run_source_check(HEADER, tests_copy)
         self.assertNotEqual(code, 0)
-        self.assertIn("Duplicate in rocketnet_test_exports: rocketnet_abi_version", err)
+        self.assertIn("Duplicate in rocketnet_test_exports: rocketnet_version", err)
 
     def test_dev_block_declaration_ignored(self):
         header_text = HEADER.read_text().replace(
@@ -116,7 +116,7 @@ class CheckHeaderExportsTest(unittest.TestCase):
         code, err = run_header_check(HEADER, EXPORTS)
         self.assertEqual(code, 0, err)
         names = check_header_exports.header_export_names(HEADER)
-        self.assertIn("rocketnet_set_assert_callback", names)
+        self.assertIn("rocketnet_assert_function", names)
 
     def test_extra_header_declaration_fails_naming_it(self):
         header_text = HEADER.read_text().replace(
@@ -131,12 +131,12 @@ class CheckHeaderExportsTest(unittest.TestCase):
         self.assertIn("rocketnet_fixture_export", err)
 
     def test_missing_list_name_fails_naming_it(self):
-        exports_text = EXPORTS.read_text().replace("rocketnet_abi_version\n", "", 1)
+        exports_text = EXPORTS.read_text().replace("rocketnet_version\n", "", 1)
         exports_copy = Path(self.tmp.name) / "exports.txt"
         exports_copy.write_text(exports_text)
         code, err = run_header_check(HEADER, exports_copy)
         self.assertNotEqual(code, 0)
-        self.assertIn("rocketnet_abi_version", err)
+        self.assertIn("rocketnet_version", err)
 
 
 if __name__ == "__main__":

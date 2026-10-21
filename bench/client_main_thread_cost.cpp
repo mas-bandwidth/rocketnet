@@ -1,6 +1,7 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Public-API per-frame main-thread cost microbenchmark. See client_main_thread_cost.md.
 #include "rocketnet_internal.h"
+#include "rocketnet_connect_token.h"
 #include <algorithm>
 #include <chrono>
 #include <stdio.h>
@@ -33,7 +34,7 @@ int main(int argc, char ** argv)
     CHECK(packets_per_frame >= 1);
     CHECK(frames > 0);
     CHECK(strlen(transport) < sizeof(rocketnet_server_transport_config_t().transport));
-    rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_NONE);
+    rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
     CHECK(rocketnet_init( NULL ) == ROCKETNET_STATUS_OK);
     rocketnet_forbid_xdp_commit();
     rocketnet_server_transport_config_t config;
@@ -45,7 +46,7 @@ int main(int argc, char ** argv)
     char address[64];
     snprintf(address, sizeof(address), "127.0.0.1:%u", rocketnet_server_transport_port(server));
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    CHECK(rocketnet_write_dev_connect_token(address, 1234, (uint64_t)time(NULL), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK);
+    CHECK(rocketnet_write_test_connect_token(address, 1234, (uint64_t)time(NULL), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK);
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config(&client_config);
     snprintf(client_config.transport, sizeof(client_config.transport), "%s", transport);
@@ -76,7 +77,7 @@ int main(int argc, char ** argv)
     update_us.reserve(frames);
     total_us.reserve(frames);
     uint64_t received = 0;
-    uint8_t scratch[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+    uint8_t scratch[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
 
     // Warm-up is discarded. The payload writes, the lockstep server loop
     // (update, reply) and the client drain run outside the timed windows.

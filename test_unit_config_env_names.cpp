@@ -31,6 +31,7 @@
 #include <string.h>
 #include <string>
 #include <vector>
+#include <algorithm>
 #include "test_unit_registry.h"
 #include "test/portable_crt.h"
 #include "sdk/rocketnet.h"
@@ -98,15 +99,15 @@ struct env_names_capture_t
 
 static void env_names_capture_begin( env_names_capture_t * capture )
 {
-    capture->saved_level = rocketnet_get_log_level();
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );            // the override lines are info
-    rocketnet_set_log_callback( env_names_log_capture, &capture->log );
+    capture->saved_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );            // the override lines are info
+    rocketnet_log_function( env_names_log_capture, &capture->log );
 }
 
 static void env_names_capture_end( env_names_capture_t * capture )
 {
-    rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_set_log_level( capture->saved_level );
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( capture->saved_level );
 }
 
 // ---------------------------------------------------------------------------
@@ -185,8 +186,8 @@ static void test_config_env_budget_is_never_a_message_field()
     const std::vector<std::string> overrides = env_names_overrides( capture.log );
     check( !env_names_contains( overrides, "ROCKETNET_CLIENT_CLIENT_SEND_KBPS" ) );
     check( !env_names_contains( overrides, "ROCKETNET_SERVER_SERVER_SEND_KBPS" ) );
-    check( client_kbps == ROCKETNET_DEFAULT_CLIENT_SEND_KBPS );
-    check( server_kbps == ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS );
+    check( client_kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
+    check( server_kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
 }
 REGISTER_UNIT_TEST( test_config_env_budget_is_never_a_message_field );
 
@@ -241,19 +242,19 @@ static void test_config_env_log_level_applies_before_init_logs()
 {
     // the worker ran init at error; the default level is info
     check( rocketnet_term() == ROCKETNET_STATUS_OK );
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
     char level[8];
     snprintf( level, sizeof( level ), "%d", (int) ROCKETNET_LOG_LEVEL_ERROR );
     env_names_setenv( "ROCKETNET_LOG_LEVEL", level );
 
     env_names_log_t log;
-    rocketnet_set_log_callback( env_names_log_capture, &log );
+    rocketnet_log_function( env_names_log_capture, &log );
     const rocketnet_status_t status = rocketnet_init( NULL );
-    rocketnet_set_log_callback( NULL, NULL );
-    const rocketnet_log_level_t after = rocketnet_get_log_level();
+    rocketnet_log_function( NULL, NULL );
+    const rocketnet_log_level_t after = rocketnet_log_level_current();
 
     env_names_unsetenv( "ROCKETNET_LOG_LEVEL" );
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
     check( status == ROCKETNET_STATUS_OK );
     check( after == ROCKETNET_LOG_LEVEL_ERROR );
@@ -305,19 +306,40 @@ static std::vector<std::string> env_names_documented( const char * relative_path
     while ( ( bytes = fread( buffer, 1, sizeof( buffer ), file ) ) > 0 )
         text.append( buffer, bytes );
     fclose( file );
-    const std::string markers[] = { "///< ROCKETNET_", "/// Environment: ROCKETNET_", "* Environment: ROCKETNET_" };
-    for ( int m = 0; m < 3; m++ )
+    // the header names a variable beside its field or in an Environment: line;
+    // docs/ENVIRONMENT.md names each in the first cell of a table row
+    // a header field's comment block starts with its variable's name
+    const std::string markers[] = { "/// ROCKETNET_CLIENT_", "/// ROCKETNET_SERVER_", "/// Environment: ROCKETNET_", "* Environment: ROCKETNET_", "| `ROCKETNET_" };
+    for ( int m = 0; m < 5; m++ )
     {
         const std::string & marker = markers[m];
     for ( size_t at = text.find( marker ); at != std::string::npos; at = text.find( marker, at + 1 ) )
     {
-        size_t begin = at + marker.size() - strlen( "ROCKETNET_" );
+        size_t begin = text.find( "ROCKETNET_", at );
         size_t end = begin;
         while ( end < text.size() && ( ( text[end] >= 'A' && text[end] <= 'Z' ) || ( text[end] >= '0' && text[end] <= '9' ) || text[end] == '_' ) )
             end++;
-        if ( end > begin )
+        if ( end > begin && std::find( names.begin(), names.end(), text.substr( begin, end - begin ) ) == names.end() )
             names.push_back( text.substr( begin, end - begin ) );
     }
+    }
+    return names;
+}
+
+// every public env name: the ones sdk/rocketnet.h names beside the config
+// fields, then the ones docs/ENVIRONMENT.md names that the structs do not carry,
+// each once (ROCKETNET_LOG_LEVEL is in both)
+static std::vector<std::string> env_names_public()
+{
+    std::vector<std::string> names = env_names_documented( "sdk/rocketnet.h" );
+    const std::vector<std::string> extra = env_names_documented( "docs/ENVIRONMENT.md" );
+    for ( size_t i = 0; i < extra.size(); i++ )
+    {
+        bool seen = false;
+        for ( size_t j = 0; j < names.size(); j++ )
+            seen = seen || names[j] == extra[i];
+        if ( !seen )
+            names.push_back( extra[i] );
     }
     return names;
 }
@@ -347,25 +369,25 @@ static std::vector<std::string> env_names_set_candidates()
         }
     }
     char text[32];
-    snprintf( text, sizeof( text ), "%d", ROCKETNET_DEFAULT_CLIENT_SEND_KBPS );
+    snprintf( text, sizeof( text ), "%d", ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
     env_names_setenv( "ROCKETNET_CLIENT_SEND_KBPS", text );
     set.push_back( "ROCKETNET_CLIENT_SEND_KBPS" );
-    snprintf( text, sizeof( text ), "%d", ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS );
+    snprintf( text, sizeof( text ), "%d", ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
     env_names_setenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", text );
     set.push_back( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" );
     struct rocketnet_server_config_t server_defaults;
-    rocketnet_server_default_config_sized( &server_defaults, sizeof( server_defaults ) );
+    rocketnet_server_default_config( &server_defaults );
     snprintf( text, sizeof( text ), "%d", server_defaults.max_clients );
     env_names_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", text );
     set.push_back( "ROCKETNET_SERVER_MAX_CLIENTS" );
 
     // public client transport fields
-    env_names_setenv( "ROCKETNET_CLIENT_FILTER_VALUE", "ESIzRA==" );
-    set.push_back( "ROCKETNET_CLIENT_FILTER_VALUE" );
+    env_names_setenv( "ROCKETNET_CLIENT_PACKET_FILTER", "ESIzRA==" );
+    set.push_back( "ROCKETNET_CLIENT_PACKET_FILTER" );
     env_names_setenv( "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES", "1200" );
     set.push_back( "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES" );
-    env_names_setenv( "ROCKETNET_CLIENT_NUM_REASSEMBLY_SLOTS", "64" );
-    set.push_back( "ROCKETNET_CLIENT_NUM_REASSEMBLY_SLOTS" );
+    env_names_setenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", "64" );
+    set.push_back( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
     env_names_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", "1" );
     set.push_back( "ROCKETNET_CLIENT_STEP_DRIVEN" );
     env_names_setenv( "ROCKETNET_CLIENT_TRANSPORT", "loopback" );
@@ -374,23 +396,19 @@ static std::vector<std::string> env_names_set_candidates()
     // public server transport fields
     env_names_setenv( "ROCKETNET_SERVER_PROTOCOL_ID", "12345" );
     set.push_back( "ROCKETNET_SERVER_PROTOCOL_ID" );
-    env_names_setenv( "ROCKETNET_SERVER_FILTER_VALUE", "ESIzRA==" );
-    set.push_back( "ROCKETNET_SERVER_FILTER_VALUE" );
+    env_names_setenv( "ROCKETNET_SERVER_PACKET_FILTER", "ESIzRA==" );
+    set.push_back( "ROCKETNET_SERVER_PACKET_FILTER" );
     const char * dummy32_base64 = "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=";
     env_names_setenv( "ROCKETNET_SERVER_BACKEND_PUBLIC_KEY", dummy32_base64 );
     set.push_back( "ROCKETNET_SERVER_BACKEND_PUBLIC_KEY" );
-    env_names_setenv( "ROCKETNET_SERVER_SERVER_PUBLIC_KEY", dummy32_base64 );
-    set.push_back( "ROCKETNET_SERVER_SERVER_PUBLIC_KEY" );
-    env_names_setenv( "ROCKETNET_SERVER_SERVER_SECRET_KEY", dummy32_base64 );
-    set.push_back( "ROCKETNET_SERVER_SERVER_SECRET_KEY" );
     env_names_setenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES", "4" );
     set.push_back( "ROCKETNET_SERVER_NUM_XDP_QUEUES" );
     env_names_setenv( "ROCKETNET_SERVER_NUM_OS_CPUS", "2" );
     set.push_back( "ROCKETNET_SERVER_NUM_OS_CPUS" );
     env_names_setenv( "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES", "1200" );
     set.push_back( "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" );
-    env_names_setenv( "ROCKETNET_SERVER_NUM_REASSEMBLY_SLOTS", "64" );
-    set.push_back( "ROCKETNET_SERVER_NUM_REASSEMBLY_SLOTS" );
+    env_names_setenv( "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES", "64" );
+    set.push_back( "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES" );
     env_names_setenv( "ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS", "30" );
     set.push_back( "ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS" );
     env_names_setenv( "ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS", "10" );
@@ -401,23 +419,7 @@ static std::vector<std::string> env_names_set_candidates()
     set.push_back( "ROCKETNET_SERVER_PUBLIC_ADDRESS" );
 
     // public link simulator fields (documented in sdk/rocketnet.h)
-    env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT", "0" );
-    set.push_back( "ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT" );
-    env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_LATENCY_MS", "0" );
-    set.push_back( "ROCKETNET_CLIENT_SIMULATED_LATENCY_MS" );
-    env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_JITTER_MS", "0" );
-    set.push_back( "ROCKETNET_CLIENT_SIMULATED_JITTER_MS" );
-    env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT", "0" );
-    set.push_back( "ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT" );
 
-    env_names_setenv( "ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT", "0" );
-    set.push_back( "ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT" );
-    env_names_setenv( "ROCKETNET_SERVER_SIMULATED_LATENCY_MS", "0" );
-    set.push_back( "ROCKETNET_SERVER_SIMULATED_LATENCY_MS" );
-    env_names_setenv( "ROCKETNET_SERVER_SIMULATED_JITTER_MS", "0" );
-    set.push_back( "ROCKETNET_SERVER_SIMULATED_JITTER_MS" );
-    env_names_setenv( "ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT", "0" );
-    set.push_back( "ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT" );
 
     // internal transport rows the passes read through the same tables
     env_names_setenv( "ROCKETNET_CLIENT_GAME_CLOCK_EPOCH", "1000" );
@@ -465,6 +467,7 @@ static void env_names_add_literal_reads( std::vector<std::string> & reads )
     const char * sources[] =
     {
         "sdk/rocketnet.cpp",
+        "sdk/rocketnet_api.cpp",
         "sdk/rocketnet_config.cpp",
         "sdk/rocketnet_platform.cpp",
         "sdk/rocketnet_server_socket_linux.cpp"
@@ -509,7 +512,7 @@ static std::vector<std::string> env_names_pass_reads()
     const struct rocketnet_config_field_t * client_fields = rocketnet_client_transport_config_fields( &num_client_fields );
     for ( int i = 0; i < num_client_fields; i++ )
     {
-        if ( strcmp( client_fields[i].name, "transport" ) == 0 )
+        if ( strcmp( client_fields[i].name, "transport" ) == 0 || ( client_fields[i].flags & ROCKETNET_CONFIG_NO_ENV ) != 0 )
             continue;
         char name[128];
         check( rocketnet_config_env_var_name_for( "client", client_fields[i].name, name, sizeof( name ) ) );
@@ -520,7 +523,7 @@ static std::vector<std::string> env_names_pass_reads()
     const struct rocketnet_config_field_t * server_fields = rocketnet_server_transport_config_fields( &num_server_fields );
     for ( int i = 0; i < num_server_fields; i++ )
     {
-        if ( strcmp( server_fields[i].name, "transport" ) == 0 )
+        if ( strcmp( server_fields[i].name, "transport" ) == 0 || ( server_fields[i].flags & ROCKETNET_CONFIG_NO_ENV ) != 0 )
             continue;
         char name[128];
         check( rocketnet_config_env_var_name_for( "server", server_fields[i].name, name, sizeof( name ) ) );
@@ -541,7 +544,7 @@ static std::vector<std::string> env_names_pass_reads()
 
 static void test_config_env_every_name_read_is_documented()
 {
-    const std::vector<std::string> documented = env_names_documented( "sdk/rocketnet.h" );
+    const std::vector<std::string> documented = env_names_public();
     const std::vector<std::string> building = env_names_documented( "BUILDING.md" );
     const std::vector<std::string> reads = env_names_pass_reads();
     check( documented.size() == building.size() );
@@ -558,17 +561,18 @@ static void test_config_env_every_name_read_is_documented()
     for ( size_t i = 0; i < reads.size(); i++ )
     {
         if ( !env_names_contains( documented, reads[i].c_str() ) )
-            printf( "read but not documented in sdk/rocketnet.h: %s\n", reads[i].c_str() );
+            printf( "read but not documented in sdk/rocketnet.h or docs/ENVIRONMENT.md: %s\n", reads[i].c_str() );
         check( env_names_contains( documented, reads[i].c_str() ) );
     }
     check( env_names_contains( documented, "ROCKETNET_CLIENT_SEND_KBPS" ) );
     check( env_names_contains( documented, "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" ) );
     check( env_names_contains( documented, "ROCKETNET_CLIENT_NUM_CHANNELS" ) );
-    check( env_names_contains( documented, "ROCKETNET_CLIENT_FILTER_VALUE" ) );
+    check( env_names_contains( documented, "ROCKETNET_CLIENT_PACKET_FILTER" ) );
     check( env_names_contains( documented, "ROCKETNET_CLIENT_STEP_DRIVEN" ) );
     check( env_names_contains( documented, "ROCKETNET_CLIENT_TRANSPORT" ) );
     check( env_names_contains( documented, "ROCKETNET_SERVER_PROTOCOL_ID" ) );
-    check( env_names_contains( documented, "ROCKETNET_SERVER_SERVER_PUBLIC_KEY" ) );
+    check( env_names_contains( documented, "ROCKETNET_SERVER_BACKEND_PUBLIC_KEY" ) );
+    check( !env_names_contains( documented, "ROCKETNET_SERVER_SERVER_PUBLIC_KEY" ) );     // the server keypair is the server's own
     check( env_names_contains( documented, "ROCKETNET_SERVER_TRANSPORT" ) );
     check( env_names_contains( documented, "ROCKETNET_SERVER_PUBLIC_ADDRESS" ) );
 
@@ -618,24 +622,25 @@ static void test_config_env_every_name_read_is_documented()
     const std::vector<std::string> overrides = env_names_overrides( capture.log );
     check( env_names_contains( overrides, "ROCKETNET_CLIENT_SEND_KBPS" ) );       // the passes ran and logged
     check( env_names_contains( overrides, "ROCKETNET_SERVER_NUM_CHANNELS" ) );
-    check( env_names_contains( overrides, "ROCKETNET_CLIENT_FILTER_VALUE" ) );
+    check( env_names_contains( overrides, "ROCKETNET_CLIENT_PACKET_FILTER" ) );
     check( env_names_contains( overrides, "ROCKETNET_CLIENT_STEP_DRIVEN" ) );
     check( env_names_contains( overrides, "ROCKETNET_CLIENT_TRANSPORT" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_PROTOCOL_ID" ) );
-    check( env_names_contains( overrides, "ROCKETNET_SERVER_SERVER_PUBLIC_KEY" ) );
+    check( env_names_contains( overrides, "ROCKETNET_SERVER_BACKEND_PUBLIC_KEY" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_TRANSPORT" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_PUBLIC_ADDRESS" ) );
-    check( documented.size() == 70 );
+    check( documented.size() == 68 );
+    check( !env_names_contains( documented, "ROCKETNET_SERVER_SERVER_SECRET_KEY" ) );
     check( env_names_contains( documented, "ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS" ) );
     check( env_names_contains( documented, "ROCKETNET_LOG_LEVEL" ) );
-    check( env_names_contains( documented, "ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT" ) );
-    check( env_names_contains( documented, "ROCKETNET_CLIENT_SIMULATED_LATENCY_MS" ) );
-    check( env_names_contains( documented, "ROCKETNET_CLIENT_SIMULATED_JITTER_MS" ) );
-    check( env_names_contains( documented, "ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT" ) );
-    check( env_names_contains( documented, "ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT" ) );
-    check( env_names_contains( documented, "ROCKETNET_SERVER_SIMULATED_LATENCY_MS" ) );
-    check( env_names_contains( documented, "ROCKETNET_SERVER_SIMULATED_JITTER_MS" ) );
-    check( env_names_contains( documented, "ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT" ) );
+    check( env_names_contains( documented, "ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT" ) );
+    check( env_names_contains( documented, "ROCKETNET_DEV_CLIENT_LATENCY_MS" ) );
+    check( env_names_contains( documented, "ROCKETNET_DEV_CLIENT_JITTER_MS" ) );
+    check( env_names_contains( documented, "ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT" ) );
+    check( env_names_contains( documented, "ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT" ) );
+    check( env_names_contains( documented, "ROCKETNET_DEV_SERVER_LATENCY_MS" ) );
+    check( env_names_contains( documented, "ROCKETNET_DEV_SERVER_JITTER_MS" ) );
+    check( env_names_contains( documented, "ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT" ) );
     check( env_names_contains( documented, "ROCKETNET_CLIENT_GAME_CLOCK_EPOCH" ) );
     check( env_names_contains( documented, "ROCKETNET_SERVER_GAME_CLOCK_EPOCH" ) );
     check( env_names_contains( documented, "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH" ) );
@@ -648,13 +653,13 @@ static void test_config_env_every_name_read_is_documented()
     for ( size_t i = 0; i < overrides.size(); i++ )
     {
         if ( !env_names_contains( documented, overrides[i].c_str() ) )
-            printf( "read but not documented in sdk/rocketnet.h: %s\n", overrides[i].c_str() );
+            printf( "read but not documented in sdk/rocketnet.h or docs/ENVIRONMENT.md: %s\n", overrides[i].c_str() );
         check( env_names_contains( documented, overrides[i].c_str() ) );
     }
     for ( size_t i = 0; i < documented.size(); i++ )
     {
         if ( !env_names_contains( reads, documented[i].c_str() ) )
-            printf( "documented in sdk/rocketnet.h but not read by any pass: %s\n", documented[i].c_str() );
+            printf( "documented in sdk/rocketnet.h or docs/ENVIRONMENT.md but not read by any pass: %s\n", documented[i].c_str() );
         check( env_names_contains( reads, documented[i].c_str() ) );
     }
 }
@@ -672,14 +677,6 @@ static void test_config_env_transport_passes_exercise_all_rows()
     // 1. Internal & simulator rows:
     env_names_setenv( "ROCKETNET_CLIENT_GAME_CLOCK_EPOCH", "2000" );
     env_names_setenv( "ROCKETNET_SERVER_GAME_CLOCK_EPOCH", "3000" );
-    env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT", "5" );
-    env_names_setenv( "ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT", "6" );
-    env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_LATENCY_MS", "50" );
-    env_names_setenv( "ROCKETNET_SERVER_SIMULATED_LATENCY_MS", "60" );
-    env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_JITTER_MS", "10" );
-    env_names_setenv( "ROCKETNET_SERVER_SIMULATED_JITTER_MS", "12" );
-    env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT", "2" );
-    env_names_setenv( "ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT", "3" );
     env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH", "10" );
     env_names_setenv( "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH", "20" );
     env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW", "8" );
@@ -711,14 +708,6 @@ static void test_config_env_transport_passes_exercise_all_rows()
 
     env_names_unsetenv( "ROCKETNET_CLIENT_GAME_CLOCK_EPOCH" );
     env_names_unsetenv( "ROCKETNET_SERVER_GAME_CLOCK_EPOCH" );
-    env_names_unsetenv( "ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT" );
-    env_names_unsetenv( "ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT" );
-    env_names_unsetenv( "ROCKETNET_CLIENT_SIMULATED_LATENCY_MS" );
-    env_names_unsetenv( "ROCKETNET_SERVER_SIMULATED_LATENCY_MS" );
-    env_names_unsetenv( "ROCKETNET_CLIENT_SIMULATED_JITTER_MS" );
-    env_names_unsetenv( "ROCKETNET_SERVER_SIMULATED_JITTER_MS" );
-    env_names_unsetenv( "ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT" );
-    env_names_unsetenv( "ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT" );
     env_names_unsetenv( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH" );
     env_names_unsetenv( "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH" );
     env_names_unsetenv( "ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW" );
@@ -732,28 +721,20 @@ static void test_config_env_transport_passes_exercise_all_rows()
     check( server_budget_ok && server_budget == 209715200 );
 
     check( client_transport.game_clock_epoch == 2000 );
-    check( client_transport.simulated_loss_percent == 5 );
-    check( client_transport.simulated_latency_ms == 50 );
-    check( client_transport.simulated_jitter_ms == 10 );
-    check( client_transport.simulated_duplicate_percent == 2 );
     check( client_transport.simulated_drop_every_nth == 10 );
     check( client_transport.simulated_reverse_window == 8 );
 
     check( server_transport.game_clock_epoch == 3000 );
-    check( server_transport.simulated_loss_percent == 6 );
-    check( server_transport.simulated_latency_ms == 60 );
-    check( server_transport.simulated_jitter_ms == 12 );
-    check( server_transport.simulated_duplicate_percent == 3 );
     check( server_transport.simulated_drop_every_nth == 20 );
     check( server_transport.simulated_reverse_window == 16 );
 
     const std::vector<std::string> overrides = env_names_overrides( capture.log );
     check( env_names_contains( overrides, "ROCKETNET_CLIENT_GAME_CLOCK_EPOCH" ) );
-    check( env_names_contains( overrides, "ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT" ) );
+    check( env_names_contains( overrides, "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW" ) );
 
-    const std::vector<std::string> documented = env_names_documented( "sdk/rocketnet.h" );
+    const std::vector<std::string> documented = env_names_public();
     const char * internal_names[] =
     {
         "ROCKETNET_CLIENT_GAME_CLOCK_EPOCH",
@@ -768,7 +749,7 @@ static void test_config_env_transport_passes_exercise_all_rows()
     for ( size_t i = 0; i < sizeof( internal_names ) / sizeof( internal_names[0] ); i++ )
     {
         if ( !env_names_contains( documented, internal_names[i] ) )
-            printf( "read but not documented in sdk/rocketnet.h: %s\n", internal_names[i] );
+            printf( "read but not documented in sdk/rocketnet.h or docs/ENVIRONMENT.md: %s\n", internal_names[i] );
         check( env_names_contains( documented, internal_names[i] ) );
     }
 

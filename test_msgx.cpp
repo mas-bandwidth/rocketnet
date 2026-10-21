@@ -48,7 +48,7 @@ static void drain(rocketnet_platform_socket_t * socket, const rocketnet_address_
 
 int main()
 {
-    rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_NONE);
+    rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
     CHECK(rocketnet_init( NULL ) == ROCKETNET_STATUS_OK);
     rocketnet_forbid_xdp_commit();
     real_send = rocketnet_sendmsg_x; real_receive = rocketnet_recvmsg_x;

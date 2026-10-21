@@ -78,7 +78,7 @@ void unreliable_dropped_while_reliable_waits_never_arrives()
 
     // the client sends at 8 kbps (a bucket of about one maximum packet); the
     // server's acks are not the subject and go at the default
-    drops_check( rocketnet_channel_harness_set_budgets( &h, 8, ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS ) != 0, "budgets" );
+    drops_check( rocketnet_channel_harness_set_budgets( &h, 8, ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS ) != 0, "budgets" );
     drops_idle( &h, 60 * 3 );
     rocketnet_channel_harness_read_counters( &h );
 
@@ -151,7 +151,7 @@ void unreliable_dropped_when_builder_out_of_budget_never_arrives()
     drops_check( rocketnet_channel_harness_create( &h ) != 0, "create" );
     drops_check( rocketnet_channel_harness_connect( &h, 60 * 10 ) != 0, "connect" );
     rocketnet_channel_harness_set_link( &h, 0.0, 0.0, 0.0f, 0.0f );
-    drops_check( rocketnet_channel_harness_set_budgets( &h, 8, ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS ) != 0, "budgets" );
+    drops_check( rocketnet_channel_harness_set_budgets( &h, 8, ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS ) != 0, "budgets" );
     drops_idle( &h, 60 * 3 );
     rocketnet_channel_harness_read_counters( &h );
 

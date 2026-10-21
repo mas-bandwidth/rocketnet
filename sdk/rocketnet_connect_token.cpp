@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet_connect_token.h"
+#include "rocketnet_base64.h"
 #include "rocketnet_crypto_tally.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_address.h"
@@ -391,7 +392,7 @@ const uint8_t rocketnet_dev_server_secret_key[32] =
     0x7b, 0xa2, 0x29, 0x75, 0x89, 0xd0, 0x8b, 0x97};
 
 #if ROCKETNET_DEVELOPMENT
-enum rocketnet_status_t rocketnet_write_dev_connect_token( const char * server_address_string,
+enum rocketnet_status_t rocketnet_write_test_connect_token( const char * server_address_string,
                                                            uint64_t client_id,
                                                            uint64_t current_timestamp,
                                                            uint8_t * connect_token,
@@ -403,7 +404,7 @@ enum rocketnet_status_t rocketnet_write_dev_connect_token( const char * server_a
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
     if ( connect_token_bytes < ROCKETNET_CONNECT_TOKEN_BYTES )
     {
-        rocketnet_error( "dev connect token refused: the buffer is %d bytes, not the %d a token needs", (int) connect_token_bytes, ROCKETNET_CONNECT_TOKEN_BYTES );
+        rocketnet_error( "test connect token refused: the buffer is %d bytes, not the %d a token needs", (int) connect_token_bytes, ROCKETNET_CONNECT_TOKEN_BYTES );
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
     }
 
@@ -450,6 +451,79 @@ enum rocketnet_status_t rocketnet_write_dev_connect_token( const char * server_a
     sodium_memzero( &private_fields, sizeof(private_fields) );
 
     return result ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
+}
+
+// the public development token: the production writer with the published
+// development backend key, handed out as the base64 string the client's
+// connect takes; nothing is written on a failure
+// an address string of one family, bounded: true when it parses as that
+// family within ROCKETNET_MAX_ADDRESS_STRING_BYTES
+static bool rn_dev_token_address( const char * address, int family )
+{
+    if ( memchr( address, '\0', ROCKETNET_MAX_ADDRESS_STRING_BYTES ) == NULL )
+    {
+        rocketnet_error( "dev connect token refused: an address is %d bytes or longer", ROCKETNET_MAX_ADDRESS_STRING_BYTES );
+        return false;
+    }
+    struct rocketnet_address_t parsed;
+    if ( !rocketnet_address_parse( &parsed, address ) || parsed.type != family )
+    {
+        rocketnet_error( "dev connect token refused: %s is not an %s address", address, family == ROCKETNET_ADDRESS_IPV4 ? "IPv4" : "IPv6" );
+        return false;
+    }
+    return true;
+}
+
+enum rocketnet_status_t rocketnet_create_dev_connect_token( const char * server_address_ipv4,
+                                                            const char * server_address_ipv6,
+                                                            const uint8_t * server_public_key,
+                                                            int expire_seconds,
+                                                            int timeout_seconds,
+                                                            uint64_t client_id,
+                                                            uint64_t protocol_id,
+                                                            uint64_t unix_timestamp,
+                                                            const uint8_t * user_data,
+                                                            char * connect_token )
+{
+    if ( !rocketnet_api_null_guard( server_public_key ) || !rocketnet_api_null_guard( connect_token ) )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    if ( !server_address_ipv4 && !server_address_ipv6 )
+    {
+        rocketnet_error( "dev connect token refused: both server addresses are NULL" );
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    }
+    if ( ( server_address_ipv4 && !rn_dev_token_address( server_address_ipv4, ROCKETNET_ADDRESS_IPV4 ) ) ||
+         ( server_address_ipv6 && !rn_dev_token_address( server_address_ipv6, ROCKETNET_ADDRESS_IPV6 ) ) )
+        return ROCKETNET_STATUS_INVALID_ADDRESS;
+    const char * server_addresses[2];
+    int num_server_addresses = 0;
+    if ( server_address_ipv4 )
+        server_addresses[num_server_addresses++] = server_address_ipv4;
+    if ( server_address_ipv6 )
+        server_addresses[num_server_addresses++] = server_address_ipv6;
+    if ( expire_seconds <= 0 || timeout_seconds <= 0 || protocol_id == 0 )
+    {
+        rocketnet_error( "dev connect token refused: expire_seconds %d, timeout_seconds %d and protocol_id must be above zero", expire_seconds, timeout_seconds );
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    }
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    const enum rocketnet_status_t status = rocketnet_write_production_connect_token( rocketnet_dev_backend_secret_key, server_public_key,
+                                                                                    protocol_id, server_addresses, num_server_addresses,
+                                                                                    client_id, unix_timestamp, unix_timestamp + (uint64_t) expire_seconds,
+                                                                                    timeout_seconds, user_data, token, sizeof( token ) );
+    if ( status == ROCKETNET_STATUS_OK )
+    {
+        char encoded[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+        const int length = rocketnet_base64_encode_data( token, sizeof( token ), encoded, sizeof( encoded ) );
+        rocketnet_assert( length == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
+        if ( length == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 )
+            memcpy( connect_token, encoded, sizeof( encoded ) );
+        sodium_memzero( encoded, sizeof( encoded ) );
+        sodium_memzero( token, sizeof( token ) );
+        return length == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_INVALID_ARGUMENT;
+    }
+    sodium_memzero( token, sizeof( token ) );
+    return status;
 }
 #endif // #if ROCKETNET_DEVELOPMENT
 
