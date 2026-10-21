@@ -1300,7 +1300,12 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
     struct rocketnet_server_t * server = (struct rocketnet_server_t *) base;
     memset( server, 0, sizeof( *server ) );
     server->context = context;
-    strncpy( server->address, address, sizeof( server->address ) - 1 );
+    {
+        // server is zeroed above, so the copy stays NUL-terminated.
+        const size_t address_length = strlen( address );
+        const size_t address_capacity = sizeof( server->address ) - 1;
+        memcpy( server->address, address, address_length < address_capacity ? address_length : address_capacity );
+    }
     server->transport = transport;
     server->message = message;
     server->kbps = kbps;

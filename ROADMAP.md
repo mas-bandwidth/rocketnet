@@ -416,6 +416,7 @@ What v1.0.0-preview-1 does not yet meet, one row per issue: what it is today, an
 
 | known issue | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
+| Zero warnings at -Wconversion and the remaining strict flags, SDK and vendored libsodium (public header already clean at -Weverything) | ❌ | ❌ | ❌ |
 | An idle server's update walks every client slot: about 0.5 ms per update at 1000 slots with no client connected. The final deliverable splits per-slot state into hot and cold parts and walks only the hot part each frame. | ❌ | ❌ | ❌ |
 | Client connect zeroes the client's 7.6 MB transport (about 3 ms) and disconnect wipes and frees it (about 1.6 ms). The final deliverable allocates the transport once at create, resets it in place on connect, and wipes only the secrets, by their size, on disconnect. | ❌ | ❌ | ❌ |
 | Claiming and releasing a server slot re-initialises its 1.48 MB region inside the update (0.11 to 0.36 ms each), and disconnecting all of 1000 clients takes about 20 ms, plus about 130 ms in the next update. The final deliverable resets only the state a slot used. | ❌ | ❌ | ❌ |

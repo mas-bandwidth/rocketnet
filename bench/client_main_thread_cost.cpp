@@ -39,7 +39,7 @@ int main(int argc, char ** argv)
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config(&config);
     config.max_clients = 2;
-    strcpy(config.transport, transport);
+    snprintf(config.transport, sizeof(config.transport), "%s", transport);
     auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
     CHECK(server && strcmp(rocketnet_server_transport_io_name(server), transport) == 0);
     char address[64];
@@ -48,7 +48,7 @@ int main(int argc, char ** argv)
     CHECK(rocketnet_write_dev_connect_token(address, 1234, (uint64_t)time(NULL), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK);
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config(&client_config);
-    strcpy(client_config.transport, transport);
+    snprintf(client_config.transport, sizeof(client_config.transport), "%s", transport);
     auto * client = rocketnet_client_transport_create(NULL, token, &client_config, rocketnet_time());
     CHECK(client);
     int client_index = -1;

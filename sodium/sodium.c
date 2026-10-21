@@ -905,7 +905,7 @@ crypto_verify_64_bytes(void)
 
 #if defined(HAVE_EMMINTRIN_H) && defined(__SSE2__)
 
-# ifdef __GNUC__
+# if defined(__GNUC__) && !defined(__clang__)
 #  pragma GCC target("sse2")
 # endif
 # include <emmintrin.h>
@@ -11265,38 +11265,38 @@ fe25519_tobytes(unsigned char *s, const fe25519 h)
     fe25519 t;
 
     fe25519_reduce(t, h);
-    s[0]  = t[0] >> 0;
-    s[1]  = t[0] >> 8;
-    s[2]  = t[0] >> 16;
-    s[3]  = (t[0] >> 24) | (t[1] * ((uint32_t) 1 << 2));
-    s[4]  = t[1] >> 6;
-    s[5]  = t[1] >> 14;
-    s[6]  = (t[1] >> 22) | (t[2] * ((uint32_t) 1 << 3));
-    s[7]  = t[2] >> 5;
-    s[8]  = t[2] >> 13;
-    s[9]  = (t[2] >> 21) | (t[3] * ((uint32_t) 1 << 5));
-    s[10] = t[3] >> 3;
-    s[11] = t[3] >> 11;
-    s[12] = (t[3] >> 19) | (t[4] * ((uint32_t) 1 << 6));
-    s[13] = t[4] >> 2;
-    s[14] = t[4] >> 10;
-    s[15] = t[4] >> 18;
-    s[16] = t[5] >> 0;
-    s[17] = t[5] >> 8;
-    s[18] = t[5] >> 16;
-    s[19] = (t[5] >> 24) | (t[6] * ((uint32_t) 1 << 1));
-    s[20] = t[6] >> 7;
-    s[21] = t[6] >> 15;
-    s[22] = (t[6] >> 23) | (t[7] * ((uint32_t) 1 << 3));
-    s[23] = t[7] >> 5;
-    s[24] = t[7] >> 13;
-    s[25] = (t[7] >> 21) | (t[8] * ((uint32_t) 1 << 4));
-    s[26] = t[8] >> 4;
-    s[27] = t[8] >> 12;
-    s[28] = (t[8] >> 20) | (t[9] * ((uint32_t) 1 << 6));
-    s[29] = t[9] >> 2;
-    s[30] = t[9] >> 10;
-    s[31] = t[9] >> 18;
+    s[0]  = (unsigned char) (t[0] >> 0);
+    s[1]  = (unsigned char) (t[0] >> 8);
+    s[2]  = (unsigned char) (t[0] >> 16);
+    s[3]  = (unsigned char) ((t[0] >> 24) | (t[1] * ((uint32_t) 1 << 2)));
+    s[4]  = (unsigned char) (t[1] >> 6);
+    s[5]  = (unsigned char) (t[1] >> 14);
+    s[6]  = (unsigned char) ((t[1] >> 22) | (t[2] * ((uint32_t) 1 << 3)));
+    s[7]  = (unsigned char) (t[2] >> 5);
+    s[8]  = (unsigned char) (t[2] >> 13);
+    s[9]  = (unsigned char) ((t[2] >> 21) | (t[3] * ((uint32_t) 1 << 5)));
+    s[10] = (unsigned char) (t[3] >> 3);
+    s[11] = (unsigned char) (t[3] >> 11);
+    s[12] = (unsigned char) ((t[3] >> 19) | (t[4] * ((uint32_t) 1 << 6)));
+    s[13] = (unsigned char) (t[4] >> 2);
+    s[14] = (unsigned char) (t[4] >> 10);
+    s[15] = (unsigned char) (t[4] >> 18);
+    s[16] = (unsigned char) (t[5] >> 0);
+    s[17] = (unsigned char) (t[5] >> 8);
+    s[18] = (unsigned char) (t[5] >> 16);
+    s[19] = (unsigned char) ((t[5] >> 24) | (t[6] * ((uint32_t) 1 << 1)));
+    s[20] = (unsigned char) (t[6] >> 7);
+    s[21] = (unsigned char) (t[6] >> 15);
+    s[22] = (unsigned char) ((t[6] >> 23) | (t[7] * ((uint32_t) 1 << 3)));
+    s[23] = (unsigned char) (t[7] >> 5);
+    s[24] = (unsigned char) (t[7] >> 13);
+    s[25] = (unsigned char) ((t[7] >> 21) | (t[8] * ((uint32_t) 1 << 4)));
+    s[26] = (unsigned char) (t[8] >> 4);
+    s[27] = (unsigned char) (t[8] >> 12);
+    s[28] = (unsigned char) ((t[8] >> 20) | (t[9] * ((uint32_t) 1 << 6)));
+    s[29] = (unsigned char) (t[9] >> 2);
+    s[30] = (unsigned char) (t[9] >> 10);
+    s[31] = (unsigned char) (t[9] >> 18);
 }
 
 #endif
@@ -11519,14 +11519,14 @@ slide_vartime(signed char *r, const unsigned char *a)
             ribs = r[i + b] << b;
             cmp = r[i] + ribs;
             if (cmp <= 15) {
-                r[i] = cmp;
+                r[i] = (signed char) (cmp);
                 r[i + b] = 0;
             } else {
                 cmp = r[i] - ribs;
                 if (cmp < -15) {
                     break;
                 }
-                r[i] = cmp;
+                r[i] = (signed char) (cmp);
                 for (k = i + b; k < 256; ++k) {
                     if (! r[k]) {
                         r[k] = 1;
@@ -11748,23 +11748,6 @@ ge25519_p3_to_cached(ge25519_cached *r, const ge25519_p3 *p)
     fe25519_sub(r->YminusX, p->Y, p->X);
     fe25519_copy(r->Z, p->Z);
     fe25519_mul(r->T2d, p->T, d2);
-}
-
-static void
-ge25519_p3_to_precomp(ge25519_precomp *pi, const ge25519_p3 *p)
-{
-    fe25519 recip;
-    fe25519 x;
-    fe25519 y;
-    fe25519 xy;
-
-    fe25519_invert(recip, p->Z);
-    fe25519_mul(x, p->X, recip);
-    fe25519_mul(y, p->Y, recip);
-    fe25519_add(pi->yplusx, y, x);
-    fe25519_sub(pi->yminusx, y, x);
-    fe25519_mul(xy, x, y);
-    fe25519_mul(pi->xy2d, xy, d2);
 }
 
 /*
@@ -15086,7 +15069,7 @@ int
 ge25519_is_canonical(const unsigned char *s)
 {
     unsigned char c;
-    unsigned char d;
+    unsigned char d_;
     unsigned int  i;
 
     c = (s[31] & 0x7f) ^ 0x7f;
@@ -15094,9 +15077,9 @@ ge25519_is_canonical(const unsigned char *s)
         c |= s[i] ^ 0xff;
     }
     c = (((unsigned int) c) - 1U) >> 8;
-    d = (0xed - 1U - (unsigned int) s[0]) >> 8;
+    d_ = (0xed - 1U - (unsigned int) s[0]) >> 8;
 
-    return 1 - (c & d & 1);
+    return 1 - (c & d_ & 1);
 }
 
 int
@@ -15593,38 +15576,38 @@ sc25519_mul(unsigned char s[32], const unsigned char a[32], const unsigned char 
     s11 += carry10;
     s10 -= carry10 * ((uint64_t) 1L << 21);
 
-    s[0]  = s0 >> 0;
-    s[1]  = s0 >> 8;
-    s[2]  = (s0 >> 16) | (s1 * ((uint64_t) 1 << 5));
-    s[3]  = s1 >> 3;
-    s[4]  = s1 >> 11;
-    s[5]  = (s1 >> 19) | (s2 * ((uint64_t) 1 << 2));
-    s[6]  = s2 >> 6;
-    s[7]  = (s2 >> 14) | (s3 * ((uint64_t) 1 << 7));
-    s[8]  = s3 >> 1;
-    s[9]  = s3 >> 9;
-    s[10] = (s3 >> 17) | (s4 * ((uint64_t) 1 << 4));
-    s[11] = s4 >> 4;
-    s[12] = s4 >> 12;
-    s[13] = (s4 >> 20) | (s5 * ((uint64_t) 1 << 1));
-    s[14] = s5 >> 7;
-    s[15] = (s5 >> 15) | (s6 * ((uint64_t) 1 << 6));
-    s[16] = s6 >> 2;
-    s[17] = s6 >> 10;
-    s[18] = (s6 >> 18) | (s7 * ((uint64_t) 1 << 3));
-    s[19] = s7 >> 5;
-    s[20] = s7 >> 13;
-    s[21] = s8 >> 0;
-    s[22] = s8 >> 8;
-    s[23] = (s8 >> 16) | (s9 * ((uint64_t) 1 << 5));
-    s[24] = s9 >> 3;
-    s[25] = s9 >> 11;
-    s[26] = (s9 >> 19) | (s10 * ((uint64_t) 1 << 2));
-    s[27] = s10 >> 6;
-    s[28] = (s10 >> 14) | (s11 * ((uint64_t) 1 << 7));
-    s[29] = s11 >> 1;
-    s[30] = s11 >> 9;
-    s[31] = s11 >> 17;
+    s[0]  = (unsigned char) (s0 >> 0);
+    s[1]  = (unsigned char) (s0 >> 8);
+    s[2]  = (unsigned char) ((s0 >> 16) | (s1 * ((uint64_t) 1 << 5)));
+    s[3]  = (unsigned char) (s1 >> 3);
+    s[4]  = (unsigned char) (s1 >> 11);
+    s[5]  = (unsigned char) ((s1 >> 19) | (s2 * ((uint64_t) 1 << 2)));
+    s[6]  = (unsigned char) (s2 >> 6);
+    s[7]  = (unsigned char) ((s2 >> 14) | (s3 * ((uint64_t) 1 << 7)));
+    s[8]  = (unsigned char) (s3 >> 1);
+    s[9]  = (unsigned char) (s3 >> 9);
+    s[10] = (unsigned char) ((s3 >> 17) | (s4 * ((uint64_t) 1 << 4)));
+    s[11] = (unsigned char) (s4 >> 4);
+    s[12] = (unsigned char) (s4 >> 12);
+    s[13] = (unsigned char) ((s4 >> 20) | (s5 * ((uint64_t) 1 << 1)));
+    s[14] = (unsigned char) (s5 >> 7);
+    s[15] = (unsigned char) ((s5 >> 15) | (s6 * ((uint64_t) 1 << 6)));
+    s[16] = (unsigned char) (s6 >> 2);
+    s[17] = (unsigned char) (s6 >> 10);
+    s[18] = (unsigned char) ((s6 >> 18) | (s7 * ((uint64_t) 1 << 3)));
+    s[19] = (unsigned char) (s7 >> 5);
+    s[20] = (unsigned char) (s7 >> 13);
+    s[21] = (unsigned char) (s8 >> 0);
+    s[22] = (unsigned char) (s8 >> 8);
+    s[23] = (unsigned char) ((s8 >> 16) | (s9 * ((uint64_t) 1 << 5)));
+    s[24] = (unsigned char) (s9 >> 3);
+    s[25] = (unsigned char) (s9 >> 11);
+    s[26] = (unsigned char) ((s9 >> 19) | (s10 * ((uint64_t) 1 << 2)));
+    s[27] = (unsigned char) (s10 >> 6);
+    s[28] = (unsigned char) ((s10 >> 14) | (s11 * ((uint64_t) 1 << 7)));
+    s[29] = (unsigned char) (s11 >> 1);
+    s[30] = (unsigned char) (s11 >> 9);
+    s[31] = (unsigned char) (s11 >> 17);
 }
 
 /*
@@ -16081,38 +16064,38 @@ sc25519_muladd(unsigned char s[32], const unsigned char a[32],
     s11 += carry10;
     s10 -= carry10 * ((uint64_t) 1L << 21);
 
-    s[0]  = s0 >> 0;
-    s[1]  = s0 >> 8;
-    s[2]  = (s0 >> 16) | (s1 * ((uint64_t) 1 << 5));
-    s[3]  = s1 >> 3;
-    s[4]  = s1 >> 11;
-    s[5]  = (s1 >> 19) | (s2 * ((uint64_t) 1 << 2));
-    s[6]  = s2 >> 6;
-    s[7]  = (s2 >> 14) | (s3 * ((uint64_t) 1 << 7));
-    s[8]  = s3 >> 1;
-    s[9]  = s3 >> 9;
-    s[10] = (s3 >> 17) | (s4 * ((uint64_t) 1 << 4));
-    s[11] = s4 >> 4;
-    s[12] = s4 >> 12;
-    s[13] = (s4 >> 20) | (s5 * ((uint64_t) 1 << 1));
-    s[14] = s5 >> 7;
-    s[15] = (s5 >> 15) | (s6 * ((uint64_t) 1 << 6));
-    s[16] = s6 >> 2;
-    s[17] = s6 >> 10;
-    s[18] = (s6 >> 18) | (s7 * ((uint64_t) 1 << 3));
-    s[19] = s7 >> 5;
-    s[20] = s7 >> 13;
-    s[21] = s8 >> 0;
-    s[22] = s8 >> 8;
-    s[23] = (s8 >> 16) | (s9 * ((uint64_t) 1 << 5));
-    s[24] = s9 >> 3;
-    s[25] = s9 >> 11;
-    s[26] = (s9 >> 19) | (s10 * ((uint64_t) 1 << 2));
-    s[27] = s10 >> 6;
-    s[28] = (s10 >> 14) | (s11 * ((uint64_t) 1 << 7));
-    s[29] = s11 >> 1;
-    s[30] = s11 >> 9;
-    s[31] = s11 >> 17;
+    s[0]  = (unsigned char) (s0 >> 0);
+    s[1]  = (unsigned char) (s0 >> 8);
+    s[2]  = (unsigned char) ((s0 >> 16) | (s1 * ((uint64_t) 1 << 5)));
+    s[3]  = (unsigned char) (s1 >> 3);
+    s[4]  = (unsigned char) (s1 >> 11);
+    s[5]  = (unsigned char) ((s1 >> 19) | (s2 * ((uint64_t) 1 << 2)));
+    s[6]  = (unsigned char) (s2 >> 6);
+    s[7]  = (unsigned char) ((s2 >> 14) | (s3 * ((uint64_t) 1 << 7)));
+    s[8]  = (unsigned char) (s3 >> 1);
+    s[9]  = (unsigned char) (s3 >> 9);
+    s[10] = (unsigned char) ((s3 >> 17) | (s4 * ((uint64_t) 1 << 4)));
+    s[11] = (unsigned char) (s4 >> 4);
+    s[12] = (unsigned char) (s4 >> 12);
+    s[13] = (unsigned char) ((s4 >> 20) | (s5 * ((uint64_t) 1 << 1)));
+    s[14] = (unsigned char) (s5 >> 7);
+    s[15] = (unsigned char) ((s5 >> 15) | (s6 * ((uint64_t) 1 << 6)));
+    s[16] = (unsigned char) (s6 >> 2);
+    s[17] = (unsigned char) (s6 >> 10);
+    s[18] = (unsigned char) ((s6 >> 18) | (s7 * ((uint64_t) 1 << 3)));
+    s[19] = (unsigned char) (s7 >> 5);
+    s[20] = (unsigned char) (s7 >> 13);
+    s[21] = (unsigned char) (s8 >> 0);
+    s[22] = (unsigned char) (s8 >> 8);
+    s[23] = (unsigned char) ((s8 >> 16) | (s9 * ((uint64_t) 1 << 5)));
+    s[24] = (unsigned char) (s9 >> 3);
+    s[25] = (unsigned char) (s9 >> 11);
+    s[26] = (unsigned char) ((s9 >> 19) | (s10 * ((uint64_t) 1 << 2)));
+    s[27] = (unsigned char) (s10 >> 6);
+    s[28] = (unsigned char) ((s10 >> 14) | (s11 * ((uint64_t) 1 << 7)));
+    s[29] = (unsigned char) (s11 >> 1);
+    s[30] = (unsigned char) (s11 >> 9);
+    s[31] = (unsigned char) (s11 >> 17);
 }
 
 /*
@@ -16503,38 +16486,38 @@ sc25519_reduce(unsigned char s[64])
     s11 += carry10;
     s10 -= carry10 * ((uint64_t) 1L << 21);
 
-    s[0]  = s0 >> 0;
-    s[1]  = s0 >> 8;
-    s[2]  = (s0 >> 16) | (s1 * ((uint64_t) 1 << 5));
-    s[3]  = s1 >> 3;
-    s[4]  = s1 >> 11;
-    s[5]  = (s1 >> 19) | (s2 * ((uint64_t) 1 << 2));
-    s[6]  = s2 >> 6;
-    s[7]  = (s2 >> 14) | (s3 * ((uint64_t) 1 << 7));
-    s[8]  = s3 >> 1;
-    s[9]  = s3 >> 9;
-    s[10] = (s3 >> 17) | (s4 * ((uint64_t) 1 << 4));
-    s[11] = s4 >> 4;
-    s[12] = s4 >> 12;
-    s[13] = (s4 >> 20) | (s5 * ((uint64_t) 1 << 1));
-    s[14] = s5 >> 7;
-    s[15] = (s5 >> 15) | (s6 * ((uint64_t) 1 << 6));
-    s[16] = s6 >> 2;
-    s[17] = s6 >> 10;
-    s[18] = (s6 >> 18) | (s7 * ((uint64_t) 1 << 3));
-    s[19] = s7 >> 5;
-    s[20] = s7 >> 13;
-    s[21] = s8 >> 0;
-    s[22] = s8 >> 8;
-    s[23] = (s8 >> 16) | (s9 * ((uint64_t) 1 << 5));
-    s[24] = s9 >> 3;
-    s[25] = s9 >> 11;
-    s[26] = (s9 >> 19) | (s10 * ((uint64_t) 1 << 2));
-    s[27] = s10 >> 6;
-    s[28] = (s10 >> 14) | (s11 * ((uint64_t) 1 << 7));
-    s[29] = s11 >> 1;
-    s[30] = s11 >> 9;
-    s[31] = s11 >> 17;
+    s[0]  = (unsigned char) (s0 >> 0);
+    s[1]  = (unsigned char) (s0 >> 8);
+    s[2]  = (unsigned char) ((s0 >> 16) | (s1 * ((uint64_t) 1 << 5)));
+    s[3]  = (unsigned char) (s1 >> 3);
+    s[4]  = (unsigned char) (s1 >> 11);
+    s[5]  = (unsigned char) ((s1 >> 19) | (s2 * ((uint64_t) 1 << 2)));
+    s[6]  = (unsigned char) (s2 >> 6);
+    s[7]  = (unsigned char) ((s2 >> 14) | (s3 * ((uint64_t) 1 << 7)));
+    s[8]  = (unsigned char) (s3 >> 1);
+    s[9]  = (unsigned char) (s3 >> 9);
+    s[10] = (unsigned char) ((s3 >> 17) | (s4 * ((uint64_t) 1 << 4)));
+    s[11] = (unsigned char) (s4 >> 4);
+    s[12] = (unsigned char) (s4 >> 12);
+    s[13] = (unsigned char) ((s4 >> 20) | (s5 * ((uint64_t) 1 << 1)));
+    s[14] = (unsigned char) (s5 >> 7);
+    s[15] = (unsigned char) ((s5 >> 15) | (s6 * ((uint64_t) 1 << 6)));
+    s[16] = (unsigned char) (s6 >> 2);
+    s[17] = (unsigned char) (s6 >> 10);
+    s[18] = (unsigned char) ((s6 >> 18) | (s7 * ((uint64_t) 1 << 3)));
+    s[19] = (unsigned char) (s7 >> 5);
+    s[20] = (unsigned char) (s7 >> 13);
+    s[21] = (unsigned char) (s8 >> 0);
+    s[22] = (unsigned char) (s8 >> 8);
+    s[23] = (unsigned char) ((s8 >> 16) | (s9 * ((uint64_t) 1 << 5)));
+    s[24] = (unsigned char) (s9 >> 3);
+    s[25] = (unsigned char) (s9 >> 11);
+    s[26] = (unsigned char) ((s9 >> 19) | (s10 * ((uint64_t) 1 << 2)));
+    s[27] = (unsigned char) (s10 >> 6);
+    s[28] = (unsigned char) ((s10 >> 14) | (s11 * ((uint64_t) 1 << 7)));
+    s[29] = (unsigned char) (s11 >> 1);
+    s[30] = (unsigned char) (s11 >> 9);
+    s[31] = (unsigned char) (s11 >> 17);
 }
 
 int
@@ -16713,7 +16696,7 @@ static int
 ristretto255_is_canonical(const unsigned char *s)
 {
     unsigned char c;
-    unsigned char d;
+    unsigned char d_;
     unsigned char e;
     unsigned int  i;
 
@@ -16722,10 +16705,10 @@ ristretto255_is_canonical(const unsigned char *s)
         c |= s[i] ^ 0xff;
     }
     c = (((unsigned int) c) - 1U) >> 8;
-    d = (0xed - 1U - (unsigned int) s[0]) >> 8;
+    d_ = (0xed - 1U - (unsigned int) s[0]) >> 8;
     e = ((s[31] >> 5) ^ optblocker_u8) >> 2;
 
-    return 1 - (((c & d) | e | s[0]) & 1);
+    return 1 - (((c & d_) | e | s[0]) & 1);
 }
 
 int
@@ -19993,14 +19976,6 @@ int blake2b_compress_avx2(blake2b_state *S,
 # define STORE(p, r) STOREU(p, r)
 #endif
 
-static inline uint64_t
-LOADU64(const void *p)
-{
-    uint64_t v;
-    memcpy(&v, p, sizeof v);
-    return v;
-}
-
 #define ROTATE16                                                              \
     _mm256_setr_epi8(2, 3, 4, 5, 6, 7, 0, 1, 10, 11, 12, 13, 14, 15, 8, 9, 2, \
                      3, 4, 5, 6, 7, 0, 1, 10, 11, 12, 13, 14, 15, 8, 9)
@@ -20849,7 +20824,7 @@ static const uint64_t blake2b_IV[8] = {
 static inline int
 blake2b_set_lastnode(blake2b_state *S)
 {
-    S->f[1] = -1;
+    S->f[1] = (uint64_t) -1;
     return 0;
 }
 /* LCOV_EXCL_STOP */
@@ -20866,7 +20841,7 @@ blake2b_set_lastblock(blake2b_state *S)
     if (S->last_node) {
         blake2b_set_lastnode(S); /* LCOV_EXCL_LINE */
     }
-    S->f[0] = -1;
+    S->f[0] = (uint64_t) -1;
     return 0;
 }
 
@@ -24293,6 +24268,7 @@ struct crypto_scalarmult_curve25519_implementation
 
 
 #define implementation rn_crypto_scalarmult_curve25519_scalarmult_curve25519_c_implementation
+#define d rn_crypto_scalarmult_curve25519_scalarmult_curve25519_c_d
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC push_options
 #endif
@@ -24543,6 +24519,7 @@ _crypto_scalarmult_curve25519_pick_best_implementation(void)
 #pragma GCC pop_options
 #endif
 
+#undef d
 #undef implementation
 
 #if defined(__GNUC__) && !defined(__clang__)
@@ -33364,7 +33341,7 @@ stream_ref(unsigned char *c, unsigned long long clen, const unsigned char *n,
         u = 1;
         for (i = 8; i < 16; i++) {
             u += (unsigned int) in[i];
-            in[i] = u;
+            in[i] = (unsigned char) (u);
             u >>= 8;
         }
         clen -= 64;
@@ -33414,7 +33391,7 @@ stream_ref_xor_ic(unsigned char *c, const unsigned char *m,
         u = 1;
         for (i = 8; i < 16; i++) {
             u += (unsigned int) in[i];
-            in[i] = u;
+            in[i] = (unsigned char) (u);
             u >>= 8;
         }
         mlen -= 64;

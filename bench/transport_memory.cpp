@@ -76,7 +76,7 @@ int main(int argc, char ** argv)
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config(&config);
     if (strlen(transport) >= sizeof(config.transport)) return 1;
-    strcpy(config.transport, transport);
+    snprintf(config.transport, sizeof(config.transport), "%s", transport);
     config.max_clients = number(argv[1]);
     config.max_payload_bytes = number(argv[2]);
     config.num_reassembly_slots = number(argv[3]);

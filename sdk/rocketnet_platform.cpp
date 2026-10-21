@@ -577,9 +577,18 @@ void rocketnet_platform_term()
     // ...
 }
 
-const char * rocketnet_platform_getenv( const char * var )
+int rocketnet_platform_getenv( const char * var, char * buffer, size_t size )
 {
-    return getenv( var );
+    rocketnet_assert( var && buffer && size > 0 );
+    buffer[0] = '\0';
+    const char * value = getenv( var );
+    if ( !value )
+        return 0;
+    const size_t length = strlen( value );
+    if ( length >= size )
+        return -1;
+    memcpy( buffer, value, length + 1 );
+    return 1;
 }
 
 // ---------------------------------------------------
@@ -2274,9 +2283,18 @@ void rocketnet_platform_term()
     // ...
 }
 
-const char * rocketnet_platform_getenv( const char * var )
+int rocketnet_platform_getenv( const char * var, char * buffer, size_t size )
 {
-    return getenv( var );
+    rocketnet_assert( var && buffer && size > 0 );
+    buffer[0] = '\0';
+    const char * value = getenv( var );
+    if ( !value )
+        return 0;
+    const size_t length = strlen( value );
+    if ( length >= size )
+        return -1;
+    memcpy( buffer, value, length + 1 );
+    return 1;
 }
 
 // ---------------------------------------------------
@@ -3776,9 +3794,23 @@ int rocketnet_platform_connection_type()
     return connection_type;
 }
 
-const char * rocketnet_platform_getenv( const char * var )
+int rocketnet_platform_getenv( const char * var, char * buffer, size_t size )
 {
-    return getenv( var );
+    rocketnet_assert( var && buffer && size > 0 );
+    buffer[0] = '\0';
+    // getenv_s with no buffer reports the bytes the value needs, terminator
+    // included, and zero when the variable is unset
+    size_t required = 0;
+    if ( getenv_s( &required, NULL, 0, var ) != 0 || required == 0 )
+        return 0;
+    if ( required > size )
+        return -1;
+    if ( getenv_s( &required, buffer, size, var ) != 0 )
+    {
+        buffer[0] = '\0';
+        return 0;
+    }
+    return 1;
 }
 
 // threads

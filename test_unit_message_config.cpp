@@ -451,6 +451,15 @@ struct mc_received_t
     std::vector<uint8_t> bytes;
 };
 
+// copies a received message; a zero-byte message copies nothing, so its data
+// pointer never reaches memmove (gcc 13 and 15 -Wnonnull on vector::assign)
+static void mc_copy_bytes( std::vector<uint8_t> & to, const uint8_t * from, int bytes )
+{
+    to.resize( (size_t) bytes );
+    if ( bytes > 0 )
+        memcpy( to.data(), from, (size_t) bytes );
+}
+
 static void mc_drain_server( mc_pair_t * pair, std::vector<mc_received_t> * out )
 {
     // the server's one receive queue across every slot: each message names
@@ -465,7 +474,7 @@ static void mc_drain_server( mc_pair_t * pair, std::vector<mc_received_t> * out 
         mc_received_t r;
         r.slot = slot;
         r.channel = channel;
-        r.bytes.assign( data, data + bytes );
+        mc_copy_bytes( r.bytes, data, bytes );
         if ( out )
             out->push_back( r );
         rocketnet_message_server_release( pair->server, data );
@@ -483,7 +492,7 @@ static void mc_drain_client( rocketnet_message_client_t * client, std::vector<mc
             mc_received_t r;
             r.slot = 0;
             r.channel = channel;
-            r.bytes.assign( data, data + bytes );
+            mc_copy_bytes( r.bytes, data, bytes );
             if ( out )
                 out->push_back( r );
             rocketnet_message_client_release( client, data );

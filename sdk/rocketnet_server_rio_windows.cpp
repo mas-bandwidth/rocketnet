@@ -40,17 +40,26 @@ static_assert( ROCKETNET_RIO_RECEIVE_SLICE_BYTES >= ROCKETNET_RECEIVE_CEILING + 
 static_assert( ROCKETNET_RIO_RECEIVES <= ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS, "a whole bank fits the process view" );
 
 // a receive bank: the model's fillBank and exposed. Its capacity is the
-// number of slices (BankCapacity == Slices).
+// number of slices (BankCapacity == Slices). data leads, so its
+// 16-alignment needs no padding before it.
 struct rocketnet_rio_bank_t
 {
+    alignas(16) uint8_t data[ROCKETNET_RIO_RECEIVES][ROCKETNET_FRAME_STRIDE];
     int num_packets;
     rocketnet_address_t from[ROCKETNET_RIO_RECEIVES];
     int packet_bytes[ROCKETNET_RIO_RECEIVES];
-    alignas(16) uint8_t data[ROCKETNET_RIO_RECEIVES][ROCKETNET_FRAME_STRIDE];
 };
 
 struct rocketnet_server_rio_t
 {
+    // next and outstanding lead, each starting a cache line (next's line
+    // padded out explicitly), so the compiler inserts no alignment padding.
+    // next is read by fill threads, which run only while the main thread is
+    // outside send_packets.
+    alignas(64) std::atomic<int> next[2];
+    uint8_t next_padding[64 - 2 * sizeof( std::atomic<int> )];
+    alignas(64) int outstanding[2] = { 0, 0 };
+
     void * context;
     SOCKET socket = INVALID_SOCKET;
     bool ipv6 = false;
@@ -75,8 +84,6 @@ struct rocketnet_server_rio_t
     // next are read by fill threads, which run only while the main thread is
     // outside send_packets.
     std::atomic<int> fill{0};
-    alignas(64) std::atomic<int> next[2];
-    alignas(64) int outstanding[2] = { 0, 0 };
     int * slot_bytes = NULL;                    // [ROCKETNET_RIO_SEND_FRAMES], zero for a free, reserved or aborted slot
 
     // receive: the model's slice states as one count of posted slices, and
@@ -97,6 +104,8 @@ struct rocketnet_server_rio_t
     int test_fault_status[ROCKETNET_RIO_TEST_NUM_FAULTS] = {};
 #endif
 };
+
+static_assert( offsetof( rocketnet_server_rio_t, outstanding ) == 64, "the rio's aligned members have no implicit padding" );
 
 // The fault seam (rocketnet_server_rio_test_fail_next) exists only in the
 // test executable. Elsewhere the check is the constant false, so the

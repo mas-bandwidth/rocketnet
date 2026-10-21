@@ -246,7 +246,6 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
                                                     const uint8_t * token_identifier,
                                                     uint64_t token_expire_timestamp,
                                                     int32_t timeout_seconds,
-                                                    uint64_t current_timestamp,
                                                     double current_time,
                                                     uint8_t * response_packet,
                                                     int * response_bytes );
@@ -604,8 +603,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     int result = rocketnet_server_process_opened_request( server, from, connection_salt, client_ephemeral_public_key,
                                                           signed_connect_data, &private_data, token_identifier,
                                                           token_expire_timestamp, timeout_seconds,
-                                                          current_timestamp, current_time,
-                                                          response_packet, response_bytes );
+                                                          current_time, response_packet, response_bytes );
 
     sodium_memzero( &private_data, sizeof(private_data) );
 
@@ -622,7 +620,6 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
                                                     const uint8_t * token_identifier,
                                                     uint64_t token_expire_timestamp,
                                                     int32_t timeout_seconds,
-                                                    uint64_t current_timestamp,
                                                     double current_time,
                                                     uint8_t * response_packet,
                                                     int * response_bytes )

@@ -19,7 +19,8 @@
 #define BOUNDARY_MAX_FRAMES 64
 #define BOUNDARY_PAYLOAD_INDEX 16
 #define BOUNDARY_FRAME_CAPACITY (ROCKETNET_MAX_PAYLOAD_BYTES + 256)
-struct boundary_packet_t { uint64_t id; int slot; int bytes; int fragment; alignas(16) uint8_t data[BOUNDARY_FRAME_CAPACITY]; };
+// the padding to data and after it is written out, so the compiler adds none (MSVC C4324)
+struct boundary_packet_t { uint64_t id; int slot; int bytes; int fragment; uint8_t head_pad[32 - sizeof(uint64_t) - 3 * sizeof(int)]; alignas(16) uint8_t data[BOUNDARY_FRAME_CAPACITY]; uint8_t tail_pad[(BOUNDARY_FRAME_CAPACITY + 15) / 16 * 16 - BOUNDARY_FRAME_CAPACITY]; };
 struct boundary_net_t;
 struct boundary_endpoint_t {
     boundary_net_t * net; bool is_server; int slot;
@@ -86,7 +87,8 @@ static uint8_t * boundary_start_packet(void * transport,int client_index,int req
     return NULL;
 }
 static int boundary_frame_of(boundary_endpoint_t * e,const rocketnet_packet_context_t * context) {
-    for(int f=0;f<BOUNDARY_MAX_FRAMES;++f) if(e->frame_used[f] && context->frame==e->frames[f]) return f; return -1;
+    for(int f=0;f<BOUNDARY_MAX_FRAMES;++f) if(e->frame_used[f] && context->frame==e->frames[f]) return f;
+    return -1;
 }
 static int boundary_finish_packet(void * transport,rocketnet_packet_context_t * context,int payload_bytes) {
     boundary_endpoint_t * e=(boundary_endpoint_t *)transport; const int f=boundary_frame_of(e,context);

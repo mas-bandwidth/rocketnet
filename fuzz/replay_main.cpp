@@ -21,12 +21,14 @@
 
 #include <vector>
 
+#include "../test/portable_crt.h"
+
 extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv );
 extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size );
 
 static bool replay_file( const char * path )
 {
-    FILE * file = fopen( path, "rb" );
+    FILE * file = rocketnet_test_fopen( path, "rb" );
     if ( file == NULL )
     {
         fprintf( stderr, "fuzz replay: cannot open %s\n", path );

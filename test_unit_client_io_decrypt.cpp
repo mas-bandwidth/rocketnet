@@ -61,7 +61,7 @@ static void client_io_decrypt_setup( client_io_decrypt_fixture_t * f )
 {
     memset( &f->fake, 0, sizeof( f->fake ) );
     f->transport = rocketnet_client_transport_io_t();
-    rocketnet_client_transport_io_config_t config = { "fake", NULL };
+    rocketnet_client_transport_io_config_t config = { "fake", NULL, NULL };
     rocketnet_address_t bind = {};
     check( rocketnet_client_transport_io_open( &rocketnet_fake_client_operations_io, &f->fake, &config, &bind, &f->transport ) );
 

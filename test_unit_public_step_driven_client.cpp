@@ -9,6 +9,7 @@
 
 #include "test_unit_registry.h"
 #include "test/fake_client_driver.h"
+#include "test/portable_crt.h"
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_config.h"
 #include "rocketnet_client_io.h"       // refusal fixture for a transport with no non-blocking step
@@ -291,10 +292,8 @@ static int public_step_unsetenv( const char * name )
 
 static void test_public_step_driven_client_env_selects_the_mode()
 {
-    const char * prior = getenv( "ROCKETNET_CLIENT_STEP_DRIVEN" );
     char saved[64] = {};
-    const bool present = prior && prior[0] != '\0';
-    if ( present ) strncpy( saved, prior, sizeof( saved ) - 1 );
+    const bool present = rocketnet_test_getenv( "ROCKETNET_CLIENT_STEP_DRIVEN", saved, sizeof( saved ) ) && saved[0] != '\0';
 
     rocketnet_client_transport_config_t config;
     int num_fields = 0;

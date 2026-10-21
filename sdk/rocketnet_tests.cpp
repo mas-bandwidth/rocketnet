@@ -111,7 +111,8 @@ extern int rocketnet_ack_popcount64_portable( uint64_t v );
 
 static int setenv( const char * name, const char * value, int overwrite )
 {
-    if ( !overwrite && getenv( name ) != NULL )
+    char probe[1];
+    if ( !overwrite && rocketnet_platform_getenv( name, probe, sizeof( probe ) ) != 0 )
         return 0;
     return _putenv_s( name, value );
 }
@@ -669,7 +670,7 @@ void rocketnet_test_copy_string_zero_size_writes_nothing()
 {
     // Test that dest_size 0 returns 0 and does not write
     char buffer[256];
-    for (size_t i = 0; i < sizeof(buffer); i++) buffer[i] = 0xFF;
+    memset( buffer, 0xFF, sizeof(buffer) );
     size_t result = rocketnet_copy_string( buffer, "hello", 0 );
     rocketnet_check( result == 0 );
     rocketnet_check( (unsigned char)buffer[0] == 0xFF );
@@ -8088,9 +8089,6 @@ void rocketnet_test_public_api_null()
     void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) = rn_assert_function;
     rocketnet_set_assert_callback( rocketnet_test_null_assert_hook );
 
-    uint8_t data[8] = { 0 };
-    const uint8_t * view = NULL;
-    int bytes = 0;
     struct rocketnet_receipt_t receipts[2];
     struct rocketnet_client_config_t client_config;
     struct rocketnet_server_config_t server_config;
@@ -12354,6 +12352,31 @@ void rocketnet_test_send_arena()
 // (ROCKETNET_SERVER_TRANSPORT=... ./bin/test), so every test that touches the
 // environment saves what it found and puts it back
 
+// the process environment's value of name at any length, read through the
+// platform wrapper; false when name is unset
+static bool rocketnet_test_getenv_string( const char * name, std::string * value )
+{
+    std::vector<char> buffer( 256 );
+    for ( ;; )
+    {
+        const int found = rocketnet_platform_getenv( name, buffer.data(), buffer.size() );
+        if ( found == 0 )
+            return false;
+        if ( found > 0 )
+        {
+            *value = buffer.data();
+            return true;
+        }
+        buffer.resize( buffer.size() * 2 );
+    }
+}
+
+static bool rocketnet_test_env_is_set( const char * name )
+{
+    std::string value;
+    return rocketnet_test_getenv_string( name, &value );
+}
+
 struct rocketnet_test_env_guard_t
 {
     const char * name;
@@ -12364,17 +12387,11 @@ struct rocketnet_test_env_guard_t
 static void rocketnet_test_env_save( struct rocketnet_test_env_guard_t * guard, const char * name )
 {
     guard->name = name;
-    const char * value = getenv( name );
-    guard->was_set = value != NULL;
+    std::string value;
+    guard->was_set = rocketnet_test_getenv_string( name, &value );
     guard->saved[0] = '\0';
-    if ( value )
-        snprintf( guard->saved, sizeof(guard->saved), "%s", value );
-}
-
-static void rocketnet_test_env_clear( struct rocketnet_test_env_guard_t * guard, const char * name )
-{
-    rocketnet_test_env_save( guard, name );
-    unsetenv( name );
+    if ( guard->was_set )
+        snprintf( guard->saved, sizeof(guard->saved), "%s", value.c_str() );
 }
 
 // the same platform truth the empty-value case below is skipped for bounds
@@ -13446,8 +13463,9 @@ class rocketnet_test_environment_t
         if (strcmp(name, "ROCKETNET_SERVER_TRANSPORT") == 0) return;
         if (strcmp(name, "ROCKETNET_CLIENT_TRANSPORT") == 0) return;
         for (const auto & entry : entries) if (entry.name == name) return;
-        const char * value = getenv(name);
-        entries.push_back({name, value ? value : "", value != NULL});
+        std::string value;
+        const bool present = rocketnet_test_getenv_string(name, &value);
+        entries.push_back({name, value, present});
         rocketnet_check(unsetenv(name) == 0);
     }
 public:
@@ -13479,25 +13497,28 @@ public:
 
 void rocketnet_test_suite_environment()
 {
-    const std::string original_server = getenv("ROCKETNET_SERVER_TRANSPORT") ? getenv("ROCKETNET_SERVER_TRANSPORT") : "";
-    const bool server_present = getenv("ROCKETNET_SERVER_TRANSPORT") != NULL;
-    const std::string original_client = getenv("ROCKETNET_CLIENT_TRANSPORT") ? getenv("ROCKETNET_CLIENT_TRANSPORT") : "";
-    const bool client_present = getenv("ROCKETNET_CLIENT_TRANSPORT") != NULL;
+    std::string original_server;
+    const bool server_present = rocketnet_test_getenv_string("ROCKETNET_SERVER_TRANSPORT", &original_server);
+    std::string original_client;
+    const bool client_present = rocketnet_test_getenv_string("ROCKETNET_CLIENT_TRANSPORT", &original_client);
     rocketnet_check(unsetenv("ROCKETNET_SERVER_PUBLIC_ADDRESS") == 0);
     const std::string long_value(4096, 'x');
     rocketnet_check(setenv("ROCKETNET_SERVER_MAX_CLIENTS", long_value.c_str(), 1) == 0);
     {
         rocketnet_test_environment_t isolated;
-        rocketnet_check(getenv("ROCKETNET_SERVER_MAX_CLIENTS") == NULL);
+        rocketnet_check(!rocketnet_test_env_is_set("ROCKETNET_SERVER_MAX_CLIENTS"));
         rocketnet_check(setenv("ROCKETNET_SERVER_PUBLIC_ADDRESS", "127.0.0.1:1234", 1) == 0);
-        rocketnet_check((getenv("ROCKETNET_SERVER_TRANSPORT") != NULL) == server_present);
-        if (server_present) rocketnet_check(original_server == getenv("ROCKETNET_SERVER_TRANSPORT"));
-        rocketnet_check((getenv("ROCKETNET_CLIENT_TRANSPORT") != NULL) == client_present);
-        if (client_present) rocketnet_check(original_client == getenv("ROCKETNET_CLIENT_TRANSPORT"));
+        std::string server_now;
+        rocketnet_check(rocketnet_test_getenv_string("ROCKETNET_SERVER_TRANSPORT", &server_now) == server_present);
+        if (server_present) rocketnet_check(original_server == server_now);
+        std::string client_now;
+        rocketnet_check(rocketnet_test_getenv_string("ROCKETNET_CLIENT_TRANSPORT", &client_now) == client_present);
+        if (client_present) rocketnet_check(original_client == client_now);
     }
-    rocketnet_check(getenv("ROCKETNET_SERVER_PUBLIC_ADDRESS") == NULL);
-    rocketnet_check(getenv("ROCKETNET_SERVER_MAX_CLIENTS") != NULL);
-    rocketnet_check(long_value == getenv("ROCKETNET_SERVER_MAX_CLIENTS"));
+    rocketnet_check(!rocketnet_test_env_is_set("ROCKETNET_SERVER_PUBLIC_ADDRESS"));
+    std::string max_clients_now;
+    rocketnet_check(rocketnet_test_getenv_string("ROCKETNET_SERVER_MAX_CLIENTS", &max_clients_now));
+    rocketnet_check(long_value == max_clients_now);
     unsetenv("ROCKETNET_SERVER_MAX_CLIENTS");
 }
 
@@ -14576,7 +14597,8 @@ void rocketnet_unit_prepare()
     // ROCKETNET_TEST_VERBOSE is set. The commit barrier is installed once
     // per process, so no test here can commit an XDP data plane.
 
-    if ( rocketnet_platform_getenv( "ROCKETNET_TEST_VERBOSE" ) == NULL )
+    char verbose[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
+    if ( rocketnet_platform_getenv( "ROCKETNET_TEST_VERBOSE", verbose, sizeof( verbose ) ) == 0 )
     {
         rocketnet_test_suite_log_function = rocketnet_test_log_capture;
         rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );

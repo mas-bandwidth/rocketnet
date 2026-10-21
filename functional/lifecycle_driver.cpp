@@ -14,6 +14,7 @@
 #if ROCKETNET_XDP
 #include "rocketnet_server_socket.h"
 #endif
+#include "../test/portable_crt.h"
 
 #include <atomic>
 #include <stddef.h>
@@ -83,7 +84,7 @@ void rocketnet_test_lifecycle_transport()
         config.max_clients = 1000;
         config.num_reassembly_slots = 256;
         config.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES;
-        strcpy(config.transport, "portable");
+        snprintf(config.transport, sizeof(config.transport), "%s", "portable");
         check(!rocketnet_server_transport_create(&state, "127.0.0.1", &config));
         check(state.calls == before);
     }
@@ -105,7 +106,7 @@ void rocketnet_test_lifecycle_transport()
     check( rocketnet_write_dev_connect_token( "127.0.0.1:40000", 1, rocketnet_functional_token_timestamp( 0, 0.0 ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
-    strcpy( client_config.transport, "portable" );
+    snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "portable" );
     int client_success = 0;
     for ( int failure = 1; failure <= 64; ++failure )
     {
@@ -127,7 +128,7 @@ void rocketnet_test_lifecycle_transport()
     rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
-    strcpy( server_config.transport, "portable" );
+    snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "portable" );
     int server_success = 0;
     for ( int failure = 1; failure <= 64; ++failure )
     {
@@ -146,6 +147,7 @@ void rocketnet_test_lifecycle_transport()
     }
     check( server_success );
     rocketnet_term();
-    if ( getenv( "ROCKETNET_TEST_VERBOSE" ) != NULL )
+    char verbose[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_TEST_VERBOSE", verbose, sizeof( verbose ) ) )
         printf( "lifecycle transport OK: client %d, server %d allocation failure stages\n", client_success - 1, server_success - 1 );
 }

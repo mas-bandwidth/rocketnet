@@ -73,17 +73,27 @@ struct rocketnet_transport_lists_t
     {
         for ( int i = 0; i < ROCKETNET_NUM_TRANSPORTS; ++i )
         {
-            if ( i ) strcat( names, ", " );
-            strcat( names, definitions[i].name );
+            if ( i ) append( names, ", " );
+            append( names, definitions[i].name );
             if ( definitions[i].discovers_bound_port )
             {
-                if ( discovering_names[0] ) strcat( discovering_names, ", " );
-                strcat( discovering_names, definitions[i].name );
+                if ( discovering_names[0] ) append( discovering_names, ", " );
+                append( discovering_names, definitions[i].name );
             }
             if ( !( definitions[i].platforms & ROCKETNET_TRANSPORT_HERE ) ) continue;
             if ( definitions[i].server_preference ) insert( servers, num_servers, i, true );
             if ( definitions[i].client_preference ) insert( clients, num_clients, i, false );
         }
+    }
+
+    // Both lists are sized exactly from the registry, so an append always fits.
+    static void append( char ( &buffer )[sizeof( names )], const char * text )
+    {
+        const size_t used = strlen( buffer );
+        const size_t bytes = strlen( text );
+        if ( used + bytes >= sizeof( buffer ) )
+            return;
+        memcpy( buffer + used, text, bytes + 1 );
     }
 
     void insert( int * list, int & count, int id, bool server )

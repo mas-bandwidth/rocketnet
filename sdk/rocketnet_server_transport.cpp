@@ -133,7 +133,10 @@ struct alignas(64) rocketnet_server_payload_slot_info_t
     rocketnet_address_t to;
     int wire_bytes;
     int client_index;
+    uint8_t padding[64 - sizeof(rocketnet_address_t) - 2 * sizeof(int)]; // the rest of the cache line, explicit
 };
+
+static_assert( sizeof(rocketnet_server_payload_slot_info_t) == 64, "one server slot info per cache line" );
 
 struct rocketnet_server_payload_ring_t
 {
@@ -141,7 +144,8 @@ struct rocketnet_server_payload_ring_t
 
     volatile uint64_t num_packets;
 
-    uint8_t padding_1[4096];
+    // a page, plus the rest of num_packets' cache line, so info starts on a cache line
+    uint8_t padding_1[4096 + 64 - sizeof(uint64_t)];
 
     struct rocketnet_server_payload_slot_info_t info[ROCKETNET_SERVER_PAYLOAD_RING_SIZE];
 
@@ -152,6 +156,12 @@ struct rocketnet_server_payload_ring_t
     uint8_t padding_3[4096];
 };
 
+static_assert( offsetof( rocketnet_server_payload_ring_t, info ) == 8192 + 64, "server ring info starts on a cache line with no implicit padding" );
+static_assert( offsetof( rocketnet_server_payload_ring_t, data ) % 16 == 0 &&
+               offsetof( rocketnet_server_payload_ring_t, data ) == offsetof( rocketnet_server_payload_ring_t, padding_2 ) + 4096,
+               "server ring data is 16-aligned with no implicit padding" );
+static_assert( sizeof(rocketnet_server_payload_ring_t) == offsetof( rocketnet_server_payload_ring_t, padding_3 ) + 4096,
+               "server ring has no implicit tail padding" );
 static_assert( ROCKETNET_FRAME_STRIDE % 16 == 0, "frame stride must keep every slot root 16-aligned" );
 static_assert( ROCKETNET_FRAME_STRIDE >= ROCKETNET_FRAME_WIRE_OFFSET + ROCKETNET_RECEIVE_CEILING, "a slot must hold the slack and a full wire packet" );
 static_assert( ROCKETNET_FRAME_PAYLOAD_OFFSET % 16 == 0, "the payload pointer handed to the caller must be 16-aligned" );
@@ -171,7 +181,10 @@ struct alignas(64) rocketnet_server_stats_frame_t
     uint64_t packets_received;
     uint64_t bytes_sent;
     uint64_t bytes_received;
+    uint8_t padding[64 - sizeof(double) - 5 * sizeof(uint64_t)]; // the rest of the cache line, explicit
 };
+
+static_assert( sizeof(rocketnet_server_stats_frame_t) == 64, "one server stats frame per cache line" );
 
 // cumulative wire totals, per server lifetime and per connection slot. a
 // datagram that arrives or leaves before its slot is assigned is held here by
@@ -210,7 +223,12 @@ struct rocketnet_server_payloads_t
 
 struct rocketnet_server_transport_t
 {
+    // the cache-line-aligned members lead, each a whole number of cache
+    // lines, so the compiler inserts no alignment padding before any of them
     rocketnet_packet_leases_t<131072> packet_leases;
+    struct rocketnet_server_payload_ring_t payload_ring;
+    struct rocketnet_server_stats_frame_t stats_frames[ROCKETNET_NUM_SERVER_STATS_FRAMES];
+
     void * context;
     int state;
     rocketnet_address_t bind_address;
@@ -252,7 +270,6 @@ struct rocketnet_server_transport_t
 
     struct rocketnet_server_send_buffer_t send_buffer;
     struct rocketnet_server_receive_buffer_t receive_buffer;
-    struct rocketnet_server_payload_ring_t payload_ring;
 
     // the most payload-ring slots one update may fill. Create sets it from
     // the configured client count with the historical 256-slot floor; the
@@ -273,7 +290,6 @@ struct rocketnet_server_transport_t
     struct rocketnet_send_arena_t * send_arena;
 
     struct rocketnet_server_transport_stats_t server_stats;
-    struct rocketnet_server_stats_frame_t stats_frames[ROCKETNET_NUM_SERVER_STATS_FRAMES];
     int current_stats_index;
     struct rocketnet_server_wire_totals_t * client_wire_totals;         // one per client slot
     int client_wire_totals_capacity;
@@ -2737,19 +2753,19 @@ static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
         const int mapping_index = rocketnet_client_slots_mapping_index( server_transport->protocol.client_slots, context->client_index );
-        const rocketnet_address_t * to = rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
+        const rocketnet_address_t * mapped_to = rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
         if ( server_transport->link_simulator )
         {
-            rocketnet_server_link_send( server_transport, to,
+            rocketnet_server_link_send( server_transport, mapped_to,
                                         context->frame + ROCKETNET_FRAME_WIRE_OFFSET, wire_bytes );
             rocketnet_server_transport_io_abort_packet( server_transport, backend_id, context->frame );
         }
         else
             rocketnet_server_transport_io_finish_packet( server_transport, backend_id, context->frame, wire_bytes );
         rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_packets_sent, 1 );
-        rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_bytes_sent, (uint64_t) ( wire_bytes + rocketnet_wire_header_bytes( to ? to->type : ROCKETNET_ADDRESS_NONE ) ) );
+        rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_bytes_sent, (uint64_t) ( wire_bytes + rocketnet_wire_header_bytes( mapped_to ? mapped_to->type : ROCKETNET_ADDRESS_NONE ) ) );
         rocketnet_server_wire_totals_add_sent_atomic( server_transport, context->client_index,
-                                                      to ? to->type : ROCKETNET_ADDRESS_NONE, wire_bytes );
+                                                      mapped_to ? mapped_to->type : ROCKETNET_ADDRESS_NONE, wire_bytes );
     }
     else
     {

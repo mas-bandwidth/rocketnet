@@ -18,7 +18,10 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
         std::atomic<uint64_t> state{0};
         rocketnet_packet_context_t context;
         uint64_t backend_id;
+        // the rest of the cache line, explicit so the compiler adds no tail padding
+        uint8_t padding[64 - sizeof(std::atomic<uint64_t>) - sizeof(rocketnet_packet_context_t) - sizeof(uint64_t)];
     };
+    static_assert( sizeof(entry_t) == 64 && alignof(entry_t) == 64, "one lease entry per cache line" );
     entry_t entries[Capacity];
     std::atomic<uint64_t> used{0};
     uint64_t epoch = 1;

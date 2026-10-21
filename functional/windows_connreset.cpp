@@ -17,6 +17,7 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
 #include "rocketnet_connect_token.h"
+#include "../test/portable_crt.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -182,8 +183,8 @@ static void windows_connreset_child_close( windows_connreset_child_t * child )
 // parent ends it. Without the parent's environment it returns at once.
 void windows_connreset_child_client()
 {
-    const char * server_address = getenv( WINDOWS_CONNRESET_CHILD_ENV );
-    if ( !server_address || server_address[0] == '\0' )
+    char server_address[256];
+    if ( !rocketnet_test_getenv( WINDOWS_CONNRESET_CHILD_ENV, server_address, sizeof( server_address ) ) || server_address[0] == '\0' )
         return;
     struct rocketnet_client_transport_t * client = windows_connreset_client( server_address );
     const double start = rocketnet_platform_time();

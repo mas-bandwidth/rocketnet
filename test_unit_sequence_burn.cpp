@@ -27,6 +27,7 @@
 // after lease insertion, so that refusal also leaves no gap.
 
 #include "test_unit_registry.h"
+#include "test/portable_crt.h"
 
 #include "rocketnet_ack.h"
 #include "rocketnet_internal.h"
@@ -461,7 +462,8 @@ static void sequence_burn_run( int side, int kind, bool burn, const int * contro
 
 static void sequence_burn_print( const char * name, const struct sequence_burn_measures_t * m )
 {
-    if ( getenv( "ROCKETNET_SEQUENCE_BURN_PRINT" ) == NULL )
+    char burn_print[256];
+    if ( !rocketnet_test_getenv( "ROCKETNET_SEQUENCE_BURN_PRINT", burn_print, sizeof( burn_print ) ) )
         return;
     printf( "BURN %-22s sent=%d refused=%d acked=%d delivered=%d refusal_ctr=%llu lease_full=%llu ack_unknown=%llu "
             "batch_full=%llu history_lost=%llu rx_already=%llu rx_did_not_open=%llu rx_delivered=%llu "
@@ -918,7 +920,8 @@ static void sequence_burn_message_run( int side, bool burn, struct sequence_burn
 
 static void sequence_burn_message_print( const char * name, const struct sequence_burn_message_measures_t * m )
 {
-    if ( getenv( "ROCKETNET_SEQUENCE_BURN_PRINT" ) == NULL )
+    char burn_print[256];
+    if ( !rocketnet_test_getenv( "ROCKETNET_SEQUENCE_BURN_PRINT", burn_print, sizeof( burn_print ) ) )
         return;
     printf( "BURN %-22s reliable_sent=%d reliable_received=%d large_sent=%d large_received=%d in_order=%d layer_refused=%d "
             "ring_full=%llu resent=%llu duplicate=%llu srtt=%.6f rttvar=%.6f resend_delay=%.6f\n",
