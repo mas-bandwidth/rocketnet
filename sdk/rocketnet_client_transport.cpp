@@ -329,7 +329,7 @@ static void rocketnet_client_transport_abort_create( rocketnet_client_transport_
 }
 
 static void rocketnet_client_thread_function( void * data );
-static void rocketnet_client_receive_packets( rocketnet_client_transport_t * client_transport );
+static void rocketnet_client_receive_packets( rocketnet_client_transport_t * client_transport, const double * synthetic_time = NULL );
 
 // The transport-owned part of ClientSession End. The protocol overload has
 // already retired keys and cleared protocol state. Only the main-thread fill
@@ -2399,7 +2399,7 @@ void rocketnet_client_transport_ack_stats_for_test( const rocketnet_ack_endpoint
 }
 #endif
 
-static void rocketnet_client_receive_packets( rocketnet_client_transport_t * client_transport )
+static void rocketnet_client_receive_packets( rocketnet_client_transport_t * client_transport, const double * synthetic_time )
 {
     rocketnet_assert( client_transport );
 
@@ -2441,9 +2441,8 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
 
         const int copy_bytes = packet_bytes < ROCKETNET_RECEIVE_PACKET_BYTES ? packet_bytes : ROCKETNET_RECEIVE_PACKET_BYTES;
 
-        const double receive_time = client_transport->step_in_update
-            ? client_transport->time
-            : rocketnet_platform_time();
+        const double receive_time = synthetic_time ? *synthetic_time
+            : ( client_transport->step_in_update ? client_transport->time : rocketnet_platform_time() );
 
         rocketnet_platform_mutex_acquire( &client_transport->mutex );
 
@@ -2471,7 +2470,7 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
     }
 }
 
-void rocketnet_client_transport_step_legacy_for_test( rocketnet_client_transport_t * client_transport )
+void rocketnet_client_transport_step_legacy_for_test( rocketnet_client_transport_t * client_transport, double time )
 {
     rocketnet_assert( client_transport && client_transport->step_driven &&
                       !client_transport->thread && !rocketnet_client_io_core( client_transport ) );
@@ -2485,7 +2484,7 @@ void rocketnet_client_transport_step_legacy_for_test( rocketnet_client_transport
         return;
     }
     rocketnet_client_transport_flush_disconnect( client_transport );
-    rocketnet_client_receive_packets( client_transport );
+    rocketnet_client_receive_packets( client_transport, &time );
 }
 
 static void rocketnet_client_thread_function( void * data )
