@@ -453,14 +453,13 @@ The reliability is one of `ROCKETNET_RELIABILITY_UNRELIABLE`,
 `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT`, `ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT`
 or `ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT`. Plain UNRELIABLE is one packet up to `ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES` (1,411 bytes);
 above 1,411 bytes it promotes to its reliable twin (`ROCKETNET_RELIABILITY_RELIABLE`),
-which fragments across packets transparently up to `max_message_bytes`, as RakNet's
-reliability layer does.
+which fragments across packets transparently up to `max_message_bytes`.
 
-The channel is RakNet's ordering channel. RELIABLE_ORDERED,
+The channel is the ordering channel. RELIABLE_ORDERED,
 RELIABLE_ORDERED_WITH_ACK_RECEIPT and the two SEQUENCED types are ordered or
 sequenced within it, independently of every other channel, and a channel at or
 past the config's `num_channels` refuses them. UNRELIABLE, RELIABLE and the
-other two receipt types ignore it, as RakNet's `ReliabilityLayer::Send` does:
+other two receipt types ignore it, since they are neither ordered nor sequenced:
 any channel is accepted for them, never refused, and they travel with no
 channel (`rn_message_object_start` in `sdk/rocketnet_message_server.cpp`).
 
@@ -548,13 +547,14 @@ void server_frame( struct rocketnet_server_t * server, int client_index, int cha
     /* 3. run the game simulation for this frame */
 
     /* 4. queue this frame's outgoing messages */
-    const uint8_t payload[] = { 1, 2, 3, 4 };
     uint32_t serial = 0;
-    uint8_t * out = rocketnet_server_start_message( server, (uint64_t) client_index, channel, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) sizeof( payload ) );
+    uint8_t * out = rocketnet_server_start_message( server, (uint64_t) client_index, channel, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
     if ( out )
     {
-        memcpy( out, payload, sizeof( payload ) );
-        serial = rocketnet_server_finish_message( server, (int) sizeof( payload ) );
+        /* serialize straight into the started message, then finish with the bytes written */
+        uint8_t * p = out;
+        *p++ = 1; *p++ = 2; *p++ = 3; *p++ = 4;
+        serial = rocketnet_server_finish_message( server, (int) ( p - out ) );
     }
     if ( serial == 0 )
     {

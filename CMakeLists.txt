@@ -528,7 +528,7 @@ if(ROCKETNET_BUILD_TESTS)
     # The promotion case exercises the WIDE channel header (an index of 256 or
     # more) on channel 300, past the default build's cap, so this binary
     # compiles the SDK once more with ROCKETNET_MAX_CHANNELS=512 for every file
-    # (RakNet promotion rule: oversize unreliable sends promote to their twin).
+    # (the promotion rule: oversize unreliable sends promote to their reliable twin).
     add_executable(test_wide
         test.cpp test_channels.cpp test_unit_unreliable_promotion.cpp test_unit_channel_violation_counters.cpp
         sdk/rocketnet_tests.cpp ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})

@@ -243,7 +243,7 @@ static void test_message_boundary_sizes_every_mode_every_channel() {
         check(pair.net->fragment_counters[ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID]==0);
         check(pair.net->fragment_counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE]==0);
         // An oversize unreliable send is promoted, not transport-fragmented
-        // (RakNet ReliabilityLayer): no type-9 fragments in any mode.
+        // (the promotion rule): no type-9 fragments in any mode.
         check(pair.net->fragment_counters[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED]==0);
         check(pair.net->fragment_counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED]==0);
         // Code 1 promotes 1406, the first size past one packet's record.

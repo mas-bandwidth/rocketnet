@@ -172,7 +172,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE == ROCK
 
 #define ROCKETNET_ACK_DEBT_THRESHOLD                                       1
 
-// RakNet ReliabilityLayer adaptive resend delay.
+// The adaptive resend delay: it follows the measured round trip.
 
 #define ROCKETNET_MESSAGE_RESEND_DELAY_SCALE_PERCENT                          200
 #define ROCKETNET_MESSAGE_RESEND_DELAY_VARIANCE_SCALE                           4

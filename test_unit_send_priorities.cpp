@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// Layer 6's scheduler, unit tier: RakNet's four send priorities inside the
+// Layer 6's scheduler, unit tier: the four send priorities inside the
 // budget's class order (docs/CHANNELS.md 9.2, tla/RNScheduler.tla). No
 // sockets, no threads, no wall clock.
 //
@@ -190,7 +190,7 @@ static void test_round_robin_across_channels()
     rn_arena_destroy( arena );
 }
 
-// a LOW channel is not starved by an IMMEDIATE backlog: RakNet's clocks give
+// a LOW channel is not starved by an IMMEDIATE backlog: the level clocks give
 // it a turn once IMMEDIATE's clock passes LOW's seed of 27, and its next turn
 // one LOW stride (35) later. The backlog is still queued when LOW goes.
 
@@ -231,7 +231,7 @@ static void test_no_starvation_of_low()
         last = order[i];
     }
 
-    // the queue drained: the clocks are back at RakNet's seeds
+    // the queue drained: the clocks are back at their seeds
     rocketnet_unit_check( builder.level_clock[ROCKETNET_PRIORITY_IMMEDIATE] == 0 );
     rocketnet_unit_check( builder.level_clock[ROCKETNET_PRIORITY_LOW] == 27 );
 

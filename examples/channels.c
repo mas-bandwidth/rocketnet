@@ -25,6 +25,22 @@ static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] 
 // start_message, finish_message, receive_messages (one batch, no release
 // call), send_packets and client_connected.
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
+
+// serialize a uint32_t little-endian straight into a started message
+static int write_u32( uint8_t * p, uint32_t value )
+{
+    p[0] = (uint8_t) value;
+    p[1] = (uint8_t) ( value >> 8 );
+    p[2] = (uint8_t) ( value >> 16 );
+    p[3] = (uint8_t) ( value >> 24 );
+    return 4;
+}
+
+static uint32_t read_u32( const uint8_t * p )
+{
+    return (uint32_t) p[0] | ( (uint32_t) p[1] << 8 ) | ( (uint32_t) p[2] << 16 ) | ( (uint32_t) p[3] << 24 );
+}
+
 #define CHAT_CHANNEL     0
 #define POSITION_CHANNEL 1
 #define NUM_CHAT         8
@@ -114,7 +130,7 @@ int main( void )
                     {
                         uint32_t seq = 0;
                         CHECK( batch->bytes[i] == (int) sizeof( seq ) );
-                        memcpy( &seq, batch->data[i], sizeof( seq ) );
+                        seq = read_u32( batch->data[i] );
                         CHECK( seq == chat_received + 1 );
                         chat_received = seq;
                         chat_this_frame++;
@@ -124,7 +140,7 @@ int main( void )
                         CHECK( batch->channel[i] == POSITION_CHANNEL );
                         uint32_t pos = 0;
                         CHECK( batch->bytes[i] == (int) sizeof( pos ) );
-                        memcpy( &pos, batch->data[i], sizeof( pos ) );
+                        pos = read_u32( batch->data[i] );
                         CHECK( pos > last_pos );
                         last_pos = pos;
                         positions_received++;
@@ -154,15 +170,13 @@ int main( void )
             pos_sent++;
             uint8_t * buf = rocketnet_client_start_message( client, POSITION_CHANNEL, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, sizeof( pos_sent ) );
             CHECK( buf != NULL );
-            memcpy( buf, &pos_sent, sizeof( pos_sent ) );
-            CHECK( rocketnet_client_finish_message( client, sizeof( pos_sent ) ) != 0 );
+            CHECK( rocketnet_client_finish_message( client, write_u32( buf, pos_sent ) ) != 0 );
             if ( chat_sent < NUM_CHAT )
             {
                 chat_sent++;
                 buf = rocketnet_client_start_message( client, CHAT_CHANNEL, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, sizeof( chat_sent ) );
                 CHECK( buf != NULL );
-                memcpy( buf, &chat_sent, sizeof( chat_sent ) );
-                CHECK( rocketnet_client_finish_message( client, sizeof( chat_sent ) ) != 0 );
+                CHECK( rocketnet_client_finish_message( client, write_u32( buf, chat_sent ) ) != 0 );
             }
         }
 

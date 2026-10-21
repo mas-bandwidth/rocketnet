@@ -20,13 +20,13 @@ Three orders nest, outermost first.
    taken only when no higher class has an item it may write now, whatever
    the priorities. A LOW retransmit goes before an IMMEDIATE new reliable
    item, and an IMMEDIATE unreliable item goes after both.
-2. **RakNet's four priorities inside a class.** Each level has a clock. The
+2. **Four priorities inside a class.** Each level has a clock. The
    level with the smallest clock goes next and its clock advances by its
    stride: 1, 5, 14 and 35 for IMMEDIATE, HIGH, MEDIUM and LOW
-   (`(1 << p) * (p + 1) + p`, docs/RAKNET-RELIABILITY.md 5.3). A clock behind
-   the last level taken counts as that level's clock (RakNet's pull-forward).
+   (`(1 << p) * (p + 1) + p`). A clock behind
+   the last level taken counts as that level's clock (the pull-forward).
    A tie goes to the more urgent level. When nothing is queued the clocks
-   reset to RakNet's seeds 0, 3, 10 and 27. Under a backlog adjacent levels
+   reset to their seeds 0, 3, 10 and 27. Under a backlog adjacent levels
    interleave at about 5:1, 2.8:1 and 2.5:1, and no level starves.
 3. **Round robin across channels inside a level**, one item per turn,
    starting after the channel the last item came from.
@@ -105,38 +105,30 @@ every update, and 1 transport loss.
 A packet the budget refuses is not written, so the builder restores the
 clocks and the round-robin cursor to their values at the packet's start.
 
-## Differences from RakNet
+## Design choices
 
-1. **The class order is outside priority.** RakNet keeps one heap for every
-   reliability and lets the weight alone decide (study 5.3). Here priority
-   orders items only inside one budget class: retransmits and ordered
-   progress, then new reliable, then unreliable, whatever their priorities
-   (R6). An IMMEDIATE unreliable item waits behind a LOW reliable one.
-2. **Priority boosts the whole channel; channels stay FIFO.** RakNet orders
-   each message by its own weight, so a later high-priority send on a channel
-   can be pulled before an earlier low-priority one (docs/CHANNELS.md 17.3
-   item 3). Here a channel is offered only at its head, at the best priority
-   among its queued items.
-3. **Round robin across channels within a level.** RakNet pulls a level's
-   messages in push order, one global FIFO (17.3 item 4).
-4. **The clock advances at take, not at push.** RakNet gives each message a
-   weight when it is pushed and advances that level's next weight then. Here
-   a level's clock advances by its stride when an item of that level is
-   taken. Under a backlog the interleave is RakNet's; what differs is that
-   the weight belongs to the level, not to the message, which is what lets a
-   boosted channel and round robin share one clock.
-5. **The pull-forward is at pick.** RakNet pulls a level's next weight
-   forward to the heap's head when it pushes; here a clock behind the last
-   level taken counts as that clock when the next level is chosen.
-6. **The reset is at drain.** RakNet reseeds every level when the heap is
-   empty at a push; here the clocks reset when a write call leaves no item
-   untaken (the model: when nothing reliable is queued or awaiting resend at
-   the end of an update).
-7. **Ties go to the more urgent level.** RakNet's heap leaves equal weights in
-   an unspecified order.
-8. **IMMEDIATE is not immediate.** RakNet's only immediate behaviour is a
-   network-thread wake (study 5.3, "Code vs comment"); here every priority is
-   written at the next update, inside the budget.
+1. **The class order is outside priority.** Priority orders items only
+   inside one budget class: retransmits and ordered progress, then new
+   reliable, then unreliable, whatever their priorities (R6). An IMMEDIATE
+   unreliable item waits behind a LOW reliable one.
+2. **Priority boosts the whole channel; channels stay FIFO.** A channel is
+   offered only at its head, at the best priority among its queued items, so
+   a later high-priority send on a channel is never pulled before an earlier
+   low-priority one (docs/CHANNELS.md 17.3 item 3).
+3. **Round robin across channels within a level**, never one global FIFO of
+   a level's messages (17.3 item 4).
+4. **The clock advances at take, not at push.** A level's clock advances by
+   its stride when an item of that level is taken. The weight belongs to the
+   level, not to the message, which is what lets a boosted channel and round
+   robin share one clock.
+5. **The pull-forward is at pick.** A clock behind the last level taken
+   counts as that clock when the next level is chosen.
+6. **The reset is at drain.** The clocks reset when a write call leaves no
+   item untaken (the model: when nothing reliable is queued or awaiting
+   resend at the end of an update).
+7. **Ties go to the more urgent level.**
+8. **IMMEDIATE is not immediate.** Every priority is written at the next
+   update, inside the budget; no priority wakes a thread.
 9. **Out of range is never taken.** An item whose priority is not 0 to 3 is
    never written by the builder; the C API is to refuse it at send (17.3
    item 10).

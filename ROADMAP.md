@@ -73,7 +73,7 @@ The unreliable connection layer the message layer runs over: connection state, s
 
 ## Reliability modes
 
-The eight RakNet reliabilities, per send, over the connection layer's per-packet acks.
+The eight reliability modes, per send, over the connection layer's per-packet acks.
 
 | feature | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
@@ -85,7 +85,7 @@ The eight RakNet reliabilities, per send, over the connection layer's per-packet
 | UNRELIABLE_WITH_ACK_RECEIPT | ✅ | ✅ | ✅ |
 | RELIABLE_WITH_ACK_RECEIPT | ✅ | ✅ | ✅ |
 | RELIABLE_ORDERED_WITH_ACK_RECEIPT | ✅ | ✅ | ✅ |
-| Oversize unreliable sends are promoted to their reliable twin, as RakNet does, and said so | ✅ | ✅ | ✅ |
+| Oversize unreliable sends are promoted to their reliable twin, and said so | ✅ | ✅ | ✅ |
 | complete | 100% | 100% | 100% |
 
 [Source data](docs/roadmap.sexp)
@@ -323,7 +323,7 @@ The C surface in sdk/rocketnet.h and what a consumer needs to use it.
 | Vendored sodium, no system libsodium | ✅ | ✅ | ✅ |
 | Structured create errors and FFI-safe logging | ✅ | ✅ | ✅ |
 | Transports are named transports throughout: the rocketnet_*_transport_* calls, ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT, and the documentation | ✅ | ❌ | ❌ |
-| One receive queue per client and one per server, every channel's messages in RakNet's order, pumped in batches with no release call | ✅ | ❌ | ❌ |
+| One receive queue per client and one per server, every channel's messages in delivery order, pumped in batches with no release call | ✅ | ❌ | ❌ |
 | Create returns NULL and a status code that names why it refused | ✅ | ❌ | ❌ |
 | A server serves IPv4, IPv6 or both on one port | ✅ | ❌ | ❌ |
 | One environment variable per setting, current names only: retired names are not read | ✅ | ❌ | ❌ |

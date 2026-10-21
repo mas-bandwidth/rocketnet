@@ -1133,7 +1133,7 @@ static void test_channels_allocator_validation()
 
     // resend_delay_initial below resend_delay_min needs two fields: the default initial (2000 ms)
     // is above every single-field floor the range allows. Re-pinned for the
-    // RakNet default initial value.
+    // default initial value.
     rocketnet_message_default_config( &config );
     config.resend_delay_initial_ms = 100;
     config.resend_delay_min_ms = 150;

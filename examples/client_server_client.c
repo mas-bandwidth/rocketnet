@@ -27,6 +27,14 @@
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
+// serialize text (without its terminator) straight into a started message
+static int write_text( uint8_t * p, const char * text, int bytes )
+{
+    for ( int i = 0; i < bytes; i++ )
+        p[i] = (uint8_t) text[i];
+    return bytes;
+}
+
 #define KEY_FILE "client_server.keys"
 
 // MSVC deprecates fopen, so this uses fopen_s there.
@@ -190,8 +198,7 @@ int main( int argc, char ** argv )
             uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message_bytes );
             if ( out )
             {
-                memcpy( out, message, (size_t) message_bytes );
-                sent = rocketnet_client_finish_message( client, message_bytes ) != 0;
+                sent = rocketnet_client_finish_message( client, write_text( out, message, message_bytes ) ) != 0;
             }
         }
 

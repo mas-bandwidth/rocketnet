@@ -2102,7 +2102,7 @@ static void test_unreliable_store_full_exhausts_and_kicks()
 }
 
 // an unreliable message past the one-packet limit is promoted to its reliable
-// twin and counted (RakNet ReliabilityLayer); the one at the limit still goes
+// twin and counted (the promotion rule); the one at the limit still goes
 // as unreliable, and a valid message behind the promotion still arrives
 static void test_unreliable_past_limit_promotes_counted_and_not_wedged()
 {

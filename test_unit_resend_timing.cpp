@@ -3,10 +3,10 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// A reliable record waits for the adaptive RakNet resend delay on every resend:
+// A reliable record waits for the adaptive resend delay on every resend:
 // First deviation equals the RTT; later deviation moves 5% toward the
 // absolute RTT error, then smoothed RTT moves 5% toward the sample. resend delay is min(2*srtt + 4*deviation + 30 ms, configured max),
-// with no configured minimum floor by default and no back-off (docs/RAKNET-RELIABILITY.md:667-695). Before the first sample it waits for
+// with no configured minimum floor by default and no back-off (standard/MESSAGES.md m9.2). Before the first sample it waits for
 // resend_delay_initial. Validation reserves four initial resend delays before reliable_timeout.
 //
 // Time is an argument and the clock starts at 1000.0; nothing here reads a
@@ -123,7 +123,7 @@ static void test_resend_delay_is_adaptive_resend_delay()
 
 REGISTER_UNIT_TEST( test_resend_delay_is_adaptive_resend_delay );
 
-// The equation honors caller bounds; RakNet's 2 s default is not an override
+// The equation honors caller bounds; the 2 s default is not an override
 // of an application's explicit maximum.
 static void test_resend_delay_uses_configured_bounds()
 {
@@ -137,8 +137,8 @@ REGISTER_UNIT_TEST( test_resend_delay_uses_configured_bounds );
 
 // The first deviation equals the first RTT; every subsequent sample moves
 // deviation 5% toward the absolute RTT error and smoothed RTT 5% toward
-// the sample, as in RakNet CC.cpp:210-222.
-static void test_raknet_rtt_estimator_moves_five_percent()
+// the sample.
+static void test_rtt_estimator_moves_five_percent()
 {
     resend_timing_fixture_t f;
     rocketnet_message_default_config( &f.config );
@@ -170,7 +170,7 @@ static void test_raknet_rtt_estimator_moves_five_percent()
     resend_timing_close( &f );
 }
 
-REGISTER_UNIT_TEST( test_raknet_rtt_estimator_moves_five_percent );
+REGISTER_UNIT_TEST( test_rtt_estimator_moves_five_percent );
 
 // test_no_backoff_between_resends: a record that is never acked repeats its
 // configured initial resend delay on every pass.
@@ -384,7 +384,7 @@ static bool resend_timing_contains( const uint64_t * numbers, uint32_t count, ui
     return false;
 }
 
-// On a 200 ms path, the RakNet resend delay is 1230 ms. Chunks wait the adaptive resend delay,
+// On a 200 ms path, the adaptive resend delay is 1230 ms. Chunks wait the adaptive resend delay,
 // with no fixed 100 ms cap or retry back-off.
 static void test_chunk_resend_paced_by_rtt_not_interval()
 {

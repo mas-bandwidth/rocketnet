@@ -176,7 +176,7 @@ struct rn_message_object_t
     int clock_started;                          // 1 from the first update on
     int pending_connection;                     // the connection with a start pending, or -1
 
-    // the one receive queue (RakPeer::Receive): the update's deliveries,
+    // the one receive queue, pumped by each receive: the update's deliveries,
     // connection by connection in index order, each connection's in its
     // delivery order. receive_connection is the connection the queue is at;
     // its cursors[0] is the next delivery. The batch form hands out up to
@@ -236,7 +236,7 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
 void rn_message_object_abort( struct rn_message_object_t * object, int index );
 uint32_t rn_message_object_send( struct rn_message_object_t * object, int index, int channel, int reliability, const uint8_t * data, int bytes );
 
-// The one receive queue (RakPeer::Receive): 1 with the next delivery of the
+// The one receive queue, pumped by each receive: 1 with the next delivery of the
 // update, its connection in *index and the channel it was delivered on in
 // *channel (either NULL: not reported), 0 when the queue is empty. Release
 // finds the held view in whichever connection holds it.

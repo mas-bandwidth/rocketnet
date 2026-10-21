@@ -11,8 +11,8 @@
     order, the sequenced modes for strictly increasing sequences, the receipt
     modes for exactly one receipt per serial, and the over-maximum start is
     refused with its named counter. Codes 0 and 1 one past their
-    single-record maxima start as their reliable twins (promotion, as
-    RakNet's ReliabilityLayer does); their over-maximum is max_message_bytes.
+    single-record maxima start as their reliable twins (the promotion
+    rule); their over-maximum is max_message_bytes.
 
     One window on one connection, ending in a clean disconnect the server
     sees: every mode at once on every channel the config allows, both
@@ -113,7 +113,7 @@ static int live_matrix_sequenced( int mode )
     return mode == 1 || mode == 4;
 }
 
-// RakNet ReliabilityLayer promotion: code 0 above 1,411 travels as code 2,
+// The promotion rule: code 0 above 1,411 travels as code 2,
 // and code 1 above 1,405 (channels below 256) as code 4
 static int live_matrix_promoted( int mode, uint32_t length )
 {
@@ -671,7 +671,7 @@ static void live_matrix_over_maximum( struct live_matrix_t * m, int direction )
             uint32_t over = rocketnet_live_mode_max( &m->live, mode ) + 1;
             if ( mode <= 1 )
             {
-                // RakNet ReliabilityLayer promotion: one past the single-record
+                // The promotion rule: one past the single-record
                 // maximum of codes 0 and 1 starts as its reliable twin, never a
                 // refusal; abort gives the room back, so nothing is sent
                 const uint64_t failed_before = live_matrix_counter( live_matrix_sender_counters( m, direction ), ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );

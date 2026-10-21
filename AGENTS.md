@@ -6,13 +6,13 @@ This guide is the technical reference for an AI coding agent integrating RocketN
 - [Building and linking on Linux, Windows and macOS](#building-and-linking-on-linux-windows-and-macos)
 - [The integration loop](#the-integration-loop)
 - [Choosing a transport](#choosing-a-transport)
-- [The eight channel types and how they map from RakNet's PacketReliability](#the-eight-channel-types-and-how-they-map-from-raknets-packetreliability)
+- [The eight channel types](#the-eight-channel-types)
 - [Connect tokens and security](#connect-tokens-and-security)
 - [Errors and refusals](#errors-and-refusals)
 - [Threading rules](#threading-rules)
 - [Testing an integration](#testing-an-integration)
 - [Common mistakes](#common-mistakes)
-- [Zero-copy messages: an intentional difference from RakNet](#zero-copy-messages-an-intentional-difference-from-raknet)
+- [Zero-copy messages](#zero-copy-messages)
 
 ---
 
@@ -29,7 +29,7 @@ RocketNet is a low-level, connection-oriented client/server UDP transport and me
 - **One link library:** `RocketNet::rocketnet` (or the `rocketnet` CMake target when embedded via `add_subdirectory`).
 - **Version macros:** `ROCKETNET_VERSION` is one comparable integer, `ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH` (`10000` for 1.0.0, and for v1.0.0-preview-1, since the prerelease is not in the integer; a development build uses `255` for each part). The text form is `ROCKETNET_VERSION_FULL` (`"1.0.0-preview-1"` for this release, or `"dev"` in a development build). `rocketnet_version()` returns the integer the library was built with; compare it with `ROCKETNET_VERSION` to catch a header and a shared library from different releases.
 - **Up to 1000 clients per server (`ROCKETNET_MAX_CLIENTS`):** Clients are addressed by an `int` slot index `0 .. max_clients - 1`; `rocketnet_client_index` returns the client's own index while connected and `-1` otherwise, and only `rocketnet_server_start_message` takes a `uint64_t` destination id (a client index today, a flow id with `ROCKETNET_FLOW_ID_BIT` set later). Each client and server is one block allocated through the allocator at create (`rocketnet_client_required_memory` and `rocketnet_server_required_memory` give its size, aligned to `ROCKETNET_ALLOCATION_ALIGNMENT`) and performs zero dynamic allocations while connections are live.
-- **Up to 32 channels (`ROCKETNET_MAX_CHANNELS`) and 8 delivery modes:** Every message is sent on a channel `0 .. num_channels - 1` with one of eight reliability modes matching RakNet's `PacketReliability`.
+- **Up to 32 channels (`ROCKETNET_MAX_CHANNELS`) and 8 delivery modes:** Every message is sent on a channel `0 .. num_channels - 1` with one of eight reliability modes.
 
 ---
 
@@ -192,8 +192,9 @@ int main( void )
             uint8_t * out = rocketnet_server_start_message( server, (uint64_t) reply_index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
             if ( !out )
                 goto cleanup;
-            memcpy( out, "pong", 4 );
-            if ( !rocketnet_server_finish_message( server, 4 ) )
+            uint8_t * p = out;
+            *p++ = 'p'; *p++ = 'o'; *p++ = 'n'; *p++ = 'g';
+            if ( !rocketnet_server_finish_message( server, (int) ( p - out ) ) )
                 goto cleanup;
         }
         if ( !client_sent && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
@@ -201,8 +202,9 @@ int main( void )
             uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
             if ( !out )
                 goto cleanup;
-            memcpy( out, "ping", 4 );
-            if ( !rocketnet_client_finish_message( client, 4 ) )
+            uint8_t * p = out;
+            *p++ = 'p'; *p++ = 'i'; *p++ = 'n'; *p++ = 'g';
+            if ( !rocketnet_client_finish_message( client, (int) ( p - out ) ) )
                 goto cleanup;
             client_sent = 1;
         }
@@ -277,11 +279,11 @@ through the config or environment. The server generates its own keypair at creat
 
 ---
 
-## The eight channel types and how they map from RakNet's PacketReliability
+## The eight channel types
 
-RocketNet implements all eight RakNet `PacketReliability` modes across up to `ROCKETNET_MAX_CHANNELS` (`32`) independent channels (`0 .. num_channels - 1`). Details of the wire codes and channel state machines live in [docs/RAKNET-RELIABILITY.md](docs/RAKNET-RELIABILITY.md) and [docs/CHANNELS.md](docs/CHANNELS.md).
+RocketNet implements eight reliability modes across up to `ROCKETNET_MAX_CHANNELS` (`32`) independent channels (`0 .. num_channels - 1`). Details of the wire codes and channel state machines live in [docs/RELIABILITY.md](docs/RELIABILITY.md) and [docs/CHANNELS.md](docs/CHANNELS.md).
 
-| RakNet `PacketReliability` | RocketNet macro | What the receiver sees | Receipt delivered via `rocketnet_client_receipts` / `rocketnet_server_receipts` |
+| Mode | RocketNet macro | What the receiver sees | Receipt delivered via `rocketnet_client_receipts` / `rocketnet_server_receipts` |
 | --- | --- | --- | --- |
 | `UNRELIABLE` | `ROCKETNET_RELIABILITY_UNRELIABLE` | Arrives at most once, in arrival order, or is dropped; an oversize message above one packet is promoted to `ROCKETNET_RELIABILITY_RELIABLE` | None |
 | `UNRELIABLE_SEQUENCED` | `ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED` | Latest-only on the channel: any message older than the newest delivered sequencing index is dropped; oversize above one packet is promoted to `ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED` | None |
@@ -403,9 +405,9 @@ RocketNet refuses invalid configuration rather than clamping it. Check returned 
 
 ---
 
-## Zero-copy messages: an intentional difference from RakNet
+## Zero-copy messages
 
-In RakNet, `RakPeerInterface::Send` takes a `const char *` or `RakNet::BitStream *` and copies the caller's payload into internal `BitStream` and `InternalPacket` allocations. RocketNet has no copying send call. Its only per-connection send path is the start/finish pair:
+RocketNet has no copying send call: the caller never hands it a finished buffer to copy. Its only per-connection send path is the start/finish pair:
 
 - `rocketnet_client_start_message(client, channel, reliability, bytes)` and `rocketnet_server_start_message(server, destination_id, channel, reliability, bytes)` reserve room for up to `bytes` bytes and return a `uint8_t *` the caller writes the message at, once, in place.
 - The caller serializes or writes the message into that pointer in place.
@@ -422,7 +424,7 @@ Where the returned pointer lies depends on the message:
 
 This API is an intentional design choice of RocketNet's author:
 
-1. **A message that fits in one packet goes out with no copy:** a fitting unreliable message is written once, by the caller, into the packet itself. A message on the region path is still written once by the caller and copied once into its packet, never through an intermediate `BitStream`.
+1. **A message that fits in one packet goes out with no copy:** a fitting unreliable message is written once, by the caller, into the packet itself. A message on the region path is still written once by the caller and copied once into its packet, never through an intermediate buffer.
 2. **Room for the headers is reserved in front of it:** for an in-place message, `start` asks the transport for a packet with the message header's room in front of the caller's bytes and one byte after them for the form byte; the transport's own headers are already in front of that. `finish` writes the header and form byte around the bytes the caller wrote, so nothing is moved.
 3. **Start's declared maximum size lets the library choose the right buffer:** for an unreliable message, `bytes` sets the packet size requested from the transport (`header + bytes + 1`), so a message declared to fit one packet gets a real packet buffer. For a message on the region path, `bytes` picks the region storage: a fixed send-store chunk (`128`, `512` or `1152` bytes) up to `1152` bytes, or a contiguous span in the connection's send spans above that (up to `max_message_bytes`), which is fragmented into packets without the caller ever building the pieces.
 
@@ -440,44 +442,42 @@ In practice: no per-message copy or allocation for unreliable traffic that takes
   - The message falls back to the queue (written to the region and sent by the next `send_packets`, one copy) when the transport has no packet buffer to give, or one smaller than the request, when unreliable messages are already queued on that connection (so it cannot overtake them; for `ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED` also when its channel's queue or a reliable block is still waiting), when the update's packet allowance is spent, or when the send budget cannot pay the declared maximum now (or a reliable message from the last pass is still waiting for budget). Each fallback is counted inside the library (the message layer's `MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK` counter, which is not one of the public stats fields). `start` then returns a pointer into the region, or `NULL` if the region has no room (below).
   - If the send budget can no longer pay at `finish`, the message is dropped there, counted in the `budget_drops` stat, and `finish` still returns its serial; a `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT` message reports `ROCKETNET_RECEIPT_STATUS_LOSS` for it.
 - **A reliable message:** `ROCKETNET_RELIABILITY_RELIABLE`, `ROCKETNET_RELIABILITY_RELIABLE_ORDERED`, `ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED`, `ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT` and `ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT` are always written into the region (a store chunk up to `1152` bytes, a contiguous span above that) and copied into their packet, or into `1152`-byte fragments, at `send_packets`. A reliable message waits for send budget and is never dropped for it.
-- **An oversize unreliable message:** when the declared `bytes` exceeds one packet (up to `max_message_bytes`), `start` accepts it and the message is promoted on the wire to its reliable twin (`ROCKETNET_RELIABILITY_UNRELIABLE` to `ROCKETNET_RELIABILITY_RELIABLE`, `ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED` to `ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED`, `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT` to reliable-with-receipt delivery, keeping its ACKED-only receipt), as RakNet's `ReliabilityLayer` does. If `finish` then commits a `bytes_written` that fits one packet, the message is not promoted: the same region record moves to the queued unreliable route without a copy and goes out with the next `send_packets`. Above `max_message_bytes`, `start` refuses in every mode.
+- **An oversize unreliable message:** when the declared `bytes` exceeds one packet (up to `max_message_bytes`), `start` accepts it and the message is promoted on the wire to its reliable twin (`ROCKETNET_RELIABILITY_UNRELIABLE` to `ROCKETNET_RELIABILITY_RELIABLE`, `ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED` to `ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED`, `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT` to reliable-with-receipt delivery, keeping its ACKED-only receipt). If `finish` then commits a `bytes_written` that fits one packet, the message is not promoted: the same region record moves to the queued unreliable route without a copy and goes out with the next `send_packets`. Above `max_message_bytes`, `start` refuses in every mode.
 - **What a `NULL` return from `start` means:**
   - **Caller misuse:** another `start` is already pending, `channel` is outside `0 .. num_channels - 1`, `reliability` is not one of the eight channel types, `bytes` is outside `1 .. max_message_bytes`, or the server's `destination_id` is outside `0 .. max_clients - 1` or has `ROCKETNET_FLOW_ID_BIT` set. `start` returns `NULL` and the connection stays up.
   - **No connection yet, or no longer:** a send before the connection is `ROCKETNET_CLIENT_STATE_CONNECTED` is dropped: start returns NULL, finish returns 0, nothing is queued. This holds on the client and the server alike, handshake states included; nothing is held for the end of the handshake, and a stopped server drops the same way for an index below `max_clients`. It is a normal drop, never API misuse: each dropped start adds 1 to the client's or the server's `not_connected_drops` stat. Send only once `rocketnet_client_state` returns `ROCKETNET_CLIENT_STATE_CONNECTED` on the client, or `rocketnet_server_client_connected` returns true for the slot on the server.
   - **Connection send memory exhausted:** a connected peer's region has no room for the reservation. `start` returns `NULL` and ends that connection: the server disconnects that client slot with `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED`, and a client ends its own connection in `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED`.
 
-### Porting RakNet-style code: before and after
+### Writing a message in place
 
-**Before (RakNet `BitStream` + copy into `Send`):**
-
-```cpp
-// RakNet: serializes into a temporary BitStream, then copies inside Send()
-RakNet::BitStream bs;
-bs.Write((uint8_t)ID_PLAYER_INPUT);
-bs.Write(tick);
-bs.Write(move_x);
-bs.Write(move_y);
-peer->Send(&bs, HIGH_PRIORITY, UNRELIABLE_SEQUENCED, 0, server_addr, false);
-```
-
-**After (RocketNet zero-copy `start` / `finish`):**
+Serialize straight into the pointer `start` returns, then finish with the bytes written:
 
 ```cpp
-// RocketNet: reserves the outgoing buffer first and writes in place
-const int max_bytes = 1 + (int)sizeof(uint32_t) + 2 * (int)sizeof(float);
+// RocketNet: reserves the outgoing buffer first and serializes in place
+static int write_u32(uint8_t * p, uint32_t value)
+{
+    p[0] = (uint8_t)value; p[1] = (uint8_t)(value >> 8); p[2] = (uint8_t)(value >> 16); p[3] = (uint8_t)(value >> 24);
+    return 4;
+}
+
+static int write_f32(uint8_t * p, float value)
+{
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof(bits)); // the float's bit pattern, not the message
+    return write_u32(p, bits);
+}
+
+const int max_bytes = 1 + 4 + 2 * 4;
 uint8_t * out = rocketnet_client_start_message(client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, max_bytes);
 if (out)
 {
-    int offset = 0;
-    out[offset++] = 1; // message type tag
-    memcpy(out + offset, &tick, sizeof(tick));
-    offset += (int)sizeof(tick);
-    memcpy(out + offset, &move_x, sizeof(move_x));
-    offset += (int)sizeof(move_x);
-    memcpy(out + offset, &move_y, sizeof(move_y));
-    offset += (int)sizeof(move_y);
+    uint8_t * p = out;
+    *p++ = 1; // message type tag
+    p += write_u32(p, tick);
+    p += write_f32(p, move_x);
+    p += write_f32(p, move_y);
 
-    uint32_t serial = rocketnet_client_finish_message(client, offset);
+    uint32_t serial = rocketnet_client_finish_message(client, (int)(p - out));
     (void)serial;
 }
 ```

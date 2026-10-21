@@ -27,6 +27,22 @@ static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] 
 // finish_message, receive_messages (one batch, no release call) and
 // send_packets, with int client indexes.
 #define CHECK( cond ) do { if ( !( cond ) ) { printf( "FAIL: %s (line %d)\n", #cond, __LINE__ ); goto cleanup; } } while ( 0 )
+
+// serialize a uint32_t little-endian straight into a started message
+static int write_u32( uint8_t * p, uint32_t value )
+{
+    p[0] = (uint8_t) value;
+    p[1] = (uint8_t) ( value >> 8 );
+    p[2] = (uint8_t) ( value >> 16 );
+    p[3] = (uint8_t) ( value >> 24 );
+    return 4;
+}
+
+static uint32_t read_u32( const uint8_t * p )
+{
+    return (uint32_t) p[0] | ( (uint32_t) p[1] << 8 ) | ( (uint32_t) p[2] << 16 ) | ( (uint32_t) p[3] << 24 );
+}
+
 #define MAX_SOAK_CLIENTS ROCKETNET_MAX_CLIENTS
 #define BATCH_CLIENTS 250
 #define DISCONNECT_BATCH 64
@@ -83,15 +99,17 @@ static void soak_write_msg( uint8_t * out, int len, uint64_t seed, uint64_t clie
         out[i] = soak_byte( seed, client_idx, kind, seq, i );
         hash = ( hash ^ out[i] ) * 16777619u;
     }
-    uint32_t hdr[4] = { (uint32_t) client_idx, ( kind & 0xffu ) | ( (uint32_t) len << 8 ), seq, hash };
-    memcpy( out, hdr, 16 );
+    uint8_t * p = out;
+    p += write_u32( p, (uint32_t) client_idx );
+    p += write_u32( p, ( kind & 0xffu ) | ( (uint32_t) len << 8 ) );
+    p += write_u32( p, seq );
+    p += write_u32( p, hash );
 }
 
 static bool soak_check_msg( const uint8_t * data, int len, uint64_t seed, uint64_t want_client,
                             int ch, struct soak_peer_t * rx, uint64_t * corrupt, uint64_t * gaps ) {
     if ( len < 16 ) { (*corrupt)++; printf( "FAIL: short message client=%" PRIu64 " seq=0\n", want_client ); return false; }
-    uint32_t hdr[4];
-    memcpy( hdr, data, 16 );
+    const uint32_t hdr[4] = { read_u32( data ), read_u32( data + 4 ), read_u32( data + 8 ), read_u32( data + 12 ) };
     uint32_t client_id = hdr[0], kind = hdr[1] & 0xffu, seq = hdr[2], want_hash = hdr[3];
     int msg_len = (int) ( hdr[1] >> 8 );
     uint32_t hash = 2166136261u;

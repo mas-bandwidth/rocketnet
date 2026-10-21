@@ -40,6 +40,20 @@ static void lifecycle_identity( lifecycle_identity_t * identity )
     check( rocketnet_generate_backend_keypair_from_seed( seed, identity->backend_public, identity->backend_secret ) == ROCKETNET_STATUS_OK );
 }
 
+// set nonzero by a test that queues more messages per connection than the
+// defaults hold: the window, the send queue and the send buffer then fit
+// that many messages, on the server and every client the world creates
+static int lifecycle_queue_messages = 0;
+
+static void lifecycle_queue_config( int * window_messages, int * send_queue_messages, int * send_buffer_bytes )
+{
+    if ( lifecycle_queue_messages == 0 )
+        return;
+    *window_messages = lifecycle_queue_messages;
+    *send_queue_messages = lifecycle_queue_messages;
+    *send_buffer_bytes = lifecycle_queue_messages * 256;      // a send-store chunk per message, with room
+}
+
 static void lifecycle_server_config( rocketnet_server_config_t * config, const lifecycle_identity_t * identity, int max_clients )
 {
     rocketnet_server_default_config( config );
@@ -47,6 +61,7 @@ static void lifecycle_server_config( rocketnet_server_config_t * config, const l
     config->max_clients = max_clients;
     memcpy( config->backend_public_key, identity->backend_public, sizeof( config->backend_public_key ) );
     config->transport = "loopback";
+    lifecycle_queue_config( &config->window_messages, &config->send_queue_messages, &config->send_buffer_bytes );
 }
 
 static void lifecycle_client_config( rocketnet_client_config_t * config )
@@ -55,6 +70,7 @@ static void lifecycle_client_config( rocketnet_client_config_t * config )
     config->transport = "loopback";
     config->step_driven = true;
     config->time_callback = lifecycle_clock;
+    lifecycle_queue_config( &config->window_messages, &config->send_queue_messages, &config->send_buffer_bytes );
 }
 
 // the token string sealed to the server's own key, naming 127.0.0.1:port
@@ -1149,7 +1165,7 @@ static void test_client_one_update_sends_more_than_sixteen_packets()
 REGISTER_UNIT_TEST( test_client_one_update_sends_more_than_sixteen_packets );
 
 // ---------------------------------------------------------------------------
-// The one receive queue, as RakPeer::Receive: every reliability type sent on
+// The one receive queue, pumped by each receive: every reliability type sent on
 // every channel by every client is received through the server's one queue,
 // each naming its sender, and through each client's one queue. The send's
 // channel orders ORDERED and sequences SEQUENCED messages within it and is
@@ -1289,7 +1305,7 @@ static void rq_run( rq_run_t * run )
     lifecycle_world_destroy( &world );
 }
 
-// RakNet's guarantees over one log: nothing twice; every reliable type
+// The delivery guarantees over one log: nothing twice; every reliable type
 // (RELIABLE, RELIABLE_ORDERED and the two reliable receipt types) exactly
 // once whatever channel it was sent on; ordered messages in send order within
 // their sender and channel; sequenced messages never older than one seen
@@ -1358,6 +1374,14 @@ REGISTER_UNIT_TEST( test_message_receive_one_queue_every_type_every_channel );
 // finds nothing pending returns false with num_messages 0.
 static void test_message_receive_pumped_in_order()
 {
+    // each client sends more than one batch; together the clients' deliveries
+    // in one update are more than one batch of the server's one queue, so
+    // the window, the send queue and the send buffer hold every message
+    enum { NUM_SENDERS = 3 };
+    const int per_client = ROCKETNET_RECEIVE_BATCH_MESSAGES + 17;
+    lifecycle_queue_messages = 1;
+    while ( lifecycle_queue_messages < per_client )
+        lifecycle_queue_messages *= 2;
     lifecycle_world_t world;
     lifecycle_world_create( &world, 2, 1 );
     rocketnet_client_t * client = world.clients[0];

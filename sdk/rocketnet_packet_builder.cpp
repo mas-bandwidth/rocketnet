@@ -20,8 +20,7 @@ static void rn_builder_count( rocketnet_counters_t * counters, int counter )
         rocketnet_platform_atomic_add_u64( (volatile uint64_t*) &counters->values[counter], 1 );
 }
 
-// RakNet's per-level stride and seed (docs/RAKNET-RELIABILITY.md 5.3,
-// RL.cpp:3926-3949): stride (1 << p) * (p + 1) + p, seed (1 << p) * p + p.
+// The per-level stride and seed: stride (1 << p) * (p + 1) + p, seed (1 << p) * p + p.
 // tla/RNScheduler.tla's Stride and Seed.
 
 static const uint64_t rn_builder_stride[ROCKETNET_PACKET_BUILDER_LEVELS] = { 1, 5, 14, 35 };
@@ -140,7 +139,7 @@ static bool rn_builder_writable( const struct rn_packet_item_t * item )
 //    items of this class: per-send priority boosts the whole channel (17.3
 //    item 3, RNScheduler!Boost and IsHead).
 // 2. The level: the smallest clock among the levels offered, a clock behind
-//    clock_base counting as clock_base (RakNet's pull-forward); a tie goes to
+//    clock_base counting as clock_base (the pull-forward); a tie goes to
 //    the more urgent level (RNScheduler!PickLevel).
 // 3. The channel: round robin from the channel after the last one taken, one
 //    item per turn (17.3 item 4, RNScheduler!PickIn).
@@ -254,7 +253,7 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
 
         // 9.3 and RNScheduler!Write: fill in the budget's class order, the
         // outer rule (RNScheduler ClassOrderBeforePriority). Within a class,
-        // RakNet's four priority levels by their clocks; within a level,
+        // the four priority levels by their clocks; within a level,
         // channels take turns one item each, so one chatty channel cannot
         // starve the others; within a channel, FIFO.
         for ( int send_class = ROCKETNET_SEND_CLASS_RETRANSMIT; send_class <= ROCKETNET_SEND_CLASS_UNRELIABLE; send_class++ )
