@@ -463,11 +463,13 @@ static void rocketnet_server_stats_worker_entry( void * arg )
 }
 
 #if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS)
-static bool rocketnet_server_stats_manual_next = false;
+// -1 uses this binary's default; 0 explicitly requests the native worker;
+// 1 requests deterministic inline stepping for the next create.
+static int rocketnet_server_stats_manual_next = -1;
 static bool rocketnet_server_stats_fail_thread_next = false;
 void rocketnet_server_transport_set_stats_worker_manual_for_test( bool enabled )
 {
-    rocketnet_server_stats_manual_next = enabled;
+    rocketnet_server_stats_manual_next = enabled ? 1 : 0;
 }
 void rocketnet_server_transport_fail_stats_worker_thread_for_test()
 {
@@ -1261,14 +1263,26 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
                                                                            double time, int * status )
 {
 #if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS)
-    const bool manual_stats_worker = rocketnet_server_stats_manual_next;
+    const int manual_override = rocketnet_server_stats_manual_next;
     const bool fail_stats_thread = rocketnet_server_stats_fail_thread_next;
-    rocketnet_server_stats_manual_next = false;
+    rocketnet_server_stats_manual_next = -1;
     rocketnet_server_stats_fail_thread_next = false;
 #else
-    const bool manual_stats_worker = false;
+    const int manual_override = -1;
     const bool fail_stats_thread = false;
 #endif
+#if defined(ROCKETNET_LOOPBACK_TEST_HOOKS)
+    // This build drives in-memory unit fixtures whose cleanup queries
+    // completion immediately; it has no OS worker or clock in that path.
+    const bool default_manual_stats_worker = true;
+#else
+    const bool default_manual_stats_worker = false;
+#endif
+    // A requested thread-create refusal must exercise the native creation
+    // branch even in deterministic unit builds. Explicit false can likewise
+    // opt one test into the native worker without changing production.
+    const bool manual_stats_worker = !fail_stats_thread &&
+        (manual_override >= 0 ? manual_override != 0 : default_manual_stats_worker);
     // docs/ERRORS-AND-LOGGING.md 2.1 and the settled Q2: a NULL required
     // argument is a logged INVALID_ARGUMENT and a NULL return in debug and
     // release (S1).
