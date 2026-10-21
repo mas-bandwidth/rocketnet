@@ -1790,6 +1790,37 @@ static void rocketnet_server_update_stats( struct rocketnet_server_transport_t *
     }
 }
 
+// Keep connected slots on the six-update publication schedule, independent
+// of send-pool progress. Free slots have reset endpoints and read as zero;
+// do not walk their cold RTT and packet histories.
+static int rocketnet_server_update_client_stats( const rocketnet_client_slots_t * slots,
+                                                 rocketnet_server_acks_t * acks )
+{
+    int updated = 0;
+    const int max_clients = rocketnet_client_slots_max_clients( slots );
+    for ( int i = 0; i < max_clients; i++ )
+    {
+        if ( (uint64_t) ( i % ROCKETNET_CLIENT_STATS_UPDATE_PHASES ) !=
+             acks->update_count % ROCKETNET_CLIENT_STATS_UPDATE_PHASES )
+            continue;
+        if ( !rocketnet_client_slots_connected( slots, i ) )
+            continue;
+        rocketnet_ack_endpoint_update_stats( &acks->endpoints[i] );
+        updated++;
+    }
+    return updated;
+}
+
+#if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS)
+// Counts actual cold endpoint calls through the production selection path.
+// The fixture owns its pure slots/acks; no transport, I/O or clock is needed.
+int rocketnet_server_transport_test_update_client_stats( const rocketnet_client_slots_t * slots,
+                                                        rocketnet_server_acks_t * acks )
+{
+    return rocketnet_server_update_client_stats( slots, acks );
+}
+#endif
+
 // The admission gate, consulted by the receive loops before a packet is
 // handed to the protocol. A source with a mapping has already cleared the
 // connect ladder and bypasses the gate; a callback that says DROP stops an
@@ -2139,11 +2170,8 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     struct rocketnet_server_acks_t * acks = server_transport->protocol.acks;
 
     const int max_clients = rocketnet_client_slots_max_clients( server_transport->protocol.client_slots );
-    // Statistics must cover every slot even when the transport's send pool is
-    // exhausted. Their six-update schedule is independent of send progress.
-    for ( int i = 0; i < max_clients; i++ )
-        if ( ( (uint64_t) ( i % ROCKETNET_CLIENT_STATS_UPDATE_PHASES ) ) == ( acks->update_count % ROCKETNET_CLIENT_STATS_UPDATE_PHASES ) )
-            rocketnet_ack_endpoint_update_stats( &acks->endpoints[i] );
+    // Statistics cover connected slots even when the send pool is exhausted.
+    rocketnet_server_update_client_stats( server_transport->protocol.client_slots, acks );
 
     const int first_client = server_transport->maintenance_next_client;
     for ( int offset = 0; offset < max_clients; offset++ )
