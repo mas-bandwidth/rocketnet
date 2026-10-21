@@ -75,7 +75,6 @@ static void half_open_server_setup( struct half_open_server_t * test, double han
     server->max_token_lifetime_seconds = 0;
     server->handshake_deadline_seconds = handshake_deadline_seconds;
     server->max_timeout_seconds = 0;
-    server->allow_negative_timeout = 0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     server->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
     server->client_slots = rocketnet_client_slots_create( NULL, 4 );

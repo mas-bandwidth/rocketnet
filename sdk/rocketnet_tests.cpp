@@ -2329,7 +2329,6 @@ static void rocketnet_test_server_setup( struct rocketnet_test_server_t * test )
     server->max_token_lifetime_seconds = 600;
     server->handshake_deadline_seconds = 5.0;
     server->max_timeout_seconds = 0;
-    server->allow_negative_timeout = 0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     server->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
     server->client_slots = rocketnet_client_slots_create( NULL, 4 );
@@ -2615,7 +2614,7 @@ void rocketnet_test_request_path_refusals()
         rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED );
     }
 
-    // zero timeout is invalid; negative refused unless configured
+    // a zero timeout and a negative one are both invalid
     memcpy( request, good_request, sizeof(request) );
     memset( request + signed_offset + ROCKETNET_SIGNED_OFFSET_TIMEOUT, 0, 4 );
     before = test.counters;
@@ -3639,10 +3638,7 @@ void rocketnet_test_request_path_config_branches()
         rocketnet_check( rocketnet_encryption_map_entry( test.server.encryption_map, index )->timeout_seconds == 30 );
     }
 
-    // a negative timeout is accepted when explicitly configured, refused
-    // otherwise (the refusal is already tested); and the accept carries the
-    // negative value through so timeouts are disabled downstream
-    test.server.allow_negative_timeout = 1;
+    // a negative timeout is refused: there is no switch that accepts it
     rocketnet_check( rocketnet_address_parse( &test.client_address, "198.51.100.61:56789" ) );
     {
         struct rocketnet_signed_connect_data_t signed_fields;
@@ -3654,11 +3650,8 @@ void rocketnet_test_request_path_config_branches()
         struct rocketnet_connect_token_t token;
         rocketnet_read_connect_token( &token, token_data );
         rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt, rocketnet_test_client_eph_public, token.signed_connect_data, token.signature );
-        rocketnet_test_pass_cookie_gate( &test, request );
-        rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
-        int index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
-        rocketnet_check( index != -1 );
-        rocketnet_check( rocketnet_encryption_map_entry( test.server.encryption_map, index )->timeout_seconds == -1 );
+        rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_check( rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) == -1 );
     }
 
     // the previous cookie key: a cookie minted under the old key is accepted
@@ -5544,8 +5537,9 @@ void rocketnet_test_client_terminal_states_wipe_secrets()
         switch ( scenario )
         {
             case 0:
-                // (a) the total connect deadline passes mid-handshake
-                rocketnet_test_mint_token( token_data, 1, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_CREATE_TS + 5, -1 );
+                // (a) the total connect deadline passes mid-handshake; the
+                // timeout is valid and longer than the token's lifetime
+                rocketnet_test_mint_token( token_data, 1, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_CREATE_TS + 5, 60 );
                 rocketnet_check( rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
                 for ( double time = 100.0; time < 107.0; time += 0.05 )
                     rocketnet_client_protocol_update( &client, time, packet, &packet_bytes );
@@ -5704,11 +5698,11 @@ void rocketnet_test_client_timeout_paths()
         rocketnet_counters_assert_conserved( &client_counters );
     }
 
-    // the total connect deadline: per-state timers disabled by a negative
-    // timeout, and the whole handshake still dies once the token's lifetime
+    // the total connect deadline: a per-state timeout longer than the
+    // token's lifetime, and the whole handshake still dies once the lifetime
     // elapses -- connect or be discarded, and no amount of nothing extends it
     rocketnet_client_protocol_init( &client, &counters );
-    rocketnet_test_mint_token( token_data, 1, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_CREATE_TS + 5, -1 );
+    rocketnet_test_mint_token( token_data, 1, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_CREATE_TS + 5, 60 );
     rocketnet_check( rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
     for ( double time = 100.0; time < 107.0; time += 0.05 )
         rocketnet_client_protocol_update( &client, time, packet, &packet_bytes );

@@ -394,7 +394,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     {
         const uint8_t * p = signed_connect_data + ROCKETNET_SIGNED_OFFSET_TIMEOUT;
         timeout_seconds = (int32_t) rocketnet_read_uint32( &p );
-        if ( timeout_seconds == 0 || ( timeout_seconds < 0 && !server->allow_negative_timeout ) )
+        if ( timeout_seconds <= 0 )
         {
             rocketnet_debug( "server ignored connection request. invalid timeout" );
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TIMEOUT_INVALID]++;

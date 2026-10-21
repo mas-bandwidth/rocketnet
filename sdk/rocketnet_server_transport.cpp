@@ -8,7 +8,6 @@
 #define ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS      3
 #define ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS      60
 #define ROCKETNET_DEFAULT_MAX_TOKEN_LIFETIME_SECONDS   0
-#define ROCKETNET_DEFAULT_ALLOW_NEGATIVE_TIMEOUT       0
 
 static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS,
                "cookie rotation period must exceed cookie lifetime so a cookie never outlives both keys" );
@@ -1579,7 +1578,6 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     protocol->max_token_lifetime_seconds = ROCKETNET_DEFAULT_MAX_TOKEN_LIFETIME_SECONDS;
     protocol->handshake_deadline_seconds = config->handshake_deadline_seconds;
     protocol->max_timeout_seconds = config->max_timeout_seconds;
-    protocol->allow_negative_timeout = ROCKETNET_DEFAULT_ALLOW_NEGATIVE_TIMEOUT;
 
     protocol->encryption_map = rocketnet_encryption_map_create( context, max_clients * ROCKETNET_ENCRYPTION_MAP_RATIO );
     protocol->used_token_history = rocketnet_used_token_history_create( context, max_clients * ROCKETNET_USED_TOKEN_HISTORY_RATIO );

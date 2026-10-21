@@ -257,7 +257,6 @@ static struct decision_t rocketnet_decide( int case_id, uint64_t now )
     server.max_token_lifetime_seconds = 600;
     server.handshake_deadline_seconds = 5.0;
     server.max_timeout_seconds = 0;
-    server.allow_negative_timeout = 0;
     server.encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     server.used_token_history = rocketnet_used_token_history_create( NULL, 64 );
     server.client_slots = rocketnet_client_slots_create( NULL, 4 );

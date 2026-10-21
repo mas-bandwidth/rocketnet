@@ -35,6 +35,7 @@
 
 #define HANDSHAKE_DEADLINE_CREATE    ROCKETNET_TEST_CREATE_TS
 #define HANDSHAKE_DEADLINE_EXPIRE    ( HANDSHAKE_DEADLINE_CREATE + 5 )
+#define HANDSHAKE_DEADLINE_TIMEOUT   60     // a valid timeout, longer than the token's lifetime
 
 static void handshake_deadline_mint( uint8_t * token_data, uint64_t create, uint64_t expire, int32_t timeout )
 {
@@ -65,7 +66,8 @@ static void handshake_deadline_mint( uint8_t * token_data, uint64_t create, uint
 // Begin at C + 3 with a token of create C and expire C + 5: the token has two
 // seconds left on its own clock, but the attempt owns the token's whole
 // lifetime, five seconds, from the moment it begins. The per-state timeout is
-// off, so only the total deadline can end it. An update just before five
+// sixty seconds, longer than the lifetime, so only the total deadline can end
+// it. An update just before five
 // seconds is still requesting cookie (1), past the token's expire timestamp on
 // the token's own clock; the update at five seconds is connect token expired
 // (-7). These are sdk/rocketnet_client_protocol.cpp:148, :187 and :205-206,
@@ -78,7 +80,7 @@ static void test_client_attempt_runs_the_token_lifetime_from_its_start()
     rocketnet_client_protocol_init( &client, &counters );
 
     uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
-    handshake_deadline_mint( token_data, HANDSHAKE_DEADLINE_CREATE, HANDSHAKE_DEADLINE_EXPIRE, -1 );
+    handshake_deadline_mint( token_data, HANDSHAKE_DEADLINE_CREATE, HANDSHAKE_DEADLINE_EXPIRE, HANDSHAKE_DEADLINE_TIMEOUT );
 
     rocketnet_unit_check( rocketnet_client_protocol_connect( &client, token_data, 1000.0,
                                                              HANDSHAKE_DEADLINE_CREATE + 3 ) );
@@ -109,7 +111,7 @@ static void test_client_connect_at_the_expire_timestamp_is_refused()
     rocketnet_client_protocol_init( &client, &counters );
 
     uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
-    handshake_deadline_mint( token_data, HANDSHAKE_DEADLINE_CREATE, HANDSHAKE_DEADLINE_EXPIRE, -1 );
+    handshake_deadline_mint( token_data, HANDSHAKE_DEADLINE_CREATE, HANDSHAKE_DEADLINE_EXPIRE, HANDSHAKE_DEADLINE_TIMEOUT );
 
     rocketnet_unit_check( !rocketnet_client_protocol_connect( &client, token_data, 1000.0,
                                                               HANDSHAKE_DEADLINE_EXPIRE ) );
