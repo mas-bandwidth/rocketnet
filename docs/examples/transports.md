@@ -72,7 +72,7 @@ variable and the value it displaced.
 - `rocketnet_server_default_config`, `rocketnet_server_create`,
   `rocketnet_server_start`, `rocketnet_server_destroy`,
   `rocketnet_server_update`, `rocketnet_server_send_packets`,
-  `rocketnet_server_port`, `rocketnet_server_transport_name`,
+  `rocketnet_server_transport_name`,
   `rocketnet_server_receive_messages`
 - `rocketnet_client_default_config`, `rocketnet_client_create`,
   `rocketnet_client_connect`, `rocketnet_client_destroy`,
@@ -80,5 +80,6 @@ variable and the value it displaced.
   `rocketnet_client_disconnect`, `rocketnet_client_state`,
   `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
   `rocketnet_client_receive_messages`
-- `rocketnet_write_dev_connect_token` (development library only)
+- `rocketnet_server_public_key`, `rocketnet_server_ipv4_address`
+- `rocketnet_create_dev_connect_token` (development library only)
 - `rocketnet_status_name`, `rocketnet_time`, `rocketnet_sleep`

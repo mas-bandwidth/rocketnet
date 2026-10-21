@@ -82,12 +82,12 @@ informational and not part of the check. The key file is a local artifact and
 can be deleted after a run.
 ## Public calls it uses
 - `rocketnet_init`, `rocketnet_term`
-- `rocketnet_generate_backend_keypair`, `rocketnet_generate_server_keypair`,
-  `rocketnet_write_production_connect_token`
+- `rocketnet_create_dev_connect_token` (development library only)
 - `rocketnet_server_default_config`, `rocketnet_server_create`,
   `rocketnet_server_start`, `rocketnet_server_destroy`,
   `rocketnet_server_update`, `rocketnet_server_send_packets`,
-  `rocketnet_server_port`, `rocketnet_server_num_connected_clients`,
+  `rocketnet_server_port`, `rocketnet_server_public_key`,
+  `rocketnet_server_ipv4_address`, `rocketnet_server_num_connected_clients`,
   `rocketnet_server_disconnect_reason`, `rocketnet_server_start_message`,
   `rocketnet_server_finish_message`, `rocketnet_server_receive_messages`
 - `rocketnet_client_default_config`, `rocketnet_client_create`,

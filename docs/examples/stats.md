@@ -62,7 +62,7 @@ library and are not part of the check.
 - `rocketnet_server_default_config`, `rocketnet_server_create`,
   `rocketnet_server_start`, `rocketnet_server_destroy`,
   `rocketnet_server_update`, `rocketnet_server_send_packets`,
-  `rocketnet_server_port`, `rocketnet_server_client_connected`,
+  `rocketnet_server_client_connected`,
   `rocketnet_server_disconnect_reason`, `rocketnet_server_start_message`,
   `rocketnet_server_finish_message`, `rocketnet_server_receive_messages`,
   `rocketnet_server_stats`, `rocketnet_server_client_stats`
@@ -73,6 +73,7 @@ library and are not part of the check.
   `rocketnet_client_state_name`, `rocketnet_client_index`,
   `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
   `rocketnet_client_receive_messages`, `rocketnet_client_stats`
-- `rocketnet_write_dev_connect_token` (development library only)
+- `rocketnet_server_public_key`, `rocketnet_server_ipv4_address`
+- `rocketnet_create_dev_connect_token` (development library only)
 - `rocketnet_status_name`, `rocketnet_time`, `rocketnet_sleep`,
   `rocketnet_disconnect_reason_name`

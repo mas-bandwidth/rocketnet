@@ -102,6 +102,7 @@ int main( int argc, char ** argv )
     struct rocketnet_server_t * server = NULL;
     static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    char served_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
     int result = 1;
     int had_client = 0;
     int echoed = 0;
@@ -146,9 +147,11 @@ int main( int argc, char ** argv )
     // carries it to the client process, which plays the backend
 
     rocketnet_server_public_key( server, server_public_key );
+    CHECK( rocketnet_server_ipv4_address( server, served_address, sizeof( served_address ) ) );
     FILE * keys = example_fopen( KEY_FILE, "w" );
     CHECK( keys != NULL );
     write_hex( keys, "server_public", server_public_key, ROCKETNET_SERVER_PUBLIC_KEY_BYTES );
+    fprintf( keys, "server_ipv4 %s\n", served_address );
     CHECK( fclose( keys ) == 0 );
 
     printf( "server listening on 127.0.0.1:%d with protocol id 0x%llx\n", (int) rocketnet_server_port( server ), (unsigned long long) EXAMPLE_PROTOCOL_ID );

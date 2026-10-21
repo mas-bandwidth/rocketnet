@@ -9,8 +9,8 @@
     message, receives the echo, prints its state changes, disconnects, and
     prints the state that says how the connection ended.
 
-    The server address is 127.0.0.1 at the port from --port <n>, else the
-    ROCKETNET_EXAMPLE_PORT environment variable, else the default 40000.
+    The server's address and public key both come from that key file: the
+    server writes them once it has started, and no secret is in it.
 
     --wrong-protocol mints the token for another protocol id; the server
     refuses it, which shows the token is bound to the title. That refusal is
@@ -27,26 +27,9 @@
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
-#define DEFAULT_PORT 40000
 #define KEY_FILE "client_server.keys"
 
-// MSVC deprecates getenv and fopen, so these use getenv_s and fopen_s there.
-// example_getenv copies the variable into buffer and returns 1, or returns 0
-// when it is unset or does not fit.
-
-static int example_getenv( const char * name, char * buffer, size_t size )
-{
-#if defined( _MSC_VER )
-    size_t length = 0;
-    return getenv_s( &length, buffer, size, name ) == 0 && length > 0;
-#else
-    const char * value = getenv( name );
-    if ( !value || strlen( value ) >= size )
-        return 0;
-    memcpy( buffer, value, strlen( value ) + 1 );
-    return 1;
-#endif
-}
+// MSVC deprecates fopen, so this uses fopen_s there.
 
 static FILE * example_fopen( const char * path, const char * mode )
 {
@@ -58,33 +41,6 @@ static FILE * example_fopen( const char * path, const char * mode )
 #endif
 }
 
-// the port comes from --port <n>, else ROCKETNET_EXAMPLE_PORT, else the
-// default; returns 0 for a value that is not 1 to 65535
-
-static int example_port( int argc, char ** argv, int * port )
-{
-    char environment[256];
-    const char * text = example_getenv( "ROCKETNET_EXAMPLE_PORT", environment, sizeof( environment ) ) ? environment : NULL;
-    for ( int i = 1; i < argc; i++ )
-    {
-        if ( strcmp( argv[i], "--port" ) == 0 )
-        {
-            if ( i + 1 >= argc ) return 0;
-            text = argv[++i];
-        }
-    }
-    if ( !text )
-    {
-        *port = DEFAULT_PORT;
-        return 1;
-    }
-    char * end = NULL;
-    const long value = strtol( text, &end, 10 );
-    if ( end == text || *end != 0 || value < 1 || value > 65535 )
-        return 0;
-    *port = (int) value;
-    return 1;
-}
 static int hex_value( char c )
 {
     if ( c >= '0' && c <= '9' ) return c - '0';
@@ -115,6 +71,25 @@ static int read_hex( FILE * file, const char * label, uint8_t * bytes, int count
     }
     return 1;
 }
+// reads one line, the label, a space, then the text up to the end of the line
+
+static int read_text( FILE * file, const char * label, char * text, size_t text_bytes )
+{
+    char line[ROCKETNET_MAX_ADDRESS_STRING_BYTES + 64];
+    if ( !fgets( line, sizeof( line ), file ) )
+        return 0;
+    line[strcspn( line, "\r\n" )] = '\0';
+    const size_t label_length = strlen( label );
+    if ( strncmp( line, label, label_length ) != 0 || line[label_length] != ' ' )
+        return 0;
+    const char * value = line + label_length + 1;
+    const size_t value_length = strlen( value );
+    if ( value_length == 0 || value_length >= text_bytes )
+        return 0;
+    memcpy( text, value, value_length + 1 );
+    return 1;
+}
+
 static void state_changed( void * context, enum rocketnet_client_state_t previous, enum rocketnet_client_state_t current )
 {
     (void) context;
@@ -127,14 +102,7 @@ int main( int argc, char ** argv )
     for ( int i = 1; i < argc; i++ )
         if ( strcmp( argv[i], "--wrong-protocol" ) == 0 )
             wrong_protocol = 1;
-    int port = 0;
-    char address[32];
-    if ( !example_port( argc, argv, &port ) )
-    {
-        printf( "FAIL: the port is not 1 to 65535 (--port <n> or ROCKETNET_EXAMPLE_PORT)\n" );
-        return 1;
-    }
-    snprintf( address, sizeof( address ), "127.0.0.1:%d", port );
+    char address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
     struct rocketnet_client_config_t config;
     struct rocketnet_client_t * client = NULL;
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
@@ -157,7 +125,8 @@ int main( int argc, char ** argv )
         FILE * keys = example_fopen( KEY_FILE, "r" );
         if ( keys )
         {
-            have_keys = read_hex( keys, "server_public", server_public_key, ROCKETNET_SERVER_PUBLIC_KEY_BYTES );
+            have_keys = read_hex( keys, "server_public", server_public_key, ROCKETNET_SERVER_PUBLIC_KEY_BYTES ) &&
+                        read_text( keys, "server_ipv4", address, sizeof( address ) );
             fclose( keys );
         }
         if ( !have_keys )
