@@ -6712,10 +6712,11 @@ void rocketnet_test_transport_payload_capacity()
 
 void rocketnet_test_client_rtt_handshake()
 {
-    // the handshake's three round trips under three different imposed
-    // delays, on mocked time: each is sampled first-send-to-first-answer,
-    // the estimate keeps the minimum, and traffic after the handshake never
-    // moves it
+    // the handshake's round trips under different imposed delays, on mocked
+    // time: the cookie is in the clear and is never a sample (TRANSPORT.md
+    // t11.1); the challenge and the first keep-alive are each sampled
+    // first-send-to-first-answer, the estimate keeps the minimum, and
+    // traffic after the handshake never moves it
 
     struct rocketnet_test_server_t test;
     rocketnet_test_server_setup( &test );
@@ -6739,7 +6740,7 @@ void rocketnet_test_client_rtt_handshake()
     int payload_client_index = -1;
 
     // cookie round trip: the request goes out at 100.0 and its answer is
-    // delivered 50ms later
+    // delivered 50ms later. no sample: the cookie's salt is in the clear
 
     rocketnet_client_protocol_update( &client, 100.0, packet, &packet_bytes );
     rocketnet_check( packet_bytes > 0 );
@@ -6749,9 +6750,11 @@ void rocketnet_test_client_rtt_handshake()
                                                       payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
     rocketnet_check( rocketnet_client_protocol_process_packet( &client, response, response_bytes, 100.05, payload, sizeof(payload), &payload_bytes ) );
     rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
-    rocketnet_check( fabs( client.rtt_estimate - 0.05 ) < 1e-9 );
+    rocketnet_check( client.rtt_estimate == 0.0 );
 
-    // challenge round trip at 30ms: the minimum moves down
+    // challenge round trip at 30ms, from the first request of sending
+    // connection request at 100.2 (never from the attempt's first request at
+    // 100.0): the first sample
 
     rocketnet_client_protocol_update( &client, 100.2, packet, &packet_bytes );
     rocketnet_check( packet_bytes > 0 );

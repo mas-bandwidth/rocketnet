@@ -768,6 +768,71 @@ void rocketnet_test_posix_client_receive_weather()
 }
 
 // ---------------------------------------------------
+// the client trusts only the server (TRANSPORT.md t11): the client socket is
+// connected to the server, so the kernel drops a datagram from any other
+// source before the transport reads it. a stranger on loopback sends first;
+// then the server's own socket sends a runt, counted PREFILTER_TOO_SHORT.
+// once the runt is counted every earlier datagram was drained, and none of
+// the stranger's reached the client: CLIENT_RECEIVE_FOREIGN_SOURCE stays 0.
+// on an unconnected socket each would count CLIENT_RECEIVE_FOREIGN_SOURCE.
+
+#define POSIX_FOREIGN_DATAGRAMS 16
+
+static void posix_client_drops_foreign_cell( int ipv6, const char * client_transport_io, const char * client_pump )
+{
+    struct posix_pair_t pair;
+    posix_pair_create( &pair, ipv6, "portable", client_transport_io, "portable", client_pump );
+    posix_check( pair.client_socket->connected );
+
+    const struct rocketnet_counters_t * counters = rocketnet_client_transport_counters( pair.client );
+    const uint64_t foreign_before = counters->values[ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE];
+    const uint64_t too_short_before = counters->values[ROCKETNET_COUNTER_PREFILTER_TOO_SHORT];
+
+    struct sockaddr_storage to;
+    const socklen_t to_bytes = posix_sockaddr( ipv6, posix_local_port( pair.client_socket ), &to );
+
+    const int stranger = posix_open_raw_sender( ipv6 );
+    uint8_t buffer[100];
+    memset( buffer, 0x5a, sizeof(buffer) );
+    for ( int i = 0; i < POSIX_FOREIGN_DATAGRAMS; i++ )
+        posix_send_datagram( stranger, &to, to_bytes, buffer, (int) sizeof(buffer), NULL );
+
+    buffer[0] = 0x40;
+    posix_send_datagram( pair.server_socket->handle, &to, to_bytes, buffer, 1, NULL );
+
+    const double deadline = rocketnet_platform_time() + 5.0;
+    while ( rocketnet_client_transport_counters( pair.client )->values[ROCKETNET_COUNTER_PREFILTER_TOO_SHORT] == too_short_before )
+    {
+        posix_check( rocketnet_platform_time() < deadline );
+        posix_pair_update( &pair );
+        rocketnet_platform_sleep( 0.001 );
+    }
+
+    counters = rocketnet_client_transport_counters( pair.client );
+    const uint64_t foreign = counters->values[ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE] - foreign_before;
+    printf( "  ipv%d client=%s: foreign source %llu of %d sent, server runt counted\n",
+            ipv6 ? 6 : 4, client_transport_io, (unsigned long long) foreign, POSIX_FOREIGN_DATAGRAMS );
+    fflush( stdout );
+    posix_check( foreign == 0 );
+    posix_check( counters->values[ROCKETNET_COUNTER_PREFILTER_TOO_SHORT] - too_short_before == 1 );
+    posix_pair_check_connected( &pair );
+
+    close( stranger );
+    posix_pair_destroy( &pair );
+}
+
+void rocketnet_test_posix_client_drops_foreign_sources()
+{
+    for ( int ipv6 = 0; ipv6 < 2; ipv6++ )
+    {
+        posix_client_drops_foreign_cell( ipv6, "portable", "portable" );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+        posix_client_drops_foreign_cell( ipv6, "msgx", posix_msgx_pump() );
+#endif
+    }
+}
+
+// ---------------------------------------------------
 // the create seam: a datagram queued on the just-bound socket before the
 // first batch call is delivered by that call, never consumed by a create
 // probe. the hook runs between bind and the pump decision.

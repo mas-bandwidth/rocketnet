@@ -8453,6 +8453,7 @@ static void rocketnet_test_two_address_token_connects_over_ipv4()
 #if !defined(_WIN32) && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 void rocketnet_test_posix_server_receive_weather();
 void rocketnet_test_posix_client_receive_weather();
+void rocketnet_test_posix_client_drops_foreign_sources();
 void rocketnet_test_posix_platform_send_seam();
 void rocketnet_test_posix_transport_send_seam();
 void rocketnet_test_posix_send_burst();
@@ -8611,6 +8612,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 #if !defined(_WIN32) && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
     { "test_posix_server_receive_weather", rocketnet_test_posix_server_receive_weather, NULL },
     { "test_posix_client_receive_weather", rocketnet_test_posix_client_receive_weather, NULL },
+    { "test_posix_client_drops_foreign_sources", rocketnet_test_posix_client_drops_foreign_sources, NULL },
     { "test_posix_platform_send_seam", rocketnet_test_posix_platform_send_seam, NULL },
     { "test_posix_transport_send_seam", rocketnet_test_posix_transport_send_seam, NULL },
     { "test_posix_send_burst", rocketnet_test_posix_send_burst, NULL },

@@ -235,8 +235,12 @@ the library does about it: **pending.**
 
 ## Socket errors and ICMP
 
-The SDK never calls `connect` on a UDP socket; every send names its destination
-(`sdk/rocketnet_platform.cpp`, no `connect(` in the file). A failed `sendto`
+A client's socket is connected to its server
+(`rocketnet_platform_socket_connect`, TRANSPORT.md t11: the client trusts only
+the server), so the kernel drops datagrams from any other source, its sends
+name no destination, and an ICMP error for the server reaches its receive,
+which skips it as weather. A server socket is never connected, and every send
+names its destination. A failed `sendto`
 is logged at debug level and the packet is dropped
 (`rocketnet_platform_socket_send_packet`). A failed `recvmsg` returns 0, which
 ends that drain; an error other than `EAGAIN` or `EINTR` is logged at debug

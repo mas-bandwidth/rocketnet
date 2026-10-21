@@ -346,6 +346,22 @@ void rocketnet_platform_socket_destroy( struct rocketnet_platform_socket_t * soc
 void rocketnet_platform_socket_send_packet( struct rocketnet_platform_socket_t * socket, const struct rocketnet_address_t * to, const void * packet_data, int packet_bytes );
 
 /**
+ * @brief Connects a UDP socket to its one peer.
+ *
+ * The kernel then drops every datagram from any other source before it is
+ * queued, and every send on the socket goes to the peer: the destination a
+ * send names is not passed to the kernel, so the caller sends only to the
+ * peer. A client socket connects once, right after it is created, to the
+ * server its connect token selects; a server socket is never connected. An
+ * ICMP error for the peer may then reach a receive, which skips it.
+ * @param socket Live socket returned by socket_create; must be non-NULL.
+ * @param to IPv4 or IPv6 peer the socket can carry; must be non-NULL.
+ * @return True when connected; false when the kernel refused or the socket
+ * cannot carry the address, with the refusal logged.
+ */
+bool rocketnet_platform_socket_connect( struct rocketnet_platform_socket_t * socket, const struct rocketnet_address_t * to );
+
+/**
  * @brief Receives one UDP datagram into caller storage.
  *
  * @param socket Live socket returned by socket_create; must be non-NULL.
@@ -968,6 +984,8 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
         int type;
         /** @brief True when the socket was created for an IPv6 bind address. */
         bool ipv6;
+        /** @brief True once rocketnet_platform_socket_connect connected it to its one peer. */
+        bool connected;
         /** @brief Native socket descriptor owned by this object. */
         rocketnet_platform_socket_handle_t handle;
         /** @brief Datagrams a failed send dropped; atomic, monotonic. */
@@ -1016,6 +1034,7 @@ bool rocketnet_platform_mmsg_read_sockaddr( struct rocketnet_platform_socket_t *
         void * context;
         bool ipv6;
         bool msgx;                  // the batched sendmsg_x/recvmsg_x pump is eligible (first batch call probes support, macOS only)
+        bool connected;             // connected to its one peer (rocketnet_platform_socket_connect); sends name no destination
         double msgx_down_until;     // a hard refusal pauses the msgx pump until this time; the next batch call after it is the re-probe
         rocketnet_platform_socket_handle_t handle;
         uint64_t send_failures;     // datagrams a failed send dropped; atomic, monotonic
@@ -1065,6 +1084,7 @@ bool rocketnet_msgx_read_sockaddr( struct rocketnet_platform_socket_t * socket, 
     {
         void * context;
         bool ipv6;
+        bool connected;             // connected to its one peer (rocketnet_platform_socket_connect); sends name no destination
         rocketnet_platform_socket_handle_t handle;
         uint64_t send_failures;     // datagrams a failed send dropped; atomic, monotonic
     };
