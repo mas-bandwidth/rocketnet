@@ -322,11 +322,11 @@ The C surface in sdk/rocketnet.h and what a consumer needs to use it.
 | Installable CMake package with C and C++ consumers | ✅ | ✅ | ✅ |
 | Vendored sodium, no system libsodium | ✅ | ✅ | ✅ |
 | Structured create errors and FFI-safe logging | ✅ | ✅ | ✅ |
-| Transports are named transports throughout: the rocketnet_*_transport_* calls, ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT, and the documentation | ✅ | ❌ | ❌ |
-| One receive queue per client and one per server, every channel's messages in delivery order, pumped in batches with no release call | ✅ | ❌ | ❌ |
-| Create returns NULL and a status code that names why it refused | ✅ | ❌ | ❌ |
-| A server serves IPv4, IPv6 or both on one port | ✅ | ❌ | ❌ |
-| One environment variable per setting, current names only: retired names are not read | ✅ | ❌ | ❌ |
+| Transports are named transports throughout: the rocketnet_*_transport_* calls, ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT, and the documentation | ✅ | ✅ | ✅ |
+| One receive queue per client and one per server, every channel's messages in delivery order, pumped in batches with no release call | ✅ | ✅ | ✅ |
+| Create returns NULL and a status code that names why it refused | ✅ | ✅ | ✅ |
+| A server serves IPv4, IPv6 or both on one port | ✅ | ✅ | ✅ |
+| One environment variable per setting, current names only: retired names are not read | ✅ | ✅ | ✅ |
 | Sized APIs for compatible struct evolution | ✅ | ✅ | ✅ |
 | Whole-transport memory estimates and operator budgets (#155) | ✅ | ✅ | ✅ |
 | C++ ClientTransport and ServerTransport interfaces | ✅ | ✅ | ✅ |
@@ -336,7 +336,7 @@ The C surface in sdk/rocketnet.h and what a consumer needs to use it.
 | API reference comments: reliability | ✅ | — | — |
 | USAGE.md: the client and server API, with worked usage | ✅ | — | — |
 | The docs job fails on any undocumented public symbol (later) | ❌ | — | — |
-| complete | 95% | 67% | 67% |
+| complete | 95% | 100% | 100% |
 
 [Source data](docs/roadmap.sexp)
 
@@ -429,9 +429,12 @@ What v1.0.0-preview-1 does not yet meet, one row per issue: what it is today, an
 | The acknowledgement statistics sweep scans thousands of records per update. The final deliverable keeps those statistics up to date as acks arrive. | ❌ | ❌ | ❌ |
 | Every main call is meant to take under 0.1 ms in Release under load; this is not yet measured at 1000 clients. The final deliverable measures every main call at 1000 clients on each platform and holds the result in a gate. | ❌ | ❌ | ❌ |
 | Each unreliable message is sent as its own packet; small unreliable messages are not packed together. The final deliverable packs small messages into shared packets and keeps in-place writes for large ones. | ❌ | ❌ | ❌ |
-| Client disconnect and destroy stop the client's I/O thread and wait for it. No shutdown time bound is promised, and shutdown reads the receive-stamp clock callback on the caller's thread. The final deliverable starts the thread at create and parks it between connections, so neither call waits, and times shutdown on its own clock. | ❌ | ❌ | ❌ |
+| Client disconnect and destroy stop the client's I/O thread and wait for it to exit. The wait is bounded: the thread checks for stop at least once a millisecond, and each hand-off wait gives up after 2 seconds; but a transport stuck inside a send holds the thread past those bounds, the header promises no shutdown time, and shutdown reads the time callback on the caller's thread. The final deliverable starts the thread at create and parks it between connections, so neither call waits, and times shutdown on its own clock. | ❌ | ❌ | ❌ |
 | On macOS, a portable-transport client connecting over IPv4 to a server that serves both IPv4 and IPv6 on one port can fail to connect. The final deliverable connects in every family combination on macOS, proven by the functional suite. | — | ❌ | — |
 | On macOS, the full functional suite run as one command takes longer than its 120 second limit, so it is run in parts. The final deliverable runs the whole suite on macOS inside the limit. | — | ❌ | — |
+| Some functional tests measure operating-system behaviour rather than RocketNet: test_macos_client_timing_default_qos, test_macos_client_timing_taskpolicy_background, the test_thread_priority_timing cases and test_thread_priority_windows_readback. The final deliverable removes them or rewrites them to test only RocketNet's own code. | ❌ | ❌ | ❌ |
+| The macOS client timing functional test carries a branch that lowers the game thread's priority, which no case uses since its last caller was removed. The final deliverable removes the branch with the cases above. | — | ❌ | — |
+| The Windows Debug, AddressSanitizer and Application Verifier runs passed before the last v1.0.0-preview-1 API changes and have not been repeated on the released API. The final deliverable repeats all three on the released API, on every Windows transport. | — | — | ❌ |
 | On Linux, XDP gateway discovery runs external commands when the server starts. This is acceptable at start; the final deliverable reads the gateway through netlink instead. | ❌ | — | — |
 | Client connect and server start still allocate: the client's transport, socket and I/O thread at each connect, and the server's transport and its tables at each start. The final deliverable builds them at create, so nothing allocates after create. | ❌ | ❌ | ❌ |
 | A few allocations do not go through the caller's allocator: AF_XDP packet memory, io_uring rings, the RIO registered region, thread stacks, interface discovery and the C library's output buffer. The final deliverable routes them through the caller's allocator where the operating system allows, and reports the rest by size. | ❌ | ❌ | ❌ |
@@ -448,7 +451,7 @@ What v1.0.0-preview-1 does not yet meet, one row per issue: what it is today, an
 | The receipt read returns how many outcomes it copied, not how many there were when the caller's buffer is too short (ring overflow is counted, in receipts_dropped). The final deliverable returns the available count. | ❌ | ❌ | ❌ |
 | Connect over whichever family works: send connection requests to the token's IPv4 and IPv6 addresses and keep the first that answers (TLA+ first). | ❌ | ❌ | ❌ |
 | Backend keygen, connect-token minting and a reference server registration in Go and C#. | ❌ | ❌ | ❌ |
-| Public header refinement pass before 1.0.0: names, structure and doc comments may still change. | ❌ | ❌ | ❌ |
+| The v1.0.0-preview-1 API is provisional: names, structure and doc comments in the public header may still change. The final deliverable finalizes the API after customer feedback. | ❌ | ❌ | ❌ |
 | The receive path still accepts a datagram up to 1472 bytes (a 1439-byte payload), above the 1416-byte ROCKETNET_MAX_PACKET_PAYLOAD_BYTES every sender writes; the standard test vectors depend on the larger bound. The final deliverable refuses anything above the send bound and regenerates the vectors. | ❌ | ❌ | ❌ |
 | The config field max_payload_bytes bounds the largest message, but max_message_bytes is already the name of a different field, so the rename to the message name waits. The final deliverable gives each of the two fields a name that says which limit it is. | ❌ | ❌ | ❌ |
 | Internal identifiers still use the old payload, ring, slot and window names that the public header no longer uses. The final deliverable renames them to the public terms in one pass. | ❌ | ❌ | ❌ |
@@ -506,7 +509,6 @@ Soaks, load, stress, transport matrices, fuzzing, sanitizers, nightlies and the 
 | Supported-platform policy | ❌ | — | — |
 | Security disclosure and release process | ✅ | — | — |
 | Independent review of the connection layer repair diff, received | ❌ | — | — |
-| The old to-do and readiness files retired into this roadmap | ✅ | — | — |
-| complete | 43% | 0% | 0% |
+| complete | 33% | 0% | 0% |
 
 [Source data](docs/roadmap.sexp)
