@@ -8,7 +8,7 @@ archive contains no test suite. Review intentional ABI changes in the list as
 part of the same change. The major version names SDK calling/layout
 compatibility, separately from the wire version; see the ABI rules below.
 
-Deploying a server on Linux: [docs/LINUX.md](docs/LINUX.md) covers the build, the `xdp -> gso -> io_uring -> portable` transport ladder and pinning, what `gso`, `io_uring` and `xdp` need from the host, socket errors and ICMP, the fd and memlock limits for 1000 clients, containers, and how to verify a host.
+Deploying a server on Linux: [docs/LINUX.md](docs/LINUX.md) covers the build, the production `xdp -> gso -> io_uring` transport ladder and pinning, what `gso`, `io_uring` and `xdp` need from the host, socket errors and ICMP, the fd and memlock limits for 1000 clients, containers, and how to verify a host. Development builds add portable last.
 
 rocketnet builds on Linux and macOS with CMake 3.20 or later, and on Windows with
 CMake 4.2 or later (the Windows block below says why). On Linux the build is
@@ -301,7 +301,7 @@ BPF/libxdp development headers or libraries, BPF clang, or `xxd`:
 
 The `xdp` rung reports that it was disabled at build time and refuses create.
 A pin of `xdp` fails; automatic selection continues with `gso`, `io_uring`
-(when built), then `portable`. The installed CMake package also omits the
+(when built), then `portable` in development builds only. The installed CMake package also omits the
 BPF/libxdp dependencies. Native `test_xdp` and `test_xdp_filter` targets are
 not built; the host-C filter and portable frame-codec unit tests still run.
 Configure with `-DROCKETNET_XDP=ON` to restore the native backend and its
@@ -501,7 +501,8 @@ Build tools normally, then use the resource probe:
 
 ```
 ./bin/transport_memory 1000 1192 16 portable 0 --plan-only
-./bin/transport_memory 1000 1192 16 portable 0
+# A live portable server probe requires a development build.
+./bin/transport_memory 1000 1192 16 gso 0
 # Linux only; this prints geometry without attaching XDP or allocating UMEM:
 ./bin/transport_memory 1000 1192 1 xdp 7 --plan-only
 python3 tools/check_memory.py

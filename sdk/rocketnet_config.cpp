@@ -815,6 +815,20 @@ bool rocketnet_config_validate_public_link_simulator( const char * transport_nam
 //                        the transport ladder
 // ----------------------------------------------------------------
 
+bool rocketnet_server_portable_pin_refused( const char * value )
+{
+#if ROCKETNET_DEVELOPMENT
+    (void) value;
+    return false;
+#else
+    if ( !value ) return false;
+    while ( *value == ' ' || *value == '\t' ) ++value;
+    const char * end = value + strlen( value );
+    while ( end > value && ( end[-1] == ' ' || end[-1] == '\t' ) ) --end;
+    return end - value == 8 && memcmp( value, "portable", 8 ) == 0;
+#endif
+}
+
 static int rocketnet_transport_id_from_name( const char * name, int name_length )
 {
     for ( int i = 0; i < ROCKETNET_NUM_TRANSPORTS; i++ )

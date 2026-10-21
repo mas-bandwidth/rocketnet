@@ -68,13 +68,12 @@ comes first in `auto`, zero means the endpoint does not have that transport
 | `xdp` | 10 | 0 | `sdk/rocketnet_drivers.inc:7` |
 | `gso` | 20 | 0 | `sdk/rocketnet_drivers.inc:6` |
 | `io_uring` | 25 | 0 | `sdk/rocketnet_drivers.inc:11` |
-| `portable` | 30 | 30 | `sdk/rocketnet_drivers.inc:5` |
+| `portable` | development: 30; production: unavailable | 30 | `sdk/rocketnet_drivers.inc:5` |
 | `loopback` | pin only | pin only | `sdk/rocketnet_drivers.inc:10` |
 
-So the Linux server `auto` order is **xdp → gso → io_uring → portable**
-(`TRANSPORTS.md:188-189`), and `./bin/test_transport` fails if it is anything else
-(`test_driver.cpp`). A build without liburing has no `io_uring` in the
-list: xdp → gso → portable (`test_driver.cpp`, `TRANSPORTS.md:183-186`).
+The production Linux server `auto` order is **xdp → gso → io_uring**;
+development builds add **portable** last. A build without liburing omits
+`io_uring` from the list. The portable client side remains available.
 `loopback` is in-process, never chosen by `auto`, and selected only by name
 (`TRANSPORTS.md:18-23`, `sdk/rocketnet_driver.h:13`). The Linux client has one
 transport in `auto`, `portable` (`test_driver.cpp`); on Linux it
@@ -118,6 +117,8 @@ endpoint: `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
 `sdk/rocketnet_config.cpp:313-319`). The rules (`sdk/rocketnet_config.h:165-176`):
 
 - A one-element list is a pin: that transport or a loud failure, never a fall.
+- A production server pin of `portable` returns `INVALID_TRANSPORT_LIST` at
+  public create or low-level start, before the all-skipped auto rule.
 - A longer list is tried in exactly that order; nothing is appended.
 - A known name this platform or endpoint does not have (`gso` for a client) is
   skipped with `transport <name> is not available here. skipped`
@@ -132,7 +133,7 @@ Every other server config field has the overlay `ROCKETNET_SERVER_<FIELD>`
 `ROCKETNET_SERVER_NUM_XDP_QUEUES` and `ROCKETNET_SERVER_NUM_OS_CPUS`
 (`sdk/rocketnet.h:805`, `sdk/rocketnet_internal.h:480-481`).
 
-CI's transport matrix pins each Linux server transport against the portable
+CI's development-build transport matrix pins each Linux server transport against the portable
 client on four cases, `test_transport_env_pin_is_honoured` among them, which proves
 the pinned transport is the one granted (`.github/workflows/ci.yml:280-305`,
 `:321`, `:358`). The same matrix, `xdp` aside (section 6):
@@ -435,14 +436,13 @@ dpkg-query -W cmake build-essential clang libbpf-dev libxdp-dev liburing-dev xxd
 make JOBS=4
 ./bin/test
 ./bin/test_transport
-ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/test_lifecycle
+./bin/test_lifecycle
 ./bin/functional
 python3 tools/check_memory.py ./bin/transport_memory
 ./bin/transport_memory 1000 1416 16 portable 0 --plan-only
 ./bin/transport_memory 1000 1416 16 gso 0 --plan-only
 ./bin/transport_memory 1000 1416 16 io_uring 0 --plan-only
 ./bin/transport_memory 1000 1416 16 xdp 7 --plan-only
-bash -c 'ulimit -n 64 && ulimit -l 64 && ./bin/transport_memory 1000 1416 16 portable 0'
 bash -c 'ulimit -n 64 && ulimit -l 64 && ./bin/transport_memory 1000 1416 16 gso 0'
 bash -c 'ulimit -n 64 && ./bin/transport_memory 1000 1416 16 io_uring 32'
 ```

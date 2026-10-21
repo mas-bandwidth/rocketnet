@@ -1111,18 +1111,12 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     // The shared fleet-list parser normally skips an unavailable name and
     // replaces an all-skipped list with auto, which would silently start a
     // different server for this explicit single-transport request.
-#if !ROCKETNET_DEVELOPMENT
-    const char * pin = config->transport;
-    while ( *pin == ' ' || *pin == '\t' ) ++pin;
-    const char * pin_end = pin + strlen( pin );
-    while ( pin_end > pin && ( pin_end[-1] == ' ' || pin_end[-1] == '\t' ) ) --pin_end;
-    if ( pin_end - pin == 8 && memcmp( pin, "portable", 8 ) == 0 )
+    if ( rocketnet_server_portable_pin_refused( config->transport ) )
     {
         if ( status ) *status = ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
         rocketnet_error( "portable server transport is unavailable in production builds" );
         return NULL;
     }
-#endif
 
     // the transport candidate list parses before anything allocates: a typo
     // fails here, loudly, listing the valid names

@@ -1626,7 +1626,9 @@ static inline enum rocketnet_status_t rocketnet_server_default_config( struct ro
 
 /// Returns the memory needed by create for this config and max_clients.
 /// Applies the same environment overrides as create.
-/// NULL config selects defaults. Invalid config returns 0.
+/// NULL config selects defaults. Invalid config returns 0, including a
+/// production server pin of portable. A named transport memory estimate is
+/// diagnostic and does not grant that transport at create or start.
 
 ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet_server_config_t * config );
 

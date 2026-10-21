@@ -1312,10 +1312,22 @@ static enum rocketnet_status_t rn_server_config_valid( const struct rocketnet_se
             rocketnet_server_reassembly_delivered_capacity( requested_clients, requested_slots ),
             rocketnet_server_reassembly_delivered_bytes( requested_clients, requested_slots, requested_payload ) ) )
         return ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED;
+    // Resolve the transport env override here as start will, so public
+    // create and required_memory reject the same production-only pin.
+    struct rocketnet_server_transport_config_t effective = *transport;
+    for ( int i = 0; i < num_fields; ++i )
+        if ( strcmp( fields[i].name, "transport" ) == 0 &&
+             !rocketnet_config_apply_env( "server", &effective, &fields[i], 1 ) )
+            return ROCKETNET_STATUS_CONFIG_ENV_INVALID;
+    if ( rocketnet_server_portable_pin_refused( effective.transport ) )
+    {
+        rocketnet_error( "portable server transport is unavailable in production builds" );
+        return ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
+    }
     int num_available = 0;
     const int * available = rocketnet_server_transport_io_availability( &num_available );
     struct rocketnet_transport_ladder_t ladder;
-    if ( !rocketnet_transport_ladder_parse( transport->transport, available, num_available, &ladder ) )
+    if ( !rocketnet_transport_ladder_parse( effective.transport, available, num_available, &ladder ) )
         return ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
     return rocketnet_message_validate_config( message ) != 0 ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
 }
@@ -1327,6 +1339,11 @@ static size_t rn_server_required_memory_current( const struct rocketnet_server_c
     struct rocketnet_message_config_t message;
     uint32_t kbps = 0;
     if ( !rn_server_split( config, true, &transport, &message, &kbps ) )
+    {
+        sodium_memzero( &transport, sizeof( transport ) );
+        return 0;
+    }
+    if ( rn_server_config_valid( &transport, &message ) != ROCKETNET_STATUS_OK )
     {
         sodium_memzero( &transport, sizeof( transport ) );
         return 0;
