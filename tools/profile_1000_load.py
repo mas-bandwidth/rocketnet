@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Capture honest 1000-client Release load timing or macOS CPU samples.
 
-This is evidence collection, not the final per-main-call budget gate. In
-particular, current load.c reports only server_update p50/p99. The script
-never emits a frame-budget PASS from that one measurement.
+This collects the load harness's per-call timing summaries and resource
+counts. Its measured call set is incomplete, so the script never emits an
+every-main-call frame-budget PASS.
 """
 
 import argparse

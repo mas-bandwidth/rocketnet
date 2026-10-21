@@ -2,9 +2,11 @@
 
 This procedure collects evidence for the open final-deliverable requirement in
 `docs/roadmap.sexp` and `docs/testing.sexp`: every main call in a Release frame
-must take **less than 100 µs** at 1000 clients on each platform. The current
-`load.c` reports only `server_update_p50_us` and `server_update_p99_us`, so the
-runner below deliberately says `COLLECTED_NOT_QUALIFIED`, never budget PASS.
+must take **less than 100 µs** at 1000 clients on each platform. `load.c`
+reports counts, exact maxima and threshold misses, and histogram percentile
+upper bounds for the calls it exercises during traffic and drain. Coverage
+still excludes other public calls and setup/teardown, so the runner says
+`COLLECTED_NOT_QUALIFIED`, never an every-main-call budget PASS.
 Do not substitute the older `tools/check_frame_budget.py`: it measures a
 32-packet client microbenchmark, not the 1000-client API loop.
 
@@ -68,11 +70,11 @@ load and interval. Samples tell where CPU was spent, while separate direct
 timing tells whether main calls meet the budget. Report unattributed and
 blocked/wait time rather than assigning it to a guessed function.
 
-## Nonoverlapping `load.c` timing proposal for its owner
+## Measurement scope and remaining qualification
 
-The current traffic loop is at `load.c:820-1000` in intake head `4f7aebd`.
-Its existing `server_update` timer is at 925-935. Do not change the 100-client
-slice, 10 ms pace, offered messages, packet budgets, threshold, or population.
+The integrated collector preserves the 100-client slice, 10 ms pace,
+offered messages and acceptance criteria. The following requirements define
+its measurements and the remaining work before a complete budget gate.
 
 1. Add bounded fixed histograms near the existing `update_us` accounting.
    Allocate all buckets before traffic; never allocate in a timed region.
@@ -81,14 +83,12 @@ slice, 10 ms pace, offered messages, packet budgets, threshold, or population.
    at or above 100 µs. Do not silently drop or overwrite observations. Label
    histogram percentiles as **upper bounds** at their stated bucket
    resolution; report overflow explicitly.
-2. Wrap calls at traffic-loop lines 832 (`client_update`), 835
-   (`client_receive_messages`, including the final NULL call), 859
-   (`client_receipts`), 874/878 (`client_start_message`/`finish_message`),
-   905 (`client_send_packets`), 928 (`server_update`, reuse the existing
-   measurement), 939 (`server_receive_messages`, including NULL), and 999
-   (`server_send_packets`). Also wrap `client_state`, `client_index`, and
+2. Measure `client_update`, `client_receive_messages` (including the final
+   NULL call), `client_receipts`, `client_start_message`/`finish_message`,
+   `client_send_packets`, `server_update`, `server_receive_messages`
+   (including NULL), and `server_send_packets`. Also measure `client_state`, `client_index`, and
    `server_client_connected` queries actually used each frame, or explicitly
-   enumerate and justify their exclusion. This is a loopback harness, so
+   enumerate and justify their exclusion. Both endpoints run in one process, so
    server and client timings must be reported separately.
 3. Emit `frame_<api>_count=<n>`, `_p50_upper_us`, `_p99_upper_us`, `_max_us`
    and `_overbudget_count` in the final single
