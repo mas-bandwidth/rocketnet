@@ -3647,8 +3647,9 @@ an input ([t1.4 Conventions](#t1.4)).
      different source address, and one that finds no free
      encryption mapping slot, before any signature, seal or keypair work. The
      first valid request for a token records its claim for the source address;
-     the claim ends at the handshake deadline or when a response binds the
-     token. A full mapping table refuses with no reply and is counted as a
+     the claim ends at the handshake deadline, when a response binds the
+     token, or immediately when processing the request refuses it without
+     retaining a mapping. A full mapping table refuses with no reply and is counted as a
      refusal. The request-claim table and the response-binding table are
      independent capacities: claim pressure cannot consume or evict a still
      live response binding.

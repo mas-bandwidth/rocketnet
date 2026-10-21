@@ -589,6 +589,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     struct rocketnet_connect_token_private_t private_data;
     if ( !rocketnet_open_connect_token_private( &private_data, signed_connect_data, server->server_public_key, server->server_secret_key ) )
     {
+        rocketnet_used_token_history_claim_release( server->used_token_history, token_identifier, from );
         rocketnet_debug( "server ignored connection request. could not open sealed private block" );
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;
@@ -604,6 +605,11 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
                                                           current_time, response_packet, response_bytes );
 
     sodium_memzero( &private_data, sizeof(private_data) );
+
+    // Only a live mapping retains the request claim. Every refusal, including
+    // a sealed denial, releases it immediately instead of waiting for expiry.
+    if ( result != ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE )
+        rocketnet_used_token_history_claim_release( server->used_token_history, token_identifier, from );
 
     return result;
 }
