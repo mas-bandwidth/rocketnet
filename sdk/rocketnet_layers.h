@@ -268,8 +268,8 @@ const char * rocketnet_client_transport_state_name( int state );
 
 // The client connects with a token, never an address: the token names the
 // server, carries the keys, and is the credential -- minted by a backend in
-// production, or locally by rocketnet_write_dev_connect_token against the
-// published development keys. The config carries what the token does not:
+// production, or locally by rocketnet_write_test_connect_token against the
+// internal test keys. The config carries what the token does not:
 // the per-title filter value, the fragmentation shape -- the largest
 // payload this client sends and reassembles, and the per-connection
 // reassembly slot count, zero meaning the defaults above; the client's

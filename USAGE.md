@@ -95,9 +95,9 @@ the config after default_config. For a server, the environment
 the recommended place for keys, and setting them in code works too. A client
 config holds no keys: the connect token carries them, whether the backend mints
 it in code, a tool generates it, or the program reads it from the environment.
-For local work a development build sets the published development keys into
-the server config by hand, and `rocketnet_write_dev_connect_token` mints a
-matching local token.
+For local work a development build sets `ROCKETNET_DEV_BACKEND_PUBLIC_KEY`
+into the server config by hand, and `rocketnet_create_dev_connect_token` makes
+a matching local token string from the server's public key and address.
 
 The precedence at create is **DEFAULT < STRUCT < ENV**: the defaults come
 first, the struct you pass is the middle layer, and the environment overlays it
