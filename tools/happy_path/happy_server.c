@@ -51,12 +51,11 @@ int main( int argc, char ** argv )
         address = argc > 1 ? argv[1] : "127.0.0.1:0";
 
     struct rocketnet_server_config_t config;
-    // the published development keys (examples/dev_keys.h); a real server brings its own keys, recommended through the ROCKETNET_SERVER_* environment variables, or set in code
+    // the published development backend key (rocketnet.h, development builds); a real server brings its own backend's key, recommended through ROCKETNET_SERVER_BACKEND_PUBLIC_KEY, or set in code
+    static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
     rocketnet_server_default_config( &config );
-    config.protocol_id = EXAMPLE_DEV_PROTOCOL_ID;
-    memcpy( config.backend_public_key, example_dev_backend_public_key, sizeof( config.backend_public_key ) );
-    memcpy( config.server_public_key, example_dev_server_public_key, sizeof( config.server_public_key ) );
-    memcpy( config.server_secret_key, example_dev_server_secret_key, sizeof( config.server_secret_key ) );
+    config.protocol_id = EXAMPLE_PROTOCOL_ID;
+    memcpy( config.backend_public_key, dev_backend_public_key, sizeof( config.backend_public_key ) );
     config.max_clients = 1;
     config.transport = "portable";
 
@@ -74,6 +73,13 @@ int main( int argc, char ** argv )
         return 1;
     }
 
+    // the server makes its own keypair: the client needs its public key to mint a token
+    uint8_t server_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    rocketnet_server_public_key( server, server_key );
+    printf( "server public key " );
+    for ( int i = 0; i < ROCKETNET_SERVER_PUBLIC_KEY_BYTES; i++ )
+        printf( "%02x", server_key[i] );
+    printf( "\n" );
     printf( "server started\n" );
     printf( "server transport %s\n", rocketnet_server_transport_name( server ) );
     fflush( stdout );

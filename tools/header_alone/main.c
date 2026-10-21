@@ -5,8 +5,8 @@
 
 // A program that sees only rocketnet.h and links only the prebuilt
 // development static library, and calls every function the header declares:
-// the lifecycle and logging setters, the name and status tables, the keygen
-// and token calls, the config refusals (a zeroed config is
+// the lifecycle and logging setters, the name and status tables, the server's
+// public key and addresses, the development connect token, the config refusals (a zeroed config is
 // CONFIG_NOT_INITIALIZED), then a server and a client on 127.0.0.1 through
 // the portable transport with one receipted message each way, the start,
 // abort and finish rules, every stats struct, the server ending the
@@ -39,8 +39,6 @@
 #define PROTOCOL_ID 0x6865616465720001ull
 #define CLIENT_ID 1234
 
-static const char client_message[] = "hello from the client";
-static const char server_message[] = "hello from the server";
 
 // ---------------------------------------------------------------------------
 // the process-wide hooks: allocator, assert function, log function, and the
@@ -94,6 +92,11 @@ static void consumer_state_change( void * context, enum rocketnet_client_state_t
         saw_connected = 1;
 }
 
+#if ROCKETNET_DEVELOPMENT
+
+static const char client_message[] = "hello from the client";
+static const char server_message[] = "hello from the server";
+
 // ---------------------------------------------------------------------------
 // one frame for both ends, in the order a game runs it: update, receive,
 // queue (done by the caller between frames), send last
@@ -138,16 +141,7 @@ static int frame( struct rocketnet_server_t * server, struct rocketnet_client_t 
     return 0;
 }
 
-static int mint_token( const uint8_t * backend_secret_key, const uint8_t * server_public_key, const char * server_address, uint8_t * connect_token )
-{
-    const char * addresses[1];
-    addresses[0] = server_address;
-    const uint64_t now = (uint64_t) time( NULL );
-    CHECK( rocketnet_write_production_connect_token( backend_secret_key, server_public_key, PROTOCOL_ID,
-                                                     addresses, 1, CLIENT_ID, now, now + 60, 10, NULL,
-                                                     connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
-    return 0;
-}
+#endif // #if ROCKETNET_DEVELOPMENT
 
 int main( void )
 {
@@ -185,25 +179,18 @@ int main( void )
     CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
-    // ---- keys: the backend signing keypair (random and from a seed) and the
-    // server sealing keypair
+    // ---- the backend public key the server verifies tokens with: the
+    // published development key in the development library (its tokens come
+    // from rocketnet_create_dev_connect_token); in a release library, which
+    // refuses the development key, any other backend's key
 
+#if ROCKETNET_DEVELOPMENT
+    static const uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
+#else
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
-    uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
-    {
-        uint8_t seed[ROCKETNET_BACKEND_SEED_BYTES];
-        uint8_t seeded_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-        uint8_t seeded_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
-        memset( seed, 7, sizeof( seed ) );
-        CHECK( rocketnet_generate_backend_keypair_from_seed( seed, backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
-        CHECK( rocketnet_generate_backend_keypair_from_seed( seed, seeded_public, seeded_secret ) == ROCKETNET_STATUS_OK );
-        CHECK( memcmp( backend_public_key, seeded_public, sizeof( seeded_public ) ) == 0 );
-        CHECK( memcmp( backend_secret_key, seeded_secret, sizeof( seeded_secret ) ) == 0 );
-    }
-    CHECK( rocketnet_generate_backend_keypair( backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
-    CHECK( rocketnet_generate_server_keypair( server_public_key, server_secret_key ) == ROCKETNET_STATUS_OK );
+    for ( int i = 0; i < ROCKETNET_BACKEND_PUBLIC_KEY_BYTES; i++ )
+        backend_public_key[i] = (uint8_t) ( 0x51 + 3 * i );
+#endif
 
     // ---- configs: create is the one check. A NULL config is the defaults; a
     // zeroed config was never filled by default_config and is refused with
@@ -252,7 +239,8 @@ int main( void )
         rocketnet_log_function( NULL, NULL );
     }
 
-    // ---- the server, with its own keys set in code
+    // ---- the server: the backend key set in code; the server makes its own
+    // keypair at create
 
     struct rocketnet_server_config_t server_config;
     CHECK( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
@@ -261,8 +249,6 @@ int main( void )
     server_config.max_clients = 2;
     server_config.transport = "portable";
     memcpy( server_config.backend_public_key, backend_public_key, sizeof( server_config.backend_public_key ) );
-    memcpy( server_config.server_public_key, server_public_key, sizeof( server_config.server_public_key ) );
-    memcpy( server_config.server_secret_key, server_secret_key, sizeof( server_config.server_secret_key ) );
     CHECK( rocketnet_server_required_memory( &server_config ) > 0 );
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
@@ -276,20 +262,35 @@ int main( void )
     CHECK( rocketnet_server_max_clients( server ) == 2 );
     CHECK( rocketnet_server_port( server ) != 0 );
 
-    char server_address[64];
-    snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
+    // ---- the server's own public key (valid from create) and the addresses
+    // it advertises once started: IPv4 only here, bound to 127.0.0.1
 
-    // ---- connect tokens: a production token for this server, and (in the
-    // development library) a development token, which this server's own keys
-    // would not accept
+    uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    uint8_t zero_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    memset( server_public_key, 0, sizeof( server_public_key ) );
+    memset( zero_key, 0, sizeof( zero_key ) );
+    rocketnet_server_public_key( server, server_public_key );
+    CHECK( memcmp( server_public_key, zero_key, sizeof( zero_key ) ) != 0 );
 
-    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    CHECK( mint_token( backend_secret_key, server_public_key, server_address, connect_token ) == 0 );
-#if ROCKETNET_DEVELOPMENT
+    char server_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+    char expected_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+    snprintf( expected_address, sizeof( expected_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
+    CHECK( rocketnet_server_ipv4_address( server, server_address, sizeof( server_address ) ) );
+    CHECK( strcmp( server_address, expected_address ) == 0 );
     {
-        uint8_t dev_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-        CHECK( rocketnet_write_dev_connect_token( server_address, CLIENT_ID, (uint64_t) time( NULL ), dev_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+        char ipv6_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+        CHECK( !rocketnet_server_ipv6_address( server, ipv6_address, sizeof( ipv6_address ) ) );
+        CHECK( ipv6_address[0] == '\0' );
     }
+
+#if ROCKETNET_DEVELOPMENT
+    // ---- a development connect token, a string, for this server's address
+    // and public key
+
+    char connect_token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    CHECK( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, CLIENT_ID, PROTOCOL_ID,
+                                               (uint64_t) time( NULL ), NULL, connect_token ) == ROCKETNET_STATUS_OK );
+    CHECK( strlen( connect_token ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 #endif
 
     // ---- the client
@@ -307,6 +308,12 @@ int main( void )
     CHECK( client != NULL );
     CHECK( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
     CHECK( rocketnet_client_index( client ) == -1 );
+    // a connect token is the NUL-terminated string the backend gives; anything
+    // else is refused
+    CHECK( rocketnet_client_connect( client, "not a connect token" ) == ROCKETNET_STATUS_INVALID_CONNECT_TOKEN );
+    CHECK( rocketnet_client_state( client ) <= ROCKETNET_CLIENT_STATE_DISCONNECTED );
+
+#if ROCKETNET_DEVELOPMENT
     CHECK( rocketnet_client_connect( client, connect_token ) == ROCKETNET_STATUS_OK );
     CHECK( strcmp( rocketnet_client_transport_name( client ), "portable" ) == 0 );
 
@@ -399,6 +406,7 @@ int main( void )
     CHECK( client_stats.bytes_sent > 0 && client_stats.bytes_received > 0 );
     CHECK( client_stats.payloads_received > 0 );
     CHECK( client_stats.receipts_acked >= 1 );
+    CHECK( client_stats.receipts_dropped == 0 );
     CHECK( client_stats.rtt >= 0.0 && client_stats.jitter >= 0.0 && client_stats.packet_loss >= 0.0 );
     CHECK( client_stats.bandwidth_sent_kbps >= 0.0 && client_stats.bandwidth_received_kbps >= 0.0 );
 
@@ -408,6 +416,7 @@ int main( void )
     CHECK( server_stats.clients_connected == 1 );
     CHECK( server_stats.payloads_received > 0 );
     CHECK( server_stats.receipts_acked >= 1 );
+    CHECK( server_stats.receipts_dropped == 0 );
     CHECK( server_stats.api_misuse == client_stats.api_misuse );
 
     struct rocketnet_server_client_stats_t slot_stats;
@@ -416,6 +425,19 @@ int main( void )
     CHECK( slot_stats.rtt >= 0.0 && slot_stats.bandwidth_acked_kbps >= 0.0 );
     rocketnet_server_client_stats( server, 1, &slot_stats );
     CHECK( slot_stats.packets_sent == 0 && slot_stats.packets_received == 0 );
+
+#else
+    // ---- a release library mints no tokens: the client stays disconnected,
+    // and the stats structs read the idle objects
+
+    struct rocketnet_client_stats_t client_stats;
+    rocketnet_client_stats( client, &client_stats );
+    CHECK( client_stats.packets_sent == 0 && client_stats.receipts_dropped == 0 );
+    struct rocketnet_server_stats_t server_stats;
+    rocketnet_server_stats( server, &server_stats );
+    CHECK( server_stats.clients_connected == 0 && server_stats.receipts_dropped == 0 );
+    CHECK( server_stats.api_misuse == client_stats.api_misuse );
+#endif
 
     // ---- api misuse is a stats field: two deliberate NULL calls count two
     // (a debug library also calls the installed assert function for each)
@@ -431,6 +453,7 @@ int main( void )
         CHECK( assertions == assertions_before || assertions == assertions_before + 2 );
     }
 
+#if ROCKETNET_DEVELOPMENT
     // ---- the server ends the connection: the client's state says how, and
     // connect is accepted again from that ended state
 
@@ -445,7 +468,8 @@ int main( void )
     CHECK( rocketnet_client_index( client ) == -1 );
     CHECK( !rocketnet_server_client_connected( server, 0 ) );
 
-    CHECK( mint_token( backend_secret_key, server_public_key, server_address, connect_token ) == 0 );
+    CHECK( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, CLIENT_ID, PROTOCOL_ID,
+                                               (uint64_t) time( NULL ), NULL, connect_token ) == ROCKETNET_STATUS_OK );
     CHECK( rocketnet_client_connect( client, connect_token ) == ROCKETNET_STATUS_OK );
     while ( rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED && rocketnet_time() - wall_start < 30.0 )
     {
@@ -465,6 +489,7 @@ int main( void )
     }
     CHECK( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED );
     CHECK( rocketnet_server_num_connected_clients( server ) == 0 );
+#endif
 
     // ---- teardown
 

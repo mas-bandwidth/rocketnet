@@ -20,6 +20,9 @@
 #include "rocketnet.h"
 #include "dev_keys.h"
 
+// the published development backend key, from rocketnet.h (development builds)
+static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -50,12 +53,10 @@ static int run_show_default_and_struct( void )
     struct rocketnet_server_t * server = NULL;
     int result = 1;
 
-    // the published development keys (dev_keys.h); a real server brings its own keys, recommended through the ROCKETNET_SERVER_* environment variables, or set in code
+    // the published development backend key (rocketnet.h) and the examples protocol id (dev_keys.h); the server makes its own keypair at create. A real server brings its own backend key, recommended through ROCKETNET_SERVER_BACKEND_PUBLIC_KEY, or set in code
     rocketnet_server_default_config( &config );
-    config.protocol_id = EXAMPLE_DEV_PROTOCOL_ID;
-    memcpy( config.backend_public_key, example_dev_backend_public_key, sizeof( config.backend_public_key ) );
-    memcpy( config.server_public_key, example_dev_server_public_key, sizeof( config.server_public_key ) );
-    memcpy( config.server_secret_key, example_dev_server_secret_key, sizeof( config.server_secret_key ) );
+    config.protocol_id = EXAMPLE_PROTOCOL_ID;
+    memcpy( config.backend_public_key, dev_backend_public_key, sizeof( config.backend_public_key ) );
 
     printf( "default max_clients: %d\n", config.max_clients );
     printf( "default max_timeout_seconds: %d\n", config.max_timeout_seconds );
@@ -88,12 +89,10 @@ static int run_show_env_wins( void )
     struct rocketnet_server_t * server = NULL;
     int result = 1;
 
-    // the published development keys (dev_keys.h); a real server brings its own keys, recommended through the ROCKETNET_SERVER_* environment variables, or set in code
+    // the published development backend key (rocketnet.h) and the examples protocol id (dev_keys.h); the server makes its own keypair at create. A real server brings its own backend key, recommended through ROCKETNET_SERVER_BACKEND_PUBLIC_KEY, or set in code
     rocketnet_server_default_config( &config );
-    config.protocol_id = EXAMPLE_DEV_PROTOCOL_ID;
-    memcpy( config.backend_public_key, example_dev_backend_public_key, sizeof( config.backend_public_key ) );
-    memcpy( config.server_public_key, example_dev_server_public_key, sizeof( config.server_public_key ) );
-    memcpy( config.server_secret_key, example_dev_server_secret_key, sizeof( config.server_secret_key ) );
+    config.protocol_id = EXAMPLE_PROTOCOL_ID;
+    memcpy( config.backend_public_key, dev_backend_public_key, sizeof( config.backend_public_key ) );
     config.max_clients = 16;
     config.transport = "loopback";
 
@@ -122,12 +121,10 @@ static int run_show_bad_refused( void )
     struct rocketnet_server_t * server = NULL;
     int result = 1;
 
-    // the published development keys (dev_keys.h); a real server brings its own keys, recommended through the ROCKETNET_SERVER_* environment variables, or set in code
+    // the published development backend key (rocketnet.h) and the examples protocol id (dev_keys.h); the server makes its own keypair at create. A real server brings its own backend key, recommended through ROCKETNET_SERVER_BACKEND_PUBLIC_KEY, or set in code
     rocketnet_server_default_config( &config );
-    config.protocol_id = EXAMPLE_DEV_PROTOCOL_ID;
-    memcpy( config.backend_public_key, example_dev_backend_public_key, sizeof( config.backend_public_key ) );
-    memcpy( config.server_public_key, example_dev_server_public_key, sizeof( config.server_public_key ) );
-    memcpy( config.server_secret_key, example_dev_server_secret_key, sizeof( config.server_secret_key ) );
+    config.protocol_id = EXAMPLE_PROTOCOL_ID;
+    memcpy( config.backend_public_key, dev_backend_public_key, sizeof( config.backend_public_key ) );
     config.max_clients = 16;
     config.transport = "loopback";
 

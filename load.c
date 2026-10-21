@@ -51,12 +51,14 @@
     .github/workflows/nightly-soak.yml runs `load 1000 60` once per cell.
 */
 
+/* the title's protocol id: the server config's and every token's */
+#define LOAD_PROTOCOL_ID 0x1122334455667788ULL
+
 #if defined(__linux__) && !defined(_GNU_SOURCE)
 #define _GNU_SOURCE     /* setns, for LOAD_CLIENT_NETNS */
 #endif
 
 #include "rocketnet.h"
-#include "sdk/rocketnet_connect_token.h"     /* the published development keys */
 #include "test/portable_crt.h"
 #include <errno.h>
 #include <inttypes.h>
@@ -542,14 +544,13 @@ int main( int argc, char ** argv )
     /* Public server and client configuration: default configs except the
        explicit settings required by the light profile */
     struct rocketnet_server_config_t server_config;
-    /* the published development keys, set by hand; a real server brings its
-       own keys, recommended through the ROCKETNET_SERVER_* environment
-       variables, or set in code */
+    /* the published development backend key, set by hand (a real server
+       brings its backend's key); the server makes its own keypair at create,
+       and every client's token is sealed to rocketnet_server_public_key */
+    static const uint8_t dev_backend_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
     rocketnet_server_default_config( &server_config );
-    server_config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
-    memcpy( server_config.backend_public_key, rocketnet_dev_backend_public_key, sizeof( server_config.backend_public_key ) );
-    memcpy( server_config.server_public_key, rocketnet_dev_server_public_key, sizeof( server_config.server_public_key ) );
-    memcpy( server_config.server_secret_key, rocketnet_dev_server_secret_key, sizeof( server_config.server_secret_key ) );
+    server_config.protocol_id = LOAD_PROTOCOL_ID;
+    memcpy( server_config.backend_public_key, dev_backend_key, sizeof( server_config.backend_public_key ) );
     server_config.max_clients = num_clients;
     server_config.handshake_deadline_seconds = 10;
 
@@ -589,6 +590,8 @@ int main( int argc, char ** argv )
     char server_address[96];
     snprintf( server_address, sizeof( server_address ), "%s:%d", server_host,
               (int) rocketnet_server_port( server ) );
+    uint8_t server_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    rocketnet_server_public_key( server, server_key );
 
     struct rocketnet_client_t ** clients =
         (struct rocketnet_client_t **) calloc( (size_t) num_clients, sizeof( *clients ) );
@@ -621,8 +624,8 @@ int main( int argc, char ** argv )
 #if defined(__linux__)
     int self_netns = -1;
     int client_netns = -1;
-    const char * client_netns_path = getenv( "LOAD_CLIENT_NETNS" );
-    if ( client_netns_path && client_netns_path[0] != 0 )
+    char client_netns_path[256];
+    if ( rocketnet_test_getenv( "LOAD_CLIENT_NETNS", client_netns_path, sizeof( client_netns_path ) ) && client_netns_path[0] != 0 )
     {
         self_netns = open( "/proc/self/ns/net", O_RDONLY );
         client_netns = open( client_netns_path, O_RDONLY );
@@ -636,7 +639,7 @@ int main( int argc, char ** argv )
 
     for ( int i = 0; i < num_clients; i++ )
     {
-        uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+        char connect_token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
 #if defined(__linux__)
         if ( client_netns >= 0 && setns( client_netns, CLONE_NEWNET ) != 0 )
         {
@@ -644,7 +647,7 @@ int main( int argc, char ** argv )
             return 1;
         }
 #endif
-        if ( rocketnet_write_dev_connect_token( server_address, (uint64_t) ( i + 1 ), token_now, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
+        if ( rocketnet_create_dev_connect_token( server_address, NULL, server_key, 30, 10, (uint64_t) ( i + 1 ), LOAD_PROTOCOL_ID, token_now, NULL, connect_token ) != ROCKETNET_STATUS_OK )
         {
             fprintf( stderr, "load: failed to create dev connect token for client %d\n", i );
             return 1;

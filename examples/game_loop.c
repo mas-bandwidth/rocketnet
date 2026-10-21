@@ -19,6 +19,9 @@
 #include "rocketnet.h"
 #include "dev_keys.h"
 
+// the published development backend key, from rocketnet.h (development builds)
+static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -100,12 +103,10 @@ int main( int argc, char ** argv )
     // the in-memory loopback transport holds ROCKETNET_LOOPBACK_MAX_ENDPOINTS
     // endpoints: one server and ROCKETNET_MAX_CLIENTS clients
     struct rocketnet_server_config_t server_config;
-    // the published development keys (dev_keys.h); a real server brings its own keys, recommended through the ROCKETNET_SERVER_* environment variables, or set in code
+    // the published development backend key (rocketnet.h) and the examples protocol id (dev_keys.h); the server makes its own keypair at create. A real server brings its own backend key, recommended through ROCKETNET_SERVER_BACKEND_PUBLIC_KEY, or set in code
     rocketnet_server_default_config( &server_config );
-    server_config.protocol_id = EXAMPLE_DEV_PROTOCOL_ID;
-    memcpy( server_config.backend_public_key, example_dev_backend_public_key, sizeof( server_config.backend_public_key ) );
-    memcpy( server_config.server_public_key, example_dev_server_public_key, sizeof( server_config.server_public_key ) );
-    memcpy( server_config.server_secret_key, example_dev_server_secret_key, sizeof( server_config.server_secret_key ) );
+    server_config.protocol_id = EXAMPLE_PROTOCOL_ID;
+    memcpy( server_config.backend_public_key, dev_backend_public_key, sizeof( server_config.backend_public_key ) );
     server_config.max_clients = num_clients;
     server_config.transport = "loopback";
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
@@ -119,16 +120,18 @@ int main( int argc, char ** argv )
     if ( !server ) { printf( "FAIL: server create\n" ); goto cleanup; }
     printf( "%d clients, server transport %s\n", num_clients, rocketnet_server_transport_name( server ) );
 
-    char server_address[64];
-    snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
+    char server_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+    uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    if ( !rocketnet_server_ipv4_address( server, server_address, sizeof( server_address ) ) ) { printf( "FAIL: server address\n" ); goto cleanup; }
+    rocketnet_server_public_key( server, server_public_key );
     struct rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "loopback";
     for ( int i = 0; i < num_clients; i++ )
     {
-        uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];       // a development token stamped far ahead, as in hello
+        char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];       // a development token stamped far ahead, as in hello
         enum rocketnet_status_t client_status = ROCKETNET_STATUS_OK;
-        if ( rocketnet_write_dev_connect_token( server_address, (uint64_t) i, 4102444800ull, token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK ||
+        if ( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, (uint64_t) i, EXAMPLE_PROTOCOL_ID, 4102444800ull, NULL, token ) != ROCKETNET_STATUS_OK ||
              !( clients[i] = rocketnet_client_create( NULL, &client_config, &client_status ) ) ||
              rocketnet_client_connect( clients[i], token ) != ROCKETNET_STATUS_OK )
             { printf( "FAIL: client %d create: %s\n", i, rocketnet_status_name( client_status ) ); goto cleanup; }

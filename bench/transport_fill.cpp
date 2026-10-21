@@ -1,6 +1,7 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Public-API packet-fill microbenchmark. See transport_fill.md for its limits.
 #include "rocketnet_internal.h"
+#include "rocketnet_connect_token.h"
 #include <chrono>
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,7 +31,7 @@ int main(int argc, char ** argv)
     char address[64];
     snprintf(address, sizeof(address), "127.0.0.1:%u", rocketnet_server_transport_port(server));
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    CHECK(rocketnet_write_dev_connect_token(address, 1234, (uint64_t)time(NULL), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK);
+    CHECK(rocketnet_write_test_connect_token(address, 1234, (uint64_t)time(NULL), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK);
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config(&client_config);
     memcpy(client_config.transport, "portable", sizeof("portable"));
