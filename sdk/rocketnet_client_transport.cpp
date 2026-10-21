@@ -316,8 +316,11 @@ bool rocketnet_client_transport_connection_state_clean_for_test( struct rocketne
     return member == NULL;
 }
 
+// Every refusal reaches here before a worker is successfully created. No
+// thread owns transport storage, so failed construction is already quiescent.
 static void rocketnet_client_transport_abort_create( rocketnet_client_transport_t * transport )
 {
+    rocketnet_assert( !transport->thread );
     transport->stop_requested = true;
     transport->stopped.store( true, std::memory_order_release );
     transport->client_io.stopped.store( true, std::memory_order_release );
@@ -2275,7 +2278,9 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
     client_transport->stop_address = server_address;
     client_transport->stop_burst_count = burst_count;
     client_transport->stop_burst_bytes = burst_bytes;
-    memcpy( client_transport->stop_burst, burst, (size_t) burst_count * ROCKETNET_SEND_BUDGET );
+    for ( int i = 0; i < burst_count; ++i )
+        memcpy( client_transport->stop_burst + i * ROCKETNET_SEND_BUDGET,
+                burst + i * ROCKETNET_SEND_BUDGET, (size_t) burst_bytes );
 
 }
 
