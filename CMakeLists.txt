@@ -782,7 +782,7 @@ if(ROCKETNET_BUILD_TOOLS)
     # lld-link loads an archive member as soon as an earlier object
     # references one of its symbols (see ROCKETNET_UNIT_TRANSPORT_SOURCE).
     set(ROCKETNET_FUZZ_PAIR_HARNESSES rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session)
-    foreach(harness rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private ${ROCKETNET_FUZZ_PAIR_HARNESSES})
+    foreach(harness rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip ${ROCKETNET_FUZZ_PAIR_HARNESSES})
         if(harness IN_LIST ROCKETNET_FUZZ_PAIR_HARNESSES)
             add_executable(fuzz_replay_${harness} fuzz/${harness}.cpp fuzz/replay_main.cpp)
         else()
