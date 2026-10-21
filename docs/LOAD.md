@@ -13,6 +13,33 @@ for this harness's 32-byte payloads, eight reliability cases and one-fragment
 messages. It does not change public defaults or make a general memory promise
 for other applications.
 
+## Low-bandwidth population ladder
+
+The requested ladder is 10, 100, 250, 500 and 1,000 clients. At each rung,
+offer one 32-byte application message per client per second in each direction
+with the fixed-rate option below. For the stock 1,000-client acceptance, run
+the `default` profile so the result covers SDK-default sizing. The `light`
+profile is a separate, additional bounded-memory workload; it cannot substitute
+for the default-profile acceptance. The current `bin/load` harness is capped at
+`ROCKETNET_MAX_CLIENTS` (1,000). Future custom 2,000, 5,000 and 10,000-client
+rungs require an explicitly extended harness/build and capacity review.
+
+For every rung, require each client's maximum wire rate to stay strictly below
+100 kbps in both directions, and compare aggregate traffic in each direction
+with that direction's available link rate. Record the exact source head,
+population, profile, transports and receipt. Report the highest population that
+passed all functional and rate criteria, the first population with a functional
+failure, and any higher population blocked by a capacity guard as `UNRUN`.
+A capacity refusal is not a functional failure, and an unrun rung has no pass
+result. Product documentation records no current ladder results.
+
+`bin/load` puts the public server and all clients in one process on loopback.
+Its byte and rate counters measure this colocated logic workload; they do not
+measure utilization of a physical NIC or prove physical line rate. Keep a
+separate test with traffic crossing the intended physical link for line-rate
+acceptance, and compare its aggregate directional rate with measured link
+capacity.
+
 Set `LOAD_PLAN_ONLY=1` with the same client count, profile and SDK environment
 as the intended run to get a `load_plan:` receipt without creating endpoints
 or binding a socket. It reports `client_public_required_bytes`,
@@ -25,7 +52,12 @@ figures include public create allocations, while connect/start may allocate
 more transport memory and native resources. The planner cannot certify host
 capacity or the eventual transport choice; a runner needs a separately
 justified reserve and should use the exact binary and environment for both
-planning and execution.
+planning and execution. The reserve byte count and evidence string are
+operator-supplied inputs. The helper checks that the evidence text names the
+source head, OS, transport and population, but cannot verify that the reserve
+was measured correctly or that the host can supply that capacity. The plan and
+reserve are planning inputs, not machine-verifiable proof of total runtime
+memory or link capacity.
 
 For a constant offered application rate across population sizes, set
 `LOAD_MESSAGES_PER_CLIENT_SECOND=1`. This offers one 32-byte message per client
@@ -39,9 +71,32 @@ so the harness never catches up with a burst. Without this variable, the
 original one-pair-per-update workload is unchanged. The summary prints the
 target, offered and accepted-message rates per client per second; the offered
 rate can fall below target when updates are slow, and the accepted rate can
-fall further when sends are refused. Fixed-rate runs report
+fall further when sends are refused. `application_offers_accepted=PASS` means
+every message that was offered was accepted by the API; it does not mean the
+target rate was reached. Delivery of all messages from a below-target offered
+rate is not target-rate success. A rate rung reaches its application target
+only when the observed offered rate reaches the target in both directions and
+all offers are accepted. Fixed-rate runs report
 `application_offers_accepted=FAIL` and fail the verdict if either direction
 refuses an offered message.
+
+Run one fixed-rate rung with the profiling helper on a clean checkout and a
+unique output path:
+
+```sh
+src=/path/to/clean/rocketnet
+head=$(git -C "$src" rev-parse HEAD)
+python3 "$src/tools/profile_1000_load.py" \
+  --mode timings --source "$src" --expected-head "$head" \
+  --server-transport portable --seconds 60 --clients 100 \
+  --profile light --messages-per-client-second 1 \
+  --output /path/to/evidence/light-100
+```
+
+This example selects the additional light profile. The stock-1,000 acceptance
+uses `--clients 1000 --profile default`; that profile also requires a
+positive `--transport-overhead-reserve-bytes` and matching
+`--transport-overhead-evidence` metadata.
 
 The `wire_window=traffic` counters are snapshots before the traffic clock
 starts and at the first drain transition. `wire_window_seconds` measures from
