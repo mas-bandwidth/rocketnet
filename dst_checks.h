@@ -887,7 +887,6 @@ static inline void rocketnet_dst_check_settle( struct rocketnet_dst_check_state_
 static inline void rocketnet_dst_check_end( struct rocketnet_dst_check_state_t * st, double /* time */,
                                             const int * session_live, const uint64_t * live_identity )
 {
-    (void) time;
     for ( int session = 0; session < ROCKETNET_DST_CHECK_MAX_SESSIONS; session++ )
     {
         if ( !session_live[session] )

@@ -190,4 +190,11 @@ inline void rocketnet_unit_tests_run()
         rocketnet_unit_tests_run_named( rocketnet_unit_tests_name( i ) );
 }
 
+// Key and seed sizes the SDK's internal key makers (sdk/rocketnet_connect_token.h)
+// write: an Ed25519 backend secret is 64 bytes and its seed 32; an X25519
+// server secret is 32. The public header carries only the public-key sizes.
+#define RN_TEST_BACKEND_SECRET_KEY_BYTES 64
+#define RN_TEST_BACKEND_SEED_BYTES 32
+#define RN_TEST_SERVER_SECRET_KEY_BYTES 32
+
 #endif // #ifndef ROCKETNET_UNIT_TEST_REGISTRY_H

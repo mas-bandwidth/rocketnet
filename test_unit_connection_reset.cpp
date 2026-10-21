@@ -306,9 +306,9 @@ struct reset_loopback_keys_t
 {
     int initialized;
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret[RN_TEST_BACKEND_SECRET_KEY_BYTES];
     uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret[RN_TEST_SERVER_SECRET_KEY_BYTES];
 };
 
 static const reset_loopback_keys_t * reset_loopback_keys()

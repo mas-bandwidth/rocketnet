@@ -38,6 +38,7 @@
 #include "test/portable_crt.h"
 
 #include "rocketnet_internal.h"
+#include "rocketnet_connect_token.h"
 #include "rocketnet_driver.h"
 #include "rocketnet_driver_loopback.h"
 #include "rocketnet_platform.h"
@@ -390,9 +391,9 @@ static void test_transport_create_client_ladder_stops_on_out_of_memory()
 
     const uint64_t protocol_id = 0x6f6f6d6f6f6d6f6fULL;
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret_key[RN_TEST_BACKEND_SECRET_KEY_BYTES];
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret_key[RN_TEST_SERVER_SECRET_KEY_BYTES];
     check( rocketnet_generate_backend_keypair( backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
     check( rocketnet_generate_server_keypair( server_public_key, server_secret_key ) == ROCKETNET_STATUS_OK );
 

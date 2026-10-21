@@ -42,8 +42,6 @@ static void create_status_dev_server_config( struct rocketnet_server_config_t * 
     check( rocketnet_server_default_config( config ) == ROCKETNET_STATUS_OK );
     config->protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     memcpy( config->backend_public_key, rocketnet_dev_backend_public_key, 32 );
-    memcpy( config->server_public_key, rocketnet_dev_server_public_key, 32 );
-    memcpy( config->server_secret_key, rocketnet_dev_server_secret_key, 32 );
 }
 
 #if defined( _WIN32 )

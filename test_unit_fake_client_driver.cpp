@@ -240,8 +240,8 @@ static void test_fake_client_disconnect_burst_keeps_server_address()
     rocketnet_quiet( 1 );
     fake_disconnect_record.count = 0;
 
-    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES], backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
-    uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES], server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES], backend_secret[RN_TEST_BACKEND_SECRET_KEY_BYTES];
+    uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES], server_secret[RN_TEST_SERVER_SECRET_KEY_BYTES];
     uint8_t seed[32];
     for ( int i = 0; i < 32; i++ )
         seed[i] = (uint8_t) ( 0x5A ^ i );

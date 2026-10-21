@@ -14,7 +14,7 @@
 //   2. the dev connect-token writer takes connect_token_bytes and returns a status
 //   3. typed enums replace the #defines, named ROCKETNET_<SET>_<VALUE>; the
 //      updates return void, and the client state carries the disconnect reason
-//   4. pure questions return bool; step_driven is bool
+//   4. pure questions return bool; step_driven is an int flag (0/1)
 //   5. Next SDK naming: rocketnet_log_level, rocketnet_assert_function
 //   6. one log sink: rocketnet_log_function; the log level is an enum
 //   7. every lookup ends in _name and returns "unknown" for an unknown value
@@ -26,6 +26,7 @@
 #include "rocketnet.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
+#include "test/token_string.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -79,8 +80,6 @@ static void api_polish_dev_server_config( struct rocketnet_server_config_t * con
     check( rocketnet_server_default_config( config ) == ROCKETNET_STATUS_OK );
     config->protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     memcpy( config->backend_public_key, rocketnet_dev_backend_public_key, 32 );
-    memcpy( config->server_public_key, rocketnet_dev_server_public_key, 32 );
-    memcpy( config->server_secret_key, rocketnet_dev_server_secret_key, 32 );
 }
 
 static void * api_polish_malloc( void * context, size_t bytes ) { (void) context; return malloc( bytes ); }
@@ -102,10 +101,10 @@ static void test_api_polish_status_returns()
     check( rocketnet_library_initialized() );
 
     uint8_t public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t secret_key[RN_TEST_SERVER_SECRET_KEY_BYTES];
     check( rocketnet_generate_server_keypair( public_key, secret_key ) == ROCKETNET_STATUS_OK );
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret[RN_TEST_BACKEND_SECRET_KEY_BYTES];
     check( rocketnet_generate_backend_keypair( backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
 
     const char * addresses[] = { "127.0.0.1:40000" };
@@ -139,17 +138,18 @@ static void test_api_polish_status_returns()
 }
 REGISTER_UNIT_TEST( test_api_polish_status_returns );
 
-// --- ruling 2: the dev token writer takes its buffer size ---------------------
+// --- the dev token minter writes the public token string ---------------------
 
-// The unit suite links the release archive, where the development writer is
+// The unit suite links the release archive, where the development minter is
 // compiled out; the development shared library built beside it carries it, so
-// the writer is loaded from there (as test_unit_connect_token_vectors.cpp
-// does) and called through the new signature. The old four-argument writer
-// would ignore the size and return 1, failing every check below.
-typedef rocketnet_status_t ( *api_polish_dev_writer_t )( const char *, uint64_t, uint64_t, uint8_t *, size_t );
+// the minter is loaded from there (as test_unit_connect_token_vectors.cpp
+// does) and called through the public signature: it writes exactly the
+// NUL-terminated string into ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES and
+// names every refusal.
+typedef rocketnet_status_t ( *api_polish_dev_minter_t )( const char *, const char *, const uint8_t *, int, int, uint64_t, uint64_t, uint64_t, const uint8_t *, char * );
 
 #if ROCKETNET_DEVELOPMENT
-static_assert( rn_same<decltype( &rocketnet_write_dev_connect_token ), api_polish_dev_writer_t>::value, "ruling 2: dev token signature" );
+static_assert( rn_same<decltype( &rocketnet_create_dev_connect_token ), api_polish_dev_minter_t>::value, "dev token minter signature" );
 #endif // #if ROCKETNET_DEVELOPMENT
 
 // the development library keeps its own log state, apart from the sink the
@@ -159,46 +159,61 @@ typedef void ( *api_polish_dev_set_log_t )( rocketnet_log_function_t, void * );
 static api_polish_dev_set_log_t api_polish_dev_set_log = NULL;
 static int api_polish_dev_error_lines = 0;
 
-static void api_polish_dev_log_capture( void *, enum rocketnet_log_level_t level, const char * message, size_t )
+static void api_polish_dev_log_capture( void *, enum rocketnet_log_level_t level, const char *, size_t )
 {
-    if ( level == ROCKETNET_LOG_LEVEL_ERROR && strstr( message, "767" ) )
+    if ( level == ROCKETNET_LOG_LEVEL_ERROR )
         api_polish_dev_error_lines++;
 }
 
-static api_polish_dev_writer_t api_polish_dev_writer()
+static api_polish_dev_minter_t api_polish_dev_minter()
 {
-    api_polish_dev_writer_t writer = NULL;
+    api_polish_dev_minter_t minter = NULL;
 #if defined(_WIN32)
     HMODULE library = LoadLibraryA( ROCKETNET_DEV_LIBRARY_PATH );
     check( library != NULL );
-    writer = (api_polish_dev_writer_t) (void *) GetProcAddress( library, "rocketnet_write_dev_connect_token" );
+    minter = (api_polish_dev_minter_t) (void *) GetProcAddress( library, "rocketnet_create_dev_connect_token" );
     api_polish_dev_set_log = (api_polish_dev_set_log_t) (void *) GetProcAddress( library, "rocketnet_log_function" );
 #else
     void * library = dlopen( ROCKETNET_DEV_LIBRARY_PATH, RTLD_NOW | RTLD_LOCAL );
     check( library != NULL );
-    writer = (api_polish_dev_writer_t) dlsym( library, "rocketnet_write_dev_connect_token" );
+    minter = (api_polish_dev_minter_t) dlsym( library, "rocketnet_create_dev_connect_token" );
     api_polish_dev_set_log = (api_polish_dev_set_log_t) dlsym( library, "rocketnet_log_function" );
 #endif
-    check( writer != NULL );
+    check( minter != NULL );
     check( api_polish_dev_set_log != NULL );
-    return writer;
+    return minter;
 }
 
-static void test_api_polish_dev_token_buffer()
+static void test_api_polish_dev_token_string()
 {
-    api_polish_dev_writer_t write_dev = api_polish_dev_writer();
-    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES + 1];
-    memset( token, 0xAB, sizeof( token ) );
+    api_polish_dev_minter_t create_dev = api_polish_dev_minter();
+    uint8_t server_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    memset( server_key, 0x42, sizeof( server_key ) );
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES + 1];
+    memset( token, 0x5A, sizeof( token ) );
+    api_polish_dev_error_lines = 0;
     api_polish_dev_set_log( api_polish_dev_log_capture, NULL );
-    check( write_dev( "127.0.0.1:40000", 1, 1000, token, ROCKETNET_CONNECT_TOKEN_BYTES - 1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
-    check( api_polish_dev_error_lines == 1 );                                             // the short buffer is named
-    check( token[0] == 0xAB && token[ROCKETNET_CONNECT_TOKEN_BYTES - 2] == 0xAB );      // nothing written
-    check( write_dev( "not an address", 1, 1000, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_INVALID_ADDRESS );
-    check( write_dev( "127.0.0.1:40000", 1, 1000, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
-    check( token[ROCKETNET_CONNECT_TOKEN_BYTES] == 0xAB );                                // nothing past the token
+
+    // no address at all: refused and named, nothing written
+    check( create_dev( NULL, NULL, server_key, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 1000, NULL, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( api_polish_dev_error_lines == 1 );
+    check( token[0] == 0x5A && token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1] == 0x5A );
+
+    // an address that does not parse
+    check( create_dev( "not an address", NULL, server_key, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 1000, NULL, token ) == ROCKETNET_STATUS_INVALID_ADDRESS );
+    check( token[0] == 0x5A );
+
+    // a dead lifetime is refused
+    check( create_dev( "127.0.0.1:40000", NULL, server_key, 0, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 1000, NULL, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( token[0] == 0x5A );
+
+    // the string fills the public buffer exactly, NUL-terminated, nothing past it
+    check( create_dev( "127.0.0.1:40000", NULL, server_key, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 1000, NULL, token ) == ROCKETNET_STATUS_OK );
+    check( strlen( token ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
+    check( token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES] == 0x5A );
     api_polish_dev_set_log( NULL, NULL );
 }
-REGISTER_UNIT_TEST( test_api_polish_dev_token_buffer );
+REGISTER_UNIT_TEST( test_api_polish_dev_token_string );
 
 // --- ruling 3: typed enums, values unchanged ----------------------------------
 
@@ -229,16 +244,16 @@ static_assert( rn_same<decltype( &rocketnet_server_start_message ), uint8_t * (*
 
 static_assert( rn_same<decltype( rocketnet_server_running( NULL ) ), bool>::value, "ruling 4: running" );
 static_assert( rn_same<decltype( rocketnet_server_client_connected( NULL, 0 ) ), bool>::value, "ruling 4: client connected" );
-static_assert( rn_same<decltype( ( (rocketnet_client_config_t *) 0 )->step_driven ), bool>::value, "ruling 4: step_driven" );
+static_assert( rn_same<decltype( ( (rocketnet_client_config_t *) 0 )->step_driven ), int>::value, "step_driven is an int flag (0/1)" );
 
 static void test_api_polish_bool_field_abi()
 {
-    // the bool field is one byte; the ABI version macro stays
-    check( sizeof( ( (rocketnet_client_config_t *) 0 )->step_driven ) == 1 );
+    // the flag is an int, as send_kbps is
+    check( sizeof( ( (rocketnet_client_config_t *) 0 )->step_driven ) == sizeof( int ) );
     check( sizeof( ( (rocketnet_client_config_t *) 0 )->send_kbps ) == sizeof( int ) );
     struct rocketnet_client_config_t config;
     check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
-    check( config.step_driven == false );
+    check( config.step_driven == 0 );
 }
 REGISTER_UNIT_TEST( test_api_polish_bool_field_abi );
 
@@ -427,11 +442,8 @@ static void test_api_polish_client_index_is_minus_one_until_connected()
     for ( int i = 0; i < 32; i++ )
         seed[i] = (uint8_t) ( 0x5C ^ i );
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
-    uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t backend_secret[RN_TEST_BACKEND_SECRET_KEY_BYTES];
     check( rocketnet_generate_backend_keypair_from_seed( seed, backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_generate_server_keypair( server_public, server_secret ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_server_config_t server_config;
     check( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
@@ -439,8 +451,6 @@ static void test_api_polish_client_index_is_minus_one_until_connected()
     server_config.max_clients = 1;
     server_config.transport = "loopback";
     memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
-    memcpy( server_config.server_public_key, server_public, sizeof( server_config.server_public_key ) );
-    memcpy( server_config.server_secret_key, server_secret, sizeof( server_config.server_secret_key ) );
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &create_status );
     check( server != NULL );
@@ -450,14 +460,14 @@ static void test_api_polish_client_index_is_minus_one_until_connected()
     char address[64];
     snprintf( address, sizeof( address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
     const char * addresses[] = { address };
-    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    check( rocketnet_write_production_connect_token( backend_secret, server_public, API_POLISH_INDEX_PROTOCOL, addresses, 1,
-        0x1D, 1000, 1ULL << 40, 300, NULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    check( rn_test_server_token_string( backend_secret, server, API_POLISH_INDEX_PROTOCOL, addresses, 1,
+        0x1D, 1000, 1ULL << 40, 300, NULL, token ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_config_t client_config;
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
     client_config.transport = "loopback";
-    client_config.step_driven = true;
+    client_config.step_driven = 1;
     client_config.time_callback = api_polish_index_clock;
     create_status = ROCKETNET_STATUS_OK;
     rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &create_status );
@@ -535,10 +545,10 @@ REGISTER_UNIT_TEST( test_api_polish_server_abort_message_misuse );
 static void test_api_polish_production_token_refuses_dead_tokens()
 {
     uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret[RN_TEST_SERVER_SECRET_KEY_BYTES];
     check( rocketnet_generate_server_keypair( server_public, server_secret ) == ROCKETNET_STATUS_OK );
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret[RN_TEST_BACKEND_SECRET_KEY_BYTES];
     check( rocketnet_generate_backend_keypair( backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
 
     const char * addresses[] = { "127.0.0.1:40000" };
