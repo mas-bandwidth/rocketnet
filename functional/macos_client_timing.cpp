@@ -7,11 +7,11 @@
     at a 60 Hz update while a server thread sends one timestamped payload every
     10 ms. Three conditions, one case each:
 
-      macos_client_timing_default_qos            the process at its default QoS
-      macos_client_timing_taskpolicy_background  the case re-runs itself under
+      test_macos_client_timing_default_qos            the process at its default QoS
+      test_macos_client_timing_taskpolicy_background  the case re-runs itself under
                                                  `taskpolicy -b` (the throttling
                                                  and coalescing a napped app sees)
-      macos_client_timing_background_thread_qos  the game thread, the one that
+      test_macos_client_timing_background_thread_qos  the game thread, the one that
                                                  creates and updates the client,
                                                  lowered to QOS_CLASS_BACKGROUND
 
@@ -396,7 +396,7 @@ void macos_client_timing_taskpolicy_background()
     char taskpolicy[] = "/usr/sbin/taskpolicy";
     char background[] = "-b";
     char run[] = "--run";
-    char name[] = "macos_client_timing_taskpolicy_background";
+    char name[] = "test_macos_client_timing_taskpolicy_background";
     char * argv[] = { taskpolicy, background, exe, run, name, NULL };
     pid_t pid = 0;
     const int spawned = posix_spawn( &pid, taskpolicy, NULL, NULL, argv, environ );
@@ -407,23 +407,6 @@ void macos_client_timing_taskpolicy_background()
     // measured only: the child asserts nothing about timing, so a nonzero exit
     // here is a setup failure (server create, connect token, spawn)
     macos_timing_require( WIFEXITED( child_status ) && WEXITSTATUS( child_status ) == 0 );
-}
-
-#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-
-void macos_client_timing_default_qos()
-{
-    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "macos_client_timing_default_qos [SKIPPED mac only: QoS classes and App Nap are macOS]" );
-}
-
-void macos_client_timing_background_thread_qos()
-{
-    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "macos_client_timing_background_thread_qos [SKIPPED mac only: QoS classes and App Nap are macOS]" );
-}
-
-void macos_client_timing_taskpolicy_background()
-{
-    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "macos_client_timing_taskpolicy_background [SKIPPED mac only: taskpolicy is macOS]" );
 }
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC

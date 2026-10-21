@@ -168,7 +168,7 @@ static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketn
     config.max_clients = clients;
     config.max_payload_bytes = payload_limit;
     config.num_reassembly_slots = 1;
-    strcpy(config.transport, "portable");
+    snprintf(config.transport, sizeof(config.transport), "%s", "portable");
     auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
     CHECK(server);
     rocketnet_server_transport_io_close(&server->io);
@@ -185,7 +185,7 @@ static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketn
     for (int i = 0; i < clients; ++i)
     {
         rocketnet_address_t address;
-        CHECK(rocketnet_address_parse(&address, "127.0.0.1:0")); address.port = 1000 + i;
+        CHECK(rocketnet_address_parse(&address, "127.0.0.1:0")); address.port = (uint16_t)( 1000 + i );
         int index = rocketnet_encryption_map_add(server->protocol.encryption_map, &address, 100.0);
         CHECK(index >= 0);
         auto * mapping = rocketnet_encryption_map_entry(server->protocol.encryption_map, index);
@@ -236,8 +236,8 @@ static void test_buffered_control_pressure(int clients = 300)
     const double elapsed_ms = (rocketnet_time() - begin) * 1000.0;
     for (int i = 0; i < clients; ++i) CHECK(server->protocol.acks->endpoints[i].rtt == 17.0f);
     rocketnet_server_transport_destroy(server); delete f;
-    printf("test_buffered_control_pressure clients=%d updates=6 controls=%d elapsed_ms=%.3f\n",
-        clients, clients * 6, elapsed_ms);
+    (void) elapsed_ms;
+    printf("test_buffered_control_pressure_%d_clients\n", clients);
 }
 
 static void test_disconnect_burst_next_send(bool staged)
@@ -259,7 +259,7 @@ static void test_disconnect_burst_next_send(bool staged)
     CHECK(server->stats_frames[stats_index].packets_sent == before + ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS);
 
     rocketnet_server_transport_destroy(server); delete f;
-    printf("test_disconnect_burst_next_send staged=%d disconnects=%d\n", staged, ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS);
+    printf("test_disconnect_burst_next_send_%s\n", staged ? "staged" : "portable");
 }
 
 static void test_staged_control_fairness()
@@ -382,8 +382,12 @@ static void test_entries_carry_connection_id(bool staged)
             uint8_t * payload = rocketnet_server_transport_packet_payload(server, &context, &capacity);
             CHECK(payload && capacity >= 8);
             memset(payload, 0x50 + k, 8);
-            sequences[c][k] = context.sequence;
+            // the server assigns the sequence when finish accepts the payload
+            // (test_unit_sequence_burn.cpp; tla/FragmentsAndAcks.tla
+            // BurnedNeverNamed), so it is read after finish, never at start
             CHECK(rocketnet_server_transport_finish_packet(server, &context, 8) > 0);
+            sequences[c][k] = context.sequence;
+            CHECK(sequences[c][k] != 0);
         }
     }
     rocketnet_server_transport_send_packets(server);
@@ -399,7 +403,7 @@ static void test_entries_carry_connection_id(bool staged)
         const int block = rocketnet_ack_block_build(plaintext, ROCKETNET_ACK_BLOCK_MAX_BYTES, &replay);
         CHECK(block > 0);
         memset(plaintext + block, 0xA0 + c, 4);
-        CHECK(rocketnet_address_parse(&f->feed_from[c], "127.0.0.1:0")); f->feed_from[c].port = 1000 + c;
+        CHECK(rocketnet_address_parse(&f->feed_from[c], "127.0.0.1:0")); f->feed_from[c].port = (uint16_t)( 1000 + c );
         f->feed_bytes[c] = rocketnet_write_sealed_packet(f->feed_data[c], ROCKETNET_CONNECTION_PAYLOAD_PACKET,
             protocol->filter_value, 1, NULL, plaintext, block + 4, protocol->protocol_id,
             mapping->connection_salt, NULL, mapping->keys.session_client_to_server);
@@ -479,7 +483,7 @@ static void test_entries_carry_connection_id(bool staged)
     }
 
     rocketnet_server_transport_destroy(server); delete f;
-    printf("test_entries_carry_connection_id staged=%d payloads=%d acked=%d fragmented=1\n", staged, num_payloads, num_acked);
+    printf("test_entries_carry_connection_id_%s\n", staged ? "staged" : "portable");
 }
 
 static void test_staged_link_address_hooks()

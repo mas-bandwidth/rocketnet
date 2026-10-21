@@ -10,12 +10,13 @@
 
 #include "test_unit_registry.h"
 #include "test/fake_client_driver.h"
+#include "test/portable_crt.h"
 
 #include "rocketnet_address.h"
 
 // Each table opens through rocketnet_client_transport_io_open with the fake as the
 // context and closes with destroy counted once.
-static void fake_client_transport_io_opens_with_all_eight()
+static void test_fake_client_transport_io_opens_with_all_eight()
 {
     const rocketnet_client_transport_io_operations_t * tables[] =
     {
@@ -41,7 +42,7 @@ static void fake_client_transport_io_opens_with_all_eight()
 
 // wait is false with nothing; wake makes the next wait true; the following
 // wait is false again; a pushed datagram makes wait true without consuming it.
-static void fake_client_wake_is_level_triggered()
+static void test_fake_client_wake_is_level_triggered()
 {
     rocketnet_fake_client_transport_io_t fake = {};
     rocketnet_unit_check( !rocketnet_fake_client_operations_io.wait( &fake, true, 1.0 ) );
@@ -64,7 +65,7 @@ static void fake_client_wake_is_level_triggered()
 // Three pushed datagrams of 10, 20 and 30 bytes from distinct ports drain by
 // receive_batch in order with stride 2048: 2, then 1, then 0, addresses and
 // bytes matching.
-static void fake_client_receive_batch_layout()
+static void test_fake_client_receive_batch_layout()
 {
     rocketnet_fake_client_transport_io_t fake = {};
     uint8_t d1[10] = {}, d2[20] = {}, d3[30] = {};
@@ -97,7 +98,7 @@ static void fake_client_receive_batch_layout()
 
 // wait honors readable: a datagram counts only when readable is true, and a
 // wake returns regardless of readable and is consumed by the next wait.
-static void fake_client_wait_honors_readable()
+static void test_fake_client_wait_honors_readable()
 {
     rocketnet_fake_client_transport_io_t fake = {};
     uint8_t data[4] = { 1, 2, 3, 4 };
@@ -118,7 +119,7 @@ static void fake_client_wait_honors_readable()
 
 // The io table opens with wait and wake set and batch null; the batch table
 // opens with the batch callbacks set.
-static void fake_client_io_table_opens_with_wait_and_wake()
+static void test_fake_client_io_table_opens_with_wait_and_wake()
 {
     rocketnet_fake_client_transport_io_t fake = {};
     rocketnet_client_transport_io_config_t config = { "fake", NULL, NULL };
@@ -145,11 +146,11 @@ static void fake_client_io_table_opens_with_wait_and_wake()
     rocketnet_client_transport_io_close( &transport );
 }
 
-REGISTER_UNIT_TEST( fake_client_transport_io_opens_with_all_eight );
-REGISTER_UNIT_TEST( fake_client_wake_is_level_triggered );
-REGISTER_UNIT_TEST( fake_client_receive_batch_layout );
-REGISTER_UNIT_TEST( fake_client_wait_honors_readable );
-REGISTER_UNIT_TEST( fake_client_io_table_opens_with_wait_and_wake );
+REGISTER_UNIT_TEST( test_fake_client_transport_io_opens_with_all_eight );
+REGISTER_UNIT_TEST( test_fake_client_wake_is_level_triggered );
+REGISTER_UNIT_TEST( test_fake_client_receive_batch_layout );
+REGISTER_UNIT_TEST( test_fake_client_wait_honors_readable );
+REGISTER_UNIT_TEST( test_fake_client_io_table_opens_with_wait_and_wake );
 
 // ---------------------------------------------------------------------------
 // A deferred disconnect burst keeps the server address (docs/CLIENT-IO.md
@@ -222,20 +223,18 @@ struct fake_disconnect_env_guard_t
     {
         for ( int i = 0; i < 2; i++ )
         {
-            const char * prior = getenv( names[i] );
-            if ( prior )
-                snprintf( saved[i], sizeof( saved[i] ), "%s", prior );
+            rocketnet_test_getenv( names[i], saved[i], sizeof( saved[i] ) );
             rocketnet_unit_check( fake_disconnect_setenv( names[i], "" ) == 0 );
         }
     }
-    ~fake_disconnect_env_guard_t()
+    ~fake_disconnect_env_guard_t() noexcept( false ) // check() throws under the expected-fail harness
     {
         for ( int i = 0; i < 2; i++ )
             rocketnet_unit_check( fake_disconnect_setenv( names[i], saved[i] ) == 0 );
     }
 };
 
-static void fake_client_disconnect_burst_keeps_server_address()
+static void test_fake_client_disconnect_burst_keeps_server_address()
 {
     fake_disconnect_env_guard_t env_guard;
     rocketnet_quiet( 1 );
@@ -336,4 +335,4 @@ static void fake_client_disconnect_burst_keeps_server_address()
     rocketnet_server_transport_destroy( server );
 }
 
-REGISTER_UNIT_TEST( fake_client_disconnect_burst_keeps_server_address );
+REGISTER_UNIT_TEST( test_fake_client_disconnect_burst_keeps_server_address );

@@ -6,6 +6,7 @@
 */
 
 #include "channel_harness.h"
+#include "../test/portable_crt.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -38,7 +39,7 @@ static const double rocketnet_ordered_timeout = 180.0;
 // also pays the two-message pipeline, the 50 ms link, the resend of every lost
 // chunk and head-of-line waits, so the multiple sits well above 1 even on a
 // clean link. Over 10% loss and seeds 1-2000 of scripts/channel-seed-sweep
-// (ordered_256k_chunked_stream_over_lossy_reordering_link, the larger factor)
+// (test_ordered_256k_chunked_stream_over_lossy_reordering_link, the larger factor)
 // the completed runs have a median of 13.5 and a maximum of 17.67; the
 // multiple is that maximum plus a margin of about 13%. The earlier 15.0 came
 // from three runs on the pinned seed and 6% of seeds exceeded it. A run that
@@ -70,10 +71,17 @@ static void rocketnet_ordered_fill( uint8_t * data, int message, int bytes )
 
 static float rocketnet_ordered_loss_percent( void )
 {
-    const char * value = getenv( "ROCKETNET_CHANNEL_LOSS_PERCENT" );
-    if ( value && value[0] )
+    char value[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_CHANNEL_LOSS_PERCENT", value, sizeof( value ) ) && value[0] )
         return (float) atof( value );
     return 10.0f;
+}
+
+// ROCKETNET_CHANNEL_METRICS set: print the measurement of a green run too
+static bool rocketnet_ordered_metrics( void )
+{
+    char value[256];
+    return rocketnet_test_getenv( "ROCKETNET_CHANNEL_METRICS", value, sizeof( value ) ) != 0;
 }
 
 struct rocketnet_ordered_measurement_t
@@ -100,7 +108,7 @@ static void rocketnet_ordered_print_measurement( const char * name,
             (unsigned long long) m->payload_bytes, m->lower_bound_seconds * 1000.0,
             m->lower_bound_seconds > 0.0 ? m->completion_seconds / m->lower_bound_seconds : 0.0 );
 
-    if ( getenv( "ROCKETNET_CHANNEL_METRICS" ) )
+    if ( rocketnet_ordered_metrics() )
     {
         int bins[8] = { 0 };
         const double limits[7] = { 0.050, 0.100, 0.250, 0.500, 1.0, 2.0, 5.0 };
@@ -258,7 +266,7 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
                 (unsigned long long) sender->counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] );
         rocketnet_ordered_print_measurement( name, &measurement, client_to_server, reason );
     }
-    else if ( getenv( "ROCKETNET_CHANNEL_METRICS" ) )
+    else if ( rocketnet_ordered_metrics() )
     {
         rocketnet_ordered_print_measurement( name, &measurement, client_to_server, "green_measurement" );
     }
@@ -273,10 +281,10 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
 
 void ordered_256k_chunked_stream_over_lossy_reordering_link()
 {
-    rocketnet_ordered_run( "ordered_256k_chunked_stream_over_lossy_reordering_link", 0 );
+    rocketnet_ordered_run( "test_ordered_256k_chunked_stream_over_lossy_reordering_link", 0 );
 }
 
 void ordered_small_and_large_interleaved()
 {
-    rocketnet_ordered_run( "ordered_small_and_large_interleaved", 1 );
+    rocketnet_ordered_run( "test_ordered_small_and_large_interleaved", 1 );
 }

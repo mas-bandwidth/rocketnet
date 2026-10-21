@@ -15,6 +15,7 @@
 // argument, starting at 1000.0.
 
 #include "test_unit_registry.h"
+#include "test/portable_crt.h"
 
 #include "sdk/rocketnet.h"
 #include "rocketnet_internal.h"
@@ -105,12 +106,8 @@ static bool public_not_released_pair_setup( struct public_not_released_pair_t * 
     memcpy( server_transport_config.server_secret_key, server_secret_key, sizeof( server_transport_config.server_secret_key ) );
     snprintf( server_transport_config.transport, sizeof( server_transport_config.transport ), "%s", "loopback" );
 
-    const char * pin = getenv( "ROCKETNET_SERVER_TRANSPORT" );
     char saved_pin[256];
-    const bool pinned = pin != NULL;
-    saved_pin[0] = '\0';
-    if ( pinned )
-        snprintf( saved_pin, sizeof( saved_pin ), "%s", pin );
+    const bool pinned = rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", saved_pin, sizeof( saved_pin ) ) != 0;
     public_not_released_unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
 
     int status = -1;
@@ -266,7 +263,7 @@ static bool public_not_released_receive_server( struct public_not_released_pair_
     return false;
 }
 
-static void public_not_released_counter_client()
+static void test_public_not_released_counter_client()
 {
     struct public_not_released_pair_t pair;
     check( public_not_released_pair_setup( &pair ) );
@@ -299,9 +296,9 @@ static void public_not_released_counter_client()
     rocketnet_assert_function( saved_assert );
     public_not_released_pair_teardown( &pair );
 }
-REGISTER_UNIT_TEST( public_not_released_counter_client );
+REGISTER_UNIT_TEST( test_public_not_released_counter_client );
 
-static void public_not_released_counter_server()
+static void test_public_not_released_counter_server()
 {
     struct public_not_released_pair_t pair;
     check( public_not_released_pair_setup( &pair ) );
@@ -334,9 +331,9 @@ static void public_not_released_counter_server()
     rocketnet_assert_function( saved_assert );
     public_not_released_pair_teardown( &pair );
 }
-REGISTER_UNIT_TEST( public_not_released_counter_server );
+REGISTER_UNIT_TEST( test_public_not_released_counter_server );
 
-static void public_not_released_counter_starts_at_zero()
+static void test_public_not_released_counter_starts_at_zero()
 {
     struct public_not_released_pair_t pair;
     check( public_not_released_pair_setup( &pair ) );
@@ -344,11 +341,11 @@ static void public_not_released_counter_starts_at_zero()
     check( public_not_released_server_count( &pair ) == 0 );
     public_not_released_pair_teardown( &pair );
 }
-REGISTER_UNIT_TEST( public_not_released_counter_starts_at_zero );
+REGISTER_UNIT_TEST( test_public_not_released_counter_starts_at_zero );
 
 // the public receive's batch is released by the next update: holding it
 // across the update is no refusal, and the counter does not move
-static void public_not_released_batch_released_by_update()
+static void test_public_not_released_batch_released_by_update()
 {
     struct public_not_released_pair_t pair;
     check( public_not_released_pair_setup( &pair ) );
@@ -372,4 +369,4 @@ static void public_not_released_batch_released_by_update()
     check( public_not_released_server_count( &pair ) == 0 );
     public_not_released_pair_teardown( &pair );
 }
-REGISTER_UNIT_TEST( public_not_released_batch_released_by_update );
+REGISTER_UNIT_TEST( test_public_not_released_batch_released_by_update );

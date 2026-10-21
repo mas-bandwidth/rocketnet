@@ -372,6 +372,7 @@ void rocketnet_forbid_xdp_commit()
 bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_config_t * config,
     const char * transport, rocketnet_server_memory_plan_t & plan)
 {
+    (void) config; // read only by the Linux and Windows transports below
     if (strcmp(transport, "portable") == 0)
     {
         plan.transport_io_bytes = rocketnet_platform_socket_allocation_bytes(); plan.sockets = 1;

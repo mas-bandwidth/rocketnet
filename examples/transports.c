@@ -54,28 +54,14 @@ static int exchange( struct rocketnet_server_t * server, const char * server_add
         rocketnet_server_update( server, now );
         rocketnet_client_update( client, now );
         // (2) receive and release every received message
-        const uint8_t * data = NULL;
-        int bytes = 0;
         struct rocketnet_message_batch_t batch;
         while ( rocketnet_client_receive_messages( client, &batch ) )
         {
-            for ( int i = 0; i < batch.num_messages; i++ )
-            {
-                data = batch.data[i];
-                bytes = batch.bytes[i];
-            }
+            // the server sends this client nothing, so there is nothing to read
         }
-        (void) data; (void) bytes;   // only drained here
         struct rocketnet_message_batch_t incoming;
         while ( rocketnet_server_receive_messages( server, &incoming ) )
-        {
-            for ( int i = 0; i < incoming.num_messages; i++ )
-            {
-                data = incoming.data[i];
-                bytes = incoming.bytes[i];
-                received++;
-            }
-        }
+            received += incoming.num_messages;
         // (3) run the game simulation for the frame: nothing to simulate here
         // (4) queue this frame's outgoing message, once the client is connected
         if ( !sent && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )

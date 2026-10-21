@@ -283,7 +283,7 @@ do                                                                              
 {                                                                                           \
     if ( !(condition) )                                                                     \
     {                                                                                       \
-        rn_assert_function( #condition, __FUNCTION__, __FILE__, __LINE__ );                 \
+        rn_assert_function( #condition, __func__, __FILE__, __LINE__ );                     \
     }                                                                                       \
 } while(0)
 #else
@@ -296,9 +296,9 @@ do                                                                              
 // count above from any refused misuse. The default allocator callbacks let a
 // caller restore them after taking the allocator.
 /** @brief Internal lifecycle-state query used by SDK entry points. @return Whether initialization has completed and the library is active. */
-bool rocketnet_library_initialized();
+bool rocketnet_library_initialized( void );
 /** @brief Internal helper that increments the process-wide refused-call count. */
-void rocketnet_api_misuse_record();
+void rocketnet_api_misuse_record( void );
 
 // The public boundary's NULL guard. Every exported entry point calls this once
 // per pointer it would dereference, at the top, before any work: a NULL is a

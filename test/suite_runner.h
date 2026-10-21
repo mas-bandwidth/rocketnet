@@ -2,23 +2,24 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    Parallel suite runner. Each test is a process. A test over 60s prints a
-    warning. A test over 120s is killed and fails the suite (a Debug or
-    sanitizer build scales the 120s: test/time_scale.h). The ten slowest
-    are printed at the end. Each case's peak resident set (wait4 ru_maxrss on
-    POSIX, PeakWorkingSetSize on Windows) is printed at the end as
-    `<case> peak_rss_mb=<n> bound_mb=<b>`, and a case over the bound fails the
-    suite (ROCKETNET_TEST_MAX_CASE_RSS_MB, overridable by that environment
-    variable; a sanitizer build prints the peaks and does not enforce the bound
-    unless the environment variable sets one). A case whose subject is a
-    full-capacity server declares its own bound with SUITE_CASE_RSS_BOUND,
-    derived from the SDK's memory plan for the configuration it uses. strict_names keeps every line inside the
-    names-only shape tools/check_test_environment.py accepts, because that
-    checker merges stderr into stdout and is not ours to change.
+    Parallel suite runner. Each test is a process. The output is the netcode
+    shape: one line per test, its name, in suite order, then
+    "*** ALL TESTS PASSED ***". A failing test prints its own output (its
+    check line) and the suite exits 1 at once. A test over 120s is killed and
+    fails (a Debug or sanitizer build scales the 120s: test/time_scale.h). A
+    test whose peak resident set (wait4 ru_maxrss on POSIX,
+    PeakWorkingSetSize on Windows) is over its bound fails
+    (ROCKETNET_TEST_MAX_CASE_RSS_MB, overridable by that environment variable;
+    a sanitizer build does not enforce it unless the variable sets one). A case
+    whose subject is a full-capacity server declares its own bound with
+    SUITE_CASE_RSS_BOUND. Every registered name is test_ lowercase snake_case,
+    or the suite fails before running anything. ROCKETNET_TEST_REPORT=1 prints
+    the slowest cases and the peak resident sets after the results.
 */
 
 #pragma once
 
+#include "portable_crt.h"
 #include "time_scale.h"
 #include <algorithm>
 #include <chrono>
@@ -55,42 +56,49 @@ extern char **environ;
 
 // The largest peak resident set one case process may reach, in MiB: the larger
 // of 256 and 1.5 times the largest case measured on a Linux Release build
-// (465 MiB, test_server_transport_io_pin_gso, 2026-10-19), so 698; never over 1024.
+// (465 MiB, test_gso_transport_server_io_pin, 2026-10-19), so 698; never over 1024.
 // A case over it fails the suite. The environment variable of the same name
 // overrides it with a positive value.
 #define ROCKETNET_TEST_MAX_CASE_RSS_MB 698
+
+// Whether the environment variable is set (to a value of at most 4095 bytes).
+inline bool suite_env_is_set( const char * name )
+{
+    char value[4096];
+    return rocketnet_test_getenv( name, value, sizeof( value ) ) != 0;
+}
 
 struct suite_exec
 {
     const char *name;
     const char *file;
-    bool required;
 };
 
 struct suite_case
 {
     std::string name;
     std::string exec_path; // empty: re-exec this binary with --run name
-    bool skipped;
-    std::string skip_line;
     int group; // suite_main's group_of: cases of different groups never run at once
 };
 
 struct suite_result
 {
     std::string name;
+    bool exec;
+    bool done;
     double seconds;
-    bool skipped;
     bool failed;
     std::string detail;
     long peak_rss_mb; // -1: not measured
+    std::string output;
 };
 
 // The bound in MiB, or 0 when it is not enforced (a sanitizer build with no
 // environment override: sanitizer shadow memory is not the case's footprint).
 inline long suite_max_case_rss_mb()
 {
-    if ( const char * env = std::getenv( "ROCKETNET_TEST_MAX_CASE_RSS_MB" ) )
+    char env[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_TEST_MAX_CASE_RSS_MB", env, sizeof( env ) ) )
     {
         const long requested = std::atol( env );
         if ( requested > 0 )
@@ -159,7 +167,7 @@ inline long suite_rss_bound_mb( uint64_t planned_bytes, long margin_mb )
 inline long suite_case_rss_mb( const std::string & name )
 {
     const long bound = suite_max_case_rss_mb();
-    if ( bound <= 0 || std::getenv( "ROCKETNET_TEST_MAX_CASE_RSS_MB" ) )
+    if ( bound <= 0 || suite_env_is_set( "ROCKETNET_TEST_MAX_CASE_RSS_MB" ) )
         return bound;
     for ( suite_case_rss_bound_t * entry = *suite_case_rss_bound_head(); entry != NULL; entry = entry->next )
     {
@@ -181,6 +189,62 @@ inline void suite_check_rss( suite_result & result, long bound_mb )
     snprintf( text, sizeof( text ), " peak_rss_mb=%ld bound_mb=%ld", result.peak_rss_mb, bound_mb );
     result.failed = true;
     result.detail = result.name + text;
+}
+
+// A test name is test_ then lowercase snake_case: [a-z0-9] words joined by
+// single underscores.
+inline bool suite_name_is_test_snake_case( const std::string & name )
+{
+    if ( name.size() <= 5 || name.compare( 0, 5, "test_" ) != 0 )
+        return false;
+    char previous = '_';
+    for ( size_t i = 0; i < name.size(); i++ )
+    {
+        const char c = name[i];
+        if ( c == '_' )
+        {
+            if ( previous == '_' )
+                return false;
+        }
+        else if ( !( ( c >= 'a' && c <= 'z' ) || ( c >= '0' && c <= '9' ) ) )
+        {
+            return false;
+        }
+        previous = c;
+    }
+    return previous != '_';
+}
+
+// The suite's order, simplest first: helpers, packet, acks, transport basics,
+// each transport type, client/server, messages. A case's layer is the first
+// rule whose area word its name starts with (after test_); the cases keep
+// their registration order within a layer.
+inline int suite_layer_of( const std::string & name )
+{
+    static const char * const layers[][48] =
+    {
+        // helpers: platform, time, base64, config, logging, memory
+        { "platform", "time", "update_time", "sleep", "thread", "endian", "read", "bounded", "base64", "hash", "copy", "address", "anonymize", "random", "config", "log", "memory", "allocator", "status", "version", "value_tracker", "secret", "suite", "fp", "hostname", "counter", "class", "sized", "dev", "abi", "unit", "runtime", "user", "deterministic", "fuzz", "pcapng", "rocketnet", "default", "disabled", "limits", "release", "exhaustion", NULL },
+        // packet: wire, crypto, tokens, prefilter, fragments
+        { "wire", "crypto", "wycheproof", "token", "connect_token", "protocol", "signed", "prefilter", "packet", "sealed", "unsealed", "open_sealed", "fragment", "reassembly", "cookie", "standard", "serialize", "replay", "integrity", "keyed", "encryption", "used", "hostile", "tampered", "vectors", "salt", "response", "admission", "payload", "max", "large", "small", "chunk", "span", "builder", "coalesce", "v4", "ipv4", "ipv6", "reused", "parse", NULL },
+        // acks: ack, window, sequence, receipts
+        { "ack", "window", "sequence", "receipt", "rnreceipts", "send_history", "loss", "jitter", "out_of_order", "resend", "resent", "reply", "previous", "pending", "never", "newer", "older", "newest", "equal", "watermark", "same", "repeated", "higher", "round", "one", "both", "first", "each", "held", "hold", NULL },
+        // transport basics: the driver/transport interface and the ladder
+        { "driver", "transport", "ladder", "endpoint", "network_simulator", "sim", "link", "send", "receive", "budget", "fake", "table", "rnslots", "rnscheduler", NULL },
+        // each transport type
+        { "portable", "loopback", "msgx", "gso", "io_uring", "xdp", "iocp", "rio", "windows", "posix", "linux", "macos", "umem", NULL },
+        // client/server: connect, handshake, slots, disconnect, lifecycle
+        { "server", "client", "connect", "handshake", "request", "challenge", "slot", "disconnect", "lifecycle", "keep_alive", "frame_sync", "dst", "live", "public", "api", "create", "destroy", "start", "backend", "session", "half", "two", "swarm", "full", "stale", NULL },
+        // messages: channels, reliability, message layer, examples
+        { "message", "channel", "rnchannel", "reliab", "unreliable", "ordered", "violation", "wide", "dispatch", "harness", "control", "state", "block", "promoted", "mixed", "raknet", "shares", "example", NULL },
+    };
+    const int count = (int) ( sizeof( layers ) / sizeof( layers[0] ) );
+    const std::string area = name.compare( 0, 5, "test_" ) == 0 ? name.substr( 5 ) : name;
+    for ( int layer = 0; layer < count; layer++ )
+        for ( int i = 0; layers[layer][i] != NULL; i++ )
+            if ( area.compare( 0, std::strlen( layers[layer][i] ), layers[layer][i] ) == 0 )
+                return layer;
+    return count;
 }
 
 inline std::string suite_executable_path()
@@ -244,7 +308,8 @@ inline int suite_job_count()
     unsigned jobs = std::thread::hardware_concurrency();
     if ( jobs == 0 )
         jobs = 1;
-    if ( const char * env = std::getenv( "ROCKETNET_TEST_JOBS" ) )
+    char env[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_TEST_JOBS", env, sizeof( env ) ) )
     {
         const int requested = std::atoi( env );
         if ( requested > 0 )
@@ -255,117 +320,172 @@ inline int suite_job_count()
     return (int) jobs;
 }
 
-inline void suite_print_summary( const std::vector<suite_result> & results, bool strict_names )
-{
-    // A passing run with no verbose switch prints no summary. A failure
-    // still prints, and the unit suite (strict_names) is unchanged.
-    if ( !strict_names && std::getenv( "ROCKETNET_TEST_VERBOSE" ) == NULL )
-    {
-        bool quiet = true;
-        for ( size_t i = 0; i < results.size(); i++ )
-        {
-            if ( results[i].failed )
-            {
-                quiet = false;
-                break;
-            }
-        }
-        if ( quiet )
-            return;
-    }
-    std::vector<suite_result> ran;
-    for ( size_t i = 0; i < results.size(); i++ )
-        if ( !results[i].skipped )
-            ran.push_back( results[i] );
-    std::sort( ran.begin(), ran.end(), []( const suite_result & a, const suite_result & b ) {
-        return a.seconds > b.seconds;
-    } );
-    const int shown = (int) ran.size() < 10 ? (int) ran.size() : 10;
-    if ( !strict_names )
-        printf( "slowest ten:\n" );
-    for ( int i = 0; i < shown; i++ )
-    {
-        if ( strict_names )
-            printf( "test_timing_slowest_%02d [SKIPPED %.3fs %s]\n", i + 1, ran[i].seconds, ran[i].name.c_str() );
-        else
-            printf( "  %8.3fs  %s\n", ran[i].seconds, ran[i].name.c_str() );
-    }
-    std::vector<suite_result> by_rss = ran;
-    std::sort( by_rss.begin(), by_rss.end(), []( const suite_result & a, const suite_result & b ) {
-        return a.peak_rss_mb > b.peak_rss_mb;
-    } );
-    if ( !strict_names )
-        printf( "peak rss, largest first:\n" );
-    for ( size_t i = 0; i < by_rss.size(); i++ )
-    {
-        if ( by_rss[i].peak_rss_mb < 0 )
-            continue;
-        if ( strict_names )
-        {
-            if ( i >= 10 )
-                break;
-            printf( "test_timing_rss_%02d [SKIPPED %s peak_rss_mb=%ld bound_mb=%ld]\n", (int) i + 1, by_rss[i].name.c_str(), by_rss[i].peak_rss_mb, suite_case_rss_mb( by_rss[i].name ) );
-        }
-        else
-            printf( "%s peak_rss_mb=%ld bound_mb=%ld\n", by_rss[i].name.c_str(), by_rss[i].peak_rss_mb, suite_case_rss_mb( by_rss[i].name ) );
-    }
-    int warnings = 0;
-    int fails = 0;
-    for ( size_t i = 0; i < ran.size(); i++ )
-    {
-        if ( ran[i].seconds > 60.0 )
-        {
-            warnings++;
-            if ( strict_names )
-                printf( "test_timing_warning_%02d [SKIPPED %.3fs %s over 60s]\n", warnings, ran[i].seconds, ran[i].name.c_str() );
-            else
-                printf( "warning: %s %.3fs (over 60s)\n", ran[i].name.c_str(), ran[i].seconds );
-        }
-        if ( ran[i].failed )
-        {
-            fails++;
-            if ( strict_names )
-                printf( "test_timing_fail_%02d [SKIPPED %s]\n", fails, ran[i].detail.c_str() );
-            else
-                printf( "FAIL: %s\n", ran[i].detail.c_str() );
-        }
-    }
-    fflush( stdout );
-}
-
 inline int suite_usage( char ** argv )
 {
     fprintf( stderr, "usage: %s [--run <case>]\n", argv[0] );
     return 2;
 }
 
-#if !defined(_WIN32)
-
-// A passing case prints its name, or a name plus " [SKIPPED". Anything else
-// stays in the capture unless the case fails. The verbose switch does not
-// capture, so the child prints straight through. strict_names (the unit
-// suite) does not capture.
-inline bool suite_passing_line( const std::string & line )
+// Calls emit( line ) for each line of output, without its line ending.
+template <typename F> inline void suite_for_each_line( const std::string & output, F emit )
 {
-    if ( line.empty() )
-        return false;
-    const char first = line[0];
-    if ( !( ( first >= 'A' && first <= 'Z' ) || ( first >= 'a' && first <= 'z' ) || first == '_' ) )
-        return false;
-    size_t n = 1;
-    while ( n < line.size() )
+    size_t i = 0;
+    while ( i < output.size() )
     {
-        const char c = line[n];
-        const bool ident = ( c >= 'A' && c <= 'Z' ) || ( c >= 'a' && c <= 'z' ) ||
-                           ( c >= '0' && c <= '9' ) || c == '_';
-        if ( !ident )
+        const size_t nl = output.find( '\n', i );
+        std::string line = output.substr( i, nl == std::string::npos ? std::string::npos : nl - i );
+        if ( !line.empty() && line.back() == '\r' )
+            line.pop_back();
+        emit( line );
+        if ( nl == std::string::npos )
             break;
-        n++;
+        i = nl + 1;
     }
-    if ( n == line.size() )
-        return true;
-    return line.compare( n, 9, " [SKIPPED" ) == 0;
 }
+
+// A passing case's output keeps only its test-name lines. Returns the number
+// of lines printed.
+inline int suite_emit_captured( const std::string & output, bool show_all )
+{
+    int printed = 0;
+    suite_for_each_line( output, [show_all, &printed]( const std::string & line ) {
+        if ( show_all || suite_name_is_test_snake_case( line ) )
+        {
+            printf( "%s\n", line.c_str() );
+            printed++;
+        }
+    } );
+    fflush( stdout );
+    return printed;
+}
+
+// Prints the finished cases in suite order, up to the first still running.
+// A passing case prints its name (an exec case, the test names it printed); a
+// failing case prints everything it wrote and, when the runner failed it
+// (time, memory, a signal, an exit with no check line), one check line.
+// Returns false once a failure is printed.
+inline bool suite_print_ready( std::vector<suite_result> & results, size_t & printed, bool capture )
+{
+    while ( printed < results.size() && results[printed].done )
+    {
+        const suite_result & result = results[printed++];
+        if ( result.failed )
+        {
+            suite_emit_captured( result.output, true );
+            if ( result.output.find( "check failed" ) == std::string::npos )
+                printf( "check failed: %s\n", result.detail.c_str() );
+            fflush( stdout );
+            return false;
+        }
+        if ( !capture )
+            continue;
+        if ( !result.exec || suite_emit_captured( result.output, false ) == 0 )
+            printf( "%s\n", result.name.c_str() );
+    }
+    fflush( stdout );
+    return true;
+}
+
+// ROCKETNET_TEST_REPORT=1: the slowest cases and the peak resident sets, as
+// one labelled block after the results.
+inline void suite_print_report( const std::vector<suite_result> & results )
+{
+    if ( !suite_env_is_set( "ROCKETNET_TEST_REPORT" ) )
+        return;
+    std::vector<suite_result> ran;
+    for ( size_t i = 0; i < results.size(); i++ )
+        if ( results[i].done )
+            ran.push_back( results[i] );
+    std::sort( ran.begin(), ran.end(), []( const suite_result & a, const suite_result & b ) { return a.seconds > b.seconds; } );
+    printf( "\nslowest cases:\n" );
+    for ( size_t i = 0; i < ran.size() && i < 10; i++ )
+        printf( "  %8.3fs  %s\n", ran[i].seconds, ran[i].name.c_str() );
+    std::sort( ran.begin(), ran.end(), []( const suite_result & a, const suite_result & b ) { return a.peak_rss_mb > b.peak_rss_mb; } );
+    printf( "peak rss:\n" );
+    for ( size_t i = 0; i < ran.size() && i < 10; i++ )
+        if ( ran[i].peak_rss_mb >= 0 )
+            printf( "  %6ld MiB (bound %ld)  %s\n", ran[i].peak_rss_mb, suite_case_rss_mb( ran[i].name ), ran[i].name.c_str() );
+    fflush( stdout );
+}
+
+// The cases in suite order, or false (after printing why) when a name is not
+// test_ snake_case or an exec binary is missing.
+inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_result> & results,
+    int ( *count )(), const char * ( *name_at )( int ), const suite_exec * execs, int nexecs,
+    int ( *group_of )( const char * name ), const std::string & dir, const char * exe_suffix )
+{
+    for ( int i = 0; i < count(); i++ )
+    {
+        suite_case item;
+        item.name = name_at( i );
+        pending.push_back( item );
+    }
+    for ( int i = 0; i < nexecs; i++ )
+    {
+        suite_case item;
+        item.name = execs[i].name;
+        item.exec_path = dir + "/" + execs[i].file + exe_suffix;
+        if ( !suite_file_exists( item.exec_path ) )
+        {
+            printf( "check failed: %s missing at %s\n", execs[i].name, item.exec_path.c_str() );
+            return false;
+        }
+        pending.push_back( item );
+    }
+    for ( size_t i = 0; i < pending.size(); i++ )
+    {
+        if ( !suite_name_is_test_snake_case( pending[i].name ) )
+        {
+            printf( "check failed: test name %s is not test_ lowercase snake_case\n", pending[i].name.c_str() );
+            return false;
+        }
+    }
+    for ( suite_case_rss_bound_t * entry = *suite_case_rss_bound_head(); entry != NULL; entry = entry->next )
+    {
+        if ( !suite_name_is_test_snake_case( entry->name ) )
+        {
+            printf( "check failed: SUITE_CASE_RSS_BOUND name %s is not test_ lowercase snake_case\n", entry->name );
+            return false;
+        }
+    }
+
+    // group_of (NULL: every case is group 0) keeps cases that measure wall
+    // time apart from cases that load the host: the cases run in ascending
+    // group order, and a case starts only while every running case is of its
+    // own group, so a group runs in parallel within itself and alone. Within
+    // a group the cases run in layer order (suite_layer_of).
+    for ( size_t i = 0; i < pending.size(); i++ )
+        pending[i].group = group_of ? group_of( pending[i].name.c_str() ) : 0;
+    std::stable_sort( pending.begin(), pending.end(), []( const suite_case & a, const suite_case & b ) {
+        if ( a.group != b.group )
+            return a.group < b.group;
+        return suite_layer_of( a.name ) < suite_layer_of( b.name );
+    } );
+    for ( size_t i = 0; i < pending.size(); i++ )
+    {
+        suite_result result;
+        result.name = pending[i].name;
+        result.exec = !pending[i].exec_path.empty();
+        result.done = false;
+        result.seconds = 0;
+        result.failed = false;
+        result.peak_rss_mb = -1;
+        results.push_back( result );
+    }
+    return true;
+}
+
+inline int suite_finish( const std::vector<suite_result> & results, bool passed )
+{
+    suite_print_report( results );
+    if ( !passed )
+        return 1;
+    printf( "\n*** ALL TESTS PASSED ***\n" );
+    fflush( stdout );
+    return 0;
+}
+
+#if !defined(_WIN32)
 
 inline void suite_drain( int fd, std::string & output )
 {
@@ -384,27 +504,6 @@ inline void suite_drain( int fd, std::string & output )
             continue;
         break;
     }
-}
-
-inline void suite_emit_captured( const std::string & output, bool show_all )
-{
-    std::string pending = output;
-    if ( !pending.empty() && pending.back() != '\n' )
-        pending.push_back( '\n' );
-    size_t i = 0;
-    while ( i < pending.size() )
-    {
-        const size_t nl = pending.find( '\n', i );
-        std::string line = pending.substr( i, nl == std::string::npos ? std::string::npos : nl - i );
-        if ( !line.empty() && line.back() == '\r' )
-            line.pop_back();
-        if ( show_all || suite_passing_line( line ) )
-            printf( "%s\n", line.c_str() );
-        if ( nl == std::string::npos )
-            break;
-        i = nl + 1;
-    }
-    fflush( stdout );
 }
 
 // Runs one case in a child with its stdout and stderr read through a pipe,
@@ -463,8 +562,6 @@ inline int suite_main( int argc, char ** argv,
     int ( *count )(),
     const char * ( *name_at )( int ),
     const suite_exec * execs, int nexecs,
-    const char ** skip_lines, int nskips,
-    bool strict_names,
     int ( *group_of )( const char * name ) = NULL )
 {
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
@@ -477,12 +574,12 @@ inline int suite_main( int argc, char ** argv,
         // Under a suite run the parent already captures this process, so
         // stream straight through; a second capture would lose lines when the
         // parent kills the process group at the time limit.
-        if ( std::getenv( "ROCKETNET_TEST_SUITE_CAPTURE" ) != NULL )
+        if ( suite_env_is_set( "ROCKETNET_TEST_SUITE_CAPTURE" ) )
         {
             unsetenv( "ROCKETNET_TEST_SUITE_CAPTURE" );
             return worker( argv[2] );
         }
-        if ( !strict_names && std::getenv( "ROCKETNET_TEST_VERBOSE" ) == NULL )
+        if ( !suite_env_is_set( "ROCKETNET_TEST_VERBOSE" ) )
             return suite_run_names_only( worker, argv[2] );
         return worker( argv[2] );
     }
@@ -493,92 +590,41 @@ inline int suite_main( int argc, char ** argv,
     const std::string self = suite_executable_path();
     if ( self.empty() )
     {
-        fprintf( stderr, "FAIL: could not resolve this executable\n" );
+        printf( "check failed: could not resolve this executable\n" );
         return 1;
     }
-    const std::string dir = suite_directory_of( self );
 
     std::vector<suite_case> pending;
-    for ( int i = 0; i < count(); i++ )
-    {
-        suite_case item;
-        item.name = name_at( i );
-        item.skipped = false;
-        pending.push_back( item );
-    }
-    for ( int i = 0; i < nexecs; i++ )
-    {
-        suite_case item;
-        item.name = execs[i].name;
-        item.exec_path = dir + "/" + execs[i].file;
-        if ( !suite_file_exists( item.exec_path ) )
-        {
-            if ( execs[i].required )
-            {
-                fprintf( stderr, "FAIL: %s missing at %s\n", execs[i].name, item.exec_path.c_str() );
-                return 1;
-            }
-            item.skipped = true;
-            item.skip_line = std::string( execs[i].name ) + " [SKIPPED not built on this platform]";
-        }
-        pending.push_back( item );
-    }
-
-    // group_of (NULL: every case is group 0) keeps cases that measure wall
-    // time apart from cases that load the host: the cases run in ascending
-    // group order, and a case starts only while every running case is of its
-    // own group, so a group runs in parallel within itself and alone
-    for ( size_t i = 0; i < pending.size(); i++ )
-        pending[i].group = group_of ? group_of( pending[i].name.c_str() ) : 0;
-    std::stable_sort( pending.begin(), pending.end(), []( const suite_case & a, const suite_case & b ) {
-        return a.group < b.group;
-    } );
-
-    for ( int i = 0; i < nskips; i++ )
-    {
-        printf( "%s\n", skip_lines[i] );
-        fflush( stdout );
-    }
+    std::vector<suite_result> results;
+    if ( !suite_collect( pending, results, count, name_at, execs, nexecs, group_of, suite_directory_of( self ), "" ) )
+        return 1;
 
     const int jobs = suite_job_count();
     const double limit_s = 120.0 * ROCKETNET_FUNCTIONAL_TIME_SCALE; // Release as written; Debug/sanitizer scaled (test/time_scale.h)
     struct running_t
     {
-        std::string name;
+        size_t index;
         pid_t pid;
         std::chrono::steady_clock::time_point start;
         bool killed;
         int group;
         int out_fd;
-        std::string output;
     };
-    const bool suite_capture = !strict_names && std::getenv( "ROCKETNET_TEST_VERBOSE" ) == NULL;
-    if ( suite_capture )
+    const bool capture = !suite_env_is_set( "ROCKETNET_TEST_VERBOSE" );
+    if ( capture )
         setenv( "ROCKETNET_TEST_SUITE_CAPTURE", "1", 1 );
     std::vector<running_t> running;
-    std::vector<suite_result> results;
     size_t next = 0;
-    int failures = 0;
+    size_t printed = 0;
+    bool passed = true;
 
-    while ( next < pending.size() || !running.empty() )
+    while ( passed && ( next < pending.size() || !running.empty() ) )
     {
         while ( (int) running.size() < jobs && next < pending.size() && ( running.empty() || running[0].group == pending[next].group ) )
         {
-            const suite_case item = pending[next++];
-            if ( item.skipped )
-            {
-                printf( "%s\n", item.skip_line.c_str() );
-                fflush( stdout );
-                suite_result result;
-                result.name = item.name;
-                result.seconds = 0;
-                result.skipped = true;
-                result.failed = false;
-                result.peak_rss_mb = -1;
-                results.push_back( result );
-                continue;
-            }
-
+            const size_t index = next++;
+            const suite_case & item = pending[index];
+            suite_result & result = results[index];
             const std::string path = item.exec_path.empty() ? self : item.exec_path;
             std::vector<char> arg0( path.begin(), path.end() );
             arg0.push_back( '\0' );
@@ -605,19 +651,13 @@ inline int suite_main( int argc, char ** argv,
             posix_spawn_file_actions_t actions;
             posix_spawn_file_actions_t * actionsp = NULL;
             bool actions_live = false;
-            if ( suite_capture )
+            if ( capture )
             {
                 if ( pipe( pipefd ) != 0 )
                 {
-                    suite_result result;
-                    result.name = item.name;
-                    result.seconds = 0;
-                    result.skipped = false;
+                    result.done = true;
                     result.failed = true;
-                    result.peak_rss_mb = -1;
                     result.detail = item.name + " failed to spawn";
-                    results.push_back( result );
-                    failures++;
                     continue;
                 }
                 fcntl( pipefd[0], F_SETFD, FD_CLOEXEC );
@@ -648,19 +688,13 @@ inline int suite_main( int argc, char ** argv,
             {
                 if ( pipefd[0] >= 0 )
                     close( pipefd[0] );
-                suite_result result;
-                result.name = item.name;
-                result.seconds = 0;
-                result.skipped = false;
+                result.done = true;
                 result.failed = true;
-                result.peak_rss_mb = -1;
                 result.detail = item.name + " failed to spawn";
-                results.push_back( result );
-                failures++;
                 continue;
             }
             running_t child;
-            child.name = item.name;
+            child.index = index;
             child.pid = pid;
             child.start = std::chrono::steady_clock::now();
             child.killed = false;
@@ -671,6 +705,7 @@ inline int suite_main( int argc, char ** argv,
 
         for ( size_t i = 0; i < running.size(); )
         {
+            suite_result & result = results[running[i].index];
             int status = 0;
             struct rusage usage;
             std::memset( &usage, 0, sizeof( usage ) );
@@ -678,7 +713,7 @@ inline int suite_main( int argc, char ** argv,
             const double seconds = std::chrono::duration<double>( std::chrono::steady_clock::now() - running[i].start ).count();
             if ( got == 0 )
             {
-                suite_drain( running[i].out_fd, running[i].output );
+                suite_drain( running[i].out_fd, result.output );
                 if ( !running[i].killed && seconds > limit_s )
                 {
                     kill( -running[i].pid, SIGKILL );
@@ -688,76 +723,88 @@ inline int suite_main( int argc, char ** argv,
                 i++;
                 continue;
             }
-            suite_result result;
-            result.name = running[i].name;
             result.seconds = seconds;
-            result.skipped = false;
-            result.failed = false;
 #if defined(__APPLE__)
             result.peak_rss_mb = got > 0 ? (long) ( usage.ru_maxrss / ( 1024 * 1024 ) ) : -1; // bytes on macOS
 #else
             result.peak_rss_mb = got > 0 ? (long) ( usage.ru_maxrss / 1024 ) : -1; // kilobytes on Linux
 #endif
+            char text[64];
             if ( got < 0 )
             {
                 result.failed = true;
-                result.detail = running[i].name + " wait failed";
+                result.detail = result.name + " wait failed";
             }
             else if ( running[i].killed || seconds > limit_s )
             {
                 result.failed = true;
-                result.seconds = seconds < limit_s ? limit_s : seconds;
-                { char limit_text[64]; snprintf( limit_text, sizeof( limit_text ), " exceeded %.0fs", limit_s ); result.detail = running[i].name + limit_text; }
+                snprintf( text, sizeof( text ), " exceeded %.0fs", limit_s );
+                result.detail = result.name + text;
             }
-            else if ( WIFEXITED( status ) && WEXITSTATUS( status ) == 0 )
-            {
-                result.failed = false;
-            }
-            else if ( WIFEXITED( status ) )
+            else if ( WIFEXITED( status ) && WEXITSTATUS( status ) != 0 )
             {
                 result.failed = true;
-                char buf[64];
-                snprintf( buf, sizeof( buf ), " exit %d", WEXITSTATUS( status ) );
-                result.detail = running[i].name + buf;
+                snprintf( text, sizeof( text ), " exit %d", WEXITSTATUS( status ) );
+                result.detail = result.name + text;
             }
-            else
+            else if ( !WIFEXITED( status ) )
             {
                 result.failed = true;
-                char buf[64];
-                snprintf( buf, sizeof( buf ), " signal %d", WIFSIGNALED( status ) ? WTERMSIG( status ) : 0 );
-                result.detail = running[i].name + buf;
+                snprintf( text, sizeof( text ), " signal %d", WIFSIGNALED( status ) ? WTERMSIG( status ) : 0 );
+                result.detail = result.name + text;
             }
             suite_check_rss( result, suite_case_rss_mb( result.name ) );
             if ( running[i].out_fd >= 0 )
             {
-                suite_drain( running[i].out_fd, running[i].output );
+                suite_drain( running[i].out_fd, result.output );
                 close( running[i].out_fd );
-                running[i].out_fd = -1;
-                suite_emit_captured( running[i].output, result.failed );
             }
-            if ( result.failed )
-                failures++;
-            results.push_back( result );
+            result.done = true;
             running.erase( running.begin() + (std::ptrdiff_t) i );
         }
 
-        if ( !running.empty() )
+        passed = suite_print_ready( results, printed, capture );
+        if ( passed && !running.empty() )
             std::this_thread::sleep_for( std::chrono::milliseconds( 50 ) );
     }
 
-    suite_print_summary( results, strict_names );
-    return failures == 0 ? 0 : 1;
+    // a failure ends the run: the cases still running are killed and reaped
+    for ( size_t i = 0; i < running.size(); i++ )
+    {
+        kill( -running[i].pid, SIGKILL );
+        kill( running[i].pid, SIGKILL );
+        int status = 0;
+        while ( waitpid( running[i].pid, &status, 0 ) < 0 && errno == EINTR ) {}
+        if ( running[i].out_fd >= 0 )
+            close( running[i].out_fd );
+    }
+    return suite_finish( results, passed );
 }
 
 #else
+
+inline void suite_drain( HANDLE pipe, std::string & output )
+{
+    if ( pipe == NULL )
+        return;
+    char buf[4096];
+    for ( ;; )
+    {
+        DWORD available = 0;
+        if ( !PeekNamedPipe( pipe, NULL, 0, NULL, &available, NULL ) || available == 0 )
+            return;
+        DWORD n = 0;
+        if ( !ReadFile( pipe, buf, available < sizeof( buf ) ? available : (DWORD) sizeof( buf ), &n, NULL ) || n == 0 )
+            return;
+        output.append( buf, (size_t) n );
+    }
+}
 
 inline int suite_main( int argc, char ** argv,
     int ( *worker )( const char * name ),
     int ( *count )(),
     const char * ( *name_at )( int ),
     const suite_exec * execs, int nexecs,
-    const char ** skip_lines, int nskips,
-    bool strict_names,
     int ( *group_of )( const char * name ) = NULL )
 {
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
@@ -776,85 +823,39 @@ inline int suite_main( int argc, char ** argv,
     const std::string self = suite_executable_path();
     if ( self.empty() )
     {
-        fprintf( stderr, "FAIL: could not resolve this executable\n" );
+        printf( "check failed: could not resolve this executable\n" );
         return 1;
     }
-    const std::string dir = suite_directory_of( self );
 
     std::vector<suite_case> pending;
-    for ( int i = 0; i < count(); i++ )
-    {
-        suite_case item;
-        item.name = name_at( i );
-        item.skipped = false;
-        pending.push_back( item );
-    }
-    for ( int i = 0; i < nexecs; i++ )
-    {
-        suite_case item;
-        item.name = execs[i].name;
-        item.exec_path = dir + "\\" + execs[i].file + ".exe";
-        if ( !suite_file_exists( item.exec_path ) )
-        {
-            if ( execs[i].required )
-            {
-                fprintf( stderr, "FAIL: %s missing at %s\n", execs[i].name, item.exec_path.c_str() );
-                return 1;
-            }
-            item.skipped = true;
-            item.skip_line = std::string( execs[i].name ) + " [SKIPPED not built on this platform]";
-        }
-        pending.push_back( item );
-    }
-    // group_of (NULL: every case is group 0) keeps cases that measure wall
-    // time apart from cases that load the host: the cases run in ascending
-    // group order, and a case starts only while every running case is of its
-    // own group, so a group runs in parallel within itself and alone
-    for ( size_t i = 0; i < pending.size(); i++ )
-        pending[i].group = group_of ? group_of( pending[i].name.c_str() ) : 0;
-    std::stable_sort( pending.begin(), pending.end(), []( const suite_case & a, const suite_case & b ) {
-        return a.group < b.group;
-    } );
-
-    for ( int i = 0; i < nskips; i++ )
-    {
-        printf( "%s\n", skip_lines[i] );
-        fflush( stdout );
-    }
+    std::vector<suite_result> results;
+    if ( !suite_collect( pending, results, count, name_at, execs, nexecs, group_of, suite_directory_of( self ), ".exe" ) )
+        return 1;
 
     const int jobs = suite_job_count();
     const double limit_s = 120.0 * ROCKETNET_FUNCTIONAL_TIME_SCALE; // Release as written; Debug/sanitizer scaled (test/time_scale.h)
     struct running_t
     {
-        std::string name;
+        size_t index;
         HANDLE process;
         std::chrono::steady_clock::time_point start;
         bool killed;
         int group;
+        HANDLE out;
     };
+    const bool capture = !suite_env_is_set( "ROCKETNET_TEST_VERBOSE" );
     std::vector<running_t> running;
-    std::vector<suite_result> results;
     size_t next = 0;
-    int failures = 0;
+    size_t printed = 0;
+    bool passed = true;
 
-    while ( next < pending.size() || !running.empty() )
+    while ( passed && ( next < pending.size() || !running.empty() ) )
     {
         while ( (int) running.size() < jobs && next < pending.size() && ( running.empty() || running[0].group == pending[next].group ) )
         {
-            const suite_case item = pending[next++];
-            if ( item.skipped )
-            {
-                printf( "%s\n", item.skip_line.c_str() );
-                fflush( stdout );
-                suite_result result;
-                result.name = item.name;
-                result.seconds = 0;
-                result.skipped = true;
-                result.failed = false;
-                result.peak_rss_mb = -1;
-                results.push_back( result );
-                continue;
-            }
+            const size_t index = next++;
+            const suite_case & item = pending[index];
+            suite_result & result = results[index];
             const std::string path = item.exec_path.empty() ? self : item.exec_path;
             const std::wstring wide_path = rocketnet_test_wide_path( path );
             std::wstring command = L"\"" + wide_path + L"\"";
@@ -865,28 +866,52 @@ inline int suite_main( int argc, char ** argv,
             STARTUPINFOW startup;
             std::memset( &startup, 0, sizeof( startup ) );
             startup.cb = sizeof( startup );
+            HANDLE read_end = NULL;
+            HANDLE write_end = NULL;
+            if ( capture )
+            {
+                SECURITY_ATTRIBUTES inherit;
+                std::memset( &inherit, 0, sizeof( inherit ) );
+                inherit.nLength = sizeof( inherit );
+                inherit.bInheritHandle = TRUE;
+                if ( !CreatePipe( &read_end, &write_end, &inherit, 1 << 20 ) || !SetHandleInformation( read_end, HANDLE_FLAG_INHERIT, 0 ) )
+                {
+                    if ( read_end )
+                        CloseHandle( read_end );
+                    if ( write_end )
+                        CloseHandle( write_end );
+                    result.done = true;
+                    result.failed = true;
+                    result.detail = item.name + " failed to spawn";
+                    continue;
+                }
+                startup.dwFlags = STARTF_USESTDHANDLES;
+                startup.hStdInput = GetStdHandle( STD_INPUT_HANDLE );
+                startup.hStdOutput = write_end;
+                startup.hStdError = write_end;
+            }
             PROCESS_INFORMATION info;
             std::memset( &info, 0, sizeof( info ) );
-            if ( wide_path.empty() || !CreateProcessW( wide_path.c_str(), mutable_command.data(), NULL, NULL, TRUE, CREATE_NEW_PROCESS_GROUP, NULL, NULL, &startup, &info ) )
+            const BOOL created = !wide_path.empty() && CreateProcessW( wide_path.c_str(), mutable_command.data(), NULL, NULL, TRUE, CREATE_NEW_PROCESS_GROUP, NULL, NULL, &startup, &info );
+            if ( write_end )
+                CloseHandle( write_end );
+            if ( !created )
             {
-                suite_result result;
-                result.name = item.name;
-                result.seconds = 0;
-                result.skipped = false;
+                if ( read_end )
+                    CloseHandle( read_end );
+                result.done = true;
                 result.failed = true;
-                result.peak_rss_mb = -1;
                 result.detail = item.name + " failed to spawn";
-                results.push_back( result );
-                failures++;
                 continue;
             }
             CloseHandle( info.hThread );
             running_t child;
-            child.name = item.name;
+            child.index = index;
             child.process = info.hProcess;
             child.start = std::chrono::steady_clock::now();
             child.killed = false;
             child.group = item.group;
+            child.out = read_end;
             running.push_back( child );
         }
 
@@ -901,6 +926,8 @@ inline int suite_main( int argc, char ** argv,
 
         for ( size_t i = 0; i < running.size(); )
         {
+            suite_result & result = results[running[i].index];
+            suite_drain( running[i].out, result.output );
             const double seconds = std::chrono::duration<double>( std::chrono::steady_clock::now() - running[i].start ).count();
             const DWORD wait = WaitForSingleObject( running[i].process, 0 );
             if ( wait == WAIT_TIMEOUT )
@@ -920,39 +947,44 @@ inline int suite_main( int argc, char ** argv,
             memory.cb = sizeof( memory );
             const bool measured = GetProcessMemoryInfo( running[i].process, &memory, sizeof( memory ) ) != 0;
             CloseHandle( running[i].process );
-            suite_result result;
-            result.name = running[i].name;
+            if ( running[i].out )
+            {
+                suite_drain( running[i].out, result.output );
+                CloseHandle( running[i].out );
+            }
             result.seconds = seconds;
-            result.skipped = false;
-            result.failed = false;
             result.peak_rss_mb = measured ? (long) ( memory.PeakWorkingSetSize / ( 1024 * 1024 ) ) : -1;
+            char text[64];
             if ( running[i].killed || seconds > limit_s )
             {
                 result.failed = true;
-                result.seconds = seconds < limit_s ? limit_s : seconds;
-                { char limit_text[64]; snprintf( limit_text, sizeof( limit_text ), " exceeded %.0fs", limit_s ); result.detail = running[i].name + limit_text; }
+                snprintf( text, sizeof( text ), " exceeded %.0fs", limit_s );
+                result.detail = result.name + text;
             }
-            else if ( code == 0 )
-            {
-                result.failed = false;
-            }
-            else
+            else if ( code != 0 )
             {
                 result.failed = true;
-                char buf[64];
-                snprintf( buf, sizeof( buf ), " exit %lu", (unsigned long) code );
-                result.detail = running[i].name + buf;
+                snprintf( text, sizeof( text ), " exit %lu", (unsigned long) code );
+                result.detail = result.name + text;
             }
             suite_check_rss( result, suite_case_rss_mb( result.name ) );
-            if ( result.failed )
-                failures++;
-            results.push_back( result );
+            result.done = true;
             running.erase( running.begin() + (std::ptrdiff_t) i );
         }
+
+        passed = suite_print_ready( results, printed, capture );
     }
 
-    suite_print_summary( results, strict_names );
-    return failures == 0 ? 0 : 1;
+    // a failure ends the run: the cases still running are ended
+    for ( size_t i = 0; i < running.size(); i++ )
+    {
+        TerminateProcess( running[i].process, 124 );
+        WaitForSingleObject( running[i].process, INFINITE );
+        CloseHandle( running[i].process );
+        if ( running[i].out )
+            CloseHandle( running[i].out );
+    }
+    return suite_finish( results, passed );
 }
 
 #endif

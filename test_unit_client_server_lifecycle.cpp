@@ -224,7 +224,7 @@ static void lifecycle_disconnect( lifecycle_world_t * world, int client )
     check( rocketnet_server_client_connected( world->server, index ) == 0 );
 }
 
-static void client_reconnects_with_a_second_token()
+static void test_client_reconnects_with_a_second_token()
 {
     lifecycle_world_t world;
     lifecycle_world_create( &world, 2, 1 );
@@ -248,9 +248,9 @@ static void client_reconnects_with_a_second_token()
     check( rn_server_stats_of( world.server ).clients_connected == 2 );
     lifecycle_world_destroy( &world );
 }
-REGISTER_UNIT_TEST( client_reconnects_with_a_second_token );
+REGISTER_UNIT_TEST( test_client_reconnects_with_a_second_token );
 
-static void client_destroy_then_create_and_connect()
+static void test_client_destroy_then_create_and_connect()
 {
     lifecycle_world_t world;
     lifecycle_world_create( &world, 2, 1 );
@@ -271,9 +271,9 @@ static void client_destroy_then_create_and_connect()
     lifecycle_exchange( &world, 0, 0xC2, 2 );
     lifecycle_world_destroy( &world );
 }
-REGISTER_UNIT_TEST( client_destroy_then_create_and_connect );
+REGISTER_UNIT_TEST( test_client_destroy_then_create_and_connect );
 
-static void client_connect_refused_unless_disconnected()
+static void test_client_connect_refused_unless_disconnected()
 {
     lifecycle_world_t world;
     lifecycle_world_create( &world, 2, 1 );
@@ -301,9 +301,9 @@ static void client_connect_refused_unless_disconnected()
     lifecycle_exchange( &world, 0, 0xD1, 2 );
     lifecycle_world_destroy( &world );
 }
-REGISTER_UNIT_TEST( client_connect_refused_unless_disconnected );
+REGISTER_UNIT_TEST( test_client_connect_refused_unless_disconnected );
 
-static void server_start_refused_unless_stopped()
+static void test_server_start_refused_unless_stopped()
 {
     lifecycle_world_t world;
     lifecycle_world_create( &world, 2, 1 );
@@ -318,9 +318,9 @@ static void server_start_refused_unless_stopped()
     lifecycle_exchange( &world, 0, 0xE1, 2 );
     lifecycle_world_destroy( &world );
 }
-REGISTER_UNIT_TEST( server_start_refused_unless_stopped );
+REGISTER_UNIT_TEST( test_server_start_refused_unless_stopped );
 
-static void client_error_state_then_disconnect_then_connect()
+static void test_client_error_state_then_disconnect_then_connect()
 {
     // denied: a server of one slot, held by client 0; client 1 is refused
     lifecycle_world_t world;
@@ -362,7 +362,7 @@ static void client_error_state_then_disconnect_then_connect()
     lifecycle_exchange( &world, 0, 0xF2, 2 );
     lifecycle_world_destroy( &world );
 }
-REGISTER_UNIT_TEST( client_error_state_then_disconnect_then_connect );
+REGISTER_UNIT_TEST( test_client_error_state_then_disconnect_then_connect );
 
 // A send on a connection that is not CONNECTED is dropped and counted, on the
 // client and on the server alike (standard/MESSAGES.md m1.5;
@@ -417,7 +417,7 @@ static void lifecycle_check_nothing_then_first_send( lifecycle_world_t * world, 
     lifecycle_exchange( world, client, tag, 1 );
 }
 
-static void client_send_dropped_before_connect()
+static void test_client_send_dropped_before_connect()
 {
     lifecycle_world_t world;
     lifecycle_world_create( &world, 1, 1 );
@@ -443,9 +443,9 @@ static void client_send_dropped_before_connect()
     check( rn_client_stats_of( client ).not_connected_drops == 3 );
     lifecycle_world_destroy( &world );
 }
-REGISTER_UNIT_TEST( client_send_dropped_before_connect );
+REGISTER_UNIT_TEST( test_client_send_dropped_before_connect );
 
-static void client_send_dropped_while_connecting()
+static void test_client_send_dropped_while_connecting()
 {
     lifecycle_world_t world;
     lifecycle_world_create( &world, 1, 2 );
@@ -492,9 +492,9 @@ static void client_send_dropped_while_connecting()
     lifecycle_check_client_send_dropped( late );
     lifecycle_world_destroy( &world );
 }
-REGISTER_UNIT_TEST( client_send_dropped_while_connecting );
+REGISTER_UNIT_TEST( test_client_send_dropped_while_connecting );
 
-static void client_send_dropped_after_disconnect()
+static void test_client_send_dropped_after_disconnect()
 {
     lifecycle_world_t world;
     lifecycle_world_create( &world, 1, 1 );
@@ -526,9 +526,9 @@ static void client_send_dropped_after_disconnect()
     lifecycle_check_nothing_then_first_send( &world, 0, 0xA9 );
     lifecycle_world_destroy( &world );
 }
-REGISTER_UNIT_TEST( client_send_dropped_after_disconnect );
+REGISTER_UNIT_TEST( test_client_send_dropped_after_disconnect );
 
-static void server_send_dropped_to_slot_not_connected()
+static void test_server_send_dropped_to_slot_not_connected()
 {
     lifecycle_world_t world;
     lifecycle_world_create( &world, 3, 1 );
@@ -575,12 +575,12 @@ static void server_send_dropped_to_slot_not_connected()
     lifecycle_check_nothing_then_first_send( &world, 0, 0xB2 );
     lifecycle_world_destroy( &world );
 }
-REGISTER_UNIT_TEST( server_send_dropped_to_slot_not_connected );
+REGISTER_UNIT_TEST( test_server_send_dropped_to_slot_not_connected );
 
 // set_send_kbps follows the same rule: a connection that is not CONNECTED has
 // no rate to set. The call returns INVALID_ARGUMENT, changes nothing and is
 // not misuse; once CONNECTED the same call is OK.
-static void server_set_send_kbps_refused_unless_connected()
+static void test_server_set_send_kbps_refused_unless_connected()
 {
     lifecycle_world_t world;
     lifecycle_world_create( &world, 2, 1 );
@@ -610,9 +610,9 @@ static void server_set_send_kbps_refused_unless_connected()
     lifecycle_exchange( &world, 0, 0xB3, 1 );
     lifecycle_world_destroy( &world );
 }
-REGISTER_UNIT_TEST( server_set_send_kbps_refused_unless_connected );
+REGISTER_UNIT_TEST( test_server_set_send_kbps_refused_unless_connected );
 
-static void client_set_send_kbps_refused_unless_connected()
+static void test_client_set_send_kbps_refused_unless_connected()
 {
     lifecycle_world_t world;
     lifecycle_world_create( &world, 1, 1 );
@@ -649,9 +649,9 @@ static void client_set_send_kbps_refused_unless_connected()
     check( rocketnet_api_misuse_count() == misuse );
     lifecycle_world_destroy( &world );
 }
-REGISTER_UNIT_TEST( client_set_send_kbps_refused_unless_connected );
+REGISTER_UNIT_TEST( test_client_set_send_kbps_refused_unless_connected );
 
-static void server_start_stop_start_again()
+static void test_server_start_stop_start_again()
 {
     lifecycle_world_t world;
     lifecycle_world_create( &world, 2, 2 );
@@ -703,9 +703,9 @@ static void server_start_stop_start_again()
     check( rn_server_stats_of( world.server ).clients_connected == 4 );
     lifecycle_world_destroy( &world );      // destroys a running server
 }
-REGISTER_UNIT_TEST( server_start_stop_start_again );
+REGISTER_UNIT_TEST( test_server_start_stop_start_again );
 
-static void server_stop_disconnects_every_client()
+static void test_server_stop_disconnects_every_client()
 {
     lifecycle_world_t world;
     lifecycle_world_create( &world, 3, 3 );
@@ -721,9 +721,9 @@ static void server_stop_disconnects_every_client()
         check( rocketnet_client_state( world.clients[i] ) <= ROCKETNET_CLIENT_STATE_DISCONNECTED );
     lifecycle_world_destroy( &world );
 }
-REGISTER_UNIT_TEST( server_stop_disconnects_every_client );
+REGISTER_UNIT_TEST( test_server_stop_disconnects_every_client );
 
-static void server_disconnect_all_clients()
+static void test_server_disconnect_all_clients()
 {
     lifecycle_world_t world;
     lifecycle_world_create( &world, 3, 3 );
@@ -745,9 +745,9 @@ static void server_disconnect_all_clients()
     check( rocketnet_server_num_connected_clients( world.server ) == 3 );
     lifecycle_world_destroy( &world );
 }
-REGISTER_UNIT_TEST( server_disconnect_all_clients );
+REGISTER_UNIT_TEST( test_server_disconnect_all_clients );
 
-static void connection_reset_client_reconnect_delivers()
+static void test_connection_reset_client_reconnect_delivers()
 {
     lifecycle_world_t world;
     lifecycle_world_create( &world, 2, 1 );
@@ -763,16 +763,12 @@ static void connection_reset_client_reconnect_delivers()
         lifecycle_server_send( world.server, index, 0x5F, (uint8_t) i );
     }
     lifecycle_pump( &world );
-    const uint8_t * data = NULL;
-    int bytes = 0;
     uint64_t sender = 0;
     struct rocketnet_message_batch_t batch;
     while ( rocketnet_server_receive_messages( world.server, &batch ) )
     {
         for ( int i = 0; i < batch.num_messages; i++ )
         {
-            data = batch.data[i];
-            bytes = batch.bytes[i];
             sender = batch.client_index[i];
             check( sender == (uint64_t) index );
         }
@@ -793,7 +789,7 @@ static void connection_reset_client_reconnect_delivers()
     }
     lifecycle_world_destroy( &world );
 }
-REGISTER_UNIT_TEST( connection_reset_client_reconnect_delivers );
+REGISTER_UNIT_TEST( test_connection_reset_client_reconnect_delivers );
 
 // ROCKETNET_FLOW_ID_BIT: a destination id with the bit set is refused and
 // counted by each destination-taking function, and client indexes
@@ -806,7 +802,7 @@ static void lifecycle_log_callback( void *, enum rocketnet_log_level_t, const ch
         lifecycle_flow_logs++;
 }
 
-static void server_destination_flow_id_refused()
+static void test_server_destination_flow_id_refused()
 {
     check( ROCKETNET_FLOW_ID_BIT == ( 1ULL << 63 ) );
     lifecycle_world_t world;
@@ -839,12 +835,12 @@ static void server_destination_flow_id_refused()
     lifecycle_exchange( &world, 0, 0x61, 1 );
     lifecycle_world_destroy( &world );
 }
-REGISTER_UNIT_TEST( server_destination_flow_id_refused );
+REGISTER_UNIT_TEST( test_server_destination_flow_id_refused );
 
 // The client index is an int on every per-client call; only
 // rocketnet_server_start_message takes a uint64_t destination id, which is
 // the client index today.
-static void server_client_index_round_trips_as_int()
+static void test_server_client_index_round_trips_as_int()
 {
     lifecycle_world_t world;
     lifecycle_world_create( &world, 3, 3 );
@@ -876,7 +872,7 @@ static void server_client_index_round_trips_as_int()
     check( rocketnet_server_num_connected_clients( world.server ) == 2 );
     lifecycle_world_destroy( &world );
 }
-REGISTER_UNIT_TEST( server_client_index_round_trips_as_int );
+REGISTER_UNIT_TEST( test_server_client_index_round_trips_as_int );
 
 // packets_per_update takes 1 .. 1024 and defaults to 256, client and
 // server, through the struct and through the environment.
@@ -888,7 +884,7 @@ static int lifecycle_setenv( const char * name, const char * value ) { return se
 static int lifecycle_unsetenv( const char * name ) { return unsetenv( name ); }
 #endif
 
-static void config_packets_per_update_range()
+static void test_config_packets_per_update_range()
 {
     rocketnet_quiet( 1 );
     lifecycle_identity_t identity;
@@ -1001,12 +997,12 @@ static void config_packets_per_update_range()
     check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL ) == NULL );
     check( lifecycle_unsetenv( "ROCKETNET_SERVER_PACKETS_PER_UPDATE" ) == 0 );
 }
-REGISTER_UNIT_TEST( config_packets_per_update_range );
+REGISTER_UNIT_TEST( test_config_packets_per_update_range );
 
 // A connection the server ends leaves the client DISCONNECTED with its
 // connection object still held; connect straight after (no disconnect call)
 // ends it first, and the lifetime counters only grow.
-static void client_reconnects_after_server_stop_without_disconnect()
+static void test_client_reconnects_after_server_stop_without_disconnect()
 {
     lifecycle_world_t world;
     lifecycle_world_create( &world, 2, 1 );
@@ -1040,13 +1036,13 @@ static void client_reconnects_after_server_stop_without_disconnect()
     check( rn_client_stats_of( client ).packets_sent > before.packets_sent );
     lifecycle_world_destroy( &world );
 }
-REGISTER_UNIT_TEST( client_reconnects_after_server_stop_without_disconnect );
+REGISTER_UNIT_TEST( test_client_reconnects_after_server_stop_without_disconnect );
 
 // A connection that ends with a reason reads it as the client state until
 // disconnect or the next connect ends it: a config mismatch (num_channels is
 // a WIRE field) ends the first, disconnect reads DISCONNECTED, and the next
 // connect runs a fresh handshake to CONNECTED.
-static void client_connection_ended_state_kept_until_disconnect()
+static void test_client_connection_ended_state_kept_until_disconnect()
 {
     lifecycle_world_t world;
     memset( &world, 0, sizeof( world ) );
@@ -1094,11 +1090,11 @@ static void client_connection_ended_state_kept_until_disconnect()
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
     lifecycle_world_destroy( &world );
 }
-REGISTER_UNIT_TEST( client_connection_ended_state_kept_until_disconnect );
+REGISTER_UNIT_TEST( test_client_connection_ended_state_kept_until_disconnect );
 
 // connect with an expired token: the status and the matching error state,
 // refused again until disconnect.
-static void client_connect_token_expired()
+static void test_client_connect_token_expired()
 {
     lifecycle_world_t world;
     lifecycle_world_create( &world, 1, 1 );
@@ -1117,12 +1113,12 @@ static void client_connect_token_expired()
     lifecycle_connect( &world, 0, 0x1E02 );
     lifecycle_world_destroy( &world );
 }
-REGISTER_UNIT_TEST( client_connect_token_expired );
+REGISTER_UNIT_TEST( test_client_connect_token_expired );
 
 // One update sends more packets than one builder call tracks
 // (ROCKETNET_PACKET_BUILDER_MAX_PACKETS, 16): the per-update limit is the
 // config's packets_per_update.
-static void client_one_update_sends_more_than_sixteen_packets()
+static void test_client_one_update_sends_more_than_sixteen_packets()
 {
     lifecycle_world_t world;
     lifecycle_world_create( &world, 1, 0 );
@@ -1154,7 +1150,7 @@ static void client_one_update_sends_more_than_sixteen_packets()
     check( sent > ROCKETNET_PACKET_BUILDER_MAX_PACKETS );
     lifecycle_world_destroy( &world );
 }
-REGISTER_UNIT_TEST( client_one_update_sends_more_than_sixteen_packets );
+REGISTER_UNIT_TEST( test_client_one_update_sends_more_than_sixteen_packets );
 
 // ---------------------------------------------------------------------------
 // The one receive queue, as RakPeer::Receive: every reliability type sent on
@@ -1349,14 +1345,14 @@ static void rq_check_log( const rq_run_t * run, const rq_log_t * log, bool at_se
             }
 }
 
-static void receive_one_queue_every_type_every_channel()
+static void test_message_receive_one_queue_every_type_every_channel()
 {
     static rq_run_t run;
     rq_run( &run );
     rq_check_log( &run, &run.at_server, true );
     rq_check_log( &run, &run.at_client, false );
 }
-REGISTER_UNIT_TEST( receive_one_queue_every_type_every_channel );
+REGISTER_UNIT_TEST( test_message_receive_one_queue_every_type_every_channel );
 
 // The receive is pumped: each call fills the caller's batch up to
 // ROCKETNET_RECEIVE_BATCH_MESSAGES and returns true, and what one call does
@@ -1364,7 +1360,7 @@ REGISTER_UNIT_TEST( receive_one_queue_every_type_every_channel );
 // per-update cap. More messages than one batch holds arrive in one update;
 // pumped to empty they are each seen once, in send order, and the call that
 // finds nothing pending returns false with num_messages 0.
-static void receive_pumped_past_one_batch_in_order()
+static void test_message_receive_pumped_past_one_batch_in_order()
 {
     lifecycle_world_t world;
     lifecycle_world_create( &world, 2, 1 );
@@ -1419,4 +1415,4 @@ static void receive_pumped_past_one_batch_in_order()
     check( !rocketnet_client_receive_messages( client, &batch ) && batch.num_messages == 0 );
     lifecycle_world_destroy( &world );
 }
-REGISTER_UNIT_TEST( receive_pumped_past_one_batch_in_order );
+REGISTER_UNIT_TEST( test_message_receive_pumped_past_one_batch_in_order );

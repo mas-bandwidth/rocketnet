@@ -30,7 +30,7 @@
 #include <arpa/inet.h>
 #endif
 
-static void platform_socket_hygiene_mapped_source_decision()
+static void test_platform_socket_hygiene_mapped_source_decision()
 {
     struct rocketnet_address_t mapped;
     memset( &mapped, 0, sizeof(mapped) );
@@ -85,7 +85,7 @@ static void platform_socket_hygiene_mapped_source_decision()
 #endif
 }
 
-static void platform_socket_hygiene_timeout_timeval()
+static void test_platform_socket_hygiene_timeout_timeval()
 {
     // A 1.5 s timeout must split seconds and microseconds:
     // tv_sec = 1, tv_usec = 500000 (< 1000000, avoiding EINVAL on SO_RCVTIMEO).
@@ -95,7 +95,7 @@ static void platform_socket_hygiene_timeout_timeval()
     rocketnet_unit_check( tv.tv_usec == 500000 );
 }
 
-static void platform_socket_hygiene_sleep_split()
+static void test_platform_socket_hygiene_sleep_split()
 {
     // A 3000 s sleep conversion must split seconds and microseconds:
     // 3000 s would overflow a 32-bit signed int microsecond counter (3000 * 1000000 > 2^31 - 1).
@@ -105,14 +105,14 @@ static void platform_socket_hygiene_sleep_split()
     rocketnet_unit_check( (int32_t) split.microseconds >= 0 );
 }
 
-static void platform_socket_hygiene_descriptor_valid()
+static void test_platform_socket_hygiene_descriptor_valid()
 {
     // File descriptor 0 is STDIN_FILENO, a legal socket descriptor if stdin was closed.
     // At BASE, rocketnet_platform_socket_destroy checked `socket->handle != 0`,
     // treating descriptor 0 as none/invalid and leaking it.
     // Valid descriptors are >= 0 (POSIX) and != INVALID_SOCKET (Windows).
     rocketnet_unit_check( rocketnet_platform_socket_handle_is_valid( 0 ) );
-    rocketnet_unit_check( !rocketnet_platform_socket_handle_is_valid( -1 ) );
+    rocketnet_unit_check( !rocketnet_platform_socket_handle_is_valid( (rocketnet_platform_socket_handle_t) -1 ) );
 }
 
 // The single-packet receive path drops a refused source and reads the next
@@ -171,7 +171,7 @@ static int platform_socket_hygiene_receive_scripted( bool ipv6, platform_socket_
 static const platform_socket_hygiene_datagram_t platform_socket_hygiene_mapped = { { 0,0,0,0, 0,0,0,0, 0,0,0xff,0xff, 1,2,3,4 }, 40000, "spoof" };
 static const platform_socket_hygiene_datagram_t platform_socket_hygiene_native = { { 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1 }, 40001, "good" };
 
-static void platform_socket_hygiene_refused_source_reads_next()
+static void test_platform_socket_hygiene_refused_source_reads_next()
 {
     // a mapped source on a socket that is not dual stack is refused, and the
     // receive goes on to the next datagram instead of returning 0
@@ -190,7 +190,7 @@ static void platform_socket_hygiene_refused_source_reads_next()
     rocketnet_unit_check( from.data.ipv6[7] == 1 );
 }
 
-static void platform_socket_hygiene_refused_source_then_drained()
+static void test_platform_socket_hygiene_refused_source_then_drained()
 {
     // only refused datagrams queued: the receive drops each, then reports
     // drained (0) when the source runs dry
@@ -205,7 +205,7 @@ static void platform_socket_hygiene_refused_source_then_drained()
     rocketnet_unit_check( script.calls == 3 );
 }
 
-static void platform_socket_hygiene_dual_stack_accepts_mapped()
+static void test_platform_socket_hygiene_dual_stack_accepts_mapped()
 {
     // on a dual stack socket a mapped source is an ipv4 client: accepted at
     // once and canonicalized to ipv4
@@ -229,10 +229,10 @@ static void platform_socket_hygiene_dual_stack_accepts_mapped()
 #endif
 }
 
-REGISTER_UNIT_TEST( platform_socket_hygiene_mapped_source_decision );
-REGISTER_UNIT_TEST( platform_socket_hygiene_timeout_timeval );
-REGISTER_UNIT_TEST( platform_socket_hygiene_sleep_split );
-REGISTER_UNIT_TEST( platform_socket_hygiene_descriptor_valid );
-REGISTER_UNIT_TEST( platform_socket_hygiene_refused_source_reads_next );
-REGISTER_UNIT_TEST( platform_socket_hygiene_refused_source_then_drained );
-REGISTER_UNIT_TEST( platform_socket_hygiene_dual_stack_accepts_mapped );
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_mapped_source_decision );
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_timeout_timeval );
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_sleep_split );
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_descriptor_valid );
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_refused_source_reads_next );
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_refused_source_then_drained );
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_dual_stack_accepts_mapped );

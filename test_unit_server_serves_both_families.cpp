@@ -115,7 +115,7 @@ static void both_families_stop( struct rocketnet_server_t * server )
     rocketnet_server_destroy( server );
 }
 
-static void server_refuses_second_address_of_the_same_family()
+static void test_server_refuses_second_address_of_the_same_family()
 {
     both_families_identity_t identity;
     both_families_identity( &identity );
@@ -124,9 +124,9 @@ static void server_refuses_second_address_of_the_same_family()
     both_families_stop( server );
     check( status == ROCKETNET_STATUS_INVALID_ADDRESS );
 }
-REGISTER_UNIT_TEST( server_refuses_second_address_of_the_same_family );
+REGISTER_UNIT_TEST( test_server_refuses_second_address_of_the_same_family );
 
-static void server_refuses_second_address_on_a_different_port()
+static void test_server_refuses_second_address_on_a_different_port()
 {
     both_families_identity_t identity;
     both_families_identity( &identity );
@@ -135,9 +135,9 @@ static void server_refuses_second_address_on_a_different_port()
     both_families_stop( server );
     check( status == ROCKETNET_STATUS_INVALID_ADDRESS );
 }
-REGISTER_UNIT_TEST( server_refuses_second_address_on_a_different_port );
+REGISTER_UNIT_TEST( test_server_refuses_second_address_on_a_different_port );
 
-static void server_refuses_an_unparseable_second_address()
+static void test_server_refuses_an_unparseable_second_address()
 {
     both_families_identity_t identity;
     both_families_identity( &identity );
@@ -146,9 +146,9 @@ static void server_refuses_an_unparseable_second_address()
     both_families_stop( server );
     check( status == ROCKETNET_STATUS_INVALID_ADDRESS );
 }
-REGISTER_UNIT_TEST( server_refuses_an_unparseable_second_address );
+REGISTER_UNIT_TEST( test_server_refuses_an_unparseable_second_address );
 
-static void public_address_environment_pair_is_consumed_together()
+static void test_public_address_environment_pair_is_consumed_together()
 {
     check( both_families_setenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS", "127.0.0.1:40000" ) == 0 );
     check( both_families_setenv( "ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS", "[::1]:40000" ) == 0 );
@@ -172,7 +172,7 @@ static void public_address_environment_pair_is_consumed_together()
     check( both_families_unsetenv( "ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS" ) == 0 );
     check( both_families_unsetenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS" ) == 0 );
 }
-REGISTER_UNIT_TEST( public_address_environment_pair_is_consumed_together );
+REGISTER_UNIT_TEST( test_public_address_environment_pair_is_consumed_together );
 
 static void both_families_pump( struct rocketnet_server_t * server, struct rocketnet_client_t * ipv4, struct rocketnet_client_t * ipv6, double * time )
 {
@@ -206,7 +206,7 @@ static struct rocketnet_client_t * both_families_connect_client( const both_fami
     return client;
 }
 
-static void server_serves_ipv4_and_ipv6_clients_on_one_port()
+static void test_server_serves_ipv4_and_ipv6_clients_on_one_port()
 {
     both_families_identity_t identity;
     both_families_identity( &identity );
@@ -300,9 +300,9 @@ static void server_serves_ipv4_and_ipv6_clients_on_one_port()
     rocketnet_client_destroy( ipv4 );
     both_families_stop( server );
 }
-REGISTER_UNIT_TEST( server_serves_ipv4_and_ipv6_clients_on_one_port );
+REGISTER_UNIT_TEST( test_server_serves_ipv4_and_ipv6_clients_on_one_port );
 
-static void one_family_server_is_unchanged()
+static void test_one_family_server_is_unchanged()
 {
     both_families_identity_t identity;
     both_families_identity( &identity );
@@ -332,7 +332,7 @@ static void one_family_server_is_unchanged()
     rocketnet_client_destroy( ipv4 );
     both_families_stop( server );
 }
-REGISTER_UNIT_TEST( one_family_server_is_unchanged );
+REGISTER_UNIT_TEST( test_one_family_server_is_unchanged );
 
 struct both_families_protocol_t
 {
@@ -414,7 +414,7 @@ static void both_families_mint( uint8_t * request, const uint8_t * ipv4, const u
 // that is checked. A foreign IPv6 beside a matching IPv4 is refused on an
 // IPv6 arrival and accepted on an IPv4 arrival.
 
-static void arrival_family_refuses_a_foreign_ipv6_address()
+static void test_arrival_family_refuses_a_foreign_ipv6_address()
 {
     struct both_families_protocol_t test;
     both_families_protocol_setup( &test );
@@ -434,9 +434,9 @@ static void arrival_family_refuses_a_foreign_ipv6_address()
     check( test.counters.values[addr_counter] == before + 1 );
     both_families_protocol_teardown( &test );
 }
-REGISTER_UNIT_TEST( arrival_family_refuses_a_foreign_ipv6_address );
+REGISTER_UNIT_TEST( test_arrival_family_refuses_a_foreign_ipv6_address );
 
-static void arrival_family_accepts_the_matching_ipv4_address()
+static void test_arrival_family_accepts_the_matching_ipv4_address()
 {
     struct both_families_protocol_t test;
     both_families_protocol_setup( &test );
@@ -456,13 +456,13 @@ static void arrival_family_accepts_the_matching_ipv4_address()
     check( test.counters.values[addr_counter] == before );
     both_families_protocol_teardown( &test );
 }
-REGISTER_UNIT_TEST( arrival_family_accepts_the_matching_ipv4_address );
+REGISTER_UNIT_TEST( test_arrival_family_accepts_the_matching_ipv4_address );
 
 // rocketnet_server_address_is_advertised: the IPv4 loopback stands for the
 // server only on an IPv6-wildcard ("[::]") server. A server that names a
 // public IPv4 and a public IPv6 address refuses a token naming 127.0.0.1.
 
-static void named_two_family_server_refuses_a_loopback_token()
+static void test_loopback_transport_named_two_family_server_refuses_a_token()
 {
     struct both_families_protocol_t test;
     both_families_protocol_setup( &test );
@@ -484,4 +484,4 @@ static void named_two_family_server_refuses_a_loopback_token()
     check( test.counters.values[addr_counter] == before + 1 );
     both_families_protocol_teardown( &test );
 }
-REGISTER_UNIT_TEST( named_two_family_server_refuses_a_loopback_token );
+REGISTER_UNIT_TEST( test_loopback_transport_named_two_family_server_refuses_a_token );

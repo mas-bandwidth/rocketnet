@@ -500,10 +500,10 @@ redirect decision per receive queue. It also covers the `config == NULL`
 branch, which the kernel's one-entry array never reaches. Only the kernel
 tier (`test_xdp_filter`) shows what the verifier accepts, the real helpers'
 behaviour, and the real per-CPU and XSKMAP maps. The host target is built for
-GCC or Clang on a little-endian, non-Windows host. Elsewhere, including the
-MSVC unit suite on Windows, the cases print `SKIPPED`. When the filter adopts
+GCC or Clang on a little-endian, non-Windows host, and its cases are in the
+unit suite on Linux only. When the filter adopts
 a new kernel header, helper or map, the shim follows in the same change, with
-the helper's kernel source cited. `xdp_host_every_counter_has_a_case` fails
+the helper's kernel source cited. `test_xdp_transport_host_every_counter_has_a_case` fails
 when a `ROCKETNET_SERVER_XDP_COUNTER_*` has no row that moves it. To reproduce
 the compatible filter, configure with
 `-DROCKETNET_XDP_FILTER_HOST_SOURCE=<path>`; the default is the shipped file.

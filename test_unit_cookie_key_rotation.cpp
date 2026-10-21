@@ -160,9 +160,7 @@ static void rocketnet_rotation_clear_mapping( struct rocketnet_rotation_server_t
         rocketnet_encryption_map_remove( test->server.encryption_map, index );
 }
 
-static void rocketnet_rotation_build_request_no_cookie( struct rocketnet_rotation_server_t * test,
-                                                        uint8_t * request,
-                                                        uint64_t client_id )
+static void rocketnet_rotation_build_request_no_cookie( uint8_t * request, uint64_t client_id )
 {
     (void) test;
     struct rocketnet_signed_connect_data_t signed_fields;
@@ -451,7 +449,7 @@ static void test_cookie_rotation_receive_after_stall_rejects_outgoing_key()
 // rocketnet_server_protocol_update) and is spent only after the cookie
 // validates (the check under "the handshake budget check" in
 // rocketnet_server_protocol_process_connection_request).
-static void handshake_budget_reopens_after_update()
+static void test_handshake_budget_reopens_after_update()
 {
     struct rocketnet_rotation_server_t test;
     rocketnet_rotation_server_setup( &test, 0 );
@@ -487,7 +485,7 @@ static void handshake_budget_reopens_after_update()
 // the cookie gate (no return cookie) is answered with a cookie and spends no
 // handshake budget (sdk/rocketnet_server_protocol.cpp,
 // rocketnet_server_protocol_process_connection_request).
-static void cookie_requests_spend_no_handshake_budget()
+static void test_cookie_requests_spend_no_handshake_budget()
 {
     struct rocketnet_rotation_server_t test;
     rocketnet_rotation_server_setup( &test, 0 );
@@ -510,7 +508,7 @@ static void cookie_requests_spend_no_handshake_budget()
     rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 1 );
 
     rocketnet_unit_check( rocketnet_address_parse( &test.client_address, "10.200.0.1:56789" ) );
-    rocketnet_rotation_build_request_no_cookie( &test, request, 0x20000ULL );
+    rocketnet_rotation_build_request_no_cookie( request, 0x20000ULL );
     rocketnet_unit_check( rocketnet_rotation_process_from_client_address( &test, request ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
     rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 1 );
 
@@ -526,5 +524,5 @@ REGISTER_UNIT_TEST( test_cookie_rotation_previous_key_rejected_after_window );
 REGISTER_UNIT_TEST( test_cookie_rotation_never_used_key_rejected );
 REGISTER_UNIT_TEST( test_cookie_rotation_draws_a_fresh_key );
 
-REGISTER_UNIT_TEST( handshake_budget_reopens_after_update );
-REGISTER_UNIT_TEST( cookie_requests_spend_no_handshake_budget );
+REGISTER_UNIT_TEST( test_handshake_budget_reopens_after_update );
+REGISTER_UNIT_TEST( test_cookie_requests_spend_no_handshake_budget );

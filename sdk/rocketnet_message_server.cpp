@@ -177,7 +177,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     sized.server_send_kbps = reserve_kbps;
     config = &sized;
 
-    rn_message_object_layout_t layout;
+    rn_message_object_layout_t layout = {};
     const bool laid_out = link && rn_message_object_layout( config, num_connections, &layout );
     const bool budget_valid = ( default_kbps <= 0 || rocketnet_send_budget_kbps_valid( (uint32_t) default_kbps ) ) && rocketnet_send_budget_time_valid( time );
     const bool memory_valid = !memory || ( laid_out && memory_bytes >= layout.total && ( (uintptr_t) memory % ROCKETNET_ALLOCATION_ALIGNMENT ) == 0 );

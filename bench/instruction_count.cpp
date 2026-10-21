@@ -178,7 +178,7 @@ void run_client_frame(bool setup_only)
     rocketnet_server_transport_dev_config(&server_config);
     server_config.max_clients = 2;
     server_config.game_clock_epoch = 1000;
-    strcpy(server_config.transport, "loopback");
+    memcpy(server_config.transport, "loopback", sizeof("loopback"));
     rocketnet_server_transport_t * server =
         rocketnet_server_transport_create(NULL, "127.0.0.1:42000", &server_config);
     CHECK(server != NULL);
@@ -189,7 +189,7 @@ void run_client_frame(bool setup_only)
 
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config(&client_config);
-    strcpy(client_config.transport, "loopback");
+    memcpy(client_config.transport, "loopback", sizeof("loopback"));
     client_config.step_driven = true;
     client_config.game_clock_epoch = 1000;
     client_config.time_callback = sim_time_callback;
@@ -295,7 +295,7 @@ void run_server_tick(bool setup_only)
     rocketnet_server_transport_dev_config(&server_config);
     server_config.max_clients = SERVER_TICK_CLIENTS;
     server_config.game_clock_epoch = 1000;
-    strcpy(server_config.transport, "loopback");
+    memcpy(server_config.transport, "loopback", sizeof("loopback"));
     rocketnet_server_transport_t * server =
         rocketnet_server_transport_create(NULL, "127.0.0.1:42001", &server_config);
     CHECK(server != NULL);
@@ -310,7 +310,7 @@ void run_server_tick(bool setup_only)
 
         rocketnet_client_transport_config_t client_config;
         rocketnet_client_transport_default_config(&client_config);
-        strcpy(client_config.transport, "loopback");
+        memcpy(client_config.transport, "loopback", sizeof("loopback"));
         client_config.step_driven = true;
         client_config.game_clock_epoch = 1000;
         client_config.time_callback = sim_time_callback;

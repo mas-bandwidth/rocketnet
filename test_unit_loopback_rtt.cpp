@@ -25,6 +25,7 @@
 // orders assert zero resends.
 
 #include "test_unit_registry.h"
+#include "test/portable_crt.h"
 
 #include "rocketnet_internal.h"
 #include "sdk/rocketnet.h"
@@ -248,7 +249,8 @@ static void loopback_rtt_run( int side, struct loopback_rtt_measures_t * m )
     m->srtt = sender->connections[0].ordered.ack.srtt;
     m->resend_delay = sender->connections[0].ordered.ack.resend_delay;
 
-    if ( getenv( "ROCKETNET_LOOPBACK_RTT_PRINT" ) != NULL )
+    char rtt_print[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_LOOPBACK_RTT_PRINT", rtt_print, sizeof( rtt_print ) ) )
         printf( "LOOPBACK_RTT %s sent=%d received=%d in_order=%d packets=%d samples=%d sample_min=%.6f sample_max=%.6f "
                 "srtt=%.6f resend_delay=%.6f resent=%llu duplicate=%llu\n",
                 side == LOOPBACK_RTT_SERVER ? "server" : "client", m->sent, m->received, m->in_order,
@@ -282,15 +284,15 @@ static void loopback_rtt_check( int side )
     rocketnet_unit_check( m.duplicate == 0 );
 }
 
-static void loopback_rtt_server_sends( void ) { loopback_rtt_check( LOOPBACK_RTT_SERVER ); }
-static void loopback_rtt_client_sends( void ) { loopback_rtt_check( LOOPBACK_RTT_CLIENT ); }
+static void test_loopback_transport_rtt_server_sends( void ) { loopback_rtt_check( LOOPBACK_RTT_SERVER ); }
+static void test_loopback_transport_rtt_client_sends( void ) { loopback_rtt_check( LOOPBACK_RTT_CLIENT ); }
 
-REGISTER_UNIT_TEST( loopback_rtt_server_sends );
-REGISTER_UNIT_TEST( loopback_rtt_client_sends );
+REGISTER_UNIT_TEST( test_loopback_transport_rtt_server_sends );
+REGISTER_UNIT_TEST( test_loopback_transport_rtt_client_sends );
 
 // Retain a full maximum resend delay payload budget without acknowledging any record.
 // Exercise each documented typical fixed-pool size and the large-span path.
-static void max_resend_delay_payload_reserve_without_acks()
+static void test_max_resend_delay_payload_reserve_without_acks()
 {
     const int budgets[] = { 1000, 10000 };
     const int payloads[] = { 128, 512, 1024, 1153, 16384 };
@@ -325,4 +327,4 @@ static void max_resend_delay_payload_reserve_without_acks()
         rn_arena_destroy( arena );
     }
 }
-REGISTER_UNIT_TEST( max_resend_delay_payload_reserve_without_acks );
+REGISTER_UNIT_TEST( test_max_resend_delay_payload_reserve_without_acks );

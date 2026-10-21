@@ -137,7 +137,7 @@ static void feed_cookie( struct rocketnet_client_protocol_t * client, double cur
 // disconnect zeroes the whole token (which holds both per-session keys), the
 // four derived keys and the ephemeral secret. Plant the canary after connect
 // and disconnect: every planted byte must be gone.
-static void TestClientTokenKeysAreWipedOnDisconnect()
+static void test_client_token_keys_are_wiped_on_disconnect()
 {
     struct rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
@@ -169,7 +169,7 @@ static void TestClientTokenKeysAreWipedOnDisconnect()
 // The cookie-request timeout (-2): an attempt that never hears back from the
 // server dies after the token's timeout. The ephemeral secret that sealed the
 // requests MUST be zeroed when the attempt ends this way.
-static void TestClientEphemeralSecretWipedOnCookieTimeout()
+static void test_client_ephemeral_secret_wiped_on_cookie_timeout()
 {
     struct rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
@@ -190,7 +190,7 @@ static void TestClientEphemeralSecretWipedOnCookieTimeout()
 
 // The connect-token-expired terminal (-7): the token's lifetime elapses during
 // the handshake and the whole attempt dies. The ephemeral secret MUST be gone.
-static void TestClientEphemeralSecretWipedOnTokenExpired()
+static void test_client_ephemeral_secret_wiped_on_token_expired()
 {
     struct rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
@@ -213,7 +213,7 @@ static void TestClientEphemeralSecretWipedOnTokenExpired()
 // The denied terminal (-1): a sealed denied that opens with the handshake keys
 // derived from this attempt's token keys and salt. The ephemeral secret MUST be
 // gone once the attempt ends in the terminal denied state.
-static void TestClientEphemeralSecretWipedOnDenied()
+static void test_client_ephemeral_secret_wiped_on_denied()
 {
     struct rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
@@ -252,7 +252,7 @@ static void TestClientEphemeralSecretWipedOnDenied()
 // The connection-request timeout (-3): reach sending-connection-request via
 // cookie, plant canary in the still-live ephemeral, let the per-state timeout
 // fire. This path still leaks (F4) so expected-fail names the fix card.
-static void TestClientEphemeralSecretWipedOnConnectionRequestTimeout()
+static void test_client_ephemeral_secret_wiped_on_connection_request_timeout()
 {
     struct rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
@@ -275,7 +275,7 @@ static void TestClientEphemeralSecretWipedOnConnectionRequestTimeout()
 // The connection-response timeout (-4): feed a valid challenge from state 2;
 // the challenge path zeroes the ephemeral (sdk/rocketnet_client_protocol.cpp:509)
 // and enters state 3. Timeout from there leaves it zero (assert green).
-static void TestClientEphemeralSecretWipedOnConnectionResponseTimeout()
+static void test_client_ephemeral_secret_wiped_on_connection_response_timeout()
 {
     struct rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
@@ -462,7 +462,7 @@ static int wp_x25519_run( bool skip_zero_check, struct wp_x25519_tally_t * tally
 // is driven too: it returns 0 on those 31 and 1 on the other 487, and each
 // success feeds the shared secret into session_client_to_server, so those 487
 // session keys are pairwise distinct without any key being printed.
-static void wycheproof_x25519_vectors()
+static void test_wycheproof_x25519_vectors()
 {
     struct wp_x25519_tally_t tally;
     tally.accepted = 0;
@@ -521,7 +521,7 @@ static void wycheproof_x25519_vectors()
 // exactly the 31 low-order vectors, and no other vector may disagree. The
 // removed check is the crypto_scalarmult all-zero refusal in
 // sdk/rocketnet_keys.cpp, rocketnet_derive_connection_keys.
-static void wycheproof_x25519_witness_skipped_zero_check_goes_red()
+static void test_wycheproof_x25519_witness_skipped_zero_check_goes_red()
 {
     struct wp_x25519_tally_t tally;
     tally.accepted = 0;
@@ -531,14 +531,14 @@ static void wycheproof_x25519_witness_skipped_zero_check_goes_red()
     rocketnet_unit_check( every_disagreement_zero_shared );
 }
 
-REGISTER_UNIT_TEST( wycheproof_x25519_vectors );
-REGISTER_UNIT_TEST( wycheproof_x25519_witness_skipped_zero_check_goes_red );
+REGISTER_UNIT_TEST( test_wycheproof_x25519_vectors );
+REGISTER_UNIT_TEST( test_wycheproof_x25519_witness_skipped_zero_check_goes_red );
 
 #endif // !defined(ROCKETNET_USE_SYSTEM_SODIUM) -- rocketnet-wycheproof-x25519
 
-REGISTER_UNIT_TEST( TestClientTokenKeysAreWipedOnDisconnect );
-REGISTER_UNIT_TEST( TestClientEphemeralSecretWipedOnConnectionResponseTimeout );
-REGISTER_UNIT_TEST( TestClientEphemeralSecretWipedOnCookieTimeout );
-REGISTER_UNIT_TEST( TestClientEphemeralSecretWipedOnTokenExpired );
-REGISTER_UNIT_TEST( TestClientEphemeralSecretWipedOnDenied );
-REGISTER_UNIT_TEST( TestClientEphemeralSecretWipedOnConnectionRequestTimeout );
+REGISTER_UNIT_TEST( test_client_token_keys_are_wiped_on_disconnect );
+REGISTER_UNIT_TEST( test_client_ephemeral_secret_wiped_on_connection_response_timeout );
+REGISTER_UNIT_TEST( test_client_ephemeral_secret_wiped_on_cookie_timeout );
+REGISTER_UNIT_TEST( test_client_ephemeral_secret_wiped_on_token_expired );
+REGISTER_UNIT_TEST( test_client_ephemeral_secret_wiped_on_denied );
+REGISTER_UNIT_TEST( test_client_ephemeral_secret_wiped_on_connection_request_timeout );

@@ -98,7 +98,7 @@ static double max_window_bytes( const budget_send_log_t * log )
     return best;
 }
 
-static void never_exceeds_budget_per_window()
+static void test_never_exceeds_budget_per_window()
 {
     const uint32_t rates[] = { 1, 64, 1000, 10000 };
     for ( int r = 0; r < 4; r++ )
@@ -239,7 +239,7 @@ static void large_message_case( uint32_t kbps, int expected_windows )
     check( (double) budget.bytes_spent == total_wire );
 }
 
-static void large_message_paced_across_windows()
+static void test_large_message_paced_across_windows()
 {
     // 1000 kbps: 269404 wire bytes, depth 12500, rate 125000 B/s: ~2.06 s, 3 windows
     large_message_case( 1000, 3 );
@@ -255,7 +255,7 @@ static void large_message_paced_across_windows()
 // leaves another untouched.
 // ---------------------------------------------------------------------------
 
-static void budgets_are_per_connection()
+static void test_budgets_are_per_connection()
 {
     rocketnet_send_budget_t client;
     rocketnet_send_budget_t slot[2];
@@ -293,7 +293,7 @@ static void budgets_are_per_connection()
 // while a reliable item waits, unreliable items get none of the bucket.
 // ---------------------------------------------------------------------------
 
-static void reliable_waits_unreliable_drops()
+static void test_reliable_waits_unreliable_drops()
 {
     rocketnet_send_budget_t budget;
     check( rocketnet_send_budget_init( &budget, 1000, 0.0 ) );       // 125 bytes per ms, depth 12500
@@ -359,7 +359,7 @@ static void reliable_waits_unreliable_drops()
 // after a lower one in the same update is counted and waits.
 // ---------------------------------------------------------------------------
 
-static void class_order_retransmit_first()
+static void test_class_order_retransmit_first()
 {
     check( rocketnet_send_budget_class_rank( ROCKETNET_SEND_CLASS_RETRANSMIT ) == 0 );
     check( rocketnet_send_budget_class_rank( ROCKETNET_SEND_CLASS_ORDERED_PROGRESS ) == 0 );
@@ -399,7 +399,7 @@ static void class_order_retransmit_first()
 // after at the new one, from the next refill. Invalid budgets are refused.
 // ---------------------------------------------------------------------------
 
-static void runtime_change_takes_effect_next_window()
+static void test_runtime_change_takes_effect_next_window()
 {
     // The capped token bucket keeps its rule: 0 is not a rate it holds.
     // Uncapping is the message layer's rule and holds no bucket at all
@@ -460,7 +460,7 @@ static rocketnet_ack_endpoint_t g_endpoint;
 static rocketnet_replay_protection_t g_replay;
 static uint8_t g_frame[ROCKETNET_FRAME_STRIDE];
 
-static void wire_bytes_match_the_transport()
+static void test_wire_bytes_match_the_transport()
 {
     uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES] = { 1, 2, 3, 4 };
     uint8_t salt[ROCKETNET_CONNECTION_SALT_BYTES] = { 5, 6, 7, 8, 9, 10, 11, 12 };
@@ -580,7 +580,7 @@ static void counting_free( void * context, void * p )
     free( p );
 }
 
-static void send_budget_no_allocation_after_create()
+static void test_send_budget_no_allocation_after_create()
 {
     rocketnet_term();
     check( rocketnet_allocator( counting_malloc, counting_free ) == ROCKETNET_STATUS_OK );
@@ -632,7 +632,7 @@ static void send_budget_no_allocation_after_create()
 // overflow the sum before the comparison (CERT INT32-C).
 // ---------------------------------------------------------------------------
 
-static void wire_bytes_refuses_int_max()
+static void test_wire_bytes_refuses_int_max()
 {
     const int imax = INT_MAX;
     check( rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, imax ) == 0 );
@@ -651,7 +651,7 @@ static void wire_bytes_refuses_int_max()
 // return 0.
 // ---------------------------------------------------------------------------
 
-static void wire_bytes_boundaries()
+static void test_wire_bytes_boundaries()
 {
     const int min_block = ROCKETNET_ACK_BLOCK_MIN_BYTES;
     const int fit = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - min_block;
@@ -665,13 +665,13 @@ static void wire_bytes_boundaries()
     check( rocketnet_send_budget_max_wire_bytes( -1 ) == 0 );
 }
 
-REGISTER_UNIT_TEST( never_exceeds_budget_per_window );
-REGISTER_UNIT_TEST( large_message_paced_across_windows );
-REGISTER_UNIT_TEST( budgets_are_per_connection );
-REGISTER_UNIT_TEST( reliable_waits_unreliable_drops );
-REGISTER_UNIT_TEST( class_order_retransmit_first );
-REGISTER_UNIT_TEST( runtime_change_takes_effect_next_window );
-REGISTER_UNIT_TEST( wire_bytes_match_the_transport );
-REGISTER_UNIT_TEST( send_budget_no_allocation_after_create );
-REGISTER_UNIT_TEST( wire_bytes_refuses_int_max );
-REGISTER_UNIT_TEST( wire_bytes_boundaries );
+REGISTER_UNIT_TEST( test_never_exceeds_budget_per_window );
+REGISTER_UNIT_TEST( test_large_message_paced_across_windows );
+REGISTER_UNIT_TEST( test_budgets_are_per_connection );
+REGISTER_UNIT_TEST( test_reliable_waits_unreliable_drops );
+REGISTER_UNIT_TEST( test_class_order_retransmit_first );
+REGISTER_UNIT_TEST( test_runtime_change_takes_effect_next_window );
+REGISTER_UNIT_TEST( test_wire_bytes_match_the_transport );
+REGISTER_UNIT_TEST( test_send_budget_no_allocation_after_create );
+REGISTER_UNIT_TEST( test_wire_bytes_refuses_int_max );
+REGISTER_UNIT_TEST( test_wire_bytes_boundaries );

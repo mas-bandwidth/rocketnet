@@ -5,18 +5,21 @@ cmake_minimum_required(VERSION 3.20)
 if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum supported macOS version" FORCE)
 endif()
+# CMake's VERSION holds numbers only, so it is the 1.0.0 of v1.0.0-preview-1;
+# the release label, prerelease included, is ROCKETNET_VERSION_STRING below,
+# read from sdk/rocketnet.h, and the installed package carries both.
 project(rocketnet VERSION 1.0.0 LANGUAGES C CXX)
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/sdk/rocketnet.h" ROCKETNET_VERSION_FULL_LINE
+    REGEX "^ *#define ROCKETNET_VERSION_FULL +\"[0-9]+\\.[0-9]+\\.[0-9]+[^\"]*\"$")
+string(REGEX REPLACE ".*\"([^\"]+)\"$" "\\1" ROCKETNET_VERSION_STRING "${ROCKETNET_VERSION_FULL_LINE}")
+string(REGEX REPLACE "^[0-9]+\\.[0-9]+\\.[0-9]+-?" "" ROCKETNET_VERSION_PRERELEASE "${ROCKETNET_VERSION_STRING}")
+if(NOT ROCKETNET_VERSION_STRING STREQUAL PROJECT_VERSION AND
+   NOT ROCKETNET_VERSION_STRING STREQUAL "${PROJECT_VERSION}-${ROCKETNET_VERSION_PRERELEASE}")
+    message(FATAL_ERROR "sdk/rocketnet.h ROCKETNET_VERSION_FULL \"${ROCKETNET_VERSION_STRING}\" "
+        "is not project VERSION ${PROJECT_VERSION} with an optional -prerelease")
+endif()
 if(MSVC)
     add_compile_options(/utf-8)
-endif()
-# clang-cl does not map #pragma warning(disable:4996) (rocketnet_platform.h,
-# rocketnet.cpp) to its own deprecation warning, so the CRT deprecations that
-# MSVC silences there are silenced here for clang-cl alone. The vendored
-# sodium amalgamation keeps helpers its configuration does not call; clang-cl
-# reports them where MSVC at /W3 does not.
-if(MSVC AND CMAKE_C_COMPILER_ID STREQUAL "Clang")
-    add_compile_options(-Wno-deprecated-declarations)
-    set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/sodium/sodium.c" PROPERTIES COMPILE_OPTIONS "-Wno-unused-function")
 endif()
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -105,6 +108,30 @@ if(MSVC)
     add_compile_options(/fp:precise)
 else()
     add_compile_options(-ffp-contract=off)
+endif()
+# The warning floor, at the same directory scope so every target this tree
+# builds carries it, the vendored sodium source included (sodium/NOTES.md):
+# a customer compiles these sources inside their game with their own warning
+# flags, so the tree ships with no warning at the floor and the floor fails
+# the build. ROCKETNET_STRICT_WARNINGS adds the strict set a game is likely
+# to use (not yet clean: a known issue in ROADMAP.md); ROCKETNET_WARNINGS_AS_ERRORS=OFF
+# keeps the warnings and drops only the failure, for a compiler newer than
+# the ones the tree is checked on.
+option(ROCKETNET_WARNINGS_AS_ERRORS "Fail the build on any compiler warning" ON)
+option(ROCKETNET_STRICT_WARNINGS "Add the strict warning set (conversion, shadow, sign, format, undef)" OFF)
+if(MSVC)
+    add_compile_options(/W4)
+    if(ROCKETNET_WARNINGS_AS_ERRORS)
+        add_compile_options(/WX)
+    endif()
+else()
+    add_compile_options(-Wall -Wextra -Wpedantic)
+    if(ROCKETNET_STRICT_WARNINGS)
+        add_compile_options(-Wshadow -Wconversion -Wsign-conversion -Wcast-qual -Wformat=2 -Wundef -Wdouble-promotion)
+    endif()
+    if(ROCKETNET_WARNINGS_AS_ERRORS)
+        add_compile_options(-Werror)
+    endif()
 endif()
 add_compile_definitions(
     ROCKETNET_HISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS}
@@ -244,15 +271,11 @@ if(ROCKETNET_HARDEN)
     endif()
 endif()
 
-# The warning floor for the tree's library and test targets: the host
-# compiler's standard warnings, never fatal. A target's options stay PRIVATE,
-# so neither the installed package nor a parent project inherits them.
+# The warning floor is directory-wide (the add_compile_options above the
+# dependencies), so it reaches every target, named here or not. The function
+# stays as the place a target names the floor it is checked against; it adds
+# nothing the directory scope has not already given the target.
 function(rocketnet_warning_floor target)
-    if(MSVC)
-        target_compile_options(${target} PRIVATE /W4)
-    else()
-        target_compile_options(${target} PRIVATE -Wall -Wextra)
-    endif()
 endfunction()
 
 # Explicit STATIC: a parent's BUILD_SHARED_LIBS must not change the target's meaning.
@@ -391,6 +414,30 @@ if(ROCKETNET_HARDEN AND ROCKETNET_LINK_RELRO_NOW)
     target_link_options(rocketnet_shared PRIVATE "$<$<CONFIG:Release>:-Wl,-z,relro,-z,now>")
 endif()
 
+# The public header at the strictest level each compiler has, in the default
+# build: a translation unit holding only rocketnet.h, as C and as C++
+# (tools/header_warnings). Every game that includes the header compiles it
+# with its own flags, so the header must be clean under all of them. Angle
+# bracket includes are the compiler's own headers, never ours, so MSVC reads
+# them at /external:W0.
+add_library(rocketnet_header_warnings OBJECT
+    tools/header_warnings/header_warnings.c
+    tools/header_warnings/header_warnings.cpp)
+target_include_directories(rocketnet_header_warnings PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/sdk")
+if(MSVC AND NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")
+    # C4820 (padding added) is MSVC's -Wpadded: layout, not a defect.
+    target_compile_options(rocketnet_header_warnings PRIVATE /Wall /wd4820 /external:anglebrackets /external:W0)
+elseif(CMAKE_C_COMPILER_ID MATCHES "Clang")
+    target_compile_options(rocketnet_header_warnings PRIVATE -Weverything -Wno-padded)
+    check_c_compiler_flag("-Wno-poison-system-directories" ROCKETNET_C_NO_POISON_SYSTEM_DIRECTORIES)
+    if(ROCKETNET_C_NO_POISON_SYSTEM_DIRECTORIES)
+        target_compile_options(rocketnet_header_warnings PRIVATE -Wno-poison-system-directories)
+    endif()
+else()
+    target_compile_options(rocketnet_header_warnings PRIVATE
+        -Wshadow -Wconversion -Wsign-conversion -Wcast-qual -Wformat=2 -Wundef -Wdouble-promotion)
+endif()
+
 if(ROCKETNET_BUILD_EXAMPLES)
     add_executable(client client.c)
     target_link_libraries(client PRIVATE rocketnet_dev)
@@ -436,6 +483,10 @@ if(ROCKETNET_BUILD_TESTS)
     list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_TRANSPORT_RESULTS_SOURCE}")
     add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} test.cpp test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
     target_compile_definitions(test PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_XDP_STAGING_TEST_HOOKS=1 ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1 ROCKETNET_RECEIVE_TEST_HOOKS=1)
+    if(TARGET RocketNet::Uring)
+        # the io_uring seam cases are built only where the driver is
+        target_compile_definitions(test PRIVATE ROCKETNET_IO_URING=1)
+    endif()
     if(WIN32)
         # The RIO overflow seam (test_unit_rio_overflow_seam.cpp) compiles into
         # the test hook library only, matching the link-simulator seam above, so
@@ -544,7 +595,7 @@ if(ROCKETNET_BUILD_TESTS)
         rocketnet_warning_floor(rocketnet_xdp_filter_host)
         target_link_libraries(test PRIVATE rocketnet_xdp_filter_host)
         target_compile_definitions(test PRIVATE ROCKETNET_XDP_FILTER_HOST=1)
-        # xdp_host_every_counter_has_a_case reads sdk/rocketnet_wire.h and its
+        # test_xdp_transport_host_every_counter_has_a_case reads sdk/rocketnet_wire.h and its
         # own source for the counters and the cases that name them.
         set_property( SOURCE test_unit_xdp_filter_host.cpp APPEND PROPERTY COMPILE_DEFINITIONS
             "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
@@ -555,7 +606,7 @@ if(ROCKETNET_BUILD_TESTS)
     # build both: CI legs build `test` alone, and without this the library is
     # missing and the probe goes red. test_dev_token_minting_absent_in_release
     # probes the release library; the connect-token vectors load the dev
-    # library's token writer through dev_connect_token_timeout_is_the_named_constant.
+    # library's token writer through test_dev_connect_token_timeout_is_the_named_constant.
     add_dependencies(test rocketnet_shared rocketnet_shared_dev)
     # Both development-library probes dlopen this absolute build path, so the
     # unit suite passes from any working directory, not only bin/.
@@ -747,6 +798,9 @@ endif()
 configure_package_config_file(cmake/RocketNetConfig.cmake.in
     "${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfig.cmake"
     INSTALL_DESTINATION ${ROCKETNET_PACKAGE_DIR})
+# find_package compares numbers, so the package version is 1.0.0; the label
+# v1.0.0-preview-1 rides beside it as RocketNet_VERSION_STRING and
+# RocketNet_VERSION_PRERELEASE (cmake/RocketNetConfig.cmake.in).
 write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfigVersion.cmake"
     VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)
 install(EXPORT RocketNetTargets NAMESPACE RocketNet:: DESTINATION ${ROCKETNET_PACKAGE_DIR})

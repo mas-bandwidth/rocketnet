@@ -57,6 +57,7 @@
 
 #include "rocketnet.h"
 #include "sdk/rocketnet_connect_token.h"     /* the published development keys */
+#include "test/portable_crt.h"
 #include <errno.h>
 #include <inttypes.h>
 #include <signal.h>
@@ -534,7 +535,8 @@ int main( int argc, char ** argv )
     const long threads_start = count_threads();
     long fds_peak = fds_start;
     long threads_peak = threads_start;
-    if ( !getenv( "ROCKETNET_LOG_LEVEL" ) )
+    char log_level[256];
+    if ( !rocketnet_test_getenv( "ROCKETNET_LOG_LEVEL", log_level, sizeof( log_level ) ) )
         rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
     /* Public server and client configuration: default configs except the
@@ -555,8 +557,9 @@ int main( int argc, char ** argv )
     rocketnet_client_default_config( &client_config );
 
     char server_bind_buf[64];
-    const char * server_bind = getenv( "LOAD_SERVER_ADDRESS" );
-    if ( !server_bind || server_bind[0] == 0 )
+    char server_bind_env[sizeof( server_bind_buf ) - 2];   // room to append ":0"
+    const char * server_bind = server_bind_env;
+    if ( !rocketnet_test_getenv( "LOAD_SERVER_ADDRESS", server_bind_env, sizeof( server_bind_env ) ) || server_bind[0] == 0 )
         server_bind = "127.0.0.1:0";
     else if ( !strchr( server_bind, ':' ) )
     {
@@ -784,8 +787,8 @@ int main( int argc, char ** argv )
     double max_server_update_s = 0.0;
     double max_server_update_at = 0.0;
 
-    const char * profile = getenv( "LOAD_PROFILE" );
-    if ( profile && profile[0] != 0 && strcmp( profile, "light" ) != 0 && strcmp( profile, "default" ) != 0 )
+    char profile[256];
+    if ( rocketnet_test_getenv( "LOAD_PROFILE", profile, sizeof( profile ) ) && profile[0] != 0 && strcmp( profile, "light" ) != 0 && strcmp( profile, "default" ) != 0 )
     {
         fprintf( stderr, "load: LOAD_PROFILE=%s is not light or default\n", profile );
         return 2;

@@ -52,7 +52,7 @@ static int receipt_list( receipt_fixture_t * f, rocketnet_message_receipt_t * ou
     return rn_window_ack_receipts( &f->ack, out, capacity );
 }
 
-static void unreliable_receipt_acked_or_loss_exactly_once()
+static void test_unreliable_receipt_acked_or_loss_exactly_once()
 {
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, NULL );
     rocketnet_unit_check( arena != NULL );
@@ -83,7 +83,7 @@ static void unreliable_receipt_acked_or_loss_exactly_once()
     receipt_fixture_destroy( &f );
 }
 
-static void unreliable_receipt_loss_at_deadline_sweep()
+static void test_unreliable_receipt_loss_at_deadline_sweep()
 {
     receipt_fixture_t f;
     receipt_fixture_init( &f );
@@ -102,7 +102,7 @@ static void unreliable_receipt_loss_at_deadline_sweep()
     receipt_fixture_destroy( &f );
 }
 
-static void unreliable_receipt_loss_on_sent_map_eviction()
+static void test_unreliable_receipt_loss_on_sent_map_eviction()
 {
     receipt_fixture_t f;
     receipt_fixture_init( &f );
@@ -123,7 +123,7 @@ static void unreliable_receipt_loss_on_sent_map_eviction()
     receipt_fixture_destroy( &f );
 }
 
-static void receipt_ring_full_drops_oldest_and_counts()
+static void test_receipt_ring_full_drops_oldest_and_counts()
 {
     receipt_fixture_t f;
     receipt_fixture_init( &f, 16 );
@@ -226,7 +226,7 @@ static rn_message_link_t receipt_link( receipt_transport_t * t )
     return link;
 }
 
-static void receipts_listed_per_update_by_the_c_api()
+static void test_receipts_listed_per_update_by_the_c_api()
 {
     receipt_transport_t transport;
     memset( &transport, 0, sizeof( transport ) );
@@ -262,7 +262,7 @@ static void receipts_listed_per_update_by_the_c_api()
     rn_message_object_destroy( &client->object );
 }
 
-static void rnreceipts_code5_witness_replays()
+static void test_rnreceipts_code5_witness_replays()
 {
     // BrokenTwoOutcomes: LOSS at the deadline, then a late packet ACK.
     // The serial's sent-map slot is a tombstone, so only LOSS is observable.
@@ -280,7 +280,7 @@ static void rnreceipts_code5_witness_replays()
     receipt_fixture_destroy( &f );
 }
 
-static void promoted_type5_block_replays_last_index_and_reliable_loss_witnesses()
+static void test_promoted_type5_block_replays_last_index_and_reliable_loss_witnesses()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
@@ -380,7 +380,7 @@ static void receipt_free( void *, void * pointer )
     free( pointer );
 }
 
-static void receipts_no_allocation_after_create()
+static void test_receipts_no_allocation_after_create()
 {
     rocketnet_term();
     rocketnet_unit_check( rocketnet_allocator( receipt_malloc, receipt_free ) == ROCKETNET_STATUS_OK );
@@ -405,11 +405,11 @@ static void receipts_no_allocation_after_create()
     rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
-REGISTER_UNIT_TEST( unreliable_receipt_acked_or_loss_exactly_once );
-REGISTER_UNIT_TEST( unreliable_receipt_loss_at_deadline_sweep );
-REGISTER_UNIT_TEST( unreliable_receipt_loss_on_sent_map_eviction );
-REGISTER_UNIT_TEST( receipt_ring_full_drops_oldest_and_counts );
-REGISTER_UNIT_TEST( receipts_listed_per_update_by_the_c_api );
-REGISTER_UNIT_TEST( rnreceipts_code5_witness_replays );
-REGISTER_UNIT_TEST( promoted_type5_block_replays_last_index_and_reliable_loss_witnesses );
-REGISTER_UNIT_TEST( receipts_no_allocation_after_create );
+REGISTER_UNIT_TEST( test_unreliable_receipt_acked_or_loss_exactly_once );
+REGISTER_UNIT_TEST( test_unreliable_receipt_loss_at_deadline_sweep );
+REGISTER_UNIT_TEST( test_unreliable_receipt_loss_on_sent_map_eviction );
+REGISTER_UNIT_TEST( test_receipt_ring_full_drops_oldest_and_counts );
+REGISTER_UNIT_TEST( test_receipts_listed_per_update_by_the_c_api );
+REGISTER_UNIT_TEST( test_rnreceipts_code5_witness_replays );
+REGISTER_UNIT_TEST( test_promoted_type5_block_replays_last_index_and_reliable_loss_witnesses );
+REGISTER_UNIT_TEST( test_receipts_no_allocation_after_create );

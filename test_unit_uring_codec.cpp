@@ -6,8 +6,8 @@
 // The io_uring completion codec (sdk/rocketnet_uring_codec.h): pure byte
 // codec, no sockets, no ring, no wall clock; the header body exists only on
 // Linux with IORING_RECV_MULTISHOT uapi. Every buffer is written byte by byte
-// in this file, never by the code under test. Each case prints SKIPPED with
-// its reason on a build without the header body.
+// in this file, never by the code under test. The cases are built only where
+// the header body is.
 
 #include <stdio.h>
 #include <string.h>
@@ -37,11 +37,9 @@ static void put_u32_le( uint8_t * b, uint32_t v )
     b[2] = (uint8_t) ( ( v >> 16 ) & 0xFF );
     b[3] = (uint8_t) ( ( v >> 24 ) & 0xFF );
 }
-#endif
 
-static void uring_codec_tag_round_trips()
+static void test_io_uring_transport_codec_tag_round_trips()
 {
-#if ROCKETNET_URING_CODEC_ACTIVE
     uint64_t t = rocketnet_uring_tag( ROCKETNET_URING_TAG_SEND, 0, 0 );
     rocketnet_unit_check( rocketnet_uring_tag_kind( t ) == ROCKETNET_URING_TAG_SEND );
     rocketnet_unit_check( rocketnet_uring_tag_queue( t ) == 0 );
@@ -50,7 +48,7 @@ static void uring_codec_tag_round_trips()
     t = rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, 65535, 0xffffffff );
     rocketnet_unit_check( rocketnet_uring_tag_kind( t ) == ROCKETNET_URING_TAG_RECV );
     rocketnet_unit_check( rocketnet_uring_tag_queue( t ) == 65535 );
-    rocketnet_unit_check( rocketnet_uring_tag_index( t ) == 0xffffffff );
+    rocketnet_unit_check( (uint32_t) rocketnet_uring_tag_index( t ) == 0xffffffffu );
 
     t = rocketnet_uring_tag( ROCKETNET_URING_TAG_CANCEL, 65535, 0 );
     rocketnet_unit_check( rocketnet_uring_tag_kind( t ) == ROCKETNET_URING_TAG_CANCEL );
@@ -68,14 +66,10 @@ static void uring_codec_tag_round_trips()
 
     rocketnet_unit_check( rocketnet_uring_buffer_id( ( 7u << IORING_CQE_BUFFER_SHIFT ) | IORING_CQE_F_BUFFER ) == 7 );
     rocketnet_unit_check( rocketnet_uring_buffer_id( 0x12345678u ) == -1 );
-#else
-    printf( "uring_codec_tag_round_trips [SKIPPED the io_uring codec needs Linux uapi with IORING_RECV_MULTISHOT]\n" );
-#endif
 }
 
-static void uring_codec_recvmsg_parses_name_and_payload()
+static void test_io_uring_transport_codec_recvmsg_parses_name_and_payload()
 {
-#if ROCKETNET_URING_CODEC_ACTIVE
     // an IPv4 sockaddr_in name, msg_namelen = sizeof(sockaddr_storage),
     // controllen 0, and a 64-byte payload.
     uint8_t buf[208];
@@ -133,14 +127,10 @@ static void uring_codec_recvmsg_parses_name_and_payload()
     rocketnet_unit_check( payload == buf + 16 + (int) sizeof( struct sockaddr_storage ) );
     for ( int i = 0; i < 64; ++i )
         rocketnet_unit_check( payload[i] == (uint8_t) ( 64 - i ) );
-#else
-    printf( "uring_codec_recvmsg_parses_name_and_payload [SKIPPED the io_uring codec needs Linux uapi with IORING_RECV_MULTISHOT]\n" );
-#endif
 }
 
-static void uring_codec_recvmsg_refuses_truncation_and_short_buffers()
+static void test_io_uring_transport_codec_recvmsg_refuses_truncation_and_short_buffers()
 {
-#if ROCKETNET_URING_CODEC_ACTIVE
     const uint8_t * name;
     const uint8_t * payload;
     int name_bytes;
@@ -195,14 +185,10 @@ static void uring_codec_recvmsg_refuses_truncation_and_short_buffers()
     rocketnet_unit_check( name_bytes == 0 );
     rocketnet_unit_check( payload_bytes == 0 );
     rocketnet_unit_check( payload == zerobuf + 16 );
-#else
-    printf( "uring_codec_recvmsg_refuses_truncation_and_short_buffers [SKIPPED the io_uring codec needs Linux uapi with IORING_RECV_MULTISHOT]\n" );
-#endif
 }
 
-static void uring_codec_recvmsg_refuses_negative_lengths()
+static void test_io_uring_transport_codec_recvmsg_refuses_negative_lengths()
 {
-#if ROCKETNET_URING_CODEC_ACTIVE
     const uint8_t * name;
     const uint8_t * payload;
     int name_bytes;
@@ -228,14 +214,10 @@ static void uring_codec_recvmsg_refuses_negative_lengths()
     rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
         buf, (int) sizeof( buf ), -16, -8,
         &name, &name_bytes, &payload, &payload_bytes ) == ROCKETNET_URING_RECV_SHORT_BUFFER );
-#else
-    printf( "uring_codec_recvmsg_refuses_negative_lengths [SKIPPED the io_uring codec needs Linux uapi with IORING_RECV_MULTISHOT]\n" );
-#endif
 }
 
-static void uring_codec_sockaddr_normalizes_v4_mapped()
+static void test_io_uring_transport_codec_sockaddr_normalizes_v4_mapped()
 {
-#if ROCKETNET_URING_CODEC_ACTIVE
     rocketnet_address_t out;
     struct sockaddr_storage ss;
 
@@ -295,13 +277,12 @@ static void uring_codec_sockaddr_normalizes_v4_mapped()
     ( (struct sockaddr_in6*) &ss )->sin6_family = AF_INET6;
     rocketnet_unit_check( !rocketnet_uring_sockaddr_to_address(
         &ss, (int) sizeof( struct sockaddr_in6 ) - 1, true, &out ) );
-#else
-    printf( "uring_codec_sockaddr_normalizes_v4_mapped [SKIPPED the io_uring codec needs Linux uapi with IORING_RECV_MULTISHOT]\n" );
-#endif
 }
 
-REGISTER_UNIT_TEST( uring_codec_tag_round_trips );
-REGISTER_UNIT_TEST( uring_codec_recvmsg_parses_name_and_payload );
-REGISTER_UNIT_TEST( uring_codec_recvmsg_refuses_truncation_and_short_buffers );
-REGISTER_UNIT_TEST( uring_codec_recvmsg_refuses_negative_lengths );
-REGISTER_UNIT_TEST( uring_codec_sockaddr_normalizes_v4_mapped );
+REGISTER_UNIT_TEST( test_io_uring_transport_codec_tag_round_trips );
+REGISTER_UNIT_TEST( test_io_uring_transport_codec_recvmsg_parses_name_and_payload );
+REGISTER_UNIT_TEST( test_io_uring_transport_codec_recvmsg_refuses_truncation_and_short_buffers );
+REGISTER_UNIT_TEST( test_io_uring_transport_codec_recvmsg_refuses_negative_lengths );
+REGISTER_UNIT_TEST( test_io_uring_transport_codec_sockaddr_normalizes_v4_mapped );
+
+#endif // #if ROCKETNET_URING_CODEC_ACTIVE

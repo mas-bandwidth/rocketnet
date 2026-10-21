@@ -36,7 +36,7 @@
 #include <windows.h>
 
 // test seams (sdk/rocketnet_server_transport.cpp, sdk/rocketnet_client_transport.cpp)
-void * rocketnet_server_transport_transport_for_testing( struct rocketnet_server_transport_t * server_transport );
+void * rocketnet_server_transport_io_name_for_testing( struct rocketnet_server_transport_t * server_transport );
 uint16_t rocketnet_client_transport_test_bound_port( struct rocketnet_client_transport_t * client_transport );
 
 #define WINDOWS_SOCKET_ERRORS_TICK ( 1.0 / 60.0 )
@@ -247,7 +247,7 @@ static void windows_socket_errors_session_start( windows_socket_errors_session_t
     snprintf( bind, sizeof( bind ), "%s:0", windows_socket_errors_host( transport->ipv6 ) );
     session->server = rocketnet_server_transport_create( NULL, bind, &server_config );
     windows_socket_errors_require( session->server != NULL );
-    windows_socket_errors_require( strcmp( rocketnet_server_transport_transport( session->server ), transport->transport ) == 0 );
+    windows_socket_errors_require( strcmp( rocketnet_server_transport_io_name( session->server ), transport->transport ) == 0 );
 
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     snprintf( server_address, sizeof( server_address ), "%s:%d", windows_socket_errors_host( transport->ipv6 ), rocketnet_server_transport_port( session->server ) );
@@ -299,7 +299,7 @@ static uint64_t windows_socket_errors_refusals( const struct rocketnet_counters_
 
 static uint64_t windows_socket_errors_transport_drops( windows_socket_errors_session_t * session )
 {
-    void * instance = rocketnet_server_transport_transport_for_testing( session->server );
+    void * instance = rocketnet_server_transport_io_name_for_testing( session->server );
     if ( strcmp( session->transport.transport, "iocp" ) == 0 )
     {
         uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS];
@@ -326,7 +326,7 @@ static uint64_t windows_socket_errors_server_counted( windows_socket_errors_sess
 // nothing
 static int windows_socket_errors_pending( windows_socket_errors_session_t * session )
 {
-    void * instance = rocketnet_server_transport_transport_for_testing( session->server );
+    void * instance = rocketnet_server_transport_io_name_for_testing( session->server );
     if ( strcmp( session->transport.transport, "iocp" ) == 0 )
         return rocketnet_server_iocp_pending( (rocketnet_server_iocp_t*) instance );
     if ( strcmp( session->transport.transport, "rio" ) == 0 )
@@ -490,7 +490,7 @@ static void windows_client_drops_oversize_and_garbage( bool ipv6 )
     char client_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     snprintf( client_string, sizeof( client_string ), "%s:%d", windows_socket_errors_host( ipv6 ), (int) port );
     windows_socket_errors_require( rocketnet_address_parse( &client_address, client_string ) );
-    rocketnet_platform_socket_t * server_socket = (rocketnet_platform_socket_t*) rocketnet_server_transport_transport_for_testing( session.server );
+    rocketnet_platform_socket_t * server_socket = (rocketnet_platform_socket_t*) rocketnet_server_transport_io_name_for_testing( session.server );
     windows_socket_errors_require( server_socket != NULL );
 
     // leg 1: from the server's socket, to the prefilter

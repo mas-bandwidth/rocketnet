@@ -93,7 +93,7 @@ static void test_packet_loss_tracker_reorder_does_not_recount()
 // newer sequence, when the sequence fell more than one buffer behind the
 // highest sent, or when the time is not finite. Sequence 0 is never passed: it
 // is an assert, not a refusal.
-static void ack_record_sent_refuses_stale_and_nonfinite()
+static void test_ack_record_sent_refuses_stale_and_nonfinite()
 {
     const uint64_t N = ROCKETNET_SENT_PACKET_BUFFER_SIZE;
 
@@ -178,4 +178,4 @@ static void ack_record_sent_refuses_stale_and_nonfinite()
 
 REGISTER_UNIT_TEST( test_packet_loss_tracker_window_edge_is_not_lost );
 REGISTER_UNIT_TEST( test_packet_loss_tracker_reorder_does_not_recount );
-REGISTER_UNIT_TEST( ack_record_sent_refuses_stale_and_nonfinite );
+REGISTER_UNIT_TEST( test_ack_record_sent_refuses_stale_and_nonfinite );

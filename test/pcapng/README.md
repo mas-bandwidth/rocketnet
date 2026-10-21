@@ -11,7 +11,7 @@ Real rocketnet traffic, captured in the functional tier and replayed into the pa
 | `test/pcapng.h` | the header-only C++ reader and writer |
 | `tools/pcapng.py` | the python reader and writer (`read_packets`, `write_packets`, `udp_payload`, `--selftest`) |
 | `functional/channel_harness.h` | the capture tee |
-| `test_unit_prefilter_counters.cpp` | the replay (`pcapng_corpus_replay`) and its witness (`pcapng_corpus_witness_unread_packet_goes_red`) |
+| `test_unit_prefilter_counters.cpp` | the replay (`test_pcapng_corpus_replay`) and its witness (`test_pcapng_corpus_witness_unread_packet_goes_red`) |
 
 ## The format
 
@@ -52,7 +52,7 @@ The tee in `functional/channel_harness.h` is active only when `ROCKETNET_PCAPNG_
 - **Interface 0, at every hand-off to the simulator**: `rocketnet_channel_endpoint_send_control` (control packets, after the wire's drop mode), `rocketnet_channel_endpoint_send_packets` (payload frames), `rocketnet_channel_endpoint_disconnect`, and `rocketnet_channel_harness_deliver_held` (held packets released in a scripted order). These are the only places a datagram leaves an end, so the corpus is exactly the traffic, before the simulator's loss, duplication and reordering.
 - **Interface 1, at the two receive hand-offs**, just before `rocketnet_server_protocol_process_packet` and `rocketnet_client_protocol_process_packet`: a session packet (types 4, 5, 6, 8, 9) from a connected mapping (server) or a client holding session keys is opened a second time on a copy, with the sequence reconstructed from the same replay state the protocol is about to use. A packet that does not open is not recorded: no reader is handed anything for it. Kind 3 is recorded where an accepted payload is handed to the message layer.
 
-One file per functional test process, `<dir>/<test name>.pcapng` (the name from the runner's `--run <name>`), rewritten whole at each harness destroy and at exit. A capture stops recording at 72 KiB, so a long test commits a deterministic prefix. The buffers are `std::vector`, outside the counting allocator, so `harness_no_allocation_after_create` counts the same.
+One file per functional test process, `<dir>/<test name>.pcapng` (the name from the runner's `--run <name>`), rewritten whole at each harness destroy and at exit. A capture stops recording at 72 KiB, so a long test commits a deterministic prefix. The buffers are `std::vector`, outside the counting allocator, so `test_harness_no_allocation_after_create` counts the same.
 
 ## The recipe
 
@@ -62,25 +62,25 @@ From the repository root on a Linux build; this regenerates every committed file
 make
 rm -f test/pcapng/*.pcapng
 for name in \
-    harness_one_message_each_way_lossy \
-    ordered_small_and_large_interleaved \
-    reliable_mixed_sizes_over_lossy_link \
-    reliable_duplicate_after_gap_delivered_once \
-    reliable_sequenced_held_record_released \
-    unreliable_receipts_over_lossy_link \
-    unreliable_at_most_once_over_duplicating_link \
-    unreliable_dropped_when_builder_out_of_budget_never_arrives \
-    control_disconnect_burst_each_end \
-    control_standalone_ack_each_end \
-    control_fragment_packets_each_end \
-    control_denied_when_server_full
+    test_harness_one_message_each_way_lossy \
+    test_ordered_small_and_large_interleaved \
+    test_reliable_mixed_sizes_over_lossy_link \
+    test_reliable_duplicate_after_gap_delivered_once \
+    test_reliable_sequenced_held_record_released \
+    test_unreliable_receipts_over_lossy_link \
+    test_unreliable_at_most_once_over_duplicating_link \
+    test_unreliable_dropped_when_builder_out_of_budget_never_arrives \
+    test_control_disconnect_burst_each_end \
+    test_control_standalone_ack_each_end \
+    test_control_fragment_packets_each_end \
+    test_control_denied_when_server_full
 do
     ROCKETNET_PCAPNG_CAPTURE_DIR=test/pcapng ./bin/functional --run $name > /dev/null || exit 1
 done
 python3 tools/pcapng.py hostile fuzz/corpus test/pcapng/hostile_prefilter.pcapng
 python3 tools/pcapng.py fragments fuzz/corpus test/pcapng/fragment_seeds.pcapng
 python3 tools/pcapng.py summary test/pcapng/*.pcapng
-./bin/test pcapng_corpus_replay
+./bin/test test_pcapng_corpus_replay
 ```
 
 `./bin/functional --run <name>` runs one test in-process (a bare name runs the whole suite).
@@ -88,18 +88,18 @@ python3 tools/pcapng.py summary test/pcapng/*.pcapng
 | File | Covers |
 | --- | --- |
 | every capture | the connect handshake: request, cookie, request with cookie, challenge, response, first keep-alives |
-| `harness_one_message_each_way_lossy` | unreliable traffic each way over loss, jitter and duplication |
-| `ordered_small_and_large_interleaved` | reliable-ordered traffic, large messages carried as message-layer blocks, over loss, reorder and duplication |
-| `reliable_mixed_sizes_over_lossy_link` | reliable traffic of mixed sizes over loss |
-| `reliable_duplicate_after_gap_delivered_once` | held payloads released in a scripted order (the reorder hook) |
-| `reliable_sequenced_held_record_released` | the same hook on a reliable-sequenced channel |
-| `unreliable_receipts_over_lossy_link` | unreliable-with-receipt traffic over loss |
-| `unreliable_at_most_once_over_duplicating_link` | a 50% duplicating link |
-| `unreliable_dropped_when_builder_out_of_budget_never_arrives` | the send-drop case |
-| `control_disconnect_burst_each_end` | the redundant disconnect burst (type 6) each way, client to server and server to client |
-| `control_standalone_ack_each_end` | a standalone ack (type 8) the server sends once its ack debt reaches the threshold |
-| `control_fragment_packets_each_end` | a fragmented payload (type 9) each way, reassembled |
-| `control_denied_when_server_full` | a denied (type 1) when the server's client slots are all full |
+| `test_harness_one_message_each_way_lossy` | unreliable traffic each way over loss, jitter and duplication |
+| `test_ordered_small_and_large_interleaved` | reliable-ordered traffic, large messages carried as message-layer blocks, over loss, reorder and duplication |
+| `test_reliable_mixed_sizes_over_lossy_link` | reliable traffic of mixed sizes over loss |
+| `test_reliable_duplicate_after_gap_delivered_once` | held payloads released in a scripted order (the reorder hook) |
+| `test_reliable_sequenced_held_record_released` | the same hook on a reliable-sequenced channel |
+| `test_unreliable_receipts_over_lossy_link` | unreliable-with-receipt traffic over loss |
+| `test_unreliable_at_most_once_over_duplicating_link` | a 50% duplicating link |
+| `test_unreliable_dropped_when_builder_out_of_budget_never_arrives` | the send-drop case |
+| `test_control_disconnect_burst_each_end` | the redundant disconnect burst (type 6) each way, client to server and server to client |
+| `test_control_standalone_ack_each_end` | a standalone ack (type 8) the server sends once its ack debt reaches the threshold |
+| `test_control_fragment_packets_each_end` | a fragmented payload (type 9) each way, reassembled |
+| `test_control_denied_when_server_full` | a denied (type 1) when the server's client slots are all full |
 | `hostile_prefilter` | every `fuzz/corpus/prefilter_*` seed less its selector byte, client to server: empty, too short, wrong epoch, wrong filter value, reserved type, an all-zero request, and three well-sized session packets |
 | `fragment_seeds` | every `fuzz/corpus/fragment_*` seed's records as kind-2 records, alternating connections as the fuzz harness does |
 
@@ -107,19 +107,19 @@ The harness now sends a type 9 fragment (via `rocketnet_client_protocol_write_fr
 
 ## The caps
 
-Each file at most 128 KiB, `test/pcapng/` (with `regress/`) at most 512 KiB in all. Both readers refuse a file over 128 KiB (`PCAPNG_FILE_OVER_CAP`), the C++ one after reading at most one 4 KiB chunk past the cap; `pcapng_corpus_replay` checks the total.
+Each file at most 128 KiB, `test/pcapng/` (with `regress/`) at most 512 KiB in all. Both readers refuse a file over 128 KiB (`PCAPNG_FILE_OVER_CAP`), the C++ one after reading at most one 4 KiB chunk past the cap; `test_pcapng_corpus_replay` checks the total.
 
 ## What is stable
 
-Captures are not byte-reproducible: the connection keys and salts are random per run, so every sealed byte differs. What a re-capture by the recipe reproduces is the count of packets per type and per end, and the count per refusal name, because the simulator's seed is pinned (`ROCKETNET_CHANNEL_SEED` unset) and no size or schedule depends on a key. `pcapng_corpus_replay` pins exactly that: for each captured file, every name a packet ended under and its count. A re-capture that changes a count is a behaviour change, and the pin in `test_unit_prefilter_counters.cpp` is updated with the reason.
+Captures are not byte-reproducible: the connection keys and salts are random per run, so every sealed byte differs. What a re-capture by the recipe reproduces is the count of packets per type and per end, and the count per refusal name, because the simulator's seed is pinned (`ROCKETNET_CHANNEL_SEED` unset) and no size or schedule depends on a key. `test_pcapng_corpus_replay` pins exactly that: for each captured file, every name a packet ended under and its count. A re-capture that changes a count is a behaviour change, and the pin in `test_unit_prefilter_counters.cpp` is updated with the reason.
 
 ## The replay
 
-`pcapng_corpus_replay` reads every `.pcapng` here and under `regress/`, with file input only: no sockets, no threads, and no time but the files' timestamps, each at or after 1000.0 s.
+`test_pcapng_corpus_replay` reads every `.pcapng` here and under `regress/`, with file input only: no sockets, no threads, and no time but the files' timestamps, each at or after 1000.0 s.
 
 - An interface-0 frame is unwrapped (`PCAPNG_FRAME_NOT_IPV4_UDP` when it is not one) and its datagram goes through the receive ladder of the end it is addressed to, up to the first rung that needs a key or connection state: `rocketnet_prefilter_check`, the reserved types, the direction rule, the per-type wire size. A server-bound read is checked against `ROCKETNET_WIRE_SERVER_PACKET_VALID`, the kernel filter's rule. A connect request goes on through the fixed-offset version and protocol id comparisons into `rocketnet_read_connect_token`, `rocketnet_verify_signed_connect_data`, `rocketnet_open_connect_token_private` and `rocketnet_connect_token_private_consistent`, under the published test keys of `sdk/rocketnet_test_vectors.h` that the harness signs with; the opened private fields are wiped at once and never printed.
 - An interface-1 record goes to its reader. An ack block is read with an honest sender's context (the block's own largest stands in for the receiver's highest sent), then the type data is held to its type's opened size. A fragment goes through one reassembly set per file. A message payload is read with the default message limits and every first-version channel type enabled.
 
 Each packet ends read (`read <end> <what>`) or refused under the name of the counter the code fires (`sdk/rocketnet_counters.h`; a message payload's refusal is `MESSAGE_PROTOCOL_VIOLATION` plus the violation's name). A packet that ends neither way fails the test with its file and index. Under a counting allocator the replay's live bytes never pass the reassembly geometry's bound, `rocketnet_reassembly_memory_required(2, 4, 16384, 4)` plus the allocator's overhead on its four allocations, and end at zero.
 
-`pcapng_corpus_witness_unread_packet_goes_red` replays with one planted fault, the prefilter's refusal name dropped, and requires the replay to report the hostile datagrams the prefilter refuses as unnamed, each by file and index.
+`test_pcapng_corpus_witness_unread_packet_goes_red` replays with one planted fault, the prefilter's refusal name dropped, and requires the replay to report the hostile datagrams the prefilter refuses as unnamed, each by file and index.

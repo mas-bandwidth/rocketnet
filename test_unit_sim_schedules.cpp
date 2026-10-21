@@ -200,7 +200,7 @@ static void sim_check_reassembled( const uint8_t * payload, int payload_bytes, u
 // 1. long skip then stragglers
 // ---------------------------------------------------------------------------
 
-static void TestSimScheduleLongSkipStragglers()
+static void test_sim_schedule_long_skip_stragglers()
 {
     struct sim_schedule_t sched;
     sim_schedule_begin( &sched );
@@ -273,7 +273,7 @@ static void TestSimScheduleLongSkipStragglers()
 // 2. final fragment first, sixteen live slots
 // ---------------------------------------------------------------------------
 
-static void TestSimScheduleFinalFragmentFirst()
+static void test_sim_schedule_final_fragment_first()
 {
     struct rocketnet_counters_t counters_storage;
     memset( &counters_storage, 0, sizeof(counters_storage) );
@@ -340,7 +340,7 @@ static void TestSimScheduleFinalFragmentFirst()
 // 3. the batch cap
 // ---------------------------------------------------------------------------
 
-static void TestSimScheduleBatchCap()
+static void test_sim_schedule_batch_cap()
 {
     struct rocketnet_counters_t counters_storage;
     memset( &counters_storage, 0, sizeof(counters_storage) );
@@ -416,7 +416,7 @@ static void TestSimScheduleBatchCap()
 // 4. same-tick slot reuse
 // ---------------------------------------------------------------------------
 
-static void TestSimScheduleSameTickSlotReuse()
+static void test_sim_schedule_same_tick_slot_reuse()
 {
     struct rocketnet_server_protocol_t server;
     memset( &server, 0, sizeof(server) );
@@ -565,7 +565,7 @@ static void TestSimScheduleSameTickSlotReuse()
 // 5. sequence pre-seeding across the wrap
 // ---------------------------------------------------------------------------
 
-static void TestSimScheduleSequenceWrap()
+static void test_sim_schedule_sequence_wrap()
 {
     struct sim_schedule_t sched;
     sim_schedule_begin( &sched );
@@ -618,8 +618,8 @@ static void TestSimScheduleSequenceWrap()
 
 // ---------------------------------------------------------------------------
 
-REGISTER_UNIT_TEST( TestSimScheduleFinalFragmentFirst );
-REGISTER_UNIT_TEST( TestSimScheduleBatchCap );
-REGISTER_UNIT_TEST( TestSimScheduleSameTickSlotReuse );
-REGISTER_UNIT_TEST( TestSimScheduleSequenceWrap );
-REGISTER_UNIT_TEST( TestSimScheduleLongSkipStragglers );
+REGISTER_UNIT_TEST( test_sim_schedule_final_fragment_first );
+REGISTER_UNIT_TEST( test_sim_schedule_batch_cap );
+REGISTER_UNIT_TEST( test_sim_schedule_same_tick_slot_reuse );
+REGISTER_UNIT_TEST( test_sim_schedule_sequence_wrap );
+REGISTER_UNIT_TEST( test_sim_schedule_long_skip_stragglers );

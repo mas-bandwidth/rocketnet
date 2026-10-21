@@ -390,17 +390,17 @@ static void fair_run_case( int num_clients, int capacity = 1 )
     fair_world_destroy( &world );
 }
 
-static void server_send_cap_one_two_clients()
+static void test_server_send_cap_one_two_clients()
 {
     fair_run_case( 2 );
 }
 
-static void server_send_cap_one_three_clients()
+static void test_server_send_cap_one_three_clients()
 {
     fair_run_case( 3 );
 }
 
-static void server_send_cap_two_three_clients()
+static void test_server_send_cap_two_three_clients()
 {
     fair_run_case( 3, 2 );
 }
@@ -408,7 +408,7 @@ static void server_send_cap_two_three_clients()
 // More than one payload frame is due at each peer. Tiny messages can share a
 // frame, so the service assertion here observes packets rather than delivery
 // of a whole message that itself needs several turns to finish.
-static void server_send_cap_two_multi_packet_service()
+static void test_server_send_cap_two_multi_packet_service()
 {
     fair_world_t world;
     fair_world_create( &world, 3, 2 );
@@ -449,9 +449,9 @@ static void server_send_cap_two_multi_packet_service()
     fair_world_destroy( &world );
 }
 
-REGISTER_UNIT_TEST( server_send_cap_two_multi_packet_service );
+REGISTER_UNIT_TEST( test_server_send_cap_two_multi_packet_service );
 
-static void server_send_capacity_spare_slots_keep_in_place()
+static void test_server_send_capacity_spare_slots_keep_in_place()
 {
     fair_world_t world;
     // Keep fewer connected peers than configured peers: surplus is measured
@@ -469,12 +469,12 @@ static void server_send_capacity_spare_slots_keep_in_place()
     fair_world_destroy( &world );
 }
 
-REGISTER_UNIT_TEST( server_send_capacity_spare_slots_keep_in_place );
-REGISTER_UNIT_TEST( server_send_cap_two_three_clients );
-REGISTER_UNIT_TEST( server_send_cap_one_two_clients );
-REGISTER_UNIT_TEST( server_send_cap_one_three_clients );
+REGISTER_UNIT_TEST( test_server_send_capacity_spare_slots_keep_in_place );
+REGISTER_UNIT_TEST( test_server_send_cap_two_three_clients );
+REGISTER_UNIT_TEST( test_server_send_cap_one_two_clients );
+REGISTER_UNIT_TEST( test_server_send_cap_one_three_clients );
 
-// The configuration server_send_capacity_default_covers_clients creates: the
+// The configuration test_server_send_capacity_default_covers_clients creates: the
 // default, at ROCKETNET_MAX_CLIENTS clients, on the loopback transport. The case
 // and its bound read it, so they cannot drift apart.
 static void send_capacity_default_config( rocketnet_server_transport_config_t * config )
@@ -484,7 +484,7 @@ static void send_capacity_default_config( rocketnet_server_transport_config_t * 
     config->max_clients = ROCKETNET_MAX_CLIENTS;
 }
 
-// server_send_capacity_default_covers_clients's peak resident bound. The case
+// test_server_send_capacity_default_covers_clients's peak resident bound. The case
 // creates a full-capacity server transport, whose per-client memory is
 // allocated up front by design, and the Windows Debug CRT fills every block
 // it returns, so the whole plan is resident there. The bound is
@@ -505,12 +505,12 @@ static long send_capacity_default_rss_bound_mb()
     return suite_rss_bound_mb( plan.total_bytes + endpoint, 32 );
 }
 
-SUITE_CASE_RSS_BOUND( server_send_capacity_default_covers_clients, send_capacity_default_rss_bound_mb );
+SUITE_CASE_RSS_BOUND( test_server_send_capacity_default_covers_clients, send_capacity_default_rss_bound_mb );
 
 // The default capacity is sized from the configured client count, so a
 // 1000-client server can start one payload frame for every client in one
 // update. This reads the transport directly; no client and no clock.
-static void server_send_capacity_default_covers_clients()
+static void test_server_send_capacity_default_covers_clients()
 {
     rocketnet_server_transport_config_t config;
     send_capacity_default_config( &config );
@@ -524,4 +524,4 @@ static void server_send_capacity_default_covers_clients()
     rocketnet_server_transport_destroy( transport );
 }
 
-REGISTER_UNIT_TEST( server_send_capacity_default_covers_clients );
+REGISTER_UNIT_TEST( test_server_send_capacity_default_covers_clients );

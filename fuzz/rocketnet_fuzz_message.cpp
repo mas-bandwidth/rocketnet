@@ -35,11 +35,12 @@
 // the same alone or after input N-1.
 //
 // Built as ci.yml builds the other targets, against the instrumented
-// library (build-fuzz, fuzzer-no-link + asan + ubsan):
+// library (build-fuzz, fuzzer-no-link + asan + ubsan); the clang++ line is
+// one command, wrapped here:
 //
-//   clang++ -g -O1 -std=c++17 -fsanitize=fuzzer,address,undefined \
-//     -fno-sanitize-recover=all -fno-omit-frame-pointer -Isdk \
-//     fuzz/rocketnet_fuzz_message.cpp build-fuzz/librocketnet.a \
+//   clang++ -g -O1 -std=c++17 -fsanitize=fuzzer,address,undefined
+//     -fno-sanitize-recover=all -fno-omit-frame-pointer -Isdk
+//     fuzz/rocketnet_fuzz_message.cpp build-fuzz/librocketnet.a
 //     -lbpf -lxdp -lpthread -o bin/fuzz_message
 //   ./bin/fuzz_message fuzz/corpus_message/*                     # the replay gate
 //   ./bin/fuzz_message corpus fuzz/corpus_message -dict=fuzz/rocketnet.dict

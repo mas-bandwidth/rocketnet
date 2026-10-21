@@ -39,7 +39,7 @@ static const int prefilter_kernel_counters[ROCKETNET_SERVER_XDP_NUM_COUNTERS] =
     ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_NO_SOCKET,
 };
 
-static void prefilter_counters_map_each_kernel_counter()
+static void test_prefilter_counters_map_each_kernel_counter()
 {
     for ( int i = 0; i < ROCKETNET_SERVER_XDP_NUM_COUNTERS; i++ )
     {
@@ -60,9 +60,9 @@ static void prefilter_counters_map_each_kernel_counter()
     }
 }
 
-REGISTER_UNIT_TEST( prefilter_counters_map_each_kernel_counter );
+REGISTER_UNIT_TEST( test_prefilter_counters_map_each_kernel_counter );
 
-static void prefilter_counters_are_assigned_not_added()
+static void test_prefilter_counters_are_assigned_not_added()
 {
     struct rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
@@ -85,7 +85,7 @@ static void prefilter_counters_are_assigned_not_added()
         check( counters.values[prefilter_kernel_counters[i]] == smaller[i] );
 }
 
-REGISTER_UNIT_TEST( prefilter_counters_are_assigned_not_added );
+REGISTER_UNIT_TEST( test_prefilter_counters_are_assigned_not_added );
 
 // ---------------------------------------------------------------------------
 // The pcapng corpus replay (test/pcapng/README.md). Every file under
@@ -572,19 +572,19 @@ struct pcapng_pin_t
 static const pcapng_pin_t pcapng_pins[] =
 {
     { "fragment_seeds.pcapng", "FRAGMENT_COUNT_INVALID=1;FRAGMENT_INDEX_OUT_OF_RANGE=1;FRAGMENT_PAYLOAD_TOO_LARGE=1;FRAGMENT_WRONG_OPENED_SIZE=2;FRAGMENT_ZERO_PAYLOAD_ID=1;read server fragment=8;read server fragment completing=4;" },
-    { "harness_one_message_each_way_lossy.pcapng", "read client CHALLENGE=1;read client COOKIE=2;read client KEEP_ALIVE=10;read client PAYLOAD=2;read client ack block KEEP_ALIVE=8;read client ack block PAYLOAD=2;read client message payload=2;read server KEEP_ALIVE=8;read server PAYLOAD=4;read server REQUEST token=2;read server RESPONSE=2;read server ack block KEEP_ALIVE=8;read server ack block PAYLOAD=2;read server message payload=2;" },
+    { "test_harness_one_message_each_way_lossy.pcapng", "read client CHALLENGE=1;read client COOKIE=2;read client KEEP_ALIVE=10;read client PAYLOAD=2;read client ack block KEEP_ALIVE=8;read client ack block PAYLOAD=2;read client message payload=2;read server KEEP_ALIVE=8;read server PAYLOAD=4;read server REQUEST token=2;read server RESPONSE=2;read server ack block KEEP_ALIVE=8;read server ack block PAYLOAD=2;read server message payload=2;" },
     { "hostile_prefilter.pcapng", "CONNECTION_REQUEST_WRONG_VERSION=1;PREFILTER_TOO_SHORT=2;PREFILTER_WRONG_EPOCH=1;PREFILTER_WRONG_VALUE=1;RESERVED_TYPE=1;read server KEEP_ALIVE=1;read server PAYLOAD=2;" },
-    { "ordered_small_and_large_interleaved.pcapng", "read client CHALLENGE=1;read client COOKIE=1;read client KEEP_ALIVE=4;read client ack block KEEP_ALIVE=3;read server PAYLOAD=25;read server REQUEST token=2;read server RESPONSE=1;read server ack block PAYLOAD=17;read server message payload=16;" },
-    { "reliable_duplicate_after_gap_delivered_once.pcapng", "read client CHALLENGE=1;read client COOKIE=1;read client KEEP_ALIVE=31;read client ack block KEEP_ALIVE=31;read server KEEP_ALIVE=29;read server PAYLOAD=3;read server REQUEST token=2;read server RESPONSE=1;read server ack block KEEP_ALIVE=29;read server ack block PAYLOAD=3;read server message payload=3;" },
-    { "reliable_mixed_sizes_over_lossy_link.pcapng", "read client CHALLENGE=1;read client COOKIE=2;read client KEEP_ALIVE=3;read client PAYLOAD=13;read client ack block KEEP_ALIVE=1;read client ack block PAYLOAD=13;read client message payload=11;read server KEEP_ALIVE=1;read server PAYLOAD=14;read server REQUEST token=2;read server RESPONSE=2;read server ack block KEEP_ALIVE=1;read server ack block PAYLOAD=9;read server message payload=9;" },
-    { "reliable_sequenced_held_record_released.pcapng", "read client CHALLENGE=1;read client COOKIE=1;read client KEEP_ALIVE=31;read client ack block KEEP_ALIVE=31;read server KEEP_ALIVE=30;read server PAYLOAD=2;read server REQUEST token=2;read server RESPONSE=1;read server ack block KEEP_ALIVE=30;read server ack block PAYLOAD=2;read server message payload=2;" },
-    { "unreliable_at_most_once_over_duplicating_link.pcapng", "read client CHALLENGE=1;read client COOKIE=1;read client KEEP_ALIVE=1;read client PAYLOAD=80;read client ack block KEEP_ALIVE=1;read client ack block PAYLOAD=121;read client message payload=77;read server PAYLOAD=80;read server REQUEST token=2;read server RESPONSE=1;read server ack block PAYLOAD=121;read server message payload=78;" },
-    { "unreliable_dropped_when_builder_out_of_budget_never_arrives.pcapng", "read client CHALLENGE=1;read client COOKIE=1;read client KEEP_ALIVE=52;read client ack block KEEP_ALIVE=52;read server KEEP_ALIVE=51;read server PAYLOAD=1;read server REQUEST token=2;read server RESPONSE=1;read server ack block KEEP_ALIVE=51;read server ack block PAYLOAD=1;read server message payload=1;" },
-    { "unreliable_receipts_over_lossy_link.pcapng", "read client CHALLENGE=1;read client COOKIE=2;read client KEEP_ALIVE=4;read client PAYLOAD=48;read client ack block KEEP_ALIVE=2;read client ack block PAYLOAD=43;read client message payload=42;read server KEEP_ALIVE=2;read server PAYLOAD=48;read server REQUEST token=2;read server RESPONSE=2;read server ack block KEEP_ALIVE=1;read server ack block PAYLOAD=47;read server message payload=42;" },
-    { "control_denied_when_server_full.pcapng", "read client COOKIE=1;read client DENIED=1;read server REQUEST token=2;" },
-    { "control_disconnect_burst_each_end.pcapng", "read client CHALLENGE=2;read client COOKIE=2;read client DISCONNECT=10;read client KEEP_ALIVE=2;read client ack block DISCONNECT=1;read client ack block KEEP_ALIVE=2;read server DISCONNECT=10;read server REQUEST token=4;read server RESPONSE=2;read server ack block DISCONNECT=1;" },
-    { "control_fragment_packets_each_end.pcapng", "read client CHALLENGE=1;read client COOKIE=1;read client FRAGMENT=3;read client KEEP_ALIVE=1;read client ack block FRAGMENT=3;read client ack block KEEP_ALIVE=1;read client fragment=2;read client fragment completing=1;read server FRAGMENT=3;read server REQUEST token=2;read server RESPONSE=1;read server ack block FRAGMENT=3;read server fragment=2;read server fragment completing=1;" },
-    { "control_standalone_ack_each_end.pcapng", "read client ACK=1;read client CHALLENGE=1;read client COOKIE=1;read client KEEP_ALIVE=1;read client ack block ACK=1;read client ack block KEEP_ALIVE=1;read server PAYLOAD=72;read server REQUEST token=2;read server RESPONSE=1;read server ack block PAYLOAD=72;read server message payload=72;" },
+    { "test_ordered_small_and_large_interleaved.pcapng", "read client CHALLENGE=1;read client COOKIE=1;read client KEEP_ALIVE=4;read client ack block KEEP_ALIVE=3;read server PAYLOAD=25;read server REQUEST token=2;read server RESPONSE=1;read server ack block PAYLOAD=17;read server message payload=16;" },
+    { "test_reliable_duplicate_after_gap_delivered_once.pcapng", "read client CHALLENGE=1;read client COOKIE=1;read client KEEP_ALIVE=31;read client ack block KEEP_ALIVE=31;read server KEEP_ALIVE=29;read server PAYLOAD=3;read server REQUEST token=2;read server RESPONSE=1;read server ack block KEEP_ALIVE=29;read server ack block PAYLOAD=3;read server message payload=3;" },
+    { "test_reliable_mixed_sizes_over_lossy_link.pcapng", "read client CHALLENGE=1;read client COOKIE=2;read client KEEP_ALIVE=3;read client PAYLOAD=13;read client ack block KEEP_ALIVE=1;read client ack block PAYLOAD=13;read client message payload=11;read server KEEP_ALIVE=1;read server PAYLOAD=14;read server REQUEST token=2;read server RESPONSE=2;read server ack block KEEP_ALIVE=1;read server ack block PAYLOAD=9;read server message payload=9;" },
+    { "test_reliable_sequenced_held_record_released.pcapng", "read client CHALLENGE=1;read client COOKIE=1;read client KEEP_ALIVE=31;read client ack block KEEP_ALIVE=31;read server KEEP_ALIVE=30;read server PAYLOAD=2;read server REQUEST token=2;read server RESPONSE=1;read server ack block KEEP_ALIVE=30;read server ack block PAYLOAD=2;read server message payload=2;" },
+    { "test_unreliable_at_most_once_over_duplicating_link.pcapng", "read client CHALLENGE=1;read client COOKIE=1;read client KEEP_ALIVE=1;read client PAYLOAD=80;read client ack block KEEP_ALIVE=1;read client ack block PAYLOAD=121;read client message payload=77;read server PAYLOAD=80;read server REQUEST token=2;read server RESPONSE=1;read server ack block PAYLOAD=121;read server message payload=78;" },
+    { "test_unreliable_dropped_when_builder_out_of_budget_never_arrives.pcapng", "read client CHALLENGE=1;read client COOKIE=1;read client KEEP_ALIVE=52;read client ack block KEEP_ALIVE=52;read server KEEP_ALIVE=51;read server PAYLOAD=1;read server REQUEST token=2;read server RESPONSE=1;read server ack block KEEP_ALIVE=51;read server ack block PAYLOAD=1;read server message payload=1;" },
+    { "test_unreliable_receipts_over_lossy_link.pcapng", "read client CHALLENGE=1;read client COOKIE=2;read client KEEP_ALIVE=4;read client PAYLOAD=48;read client ack block KEEP_ALIVE=2;read client ack block PAYLOAD=43;read client message payload=42;read server KEEP_ALIVE=2;read server PAYLOAD=48;read server REQUEST token=2;read server RESPONSE=2;read server ack block KEEP_ALIVE=1;read server ack block PAYLOAD=47;read server message payload=42;" },
+    { "test_control_denied_when_server_full.pcapng", "read client COOKIE=1;read client DENIED=1;read server REQUEST token=2;" },
+    { "test_control_disconnect_burst_each_end.pcapng", "read client CHALLENGE=2;read client COOKIE=2;read client DISCONNECT=10;read client KEEP_ALIVE=2;read client ack block DISCONNECT=1;read client ack block KEEP_ALIVE=2;read server DISCONNECT=10;read server REQUEST token=4;read server RESPONSE=2;read server ack block DISCONNECT=1;" },
+    { "test_control_fragment_packets_each_end.pcapng", "read client CHALLENGE=1;read client COOKIE=1;read client FRAGMENT=3;read client KEEP_ALIVE=1;read client ack block FRAGMENT=3;read client ack block KEEP_ALIVE=1;read client fragment=2;read client fragment completing=1;read server FRAGMENT=3;read server REQUEST token=2;read server RESPONSE=1;read server ack block FRAGMENT=3;read server fragment=2;read server fragment completing=1;" },
+    { "test_control_standalone_ack_each_end.pcapng", "read client ACK=1;read client CHALLENGE=1;read client COOKIE=1;read client KEEP_ALIVE=1;read client ack block ACK=1;read client ack block KEEP_ALIVE=1;read server PAYLOAD=72;read server REQUEST token=2;read server RESPONSE=1;read server ack block PAYLOAD=72;read server message payload=72;" },
 };
 
 // replays every file of the corpus; returns the number of unnamed packets and
@@ -714,7 +714,7 @@ static void pcapng_reader_refusals()
         check( strncmp( rocketnet_pcapng_result_name( i ), "PCAPNG_", 7 ) == 0 );
 }
 
-static void pcapng_corpus_replay()
+static void test_pcapng_corpus_replay()
 {
     pcapng_reader_refusals();
     pcapng_fault_drop_prefilter_name = 0;
@@ -722,12 +722,12 @@ static void pcapng_corpus_replay()
     check( unnamed == 0 );
 }
 
-REGISTER_UNIT_TEST( pcapng_corpus_replay );
+REGISTER_UNIT_TEST( test_pcapng_corpus_replay );
 
 // the witness: the same replay with the prefilter's refusal name dropped. The
 // hostile datagrams are refused there, so they now end unnamed, and the replay
 // must report them, each with its file and index.
-static void pcapng_corpus_witness_unread_packet_goes_red()
+static void test_pcapng_corpus_witness_unread_packet_goes_red()
 {
     pcapng_fault_drop_prefilter_name = 1;
     const int unnamed = pcapng_replay_corpus( 0 );
@@ -741,14 +741,14 @@ static void pcapng_corpus_witness_unread_packet_goes_red()
     check( hostile.unnamed.empty() );
 }
 
-REGISTER_UNIT_TEST( pcapng_corpus_witness_unread_packet_goes_red );
+REGISTER_UNIT_TEST( test_pcapng_corpus_witness_unread_packet_goes_red );
 
 // The corpus covers each control packet type: every top-level file under
 // test/pcapng/ is read and its interface-0 frames counted by packet type
 // (the first byte of the UDP payload), and the corpus must hold at least
 // one frame of each of types 1 (denied), 6 (disconnect), 8 (ack) and 9
 // (fragment). File input only: no sockets, no threads, no real time.
-static void pcapng_corpus_covers_control_packet_types()
+static void test_pcapng_corpus_covers_control_packet_types()
 {
     static const int required_types[4] = {
         ROCKETNET_CONNECTION_DENIED_PACKET,
@@ -793,4 +793,4 @@ static void pcapng_corpus_covers_control_packet_types()
         check( counts[required_types[i]] >= 1 );
 }
 
-REGISTER_UNIT_TEST( pcapng_corpus_covers_control_packet_types );
+REGISTER_UNIT_TEST( test_pcapng_corpus_covers_control_packet_types );

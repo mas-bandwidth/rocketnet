@@ -153,7 +153,7 @@ static bool cm_bookkeeping_equal( const rn_region_t * a, const rn_region_t * b )
 // RNConnectionMemory NoCrossSlotEffect: two regions from one arena (the
 // server shape). Exhausting A changes nothing of B: not its memory, not its
 // region state, not its kick decision, and B still sends after.
-static void memory_isolation_between_slots()
+static void test_memory_isolation_between_slots()
 {
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
@@ -207,7 +207,7 @@ static void memory_isolation_between_slots()
 // RNConnectionMemory Exhaust and Kick: exhaustion is sticky with the reason
 // MESSAGE_MEMORY_EXHAUSTED, and the kick decision for that region says so on
 // every update until the region is reset; a flood is kicked by name.
-static void exhaustion_is_a_kick_with_its_reason()
+static void test_exhaustion_is_a_kick_with_its_reason()
 {
     check( ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED != ROCKETNET_DISCONNECT_REASON_NONE );
     check( strcmp( rocketnet_counter_name( ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED ), "MESSAGE_MEMORY_EXHAUSTED" ) == 0 );
@@ -272,7 +272,7 @@ static void exhaustion_is_a_kick_with_its_reason()
 // RNConnectionMemory Reuse and ReusedSlotStartsClean: a slot's region, used
 // to exhaustion and reset, equals a freshly carved region of the same config
 // in every byte of its bookkeeping, and holds nothing of its previous client.
-static void reused_slot_starts_clean()
+static void test_reused_slot_starts_clean()
 {
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
@@ -331,7 +331,7 @@ static void reused_slot_starts_clean()
 // The caller may supply the block: create takes nothing from the allocator,
 // every region and every record lies inside the block, a short or misaligned
 // block is refused (never truncated), and destroy frees nothing.
-static void user_block_is_used_and_nothing_else()
+static void test_user_block_is_used_and_nothing_else()
 {
     cm_install();
 
@@ -396,7 +396,7 @@ static void user_block_is_used_and_nothing_else()
 // R2: a counting allocator sees create's one allocation and then nothing
 // across sends, acks, exhaustion, the kick decision, the reset and reuse,
 // for a server-shaped arena and a client-shaped one; destroy is the one free.
-static void connection_memory_no_allocation_after_create()
+static void test_connection_memory_no_allocation_after_create()
 {
     cm_install();
 
@@ -451,7 +451,7 @@ static void connection_memory_no_allocation_after_create()
 // RNConnectionMemory ExhaustionOnlyLeadsToDisconnect: once a region is
 // exhausted, every send is refused until the region is reset (the model's
 // Reuse). The old code allowed a free + alloc to succeed after exhaustion.
-static void exhausted_region_refuses_sends_until_reset()
+static void test_exhausted_region_refuses_sends_until_reset()
 {
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
@@ -516,7 +516,7 @@ static void exhausted_region_refuses_sends_until_reset()
 // so there is no receive no-room outcome to wire. What a receive can do is
 // arrive on an already-exhausted region; this pins that it is refused -- the
 // connection's exhaustion already kicked it -- and the decision stays exhaustion.
-static void receive_without_room_exhausts_the_region()
+static void test_receive_without_room_exhausts_the_region()
 {
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
@@ -566,7 +566,7 @@ static void receive_without_room_exhausts_the_region()
 // delivered at least 1) or an over-budget geometry is refused before any
 // allocation (sdk/rocketnet_fragment.cpp rocketnet_reassembly_memory_required,
 // rocketnet_reassembly_memory_allowed, rocketnet_reassembly_set_create).
-static void reassembly_geometry_refuses_bad_arguments_and_budget()
+static void test_reassembly_geometry_refuses_bad_arguments_and_budget()
 {
     const int MP = ROCKETNET_MAX_PAYLOAD_BYTES;
 
@@ -613,7 +613,7 @@ static void reassembly_geometry_refuses_bad_arguments_and_budget()
 // exhausted by its descriptor table, with one descriptor then returned, still
 // refuses a span: nothing is taken, and each refusal counts
 // MESSAGE_MEMORY_EXHAUSTED exactly as rn_region_send_alloc does.
-static void exhausted_region_refuses_spans()
+static void test_exhausted_region_refuses_spans()
 {
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
@@ -657,7 +657,7 @@ static void exhausted_region_refuses_spans()
 
 // RNConnectionMemory Reuse: the reset clears the sticky state, and the span
 // path takes room again.
-static void span_granted_after_reset()
+static void test_span_granted_after_reset()
 {
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
@@ -694,13 +694,13 @@ static void span_granted_after_reset()
     rn_arena_destroy( arena );
 }
 
-REGISTER_UNIT_TEST( memory_isolation_between_slots );
-REGISTER_UNIT_TEST( reassembly_geometry_refuses_bad_arguments_and_budget );
-REGISTER_UNIT_TEST( exhaustion_is_a_kick_with_its_reason );
-REGISTER_UNIT_TEST( reused_slot_starts_clean );
-REGISTER_UNIT_TEST( user_block_is_used_and_nothing_else );
-REGISTER_UNIT_TEST( connection_memory_no_allocation_after_create );
-REGISTER_UNIT_TEST( exhausted_region_refuses_sends_until_reset );
-REGISTER_UNIT_TEST( receive_without_room_exhausts_the_region );
-REGISTER_UNIT_TEST( exhausted_region_refuses_spans );
-REGISTER_UNIT_TEST( span_granted_after_reset );
+REGISTER_UNIT_TEST( test_memory_isolation_between_slots );
+REGISTER_UNIT_TEST( test_reassembly_geometry_refuses_bad_arguments_and_budget );
+REGISTER_UNIT_TEST( test_exhaustion_is_a_kick_with_its_reason );
+REGISTER_UNIT_TEST( test_reused_slot_starts_clean );
+REGISTER_UNIT_TEST( test_user_block_is_used_and_nothing_else );
+REGISTER_UNIT_TEST( test_connection_memory_no_allocation_after_create );
+REGISTER_UNIT_TEST( test_exhausted_region_refuses_sends_until_reset );
+REGISTER_UNIT_TEST( test_receive_without_room_exhausts_the_region );
+REGISTER_UNIT_TEST( test_exhausted_region_refuses_spans );
+REGISTER_UNIT_TEST( test_span_granted_after_reset );

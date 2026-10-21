@@ -5,7 +5,7 @@
     The real connect through the C transport API from a C++ translation unit
     over loopback: a server transport and a client transport connect over
     127.0.0.1 with the development keys, exchange payloads each way, and
-    disconnect. The checks mirror test_transport_udp_loopback.
+    disconnect. The checks mirror test_loopback_transport_udp.
 */
 
 #include "rocketnet.h"
@@ -136,6 +136,11 @@ void rocketnet_test_cpp_transports_connect_over_loopback()
     start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 2.0 )
     {
+        // the client keeps updating while the server waits: a disconnect burst whose
+        // hand-off found the other send ring busy is deferred and goes out on
+        // the client's next update (sdk/rocketnet_client_transport.cpp
+        // rocketnet_client_transport_disconnect and _fill_destination), not before
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         if ( rocketnet_server_transport_num_connected_clients( server ) == 0 )
             break;

@@ -33,13 +33,6 @@
 #include <mutex>
 #include <new>
 
-#if defined( _MSC_VER )
-#pragma warning(push)
-#pragma warning(disable:4996)
-#pragma warning(disable:4127)
-#pragma warning(disable:4244)
-#pragma warning(disable:4668)
-#endif
 
 // -------------------------------------------------
 
@@ -699,8 +692,9 @@ bool rocketnet_init_ex( void * context, int * status )
     }
 
     // the level first, so init's own lines obey it
-    const char * log_level_override = rocketnet_platform_getenv( "ROCKETNET_LOG_LEVEL" );
-    if ( log_level_override )
+    // a value too long for the buffer is set: the override refuses its empty copy loudly
+    char log_level_override[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
+    if ( rocketnet_platform_getenv( "ROCKETNET_LOG_LEVEL", log_level_override, sizeof( log_level_override ) ) != 0 )
         rocketnet_log_level_override_apply( log_level_override );
 
     rocketnet_info( "rocketnet version is %s", ROCKETNET_VERSION_FULL );
@@ -759,9 +753,6 @@ int rocketnet_term_ex()
 
 // ---------------------------------------------------------------
 
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
 
 uint64_t rocketnet_next_packet_lease_id()
 {

@@ -223,12 +223,11 @@ jobs:
 
       # Driver selection is runtime now (#106), so one build serves the whole
       # matrix. ./bin/test is the unit suite: no socket, no real driver, the
-      # state machines and the in-memory simulator, parallel, 60s warning,
-      # 120s kill. ./bin/functional is the driver matrix. On this unprivileged
+      # state machines and the in-memory simulator, parallel, 120s kill. ./bin/functional is the driver matrix. On this unprivileged
       # runner the linux functional leg is the FALL made real -- xdp refused
       # for missing privilege, gso granted -- so the functional suite runs
       # over the gso driver here (and over the darwin msgx pump on macOS);
-      # the pin tests (test_server_driver_pin_*) go red if a rung stops
+      # the pin tests (test_*_transport_server_io_pin) go red if a rung stops
       # granting, so a silent fall cannot hollow this leg out. The second
       # functional run pins the portable floor by env.
 
@@ -291,13 +290,12 @@ jobs:
         run: |
           set -o pipefail
           ./bin/functional | tee functional-pinned.log
-          grep -qx 'transport_env_pin_is_honoured' functional-pinned.log
-          ! grep -q '^transport_env_pin_is_honoured \[SKIPPED' functional-pinned.log
+          grep -qx 'test_transport_env_pin_is_honoured' functional-pinned.log
 
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
       # server, so a family regression on any one transport fails here.
-      # transport_env_pin_is_honoured runs under the same pin and proves the
+      # test_transport_env_pin_is_honoured runs under the same pin and proves the
       # pinned transport is the one granted. tools/check_transport_matrix.py
       # refuses a driver row in sdk/rocketnet_drivers.inc with no cell on an
       # OS it builds for. A cell line is: server transport, client
@@ -307,7 +305,7 @@ jobs:
       # as the card lands; any other skip fails. No cell holds a mark: the
       # in-memory loopback serves dual stack like the socket transports. The xdp
       # cell needs root, a namespace and a veth pair, so it runs
-      # xdp_max_size_both_ways_ipv4 and _ipv6 (the xdp server, the portable
+      # test_xdp_transport_max_size_both_ways_ipv4 and _ipv6 (the xdp server, the portable
       # client) as root inside a virtme-ng guest on the runner's own kernel,
       # never on the host; a runner with no VM tier fails the cell.
       - name: Transport family matrix (every transport on IPv4, IPv6 and dual stack)
@@ -335,8 +333,8 @@ jobs:
             Windows) matrix=$TRANSPORT_MATRIX_WINDOWS; functional=./bin/Release/functional.exe ;;
             *) echo "TRANSPORT-MATRIX no matrix for $RUNNER_OS"; exit 1 ;;
           esac
-          socket_cases="test_transport_udp_loopback test_transport_ipv6_loopback test_transport_dual_stack_ipv4_client transport_env_pin_is_honoured"
-          xdp_cases="xdp_max_size_both_ways_ipv4 xdp_max_size_both_ways_ipv6"
+          socket_cases="test_loopback_transport_udp test_loopback_transport_ipv6 test_transport_dual_stack_ipv4_client test_transport_env_pin_is_honoured"
+          xdp_cases="test_xdp_transport_max_size_both_ways_ipv4 test_xdp_transport_max_size_both_ways_ipv6"
           cell_cases() { if [ "$1" = xdp ]; then echo "$xdp_cases"; else echo "$socket_cases"; fi; }
           uring_offered=0
           if [ "$RUNNER_OS" = Linux ] && [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then uring_offered=1; fi
@@ -549,7 +547,7 @@ jobs:
           cat > build/xdp-libxdp-1-4.sh <<'GUEST'
           uname -r
           failed=0
-          for case in xdp_max_size_both_ways_ipv4 xdp_max_size_both_ways_ipv6; do
+          for case in test_xdp_transport_max_size_both_ways_ipv4 test_xdp_transport_max_size_both_ways_ipv6; do
             log="build/libxdp-1-4.$case.log"
             sudo ./bin/functional --run "$case" > "$log" 2>&1
             rc=$?
@@ -573,8 +571,8 @@ jobs:
   # engine and the portable rung on the one platform whose only rung is
   # portable -- EXCEPT the empty-value distinction, which windows cannot
   # represent: its CRT has no set-but-empty variable, so that one case is
-  # skipped there, named and logged with that reason. Tests compiled out
-  # on windows are named and logged by the suite itself as named skips:
+  # not checked there. Tests windows does not build are not registered
+  # there, so they are neither run nor printed:
   # the refused-destination and zero-length-chaff pump tests, whose
   # raw-socket injector is posix-only, and the gso/xdp and msgx rung
   # tests windows does not build.
@@ -647,8 +645,8 @@ jobs:
   # engine and the portable rung on the one platform whose only rung is
   # portable -- EXCEPT the empty-value distinction, which windows cannot
   # represent: its CRT has no set-but-empty variable, so that one case is
-  # skipped there, named and logged with that reason. Tests compiled out
-  # on windows are named and logged by the suite itself as named skips:
+  # not checked there. Tests windows does not build are not registered
+  # there, so they are neither run nor printed:
   # the refused-destination and zero-length-chaff pump tests, whose
   # raw-socket injector is posix-only, and the gso/xdp and msgx rung
   # tests windows does not build.
@@ -717,8 +715,7 @@ jobs:
         run: |
           set -o pipefail
           ./bin/Release/functional.exe | tr -d '\r' | tee functional-iocp.log
-          grep -qx 'transport_env_pin_is_honoured' functional-iocp.log
-          ! grep -q '^transport_env_pin_is_honoured \[SKIPPED' functional-iocp.log
+          grep -qx 'test_transport_env_pin_is_honoured' functional-iocp.log
 
       - name: "Functional: lifecycle binary"
         if: matrix.leg == 'a'
@@ -759,7 +756,7 @@ jobs:
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
       # server, so a family regression on any one transport fails here.
-      # transport_env_pin_is_honoured runs under the same pin and proves the
+      # test_transport_env_pin_is_honoured runs under the same pin and proves the
       # pinned transport is the one granted. tools/check_transport_matrix.py
       # refuses a driver row in sdk/rocketnet_drivers.inc with no cell on an
       # OS it builds for. A cell line is: server transport, client
@@ -786,7 +783,7 @@ jobs:
             Windows) matrix=$TRANSPORT_MATRIX_WINDOWS; functional=./bin/Release/functional.exe ;;
             *) echo "TRANSPORT-MATRIX no matrix for $RUNNER_OS"; exit 1 ;;
           esac
-          cases="test_transport_udp_loopback test_transport_ipv6_loopback test_transport_dual_stack_ipv4_client transport_env_pin_is_honoured"
+          cases="test_loopback_transport_udp test_loopback_transport_ipv6 test_transport_dual_stack_ipv4_client test_transport_env_pin_is_honoured"
           uring_offered=0
           if [ "$RUNNER_OS" = Linux ] && [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then uring_offered=1; fi
           mkdir -p build
@@ -809,7 +806,7 @@ jobs:
           failed=0
           while read -r server client expected; do
             [ -n "$server" ] && [ -d "$logs" ] || continue
-            [ -f "$logs/$server.$client.transport_env_pin_is_honoured.rc" ] || continue
+            [ -f "$logs/$server.$client.test_transport_env_pin_is_honoured.rc" ] || continue
             for case in $cases; do
               log="$logs/$server.$client.$case.log"
               rc=$(cat "$logs/$server.$client.$case.rc")

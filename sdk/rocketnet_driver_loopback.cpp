@@ -179,11 +179,11 @@ static void * loopback_create( void * context, rocketnet_address_t * bind )
             }
             if ( !held )
                 break;
-            port = port == ROCKETNET_LOOPBACK_LAST_PORT ? ROCKETNET_LOOPBACK_FIRST_PORT
-                                                         : (uint16_t) ( port + 1 );
+            port = port == ROCKETNET_LOOPBACK_LAST_PORT ? (uint16_t) ROCKETNET_LOOPBACK_FIRST_PORT
+                                                        : (uint16_t) ( port + 1 );
         }
         bind->port = port;
-        state.next_port = port == ROCKETNET_LOOPBACK_LAST_PORT ? ROCKETNET_LOOPBACK_FIRST_PORT
+        state.next_port = port == ROCKETNET_LOOPBACK_LAST_PORT ? (uint16_t) ROCKETNET_LOOPBACK_FIRST_PORT
                                                                : (uint16_t) ( port + 1 );
     }
 
@@ -338,11 +338,12 @@ static int loopback_client_receive( void * transport, rocketnet_address_t * from
 static const rocketnet_server_transport_io_operations_t loopback_server_operations =
 {
     ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE, loopback_server_create, loopback_destroy, loopback_stop,
-    NULL, NULL, NULL, NULL, NULL, loopback_server_send_batch, loopback_server_receive_batch
+    NULL, NULL, NULL, NULL, NULL, loopback_server_send_batch, loopback_server_receive_batch,
+    NULL, NULL, NULL, NULL, NULL, NULL
 };
 
 static const rocketnet_client_transport_io_operations_t loopback_client_operations =
-{ loopback_client_create, loopback_destroy, loopback_send, loopback_client_receive };
+{ loopback_client_create, loopback_destroy, loopback_send, loopback_client_receive, NULL, NULL, NULL, NULL, NULL };
 
 extern const rocketnet_transport_backend_t rocketnet_loopback_transport = { &loopback_server_operations, &loopback_client_operations };
 

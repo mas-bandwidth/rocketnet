@@ -109,7 +109,7 @@ static int priorities_position( const int * order, int count, int index )
 // within one class the more urgent level goes first, whatever the channel
 // order: IMMEDIATE, then HIGH, then LOW.
 
-static void higher_priority_first_within_class()
+static void test_higher_priority_first_within_class()
 {
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &priorities_counters );
     rocketnet_unit_check( arena != NULL );
@@ -138,7 +138,7 @@ static void higher_priority_first_within_class()
 // first, at IMMEDIATE, then the IMMEDIATE one, both ahead of another channel's
 // HIGH record (17.3 item 3; RNScheduler FirstWriteInOrderPerChannel).
 
-static void channel_fifo_kept_per_channel()
+static void test_channel_fifo_kept_per_channel()
 {
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &priorities_counters );
     rocketnet_unit_check( arena != NULL );
@@ -164,7 +164,7 @@ static void channel_fifo_kept_per_channel()
 // within one level, channels take turns, one record each, starting after the
 // channel the last record came from (17.3 item 4).
 
-static void round_robin_across_channels()
+static void test_round_robin_across_channels()
 {
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &priorities_counters );
     rocketnet_unit_check( arena != NULL );
@@ -194,7 +194,7 @@ static void round_robin_across_channels()
 // it a turn once IMMEDIATE's clock passes LOW's seed of 27, and its next turn
 // one LOW stride (35) later. The backlog is still queued when LOW goes.
 
-static void no_starvation_of_low()
+static void test_no_starvation_of_low()
 {
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &priorities_counters );
     rocketnet_unit_check( arena != NULL );
@@ -242,7 +242,7 @@ static void no_starvation_of_low()
 // MEDIUM ordered-progress record, before a HIGH new reliable one, before an
 // IMMEDIATE unreliable one (R6; RNScheduler ClassOrderBeforePriority).
 
-static void budget_class_order_still_rules()
+static void test_budget_class_order_still_rules()
 {
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &priorities_counters );
     rocketnet_unit_check( arena != NULL );
@@ -281,7 +281,7 @@ static void budget_class_order_still_rules()
 // reliable records in the first three updates and the unreliable item only
 // when none is queued.
 
-static void rnscheduler_witness_replays()
+static void test_rnscheduler_witness_replays()
 {
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &priorities_counters );
     rocketnet_unit_check( arena != NULL );
@@ -338,7 +338,7 @@ static void priorities_free( void * context, void * p )
     rocketnet_default_free_function( NULL, p );
 }
 
-static void send_priorities_no_allocation_after_create()
+static void test_send_priorities_no_allocation_after_create()
 {
     // the suite initialised the library before this test; replacement is
     // refused after init, so the test terminates it, installs the counting
@@ -389,10 +389,10 @@ static void send_priorities_no_allocation_after_create()
     rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
-REGISTER_UNIT_TEST( higher_priority_first_within_class );
-REGISTER_UNIT_TEST( channel_fifo_kept_per_channel );
-REGISTER_UNIT_TEST( round_robin_across_channels );
-REGISTER_UNIT_TEST( no_starvation_of_low );
-REGISTER_UNIT_TEST( budget_class_order_still_rules );
-REGISTER_UNIT_TEST( rnscheduler_witness_replays );
-REGISTER_UNIT_TEST( send_priorities_no_allocation_after_create );
+REGISTER_UNIT_TEST( test_higher_priority_first_within_class );
+REGISTER_UNIT_TEST( test_channel_fifo_kept_per_channel );
+REGISTER_UNIT_TEST( test_round_robin_across_channels );
+REGISTER_UNIT_TEST( test_no_starvation_of_low );
+REGISTER_UNIT_TEST( test_budget_class_order_still_rules );
+REGISTER_UNIT_TEST( test_rnscheduler_witness_replays );
+REGISTER_UNIT_TEST( test_send_priorities_no_allocation_after_create );

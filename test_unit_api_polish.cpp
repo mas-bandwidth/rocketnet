@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The v1.0.0 API rulings, pinned. Each ruling has a compile-time check that
+// The v1.0.0-preview-1 API rulings, pinned. Each ruling has a compile-time check that
 // the old form fails to compile (a static_assert on the declared type, or an
 // #error on a removed name), and a run-time case where the old form returned
 // a different value. Every case runs in memory, with no clock, sockets or
@@ -88,7 +88,7 @@ static void api_polish_free( void * context, void * p ) { (void) context; free( 
 
 // the worker process is initialized before a unit test runs: a second init
 // says why it refused, where the old bool said only false
-static void api_polish_status_returns()
+static void test_api_polish_status_returns()
 {
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_ALREADY_INITIALIZED );
     check( rocketnet_allocator( api_polish_malloc, api_polish_free ) == ROCKETNET_STATUS_ALREADY_INITIALIZED );
@@ -137,7 +137,7 @@ static void api_polish_status_returns()
     check( create_status == ROCKETNET_STATUS_OK );
     rocketnet_server_destroy( server );
 }
-REGISTER_UNIT_TEST( api_polish_status_returns );
+REGISTER_UNIT_TEST( test_api_polish_status_returns );
 
 // --- ruling 2: the dev token writer takes its buffer size ---------------------
 
@@ -184,7 +184,7 @@ static api_polish_dev_writer_t api_polish_dev_writer()
     return writer;
 }
 
-static void api_polish_dev_token_buffer()
+static void test_api_polish_dev_token_buffer()
 {
     api_polish_dev_writer_t write_dev = api_polish_dev_writer();
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES + 1];
@@ -198,7 +198,7 @@ static void api_polish_dev_token_buffer()
     check( token[ROCKETNET_CONNECT_TOKEN_BYTES] == 0xAB );                                // nothing past the token
     api_polish_dev_set_log( NULL, NULL );
 }
-REGISTER_UNIT_TEST( api_polish_dev_token_buffer );
+REGISTER_UNIT_TEST( test_api_polish_dev_token_buffer );
 
 // --- ruling 3: typed enums, values unchanged ----------------------------------
 
@@ -231,7 +231,7 @@ static_assert( rn_same<decltype( rocketnet_server_running( NULL ) ), bool>::valu
 static_assert( rn_same<decltype( rocketnet_server_client_connected( NULL, 0 ) ), bool>::value, "ruling 4: client connected" );
 static_assert( rn_same<decltype( ( (rocketnet_client_config_t *) 0 )->step_driven ), bool>::value, "ruling 4: step_driven" );
 
-static void api_polish_bool_field_abi()
+static void test_api_polish_bool_field_abi()
 {
     // the bool field is one byte; the ABI version macro stays
     check( sizeof( ( (rocketnet_client_config_t *) 0 )->step_driven ) == 1 );
@@ -240,7 +240,7 @@ static void api_polish_bool_field_abi()
     check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
     check( config.step_driven == false );
 }
-REGISTER_UNIT_TEST( api_polish_bool_field_abi );
+REGISTER_UNIT_TEST( test_api_polish_bool_field_abi );
 
 // --- ruling 5 and 6: set_/get_ naming, one log sink, an enum level -------------
 
@@ -264,7 +264,7 @@ static void api_polish_log_capture( void * context, rocketnet_log_level_t level,
     g_polish_message[n] = '\0';
 }
 
-static void api_polish_log_callback_receives_a_message()
+static void test_api_polish_log_callback_receives_a_message()
 {
     const rocketnet_log_level_t saved = rocketnet_log_level_current();
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
@@ -283,7 +283,7 @@ static void api_polish_log_callback_receives_a_message()
     check( rocketnet_log_level_current() == ROCKETNET_LOG_LEVEL_INFO );
     rocketnet_log_level( saved );
 }
-REGISTER_UNIT_TEST( api_polish_log_callback_receives_a_message );
+REGISTER_UNIT_TEST( test_api_polish_log_callback_receives_a_message );
 
 // --- ruling 7: every lookup is _name and says "unknown" ------------------------
 
@@ -293,7 +293,7 @@ static_assert( rn_same<decltype( &rocketnet_disconnect_reason_name ), const char
 static_assert( rn_same<decltype( ( (rocketnet_client_config_t *) 0 )->state_change_callback ),
                        void (*)( void *, rocketnet_client_state_t, rocketnet_client_state_t )>::value, "ruling 7: state_change_callback takes the enum" );
 
-static void api_polish_lookups_say_unknown()
+static void test_api_polish_lookups_say_unknown()
 {
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_OK ), "OK" ) == 0 );
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_FLOW_ID_RESERVED ), "FLOW_ID_RESERVED" ) == 0 );
@@ -320,11 +320,11 @@ static void api_polish_lookups_say_unknown()
     check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED ), "server disconnected" ) == 0 );
     check( strcmp( rocketnet_disconnect_reason_name( (rocketnet_disconnect_reason_t) 7 ), "unknown" ) == 0 );
 }
-REGISTER_UNIT_TEST( api_polish_lookups_say_unknown );
+REGISTER_UNIT_TEST( test_api_polish_lookups_say_unknown );
 
 // A zero-filled receipt names NONE. Value 2 is reserved and is not a
 // disconnect reason. Every name lookup names every value of its enum.
-static void api_polish_zero_receipt_and_dense_reasons()
+static void test_api_polish_zero_receipt_and_dense_reasons()
 {
     struct rocketnet_receipt_t receipt;
     memset( &receipt, 0, sizeof( receipt ) );
@@ -374,7 +374,7 @@ static void api_polish_zero_receipt_and_dense_reasons()
     check( sizeof( enum rocketnet_update_result_t ) == sizeof( int ) );
     check( sizeof( enum rocketnet_client_state_t ) == sizeof( int ) );
 }
-REGISTER_UNIT_TEST( api_polish_zero_receipt_and_dense_reasons );
+REGISTER_UNIT_TEST( test_api_polish_zero_receipt_and_dense_reasons );
 
 // --- ruling 8: sizes are size_t ------------------------------------------------
 
@@ -390,7 +390,7 @@ static void api_polish_quiet_assert( const char * condition, const char * functi
     (void) condition; (void) function; (void) file; (void) line;
 }
 
-static void api_polish_null_client_state_is_invalid()
+static void test_api_polish_null_client_state_is_invalid()
 {
     static_assert( ROCKETNET_CLIENT_STATE_INVALID == -100, "ruling 9: the value" );
     rocketnet_assert_function( api_polish_quiet_assert );
@@ -399,7 +399,7 @@ static void api_polish_null_client_state_is_invalid()
     check( rocketnet_api_misuse_count() == before + 1 );
     rocketnet_assert_function( NULL );
 }
-REGISTER_UNIT_TEST( api_polish_null_client_state_is_invalid );
+REGISTER_UNIT_TEST( test_api_polish_null_client_state_is_invalid );
 
 // --- a client index before CONNECTED is -1, never an assert --------------------
 
@@ -416,7 +416,7 @@ static double api_polish_index_clock( void * ) { return g_polish_index_now; }
 
 #define API_POLISH_INDEX_PROTOCOL 0x1D3C0FFEE0A11CE5ULL
 
-static void api_polish_client_index_is_minus_one_until_connected()
+static void test_api_polish_client_index_is_minus_one_until_connected()
 {
     rocketnet_quiet( true );
     rocketnet_assert_function( api_polish_count_assert );
@@ -502,10 +502,10 @@ static void api_polish_client_index_is_minus_one_until_connected()
     rocketnet_assert_function( NULL );
     rocketnet_quiet( false );
 }
-REGISTER_UNIT_TEST( api_polish_client_index_is_minus_one_until_connected );
+REGISTER_UNIT_TEST( test_api_polish_client_index_is_minus_one_until_connected );
 // --- ruling 11: server abort_message past max_clients counts misuse ------------
 
-static void api_polish_server_abort_message_misuse()
+static void test_api_polish_server_abort_message_misuse()
 {
     rocketnet_server_config_t config;
     api_polish_dev_server_config( &config );
@@ -525,14 +525,14 @@ static void api_polish_server_abort_message_misuse()
 
     rocketnet_server_destroy( server );
 }
-REGISTER_UNIT_TEST( api_polish_server_abort_message_misuse );
+REGISTER_UNIT_TEST( test_api_polish_server_abort_message_misuse );
 
 // --- the production minter refuses a token no peer accepts ---------------------
 
 // a timeout of zero or below (t13.2: a production server refuses both), and an
 // expire stamp at or before the create stamp (the token is already expired when
 // it is made), are refused with INVALID_ARGUMENT and the output is untouched
-static void api_polish_production_token_refuses_dead_tokens()
+static void test_api_polish_production_token_refuses_dead_tokens()
 {
     uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
@@ -569,4 +569,4 @@ static void api_polish_production_token_refuses_dead_tokens()
     check( rocketnet_write_production_connect_token( backend_secret, server_public, 0x1234ULL, addresses, 1, 7,
                                                      create, create + 1, 1, NULL, token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
 }
-REGISTER_UNIT_TEST( api_polish_production_token_refuses_dead_tokens );
+REGISTER_UNIT_TEST( test_api_polish_production_token_refuses_dead_tokens );

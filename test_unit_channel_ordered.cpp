@@ -74,8 +74,12 @@ struct wire_packet_t
 {
     uint64_t id;
     int bytes;
+    uint8_t bytes_pad[16 - sizeof( uint64_t ) - sizeof( int )];                 // explicit: data starts 16-aligned
     alignas( 16 ) uint8_t data[ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t tail_pad[16 - ROCKETNET_MAX_PAYLOAD_BYTES % 16];                     // explicit: the size rounds up to 16
 };
+static_assert( sizeof( wire_packet_t ) == 16 + ( ROCKETNET_MAX_PAYLOAD_BYTES + 15 ) / 16 * 16, "no implicit padding" );
+static_assert( alignof( wire_packet_t ) == 16, "data is 16-aligned" );
 
 struct delivered_t
 {
@@ -445,7 +449,7 @@ static void small_leg( float loss, float duplicate, uint64_t seed )
     node_free( b );
 }
 
-static void small_in_order_exactly_once_under_loss_and_reorder()
+static void test_small_in_order_exactly_once_under_loss_and_reorder()
 {
     small_leg( 0.0f, 0.0f, 1 );
     small_leg( 20.0f, 20.0f, 2 );
@@ -456,7 +460,7 @@ static void small_in_order_exactly_once_under_loss_and_reorder()
 // 2. several small messages in one packet, resent until a packet ack covers them
 // ---------------------------------------------------------------------------
 
-static void small_packed_and_resent_until_packet_acked()
+static void test_small_packed_and_resent_until_packet_acked()
 {
     rocketnet_message_config_t config;
     node_config( &config, 1024, 262144, 262144, 800000 );
@@ -607,7 +611,7 @@ static void exchange_perfect( node_t * a, node_t * b, double * now, int updates,
     }
 }
 
-static void large_chunked_one_per_packet_and_delivered_whole()
+static void test_large_chunked_one_per_packet_and_delivered_whole()
 {
     // the defaults: the largest message fits (max_message_bytes 262144, 228 chunks)
     rocketnet_message_config_t config;
@@ -843,7 +847,7 @@ static void ordering_wrap_leg( uint32_t start )
     node_free( b );
 }
 
-static void large_between_small_keeps_order()
+static void test_large_between_small_keeps_order()
 {
     boundary_sizes_leg();
     ordering_wrap_leg( 0x00FFFFFA );
@@ -858,7 +862,7 @@ static void large_between_small_keeps_order()
 // 5. chunks are placed by index, not by arrival
 // ---------------------------------------------------------------------------
 
-static void chunks_placed_by_index_not_arrival()
+static void test_chunks_placed_by_index_not_arrival()
 {
     rocketnet_message_config_t config;
     node_config( &config, 1024, 262144, 262144, 800000 );
@@ -923,7 +927,7 @@ static void chunks_placed_by_index_not_arrival()
 // 6. no partial delivery: the last index arriving is not the message arriving
 // ---------------------------------------------------------------------------
 
-static void no_partial_delivery()
+static void test_no_partial_delivery()
 {
     rocketnet_message_config_t config;
     node_config( &config, 1024, 262144, 262144, 800000 );
@@ -1020,7 +1024,7 @@ static void expect_kick( node_t * node, int counter_id, uint64_t before )
     check( node->ordered.channels.deliveries == 0 );
 }
 
-static void hostile_chunk_count_or_index_kicks()
+static void test_hostile_chunk_count_or_index_kicks()
 {
     rocketnet_message_config_t config;
     node_config( &config, 1024, 262144, 262144, 800000 );
@@ -1158,7 +1162,7 @@ static void hostile_chunk_count_or_index_kicks()
 // rn_channels_dispatch_reliable_chunk (sdk/rocketnet_channel_reliable.cpp)
 // fires BAD_BLOCK for the shape, the dead number and a part that disagrees,
 // and BAD_RING for a span outside the ring.
-static void hostile_reliable_chunks_are_refused()
+static void test_hostile_reliable_chunks_are_refused()
 {
     rocketnet_message_config_t config;
     node_config( &config, 1024, 262144, 262144, 800000 );
@@ -1243,7 +1247,7 @@ static void hostile_reliable_chunks_are_refused()
     }
 }
 
-static void hostile_small_at_held_ordering_is_refused()
+static void test_hostile_small_at_held_ordering_is_refused()
 {
     rocketnet_message_config_t config;
     node_config( &config, 1024, 262144, 262144, 800000 );
@@ -1293,7 +1297,7 @@ static void hostile_small_at_held_ordering_is_refused()
 // rocketnet_network_simulator, time only an argument starting at 1000.0, the
 // hostile small record injected as a packet after the block's chunk is held
 
-static void hostile_small_at_held_ordering_is_refused_sim()
+static void test_hostile_small_at_held_ordering_is_refused_sim()
 {
     rocketnet_message_config_t config;
     node_config( &config, 1024, 262144, 262144, 800000 );
@@ -1399,7 +1403,7 @@ static int packet_records( node_t * node, const wire_packet_t * packet, rocketne
     return n;
 }
 
-static void start_pointer_is_the_frame_source()
+static void test_start_pointer_is_the_frame_source()
 {
     rocketnet_message_config_t config;
     node_config( &config, 1024, 262144, 262144, 800000 );
@@ -1596,11 +1600,11 @@ static uint64_t cm_calls()
     return cm_mallocs + cm_frees;
 }
 
-// Registered as ordered_no_allocation_after_create: unit test names are unique
+// Registered as test_ordered_no_allocation_after_create: unit test names are unique
 // across the suite, and the registrar aborts on a duplicate
 // (test_unit_registry.h, rocketnet_unit_file_registrar_t).
 
-static void ordered_no_allocation_after_create()
+static void test_ordered_no_allocation_after_create()
 {
     // the defaults are admissible, and a connection's region at them is this many bytes (CHANNELS.md 14)
     rocketnet_message_config_t defaults;
@@ -1778,7 +1782,7 @@ static void model_ack( model_t * m, double now )
     feed_acks( m->a, acks, now );
 }
 
-static void rnchannel_witness_replays_ordered()
+static void test_rnchannel_witness_replays_ordered()
 {
     rocketnet_message_config_t config;
     node_config( &config, 1024, 262144, 262144, 800000 );
@@ -1975,7 +1979,7 @@ static void rnchannel_witness_replays_ordered()
 // is a real send time, not "never sent" (RNResendTiming!Due reads lastSend as
 // a real tick, 0 included).
 
-static void ordered_record_sent_at_zero_waits_for_its_resend()
+static void test_ordered_record_sent_at_zero_waits_for_its_resend()
 {
     rocketnet_message_config_t config;
     node_config( &config, 1024, 262144, 262144, 800000 );
@@ -2008,7 +2012,7 @@ static void ordered_record_sent_at_zero_waits_for_its_resend()
     node_free( a );
 }
 
-static void ordered_record_sent_at_1000_waits_for_its_resend()
+static void test_ordered_record_sent_at_1000_waits_for_its_resend()
 {
     rocketnet_message_config_t config;
     node_config( &config, 1024, 262144, 262144, 800000 );
@@ -2035,7 +2039,7 @@ static void ordered_record_sent_at_1000_waits_for_its_resend()
     node_free( a );
 }
 
-static void ordered_failed_send_at_zero_is_due_next_update()
+static void test_ordered_failed_send_at_zero_is_due_next_update()
 {
     rocketnet_message_config_t config;
     node_config( &config, 1024, 262144, 262144, 800000 );
@@ -2061,19 +2065,19 @@ static void ordered_failed_send_at_zero_is_due_next_update()
     node_free( a );
 }
 
-REGISTER_UNIT_TEST( ordered_record_sent_at_zero_waits_for_its_resend );
-REGISTER_UNIT_TEST( ordered_record_sent_at_1000_waits_for_its_resend );
-REGISTER_UNIT_TEST( ordered_failed_send_at_zero_is_due_next_update );
-REGISTER_UNIT_TEST( small_in_order_exactly_once_under_loss_and_reorder );
-REGISTER_UNIT_TEST( small_packed_and_resent_until_packet_acked );
-REGISTER_UNIT_TEST( large_chunked_one_per_packet_and_delivered_whole );
-REGISTER_UNIT_TEST( large_between_small_keeps_order );
-REGISTER_UNIT_TEST( chunks_placed_by_index_not_arrival );
-REGISTER_UNIT_TEST( no_partial_delivery );
-REGISTER_UNIT_TEST( hostile_chunk_count_or_index_kicks );
-REGISTER_UNIT_TEST( hostile_reliable_chunks_are_refused );
-REGISTER_UNIT_TEST( hostile_small_at_held_ordering_is_refused );
-REGISTER_UNIT_TEST( hostile_small_at_held_ordering_is_refused_sim );
-REGISTER_UNIT_TEST( start_pointer_is_the_frame_source );
-REGISTER_UNIT_TEST( ordered_no_allocation_after_create );
-REGISTER_UNIT_TEST( rnchannel_witness_replays_ordered );
+REGISTER_UNIT_TEST( test_ordered_record_sent_at_zero_waits_for_its_resend );
+REGISTER_UNIT_TEST( test_ordered_record_sent_at_1000_waits_for_its_resend );
+REGISTER_UNIT_TEST( test_ordered_failed_send_at_zero_is_due_next_update );
+REGISTER_UNIT_TEST( test_small_in_order_exactly_once_under_loss_and_reorder );
+REGISTER_UNIT_TEST( test_small_packed_and_resent_until_packet_acked );
+REGISTER_UNIT_TEST( test_large_chunked_one_per_packet_and_delivered_whole );
+REGISTER_UNIT_TEST( test_large_between_small_keeps_order );
+REGISTER_UNIT_TEST( test_chunks_placed_by_index_not_arrival );
+REGISTER_UNIT_TEST( test_no_partial_delivery );
+REGISTER_UNIT_TEST( test_hostile_chunk_count_or_index_kicks );
+REGISTER_UNIT_TEST( test_hostile_reliable_chunks_are_refused );
+REGISTER_UNIT_TEST( test_hostile_small_at_held_ordering_is_refused );
+REGISTER_UNIT_TEST( test_hostile_small_at_held_ordering_is_refused_sim );
+REGISTER_UNIT_TEST( test_start_pointer_is_the_frame_source );
+REGISTER_UNIT_TEST( test_ordered_no_allocation_after_create );
+REGISTER_UNIT_TEST( test_rnchannel_witness_replays_ordered );

@@ -486,8 +486,14 @@ bool rocketnet_config_apply_env_uint64( const char * transport_name, const char 
         return false;
     }
 
-    const char * value = rocketnet_platform_getenv( env_name );
-    if ( !value || value[0] == '\0' )
+    char value[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
+    const int found = rocketnet_platform_getenv( env_name, value, sizeof(value) );
+    if ( found < 0 )
+    {
+        rocketnet_error( "%s config could not parse %s as an unsigned 64 bit integer: longer than %d characters", transport_name, env_name, (int) sizeof(value) - 1 );
+        return false;
+    }
+    if ( found == 0 || value[0] == '\0' )
         return true;
 
     if ( !rocketnet_config_parse_uint64( value, out ) )
@@ -511,6 +517,103 @@ void (*rocketnet_config_decode_staging_hook)( const uint8_t * staging, int bytes
 #define ROCKETNET_CONFIG_DECODE_STAGING_SEEN( staging, bytes ) do {} while ( 0 )
 #endif
 
+// One field's env value, set and non-empty in value. The caller wipes value
+// afterwards, on every exit, since a secret field's value is a secret.
+static bool rocketnet_config_apply_env_value( const char * transport_name, void * config, const struct rocketnet_config_field_t * field,
+                                              const char * env_name, const char * value )
+{
+    const bool secret = ( field->flags & ROCKETNET_CONFIG_SECRET ) != 0;
+
+    char displaced[192];
+    if ( secret )
+        snprintf( displaced, sizeof(displaced), "(redacted)" );
+    else
+        rocketnet_config_field_to_string( config, field, displaced, sizeof(displaced) );
+
+    uint8_t * base = (uint8_t*) config + field->offset;
+
+    switch ( field->kind )
+    {
+        case ROCKETNET_CONFIG_KIND_INT:
+        {
+            int parsed;
+            if ( !rocketnet_config_parse_int( value, &parsed ) )
+            {
+                // the failing value is never echoed for a secret field
+                // -- a mistyped secret is still a secret
+                rocketnet_error( "%s config could not parse %s=\"%s\" as an integer", transport_name, env_name, secret ? "(redacted)" : value );
+                return false;
+            }
+            memcpy( base, &parsed, sizeof(parsed) );
+        }
+        break;
+
+        case ROCKETNET_CONFIG_KIND_UINT64:
+        {
+            uint64_t parsed;
+            if ( !rocketnet_config_parse_uint64( value, &parsed ) )
+            {
+                rocketnet_error( "%s config could not parse %s=\"%s\" as an unsigned 64 bit integer", transport_name, env_name, secret ? "(redacted)" : value );
+                return false;
+            }
+            memcpy( base, &parsed, sizeof(parsed) );
+        }
+        break;
+
+        case ROCKETNET_CONFIG_KIND_BYTES:
+        {
+            uint8_t decoded[256];
+            if ( field->size > (int) sizeof(decoded) )
+            {
+                // a real check, not an assert compiled out of release:
+                // a table field wider than the decode staging refuses
+                // rather than truncating
+                rocketnet_error( "%s config field \"%s\" is wider than the decode staging (%d > %d)", transport_name, field->name, field->size, (int) sizeof(decoded) );
+                return false;
+            }
+            const int decoded_bytes = rocketnet_base64_decode_data( value, decoded, (size_t) field->size );
+            const bool decoded_whole = decoded_bytes == field->size;
+            if ( decoded_whole )
+                memcpy( base, decoded, (size_t) field->size );
+            // the staging holds the decoded bytes, a secret key's among
+            // them, on the parse and on a refused decode alike: wiped
+            // before either exit
+            sodium_memzero( decoded, sizeof(decoded) );
+            ROCKETNET_CONFIG_DECODE_STAGING_SEEN( decoded, field->size );
+            if ( !decoded_whole )
+            {
+                rocketnet_error( "%s config could not parse %s as base64 of exactly %d bytes", transport_name, env_name, field->size );
+                return false;
+            }
+        }
+        break;
+
+        case ROCKETNET_CONFIG_KIND_STRING:
+        {
+            if ( (int) strlen( value ) >= field->size )
+            {
+                rocketnet_error( "%s config %s value is too long (%d character maximum)", transport_name, env_name, field->size - 1 );
+                return false;
+            }
+            snprintf( (char*) base, (size_t) field->size, "%s", value );
+        }
+        break;
+
+        default:
+        {
+            rocketnet_error( "%s config field \"%s\" has an unknown kind %d", transport_name, field->name, field->kind );
+            return false;
+        }
+    }
+
+    // the override, logged loudly with what it displaced: the audit
+    // trail that keeps the default < struct < env layering honest
+
+    rocketnet_info( "%s config override %s=%s (displaces %s)", transport_name, env_name, secret ? "(redacted)" : value, displaced );
+
+    return true;
+}
+
 bool rocketnet_config_apply_env( const char * transport_name, void * config, const struct rocketnet_config_field_t * fields, int num_fields )
 {
     rocketnet_assert( transport_name );
@@ -530,9 +633,16 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
             return false;
         }
 
-        const char * value = rocketnet_platform_getenv( env_name );
-        if ( !value )
+        char value[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
+        const int found = rocketnet_platform_getenv( env_name, value, sizeof(value) );
+        if ( found == 0 )
             continue;
+
+        if ( found < 0 )
+        {
+            rocketnet_error( "%s config %s value is too long (%d character maximum)", transport_name, env_name, (int) sizeof(value) - 1 );
+            return false;
+        }
 
         if ( value[0] == '\0' )
         {
@@ -540,94 +650,10 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
             continue;
         }
 
-        const bool secret = ( field->flags & ROCKETNET_CONFIG_SECRET ) != 0;
-
-        char displaced[192];
-        if ( secret )
-            snprintf( displaced, sizeof(displaced), "(redacted)" );
-        else
-            rocketnet_config_field_to_string( config, field, displaced, sizeof(displaced) );
-
-        uint8_t * base = (uint8_t*) config + field->offset;
-
-        switch ( field->kind )
-        {
-            case ROCKETNET_CONFIG_KIND_INT:
-            {
-                int parsed;
-                if ( !rocketnet_config_parse_int( value, &parsed ) )
-                {
-                    // the failing value is never echoed for a secret field
-                    // -- a mistyped secret is still a secret
-                    rocketnet_error( "%s config could not parse %s=\"%s\" as an integer", transport_name, env_name, secret ? "(redacted)" : value );
-                    return false;
-                }
-                memcpy( base, &parsed, sizeof(parsed) );
-            }
-            break;
-
-            case ROCKETNET_CONFIG_KIND_UINT64:
-            {
-                uint64_t parsed;
-                if ( !rocketnet_config_parse_uint64( value, &parsed ) )
-                {
-                    rocketnet_error( "%s config could not parse %s=\"%s\" as an unsigned 64 bit integer", transport_name, env_name, secret ? "(redacted)" : value );
-                    return false;
-                }
-                memcpy( base, &parsed, sizeof(parsed) );
-            }
-            break;
-
-            case ROCKETNET_CONFIG_KIND_BYTES:
-            {
-                uint8_t decoded[256];
-                if ( field->size > (int) sizeof(decoded) )
-                {
-                    // a real check, not an assert compiled out of release:
-                    // a table field wider than the decode staging refuses
-                    // rather than truncating
-                    rocketnet_error( "%s config field \"%s\" is wider than the decode staging (%d > %d)", transport_name, field->name, field->size, (int) sizeof(decoded) );
-                    return false;
-                }
-                const int decoded_bytes = rocketnet_base64_decode_data( value, decoded, (size_t) field->size );
-                const bool decoded_whole = decoded_bytes == field->size;
-                if ( decoded_whole )
-                    memcpy( base, decoded, (size_t) field->size );
-                // the staging holds the decoded bytes, a secret key's among
-                // them, on the parse and on a refused decode alike: wiped
-                // before either exit
-                sodium_memzero( decoded, sizeof(decoded) );
-                ROCKETNET_CONFIG_DECODE_STAGING_SEEN( decoded, field->size );
-                if ( !decoded_whole )
-                {
-                    rocketnet_error( "%s config could not parse %s as base64 of exactly %d bytes", transport_name, env_name, field->size );
-                    return false;
-                }
-            }
-            break;
-
-            case ROCKETNET_CONFIG_KIND_STRING:
-            {
-                if ( (int) strlen( value ) >= field->size )
-                {
-                    rocketnet_error( "%s config %s value is too long (%d character maximum)", transport_name, env_name, field->size - 1 );
-                    return false;
-                }
-                snprintf( (char*) base, (size_t) field->size, "%s", value );
-            }
-            break;
-
-            default:
-            {
-                rocketnet_error( "%s config field \"%s\" has an unknown kind %d", transport_name, field->name, field->kind );
-                return false;
-            }
-        }
-
-        // the override, logged loudly with what it displaced: the audit
-        // trail that keeps the default < struct < env layering honest
-
-        rocketnet_info( "%s config override %s=%s (displaces %s)", transport_name, env_name, secret ? "(redacted)" : value, displaced );
+        const bool applied = rocketnet_config_apply_env_value( transport_name, config, field, env_name, value );
+        sodium_memzero( value, sizeof(value) );
+        if ( !applied )
+            return false;
     }
 
     return true;

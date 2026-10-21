@@ -38,7 +38,7 @@ WILDCARD_ALLOWED = {
      'rocketnet_check( rocketnet_address_parse( &bind_address, "[::]:0" ) );'):
         "rio dual-stack case (Windows): ipv4 and ipv6 peers of the ipv6 wildcard",
     ("functional/rocketnet_functional_tests.cpp",
-     'rocketnet_test_server_gso_wire_exchange( "test_server_gso_wire_dual_stack", "[::]", "127.0.0.1", "127.0.0.1", 0, 1 );'):
+     'rocketnet_test_server_gso_wire_exchange( "test_gso_transport_server_wire_dual_stack", "[::]", "127.0.0.1", "127.0.0.1", 0, 1 );'):
         "gso dual-stack case (Linux): an ipv4 peer of the ipv6 wildcard",
     ("functional/rocketnet_functional_tests.cpp",
      'rocketnet_test_server_uring_wire_exchange( "[::]", "127.0.0.1", "127.0.0.1", 1 );'):

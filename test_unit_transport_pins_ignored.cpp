@@ -9,6 +9,7 @@
 // and expects CONNECTED. The environment it changed is restored on exit.
 
 #include "test_unit_registry.h"
+#include "test/portable_crt.h"
 
 #include "sdk/rocketnet.h"
 #include "rocketnet_internal.h"
@@ -46,18 +47,12 @@ static double pins_ignored_time_callback( void * )
     return pins_ignored_clock;
 }
 
-static void unit_transport_pins_ignored()
+static void test_unit_transport_pins_ignored()
 {
     char saved_server[64] = "";
     char saved_client[64] = "";
-    const char * orig_server = getenv( "ROCKETNET_SERVER_TRANSPORT" );
-    const char * orig_client = getenv( "ROCKETNET_CLIENT_TRANSPORT" );
-    const bool had_server = orig_server != NULL;
-    const bool had_client = orig_client != NULL;
-    if ( had_server )
-        snprintf( saved_server, sizeof( saved_server ), "%s", orig_server );
-    if ( had_client )
-        snprintf( saved_client, sizeof( saved_client ), "%s", orig_client );
+    const bool had_server = rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", saved_server, sizeof( saved_server ) ) != 0;
+    const bool had_client = rocketnet_test_getenv( "ROCKETNET_CLIENT_TRANSPORT", saved_client, sizeof( saved_client ) ) != 0;
 
     pins_set( "ROCKETNET_SERVER_TRANSPORT", "io_uring" );
     pins_set( "ROCKETNET_CLIENT_TRANSPORT", "io_uring" );
@@ -137,7 +132,7 @@ static void unit_transport_pins_ignored()
     else
         pins_clear( "ROCKETNET_CLIENT_TRANSPORT" );
 
-    printf( "unit_transport_pins_ignored\n" );
+    printf( "test_unit_transport_pins_ignored\n" );
 }
 
-REGISTER_UNIT_TEST( unit_transport_pins_ignored );
+REGISTER_UNIT_TEST( test_unit_transport_pins_ignored );

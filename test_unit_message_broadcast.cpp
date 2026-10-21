@@ -466,7 +466,7 @@ static void mb_fill( uint8_t * data, int bytes, uint32_t id )
 // the queued slot count
 // ---------------------------------------------------------------------------
 
-static void message_server_broadcast_reaches_every_connected()
+static void test_message_server_broadcast_reaches_every_connected()
 {
     mb_pair_t pair;
     mb_pair_setup( &pair, 3 );
@@ -502,7 +502,7 @@ static void message_server_broadcast_reaches_every_connected()
 // counted; the return value names how many slots were queued
 // ---------------------------------------------------------------------------
 
-static void message_server_broadcast_skips_free_and_exhausted()
+static void test_message_server_broadcast_skips_free_and_exhausted()
 {
     rocketnet_message_config_t config;
     mb_small_config( &config );
@@ -557,8 +557,8 @@ static void message_server_broadcast_skips_free_and_exhausted()
     mb_pair_teardown( &pair );
 }
 
-REGISTER_UNIT_TEST( message_server_broadcast_reaches_every_connected );
-REGISTER_UNIT_TEST( message_server_broadcast_skips_free_and_exhausted );
+REGISTER_UNIT_TEST( test_message_server_broadcast_reaches_every_connected );
+REGISTER_UNIT_TEST( test_message_server_broadcast_skips_free_and_exhausted );
 
 // ---------------------------------------------------------------------------
 // The counted allocator, as test_unit_message_objects.cpp carries its mo_*
@@ -588,7 +588,7 @@ static void mcr_free( void * context, void * p )
 // rocketnet_message_client_create).
 // ---------------------------------------------------------------------------
 
-static void message_client_create_refuses_budget_and_config()
+static void test_message_client_create_refuses_budget_and_config()
 {
     rocketnet_term();
     check( rocketnet_allocator( mcr_malloc, mcr_free ) == ROCKETNET_STATUS_OK );
@@ -626,7 +626,7 @@ static void message_client_create_refuses_budget_and_config()
 // rocketnet_message_server_create).
 // ---------------------------------------------------------------------------
 
-static void message_server_create_refuses_budget_and_config()
+static void test_message_server_create_refuses_budget_and_config()
 {
     rocketnet_term();
     check( rocketnet_allocator( mcr_malloc, mcr_free ) == ROCKETNET_STATUS_OK );
@@ -651,5 +651,5 @@ static void message_server_create_refuses_budget_and_config()
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
-REGISTER_UNIT_TEST( message_client_create_refuses_budget_and_config );
-REGISTER_UNIT_TEST( message_server_create_refuses_budget_and_config );
+REGISTER_UNIT_TEST( test_message_client_create_refuses_budget_and_config );
+REGISTER_UNIT_TEST( test_message_server_create_refuses_budget_and_config );

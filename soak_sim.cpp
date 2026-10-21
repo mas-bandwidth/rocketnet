@@ -68,6 +68,7 @@
 #include "rocketnet_ack.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_test_vectors.h"
+#include "test/portable_crt.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -380,16 +381,16 @@ int main( int argc, char ** argv )
 
     // the profile, and its negative control
 
-    const char * profile_string = getenv( "ROCKETNET_SOAK_SIM_PROFILE" );
-    if ( profile_string && profile_string[0] == '1' )
+    char profile_string[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_SOAK_SIM_PROFILE", profile_string, sizeof( profile_string ) ) && profile_string[0] == '1' )
     {
         soak_profile_enabled = 1;
         soak_profile_calibrate();
         printf( "soak_sim: wall-clock attribution ENABLED\n" );
     }
 
-    const char * accounting_fault_string = getenv( "ROCKETNET_SOAK_SIM_FAULT_ACCOUNTING" );
-    if ( accounting_fault_string && accounting_fault_string[0] == '1' )
+    char accounting_fault_string[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_SOAK_SIM_FAULT_ACCOUNTING", accounting_fault_string, sizeof( accounting_fault_string ) ) && accounting_fault_string[0] == '1' )
     {
         soak_profile_double_charge = 1;
         printf( "soak_sim: accounting fault ARMED -- the profile must refuse itself\n" );
@@ -482,9 +483,10 @@ int main( int argc, char ** argv )
     // every night, an A/B wants the same one twice. a pinned seed is echoed,
     // so a run's own output says which wire it ran on.
 
-    const char * seed_string = getenv( "ROCKETNET_SOAK_SIM_SEED" );
-    const uint64_t simulator_seed = seed_string ? strtoull( seed_string, NULL, 10 ) : rocketnet_random_uint64();
-    if ( seed_string )
+    char seed_string[256];
+    const int seed_pinned = rocketnet_test_getenv( "ROCKETNET_SOAK_SIM_SEED", seed_string, sizeof( seed_string ) );
+    const uint64_t simulator_seed = seed_pinned ? strtoull( seed_string, NULL, 10 ) : rocketnet_random_uint64();
+    if ( seed_pinned )
         printf( "soak_sim: simulator seed pinned to %llu\n", (unsigned long long) simulator_seed );
 
     struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, 4096, simulator_seed );
@@ -495,15 +497,15 @@ int main( int argc, char ** argv )
     // receive and aborts on divergence. the fault arms a deliberate index
     // corruption so the audit can be WATCHED failing rather than assumed to.
 
-    const char * audit_string = getenv( "ROCKETNET_SOAK_SIM_AUDIT" );
-    if ( audit_string && audit_string[0] == '1' )
+    char audit_string[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_SOAK_SIM_AUDIT", audit_string, sizeof( audit_string ) ) && audit_string[0] == '1' )
     {
         rocketnet_network_simulator_audit( simulator, 1 );
         printf( "soak_sim: simulator receive audit ENABLED (slow -- proof mode, not soak mode)\n" );
     }
 
-    const char * index_fault_string = getenv( "ROCKETNET_SOAK_SIM_FAULT_INDEX" );
-    const uint64_t index_fault_iteration = index_fault_string ? strtoull( index_fault_string, NULL, 10 ) : 0;
+    char index_fault_string[256];
+    const uint64_t index_fault_iteration = rocketnet_test_getenv( "ROCKETNET_SOAK_SIM_FAULT_INDEX", index_fault_string, sizeof( index_fault_string ) ) ? strtoull( index_fault_string, NULL, 10 ) : 0;
     if ( index_fault_iteration )
         printf( "soak_sim: simulator index fault ARMED for iteration %llu -- the audit must go red\n",
                 (unsigned long long) index_fault_iteration );

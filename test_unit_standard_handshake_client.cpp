@@ -271,10 +271,10 @@ static int standard_handshake_client_generate( const char * id, uint8_t * out, i
     return written;
 }
 
-static void standard_handshake_client_vectors()
+static void test_standard_handshake_client_vectors()
 {
     const int count = (int) ( sizeof( standard_handshake_client_table ) / sizeof( standard_handshake_client_table[0] ) );
     rocketnet_unit_check( rn_standard_vectors_walk( standard_handshake_client_table, count, standard_handshake_client_generate ) == 1 );
 }
 
-REGISTER_UNIT_TEST( standard_handshake_client_vectors );
+REGISTER_UNIT_TEST( test_standard_handshake_client_vectors );

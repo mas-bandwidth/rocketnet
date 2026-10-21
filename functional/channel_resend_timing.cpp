@@ -2,7 +2,7 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    resend_timing_table_over_lossy_links: the measured latency and cost of the
+    test_resend_timing_table_over_lossy_links: the measured latency and cost of the
     reliable resend rule (docs/CHANNELS.md 6.4; tla/RNResendTiming.tla) over
     the channel harness. For each RTT (20, 50, 100 and 200 ms; harness
     latency RTT/2 each way, jitter a tenth of that) and loss (10% and 20%,
@@ -297,7 +297,7 @@ void resend_timing_table_over_lossy_links()
             for ( int l = 0; l < 2; l++ )
                 resend_timing_run( s == 0 ? "rule" : "fixed", s, rtts[r], losses[l], &rows[s][r][l] );
 
-    printf( "resend_timing_table_over_lossy_links: %d reliable %d-byte messages per row, one per 60 Hz update\n",
+    printf( "test_resend_timing_table_over_lossy_links: %d reliable %d-byte messages per row, one per 60 Hz update\n",
             RESEND_TIMING_MESSAGES, RESEND_TIMING_BYTES );
     printf( "schedule rtt_ms loss_pct p50_ms p99_ms p999_ms copies timeouts model_p99_ms resends gap_min_ms gap_max_ms early_min_ms late_max_ms max_sends ceiling_slack_ms\n" );
     for ( int s = 0; s < 2; s++ )
@@ -334,7 +334,7 @@ void resend_timing_table_over_lossy_links()
 }
 
 /*
-    block_resend_cost_over_long_path: the bandwidth a resend policy spends per
+    test_block_resend_cost_over_long_path: the bandwidth a resend policy spends per
     useful byte for a large block (docs/CHANNELS.md 6.4 "Resend" and "The
     cost"; tla/RNResendTiming.tla Delay("c")). The client sends one 256 KiB
     reliable-ordered block over a 200 ms path (harness latency 100 ms each
@@ -532,7 +532,7 @@ void block_resend_cost_over_long_path()
     block_cost_run( "cap100", 1, 0, 0, &rows[3] );
     block_cost_run( "resend_delay+small", 0, 1, 1, &rows[4] );
 
-    printf( "block_resend_cost_over_long_path: one %d-byte reliable-ordered block, rtt 200 ms, 10%% loss, 60 Hz\n", BLOCK_COST_BYTES );
+    printf( "test_block_resend_cost_over_long_path: one %d-byte reliable-ordered block, rtt 200 ms, 10%% loss, 60 Hz\n", BLOCK_COST_BYTES );
     printf( "schedule  sender delivered completion_s wire_per_payload_byte copies_per_record small_sent small_p99_ms small_held\n" );
     for ( int s = 0; s < 5; s++ )
         printf( "%-9s %6s %9d %12.3f %21.3f %17.2f %10d %12.1f %10d\n", rows[s].schedule, rows[s].sender, rows[s].delivered, rows[s].completion_s,

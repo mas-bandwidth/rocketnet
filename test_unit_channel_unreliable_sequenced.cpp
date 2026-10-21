@@ -38,7 +38,7 @@ static void sequenced_record( rocketnet_message_record_t * record, int code, uin
     record->bytes = 1;
 }
 
-static void older_dropped_newest_delivered()
+static void test_older_dropped_newest_delivered()
 {
     rn_region_t * region = sequenced_region();
     rocketnet_unit_check( region != NULL );
@@ -59,7 +59,7 @@ static void older_dropped_newest_delivered()
     rn_region_reset( region );
 }
 
-static void watermark_resets_on_ordered_delivery()
+static void test_watermark_resets_on_ordered_delivery()
 {
     rn_region_t * region = sequenced_region();
     rocketnet_unit_check( region != NULL );
@@ -79,7 +79,7 @@ static void watermark_resets_on_ordered_delivery()
     rn_region_reset( region );
 }
 
-static void held_newest_ahead_of_epoch()
+static void test_held_newest_ahead_of_epoch()
 {
     rn_region_t * region = sequenced_region();
     rocketnet_unit_check( region != NULL );
@@ -102,7 +102,7 @@ static void held_newest_ahead_of_epoch()
     rn_region_reset( region );
 }
 
-static void reliable_sequenced_uses_shared_watermark()
+static void test_reliable_sequenced_uses_shared_watermark()
 {
     rn_region_t * region = sequenced_region();
     rocketnet_unit_check( region != NULL );
@@ -122,7 +122,7 @@ static void reliable_sequenced_uses_shared_watermark()
     rn_region_reset( region );
 }
 
-static void hold_full_drops_and_counts()
+static void test_hold_full_drops_and_counts()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
@@ -145,7 +145,7 @@ static void hold_full_drops_and_counts()
     rn_arena_destroy( arena );
 }
 
-static void large_future_state_drops_without_violation()
+static void test_large_future_state_drops_without_violation()
 {
     rn_region_t * region = sequenced_region();
     rocketnet_unit_check( region != NULL );
@@ -174,7 +174,7 @@ static void large_future_state_drops_without_violation()
     rn_region_reset( region );
 }
 
-static void never_takes_a_reliable_number()
+static void test_never_takes_a_reliable_number()
 {
     // The public C API's start/finish accepts code 1 while the per-channel
     // queue and reliable number state stay independent (RNChannelTypes!Enqueue).
@@ -226,7 +226,7 @@ static void sequenced_large_send_packets( void * )
 {
 }
 
-static void large_state_promotes_to_reliable_sequenced()
+static void test_large_state_promotes_to_reliable_sequenced()
 {
     rn_message_link_t link = {};
     link.max_payload_bytes = sequenced_large_max_payload;
@@ -252,13 +252,13 @@ static void large_state_promotes_to_reliable_sequenced()
     rn_message_object_destroy( object );
 }
 
-static void rnchannel_sequenced_witness_replays()
+static void test_rnchannel_sequenced_witness_replays()
 {
     // The reversed traces in README-RNChannelTypes: reject backwards state,
     // reset the watermark on the ordered drain, and keep one future state.
-    older_dropped_newest_delivered();
-    watermark_resets_on_ordered_delivery();
-    held_newest_ahead_of_epoch();
+    test_older_dropped_newest_delivered();
+    test_watermark_resets_on_ordered_delivery();
+    test_held_newest_ahead_of_epoch();
 }
 
 static uint64_t sequenced_allocations;
@@ -277,7 +277,7 @@ static void sequenced_counting_free( void * context, void * memory )
     free( memory );
 }
 
-static void sequenced_no_allocation_after_create()
+static void test_sequenced_no_allocation_after_create()
 {
     rocketnet_term();
     rocketnet_unit_check( rocketnet_allocator( sequenced_counting_malloc, sequenced_counting_free ) == ROCKETNET_STATUS_OK );
@@ -303,13 +303,13 @@ static void sequenced_no_allocation_after_create()
     rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
-REGISTER_UNIT_TEST( older_dropped_newest_delivered );
-REGISTER_UNIT_TEST( watermark_resets_on_ordered_delivery );
-REGISTER_UNIT_TEST( held_newest_ahead_of_epoch );
-REGISTER_UNIT_TEST( reliable_sequenced_uses_shared_watermark );
-REGISTER_UNIT_TEST( hold_full_drops_and_counts );
-REGISTER_UNIT_TEST( large_future_state_drops_without_violation );
-REGISTER_UNIT_TEST( never_takes_a_reliable_number );
-REGISTER_UNIT_TEST( large_state_promotes_to_reliable_sequenced );
-REGISTER_UNIT_TEST( rnchannel_sequenced_witness_replays );
-REGISTER_UNIT_TEST( sequenced_no_allocation_after_create );
+REGISTER_UNIT_TEST( test_older_dropped_newest_delivered );
+REGISTER_UNIT_TEST( test_watermark_resets_on_ordered_delivery );
+REGISTER_UNIT_TEST( test_held_newest_ahead_of_epoch );
+REGISTER_UNIT_TEST( test_reliable_sequenced_uses_shared_watermark );
+REGISTER_UNIT_TEST( test_hold_full_drops_and_counts );
+REGISTER_UNIT_TEST( test_large_future_state_drops_without_violation );
+REGISTER_UNIT_TEST( test_never_takes_a_reliable_number );
+REGISTER_UNIT_TEST( test_large_state_promotes_to_reliable_sequenced );
+REGISTER_UNIT_TEST( test_rnchannel_sequenced_witness_replays );
+REGISTER_UNIT_TEST( test_sequenced_no_allocation_after_create );

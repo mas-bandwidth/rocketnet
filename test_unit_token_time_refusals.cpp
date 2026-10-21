@@ -174,7 +174,7 @@ static void token_time_accept( struct token_time_server_t * t, uint64_t create, 
                                  { ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE, 1 } } );
 }
 
-static void token_time_refusals_are_distinct()
+static void test_token_time_refusals_are_distinct()
 {
     struct token_time_server_t t;
     token_time_setup( &t );
@@ -206,7 +206,7 @@ static void token_time_refusals_are_distinct()
 // the accepted side of each boundary as its own check: the request is answered
 // with a cookie, so it is not ignored and no token-time refusal counter moves
 
-static void token_expiring_one_second_ahead_is_accepted()
+static void test_token_expiring_one_second_ahead_is_accepted()
 {
     struct token_time_server_t t;
     token_time_setup( &t );
@@ -214,7 +214,7 @@ static void token_expiring_one_second_ahead_is_accepted()
     token_time_teardown( &t );
 }
 
-static void token_created_at_the_skew_limit_is_accepted()
+static void test_token_created_at_the_skew_limit_is_accepted()
 {
     struct token_time_server_t t;
     token_time_setup( &t );
@@ -222,7 +222,7 @@ static void token_created_at_the_skew_limit_is_accepted()
     token_time_teardown( &t );
 }
 
-static void token_lifetime_at_the_maximum_is_accepted()
+static void test_token_lifetime_at_the_maximum_is_accepted()
 {
     struct token_time_server_t t;
     token_time_setup( &t );
@@ -230,7 +230,7 @@ static void token_lifetime_at_the_maximum_is_accepted()
     token_time_teardown( &t );
 }
 
-REGISTER_UNIT_TEST( token_time_refusals_are_distinct );
-REGISTER_UNIT_TEST( token_expiring_one_second_ahead_is_accepted );
-REGISTER_UNIT_TEST( token_created_at_the_skew_limit_is_accepted );
-REGISTER_UNIT_TEST( token_lifetime_at_the_maximum_is_accepted );
+REGISTER_UNIT_TEST( test_token_time_refusals_are_distinct );
+REGISTER_UNIT_TEST( test_token_expiring_one_second_ahead_is_accepted );
+REGISTER_UNIT_TEST( test_token_created_at_the_skew_limit_is_accepted );
+REGISTER_UNIT_TEST( test_token_lifetime_at_the_maximum_is_accepted );

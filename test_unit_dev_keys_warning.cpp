@@ -137,7 +137,7 @@ static int test_unset_environment( const char * name )
 #endif
 }
 
-static void dev_keys_warn_on_every_start()
+static void test_dev_keys_warn_on_every_start()
 {
     // the server, development keys: a warning on create, and in a release
     // build (the unit suite's build) the published keys are refused.
@@ -149,7 +149,7 @@ static void dev_keys_warn_on_every_start()
     {
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_dev_config( &config );
-        strcpy( config.transport, "loopback" );
+        snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
         int status = -1;
         start_capture();
         void * srv = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status );
@@ -201,4 +201,4 @@ static void dev_keys_warn_on_every_start()
     }
 }
 
-REGISTER_UNIT_TEST( dev_keys_warn_on_every_start );
+REGISTER_UNIT_TEST( test_dev_keys_warn_on_every_start );

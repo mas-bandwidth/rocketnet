@@ -40,7 +40,7 @@ static void api_polish_followups_assert( const char * condition, const char * fu
     api_polish_followups_asserts++;
 }
 
-static void api_polish_followups()
+static void test_api_polish_followups()
 {
     // rocketnet_quiet suppresses and resumes the one log sink
     const enum rocketnet_log_level_t saved = rocketnet_log_level_current();
@@ -77,4 +77,4 @@ static void api_polish_followups()
     check( rn_assert_function == original );
     check( api_polish_followups_asserts == 0 );
 }
-REGISTER_UNIT_TEST( api_polish_followups );
+REGISTER_UNIT_TEST( test_api_polish_followups );

@@ -1,281 +1,214 @@
-; RocketNet v1.0.0 testing data. TESTING.md is rendered from this file by
-; tools/roadmap/render.py (make testing); make testing-check fails when the
-; committed page is not what this renders. The shapes are the roadmap's
-; (docs/roadmap.sexp), with the platform columns in the order Windows, macOS,
-; Linux and the transport columns in the order the automatic ladder ranks them.
+; RocketNet v1.0.0-preview-1 testing plan. TESTING.md is rendered from this
+; file by tools/roadmap/render.py (make testing); make testing-check fails when
+; the committed page is not what this renders. This file is the whole plan:
+; every test RocketNet runs for v1.0.0-preview-1, and the long runs that come
+; with the final deliverable, so none of them is lost.
 ;
-; Four tables. "Tests per platform" holds the tests that apply to every
+; Five tables. "Tests per platform" holds the tests that apply to every
 ; platform, and "Platform-specific tests" each test that applies to only some,
 ; one row per platform it applies to. "Tests per transport" holds the tests
 ; that apply to every transport, and "Transport-specific tests" each test that
-; applies to only some, one row per transport. :all-cells-apply refuses a -
-; cell, so no table shows a dash. :tables-only prints only the headings, a
-; line of source links under each, and the tables: the :text, :pending and
-; :owed text below stays here as the data behind each cell. A transport that builds on more than one
-; platform (portable, loopback) is y only when its card or CI shows it green
-; on every platform it builds on; its note names the platforms still open.
+; applies to only some, one row per transport. "Release-wide tests" holds the
+; tests that are neither per platform nor per transport (model checks, proofs,
+; reviews). :all-cells-apply refuses a - cell, so no table shows a dash.
+; :tables-only prints only the headings, a line of source links under each,
+; and the tables. :rows-name-source makes every row carry :source, the file
+; that owns the test; the :source, :evidence and :pending text stays here as
+; the data behind each cell.
 ;
-; A cell is y only when the test has landed on sprint/rocketnet-proof and the
-; card that landed it, or a CI run on that branch, shows it green there. Work
-; in progress and cards not yet landed are n, and :pending names the card and
-; its column (working, review, waiting, ready). A test with no card at all is
-; n, marked "no card". A run that the two-minute rule defers until every
-; feature and bug has landed (soak, load, repeat and 1000-client runs) is o,
-; shown as OWED, with the card that runs it in its note.
+; Status, per cell:
+;   y  ✅  green at this release: a landed commit that ran it (in :evidence),
+;          or a CI run.
+;   n  ❌  red, or not yet green, at this release; :pending says why.
+;   o      a long run (soak, load, repeat, 1000 clients) that comes with the
+;          final deliverable; shown as "planned for the final deliverable".
+;   p      a test with no green run yet that comes with the final deliverable;
+;          shown the same way.
+; A transport that builds on more than one platform (portable, loopback) is y
+; only when it is green on every platform it builds on.
 ;
-; The per-commit CI (ci.yml) runs on pull requests and on a dispatch; the
-; scheduled nightlies run only on main, which is far behind this branch, so
-; no nightly has run on this branch's code as scheduled. A Linux cell for CI
-; or a nightly comes from the cards that ran those jobs' steps by hand.
-;
-; Recorded 2026-10-20 at sprint/rocketnet-proof ac4cae3c20550ee4315c0f9ee3e9f95915a8fe9f.
-(:title "RocketNet v1.0.0 testing"
+; Recorded 2026-10-20 for v1.0.0-preview-1 at 330e951e. CI run 39514217665 at
+; 330e951e: the Linux ASan and UBSan unit job passes; the Linux Debug and
+; Release legs stop before their suites, at the floating-point floor check;
+; the Windows build is red (two Windows functional files call a name the
+; transport rename removed); the macOS legs had not run when this was recorded.
+(:title "RocketNet v1.0.0-preview-1 testing"
  :all-cells-apply t
  :tables-only t
- :owed "the run is longer than two minutes, and such runs (soak, load, repeat and 1000-client) wait until every feature and bug has landed. OWED is neither a pass nor a fail; the note names the card that runs it."
- :text ("Every test RocketNet runs for v1.0.0, by platform and by transport. ✅ is landed on the release branch and shown green by its card or by CI; ❌ is not yet: in progress, not landed, or not carded; OWED is a long run deferred until every feature has landed. Each table's complete row is the share of ✅ among that table's own cells. Under each table, every ❌ and OWED names the card behind it, or no card.")
+ :rows-name-source t
+ :owed "a long run (soak, load, repeat, 1000 clients) that comes with the final deliverable."
+ :text ("Every test RocketNet runs for v1.0.0-preview-1, and the long runs that come with the final deliverable, by platform, by transport and release-wide. ✅ is green at this release; ❌ is red, or not yet green, at this release; planned for the final deliverable is a run that comes with the final deliverable. Each table's complete row is the share of ✅ among that table's own cells.")
  :areas
- ((:id "platforms" :title "Tests per platform"
+ ((:id "platforms"
+   :title "Tests per platform"
    :text "The tests that apply to every platform: one row per test, one column per platform."
    :label "test"
    :columns ("Windows" "macOS" "Linux")
    :rows
-   ((:feature "Unit suite (./bin/test)" :cells (y y y)
-     :evidence "Windows: test.exe Release green on the Windows member, rocketnet-transport-create-reports-out-of-memory b3162561; macOS and Linux: ./bin/test green Debug and Release, rocketnet-transport-create-reports-out-of-memory b3162561")
-    (:feature "Functional suite (./bin/functional)" :cells (y y y)
-     :evidence "Windows: functional.exe Release green, rocketnet-functional-builds-on-windows 85a98401, 10 of 10 runs in rocketnet-functional-tokens-use-the-test-clock d59e30de; macOS: ./bin/functional green, rocketnet-macos-client-timing-under-app-nap a2c4ac1f and rocketnet-macos-msgx-forced-portable-client-creates bb1521ab; Linux: ./bin/functional green Debug with the transport unset and pinned to portable, gso and io_uring, rocketnet-linux-pinned-portable-functional-green e73c2177")
-    (:feature "Functional suite repeated, zero flakes" :cells (o o o)
-     :pending ((Windows "rocketnet-windows-suite-stable (working): 20 of 20 runs")
-               (macOS "rocketnet-macos-transport-matrix-repeat (waiting): every cell fifty times")
-               (Linux "rocketnet-linux-transport-matrix-repeat (waiting): every cell fifty times")))
-    (:feature "Sanitizers (ASan, UBSan, TSan; MSVC ASan on Windows)" :cells (y n o)
-     :evidence ((Windows "MSVC ASan, test.exe, test_lifecycle.exe, test_iocp.exe and functional.exe on the default transport, iocp and rio, zero reports, rocketnet-win-msvc-asan e2ed2a4b")
-                (Linux "ASan/UBSan CI unit and LSan unit on default and portable, plus focused fragment tests green, rocketnet-linux-sanitizers-green-at-base 1452058ca852940c2311d63a57e82cbcf262fbed"))
-     :pending ((macOS "rocketnet-macos-sanitizers-and-leaks (working)")
-               (Linux "no card: full functional ASan/UBSan, LSan and TSan matrices are OWED under the two-minute rule")))
-    (:feature "Leaks (LSan, the leaks tool, App Verifier's leak layer)" :cells (y n o)
-     :evidence ((Windows "App Verifier with the Leak layer, 0 stops on test_lifecycle, test_iocp and functional per transport, rocketnet-win-app-verifier 7457d35b")
-                (Linux "LSan unit suite on default and portable green, rocketnet-linux-sanitizers-green-at-base 1452058ca852940c2311d63a57e82cbcf262fbed"))
-     :pending ((macOS "rocketnet-macos-sanitizers-and-leaks (working)")
-               (Linux "no card: full functional LSan matrix is OWED under the two-minute rule")))
-    (:feature "libFuzzer (corpus replay and fuzz runs)" :cells (n n y)
-     :evidence "Linux: fuzz-smoke and fuzz-smoke-ndebug green, rocketnet-linux-ci-green-at-base 32c4ff08; fuzz-nightly.yml's fuzz job green with its own time budget, rocketnet-linux-nightlies-green-at-base 381203ba"
-     :pending ((Windows "rocketnet-win-libfuzzer-clang-cl (working)")
-               (macOS "rocketnet-macos-nightlies-green-at-base (review): fuzz-macos")))
-    (:feature "Lifecycle stress (init/term, create/destroy, restart, destroy under traffic)" :cells (n n y)
-     :evidence "Linux: every case 5 runs in a row, xdp in a guest, rocketnet-linux-lifecycle-stress-t 8a68c102"
-     :pending ((Windows "rocketnet-win-lifecycle-stress (working)")
-               (macOS "rocketnet-macos-lifecycle-stress-t (working): the descriptor and thread counts per case")))
-    (:feature "Hard-killed peer never stalls receive" :cells (n n n)
-     :pending ((Windows "rocketnet-windows-udp-connreset-never-stalls-receive (working)")
-               (macOS "rocketnet-macos-hard-killed-peer-never-stalls-receive (working)")
-               (Linux "rocketnet-linux-hard-killed-peer-never-stalls-receive (working)")))
-    (:feature "Socket error paths (oversize, runt, garbage, zero-length, failed sends)" :cells (n y y)
-     :evidence "macOS: rocketnet-macos-socket-errors-and-enobufs-t 7ea06926, 20 of 20; Linux: rocketnet-linux-socket-error-paths ce98ebd1, 20 of 20, xdp cells in a guest"
-     :pending ((Windows "rocketnet-win-socket-error-paths-t-t (working)")))
-    (:feature "Network thread priority" :cells (y y y)
-     :evidence "Windows, macOS and Linux: test_unit_thread_priority cases run by name in ./bin/test on each, rocketnet-network-thread-priority-as-space 92e729dd")
-    (:feature "Examples (run_examples.py)" :cells (n n n)
-     :pending ((Windows "rocketnet-example-ack-receipts-debug-assert (review): example_budgets fails at this branch since sends drop until connected")
-               (macOS "rocketnet-example-ack-receipts-debug-assert (review)")
-               (Linux "rocketnet-example-ack-receipts-debug-assert (review)")))
-    (:feature "1000 clients, load harness" :cells (o o y)
-     :evidence "Linux: ./bin/load 1000 60 passes all five criteria three times on portable, gso, gso plain and io_uring, once on xdp in a guest, rocketnet-linux-load-1000-clients 33f45ea9"
-     :pending ((Windows "rocketnet-win-load-1000-clients (waiting)")
-               (macOS "rocketnet-macos-load-1000-clients-t (working)")))
-    (:feature "1000 light clients (10 Hz, 1 packet per update)" :cells (o o o)
-     :pending ((Windows "rocketnet-load-light-profile-windows (waiting)")
-               (macOS "rocketnet-load-light-profile-macos (waiting)")
-               (Linux "rocketnet-load-light-profile-linux (working)")))
-    (:feature "Soak (30 minutes per transport under impairment)" :cells (o y o)
-     :evidence "macOS: six cells pass with flat fds and threads, rocketnet-macos-soak-per-transport df775cf1"
-     :pending ((Windows "rocketnet-win-soak-per-transport (waiting)")
-               (Linux "rocketnet-linux-soak-per-transport (working)")))
-    (:feature "Nightlies (every nightly job's steps green on this branch)" :cells (n n n)
-     :pending ((Windows "rocketnet-r1-windows-nightlies-all-run (working); rocketnet-example-ack-receipts-debug-assert (review) for the examples job; build-and-test-windows-debug ran step by step green, rocketnet-win-nightlies-on-fleet-runner f2dae0dc")
-               (macOS "rocketnet-macos-nightlies-green-at-base (review) and rocketnet-macos-nightly-soak-green-at-base (waiting)")
-               (Linux "rocketnet-linux-nightly-soak-green-at-base (working) for nightly-soak; nightly-leaks green in rocketnet-linux-sanitizers-green-at-base 1452058ca852940c2311d63a57e82cbcf262fbed; rocketnet-example-ack-receipts-debug-assert (review) for the examples job; fuzz, frame budget and channel seeds are green, rocketnet-linux-nightlies-green-at-base 381203ba")))
-    (:feature "CI (ci.yml, every step green on this branch)" :cells (n n n)
-     :pending ((Windows "rocketnet-windows-ci-green-at-base (working)")
-               (macOS "rocketnet-macos-ci-green-at-base (working)")
-               (Linux "big endian: no card; sanitizer and TSan unit checks green in rocketnet-linux-sanitizers-green-at-base 1452058ca852940c2311d63a57e82cbcf262fbed; full functional sanitizer and TSan matrices are OWED under the two-minute rule; every other Linux step is green, rocketnet-linux-ci-green-at-base 32c4ff08")))))
-  (:id "platform-specific" :title "Platform-specific tests"
+   ((:feature "Unit suite (./bin/test)" :cells (n n y) :source "test.cpp and test_unit_*.cpp (./bin/test)" :evidence "Linux: ./bin/test exits 0 at 330e951e in a Release build on Linux x86_64, and the ASan and UBSan unit job of CI run 39514217665 at 330e951e passes" :pending ((Windows "the Windows build is red at 330e951e in CI run 39514217665: functional/windows_socket_errors.cpp and functional/windows_connreset.cpp call a name the transport rename removed; being made green for v1.0.0-preview-1") (macOS "the macOS legs of CI run 39514217665 at 330e951e had not run when this was recorded; being made green for v1.0.0-preview-1")))
+    (:feature "Functional suite (./bin/functional)" :cells (n n n) :source "functional/ (./bin/functional)" :pending ((Windows "the Windows build is red at 330e951e in CI run 39514217665: functional/windows_socket_errors.cpp and functional/windows_connreset.cpp call a name the transport rename removed; being made green for v1.0.0-preview-1") (macOS "the macOS legs of CI run 39514217665 at 330e951e had not run when this was recorded; being made green for v1.0.0-preview-1") (Linux "./bin/functional exits 1 at 330e951e in a Release build on Linux x86_64, at test_transport_control.cpp:428 (num_acked == 6), and the ASan and UBSan functional job of CI run 39514217665 fails; being made green for v1.0.0-preview-1")))
+    (:feature "Functional suite repeated, zero flakes" :cells (o o o) :source "functional/ (./bin/functional, repeated)" :pending ((Windows "planned for the final deliverable: 20 of 20 runs") (macOS "planned for the final deliverable") (Linux "planned for the final deliverable")))
+    (:feature "Transport matrix, every cell fifty times" :cells (o o o) :source "tools/check_transport_matrix.py" :pending ((Windows "planned for the final deliverable") (macOS "planned for the final deliverable") (Linux "planned for the final deliverable")))
+    (:feature "Sanitizers (ASan, UBSan, TSan; MSVC ASan on Windows)" :cells (y p o) :source "ci.yml sanitizer jobs" :evidence ((Windows "MSVC ASan, test.exe, test_lifecycle.exe, test_iocp.exe and functional.exe on the default transport, iocp and rio, zero reports, landed 20e2a9a4")) :pending ((macOS "planned for the final deliverable") (Linux "planned for the final deliverable: the full functional ASan/UBSan and TSan matrices; ASan/UBSan unit and focused fragment tests are green, 1452058c")))
+    (:feature "Leaks (LSan, the leaks tool, App Verifier's leak layer)" :cells (y p o) :source "nightly-leaks.yml, tools/lsan.supp" :evidence ((Windows "App Verifier with the Leak layer, 0 stops on test_lifecycle, test_iocp and functional per transport, 7457d35b")) :pending ((macOS "planned for the final deliverable: the leaks tool") (Linux "planned for the final deliverable: the full functional LSan matrix; the LSan unit suite is green, 1452058c")))
+    (:feature "libFuzzer (corpus replay and fuzz runs; clang-cl on Windows)" :cells (p y y) :source "fuzz/, fuzz-nightly.yml" :evidence "macOS: fuzz-macos run by hand green, landed e7fba514; Linux: fuzz-smoke and fuzz-smoke-ndebug green, 32c4ff08, and fuzz-nightly.yml's fuzz job green, 381203ba" :pending ((Windows "planned for the final deliverable")))
+    (:feature "Toolchain matrix (MSVC, clang-cl and ARM64 on Windows; Xcode universal arm64 and x86_64 on macOS; gcc and clang on Linux)" :cells (y y y) :source "CMakeLists.txt" :evidence "Windows: clang-cl build passes test.exe and functional.exe, ARM64 cross build, 836cb427; macOS: both slices built, the x86_64 slice's suites under Rosetta 2, ./bin/test from the Xcode generator's build, 879d31f4; Linux: gcc and clang, Debug and Release, ./bin/test and ./bin/functional, landed b83cb5b8")
+    (:feature "Lifecycle stress (init/term, create/destroy, restart, destroy under traffic)" :cells (p y y) :source "test_lifecycle.cpp, functional/posix_lifecycle_stress.cpp" :evidence "macOS: descriptor and thread counts flat per case, landed 2773d0da; Linux: every case 5 runs in a row, xdp in a guest, 8a68c102" :pending ((Windows "planned for the final deliverable")))
+    (:feature "Hard-killed peer never stalls receive" :cells (p y p) :source "functional/posix_hard_killed_peer.cpp" :evidence "macOS: a SIGKILLed client per transport, landed 443ea520" :pending ((Windows "planned for the final deliverable") (Linux "planned for the final deliverable")))
+    (:feature "Socket error paths (oversize, runt, garbage, zero-length, failed sends)" :cells (p y y) :source "functional/posix_socket_errors.cpp" :evidence "macOS: 7ea06926, 20 of 20; Linux: ce98ebd1, 20 of 20, xdp cells in a guest" :pending ((Windows "planned for the final deliverable")))
+    (:feature "Network thread priority" :cells (y y y) :source "test_unit_thread_priority.cpp, functional/thread_priority_timing.cpp" :evidence "Windows, macOS and Linux: test_unit_thread_priority cases run by name in ./bin/test on each, 92e729dd")
+    (:feature "Examples (run_examples.py)" :cells (n n n) :source "examples/, nightly-examples.yml" :pending ((Windows "not yet run at 330e951e; example_soak is red here too") (macOS "not yet run at 330e951e; example_soak is red here too") (Linux "tools/run_examples.py at 330e951e in a Release build on Linux x86_64: nine examples pass and example_soak fails (see Example soak)")))
+    (:feature "Example soak (example_soak)" :cells (n n n) :source "examples/soak.c" :pending ((Windows "example_soak fails at the check that the server has no connected clients after the disconnect pass, Debug and Release; a known issue") (macOS "example_soak fails at the check that the server has no connected clients after the disconnect pass, Debug and Release; a known issue") (Linux "example_soak fails at the check that the server has no connected clients after the disconnect pass (examples/soak.c line 336) at 330e951e in a Release build on Linux x86_64; a known issue")))
+    (:feature "1000 clients, load harness" :cells (o o y) :source "load.c (./bin/load)" :evidence "Linux: ./bin/load 1000 60 passes all five criteria three times on portable, gso, gso plain and io_uring, once on xdp in a guest, 33f45ea9" :pending ((Windows "planned for the final deliverable") (macOS "planned for the final deliverable")))
+    (:feature "1000 light clients (10 Hz, 1 packet per update)" :cells (o o o) :source "load.c light profile" :pending ((Windows "planned for the final deliverable") (macOS "planned for the final deliverable") (Linux "planned for the final deliverable")))
+    (:feature "Soak (30 minutes per transport under impairment)" :cells (o y o) :source "soak.c, soak_sim.cpp" :evidence "macOS: six cells pass with flat fds and threads, df775cf1" :pending ((Windows "planned for the final deliverable") (Linux "planned for the final deliverable")))
+    (:feature "Main API calls under 0.1 ms each, Release, under load" :cells (p p p) :source "nightly-frame-budget.yml, tools/check_frame_budget.py (the client frame budget)" :pending ((Windows "planned for the final deliverable: every main API call timed in Release at 1000 clients") (macOS "planned for the final deliverable: every main API call timed in Release at 1000 clients") (Linux "planned for the final deliverable: every main API call timed in Release at 1000 clients")))
+    (:feature "Nightlies (every nightly job's steps green on this branch)" :cells (p o o) :source ".github/workflows/nightly*.yml, fuzz-nightly.yml" :pending ((Windows "planned for the final deliverable") (macOS "planned for the final deliverable: for nightly-soak; fuzz, examples and frame budget ran by hand in landed e7fba514") (Linux "planned for the final deliverable: for nightly-soak; fuzz, frame budget, channel seeds and leaks green, 381203ba")))
+    (:feature "CI (ci.yml, every step green on this branch)" :cells (n n n) :source ".github/workflows/ci.yml" :pending ((Windows "the Windows build is red at 330e951e in CI run 39514217665: functional/windows_socket_errors.cpp and functional/windows_connreset.cpp call a name the transport rename removed; being made green for v1.0.0-preview-1") (macOS "the macOS legs of CI run 39514217665 at 330e951e had not run when this was recorded; being made green for v1.0.0-preview-1") (Linux "in CI run 39514217665 at 330e951e the Debug and Release legs stop at the floating-point floor check, and the functional sanitizer, tsan lifecycle, conformance, platform selftest and big-endian jobs are red")))))
+  (:id "platform-specific"
+   :title "Platform-specific tests"
    :text "The tests that apply to only some platforms: one row per platform a test applies to."
    :label "test"
    :specific t
    :columns ("Windows" "macOS" "Linux")
    :rows
-   ((:feature "UDP connection reset (SIO_UDP_CONNRESET) never stalls receive" :on Windows :cell n
-     :pending "rocketnet-windows-udp-connreset-never-stalls-receive (working)")
-    (:feature "Application Verifier" :on Windows :cell y
-     :evidence "Windows: 0 verifier stops, rocketnet-win-app-verifier 7457d35b")
-    (:feature "Toolchain matrix (clang-cl and ARM64 on Windows; gcc and clang on Linux)" :on Windows :cell y
-     :evidence "Windows: clang-cl build passes test.exe and functional.exe, ARM64 cross build, rocketnet-win-toolchain-matrix 836cb427")
-    (:feature "Toolchain matrix (clang-cl and ARM64 on Windows; gcc and clang on Linux)" :on Linux :cell n
-     :pending "rocketnet-linux-toolchain-matrix (working)")
-    (:feature "App Nap and timer coalescing keep client timing" :on macOS :cell y
-     :evidence "macOS: functional/macos_client_timing.cpp, rocketnet-macos-client-timing-under-app-nap a2c4ac1f")
-    (:feature "Universal arm64 and x86_64 build, Xcode generator" :on macOS :cell y
-     :evidence "macOS: both slices built, the x86_64 slice's suites under Rosetta 2, ./bin/test from the Xcode generator's build, rocketnet-macos-universal-and-xcode-t 879d31f4")))
-  (:id "transports" :title "Tests per transport"
-   :text ("The tests that apply to every transport: one row per test, one column per transport, in the order the automatic ladder ranks them."
-          "xdp, gso and io_uring build on Linux, msgx on macOS, iocp and rio on Windows, and portable and loopback on all three; a portable or loopback cell is ✅ only when it is green on all three.")
+   ((:feature "UDP connection reset (SIO_UDP_CONNRESET) never stalls receive" :on Windows :cell n :source "test_iocp.cpp" :pending "landed as 561142df; the Windows build is red at 330e951e in CI run 39514217665: functional/windows_socket_errors.cpp and functional/windows_connreset.cpp call a name the transport rename removed; being made green for v1.0.0-preview-1")
+    (:feature "Application Verifier" :on Windows :cell y :source "the CI workflows" :evidence "Windows: 0 verifier stops, 7457d35b")
+    (:feature "App Nap and timer coalescing keep client timing" :on macOS :cell y :source "functional/macos_client_timing.cpp" :evidence "macOS: functional/macos_client_timing.cpp, a2c4ac1f")
+    (:feature "MemorySanitizer (msan.yml)" :on Linux :cell y :source ".github/workflows/msan.yml, tools/msan_known.txt" :evidence "Linux: msan.yml run 39514217624 at 330e951e passes")
+    (:feature "Big-endian system build and suites" :on Linux :cell p :source ".github/workflows/nightly-bigendian-system.yml, tools/bigendian/" :pending "planned for the final deliverable")
+    (:feature "Live XDP test (an XDP server, a client on every test machine)" :on Linux :cell p :source "docs/LIVE-XDP.md, tla/MCRNLiveFleetRun.cfg" :pending "planned for the final deliverable: after v1.0.0-preview-1")))
+  (:id "transports"
+   :title "Tests per transport"
+   :text ("The tests that apply to every transport: one row per test, one column per transport, in the order the automatic ladder ranks them." "xdp, gso and io_uring build on Linux, msgx on macOS, iocp and rio on Windows, and portable and loopback on all three; a portable or loopback cell is ✅ only when it is green on all three.")
    :label "test"
    :columns transports
    :rows
-   ((:feature "Transport family matrix (IPv4, IPv6 and dual stack, each transport pinned)"
-     :cells (y n y y n n n n)
-     :evidence "xdp: xdp_max_size_both_ways_ipv4 and _ipv6 in a guest, rocketnet-r1-ci-xdp-cell-on-libxdp-1-4 cce78fab; gso and io_uring: the matrix step's gso and io_uring cells green, rocketnet-linux-ci-green-at-base 32c4ff08"
-     :pending ((msgx "rocketnet-macos-ci-green-at-base (working)")
-               (portable "macOS: rocketnet-macos-ci-green-at-base (working); Windows: rocketnet-windows-ci-green-at-base (working); Linux is green, rocketnet-linux-pinned-portable-functional-green e73c2177")
-               (iocp "rocketnet-windows-ci-green-at-base (working)")
-               (rio "rocketnet-windows-ci-green-at-base (working)")
-               (loopback "macOS: rocketnet-macos-ci-green-at-base (working); Windows: rocketnet-windows-ci-green-at-base (working); Linux: no landed card names the loopback cell")))
-    (:feature "Every matrix cell fifty times, zero flakes"
-     :cells (o o o o o o o o)
-     :pending ((xdp "rocketnet-linux-transport-matrix-repeat (waiting)")
-               (msgx "rocketnet-macos-transport-matrix-repeat (waiting)")
-               (gso "rocketnet-linux-transport-matrix-repeat (waiting)")
-               (io_uring "rocketnet-linux-transport-matrix-repeat (waiting)")
-               (portable "rocketnet-win-transport-matrix-repeat, rocketnet-macos-transport-matrix-repeat and rocketnet-linux-transport-matrix-repeat (waiting)")
-               (iocp "rocketnet-win-transport-matrix-repeat (waiting)")
-               (rio "rocketnet-win-transport-matrix-repeat (waiting)")
-               (loopback "rocketnet-win-transport-matrix-repeat, rocketnet-macos-transport-matrix-repeat and rocketnet-linux-transport-matrix-repeat (waiting)")))))
-  (:id "transport-specific" :title "Transport-specific tests"
+   ((:feature "Transport family matrix (IPv4, IPv6 and dual stack, each transport pinned)" :cells (y p y y p p p p) :source "functional/live_matrix.cpp, tools/check_transport_matrix.py, ci.yml matrix step" :evidence "xdp: xdp_max_size_both_ways_ipv4 and _ipv6 in a guest, cce78fab; gso and io_uring: the matrix step's gso and io_uring cells green, 32c4ff08" :pending ((msgx "planned for the final deliverable") (portable "planned for the final deliverable: Linux is green, e73c2177") (iocp "planned for the final deliverable") (rio "planned for the final deliverable") (loopback "planned for the final deliverable: Linux: no landed change names the loopback cell")))
+    (:feature "Every matrix cell fifty times, zero flakes" :cells (o o o o o o o o) :source "tools/check_transport_matrix.py" :pending ((xdp "planned for the final deliverable") (msgx "planned for the final deliverable") (gso "planned for the final deliverable") (io_uring "planned for the final deliverable") (portable "planned for the final deliverable") (iocp "planned for the final deliverable") (rio "planned for the final deliverable") (loopback "planned for the final deliverable")))))
+  (:id "transport-specific"
+   :title "Transport-specific tests"
    :text "The tests that apply to only some transports: one row per transport a test applies to. None of these runs on loopback, the in-process transport; Application Verifier runs only on Windows."
    :label "test"
    :specific t
    :columns transports
    :rows
-   ((:feature "Functional suite on each server transport" :on xdp :cell y
-     :evidence "xdp: in a guest, rocketnet-r1-ci-xdp-cell-on-libxdp-1-4 cce78fab")
-    (:feature "Functional suite on each server transport" :on msgx :cell y
-     :evidence "msgx: ./bin/functional on the default ladder, rocketnet-macos-client-timing-under-app-nap a2c4ac1f")
-    (:feature "Functional suite on each server transport" :on gso :cell y
-     :evidence "gso: ./bin/functional pinned to gso, rocketnet-linux-pinned-portable-functional-green e73c2177")
-    (:feature "Functional suite on each server transport" :on io_uring :cell y
-     :evidence "io_uring: ./bin/functional pinned to io_uring, rocketnet-linux-pinned-portable-functional-green e73c2177")
-    (:feature "Functional suite on each server transport" :on portable :cell n
-     :pending "macOS: rocketnet-macos-ci-green-at-base (working); Windows and Linux are green, rocketnet-win-app-verifier 7457d35b and rocketnet-linux-pinned-portable-functional-green e73c2177")
-    (:feature "Functional suite on each server transport" :on iocp :cell y
-     :evidence "iocp: functional.exe pinned to iocp under App Verifier, rocketnet-win-app-verifier 7457d35b")
-    (:feature "Functional suite on each server transport" :on rio :cell y
-     :evidence "rio: functional.exe pinned to rio under App Verifier, rocketnet-win-app-verifier 7457d35b")
-    (:feature "Hard-killed peer or ICMP error never stalls receive" :on xdp :cell n
-     :pending "rocketnet-linux-hard-killed-peer-never-stalls-receive (working)")
-    (:feature "Hard-killed peer or ICMP error never stalls receive" :on msgx :cell n
-     :pending "rocketnet-macos-hard-killed-peer-never-stalls-receive (working)")
-    (:feature "Hard-killed peer or ICMP error never stalls receive" :on gso :cell n
-     :pending "rocketnet-linux-hard-killed-peer-never-stalls-receive (working)")
-    (:feature "Hard-killed peer or ICMP error never stalls receive" :on io_uring :cell n
-     :pending "rocketnet-linux-hard-killed-peer-never-stalls-receive (working)")
-    (:feature "Hard-killed peer or ICMP error never stalls receive" :on portable :cell n
-     :pending "rocketnet-windows-udp-connreset-never-stalls-receive (working), rocketnet-macos-hard-killed-peer-never-stalls-receive (working) and rocketnet-linux-hard-killed-peer-never-stalls-receive (working)")
-    (:feature "Hard-killed peer or ICMP error never stalls receive" :on iocp :cell n
-     :pending "rocketnet-windows-udp-connreset-never-stalls-receive (working)")
-    (:feature "Hard-killed peer or ICMP error never stalls receive" :on rio :cell n
-     :pending "rocketnet-windows-udp-connreset-never-stalls-receive (working)")
-    (:feature "Socket error paths" :on xdp :cell y
-     :evidence "xdp: 5 of 5 in a guest, rocketnet-linux-socket-error-paths ce98ebd1")
-    (:feature "Socket error paths" :on msgx :cell y
-     :evidence "msgx: rocketnet-macos-socket-errors-and-enobufs-t 7ea06926")
-    (:feature "Socket error paths" :on gso :cell y
-     :evidence "gso: rocketnet-linux-socket-error-paths ce98ebd1")
-    (:feature "Socket error paths" :on io_uring :cell y
-     :evidence "io_uring: rocketnet-linux-socket-error-paths ce98ebd1")
-    (:feature "Socket error paths" :on portable :cell n
-     :pending "Windows: rocketnet-win-socket-error-paths-t-t (working); macOS and Linux are green, rocketnet-macos-socket-errors-and-enobufs-t 7ea06926 and rocketnet-linux-socket-error-paths ce98ebd1")
-    (:feature "Socket error paths" :on iocp :cell n
-     :pending "rocketnet-win-socket-error-paths-t-t (working)")
-    (:feature "Socket error paths" :on rio :cell n
-     :pending "rocketnet-win-socket-error-paths-t-t (working)")
-    (:feature "Lifecycle stress" :on xdp :cell y
-     :evidence "xdp: in a guest, rocketnet-linux-lifecycle-stress-t 8a68c102")
-    (:feature "Lifecycle stress" :on msgx :cell n
-     :pending "rocketnet-macos-lifecycle-stress-t (working)")
-    (:feature "Lifecycle stress" :on gso :cell y
-     :evidence "gso: 120 of 120 over 5 runs, rocketnet-linux-lifecycle-stress-t 8a68c102")
-    (:feature "Lifecycle stress" :on io_uring :cell y
-     :evidence "io_uring: rocketnet-linux-lifecycle-stress-t 8a68c102")
-    (:feature "Lifecycle stress" :on portable :cell n
-     :pending "Windows: rocketnet-win-lifecycle-stress (working); macOS: rocketnet-macos-lifecycle-stress-t (working); Linux is green, rocketnet-linux-lifecycle-stress-t 8a68c102")
-    (:feature "Lifecycle stress" :on iocp :cell n
-     :pending "rocketnet-win-lifecycle-stress (working)")
-    (:feature "Lifecycle stress" :on rio :cell n
-     :pending "rocketnet-win-lifecycle-stress (working)")
-    (:feature "Soak under impairment, flat resources" :on xdp :cell o
-     :pending "rocketnet-linux-soak-per-transport (working)")
-    (:feature "Soak under impairment, flat resources" :on msgx :cell y
-     :evidence "msgx: msgx and msgx degraded, impaired and clean, rocketnet-macos-soak-per-transport df775cf1")
-    (:feature "Soak under impairment, flat resources" :on gso :cell o
-     :pending "rocketnet-linux-soak-per-transport (working)")
-    (:feature "Soak under impairment, flat resources" :on io_uring :cell o
-     :pending "rocketnet-linux-soak-per-transport (working)")
-    (:feature "Soak under impairment, flat resources" :on portable :cell o
-     :pending "Windows: rocketnet-win-soak-per-transport (waiting); Linux: rocketnet-linux-soak-per-transport (working); macOS is green, rocketnet-macos-soak-per-transport df775cf1")
-    (:feature "Soak under impairment, flat resources" :on iocp :cell o
-     :pending "rocketnet-win-soak-per-transport (waiting)")
-    (:feature "Soak under impairment, flat resources" :on rio :cell o
-     :pending "rocketnet-win-soak-per-transport (waiting)")
-    (:feature "1000 clients, load harness" :on xdp :cell y
-     :evidence "xdp: one run in a guest, rocketnet-linux-load-1000-clients 33f45ea9")
-    (:feature "1000 clients, load harness" :on msgx :cell o
-     :pending "rocketnet-macos-load-1000-clients-t (working)")
-    (:feature "1000 clients, load harness" :on gso :cell y
-     :evidence "gso: three runs, rocketnet-linux-load-1000-clients 33f45ea9")
-    (:feature "1000 clients, load harness" :on io_uring :cell y
-     :evidence "io_uring: three runs, rocketnet-linux-load-1000-clients 33f45ea9")
-    (:feature "1000 clients, load harness" :on portable :cell o
-     :pending "Windows: rocketnet-win-load-1000-clients (waiting); macOS: rocketnet-macos-load-1000-clients-t (working); Linux is green, rocketnet-linux-load-1000-clients 33f45ea9")
-    (:feature "1000 clients, load harness" :on iocp :cell o
-     :pending "rocketnet-win-load-1000-clients (waiting)")
-    (:feature "1000 clients, load harness" :on rio :cell o
-     :pending "rocketnet-win-load-1000-clients (waiting)")
-    (:feature "1000 light clients (10 Hz, 1 packet per update)" :on xdp :cell o
-     :pending "rocketnet-load-light-profile-linux (working)")
-    (:feature "1000 light clients (10 Hz, 1 packet per update)" :on msgx :cell o
-     :pending "rocketnet-load-light-profile-macos (waiting)")
-    (:feature "1000 light clients (10 Hz, 1 packet per update)" :on gso :cell o
-     :pending "rocketnet-load-light-profile-linux (working)")
-    (:feature "1000 light clients (10 Hz, 1 packet per update)" :on io_uring :cell o
-     :pending "rocketnet-load-light-profile-linux (working)")
-    (:feature "1000 light clients (10 Hz, 1 packet per update)" :on portable :cell o
-     :pending "rocketnet-load-light-profile-windows (waiting), rocketnet-load-light-profile-macos (waiting) and rocketnet-load-light-profile-linux (working)")
-    (:feature "1000 light clients (10 Hz, 1 packet per update)" :on iocp :cell o
-     :pending "rocketnet-load-light-profile-windows (waiting)")
-    (:feature "1000 light clients (10 Hz, 1 packet per update)" :on rio :cell o
-     :pending "rocketnet-load-light-profile-windows (waiting)")
-    (:feature "1000 clients over the LAN, every guarantee checked" :on xdp :cell o
-     :pending "rocketnet-lan-1000-client-soak-matrix (waiting)")
-    (:feature "1000 clients over the LAN, every guarantee checked" :on msgx :cell o
-     :pending "rocketnet-lan-1000-client-soak-matrix (waiting)")
-    (:feature "1000 clients over the LAN, every guarantee checked" :on gso :cell o
-     :pending "rocketnet-lan-1000-client-soak-matrix (waiting)")
-    (:feature "1000 clients over the LAN, every guarantee checked" :on io_uring :cell o
-     :pending "rocketnet-lan-1000-client-soak-matrix (waiting)")
-    (:feature "1000 clients over the LAN, every guarantee checked" :on portable :cell o
-     :pending "rocketnet-lan-1000-client-soak-matrix (waiting)")
-    (:feature "1000 clients over the LAN, every guarantee checked" :on iocp :cell o
-     :pending "rocketnet-lan-1000-client-soak-matrix (waiting)")
-    (:feature "1000 clients over the LAN, every guarantee checked" :on rio :cell o
-     :pending "rocketnet-lan-1000-client-soak-matrix (waiting)")
-    (:feature "Sanitizers per transport" :on xdp :cell n
-     :pending "rocketnet-linux-transport-matrix-repeat (waiting): the functional suite under ASan per transport")
-    (:feature "Sanitizers per transport" :on msgx :cell n
-     :pending "rocketnet-macos-sanitizers-and-leaks (working)")
-    (:feature "Sanitizers per transport" :on gso :cell n
-     :pending "rocketnet-linux-transport-matrix-repeat (waiting): the functional suite under ASan per transport")
-    (:feature "Sanitizers per transport" :on io_uring :cell n
-     :pending "rocketnet-linux-transport-matrix-repeat (waiting): the functional suite under ASan per transport")
-    (:feature "Sanitizers per transport" :on portable :cell n
-     :pending "macOS: rocketnet-macos-sanitizers-and-leaks (working); Linux: rocketnet-linux-transport-matrix-repeat (waiting); Windows is green, rocketnet-win-msvc-asan e2ed2a4b")
-    (:feature "Sanitizers per transport" :on iocp :cell y
-     :evidence "iocp: functional.exe pinned to iocp under MSVC ASan, zero reports, rocketnet-win-msvc-asan e2ed2a4b")
-    (:feature "Sanitizers per transport" :on rio :cell y
-     :evidence "rio: functional.exe pinned to rio under MSVC ASan, zero reports, rocketnet-win-msvc-asan e2ed2a4b")
-    (:feature "Application Verifier" :on portable :cell y
-     :evidence "portable: 0 verifier stops on functional.exe's default transport on Windows, rocketnet-win-app-verifier 7457d35b")
-    (:feature "Application Verifier" :on iocp :cell y
-     :evidence "iocp: 0 verifier stops, rocketnet-win-app-verifier 7457d35b")
-    (:feature "Application Verifier" :on rio :cell y
-     :evidence "rio: 0 verifier stops, rocketnet-win-app-verifier 7457d35b")))))
+   ((:feature "Functional suite on each server transport" :on xdp :cell y :source "functional/ (./bin/functional, transport pinned)" :evidence "xdp: in a guest, cce78fab")
+    (:feature "Functional suite on each server transport" :on msgx :cell y :source "functional/ (./bin/functional, transport pinned)" :evidence "msgx: ./bin/functional on the default ladder, a2c4ac1f")
+    (:feature "Functional suite on each server transport" :on gso :cell y :source "functional/ (./bin/functional, transport pinned)" :evidence "gso: ./bin/functional pinned to gso, e73c2177")
+    (:feature "Functional suite on each server transport" :on io_uring :cell y :source "functional/ (./bin/functional, transport pinned)" :evidence "io_uring: ./bin/functional pinned to io_uring, e73c2177")
+    (:feature "Functional suite on each server transport" :on portable :cell p :source "functional/ (./bin/functional, transport pinned)" :pending "planned for the final deliverable: Windows and Linux are green, 7457d35b and e73c2177")
+    (:feature "Functional suite on each server transport" :on iocp :cell y :source "functional/ (./bin/functional, transport pinned)" :evidence "iocp: functional.exe pinned to iocp under App Verifier, 7457d35b")
+    (:feature "Functional suite on each server transport" :on rio :cell y :source "functional/ (./bin/functional, transport pinned)" :evidence "rio: functional.exe pinned to rio under App Verifier, 7457d35b")
+    (:feature "Hard-killed peer or ICMP error never stalls receive" :on xdp :cell p :source "functional/posix_hard_killed_peer.cpp" :pending "planned for the final deliverable")
+    (:feature "Hard-killed peer or ICMP error never stalls receive" :on msgx :cell y :source "functional/posix_hard_killed_peer.cpp" :evidence "msgx: a SIGKILLed client, landed 443ea520")
+    (:feature "Hard-killed peer or ICMP error never stalls receive" :on gso :cell p :source "functional/posix_hard_killed_peer.cpp" :pending "planned for the final deliverable")
+    (:feature "Hard-killed peer or ICMP error never stalls receive" :on io_uring :cell p :source "functional/posix_hard_killed_peer.cpp" :pending "planned for the final deliverable")
+    (:feature "Hard-killed peer or ICMP error never stalls receive" :on portable :cell p :source "functional/posix_hard_killed_peer.cpp" :pending "planned for the final deliverable: macOS is green, landed 443ea520")
+    (:feature "Hard-killed peer or ICMP error never stalls receive" :on iocp :cell p :source "functional/posix_hard_killed_peer.cpp" :pending "planned for the final deliverable")
+    (:feature "Hard-killed peer or ICMP error never stalls receive" :on rio :cell p :source "functional/posix_hard_killed_peer.cpp" :pending "planned for the final deliverable")
+    (:feature "Socket error paths" :on xdp :cell y :source "functional/posix_socket_errors.cpp" :evidence "xdp: 5 of 5 in a guest, ce98ebd1")
+    (:feature "Socket error paths" :on msgx :cell y :source "functional/posix_socket_errors.cpp" :evidence "msgx: 7ea06926")
+    (:feature "Socket error paths" :on gso :cell y :source "functional/posix_socket_errors.cpp" :evidence "gso: ce98ebd1")
+    (:feature "Socket error paths" :on io_uring :cell y :source "functional/posix_socket_errors.cpp" :evidence "io_uring: ce98ebd1")
+    (:feature "Socket error paths" :on portable :cell p :source "functional/posix_socket_errors.cpp" :pending "planned for the final deliverable: macOS and Linux are green, 7ea06926 and ce98ebd1")
+    (:feature "Socket error paths" :on iocp :cell p :source "functional/posix_socket_errors.cpp" :pending "planned for the final deliverable")
+    (:feature "Socket error paths" :on rio :cell p :source "functional/posix_socket_errors.cpp" :pending "planned for the final deliverable")
+    (:feature "Lifecycle stress" :on xdp :cell y :source "test_lifecycle.cpp, functional/posix_lifecycle_stress.cpp" :evidence "xdp: in a guest, 8a68c102")
+    (:feature "Lifecycle stress" :on msgx :cell y :source "test_lifecycle.cpp, functional/posix_lifecycle_stress.cpp" :evidence "msgx: msgx and msgx forced portable, landed 2773d0da")
+    (:feature "Lifecycle stress" :on gso :cell y :source "test_lifecycle.cpp, functional/posix_lifecycle_stress.cpp" :evidence "gso: 120 of 120 over 5 runs, 8a68c102")
+    (:feature "Lifecycle stress" :on io_uring :cell y :source "test_lifecycle.cpp, functional/posix_lifecycle_stress.cpp" :evidence "io_uring: 8a68c102")
+    (:feature "Lifecycle stress" :on portable :cell p :source "test_lifecycle.cpp, functional/posix_lifecycle_stress.cpp" :pending "planned for the final deliverable: macOS and Linux are green, landed 2773d0da and 8a68c102")
+    (:feature "Lifecycle stress" :on iocp :cell p :source "test_lifecycle.cpp, functional/posix_lifecycle_stress.cpp" :pending "planned for the final deliverable")
+    (:feature "Lifecycle stress" :on rio :cell p :source "test_lifecycle.cpp, functional/posix_lifecycle_stress.cpp" :pending "planned for the final deliverable")
+    (:feature "Soak under impairment, flat resources" :on xdp :cell o :source "soak.c, soak_sim.cpp" :pending "planned for the final deliverable")
+    (:feature "Soak under impairment, flat resources" :on msgx :cell y :source "soak.c, soak_sim.cpp" :evidence "msgx: msgx and msgx degraded, impaired and clean, df775cf1")
+    (:feature "Soak under impairment, flat resources" :on gso :cell o :source "soak.c, soak_sim.cpp" :pending "planned for the final deliverable")
+    (:feature "Soak under impairment, flat resources" :on io_uring :cell o :source "soak.c, soak_sim.cpp" :pending "planned for the final deliverable")
+    (:feature "Soak under impairment, flat resources" :on portable :cell o :source "soak.c, soak_sim.cpp" :pending "planned for the final deliverable: macOS is green, df775cf1")
+    (:feature "Soak under impairment, flat resources" :on iocp :cell o :source "soak.c, soak_sim.cpp" :pending "planned for the final deliverable")
+    (:feature "Soak under impairment, flat resources" :on rio :cell o :source "soak.c, soak_sim.cpp" :pending "planned for the final deliverable")
+    (:feature "1000 clients, load harness" :on xdp :cell y :source "load.c (./bin/load)" :evidence "xdp: one run in a guest, 33f45ea9")
+    (:feature "1000 clients, load harness" :on msgx :cell o :source "load.c (./bin/load)" :pending "planned for the final deliverable")
+    (:feature "1000 clients, load harness" :on gso :cell y :source "load.c (./bin/load)" :evidence "gso: three runs, 33f45ea9")
+    (:feature "1000 clients, load harness" :on io_uring :cell y :source "load.c (./bin/load)" :evidence "io_uring: three runs, 33f45ea9")
+    (:feature "1000 clients, load harness" :on portable :cell o :source "load.c (./bin/load)" :pending "planned for the final deliverable: Linux is green, 33f45ea9")
+    (:feature "1000 clients, load harness" :on iocp :cell o :source "load.c (./bin/load)" :pending "planned for the final deliverable")
+    (:feature "1000 clients, load harness" :on rio :cell o :source "load.c (./bin/load)" :pending "planned for the final deliverable")
+    (:feature "1000 light clients (10 Hz, 1 packet per update)" :on xdp :cell o :source "load.c light profile" :pending "planned for the final deliverable")
+    (:feature "1000 light clients (10 Hz, 1 packet per update)" :on msgx :cell o :source "load.c light profile" :pending "planned for the final deliverable")
+    (:feature "1000 light clients (10 Hz, 1 packet per update)" :on gso :cell o :source "load.c light profile" :pending "planned for the final deliverable")
+    (:feature "1000 light clients (10 Hz, 1 packet per update)" :on io_uring :cell o :source "load.c light profile" :pending "planned for the final deliverable")
+    (:feature "1000 light clients (10 Hz, 1 packet per update)" :on portable :cell o :source "load.c light profile" :pending "planned for the final deliverable")
+    (:feature "1000 light clients (10 Hz, 1 packet per update)" :on iocp :cell o :source "load.c light profile" :pending "planned for the final deliverable")
+    (:feature "1000 light clients (10 Hz, 1 packet per update)" :on rio :cell o :source "load.c light profile" :pending "planned for the final deliverable")
+    (:feature "1000 clients over the LAN, every guarantee checked (soak matrix)" :on xdp :cell o :source "docs/lan-bench/" :pending "planned for the final deliverable")
+    (:feature "1000 clients over the LAN, every guarantee checked (soak matrix)" :on msgx :cell o :source "docs/lan-bench/" :pending "planned for the final deliverable")
+    (:feature "1000 clients over the LAN, every guarantee checked (soak matrix)" :on gso :cell o :source "docs/lan-bench/" :pending "planned for the final deliverable")
+    (:feature "1000 clients over the LAN, every guarantee checked (soak matrix)" :on io_uring :cell o :source "docs/lan-bench/" :pending "planned for the final deliverable")
+    (:feature "1000 clients over the LAN, every guarantee checked (soak matrix)" :on portable :cell o :source "docs/lan-bench/" :pending "planned for the final deliverable")
+    (:feature "1000 clients over the LAN, every guarantee checked (soak matrix)" :on iocp :cell o :source "docs/lan-bench/" :pending "planned for the final deliverable")
+    (:feature "1000 clients over the LAN, every guarantee checked (soak matrix)" :on rio :cell o :source "docs/lan-bench/" :pending "planned for the final deliverable")
+    (:feature "Sanitizers per transport" :on xdp :cell o :source "ci.yml sanitizer jobs" :pending "planned for the final deliverable: the functional suite under ASan per transport")
+    (:feature "Sanitizers per transport" :on msgx :cell p :source "ci.yml sanitizer jobs" :pending "planned for the final deliverable")
+    (:feature "Sanitizers per transport" :on gso :cell o :source "ci.yml sanitizer jobs" :pending "planned for the final deliverable: the functional suite under ASan per transport")
+    (:feature "Sanitizers per transport" :on io_uring :cell o :source "ci.yml sanitizer jobs" :pending "planned for the final deliverable: the functional suite under ASan per transport")
+    (:feature "Sanitizers per transport" :on portable :cell o :source "ci.yml sanitizer jobs" :pending "planned for the final deliverable: Linux: the functional suite under ASan per transport; Windows is green, e2ed2a4b")
+    (:feature "Sanitizers per transport" :on iocp :cell y :source "ci.yml sanitizer jobs" :evidence "iocp: functional.exe pinned to iocp under MSVC ASan, zero reports, e2ed2a4b")
+    (:feature "Sanitizers per transport" :on rio :cell y :source "ci.yml sanitizer jobs" :evidence "rio: functional.exe pinned to rio under MSVC ASan, zero reports, e2ed2a4b")
+    (:feature "Application Verifier" :on portable :cell y :source "the CI workflows" :evidence "portable: 0 verifier stops on functional.exe's default transport on Windows, 7457d35b")
+    (:feature "Application Verifier" :on iocp :cell y :source "the CI workflows" :evidence "iocp: 0 verifier stops, 7457d35b")
+    (:feature "Application Verifier" :on rio :cell y :source "the CI workflows" :evidence "rio: 0 verifier stops, 7457d35b")))
+  (:id "release"
+   :title "Release-wide tests"
+   :text "The tests that are neither per platform nor per transport: model checks, proofs, reviews and checks of the code as a whole."
+   :label "test"
+   :columns release
+   :rows
+   ((:feature "Send budget: packets_per_update 256 at 60 Hz, receive sized at least 2x" :cells (p) :source "test_unit_send_budget.cpp, tla/MCRNSendBudget.cfg" :pending ((status "planned for the final deliverable")))
+    (:feature "Security pass: per-client resource exhaustion disconnects the client" :cells (p) :source "SECURITY.md, tla/MCRNSecurityTables*.cfg" :pending ((status "planned for the final deliverable")))
+    (:feature "Receipt loss reported after its own deadline" :cells (p) :source "test_unit_channel_receipts.cpp, tla/MCRNReceipts.cfg" :pending ((status "planned for the final deliverable")))
+    (:feature "Source format in the netcode style (clang-format check)" :cells (p) :source "tools/format/" :pending ((status "planned for the final deliverable")))
+    (:feature "TLA+ ledger current (tla/CASES.tsv and tla/COVERAGE.tsv match the models)" :cells (p) :source "tla/CASES.tsv, tla/COVERAGE.tsv, tools/check_tla_coverage.py" :pending ((status "planned for the final deliverable")))
+    (:feature "TLA+ model check: link (19 required)" :cells (p) :source "tla/CASES.tsv group link; tla/MCLink.tla, tla/MCLinkPatterns.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: clientconnection (14 required, 9 bench)" :cells (p) :source "tla/CASES.tsv group clientconnection; tla/MCClientConnection.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base; the bench-gated configs run by hand on a bench, not in tlc.yml")))
+    (:feature "TLA+ model check: replaywindow (2 required, 1 bench)" :cells (p) :source "tla/CASES.tsv group replaywindow; tla/MCReplayWindow.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base; the bench-gated configs run by hand on a bench, not in tlc.yml")))
+    (:feature "TLA+ model check: rnsendstore (1 required)" :cells (p) :source "tla/CASES.tsv group rnsendstore; tla/MCRNSendStore.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnring (5 required)" :cells (p) :source "tla/CASES.tsv group rnring; tla/MCRNRing.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnsendspans (3 required)" :cells (p) :source "tla/CASES.tsv group rnsendspans; tla/MCRNSendSpans.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnwindow (7 required)" :cells (p) :source "tla/CASES.tsv group rnwindow; tla/MCRNWindow.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: receiveorder (4 required)" :cells (p) :source "tla/CASES.tsv group receiveorder; tla/MCReceiveOrder.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rndriversendstaging (2 required)" :cells (p) :source "tla/CASES.tsv group rndriversendstaging; tla/MCRNDriverSendStaging.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnsecuritytables (13 required)" :cells (p) :source "tla/CASES.tsv group rnsecuritytables; tla/MCRNSecurityTables.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: serverconnection (5 required)" :cells (p) :source "tla/CASES.tsv group serverconnection; tla/MCServerConnection.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnconnectionmemory (3 required)" :cells (p) :source "tla/CASES.tsv group rnconnectionmemory; tla/MCRNConnectionMemory.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnsendbudget (4 required)" :cells (p) :source "tla/CASES.tsv group rnsendbudget; tla/MCRNSendBudget.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnreceipts (5 required)" :cells (p) :source "tla/CASES.tsv group rnreceipts; tla/MCRNReceipts.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnchannel (9 required)" :cells (p) :source "tla/CASES.tsv group rnchannel; tla/MCRNChannel.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnslots (12 required)" :cells (p) :source "tla/CASES.tsv group rnslots; tla/MCRNSlots.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnchanneltypes (11 required)" :cells (p) :source "tla/CASES.tsv group rnchanneltypes; tla/MCRNChannelTypes.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnsenthistory (3 required)" :cells (p) :source "tla/CASES.tsv group rnsenthistory; tla/MCRNSentHistory.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnscheduler (3 required)" :cells (p) :source "tla/CASES.tsv group rnscheduler; tla/MCRNScheduler.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnresendtiming (3 required)" :cells (p) :source "tla/CASES.tsv group rnresendtiming; tla/MCRNResendTiming.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnfilterepochs (3 required)" :cells (p) :source "tla/CASES.tsv group rnfilterepochs; tla/MCRNFilterEpochs.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnuringdriver (4 required)" :cells (p) :source "tla/CASES.tsv group rnuringdriver; tla/MCRNUringDriver.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: fragmentsandacks (18 required, 6 bench)" :cells (p) :source "tla/CASES.tsv group fragmentsandacks; tla/MCFragmentsAndAcks.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base; the bench-gated configs run by hand on a bench, not in tlc.yml")))
+    (:feature "TLA+ model check: rnblocks (2 required)" :cells (p) :source "tla/CASES.tsv group rnblocks; tla/MCRNBlocks.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnclientio (8 required)" :cells (p) :source "tla/CASES.tsv group rnclientio; tla/MCRNClientIo.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnendpoint (5 required, 2 bench)" :cells (p) :source "tla/CASES.tsv group rnendpoint; tla/MCRNEndpoint.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base; the bench-gated configs run by hand on a bench, not in tlc.yml")))
+    (:feature "TLA+ model check: rnxdpreplay (3 required)" :cells (p) :source "tla/CASES.tsv group rnxdpreplay; tla/MCRNXdpReplay.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnxdpreceivering (2 required)" :cells (p) :source "tla/CASES.tsv group rnxdpreceivering; tla/MCRNXdpReceiveRing.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnriodriver (4 required)" :cells (p) :source "tla/CASES.tsv group rnriodriver; tla/MCRNRioDriver.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnflows (2 required)" :cells (p) :source "tla/CASES.tsv group rnflows; tla/MCRNFlows.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnclientiodecrypt (5 required)" :cells (p) :source "tla/CASES.tsv group rnclientiodecrypt; tla/MCRNClientIoDecrypt.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnlivefleetrun (3 required)" :cells (p) :source "tla/CASES.tsv group rnlivefleetrun; tla/MCRNLiveFleetRun.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: clientsession (5 required)" :cells (p) :source "tla/CASES.tsv group clientsession; tla/MCClientSession.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: serversession (10 required)" :cells (p) :source "tla/CASES.tsv group serversession; tla/MCServerSession.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnoutgoingbuild (4 required)" :cells (p) :source "tla/CASES.tsv group rnoutgoingbuild; tla/MCRNOutgoingBuild.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnsimfaults (3 required)" :cells (p) :source "tla/CASES.tsv group rnsimfaults; tla/MCRNSimFaults.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnclientreceivequit (5 required)" :cells (p) :source "tla/CASES.tsv group rnclientreceivequit; tla/MCRNClientReceiveQuit.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnserversendfair (4 required)" :cells (p) :source "tla/CASES.tsv group rnserversendfair; tla/MCRNServerSendFair.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: sendhandoff (3 required)" :cells (p) :source "tla/CASES.tsv group sendhandoff; tla/MCSendHandoff.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "CBMC bounded proofs of the untrusted-input readers to the full packet size (Frama-C route for C++)" :cells (p) :source "proofs/cbmc/, cbmc.yml" :pending ((status "planned for the final deliverable")))
+    (:feature "Frama-Clang WP trial on rocketnet_ack_block_read" :cells (p) :source "proofs/framaclang/ (planned)" :pending ((status "planned for the final deliverable")))
+    (:feature "Holistic review: six independent whole-system reviewers" :cells (p) :source "after v1.0.0-preview-1" :pending ((status "planned for the final deliverable: six independent reviews of the whole system after every feature has landed")))))))

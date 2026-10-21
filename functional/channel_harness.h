@@ -38,6 +38,7 @@
 #include "rocketnet_client_protocol.h"
 #include "rocketnet_test_vectors.h"
 #include "rocketnet_wire.h"
+#include "../test/portable_crt.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet_client_slots.h"
 #include "rocketnet_encryption_map.h"
@@ -148,7 +149,7 @@ static inline void rocketnet_channel_capture_flush( void )
     rocketnet_channel_capture_t & capture = rocketnet_channel_capture();
     if ( !capture.active || capture.image.empty() )
         return;
-    FILE * file = fopen( capture.path.c_str(), "wb" );
+    FILE * file = rocketnet_test_fopen( capture.path.c_str(), "wb" );
     if ( !file )
         return;
     fwrite( capture.image.data(), 1, capture.image.size(), file );
@@ -158,8 +159,8 @@ static inline void rocketnet_channel_capture_flush( void )
 static inline void rocketnet_channel_capture_begin( void )
 {
     rocketnet_channel_capture_t & capture = rocketnet_channel_capture();
-    const char * directory = getenv( "ROCKETNET_PCAPNG_CAPTURE_DIR" );
-    if ( !directory || !directory[0] )
+    char directory[4096];
+    if ( !rocketnet_test_getenv( "ROCKETNET_PCAPNG_CAPTURE_DIR", directory, sizeof( directory ) ) || !directory[0] )
         return;
     if ( capture.active )
         return;                     // a second harness in the same test appends to the same file
@@ -786,8 +787,8 @@ inline rocketnet_channel_seed_state_t & rocketnet_channel_seed_state()
 
 static inline uint64_t rocketnet_channel_seed_from_environment( void )
 {
-    const char * value = getenv( "ROCKETNET_CHANNEL_SEED" );
-    if ( value && value[0] )
+    char value[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_CHANNEL_SEED", value, sizeof( value ) ) && value[0] )
         return (uint64_t) strtoull( value, NULL, 0 );
     return rocketnet_channel_pinned_seed;
 }

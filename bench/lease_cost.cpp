@@ -99,7 +99,7 @@ int main(int argc, char ** argv)
     rocketnet_server_transport_dev_config(&config);
     config.max_clients = 2;
     config.max_payload_bytes = 4096;
-    strcpy(config.transport, "portable");
+    memcpy(config.transport, "portable", sizeof("portable"));
     auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
     CHECK(server && strcmp(rocketnet_server_transport_io_name(server), "portable") == 0);
     const size_t server_bytes = live_bytes.load();
@@ -110,7 +110,7 @@ int main(int argc, char ** argv)
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config(&client_config);
     client_config.max_payload_bytes = 4096;
-    strcpy(client_config.transport, "portable");
+    memcpy(client_config.transport, "portable", sizeof("portable"));
     auto * client = rocketnet_client_transport_create(NULL, token, &client_config, rocketnet_time());
     CHECK(client);
     const size_t client_bytes = live_bytes.load() - server_bytes;

@@ -4,6 +4,7 @@
 */
 
 #include "test_unit_registry.h"
+#include "test/portable_crt.h"
 
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_connection_reset.h"
@@ -37,12 +38,8 @@ struct reset_env_pin_t
 
 static void reset_env_pin_set_aside( reset_env_pin_t * pin, const char * name )
 {
-    const char * value = getenv( name );
     pin->name = name;
-    pin->was_set = value != NULL;
-    pin->value[0] = '\0';
-    if ( value )
-        snprintf( pin->value, sizeof(pin->value), "%s", value );
+    pin->was_set = rocketnet_test_getenv( name, pin->value, sizeof(pin->value) ) != 0;
 #if defined(_WIN32)
     _putenv_s( name, "" );
 #else
@@ -105,21 +102,16 @@ static const rocketnet_reset_member_t endpoint_layout[] =
 };
 #undef ENDPOINT_MEMBER
 
-#define MESSAGE_FIELD( decision, field ) { #field, offsetof( rn_message_connection_t, field ), sizeof( ((rn_message_connection_t*)0)->field ), alignof(decltype(((rn_message_connection_t*)0)->field)), #decision[0] == 'R' },
-// rn_message_connection_t is not standard layout, so offsetof is
-// conditionally supported on it; every supported compiler gives the member
-// offset, which is all the reset audit compares
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Winvalid-offsetof"
-#endif
+// rn_message_connection_t is not standard layout (it derives from
+// rn_endpoint_t), so offsetof is only conditionally supported on it; each
+// member's offset is measured on a probe object instead, which is all the
+// reset audit compares
+static rn_message_connection_t reset_message_connection_probe;
+#define MESSAGE_FIELD( decision, field ) { #field, (size_t) ( (const char *) &reset_message_connection_probe.field - (const char *) &reset_message_connection_probe ), sizeof( ((rn_message_connection_t*)0)->field ), alignof(decltype(((rn_message_connection_t*)0)->field)), #decision[0] == 'R' },
 static const rocketnet_reset_member_t message_connection_fields[] =
 {
     ROCKETNET_MESSAGE_CONNECTION_FIELDS( MESSAGE_FIELD )
 };
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
 #undef MESSAGE_FIELD
 
 #define RESET_COUNT( array ) ( sizeof(array) / sizeof((array)[0]) )
@@ -148,7 +140,7 @@ static void reset_field_holds( const char * structure, const char * member, cons
     check( holds );
 }
 
-static void connection_reset_inventory_covers_every_field()
+static void test_connection_reset_inventory_covers_every_field()
 {
     char failure[256];
 
@@ -297,7 +289,7 @@ static void connection_reset_inventory_covers_every_field()
         check( connection->cursors[i] == 0 );
     rn_message_object_destroy( object );
 }
-REGISTER_UNIT_TEST( connection_reset_inventory_covers_every_field );
+REGISTER_UNIT_TEST( test_connection_reset_inventory_covers_every_field );
 
 extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
@@ -334,7 +326,7 @@ static const reset_loopback_keys_t * reset_loopback_keys()
     return &keys;
 }
 
-enum { RESET_LOOPBACK_PROTOCOL_ID = 0x5245534554ULL };
+static const uint64_t RESET_LOOPBACK_PROTOCOL_ID = 0x5245534554ULL;
 
 static rocketnet_message_server_t * reset_loopback_server_create( double now, const rocketnet_message_config_t * message_config = NULL )
 {
@@ -727,7 +719,7 @@ static void reset_loopback_server_sweep_timeout_scenario()
     reset_loopback_destroy( &f );
 }
 
-static void connection_reset_server_slot_reuse_is_clean()
+static void test_connection_reset_server_slot_reuse_is_clean()
 {
     reset_loopback_slot_reuse_scenario();
     reset_loopback_server_sweep_timeout_scenario();
@@ -753,9 +745,9 @@ static void connection_reset_server_slot_reuse_is_clean()
     check( f.server.reassembly->newest_completed[b] == 0 );
     reset_server_teardown( &f );
 }
-REGISTER_UNIT_TEST( connection_reset_server_slot_reuse_is_clean );
+REGISTER_UNIT_TEST( test_connection_reset_server_slot_reuse_is_clean );
 
-static void connection_reset_server_reset_touches_only_its_slot()
+static void test_connection_reset_server_reset_touches_only_its_slot()
 {
     reset_loopback_other_slot_scenario();
     reset_server_fixture_t f;
@@ -775,7 +767,7 @@ static void connection_reset_server_reset_touches_only_its_slot()
     check( f.connection_ids[b] == b_id );
     reset_server_teardown( &f );
 }
-REGISTER_UNIT_TEST( connection_reset_server_reset_touches_only_its_slot );
+REGISTER_UNIT_TEST( test_connection_reset_server_reset_touches_only_its_slot );
 
 
 // The client ends the connection itself, by its own timeout: the server goes
@@ -832,7 +824,7 @@ static void reset_loopback_client_denied_scenario()
     reset_loopback_destroy( &f );
 }
 
-static void connection_reset_client_disconnect_is_clean()
+static void test_connection_reset_client_disconnect_is_clean()
 {
     reset_loopback_client_timeout_scenario();
     reset_loopback_client_denied_scenario();
@@ -863,7 +855,7 @@ static void connection_reset_client_disconnect_is_clean()
     check( memcmp( client.reassembly->slots, fresh_slots, sizeof(fresh_slots) ) == 0 );
     rocketnet_reassembly_set_destroy( client.reassembly );
 }
-REGISTER_UNIT_TEST( connection_reset_client_disconnect_is_clean );
+REGISTER_UNIT_TEST( test_connection_reset_client_disconnect_is_clean );
 
 static void reset_loopback_client_disconnect_state_scenario( int state, int mid_fragment )
 {
@@ -944,7 +936,7 @@ static void reset_loopback_server_disconnect_state_scenario( int mid_fragment )
     reset_loopback_destroy( &f );
 }
 
-static void connection_reset_each_state_leaves_a_clean_slot()
+static void test_connection_reset_each_state_leaves_a_clean_slot()
 {
     static const int handshake_and_connected[] = {
         ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE,
@@ -961,7 +953,7 @@ static void connection_reset_each_state_leaves_a_clean_slot()
     reset_loopback_server_disconnect_state_scenario( 0 );
     reset_loopback_server_disconnect_state_scenario( 1 );
 }
-REGISTER_UNIT_TEST( connection_reset_each_state_leaves_a_clean_slot );
+REGISTER_UNIT_TEST( test_connection_reset_each_state_leaves_a_clean_slot );
 
 static void reset_loopback_settle_messages( reset_loopback_t * f )
 {
@@ -1074,7 +1066,7 @@ static void reset_loopback_client_reliable_timeout_reason_scenario( const rocket
     reset_loopback_destroy( &f );
 }
 
-static void connection_reset_disconnect_reason_kept_until_next_connection()
+static void test_connection_reset_disconnect_reason_kept_until_next_connection()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
@@ -1085,4 +1077,4 @@ static void connection_reset_disconnect_reason_kept_until_next_connection()
     reset_loopback_server_reliable_timeout_reason_scenario( &config );
     reset_loopback_client_reliable_timeout_reason_scenario( &config );
 }
-REGISTER_UNIT_TEST( connection_reset_disconnect_reason_kept_until_next_connection );
+REGISTER_UNIT_TEST( test_connection_reset_disconnect_reason_kept_until_next_connection );

@@ -8,6 +8,7 @@
 #include "rocketnet_platform.h"
 #include "../test/time_scale.h"
 #include "../test/suite_runner.h"
+#include "../test/portable_crt.h"
 
 #include <climits>
 #include <stdio.h>
@@ -52,8 +53,11 @@ struct server_receive_backlog_env_t
     std::string value;
 
     explicit server_receive_backlog_env_t( const char * env_name )
-        : name( env_name ), had_value( getenv( env_name ) != NULL ), value( had_value ? getenv( env_name ) : "" )
+        : name( env_name ), had_value( false ), value()
     {
+        char buffer[4096];
+        had_value = rocketnet_test_getenv( env_name, buffer, sizeof( buffer ) ) != 0;
+        value = buffer;
         server_receive_backlog_set_env( name, NULL );
     }
 
@@ -102,7 +106,7 @@ static const int server_receive_backlog_max_clients = 48;
 
 static long rocketnet_server_receive_backlog_rss_bound_mb()
 {
-    const char * name = "server_receive_keeps_up_with_max_clients";
+    const char * name = "test_server_receive_keeps_up_with_max_clients";
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = server_receive_backlog_max_clients;
@@ -116,14 +120,15 @@ static long rocketnet_server_receive_backlog_rss_bound_mb()
         return 0; // A missing plan falls back to the strict default bound.
     const uint64_t bytes = server_bytes + server_receive_backlog_max_clients * client_bytes + queues;
     const long bound = suite_rss_bound_mb( bytes, 32 );
-    if ( getenv( "ROCKETNET_TEST_VERBOSE" ) )
+    char verbose[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_TEST_VERBOSE", verbose, sizeof( verbose ) ) )
         printf( "%s rss_budget server_bytes=%llu client_bytes=%llu clients=%d queue_bytes=%llu margin_mb=32 bound_mb=%ld\n",
                 name, (unsigned long long) server_bytes, (unsigned long long) client_bytes,
                 server_receive_backlog_max_clients, (unsigned long long) queues, bound );
     return bound;
 }
 
-SUITE_CASE_RSS_BOUND( server_receive_keeps_up_with_max_clients, rocketnet_server_receive_backlog_rss_bound_mb );
+SUITE_CASE_RSS_BOUND( test_server_receive_keeps_up_with_max_clients, rocketnet_server_receive_backlog_rss_bound_mb );
 
 void rocketnet_test_server_receive_keeps_up_with_max_clients()
 {
@@ -291,7 +296,8 @@ void rocketnet_test_server_receive_keeps_up_with_max_clients()
         // All post-settle client packets target the server loopback endpoint, so the exact
         // sent-minus-received remainder is queued or dropped; capacity splits those counts.
         const uint64_t outstanding = sent_total >= received_total ? sent_total - received_total : 0;
-        queue_depth = outstanding < ROCKETNET_LOOPBACK_QUEUE_PACKETS ? outstanding : ROCKETNET_LOOPBACK_QUEUE_PACKETS;
+        const uint64_t queue_capacity = (uint64_t) ROCKETNET_LOOPBACK_QUEUE_PACKETS;
+        queue_depth = outstanding < queue_capacity ? outstanding : queue_capacity;
         dropped = outstanding - queue_depth;
         if ( frame > 0 && queue_depth > previous_depth )
             growing = true;

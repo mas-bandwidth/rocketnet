@@ -129,7 +129,7 @@ static int standard_channels_receipts_security_generate( const char * id, uint8_
     return -1;
 }
 
-static void standard_channels_receipts_security_vectors()
+static void test_standard_channels_receipts_security_vectors()
 {
     const int count = (int) ( sizeof( standard_channels_receipts_security_table ) /
                               sizeof( standard_channels_receipts_security_table[0] ) );
@@ -137,4 +137,4 @@ static void standard_channels_receipts_security_vectors()
                                      standard_channels_receipts_security_generate ) == count );
 }
 
-REGISTER_UNIT_TEST( standard_channels_receipts_security_vectors );
+REGISTER_UNIT_TEST( test_standard_channels_receipts_security_vectors );

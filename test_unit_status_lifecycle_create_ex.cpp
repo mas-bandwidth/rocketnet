@@ -145,7 +145,7 @@ static void check_message_validate_status()
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 }
 
-static void lifecycle_ex_reports_every_status()
+static void test_lifecycle_ex_reports_every_status()
 {
     allocator_state state = { 0, 0, 0 };
     int status = -1;
@@ -240,4 +240,4 @@ static void lifecycle_ex_reports_every_status()
     check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
 }
 
-REGISTER_UNIT_TEST( lifecycle_ex_reports_every_status );
+REGISTER_UNIT_TEST( test_lifecycle_ex_reports_every_status );

@@ -19,6 +19,7 @@
 #include "sdk/rocketnet_connect_token.h"
 #include "sdk/rocketnet_counters.h"
 #include "test/live_verify.h"
+#include "test/portable_crt.h"
 #include <stdio.h>
 #include <string.h>
 #include <signal.h>
@@ -279,12 +280,18 @@ static void r_rss( FILE * f, const char * label, double seconds, long kb )
 
 static long resident_kb( void )
 {
-    FILE * f = fopen( "/proc/self/statm", "r" );
+    FILE * f = rocketnet_test_fopen( "/proc/self/statm", "r" );
     if ( !f ) return 0;
-    long total = 0, resident = 0;
-    int n = fscanf( f, "%ld %ld", &total, &resident );
+    char line[256];
+    const int have_line = fgets( line, sizeof( line ), f ) != NULL;
     fclose( f );
-    if ( n != 2 ) return 0;
+    if ( !have_line ) return 0;
+    /* statm is "total resident ...": skip the total, read the resident pages */
+    char * after_total = NULL;
+    char * after_resident = NULL;
+    strtol( line, &after_total, 10 );
+    const long resident = strtol( after_total, &after_resident, 10 );
+    if ( after_total == line || after_resident == after_total ) return 0;
     return resident; /* pages; the page size is 4 KiB on Linux, kb = pages * 4 */
 }
 
@@ -292,7 +299,7 @@ static long resident_kb( void )
 
 static void write_self_test( const char * path, const char * label )
 {
-    FILE * f = fopen( path, "w" );
+    FILE * f = rocketnet_test_fopen( path, "w" );
     if ( !f )
     {
         fprintf( stderr, "client: cannot write %s\n", path );
@@ -640,12 +647,12 @@ static void run_matrix( opts_t * o )
     FILE * status = NULL;
     if ( o->results_path )
     {
-        res = fopen( o->results_path, "w" );
+        res = rocketnet_test_fopen( o->results_path, "w" );
         if ( !res ) { perror( "client: results" ); exit( 1 ); }
     }
     if ( o->status_path )
     {
-        status = fopen( o->status_path, "w" );
+        status = rocketnet_test_fopen( o->status_path, "w" );
         if ( !status ) { perror( "client: status" ); exit( 1 ); }
     }
 
@@ -1003,8 +1010,9 @@ int main( int argc, char ** argv )
         return 1;
     }
 
-    const char * connect_address = getenv( "ROCKETNET_CLIENT_CONNECT_ADDRESS" );
-    if ( !connect_address )
+    char connect_address_buffer[256];
+    const char * connect_address = connect_address_buffer;
+    if ( !rocketnet_test_getenv( "ROCKETNET_CLIENT_CONNECT_ADDRESS", connect_address_buffer, sizeof( connect_address_buffer ) ) )
         connect_address = o.address;
 
     if ( o.matrix )

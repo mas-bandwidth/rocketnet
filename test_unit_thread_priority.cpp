@@ -171,7 +171,7 @@ static void priority_check_one_thread_call( struct rocketnet_platform_thread_t *
 #endif
 }
 
-static void thread_priority_default_is_on()
+static void test_thread_priority_default_is_on()
 {
     rocketnet_unit_check( rocketnet_get_thread_priority() );
     rocketnet_thread_priority( false );
@@ -180,7 +180,7 @@ static void thread_priority_default_is_on()
     rocketnet_unit_check( rocketnet_get_thread_priority() );
 }
 
-static void thread_priority_client_requests_space_values()
+static void test_thread_priority_client_requests_space_values()
 {
     struct rocketnet_platform_thread_t thread;
     memset( &thread, 0, sizeof( thread ) );
@@ -193,7 +193,7 @@ static void thread_priority_client_requests_space_values()
     priority_fake_restore();
 }
 
-static void thread_priority_server_requests_space_values()
+static void test_thread_priority_server_requests_space_values()
 {
     struct rocketnet_platform_thread_t thread;
     memset( &thread, 0, sizeof( thread ) );
@@ -206,7 +206,7 @@ static void thread_priority_server_requests_space_values()
     priority_fake_restore();
 }
 
-static void thread_priority_off_makes_no_calls()
+static void test_thread_priority_off_makes_no_calls()
 {
     struct rocketnet_platform_thread_t thread;
     memset( &thread, 0, sizeof( thread ) );
@@ -226,7 +226,7 @@ static void thread_priority_off_makes_no_calls()
     priority_fake_restore();
 }
 
-static void thread_priority_refusal_counts_and_logs_once()
+static void test_thread_priority_refusal_counts_and_logs_once()
 {
     struct rocketnet_platform_thread_t thread;
     memset( &thread, 0, sizeof( thread ) );
@@ -250,13 +250,11 @@ static void thread_priority_refusal_counts_and_logs_once()
     priority_fake_restore();
 }
 
-// The timer period exists only on Windows. Both cases are registered on every
-// platform so the suite names match across platforms; off Windows each is a
-// named skip.
+// The timer period exists only on Windows, so both cases are built only there.
 
-static void thread_priority_windows_timer_period_at_init_and_term()
-{
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+static void test_thread_priority_windows_timer_period_at_init_and_term()
+{
     priority_fake_install( false );
     rocketnet_unit_check( rocketnet_platform_init() );
     rocketnet_unit_check( priority_fake_count == 2 );
@@ -268,14 +266,12 @@ static void thread_priority_windows_timer_period_at_init_and_term()
     rocketnet_unit_check( priority_fake_calls[2].kind == PRIORITY_FAKE_TIME_END_PERIOD );
     rocketnet_unit_check( priority_fake_calls[2].period == 1 );
     priority_fake_restore();
-#else
-    printf( "thread_priority_windows_timer_period_at_init_and_term [SKIPPED off windows: no process timer period]\n" );
-#endif
 }
+#endif
 
-static void thread_priority_windows_timer_refusal_counts_and_logs_once()
-{
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+static void test_thread_priority_windows_timer_refusal_counts_and_logs_once()
+{
     priority_fake_install( true );
     const uint64_t refusals = rocketnet_get_thread_priority_refusals();
     rocketnet_unit_check( rocketnet_platform_init() );
@@ -289,10 +285,8 @@ static void thread_priority_windows_timer_refusal_counts_and_logs_once()
     for ( int i = 0; i < priority_fake_count; ++i )
         rocketnet_unit_check( priority_fake_calls[i].kind != PRIORITY_FAKE_TIME_END_PERIOD );
     priority_fake_restore();
-#else
-    printf( "thread_priority_windows_timer_refusal_counts_and_logs_once [SKIPPED off windows: no process timer period]\n" );
-#endif
 }
+#endif
 
 // Frame sync's own priority step (sdk/rocketnet_frame_sync.cpp,
 // rocketnet_frame_sync_elevate_priority) honours the same switch: off, it
@@ -313,7 +307,7 @@ static void priority_frame_sync_log_capture( void * context, enum rocketnet_log_
         priority_frame_sync_lines++;
 }
 
-static void thread_priority_off_frame_sync_takes_no_priority()
+static void test_thread_priority_off_frame_sync_takes_no_priority()
 {
     priority_fake_install( false );
     rocketnet_log_function( priority_frame_sync_log_capture, NULL );
@@ -326,13 +320,15 @@ static void thread_priority_off_frame_sync_takes_no_priority()
     priority_fake_restore();
 }
 
-REGISTER_UNIT_TEST( thread_priority_off_frame_sync_takes_no_priority );
+REGISTER_UNIT_TEST( test_thread_priority_off_frame_sync_takes_no_priority );
 
-REGISTER_UNIT_TEST( thread_priority_windows_timer_period_at_init_and_term );
-REGISTER_UNIT_TEST( thread_priority_windows_timer_refusal_counts_and_logs_once );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+REGISTER_UNIT_TEST( test_thread_priority_windows_timer_period_at_init_and_term );
+REGISTER_UNIT_TEST( test_thread_priority_windows_timer_refusal_counts_and_logs_once );
+#endif
 
-REGISTER_UNIT_TEST( thread_priority_default_is_on );
-REGISTER_UNIT_TEST( thread_priority_client_requests_space_values );
-REGISTER_UNIT_TEST( thread_priority_server_requests_space_values );
-REGISTER_UNIT_TEST( thread_priority_off_makes_no_calls );
-REGISTER_UNIT_TEST( thread_priority_refusal_counts_and_logs_once );
+REGISTER_UNIT_TEST( test_thread_priority_default_is_on );
+REGISTER_UNIT_TEST( test_thread_priority_client_requests_space_values );
+REGISTER_UNIT_TEST( test_thread_priority_server_requests_space_values );
+REGISTER_UNIT_TEST( test_thread_priority_off_makes_no_calls );
+REGISTER_UNIT_TEST( test_thread_priority_refusal_counts_and_logs_once );

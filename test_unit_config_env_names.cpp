@@ -32,6 +32,7 @@
 #include <string>
 #include <vector>
 #include "test_unit_registry.h"
+#include "test/portable_crt.h"
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_config.h"
 #include "sdk/rocketnet_allocator.h"
@@ -160,7 +161,7 @@ static struct rn_message_object_t * env_names_object_create( int is_server, int3
 // field's name under the endpoint prefix
 // ---------------------------------------------------------------------------
 
-static void config_env_budget_is_never_a_message_field()
+static void test_config_env_budget_is_never_a_message_field()
 {
     env_names_setenv( "ROCKETNET_CLIENT_CLIENT_SEND_KBPS", "123" );
     env_names_setenv( "ROCKETNET_SERVER_SERVER_SEND_KBPS", "456" );
@@ -187,14 +188,14 @@ static void config_env_budget_is_never_a_message_field()
     check( client_kbps == ROCKETNET_DEFAULT_CLIENT_SEND_KBPS );
     check( server_kbps == ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS );
 }
-REGISTER_UNIT_TEST( config_env_budget_is_never_a_message_field );
+REGISTER_UNIT_TEST( test_config_env_budget_is_never_a_message_field );
 
 // ---------------------------------------------------------------------------
 // (1) the documented ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS is the budget the
 // message object takes: ROCKETNET_MESSAGE_SERVER_SEND_KBPS changes nothing
 // ---------------------------------------------------------------------------
 
-static void config_env_per_client_send_kbps_is_the_server_budget()
+static void test_config_env_per_client_send_kbps_is_the_server_budget()
 {
     env_names_setenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", "500" );
     env_names_setenv( "ROCKETNET_MESSAGE_SERVER_SEND_KBPS", "700" );
@@ -229,14 +230,14 @@ static void config_env_per_client_send_kbps_is_the_server_budget()
     check( server_default == 500 );
     check( client_default == 300 );
 }
-REGISTER_UNIT_TEST( config_env_per_client_send_kbps_is_the_server_budget );
+REGISTER_UNIT_TEST( test_config_env_per_client_send_kbps_is_the_server_budget );
 
 // ---------------------------------------------------------------------------
 // (1, 3) ROCKETNET_LOG_LEVEL is applied before init's first line: at error,
 // init emits no info line
 // ---------------------------------------------------------------------------
 
-static void config_env_log_level_applies_before_init_logs()
+static void test_config_env_log_level_applies_before_init_logs()
 {
     // the worker ran init at error; the default level is info
     check( rocketnet_term() == ROCKETNET_STATUS_OK );
@@ -259,7 +260,7 @@ static void config_env_log_level_applies_before_init_logs()
     for ( size_t i = 0; i < log.levels.size(); i++ )
         check( log.levels[i] <= (int) ROCKETNET_LOG_LEVEL_ERROR );
 }
-REGISTER_UNIT_TEST( config_env_log_level_applies_before_init_logs );
+REGISTER_UNIT_TEST( test_config_env_log_level_applies_before_init_logs );
 
 // ---------------------------------------------------------------------------
 // (3) ROCKETNET_CLIENT_STEP_DRIVEN is 0 or 1: any other value is out of range
@@ -278,14 +279,14 @@ static bool env_names_step_driven_valid( const char * value )
     return rocketnet_config_validate( "client", &config, fields, num_fields );
 }
 
-static void config_env_step_driven_is_zero_or_one()
+static void test_config_env_step_driven_is_zero_or_one()
 {
     check( env_names_step_driven_valid( "0" ) );
     check( env_names_step_driven_valid( "1" ) );
     check( !env_names_step_driven_valid( "2" ) );
     check( !env_names_step_driven_valid( "18446744073709551615" ) );
 }
-REGISTER_UNIT_TEST( config_env_step_driven_is_zero_or_one );
+REGISTER_UNIT_TEST( test_config_env_step_driven_is_zero_or_one );
 
 // ---------------------------------------------------------------------------
 // (4) every variable the public env passes apply is named in sdk/rocketnet.h
@@ -296,7 +297,7 @@ static std::vector<std::string> env_names_documented( const char * relative_path
 {
     std::vector<std::string> names;
     const std::string path = std::string( ROCKETNET_SOURCE_DIR ) + "/" + relative_path;
-    FILE * file = fopen( path.c_str(), "rb" );
+    FILE * file = rocketnet_test_fopen( path.c_str(), "rb" );
     check( file != NULL );
     std::string text;
     char buffer[4096];
@@ -448,7 +449,7 @@ static std::vector<std::string> env_names_set_candidates()
 static std::string env_names_read_file( const char * relative_path )
 {
     const std::string path = std::string( ROCKETNET_SOURCE_DIR ) + "/" + relative_path;
-    FILE * file = fopen( path.c_str(), "rb" );
+    FILE * file = rocketnet_test_fopen( path.c_str(), "rb" );
     check( file != NULL );
     std::string text;
     char buffer[4096];
@@ -538,7 +539,7 @@ static std::vector<std::string> env_names_pass_reads()
     return reads;
 }
 
-static void config_env_every_name_read_is_documented()
+static void test_config_env_every_name_read_is_documented()
 {
     const std::vector<std::string> documented = env_names_documented( "sdk/rocketnet.h" );
     const std::vector<std::string> building = env_names_documented( "BUILDING.md" );
@@ -657,7 +658,7 @@ static void config_env_every_name_read_is_documented()
         check( env_names_contains( reads, documented[i].c_str() ) );
     }
 }
-REGISTER_UNIT_TEST( config_env_every_name_read_is_documented );
+REGISTER_UNIT_TEST( test_config_env_every_name_read_is_documented );
 
 // ---------------------------------------------------------------------------
 // (4) transport passes also exercise development, internal and operator rows:
@@ -666,7 +667,7 @@ REGISTER_UNIT_TEST( config_env_every_name_read_is_documented );
 // rocketnet_config_apply_env_uint64)
 // ---------------------------------------------------------------------------
 
-static void config_env_transport_passes_exercise_all_rows()
+static void test_config_env_transport_passes_exercise_all_rows()
 {
     // 1. Internal & simulator rows:
     env_names_setenv( "ROCKETNET_CLIENT_GAME_CLOCK_EPOCH", "2000" );
@@ -773,4 +774,4 @@ static void config_env_transport_passes_exercise_all_rows()
 
 
 }
-REGISTER_UNIT_TEST( config_env_transport_passes_exercise_all_rows );
+REGISTER_UNIT_TEST( test_config_env_transport_passes_exercise_all_rows );

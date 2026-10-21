@@ -108,7 +108,7 @@ static void stale_rule_report( const char * name, struct stale_rule_harness_t * 
 // and every later payload must deliver: the loss is X's abandonment, counted
 // once, never a stale refusal.
 
-static void reassembly_lost_run_does_not_stale_the_slot()
+static void test_reassembly_lost_run_does_not_stale_the_slot()
 {
     struct stale_rule_harness_t h;
     stale_rule_begin( &h, 8 );
@@ -134,7 +134,7 @@ static void reassembly_lost_run_does_not_stale_the_slot()
         stale_rule_offer( &h, id, 1 );
     }
 
-    stale_rule_report( "reassembly_lost_run_does_not_stale_the_slot", &h, (int) last );
+    stale_rule_report( "test_reassembly_lost_run_does_not_stale_the_slot", &h, (int) last );
 
     rocketnet_unit_check( h.counters[ROCKETNET_COUNTER_FRAGMENT_STALE] == 0 );
     rocketnet_unit_check( h.delivered == (int) last - lost );
@@ -150,7 +150,7 @@ static void reassembly_lost_run_does_not_stale_the_slot()
 // so it may hold the slot only until the next live id of the series, X+264,
 // displaces it; every later payload delivers. No loss beyond the one delay.
 
-static void reassembly_late_fragment_after_completion_does_not_poison()
+static void test_reassembly_late_fragment_after_completion_does_not_poison()
 {
     struct stale_rule_harness_t h;
     stale_rule_begin( &h, 8 );
@@ -174,7 +174,7 @@ static void reassembly_late_fragment_after_completion_does_not_poison()
         }
     }
 
-    stale_rule_report( "reassembly_late_fragment_after_completion_does_not_poison", &h, (int) last );
+    stale_rule_report( "test_reassembly_late_fragment_after_completion_does_not_poison", &h, (int) last );
 
     rocketnet_unit_check( h.counters[ROCKETNET_COUNTER_FRAGMENT_STALE] == 0 );
     rocketnet_unit_check( h.delivered == (int) last - 1 );                      // every payload but X
@@ -189,7 +189,7 @@ static void reassembly_late_fragment_after_completion_does_not_poison()
 // ahead within the bound may take an empty slot, but the next honest id of the
 // series displaces it. Every honest payload delivers.
 
-static void reassembly_hostile_far_ahead_id_cannot_poison()
+static void test_reassembly_hostile_far_ahead_id_cannot_poison()
 {
     struct stale_rule_harness_t h;
     stale_rule_begin( &h, 8 );
@@ -230,7 +230,7 @@ static void reassembly_hostile_far_ahead_id_cannot_poison()
         }
     }
 
-    stale_rule_report( "reassembly_hostile_far_ahead_id_cannot_poison", &h, (int) last );
+    stale_rule_report( "test_reassembly_hostile_far_ahead_id_cannot_poison", &h, (int) last );
 
     rocketnet_unit_check( h.counters[ROCKETNET_COUNTER_FRAGMENT_STALE] == hostile_refused );
     rocketnet_unit_check( h.delivered == (int) last );
@@ -249,7 +249,7 @@ static void reassembly_hostile_far_ahead_id_cannot_poison()
 // ahead (4005) holds the slot only until 5's own final displaces it: one
 // payload lost, nothing stale.
 
-static void reassembly_one_bad_fragment_costs_at_most_the_window()
+static void test_reassembly_one_bad_fragment_costs_at_most_the_window()
 {
     const uint32_t last = 2000;
 
@@ -267,7 +267,7 @@ static void reassembly_one_bad_fragment_costs_at_most_the_window()
             stale_rule_offer( &h, id, 1 );
         }
 
-        stale_rule_report( "reassembly_one_bad_fragment_costs_at_most_the_window (256 ahead)", &h, (int) last );
+        stale_rule_report( "test_reassembly_one_bad_fragment_costs_at_most_the_window (256 ahead)", &h, (int) last );
 
         const int lost = (int) ( ROCKETNET_REASSEMBLY_BEHIND / 8 );                    // 32: 5, 13 .. 253
         rocketnet_unit_check( lost == 32 );
@@ -293,7 +293,7 @@ static void reassembly_one_bad_fragment_costs_at_most_the_window()
             stale_rule_offer( &h, id, 1 );
         }
 
-        stale_rule_report( "reassembly_one_bad_fragment_costs_at_most_the_window (4000 ahead)", &h, (int) last );
+        stale_rule_report( "test_reassembly_one_bad_fragment_costs_at_most_the_window (4000 ahead)", &h, (int) last );
 
         rocketnet_unit_check( h.delivered == (int) last - 1 );                      // every payload but 5
         rocketnet_unit_check( h.counters[ROCKETNET_COUNTER_FRAGMENT_STALE] == 0 );
@@ -302,7 +302,7 @@ static void reassembly_one_bad_fragment_costs_at_most_the_window()
     }
 }
 
-REGISTER_UNIT_TEST( reassembly_lost_run_does_not_stale_the_slot );
-REGISTER_UNIT_TEST( reassembly_one_bad_fragment_costs_at_most_the_window );
-REGISTER_UNIT_TEST( reassembly_late_fragment_after_completion_does_not_poison );
-REGISTER_UNIT_TEST( reassembly_hostile_far_ahead_id_cannot_poison );
+REGISTER_UNIT_TEST( test_reassembly_lost_run_does_not_stale_the_slot );
+REGISTER_UNIT_TEST( test_reassembly_one_bad_fragment_costs_at_most_the_window );
+REGISTER_UNIT_TEST( test_reassembly_late_fragment_after_completion_does_not_poison );
+REGISTER_UNIT_TEST( test_reassembly_hostile_far_ahead_id_cannot_poison );

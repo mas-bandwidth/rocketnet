@@ -162,7 +162,7 @@ static const rn_standard_vector_t standard_timing_and_counters_table[] =
     "000079b815e7000000" ),
 };
 
-static void standard_timing_and_counters_vectors()
+static void test_standard_timing_and_counters_vectors()
 {
     const int count = (int) ( sizeof( standard_timing_and_counters_table ) / sizeof( standard_timing_and_counters_table[0] ) );
     rocketnet_unit_check( rn_standard_vectors_walk( standard_timing_and_counters_table, count, standard_timing_and_counters_generate ) == count );
@@ -193,4 +193,4 @@ static void standard_timing_and_counters_vectors()
     rocketnet_unit_check( standard_timing_and_counters_generate( "t17.no-such-vector", scratch, 2 ) == -1 );
 }
 
-REGISTER_UNIT_TEST( standard_timing_and_counters_vectors );
+REGISTER_UNIT_TEST( test_standard_timing_and_counters_vectors );

@@ -70,7 +70,7 @@ void reliable_state_stream_over_lossy_link()
     rs_functional_check( h.resends > 0, "loss caused no resend" );
     rs_functional_check( rocketnet_channel_harness_overflows( &h ) == 0, "delivery ring overflow" );
     rs_functional_check( rocketnet_channel_allocator_calls == h.allocation_snapshot, "allocation after create" );
-    printf( "reliable_state_stream_over_lossy_link: accepted=%u delivered=%u last=%u resends=%llu wire_to_server=%lld wire_to_client=%lld seed=0x5EED5EED5EED5EED\n",
+    printf( "test_reliable_state_stream_over_lossy_link: accepted=%u delivered=%u last=%u resends=%llu wire_to_server=%lld wire_to_client=%lld seed=0x5EED5EED5EED5EED\n",
             accepted, delivered, last, (unsigned long long) h.resends,
             (long long) h.wire_bytes_to_server, (long long) h.wire_bytes_to_client );
     rocketnet_channel_harness_destroy( &h );
@@ -146,7 +146,7 @@ void reliable_sequenced_long_run_across_epochs()
 
     rocketnet_channel_harness_read_counters( &h );
     const uint32_t stale = rs_server_stale( &h );
-    printf( "reliable_sequenced_long_run_across_epochs: sent=%u ordered=%u/%u states=%u newest=%u/%u stale=%u resends=%llu elapsed=%.3fs seed=0x%016llx\n",
+    printf( "test_reliable_sequenced_long_run_across_epochs: sent=%u ordered=%u/%u states=%u newest=%u/%u stale=%u resends=%llu elapsed=%.3fs seed=0x%016llx\n",
             position, ordered_seen, ordered_sent, states_seen, newest_seen, position, stale,
             (unsigned long long) h.resends, h.now - 1000.0, (unsigned long long) h.seed );
     rs_functional_check( position > 1024 + 64, "the run is shorter than the receive window" );
@@ -212,7 +212,7 @@ void reliable_sequenced_held_record_released()
         rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
         rs_functional_check( !rocketnet_channel_harness_server_collect( &h, 0, &d ), "a message arrived twice" );
     }
-    printf( "reliable_sequenced_held_record_released: held=%d ordered_packets=%d state_packets=%d\n",
+    printf( "test_reliable_sequenced_held_record_released: held=%d ordered_packets=%d state_packets=%d\n",
             state_end, ordered_end, state_end - ordered_end );
     rs_functional_check( h.held_overflow == 0, "held packets overflowed" );
     rs_functional_check( rocketnet_channel_harness_overflows( &h ) == 0, "delivery ring overflow" );

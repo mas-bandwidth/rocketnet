@@ -451,6 +451,15 @@ struct mc_received_t
     std::vector<uint8_t> bytes;
 };
 
+// copies a received message; a zero-byte message copies nothing, so its data
+// pointer never reaches memmove (gcc 13 and 15 -Wnonnull on vector::assign)
+static void mc_copy_bytes( std::vector<uint8_t> & to, const uint8_t * from, int bytes )
+{
+    to.resize( (size_t) bytes );
+    if ( bytes > 0 )
+        memcpy( to.data(), from, (size_t) bytes );
+}
+
 static void mc_drain_server( mc_pair_t * pair, std::vector<mc_received_t> * out )
 {
     // the server's one receive queue across every slot: each message names
@@ -465,7 +474,7 @@ static void mc_drain_server( mc_pair_t * pair, std::vector<mc_received_t> * out 
         mc_received_t r;
         r.slot = slot;
         r.channel = channel;
-        r.bytes.assign( data, data + bytes );
+        mc_copy_bytes( r.bytes, data, bytes );
         if ( out )
             out->push_back( r );
         rocketnet_message_server_release( pair->server, data );
@@ -483,7 +492,7 @@ static void mc_drain_client( rocketnet_message_client_t * client, std::vector<mc
             mc_received_t r;
             r.slot = 0;
             r.channel = channel;
-            r.bytes.assign( data, data + bytes );
+            mc_copy_bytes( r.bytes, data, bytes );
             if ( out )
                 out->push_back( r );
             rocketnet_message_client_release( client, data );
@@ -588,7 +597,7 @@ static void mc_capture( void * context, enum rocketnet_log_level_t level, const 
 // refuse each other. Each end logs one error line naming the field and both
 // values; the server kicks the slot and the client disconnects itself, both
 // with CONFIG_MISMATCH. Red at a base without CONFIG: both stay connected.
-static void message_config_mismatch_ends_both_connections()
+static void test_message_config_mismatch_ends_both_connections()
 {
     rocketnet_message_config_t server_config;
     rocketnet_message_config_t client_config;
@@ -699,7 +708,7 @@ static int mc_config_sends( const mc_endpoint_t * sender, const rocketnet_messag
 // RNEndpoint Reset, WriteOk and OnPayload: equal configs connect and both
 // ends verify. CONFIG goes first even when the application queued a message
 // before the first packet, and that message's record takes reliable number 1.
-static void message_config_equal_connects_and_verifies()
+static void test_message_config_equal_connects_and_verifies()
 {
     rocketnet_message_config_t config;
     mc_config( &config );
@@ -756,7 +765,7 @@ static void message_config_equal_connects_and_verifies()
 // RNEndpoint ConfigReliable (the reversed witness ConfigVerifiedDespite-
 // FirstLoss): the first packet each way is lost; CONFIG is resent until acked
 // like any reliable record, and both ends still verify.
-static void message_config_first_loss_still_verifies()
+static void test_message_config_first_loss_still_verifies()
 {
     rocketnet_message_config_t config;
     mc_config( &config );
@@ -800,7 +809,7 @@ static void message_config_first_loss_still_verifies()
 // nothing reliable unacked, yet it is still waiting for the peer's CONFIG, so
 // reliable_timeout after it connected it ends the connection as
 // RELIABLE_TIMEOUT. Red at a base without CONFIG: nothing ever times out.
-static void message_config_never_received_is_reliable_timeout()
+static void test_message_config_never_received_is_reliable_timeout()
 {
     rocketnet_message_config_t config;
     mc_config( &config );
@@ -836,7 +845,7 @@ static void message_config_never_received_is_reliable_timeout()
 // from the library's own defaults (CHANNELS.md 13.4) and pins it byte for
 // byte: enabled 0xFF, all eight types of the first version's mask (7.5).
 // Red if the default mask or the default config drifts from the standard.
-static void config_vector_is_library_default()
+static void test_config_vector_is_library_default()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
@@ -877,8 +886,8 @@ static void config_vector_is_library_default()
     check( memcmp( payload, expected, sizeof( expected ) ) == 0 );
 }
 
-REGISTER_UNIT_TEST( message_config_mismatch_ends_both_connections );
-REGISTER_UNIT_TEST( message_config_equal_connects_and_verifies );
-REGISTER_UNIT_TEST( message_config_first_loss_still_verifies );
-REGISTER_UNIT_TEST( message_config_never_received_is_reliable_timeout );
-REGISTER_UNIT_TEST( config_vector_is_library_default );
+REGISTER_UNIT_TEST( test_message_config_mismatch_ends_both_connections );
+REGISTER_UNIT_TEST( test_message_config_equal_connects_and_verifies );
+REGISTER_UNIT_TEST( test_message_config_first_loss_still_verifies );
+REGISTER_UNIT_TEST( test_message_config_never_received_is_reliable_timeout );
+REGISTER_UNIT_TEST( test_config_vector_is_library_default );

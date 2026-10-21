@@ -884,7 +884,7 @@ static inline void rocketnet_dst_check_settle( struct rocketnet_dst_check_state_
 // Called at the last step: every reliable message sent on a stream whose
 // session is still live is delivered. The harness passes the live flag per
 // session (0 the server, i + 1 client i).
-static inline void rocketnet_dst_check_end( struct rocketnet_dst_check_state_t * st, double time,
+static inline void rocketnet_dst_check_end( struct rocketnet_dst_check_state_t * st, double /* time */,
                                             const int * session_live, const uint64_t * live_identity )
 {
     (void) time;

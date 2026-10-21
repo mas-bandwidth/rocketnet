@@ -13,6 +13,7 @@
 // arrives in a later update, late and stale. The counter shows the drop; the
 // two cases assert the absence over simulated time.
 #include "channel_harness.h"
+#include "../test/portable_crt.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,6 +22,13 @@
 #define DROPS_UNRELIABLE_BYTES      24
 #define DROPS_BUILDER_BYTES         300
 #define DROPS_TICK                  ( 1.0 / 60.0 )
+
+// ROCKETNET_TEST_VERBOSE set: print each case's counts
+static bool drops_verbose()
+{
+    char value[256];
+    return rocketnet_test_getenv( "ROCKETNET_TEST_VERBOSE", value, sizeof( value ) ) != 0;
+}
 
 static void drops_check( bool condition, const char * label )
 {
@@ -131,8 +139,8 @@ void unreliable_dropped_while_reliable_waits_never_arrives()
     drops_check( drops_over_budget( &h ) >= before + 4, "counter does not fall" );
     drops_check( rocketnet_channel_harness_overflows( &h ) == 0, "delivery ring overflow" );
     drops_check( rocketnet_channel_allocator_calls == h.allocation_snapshot, "allocation after create" );
-    if ( getenv( "ROCKETNET_TEST_VERBOSE" ) != NULL )
-        printf( "unreliable_dropped_while_reliable_waits_never_arrives: over_budget=%llu reliable_arrived=%d elapsed=%.2f\n",
+    if ( drops_verbose() )
+        printf( "test_unreliable_dropped_while_reliable_waits_never_arrives: over_budget=%llu reliable_arrived=%d elapsed=%.2f\n",
                 (unsigned long long) ( drops_over_budget( &h ) - before ), reliable_arrived, elapsed );
     rocketnet_channel_harness_destroy( &h );
 }
@@ -185,8 +193,8 @@ void unreliable_dropped_when_builder_out_of_budget_never_arrives()
     drops_check( drops_over_budget( &h ) == before + (uint64_t) ( sent - arrived ), "no further drops once idle" );
     drops_check( rocketnet_channel_harness_overflows( &h ) == 0, "delivery ring overflow" );
     drops_check( rocketnet_channel_allocator_calls == h.allocation_snapshot, "allocation after create" );
-    if ( getenv( "ROCKETNET_TEST_VERBOSE" ) != NULL )
-        printf( "unreliable_dropped_when_builder_out_of_budget_never_arrives: sent=%d arrived=%d over_budget=%llu elapsed=%.2f\n",
+    if ( drops_verbose() )
+        printf( "test_unreliable_dropped_when_builder_out_of_budget_never_arrives: sent=%d arrived=%d over_budget=%llu elapsed=%.2f\n",
                 sent, arrived, (unsigned long long) ( drops_over_budget( &h ) - before ), elapsed );
     rocketnet_channel_harness_destroy( &h );
 }

@@ -102,10 +102,10 @@ static const rn_standard_vector_t standard_fragmentation_table[] =
     RN_STANDARD_VECTOR( "t16.reassembly-trace", "000000000100000106010100" ),
 };
 
-static void standard_fragmentation_vectors()
+static void test_standard_fragmentation_vectors()
 {
     const int count = (int) ( sizeof( standard_fragmentation_table ) / sizeof( standard_fragmentation_table[0] ) );
     rocketnet_unit_check( rn_standard_vectors_walk( standard_fragmentation_table, count, standard_fragmentation_generate ) == count );
 }
 
-REGISTER_UNIT_TEST( standard_fragmentation_vectors );
+REGISTER_UNIT_TEST( test_standard_fragmentation_vectors );

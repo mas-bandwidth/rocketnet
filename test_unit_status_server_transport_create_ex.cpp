@@ -16,6 +16,7 @@
 //     because the ladder refuses the XDP rung before opening anything.
 
 #include "test_unit_registry.h"
+#include "test/portable_crt.h"
 
 #include "rocketnet_internal.h"
 
@@ -28,7 +29,8 @@
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 static int setenv( const char * name, const char * value, int overwrite )
 {
-    if ( !overwrite && getenv( name ) != NULL )
+    size_t length = 0;
+    if ( !overwrite && getenv_s( &length, NULL, 0, name ) == 0 && length != 0 )
         return 0;
     return _putenv_s( name, value );
 }
@@ -50,11 +52,7 @@ struct env_pin_saved
 
 static void env_pin_set_aside( env_pin_saved * saved )
 {
-    const char * value = getenv( "ROCKETNET_SERVER_TRANSPORT" );
-    saved->was_set = value != NULL;
-    saved->value[0] = '\0';
-    if ( value )
-        snprintf( saved->value, sizeof(saved->value), "%s", value );
+    saved->was_set = rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", saved->value, sizeof(saved->value) ) != 0;
     unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
 }
 
@@ -120,7 +118,7 @@ static void server_create_ex_expected_null_assert( const char *, const char *, c
 }
 #endif
 
-static void server_transport_create_ex_reports_every_status()
+static void test_server_transport_create_ex_reports_every_status()
 {
     env_pin_saved pin;
     env_pin_set_aside( &pin );
@@ -194,7 +192,7 @@ static void server_transport_create_ex_reports_every_status()
     {
         struct rocketnet_server_transport_config_t config;
         production_config( &config );
-        strcpy( config.transport, "loopback" );
+        snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
         status = -1;
         check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
@@ -206,7 +204,7 @@ static void server_transport_create_ex_reports_every_status()
     {
         struct rocketnet_server_transport_config_t config;
         production_config( &config );
-        strcpy( config.transport, "portable" );
+        snprintf( config.transport, sizeof( config.transport ), "%s", "portable" );
         status = -1;
         check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
@@ -232,7 +230,7 @@ static void server_transport_create_ex_reports_every_status()
     {
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_dev_config( &config );
-        strcpy( config.transport, "bogus" );
+        snprintf( config.transport, sizeof( config.transport ), "%s", "bogus" );
         status = -1;
         check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_INVALID_TRANSPORT_LIST );
@@ -260,19 +258,17 @@ static void server_transport_create_ex_reports_every_status()
     // TRANSPORT_PORT_ZERO_UNSUPPORTED. The xdp row exists only on Linux:
     // elsewhere the ladder skips "xdp" for the platform and falls to the
     // auto order (sdk/rocketnet_tests.cpp checks that fall), whose transports
-    // open a real socket, so off Linux the case is a named skip
-    {
+    // open a real socket, so the step runs on Linux only
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    {
         struct rocketnet_server_transport_config_t config;
         production_config( &config );
-        strcpy( config.transport, "xdp" );
+        snprintf( config.transport, sizeof( config.transport ), "%s", "xdp" );
         status = -1;
         check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:0", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED );
-#else
-        printf( "server_transport_create_ex_reports_every_status S12 [SKIPPED off linux: the xdp row is not built, so a pin of it falls to the auto order]\n" );
-#endif
     }
+#endif
 
     // S10 and S14: a fault-injecting allocator failing at each allocation in
     // turn yields OUT_OF_MEMORY, and once every allocation succeeds the create
@@ -280,7 +276,7 @@ static void server_transport_create_ex_reports_every_status()
     {
         struct rocketnet_server_transport_config_t config;
         production_config( &config );
-        strcpy( config.transport, "loopback" );
+        snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
         config.max_clients = 1;
 
         int reached_success = 0;
@@ -318,4 +314,4 @@ static void server_transport_create_ex_reports_every_status()
     env_pin_put_back( &pin );
 }
 
-REGISTER_UNIT_TEST( server_transport_create_ex_reports_every_status );
+REGISTER_UNIT_TEST( test_server_transport_create_ex_reports_every_status );

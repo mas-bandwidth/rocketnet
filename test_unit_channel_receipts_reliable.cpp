@@ -165,7 +165,7 @@ static void reliable_fixture_destroy( reliable_receipt_fixture_t * f )
     rn_message_object_destroy( &f->client->object );
 }
 
-static void reliable_receipt_acked_never_loss()
+static void test_reliable_receipt_acked_never_loss()
 {
     rocketnet_unit_check( ROCKETNET_CHANNEL_RECEIPT_BASE( ROCKETNET_CHANNEL_TYPE_RELIABLE_WITH_RECEIPT ) ==
                           ROCKETNET_CHANNEL_TYPE_RELIABLE );
@@ -186,7 +186,7 @@ static void reliable_receipt_acked_never_loss()
     reliable_fixture_destroy( &f );
 }
 
-static void ordered_receipt_after_all_chunks()
+static void test_ordered_receipt_after_all_chunks()
 {
     reliable_receipt_fixture_t f;
     reliable_fixture_create( &f, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 2 * ROCKETNET_MESSAGE_FRAGMENT_BYTES + 17 );
@@ -202,7 +202,7 @@ static void ordered_receipt_after_all_chunks()
     reliable_fixture_destroy( &f );
 }
 
-static void reliable_receipt_waits_for_every_number()
+static void test_reliable_receipt_waits_for_every_number()
 {
     reliable_receipt_fixture_t f;
     reliable_fixture_create( &f, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, 1412 );
@@ -235,7 +235,7 @@ static void reliable_receipt_waits_for_every_number()
     reliable_fixture_destroy( &f );
 }
 
-static void rnreceipts_reliable_witness_replays()
+static void test_rnreceipts_reliable_witness_replays()
 {
     // BrokenLastIndexAck and BrokenReliableLoss: neither a last-index ACK nor
     // a resend delay sweep completes or loses a still-incomplete reliable block.
@@ -264,7 +264,7 @@ static void reliable_receipt_free( void *, void * pointer )
     free( pointer );
 }
 
-static void no_allocation_after_create_reliable_receipts()
+static void test_no_allocation_after_create_reliable_receipts()
 {
     rocketnet_term();
     rocketnet_unit_check( rocketnet_allocator( reliable_receipt_malloc, reliable_receipt_free ) == ROCKETNET_STATUS_OK );
@@ -284,8 +284,8 @@ static void no_allocation_after_create_reliable_receipts()
     rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
-REGISTER_UNIT_TEST( reliable_receipt_acked_never_loss );
-REGISTER_UNIT_TEST( ordered_receipt_after_all_chunks );
-REGISTER_UNIT_TEST( reliable_receipt_waits_for_every_number );
-REGISTER_UNIT_TEST( rnreceipts_reliable_witness_replays );
-REGISTER_UNIT_TEST( no_allocation_after_create_reliable_receipts );
+REGISTER_UNIT_TEST( test_reliable_receipt_acked_never_loss );
+REGISTER_UNIT_TEST( test_ordered_receipt_after_all_chunks );
+REGISTER_UNIT_TEST( test_reliable_receipt_waits_for_every_number );
+REGISTER_UNIT_TEST( test_rnreceipts_reliable_witness_replays );
+REGISTER_UNIT_TEST( test_no_allocation_after_create_reliable_receipts );

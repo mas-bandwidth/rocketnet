@@ -19,6 +19,7 @@
 // variables and restores them.
 
 #include "test_unit_registry.h"
+#include "test/portable_crt.h"
 
 #include "rocketnet.h"
 #include "rocketnet_internal.h"
@@ -52,6 +53,15 @@ static int create_status_unsetenv( const char * name ) { return _putenv_s( name,
 static int create_status_setenv( const char * name, const char * value ) { return setenv( name, value, 1 ); }
 static int create_status_unsetenv( const char * name ) { return unsetenv( name ); }
 #endif
+
+// Whether the variable is set; its value, or empty, in value.
+static bool create_status_getenv( const char * name, std::string & value )
+{
+    char buffer[4096];
+    const bool present = rocketnet_test_getenv( name, buffer, sizeof( buffer ) ) != 0;
+    value = buffer;
+    return present;
+}
 
 // ---- the fault-injecting allocator -----------------------------------------
 
@@ -89,7 +99,7 @@ static void create_status_release( void * context, void * pointer )
 
 // ---- success writes OK -------------------------------------------------------
 
-static void create_reports_status_success()
+static void test_create_reports_status_success()
 {
     struct rocketnet_client_config_t client_config;
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
@@ -109,11 +119,11 @@ static void create_reports_status_success()
     check( status == ROCKETNET_STATUS_OK );
     rocketnet_server_destroy( server );
 }
-REGISTER_UNIT_TEST( create_reports_status_success );
+REGISTER_UNIT_TEST( test_create_reports_status_success );
 
 // ---- before init ------------------------------------------------------------
 
-static void create_reports_status_not_initialized()
+static void test_create_reports_status_not_initialized()
 {
     void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_assert_function( create_status_quiet_assert );
@@ -138,11 +148,11 @@ static void create_reports_status_not_initialized()
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
     rocketnet_assert_function( saved_assert );
 }
-REGISTER_UNIT_TEST( create_reports_status_not_initialized );
+REGISTER_UNIT_TEST( test_create_reports_status_not_initialized );
 
 // ---- bad arguments ----------------------------------------------------------
 
-static void create_reports_status_invalid_argument()
+static void test_create_reports_status_invalid_argument()
 {
     struct rocketnet_client_config_t client_config;
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
@@ -158,7 +168,7 @@ static void create_reports_status_invalid_argument()
     rocketnet_assert_function( saved_assert );
     check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
 }
-REGISTER_UNIT_TEST( create_reports_status_invalid_argument );
+REGISTER_UNIT_TEST( test_create_reports_status_invalid_argument );
 
 // ---- a config never filled: config_bytes below its own field ----------------
 
@@ -167,7 +177,7 @@ REGISTER_UNIT_TEST( create_reports_status_invalid_argument );
 // required_memory; the inline default_config sets config_bytes to the
 // caller's sizeof, and the library half refuses a config_bytes that small
 // without writing a byte.
-static void create_reports_status_config_not_initialized()
+static void test_create_reports_status_config_not_initialized()
 {
     struct rocketnet_client_config_t client_config;
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
@@ -226,11 +236,11 @@ static void create_reports_status_config_not_initialized()
     check( status == ROCKETNET_STATUS_OK );
     rocketnet_client_destroy( client );
 }
-REGISTER_UNIT_TEST( create_reports_status_config_not_initialized );
+REGISTER_UNIT_TEST( test_create_reports_status_config_not_initialized );
 
 // ---- an over-long address ---------------------------------------------------
 
-static void create_reports_status_invalid_address()
+static void test_create_reports_status_invalid_address()
 {
     struct rocketnet_server_config_t server_config;
     create_status_dev_server_config( &server_config );
@@ -244,11 +254,11 @@ static void create_reports_status_invalid_address()
     check( rocketnet_server_create( NULL, address, &server_config, &status ) == NULL );
     check( status == ROCKETNET_STATUS_INVALID_ADDRESS );
 }
-REGISTER_UNIT_TEST( create_reports_status_invalid_address );
+REGISTER_UNIT_TEST( test_create_reports_status_invalid_address );
 
 // ---- config refusals --------------------------------------------------------
 
-static void create_reports_status_config_refusals()
+static void test_create_reports_status_config_refusals()
 {
     // a field out of range
     struct rocketnet_client_config_t client_config;
@@ -268,12 +278,10 @@ static void create_reports_status_config_refusals()
     // A value supplied by the caller is a config-range refusal, even though
     // create also checks environment overrides. Keep the environment absent
     // for this distinction, then restore it for the process running the suite.
-    const char * client_env = getenv( "ROCKETNET_CLIENT_SEND_KBPS" );
-    const char * server_env = getenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" );
-    const std::string saved_client_env = client_env ? client_env : "";
-    const std::string saved_server_env = server_env ? server_env : "";
-    const bool had_client_env = client_env != NULL;
-    const bool had_server_env = server_env != NULL;
+    std::string saved_client_env;
+    std::string saved_server_env;
+    const bool had_client_env = create_status_getenv( "ROCKETNET_CLIENT_SEND_KBPS", saved_client_env );
+    const bool had_server_env = create_status_getenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", saved_server_env );
     check( create_status_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" ) == 0 );
     check( create_status_unsetenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" ) == 0 );
 
@@ -355,9 +363,8 @@ static void create_reports_status_config_refusals()
 
     // a malformed environment override: CONFIG_ENV_INVALID, client and server
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
-    const char * prior_client_value = getenv( "ROCKETNET_CLIENT_SEND_KBPS" );
-    const bool prior_client_present = prior_client_value != NULL;
-    const std::string prior_client = prior_client_present ? prior_client_value : "";
+    std::string prior_client;
+    const bool prior_client_present = create_status_getenv( "ROCKETNET_CLIENT_SEND_KBPS", prior_client );
     check( create_status_setenv( "ROCKETNET_CLIENT_SEND_KBPS", "not-a-number" ) == 0 );
     status = ROCKETNET_STATUS_OK;
     check( rocketnet_client_create( NULL, &client_config, &status ) == NULL );
@@ -367,9 +374,8 @@ static void create_reports_status_config_refusals()
 
     create_status_dev_server_config( &server_config );
     server_config.max_clients = 4;
-    const char * prior_server_value = getenv( "ROCKETNET_SERVER_MAX_CLIENTS" );
-    const bool prior_server_present = prior_server_value != NULL;
-    const std::string prior_server = prior_server_present ? prior_server_value : "";
+    std::string prior_server;
+    const bool prior_server_present = create_status_getenv( "ROCKETNET_SERVER_MAX_CLIENTS", prior_server );
     check( create_status_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "not-a-number" ) == 0 );
     status = ROCKETNET_STATUS_OK;
     check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &status ) == NULL );
@@ -377,11 +383,11 @@ static void create_reports_status_config_refusals()
     if ( prior_server_present ) check( create_status_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", prior_server.c_str() ) == 0 );
     else check( create_status_unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" ) == 0 );
 }
-REGISTER_UNIT_TEST( create_reports_status_config_refusals );
+REGISTER_UNIT_TEST( test_create_reports_status_config_refusals );
 
 // ---- a failed block allocation ----------------------------------------------
 
-static void create_reports_status_out_of_memory()
+static void test_create_reports_status_out_of_memory()
 {
     create_status_allocator_t state;
     memset( &state, 0, sizeof( state ) );
@@ -441,11 +447,11 @@ static void create_reports_status_out_of_memory()
     check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
-REGISTER_UNIT_TEST( create_reports_status_out_of_memory );
+REGISTER_UNIT_TEST( test_create_reports_status_out_of_memory );
 
 // ---- a NULL status, on a refusal and on a success ---------------------------
 
-static void create_reports_status_null_status()
+static void test_create_reports_status_null_status()
 {
     struct rocketnet_client_config_t client_config;
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
@@ -465,7 +471,7 @@ static void create_reports_status_null_status()
     server_config.max_clients = 0;
     check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL ) == NULL );
 }
-REGISTER_UNIT_TEST( create_reports_status_null_status );
+REGISTER_UNIT_TEST( test_create_reports_status_null_status );
 
 // ---- a NULL config -----------------------------------------------------------
 // A NULL config is the defaults: this case compiles in C++ (this file) and
@@ -475,7 +481,7 @@ REGISTER_UNIT_TEST( create_reports_status_null_status );
 // far past the unit suite's memory bound, so the server side is exercised
 // through required_memory below.
 
-static void create_reports_status_null_config_macro()
+static void test_create_reports_status_null_config_macro()
 {
     enum rocketnet_status_t status = ROCKETNET_STATUS_COUNT;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, NULL, &status );
@@ -493,4 +499,4 @@ static void create_reports_status_null_config_macro()
     check( rocketnet_server_default_config_internal( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     rocketnet_assert_function( saved_assert );
 }
-REGISTER_UNIT_TEST( create_reports_status_null_config_macro );
+REGISTER_UNIT_TEST( test_create_reports_status_null_config_macro );

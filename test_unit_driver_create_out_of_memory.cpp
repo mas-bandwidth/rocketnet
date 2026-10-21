@@ -8,21 +8,21 @@
 // transport ladder ends there instead of falling to the next candidate. A
 // fault-injecting allocator fails each allocation in turn:
 //
-//   * transport_open_reports_out_of_memory: a transport open over an in-memory
+//   * test_transport_open_reports_out_of_memory: a transport open over an in-memory
 //     transport with three allocations, server and client, gives OUT_OF_MEMORY
 //     at each with nothing live, and a create that refuses without a failed
 //     allocation leaves the status untouched;
-//   * transport_create_server_ladder_stops_on_out_of_memory: the loopback
+//   * test_transport_create_server_ladder_stops_on_out_of_memory: the loopback
 //     transport under rocketnet_server_transport_create_ex, pinned and as the
 //     first of two candidates;
-//   * transport_create_client_ladder_stops_on_out_of_memory: the same for
+//   * test_transport_create_client_ladder_stops_on_out_of_memory: the same for
 //     rocketnet_client_transport_create_ex;
-//   * platform_adapters_fetch_is_bounded: the buffer loop of the Windows
+//   * test_platform_adapters_fetch_is_bounded: the buffer loop of the Windows
 //     connection-type query (rocketnet_platform_adapters_fetch,
 //     sdk/rocketnet_platform.cpp), over a fake query on every platform, asks
 //     the allocator no more than its bound when it refuses, and runs the
 //     query no more than its bound when the query keeps overflowing;
-//   * platform_init_survives_a_refusing_allocator: rocketnet_init_ex under an
+//   * test_platform_init_survives_a_refusing_allocator: rocketnet_init_ex under an
 //     allocator that refuses its first TRANSPORT_OOM_GIVE_WAY requests completes,
 //     and platform init asks no more than the bound; on Windows this walks
 //     get_connection_type.
@@ -35,6 +35,7 @@
 // that count (sdk/rocketnet_driver.cpp:126), the same path these cases walk.
 
 #include "test_unit_registry.h"
+#include "test/portable_crt.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_driver.h"
@@ -50,7 +51,8 @@
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 static int setenv( const char * name, const char * value, int overwrite )
 {
-    if ( !overwrite && getenv( name ) != NULL )
+    size_t length = 0;
+    if ( !overwrite && getenv_s( &length, NULL, 0, name ) == 0 && length != 0 )
         return 0;
     return _putenv_s( name, value );
 }
@@ -71,11 +73,7 @@ struct transport_oom_env_pin_t
 
 static void transport_oom_env_set_aside( const char * name, transport_oom_env_pin_t * saved )
 {
-    const char * value = getenv( name );
-    saved->was_set = value != NULL;
-    saved->value[0] = '\0';
-    if ( value )
-        snprintf( saved->value, sizeof(saved->value), "%s", value );
+    saved->was_set = rocketnet_test_getenv( name, saved->value, sizeof(saved->value) ) != 0;
     unsetenv( name );
 }
 
@@ -196,7 +194,7 @@ static int transport_oom_receive_batch( void *, rocketnet_address_t *, uint8_t *
 static void transport_oom_send( void *, const rocketnet_address_t *, const uint8_t *, int ) {}
 static int transport_oom_receive( void *, rocketnet_address_t *, uint8_t *, int ) { return 0; }
 
-static void transport_open_reports_out_of_memory()
+static void test_transport_open_reports_out_of_memory()
 {
     transport_oom_allocator_t state;
     transport_oom_begin( &state );
@@ -281,7 +279,7 @@ static void transport_open_reports_out_of_memory()
     }
 
     transport_oom_end( &state );
-    printf( "transport_open_reports_out_of_memory\n" );
+    printf( "test_transport_open_reports_out_of_memory\n" );
 }
 
 // ---- the server ladder ---------------------------------------------------------
@@ -326,7 +324,7 @@ static int transport_oom_walk_server( transport_oom_allocator_t * state, const c
     return 0;
 }
 
-static void transport_create_server_ladder_stops_on_out_of_memory()
+static void test_transport_create_server_ladder_stops_on_out_of_memory()
 {
     transport_oom_env_pin_t pin;
     transport_oom_env_set_aside( "ROCKETNET_SERVER_TRANSPORT", &pin );
@@ -345,7 +343,7 @@ static void transport_create_server_ladder_stops_on_out_of_memory()
 
     transport_oom_end( &state );
     transport_oom_env_put_back( "ROCKETNET_SERVER_TRANSPORT", &pin );
-    printf( "transport_create_server_ladder_stops_on_out_of_memory\n" );
+    printf( "test_transport_create_server_ladder_stops_on_out_of_memory\n" );
 }
 
 // ---- the client ladder ---------------------------------------------------------
@@ -382,7 +380,7 @@ static int transport_oom_walk_client( transport_oom_allocator_t * state, const u
     return 0;
 }
 
-static void transport_create_client_ladder_stops_on_out_of_memory()
+static void test_transport_create_client_ladder_stops_on_out_of_memory()
 {
     transport_oom_env_pin_t pin;
     transport_oom_env_set_aside( "ROCKETNET_CLIENT_TRANSPORT", &pin );
@@ -411,7 +409,7 @@ static void transport_create_client_ladder_stops_on_out_of_memory()
 
     transport_oom_end( &state );
     transport_oom_env_put_back( "ROCKETNET_CLIENT_TRANSPORT", &pin );
-    printf( "transport_create_client_ladder_stops_on_out_of_memory\n" );
+    printf( "test_transport_create_client_ladder_stops_on_out_of_memory\n" );
 }
 
 // ---- the connection-type buffer loop -----------------------------------------
@@ -462,7 +460,7 @@ static void transport_oom_query_script( int answer, int overflows, unsigned long
     transport_oom_query_needs = needs;
 }
 
-static void platform_adapters_fetch_is_bounded()
+static void test_platform_adapters_fetch_is_bounded()
 {
     transport_oom_allocator_t state;
     transport_oom_begin( &state );
@@ -477,7 +475,7 @@ static void platform_adapters_fetch_is_bounded()
         const int asked = state.calls - before;
         state.refuse_through = 0;
         if ( asked != 1 )
-            printf( "platform_adapters_fetch_is_bounded: a refusing allocator was asked %d times (one expected, bound %d)\n", asked, TRANSPORT_OOM_ADAPTERS_ATTEMPTS );
+            printf( "test_platform_adapters_fetch_is_bounded: a refusing allocator was asked %d times (one expected, bound %d)\n", asked, TRANSPORT_OOM_ADAPTERS_ATTEMPTS );
         check( asked == 1 );
         if ( buffer )
             rocketnet_free( &state, buffer );
@@ -525,7 +523,7 @@ static void platform_adapters_fetch_is_bounded()
     }
 
     transport_oom_end( &state );
-    printf( "platform_adapters_fetch_is_bounded\n" );
+    printf( "test_platform_adapters_fetch_is_bounded\n" );
 }
 
 // platform init under an allocator that refuses every request (until it gives
@@ -534,7 +532,7 @@ static void platform_adapters_fetch_is_bounded()
 // of get_connection_type, made from rocketnet_platform_init, so the count is
 // exactly one and the connection type is unknown; elsewhere the case checks
 // the bound only.
-static void platform_init_survives_a_refusing_allocator()
+static void test_platform_init_survives_a_refusing_allocator()
 {
     transport_oom_allocator_t state;
     memset( &state, 0, sizeof(state) );
@@ -548,18 +546,18 @@ static void platform_init_survives_a_refusing_allocator()
     check( initialized );
     check( status == ROCKETNET_STATUS_OK );
     if ( asked > TRANSPORT_OOM_ADAPTERS_ATTEMPTS )
-        printf( "platform_init_survives_a_refusing_allocator: platform init asked a refusing allocator %d times (bound %d)\n", asked, TRANSPORT_OOM_ADAPTERS_ATTEMPTS );
+        printf( "test_platform_init_survives_a_refusing_allocator: platform init asked a refusing allocator %d times (bound %d)\n", asked, TRANSPORT_OOM_ADAPTERS_ATTEMPTS );
     check( asked <= TRANSPORT_OOM_ADAPTERS_ATTEMPTS );
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     check( asked == 1 );
     check( rocketnet_platform_connection_type() == ROCKETNET_CONNECTION_TYPE_UNKNOWN );
 #endif
     transport_oom_end( &state );
-    printf( "platform_init_survives_a_refusing_allocator\n" );
+    printf( "test_platform_init_survives_a_refusing_allocator\n" );
 }
 
-REGISTER_UNIT_TEST( transport_open_reports_out_of_memory );
-REGISTER_UNIT_TEST( transport_create_server_ladder_stops_on_out_of_memory );
-REGISTER_UNIT_TEST( transport_create_client_ladder_stops_on_out_of_memory );
-REGISTER_UNIT_TEST( platform_adapters_fetch_is_bounded );
-REGISTER_UNIT_TEST( platform_init_survives_a_refusing_allocator );
+REGISTER_UNIT_TEST( test_transport_open_reports_out_of_memory );
+REGISTER_UNIT_TEST( test_transport_create_server_ladder_stops_on_out_of_memory );
+REGISTER_UNIT_TEST( test_transport_create_client_ladder_stops_on_out_of_memory );
+REGISTER_UNIT_TEST( test_platform_adapters_fetch_is_bounded );
+REGISTER_UNIT_TEST( test_platform_init_survives_a_refusing_allocator );

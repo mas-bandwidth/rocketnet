@@ -34,6 +34,7 @@
 #include "rocketnet_platform.h"
 
 #include "../test/live_verify.h"
+#include "../test/portable_crt.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1059,7 +1060,7 @@ static void live_matrix_window( struct live_matrix_t * m, double deadline )
 
 static void live_matrix_print_table()
 {
-    printf( "live_message_matrix_loopback table: received/sent per (direction, mode, channel, size bucket); over is refused/attempted\n" );
+    printf( "test_loopback_transport_live_message_matrix table: received/sent per (direction, mode, channel, size bucket); over is refused/attempted\n" );
     printf( "dir mode ch" );
     for ( int b = 0; b < ROCKETNET_LIVE_NUM_BUCKETS; b++ )
         printf( " %12s", rocketnet_live_bucket_name( b ) );
@@ -1093,7 +1094,8 @@ void live_message_matrix_loopback()
     static struct live_matrix_t matrix;
     struct live_matrix_t * m = &matrix;
     memset( m, 0, sizeof( *m ) );
-    live_matrix_verbose = getenv( "ROCKETNET_TEST_VERBOSE" ) != NULL;
+    char verbose[256];
+    live_matrix_verbose = rocketnet_test_getenv( "ROCKETNET_TEST_VERBOSE", verbose, sizeof( verbose ) );
     memset( live_matrix_table_sent, 0, sizeof( live_matrix_table_sent ) );
     memset( live_matrix_table_received, 0, sizeof( live_matrix_table_received ) );
 
@@ -1153,7 +1155,7 @@ void live_message_matrix_loopback()
     if ( live_matrix_verbose || m->failures != 0 || m->edge_failures != 0 || elapsed >= LIVE_MATRIX_PASS_SECONDS )
     {
         live_matrix_print_table();
-        printf( "live_message_matrix_loopback: verified=%llu failures=%llu edge_failures=%llu not_delivered_0_1_4=%llu refusals=%llu elapsed=%.3f s (bound %.0f s)\n",
+        printf( "test_loopback_transport_live_message_matrix: verified=%llu failures=%llu edge_failures=%llu not_delivered_0_1_4=%llu refusals=%llu elapsed=%.3f s (bound %.0f s)\n",
                 (unsigned long long) m->verified, (unsigned long long) m->failures, (unsigned long long) m->edge_failures, (unsigned long long) m->not_delivered,
                 (unsigned long long) m->refusals, elapsed, LIVE_MATRIX_PASS_SECONDS );
         fflush( stdout );

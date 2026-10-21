@@ -27,6 +27,8 @@ DWORD rocketnet_iocp_coalesced_stride( WSAMSG * message );
 struct coalesced_cmsg_buffer_t
 {
     WSAMSG message;
+    // the padding to control is written out, so the compiler adds none (MSVC C4324)
+    char pad[( sizeof( WSAMSG ) + 15 ) / 16 * 16 - sizeof( WSAMSG )];
     alignas(16) char control[64];
 };
 
@@ -51,14 +53,14 @@ static void coalesced_cmsg_build( coalesced_cmsg_buffer_t * b, int level, int ty
     memcpy( WSA_CMSG_DATA( cmsg ), &stride, sizeof( stride ) );
 }
 
-static void windows_coalesced_cmsg_whole_dword_is_read()
+static void test_windows_coalesced_cmsg_whole_dword_is_read()
 {
     coalesced_cmsg_buffer_t b;
     coalesced_cmsg_build( &b, IPPROTO_UDP, UDP_COALESCED_INFO, WSA_CMSG_LEN( sizeof( DWORD ) ) );
     check( rocketnet_iocp_coalesced_stride( &b.message ) == 1234 );
 }
 
-static void windows_coalesced_cmsg_short_length_is_not_read()
+static void test_windows_coalesced_cmsg_short_length_is_not_read()
 {
     // cmsg_len one byte short of a DWORD, and a header with no data at all:
     // neither carries a whole stride, so neither is copied.
@@ -69,7 +71,7 @@ static void windows_coalesced_cmsg_short_length_is_not_read()
     check( rocketnet_iocp_coalesced_stride( &b.message ) == 0 );
 }
 
-static void windows_coalesced_cmsg_other_headers_are_skipped()
+static void test_windows_coalesced_cmsg_other_headers_are_skipped()
 {
     coalesced_cmsg_buffer_t b;
     coalesced_cmsg_build( &b, IPPROTO_IP, UDP_COALESCED_INFO, WSA_CMSG_LEN( sizeof( DWORD ) ) );
@@ -82,8 +84,8 @@ static void windows_coalesced_cmsg_other_headers_are_skipped()
     check( rocketnet_iocp_coalesced_stride( &b.message ) == 0 );
 }
 
-REGISTER_UNIT_TEST( windows_coalesced_cmsg_whole_dword_is_read );
-REGISTER_UNIT_TEST( windows_coalesced_cmsg_short_length_is_not_read );
-REGISTER_UNIT_TEST( windows_coalesced_cmsg_other_headers_are_skipped );
+REGISTER_UNIT_TEST( test_windows_coalesced_cmsg_whole_dword_is_read );
+REGISTER_UNIT_TEST( test_windows_coalesced_cmsg_short_length_is_not_read );
+REGISTER_UNIT_TEST( test_windows_coalesced_cmsg_other_headers_are_skipped );
 
 #endif // #if defined(_WIN32)

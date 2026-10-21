@@ -223,7 +223,7 @@ static void max_payload_seal_and_deliver( struct max_payload_pair_t * pair, int 
 // code 0) and reliable ordered (code 3). Nothing fragments.
 // ---------------------------------------------------------------------------
 
-static void message_of_1400_bytes_is_one_unfragmented_packet()
+static void test_message_of_1400_bytes_is_one_unfragmented_packet()
 {
     static struct max_payload_pair_t pair;
     max_payload_pair_setup( &pair );
@@ -329,7 +329,7 @@ static void message_of_1400_bytes_is_one_unfragmented_packet()
 // the headers check them at compile time.
 // ---------------------------------------------------------------------------
 
-static void limits_are_derived_from_the_packet_size()
+static void test_limits_are_derived_from_the_packet_size()
 {
     const int mtu = 1500, ipv4 = 20, ipv6 = 40, udp = 8;
 
@@ -376,7 +376,7 @@ static void limits_are_derived_from_the_packet_size()
 // open on the far side.
 // ---------------------------------------------------------------------------
 
-static void sealed_packet_at_max_size_opens()
+static void test_sealed_packet_at_max_size_opens()
 {
     static struct max_payload_pair_t pair;
     max_payload_pair_setup( &pair );
@@ -482,7 +482,7 @@ static void sealed_packet_at_max_size_opens()
 // prefilter and counted, before any decryption.
 // ---------------------------------------------------------------------------
 
-static void receive_ceiling_refuses_one_byte_over()
+static void test_receive_ceiling_refuses_one_byte_over()
 {
     static struct max_payload_pair_t pair;
     max_payload_pair_setup( &pair );
@@ -557,7 +557,7 @@ static uint64_t client_all_counters_sum( const struct rocketnet_counters_t * cou
     return sum;
 }
 
-static void client_drops_reserved_and_wrong_direction_types()
+static void test_client_drops_reserved_and_wrong_direction_types()
 {
     static struct max_payload_pair_t pair;
     max_payload_pair_setup( &pair );
@@ -607,11 +607,11 @@ static void client_drops_reserved_and_wrong_direction_types()
     max_payload_pair_teardown( &pair );
 }
 
-REGISTER_UNIT_TEST( message_of_1400_bytes_is_one_unfragmented_packet );
-REGISTER_UNIT_TEST( limits_are_derived_from_the_packet_size );
-REGISTER_UNIT_TEST( sealed_packet_at_max_size_opens );
-REGISTER_UNIT_TEST( receive_ceiling_refuses_one_byte_over );
-REGISTER_UNIT_TEST( client_drops_reserved_and_wrong_direction_types );
+REGISTER_UNIT_TEST( test_message_of_1400_bytes_is_one_unfragmented_packet );
+REGISTER_UNIT_TEST( test_limits_are_derived_from_the_packet_size );
+REGISTER_UNIT_TEST( test_sealed_packet_at_max_size_opens );
+REGISTER_UNIT_TEST( test_receive_ceiling_refuses_one_byte_over );
+REGISTER_UNIT_TEST( test_client_drops_reserved_and_wrong_direction_types );
 
 // ---------------------------------------------------------------------------
 // rocketnet-wycheproof-chacha20-poly1305: every ChaCha20-Poly1305 vector in
@@ -771,7 +771,7 @@ static int wp_aead_run( bool skip_tag_check, struct wp_aead_tallies_t * tallies,
     return disagreements;
 }
 
-static void wycheproof_chacha20_poly1305_vectors()
+static void test_wycheproof_chacha20_poly1305_vectors()
 {
     // Every vector through the vendored sodium the SDK links. Valid vectors
     // open with the exact plaintext and re-seal to ct||tag; invalid vectors
@@ -853,7 +853,7 @@ static void wycheproof_chacha20_poly1305_vectors()
     check( sdk_vectors == 254 );
 }
 
-static void wycheproof_chacha20_poly1305_witness_skipped_tag_goes_red()
+static void test_wycheproof_chacha20_poly1305_witness_skipped_tag_goes_red()
 {
     // The planted bug removes exactly the tag comparison. The 60 invalid
     // vectors with a 12-byte iv are the only ones it opens, so the runner
@@ -864,7 +864,7 @@ static void wycheproof_chacha20_poly1305_witness_skipped_tag_goes_red()
     check( witness_ok );
 }
 
-REGISTER_UNIT_TEST( wycheproof_chacha20_poly1305_vectors );
-REGISTER_UNIT_TEST( wycheproof_chacha20_poly1305_witness_skipped_tag_goes_red );
+REGISTER_UNIT_TEST( test_wycheproof_chacha20_poly1305_vectors );
+REGISTER_UNIT_TEST( test_wycheproof_chacha20_poly1305_witness_skipped_tag_goes_red );
 
 #endif // !defined(ROCKETNET_USE_SYSTEM_SODIUM)
