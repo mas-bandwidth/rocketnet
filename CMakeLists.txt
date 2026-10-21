@@ -630,11 +630,16 @@ if(ROCKETNET_BUILD_TESTS)
     # probes the release library; the connect-token vectors load the dev
     # library's token writer through test_dev_connect_token_timeout_is_the_named_constant.
     add_dependencies(test rocketnet_shared rocketnet_shared_dev)
+    add_dependencies(test_wide rocketnet_shared)
     # Probe the exact shared targets built for this configuration, so the unit
     # suite passes when the output directory or working directory changes.
-    target_compile_definitions(test PRIVATE
-        "ROCKETNET_DEV_LIBRARY_PATH=\"$<TARGET_FILE:rocketnet_shared_dev>\""
+    # sdk/rocketnet_tests.cpp is compiled by these two targets, not by test.
+    target_compile_definitions(rocketnet_test_support PRIVATE
         "ROCKETNET_RELEASE_LIBRARY_PATH=\"$<TARGET_FILE:rocketnet_shared>\"")
+    target_compile_definitions(test_wide PRIVATE
+        "ROCKETNET_RELEASE_LIBRARY_PATH=\"$<TARGET_FILE:rocketnet_shared>\"")
+    target_compile_definitions(test PRIVATE
+        "ROCKETNET_DEV_LIBRARY_PATH=\"$<TARGET_FILE:rocketnet_shared_dev>\"")
     # Keep the shared target directory in the executable's RUNPATH for other
     # runtime loads that use a bare soname.
     set_property(TARGET test APPEND PROPERTY BUILD_RPATH "$<TARGET_FILE_DIR:rocketnet_shared>")
