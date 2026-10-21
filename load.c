@@ -879,14 +879,47 @@ int main( int argc, char ** argv )
         }
     }
 
+    char plan_text[8] = { 0 };
+    int plan_only = 0;
+#if defined( _MSC_VER )
+    size_t plan_length = 0;
+    if ( getenv_s( &plan_length, plan_text, sizeof( plan_text ), "LOAD_PLAN_ONLY" ) != 0 ||
+         plan_length > sizeof( plan_text ) )
+    {
+        fprintf( stderr, "load: LOAD_PLAN_ONLY must be 1 when set\n" );
+        return 2;
+    }
+    plan_only = plan_length != 0;
+#else
+    const char * plan_env = getenv( "LOAD_PLAN_ONLY" );
+    plan_only = plan_env != NULL;
+    if ( plan_only )
+    {
+        if ( strlen( plan_env ) >= sizeof( plan_text ) )
+        {
+            fprintf( stderr, "load: LOAD_PLAN_ONLY must be 1 when set\n" );
+            return 2;
+        }
+        strcpy( plan_text, plan_env );
+    }
+#endif
+    if ( plan_only && strcmp( plan_text, "1" ) != 0 )
+    {
+        fprintf( stderr, "load: LOAD_PLAN_ONLY must be 1 when set\n" );
+        return 2;
+    }
+
 #if !defined(_WIN32)
-    struct load_fd_limit_t fd_limit;
-    if ( !ensure_fd_limit( num_clients, &fd_limit ) )
-        return 1;
-    char fd_limit_soft_text[32];
-    char fd_limit_hard_text[32];
-    format_rlim( fd_limit.soft, fd_limit_soft_text, sizeof( fd_limit_soft_text ) );
-    format_rlim( fd_limit.hard, fd_limit_hard_text, sizeof( fd_limit_hard_text ) );
+    char fd_limit_soft_text[32] = "n/a";
+    char fd_limit_hard_text[32] = "n/a";
+    if ( !plan_only )
+    {
+        struct load_fd_limit_t fd_limit;
+        if ( !ensure_fd_limit( num_clients, &fd_limit ) )
+            return 1;
+        format_rlim( fd_limit.soft, fd_limit_soft_text, sizeof( fd_limit_soft_text ) );
+        format_rlim( fd_limit.hard, fd_limit_hard_text, sizeof( fd_limit_hard_text ) );
+    }
 #else
     const char * fd_limit_soft_text = "n/a";
     const char * fd_limit_hard_text = "n/a";
@@ -916,6 +949,7 @@ int main( int argc, char ** argv )
     if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
     {
         fprintf( stderr, "load: rocketnet_init failed\n" );
+        free( timing.buckets );
         return 1;
     }
     const long fds_start = count_open_fds();
@@ -977,6 +1011,33 @@ int main( int argc, char ** argv )
 
     const size_t client_public_required_bytes = rocketnet_client_required_memory( &client_config );
     const size_t server_public_required_bytes = rocketnet_server_required_memory( &server_config );
+
+    if ( plan_only )
+    {
+        size_t total_public_required_bytes = 0;
+        const char * plan_reason = "none";
+        if ( client_public_required_bytes == 0 || server_public_required_bytes == 0 )
+            plan_reason = "invalid_required_memory";
+        else if ( client_public_required_bytes > ( SIZE_MAX - server_public_required_bytes ) / (size_t) num_clients )
+            plan_reason = "public_memory_overflow";
+        else
+            total_public_required_bytes = server_public_required_bytes +
+                                          (size_t) num_clients * client_public_required_bytes;
+
+        const enum rocketnet_status_t plan_term_status = rocketnet_term();
+        if ( plan_term_status != ROCKETNET_STATUS_OK && strcmp( plan_reason, "none" ) == 0 )
+            plan_reason = "term_status";
+        free( timing.buckets );
+        printf( "load_plan: clients=%d profile=%s client_public_required_bytes=%zu "
+                "server_public_required_bytes=%zu total_public_required_bytes=%zu "
+                "public_memory_scope=create_only transport_selection=unresolved_before_start "
+                "term_status_code=%d reason=%s verdict=%s\n",
+                num_clients, profile_name, client_public_required_bytes,
+                server_public_required_bytes, total_public_required_bytes,
+                (int) plan_term_status, plan_reason,
+                strcmp( plan_reason, "none" ) == 0 ? "PASS" : "FAIL" );
+        return strcmp( plan_reason, "none" ) == 0 ? 0 : 1;
+    }
 
     char server_bind_buf[64];
     char server_bind_env[sizeof( server_bind_buf ) - 2];   // room to append ":0"

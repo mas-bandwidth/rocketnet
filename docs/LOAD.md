@@ -13,6 +13,20 @@ for this harness's 32-byte payloads, eight reliability cases and one-fragment
 messages. It does not change public defaults or make a general memory promise
 for other applications.
 
+Set `LOAD_PLAN_ONLY=1` with the same client count, profile and SDK environment
+as the intended run to get a `load_plan:` receipt without creating endpoints
+or binding a socket. It reports `client_public_required_bytes`,
+`server_public_required_bytes` and checked
+`total_public_required_bytes = server + clients * client`. A zero required
+size, arithmetic overflow or failed SDK termination returns a FAIL receipt and
+nonzero exit. The `public_memory_scope=create_only` and
+`transport_selection=unresolved_before_start` labels matter: required-memory
+figures include public create allocations, while connect/start may allocate
+more transport memory and native resources. The planner cannot certify host
+capacity or the eventual transport choice; a runner needs a separately
+justified reserve and should use the exact binary and environment for both
+planning and execution.
+
 For a constant offered application rate across population sizes, set
 `LOAD_MESSAGES_PER_CLIENT_SECOND=1`. This offers one 32-byte message per client
 per second in each direction while keeping the same client update schedule.
