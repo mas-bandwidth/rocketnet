@@ -42,7 +42,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 <= ROCKETNET_MAX_PACKET
 // -----------------------------------------
 
 // The int-status forms of rocketnet_init, rocketnet_term and
-// rocketnet_set_allocator, which the public calls wrap: the public calls
+// rocketnet_allocator, which the public calls wrap: the public calls
 // return the same code as enum rocketnet_status_t.
 
 #ifdef __cplusplus
@@ -267,7 +267,7 @@ __inline int c99_snprintf(char *outBuf, size_t size, const char *format, ...)
 #endif
 
 // The process-wide assert callback the rocketnet_assert macro calls. It is internal
-// and never exported: a caller installs a callback with rocketnet_set_assert_callback,
+// and never exported: a caller installs a callback with rocketnet_assert_function,
 // the only way in, and NULL there restores the default.
 #if defined( __GNUC__ ) || defined( __clang__ )
     #define ROCKETNET_INTERNAL __attribute__((visibility("hidden")))
@@ -275,7 +275,7 @@ __inline int c99_snprintf(char *outBuf, size_t size, const char *format, ...)
     #define ROCKETNET_INTERNAL
 #endif
 
-extern ROCKETNET_INTERNAL rocketnet_assert_callback_t rn_assert_function;
+extern ROCKETNET_INTERNAL rocketnet_assert_function_t rn_assert_function;
 
 #if ROCKETNET_ASSERTS
 #define rocketnet_assert( condition )                                                            \
@@ -411,6 +411,8 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES - ROCKETNET_MAX_PAY
 #define ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT     (1<<0)
 /** @brief Config-field flag that redacts its value in override logs. */
 #define ROCKETNET_CONFIG_SECRET                 (1<<1)
+/** @brief Config-field flag for a field no environment variable sets: the public server's own keypair, which create generates. */
+#define ROCKETNET_CONFIG_NO_ENV                 (1<<2)
 
 /** @brief Zero initializer for fixed-size byte-array configuration fields. */
 #define ROCKETNET_CONFIG_ZERO_BYTES             {0}
@@ -495,8 +497,8 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
     INT_FIELD(    max_clients,        1000,                              1, ROCKETNET_MAX_CLIENTS,                             0 )                          \
     BYTES_FIELD(  filter_value,          4,                              ROCKETNET_TEST_FILTER_VALUE,                          0 )                          \
     BYTES_FIELD(  backend_public_key,   32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          0 )                          \
-    BYTES_FIELD(  server_public_key,    32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          0 )                          \
-    BYTES_FIELD(  server_secret_key,    32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          ROCKETNET_CONFIG_SECRET )    \
+    BYTES_FIELD(  server_public_key,    32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          ROCKETNET_CONFIG_NO_ENV )               \
+    BYTES_FIELD(  server_secret_key,    32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          ROCKETNET_CONFIG_SECRET | ROCKETNET_CONFIG_NO_ENV )    \
     INT_FIELD(    num_xdp_queues,        0,                              1, 1024,                                              ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     INT_FIELD(    num_os_cpus,           0,                              1, 256,                                               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     INT_FIELD(    max_payload_bytes,     0,                              ROCKETNET_MAX_PAYLOAD_BYTES,                                                       \
@@ -599,8 +601,5 @@ void rocketnet_platform_set_network_lookups_for_testing( const struct rocketnet_
 // the duration rocketnet_sleep passes to the platform: 0 for a negative, zero
 // or NaN request, ROCKETNET_SLEEP_MAX_SECONDS for a longer or infinite one
 double rocketnet_sleep_clamp( double seconds );
-
-// Enumerate the actual ABI query table; NULL marks the end.
-const char * rocketnet_abi_layouts( size_t index );
 
 #endif // #ifndef ROCKETNET_INTERNAL_H

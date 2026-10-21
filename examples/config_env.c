@@ -18,6 +18,7 @@
 */
 
 #include "rocketnet.h"
+#include "dev_keys.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,7 +26,7 @@
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
-// Show the default and the struct value: print two defaults from the dev
+// Show the default and the struct value: print two defaults from the default
 // config, set them, and prove create honors the struct value.
 static int run_show_default_and_struct( void )
 {
@@ -33,7 +34,12 @@ static int run_show_default_and_struct( void )
     struct rocketnet_server_t * server = NULL;
     int result = 1;
 
-    rocketnet_server_dev_config( &config );
+    // the published development keys (dev_keys.h); a real server brings its own keys, recommended through the ROCKETNET_SERVER_* environment variables, or set in code
+    rocketnet_server_default_config( &config );
+    config.protocol_id = EXAMPLE_DEV_PROTOCOL_ID;
+    memcpy( config.backend_public_key, example_dev_backend_public_key, sizeof( config.backend_public_key ) );
+    memcpy( config.server_public_key, example_dev_server_public_key, sizeof( config.server_public_key ) );
+    memcpy( config.server_secret_key, example_dev_server_secret_key, sizeof( config.server_secret_key ) );
 
     printf( "default max_clients: %d\n", config.max_clients );
     printf( "default max_timeout_seconds: %d\n", config.max_timeout_seconds );
@@ -43,7 +49,7 @@ static int run_show_default_and_struct( void )
     config.transport = "loopback";
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0, &create_status );
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, &create_status );
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     CHECK( server != NULL );
     printf( "struct max_clients: %d\n", rocketnet_server_max_clients( server ) );
@@ -66,12 +72,17 @@ static int run_show_env_wins( void )
     struct rocketnet_server_t * server = NULL;
     int result = 1;
 
-    rocketnet_server_dev_config( &config );
+    // the published development keys (dev_keys.h); a real server brings its own keys, recommended through the ROCKETNET_SERVER_* environment variables, or set in code
+    rocketnet_server_default_config( &config );
+    config.protocol_id = EXAMPLE_DEV_PROTOCOL_ID;
+    memcpy( config.backend_public_key, example_dev_backend_public_key, sizeof( config.backend_public_key ) );
+    memcpy( config.server_public_key, example_dev_server_public_key, sizeof( config.server_public_key ) );
+    memcpy( config.server_secret_key, example_dev_server_secret_key, sizeof( config.server_secret_key ) );
     config.max_clients = 16;
     config.transport = "loopback";
 
     enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
-    server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0, &create_status_2 );
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, &create_status_2 );
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     CHECK( server != NULL );
     printf( "environment max_clients: %d\n", rocketnet_server_max_clients( server ) );
@@ -95,12 +106,17 @@ static int run_show_bad_refused( void )
     struct rocketnet_server_t * server = NULL;
     int result = 1;
 
-    rocketnet_server_dev_config( &config );
+    // the published development keys (dev_keys.h); a real server brings its own keys, recommended through the ROCKETNET_SERVER_* environment variables, or set in code
+    rocketnet_server_default_config( &config );
+    config.protocol_id = EXAMPLE_DEV_PROTOCOL_ID;
+    memcpy( config.backend_public_key, example_dev_backend_public_key, sizeof( config.backend_public_key ) );
+    memcpy( config.server_public_key, example_dev_server_public_key, sizeof( config.server_public_key ) );
+    memcpy( config.server_secret_key, example_dev_server_secret_key, sizeof( config.server_secret_key ) );
     config.max_clients = 16;
     config.transport = "loopback";
 
     enum rocketnet_status_t create_status_3 = ROCKETNET_STATUS_OK;
-    server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0, &create_status_3 );
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, &create_status_3 );
     CHECK( server == NULL );
     printf( "bad value refused: %s\n", rocketnet_status_name( create_status_3 ) );
 
@@ -114,6 +130,7 @@ cleanup:
 
 int main( int argc, char ** argv )
 {
+    (void) argc;
     int result = 1;
     const char * env = getenv( "ROCKETNET_SERVER_MAX_CLIENTS" );
 

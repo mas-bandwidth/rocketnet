@@ -712,7 +712,7 @@ static void run_matrix( opts_t * o )
         cc.packets_per_update = 64;     // the budget, section 2
 
         enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-        struct rocketnet_client_t * client = rocketnet_client_create( NULL, &cc, NULL, 0, &create_status );
+        struct rocketnet_client_t * client = rocketnet_client_create( NULL, &cc, &create_status );
         if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
         if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
         {
@@ -808,8 +808,8 @@ static void run_matrix( opts_t * o )
             if ( state < 0 )
             {
                 char excerpt[128];
-                snprintf( excerpt, sizeof(excerpt), "state=%s reason=%d", rocketnet_client_state_name( state ),
-                          rocketnet_client_disconnect_reason( client ) );
+                // a negative state names how the connection ended
+                snprintf( excerpt, sizeof(excerpt), "state=%s", rocketnet_client_state_name( state ) );
                 r_fail( res, o->label, window, 0, 0, 0, 0, "unexpected-disconnect", 0, state, "client",
                         "-", excerpt );
                 r_event( res, o->label, window, "unexpected-disconnect", rocketnet_client_state_name( state ) );
@@ -850,11 +850,11 @@ static void run_matrix( opts_t * o )
                 last_stat = rocketnet_time();
                 if ( st.rtt_count < 200000 )
                 {
-                    st.rtt[st.rtt_count] = rocketnet_client_stat( client, ROCKETNET_CLIENT_STAT_RTT );
-                    st.loss[st.loss_count] = rocketnet_client_stat( client, ROCKETNET_CLIENT_STAT_PACKET_LOSS );
+                    st.rtt[st.rtt_count] = rn_client_stats_of( client ).rtt;
+                    st.loss[st.loss_count] = rn_client_stats_of( client ).packet_loss;
                     r_stat( res, o->label, window, rocketnet_time() - w0,
                             st.rtt[st.rtt_count],
-                            rocketnet_client_stat( client, ROCKETNET_CLIENT_STAT_JITTER ),
+                            rn_client_stats_of( client ).jitter,
                             st.loss[st.loss_count] );
                     st.rtt_count++;
                     st.loss_count++;
@@ -921,12 +921,14 @@ static void run_matrix( opts_t * o )
         /* the disconnect: alternating clean and silent drop, final clean */
         if ( is_final || ( window % 2 ) == 0 )
         {
-            const int reason = !aborted ? rocketnet_client_disconnect_reason( client ) : ROCKETNET_DISCONNECT_REASON_NONE;
-            if ( !aborted && reason != ROCKETNET_DISCONNECT_REASON_NONE )
+            // a connection the server or the protocol ended reads as a
+            // negative state; before a clean close it must still be up
+            const int ended = !aborted ? rocketnet_client_state( client ) : ROCKETNET_CLIENT_STATE_CONNECTED;
+            if ( !aborted && ended < 0 )
             {
                 char excerpt[96];
-                snprintf( excerpt, sizeof(excerpt), "disconnect reason=%d before clean close", reason );
-                r_fail( res, o->label, window, 0, 0, 0, 0, "unexpected-disconnect-reason", 0, reason, "client", "-", excerpt );
+                snprintf( excerpt, sizeof(excerpt), "state=%s before clean close", rocketnet_client_state_name( (enum rocketnet_client_state_t) ended ) );
+                r_fail( res, o->label, window, 0, 0, 0, 0, "unexpected-disconnect-reason", 0, ended, "client", "-", excerpt );
                 r_event( res, o->label, window, "unexpected-disconnect", "reason" );
                 st.fails++;
             }

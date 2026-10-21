@@ -55,9 +55,9 @@ means each precedence held and the bad value was refused.
 ## Public calls it uses
 
 - `rocketnet_init`, `rocketnet_term`
-- `rocketnet_server_dev_config`, `rocketnet_server_create`,
+- `rocketnet_server_default_config`, `rocketnet_server_create`,
   `rocketnet_server_destroy`, `rocketnet_server_max_clients`
 - `rocketnet_status_name`, `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`
-- The C standard library: `getenv`, `system`, `strcmp`, `snprintf`, `printf`
+- The C standard library: `getenv`, `system`, `strcmp`, `memcpy`, `snprintf`, `printf`
 
 The full field list lives in `sdk/rocketnet.h`.

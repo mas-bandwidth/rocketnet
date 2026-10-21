@@ -383,7 +383,7 @@ static void receipt_free( void *, void * pointer )
 static void receipts_no_allocation_after_create()
 {
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_set_allocator( receipt_malloc, receipt_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_allocator( receipt_malloc, receipt_free ) == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
     receipt_fixture_t f;
     receipt_fixture_init( &f );
@@ -401,7 +401,7 @@ static void receipts_no_allocation_after_create()
     rocketnet_unit_check( receipt_allocations == snapshot );
     receipt_fixture_destroy( &f );
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 

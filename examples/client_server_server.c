@@ -112,7 +112,7 @@ int main( int argc, char ** argv )
     memcpy( config.server_secret_key, server_secret_key, sizeof( config.server_secret_key ) );
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    server = rocketnet_server_create( NULL, address, &config, NULL, 0, &create_status );
+    server = rocketnet_server_create( NULL, address, &config, &create_status );
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
@@ -136,18 +136,16 @@ int main( int argc, char ** argv )
     while ( rocketnet_time() - start < 30.0 )
     {
         const double now = 1000.0 + ( rocketnet_time() - start );
-        const int max_clients = rocketnet_server_max_clients( server );
 
         // (1) update pumps the transport and takes in what arrived
-        if ( rocketnet_server_update( server, now ) != ROCKETNET_UPDATE_OK )
-            break;
+        rocketnet_server_update( server, now );
 
         // (2) receive and release every received message
         // one queue across every client, each message naming its sender
         {
             const uint8_t * data = NULL;
             int bytes = 0;
-            uint64_t i = 0;
+            int i = 0;
             struct rocketnet_message_batch_t batch;
             while ( rocketnet_server_receive_messages( server, &batch ) )
             {
@@ -157,11 +155,11 @@ int main( int argc, char ** argv )
                     bytes = batch.bytes[j];
                     i = batch.client_index[j];
                     printf( "server received: %.*s\n", bytes, (const char*) data );
-                    uint8_t * out = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
+                    uint8_t * out = rocketnet_server_start_message( server, (uint64_t) i, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
                     if ( out )
                     {
                         memcpy( out, data, (size_t) bytes );
-                        if ( rocketnet_server_finish_message( server, i, bytes ) )
+                        if ( rocketnet_server_finish_message( server, bytes ) )
                             echoed = 1;
                     }
                 }

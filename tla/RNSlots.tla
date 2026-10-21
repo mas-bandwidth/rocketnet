@@ -217,6 +217,9 @@ StartPending(s) ==
     /\ st' = [st EXCEPT !.pending = s, !.pendingConn = st.bound[s]]
     /\ UNCHANGED <<wire, sent, pulse>>
 
+\* A finish ends the pending start whether it is accepted or refused: a
+\* refused bytes_written aborts the start (rn_message_object_finish), so the
+\* refused and accepted finishes take the same step here.
 FinishPending(s) ==
     /\ st.phase = "application" /\ st.pending = s
     /\ st' = [st EXCEPT !.pending = 0, !.pendingConn = 0]

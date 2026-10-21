@@ -381,7 +381,7 @@ int rocketnet_posix_hard_killed_child_main( int argc, char ** argv )
     if ( argc < 4 )
         return 2;
     setvbuf( stdout, NULL, _IOLBF, 0 );
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
     if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
         return 1;
     const pid_t parent = getppid();
@@ -779,8 +779,8 @@ static void posix_seam_unknown_errno_pauses_msgx()
     // per-packet loop without losing a datagram, the pump reads portable
     // until the pause expires, and the pause logs once
 
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_WARN );
-    rocketnet_set_log_callback( posix_seam_log, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_WARN );
+    rocketnet_log_function( posix_seam_log, NULL );
 
     struct rocketnet_platform_socket_t * socket = posix_seam_socket_with_queue( "msgx" );
     rocketnet_address_t from[32];

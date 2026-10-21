@@ -851,7 +851,8 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
     // The published development keys are public and not for production: an
     // implementation must warn on every start that uses them, at each end that
-    // can tell. The client can tell from its token's server key.
+    // can tell. The client can tell only from a token sealed to the fixed test
+    // server key; a public server's key is its own, so the server warns.
     if ( memcmp( client_transport->protocol.signed_fields.server_public_key, rocketnet_dev_server_public_key, ROCKETNET_KEY_BYTES ) == 0 )
         rocketnet_warn( "development keys are public and not for production" );
 

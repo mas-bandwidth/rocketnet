@@ -6,8 +6,11 @@ over the in-memory `loopback` transport, which needs no socket and no network.
 ## What it shows
 
 1. Initialize the library.
-2. Create a server with the published development keys, an ephemeral port,
-   and the `loopback` transport pinned in its config.
+2. Create a server with the published development keys (`examples/dev_keys.h`,
+   set by hand after `rocketnet_server_default_config`; a real server brings
+   its own keys, recommended through the `ROCKETNET_SERVER_*` environment
+   variables, or set in code), an ephemeral port, and the `loopback` transport
+   pinned in its config.
 3. Mint a development connect token for that server address.
 4. Create a client pinned to `loopback`, then update both ends until the
    client reports `ROCKETNET_CLIENT_STATE_CONNECTED`.
@@ -50,16 +53,15 @@ from the library and are not part of the check.
 ## Public calls it uses
 
 - `rocketnet_init`, `rocketnet_term`
-- `rocketnet_server_dev_config`, `rocketnet_server_create`,
-  `rocketnet_server_update`, `rocketnet_server_port`,
-  `rocketnet_server_max_clients`, `rocketnet_server_client_connected`,
-  `rocketnet_server_receive_messages`,
-  `rocketnet_server_send_packets`, `rocketnet_server_destroy`
+- `rocketnet_server_default_config`, `rocketnet_server_create`,
+  `rocketnet_server_start`, `rocketnet_server_destroy`,
+  `rocketnet_server_update`, `rocketnet_server_send_packets`,
+  `rocketnet_server_port`, `rocketnet_server_receive_messages`
 - `rocketnet_client_default_config`, `rocketnet_client_create`,
-  `rocketnet_client_state`, `rocketnet_client_update`,
+  `rocketnet_client_connect`, `rocketnet_client_destroy`,
+  `rocketnet_client_update`, `rocketnet_client_send_packets`,
+  `rocketnet_client_disconnect`, `rocketnet_client_state`,
   `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
-  `rocketnet_client_receive_messages`,
-  `rocketnet_client_send_packets`, `rocketnet_client_disconnect`,
-  `rocketnet_client_destroy`
+  `rocketnet_client_receive_messages`
 - `rocketnet_write_dev_connect_token` (development library only)
-- `rocketnet_time`, `rocketnet_sleep`
+- `rocketnet_status_name`, `rocketnet_time`, `rocketnet_sleep`

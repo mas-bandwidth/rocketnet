@@ -386,19 +386,18 @@ compiled. These checks are in CI.
 
 ## ABI compatibility
 
-The current public layouts are preserved. New allocation-free `rocketnet_abi_*`
-queries expose the SDK revision, compiler-derived struct sizes, field counts,
-offsets and widths for both configs and packet context.
-They are safe before init and write no caller-owned struct. Unknown names return
-`SIZE_MAX` for size/offset, or `-1` for count. Native dynamic loaders may use
-these before calling struct-writing functions.
+Each public config struct starts with `config_bytes`, the size of the struct
+the caller compiled against, set by the inline default_config call. A library
+reads a larger config as far as it knows and a smaller one as a prefix with
+defaults after it, so a config struct can grow at its end without breaking a
+program built against an older header (`docs/ABI-EVOLUTION.md`).
 
 An incompatible layout or calling-contract change must increment
-`ROCKETNET_ABI_VERSION` and update native ABI regression checks. Additive functions alone
-do not require a revision change. Changes to public fields must also update the
-ABI metadata and native regression checks. The existing unsized C entry points still
-require matching headers and library; this does not make an old native binary
-safe to use with an arbitrary newer library.
+`ROCKETNET_ABI_VERSION`. Additive functions alone do not require a revision
+change. The other public structs carry no size, so a header and a library from
+different ABI revisions must not be mixed; compare `rocketnet_version()` with
+`ROCKETNET_VERSION` to catch a header and a shared library from different
+releases.
 
 ## History memory budget
 
@@ -424,8 +423,9 @@ still requires roughly 4.2 GiB; select fewer queues or provision that explicitly
 
 ## Pre-allocation server resource plans
 
-`rocketnet_server_required_memory(config)` returns the bytes of the caller memory
-block the server needs for `config` at its `max_clients`. It works before
+`rocketnet_server_required_memory(config)` returns the bytes of the one block
+`rocketnet_server_create` allocates through the allocator for `config` at its
+`max_clients`. It works before
 `rocketnet_init`, opens no sockets, starts no workers and allocates no memory.
 Pass `NULL` config for defaults. The query reads the supplied configuration and
 applies environment overrides (matching create), but does not check keys, probe

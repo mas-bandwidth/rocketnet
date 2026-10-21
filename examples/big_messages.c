@@ -14,6 +14,7 @@
 */
 
 #include "rocketnet.h"
+#include "dev_keys.h"
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
@@ -41,7 +42,12 @@ int main( void )
     for ( int i = 0; i < BIG_BYTES; i++ )
         expected[i] = (uint8_t) ( i * 31 + 13 );
     CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
-    rocketnet_server_dev_config( &server_config );
+    // the published development keys (dev_keys.h); a real server brings its own keys, recommended through the ROCKETNET_SERVER_* environment variables, or set in code
+    rocketnet_server_default_config( &server_config );
+    server_config.protocol_id = EXAMPLE_DEV_PROTOCOL_ID;
+    memcpy( server_config.backend_public_key, example_dev_backend_public_key, sizeof( server_config.backend_public_key ) );
+    memcpy( server_config.server_public_key, example_dev_server_public_key, sizeof( server_config.server_public_key ) );
+    memcpy( server_config.server_secret_key, example_dev_server_secret_key, sizeof( server_config.server_secret_key ) );
     server_config.max_clients = 1;
     server_config.transport = "loopback";
     // the defaults (262144) already hold 200 KB; set both ends' limits here so
@@ -49,7 +55,7 @@ int main( void )
     server_config.max_message_bytes = LIMIT_BYTES;
     server_config.receive_ring_bytes = LIMIT_BYTES;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, &create_status );
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &create_status );
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
@@ -66,7 +72,7 @@ int main( void )
     // expires thirty seconds after its timestamp, so it uses one far ahead
     CHECK( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
-    client = rocketnet_client_create( NULL, &client_config, NULL, 0, &create_status_2 );
+    client = rocketnet_client_create( NULL, &client_config, &create_status_2 );
     if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
@@ -75,15 +81,12 @@ int main( void )
     }
     CHECK( client != NULL );
     const double start = rocketnet_time();
-    const int max_clients = rocketnet_server_max_clients( server );
     while ( rocketnet_time() - start < DEADLINE_SECONDS )
     {
         const double now = 1000.0 + ( rocketnet_time() - start );
         // (1) update pumps the transport and takes in what arrived
-        if ( rocketnet_server_update( server, now ) != ROCKETNET_UPDATE_OK )
-            return -1;
-        if ( rocketnet_client_update( client, now ) != ROCKETNET_UPDATE_OK )
-            return -1;
+        rocketnet_server_update( server, now );
+        rocketnet_client_update( client, now );
         // (2) receive and release every received message, checking each byte
         const uint8_t * data = NULL;
         int bytes = 0;
@@ -96,7 +99,6 @@ int main( void )
                 bytes = batch.bytes[i];
             }
         }
-        uint64_t sender = 0;
         struct rocketnet_message_batch_t incoming;
         while ( rocketnet_server_receive_messages( server, &incoming ) )
         {
@@ -104,7 +106,6 @@ int main( void )
             {
                 data = incoming.data[i];
                 bytes = incoming.bytes[i];
-                sender = incoming.client_index[i];
                 if ( bytes == BIG_BYTES )
                 {
                     CHECK( memcmp( data, expected, BIG_BYTES ) == 0 );
@@ -129,7 +130,9 @@ int main( void )
             }
             if ( big_arrived && !oversize_sent )
             {
-                promotion_before = rocketnet_client_counter( client, ROCKETNET_CLIENT_COUNTER_RECEIPTS_ACKED );
+                struct rocketnet_client_stats_t stats;
+                rocketnet_client_stats( client, &stats );
+                promotion_before = stats.receipts_acked;
                 printf( "promotion counter before: %llu\n", (unsigned long long) promotion_before );
                 // 4096 bytes is above one packet's record limit. A start that
                 // returns a buffer here is the promotion: an oversize
@@ -141,7 +144,11 @@ int main( void )
                 oversize_sent = 1;
             }
             if ( oversize_sent )
-                promotion_after = rocketnet_client_counter( client, ROCKETNET_CLIENT_COUNTER_RECEIPTS_ACKED );
+            {
+                struct rocketnet_client_stats_t stats;
+                rocketnet_client_stats( client, &stats );
+                promotion_after = stats.receipts_acked;
+            }
         }
         // (5) send_packets is last,
         // after this frame's messages are queued, so this frame's messages

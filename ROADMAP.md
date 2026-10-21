@@ -318,7 +318,6 @@ The C surface in sdk/rocketnet.h and what a consumer needs to use it.
 | Connection layer C surface: rocketnet_client_transport_* and rocketnet_server_transport_* | ✅ | ✅ | ✅ |
 | Root header pure C: the client and server with their functions, the address type, nothing else | ✅ | ✅ | ✅ |
 | Message objects in C: rocketnet_message_client_* and rocketnet_message_server_* | ✅ | ✅ | ✅ |
-| ABI revision and layout queries | ✅ | ✅ | ✅ |
 | Installable CMake package with C and C++ consumers | ✅ | ✅ | ✅ |
 | Vendored sodium, no system libsodium | ✅ | ✅ | ✅ |
 | Structured create errors and FFI-safe logging | ✅ | ✅ | ✅ |
@@ -331,7 +330,7 @@ The C surface in sdk/rocketnet.h and what a consumer needs to use it.
 | API reference comments: reliability | ✅ | — | — |
 | USAGE.md: the client and server API, with worked usage | ✅ | — | — |
 | The docs job fails on any undocumented public symbol (later) | ❌ | — | — |
-| complete | 94% | 100% | 100% |
+| complete | 93% | 100% | 100% |
 
 [Source data](docs/roadmap.sexp)
 

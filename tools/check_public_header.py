@@ -5,7 +5,8 @@
     errors, plain and with ROCKETNET_SHARED and ROCKETNET_DEVELOPMENT defined;
 (b) every #include names only stdint.h, stddef.h or stdbool.h;
 (c) every function and data declaration carries ROCKETNET_EXPORT and sits
-    inside the one extern "C" block, and no inline, static, default argument,
+    inside the one extern "C" block, and no inline (the two default_config
+    inlines excepted, in their one exact form), static, default argument,
     overload, namespace, class, template, operator or reference appears;
 (d) a fresh empty directory holding only rocketnet.h and the prebuilt
     development static library builds, links and runs tools/header_alone as C
@@ -29,6 +30,7 @@ from check_dll_consumer import msvc_environment, msvc_tool
 ROOT = Path(__file__).resolve().parent.parent
 HEADER = ROOT / "sdk" / "rocketnet.h"
 ALLOWED_INCLUDES = {"stdint.h", "stddef.h", "stdbool.h"}
+ALLOWED_INLINES = ("rocketnet_client_default_config", "rocketnet_server_default_config")
 BANNED_WORDS = ("inline", "__inline", "__forceinline", "static", "namespace", "class",
                 "template", "operator", "typename", "using", "virtual")
 
@@ -179,6 +181,18 @@ def check_declarations(raw):
     # the block's own brace and the extern "C" are not part of any declaration
     code = code[:open_block.start()] + re.sub(r"[^\n]", " ", code[open_block.start():open_block.end()]) + code[open_block.end():]
     code = code[:close_block.start()] + re.sub(r"[^\n]", " ", code[close_block.start():close_block.end()]) + code[close_block.end():]
+
+    # the one allowed definition form: each config's inline default_config,
+    # which sets config_bytes from the caller's compile and calls the
+    # library's _internal fill. Exactly these, each once, are blanked here.
+    for name in ALLOWED_INLINES:
+        pattern = (r"static\s+inline\s+enum\s+rocketnet_status_t\s+%s\s*\(\s*struct\s+(\w+)\s*\*\s*config\s*\)\s*\{"
+                   r"\s*if\s*\(\s*config\s*\)\s*config->config_bytes\s*=\s*sizeof\s*\(\s*\*config\s*\)\s*;"
+                   r"\s*return\s+%s_internal\s*\(\s*config\s*\)\s*;\s*\}") % ( name, name )
+        found = list(re.finditer(pattern, code))
+        report(len(found) == 1, "(c) the inline %s is the one allowed form, exactly once" % name)
+        for m in found:
+            code = code[:m.start()] + re.sub(r"[^\n]", " ", code[m.start():m.end()]) + code[m.end():]
 
     for word in BANNED_WORDS:
         for m in re.finditer(r"\b%s\b" % word, code):

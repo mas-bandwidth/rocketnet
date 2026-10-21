@@ -298,9 +298,7 @@ static void loopback_drop_every_nth()
         rocketnet_client_transport_stats( pair.client, &cstats );
         rocketnet_server_transport_stats( pair.server, &sstats );
         const uint64_t client_sent_before = cstats.packets_sent;
-        const uint64_t server_received_before = sstats.packets_received;
         const uint64_t server_sent_before = sstats.packets_sent;
-        const uint64_t client_received_before = cstats.packets_received;
 
         uint8_t payload[4];
         const uint32_t seq = (uint32_t) ( i + 1 );
@@ -544,13 +542,13 @@ static void loopback_error_begin( const char * field )
     loopback_error_lines = 0;
     loopback_error_lines_naming = 0;
     loopback_error_field = field;
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
-    rocketnet_set_log_callback( loopback_error_capture, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_log_function( loopback_error_capture, NULL );
 }
 
 static void loopback_error_end()
 {
-    rocketnet_set_log_callback( NULL, NULL );
+    rocketnet_log_function( NULL, NULL );
 }
 
 static int loopback_setenv( const char * name, const char * value )

@@ -583,7 +583,7 @@ static void counting_free( void * context, void * p )
 static void send_budget_no_allocation_after_create()
 {
     rocketnet_term();
-    check( rocketnet_set_allocator( counting_malloc, counting_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( counting_malloc, counting_free ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     rocketnet_send_budget_t budgets[4];

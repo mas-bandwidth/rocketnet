@@ -1591,11 +1591,11 @@ static void test_channels_allocator_sizing()
     // the print form logs the same lines at info level and returns the region bytes
 
     rocketnet_message_default_config( &config );
-    const enum rocketnet_log_level_t old_level = rocketnet_get_log_level();
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    const enum rocketnet_log_level_t old_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
     const int lines_before = rn_log_lines;
     check( rocketnet_message_print_connection_sizing( &config, 16 ) == rocketnet_message_connection_bytes( &config ) );
-    rocketnet_set_log_level( old_level );
+    rocketnet_log_level( old_level );
     check( rn_log_lines - lines_before >= 10 );
     check( strstr( rn_log_last, "16 connections" ) != NULL );
 }
@@ -4425,12 +4425,12 @@ void rocketnet_channels_prepare( const char * name )
 {
     if ( !rocketnet_channels_is_allocator_test( name ) )
         return;
-    rocketnet_set_allocator( rn_test_malloc_hook, rn_test_free_hook );
+    rocketnet_allocator( rn_test_malloc_hook, rn_test_free_hook );
 }
 
 void rocketnet_channels_prepare_log( const char * name )
 {
     if ( !rocketnet_channels_is_allocator_test( name ) )
         return;
-    rocketnet_set_log_callback( rn_test_log_function, NULL );
+    rocketnet_log_function( rn_test_log_function, NULL );
 }

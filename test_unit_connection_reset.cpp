@@ -293,7 +293,7 @@ static void connection_reset_inventory_covers_every_field()
 #undef CHECK_MESSAGE_RESET
     for ( uint32_t i = 0; i < connection->region->delivery_entries; i++ )
         check( connection->views[i] == 0 );
-    for ( int i = 0; i < connection->region->num_channels; i++ )
+    for ( uint32_t i = 0; i < connection->region->num_channels; i++ )
         check( connection->cursors[i] == 0 );
     rn_message_object_destroy( object );
 }

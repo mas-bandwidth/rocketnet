@@ -113,6 +113,25 @@ static inline int rocketnet_wire_header_bytes( int address_type )
 #define ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES  41  // 6 + 4 + 7 + 8 + 16
 #define ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES     34  // 6 + 4 + 7 + 1 + 16
 #define ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES  33  // 6 + 4 + 7 + 0 + 16
+
+// Every handshake packet fits one datagram on the smaller family's budget:
+// 1500 - 40 - 8 = 1452 UDP payload bytes over IPv6 (ROCKETNET_MAX_PACKET_BYTES_IPV6
+// in rocketnet.h; written out here because this header stands alone in the
+// XDP program). A token change that would push the connection request past
+// one IPv6 datagram fails to compile.
+
+#define ROCKETNET_HANDSHAKE_MAX_WIRE_BYTES              1452    // ( 1500 - 40 - 8 )
+
+#ifdef __cplusplus
+#define ROCKETNET_WIRE_STATIC_ASSERT( condition, message ) static_assert( condition, message )
+#else
+#define ROCKETNET_WIRE_STATIC_ASSERT( condition, message ) _Static_assert( condition, message )
+#endif
+
+ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES <= ROCKETNET_HANDSHAKE_MAX_WIRE_BYTES, "the connection request fits one IPv6 datagram" );
+ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_DENIED_WIRE_BYTES <= ROCKETNET_HANDSHAKE_MAX_WIRE_BYTES, "the connection denied fits one IPv6 datagram" );
+ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES <= ROCKETNET_HANDSHAKE_MAX_WIRE_BYTES, "the connection challenge fits one IPv6 datagram" );
+ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES <= ROCKETNET_HANDSHAKE_MAX_WIRE_BYTES, "the connection response fits one IPv6 datagram" );
 #define ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES          38
 #define ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES         33  // 6 + 4 + 7 + 0 + 16
 #define ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES    40  // 6 + 4 + 7 + 6 + 1 + 16

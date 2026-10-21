@@ -1720,6 +1720,20 @@ int rocketnet_server_transport_state( struct rocketnet_server_transport_t * serv
     return server_transport->state;
 }
 
+bool rocketnet_server_transport_advertised_address( struct rocketnet_server_transport_t * server_transport, int family, struct rocketnet_address_t * address )
+{
+    if ( !rocketnet_api_null_guard( server_transport ) || !rocketnet_api_null_guard( address ) )
+        return false;
+    if ( server_transport->state != ROCKETNET_SERVER_TRANSPORT_RUNNING )
+        return false;
+    const struct rocketnet_address_t * advertised = family == ROCKETNET_ADDRESS_IPV4 ? &server_transport->protocol.advertised_ipv4 :
+                                                    family == ROCKETNET_ADDRESS_IPV6 ? &server_transport->protocol.advertised_ipv6 : NULL;
+    if ( !advertised || advertised->type != family )
+        return false;
+    *address = *advertised;
+    return true;
+}
+
 uint16_t rocketnet_server_transport_port( struct rocketnet_server_transport_t * server_transport )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )

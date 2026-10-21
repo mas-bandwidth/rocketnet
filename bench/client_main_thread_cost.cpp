@@ -33,7 +33,7 @@ int main(int argc, char ** argv)
     CHECK(packets_per_frame >= 1);
     CHECK(frames > 0);
     CHECK(strlen(transport) < sizeof(rocketnet_server_transport_config_t().transport));
-    rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_NONE);
+    rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
     CHECK(rocketnet_init( NULL ) == ROCKETNET_STATUS_OK);
     rocketnet_forbid_xdp_commit();
     rocketnet_server_transport_config_t config;

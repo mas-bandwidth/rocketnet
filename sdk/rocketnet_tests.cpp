@@ -183,7 +183,7 @@ static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level
 // ROCKETNET_TEST_VERBOSE state, and restores the default printer -- which
 // is what verbose wants.
 
-static rocketnet_log_callback_t rocketnet_test_suite_log_function = NULL;
+static rocketnet_log_function_t rocketnet_test_suite_log_function = NULL;
 
 static void rocketnet_test_log_ring_clear()
 {
@@ -250,7 +250,7 @@ static void rocketnet_test_update_time_clamp_assert_hook( const char * condition
 
 void rocketnet_test_update_time_clamp()
 {
-    rocketnet_set_assert_callback( rocketnet_test_update_time_clamp_assert_hook );
+    rocketnet_assert_function( rocketnet_test_update_time_clamp_assert_hook );
     rocketnet_test_update_time_clamp_asserts = 0;
 
     const double last_good = 10.0;
@@ -294,7 +294,7 @@ void rocketnet_test_update_time_clamp()
 
     // restore the default (trapping) hook for the rest of the suite
 
-    rocketnet_set_assert_callback( NULL );
+    rocketnet_assert_function( NULL );
 }
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
@@ -7472,7 +7472,7 @@ void rocketnet_test_create_before_init_is_refused()
     // a refused create must allocate nothing: install a counting allocator and
     // assert it is never called. both callbacks, uninitialized, nothing live.
     rocketnet_test_allocator_calls = 0;
-    rocketnet_check( rocketnet_set_allocator( rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_allocator( rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) == ROCKETNET_STATUS_OK );
 
     const uint64_t before = rocketnet_api_misuse_count();
 
@@ -7487,7 +7487,7 @@ void rocketnet_test_create_before_init_is_refused()
     rocketnet_check( rocketnet_test_allocator_calls == 0 );
 
     // restore the default allocator, then the library, for the worker's term
-    rocketnet_check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     rocketnet_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
@@ -7495,19 +7495,19 @@ void rocketnet_test_allocator_refusal_is_returned()
 {
     // after init a replacement is refused and counted
     const uint64_t before = rocketnet_api_misuse_count();
-    rocketnet_check( rocketnet_set_allocator( rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) != ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_allocator( rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) != ROCKETNET_STATUS_OK );
 
     // terminated with no live allocations: a partial set is still refused and
     // counted; both callbacks are taken and return true
     rocketnet_term();
-    rocketnet_check( rocketnet_set_allocator( NULL, rocketnet_test_allocator_free ) != ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_set_allocator( rocketnet_test_allocator_malloc, NULL ) != ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_allocator( NULL, rocketnet_test_allocator_free ) != ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_allocator( rocketnet_test_allocator_malloc, NULL ) != ROCKETNET_STATUS_OK );
     rocketnet_check( rocketnet_api_misuse_count() == before + 3 );
 
-    rocketnet_check( rocketnet_set_allocator( rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_allocator( rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) == ROCKETNET_STATUS_OK );
 
     // restore the default allocator, then the library, for the worker's term
-    rocketnet_check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     rocketnet_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
@@ -7548,19 +7548,19 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_term",
     "rocketnet_num_status_codes",
     "rocketnet_status_name",
-    "rocketnet_set_assert_callback",
-    "rocketnet_set_quiet",
-    "rocketnet_set_log_level",
-    "rocketnet_set_thread_priority",
+    "rocketnet_assert_function",
+    "rocketnet_quiet",
+    "rocketnet_log_level",
+    "rocketnet_thread_priority",
     "rocketnet_get_thread_priority",
     "rocketnet_get_thread_priority_refusals",
-    "rocketnet_get_log_level",
+    "rocketnet_log_level_current",
     "rocketnet_log_level_name",
-    "rocketnet_set_log_callback",
+    "rocketnet_log_function",
     "rocketnet_api_misuse_count",
     "rocketnet_time",
     "rocketnet_sleep",
-    "rocketnet_set_allocator",
+    "rocketnet_allocator",
     "rocketnet_generate_backend_keypair",
     "rocketnet_generate_backend_keypair_from_seed",
     "rocketnet_generate_server_keypair",
@@ -7635,7 +7635,7 @@ static const char * rocketnet_test_public_null_case_exports[] =
     "rocketnet_abi_field_count",
     "rocketnet_abi_field_offset",
     "rocketnet_abi_field_size",
-    "rocketnet_set_allocator",
+    "rocketnet_allocator",
     "rocketnet_generate_backend_keypair",
     "rocketnet_generate_backend_keypair_from_seed",
     "rocketnet_generate_server_keypair",
@@ -7700,15 +7700,15 @@ static const char * rocketnet_test_public_null_exempt_exports[] =
     "rocketnet_term",
     "rocketnet_num_status_codes",
     "rocketnet_status_name",
-    "rocketnet_set_assert_callback",
-    "rocketnet_set_quiet",
-    "rocketnet_set_log_level",
-    "rocketnet_set_thread_priority",
+    "rocketnet_assert_function",
+    "rocketnet_quiet",
+    "rocketnet_log_level",
+    "rocketnet_thread_priority",
     "rocketnet_get_thread_priority",
     "rocketnet_get_thread_priority_refusals",
-    "rocketnet_get_log_level",
+    "rocketnet_log_level_current",
     "rocketnet_log_level_name",
-    "rocketnet_set_log_callback",
+    "rocketnet_log_function",
     "rocketnet_api_misuse_count",
     "rocketnet_time",
     "rocketnet_sleep",
@@ -7747,19 +7747,19 @@ static const char * rocketnet_test_layer_exports[] =
     "rocketnet_init_ex",
     "rocketnet_term",
     "rocketnet_term_ex",
-    "rocketnet_set_assert_callback",
-    "rocketnet_set_quiet",
-    "rocketnet_set_log_level",
-    "rocketnet_get_log_level",
+    "rocketnet_assert_function",
+    "rocketnet_quiet",
+    "rocketnet_log_level",
+    "rocketnet_log_level_current",
     "rocketnet_log_level_name",
-    "rocketnet_set_log_callback",
+    "rocketnet_log_function",
     "rocketnet_printf",
     "rocketnet_info",
     "rocketnet_warn",
     "rocketnet_error",
     "rocketnet_debug",
     "rocketnet_spam",
-    "rocketnet_set_allocator",
+    "rocketnet_allocator",
     "rocketnet_allocator_ex",
     "rocketnet_api_misuse_count",
     "rocketnet_malloc",
@@ -7914,7 +7914,7 @@ static const char * rocketnet_test_layer_null_case_exports[] =
     "rocketnet_error",
     "rocketnet_debug",
     "rocketnet_spam",
-    "rocketnet_set_allocator",
+    "rocketnet_allocator",
     "rocketnet_allocator_ex",
     "rocketnet_user_id_string",
     "rocketnet_random_bytes",
@@ -8032,12 +8032,12 @@ static const char * rocketnet_test_layer_null_exempt_exports[] =
     "rocketnet_init_ex",
     "rocketnet_term",
     "rocketnet_term_ex",
-    "rocketnet_set_assert_callback",
-    "rocketnet_set_quiet",
-    "rocketnet_set_log_level",
-    "rocketnet_get_log_level",
+    "rocketnet_assert_function",
+    "rocketnet_quiet",
+    "rocketnet_log_level",
+    "rocketnet_log_level_current",
     "rocketnet_log_level_name",
-    "rocketnet_set_log_callback",
+    "rocketnet_log_function",
     "rocketnet_api_misuse_count",
     "rocketnet_malloc",
     "rocketnet_free",
@@ -8086,7 +8086,7 @@ static bool rocketnet_test_name_in( const char * name, const char * const * list
 void rocketnet_test_public_api_null()
 {
     void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) = rn_assert_function;
-    rocketnet_set_assert_callback( rocketnet_test_null_assert_hook );
+    rocketnet_assert_function( rocketnet_test_null_assert_hook );
 
     uint8_t data[8] = { 0 };
     const uint8_t * view = NULL;
@@ -8101,7 +8101,7 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_abi_field_count( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_abi_field_offset( NULL, NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_abi_field_size( NULL, NULL ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_set_allocator( NULL, NULL ) != ROCKETNET_STATUS_OK ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_allocator( NULL, NULL ) != ROCKETNET_STATUS_OK ) );
     RN_TEST_ONE_MISUSE( rocketnet_allocator_ex( NULL, NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_generate_backend_keypair( NULL, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_generate_backend_keypair_from_seed( NULL, token, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
@@ -8152,8 +8152,8 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_server_disconnect_all_clients( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_disconnect_reason( NULL, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_start_message( NULL, 0, 0, ROCKETNET_RELIABILITY_RELIABLE, 4 ) == NULL ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_finish_message( NULL, 0, 4 ) == 0 ) );
-    RN_TEST_ONE_MISUSE( rocketnet_server_abort_message( NULL, 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_finish_message( NULL, 4 ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_server_abort_message( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_server_receive_messages( NULL, NULL ) ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_receipts( NULL, 0, receipts, 2 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_set_send_kbps( NULL, 0, 1000 ) != ROCKETNET_STATUS_OK ) );
@@ -8198,7 +8198,7 @@ void rocketnet_test_public_api_null()
     }
     rocketnet_check( num_cases + num_exempt == num_exports );
 
-    rocketnet_set_assert_callback( saved_assert );
+    rocketnet_assert_function( saved_assert );
 }
 
 // The version is one integer, and the library and the header agree on it.
@@ -8212,7 +8212,7 @@ void rocketnet_test_version_is_one_integer()
 void rocketnet_test_public_api_null_is_a_counted_no_op()
 {
     void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) = rn_assert_function;
-    rocketnet_set_assert_callback( rocketnet_test_null_assert_hook );
+    rocketnet_assert_function( rocketnet_test_null_assert_hook );
     rocketnet_test_null_asserts = 0;
 
     uint64_t before;
@@ -8571,9 +8571,9 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     rocketnet_check( rocketnet_message_server_create_sized( NULL, NULL, NULL, 0, NULL, 0, NULL, 0, 0 ) == NULL );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
-    // rocketnet_set_allocator refuses a NULL callback in a partial or full set
+    // rocketnet_allocator refuses a NULL callback in a partial or full set
     before = rocketnet_api_misuse_count();
-    rocketnet_check( rocketnet_set_allocator( NULL, NULL ) != ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_allocator( NULL, NULL ) != ROCKETNET_STATUS_OK );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();
@@ -8698,7 +8698,7 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
 
     (void) client_index;
 
-    rocketnet_set_assert_callback( saved_assert );
+    rocketnet_assert_function( saved_assert );
 }
 
 // --- the general acks ---
@@ -12986,14 +12986,14 @@ void rocketnet_test_config_validation()
     rocketnet_server_transport_default_config_current( &config );
 
     rocketnet_test_captured_log[0] = '\0';
-    const enum rocketnet_log_level_t empty_saved_level = rocketnet_get_log_level();
-    rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    const enum rocketnet_log_level_t empty_saved_level = rocketnet_log_level_current();
+    rocketnet_log_function( rocketnet_test_capture_log, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
     rocketnet_check( rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
 
-    rocketnet_set_log_level( empty_saved_level );
-    rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
+    rocketnet_log_level( empty_saved_level );
+    rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 
     rocketnet_check( config.max_clients == 1000 );
     rocketnet_check( strstr( rocketnet_test_captured_log, "config ignores empty ROCKETNET_SERVER_MAX_CLIENTS" ) != NULL );
@@ -13307,14 +13307,14 @@ void rocketnet_test_config_override_logging()
     rocketnet_server_transport_default_config( &config );
 
     rocketnet_test_captured_log[0] = '\0';
-    const enum rocketnet_log_level_t saved_level = rocketnet_get_log_level();
-    rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_function( rocketnet_test_capture_log, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
     rocketnet_check( rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
 
-    rocketnet_set_log_level( saved_level );
-    rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
+    rocketnet_log_level( saved_level );
+    rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 
     rocketnet_check( config.max_clients == 77 );
     rocketnet_check( memcmp( config.server_secret_key, secret_bytes, 32 ) == 0 );
@@ -13334,11 +13334,11 @@ void rocketnet_test_config_override_logging()
     setenv( "ROCKETNET_SERVER_SERVER_SECRET_KEY", "not!valid!base64!secret!material!!", 1 );
     rocketnet_server_transport_default_config( &config );
     rocketnet_test_captured_log[0] = '\0';
-    rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_function( rocketnet_test_capture_log, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
     rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
-    rocketnet_set_log_level( saved_level );
-    rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
+    rocketnet_log_level( saved_level );
+    rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
     rocketnet_check( strstr( rocketnet_test_captured_log, "not!valid!base64!secret!material!!" ) == NULL );
 
     rocketnet_test_env_restore( &clients_guard );
@@ -13357,56 +13357,56 @@ void rocketnet_test_log_level_refuses_out_of_range()
     // the level this test found, restored at the end: moving the level must
     // not leak into the next test
 
-    const enum rocketnet_log_level_t saved_level = rocketnet_get_log_level();
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
 
     // the setter takes only a defined level, NONE (0) through SPAM (5). a
     // value outside that range leaves the level in force rather than
     // storing it, so a caller cannot silence the library by accident
 
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
-    rocketnet_set_log_level( (enum rocketnet_log_level_t) -1 );
-    rocketnet_check( rocketnet_get_log_level() == ROCKETNET_LOG_LEVEL_INFO );
-    rocketnet_set_log_level( (enum rocketnet_log_level_t) 6 );
-    rocketnet_check( rocketnet_get_log_level() == ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_level( (enum rocketnet_log_level_t) -1 );
+    rocketnet_check( rocketnet_log_level_current() == ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_level( (enum rocketnet_log_level_t) 6 );
+    rocketnet_check( rocketnet_log_level_current() == ROCKETNET_LOG_LEVEL_INFO );
 
     // every defined level round-trips
 
     for ( int level = ROCKETNET_LOG_LEVEL_NONE; level <= ROCKETNET_LOG_LEVEL_SPAM; level++ )
     {
-        rocketnet_set_log_level( (enum rocketnet_log_level_t) level );
-        rocketnet_check( rocketnet_get_log_level() == level );
+        rocketnet_log_level( (enum rocketnet_log_level_t) level );
+        rocketnet_check( rocketnet_log_level_current() == level );
     }
 
     // the override path parses strictly and applies only an in-range value:
     // a word, an out-of-range number, a negative and the empty string are
     // all refused, and the level stays where it was
 
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
     rocketnet_log_level_override_apply( "abc" );
-    rocketnet_check( rocketnet_get_log_level() == ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_check( rocketnet_log_level_current() == ROCKETNET_LOG_LEVEL_INFO );
     rocketnet_log_level_override_apply( "9" );
-    rocketnet_check( rocketnet_get_log_level() == ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_check( rocketnet_log_level_current() == ROCKETNET_LOG_LEVEL_INFO );
     rocketnet_log_level_override_apply( "-1" );
-    rocketnet_check( rocketnet_get_log_level() == ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_check( rocketnet_log_level_current() == ROCKETNET_LOG_LEVEL_INFO );
     rocketnet_log_level_override_apply( "" );
-    rocketnet_check( rocketnet_get_log_level() == ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_check( rocketnet_log_level_current() == ROCKETNET_LOG_LEVEL_INFO );
 
     // a valid override behaves exactly as before
 
     rocketnet_log_level_override_apply( "4" );
-    rocketnet_check( rocketnet_get_log_level() == ROCKETNET_LOG_LEVEL_DEBUG );
+    rocketnet_check( rocketnet_log_level_current() == ROCKETNET_LOG_LEVEL_DEBUG );
 
     // a refused value is named in the warning, so a mistyped environment
     // variable tells the operator instead of silencing the library
 
     rocketnet_test_captured_log[0] = '\0';
-    rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
+    rocketnet_log_function( rocketnet_test_capture_log, NULL );
     rocketnet_log_level_override_apply( "abc" );
-    rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
+    rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
     rocketnet_check( strstr( rocketnet_test_captured_log, "abc" ) != NULL );
 
-    rocketnet_set_log_level( saved_level );
+    rocketnet_log_level( saved_level );
 }
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
@@ -14607,7 +14607,7 @@ void rocketnet_unit_prepare()
     if ( rocketnet_platform_getenv( "ROCKETNET_TEST_VERBOSE" ) == NULL )
     {
         rocketnet_test_suite_log_function = rocketnet_test_log_capture;
-        rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
+        rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
     }
     rocketnet_forbid_xdp_commit();
     // the unit suite runs over the loopback transport with no sockets, so a

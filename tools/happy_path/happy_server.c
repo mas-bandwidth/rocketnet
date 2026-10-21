@@ -16,6 +16,7 @@
 #endif
 
 #include "rocketnet.h"
+#include "../../examples/dev_keys.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -48,12 +49,17 @@ int main( int argc, char ** argv )
         address = argc > 1 ? argv[1] : "127.0.0.1:0";
 
     struct rocketnet_server_config_t config;
-    rocketnet_server_dev_config( &config );
+    // the published development keys (examples/dev_keys.h); a real server brings its own keys, recommended through the ROCKETNET_SERVER_* environment variables, or set in code
+    rocketnet_server_default_config( &config );
+    config.protocol_id = EXAMPLE_DEV_PROTOCOL_ID;
+    memcpy( config.backend_public_key, example_dev_backend_public_key, sizeof( config.backend_public_key ) );
+    memcpy( config.server_public_key, example_dev_server_public_key, sizeof( config.server_public_key ) );
+    memcpy( config.server_secret_key, example_dev_server_secret_key, sizeof( config.server_secret_key ) );
     config.max_clients = 1;
     config.transport = "portable";
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, address, &config, NULL, 0, &create_status );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, address, &config, &create_status );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -89,7 +95,6 @@ int main( int argc, char ** argv )
         {
             const uint8_t * data = NULL;
             int bytes = 0;
-            uint64_t sender = 0;
             struct rocketnet_message_batch_t batch;
             while ( rocketnet_server_receive_messages( server, &batch ) )
             {
@@ -97,7 +102,6 @@ int main( int argc, char ** argv )
                 {
                     data = batch.data[i];
                     bytes = batch.bytes[i];
-                    sender = batch.client_index[i];
                     const int mode = bytes > 0 ? data[0] : -1;
                     const int ok = mode >= 0 && mode < 8 &&
                                    bytes == payload_bytes &&

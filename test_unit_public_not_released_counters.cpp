@@ -3,14 +3,16 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The public client and server counter enums' unreleased-message counter.
-// The pair runs over the in-process loopback transport: no socket, no receive
-// thread (the client transport is created step-driven), and time is only ever
-// an argument, starting at 1000.0. A received message is held across an
-// update, the update refuses by name, and the public counter reads the
-// internal MESSAGE_NOT_RELEASED count. The public receive is a batch that
-// the next receive or update releases, so the held view is taken through the
-// message layer under the public object.
+// The unreleased-message refusal under the public client and server. The
+// public API no longer reports it (the update returns void and the stats
+// structs carry no MESSAGE_NOT_RELEASED count), so these cases assert the
+// internal message layer beneath the public objects: a view held across the
+// message layer's update is refused by name (ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED)
+// and counted in the internal MESSAGE_NOT_RELEASED counter, and the public
+// receive's batch, which the next update releases, never trips it. The pair
+// runs over the in-process loopback transport: no socket, no receive thread
+// (the client transport is created step-driven), and time is only ever an
+// argument, starting at 1000.0.
 
 #include "test_unit_registry.h"
 
@@ -179,6 +181,18 @@ static bool public_not_released_pair_setup( struct public_not_released_pair_t * 
     return true;
 }
 
+static uint64_t public_not_released_client_count( struct public_not_released_pair_t * pair )
+{
+    return rocketnet_counter_value( rocketnet_message_client_counters( rocketnet_client_message_client( pair->client ) ),
+                                    ROCKETNET_COUNTER_MESSAGE_NOT_RELEASED );
+}
+
+static uint64_t public_not_released_server_count( struct public_not_released_pair_t * pair )
+{
+    return rocketnet_counter_value( rocketnet_message_server_counters( rocketnet_server_message_server( pair->server ) ),
+                                    ROCKETNET_COUNTER_MESSAGE_NOT_RELEASED );
+}
+
 static void public_not_released_pair_teardown( struct public_not_released_pair_t * pair )
 {
     rocketnet_client_destroy( pair->client );
@@ -189,8 +203,8 @@ static void public_not_released_pump( struct public_not_released_pair_t * pair )
 {
     pair->time += 0.01;
     public_not_released_clock = pair->time;
-    check( rocketnet_server_update( pair->server, pair->time ) == ROCKETNET_UPDATE_OK );
-    check( rocketnet_client_update( pair->client, pair->time ) == ROCKETNET_UPDATE_OK );
+    rocketnet_server_update( pair->server, pair->time );
+    rocketnet_client_update( pair->client, pair->time );
     rocketnet_server_send_packets( pair->server );
     rocketnet_client_send_packets( pair->client );
     rocketnet_client_io_step( rocketnet_client_transport_client_io( pair->client_transport ), false );
@@ -213,7 +227,7 @@ static void public_not_released_send_from_server( struct public_not_released_pai
     uint8_t * out = rocketnet_server_start_message( pair->server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 16 );
     check( out != NULL );
     memset( out, value, 16 );
-    check( rocketnet_server_finish_message( pair->server, 0, 16 ) != 0 );
+    check( rocketnet_server_finish_message( pair->server, 16 ) != 0 );
 }
 
 static void public_not_released_send_from_client( struct public_not_released_pair_t * pair, uint8_t value )
@@ -264,14 +278,14 @@ static void public_not_released_counter_client()
     int bytes = 0;
     check( public_not_released_receive_client( &pair, &held, &bytes ) );
     check( bytes == 16 );
-    check( rocketnet_client_counter( pair.client, ROCKETNET_CLIENT_COUNTER_MESSAGES_NOT_RELEASED ) == 0 );
+    check( public_not_released_client_count( &pair ) == 0 );
 
     void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
-    rocketnet_set_assert_callback( public_not_released_assert_hook );
+    rocketnet_assert_function( public_not_released_assert_hook );
 
     pair.time += 0.01;
-    check( rocketnet_client_update( pair.client, pair.time ) == ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED );
-    check( rocketnet_client_counter( pair.client, ROCKETNET_CLIENT_COUNTER_MESSAGES_NOT_RELEASED ) == 1 );
+    check( rocketnet_message_client_update( rocketnet_client_message_client( pair.client ), pair.time ) == ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED );
+    check( public_not_released_client_count( &pair ) == 1 );
 
     // a later message is released normally, and the refusal's count stays
     public_not_released_send_from_server( &pair, 8 );
@@ -279,10 +293,10 @@ static void public_not_released_counter_client()
     check( public_not_released_receive_client( &pair, &next, &bytes ) );
     rocketnet_message_client_release( rocketnet_client_message_client( pair.client ), next );
     pair.time += 0.01;
-    check( rocketnet_client_update( pair.client, pair.time ) == ROCKETNET_UPDATE_OK );
-    check( rocketnet_client_counter( pair.client, ROCKETNET_CLIENT_COUNTER_MESSAGES_NOT_RELEASED ) == 1 );
+    rocketnet_client_update( pair.client, pair.time );
+    check( public_not_released_client_count( &pair ) == 1 );
 
-    rocketnet_set_assert_callback( saved_assert );
+    rocketnet_assert_function( saved_assert );
     public_not_released_pair_teardown( &pair );
 }
 REGISTER_UNIT_TEST( public_not_released_counter_client );
@@ -299,14 +313,14 @@ static void public_not_released_counter_server()
     int bytes = 0;
     check( public_not_released_receive_server( &pair, &held, &bytes ) );
     check( bytes == 16 );
-    check( rocketnet_server_counter( pair.server, ROCKETNET_SERVER_COUNTER_MESSAGES_NOT_RELEASED ) == 0 );
+    check( public_not_released_server_count( &pair ) == 0 );
 
     void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
-    rocketnet_set_assert_callback( public_not_released_assert_hook );
+    rocketnet_assert_function( public_not_released_assert_hook );
 
     pair.time += 0.01;
-    check( rocketnet_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED );
-    check( rocketnet_server_counter( pair.server, ROCKETNET_SERVER_COUNTER_MESSAGES_NOT_RELEASED ) == 1 );
+    check( rocketnet_message_server_update( rocketnet_server_message_server( pair.server ), pair.time ) == ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED );
+    check( public_not_released_server_count( &pair ) == 1 );
 
     // a later message is released normally, and the refusal's count stays
     public_not_released_send_from_client( &pair, 10 );
@@ -314,10 +328,10 @@ static void public_not_released_counter_server()
     check( public_not_released_receive_server( &pair, &next, &bytes ) );
     rocketnet_message_server_release( rocketnet_server_message_server( pair.server ), next );
     pair.time += 0.01;
-    check( rocketnet_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
-    check( rocketnet_server_counter( pair.server, ROCKETNET_SERVER_COUNTER_MESSAGES_NOT_RELEASED ) == 1 );
+    rocketnet_server_update( pair.server, pair.time );
+    check( public_not_released_server_count( &pair ) == 1 );
 
-    rocketnet_set_assert_callback( saved_assert );
+    rocketnet_assert_function( saved_assert );
     public_not_released_pair_teardown( &pair );
 }
 REGISTER_UNIT_TEST( public_not_released_counter_server );
@@ -326,8 +340,8 @@ static void public_not_released_counter_starts_at_zero()
 {
     struct public_not_released_pair_t pair;
     check( public_not_released_pair_setup( &pair ) );
-    check( rocketnet_client_counter( pair.client, ROCKETNET_CLIENT_COUNTER_MESSAGES_NOT_RELEASED ) == 0 );
-    check( rocketnet_server_counter( pair.server, ROCKETNET_SERVER_COUNTER_MESSAGES_NOT_RELEASED ) == 0 );
+    check( public_not_released_client_count( &pair ) == 0 );
+    check( public_not_released_server_count( &pair ) == 0 );
     public_not_released_pair_teardown( &pair );
 }
 REGISTER_UNIT_TEST( public_not_released_counter_starts_at_zero );
@@ -352,10 +366,10 @@ static void public_not_released_batch_released_by_update()
     }
     check( client_got && server_got );
     pair.time += 0.01;
-    check( rocketnet_client_update( pair.client, pair.time ) == ROCKETNET_UPDATE_OK );
-    check( rocketnet_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
-    check( rocketnet_client_counter( pair.client, ROCKETNET_CLIENT_COUNTER_MESSAGES_NOT_RELEASED ) == 0 );
-    check( rocketnet_server_counter( pair.server, ROCKETNET_SERVER_COUNTER_MESSAGES_NOT_RELEASED ) == 0 );
+    rocketnet_client_update( pair.client, pair.time );
+    rocketnet_server_update( pair.server, pair.time );
+    check( public_not_released_client_count( &pair ) == 0 );
+    check( public_not_released_server_count( &pair ) == 0 );
     public_not_released_pair_teardown( &pair );
 }
 REGISTER_UNIT_TEST( public_not_released_batch_released_by_update );

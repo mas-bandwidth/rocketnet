@@ -32,8 +32,10 @@ records in `tla/RUNS.tsv`.
 - **Defaults.** 1000 kbps for the client, 10000 kbps for each server client
   slot; configuration fields in the message config, overridable at create and
   at runtime. A capped budget is 1 kbps to 10000000 kbps.
-- **Uncapped.** A value of 0 or lower, at create or to `set_send_kbps`,
-  disables that connection's budget: it sends every item, nothing is dropped
+- **Uncapped.** Inside the message endpoint, a value of 0 or lower to
+  `rn_endpoint_set_send_kbps` disables that connection's budget (the public
+  calls never pass one: there 0 is the default rate and a negative value is
+  refused with `ROCKETNET_STATUS_INVALID_ARGUMENT`): it sends every item, nothing is dropped
   or waits by the budget, and `NeverOverspend` claims nothing about it. A
   positive value caps it again with a fresh full bucket; a value above the
   maximum is refused and changes nothing. Disabling the budget is not

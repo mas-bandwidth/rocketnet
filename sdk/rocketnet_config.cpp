@@ -520,6 +520,8 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
     for ( int i = 0; i < num_fields; i++ )
     {
         const struct rocketnet_config_field_t * field = &fields[i];
+        if ( ( field->flags & ROCKETNET_CONFIG_NO_ENV ) != 0 )
+            continue;
 
         char env_name[128];
         if ( !rocketnet_config_env_var_name_for( transport_name, field->name, env_name, sizeof(env_name) ) )

@@ -727,7 +727,10 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
         int payload_bytes = 0;
         const uint32_t serial = rn_endpoint_in_place_finish( connection, object->in_place_payload, bytes, object->time, &payload_bytes );
         if ( serial == 0 )
-            return 0;                                           // the start stays pending
+        {
+            rn_message_connection_cancel_pending( object, index );     // a refused finish aborts its start: the object is never stuck
+            return 0;
+        }
         rocketnet_packet_context_t context = object->in_place_context;
         object->in_place = 0;
         object->in_place_payload = NULL;
@@ -747,7 +750,10 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
 
     const uint32_t serial = rn_endpoint_finish( &object->connections[index], bytes, 0 );   // RNEndpoint Send's second half
     if ( serial == 0 )
-        return 0;                                               // the start stays pending
+    {
+        rn_message_connection_cancel_pending( object, index );         // a refused finish aborts its start (tla/RNSlots.tla FinishPending)
+        return 0;
+    }
 
     object->pending_connection = -1;
     return serial;

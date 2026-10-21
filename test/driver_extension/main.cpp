@@ -19,7 +19,7 @@ extern bool external_test_replay_has_forgotten;
 
 int main()
 {
-    rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_NONE);
+    rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
     CHECK(rocketnet_init(NULL) == ROCKETNET_STATUS_OK);
     rocketnet_forbid_xdp_commit();
     rocketnet_server_transport_config_t server_config;

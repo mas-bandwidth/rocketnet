@@ -1435,14 +1435,14 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
     rocketnet_platform_set_ipv6_socket_available_for_testing( false );
 
     rocketnet_test_captured_log[0] = '\0';
-    const enum rocketnet_log_level_t saved_level = rocketnet_get_log_level();
-    rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_function( rocketnet_test_capture_log, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
 
-    rocketnet_set_log_level( saved_level );
-    rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
+    rocketnet_log_level( saved_level );
+    rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 
     rocketnet_check( client );
     rocketnet_check( strstr( rocketnet_test_captured_log, "client socket is ipv4 because ipv6 is unavailable on this host" ) != NULL );
@@ -1526,13 +1526,13 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
 
     int create_status = ROCKETNET_STATUS_OK;
     rocketnet_test_captured_log[0] = '\0';
-    rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_log_function( rocketnet_test_capture_log, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
     struct rocketnet_client_transport_t * refused = rocketnet_client_transport_create_ex( NULL, connect_token, NULL, rocketnet_platform_time(), &create_status );
 
-    rocketnet_set_log_level( saved_level );
-    rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
+    rocketnet_log_level( saved_level );
+    rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 
     rocketnet_check( refused == NULL );
     rocketnet_check( create_status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
@@ -1877,11 +1877,11 @@ void rocketnet_test_transport_update_time_clamped()
     // through a non-aborting hook so the suite goes on
 
     rocketnet_test_update_time_clamped_asserts = 0;
-    rocketnet_set_assert_callback( rocketnet_test_update_time_clamped_assert_hook );
+    rocketnet_assert_function( rocketnet_test_update_time_clamped_assert_hook );
 
     rocketnet_server_transport_update( server, NAN );
 
-    rocketnet_set_assert_callback( NULL );
+    rocketnet_assert_function( NULL );
 
     rocketnet_check( rocketnet_api_misuse_count() == misuse_before + 1 );
 
@@ -3585,7 +3585,7 @@ void rocketnet_test_public_client_server_queries()
     server_config.transport = "portable";
     const uint64_t memory_bytes = rocketnet_server_required_memory( &server_config );
     rocketnet_check( memory_bytes > 0 );
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, NULL );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -3603,7 +3603,7 @@ void rocketnet_test_public_client_server_queries()
     struct rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "portable";
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0, NULL );
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
     if ( client && rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
@@ -3628,7 +3628,7 @@ void rocketnet_test_public_client_server_queries()
             out = rocketnet_server_start_message( server, rocketnet_client_index( client ), 0, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, (int) sizeof( payload ) );
             rocketnet_check( out != NULL );
             memcpy( out, payload, sizeof( payload ) );
-            rocketnet_check( rocketnet_server_finish_message( server, rocketnet_client_index( client ), (int) sizeof( payload ) ) != 0 );
+            rocketnet_check( rocketnet_server_finish_message( server, (int) sizeof( payload ) ) != 0 );
             exchanged++;
         }
         const uint8_t * data = NULL;
@@ -3678,28 +3678,28 @@ void rocketnet_test_public_client_server_queries()
     struct rocketnet_client_transport_stats_t cs;
     rocketnet_client_transport_stats( client_transport, &cs );
 
-    rocketnet_check( rocketnet_client_counter( client, ROCKETNET_CLIENT_COUNTER_PACKETS_SENT ) == cs.packets_sent && cs.packets_sent > 0 );
-    rocketnet_check( rocketnet_client_counter( client, ROCKETNET_CLIENT_COUNTER_PACKETS_RECEIVED ) == cs.packets_received && cs.packets_received > 0 );
-    rocketnet_check( rocketnet_client_counter( client, ROCKETNET_CLIENT_COUNTER_BYTES_SENT ) == cs.bytes_sent && cs.bytes_sent > cs.packets_sent );
-    rocketnet_check( rocketnet_client_counter( client, ROCKETNET_CLIENT_COUNTER_BYTES_RECEIVED ) == cs.bytes_received && cs.bytes_received > cs.packets_received );
-    rocketnet_check( rocketnet_client_counter( client, ROCKETNET_CLIENT_COUNTER_PAYLOADS_RECEIVED ) == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_CLIENT_PAYLOAD_DELIVERED ) );
-    rocketnet_check( rocketnet_client_counter( client, ROCKETNET_CLIENT_COUNTER_PAYLOADS_RECEIVED ) > 0 );
-    rocketnet_check( rocketnet_client_counter( client, ROCKETNET_CLIENT_COUNTER_MESSAGES_RESENT ) == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_MESSAGE_RESENT ) );
-    rocketnet_check( rocketnet_client_counter( client, ROCKETNET_CLIENT_COUNTER_MESSAGES_DUPLICATE ) == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_MESSAGE_DUPLICATE ) );
-    rocketnet_check( rocketnet_client_counter( client, ROCKETNET_CLIENT_COUNTER_RECEIPTS_ACKED ) == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED ) );
-    rocketnet_check( rocketnet_client_counter( client, ROCKETNET_CLIENT_COUNTER_RECEIPTS_ACKED ) > 0 );
-    rocketnet_check( rocketnet_client_counter( client, ROCKETNET_CLIENT_COUNTER_RECEIPTS_LOST ) == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS ) );
-    rocketnet_check( rocketnet_client_counter( client, ROCKETNET_CLIENT_COUNTER_BUDGET_DROPS ) == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET ) );
-    rocketnet_check( rocketnet_client_counter( client, ROCKETNET_CLIENT_COUNTER_SEND_DEFERRED ) == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED ) );
+    rocketnet_check( rn_client_stats_of( client ).packets_sent == cs.packets_sent && cs.packets_sent > 0 );
+    rocketnet_check( rn_client_stats_of( client ).packets_received == cs.packets_received && cs.packets_received > 0 );
+    rocketnet_check( rn_client_stats_of( client ).bytes_sent == cs.bytes_sent && cs.bytes_sent > cs.packets_sent );
+    rocketnet_check( rn_client_stats_of( client ).bytes_received == cs.bytes_received && cs.bytes_received > cs.packets_received );
+    rocketnet_check( rn_client_stats_of( client ).payloads_received == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_CLIENT_PAYLOAD_DELIVERED ) );
+    rocketnet_check( rn_client_stats_of( client ).payloads_received > 0 );
+    rocketnet_check( rn_client_stats_of( client ).messages_resent == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_MESSAGE_RESENT ) );
+    rocketnet_check( rn_client_stats_of( client ).messages_duplicate == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_MESSAGE_DUPLICATE ) );
+    rocketnet_check( rn_client_stats_of( client ).receipts_acked == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED ) );
+    rocketnet_check( rn_client_stats_of( client ).receipts_acked > 0 );
+    rocketnet_check( rn_client_stats_of( client ).receipts_lost == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS ) );
+    rocketnet_check( rn_client_stats_of( client ).budget_drops == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET ) );
+    rocketnet_check( rn_client_stats_of( client ).send_deferred == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED ) );
     rocketnet_check( rocketnet_client_counter( client, ROCKETNET_CLIENT_COUNTER_COUNT ) == 0 );
 
-    rocketnet_check( rocketnet_client_stat( client, ROCKETNET_CLIENT_STAT_RTT ) == (double) cs.rtt );
-    rocketnet_check( rocketnet_client_stat( client, ROCKETNET_CLIENT_STAT_JITTER ) == (double) cs.jitter );
-    rocketnet_check( rocketnet_client_stat( client, ROCKETNET_CLIENT_STAT_PACKET_LOSS ) == (double) cs.packet_loss );
-    rocketnet_check( rocketnet_client_stat( client, ROCKETNET_CLIENT_STAT_PACKETS_SENT_PER_SECOND ) == (double) cs.packets_sent_per_second );
-    rocketnet_check( rocketnet_client_stat( client, ROCKETNET_CLIENT_STAT_PACKETS_RECEIVED_PER_SECOND ) == (double) cs.packets_received_per_second );
-    rocketnet_check( rocketnet_client_stat( client, ROCKETNET_CLIENT_STAT_BANDWIDTH_SENT ) == (double) cs.bandwidth_sent_kbps );
-    rocketnet_check( rocketnet_client_stat( client, ROCKETNET_CLIENT_STAT_BANDWIDTH_RECEIVED ) == (double) cs.bandwidth_received_kbps );
+    rocketnet_check( rn_client_stats_of( client ).rtt == (double) cs.rtt );
+    rocketnet_check( rn_client_stats_of( client ).jitter == (double) cs.jitter );
+    rocketnet_check( rn_client_stats_of( client ).packet_loss == (double) cs.packet_loss );
+    rocketnet_check( rn_client_stats_of( client ).packets_sent_per_second == (double) cs.packets_sent_per_second );
+    rocketnet_check( rn_client_stats_of( client ).packets_received_per_second == (double) cs.packets_received_per_second );
+    rocketnet_check( rn_client_stats_of( client ).bandwidth_sent_kbps == (double) cs.bandwidth_sent_kbps );
+    rocketnet_check( rn_client_stats_of( client ).bandwidth_received_kbps == (double) cs.bandwidth_received_kbps );
     rocketnet_check( rocketnet_client_stat( client, ROCKETNET_CLIENT_STAT_COUNT ) == 0.0 );
 
     struct rocketnet_message_server_t * message_server = rocketnet_server_message_server( server );
@@ -3709,53 +3709,53 @@ void rocketnet_test_public_client_server_queries()
     struct rocketnet_server_transport_stats_t ss;
     rocketnet_server_transport_stats( server_transport, &ss );
 
-    rocketnet_check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_PACKETS_SENT ) == ss.packets_sent && ss.packets_sent > 0 );
-    rocketnet_check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_PACKETS_RECEIVED ) == ss.packets_received && ss.packets_received > 0 );
-    rocketnet_check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_BYTES_SENT ) == ss.bytes_sent && ss.bytes_sent > ss.packets_sent );
-    rocketnet_check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_BYTES_RECEIVED ) == ss.bytes_received && ss.bytes_received > ss.packets_received );
-    rocketnet_check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_CLIENTS_CONNECTED ) == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_CLIENT_CONNECTED ) );
-    rocketnet_check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_CLIENTS_CONNECTED ) == 1 );
-    rocketnet_check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_CLIENTS_DENIED_FULL ) == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS ) + rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_SLOTS ) );
-    rocketnet_check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_HANDSHAKES_OVER_BUDGET ) == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED ) );
-    rocketnet_check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_PAYLOADS_RECEIVED ) == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_PAYLOAD_DELIVERED ) );
-    rocketnet_check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_PAYLOADS_RECEIVED ) > 0 );
-    rocketnet_check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_MESSAGES_RESENT ) == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_MESSAGE_RESENT ) );
-    rocketnet_check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_MESSAGES_DUPLICATE ) == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_MESSAGE_DUPLICATE ) );
-    rocketnet_check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_RECEIPTS_ACKED ) == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED ) );
-    rocketnet_check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_RECEIPTS_ACKED ) > 0 );
-    rocketnet_check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_RECEIPTS_LOST ) == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS ) );
-    rocketnet_check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_BUDGET_DROPS ) == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET ) );
+    rocketnet_check( rn_server_stats_of( server ).packets_sent == ss.packets_sent && ss.packets_sent > 0 );
+    rocketnet_check( rn_server_stats_of( server ).packets_received == ss.packets_received && ss.packets_received > 0 );
+    rocketnet_check( rn_server_stats_of( server ).bytes_sent == ss.bytes_sent && ss.bytes_sent > ss.packets_sent );
+    rocketnet_check( rn_server_stats_of( server ).bytes_received == ss.bytes_received && ss.bytes_received > ss.packets_received );
+    rocketnet_check( rn_server_stats_of( server ).clients_connected == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_CLIENT_CONNECTED ) );
+    rocketnet_check( rn_server_stats_of( server ).clients_connected == 1 );
+    rocketnet_check( rn_server_stats_of( server ).clients_denied_full == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS ) + rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_SLOTS ) );
+    rocketnet_check( rn_server_stats_of( server ).handshakes_over_budget == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED ) );
+    rocketnet_check( rn_server_stats_of( server ).payloads_received == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_PAYLOAD_DELIVERED ) );
+    rocketnet_check( rn_server_stats_of( server ).payloads_received > 0 );
+    rocketnet_check( rn_server_stats_of( server ).messages_resent == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_MESSAGE_RESENT ) );
+    rocketnet_check( rn_server_stats_of( server ).messages_duplicate == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_MESSAGE_DUPLICATE ) );
+    rocketnet_check( rn_server_stats_of( server ).receipts_acked == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED ) );
+    rocketnet_check( rn_server_stats_of( server ).receipts_acked > 0 );
+    rocketnet_check( rn_server_stats_of( server ).receipts_lost == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS ) );
+    rocketnet_check( rn_server_stats_of( server ).budget_drops == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET ) );
     rocketnet_check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_COUNT ) == 0 );
 
-    rocketnet_check( rocketnet_server_stat( server, ROCKETNET_SERVER_STAT_PACKETS_SENT_PER_SECOND ) == (double) ss.packets_sent_per_second );
-    rocketnet_check( rocketnet_server_stat( server, ROCKETNET_SERVER_STAT_PACKETS_RECEIVED_PER_SECOND ) == (double) ss.packets_received_per_second );
-    rocketnet_check( rocketnet_server_stat( server, ROCKETNET_SERVER_STAT_BANDWIDTH_SENT ) == (double) ss.bandwidth_sent_kbps );
-    rocketnet_check( rocketnet_server_stat( server, ROCKETNET_SERVER_STAT_BANDWIDTH_RECEIVED ) == (double) ss.bandwidth_received_kbps );
+    rocketnet_check( rn_server_stats_of( server ).packets_sent_per_second == (double) ss.packets_sent_per_second );
+    rocketnet_check( rn_server_stats_of( server ).packets_received_per_second == (double) ss.packets_received_per_second );
+    rocketnet_check( rn_server_stats_of( server ).bandwidth_sent_kbps == (double) ss.bandwidth_sent_kbps );
+    rocketnet_check( rn_server_stats_of( server ).bandwidth_received_kbps == (double) ss.bandwidth_received_kbps );
     rocketnet_check( rocketnet_server_stat( server, ROCKETNET_SERVER_STAT_COUNT ) == 0.0 );
 
     const int slot = rocketnet_client_index( client );
     rocketnet_check( rocketnet_server_client_connected( server, slot ) && rocketnet_server_client_id( server, slot ) == 77 );
     struct rocketnet_server_transport_client_stats_t cls;
     rocketnet_server_transport_client_stats( server_transport, slot, &cls );
-    rocketnet_check( rocketnet_server_client_counter( server, slot, ROCKETNET_SERVER_CLIENT_COUNTER_PACKETS_SENT ) == cls.packets_sent && cls.packets_sent > 0 );
-    rocketnet_check( rocketnet_server_client_counter( server, slot, ROCKETNET_SERVER_CLIENT_COUNTER_PACKETS_RECEIVED ) == cls.packets_received && cls.packets_received > 0 );
-    rocketnet_check( rocketnet_server_client_counter( server, slot, ROCKETNET_SERVER_CLIENT_COUNTER_BYTES_SENT ) == cls.bytes_sent && cls.bytes_sent > cls.packets_sent );
-    rocketnet_check( rocketnet_server_client_counter( server, slot, ROCKETNET_SERVER_CLIENT_COUNTER_BYTES_RECEIVED ) == cls.bytes_received && cls.bytes_received > cls.packets_received );
+    rocketnet_check( rn_server_client_stats_of( server, slot ).packets_sent == cls.packets_sent && cls.packets_sent > 0 );
+    rocketnet_check( rn_server_client_stats_of( server, slot ).packets_received == cls.packets_received && cls.packets_received > 0 );
+    rocketnet_check( rn_server_client_stats_of( server, slot ).bytes_sent == cls.bytes_sent && cls.bytes_sent > cls.packets_sent );
+    rocketnet_check( rn_server_client_stats_of( server, slot ).bytes_received == cls.bytes_received && cls.bytes_received > cls.packets_received );
     rocketnet_check( rocketnet_server_client_counter( server, slot, ROCKETNET_SERVER_CLIENT_COUNTER_COUNT ) == 0 );
-    rocketnet_check( rocketnet_server_client_stat( server, slot, ROCKETNET_SERVER_CLIENT_STAT_RTT ) == (double) cls.rtt );
-    rocketnet_check( rocketnet_server_client_stat( server, slot, ROCKETNET_SERVER_CLIENT_STAT_JITTER ) == (double) cls.jitter );
-    rocketnet_check( rocketnet_server_client_stat( server, slot, ROCKETNET_SERVER_CLIENT_STAT_PACKET_LOSS ) == (double) cls.packet_loss );
-    rocketnet_check( rocketnet_server_client_stat( server, slot, ROCKETNET_SERVER_CLIENT_STAT_BANDWIDTH_SENT ) == (double) cls.bandwidth_sent_kbps );
-    rocketnet_check( rocketnet_server_client_stat( server, slot, ROCKETNET_SERVER_CLIENT_STAT_BANDWIDTH_RECEIVED ) == (double) cls.bandwidth_received_kbps );
-    rocketnet_check( rocketnet_server_client_stat( server, slot, ROCKETNET_SERVER_CLIENT_STAT_BANDWIDTH_ACKED ) == (double) cls.bandwidth_acked_kbps );
+    rocketnet_check( rn_server_client_stats_of( server, slot ).rtt == (double) cls.rtt );
+    rocketnet_check( rn_server_client_stats_of( server, slot ).jitter == (double) cls.jitter );
+    rocketnet_check( rn_server_client_stats_of( server, slot ).packet_loss == (double) cls.packet_loss );
+    rocketnet_check( rn_server_client_stats_of( server, slot ).bandwidth_sent_kbps == (double) cls.bandwidth_sent_kbps );
+    rocketnet_check( rn_server_client_stats_of( server, slot ).bandwidth_received_kbps == (double) cls.bandwidth_received_kbps );
+    rocketnet_check( rn_server_client_stats_of( server, slot ).bandwidth_acked_kbps == (double) cls.bandwidth_acked_kbps );
     rocketnet_check( rocketnet_server_client_stat( server, slot, ROCKETNET_SERVER_CLIENT_STAT_COUNT ) == 0.0 );
 
     // a free slot, and a slot past max_clients, read 0
     const int free_slot = slot == 0 ? 1 : 0;
     rocketnet_check( !rocketnet_server_client_connected( server, free_slot ) );
-    rocketnet_check( rocketnet_server_client_counter( server, free_slot, ROCKETNET_SERVER_CLIENT_COUNTER_PACKETS_SENT ) == 0 );
-    rocketnet_check( rocketnet_server_client_stat( server, free_slot, ROCKETNET_SERVER_CLIENT_STAT_RTT ) == 0.0 );
-    rocketnet_check( rocketnet_server_client_counter( server, 3, ROCKETNET_SERVER_CLIENT_COUNTER_PACKETS_SENT ) == 0 );
+    rocketnet_check( rn_server_client_stats_of( server, free_slot ).packets_sent == 0 );
+    rocketnet_check( rn_server_client_stats_of( server, free_slot ).rtt == 0.0 );
+    rocketnet_check( rn_server_client_stats_of( server, 3 ).packets_sent == 0 );
     rocketnet_check( rocketnet_server_client_id( server, 3 ) == 0 );
 
     rocketnet_client_destroy( client );
@@ -4799,14 +4799,14 @@ void rocketnet_test_server_port_zero_transport()
         snprintf( config.transport, sizeof(config.transport), "%s", name );
 
         rocketnet_test_captured_log[0] = '\0';
-        const enum rocketnet_log_level_t saved_level = rocketnet_get_log_level();
-        rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
-        rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+        const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+        rocketnet_log_function( rocketnet_test_capture_log, NULL );
+        rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
         struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
 
-        rocketnet_set_log_level( saved_level );
-        rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
+        rocketnet_log_level( saved_level );
+        rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 
         rocketnet_check( server == NULL );
         rocketnet_check( strstr( rocketnet_test_captured_log, "cannot discover the port it was granted and hand it back" ) != NULL );
@@ -4820,13 +4820,13 @@ void rocketnet_test_server_port_zero_transport()
         snprintf( expected_rung_refusal, sizeof(expected_rung_refusal), "server transport %s refused: a port-zero public address", name );
 
         rocketnet_test_captured_log[0] = '\0';
-        rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
-        rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
+        rocketnet_log_function( rocketnet_test_capture_log, NULL );
+        rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
         server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
 
-        rocketnet_set_log_level( saved_level );
-        rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
+        rocketnet_log_level( saved_level );
+        rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 
         rocketnet_check( server == NULL );
         rocketnet_check( strstr( rocketnet_test_captured_log, expected_rung_refusal ) != NULL );
@@ -4841,13 +4841,13 @@ void rocketnet_test_server_port_zero_transport()
         // short-circuits the port-zero pins that would otherwise reach it.
 
         rocketnet_test_captured_log[0] = '\0';
-        rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
-        rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
+        rocketnet_log_function( rocketnet_test_capture_log, NULL );
+        rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
         server = rocketnet_test_server_transport_create_on_free_port( &config );
 
-        rocketnet_set_log_level( saved_level );
-        rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
+        rocketnet_log_level( saved_level );
+        rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 
         rocketnet_check( server == NULL );
         rocketnet_check( strstr( rocketnet_test_captured_log, "port-zero public address" ) == NULL );
@@ -5741,14 +5741,14 @@ static bool rocketnet_test_server_uring_skipped( const char * test_name )
     rocketnet_check( rocketnet_address_parse( &refused_address, "127.0.0.1" ) );
 
     rocketnet_test_captured_log[0] = '\0';
-    const enum rocketnet_log_level_t saved_level = rocketnet_get_log_level();
-    rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_function( rocketnet_test_capture_log, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
     struct rocketnet_server_uring_t * refused = rocketnet_server_uring_create( NULL, &refused_address, 2 );
 
-    rocketnet_set_log_level( saved_level );
-    rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
+    rocketnet_log_level( saved_level );
+    rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 
     rocketnet_check( refused == NULL );
 
@@ -5839,15 +5839,15 @@ void rocketnet_test_server_uring_probe()
     const uint64_t leaked_transports_before = rocketnet_server_uring_leaked_transports();
 
     rocketnet_test_captured_log[0] = '\0';
-    const enum rocketnet_log_level_t stall_saved_level = rocketnet_get_log_level();
-    rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_WARN );
+    const enum rocketnet_log_level_t stall_saved_level = rocketnet_log_level_current();
+    rocketnet_log_function( rocketnet_test_capture_log, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_WARN );
 
     rocketnet_server_uring_test_stall_destroy( stalled );
     rocketnet_server_uring_destroy( stalled );
 
-    rocketnet_set_log_level( stall_saved_level );
-    rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
+    rocketnet_log_level( stall_saved_level );
+    rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 
     rocketnet_check( strstr( rocketnet_test_captured_log, "destroy gave up waiting" ) != NULL );
     rocketnet_check( strstr( rocketnet_test_captured_log, "leaked, not freed" ) != NULL );
@@ -7616,10 +7616,10 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
     snprintf( server_config.transport, sizeof(server_config.transport), "xdp" );
 
     // the create at info level, so every pre-flight line is in the output
-    const enum rocketnet_log_level_t log_level = rocketnet_get_log_level();
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    const enum rocketnet_log_level_t log_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, server_address, &server_config );
-    rocketnet_set_log_level( log_level );
+    rocketnet_log_level( log_level );
     if ( !server || strcmp( rocketnet_server_transport_io_name( server ), "xdp" ) != 0 )
         rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: FAILED: the server did not start on the xdp transport (%s)", case_name, server ? rocketnet_server_transport_io_name( server ) : "create refused" );
     rocketnet_xdp_veth_server = server;
@@ -8559,7 +8559,7 @@ static void rocketnet_test_public_client_reads_server_disconnected()
     rocketnet_server_dev_config( &server_config );
     server_config.max_clients = 2;
     server_config.transport = "portable";
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, NULL );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -8575,7 +8575,7 @@ static void rocketnet_test_public_client_reads_server_disconnected()
     struct rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "portable";
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0, NULL );
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
     if ( client && rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
@@ -8648,7 +8648,7 @@ static void rocketnet_test_two_address_token_connects_over_ipv4()
     memcpy( server_config.server_public_key, server_public, sizeof( server_config.server_public_key ) );
     memcpy( server_config.server_secret_key, server_secret, sizeof( server_config.server_secret_key ) );
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, &create_status );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &create_status );
     rocketnet_check( server && create_status == ROCKETNET_STATUS_OK );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
@@ -8674,7 +8674,7 @@ static void rocketnet_test_two_address_token_connects_over_ipv4()
     rocketnet_client_default_config( &client_config );
     client_config.transport = "portable";
     create_status = ROCKETNET_STATUS_OK;
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0, &create_status );
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &create_status );
     rocketnet_check( client && create_status == ROCKETNET_STATUS_OK );
     rocketnet_check( client );
     const enum rocketnet_status_t connect_status = rocketnet_client_connect( client, token );
@@ -9107,7 +9107,7 @@ void rocketnet_functional_prepare()
     if ( rocketnet_platform_getenv( "ROCKETNET_TEST_VERBOSE" ) == NULL )
     {
         rocketnet_test_suite_log_function = rocketnet_test_log_capture;
-        rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
+        rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
     }
     rocketnet_forbid_xdp_commit();
     if ( rocketnet_functional_environment == NULL )

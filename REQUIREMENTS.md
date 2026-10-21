@@ -8,17 +8,19 @@ in `sdk/rocketnet.h`; no C++ type crosses it.
 
 - Messages are opaque byte buffers. Serialization and game simulation belong
   to the caller.
-- Public calls perform bounded work and do not block. Create and the main frame
-  calls are intended to be unnoticeable in a game profiler.
+- Public calls perform bounded work. Create and the main frame calls are
+  intended to be unnoticeable in a game profiler. The client's disconnect and
+  destroy stop its I/O thread and wait for it, bounded.
 - Ordinary memory, whether allocated at create or during a documented runtime
   lifecycle, uses the caller allocator. Capacity and failure are bounded and
   reported; no component may hide an allocation outside those hooks.
 - The caller supplies monotonic time to update and follows the five-step frame
   order documented in `AGENTS.md` and `USAGE.md`.
 - The API reports specific create, lifecycle and configuration refusals through
-  `rocketnet_status_t` and exposes counters for runtime outcomes.
-- The public config has one whole-struct revision, sized entry points for ABI
-  compatibility, documented defaults and strict validation.
+  `rocketnet_status_t` and exposes stats structs for runtime outcomes.
+- Each public config starts with `config_bytes`, set by its default_config
+  call, so the struct can grow at its end; it has documented defaults and
+  strict validation at create.
 
 ## Connection and security
 
@@ -34,8 +36,9 @@ in `sdk/rocketnet.h`; no C++ type crosses it.
 - Session traffic is authenticated and encrypted with per-connection keys,
   includes replay protection, and provides no property weaker than netcode
   1.02's security baseline.
-- Development builds provide explicit development keys and token helpers. A
-  production start requires application-supplied keys.
+- Development builds accept the published development keys, which a program
+  sets into its server config explicitly, and provide a development token
+  helper. A production start requires application-supplied keys.
 - Player-hosted servers remain possible because token verification needs a
   backend public key rather than a backend/server shared secret.
 

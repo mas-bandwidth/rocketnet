@@ -26,7 +26,7 @@ static void fake_client_transport_io_opens_with_all_eight()
     for ( int i = 0; i < 3; i++ )
     {
         rocketnet_fake_client_transport_io_t fake = {};
-        rocketnet_client_transport_io_config_t config = { "fake", NULL };
+        rocketnet_client_transport_io_config_t config = { "fake", NULL, NULL };
         rocketnet_address_t bind = {};
         rocketnet_client_transport_io_t transport = {};
         const bool opened = rocketnet_client_transport_io_open(
@@ -121,7 +121,7 @@ static void fake_client_wait_honors_readable()
 static void fake_client_io_table_opens_with_wait_and_wake()
 {
     rocketnet_fake_client_transport_io_t fake = {};
-    rocketnet_client_transport_io_config_t config = { "fake", NULL };
+    rocketnet_client_transport_io_config_t config = { "fake", NULL, NULL };
     rocketnet_address_t bind = {};
     rocketnet_client_transport_io_t transport = {};
     rocketnet_unit_check( rocketnet_client_transport_io_open(
@@ -238,7 +238,7 @@ struct fake_disconnect_env_guard_t
 static void fake_client_disconnect_burst_keeps_server_address()
 {
     fake_disconnect_env_guard_t env_guard;
-    rocketnet_set_quiet( 1 );
+    rocketnet_quiet( 1 );
     fake_disconnect_record.count = 0;
 
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES], backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];

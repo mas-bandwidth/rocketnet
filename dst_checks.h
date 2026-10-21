@@ -632,7 +632,7 @@ static inline void rocketnet_dst_check_delivery( struct rocketnet_dst_check_stat
 
     if ( type == 4 )
         rocketnet_dst_check_set_bit( st, s->reliable_delivered, s->reliable_base, sequence, "reliable_delivered" );
-        rocketnet_dst_check_reliable_resolve( s );
+    rocketnet_dst_check_reliable_resolve( s );
 
     if ( type == 2 || type == 3 || type == 4 || type == 6 || type == 7 )
     {
@@ -887,6 +887,7 @@ static inline void rocketnet_dst_check_settle( struct rocketnet_dst_check_state_
 static inline void rocketnet_dst_check_end( struct rocketnet_dst_check_state_t * st, double time,
                                             const int * session_live, const uint64_t * live_identity )
 {
+    (void) time;
     for ( int session = 0; session < ROCKETNET_DST_CHECK_MAX_SESSIONS; session++ )
     {
         if ( !session_live[session] )

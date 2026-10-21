@@ -64,7 +64,7 @@ static rocketnet_server_t * reached_server_create( void * context, const reached
     memcpy( config.server_secret_key, identity->server_secret, sizeof( config.server_secret_key ) );
     config.transport = "loopback";
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    rocketnet_server_t * server = rocketnet_server_create( context, "127.0.0.1:0", &config, NULL, 0, &create_status );
+    rocketnet_server_t * server = rocketnet_server_create( context, "127.0.0.1:0", &config, &create_status );
     check( server != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
     check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
@@ -136,7 +136,7 @@ REGISTER_UNIT_TEST( timer_create_failed_reached );
 // a refused mutex create fails client connect with MUTEX_CREATE_FAILED
 static void client_mutex_create_failed_reached()
 {
-    rocketnet_set_quiet( 1 );
+    rocketnet_quiet( 1 );
     reached_identity_t identity;
     reached_identity( &identity );
     rocketnet_server_t * server = reached_server_create( NULL, &identity );
@@ -149,7 +149,7 @@ static void client_mutex_create_failed_reached()
     config.transport = "loopback";
     config.step_driven = true;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL, 0, &create_status );
+    rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &create_status );
     check( client != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
 
@@ -202,9 +202,9 @@ static void client_connect_thread_create_failed_reached()
     reached_allocator_t state = { 0, 0, 0 };
 
     check( rocketnet_term() == ROCKETNET_STATUS_OK );
-    check( rocketnet_set_allocator( reached_allocate, reached_release ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( reached_allocate, reached_release ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( &state ) == ROCKETNET_STATUS_OK );
-    rocketnet_set_quiet( 1 );
+    rocketnet_quiet( 1 );
 
     reached_identity_t identity;
     reached_identity( &identity );
@@ -217,7 +217,7 @@ static void client_connect_thread_create_failed_reached()
     config.transport = "loopback";
     config.step_driven = false;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    rocketnet_client_t * client = rocketnet_client_create( &state, &config, NULL, 0, &create_status );
+    rocketnet_client_t * client = rocketnet_client_create( &state, &config, &create_status );
     check( client != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
 
@@ -251,7 +251,7 @@ static void client_connect_thread_create_failed_reached()
 
     check( rocketnet_term() == ROCKETNET_STATUS_OK );
     check( state.live == 0 );
-    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 REGISTER_UNIT_TEST( client_connect_thread_create_failed_reached );
@@ -261,7 +261,7 @@ static double reached_clock( void * ) { return reached_now; }
 
 static enum rocketnet_client_state_t reached_handshake_stall( enum rocketnet_client_state_t handshake_state, double * stalled_at, double * ended_at )
 {
-    rocketnet_set_quiet( 1 );
+    rocketnet_quiet( 1 );
     reached_identity_t identity;
     reached_identity( &identity );
     rocketnet_server_t * server = reached_server_create( NULL, &identity );
@@ -276,7 +276,7 @@ static enum rocketnet_client_state_t reached_handshake_stall( enum rocketnet_cli
     config.time_callback = reached_clock;
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL, 0, &create_status );
+    rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &create_status );
     check( client != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
     check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
@@ -288,9 +288,9 @@ static enum rocketnet_client_state_t reached_handshake_stall( enum rocketnet_cli
         reached_now = time;
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE )
             seen_requesting_cookie = 1;
-        check( rocketnet_client_update( client, time ) == ROCKETNET_UPDATE_OK );
+        rocketnet_client_update( client, time );
         rocketnet_client_send_packets( client );
-        check( rocketnet_server_update( server, time ) == ROCKETNET_UPDATE_OK );
+        rocketnet_server_update( server, time );
         rocketnet_server_send_packets( server );
         time += 0.01;
     }
@@ -310,7 +310,7 @@ static enum rocketnet_client_state_t reached_handshake_stall( enum rocketnet_cli
     {
         time += 0.01;
         reached_now = time;
-        check( rocketnet_client_update( client, time ) == ROCKETNET_UPDATE_OK );
+        rocketnet_client_update( client, time );
         rocketnet_client_send_packets( client );
     }
     *ended_at = time;

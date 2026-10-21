@@ -14,6 +14,7 @@
 */
 
 #include "rocketnet.h"
+#include "dev_keys.h"
 
 #include <stdio.h>
 #include <stdint.h>
@@ -28,7 +29,6 @@ static int exchange( struct rocketnet_server_t * server, const char * server_add
     struct rocketnet_client_config_t config;
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     struct rocketnet_client_t * client = NULL;
-    const int max_clients = rocketnet_server_max_clients( server );
     const double start = rocketnet_time();
     int sent = 0;
     int received = 0;
@@ -38,7 +38,7 @@ static int exchange( struct rocketnet_server_t * server, const char * server_add
     if ( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
         return 0;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    client = rocketnet_client_create( NULL, &config, NULL, 0, &create_status );
+    client = rocketnet_client_create( NULL, &config, &create_status );
     if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
@@ -51,10 +51,8 @@ static int exchange( struct rocketnet_server_t * server, const char * server_add
     {
         const double now = 1000.0 + ( rocketnet_time() - start );
         // (1) update pumps the transport and takes in what arrived
-        if ( rocketnet_server_update( server, now ) != ROCKETNET_UPDATE_OK )
-            break;
-        if ( rocketnet_client_update( client, now ) != ROCKETNET_UPDATE_OK )
-            break;
+        rocketnet_server_update( server, now );
+        rocketnet_client_update( client, now );
         // (2) receive and release every received message
         const uint8_t * data = NULL;
         int bytes = 0;
@@ -67,7 +65,7 @@ static int exchange( struct rocketnet_server_t * server, const char * server_add
                 bytes = batch.bytes[i];
             }
         }
-        uint64_t sender = 0;
+        (void) data; (void) bytes;   // only drained here
         struct rocketnet_message_batch_t incoming;
         while ( rocketnet_server_receive_messages( server, &incoming ) )
         {
@@ -75,7 +73,6 @@ static int exchange( struct rocketnet_server_t * server, const char * server_add
             {
                 data = incoming.data[i];
                 bytes = incoming.bytes[i];
-                sender = incoming.client_index[i];
                 received++;
             }
         }
@@ -117,11 +114,16 @@ static int create_and_prove( const char * label, const char * transport )
     char server_address[64];
     struct rocketnet_server_t * server;
     int ok;
-    rocketnet_server_dev_config( &config );
+    // the published development keys (dev_keys.h); a real server brings its own keys, recommended through the ROCKETNET_SERVER_* environment variables, or set in code
+    rocketnet_server_default_config( &config );
+    config.protocol_id = EXAMPLE_DEV_PROTOCOL_ID;
+    memcpy( config.backend_public_key, example_dev_backend_public_key, sizeof( config.backend_public_key ) );
+    memcpy( config.server_public_key, example_dev_server_public_key, sizeof( config.server_public_key ) );
+    memcpy( config.server_secret_key, example_dev_server_secret_key, sizeof( config.server_secret_key ) );
     config.max_clients = 2;
     config.transport = transport;
     enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
-    server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0, &create_status_2 );
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, &create_status_2 );
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
@@ -144,7 +146,7 @@ int main( void )
     CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
     // let the library's own log lines through: they are the reason a
     // transport was granted, skipped, or refused
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
     // auto: the platform's ladder, and the first transport that starts wins
     CHECK( create_and_prove( "auto", NULL ) );
     // a pin: exactly this transport, or a loud failure
@@ -156,12 +158,17 @@ int main( void )
     CHECK( create_and_prove( "list", "xdp,gso,portable" ) );
     // an impossible pin: a name no transport has, refused loudly by the
     // library, with the valid names in its error line
-    rocketnet_server_dev_config( &config );
+    // the published development keys (dev_keys.h); a real server brings its own keys, recommended through the ROCKETNET_SERVER_* environment variables, or set in code
+    rocketnet_server_default_config( &config );
+    config.protocol_id = EXAMPLE_DEV_PROTOCOL_ID;
+    memcpy( config.backend_public_key, example_dev_backend_public_key, sizeof( config.backend_public_key ) );
+    memcpy( config.server_public_key, example_dev_server_public_key, sizeof( config.server_public_key ) );
+    memcpy( config.server_secret_key, example_dev_server_secret_key, sizeof( config.server_secret_key ) );
     config.max_clients = 2;
     config.transport = "not-a-transport";
     {
         enum rocketnet_status_t create_status_3 = ROCKETNET_STATUS_OK;
-        struct rocketnet_server_t * refused = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0, &create_status_3 );
+        struct rocketnet_server_t * refused = rocketnet_server_create( NULL, "127.0.0.1:0", &config, &create_status_3 );
         if ( !refused ) printf( "create refused: %s\n", rocketnet_status_name( create_status_3 ) );
         const int started = refused ? (int) rocketnet_server_start( refused ) : -1;
         if ( refused )

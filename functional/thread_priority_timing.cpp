@@ -383,9 +383,9 @@ static void priority_timing_run( const char * condition, int spinners, bool read
     priority_timing_wakes.intervals = wake_storage.data();
 
     // the refusal lines are warnings: raise the level for the case and count them
-    const enum rocketnet_log_level_t saved_level = rocketnet_get_log_level();
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
-    rocketnet_set_log_callback( priority_timing_log, NULL );
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_function( priority_timing_log, NULL );
 
     const double start = rocketnet_platform_time();
 
@@ -501,8 +501,8 @@ static void priority_timing_run( const char * condition, int spinners, bool read
     rocketnet_server_transport_update( server, priority_timing_game_time( start ) );
     rocketnet_server_transport_destroy( server );
 
-    rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_set_log_level( saved_level );
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved_level );
 
     std::vector<double> wakes( wake_storage.begin(), wake_storage.begin() + (ptrdiff_t) priority_timing_wakes.num_intervals );
     const priority_timing_stats_t w = priority_timing_stats( wakes );

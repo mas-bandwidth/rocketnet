@@ -227,7 +227,7 @@ static bool sequence_burn_pair_setup( struct sequence_burn_pair_t * pair )
     memset( pair, 0, sizeof( *pair ) );
     pair->time = 1000.0;
     sequence_burn_clock = pair->time;
-    rocketnet_set_quiet( 1 );
+    rocketnet_quiet( 1 );
 
     const uint64_t protocol_id = 0x6275726e73657173ULL;
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
@@ -757,7 +757,7 @@ static bool sequence_burn_message_pair_setup( struct sequence_burn_message_pair_
     memset( pair, 0, sizeof( *pair ) );
     pair->time = 1000.0;
     sequence_burn_clock = pair->time;
-    rocketnet_set_quiet( 1 );
+    rocketnet_quiet( 1 );
 
     const uint64_t protocol_id = 0x6275726e6d736773ULL;
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];

@@ -3,13 +3,13 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED (tla/ClientSession.tla
+// ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED (tla/ClientSession.tla
 // ServerDisconnect): a client that accepts the server's disconnect packet
-// reads it from rocketnet_client_disconnect_reason until its next connection
-// is established. The server ends the connection three ways
+// reads it from rocketnet_client_state until its next connect starts a new
+// handshake. The server ends the connection three ways
 // (rocketnet_server_disconnect_client, rocketnet_server_stop,
-// rocketnet_server_destroy); a deliberate client disconnect and a connection
-// timeout keep reading NONE. Everything runs in one process over the
+// rocketnet_server_destroy); a deliberate client disconnect reads
+// DISCONNECTED and a connection timeout CONNECTION_TIMED_OUT. Everything runs in one process over the
 // in-memory loopback transport with step-driven clients: no socket, no
 // thread, no sleep, and time is an argument starting at 1000.0.
 
@@ -54,7 +54,7 @@ static rocketnet_server_t * server_disconnected_server_create( const server_disc
     memcpy( config.server_public_key, identity->server_public, sizeof( config.server_public_key ) );
     memcpy( config.server_secret_key, identity->server_secret, sizeof( config.server_secret_key ) );
     config.transport = "loopback";
-    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0, NULL );
+    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL );
     check( server != NULL );
     check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
     return server;
@@ -67,7 +67,7 @@ static rocketnet_client_t * server_disconnected_client_create()
     config.transport = "loopback";
     config.step_driven = true;
     config.time_callback = server_disconnected_clock;
-    rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL, 0, NULL );
+    rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL );
     check( client != NULL );
     return client;
 }
@@ -88,36 +88,37 @@ static void server_disconnected_pump( rocketnet_server_t * server, rocketnet_cli
 {
     *time += 0.01;
     server_disconnected_now = *time;
-    check( rocketnet_client_update( client, *time ) == ROCKETNET_UPDATE_OK );
+    rocketnet_client_update( client, *time );
     rocketnet_client_send_packets( client );
     if ( server && rocketnet_server_running( server ) )
     {
-        check( rocketnet_server_update( server, *time ) == ROCKETNET_UPDATE_OK );
+        rocketnet_server_update( server, *time );
         rocketnet_server_send_packets( server );
     }
 }
 
-// Connects the client to the server and returns its slot. Before
-// CONNECTED is reached, the reason the previous connection ended with still
-// reads (`reason_before`); once CONNECTED, it reads NONE.
-static uint64_t server_disconnected_connect( const server_disconnected_identity_t * identity, rocketnet_server_t * server,
-                                             rocketnet_client_t * client, uint64_t client_id, int32_t timeout_seconds,
-                                             rocketnet_disconnect_reason_t reason_before, double * time )
+// Connects the client to the server and returns its slot. Before the
+// connect, the state the previous connection ended in still reads
+// (`state_before`); connect ends it and starts a new handshake, whose states
+// are positive until CONNECTED.
+static int server_disconnected_connect( const server_disconnected_identity_t * identity, rocketnet_server_t * server,
+                                        rocketnet_client_t * client, uint64_t client_id, int32_t timeout_seconds,
+                                        rocketnet_client_state_t state_before, double * time )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     server_disconnected_token( identity, rocketnet_server_port( server ), client_id, timeout_seconds, token );
+    check( rocketnet_client_state( client ) == state_before );
     check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_client_state( client ) > ROCKETNET_CLIENT_STATE_DISCONNECTED );
     check( rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED );
-    check( rocketnet_client_disconnect_reason( client ) == reason_before );
     for ( int i = 0; i < 400 && rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
     {
         server_disconnected_pump( server, client, time );
-        if ( rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED )
-            check( rocketnet_client_disconnect_reason( client ) == reason_before );
+        check( rocketnet_client_state( client ) > ROCKETNET_CLIENT_STATE_DISCONNECTED );
     }
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
-    check( rocketnet_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_NONE );
-    const uint64_t index = rocketnet_client_index( client );
+    const int index = rocketnet_client_index( client );
+    check( index >= 0 );
     for ( int i = 0; i < 400 && !rocketnet_server_client_connected( server, index ); i++ )
         server_disconnected_pump( server, client, time );
     check( rocketnet_server_client_connected( server, index ) );
@@ -125,7 +126,6 @@ static uint64_t server_disconnected_connect( const server_disconnected_identity_
     for ( int i = 0; i < 4; i++ )
         server_disconnected_pump( server, client, time );
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
-    check( rocketnet_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_NONE );
     return index;
 }
 
@@ -137,12 +137,11 @@ enum server_disconnected_how_t
 };
 
 // DONE-WHEN (3): for each way the server ends the connection, one client
-// update after it reads SERVER_DISCONNECTED with the client DISCONNECTED;
-// the reason is kept through further updates and through the next
-// handshake, and the next CONNECTED reads NONE.
+// update after it the client state reads SERVER_DISCONNECTED; the state is
+// kept through further updates until the next connect starts a handshake.
 static void server_disconnect_sets_server_disconnected_reason()
 {
-    rocketnet_set_quiet( 1 );
+    rocketnet_quiet( 1 );
     server_disconnected_identity_t identity;
     server_disconnected_identity( &identity );
 
@@ -154,8 +153,8 @@ static void server_disconnect_sets_server_disconnected_reason()
         server_disconnected_now = time;
         rocketnet_server_t * server = server_disconnected_server_create( &identity );
         rocketnet_client_t * client = server_disconnected_client_create();
-        const uint64_t index = server_disconnected_connect( &identity, server, client, 0x5D00ULL + (uint64_t) h, 300,
-                                                            ROCKETNET_DISCONNECT_REASON_NONE, &time );
+        const int index = server_disconnected_connect( &identity, server, client, 0x5D00ULL + (uint64_t) h, 300,
+                                                       ROCKETNET_CLIENT_STATE_DISCONNECTED, &time );
 
         if ( how == SERVER_DISCONNECTED_BY_DISCONNECT_CLIENT )
         {
@@ -173,23 +172,21 @@ static void server_disconnect_sets_server_disconnected_reason()
         }
 
         // within one client update
-        check( rocketnet_client_update( client, time ) == ROCKETNET_UPDATE_OK );
-        check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
-        check( rocketnet_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
+        rocketnet_client_update( client, time );
+        check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED );
 
         // kept through further updates
         for ( int i = 0; i < 10; i++ )
             server_disconnected_pump( server, client, &time );
-        check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
-        check( rocketnet_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
+        check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED );
 
-        // kept until the next connection is established, then NONE
+        // kept until the next connect, which ends it and starts a handshake
         if ( how == SERVER_DISCONNECTED_BY_STOP )
             check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
         else if ( how == SERVER_DISCONNECTED_BY_DESTROY )
             server = server_disconnected_server_create( &identity );
         server_disconnected_connect( &identity, server, client, 0x5D10ULL + (uint64_t) h, 300,
-                                     ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED, &time );
+                                     ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED, &time );
 
         rocketnet_client_destroy( client );
         rocketnet_server_destroy( server );
@@ -198,11 +195,11 @@ static void server_disconnect_sets_server_disconnected_reason()
 
 REGISTER_UNIT_TEST( server_disconnect_sets_server_disconnected_reason );
 
-// DONE-WHEN (4): a deliberate client disconnect reads NONE, and so does a
-// connection timeout, whose state is CONNECTION_TIMED_OUT.
+// DONE-WHEN (4): a deliberate client disconnect reads DISCONNECTED, never
+// SERVER_DISCONNECTED, and a connection timeout reads CONNECTION_TIMED_OUT.
 static void client_disconnect_and_timeout_read_none()
 {
-    rocketnet_set_quiet( 1 );
+    rocketnet_quiet( 1 );
     server_disconnected_identity_t identity;
     server_disconnected_identity( &identity );
 
@@ -212,16 +209,14 @@ static void client_disconnect_and_timeout_read_none()
         server_disconnected_now = time;
         rocketnet_server_t * server = server_disconnected_server_create( &identity );
         rocketnet_client_t * client = server_disconnected_client_create();
-        const uint64_t index = server_disconnected_connect( &identity, server, client, 0x5E01ULL, 300,
-                                                            ROCKETNET_DISCONNECT_REASON_NONE, &time );
+        const int index = server_disconnected_connect( &identity, server, client, 0x5E01ULL, 300,
+                                                       ROCKETNET_CLIENT_STATE_DISCONNECTED, &time );
         rocketnet_client_disconnect( client );
         check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
-        check( rocketnet_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_NONE );
         for ( int i = 0; i < 10; i++ )
             server_disconnected_pump( server, client, &time );
         check( !rocketnet_server_client_connected( server, index ) );
         check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
-        check( rocketnet_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_NONE );
         rocketnet_client_destroy( client );
         rocketnet_server_destroy( server );
     }
@@ -234,16 +229,15 @@ static void client_disconnect_and_timeout_read_none()
         rocketnet_server_t * server = server_disconnected_server_create( &identity );
         rocketnet_client_t * client = server_disconnected_client_create();
         server_disconnected_connect( &identity, server, client, 0x5E02ULL, 2,
-                                     ROCKETNET_DISCONNECT_REASON_NONE, &time );
+                                     ROCKETNET_CLIENT_STATE_DISCONNECTED, &time );
         for ( int i = 0; i < 100 && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
         {
             time += 0.1;
             server_disconnected_now = time;
-            check( rocketnet_client_update( client, time ) == ROCKETNET_UPDATE_OK );
+            rocketnet_client_update( client, time );
             rocketnet_client_send_packets( client );
         }
         check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT );
-        check( rocketnet_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_NONE );
         rocketnet_client_destroy( client );
         rocketnet_server_destroy( server );
     }
@@ -378,7 +372,7 @@ do                                                                              
 
 static void server_disconnect_now_case( bool all )
 {
-    rocketnet_set_quiet( 1 );
+    rocketnet_quiet( 1 );
     server_disconnected_identity_t identity;
     server_disconnected_identity( &identity );
     double time = 1000.0;
@@ -386,10 +380,10 @@ static void server_disconnect_now_case( bool all )
     rocketnet_server_t * server = server_disconnected_server_create( &identity );
     rocketnet_client_t * client = server_disconnected_client_create();
     rocketnet_client_t * other = all ? server_disconnected_client_create() : NULL;
-    const uint64_t index = server_disconnected_connect( &identity, server, client, 0x5F00ULL + ( all ? 1 : 0 ), 300,
-                                                        ROCKETNET_DISCONNECT_REASON_NONE, &time );
-    const uint64_t other_index = all ? server_disconnected_connect( &identity, server, other, 0x5F10ULL, 300,
-                                                                    ROCKETNET_DISCONNECT_REASON_NONE, &time ) : index;
+    const int index = server_disconnected_connect( &identity, server, client, 0x5F00ULL + ( all ? 1 : 0 ), 300,
+                                                   ROCKETNET_CLIENT_STATE_DISCONNECTED, &time );
+    const int other_index = all ? server_disconnected_connect( &identity, server, other, 0x5F10ULL, 300,
+                                                               ROCKETNET_CLIENT_STATE_DISCONNECTED, &time ) : index;
     check( rocketnet_server_num_connected_clients( server ) == ( all ? 2 : 1 ) );
 
     // an in-place start, open when the disconnect comes
@@ -397,7 +391,7 @@ static void server_disconnect_now_case( bool all )
     check( rocketnet_server_start_message( server, index, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 16 ) != NULL );
     check( object->in_place == 1 );
     check( object->pending_connection == (int) index );
-    const uint64_t drops = rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_NOT_CONNECTED_DROPS );
+    const uint64_t drops = rn_server_stats_of( server ).not_connected_drops;
 
     if ( all )
         rocketnet_server_disconnect_all_clients( server );
@@ -412,24 +406,22 @@ static void server_disconnect_now_case( bool all )
     server_disconnect_now_check( !rocketnet_server_client_connected( server, other_index ) );
     server_disconnect_now_check( object->in_place == 0 );
     server_disconnect_now_check( object->pending_connection == -1 );
-    server_disconnect_now_check( rocketnet_server_finish_message( server, index, 16 ) == 0 );
+    server_disconnect_now_check( rocketnet_server_finish_message( server, 16 ) == 0 );
     server_disconnect_now_check( rocketnet_server_start_message( server, index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 16 ) == NULL );
-    server_disconnect_now_check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_NOT_CONNECTED_DROPS ) == drops + 1 );
+    server_disconnect_now_check( rn_server_stats_of( server ).not_connected_drops == drops + 1 );
     server_disconnect_now_check( rocketnet_server_start_message( server, other_index, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 16 ) == NULL );
-    server_disconnect_now_check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_NOT_CONNECTED_DROPS ) == drops + 2 );
+    server_disconnect_now_check( rn_server_stats_of( server ).not_connected_drops == drops + 2 );
     check( server_disconnect_now_failures == 0 );
 
     // the disconnect reaches the client as SERVER_DISCONNECTED, and the
     // server's reason for the slot reads NONE across the next updates
     rocketnet_server_send_packets( server );
-    check( rocketnet_client_update( client, time ) == ROCKETNET_UPDATE_OK );
-    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
-    check( rocketnet_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
+    rocketnet_client_update( client, time );
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED );
     if ( all )
     {
-        check( rocketnet_client_update( other, time ) == ROCKETNET_UPDATE_OK );
-        check( rocketnet_client_state( other ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
-        check( rocketnet_client_disconnect_reason( other ) == ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
+        rocketnet_client_update( other, time );
+        check( rocketnet_client_state( other ) == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED );
     }
     for ( int i = 0; i < 4; i++ )
         server_disconnected_pump( server, client, &time );

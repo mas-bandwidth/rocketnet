@@ -2640,9 +2640,9 @@ earlier class.
 
 The client's budget to the server defaults to client_default_kbps and the
 server's budget to each client defaults to server_default_kbps. A positive
-value outside send_kbps_min to send_kbps_max MUST be refused and MUST leave the
-budget unchanged. A budget of 0 or less sets that direction's budget to
-send_kbps_max; such a budget is NOT RECOMMENDED.
+value above send_kbps_max MUST be refused and MUST leave the budget unchanged,
+and so MUST a negative value. A budget of 0 sets that direction's default
+budget. A budget of send_kbps_max is the ceiling and is NOT RECOMMENDED.
 
 A setter MUST refill at the old rate up to its time argument, then apply the
 new rate and depth from that time, keeping the bucket's bytes capped at the new

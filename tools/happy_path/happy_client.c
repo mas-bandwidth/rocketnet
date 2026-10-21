@@ -63,7 +63,7 @@ int main( int argc, char ** argv )
     config.transport = "portable";
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL, 0, &create_status );
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &create_status );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
@@ -99,12 +99,7 @@ int main( int argc, char ** argv )
         }
 
         // (1) update pumps the transport and takes in what arrived
-        if ( rocketnet_client_update( client, now ) != ROCKETNET_UPDATE_OK )
-        {
-            printf( "error: client update failed\n" );
-            exit_code = 1;
-            break;
-        }
+        rocketnet_client_update( client, now );
 
         // (2) receive and process every received message for this update
         const uint8_t * data = NULL;
@@ -118,6 +113,7 @@ int main( int argc, char ** argv )
                 bytes = batch.bytes[i];
             }
         }
+        (void) data; (void) bytes;   // only drained here
 
         const int state = rocketnet_client_state( client );
         if ( state < 0 )

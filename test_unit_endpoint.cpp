@@ -506,7 +506,7 @@ static void ep_free( void * context, void * p )
 static void endpoint_never_allocates_or_reads_a_clock()
 {
     rocketnet_term();
-    check( rocketnet_set_allocator( ep_malloc, ep_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( ep_malloc, ep_free ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     rocketnet_message_config_t config;
@@ -568,7 +568,7 @@ static void endpoint_never_allocates_or_reads_a_clock()
     check( traces[0] == traces[1] );
 
     rocketnet_term();
-    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 

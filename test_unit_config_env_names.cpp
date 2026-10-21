@@ -97,15 +97,15 @@ struct env_names_capture_t
 
 static void env_names_capture_begin( env_names_capture_t * capture )
 {
-    capture->saved_level = rocketnet_get_log_level();
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );            // the override lines are info
-    rocketnet_set_log_callback( env_names_log_capture, &capture->log );
+    capture->saved_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );            // the override lines are info
+    rocketnet_log_function( env_names_log_capture, &capture->log );
 }
 
 static void env_names_capture_end( env_names_capture_t * capture )
 {
-    rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_set_log_level( capture->saved_level );
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( capture->saved_level );
 }
 
 // ---------------------------------------------------------------------------
@@ -240,19 +240,19 @@ static void config_env_log_level_applies_before_init_logs()
 {
     // the worker ran init at error; the default level is info
     check( rocketnet_term() == ROCKETNET_STATUS_OK );
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
     char level[8];
     snprintf( level, sizeof( level ), "%d", (int) ROCKETNET_LOG_LEVEL_ERROR );
     env_names_setenv( "ROCKETNET_LOG_LEVEL", level );
 
     env_names_log_t log;
-    rocketnet_set_log_callback( env_names_log_capture, &log );
+    rocketnet_log_function( env_names_log_capture, &log );
     const rocketnet_status_t status = rocketnet_init( NULL );
-    rocketnet_set_log_callback( NULL, NULL );
-    const rocketnet_log_level_t after = rocketnet_get_log_level();
+    rocketnet_log_function( NULL, NULL );
+    const rocketnet_log_level_t after = rocketnet_log_level_current();
 
     env_names_unsetenv( "ROCKETNET_LOG_LEVEL" );
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
     check( status == ROCKETNET_STATUS_OK );
     check( after == ROCKETNET_LOG_LEVEL_ERROR );
@@ -353,7 +353,7 @@ static std::vector<std::string> env_names_set_candidates()
     env_names_setenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", text );
     set.push_back( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" );
     struct rocketnet_server_config_t server_defaults;
-    rocketnet_server_default_config_sized( &server_defaults, sizeof( server_defaults ) );
+    rocketnet_server_default_config( &server_defaults );
     snprintf( text, sizeof( text ), "%d", server_defaults.max_clients );
     env_names_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", text );
     set.push_back( "ROCKETNET_SERVER_MAX_CLIENTS" );

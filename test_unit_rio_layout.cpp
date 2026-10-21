@@ -155,7 +155,7 @@ static void rio_context_round_trips()
     c = rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 255, 0xffffffff );
     rocketnet_unit_check( rocketnet_rio_context_kind( c ) == ROCKETNET_RIO_CONTEXT_RECEIVE );
     rocketnet_unit_check( rocketnet_rio_context_phase( c ) == 255 );
-    rocketnet_unit_check( rocketnet_rio_context_index( c ) == 0xffffffff );
+    rocketnet_unit_check( (uint32_t) rocketnet_rio_context_index( c ) == 0xffffffffu );
 
     c = rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_SEND, 255, 0 );
     rocketnet_unit_check( rocketnet_rio_context_kind( c ) == ROCKETNET_RIO_CONTEXT_SEND );
@@ -165,7 +165,7 @@ static void rio_context_round_trips()
     c = rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_SEND, 0, 0xffffffff );
     rocketnet_unit_check( rocketnet_rio_context_kind( c ) == ROCKETNET_RIO_CONTEXT_SEND );
     rocketnet_unit_check( rocketnet_rio_context_phase( c ) == 0 );
-    rocketnet_unit_check( rocketnet_rio_context_index( c ) == 0xffffffff );
+    rocketnet_unit_check( (uint32_t) rocketnet_rio_context_index( c ) == 0xffffffffu );
 
     rocketnet_unit_check( rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_SEND, 0, 0 )
         != rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 0, 0 ) );

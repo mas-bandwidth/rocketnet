@@ -13,6 +13,7 @@
 */
 
 #include "rocketnet.h"
+#include "dev_keys.h"
 
 #include <stdio.h>
 #include <stdint.h>
@@ -22,13 +23,12 @@
 
 // Run frames until the client is connected and, when message is set, the
 // server has received it. Returns 1 when done, 0 on the five-second deadline,
-// and -1 when an update fails.
+// and -1 when the message cannot be queued.
 static int run_frames( struct rocketnet_server_t * server, struct rocketnet_client_t * client,
                        const char * message, int * received, double * time_base )
 {
     const int send = message != NULL;
     const double start = rocketnet_time();
-    const int max_clients = rocketnet_server_max_clients( server );
     int sent = 0;
 
     if ( received )
@@ -40,10 +40,8 @@ static int run_frames( struct rocketnet_server_t * server, struct rocketnet_clie
 
         // (1) update pumps the transport and takes in what arrived
 
-        if ( rocketnet_server_update( server, now ) != ROCKETNET_UPDATE_OK )
-            return -1;
-        if ( rocketnet_client_update( client, now ) != ROCKETNET_UPDATE_OK )
-            return -1;
+        rocketnet_server_update( server, now );
+        rocketnet_client_update( client, now );
 
         // (2) receive every message in batches; the next receive or update releases them
 
@@ -61,7 +59,6 @@ static int run_frames( struct rocketnet_server_t * server, struct rocketnet_clie
         }
 
         {
-            uint64_t sender = 0;
             struct rocketnet_message_batch_t incoming;
             while ( rocketnet_server_receive_messages( server, &incoming ) )
             {
@@ -69,7 +66,6 @@ static int run_frames( struct rocketnet_server_t * server, struct rocketnet_clie
                 {
                     data = incoming.data[i];
                     bytes = incoming.bytes[i];
-                    sender = incoming.client_index[i];
                     printf( "server received: %.*s\n", bytes, (const char*) data );
 
                     if ( received )
@@ -130,12 +126,17 @@ int main( void )
     // the server takes the published development keys, the loopback pin, and
     // an ephemeral port that is read back below
 
-    rocketnet_server_dev_config( &server_config );
+    // the published development keys (dev_keys.h); a real server brings its own keys, recommended through the ROCKETNET_SERVER_* environment variables, or set in code
+    rocketnet_server_default_config( &server_config );
+    server_config.protocol_id = EXAMPLE_DEV_PROTOCOL_ID;
+    memcpy( server_config.backend_public_key, example_dev_backend_public_key, sizeof( server_config.backend_public_key ) );
+    memcpy( server_config.server_public_key, example_dev_server_public_key, sizeof( server_config.server_public_key ) );
+    memcpy( server_config.server_secret_key, example_dev_server_secret_key, sizeof( server_config.server_secret_key ) );
     server_config.max_clients = 2;
     server_config.transport = "loopback";
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, &create_status );
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &create_status );
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
@@ -163,7 +164,7 @@ int main( void )
         CHECK( rocketnet_write_dev_connect_token( server_address, (uint64_t) round, 4102444800ull, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
         enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
-        client = rocketnet_client_create( NULL, &client_config, NULL, 0, &create_status_2 );
+        client = rocketnet_client_create( NULL, &client_config, &create_status_2 );
         if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
         if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
         {

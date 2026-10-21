@@ -283,7 +283,7 @@ static void reliable_counted_free( void * context, void * memory )
 static void reliable_no_allocation_after_create()
 {
     rocketnet_term();
-    check( rocketnet_set_allocator( reliable_counted_malloc, reliable_counted_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( reliable_counted_malloc, reliable_counted_free ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     rocketnet_message_config_t config;
@@ -306,7 +306,7 @@ static void reliable_no_allocation_after_create()
     rn_arena_destroy( sender.arena );
     rn_arena_destroy( receiver.arena );
     rocketnet_term();
-    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 

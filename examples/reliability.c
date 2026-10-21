@@ -10,6 +10,7 @@
 */
 
 #include "rocketnet.h"
+#include "dev_keys.h"
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
@@ -44,11 +45,16 @@ int main( void ) {
     for ( int m = 0; m < NUM_MODES; m++ ) stats[m].monotonic = stats[m].strict = 1;
 
     CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
-    CHECK( rocketnet_server_dev_config_sized( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
+    // the published development keys (dev_keys.h); a real server brings its own keys, recommended through the ROCKETNET_SERVER_* environment variables, or set in code
+    rocketnet_server_default_config( &server_config );
+    server_config.protocol_id = EXAMPLE_DEV_PROTOCOL_ID;
+    memcpy( server_config.backend_public_key, example_dev_backend_public_key, sizeof( server_config.backend_public_key ) );
+    memcpy( server_config.server_public_key, example_dev_server_public_key, sizeof( server_config.server_public_key ) );
+    memcpy( server_config.server_secret_key, example_dev_server_secret_key, sizeof( server_config.server_secret_key ) );
     server_config.transport = "loopback"; server_config.num_channels = NUM_MODES;
     server_config.simulated_loss_percent = 25; server_config.simulated_latency_ms = 20; server_config.simulated_jitter_ms = 35;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    server = rocketnet_server_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ), NULL, 0, &create_status );
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &create_status );
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
@@ -60,11 +66,11 @@ int main( void ) {
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
     CHECK( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    CHECK( rocketnet_client_default_config_sized( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
+    CHECK( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
     client_config.transport = "loopback"; client_config.num_channels = NUM_MODES; client_config.step_driven = true;
     client_config.simulated_loss_percent = 25; client_config.simulated_latency_ms = 20; client_config.simulated_jitter_ms = 35;
     enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
-    client = rocketnet_client_create_sized( NULL, &client_config, sizeof( client_config ), NULL, 0, &create_status_2 );
+    client = rocketnet_client_create( NULL, &client_config, &create_status_2 );
     if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
@@ -78,8 +84,8 @@ int main( void ) {
     {
         const double now = 1000.0 + (double) frame * 0.010;
         // (1) update pumps the transport and takes in what arrived
-        CHECK( rocketnet_server_update( server, now ) == ROCKETNET_UPDATE_OK );
-        CHECK( rocketnet_client_update( client, now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_server_update( server, now );
+        rocketnet_client_update( client, now );
 
         // (2) receive and release every message, and read resolved ack receipts
         const uint8_t * data = NULL;
@@ -101,7 +107,7 @@ int main( void ) {
                     s->arrived++;
             }
         }
-        const int slot = rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED ? (int) rocketnet_client_index( client ) : -1;
+        const int slot = rocketnet_client_index( client ); // -1 until CONNECTED
         int sender = -1;
         struct rocketnet_message_batch_t incoming;
         while ( rocketnet_server_receive_messages( server, &incoming ) )
@@ -130,10 +136,10 @@ int main( void ) {
             if ( sent < NUM_MODES * NUM_MSGS )
             {
                 const int m = sent / NUM_MSGS, seq = sent % NUM_MSGS + 1;
-                uint8_t * out = rocketnet_server_start_message( server, slot, m, modes[m], 2 );
+                uint8_t * out = rocketnet_server_start_message( server, (uint64_t) slot, m, modes[m], 2 );
                 CHECK( out != NULL );
                 out[0] = (uint8_t) m; out[1] = (uint8_t) seq;
-                stats[m].serials[seq - 1] = rocketnet_server_finish_message( server, slot, 2 );
+                stats[m].serials[seq - 1] = rocketnet_server_finish_message( server, 2 );
                 CHECK( stats[m].serials[seq - 1] != 0 );
                 sent++;
             }

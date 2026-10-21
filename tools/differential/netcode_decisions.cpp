@@ -827,7 +827,7 @@ int main( int argc, const char ** argv )
     if ( argc > 1 )
         cases_path = argv[1];
 
-    rocketnet_set_quiet( true );
+    rocketnet_quiet( true );
 
 #if defined( ROCKETNET_DIFFERENTIAL_NETCODE_DIR )
     netcode_log_level( NETCODE_LOG_LEVEL_DEBUG );

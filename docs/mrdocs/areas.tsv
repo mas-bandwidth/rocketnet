@@ -1,8 +1,8 @@
 # area	files	symbol_ere
 platform	sdk/rocketnet_platform.h	-
-counters	sdk/rocketnet_counters.h	counter|_stats(_t)?(::|$)|^ROCKETNET_COUNTER|api_misuse_count
-reliability	-	^ROCKETNET_(UNRELIABLE|RELIABLE|PRIORITY_|RECEIPT_)|receipt
-configuration	-	config|_CONFIG_TABLE|required_memory|host_memory_estimate|_sized(::|$)|connection_bytes|connection_sizing|^ROCKETNET_MAX_
+counters	sdk/rocketnet_counters.h	counter|_stats(_t)?(::|$)|^ROCKETNET_COUNTER
+reliability	-	^ROCKETNET_(RELIABILITY_|UNRELIABLE|RELIABLE|PRIORITY_|RECEIPT_)|receipt
+configuration	-	config|_CONFIG_TABLE|required_memory|host_memory_estimate|connection_bytes|connection_sizing|^ROCKETNET_MAX_
 connection	sdk/rocketnet_connect_token.h,sdk/rocketnet_address.h	^rocketnet_(client|server)_transport(_t$|_(create|destroy|stop|update|state|port|client_index|disconnect|num_connected_clients|is_client_connected|client_id|client_connection_id|set_admission_callback))|_TRANSPORT_STATE|connect_token|^rocketnet_address
 packets	sdk/rocketnet_route.h	^rocketnet_(client|server)_transport_|packet|^rocketnet_frame_sync|xdp|transport|^ROCKETNET_TRANSPORT
 messages	-	^rocketnet_message|channel|^ROCKETNET_(CHANNEL|MESSAGE)

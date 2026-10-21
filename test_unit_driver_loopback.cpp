@@ -39,7 +39,7 @@ static void transport_loopback_binds_and_discovers_a_port()
     const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
     rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
-    const rocketnet_server_transport_io_config_t setup = { "loopback", &server_config, NULL };
+    const rocketnet_server_transport_io_config_t setup = { "loopback", &server_config, NULL, NULL };
 
     rocketnet_address_t a;
     rocketnet_unit_check( rocketnet_address_parse( &a, "127.0.0.1:0" ) );
@@ -70,8 +70,8 @@ static void transport_loopback_exchanges_both_ways()
     rocketnet_server_transport_dev_config( &server_config );
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
-    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL };
-    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config };
+    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
+    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
 
     rocketnet_address_t server_address, client_address;
     rocketnet_unit_check( rocketnet_address_parse( &server_address, "0.0.0.0:0" ) );
@@ -126,8 +126,8 @@ static void transport_loopback_dual_stack_serves_ipv4_and_ipv6()
     rocketnet_server_transport_dev_config( &server_config );
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
-    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL };
-    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config };
+    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
+    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
 
     rocketnet_address_t server_address, client4_address, client6_address;
     rocketnet_unit_check( rocketnet_address_parse( &server_address, "[::]:0" ) );
@@ -187,7 +187,7 @@ static void transport_loopback_full_queue_drops_and_counts()
     const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
     rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
-    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL };
+    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
     rocketnet_address_t server_address;
     rocketnet_unit_check( rocketnet_address_parse( &server_address, "127.0.0.1:0" ) );
     rocketnet_server_transport_io_t server = {};
@@ -195,7 +195,7 @@ static void transport_loopback_full_queue_drops_and_counts()
 
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
-    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config };
+    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
     rocketnet_address_t client_address;
     rocketnet_unit_check( rocketnet_address_parse( &client_address, "0.0.0.0:0" ) );
     rocketnet_client_transport_io_t client = {};
@@ -287,7 +287,7 @@ static void transport_loopback_runtime_does_not_allocate()
     const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
     rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
-    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL };
+    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
     rocketnet_address_t server_address;
     rocketnet_unit_check( rocketnet_address_parse( &server_address, "127.0.0.1:0" ) );
     rocketnet_server_transport_io_t server = {};
@@ -297,7 +297,7 @@ static void transport_loopback_runtime_does_not_allocate()
 
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
-    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config };
+    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
     rocketnet_address_t client_address;
     rocketnet_unit_check( rocketnet_address_parse( &client_address, "0.0.0.0:0" ) );
     rocketnet_client_transport_io_t client = {};
@@ -366,7 +366,7 @@ static void transport_loopback_destroy_frees_the_port()
 
     rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
-    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL };
+    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
     rocketnet_address_t server_address;
     rocketnet_unit_check( rocketnet_address_parse( &server_address, "127.0.0.1:0" ) );
     rocketnet_server_transport_io_t server = {};
@@ -375,7 +375,7 @@ static void transport_loopback_destroy_frees_the_port()
 
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
-    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config };
+    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
     rocketnet_address_t client_address;
     rocketnet_unit_check( rocketnet_address_parse( &client_address, "0.0.0.0:0" ) );
     rocketnet_client_transport_io_t client = {};
@@ -643,7 +643,7 @@ static void transport_loopback_holds_max_clients_plus_server()
 
     rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
-    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL };
+    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
     rocketnet_address_t server_address;
     rocketnet_unit_check( rocketnet_address_parse( &server_address, "127.0.0.1:0" ) );
     rocketnet_server_transport_io_t server = {};
@@ -652,7 +652,7 @@ static void transport_loopback_holds_max_clients_plus_server()
 
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
-    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config };
+    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
     rocketnet_client_transport_io_t * clients = (rocketnet_client_transport_io_t*) calloc( ROCKETNET_MAX_CLIENTS, sizeof( rocketnet_client_transport_io_t ) );
     rocketnet_address_t * client_addresses = (rocketnet_address_t*) calloc( ROCKETNET_MAX_CLIENTS, sizeof( rocketnet_address_t ) );
     rocketnet_unit_check( clients && client_addresses );
@@ -746,13 +746,13 @@ static void transport_loopback_refuses_past_max_endpoints()
 {
     const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
     const int live_before = rocketnet_loopback_endpoints_live();
-    const enum rocketnet_log_level_t saved_level = rocketnet_get_log_level();
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_WARN );
-    rocketnet_set_log_callback( loopback_refusal_log_capture, NULL );
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_WARN );
+    rocketnet_log_function( loopback_refusal_log_capture, NULL );
 
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
-    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config };
+    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
     rocketnet_client_transport_io_t * clients = (rocketnet_client_transport_io_t*) calloc( ROCKETNET_LOOPBACK_MAX_ENDPOINTS, sizeof( rocketnet_client_transport_io_t ) );
     rocketnet_unit_check( clients );
 
@@ -789,8 +789,8 @@ static void transport_loopback_refuses_past_max_endpoints()
         rocketnet_client_transport_io_close( &clients[i] );
     rocketnet_unit_check( rocketnet_loopback_endpoints_live() == live_before );
 
-    rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_set_log_level( saved_level );
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved_level );
     free( clients );
     printf( "transport_loopback_refuses_past_max_endpoints\n" );
 }
@@ -904,8 +904,8 @@ static void loopback_server_batch_drops_packet_larger_than_stride()
     rocketnet_server_transport_dev_config( &server_config );
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
-    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL };
-    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config };
+    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
+    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
     rocketnet_address_t server_address, client_address;
     rocketnet_unit_check( rocketnet_address_parse( &server_address, "127.0.0.1:0" ) );
     rocketnet_unit_check( rocketnet_address_parse( &client_address, "127.0.0.1:0" ) );

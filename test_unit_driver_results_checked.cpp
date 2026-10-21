@@ -144,7 +144,7 @@ static void transport_results_open_io( transport_results_lie_t * lie, rocketnet_
     ops->receive_batch = batch ? transport_results_lie_receive_batch : NULL;
     ops->wait = NULL;
     ops->wake = NULL;
-    rocketnet_client_transport_io_config_t config = { "fake", NULL };
+    rocketnet_client_transport_io_config_t config = { "fake", NULL, NULL };
     rocketnet_address_t bind = {};
     rocketnet_unit_check( rocketnet_client_transport_io_open( ops, lie, &config, &bind, transport ) );
 
@@ -329,7 +329,7 @@ static void transport_results_client_without_wait_skips_the_call()
 {
     rocketnet_fake_client_transport_io_t fake = {};
     rocketnet_client_transport_io_t transport = {};
-    rocketnet_client_transport_io_config_t config = { "fake", NULL };
+    rocketnet_client_transport_io_config_t config = { "fake", NULL, NULL };
     rocketnet_address_t bind = {};
     rocketnet_unit_check( rocketnet_client_transport_io_open( &rocketnet_fake_client_operations_base, &fake, &config, &bind, &transport ) );
     rocketnet_unit_check( transport.operations->wait == NULL );
@@ -542,8 +542,8 @@ static void transport_results_loopback_matches_destination_or_wildcard()
     rocketnet_server_transport_dev_config( &server_config );
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
-    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL };
-    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config };
+    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
+    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
 
     rocketnet_address_t server_address, client_address;
     rocketnet_unit_check( rocketnet_address_parse( &server_address, "127.0.0.1:0" ) );

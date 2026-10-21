@@ -852,7 +852,7 @@ static void release_returns_room()
     // update with a held view: the named error, the assert in a debug build,
     // and the views are taken back so nothing grows
     void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
-    rocketnet_set_assert_callback( mo_assert_hook );
+    rocketnet_assert_function( mo_assert_hook );
     mo_asserts = 0;
 
     // the server's CONFIG (CHANNELS.md 10.3) is acked first, so the room counted below is the application's alone
@@ -890,7 +890,7 @@ static void release_returns_room()
     check( mo_asserts == 0 );
 #endif
     check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_NOT_RELEASED ) == (uint64_t) ( 3 * region->window - 1 ) );
-    rocketnet_set_assert_callback( saved_assert );
+    rocketnet_assert_function( saved_assert );
 
     mo_pair_teardown( &pair );
 }
@@ -1681,7 +1681,7 @@ static void mo_free( void * context, void * p )
 static void message_objects_no_allocation_after_create()
 {
     rocketnet_term();
-    check( rocketnet_set_allocator( mo_malloc, mo_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( mo_malloc, mo_free ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     {
@@ -1749,7 +1749,7 @@ static void message_objects_no_allocation_after_create()
     }
 
     rocketnet_term();
-    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
@@ -1914,7 +1914,7 @@ static void rnslots_witness_replays()
         int bytes = 0;
         check( rocketnet_message_server_receive( pair.server, NULL, NULL, &data, &bytes ) == 1 );
         void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
-        rocketnet_set_assert_callback( mo_assert_hook );
+        rocketnet_assert_function( mo_assert_hook );
         mo_asserts = 0;
         pair.time += 0.01;
         check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED );
@@ -1923,7 +1923,7 @@ static void rnslots_witness_replays()
 #else
         check( mo_asserts == 0 );
 #endif
-        rocketnet_set_assert_callback( saved_assert );
+        rocketnet_assert_function( saved_assert );
         check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_NOT_RELEASED ) == 1 );
         // the following update, with nothing held, is fine
         pair.time += 0.01;
@@ -1958,7 +1958,7 @@ static void message_objects_client_clock_starts_at_first_update()
     mo_net_connect( net, 0 );
 
     void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
-    rocketnet_set_assert_callback( mo_assert_hook );
+    rocketnet_assert_function( mo_assert_hook );
     mo_asserts = 0;
     const uint64_t misuse_before = rocketnet_api_misuse_count();
     check( rocketnet_message_client_update( client, NAN ) == ROCKETNET_UPDATE_OK );
@@ -2043,7 +2043,7 @@ static void message_objects_client_clock_starts_at_first_update()
     check( rocketnet_message_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_NONE );
     check( rocketnet_message_server_disconnect_reason( server, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
-    rocketnet_set_assert_callback( saved_assert );
+    rocketnet_assert_function( saved_assert );
     rocketnet_message_client_destroy( client );
     rocketnet_message_server_destroy( server );
     mo_net_free( net );
@@ -2427,8 +2427,8 @@ static void send_room_warns_in_debug_builds_only()
     check( rn_send_room_warnings == ( ROCKETNET_ASSERTS ? 1 : 0 ) );     // compiled in exactly when the debug macro is on
     mo_room_lines = mo_room_crossings = mo_room_exhausted = mo_room_named = 0;
     mo_room_name = "client";
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_SPAM );
-    rocketnet_set_log_callback( mo_room_capture, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );
+    rocketnet_log_function( mo_room_capture, NULL );
 
     rocketnet_message_client_t * client = pair.clients[0];
     rn_message_connection_t * connection = mo_client_connection( client );
@@ -2480,8 +2480,8 @@ static void send_room_warns_in_debug_builds_only()
     check( mo_room_exhausted == ( rn_send_room_warnings ? 1 : 0 ) );
     check( mo_room_named == mo_room_lines );
 
-    rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     mo_pair_teardown( &pair );
 }
 
@@ -2642,7 +2642,7 @@ static bool mo_send_and_verify_delivery( mo_pair_t * pair, bool from_client, uin
 static void update_time_bad_counted_once_never_stored_or_wedged()
 {
     void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
-    rocketnet_set_assert_callback( mo_assert_hook );
+    rocketnet_assert_function( mo_assert_hook );
     mo_asserts = 0;
 
     // the client object, then the server object, on the pair
@@ -2715,13 +2715,13 @@ static void update_time_bad_counted_once_never_stored_or_wedged()
         mo_pair_teardown( &pair );
     }
 
-    rocketnet_set_assert_callback( saved_assert );
+    rocketnet_assert_function( saved_assert );
 }
 
 static void update_time_first_update_not_finite_refused()
 {
     void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
-    rocketnet_set_assert_callback( mo_assert_hook );
+    rocketnet_assert_function( mo_assert_hook );
     mo_asserts = 0;
 
     for ( int side = 0; side < 2; side++ )
@@ -2770,7 +2770,7 @@ static void update_time_first_update_not_finite_refused()
         mo_pair_teardown( &pair );
     }
 
-    rocketnet_set_assert_callback( saved_assert );
+    rocketnet_assert_function( saved_assert );
 }
 
 // slots are keyed on the transport's connection id (P9a), and each batch entry
@@ -2903,10 +2903,10 @@ static void reconnect_pump( reconnect_world_t * world, double dt = 0.01 )
     reconnect_now = world->time;
     for ( int i = 0; i < 2; i++ )
     {
-        check( rocketnet_client_update( world->clients[i], world->time ) == ROCKETNET_UPDATE_OK );
+        rocketnet_client_update( world->clients[i], world->time );
         rocketnet_client_send_packets( world->clients[i] );
     }
-    check( rocketnet_server_update( world->server, world->time ) == ROCKETNET_UPDATE_OK );
+    rocketnet_server_update( world->server, world->time );
     rocketnet_server_send_packets( world->server );
     world->time += dt;
 }
@@ -2936,7 +2936,7 @@ static int reconnect_exchange( reconnect_world_t * world, int client, uint8_t ta
         if ( up ) { up[0] = tag; up[1] = (uint8_t) i; check( rocketnet_client_finish_message( c, 2 ) != 0 ); }
         uint8_t * down = rocketnet_server_start_message( world->server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 2 );
         check( down != NULL );
-        if ( down ) { down[0] = tag; down[1] = (uint8_t) i; check( rocketnet_server_finish_message( world->server, 0, 2 ) != 0 ); }
+        if ( down ) { down[0] = tag; down[1] = (uint8_t) i; check( rocketnet_server_finish_message( world->server, 2 ) != 0 ); }
     }
     int at_server = 0, at_client = 0;
     for ( int step = 0; step < 300 && ( at_server < want || at_client < want ); step++ )
@@ -2979,7 +2979,7 @@ static void same_client_id_reconnect_in_one_update_resets_the_slot()
 {
     reconnect_world_t world;
     memset( &world, 0, sizeof( world ) );
-    rocketnet_set_quiet( 1 );
+    rocketnet_quiet( 1 );
     world.time = 1000.0;
     reconnect_now = world.time;
     uint8_t seed[32];
@@ -2996,7 +2996,7 @@ static void same_client_id_reconnect_in_one_update_resets_the_slot()
     memcpy( server_config.server_public_key, world.server_public, sizeof( server_config.server_public_key ) );
     memcpy( server_config.server_secret_key, world.server_secret, sizeof( server_config.server_secret_key ) );
     server_config.transport = "loopback";
-    world.server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, NULL );
+    world.server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL );
     check( world.server != NULL );
     check( rocketnet_server_start( world.server ) == ROCKETNET_STATUS_OK );
     for ( int i = 0; i < 2; i++ )
@@ -3006,7 +3006,7 @@ static void same_client_id_reconnect_in_one_update_resets_the_slot()
         client_config.transport = "loopback";
         client_config.step_driven = true;
         client_config.time_callback = reconnect_clock;
-        world.clients[i] = rocketnet_client_create( NULL, &client_config, NULL, 0, NULL );
+        world.clients[i] = rocketnet_client_create( NULL, &client_config, NULL );
         check( world.clients[i] != NULL );
     }
 
@@ -3022,7 +3022,7 @@ static void same_client_id_reconnect_in_one_update_resets_the_slot()
     check( rocketnet_server_client_id( world.server, 0 ) == RECONNECT_CLIENT_ID );
     check( reconnect_exchange( &world, 0, 0xA1, 3 ) );
     check( rocketnet_client_state( world.clients[1] ) == ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE );
-    check( rocketnet_server_counter( world.server, ROCKETNET_SERVER_COUNTER_CLIENTS_CONNECTED ) == 1 );
+    check( rn_server_stats_of( world.server ).clients_connected == 1 );
 
     // A disconnects; in the next server update its disconnect is processed
     // and then B's response, which takes slot 0 with the same client id. B's
@@ -3030,7 +3030,7 @@ static void same_client_id_reconnect_in_one_update_resets_the_slot()
     world.time += 0.25;
     rocketnet_client_disconnect( world.clients[0] );
     reconnect_pump( &world );
-    check( rocketnet_server_counter( world.server, ROCKETNET_SERVER_COUNTER_CLIENTS_CONNECTED ) == 2 );
+    check( rn_server_stats_of( world.server ).clients_connected == 2 );
     check( rocketnet_server_client_connected( world.server, 0 ) != 0 );
     check( rocketnet_server_client_id( world.server, 0 ) == RECONNECT_CLIENT_ID );
 
@@ -3046,7 +3046,6 @@ static void same_client_id_reconnect_in_one_update_resets_the_slot()
     while ( world.time < until && rocketnet_client_state( world.clients[1] ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         reconnect_pump( &world, 0.05 );
     check( rocketnet_client_state( world.clients[1] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
-    check( rocketnet_client_disconnect_reason( world.clients[1] ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
     for ( int i = 0; i < 2; i++ )
         rocketnet_client_destroy( world.clients[i] );

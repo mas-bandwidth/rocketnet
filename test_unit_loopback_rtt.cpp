@@ -110,7 +110,7 @@ static bool loopback_rtt_pair_setup( struct loopback_rtt_pair_t * pair )
     memset( pair, 0, sizeof( *pair ) );
     pair->time = 1000.0;
     loopback_rtt_clock = pair->time;
-    rocketnet_set_quiet( 1 );
+    rocketnet_quiet( 1 );
 
     const uint64_t protocol_id = 0x6c6f6f7072747431ULL;
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];

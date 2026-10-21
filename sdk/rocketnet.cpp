@@ -60,13 +60,13 @@ static void default_assert_function( const char * condition, const char * functi
     #endif
 }
 
-rocketnet_assert_callback_t rn_assert_function = default_assert_function;
+rocketnet_assert_function_t rn_assert_function = default_assert_function;
 
-void rocketnet_set_assert_callback( rocketnet_assert_callback_t callback )
+void rocketnet_assert_function( rocketnet_assert_function_t function )
 {
-    if ( callback )
+    if ( function )
     {
-        rn_assert_function = callback;
+        rn_assert_function = function;
     }
     else
     {
@@ -78,14 +78,14 @@ void rocketnet_set_assert_callback( rocketnet_assert_callback_t callback )
 
 static std::atomic<bool> log_quiet{ false };
 
-void rocketnet_set_quiet( bool flag )
+void rocketnet_quiet( bool flag )
 {
    log_quiet.store( flag, std::memory_order_relaxed );
 }
 
 static std::atomic<int> log_level{ ROCKETNET_LOG_LEVEL_INFO };
 
-void rocketnet_set_log_level( enum rocketnet_log_level_t level )
+void rocketnet_log_level( enum rocketnet_log_level_t level )
 {
     // the defined levels are NONE (0) through SPAM (5): a value outside that
     // range is refused, leaving the level already in force. a caller that
@@ -154,7 +154,7 @@ void rocketnet_log_level_override_apply( const char * value )
                     value ? value : "", ROCKETNET_LOG_LEVEL_NONE, ROCKETNET_LOG_LEVEL_SPAM, log_level.load( std::memory_order_relaxed ) );
 }
 
-void rocketnet_set_thread_priority( bool enabled )
+void rocketnet_thread_priority( bool enabled )
 {
     rocketnet_platform_set_thread_priority_enabled( enabled );
 }
@@ -169,7 +169,7 @@ uint64_t rocketnet_get_thread_priority_refusals( void )
     return rocketnet_platform_thread_priority_refusals();
 }
 
-enum rocketnet_log_level_t rocketnet_get_log_level( void )
+enum rocketnet_log_level_t rocketnet_log_level_current( void )
 {
     return (enum rocketnet_log_level_t) log_level.load( std::memory_order_relaxed );
 }
@@ -225,6 +225,7 @@ static const char * const rocketnet_status_names[] =
     "SERVER_NOT_STOPPED",
     "FLOW_ID_RESERVED",
     "TRANSPORT_FAMILIES_UNSUPPORTED",
+    "CONFIG_NOT_INITIALIZED",
 };
 
 static_assert( sizeof( rocketnet_status_names ) / sizeof( rocketnet_status_names[0] ) == ROCKETNET_STATUS_COUNT,
@@ -258,13 +259,13 @@ static void default_log_callback( void * context, enum rocketnet_log_level_t lev
 }
 
 static volatile uint64_t rocketnet_log_sink_lock = 0;
-static rocketnet_log_callback_t rocketnet_log_callback = NULL;
+static rocketnet_log_function_t rocketnet_log_callback = NULL;
 static void * rocketnet_log_callback_context = NULL;
 
 // docs/ERRORS-AND-LOGGING.md 3.2 and 3.3: the one sink. a non-NULL callback
 // replaces the active sink; NULL restores the default sink. the (callback,
 // context) pair is guarded by the spin lock so it is never observed torn.
-void rocketnet_set_log_callback( rocketnet_log_callback_t callback, void * context )
+void rocketnet_log_function( rocketnet_log_function_t callback, void * context )
 {
     rocketnet_platform_spin_lock_u64( &rocketnet_log_sink_lock );
     rocketnet_log_callback = callback;
@@ -290,7 +291,7 @@ static void rocketnet_log_v( int level, const char * format, va_list args )
                     ( (size_t) n < sizeof( buffer ) ? (size_t) n : sizeof( buffer ) - 1 );
 
     rocketnet_platform_spin_lock_u64( &rocketnet_log_sink_lock );
-    rocketnet_log_callback_t cb = rocketnet_log_callback;
+    rocketnet_log_function_t cb = rocketnet_log_callback;
     void * ctx = rocketnet_log_callback_context;
     rocketnet_platform_spin_unlock_u64( &rocketnet_log_sink_lock );
 
@@ -433,7 +434,7 @@ uint64_t rocketnet_allocation_overhead()
     return sizeof(rocketnet_allocation_header_t) + ROCKETNET_ALLOCATION_ALIGNMENT - 1;
 }
 
-enum rocketnet_status_t rocketnet_set_allocator( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) )
+enum rocketnet_status_t rocketnet_allocator( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) )
 {
     return (enum rocketnet_status_t) rocketnet_allocator_ex( malloc_function, free_function );
 }

@@ -91,8 +91,8 @@ int main(int argc, char ** argv)
     const int payload_bytes = atoi(argv[3]), threads = atoi(argv[4]), batches = atoi(argv[5]);
     const bool plant = argc > 6 && strcmp(argv[6], "plant") == 0;
     CHECK(payload_bytes > 0 && payload_bytes <= 4096 && (threads == 1 || threads == 4) && batches > 0);
-    rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_NONE);
-    rocketnet_set_allocator(allocate, release);
+    rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
+    rocketnet_allocator(allocate, release);
     CHECK(rocketnet_init( NULL ) == ROCKETNET_STATUS_OK);
     rocketnet_forbid_xdp_commit();
     rocketnet_server_transport_config_t config;

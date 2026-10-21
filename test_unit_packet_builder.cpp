@@ -224,7 +224,7 @@ static void builder_obeys_budget_and_class_order()
 static void packet_builder_no_allocation_after_create()
 {
     rocketnet_term();                                           // the allocator is replaced only before init
-    rocketnet_unit_check( rocketnet_set_allocator( builder_malloc, builder_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_allocator( builder_malloc, builder_free ) == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     builder_allocs = 0;
@@ -278,7 +278,7 @@ static void packet_builder_no_allocation_after_create()
 
     rn_arena_destroy( arena );
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 

@@ -591,7 +591,7 @@ static void mcr_free( void * context, void * p )
 static void message_client_create_refuses_budget_and_config()
 {
     rocketnet_term();
-    check( rocketnet_set_allocator( mcr_malloc, mcr_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( mcr_malloc, mcr_free ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     // a config whose required memory is zero: num_channels = 0 fails
@@ -615,7 +615,7 @@ static void message_client_create_refuses_budget_and_config()
     check( mcr_mallocs == before );
 
     rocketnet_term();
-    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
@@ -629,7 +629,7 @@ static void message_client_create_refuses_budget_and_config()
 static void message_server_create_refuses_budget_and_config()
 {
     rocketnet_term();
-    check( rocketnet_set_allocator( mcr_malloc, mcr_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( mcr_malloc, mcr_free ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     rocketnet_message_config_t bad;
@@ -647,7 +647,7 @@ static void message_server_create_refuses_budget_and_config()
     check( mcr_mallocs == before );
 
     rocketnet_term();
-    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 

@@ -18,6 +18,32 @@
 extern "C" {
 #endif
 
+/// Config revision sizes (docs/ABI-EVOLUTION.md): the end of a revision's last
+/// field rounded up to that revision's alignment. The public configs have one
+/// revision each, the whole struct; a config_bytes the library does not know
+/// is refused.
+#define ROCKETNET_CONFIG_REVISION_BYTES( end, align ) ( ( ( end ) + ( align ) - 1 ) / ( align ) * ( align ) )
+#define ROCKETNET_CLIENT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, simulated_duplicate_percent ) + sizeof( int ), sizeof( void * ) )
+#define ROCKETNET_SERVER_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, second_public_address ) + sizeof( const char * ), sizeof( void * ) )
+
+/// What the message layer's update returns. The public update returns void.
+enum rocketnet_update_result_t
+{
+    ROCKETNET_UPDATE_OK                                         =  0,  ///< The update ran
+    ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED                       = -1   ///< A received message view was still held at update
+};
+
+/// The process-wide log level in force: a relaxed atomic read for the SDK's
+/// own tests, which save and restore it. Not exported.
+enum rocketnet_log_level_t rocketnet_log_level_current( void );
+
+/// The process-wide reads the public stats structs carry (api_misuse,
+/// thread_priority_refusals) and the thread priority setting, for the SDK's
+/// own code and tests. Not exported.
+uint64_t rocketnet_api_misuse_count( void );
+uint64_t rocketnet_get_thread_priority_refusals( void );
+bool rocketnet_get_thread_priority( void );
+
 /** @brief Capacity in bytes of transport address strings, including the terminating NUL. */
 #define ROCKETNET_MAX_ADDRESS_STRING_LENGTH                256
 
@@ -921,6 +947,14 @@ int rocketnet_server_transport_state( struct rocketnet_server_transport_t * serv
  * @return The bound port in host byte order; zero for NULL. A configured port of zero is supported only by transports that can discover the bound port.
  */
 uint16_t rocketnet_server_transport_port( struct rocketnet_server_transport_t * server_transport );
+
+struct rocketnet_address_t;
+
+// The address the running transport advertises for one family
+// (ROCKETNET_ADDRESS_IPV4 or ROCKETNET_ADDRESS_IPV6), the bound port filled
+// in: the one connect tokens name. false, *address untouched, when the
+// transport does not serve that family or is not running.
+bool rocketnet_server_transport_advertised_address( struct rocketnet_server_transport_t * server_transport, int family, struct rocketnet_address_t * address );
 
 // the granted transport, request-vs-granted style: the name of the candidate
 // that won the ladder at create ("xdp", "gso", "msgx", "portable"), never
@@ -1872,6 +1906,29 @@ const char * rocketnet_counter_class_name( int counter_class );
 // returns, when every packet counted as arrived has taken its outcome. A NULL
 // counters is a counted no-op that returns 0.
 int rocketnet_counters_conserved( const struct rocketnet_counters_t * counters, char * report, int report_bytes );
+
+// The SDK's own tests and tools read one stat in an expression: each returns
+// the public stats call's struct by value.
+static inline struct rocketnet_client_stats_t rn_client_stats_of( const struct rocketnet_client_t * client )
+{
+    struct rocketnet_client_stats_t stats;
+    rocketnet_client_stats( client, &stats );
+    return stats;
+}
+
+static inline struct rocketnet_server_stats_t rn_server_stats_of( const struct rocketnet_server_t * server )
+{
+    struct rocketnet_server_stats_t stats;
+    rocketnet_server_stats( server, &stats );
+    return stats;
+}
+
+static inline struct rocketnet_server_client_stats_t rn_server_client_stats_of( const struct rocketnet_server_t * server, int client_index )
+{
+    struct rocketnet_server_client_stats_t stats;
+    rocketnet_server_client_stats( server, client_index, &stats );
+    return stats;
+}
 
 #ifdef __cplusplus
 }

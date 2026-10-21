@@ -827,11 +827,11 @@ static inline int rocketnet_channel_harness_create_with_config( rocketnet_channe
     rocketnet_channel_capture_begin();
     rocketnet_term();
     rocketnet_channel_allocator_calls = 0;
-    if ( rocketnet_set_allocator( rocketnet_channel_counting_malloc, rocketnet_channel_counting_free ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_allocator( rocketnet_channel_counting_malloc, rocketnet_channel_counting_free ) != ROCKETNET_STATUS_OK )
         return 0;
     if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
     {
-        rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function );
+        rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function );
         rocketnet_init( NULL );
         return 0;
     }
@@ -1087,7 +1087,7 @@ static inline void rocketnet_channel_harness_destroy( rocketnet_channel_harness_
     if ( h->counting_allocator_installed )
     {
         rocketnet_term();
-        rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function );
+        rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function );
         rocketnet_init( NULL );
     }
     rocketnet_channel_seed_state().live = 0;

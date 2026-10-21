@@ -700,17 +700,17 @@ static void xdp_ipv6_pin_reaches_the_xdp_transport_at_create()
     config.protocol_id = 1;
     strcpy( config.transport, "xdp" );
 
-    const enum rocketnet_log_level_t level = rocketnet_get_log_level();
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_DEBUG );
-    rocketnet_set_log_callback( xdp_ipv6_capture, NULL );
+    const enum rocketnet_log_level_t level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_DEBUG );
+    rocketnet_log_function( xdp_ipv6_capture, NULL );
     xdp_ipv6_family_refusals = 0;
     xdp_ipv6_barrier_lines = 0;
 
     int status = -1;
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "[2001:db8::10]:40000", &config, 1000.0, &status );
 
-    rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_set_log_level( level );
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( level );
     if ( pinned )
         setenv( "ROCKETNET_SERVER_TRANSPORT", saved, 1 );
 

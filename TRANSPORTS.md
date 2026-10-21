@@ -211,9 +211,9 @@ settings (`flow_platform.cpp`), unchanged.
 | IOCP (Windows) | one worker per completion thread (`sdk/rocketnet_server_iocp_windows.cpp:568`) | `THREAD_PRIORITY_TIME_CRITICAL`, after each create |
 | io_uring, RIO, portable socket | none | nothing |
 
-`rocketnet_set_thread_priority( false )` turns the priority calls off for
+`rocketnet_thread_priority( false )` turns the priority calls off for
 threads created after it; the XDP thread's pin to its queue's cpu always runs.
-A refused call is counted by `rocketnet_get_thread_priority_refusals` and
+A refused call is counted in the stats structs' `thread_priority_refusals` and
 logged once per call kind (`docs/ERRORS-AND-LOGGING.md` 3.4); the transport starts
 either way. The server task workers of a game and its main thread are the
 game's to set; the library sets nothing on them.

@@ -71,26 +71,30 @@ Stop that server when the run finishes.
 server received: hello from the client
 client received: hello from the client
 client state: connected -> disconnected
-client disconnect reason: none
+client state after disconnect: disconnected
 PASS
 ```
 Each `client state:` line is a state change from the public callback. The
-server prints the message it received; the client prints the echo. The
-disconnect reason is `none` for a clean disconnect. Library log lines are
+server prints the message it received; the client prints the echo. After its
+own disconnect the client's state is `disconnected`; a connection the server
+or the protocol ended reads as a negative state that names how. Library log lines are
 informational and not part of the check. The key file is a local artifact and
 can be deleted after a run.
 ## Public calls it uses
 - `rocketnet_init`, `rocketnet_term`
 - `rocketnet_generate_backend_keypair`, `rocketnet_generate_server_keypair`,
   `rocketnet_write_production_connect_token`
-- `rocketnet_server_default_config`, `rocketnet_server_create`, `rocketnet_server_update`,
-  `rocketnet_server_port`, `rocketnet_server_max_clients`, `rocketnet_server_num_connected_clients`,
-  `rocketnet_server_receive_messages`, `rocketnet_server_start_message`,
-  `rocketnet_server_finish_message`, `rocketnet_server_send_packets`, `rocketnet_server_disconnect_reason`,
-  `rocketnet_server_destroy`
-- `rocketnet_client_default_config`, `rocketnet_client_create`, `rocketnet_client_state`,
-  `rocketnet_client_state_name`, `rocketnet_client_update`, `rocketnet_client_receive_messages`,
-  `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
-  `rocketnet_client_send_packets`, `rocketnet_client_disconnect`, `rocketnet_client_disconnect_reason`,
-  `rocketnet_client_destroy`
-- `rocketnet_time`, `rocketnet_sleep`
+- `rocketnet_server_default_config`, `rocketnet_server_create`,
+  `rocketnet_server_start`, `rocketnet_server_destroy`,
+  `rocketnet_server_update`, `rocketnet_server_send_packets`,
+  `rocketnet_server_port`, `rocketnet_server_num_connected_clients`,
+  `rocketnet_server_disconnect_reason`, `rocketnet_server_start_message`,
+  `rocketnet_server_finish_message`, `rocketnet_server_receive_messages`
+- `rocketnet_client_default_config`, `rocketnet_client_create`,
+  `rocketnet_client_connect`, `rocketnet_client_destroy`,
+  `rocketnet_client_update`, `rocketnet_client_send_packets`,
+  `rocketnet_client_disconnect`, `rocketnet_client_state`,
+  `rocketnet_client_state_name`, `rocketnet_client_start_message`,
+  `rocketnet_client_finish_message`, `rocketnet_client_receive_messages`
+- `rocketnet_status_name`, `rocketnet_time`, `rocketnet_sleep`,
+  `rocketnet_disconnect_reason_name`

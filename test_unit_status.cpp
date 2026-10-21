@@ -55,12 +55,14 @@ static const struct
     { ROCKETNET_STATUS_SERVER_NOT_STOPPED, "SERVER_NOT_STOPPED" },
     { ROCKETNET_STATUS_FLOW_ID_RESERVED, "FLOW_ID_RESERVED" },
     { ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED, "TRANSPORT_FAMILIES_UNSUPPORTED" },
+    { ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED, "CONFIG_NOT_INITIALIZED" },
 };
 
 static void status_names_cover_every_code()
 {
     check( ROCKETNET_STATUS_OK == 0 );
-    check( ROCKETNET_STATUS_COUNT == 27 );
+    check( ROCKETNET_STATUS_COUNT == 28 );
+    check( ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED == 27 );
     check( rocketnet_num_status_codes() == ROCKETNET_STATUS_COUNT );
     check( sizeof( status_expected ) / sizeof( status_expected[0] ) == ROCKETNET_STATUS_COUNT );
 

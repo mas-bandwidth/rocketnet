@@ -45,7 +45,7 @@ naming `<struct>.<member>`.
 | | packet/message serials, ordering/sequencing indices, unreliable queue, pending start, write pass and send-budget accumulator | message send state | RESET | no work may cross connections |
 | | `views`, `cursors` | allocation pointers | KEEP | storage is fixed; pointed-to contents reset |
 | | `connection_id`, `state`, `held` | message slot binding | RESET | slot becomes free |
-| | `disconnect_reason` | last message-layer reason | KEEP | public API keeps it until the next establishment |
+| | `disconnect_reason` | last message-layer reason | KEEP | the public client state carries it until disconnect or the next connect |
 
 The disconnect burst is sealed before reset. The client transport copies the
 destination address locally, sends only that burst after reset, and retains no

@@ -171,7 +171,7 @@ static void rocketnet_frame_sync_sleep_until( struct rocketnet_frame_sync_t * fr
 
 static void rocketnet_frame_sync_elevate_priority( struct rocketnet_frame_sync_t * frame_sync )
 {
-    // off (rocketnet_set_thread_priority( false )): no priority call, and
+    // off (rocketnet_thread_priority( false )): no priority call, and
     // without priority held the wait is plain absolute sleep
     if ( !rocketnet_platform_thread_priority_enabled() )
         return;
@@ -202,7 +202,7 @@ static void rocketnet_frame_sync_restore_priority( struct rocketnet_frame_sync_t
 
 static void rocketnet_frame_sync_elevate_priority( struct rocketnet_frame_sync_t * frame_sync )
 {
-    // off (rocketnet_set_thread_priority( false )): no priority call, and
+    // off (rocketnet_thread_priority( false )): no priority call, and
     // without priority held the wait is plain absolute sleep
     if ( !rocketnet_platform_thread_priority_enabled() )
         return;
@@ -251,7 +251,7 @@ static void rocketnet_frame_sync_restore_priority( struct rocketnet_frame_sync_t
 
 static void rocketnet_frame_sync_elevate_priority( struct rocketnet_frame_sync_t * frame_sync )
 {
-    // off (rocketnet_set_thread_priority( false )): no priority call, and
+    // off (rocketnet_thread_priority( false )): no priority call, and
     // without priority held the wait is plain absolute sleep
     if ( !rocketnet_platform_thread_priority_enabled() )
         return;

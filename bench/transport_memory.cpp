@@ -72,7 +72,7 @@ int main(int argc, char ** argv)
     const char * transport = argc >= 5 ? argv[4] : "portable";
     const bool plan_only = argc == 7 && strcmp(argv[6], "--plan-only") == 0;
     if (argc == 7 && !plan_only) return 1;
-    rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_NONE);
+    rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config(&config);
     if (strlen(transport) >= sizeof(config.transport)) return 1;
@@ -94,7 +94,7 @@ int main(int argc, char ** argv)
         (unsigned long long)plan.send_arena_bytes, (unsigned long long)plan.transport_bytes,
         (unsigned long long)plan.umem_bytes, plan.worker_threads, plan.sockets);
     if (plan_only) return 0; // No init, sockets, worker threads or UMEM registration.
-    rocketnet_set_allocator(allocate, release);
+    rocketnet_allocator(allocate, release);
     if (rocketnet_init( NULL ) != ROCKETNET_STATUS_OK) return 1;
     rocketnet_forbid_xdp_commit();
     auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);

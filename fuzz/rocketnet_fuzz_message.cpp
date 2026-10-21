@@ -179,7 +179,7 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
 
     // the codec allocates nothing and touches nothing else: no rocketnet_init
 
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     return 0;
 }
 

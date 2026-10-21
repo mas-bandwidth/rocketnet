@@ -27,7 +27,7 @@
 #define check rocketnet_unit_check
 
 // ---------------------------------------------------------------------------
-// The counting allocator: rocketnet_set_allocator accepts a replacement only on an
+// The counting allocator: rocketnet_allocator accepts a replacement only on an
 // uninitialized library with nothing live, so the worker's init is stopped,
 // the counter installed and the library started again; the restore reverses it.
 // ---------------------------------------------------------------------------
@@ -52,14 +52,14 @@ static void cm_free( void * context, void * p )
 static void cm_install()
 {
     rocketnet_term();
-    check( rocketnet_set_allocator( cm_malloc, cm_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( cm_malloc, cm_free ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
 static void cm_restore()
 {
     rocketnet_term();
-    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 

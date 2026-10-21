@@ -189,7 +189,7 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
     if ( sodium_init() < 0 )
         abort();
 
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
     rocketnet_fuzz_build_base_token();
 

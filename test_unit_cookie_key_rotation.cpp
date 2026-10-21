@@ -164,6 +164,7 @@ static void rocketnet_rotation_build_request_no_cookie( struct rocketnet_rotatio
                                                         uint8_t * request,
                                                         uint64_t client_id )
 {
+    (void) test;
     struct rocketnet_signed_connect_data_t signed_fields;
     struct rocketnet_connect_token_private_t private_fields;
     rocketnet_rotation_fill_vector_fields( &signed_fields, &private_fields, client_id );

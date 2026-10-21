@@ -65,7 +65,7 @@ static void both_families_identity( both_families_identity_t * identity )
 
 static void both_families_fill( rocketnet_server_config_t * config, const both_families_identity_t * identity, int max_clients )
 {
-    check( rocketnet_server_dev_config_sized( config, sizeof( *config ) ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_server_default_config( config ) == ROCKETNET_STATUS_OK );
     config->protocol_id = BOTH_FAMILIES_PROTOCOL;
     config->max_clients = max_clients;
     memcpy( config->backend_public_key, identity->backend_public, sizeof( config->backend_public_key ) );
@@ -97,9 +97,9 @@ static enum rocketnet_status_t both_families_start( const both_families_identity
     config.public_address = first;
     config.second_public_address = second;
     both_families_now = 1000.0;
-    rocketnet_set_quiet( 1 );
+    rocketnet_quiet( 1 );
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_COUNT;
-    struct rocketnet_server_t * server = rocketnet_server_create_sized( NULL, first, &config, sizeof( config ), NULL, 0, &create_status );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, first, &config, &create_status );
     check( server != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
     enum rocketnet_status_t status = rocketnet_server_start( server );
@@ -179,15 +179,15 @@ static void both_families_pump( struct rocketnet_server_t * server, struct rocke
     both_families_now = *time;
     if ( ipv4 )
     {
-        check( rocketnet_client_update( ipv4, *time ) == ROCKETNET_UPDATE_OK );
+        rocketnet_client_update( ipv4, *time );
         rocketnet_client_send_packets( ipv4 );
     }
     if ( ipv6 )
     {
-        check( rocketnet_client_update( ipv6, *time ) == ROCKETNET_UPDATE_OK );
+        rocketnet_client_update( ipv6, *time );
         rocketnet_client_send_packets( ipv6 );
     }
-    check( rocketnet_server_update( server, *time ) == ROCKETNET_UPDATE_OK );
+    rocketnet_server_update( server, *time );
     rocketnet_server_send_packets( server );
     *time += 0.01;
 }
@@ -199,7 +199,7 @@ static struct rocketnet_client_t * both_families_connect_client( const both_fami
     rocketnet_client_config_t config;
     both_families_client_config( &config );
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_COUNT;
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL, 0, &create_status );
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &create_status );
     check( client != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
     check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
@@ -249,11 +249,11 @@ static void server_serves_ipv4_and_ipv6_clients_on_one_port()
     out = rocketnet_server_start_message( server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
     check( out != NULL );
     memcpy( out, to_ipv4, 4 );
-    check( rocketnet_server_finish_message( server, 0, 4 ) != 0 );
+    check( rocketnet_server_finish_message( server, 4 ) != 0 );
     out = rocketnet_server_start_message( server, 1, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
     check( out != NULL );
     memcpy( out, to_ipv6, 4 );
-    check( rocketnet_server_finish_message( server, 1, 4 ) != 0 );
+    check( rocketnet_server_finish_message( server, 4 ) != 0 );
 
     int got_ipv4 = 0, got_ipv6 = 0, got_from_ipv4 = 0, got_from_ipv6 = 0;
     for ( int step = 0; step < 400 && ( got_ipv4 < 1 || got_ipv6 < 1 || got_from_ipv4 < 1 || got_from_ipv6 < 1 ); step++ )

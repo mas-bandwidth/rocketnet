@@ -280,7 +280,7 @@ static void sequenced_counting_free( void * context, void * memory )
 static void sequenced_no_allocation_after_create()
 {
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_set_allocator( sequenced_counting_malloc, sequenced_counting_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_allocator( sequenced_counting_malloc, sequenced_counting_free ) == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &sequenced_counters );
     rocketnet_unit_check( arena != NULL );
@@ -299,7 +299,7 @@ static void sequenced_no_allocation_after_create()
     rocketnet_unit_check( sequenced_allocations == after_create );
     rn_arena_destroy( arena );
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 

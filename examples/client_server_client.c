@@ -6,8 +6,8 @@
     The stub holds the backend signing key and the server's public key from
     the key file the server writes, and mints a production connect token. The
     client connects over real UDP on loopback, sends one reliable-ordered
-    message, receives the echo, prints its state changes and disconnect
-    reason, and disconnects.
+    message, receives the echo, prints its state changes, disconnects, and
+    prints the state that says how the connection ended.
 
     The server address is 127.0.0.1 at the port from --port <n>, else the
     ROCKETNET_EXAMPLE_PORT environment variable, else the default 40000.
@@ -145,7 +145,7 @@ int main( int argc, char ** argv )
     config.transport = "portable";
     config.state_change_callback = state_changed;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    client = rocketnet_client_create( NULL, &config, NULL, 0, &create_status );
+    client = rocketnet_client_create( NULL, &config, &create_status );
     if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
@@ -160,7 +160,7 @@ int main( int argc, char ** argv )
         const double now = 1000.0 + ( rocketnet_time() - start );
 
         // (1) update pumps the transport and takes in what arrived
-        if ( rocketnet_client_update( client, now ) != ROCKETNET_UPDATE_OK ) break;
+        rocketnet_client_update( client, now );
 
         // (2) receive and release every received message
         const uint8_t * data = NULL;
@@ -211,7 +211,9 @@ int main( int argc, char ** argv )
 
     CHECK( wrong_protocol ? refused : received );
     rocketnet_client_disconnect( client );
-    printf( "client disconnect reason: %s\n", rocketnet_disconnect_reason_name( rocketnet_client_disconnect_reason( client ) ) );
+    // the state says how a connection ended: DISCONNECTED after our own
+    // disconnect, a negative state when the server or the protocol ended it
+    printf( "client state after disconnect: %s\n", rocketnet_client_state_name( rocketnet_client_state( client ) ) );
     result = 0;
 
 cleanup:

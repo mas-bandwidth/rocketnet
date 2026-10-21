@@ -9,8 +9,8 @@ in-memory `loopback` transport, so it needs no socket and no network.
 
 1. Set `max_message_bytes` and `receive_ring_bytes` on both ends to 256 KB.
    The defaults (262144) already hold 200 KB; the example sets them explicitly.
-2. Connect a client to a server with the published development keys and a
-   development connect token.
+2. Connect a client to a server with the published development keys (set by
+   hand from `examples/dev_keys.h`) and a development connect token.
 3. Send a 200 KB `ROCKETNET_RELIABILITY_RELIABLE` message with `rocketnet_client_start_message`, a
    `memcpy` of a known pattern into the returned buffer, and
    `rocketnet_client_finish_message`. The server receives one reassembled message,
@@ -59,13 +59,15 @@ log lines before it are not part of the check.
 ## Public calls it uses
 
 - `rocketnet_init`, `rocketnet_term`
-- `rocketnet_server_dev_config`, `rocketnet_server_create`, `rocketnet_server_update`,
-  `rocketnet_server_port`, `rocketnet_server_max_clients`, `rocketnet_server_client_connected`,
-  `rocketnet_server_receive_messages`, `rocketnet_server_send_packets`,
-  `rocketnet_server_destroy`
-- `rocketnet_client_default_config`, `rocketnet_client_create`, `rocketnet_client_state`,
-  `rocketnet_client_update`, `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
-  `rocketnet_client_receive_messages`, `rocketnet_client_send_packets`,
-  `rocketnet_client_counter`, `rocketnet_client_disconnect`, `rocketnet_client_destroy`
+- `rocketnet_server_default_config`, `rocketnet_server_create`,
+  `rocketnet_server_start`, `rocketnet_server_destroy`,
+  `rocketnet_server_update`, `rocketnet_server_send_packets`,
+  `rocketnet_server_port`, `rocketnet_server_receive_messages`
+- `rocketnet_client_default_config`, `rocketnet_client_create`,
+  `rocketnet_client_connect`, `rocketnet_client_destroy`,
+  `rocketnet_client_update`, `rocketnet_client_send_packets`,
+  `rocketnet_client_disconnect`, `rocketnet_client_state`,
+  `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
+  `rocketnet_client_receive_messages`, `rocketnet_client_stats`
 - `rocketnet_write_dev_connect_token` (development library only)
-- `rocketnet_time`, `rocketnet_sleep`
+- `rocketnet_status_name`, `rocketnet_time`, `rocketnet_sleep`

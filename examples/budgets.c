@@ -14,6 +14,7 @@
 */
 
 #include "rocketnet.h"
+#include "dev_keys.h"
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
@@ -57,11 +58,16 @@ int main( void )
     printf( "client send budget default: %d kbps\n", ROCKETNET_DEFAULT_CLIENT_SEND_KBPS );
     printf( "server per-client send budget default: %d kbps\n", ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS );
 
-    rocketnet_server_dev_config( &server_config );
+    // the published development keys (dev_keys.h); a real server brings its own keys, recommended through the ROCKETNET_SERVER_* environment variables, or set in code
+    rocketnet_server_default_config( &server_config );
+    server_config.protocol_id = EXAMPLE_DEV_PROTOCOL_ID;
+    memcpy( server_config.backend_public_key, example_dev_backend_public_key, sizeof( server_config.backend_public_key ) );
+    memcpy( server_config.server_public_key, example_dev_server_public_key, sizeof( server_config.server_public_key ) );
+    memcpy( server_config.server_secret_key, example_dev_server_secret_key, sizeof( server_config.server_secret_key ) );
     server_config.max_clients = 2;
     server_config.transport = "loopback";
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, &create_status );
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &create_status );
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
@@ -79,7 +85,7 @@ int main( void )
     printf( "client send budget from config at create: %d kbps\n", client_config.send_kbps );
 
     enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
-    client = rocketnet_client_create( NULL, &client_config, NULL, 0, &create_status_2 );
+    client = rocketnet_client_create( NULL, &client_config, &create_status_2 );
     if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
@@ -99,10 +105,8 @@ int main( void )
         const double now = 1000.0 + ( rocketnet_time() - start );
 
         // (1) update pumps the transport and takes in what arrived
-        if ( rocketnet_server_update( server, now ) != ROCKETNET_UPDATE_OK )
-            goto cleanup;
-        if ( rocketnet_client_update( client, now ) != ROCKETNET_UPDATE_OK )
-            goto cleanup;
+        rocketnet_server_update( server, now );
+        rocketnet_client_update( client, now );
 
         // (2) receive and release every message; count the reliable ones,
         // sent on channel 1, so the example checks none was lost. The server
@@ -117,7 +121,7 @@ int main( void )
         {
             for ( int i = 0; i < batch.num_messages; i++ )
             {
-                if ( batch.client_index[i] == (uint64_t) slot && batch.channel[i] == 1 )
+                if ( batch.client_index[i] == slot && batch.channel[i] == 1 )
                     reliable_received++;
             }
         }
@@ -164,7 +168,9 @@ int main( void )
         rocketnet_sleep( 0.001 );
     }
 
-    const uint64_t drops = rocketnet_client_counter( client, ROCKETNET_CLIENT_COUNTER_BUDGET_DROPS );
+    struct rocketnet_client_stats_t stats;
+    rocketnet_client_stats( client, &stats );
+    const uint64_t drops = stats.budget_drops;
     printf( "unreliable over-budget drops: %llu\n", (unsigned long long) drops );
     printf( "reliable messages arrived: %d/%d\n", reliable_received, RELIABLE_COUNT );
     CHECK( drops > 0 );

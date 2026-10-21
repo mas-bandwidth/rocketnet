@@ -2,12 +2,13 @@
 
 Low-level client/server UDP transport library.
 
-RocketNet's public calls do bounded work and do not block. The frame-loop calls,
-including create, are designed to disappear into an ordinary game profiler.
+RocketNet's public calls do bounded work, and the frame-loop calls, including
+create, are designed to disappear into an ordinary game profiler. The client's
+disconnect and destroy stop its I/O thread and wait for it, bounded.
 
 ## Quick start
 
-This development-build example creates both endpoints without opening a socket,
+This example creates both endpoints without opening a socket,
 checks the create status, and tears them down cleanly:
 
 <!-- check_readme:example:begin -->
@@ -21,7 +22,7 @@ int main( void )
 
     struct rocketnet_server_config_t server_config;
     struct rocketnet_client_config_t client_config;
-    if ( rocketnet_server_dev_config( &server_config ) != ROCKETNET_STATUS_OK ||
+    if ( rocketnet_server_default_config( &server_config ) != ROCKETNET_STATUS_OK ||
          rocketnet_client_default_config( &client_config ) != ROCKETNET_STATUS_OK )
         return 1;
     server_config.transport = "loopback";
@@ -29,13 +30,11 @@ int main( void )
     client_config.step_driven = 1;
 
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
-    struct rocketnet_server_t * server = rocketnet_server_create(
-        NULL, "127.0.0.1:0", &server_config, NULL, 0, &status );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &status );
     if ( !server || status != ROCKETNET_STATUS_OK )
         return 1;
 
-    struct rocketnet_client_t * client = rocketnet_client_create(
-        NULL, &client_config, NULL, 0, &status );
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
     if ( !client || status != ROCKETNET_STATUS_OK )
         return 1;
 

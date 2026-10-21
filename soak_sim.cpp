@@ -363,7 +363,7 @@ int main( int argc, char ** argv )
     if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
         return 1;
 
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
     uint64_t max_iterations = 0;
     if ( argc > 1 )

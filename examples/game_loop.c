@@ -17,6 +17,7 @@
 */
 
 #include "rocketnet.h"
+#include "dev_keys.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,8 +25,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// The header at this base declares start, finish, receive, release and
-// send_packets; the lifecycle rename makes them *_start_message and friends.
+// The message calls: *_start_message, *_finish_message, *_receive_messages
+// (one batch, released by the next receive or update) and *_send_packets.
 
 #define FRAME_DT ( 1.0 / 60.0 )
 #define BUDGET_US 100.0
@@ -99,11 +100,16 @@ int main( int argc, char ** argv )
     // the in-memory loopback transport holds ROCKETNET_LOOPBACK_MAX_ENDPOINTS
     // endpoints: one server and ROCKETNET_MAX_CLIENTS clients
     struct rocketnet_server_config_t server_config;
-    rocketnet_server_dev_config( &server_config );
+    // the published development keys (dev_keys.h); a real server brings its own keys, recommended through the ROCKETNET_SERVER_* environment variables, or set in code
+    rocketnet_server_default_config( &server_config );
+    server_config.protocol_id = EXAMPLE_DEV_PROTOCOL_ID;
+    memcpy( server_config.backend_public_key, example_dev_backend_public_key, sizeof( server_config.backend_public_key ) );
+    memcpy( server_config.server_public_key, example_dev_server_public_key, sizeof( server_config.server_public_key ) );
+    memcpy( server_config.server_secret_key, example_dev_server_secret_key, sizeof( server_config.server_secret_key ) );
     server_config.max_clients = num_clients;
     server_config.transport = "loopback";
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, &create_status );
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &create_status );
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
@@ -123,7 +129,7 @@ int main( int argc, char ** argv )
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];       // a development token stamped far ahead, as in hello
         enum rocketnet_status_t client_status = ROCKETNET_STATUS_OK;
         if ( rocketnet_write_dev_connect_token( server_address, (uint64_t) i, 4102444800ull, token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK ||
-             !( clients[i] = rocketnet_client_create( NULL, &client_config, NULL, 0, &client_status ) ) ||
+             !( clients[i] = rocketnet_client_create( NULL, &client_config, &client_status ) ) ||
              rocketnet_client_connect( clients[i], token ) != ROCKETNET_STATUS_OK )
             { printf( "FAIL: client %d create: %s\n", i, rocketnet_status_name( client_status ) ); goto cleanup; }
     }
@@ -131,8 +137,6 @@ int main( int argc, char ** argv )
     const uint32_t frames = (uint32_t) seconds * 60;
     uint64_t events_sent = 0, events_received = 0;
     double previous = rocketnet_time(), accumulator = 0.0;
-    const uint8_t * data;
-    int bytes;
     uint8_t * buffer;
 
     for ( uint32_t frame = 0; measure_from == UINT32_MAX || frame < measure_from + frames; frame++ )
@@ -186,7 +190,7 @@ int main( int argc, char ** argv )
         // (3) simulate: nothing moves in this example
         for ( int i = 0; measuring && i < num_clients; i++ )                            // (4) queue each client's snapshot
             if ( ( buffer = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, sizeof( message_t ) ) ) )
-                { write_message( buffer, frame ); rocketnet_server_finish_message( server, i, sizeof( message_t ) ); }
+                { write_message( buffer, frame ); rocketnet_server_finish_message( server, sizeof( message_t ) ); }
         if ( !wrong_order ) rocketnet_server_send_packets( server );                    // (5) last, so this frame's messages leave this frame
 
         if ( measuring && connected != num_clients ) { printf( "FAIL: a client disconnected\n" ); goto cleanup; }
