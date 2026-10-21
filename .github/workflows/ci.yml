@@ -215,7 +215,9 @@ jobs:
 
       - name: Check the floating-point floor on every compiler invocation
         if: runner.os == 'Linux'
-        run: bash tools/check_fp_contract.sh
+        run: |
+          bash tools/check_fp_contract.sh
+          cmake -DROCKETNET_OSS_FUZZ_BUILD_SCRIPT=oss-fuzz/build.sh -P tools/check_oss_fuzz_fp_contract.cmake
 
       - name: Check every child make has a bounded -j
         if: runner.os == 'Linux'

@@ -456,6 +456,16 @@ if(ROCKETNET_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 if(ROCKETNET_BUILD_TESTS)
+    # oss-fuzz/build.sh is the one build path that does not go through this
+    # file, so the -ffp-contract=off floor has to be pinned there separately:
+    # this holds every $CC/$CXX compile line in it to the flag. A build target,
+    # not a ctest: the unit binary's target name "test" is reserved once CTest
+    # is enabled. ci.yml runs the same script beside tools/check_fp_contract.sh.
+    add_custom_target(oss_fuzz_fp_contract
+        COMMAND ${CMAKE_COMMAND}
+            -DROCKETNET_OSS_FUZZ_BUILD_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/oss-fuzz/build.sh
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_oss_fuzz_fp_contract.cmake
+        VERBATIM)
     add_executable(test_sodium test_sodium.c)
     target_link_libraries(test_sodium PRIVATE rocketnet)
     rocketnet_use_sodium(test_sodium)
