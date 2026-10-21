@@ -29,12 +29,41 @@
 #define KEY_FILE "client_server.keys"
 #define DEFAULT_PORT 40000
 
+// MSVC deprecates getenv and fopen, so these use getenv_s and fopen_s there.
+// example_getenv copies the variable into buffer and returns 1, or returns 0
+// when it is unset or does not fit.
+
+static int example_getenv( const char * name, char * buffer, size_t size )
+{
+#if defined( _MSC_VER )
+    size_t length = 0;
+    return getenv_s( &length, buffer, size, name ) == 0 && length > 0;
+#else
+    const char * value = getenv( name );
+    if ( !value || strlen( value ) >= size )
+        return 0;
+    memcpy( buffer, value, strlen( value ) + 1 );
+    return 1;
+#endif
+}
+
+static FILE * example_fopen( const char * path, const char * mode )
+{
+#if defined( _MSC_VER )
+    FILE * file = NULL;
+    return fopen_s( &file, path, mode ) == 0 ? file : NULL;
+#else
+    return fopen( path, mode );
+#endif
+}
+
 // the port comes from --port <n>, else ROCKETNET_EXAMPLE_PORT, else the
 // default; returns 0 for a value that is not 1 to 65535
 
 static int example_port( int argc, char ** argv, int * port )
 {
-    const char * text = getenv( "ROCKETNET_EXAMPLE_PORT" );
+    char environment[256];
+    const char * text = example_getenv( "ROCKETNET_EXAMPLE_PORT", environment, sizeof( environment ) ) ? environment : NULL;
     for ( int i = 1; i < argc; i++ )
     {
         if ( strcmp( argv[i], "--port" ) == 0 )
@@ -121,7 +150,7 @@ int main( int argc, char ** argv )
     }
     CHECK( server != NULL );
 
-    FILE * keys = fopen( KEY_FILE, "w" );
+    FILE * keys = example_fopen( KEY_FILE, "w" );
     CHECK( keys != NULL );
     write_hex( keys, "backend_secret", backend_secret_key, ROCKETNET_BACKEND_SECRET_KEY_BYTES );
     write_hex( keys, "server_public", server_public_key, ROCKETNET_SERVER_PUBLIC_KEY_BYTES );
@@ -136,7 +165,6 @@ int main( int argc, char ** argv )
     while ( rocketnet_time() - start < 30.0 )
     {
         const double now = 1000.0 + ( rocketnet_time() - start );
-        const int max_clients = rocketnet_server_max_clients( server );
 
         // (1) update pumps the transport and takes in what arrived
         if ( rocketnet_server_update( server, now ) != ROCKETNET_UPDATE_OK )

@@ -28,6 +28,7 @@
 //     fail.
 
 #include "test_unit_registry.h"
+#include "test/portable_crt.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
@@ -41,7 +42,8 @@
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 static int setenv( const char * name, const char * value, int overwrite )
 {
-    if ( !overwrite && getenv( name ) != NULL )
+    size_t length = 0;
+    if ( !overwrite && getenv_s( &length, NULL, 0, name ) == 0 && length != 0 )
         return 0;
     return _putenv_s( name, value );
 }
@@ -62,11 +64,7 @@ struct env_pin_saved
 
 static void env_pin_set_aside( env_pin_saved * saved )
 {
-    const char * value = getenv( "ROCKETNET_CLIENT_TRANSPORT" );
-    saved->was_set = value != NULL;
-    saved->value[0] = '\0';
-    if ( value )
-        snprintf( saved->value, sizeof(saved->value), "%s", value );
+    saved->was_set = rocketnet_test_getenv( "ROCKETNET_CLIENT_TRANSPORT", saved->value, sizeof(saved->value) ) != 0;
     unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
 }
 
@@ -167,10 +165,11 @@ static void test_client_transport_create_ex_reports_every_status()
     check( status == ROCKETNET_STATUS_OK );
 
     // C2: an invalid environment overlay refuses at the env apply
-    const char * prior = getenv( "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES" );
+    char prior[4096];
+    const bool had_prior = rocketnet_test_getenv( "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES", prior, sizeof( prior ) ) != 0;
     setenv( "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES", "not-a-number", 1 );
     check_create_status( ROCKETNET_STATUS_CONFIG_ENV_INVALID, token, NULL, &state, &status );
-    if ( prior )
+    if ( had_prior )
         setenv( "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES", prior, 1 );
     else
         unsetenv( "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES" );

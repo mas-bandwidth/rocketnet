@@ -33,7 +33,6 @@ static int print_client_stats( struct rocketnet_client_t * client )
 
 static int run_connect_and_traffic( struct rocketnet_server_t * server, struct rocketnet_client_t * client, double * time_base )
 {
-    const int max_clients = rocketnet_server_max_clients( server );
     const double start = rocketnet_time();
     static uint8_t payload[32] = { 0 };
     int connected = 0;
@@ -142,7 +141,7 @@ int main( void )
     }
     CHECK( client != NULL );
     CHECK( run_connect_and_traffic( server, client, &time_base ) == 0 );
-    const int client_index = rocketnet_client_index( client );
+    const int client_index = (int) rocketnet_client_index( client );
     printf( "client state %s\n", rocketnet_client_state_name( rocketnet_client_state( client ) ) );
     CHECK( print_client_stats( client ) );
     printf( "server client %d rtt %.2f ms, jitter %.2f ms, loss %.2f%%, bandwidth %.1f kbps sent %.1f kbps received\n",

@@ -160,9 +160,7 @@ static void rocketnet_rotation_clear_mapping( struct rocketnet_rotation_server_t
         rocketnet_encryption_map_remove( test->server.encryption_map, index );
 }
 
-static void rocketnet_rotation_build_request_no_cookie( struct rocketnet_rotation_server_t * test,
-                                                        uint8_t * request,
-                                                        uint64_t client_id )
+static void rocketnet_rotation_build_request_no_cookie( uint8_t * request, uint64_t client_id )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
     struct rocketnet_connect_token_private_t private_fields;
@@ -509,7 +507,7 @@ static void test_cookie_requests_spend_no_handshake_budget()
     rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 1 );
 
     rocketnet_unit_check( rocketnet_address_parse( &test.client_address, "10.200.0.1:56789" ) );
-    rocketnet_rotation_build_request_no_cookie( &test, request, 0x20000ULL );
+    rocketnet_rotation_build_request_no_cookie( request, 0x20000ULL );
     rocketnet_unit_check( rocketnet_rotation_process_from_client_address( &test, request ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
     rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 1 );
 

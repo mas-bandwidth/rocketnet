@@ -49,7 +49,10 @@ struct mo_packet_t
     int slot;
     uint64_t connection;                            // the slot's connection when the packet was sent (P9b)
     int bytes;
+    // the padding to data and after it is written out, so the compiler adds none (MSVC C4324)
+    uint8_t head_pad[16 - sizeof( uint64_t ) - sizeof( int )];
     alignas( 16 ) uint8_t data[ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t tail_pad[( ROCKETNET_MAX_PAYLOAD_BYTES + 15 ) / 16 * 16 - ROCKETNET_MAX_PAYLOAD_BYTES];
 };
 
 struct mo_net_t;

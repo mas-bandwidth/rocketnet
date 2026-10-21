@@ -21,6 +21,7 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_counters.h"
 #include "test/live_verify.h"
+#include "test/portable_crt.h"
 
 #include <stdio.h>
 #include <signal.h>
@@ -87,7 +88,7 @@ static void set_status( const char * path, const char * line )
 {
     if ( !path )
         return;
-    FILE * f = fopen( path, "w" );
+    FILE * f = rocketnet_test_fopen( path, "w" );
     if ( f )
     {
         fprintf( f, "%s\n", line );
@@ -844,7 +845,7 @@ static int run_self_test( const char * path, const char * label, uint32_t seed )
 
     if ( path )
     {
-        g_results = fopen( path, "w" );
+        g_results = rocketnet_test_fopen( path, "w" );
         if ( g_results )
         {
             results_line( "bench", "%s\t%u\t500\t1000\tself-test", label, seed );
@@ -927,10 +928,10 @@ int main( int argc, char ** argv )
     rocketnet_server_transport_dev_config( &config );
     config.max_clients = max_clients;
 
-    const char * env_transport = getenv( "ROCKETNET_SERVER_TRANSPORT" );
+    char env_transport[sizeof config.transport];
     if ( transport )
         snprintf( config.transport, sizeof config.transport, "%s", transport );
-    else if ( env_transport )
+    else if ( rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", env_transport, sizeof env_transport ) )
         snprintf( config.transport, sizeof config.transport, "%s", env_transport );
 
     // section 9: when xdp is pinned, refuse the in-tree transport
@@ -963,7 +964,7 @@ int main( int argc, char ** argv )
     printf( "server max_clients %d\n", config.max_clients );
     if ( results_path )
     {
-        g_results = fopen( results_path, "w" );
+        g_results = rocketnet_test_fopen( results_path, "w" );
         if ( g_results )
         {
             results_line( "bench", "%s\t%u\t%u\t%d\t%s", label, seed, send_kbps, max_clients, rocketnet_server_transport_io_name( transport_obj ) );
@@ -1064,8 +1065,6 @@ int main( int argc, char ** argv )
     set_status( status_path, "stopping" );
     rocketnet_message_server_destroy( server );
 
-    const char * print_counters = getenv( "ROCKETNET_SERVER_PRINT_COUNTERS" );
-    (void) print_counters;
     rocketnet_term();
 
     results_event( "stopped" );

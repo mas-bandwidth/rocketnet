@@ -34,6 +34,35 @@ notice remain in the generated files. Installing the SDK installs the sodium
 license too. The private symbol prefix prevents collisions when an application
 also links its own libsodium; the SDK shared library exports no sodium symbols.
 
+## Warning adaptations
+
+The SDK builds `sodium.c` with the rest of the tree, with warnings as errors
+at `-Wall -Wextra -Wpedantic` (GCC, Clang) and `/W4` (MSVC), and no flag or
+pragma is added for it. Each warning the pinned inputs raised there is fixed
+at its input by the generator (`BASELINE_ADAPTATIONS`, `UPSTREAM_ADAPTATIONS`
+and the manifest's `renames` in `tools/generate_sodium.py`); every
+replacement must match exactly once, so a re-vendor that changes the text
+fails loudly and the edit is reviewed again:
+
+| Input | Warning | Edit |
+| --- | --- | --- |
+| baseline `sodium.h` (`uint128_t`) | `-Wpedantic` (`__int128` is an extension) | `__extension__ typedef` |
+| baseline `sodium.h` (`ACQUIRE_FENCE`) | `-Wtsan` (GCC: ThreadSanitizer does not support a standalone fence) | a ThreadSanitizer build (`__SANITIZE_THREAD__`, test builds only) takes upstream's no-fence fallback; the fence is a speculation barrier, not synchronisation |
+| baseline `sodium_verify.c` | `-Wunknown-pragmas` (Clang: no GCC target pragma) | the SSE2 target pragma is GCC-only; the block already requires `__SSE2__` |
+| `crypto_core/ed25519/ref10/ed25519_ref10.c` | `-Wunused-function` | `ge25519_p3_to_precomp`, never called by the subset, removed |
+| `crypto_core/ed25519/ref10/ed25519_ref10.c` | C4459 (local `d` hides the curve constant `d`) | the local in `ge25519_is_canonical` and `ristretto255_is_canonical` is `d_` |
+| `crypto_scalarmult/curve25519/scalarmult_curve25519.c` | C4459 (amalgamation: the local `d` hides ed25519's file-scope `d`) | `d` added to the file's `renames` |
+| `crypto_generichash/blake2b/ref/blake2b-compress-avx2.h` | `-Wunused-function` | `LOADU64`, never called, removed |
+| `crypto_generichash/blake2b/ref/blake2b-ref.c` | C4245 (`int` -1 into `uint64_t`) | `(uint64_t) -1`, the same value |
+| baseline `sodium.h` (`sodium_private_common.h`) | none: it turned C4127, C4244, C4668 and C4456 off for every file including `sodium.h` | the four `#pragma warning(disable:...)` lines removed; the warnings they hid are fixed at their sites |
+| `fe_25_5/fe.h` `fe25519_tobytes`; `ed25519_ref10.c` `sc25519_mul`, `sc25519_muladd`, `sc25519_reduce`, `slide_vartime`; `salsa20_ref.c` `stream_ref`, `stream_ref_xor_ic` | C4244 (a 64- or 32-bit limb stored into a byte) | each such store spelled with the cast the implicit conversion performs, `(unsigned char) (expr)` (`NARROWING_STORES`): the same value |
+
+None changes cryptographic arithmetic; `test_sodium` and the oracle check
+below cover the result. Upstream's own `#pragma GCC diagnostic ignored
+"-Wlong-long"` lines in its public headers are kept as written. The strict
+set (`ROCKETNET_STRICT_WARNINGS`: `-Wconversion`, `-Wsign-conversion` and
+the rest) is not yet clean here; that is a known issue in ROADMAP.md.
+
 ## Reproduce
 
 From the repository root:

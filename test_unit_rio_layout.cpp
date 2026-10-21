@@ -63,7 +63,6 @@ static void test_rio_transport_layout_slices_tile_the_region()
 
     // no two sub-regions overlap: each region's start is at least the end
     // of the previous one.
-    rocketnet_unit_check( p.send_addresses_offset >= 0 );
     rocketnet_unit_check( p.receive_slices_offset >= p.send_addresses_offset + 32768 * 64 - 1 );
     rocketnet_unit_check( p.receive_addresses_offset >= p.receive_slices_offset + 4096 * 2048 - 1 );
     rocketnet_unit_check( p.total_bytes >= p.receive_addresses_offset + 4096 * 64 - 1 );
@@ -155,7 +154,7 @@ static void test_rio_transport_context_round_trips()
     c = rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 255, 0xffffffff );
     rocketnet_unit_check( rocketnet_rio_context_kind( c ) == ROCKETNET_RIO_CONTEXT_RECEIVE );
     rocketnet_unit_check( rocketnet_rio_context_phase( c ) == 255 );
-    rocketnet_unit_check( rocketnet_rio_context_index( c ) == 0xffffffff );
+    rocketnet_unit_check( (uint32_t) rocketnet_rio_context_index( c ) == 0xffffffffu );
 
     c = rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_SEND, 255, 0 );
     rocketnet_unit_check( rocketnet_rio_context_kind( c ) == ROCKETNET_RIO_CONTEXT_SEND );
@@ -165,7 +164,7 @@ static void test_rio_transport_context_round_trips()
     c = rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_SEND, 0, 0xffffffff );
     rocketnet_unit_check( rocketnet_rio_context_kind( c ) == ROCKETNET_RIO_CONTEXT_SEND );
     rocketnet_unit_check( rocketnet_rio_context_phase( c ) == 0 );
-    rocketnet_unit_check( rocketnet_rio_context_index( c ) == 0xffffffff );
+    rocketnet_unit_check( (uint32_t) rocketnet_rio_context_index( c ) == 0xffffffffu );
 
     rocketnet_unit_check( rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_SEND, 0, 0 )
         != rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 0, 0 ) );

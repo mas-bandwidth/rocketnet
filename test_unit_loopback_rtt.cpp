@@ -25,6 +25,7 @@
 // orders assert zero resends.
 
 #include "test_unit_registry.h"
+#include "test/portable_crt.h"
 
 #include "rocketnet_internal.h"
 #include "sdk/rocketnet.h"
@@ -248,7 +249,8 @@ static void loopback_rtt_run( int side, struct loopback_rtt_measures_t * m )
     m->srtt = sender->connections[0].ordered.ack.srtt;
     m->resend_delay = sender->connections[0].ordered.ack.resend_delay;
 
-    if ( getenv( "ROCKETNET_LOOPBACK_RTT_PRINT" ) != NULL )
+    char rtt_print[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_LOOPBACK_RTT_PRINT", rtt_print, sizeof( rtt_print ) ) )
         printf( "LOOPBACK_RTT %s sent=%d received=%d in_order=%d packets=%d samples=%d sample_min=%.6f sample_max=%.6f "
                 "srtt=%.6f resend_delay=%.6f resent=%llu duplicate=%llu\n",
                 side == LOOPBACK_RTT_SERVER ? "server" : "client", m->sent, m->received, m->in_order,

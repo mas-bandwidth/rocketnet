@@ -24,7 +24,6 @@
 #ifndef ROCKETNET_UNIT_TEST_REGISTRY_H
 #define ROCKETNET_UNIT_TEST_REGISTRY_H
 
-#include <setjmp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,14 +45,21 @@ inline struct rocketnet_unit_file_test_t ** rocketnet_unit_file_head()
     return &head;
 }
 
-// the jump buffer the expected-fail harness installs while it runs a test, so
-// a failing rocketnet_unit_check inside it longjmps back to the harness
-// instead of aborting the process. NULL outside an expected-fail test.
+// set by the expected-fail harness while it runs a test, so a failing
+// rocketnet_unit_check inside it throws rocketnet_unit_expected_failure_t
+// back to the harness instead of aborting the process. false outside an
+// expected-fail test. (An exception, not setjmp/longjmp: longjmp skips the
+// destructors of the C++ objects it unwinds past.)
 
-inline jmp_buf ** rocketnet_unit_expected_fail_env()
+struct rocketnet_unit_expected_failure_t
 {
-    static jmp_buf * env = NULL;
-    return &env;
+    int line;
+};
+
+inline bool * rocketnet_unit_expected_fail_active()
+{
+    static bool active = false;
+    return &active;
 }
 
 // A static registrar: a file-scope object whose constructor registers the
@@ -92,8 +98,8 @@ do                                                                              
 {                                                                                                                 \
     if ( !(condition) )                                                                                           \
     {                                                                                                             \
-        if ( *rocketnet_unit_expected_fail_env() )                                                                \
-            longjmp( **rocketnet_unit_expected_fail_env(), 1 );                                                   \
+        if ( *rocketnet_unit_expected_fail_active() )                                                             \
+            throw rocketnet_unit_expected_failure_t{ __LINE__ };                                                  \
         printf( "check failed: ( %s ), function %s, file %s, line %d\n", #condition,                             \
                 (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ );                                   \
         fflush( stdout );                                                                                         \
@@ -158,19 +164,21 @@ inline int rocketnet_unit_tests_run_named( const char * name )
         return 0;
     }
 
-    jmp_buf env;
-    *rocketnet_unit_expected_fail_env() = &env;
-    if ( setjmp( env ) == 0 )
+    *rocketnet_unit_expected_fail_active() = true;
+    try
     {
         test->function();
-        *rocketnet_unit_expected_fail_env() = NULL;
-        printf( "check failed: ( %s ), expected to fail for card %s but passed; remove the marker\n",
-                test->name, test->expected_fail_card );
-        fflush( stdout );
-        return 1;
     }
-    *rocketnet_unit_expected_fail_env() = NULL;
-    return 0;
+    catch ( const rocketnet_unit_expected_failure_t & )
+    {
+        *rocketnet_unit_expected_fail_active() = false;
+        return 0;
+    }
+    *rocketnet_unit_expected_fail_active() = false;
+    printf( "check failed: ( %s ), expected to fail for card %s but passed; remove the marker\n",
+            test->name, test->expected_fail_card );
+    fflush( stdout );
+    return 1;
 }
 
 // runs every registered test in this process, in list order. the suite runs

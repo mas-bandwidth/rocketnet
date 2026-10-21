@@ -10,8 +10,10 @@ static void unhex(unsigned char * out, const char * text)
 {
     for (size_t i = 0; i < strlen(text) / 2; ++i)
     {
-        unsigned byte;
-        CHECK(sscanf(text + i * 2, "%2x", &byte) == 1);
+        const char pair[3] = { text[i * 2], text[i * 2 + 1], '\0' };
+        char * end = NULL;
+        const unsigned long byte = strtoul(pair, &end, 16);
+        CHECK(end != pair);
         out[i] = (unsigned char)byte;
     }
 }

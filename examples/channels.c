@@ -83,16 +83,10 @@ int main( void )
         CHECK( rocketnet_client_update( client, now ) == ROCKETNET_UPDATE_OK );
 
         // (2) receive and release every received message on both channels
-        const uint8_t * data = NULL;
-        int bytes = 0;
         struct rocketnet_message_batch_t incoming;
         while ( rocketnet_client_receive_messages( client, &incoming ) )
         {
-            for ( int i = 0; i < incoming.num_messages; i++ )
-            {
-                data = incoming.data[i];
-                bytes = incoming.bytes[i];
-            }
+            // the server sends this client nothing, so there is nothing to read
         }
 
         uint32_t chat_this_frame = 0, pos_this_frame = 0;

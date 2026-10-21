@@ -529,10 +529,12 @@ static bool get_gateway_mac_address( const char * interface_name, int address_ty
     // other env value -- a malformed MAC refuses loudly rather than
     // silently becoming 00:00:00:00:00:00 through strtol
 
-    const char * gateway_ethernet_address_env = rocketnet_platform_getenv( "ROCKETNET_GATEWAY_ETHERNET_ADDRESS" );
-    if ( gateway_ethernet_address_env && gateway_ethernet_address_env[0] != '\0' )
+    // a value too long for the buffer is set, and refused below as no mac address
+    char gateway_ethernet_address_env[64];
+    const int gateway_ethernet_address_found = rocketnet_platform_getenv( "ROCKETNET_GATEWAY_ETHERNET_ADDRESS", gateway_ethernet_address_env, sizeof( gateway_ethernet_address_env ) );
+    if ( gateway_ethernet_address_found < 0 || ( gateway_ethernet_address_found > 0 && gateway_ethernet_address_env[0] != '\0' ) )
     {
-        bool valid = strlen( gateway_ethernet_address_env ) == 17;
+        bool valid = gateway_ethernet_address_found > 0 && strlen( gateway_ethernet_address_env ) == 17;
         for ( int i = 0; valid && i < 17; i++ )
         {
             const char c = gateway_ethernet_address_env[i];
@@ -1875,8 +1877,8 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         // mutexes were never created (test_xdp_filter.cpp:1603,
         // xdp_create_fails_part_way_tears_down)
         {
-            const char * fail_at_queue = rocketnet_platform_getenv( "ROCKETNET_TEST_XDP_FAIL_AT_QUEUE" );
-            if ( fail_at_queue && atoi( fail_at_queue ) == queue )
+            char fail_at_queue[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
+            if ( rocketnet_platform_getenv( "ROCKETNET_TEST_XDP_FAIL_AT_QUEUE", fail_at_queue, sizeof( fail_at_queue ) ) > 0 && atoi( fail_at_queue ) == queue )
             {
                 rocketnet_error( "server xdp create failed at queue %d (injected by ROCKETNET_TEST_XDP_FAIL_AT_QUEUE)", queue );
                 rocketnet_server_socket_destroy( server_socket );
@@ -2259,7 +2261,7 @@ int rocketnet_server_socket_send_queue( const rocketnet_address_t * to, int num_
     return (int) ( hash % (uint64_t) num_queues );
 }
 
-uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, int queue, const rocketnet_address_t * to, const uint8_t * destination_mac )
+uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t /* packet_id */, int queue, const rocketnet_address_t * to, const uint8_t * destination_mac )
 {
     rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
 
@@ -2746,6 +2748,7 @@ static void pin_thread_to_cpu( int cpu )
 
     int num_cpus = sysconf( _SC_NPROCESSORS_ONLN );
     rocketnet_assert( cpu < num_cpus );
+    (void) num_cpus; // read only by the assert above
 
     cpu_set_t cpuset;
     CPU_ZERO( &cpuset );
@@ -2849,7 +2852,7 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
 
             rocketnet_server_socket_receive_buffer_t * receive_buffer = &socket->receive_buffer[j];
 
-            for ( int i = 0; i < receive_buffer->num_packets; i++ )
+            for ( int i = 0; i < (int) receive_buffer->num_packets; i++ )
             {
                 uint8_t * eth = receive_buffer->eth[i];
                 rocketnet_address_t from = receive_buffer->from[i];
@@ -3038,7 +3041,7 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
         if ( num_completed > 0 )
         {
-            for ( int i = 0; i < num_completed; i++ )
+            for ( int i = 0; i < (int) num_completed; i++ )
             {
                 uint64_t frame = *xsk_ring_cons__comp_addr( &socket->complete_queue, complete_index + i );
                 free_send_frame( socket, frame );

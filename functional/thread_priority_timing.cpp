@@ -32,6 +32,7 @@
 
 #include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
+#include "../test/portable_crt.h"
 
 #include <algorithm>
 #include <atomic>
@@ -81,8 +82,8 @@ static void priority_timing_check( bool condition, const char * expression, int 
 
 static double priority_timing_seconds()
 {
-    const char * value = getenv( "ROCKETNET_TIMING_SECONDS" );
-    if ( !value )
+    char value[256];
+    if ( !rocketnet_test_getenv( "ROCKETNET_TIMING_SECONDS", value, sizeof( value ) ) )
         return 2.0;
     const double seconds = atof( value );
     return seconds > 0.0 ? seconds : 2.0;
@@ -229,6 +230,22 @@ static std::atomic<int> priority_timing_iocp_workers{ -1 };
 static std::atomic<int> priority_timing_gso_queues{ 0 };
 static char priority_timing_first_refusal[512];
 
+// a log line "<prefix> <count>...": the count after the prefix, as sscanf's
+// "<prefix> %d" reads it (whitespace skipped, an optional sign, decimal digits)
+static bool priority_timing_parse_count( const char * message, const char * prefix, int * value )
+{
+    const size_t prefix_length = strlen( prefix );
+    if ( strncmp( message, prefix, prefix_length ) != 0 )
+        return false;
+    const char * start = message + prefix_length;
+    char * end = NULL;
+    const long parsed = strtol( start, &end, 10 );
+    if ( end == start )
+        return false;
+    *value = (int) parsed;
+    return true;
+}
+
 static void priority_timing_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
 {
     (void) context;
@@ -239,10 +256,10 @@ static void priority_timing_log( void * context, enum rocketnet_log_level_t leve
             snprintf( priority_timing_first_refusal, sizeof( priority_timing_first_refusal ), "%s", message );
     }
     int workers = 0;
-    if ( sscanf( message, "iocp transport: %d workers", &workers ) == 1 )
+    if ( priority_timing_parse_count( message, "iocp transport:", &workers ) )
         priority_timing_iocp_workers.store( workers );
     int queues = 0;
-    if ( sscanf( message, "gso transport: %d queue", &queues ) == 1 )
+    if ( priority_timing_parse_count( message, "gso transport:", &queues ) )
         priority_timing_gso_queues.store( queues );
     if ( level <= ROCKETNET_LOG_LEVEL_ERROR )
         printf( "%s\n", message );

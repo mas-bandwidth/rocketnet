@@ -119,8 +119,14 @@ int main( int argc, char ** argv )
         if ( strcmp( arg, "--seeds" ) == 0 && i + 1 < argc )
         {
             const char * range = argv[++i];
-            unsigned long long a, b;
-            if ( sscanf( range, "%llu-%llu", &a, &b ) != 2 || a > b )
+            // a-b: an unsigned number, a '-', an unsigned number
+            char * a_end = NULL;
+            char * b_end = NULL;
+            const unsigned long long a = strtoull( range, &a_end, 10 );
+            const bool have_a = a_end != range && *a_end == '-';
+            const unsigned long long b = have_a ? strtoull( a_end + 1, &b_end, 10 ) : 0;
+            const bool have_b = have_a && b_end != a_end + 1;
+            if ( !have_b || a > b )
             {
                 fprintf( stderr, "dst: --seeds needs a-b with a <= b\n" );
                 return 2;

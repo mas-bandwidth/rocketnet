@@ -168,7 +168,7 @@ static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketn
     config.max_clients = clients;
     config.max_payload_bytes = payload_limit;
     config.num_reassembly_slots = 1;
-    strcpy(config.transport, "portable");
+    snprintf(config.transport, sizeof(config.transport), "%s", "portable");
     auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
     CHECK(server);
     rocketnet_server_transport_io_close(&server->io);
@@ -185,7 +185,7 @@ static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketn
     for (int i = 0; i < clients; ++i)
     {
         rocketnet_address_t address;
-        CHECK(rocketnet_address_parse(&address, "127.0.0.1:0")); address.port = 1000 + i;
+        CHECK(rocketnet_address_parse(&address, "127.0.0.1:0")); address.port = (uint16_t)( 1000 + i );
         int index = rocketnet_encryption_map_add(server->protocol.encryption_map, &address, 100.0);
         CHECK(index >= 0);
         auto * mapping = rocketnet_encryption_map_entry(server->protocol.encryption_map, index);
@@ -403,7 +403,7 @@ static void test_entries_carry_connection_id(bool staged)
         const int block = rocketnet_ack_block_build(plaintext, ROCKETNET_ACK_BLOCK_MAX_BYTES, &replay);
         CHECK(block > 0);
         memset(plaintext + block, 0xA0 + c, 4);
-        CHECK(rocketnet_address_parse(&f->feed_from[c], "127.0.0.1:0")); f->feed_from[c].port = 1000 + c;
+        CHECK(rocketnet_address_parse(&f->feed_from[c], "127.0.0.1:0")); f->feed_from[c].port = (uint16_t)( 1000 + c );
         f->feed_bytes[c] = rocketnet_write_sealed_packet(f->feed_data[c], ROCKETNET_CONNECTION_PAYLOAD_PACKET,
             protocol->filter_value, 1, NULL, plaintext, block + 4, protocol->protocol_id,
             mapping->connection_salt, NULL, mapping->keys.session_client_to_server);

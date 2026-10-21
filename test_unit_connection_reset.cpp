@@ -4,6 +4,7 @@
 */
 
 #include "test_unit_registry.h"
+#include "test/portable_crt.h"
 
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_connection_reset.h"
@@ -37,12 +38,8 @@ struct reset_env_pin_t
 
 static void reset_env_pin_set_aside( reset_env_pin_t * pin, const char * name )
 {
-    const char * value = getenv( name );
     pin->name = name;
-    pin->was_set = value != NULL;
-    pin->value[0] = '\0';
-    if ( value )
-        snprintf( pin->value, sizeof(pin->value), "%s", value );
+    pin->was_set = rocketnet_test_getenv( name, pin->value, sizeof(pin->value) ) != 0;
 #if defined(_WIN32)
     _putenv_s( name, "" );
 #else
@@ -105,21 +102,16 @@ static const rocketnet_reset_member_t endpoint_layout[] =
 };
 #undef ENDPOINT_MEMBER
 
-#define MESSAGE_FIELD( decision, field ) { #field, offsetof( rn_message_connection_t, field ), sizeof( ((rn_message_connection_t*)0)->field ), alignof(decltype(((rn_message_connection_t*)0)->field)), #decision[0] == 'R' },
-// rn_message_connection_t is not standard layout, so offsetof is
-// conditionally supported on it; every supported compiler gives the member
-// offset, which is all the reset audit compares
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Winvalid-offsetof"
-#endif
+// rn_message_connection_t is not standard layout (it derives from
+// rn_endpoint_t), so offsetof is only conditionally supported on it; each
+// member's offset is measured on a probe object instead, which is all the
+// reset audit compares
+static rn_message_connection_t reset_message_connection_probe;
+#define MESSAGE_FIELD( decision, field ) { #field, (size_t) ( (const char *) &reset_message_connection_probe.field - (const char *) &reset_message_connection_probe ), sizeof( ((rn_message_connection_t*)0)->field ), alignof(decltype(((rn_message_connection_t*)0)->field)), #decision[0] == 'R' },
 static const rocketnet_reset_member_t message_connection_fields[] =
 {
     ROCKETNET_MESSAGE_CONNECTION_FIELDS( MESSAGE_FIELD )
 };
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
 #undef MESSAGE_FIELD
 
 #define RESET_COUNT( array ) ( sizeof(array) / sizeof((array)[0]) )
@@ -293,7 +285,7 @@ static void test_connection_reset_inventory_covers_every_field()
 #undef CHECK_MESSAGE_RESET
     for ( uint32_t i = 0; i < connection->region->delivery_entries; i++ )
         check( connection->views[i] == 0 );
-    for ( int i = 0; i < connection->region->num_channels; i++ )
+    for ( uint32_t i = 0; i < connection->region->num_channels; i++ )
         check( connection->cursors[i] == 0 );
     rn_message_object_destroy( object );
 }
@@ -334,7 +326,7 @@ static const reset_loopback_keys_t * reset_loopback_keys()
     return &keys;
 }
 
-enum { RESET_LOOPBACK_PROTOCOL_ID = 0x5245534554ULL };
+static const uint64_t RESET_LOOPBACK_PROTOCOL_ID = 0x5245534554ULL;
 
 static rocketnet_message_server_t * reset_loopback_server_create( double now, const rocketnet_message_config_t * message_config = NULL )
 {

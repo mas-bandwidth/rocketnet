@@ -27,6 +27,8 @@ DWORD rocketnet_iocp_coalesced_stride( WSAMSG * message );
 struct coalesced_cmsg_buffer_t
 {
     WSAMSG message;
+    // the padding to control is written out, so the compiler adds none (MSVC C4324)
+    char pad[( sizeof( WSAMSG ) + 15 ) / 16 * 16 - sizeof( WSAMSG )];
     alignas(16) char control[64];
 };
 

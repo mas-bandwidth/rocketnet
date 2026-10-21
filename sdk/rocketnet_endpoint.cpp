@@ -188,7 +188,7 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
         // the actual byte count, even when the caller finishes short.
         endpoint->max_payload_bytes = transport_max;
         // One size rule refuses only the configured maximum; larger records promote to the reliable twin.
-        const bool over_max = (uint32_t) bytes > endpoint->config->max_message_bytes;
+        const bool over_max = (uint32_t) bytes > (uint32_t) endpoint->config->max_message_bytes;
         if ( over_max )
         {
             rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
@@ -314,9 +314,9 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
             rocketnet_assert( endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE ||
                               endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
                               endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT );
-            const uint32_t channel = endpoint->ordered.channels.pending_channel;
+            const uint32_t pending_channel = endpoint->ordered.channels.pending_channel;
             endpoint->ordered.channels.pending = RN_DESCRIPTOR_NONE;
-            descriptor->channel = (uint16_t) channel;
+            descriptor->channel = (uint16_t) pending_channel;
             descriptor->reliability = (uint8_t) endpoint->pending_type;
             descriptor->priority = ROCKETNET_PRIORITY_MEDIUM;
             descriptor->fragments = 1;

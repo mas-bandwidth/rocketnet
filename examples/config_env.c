@@ -25,6 +25,22 @@
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
+// Copies an environment variable into buffer and returns 1, or returns 0 when
+// it is unset or does not fit. MSVC deprecates getenv, so it uses getenv_s.
+static int example_getenv( const char * name, char * buffer, size_t size )
+{
+#if defined( _MSC_VER )
+    size_t length = 0;
+    return getenv_s( &length, buffer, size, name ) == 0 && length > 0;
+#else
+    const char * value = getenv( name );
+    if ( !value || strlen( value ) >= size )
+        return 0;
+    memcpy( buffer, value, strlen( value ) + 1 );
+    return 1;
+#endif
+}
+
 // Show the default and the struct value: print two defaults from the dev
 // config, set them, and prove create honors the struct value.
 static int run_show_default_and_struct( void )
@@ -115,13 +131,17 @@ cleanup:
 int main( int argc, char ** argv )
 {
     int result = 1;
-    const char * env = getenv( "ROCKETNET_SERVER_MAX_CLIENTS" );
+    char env[256];
+    const int have_env = example_getenv( "ROCKETNET_SERVER_MAX_CLIENTS", env, sizeof( env ) );
 
     CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
-    if ( !env )
+    if ( !have_env )
     {
         char command[512];
+
+        // the example re-runs itself by the name it was started with
+        CHECK( argc > 0 );
 
         // default and struct first, then spawn the environment demo children
         CHECK( run_show_default_and_struct() == 0 );

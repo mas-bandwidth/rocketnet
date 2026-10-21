@@ -20,6 +20,7 @@
 // covers them, so they are not coded twice here.
 
 #include "test_unit_registry.h"
+#include "test/portable_crt.h"
 
 #ifdef _WIN32
 #include <io.h>
@@ -47,7 +48,7 @@ static std::string ascii_lower( const std::string & text )
 static bool read_source_file( const std::string & relative_path, std::string & contents )
 {
     std::string path = std::string( ROCKETNET_SOURCE_DIR ) + "/" + relative_path;
-    FILE * file = fopen( path.c_str(), "rb" );
+    FILE * file = rocketnet_test_fopen( path.c_str(), "rb" );
     if ( !file )
         return false;
     char buffer[4096];
@@ -289,7 +290,8 @@ static void test_client_server_say_messages_not_packets()
 
     // a passing run prints its name only; ROCKETNET_TEST_VERBOSE adds the
     // per-reason report
-    if ( getenv( "ROCKETNET_TEST_VERBOSE" ) == NULL )
+    char verbose[4096];
+    if ( !rocketnet_test_getenv( "ROCKETNET_TEST_VERBOSE", verbose, sizeof( verbose ) ) )
         return;
 
     std::vector<std::string> reasons;

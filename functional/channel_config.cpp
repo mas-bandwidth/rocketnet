@@ -10,6 +10,7 @@
 */
 
 #include "channel_harness.h"
+#include "../test/portable_crt.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,8 +39,8 @@ static const double rocketnet_config_step = 1.0 / 60.0;
 
 static float rocketnet_config_loss_percent( float fallback )
 {
-    const char * value = getenv( "ROCKETNET_CHANNEL_LOSS_PERCENT" );
-    if ( value && value[0] )
+    char value[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_CHANNEL_LOSS_PERCENT", value, sizeof( value ) ) && value[0] )
         return (float) atof( value );
     return fallback;
 }

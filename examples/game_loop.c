@@ -131,8 +131,6 @@ int main( int argc, char ** argv )
     const uint32_t frames = (uint32_t) seconds * 60;
     uint64_t events_sent = 0, events_received = 0;
     double previous = rocketnet_time(), accumulator = 0.0;
-    const uint8_t * data;
-    int bytes;
     uint8_t * buffer;
 
     for ( uint32_t frame = 0; measure_from == UINT32_MAX || frame < measure_from + frames; frame++ )

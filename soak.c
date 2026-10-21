@@ -40,6 +40,7 @@
 
 #include "rocketnet.h"
 #include "rocketnet_layers.h"
+#include "test/portable_crt.h"
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
@@ -127,8 +128,8 @@ static int soak_duplicates_planted( void )
     const char * names[] = { "ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT", "ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT" };
     for ( int i = 0; i < 2; i++ )
     {
-        const char * value = getenv( names[i] );
-        if ( value && value[0] != '\0' && strtol( value, NULL, 10 ) != 0 )
+        char value[256];
+        if ( rocketnet_test_getenv( names[i], value, sizeof( value ) ) && value[0] != '\0' && strtol( value, NULL, 10 ) != 0 )
             return 1;
     }
     return 0;
@@ -234,8 +235,8 @@ int main( int argc, char ** argv )
         }
     }
 
-    const char * fault_verify_env = getenv( "ROCKETNET_SOAK_FAULT_VERIFY" );
-    int fault_verify_pending = ( fault_verify_env && fault_verify_env[0] != '\0' && strcmp( fault_verify_env, "0" ) != 0 ) ? 1 : 0;
+    char fault_verify_env[256];
+    int fault_verify_pending = ( rocketnet_test_getenv( "ROCKETNET_SOAK_FAULT_VERIFY", fault_verify_env, sizeof( fault_verify_env ) ) && fault_verify_env[0] != '\0' && strcmp( fault_verify_env, "0" ) != 0 ) ? 1 : 0;
 
     signal( SIGINT, interrupt_handler );
 

@@ -21,15 +21,6 @@ endif()
 if(MSVC)
     add_compile_options(/utf-8)
 endif()
-# clang-cl does not map #pragma warning(disable:4996) (rocketnet_platform.h,
-# rocketnet.cpp) to its own deprecation warning, so the CRT deprecations that
-# MSVC silences there are silenced here for clang-cl alone. The vendored
-# sodium amalgamation keeps helpers its configuration does not call; clang-cl
-# reports them where MSVC at /W3 does not.
-if(MSVC AND CMAKE_C_COMPILER_ID STREQUAL "Clang")
-    add_compile_options(-Wno-deprecated-declarations)
-    set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/sodium/sodium.c" PROPERTIES COMPILE_OPTIONS "-Wno-unused-function")
-endif()
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include(CheckCCompilerFlag)
@@ -117,6 +108,30 @@ if(MSVC)
     add_compile_options(/fp:precise)
 else()
     add_compile_options(-ffp-contract=off)
+endif()
+# The warning floor, at the same directory scope so every target this tree
+# builds carries it, the vendored sodium source included (sodium/NOTES.md):
+# a customer compiles these sources inside their game with their own warning
+# flags, so the tree ships with no warning at the floor and the floor fails
+# the build. ROCKETNET_STRICT_WARNINGS adds the strict set a game is likely
+# to use (not yet clean: a known issue in ROADMAP.md); ROCKETNET_WARNINGS_AS_ERRORS=OFF
+# keeps the warnings and drops only the failure, for a compiler newer than
+# the ones the tree is checked on.
+option(ROCKETNET_WARNINGS_AS_ERRORS "Fail the build on any compiler warning" ON)
+option(ROCKETNET_STRICT_WARNINGS "Add the strict warning set (conversion, shadow, sign, format, undef)" OFF)
+if(MSVC)
+    add_compile_options(/W4)
+    if(ROCKETNET_WARNINGS_AS_ERRORS)
+        add_compile_options(/WX)
+    endif()
+else()
+    add_compile_options(-Wall -Wextra -Wpedantic)
+    if(ROCKETNET_STRICT_WARNINGS)
+        add_compile_options(-Wshadow -Wconversion -Wsign-conversion -Wcast-qual -Wformat=2 -Wundef -Wdouble-promotion)
+    endif()
+    if(ROCKETNET_WARNINGS_AS_ERRORS)
+        add_compile_options(-Werror)
+    endif()
 endif()
 add_compile_definitions(
     ROCKETNET_HISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS}
@@ -256,15 +271,11 @@ if(ROCKETNET_HARDEN)
     endif()
 endif()
 
-# The warning floor for the tree's library and test targets: the host
-# compiler's standard warnings, never fatal. A target's options stay PRIVATE,
-# so neither the installed package nor a parent project inherits them.
+# The warning floor is directory-wide (the add_compile_options above the
+# dependencies), so it reaches every target, named here or not. The function
+# stays as the place a target names the floor it is checked against; it adds
+# nothing the directory scope has not already given the target.
 function(rocketnet_warning_floor target)
-    if(MSVC)
-        target_compile_options(${target} PRIVATE /W4)
-    else()
-        target_compile_options(${target} PRIVATE -Wall -Wextra)
-    endif()
 endfunction()
 
 # Explicit STATIC: a parent's BUILD_SHARED_LIBS must not change the target's meaning.
@@ -401,6 +412,30 @@ foreach(target rocketnet rocketnet_dev rocketnet_shared rocketnet_shared_dev ${r
 endforeach()
 if(ROCKETNET_HARDEN AND ROCKETNET_LINK_RELRO_NOW)
     target_link_options(rocketnet_shared PRIVATE "$<$<CONFIG:Release>:-Wl,-z,relro,-z,now>")
+endif()
+
+# The public header at the strictest level each compiler has, in the default
+# build: a translation unit holding only rocketnet.h, as C and as C++
+# (tools/header_warnings). Every game that includes the header compiles it
+# with its own flags, so the header must be clean under all of them. Angle
+# bracket includes are the compiler's own headers, never ours, so MSVC reads
+# them at /external:W0.
+add_library(rocketnet_header_warnings OBJECT
+    tools/header_warnings/header_warnings.c
+    tools/header_warnings/header_warnings.cpp)
+target_include_directories(rocketnet_header_warnings PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/sdk")
+if(MSVC AND NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")
+    # C4820 (padding added) is MSVC's -Wpadded: layout, not a defect.
+    target_compile_options(rocketnet_header_warnings PRIVATE /Wall /wd4820 /external:anglebrackets /external:W0)
+elseif(CMAKE_C_COMPILER_ID MATCHES "Clang")
+    target_compile_options(rocketnet_header_warnings PRIVATE -Weverything -Wno-padded)
+    check_c_compiler_flag("-Wno-poison-system-directories" ROCKETNET_C_NO_POISON_SYSTEM_DIRECTORIES)
+    if(ROCKETNET_C_NO_POISON_SYSTEM_DIRECTORIES)
+        target_compile_options(rocketnet_header_warnings PRIVATE -Wno-poison-system-directories)
+    endif()
+else()
+    target_compile_options(rocketnet_header_warnings PRIVATE
+        -Wshadow -Wconversion -Wsign-conversion -Wcast-qual -Wformat=2 -Wundef -Wdouble-promotion)
 endif()
 
 if(ROCKETNET_BUILD_EXAMPLES)

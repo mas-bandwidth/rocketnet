@@ -444,7 +444,6 @@
 #define ge25519_p3_dbl rocketnet_sodium_ge25519_p3_dbl
 #define ge25519_p3_to_cached rocketnet_sodium_ge25519_p3_to_cached
 #define ge25519_p3_to_p2 rocketnet_sodium_ge25519_p3_to_p2
-#define ge25519_p3_to_precomp rocketnet_sodium_ge25519_p3_to_precomp
 #define ge25519_p3_tobytes rocketnet_sodium_ge25519_p3_tobytes
 #define ge25519_precomp rocketnet_sodium_ge25519_precomp
 #define ge25519_precomp_0 rocketnet_sodium_ge25519_precomp_0
@@ -1296,13 +1295,6 @@ int crypto_stream_chacha20_ietf_ext_xor_ic(unsigned char *c, const unsigned char
 #include <stdlib.h>
 #include <string.h>
 
-#if defined( _MSC_VER )
-#pragma warning(disable:4127)
-#pragma warning(disable:4244)
-#pragma warning(disable:4668)
-#pragma warning(disable:4456)
-#endif
-
 #define COMPILER_ASSERT(X) (void) sizeof(char[(X) ? 1 : -1])
 
 /* 128-bit integer support: enables the Poly1305 donna64 and SSE2 code paths.
@@ -1320,7 +1312,8 @@ int crypto_stream_chacha20_ietf_ext_xor_ic(unsigned char *c, const unsigned char
    produced, so a speculative read cannot reach unauthenticated plaintext.
    Falling back to (void) 0 matches upstream's behaviour when autoconf detects
    no fence primitive: correct and interoperable, without the hardening. */
-#if !defined(HAVE_GCC_MEMORY_FENCES) && (defined(__GNUC__) || defined(__clang__))
+#if !defined(HAVE_GCC_MEMORY_FENCES) && (defined(__GNUC__) || defined(__clang__)) && \
+    !defined(__SANITIZE_THREAD__)
 # define HAVE_GCC_MEMORY_FENCES 1
 #endif
 #if !defined(HAVE_INLINE_ASM) && (defined(__GNUC__) || defined(__clang__)) && \
@@ -1338,7 +1331,7 @@ int crypto_stream_chacha20_ietf_ext_xor_ic(unsigned char *c, const unsigned char
 
 #ifdef HAVE_TI_MODE
 # if defined(__SIZEOF_INT128__)
-typedef unsigned __int128 uint128_t;
+__extension__ typedef unsigned __int128 uint128_t;
 # else
 typedef unsigned uint128_t __attribute__((mode(TI)));
 # endif

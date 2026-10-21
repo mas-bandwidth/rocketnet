@@ -259,10 +259,10 @@ static const posix_cell_t posix_cells[] =
     { "server io_uring, client portable", "io_uring", "io_uring", "portable", "portable", false },
     { "server xdp, client portable",      "xdp",      "xdp",      "portable", "portable", true },
 #else
-    { "server portable, client portable", "portable",      "portable", "portable", "portable" },
-    { "server portable, client msgx",     "portable",      "portable", "msgx",     "msgx",     NULL },
-    { "server msgx, client portable",     "msgx",          "msgx",     "portable", "portable" },
-    { "server msgx, client msgx",         "msgx",          "msgx",     "msgx",     "msgx",     NULL },
+    { "server portable, client portable", "portable",      "portable", "portable", "portable", false },
+    { "server portable, client msgx",     "portable",      "portable", "msgx",     "msgx",     false },
+    { "server msgx, client portable",     "msgx",          "msgx",     "portable", "portable", false },
+    { "server msgx, client msgx",         "msgx",          "msgx",     "msgx",     "msgx",     false },
 #endif
 };
 
@@ -506,6 +506,8 @@ static void posix_cell_begin( const posix_cell_t * cell, posix_env_guard_t * ser
 #if defined(__linux__) && ROCKETNET_XDP
     if ( cell->xdp )
         posix_xdp_setup();
+#else
+    (void) cell;
 #endif
 }
 
