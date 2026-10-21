@@ -1794,7 +1794,7 @@ static void test_rnslots_witness_replays()
         const uint8_t * data = NULL;
         int bytes = 0;
         check( rocketnet_message_server_receive( pair.server, NULL, NULL, &data, &bytes ) == 0 );
-        check( mo_server_slot( &pair, 0 )->connection_id == pair.net->slot_connection[0] );
+        check( mo_server_slot( &pair, 0 )->hot->connection_id == pair.net->slot_connection[0] );
         check( mo_server_slot( &pair, 0 )->region->channel_receive[0].ordered_read == 0 );
         check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY ) >= 1 );
         mo_pair_teardown( &pair );
@@ -2547,7 +2547,7 @@ static void test_pending_start_cancelled_by_slot_reset()
     mo_fill( up, 9, 100 );
     mo_net_drop_slot( pair.net, 1 );
     check( rocketnet_message_client_update( pair.clients[1], pair.time + 0.01 ) == ROCKETNET_UPDATE_OK );
-    check( mo_client_connection( pair.clients[1] )->state == RN_MESSAGE_CONNECTION_FREE );
+    check( mo_client_connection( pair.clients[1] )->hot->state == RN_MESSAGE_CONNECTION_FREE );
     check( pair.clients[1]->object.pending_connection == -1 );
     check( rocketnet_message_client_finish( pair.clients[1], 100 ) == 0 );
 
@@ -2798,7 +2798,7 @@ static void test_slot_bound_this_update_keeps_its_first_payload()
     check( pair.net->server->inbound.size() >= 1 );
     const uint64_t stale = mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY );
     check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
-    check( mo_server_slot( &pair, 0 )->connection_id == pair.net->slot_connection[0] );
+    check( mo_server_slot( &pair, 0 )->hot->connection_id == pair.net->slot_connection[0] );
     const uint8_t * data = NULL;
     int bytes = 0;
     int from = -1;
@@ -2833,7 +2833,7 @@ static void test_previous_connection_payload_dropped_after_reconnect()
         check( pair.net->slot_connection[0] != a );
         pair.time += 0.01;
         check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );     // Observe binds B
-        check( mo_server_slot( &pair, 0 )->connection_id == pair.net->slot_connection[0] );
+        check( mo_server_slot( &pair, 0 )->hot->connection_id == pair.net->slot_connection[0] );
         const uint64_t stale = mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY );
         pair.net->server->inbound.swap( late );
         pair.time += 0.01;
@@ -2869,7 +2869,7 @@ static void test_previous_connection_ack_dropped_after_reconnect()
             check( pair.net->server->acks_inbox_connection[i] == a );
         mo_net_connect( pair.net, 0 );                                          // B takes the slot
         check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );     // Observe binds B
-        check( mo_server_slot( &pair, 0 )->connection_id == pair.net->slot_connection[0] );
+        check( mo_server_slot( &pair, 0 )->hot->connection_id == pair.net->slot_connection[0] );
         const uint64_t stale = mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY );
         pair.net->hold_acks = false;
         pair.time += 0.01;
