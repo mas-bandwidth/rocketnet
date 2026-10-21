@@ -1497,7 +1497,7 @@ static void test_xdp_transport_host_udp_length_drops()
 // same count when num_xdp_queues is zero or negative. The xdp branch of
 // rocketnet_builtin_server_memory_plan exists on Linux only.
 
-#if defined(__linux__)
+#if ROCKETNET_XDP
 
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_memory.h"
@@ -1520,7 +1520,7 @@ static void test_xdp_transport_queue_default_matches_memory_plan()
     rocketnet_unit_check( plan.sockets == 3 );
 }
 
-#endif // #if defined(__linux__)
+#endif // #if ROCKETNET_XDP
 
 #if ROCKETNET_XDP_FILTER_HOST && defined(__linux__)
 REGISTER_UNIT_TEST( test_xdp_transport_host_ipv4_rocketnet_packet_redirects );
@@ -1554,6 +1554,6 @@ REGISTER_UNIT_TEST( test_xdp_transport_host_replay_never_writes_the_map );
 REGISTER_UNIT_TEST( test_xdp_transport_host_udp_length_drops );
 #endif // #if ROCKETNET_XDP_FILTER_HOST && defined(__linux__)
 
-#if defined(__linux__)
+#if ROCKETNET_XDP
 REGISTER_UNIT_TEST( test_xdp_transport_queue_default_matches_memory_plan );
-#endif // #if defined(__linux__)
+#endif // #if ROCKETNET_XDP

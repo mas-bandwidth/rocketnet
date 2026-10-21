@@ -882,7 +882,7 @@ bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_ser
     const bool xdp = strcmp( transport, "xdp" ) == 0;
     if ( xdp )
     {
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_XDP
         const uint64_t ring_bytes = (uint64_t) ( ROCKETNET_XDP_RECV_QUEUE_SIZE + ROCKETNET_XDP_SEND_QUEUE_SIZE ) * sizeof(struct xdp_desc);
         if ( !rocketnet_memory_add( e.xdp_ring_bytes, (uint64_t) plan.sockets, ring_bytes ) )
             return false;

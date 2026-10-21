@@ -291,6 +291,23 @@ compiler. The generated header lives in each build tree, so concurrent
 configurations do not rewrite the checkout. macOS and Windows do not build the
 object.
 
+### Building Linux without XDP
+
+XDP remains enabled by default. Set `-DROCKETNET_XDP=OFF` to build without
+BPF/libxdp development headers or libraries, BPF clang, or `xxd`:
+
+    cmake -S . -B build-no-xdp -DROCKETNET_XDP=OFF -DCMAKE_BUILD_TYPE=Release
+    cmake --build build-no-xdp --parallel 4
+
+The `xdp` rung reports that it was disabled at build time and refuses create.
+A pin of `xdp` fails; automatic selection continues with `gso`, `io_uring`
+(when built), then `portable`. The installed CMake package also omits the
+BPF/libxdp dependencies. Native `test_xdp` and `test_xdp_filter` targets are
+not built; the host-C filter and portable frame-codec unit tests still run.
+Configure with `-DROCKETNET_XDP=ON` to restore the native backend and its
+dependencies. Missing BPF/libxdp development files remain a configure error
+when XDP is enabled.
+
 ## Pinned sodium
 
 The default build uses the committed `sodium/sodium.c` and `sodium/sodium.h`

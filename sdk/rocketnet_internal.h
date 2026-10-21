@@ -19,9 +19,13 @@
 #include "rocketnet_testing.h"
 #include "rocketnet_layers.h"
 
+#ifndef ROCKETNET_XDP
 #ifdef __linux__
 #define ROCKETNET_XDP 1
-#endif // #ifdef __linux__
+#else
+#define ROCKETNET_XDP 0
+#endif
+#endif
 
 // a compile-time assert that also builds in C compilers without C11 mode
 

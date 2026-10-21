@@ -86,9 +86,11 @@ int main( int argc, char ** argv )
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize" },
         { "test_transport_control", "test_transport_control" },
+#if ROCKETNET_XDP
         { "test_xdp", "test_xdp" },
+#endif
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3 );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof(execs) / sizeof(execs[0]) );
 #else
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize" },
