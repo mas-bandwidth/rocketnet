@@ -906,7 +906,7 @@ static void rocketnet_ack_compute_stats( uint64_t highest_sent, uint64_t highest
 }
 
 void rocketnet_ack_stats_history_compute( const rocketnet_ack_stats_history_t * history,
-                                           rocketnet_ack_stats_result_t * result )
+                                        rocketnet_ack_stats_result_t * result )
 {
     rocketnet_assert(history && result);
     rocketnet_ack_compute_stats(history->highest_sent, history->highest_received,

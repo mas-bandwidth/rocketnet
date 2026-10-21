@@ -171,7 +171,7 @@ struct rocketnet_ack_stats_delta_t
 
 struct rocketnet_ack_endpoint_t
 {
-    // NULL for clients and worker scratch. The server binds this pointer
+    // NULL for clients. The server binds this pointer
     // after endpoint initialization and preserves it across slot reset.
     rocketnet_ack_stats_delta_t * stats_delta;
     uint64_t sent_lock;                         // guards sent-record reservation and publication
@@ -334,8 +334,7 @@ struct rocketnet_ack_stats_result_t
 };
 
 void rocketnet_ack_stats_history_compute( const rocketnet_ack_stats_history_t * history,
-                                           rocketnet_ack_stats_result_t * result );
-
+                                        rocketnet_ack_stats_result_t * result );
 
 // -----------------------------------------
 //                    the server's acks
