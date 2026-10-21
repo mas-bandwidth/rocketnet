@@ -1008,8 +1008,8 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_allocator( void * (*malloc_fu
 /// Transport is a comma-separated list tried from left to right at client
 /// connect or server start. The first transport that starts wins. "auto" is
 /// the default, including NULL or an empty string. Linux servers try
-/// xdp,gso,io_uring,portable. io_uring requires a build with liburing. macOS
-/// servers try msgx,portable. Windows servers try portable,iocp,rio. macOS
+/// xdp,gso,io_uring,portable. io_uring requires build support. macOS servers
+/// try msgx,portable. Windows servers try portable,iocp,rio. macOS
 /// clients try msgx,portable. Other clients try portable. Loopback is selected
 /// by name, never by auto. A one-name list selects only that transport.
 /// Unsupported names are skipped with a log.
