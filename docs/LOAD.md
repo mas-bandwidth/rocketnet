@@ -21,8 +21,9 @@ with the fixed-rate option below. For the stock 1,000-client acceptance, run
 the `default` profile so the result covers SDK-default sizing. The `light`
 profile is a separate, additional bounded-memory workload; it cannot substitute
 for the default-profile acceptance. The current `bin/load` harness is capped at
-`ROCKETNET_MAX_CLIENTS` (1,000). Future custom 2,000, 5,000 and 10,000-client
-rungs require an explicitly extended harness/build and capacity review.
+`ROCKETNET_MAX_CLIENTS` (1,000). Future custom 2,000, 3,000, 4,000, 5,000,
+6,000, 7,000, 8,000, 9,000 and 10,000-client rungs require an explicitly
+extended harness/build and capacity review.
 
 For every rung, require each client's maximum wire rate to stay strictly below
 100 kbps in both directions, and compare aggregate traffic in each direction
@@ -72,23 +73,26 @@ original one-pair-per-update workload is unchanged. The summary prints the
 target, offered and accepted-message rates per client per second; the offered
 rate can fall below target when updates are slow, and the accepted rate can
 fall further when sends are refused. `application_offers_accepted=PASS` means
-every message that was offered was accepted by the API; it does not mean the
-target rate was reached. Delivery of all messages from a below-target offered
-rate is not target-rate success. A rate rung reaches its application target
-only when the observed offered rate reaches the target in both directions and
-all offers are accepted. Fixed-rate runs report
+every message that was offered was accepted by the API; it does not qualify the
+workload against its requested rate. Report the requested target, observed
+offered and accepted rates, and offered-to-target ratio separately for each
+direction. The finite traffic window can leave the observed offered rate
+slightly below the requested rate even on a healthy run. Keep that difference
+visible; no numerical tolerance is defined here, so do not round it away or add
+an acceptance threshold. A below-target workload is not evidence that the
+requested rate was sustained. Fixed-rate runs report
 `application_offers_accepted=FAIL` and fail the verdict if either direction
 refuses an offered message.
 
-Run one fixed-rate rung with the profiling helper on a clean checkout and a
-unique output path:
+Run one fixed-rate rung with the profiling helper on a clean Linux checkout
+and a unique output path. This example selects native GSO for the server:
 
 ```sh
 src=/path/to/clean/rocketnet
 head=$(git -C "$src" rev-parse HEAD)
 python3 "$src/tools/profile_1000_load.py" \
   --mode timings --source "$src" --expected-head "$head" \
-  --server-transport portable --seconds 60 --clients 100 \
+  --server-transport gso --seconds 60 --clients 100 \
   --profile light --messages-per-client-second 1 \
   --output /path/to/evidence/light-100
 ```
