@@ -3514,6 +3514,7 @@ void rocketnet_test_server_handshake_deadline_from_config()
     rocketnet_test_env_clear( &transport_guard, "ROCKETNET_SERVER_TRANSPORT" );
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
+    config.max_clients = 1; // This case checks one handshake deadline, not server capacity.
     config.handshake_deadline_seconds = 2;
     snprintf( config.transport, sizeof(config.transport), "portable" );
     const double start_time = 100.0;
