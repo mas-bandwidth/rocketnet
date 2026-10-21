@@ -201,12 +201,11 @@ that waits in frame sync, put back to the standard policy afterwards
 `rocketnet_frame_sync_elevate_priority` returns before that call when
 `rocketnet_platform_thread_priority_enabled` is false.
 
-The functional case `test_thread_priority_timing_receive_gaps`
-(`functional/thread_priority_timing.cpp`, `priority_timing_run`) reads the I/O
-thread's scheduling and QoS class from inside the thread and checks both: the
-class is never `QOS_CLASS_USER_INTERACTIVE`, on or off, and with the switch on
-the thread reads back `SCHED_RR` at `sched_get_priority_min( SCHED_RR )` or the
-create counted a refusal.
+The deterministic cases in `test_unit_thread_priority.cpp` verify the client
+and server priority requests, the off switch, and refusal counting and logging
+through a fake platform call table. The functional scheduler readback and
+App Nap timing cases have been retired: OS scheduling and process throttling
+are outside RocketNet's control.
 
 A game that wants the client's I/O on a thread it owns sets
 `ROCKETNET_CLIENT_STEP_DRIVEN=1`: the

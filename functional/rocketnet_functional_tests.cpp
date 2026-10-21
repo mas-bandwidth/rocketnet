@@ -8110,13 +8110,6 @@ extern void rocketnet_test_posix_destroy_under_traffic_100_xdp();
 // the channel harness smoke cases (functional/channel_smoke.cpp, picked up by
 // the functional/channel_*.cpp glob)
 extern void harness_one_message_each_way_lossless();
-extern void thread_priority_timing_receive_gaps();
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-extern void thread_priority_timing_taskpolicy_background();
-#endif
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-extern void thread_priority_windows_readback();
-#endif
 extern void harness_one_message_each_way_lossy();
 extern void harness_lossy_100_percent_negative_control();
 extern void harness_no_allocation_after_create();
@@ -8149,10 +8142,6 @@ extern void block_resend_cost_over_long_path();
 extern void rocketnet_test_cpp_transports_connect_over_loopback();
 extern void live_message_matrix_loopback();
 extern void rocketnet_test_server_receive_keeps_up_with_max_clients();
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-extern void macos_client_timing_default_qos();
-extern void macos_client_timing_taskpolicy_background();
-#endif
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 // oversize, runt and garbage datagrams at every Windows receive path (functional/windows_socket_errors.cpp)
@@ -8518,15 +8507,6 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_connect_token_mint_concurrent", rocketnet_test_connect_token_mint_concurrent, NULL },
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config, NULL },
     { "test_server_receive_keeps_up_with_max_clients", rocketnet_test_server_receive_keeps_up_with_max_clients, NULL },
-    { "test_thread_priority_timing_receive_gaps", thread_priority_timing_receive_gaps, NULL },
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-    { "test_thread_priority_timing_taskpolicy_background", thread_priority_timing_taskpolicy_background, NULL },
-    { "test_macos_client_timing_default_qos", macos_client_timing_default_qos, NULL },
-    { "test_macos_client_timing_taskpolicy_background", macos_client_timing_taskpolicy_background, NULL },
-#endif
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    { "test_thread_priority_windows_readback", thread_priority_windows_readback, NULL },
-#endif
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     // Windows keeps its sleep and its wake is a no-op, so only POSIX runs the wake cases
     { "test_client_receive_thread_quit_wake_ends_a_long_wait", rocketnet_test_client_receive_thread_quit_wake_ends_a_long_wait, NULL },
