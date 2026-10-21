@@ -60,16 +60,16 @@ REGISTER_UNIT_TEST( test_unguarded_after_literals );
 
 class ShapeTests(unittest.TestCase):
     def test_names_then_passed_line(self):
-        self.assertEqual(checker.check_shape(["test_a", "test_b", "", checker.PASSED_LINE], "suite"),
+        self.assertEqual(checker.check_shape(["test_a", "test_b", "", checker.PASSED_LINE, ""], "suite"),
                          ["test_a", "test_b"])
 
     def test_skip_line_fails(self):
         with self.assertRaises(SystemExit):
-            checker.check_shape(["test_a", "test_xdp_matcher [SKIPPED linux only]", "", checker.PASSED_LINE], "suite")
+            checker.check_shape(["test_a", "test_xdp_matcher [SKIPPED linux only]", "", checker.PASSED_LINE, ""], "suite")
 
     def test_capital_letter_fails(self):
         with self.assertRaises(SystemExit):
-            checker.check_shape(["TestWindowRing", "", checker.PASSED_LINE], "suite")
+            checker.check_shape(["TestWindowRing", "", checker.PASSED_LINE, ""], "suite")
 
     def test_missing_passed_line_fails(self):
         with self.assertRaises(SystemExit):

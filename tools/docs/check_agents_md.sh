@@ -52,8 +52,10 @@ run_example() {
     DOC="$1"
     MARKER="$2"
     STEM="$3"
+    LIBNAME="${4:-rocketnet}"
+    DEFINES="${5:-}"
     BUILD_DIR="$ROOT/build"
-    LIB="$BUILD_DIR/librocketnet.a"
+    LIB="$BUILD_DIR/lib${LIBNAME}.a"
     if [ ! -f "$LIB" ]; then
         echo "error: missing $LIB (build the library under build/ first)" >&2
         exit 1
@@ -79,7 +81,7 @@ run_example() {
         LIBS="-lstdc++ -lpthread -lm"
     fi
 
-    ${CC:-cc} -Wall -Werror -I"$ROOT/sdk" "$SRC" "$LIB" $LIBS -o "$BIN"
+    ${CC:-cc} -Wall -Werror $DEFINES -I"$ROOT/sdk" "$SRC" "$LIB" $LIBS -o "$BIN"
     "$BIN"
     rm -f "$SRC" "$BIN"
     trap - EXIT INT TERM
@@ -91,11 +93,11 @@ case "$MODE" in
         run_identifiers
         ;;
     example)
-        run_example "$AGENTS_MD" check_agents_md agents_md
+        run_example "$AGENTS_MD" check_agents_md agents_md rocketnet_dev -DROCKETNET_DEVELOPMENT=1
         ;;
     all)
         run_identifiers
-        run_example "$AGENTS_MD" check_agents_md agents_md
+        run_example "$AGENTS_MD" check_agents_md agents_md rocketnet_dev -DROCKETNET_DEVELOPMENT=1
         run_example "$README_MD" check_readme readme
         ;;
     *)
