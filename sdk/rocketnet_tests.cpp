@@ -1625,11 +1625,10 @@ void rocketnet_test_prefilter()
     // the surface payload constants derive from the wire numbers and must
     // never drift: the send capacity is the largest multiple of eight
     // inside the budget less the fixed overhead and the minimum ack block,
-    // and the receive constant is the ceiling less the same
+    // and the receive capacity matches that same rounded sender bound
     rocketnet_check( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ==
                      ( ( ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES ) / 8 ) * 8 );
-    rocketnet_check( ROCKETNET_RECEIVE_PAYLOAD_BYTES ==
-                     ROCKETNET_RECEIVE_CEILING - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES );
+    rocketnet_check( ROCKETNET_RECEIVE_PAYLOAD_BYTES == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
 
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
 
@@ -6775,12 +6774,11 @@ void rocketnet_test_transport_payload_capacity()
     rocketnet_check( ROCKETNET_MAX_PAYLOADS_PER_UPDATE >= ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS );
 
     // and the storage behind them must cover a full-size RECEIVED payload
-    // for every one of those slots -- the receive side accepts up to the
-    // fixed ceiling whatever this end's own send budget -- or the same loss
-    // returns as an overrun instead
+    // for every one of those slots. The receiver enforces the same rounded
+    // payload capacity as the sender; undersizing this storage would turn
+    // the same loss into an overrun instead
 
-    rocketnet_check( ROCKETNET_RECEIVE_PAYLOAD_BYTES ==
-                     ROCKETNET_RECEIVE_CEILING - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES );
+    rocketnet_check( ROCKETNET_RECEIVE_PAYLOAD_BYTES == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
     rocketnet_check( (size_t) ROCKETNET_MAX_PAYLOADS_PER_UPDATE * ROCKETNET_RECEIVE_PAYLOAD_BYTES
                      >= (size_t) ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS * ROCKETNET_RECEIVE_PAYLOAD_BYTES );
 }
