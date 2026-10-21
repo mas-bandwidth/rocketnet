@@ -71,6 +71,11 @@ includes hardening, longer testing and performance work.
 - The example soak has a known failure when many clients disconnect at once.
   Reconnect and UDP-loopback functional cases have also shown timing failures
   under heavy host load.
+- On macOS, the portable dual-stack connection test can intermittently fail
+  to connect before its deadline. The failure remains a known issue even
+  when a repeat run passes.
+- The full macOS functional suite exceeds the 120-second gate limit. The
+  timed-out runs do not establish a full-suite pass.
 - Protocol refusal paths, token-claim behavior and low-rate reliable-message
   timeouts still have follow-up work recorded in the roadmap.
 
