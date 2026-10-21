@@ -39,6 +39,7 @@ struct control_fixture_t
     int responses;
     int payloads;
     int aborts;
+    int start_calls;
     int disconnects;
     int pending_disconnects;
     bool staged;
@@ -112,6 +113,7 @@ static int receive_batch(void * p, rocketnet_address_t * from, uint8_t * data, i
 static uint8_t * start_packet(void * p, const rocketnet_address_t * to, uint64_t * id)
 {
     auto * f = (control_fixture_t*)p;
+    ++f->start_calls;
     if (f->unreachable) { *id = ROCKETNET_TRANSPORT_PACKET_UNREACHABLE; return NULL; }
     if (f->lease_frames)
     {
@@ -280,6 +282,67 @@ static void test_staged_control_fairness()
     }
     rn_native_server_transport_stop_and_destroy(server); delete f;
     printf("test_staged_control_fairness\n");
+}
+
+static void test_staged_idle_maintenance_preflight()
+{
+    // A connected but idle slot should not touch staged frame ownership.
+    // The boundary, the pre-ACK keep-alive clock, the post-ACK send clock,
+    // and ACK debt each still request exactly one frame when due.
+    auto * f = new control_fixture_t(); f->capacity = 16;
+    rocketnet_server_transport_io_operations_t operations;
+    auto * server = make_server(f, &operations, 1, true);
+    server->protocol.send_rate = 1.0;
+    auto * mapping = rocketnet_encryption_map_entry(server->protocol.encryption_map,
+        rocketnet_client_slots_mapping_index(server->protocol.client_slots, 0));
+    mapping->control->last_receive_time = 1000.0;
+    mapping->last_keep_alive_send_time = 1000.0;
+    mapping->last_send_time = 1000.0;
+
+    rocketnet_server_transport_update(server, 1000.0);
+    rocketnet_server_transport_update(server, 1000.5);
+    CHECK(f->start_calls == 0 && f->aborts == 0);
+
+    // Before any keep-alive is acknowledged, ordinary traffic does not
+    // suppress the keep-alive at the exact one-second boundary.
+    mapping->last_send_time = 1000.75;
+    rocketnet_server_transport_update(server, 1001.0);
+    CHECK(f->start_calls == 1 && f->keep_alives[0] == 1 && f->acks[0] == 0);
+
+    // Once acknowledged, any send stamps the clock used for suppression.
+    server->protocol.acks->endpoints[0].keep_alive_acked = 1;
+    mapping->last_send_time = 1001.0;
+    rocketnet_server_transport_update(server, 1001.5);
+    CHECK(f->start_calls == 1 && f->aborts == 0);
+    rocketnet_server_transport_update(server, 1002.0);
+    CHECK(f->start_calls == 2 && f->keep_alives[0] == 2);
+
+    // A single owed ACK is due before the next paced keep-alive.
+    server->protocol.acks->endpoints[0].ack_debt = 1;
+    rocketnet_server_transport_update(server, 1002.25);
+    CHECK(f->start_calls == 3 && f->acks[0] == 1);
+    CHECK(server->protocol.acks->endpoints[0].ack_debt == 0);
+
+    // When both are due, the existing writer keeps keep-alive priority and
+    // its ACK block clears the debt without a second reservation.
+    server->protocol.acks->endpoints[0].ack_debt = 1;
+    rocketnet_server_transport_update(server, 1003.25);
+    CHECK(f->start_calls == 4 && f->keep_alives[0] == 3 && f->acks[0] == 1);
+    CHECK(server->protocol.acks->endpoints[0].ack_debt == 0 && f->aborts == 0);
+
+    // The slot API permits a connected slot with no mapping. The preflight
+    // must still count that broken state, without indexing
+    // an address at -1 or reserving a staged frame.
+    rocketnet_client_slots_release(server->protocol.client_slots, 0);
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
+    CHECK(rocketnet_client_slots_assign(server->protocol.client_slots, 9, -1, user_data) == 0);
+    const uint64_t missing_before = server->protocol.counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING];
+    rocketnet_server_transport_update(server, 1003.5);
+    CHECK(server->protocol.counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING] == missing_before + 1);
+    CHECK(f->start_calls == 4);
+
+    rn_native_server_transport_stop_and_destroy(server); delete f;
+    printf("test_staged_idle_maintenance_preflight\n");
 }
 
 static void test_single_frame_arena()
@@ -565,6 +628,7 @@ int main(int argc, char ** argv)
     test_disconnect_burst_next_send(false);
     test_disconnect_burst_next_send(true);
     test_staged_control_fairness();
+    test_staged_idle_maintenance_preflight();
     test_single_frame_arena();
     test_staged_lease_table_full();
     test_entries_carry_connection_id(false);

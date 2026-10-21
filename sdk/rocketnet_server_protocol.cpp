@@ -1491,6 +1491,11 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
     }
 }
 
+void rocketnet_server_protocol_note_missing_mapping( struct rocketnet_server_protocol_t * server )
+{
+    server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING]++;
+}
+
 static struct rocketnet_encryption_mapping_t * rocketnet_server_connected_mapping( struct rocketnet_server_protocol_t * server,
                                                                                    int client_index )
 {
@@ -1514,7 +1519,7 @@ static struct rocketnet_encryption_mapping_t * rocketnet_server_connected_mappin
         // receiving keep-alives and times out -- a silent failure needs a
         // name, or the first person to hit it has nothing to look at.
 
-        server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING]++;
+        rocketnet_server_protocol_note_missing_mapping( server );
         return NULL;
     }
 
@@ -1668,6 +1673,17 @@ int rocketnet_server_protocol_write_ack_if_due( struct rocketnet_server_protocol
     return bytes;
 }
 
+static int rocketnet_server_keep_alive_due( const struct rocketnet_server_protocol_t * server,
+                                             const struct rocketnet_encryption_mapping_t * mapping,
+                                             int client_index, double current_time )
+{
+    const double send_rate = server->send_rate > 0.0 ? server->send_rate : 10.0;
+    const int acknowledged = server->acks && client_index >= 0
+                             ? (int) server->acks->endpoints[client_index].keep_alive_acked : 0;
+    const double last = acknowledged ? mapping->last_send_time : mapping->last_keep_alive_send_time;
+    return !( current_time - last < 1.0 / send_rate );
+}
+
 // tla/ServerConnection.tla ServerKeepAlive
 int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_protocol_t * server,
                                               int client_index,
@@ -1733,21 +1749,29 @@ int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_p
     // it cannot be produced by anyone else for it and no other client's
     // pacing is affected.
 
-    double send_rate = server->send_rate > 0.0 ? server->send_rate : 10.0;
-
-    // no ack bookkeeping means the claim can never be observed; fall back to
-    // the unsuppressed clock, which is the safe direction
-
-    int acknowledged = server->acks && client_index >= 0
-                        ? (int) server->acks->endpoints[client_index].keep_alive_acked
-                        : 0;
-
-    double last = acknowledged ? mapping->last_send_time : mapping->last_keep_alive_send_time;
-
-    if ( current_time - last < 1.0 / send_rate )
+    // Without ack bookkeeping the helper uses the unsuppressed clock.
+    if ( !rocketnet_server_keep_alive_due( server, mapping, client_index, current_time ) )
         return 0;
 
     return rocketnet_server_write_keep_alive( server, client_index, current_time, out_packet );
+}
+
+int rocketnet_server_protocol_maintenance_due( const struct rocketnet_server_protocol_t * server,
+                                                int client_index, double current_time )
+{
+    rocketnet_assert( server );
+    if ( !rocketnet_client_slots_connected( server->client_slots, client_index ) )
+        return 0;
+
+    const int mapping_index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
+    // Let the transport record a connected slot missing its mapping.
+    // The preflight itself must not change counters or connection state.
+    if ( mapping_index < 0 )
+        return 1;
+
+    const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, mapping_index );
+    return rocketnet_server_keep_alive_due( server, mapping, client_index, current_time ) ||
+           ( server->acks && server->acks->endpoints[client_index].ack_debt != 0 );
 }
 
 // The fill-phase pair behind the acquire/commit send surface. Any number of

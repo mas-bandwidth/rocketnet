@@ -2231,7 +2231,19 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         server_transport->maintenance_next_client = i;
         if ( !rocketnet_client_slots_connected( server_transport->protocol.client_slots, i ) )
             continue;
+        if ( !rocketnet_server_protocol_maintenance_due( &server_transport->protocol, i, current_time ) )
+        {
+            server_transport->maintenance_next_client = (i + 1) % max_clients;
+            continue;
+        }
         int mapping_index = rocketnet_client_slots_mapping_index( server_transport->protocol.client_slots, i );
+        if ( mapping_index < 0 )
+        {
+            // This internally permitted slot state has no address to stage.
+            rocketnet_server_protocol_note_missing_mapping( &server_transport->protocol );
+            server_transport->maintenance_next_client = (i + 1) % max_clients;
+            continue;
+        }
         const rocketnet_address_t * client_address = rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
         struct rocketnet_server_frame_t frame;
         uint8_t * frame_data = rocketnet_server_reserve_send_frame( server_transport, client_address, &frame );
