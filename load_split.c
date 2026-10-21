@@ -4,6 +4,7 @@
 #define main load_same_process_main
 #include "load.c"
 #undef main
+#include "tools/load_split_schedule.h"
 
 #define SPLIT_ARM_MAGIC 0x524E414Du
 #define SPLIT_ACK_MAGIC 0x524E414Bu
@@ -775,15 +776,17 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
         const struct rocketnet_message_batch_t * batch = NULL;
         while ( (batch = rocketnet_server_receive_messages(server)) != NULL )
             split_receive_c2s(&result, clients, total, run_id, batch, server);
-        for ( int i = 0; in_traffic && rocketnet_time() < end_time && i < total; ++i )
+        for ( int i = 0; in_traffic && i < total; ++i )
         {
             if ( !rocketnet_server_client_connected(server, clients[i].slot) ||
                  rocketnet_server_client_id(server, clients[i].slot) != (uint64_t) i + 1 )
             { result.unexpected_disconnects++; continue; }
-            if ( now < clients[i].next_due ) continue;
-            const uint64_t skipped = (uint64_t) (now - clients[i].next_due);
-            result.missed_due_slots += skipped;
-            clients[i].next_due += (double) skipped + 1.0;
+            /* Use the offer-time clock for both the deadline and due phase.
+             * An update may have crossed one or more due slots since now. */
+            const double offer_now = rocketnet_time();
+            if ( offer_now >= end_time ) break;
+            if ( !split_offer_due(offer_now, end_time, &clients[i].next_due,
+                                  &result.missed_due_slots) ) continue;
             if ( clients[i].s2c.sent_count + 1 >= LOAD_MAX_SEQ_TRACKED )
             { result.protocol_errors++; continue; }
             result.s2c_offered++;
@@ -1116,14 +1119,16 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
             const struct rocketnet_message_batch_t * batch = NULL;
             while ( (batch = rocketnet_client_receive_messages(peer->api)) != NULL )
                 split_client_runtime_batch(&result, peer, (uint32_t) (first + local), run_id, batch);
-            if ( rocketnet_client_state(peer->api) != ROCKETNET_CLIENT_STATE_CONNECTED )
+            const enum rocketnet_client_state_t state = rocketnet_client_state(peer->api);
+            if ( state != ROCKETNET_CLIENT_STATE_CONNECTED )
                 result.unexpected_disconnects++;
-            if ( in_traffic && rocketnet_time() < traffic_end && now >= peer->next_due &&
-                 rocketnet_client_state(peer->api) == ROCKETNET_CLIENT_STATE_CONNECTED )
+            /* A client update can cross a due slot. The same fresh clock
+             * decides traffic eligibility and counts every skipped slot. */
+            const double offer_now = rocketnet_time();
+            if ( in_traffic && state == ROCKETNET_CLIENT_STATE_CONNECTED &&
+                 split_offer_due(offer_now, traffic_end, &peer->next_due,
+                                 &result.missed_due_slots) )
             {
-                const uint64_t skipped = (uint64_t) (now - peer->next_due);
-                result.missed_due_slots += skipped;
-                peer->next_due += (double) skipped + 1.0;
                 const uint32_t combo = peer->next_combo % LOAD_NUM_COMBOS;
                 peer->next_combo++;
                 struct load_stream_state_t * stream = &peer->c2s[combo];
