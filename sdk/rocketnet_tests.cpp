@@ -14805,6 +14805,18 @@ void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
         rocketnet_check( estimate.sockets == plan.sockets );
         rocketnet_check( estimate.worker_threads == plan.worker_threads );
 
+        // The host plan describes native production resources even when a
+        // unit build runs the stats worker manually. Stats add one worker
+        // and its stack, but their event-only wake adds no network socket.
+        rocketnet_server_transport_config_t config;
+        rocketnet_server_transport_default_config( &config );
+        rocketnet_server_memory_plan_t io_plan = {};
+        rocketnet_check( rocketnet_builtin_server_memory_plan( &config, transport, io_plan ) );
+        rocketnet_check( estimate.sockets == io_plan.sockets );
+        rocketnet_check( estimate.worker_threads == io_plan.worker_threads + 1 );
+        rocketnet_check( estimate.thread_stack_bytes ==
+                         ( (uint64_t) io_plan.worker_threads + 1 ) * estimate.thread_stack_bytes_per_thread );
+
         if ( strcmp( transport, "xdp" ) == 0 )
         {
             rocketnet_check( estimate.umem_bytes > 0 );
@@ -14818,23 +14830,25 @@ void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
             rocketnet_check( estimate.socket_receive_buffer_bytes == (uint64_t) estimate.sockets * ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
         }
         if ( strcmp( transport, "portable" ) == 0 )
-            rocketnet_check( estimate.sockets == 1 && estimate.worker_threads == 0 && estimate.thread_stack_bytes == 0 );
+            rocketnet_check( estimate.sockets == 1 && estimate.worker_threads == 1 &&
+                             estimate.thread_stack_bytes == estimate.thread_stack_bytes_per_thread );
         if ( strcmp( transport, "rio" ) == 0 )
             rocketnet_check( estimate.registered_region_bytes > 0 && estimate.allocator_bytes > 0 );
     }
     rocketnet_check( estimated >= 1 );
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    // the socket requests and the stacks scale with the configured queue count
+    // The socket requests and transport stacks scale with the configured
+    // queue count; the stats worker contributes one additional fixed stack.
     {
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_default_config( &config );
         config.num_xdp_queues = 8;
         struct rocketnet_host_memory_estimate_t estimate;
         rocketnet_check( rocketnet_server_transport_host_memory_estimate( &config, "gso", &estimate ) );
-        rocketnet_check( estimate.sockets == 8 && estimate.worker_threads == 8 );
+        rocketnet_check( estimate.sockets == 8 && estimate.worker_threads == 9 );
         rocketnet_check( estimate.socket_send_buffer_bytes == 8ull * ROCKETNET_SOCKET_SEND_BUFFER_SIZE );
-        rocketnet_check( estimate.thread_stack_bytes == 8ull * estimate.thread_stack_bytes_per_thread );
+        rocketnet_check( estimate.thread_stack_bytes == 9ull * estimate.thread_stack_bytes_per_thread );
         rocketnet_check( estimate.total_bytes == rocketnet_test_host_memory_sum( estimate ) );
     }
 #endif
