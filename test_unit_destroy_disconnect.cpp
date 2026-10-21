@@ -190,6 +190,11 @@ static int destroy_disconnect_connect_client( rocketnet_server_t * server, rocke
     for ( int i = 0; i < 200; i++ )
     {
         *time += 0.01;
+        rocketnet_client_transport_t * transport = rocketnet_message_client_transport( rocketnet_client_message_client( client ) );
+        // The legacy fixture suppresses its native worker. Explicitly run its
+        // receive iteration; public update only drives the configured I/O core.
+        if ( !rocketnet_client_transport_client_io( transport ) )
+            rocketnet_client_transport_step_legacy_for_test( transport, *time );
         rocketnet_client_update( client, *time );
         rocketnet_client_send_packets( client );
         rocketnet_server_update( server, *time );
