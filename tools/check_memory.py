@@ -36,9 +36,9 @@ for transport in transports:
         assert observed['peak_allocator_bytes'] <= plan['planned_bytes'], (
             transport, profile, 'planned_bytes', plan['planned_bytes'],
             'peak_allocator_bytes', observed['peak_allocator_bytes'])
-        # Every server now owns one stats worker. The one-queue GSO/IOCP
-        # profiles also own one I/O worker; the wake adds no network socket.
-        assert plan['worker_threads'] == (2 if transport in ('gso', 'iocp') else 1)
+        # Every server owns one stats worker. Portable TX and the one-queue
+        # GSO/IOCP profiles each add one I/O worker; wakes add no socket.
+        assert plan['worker_threads'] == (2 if transport in ('portable', 'gso', 'iocp') else 1)
         assert plan['sockets'] == 1
         # Startup shims can be freed before this observation, even for
         # portable. The native probe bounds that difference by its planned

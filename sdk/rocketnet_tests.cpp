@@ -14830,8 +14830,8 @@ void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
             rocketnet_check( estimate.socket_receive_buffer_bytes == (uint64_t) estimate.sockets * ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
         }
         if ( strcmp( transport, "portable" ) == 0 )
-            rocketnet_check( estimate.sockets == 1 && estimate.worker_threads == 1 &&
-                             estimate.thread_stack_bytes == estimate.thread_stack_bytes_per_thread );
+            rocketnet_check( estimate.sockets == 1 && estimate.worker_threads == 2 &&
+                             estimate.thread_stack_bytes == 2 * estimate.thread_stack_bytes_per_thread );
         if ( strcmp( transport, "rio" ) == 0 )
             rocketnet_check( estimate.registered_region_bytes > 0 && estimate.allocator_bytes > 0 );
     }
