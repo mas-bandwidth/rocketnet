@@ -22,6 +22,14 @@ static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] 
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
+// serialize a received message's bytes straight into a started message
+static int write_bytes( uint8_t * p, const uint8_t * data, int bytes )
+{
+    for ( int i = 0; i < bytes; i++ )
+        p[i] = data[i];
+    return bytes;
+}
+
 // One call copies the current value of every client stat into a struct the caller
 // owns; read the fields from the struct, not with a call per field.
 static int print_client_stats( const struct rocketnet_client_t * client )
@@ -85,8 +93,7 @@ static int run_connect_and_traffic( struct rocketnet_server_t * server, struct r
                     uint8_t * out = rocketnet_server_start_message( server, (uint64_t) incoming.client_index[j], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
                     if ( out )
                     {
-                        memcpy( out, incoming.data[j], (size_t) bytes );
-                        rocketnet_server_finish_message( server, bytes );
+                        rocketnet_server_finish_message( server, write_bytes( out, incoming.data[j], bytes ) );
                     }
                 }
             }
@@ -97,8 +104,7 @@ static int run_connect_and_traffic( struct rocketnet_server_t * server, struct r
             uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) sizeof( payload ) );
             if ( out )
             {
-                memcpy( out, payload, sizeof( payload ) );
-                rocketnet_client_finish_message( client, (int) sizeof( payload ) );
+                rocketnet_client_finish_message( client, write_bytes( out, payload, (int) sizeof( payload ) ) );
             }
         }
         // (5) send_packets is last

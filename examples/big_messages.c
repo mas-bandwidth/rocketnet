@@ -24,6 +24,14 @@ static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] 
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
+// serialize the known pattern straight into a started message
+static int write_pattern( uint8_t * p, int bytes )
+{
+    for ( int i = 0; i < bytes; i++ )
+        p[i] = (uint8_t) ( i * 31 + 13 );
+    return bytes;
+}
+
 #define BIG_BYTES           ( 200 * 1024 )
 #define OVERSIZE_BYTES      4096
 #define LIMIT_BYTES         ( 256 * 1024 )
@@ -120,8 +128,7 @@ int main( void )
             {
                 uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE, BIG_BYTES );
                 CHECK( out != NULL );
-                memcpy( out, expected, BIG_BYTES );
-                CHECK( rocketnet_client_finish_message( client, BIG_BYTES ) != 0 );
+                CHECK( rocketnet_client_finish_message( client, write_pattern( out, BIG_BYTES ) ) != 0 );
                 big_sent = 1;
                 big_sent_at = rocketnet_time() - start;
             }

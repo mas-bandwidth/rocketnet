@@ -24,6 +24,14 @@
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
+// serialize a received message's bytes straight into a started message
+static int write_bytes( uint8_t * p, const uint8_t * data, int bytes )
+{
+    for ( int i = 0; i < bytes; i++ )
+        p[i] = data[i];
+    return bytes;
+}
+
 #define KEY_FILE "client_server.keys"
 #define DEFAULT_PORT 40000
 
@@ -185,8 +193,7 @@ int main( int argc, char ** argv )
                     uint8_t * out = rocketnet_server_start_message( server, (uint64_t) i, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
                     if ( out )
                     {
-                        memcpy( out, data, (size_t) bytes );
-                        if ( rocketnet_server_finish_message( server, bytes ) )
+                        if ( rocketnet_server_finish_message( server, write_bytes( out, data, bytes ) ) )
                             echoed = 1;
                     }
                 }

@@ -24,6 +24,16 @@ static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] 
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
+// serialize a uint32_t little-endian straight into a started message
+static int write_u32( uint8_t * p, uint32_t value )
+{
+    p[0] = (uint8_t) value;
+    p[1] = (uint8_t) ( value >> 8 );
+    p[2] = (uint8_t) ( value >> 16 );
+    p[3] = (uint8_t) ( value >> 24 );
+    return 4;
+}
+
 #define NUM_UPDATES 20
 
 int main( void )
@@ -151,8 +161,7 @@ int main( void )
                 uint32_t snapshot_id = (uint32_t) sent;
                 uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, (int) sizeof( snapshot_id ) );
                 CHECK( out != NULL );
-                memcpy( out, &snapshot_id, sizeof( snapshot_id ) );
-                serials[sent] = rocketnet_client_finish_message( client, (int) sizeof( snapshot_id ) );
+                serials[sent] = rocketnet_client_finish_message( client, write_u32( out, snapshot_id ) );
                 CHECK( serials[sent] != 0 );
                 sent++;
             }

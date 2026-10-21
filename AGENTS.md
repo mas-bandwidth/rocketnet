@@ -192,8 +192,9 @@ int main( void )
             uint8_t * out = rocketnet_server_start_message( server, (uint64_t) reply_index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
             if ( !out )
                 goto cleanup;
-            memcpy( out, "pong", 4 );
-            if ( !rocketnet_server_finish_message( server, 4 ) )
+            uint8_t * p = out;
+            *p++ = 'p'; *p++ = 'o'; *p++ = 'n'; *p++ = 'g';
+            if ( !rocketnet_server_finish_message( server, (int) ( p - out ) ) )
                 goto cleanup;
         }
         if ( !client_sent && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
@@ -201,8 +202,9 @@ int main( void )
             uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
             if ( !out )
                 goto cleanup;
-            memcpy( out, "ping", 4 );
-            if ( !rocketnet_client_finish_message( client, 4 ) )
+            uint8_t * p = out;
+            *p++ = 'p'; *p++ = 'i'; *p++ = 'n'; *p++ = 'g';
+            if ( !rocketnet_client_finish_message( client, (int) ( p - out ) ) )
                 goto cleanup;
             client_sent = 1;
         }

@@ -547,13 +547,14 @@ void server_frame( struct rocketnet_server_t * server, int client_index, int cha
     /* 3. run the game simulation for this frame */
 
     /* 4. queue this frame's outgoing messages */
-    const uint8_t payload[] = { 1, 2, 3, 4 };
     uint32_t serial = 0;
-    uint8_t * out = rocketnet_server_start_message( server, (uint64_t) client_index, channel, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) sizeof( payload ) );
+    uint8_t * out = rocketnet_server_start_message( server, (uint64_t) client_index, channel, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
     if ( out )
     {
-        memcpy( out, payload, sizeof( payload ) );
-        serial = rocketnet_server_finish_message( server, (int) sizeof( payload ) );
+        /* serialize straight into the started message, then finish with the bytes written */
+        uint8_t * p = out;
+        *p++ = 1; *p++ = 2; *p++ = 3; *p++ = 4;
+        serial = rocketnet_server_finish_message( server, (int) ( p - out ) );
     }
     if ( serial == 0 )
     {

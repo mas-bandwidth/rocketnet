@@ -35,7 +35,7 @@ static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] 
 #define BUDGET_US 100.0
 #define BINS 10000                                          // 0.1 us bins up to 1 ms, then one overflow bin
 
-typedef struct { uint32_t frame; float x, y; } message_t;   // the frame it was queued in, and a position
+#define MESSAGE_BYTES 12   // the frame it was queued in (uint32), and a position (two floats)
 typedef struct { uint32_t bins[BINS + 1]; uint64_t count; double max, tick_sum, tick_max; } costs_t;
 typedef struct { double sum; uint64_t count; uint32_t min, max; } latency_t;
 
@@ -68,15 +68,24 @@ static void print_costs( const char * label, const costs_t * c, uint32_t ticks )
             label, percentile( c, 0.5 ), percentile( c, 0.99 ), c->max, BUDGET_US, c->tick_sum / ticks, c->tick_max );
 }
 
-// fill a buffer that start returned, or note the latency of a message that arrived
-static void write_message( uint8_t * buffer, uint32_t frame ) { message_t m = { frame, 1.0f, 2.0f }; memcpy( buffer, &m, sizeof( m ) ); }
+// serialize a message straight into a buffer that start returned, or note the
+// latency of a message that arrived; returns the bytes written
+static int write_u32( uint8_t * p, uint32_t value ) { p[0] = (uint8_t) value; p[1] = (uint8_t) ( value >> 8 ); p[2] = (uint8_t) ( value >> 16 ); p[3] = (uint8_t) ( value >> 24 ); return 4; }
+static int write_f32( uint8_t * p, float value ) { union { float f; uint32_t u; } bits; bits.f = value; return write_u32( p, bits.u ); }
+static uint32_t read_u32( const uint8_t * p ) { return (uint32_t) p[0] | ( (uint32_t) p[1] << 8 ) | ( (uint32_t) p[2] << 16 ) | ( (uint32_t) p[3] << 24 ); }
+static int write_message( uint8_t * buffer, uint32_t frame )
+{
+    uint8_t * p = buffer;
+    p += write_u32( p, frame );
+    p += write_f32( p, 1.0f );
+    p += write_f32( p, 2.0f );
+    return (int) ( p - buffer );
+}
 
 static void read_message( latency_t * l, uint32_t frame, const uint8_t * data, int bytes )
 {
-    message_t m;
-    if ( bytes != (int) sizeof( m ) ) return;
-    memcpy( &m, data, sizeof( m ) );
-    const uint32_t frames = frame - m.frame;                // received minus queued: 0 is the same frame
+    if ( bytes != MESSAGE_BYTES ) return;
+    const uint32_t frames = frame - read_u32( data );                // received minus queued: 0 is the same frame
     l->min = l->count == 0 || frames < l->min ? frames : l->min;
     l->max = frames > l->max ? frames : l->max;
     l->sum += frames; l->count++;
@@ -168,12 +177,12 @@ int main( int argc, char ** argv )
                 for ( int m = 0; m < incoming.num_messages; m++ )
                     read_message( &to_client, frame, incoming.data[m], incoming.bytes[m] );
             // (3) simulate: nothing moves in this example
-            if ( measuring && ( buffer = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, sizeof( message_t ) ) ) )
-                { write_message( buffer, frame ); rocketnet_client_finish_message( client, sizeof( message_t ) ); }      // (4) queue
+            if ( measuring && ( buffer = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, MESSAGE_BYTES ) ) )
+                rocketnet_client_finish_message( client, write_message( buffer, frame ) );      // (4) queue
             if ( measuring && ( frame + i ) % 30 == 0 && frame + 60 < measure_from + frames )
             {
-                if ( ( buffer = rocketnet_client_start_message( client, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, sizeof( message_t ) ) ) ) write_message( buffer, frame );
-                if ( !buffer || !rocketnet_client_finish_message( client, sizeof( message_t ) ) ) { printf( "FAIL: client %d event refused\n", i ); goto cleanup; }
+                buffer = rocketnet_client_start_message( client, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, MESSAGE_BYTES );
+                if ( !buffer || !rocketnet_client_finish_message( client, write_message( buffer, frame ) ) ) { printf( "FAIL: client %d event refused\n", i ); goto cleanup; }
                 events_sent++;
             }
             if ( !wrong_order ) rocketnet_client_send_packets( client );                // (5) last, so this frame's messages leave this frame
@@ -191,8 +200,8 @@ int main( int argc, char ** argv )
                 { read_message( &to_server, frame, batch.data[m], batch.bytes[m] ); events_received += batch.channel[m] == 1; }
         // (3) simulate: nothing moves in this example
         for ( int i = 0; measuring && i < num_clients; i++ )                            // (4) queue each client's snapshot
-            if ( ( buffer = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, sizeof( message_t ) ) ) )
-                { write_message( buffer, frame ); rocketnet_server_finish_message( server, sizeof( message_t ) ); }
+            if ( ( buffer = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, MESSAGE_BYTES ) ) )
+                rocketnet_server_finish_message( server, write_message( buffer, frame ) );
         if ( !wrong_order ) rocketnet_server_send_packets( server );                    // (5) last, so this frame's messages leave this frame
 
         if ( measuring && connected != num_clients ) { printf( "FAIL: a client disconnected\n" ); goto cleanup; }

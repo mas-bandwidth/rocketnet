@@ -24,6 +24,14 @@ static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] 
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
+// serialize text (without its terminator) straight into a started message
+static int write_text( uint8_t * p, const char * text, int bytes )
+{
+    for ( int i = 0; i < bytes; i++ )
+        p[i] = (uint8_t) text[i];
+    return bytes;
+}
+
 // Run frames until the client is connected and, when message is set, the
 // server has received it. Returns 1 when done, 0 on the five-second deadline,
 // and -1 when the message cannot be queued.
@@ -80,8 +88,7 @@ static int run_frames( struct rocketnet_server_t * server, struct rocketnet_clie
             uint8_t * buffer = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message_bytes );
             if ( !buffer )
                 return -1;
-            memcpy( buffer, message, (size_t) message_bytes );
-            if ( !rocketnet_client_finish_message( client, message_bytes ) )
+            if ( !rocketnet_client_finish_message( client, write_text( buffer, message, message_bytes ) ) )
                 return -1;
             sent = 1;
         }

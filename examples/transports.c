@@ -25,6 +25,14 @@ static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] 
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
+// serialize text (without its terminator) straight into a started message
+static int write_text( uint8_t * p, const char * text, int bytes )
+{
+    for ( int i = 0; i < bytes; i++ )
+        p[i] = (uint8_t) text[i];
+    return bytes;
+}
+
 // Connect a portable client over the loopback interface, send one reliable
 // message, and wait until the server receives it. Returns 1 when it arrived.
 static int exchange( struct rocketnet_server_t * server, const char * server_address )
@@ -76,8 +84,7 @@ static int exchange( struct rocketnet_server_t * server, const char * server_add
             uint8_t * buffer = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message_bytes );
             if ( !buffer )
                 break;
-            memcpy( buffer, message, (size_t) message_bytes );
-            if ( !rocketnet_client_finish_message( client, message_bytes ) )
+            if ( !rocketnet_client_finish_message( client, write_text( buffer, message, message_bytes ) ) )
                 break;
             sent = 1;
         }
