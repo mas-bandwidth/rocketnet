@@ -82,6 +82,7 @@ static bool portable_tx_publish( portable_server_t * server )
     return true;
 }
 
+#if defined(ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE)
 static void portable_tx_worker( void * arg )
 {
     portable_server_t * server = (portable_server_t*) arg;
@@ -126,6 +127,7 @@ static void portable_tx_worker( void * arg )
     }
     server->exited.store( true, std::memory_order_release );
 }
+#endif
 
 static void portable_server_cleanup( portable_server_t * server )
 {
