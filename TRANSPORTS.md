@@ -204,12 +204,15 @@ and `:3573`):
 `SCHED_RR` at `sched_get_priority_min( SCHED_RR )` on Linux and macOS,
 `THREAD_PRIORITY_TIME_CRITICAL` on Windows.
 
-| Transport | Threads it creates | What the library sets |
+| Transport | Network threads it creates | What the library sets |
 |---|---|---|
 | GSO (Linux) | one worker per queue (`sdk/rocketnet_server_gso_linux.cpp:769`) | `SCHED_RR`, minimum priority, after each create |
 | XDP (Linux) | one thread per queue (`sdk/rocketnet_server_socket_linux.cpp:2568-2577`) | on itself at thread start: pinned to cpu `num_os_cpus + queue` with `pthread_setaffinity_np`, then `SCHED_RR` at the minimum priority on `pthread_self()` |
 | IOCP (Windows) | one worker per completion thread (`sdk/rocketnet_server_iocp_windows.cpp:568`) | `THREAD_PRIORITY_TIME_CRITICAL`, after each create |
 | io_uring, RIO, portable socket | none | nothing |
+
+Every server also runs one background stats worker. It uses a socket-free wake
+and does not receive the network-thread priority override described above.
 
 `rocketnet_thread_priority( false )` turns the priority calls off for
 threads created after it; the XDP thread's pin to its queue's cpu always runs.
@@ -297,7 +300,8 @@ went to a closed port.
 
 `io_uring` (`sdk/rocketnet_server_uring_linux.cpp`, `sdk/rocketnet_server_uring.h`)
 is a staged Linux server transport with one io_uring per transport, used only on the
-main thread, and no worker threads. An `SO_REUSEPORT` socket group, bound the
+main thread, with no I/O worker threads. The server still has its separate
+background stats worker. An `SO_REUSEPORT` socket group, bound the
 way the GSO transport binds its group, shards receives across queues. Each queue
 has a provided buffer ring and one multishot `RECVMSG`, so the kernel fills
 receive buffers with no syscall per datagram; `send_packets` submits one

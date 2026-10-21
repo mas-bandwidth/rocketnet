@@ -460,7 +460,8 @@ of the public client and server API.
 
 The internal transport plan, allocated at start, includes the transport, protocol tables and ACK history, reassembly and
 its delivered mirror, send arena, native transport queues and SDK worker allocations,
-plus the SDK allocator's ownership/alignment overhead. XDP UMEM is counted
+including the two background stats snapshot banks, worker scratch storage and
+socket-free wake, plus the SDK allocator's ownership/alignment overhead. XDP UMEM is counted
 separately and included in the total. Worker startup shims are included even if
 some have already been freed by the time create returns. OS thread stacks, kernel
 socket/ring storage, libbpf/libxdp allocations, libc bookkeeping, loader and
@@ -488,14 +489,20 @@ sdk/rocketnet_xdp_socket_config.h), libbpf/libxdp and the XDP program's maps, th
 submission, completion and provided buffer rings, thread guard pages
 and TLS, kernel page tables, loader memory, libc bookkeeping outside the SDK
 allocator, and application memory. Stacks count reserved address space, not
-resident pages. With default configuration and an 8 MiB default stack, on Linux:
+resident pages. Every server adds one background stats worker to its transport's
+I/O workers. Its wake uses a native event or pipe, so it adds no UDP socket or
+socket-buffer reservation. The current default Linux worker topology is:
 
-| transport | required_memory | sockets | socket buffers | XDP rings | threads x stack | estimate total |
-| --- | --- | --- | --- | --- | --- | --- |
-| portable | 688,206,108 | 1 | 2,000,000 | 0 | 0 | 690,206,108 |
-| gso | 830,413,923 | 4 | 8,000,000 | 0 | 4 x 8 MiB | 871,968,355 |
-| io_uring | 799,247,707 | 4 | 8,000,000 | 0 | 0 | 807,247,707 |
-| xdp | 4,473,629,517 (UMEM 1,879,048,192) | 7 | 0 | 3,670,016 | 7 x 8 MiB | 4,536,019,789 |
+| transport | sockets | I/O workers | stats workers | total stacks |
+| --- | --- | --- | --- | --- |
+| portable (development server) | 1 | 0 | 1 | 1 |
+| gso | 4 | 4 | 1 | 5 |
+| io_uring | 4 | 0 | 1 | 1 |
+| xdp | 7 | 7 | 1 | 8 |
+
+Multiply the total stacks by the host's default stack reserve. Use the probe
+below for byte totals from the exact build and configured geometry; allocator
+sizes also depend on platform layout and compile-time limits.
 
 Build tools normally, then use the resource probe:
 
