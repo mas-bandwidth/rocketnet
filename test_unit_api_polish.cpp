@@ -129,6 +129,7 @@ static void test_api_polish_status_returns()
     check( rocketnet_client_default_config_internal( &client_config ) == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
     struct rocketnet_server_config_t server_config;
     api_polish_dev_server_config( &server_config );
+    server_config.max_clients = 1; // This case checks status codes, not server capacity.
     create_status = ROCKETNET_TEST_STATUS_UNSET;
     rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
     check( server != NULL );

@@ -1500,6 +1500,17 @@ static void test_message_receive_pumped_in_order()
 }
 REGISTER_UNIT_TEST( test_message_receive_pumped_in_order );
 
+static int lifecycle_receive_null_assertions = 0;
+
+static void lifecycle_receive_null_assert( const char * condition, const char * function, const char * file, int line )
+{
+    check( strcmp( condition, "p" ) == 0 );
+    check( strcmp( function, "rocketnet_api_null_guard" ) == 0 );
+    (void) file;
+    (void) line;
+    lifecycle_receive_null_assertions++;
+}
+
 // The library owns one receive batch per object: each receive refills and
 // returns it, a receive that fills nothing returns NULL, the second of two
 // receives in a row wipes the first, and a NULL object is one counted misuse
@@ -1537,11 +1548,17 @@ static void test_receive_returns_the_objects_one_batch()
     check( rocketnet_server_receive_messages( world.server ) == NULL );
     check( first->num_messages == 0 );
 
+    // NULL is an expected misuse: Debug reports it through the assert hook.
+    const rocketnet_assert_function_t saved_assert = rn_assert_function;
+    lifecycle_receive_null_assertions = 0;
+    rocketnet_assert_function( lifecycle_receive_null_assert );
     const uint64_t misuse = rocketnet_api_misuse_count();
     check( rocketnet_server_receive_messages( NULL ) == NULL );
     check( rocketnet_api_misuse_count() == misuse + 1 );
     check( rocketnet_client_receive_messages( NULL ) == NULL );
     check( rocketnet_api_misuse_count() == misuse + 2 );
+    rocketnet_assert_function( saved_assert );
+    check( lifecycle_receive_null_assertions == ( ROCKETNET_ASSERTS ? 2 : 0 ) );
     lifecycle_world_destroy( &world );
 }
 REGISTER_UNIT_TEST( test_receive_returns_the_objects_one_batch );
