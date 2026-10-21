@@ -805,6 +805,7 @@ static void test_connection_reset_server_slot_reuse_is_clean()
     rocketnet_server_connection_reset( &f.server, a );
     check( !rocketnet_client_slots_connected( f.server.client_slots, a ) );
     check( f.connection_ids[a] == 0 );
+    check( f.server.acks->endpoints[a].stats_delta == fresh_ack.stats_delta );
     check( memcmp( &f.server.acks->endpoints[a], &fresh_ack, sizeof(fresh_ack) ) == 0 );
     check( memcmp( f.server.reassembly->slots + a * f.server.reassembly->num_slots,
                    fresh_slots, sizeof(fresh_slots) ) == 0 );
