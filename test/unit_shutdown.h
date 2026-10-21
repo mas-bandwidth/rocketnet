@@ -5,7 +5,6 @@
 #include "../test_unit_registry.h"
 #include "../sdk/rocketnet_internal.h"
 #include "../sdk/rocketnet_driver.h"
-#include "../sdk/rocketnet_client_io.h"
 
 // Test-only cleanup for deterministic, step-driven fixtures. These helpers
 // deliberately drive the fake worker; production completion queries never do.
