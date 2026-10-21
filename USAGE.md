@@ -625,10 +625,11 @@ modulo phase and hands off delta buffers for connected slots. Results from a
 newly submitted batch can be published no earlier than a later update. The
 worker folds those deltas into its rolling ACK history and computes RTT,
 jitter, loss and bandwidth while the main thread continues its frame work. A
-busy worker does not block update. A new batch can still be submitted if the
-other delta bank is free; if both banks are occupied, update submits no batch
-and the submitted-job ordinal does not advance, so that phase is retried rather
-than starved. At 1,000 configured slots, a full set of phases spans 50
+busy worker does not block update. Submission requires a free job bank, a
+spare delta buffer for every selected connected slot, and an immediately
+available exchange mutex. If any condition is missing, update defers the phase
+without advancing the submitted-job ordinal; deltas continue coalescing in the
+producer buffers, and the same phase is retried later. At 1,000 configured slots, a full set of phases spans 50
 successfully submitted jobs; when the worker falls behind, published quality
 values can lag further. Each result carries its connection ID, so a result for
 a reset or reused slot is discarded. Reset clears that slot's published quality

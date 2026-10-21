@@ -80,9 +80,11 @@ connected slots. Results from a newly submitted batch can be published no
 earlier than a later update. A background worker folds the deltas into its
 rolling ACK history and computes the server-slot statistics; the caller's
 server-slot stats call only copies the most recently published values. If the
-worker is busy, update does not wait. It can still submit a batch when the
-other delta bank is free; when both banks are occupied it skips submission and
-retries that submitted-job ordinal on a later update. The ordinal cycles through
+worker is busy, update does not wait. Submission requires a free job bank, a
+spare delta buffer for every selected connected slot, and an immediately
+available exchange mutex. Otherwise update defers the phase without advancing
+the submitted-job ordinal; deltas keep coalescing in producer buffers and the
+same phase is retried later. The ordinal cycles through
 `ceil(max_clients / 20)` phases, so every phase is revisited without starvation.
 At 1,000 configured slots, a full set of phases takes 50 successfully submitted
 batches, and worker lag can make published values older still. Results carry
