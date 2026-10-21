@@ -438,7 +438,7 @@ static rocketnet_message_client_t * mo_client_create( mo_net_t * net, int slot, 
 }
 
 static void mo_pair_setup( mo_pair_t * pair, int num_clients, const rocketnet_message_config_t * config = NULL,
-                           uint32_t client_kbps = ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, uint32_t server_kbps = ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS )
+                           uint32_t client_kbps = ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, uint32_t server_kbps = ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS )
 {
     rocketnet_message_config_t defaults;
     if ( !config )
@@ -618,8 +618,8 @@ static void test_message_client_start_dropped_before_transport_connected()
     memset( &pair, 0, sizeof( pair ) );
     pair.net = mo_net_new();
     pair.num_clients = 1;
-    pair.server = mo_server_create( pair.net, &config, MO_MAX_SLOTS, ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS );
-    pair.clients[0] = mo_client_create( pair.net, 0, &config, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS );
+    pair.server = mo_server_create( pair.net, &config, MO_MAX_SLOTS, ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
+    pair.clients[0] = mo_client_create( pair.net, 0, &config, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
     check( pair.server && pair.clients[0] );
     pair.time = MO_T0;
     const rocketnet_counters_t * counters = rocketnet_message_client_counters( pair.clients[0] );
@@ -1202,7 +1202,7 @@ static void test_slot_reuse_starts_clean()
     mo_small_config( &config );
     config.server_send_kbps = 7000;                                   // R6: a reused slot starts at the config field
     mo_pair_t pair;
-    mo_pair_setup( &pair, 1, &config, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0 );
+    mo_pair_setup( &pair, 1, &config, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0 );
     mo_step( &pair );
 
     rn_message_connection_t * slot = mo_server_slot( &pair, 0 );
@@ -1238,7 +1238,7 @@ static void test_slot_reuse_starts_clean()
     delete pair.net->clients[0];
     pair.net->clients[0] = NULL;
     rocketnet_message_client_destroy( pair.clients[0] );
-    pair.clients[0] = mo_client_create( pair.net, 0, &config, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS );
+    pair.clients[0] = mo_client_create( pair.net, 0, &config, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
     check( pair.clients[0] );
     mo_net_connect( pair.net, 0 );
     mo_step( &pair );
@@ -1351,9 +1351,9 @@ static void test_budget_set_at_create_and_runtime()
     }
 
     mo_pair_t pair;
-    mo_pair_setup( &pair, 1, NULL, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS );
-    check( mo_client_connection( pair.clients[0] )->budget.kbps == ROCKETNET_DEFAULT_CLIENT_SEND_KBPS );
-    check( mo_server_slot( &pair, 0 )->budget.kbps == ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS );
+    mo_pair_setup( &pair, 1, NULL, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
+    check( mo_client_connection( pair.clients[0] )->budget.kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
+    check( mo_server_slot( &pair, 0 )->budget.kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
     mo_step( &pair );
 
     // at runtime: a low rate. Reliable messages wait for budget and are all
@@ -1709,11 +1709,11 @@ static void test_message_objects_no_allocation_after_create()
         check( allocation != NULL );
         void * block = (void *) ( ( (uintptr_t) allocation + alignment - 1 ) & ~(uintptr_t) ( alignment - 1 ) );
         const uint64_t before_block = mo_mallocs;
-        rocketnet_message_client_t * in_block = mo_client_create( net, 0, &config, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, block, bytes );
+        rocketnet_message_client_t * in_block = mo_client_create( net, 0, &config, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, block, bytes );
         check( in_block != NULL );
         check( (void *) in_block == block );
         check( mo_mallocs == before_block );
-        check( mo_client_create( net, 1, &config, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, block, bytes - 64 ) == NULL );        // short: refused
+        check( mo_client_create( net, 1, &config, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, block, bytes - 64 ) == NULL );        // short: refused
         rocketnet_message_client_destroy( in_block );
 
         // the hot path: sends both types, writes, resends under loss, acks,
@@ -1953,12 +1953,12 @@ static void test_message_objects_client_clock_starts_at_first_update()
 
     // seeded at 0.0, the public create's seed
     rn_message_link_t server_link = mo_link( net->server );
-    rocketnet_message_server_t * server = (rocketnet_message_server_t *) rn_message_object_create( NULL, &server_link, 1, 2, &config, NULL, 0, ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, 0.0 );
+    rocketnet_message_server_t * server = (rocketnet_message_server_t *) rn_message_object_create( NULL, &server_link, 1, 2, &config, NULL, 0, ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, 0.0 );
     check( server );
     mo_endpoint_t * e = mo_net_client( net, 0 );
     rn_message_link_t client_link = mo_link( e );
     client_link.clock_from_first_update = 1;                    // as rn_message_client_link binds it
-    rocketnet_message_client_t * client = (rocketnet_message_client_t *) rn_message_object_create( NULL, &client_link, 0, 1, &config, NULL, 0, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 );
+    rocketnet_message_client_t * client = (rocketnet_message_client_t *) rn_message_object_create( NULL, &client_link, 0, 1, &config, NULL, 0, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 );
     check( client );
     mo_net_connect( net, 0 );
 

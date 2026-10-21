@@ -1120,7 +1120,7 @@ static void test_client_one_update_sends_more_than_sixteen_packets()
     lifecycle_world_create( &world, 1, 0 );
     rocketnet_client_config_t client_config;
     lifecycle_client_config( &client_config );
-    client_config.send_kbps = ROCKETNET_SEND_BUDGET_MAX_KBPS;   // the ceiling: the packet limit alone bounds the update
+    client_config.send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;   // no budget: the packet limit alone bounds the update
     world.clients[0] = rocketnet_client_create( NULL, &client_config, NULL );
     world.num_clients = 1;
     check( world.clients[0] != NULL );
@@ -1363,7 +1363,7 @@ static void test_message_receive_pumped_past_one_batch_in_order()
     rocketnet_client_t * client = world.clients[0];
     lifecycle_connect( &world, 0, 0x1B01 );
     const int index = (int) rocketnet_client_index( client );
-    check( rocketnet_client_set_send_kbps( client, ROCKETNET_SEND_BUDGET_MAX_KBPS ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_client_set_send_kbps( client, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );
 
     const int total = 3 * ROCKETNET_RECEIVE_BATCH_MESSAGES + 17;
     for ( int i = 0; i < total; i++ )

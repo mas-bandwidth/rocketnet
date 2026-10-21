@@ -402,7 +402,7 @@ static rocketnet_message_client_t * mc_client_create( mc_net_t * net, int slot, 
 }
 
 static void mc_pair_setup( mc_pair_t * pair, int num_clients, const rocketnet_message_config_t * config = NULL,
-                           uint32_t client_kbps = ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, uint32_t server_kbps = ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS )
+                           uint32_t client_kbps = ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, uint32_t server_kbps = ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS )
 {
     rocketnet_message_config_t defaults;
     if ( !config )
@@ -609,9 +609,9 @@ static void test_message_config_mismatch_ends_both_connections()
     memset( &pair, 0, sizeof( pair ) );
     pair.net = mc_net_new();
     pair.num_clients = 1;
-    pair.server = mc_server_create( pair.net, &server_config, MC_MAX_SLOTS, ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS );
+    pair.server = mc_server_create( pair.net, &server_config, MC_MAX_SLOTS, ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
     check( pair.server );
-    pair.clients[0] = mc_client_create( pair.net, 0, &client_config, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS );
+    pair.clients[0] = mc_client_create( pair.net, 0, &client_config, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
     check( pair.clients[0] );
     mc_net_connect( pair.net, 0 );
     pair.time = MC_T0;

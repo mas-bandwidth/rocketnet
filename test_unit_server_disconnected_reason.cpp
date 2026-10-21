@@ -322,7 +322,7 @@ static void server_disconnected_fake_case( int names_end_reason, int expected_re
     link.destroy = NULL;                                        // the case owns the fake
 
     rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 1, NULL, NULL, 0,
-                                                             ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 1000.0 );
+                                                             ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 1000.0 );
     check( object );
     rocketnet_message_client_t * client = (rocketnet_message_client_t *) object;
     double time = 1000.0;

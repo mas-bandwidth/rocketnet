@@ -49,7 +49,8 @@ static_assert( sizeof( struct rocketnet_receipt_t ) == sizeof( struct rocketnet_
                offsetof( struct rocketnet_receipt_t, serial ) == offsetof( struct rocketnet_message_receipt_t, serial ) &&
                offsetof( struct rocketnet_receipt_t, status ) == offsetof( struct rocketnet_message_receipt_t, status ), "the public receipt is the message receipt" );
 
-static_assert( ROCKETNET_DEFAULT_CLIENT_SEND_KBPS <= ROCKETNET_SEND_BUDGET_MAX_KBPS && ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS <= ROCKETNET_SEND_BUDGET_MAX_KBPS, "the default budgets are valid budgets" );
+static_assert( ROCKETNET_SEND_BUDGET_MAX_KBPS == ROCKETNET_SEND_KBPS_UNLIMITED - 1, "every budget below the unlimited sentinel is a budget" );
+static_assert( ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS <= ROCKETNET_SEND_BUDGET_MAX_KBPS && ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS <= ROCKETNET_SEND_BUDGET_MAX_KBPS, "the default budgets are valid budgets" );
 
 uint32_t rocketnet_version( void )
 {
@@ -68,18 +69,18 @@ uint32_t rocketnet_version( void )
     X( sequenced_holds ) X( receipt_ring ) X( resend_delay_initial_ms ) X( resend_delay_min_ms ) X( resend_delay_max_ms ) X( reliable_timeout_ms )
 
 // the send budget fields: one int each, read under the endpoint's env name.
-// 0 is the documented default rate, ROCKETNET_SEND_BUDGET_MAX_KBPS asks for
-// the ceiling, a negative rate is refused as INVALID_ARGUMENT
-// (rn_public_send_kbps), and above the ceiling is refused as out of range.
+// 0 is the directional default rate, ROCKETNET_SEND_KBPS_UNLIMITED is no
+// budget, and a negative rate is refused as INVALID_ARGUMENT
+// (rn_public_send_kbps).
 
 static const struct rocketnet_config_field_t rn_client_budget_fields[] =
 {
-    { "send_kbps", ROCKETNET_CONFIG_KIND_INT, 0, (int) sizeof(int), (int64_t) INT_MIN, (int64_t) ROCKETNET_SEND_BUDGET_MAX_KBPS, 0 },
+    { "send_kbps", ROCKETNET_CONFIG_KIND_INT, 0, (int) sizeof(int), (int64_t) INT_MIN, (int64_t) ROCKETNET_SEND_KBPS_UNLIMITED, 0 },
 };
 
 static const struct rocketnet_config_field_t rn_server_budget_fields[] =
 {
-    { "per_client_send_kbps", ROCKETNET_CONFIG_KIND_INT, 0, (int) sizeof(int), (int64_t) INT_MIN, (int64_t) ROCKETNET_SEND_BUDGET_MAX_KBPS, 0 },
+    { "per_client_send_kbps", ROCKETNET_CONFIG_KIND_INT, 0, (int) sizeof(int), (int64_t) INT_MIN, (int64_t) ROCKETNET_SEND_KBPS_UNLIMITED, 0 },
 };
 
 const struct rocketnet_config_field_t * rocketnet_client_budget_config_fields( int * num_fields )
@@ -96,24 +97,24 @@ const struct rocketnet_config_field_t * rocketnet_server_budget_config_fields( i
 
 static uint32_t rn_budget_kbps( int kbps )
 {
-    return kbps <= 0 ? (uint32_t) ROCKETNET_SEND_BUDGET_MAX_KBPS : (uint32_t) kbps;
+    return kbps <= 0 ? 0u : (uint32_t) kbps;                   // 0: uncapped
 }
 
 // The public send rate to the message layer's: 0 is the default rate (the
-// value default_config writes), ROCKETNET_SEND_BUDGET_MAX_KBPS is the ceiling,
-// which the message layer holds as 0 (no create-time reserve for it), and a
-// negative rate is refused. A zeroed config is never the 10 Gbit/s ceiling.
+// value default_config writes), ROCKETNET_SEND_KBPS_UNLIMITED is no budget,
+// which the message layer holds as 0 (uncapped, with no create-time reserve
+// for it), and a negative rate is refused.
 static bool rn_public_send_kbps( const char * endpoint, const char * field, int kbps, int default_kbps, int * resolved, enum rocketnet_status_t * failure )
 {
     if ( kbps < 0 )
     {
-        rocketnet_error( "%s config refused: %s is %d; a send rate is 0 (the default), 1 .. %d, or %d for the ceiling", endpoint, field, kbps, ROCKETNET_SEND_BUDGET_MAX_KBPS - 1, ROCKETNET_SEND_BUDGET_MAX_KBPS );
+        rocketnet_error( "%s config refused: %s is %d; a send rate is 0 (the default), a budget in kbps, or ROCKETNET_SEND_KBPS_UNLIMITED", endpoint, field, kbps );
         if ( failure ) *failure = ROCKETNET_STATUS_INVALID_ARGUMENT;
         return false;
     }
     if ( kbps == 0 )
         kbps = default_kbps;
-    *resolved = kbps >= ROCKETNET_SEND_BUDGET_MAX_KBPS ? 0 : kbps;
+    *resolved = kbps == ROCKETNET_SEND_KBPS_UNLIMITED ? 0 : kbps;
     return true;
 }
 
@@ -207,7 +208,7 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
         return false;
     }
     int resolved = 0;
-    if ( !rn_public_send_kbps( "client", "send_kbps", send_kbps, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, &resolved, failure ) )
+    if ( !rn_public_send_kbps( "client", "send_kbps", send_kbps, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, &resolved, failure ) )
         return false;
     message->client_send_kbps = resolved;
     *kbps = rn_budget_kbps( resolved );
@@ -290,7 +291,7 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
         return false;
     }
     int resolved = 0;
-    if ( !rn_public_send_kbps( "server", "per_client_send_kbps", send_kbps, ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, &resolved, failure ) )
+    if ( !rn_public_send_kbps( "server", "per_client_send_kbps", send_kbps, ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, &resolved, failure ) )
         return false;
     message->server_send_kbps = resolved;
     *kbps = rn_budget_kbps( resolved );
@@ -433,7 +434,7 @@ static void rn_client_default_config_current( struct rocketnet_client_config_t *
     config->simulated_latency_ms = transport.simulated_latency_ms;
     config->simulated_jitter_ms = transport.simulated_jitter_ms;
     config->simulated_duplicate_percent = transport.simulated_duplicate_percent;
-    config->send_kbps = ROCKETNET_DEFAULT_CLIENT_SEND_KBPS;
+    config->send_kbps = ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS;
     struct rocketnet_message_config_t message;
     rocketnet_message_default_config( &message );
 #define RN_COPY( name ) config->name = message.name;
@@ -914,24 +915,18 @@ int rocketnet_client_receipts( struct rocketnet_client_t * client, struct rocket
     return rocketnet_message_client_receipts( client->connection, (struct rocketnet_message_receipt_t *) out, capacity );
 }
 
-// a rate above the ceiling is out of range and a negative rate an invalid
-// argument; 0 is the endpoint's default rate. A connection that is not
+// a negative rate is an invalid argument; 0 is the endpoint's default rate. A connection that is not
 // CONNECTED has no budget to set (the config's rate is its starting rate)
 static enum rocketnet_status_t rn_send_kbps_runtime( const char * endpoint, int kbps, int default_kbps, int32_t * resolved )
 {
-    if ( kbps > ROCKETNET_SEND_BUDGET_MAX_KBPS )
-    {
-        rocketnet_error( "%s set_send_kbps refused: %d kbps is above the %d kbps ceiling", endpoint, kbps, ROCKETNET_SEND_BUDGET_MAX_KBPS );
-        return ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
-    }
     if ( kbps < 0 )
     {
         rocketnet_error( "%s set_send_kbps refused: %d kbps is negative", endpoint, kbps );
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
     }
-    // ROCKETNET_SEND_BUDGET_MAX_KBPS is no send budget: the message layer
+    // ROCKETNET_SEND_KBPS_UNLIMITED is no send budget: the message layer
     // holds that as 0, which uncaps the connection
-    *resolved = (int32_t) ( kbps == 0 ? default_kbps : ( kbps >= ROCKETNET_SEND_BUDGET_MAX_KBPS ? 0 : kbps ) );
+    *resolved = (int32_t) ( kbps == 0 ? default_kbps : ( kbps == ROCKETNET_SEND_KBPS_UNLIMITED ? 0 : kbps ) );
     return ROCKETNET_STATUS_OK;
 }
 
@@ -940,7 +935,7 @@ enum rocketnet_status_t rocketnet_client_set_send_kbps( struct rocketnet_client_
     if ( !rocketnet_api_null_guard( client ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
     int32_t resolved = 0;
-    const enum rocketnet_status_t range = rn_send_kbps_runtime( "client", kbps, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, &resolved );
+    const enum rocketnet_status_t range = rn_send_kbps_runtime( "client", kbps, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, &resolved );
     if ( range != ROCKETNET_STATUS_OK )
         return range;
     if ( rn_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED )
@@ -1134,7 +1129,7 @@ static void rn_server_config_from_transport_current( struct rocketnet_server_con
     config->transport = NULL;
     config->public_address = NULL;
     config->second_public_address = NULL;
-    config->per_client_send_kbps = ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS;
+    config->per_client_send_kbps = ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS;
     struct rocketnet_message_config_t message;
     rocketnet_message_default_config( &message );
 #define RN_COPY( name ) config->name = message.name;
@@ -1692,7 +1687,7 @@ enum rocketnet_status_t rocketnet_server_set_send_kbps( struct rocketnet_server_
     if ( !rocketnet_api_null_guard( server ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
     int32_t resolved = 0;
-    const enum rocketnet_status_t range = rn_send_kbps_runtime( "server", kbps, ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, &resolved );
+    const enum rocketnet_status_t range = rn_send_kbps_runtime( "server", kbps, ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, &resolved );
     if ( range != ROCKETNET_STATUS_OK )
         return range;
     int slot;

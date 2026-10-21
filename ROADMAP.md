@@ -449,7 +449,6 @@ What v1.0.0-preview-1 does not yet meet, one row per issue: what it is today, an
 | Public header refinement pass before 1.0.0: names, structure and doc comments may still change. | ❌ | ❌ | ❌ |
 | Client connect from a handshake or token failure state (CONNECTION_DENIED .. CONNECT_TOKEN_EXPIRED) is refused until rocketnet_client_disconnect; the final deliverable lets connect start over from any failure state (TLA+ first). | ❌ | ❌ | ❌ |
 | The *_name lookups return two forms: status names are the enum suffix ("OK") and the client state, log level and disconnect reason names are lower-case words. The final deliverable returns the upper-case enum suffix from all four. | ❌ | ❌ | ❌ |
-| The public header still carries the internal wide-channel build switch (ROCKETNET_INTERNAL_WIDE_BUILD and its ROCKETNET_MAX_CHANNELS override). The final deliverable moves it into an internal header. | ❌ | ❌ | ❌ |
 | A Linux build with XDP off still needs the BPF and XDP development libraries. The final deliverable makes them optional when XDP is off. | ❌ | — | — |
 | The public header carries a large volume of comments, some citing internal design references; the examples are longer than they need to be; the build has many targets. The final deliverable states each rule once in the header, shortens the examples and trims the build targets. | ❌ | — | — |
 | complete | 0% | 0% | 0% |

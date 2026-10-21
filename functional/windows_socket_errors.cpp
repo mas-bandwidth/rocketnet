@@ -601,7 +601,7 @@ static void windows_per_packet_receive_counts_empty_datagram( bool ipv6 )
     windows_socket_errors_sender_send( &sender, &real );
     windows_socket_errors_sender_close( &sender );
 
-    uint8_t packet[ROCKETNET_MAX_PACKET_BYTES];
+    uint8_t packet[ROCKETNET_RECEIVE_PACKET_BYTES];
     rocketnet_address_t from;
     const int first = rocketnet_platform_socket_receive_packet( socket, &from, packet, (int) sizeof( packet ) );
     const uint64_t empties = rocketnet_platform_receive_empties() - empties_before;

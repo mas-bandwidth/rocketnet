@@ -144,7 +144,7 @@ static bool public_not_released_pair_setup( struct public_not_released_pair_t * 
     struct rn_message_link_t server_link;
     rn_message_server_link( &server_link, server_transport );
     struct rocketnet_message_server_t * server = (struct rocketnet_message_server_t *) rn_message_object_create(
-        NULL, &server_link, 1, 1, &message_config, NULL, 0, ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, pair->time );
+        NULL, &server_link, 1, 1, &message_config, NULL, 0, ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, pair->time );
     check( server != NULL );
     if ( !server )
         return false;
@@ -168,7 +168,7 @@ static bool public_not_released_pair_setup( struct public_not_released_pair_t * 
     struct rn_message_link_t client_link;
     rn_message_client_link( &client_link, client_transport );
     struct rocketnet_message_client_t * client = (struct rocketnet_message_client_t *) rn_message_object_create(
-        NULL, &client_link, 0, 1, &message_config, NULL, 0, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, pair->time );
+        NULL, &client_link, 0, 1, &message_config, NULL, 0, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, pair->time );
     check( client != NULL );
     if ( !client )
         return false;

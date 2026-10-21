@@ -77,7 +77,7 @@ int main(int argc, char ** argv)
     update_us.reserve(frames);
     total_us.reserve(frames);
     uint64_t received = 0;
-    uint8_t scratch[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+    uint8_t scratch[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
 
     // Warm-up is discarded. The payload writes, the lockstep server loop
     // (update, reply) and the client drain run outside the timed windows.

@@ -1386,7 +1386,7 @@ int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t
     return rocketnet_server_protocol_process_packet_capacity( server, from, packet_data, packet_bytes,
                                                               current_timestamp, current_time,
                                                               response_packet, response_bytes,
-                                                              out_payload, ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES,
+                                                              out_payload, ROCKETNET_RECEIVE_PAYLOAD_BYTES,
                                                               out_payload_bytes, out_payload_client_index );
 }
 

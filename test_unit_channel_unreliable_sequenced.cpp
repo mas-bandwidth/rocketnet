@@ -180,7 +180,7 @@ static void test_never_takes_a_reliable_number()
     // queue and reliable number state stay independent (RNChannelTypes!Enqueue).
     rn_message_link_t link = {};
     rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 1, NULL, NULL, 0,
-                                                               ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 );
+                                                               ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 );
     rocketnet_unit_check( object != NULL );
     rocketnet_message_client_t * client = (rocketnet_message_client_t *) object;
     rn_message_connection_t * connection = &object->connections[0];

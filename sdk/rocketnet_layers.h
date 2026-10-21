@@ -26,6 +26,35 @@ extern "C" {
 #define ROCKETNET_CLIENT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, simulated_duplicate_percent ) + sizeof( int ), sizeof( void * ) )
 #define ROCKETNET_SERVER_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, second_public_address ) + sizeof( const char * ), sizeof( void * ) )
 
+/// The receive bounds: a receiver accepts what one 1500-MTU IPv4 datagram
+/// carries, 1472 bytes, and its payload, 1439 bytes, wider than the send side
+/// (ROCKETNET_RECEIVE_PACKET_BYTES, ROCKETNET_MAX_PAYLOAD_BYTES). Internal.
+#define ROCKETNET_RECEIVE_PACKET_BYTES                     ( 1500 - 20 - 8 )
+#define ROCKETNET_RECEIVE_PAYLOAD_BYTES                    1439    // 1472 - 26 - 7
+
+/// The defaults the public header states as numbers in each field's comment.
+#define ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES                16384
+#define ROCKETNET_DEFAULT_REASSEMBLY_SLOTS                 8
+
+/// The largest message one packet carries, written in place: the payload
+/// capacity less the one form byte.
+#define ROCKETNET_MESSAGE_SINGLE_BYTES                     ( ROCKETNET_MAX_PAYLOAD_BYTES - 1 )
+
+/// The standard's numbering of the ways a connection ends (standard/MESSAGES.md),
+/// the one place it maps from the public enum, which is dense and negative.
+static inline int rocketnet_disconnect_reason_standard_code( int reason )
+{
+    switch ( reason )
+    {
+        case ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH:           return 1;
+        case ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION:        return 3;
+        case ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT:          return 4;
+        case ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED:  return 5;
+        case ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED:       return 6;
+        default:                                                    return 0;
+    }
+}
+
 /// What the message layer's update returns. The public update returns void.
 enum rocketnet_update_result_t
 {

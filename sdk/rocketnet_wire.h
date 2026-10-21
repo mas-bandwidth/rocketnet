@@ -115,7 +115,7 @@ static inline int rocketnet_wire_header_bytes( int address_type )
 #define ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES  33  // 6 + 4 + 7 + 0 + 16
 
 // Every handshake packet fits one datagram on the smaller family's budget:
-// 1500 - 40 - 8 = 1452 UDP payload bytes over IPv6 (ROCKETNET_MAX_PACKET_BYTES_IPV6
+// 1500 - 40 - 8 = 1452 UDP payload bytes over IPv6 (ROCKETNET_MAX_PACKET_BYTES
 // in rocketnet.h; written out here because this header stands alone in the
 // XDP program). A token change that would push the connection request past
 // one IPv6 datagram fails to compile.

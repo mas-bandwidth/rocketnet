@@ -216,7 +216,7 @@ void run_client_frame(bool setup_only)
     CHECK(client_index >= 0 && rocketnet_server_transport_is_client_connected(server, client_index));
 
     const int measured_frames = setup_only ? 0 : CLIENT_FRAME_UNITS;
-    uint8_t scratch[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+    uint8_t scratch[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
     uint64_t received = 0;
 
     for (int frame = -CLIENT_FRAME_WARMUP; frame < measured_frames; ++frame)
@@ -346,7 +346,7 @@ void run_server_tick(bool setup_only)
     CHECK(rocketnet_server_transport_num_connected_clients(server) == SERVER_TICK_CLIENTS);
 
     const int measured_ticks = setup_only ? 0 : SERVER_TICK_UNITS;
-    uint8_t scratch[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+    uint8_t scratch[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
     uint64_t total_server_received = 0;
 
     for (int tick = -SERVER_TICK_WARMUP; tick < measured_ticks; ++tick)

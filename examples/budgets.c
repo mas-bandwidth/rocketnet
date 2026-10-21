@@ -59,8 +59,8 @@ int main( void )
     int result = 1;
 
     CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
-    printf( "client send budget default: %d kbps\n", ROCKETNET_DEFAULT_CLIENT_SEND_KBPS );
-    printf( "server per-client send budget default: %d kbps\n", ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS );
+    printf( "client send budget default: %d kbps\n", ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
+    printf( "server per-client send budget default: %d kbps\n", ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
 
     // the published development backend key (rocketnet.h) and the examples protocol id (dev_keys.h); the server makes its own keypair at create. A real server brings its own backend key, recommended through ROCKETNET_SERVER_BACKEND_PUBLIC_KEY, or set in code
     rocketnet_server_default_config( &server_config );

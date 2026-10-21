@@ -333,8 +333,8 @@ static void ip_pair_setup( ip_pair_t * pair, int packets_per_update = 8 )
     pair->net->next_id = 5000;
     rn_message_link_t server_link = ip_link( &pair->net->server );
     rn_message_link_t client_link = ip_link( &pair->net->client );
-    pair->server = (rocketnet_message_server_t *) rn_message_object_create( NULL, &server_link, 1, 1, &config, NULL, 0, ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, IP_T0 );
-    pair->client = (rocketnet_message_client_t *) rn_message_object_create( NULL, &client_link, 0, 1, &config, NULL, 0, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, IP_T0 );
+    pair->server = (rocketnet_message_server_t *) rn_message_object_create( NULL, &server_link, 1, 1, &config, NULL, 0, ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, IP_T0 );
+    pair->client = (rocketnet_message_client_t *) rn_message_object_create( NULL, &client_link, 0, 1, &config, NULL, 0, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, IP_T0 );
     check( pair->server && pair->client );
     pair->time = IP_T0;
 }

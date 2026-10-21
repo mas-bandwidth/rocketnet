@@ -69,17 +69,17 @@
 
 // the defaults of the message config fields client_send_kbps and
 // server_send_kbps (sdk/rocketnet.h), not limits: only the config table reads them
-#ifndef ROCKETNET_DEFAULT_CLIENT_SEND_KBPS
-#define ROCKETNET_DEFAULT_CLIENT_SEND_KBPS                  1000        // client to server
+#ifndef ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS
+#define ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS                  1000        // client to server
 #endif
-#ifndef ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS
-#define ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS       10000       // server to each client slot
+#ifndef ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS
+#define ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS       10000       // server to each client slot
 #endif
 
 #define ROCKETNET_SEND_BUDGET_MIN_KBPS                      1
-#ifndef ROCKETNET_SEND_BUDGET_MAX_KBPS
-#define ROCKETNET_SEND_BUDGET_MAX_KBPS                      10000000    // 10 Gbit/s per connection
-#endif
+// the largest capped budget: every int below ROCKETNET_SEND_KBPS_UNLIMITED,
+// which the public layer passes down as 0, uncapped
+#define ROCKETNET_SEND_BUDGET_MAX_KBPS                      ( 0x7fffffff - 1 )
 #define ROCKETNET_SEND_BUDGET_DEPTH_SECONDS                 0.1         // the bucket holds 100 ms of budget...
 #define ROCKETNET_SEND_BUDGET_MAX_PACKET_WIRE_BYTES         ROCKETNET_SEND_BUDGET   // ...and never less than one maximum packet
 

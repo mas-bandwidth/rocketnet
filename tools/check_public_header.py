@@ -68,9 +68,14 @@ def compile_alone(compiler_c, compiler_cxx):
     ]
     variants = [("", []), (" with ROCKETNET_SHARED", ["-DROCKETNET_SHARED"]),
                 (" with ROCKETNET_DEVELOPMENT=1", ["-DROCKETNET_DEVELOPMENT=1"])]
+    # a translation unit that includes the header, so its static inline
+    # default_config calls are an included header's, as in every program
+    unit_directory = tempfile.mkdtemp(prefix="rocketnet-header-alone-")
+    unit = Path(unit_directory) / "include_rocketnet.c"
+    unit.write_text('#include "rocketnet.h"\n')
     for name, compiler, flags in languages:
         for suffix, defines in variants:
-            command = [compiler] + flags + defines + [str(HEADER)]
+            command = [compiler] + flags + defines + ["-I", str(HEADER.parent), str(unit)]
             result = subprocess.run(command, capture_output=True, text=True)
             detail = "" if result.returncode == 0 else ": " + (result.stderr.strip().splitlines() or ["exit %d" % result.returncode])[0]
             report(result.returncode == 0, "(a) the header alone compiles as %s%s%s" % (name, suffix, detail))
@@ -94,7 +99,10 @@ def compile_alone_cl():
                 (" with ROCKETNET_DEVELOPMENT=1", ["/DROCKETNET_DEVELOPMENT=1"])]
     for name, flags, source_flag in languages:
         for suffix, defines in variants:
-            command = [compiler, "/nologo", "/Zs", "/W4", "/WX"] + flags + defines + [source_flag + str(HEADER)]
+            unit_directory = tempfile.mkdtemp(prefix="rocketnet-header-alone-")
+            unit = Path(unit_directory) / "include_rocketnet.c"
+            unit.write_text('#include "rocketnet.h"\n')
+            command = [compiler, "/nologo", "/Zs", "/W4", "/WX", "/I" + str(HEADER.parent)] + flags + defines + [source_flag + str(unit)]
             result = subprocess.run(command, capture_output=True, text=True, env=environment)
             lines = [line for line in (result.stdout + result.stderr).strip().splitlines() if line.strip() and line.strip() != HEADER.name]
             detail = "" if result.returncode == 0 else ": " + (lines or ["exit %d" % result.returncode])[0]
@@ -102,9 +110,9 @@ def compile_alone_cl():
 
 
 def check_channel_bound(compiler_c, compiler_cxx):
-    """Consumer overrides stay fixed; the complete SDK test build stays wide."""
-    variants = [("consumer", [], 32),
-                ("internal wide build", ["ROCKETNET_INTERNAL_WIDE_BUILD=1"], 512)]
+    """The bound is 32 by default, and a build that defines it (the library and the program alike) gets its value."""
+    variants = [("default", [], 32),
+                ("defined", ["ROCKETNET_MAX_CHANNELS=512"], 512)]
     with tempfile.TemporaryDirectory(prefix="rocketnet-channel-bound-") as directory:
         source = Path(directory) / "bound.c"
         for label, defines, expected in variants:
@@ -121,13 +129,13 @@ def check_channel_bound(compiler_c, compiler_cxx):
                     return
                 commands = [("C", [compiler, "/nologo", "/Zs", "/W4", "/WX", "/Tc" + str(source)]),
                             ("C++", [compiler, "/nologo", "/Zs", "/W4", "/WX", "/Tp" + str(source)])]
-                flags = ["/I" + str(HEADER.parent), "/DROCKETNET_MAX_CHANNELS=512"] + ["/D" + d for d in defines]
+                flags = ["/I" + str(HEADER.parent)] + ["/D" + d for d in defines]
             else:
                 environment = None
                 commands = [("C99", [compiler_c, "-std=c99", "-x", "c"]),
                             ("C++11", [compiler_cxx, "-std=c++11", "-x", "c++"])]
                 flags = ["-pedantic", "-Wall", "-Wextra", "-Werror", "-fsyntax-only",
-                         "-I", str(HEADER.parent), "-DROCKETNET_MAX_CHANNELS=512"] + ["-D" + d for d in defines] + [str(source)]
+                         "-I", str(HEADER.parent)] + ["-D" + d for d in defines] + [str(source)]
             for language, command in commands:
                 result = subprocess.run(command + flags, capture_output=True, text=True, env=environment)
                 detail = "" if result.returncode == 0 else ": " + (result.stderr + result.stdout).strip()
@@ -193,6 +201,10 @@ def check_declarations(raw):
         report(len(found) == 1, "(c) the inline %s is the one allowed form, exactly once" % name)
         for m in found:
             code = code[:m.start()] + re.sub(r"[^\n]", " ", code[m.start():m.end()]) + code[m.end():]
+
+    # the enum-size static asserts, under their language guards, are no declarations
+    for m in list(re.finditer(r"(?:_Static_assert|static_assert)\s*\((?:[^;]*?)\)\s*;", code, flags=re.S)):
+        code = code[:m.start()] + re.sub(r"[^\n]", " ", code[m.start():m.end()]) + code[m.end():]
 
     for word in BANNED_WORDS:
         for m in re.finditer(r"\b%s\b" % word, code):
@@ -292,7 +304,7 @@ def system_libraries(build):
     return libraries + ["-lstdc++", "-lm", "-lpthread"]
 
 
-HEADER_ALONE_INCLUDES = {"main.c": {"rocketnet.h", "stdio.h", "string.h", "time.h"}, "main.cpp": {"main.c"}}
+HEADER_ALONE_INCLUDES = {"main.c": {"rocketnet.h", "stdio.h", "stdlib.h", "string.h", "time.h"}, "main.cpp": {"main.c"}}
 
 
 def self_contained(build, config, compiler_c, compiler_cxx):

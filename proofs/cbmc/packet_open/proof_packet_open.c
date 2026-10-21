@@ -13,7 +13,7 @@
 
     Packet buffers are allocated at exactly the symbolic packet_bytes, so a
     read one past the caller's length is an out-of-bounds failure and not
-    slack. packet_bytes runs over 0..ROCKETNET_MAX_PACKET_BYTES (the receive
+    slack. packet_bytes runs over 0..ROCKETNET_RECEIVE_PACKET_BYTES (the receive
     ceiling) for the opener, and over 0..ROCKETNET_RECEIVE_CEILING + 1 for the
     prefilter so both refusal edges are covered.
 
@@ -192,7 +192,7 @@ static void open_assert( int result, int out_capacity )
 void harness_open_sealed_packet( void )
 {
     int packet_bytes = nondet_int();
-    __CPROVER_assume( packet_bytes >= 0 && packet_bytes <= ROCKETNET_MAX_PACKET_BYTES );
+    __CPROVER_assume( packet_bytes >= 0 && packet_bytes <= ROCKETNET_RECEIVE_PACKET_BYTES );
 
     int out_capacity = nondet_int();
     __CPROVER_assume( out_capacity >= 0 && out_capacity <= ROCKETNET_MAX_PAYLOAD_BYTES );

@@ -487,13 +487,13 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
             const double now = io->time( io->time_context );
             uint8_t * packet_data = buffer->data + (size_t) io->fill_slots * ROCKETNET_FRAME_SIZE;
             const int bytes = io->transport->operations->receive( io->transport->instance, &from, packet_data,
-                ROCKETNET_MAX_PACKET_BYTES );
+                ROCKETNET_RECEIVE_PACKET_BYTES );
             if ( bytes == 0 )
                 break;
             if ( bytes < 0 || bytes > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
             {
                 io->transport_faults++;
-                if ( io->prefilter_too_large && bytes > ROCKETNET_MAX_PACKET_BYTES )
+                if ( io->prefilter_too_large && bytes > ROCKETNET_RECEIVE_PACKET_BYTES )
                     (*io->prefilter_too_large)++;
                 break;
             }

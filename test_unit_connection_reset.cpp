@@ -235,7 +235,7 @@ static void test_connection_reset_inventory_covers_every_field()
     rn_message_link_t link;
     memset( &link, 0, sizeof(link) );
     rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 1, NULL, NULL, 0,
-                                                             ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 1000.0 );
+                                                             ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 1000.0 );
     check( object );
     rn_message_connection_t * connection = &object->connections[0];
 #define MESSAGE_MEMBER( field, declaration ) { #field, (size_t) ( (const uint8_t *) &connection->field - (const uint8_t *) connection ), \
@@ -350,7 +350,7 @@ static rocketnet_message_server_t * reset_loopback_server_create( double now, co
     rn_message_server_link( &link, transport );
     return (rocketnet_message_server_t *) rn_message_object_create( NULL, &link, 1, RESET_LOOPBACK_MAX_CLIENTS,
                                                                     message_config, NULL, 0,
-                                                                    ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, now );
+                                                                    ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, now );
 }
 
 static rocketnet_message_client_t * reset_loopback_client_create( rocketnet_message_server_t * server, uint64_t client_id,
@@ -379,7 +379,7 @@ static rocketnet_message_client_t * reset_loopback_client_create( rocketnet_mess
     rn_message_link_t link;
     rn_message_client_link( &link, transport );
     return (rocketnet_message_client_t *) rn_message_object_create( NULL, &link, 0, 1, message_config, NULL, 0,
-                                                                    ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 );
+                                                                    ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 );
 }
 
 static void reset_loopback_step( reset_loopback_t * f )

@@ -53,7 +53,7 @@ int main(int argc, char ** argv)
     }
     CHECK(client_index >= 0 && rocketnet_server_transport_is_client_connected(server, client_index));
     const int batch_size = 128;
-    uint8_t received[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+    uint8_t received[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
     uint64_t wire_bytes = 0, received_packets = 0, drained_packets = 0;
     volatile uint64_t plant_state = 1;
     double elapsed_ns = 0;

@@ -34,6 +34,10 @@ static void rn_endpoint_count( rn_endpoint_t * endpoint, int counter, uint64_t a
         rocketnet_platform_atomic_add_u64( (volatile uint64_t*) &counters->values[counter], amount );
 }
 
+// the public promotion threshold is the record rule at the full payload capacity
+static_assert( ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES == ROCKETNET_MESSAGE_SINGLE_BYTES - ROCKETNET_MESSAGE_RECORD_FIXED_BYTES - 1,
+               "ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES is the largest unreliable message one packet carries" );
+
 static bool rn_endpoint_unreliable_over_record_capacity( int reliability, int channel, int bytes, int capacity )
 {
     // Every unreliable mode uses the same record-size rule, including its wire header and form byte.

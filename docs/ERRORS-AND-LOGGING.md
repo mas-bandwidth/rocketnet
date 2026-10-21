@@ -54,9 +54,8 @@ create result, status and any documented log line. Only failures named in the
 public API-misuse list increment the misuse count.
 
 For client `send_kbps` and server `per_client_send_kbps`, zero selects the
-documented default. `ROCKETNET_SEND_BUDGET_MAX_KBPS` means no send budget, with
-the transport's 10 Gbit/s ceiling; it does not request a finite 10 Gbit/s
-rate. Negative values and values above the ceiling are refused as described by
+documented default. `ROCKETNET_SEND_KBPS_UNLIMITED` means no send budget on
+that connection. Negative values are refused as described by
 the config fields and `*_set_send_kbps` declarations in `sdk/rocketnet.h`.
 
 The helper names used later in this document (`rocketnet_error`,

@@ -9,6 +9,7 @@
 #include "rocketnet_fragment.h"
 #include "rocketnet_base64.h"
 #include "rocketnet_allocator.h"
+#include "rocketnet_send_budget.h"
 
 #include <stdio.h>
 #include <stdlib.h>

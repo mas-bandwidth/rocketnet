@@ -124,8 +124,8 @@ static inline int rocketnet_xdp_frame_build(
     const int ipv6 = ( source->type == ROCKETNET_ADDRESS_IPV6 );
     const int header_bytes = rocketnet_xdp_frame_header_bytes( source->type );
     const int max_payload = ipv6
-        ? ROCKETNET_MAX_PACKET_BYTES_IPV6
-        : ROCKETNET_MAX_PACKET_BYTES;
+        ? ROCKETNET_MAX_PACKET_BYTES
+        : ROCKETNET_RECEIVE_PACKET_BYTES;
     if ( payload_bytes > max_payload )
         return 0;
     if ( (size_t) ( header_bytes + payload_bytes ) > frame_bytes )

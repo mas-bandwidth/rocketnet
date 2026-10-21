@@ -340,8 +340,8 @@ int main( void )
         {
             CHECK( rocketnet_client_index( client ) == 0 );
             CHECK( rocketnet_client_set_send_kbps( client, 0 ) == ROCKETNET_STATUS_OK );
-            CHECK( rocketnet_client_set_send_kbps( client, ROCKETNET_SEND_BUDGET_MAX_KBPS ) == ROCKETNET_STATUS_OK );
-            CHECK( rocketnet_client_set_send_kbps( client, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS ) == ROCKETNET_STATUS_OK );
+            CHECK( rocketnet_client_set_send_kbps( client, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );
+            CHECK( rocketnet_client_set_send_kbps( client, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS ) == ROCKETNET_STATUS_OK );
 
             // an aborted start sends nothing, and the next start is free
             CHECK( rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 8 ) != NULL );

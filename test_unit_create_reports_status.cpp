@@ -284,16 +284,21 @@ static void test_create_reports_status_config_refusals()
     check( create_status_unsetenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" ) == 0 );
 
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
-    client_config.send_kbps = ROCKETNET_SEND_BUDGET_MAX_KBPS + 1;
-    status = ROCKETNET_STATUS_OK;
-    check( rocketnet_client_create( NULL, &client_config, &status ) == NULL );
-    check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+    // ROCKETNET_SEND_KBPS_UNLIMITED is no budget: accepted, with no ceiling
+    client_config.send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;
+    status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+    struct rocketnet_client_t * unlimited_client = rocketnet_client_create( NULL, &client_config, &status );
+    check( unlimited_client != NULL );
+    check( status == ROCKETNET_STATUS_OK );
+    rocketnet_client_destroy( unlimited_client );
 
     create_status_dev_server_config( &server_config );
-    server_config.per_client_send_kbps = ROCKETNET_SEND_BUDGET_MAX_KBPS + 1;
-    status = ROCKETNET_STATUS_OK;
-    check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &status ) == NULL );
-    check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+    server_config.per_client_send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;
+    status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+    struct rocketnet_server_t * unlimited_server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &status );
+    check( unlimited_server != NULL );
+    check( status == ROCKETNET_STATUS_OK );
+    rocketnet_server_destroy( unlimited_server );
 
     // a negative rate is refused as an invalid argument; 0 is the default rate
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );

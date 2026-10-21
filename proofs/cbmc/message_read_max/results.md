@@ -18,8 +18,8 @@ than slack inside the stack array.
 | Harness | Reader(s) | Symbolic length bound | Unwind | Solver | Properties passed / total | Failed / unproved | Verdict | Time |
 | --- | --- | --- | ---: | --- | ---: | ---: | --- | ---: |
 | `harness_message_reader` | `rocketnet_message_reader_begin`, `rocketnet_message_reader_next` | `bytes` in `[0, 24]` (`PAYLOAD_BOUND = 24`), arbitrary single-message and multi-record payloads, symbolic `rocketnet_message_limits_t` | 7 | `--bitwuzla` | 204 / 204 | 0 | `VERIFICATION SUCCESSFUL` | 37 s |
-| `harness_message_reader_single_max` | `rocketnet_message_reader_begin`, `rocketnet_message_reader_next` | `bytes` in `[0, 1439]` (`ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES`), non-`RECORDS` payloads (`FORM_SINGLE`, invalid form bytes, short and `NULL` inputs), symbolic `rocketnet_message_limits_t` | 2 | `--z3` | 192 / 192 | 0 | `VERIFICATION SUCCESSFUL` | 6 s |
-| `harness_message_read_config_body` | `rocketnet_message_read_config_body` | `bytes` in `[0, 1439]` (`ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES`), symbolic buffer contents and `NULL` | 1 | `--z3` | 64 / 64 | 0 | `VERIFICATION SUCCESSFUL` | 2 s |
+| `harness_message_reader_single_max` | `rocketnet_message_reader_begin`, `rocketnet_message_reader_next` | `bytes` in `[0, 1439]` (`ROCKETNET_RECEIVE_PAYLOAD_BYTES`), non-`RECORDS` payloads (`FORM_SINGLE`, invalid form bytes, short and `NULL` inputs), symbolic `rocketnet_message_limits_t` | 2 | `--z3` | 192 / 192 | 0 | `VERIFICATION SUCCESSFUL` | 6 s |
+| `harness_message_read_config_body` | `rocketnet_message_read_config_body` | `bytes` in `[0, 1439]` (`ROCKETNET_RECEIVE_PAYLOAD_BYTES`), symbolic buffer contents and `NULL` | 1 | `--z3` | 64 / 64 | 0 | `VERIFICATION SUCCESSFUL` | 2 s |
 
 All 460 / 460 checked properties across the three harnesses pass (`0` failed,
 `0` refuted, `0` timed out at the configured bounds).

@@ -2377,7 +2377,7 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
 
     // the mutex covers the append only, never a socket call (docs/CLIENT-IO.md, Measured)
 
-    uint8_t scratch[ROCKETNET_MAX_PACKET_BYTES];
+    uint8_t scratch[ROCKETNET_RECEIVE_PACKET_BYTES];
 
     while ( 1 )
     {
@@ -2395,7 +2395,7 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
             break;
 
         struct rocketnet_address_t from;
-        const int packet_bytes = client_transport->io.operations->receive( client_transport->io.instance, &from, scratch, ROCKETNET_MAX_PACKET_BYTES );
+        const int packet_bytes = client_transport->io.operations->receive( client_transport->io.instance, &from, scratch, ROCKETNET_RECEIVE_PACKET_BYTES );
         if ( packet_bytes == 0 )
             break;
         if ( packet_bytes < 0 || packet_bytes > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
@@ -2411,7 +2411,7 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
         // (sdk/rocketnet_protocol.cpp:176-180). An oversize datagram's bytes
         // past scratch were never written, so only scratch's prefix is copied.
 
-        const int copy_bytes = packet_bytes < ROCKETNET_MAX_PACKET_BYTES ? packet_bytes : ROCKETNET_MAX_PACKET_BYTES;
+        const int copy_bytes = packet_bytes < ROCKETNET_RECEIVE_PACKET_BYTES ? packet_bytes : ROCKETNET_RECEIVE_PACKET_BYTES;
 
         const double receive_time = client_transport->step_in_update
             ? client_transport->time

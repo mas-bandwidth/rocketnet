@@ -1248,7 +1248,7 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
     // overrun cannot happen and the protocol state is left untouched. the
     // transport reports the same condition from its own cursor.
 
-    if ( out_payload_capacity < ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES )
+    if ( out_payload_capacity < ROCKETNET_RECEIVE_PAYLOAD_BYTES )
     {
         rocketnet_spam( "client dropped packet. output capacity too small" );
         counters[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL]++;

@@ -119,7 +119,7 @@ static void reliable_fixture_create( reliable_receipt_fixture_t * f, int type, i
     config.send_buffer_bytes = 800000;
     rn_message_link_t link = reliable_link( &f->transport );
     f->client = (rocketnet_message_client_t *) rn_message_object_create( NULL, &link, 0, 1, &config, NULL, 0,
-                                                                          ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 );
+                                                                          ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 );
     rocketnet_unit_check( f->client != NULL );
     if ( allocation_snapshot )
         *allocation_snapshot = reliable_receipt_allocations;

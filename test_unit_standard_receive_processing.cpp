@@ -317,7 +317,7 @@ static void standard_client_teardown( struct standard_client_t * fixture )
 
 static int standard_client_process( struct standard_client_t * fixture, const uint8_t * packet, int packet_bytes )
 {
-    uint8_t payload[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+    uint8_t payload[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
     int payload_bytes = 0;
     return rocketnet_client_protocol_process_packet( &fixture->client, packet, packet_bytes, standard_receive_time,
                                                      payload, (int) sizeof( payload ), &payload_bytes );
@@ -364,7 +364,7 @@ static void standard_server_teardown( struct standard_server_t * fixture )
 static void standard_server_process( struct standard_server_t * fixture, const uint8_t * packet, int packet_bytes )
 {
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
-    uint8_t payload[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+    uint8_t payload[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
     int response_bytes = 0;
     int payload_bytes = 0;
     int payload_client_index = -1;

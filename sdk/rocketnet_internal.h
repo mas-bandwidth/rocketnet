@@ -35,7 +35,7 @@
     typedef char ROCKETNET_STATIC_ASSERT_JOIN( rocketnet_static_assert_, __LINE__ )[(condition) ? 1 : -1]
 #endif
 
-ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 <= ROCKETNET_MAX_PACKET_BYTES, "the IPv6 packet is the smaller of the two families" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES <= ROCKETNET_RECEIVE_PACKET_BYTES, "the IPv6 packet is the smaller of the two families" );
 
 // -----------------------------------------
 //          status-returning lifecycle forms
@@ -378,9 +378,9 @@ inline void rocketnet_endian_fix( uint64_t * value )
 // the public payload constants, written in rocketnet.h with their derivation
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PAYLOAD_BYTES % 8 == 0, "the payload capacity is a multiple of eight" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PAYLOAD_BYTES < ROCKETNET_MAX_PACKET_BYTES_IPV6, "the payload capacity fits the send budget" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES - ROCKETNET_MAX_PAYLOAD_BYTES >=
-                         ROCKETNET_MAX_PACKET_BYTES - ROCKETNET_MAX_PACKET_BYTES_IPV6, "the receive payload is the capacity plus the family difference and the rounding" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PAYLOAD_BYTES < ROCKETNET_MAX_PACKET_BYTES, "the payload capacity fits the send budget" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PAYLOAD_BYTES - ROCKETNET_MAX_PAYLOAD_BYTES >=
+                         ROCKETNET_RECEIVE_PACKET_BYTES - ROCKETNET_MAX_PACKET_BYTES, "the receive payload is the capacity plus the family difference and the rounding" );
 
 // -----------------------------------------
 //                  transport config tables
@@ -562,8 +562,8 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
     INT_FIELD( resend_delay_min_ms,                  0,      0, 60000,                  0 )                                         \
     INT_FIELD( resend_delay_max_ms,               2000,     10, 60000,                  0 )                                         \
     INT_FIELD( reliable_timeout_ms,     10000,   1000, 600000,                 0 )                                         \
-    INT_FIELD( client_send_kbps,         ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, INT32_MIN, ROCKETNET_SEND_BUDGET_MAX_KBPS, 0 ) \
-    INT_FIELD( server_send_kbps,         ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, INT32_MIN, ROCKETNET_SEND_BUDGET_MAX_KBPS, 0 )
+    INT_FIELD( client_send_kbps,         ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, INT32_MIN, ROCKETNET_SEND_BUDGET_MAX_KBPS, 0 ) \
+    INT_FIELD( server_send_kbps,         ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, INT32_MIN, ROCKETNET_SEND_BUDGET_MAX_KBPS, 0 )
 
 #define ROCKETNET_MESSAGE_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_message_config_t, reliable_timeout_ms ) + sizeof( int ), sizeof( int ) )
 #define ROCKETNET_MESSAGE_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_message_config_t, server_send_kbps ) + sizeof( int ), sizeof( int ) )

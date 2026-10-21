@@ -1628,7 +1628,7 @@ void rocketnet_test_prefilter()
     // and the receive constant is the ceiling less the same
     rocketnet_check( ROCKETNET_MAX_PAYLOAD_BYTES ==
                      ( ( ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES ) / 8 ) * 8 );
-    rocketnet_check( ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES ==
+    rocketnet_check( ROCKETNET_RECEIVE_PAYLOAD_BYTES ==
                      ROCKETNET_RECEIVE_CEILING - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES );
 
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
@@ -6777,10 +6777,10 @@ void rocketnet_test_transport_payload_capacity()
     // fixed ceiling whatever this end's own send budget -- or the same loss
     // returns as an overrun instead
 
-    rocketnet_check( ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES ==
+    rocketnet_check( ROCKETNET_RECEIVE_PAYLOAD_BYTES ==
                      ROCKETNET_RECEIVE_CEILING - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES );
-    rocketnet_check( (size_t) ROCKETNET_MAX_PAYLOADS_PER_UPDATE * ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES
-                     >= (size_t) ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS * ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES );
+    rocketnet_check( (size_t) ROCKETNET_MAX_PAYLOADS_PER_UPDATE * ROCKETNET_RECEIVE_PAYLOAD_BYTES
+                     >= (size_t) ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS * ROCKETNET_RECEIVE_PAYLOAD_BYTES );
 }
 
 
@@ -10989,7 +10989,7 @@ void rocketnet_test_client_protocol_refuses_a_small_capacity()
     // the same packet, untouched by the refused call, is accepted whole into a
     // full buffer and lands byte-exact
 
-    uint8_t full[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+    uint8_t full[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
     payload_bytes = 0;
     rocketnet_check( rocketnet_client_protocol_process_packet( &pair.client, packet, packet_bytes, pair.time,
                                                               full, (int) sizeof(full), &payload_bytes ) );
@@ -12740,9 +12740,9 @@ void rocketnet_test_public_config_resolve()
     // NULL is the defaults
 
     rocketnet_check( rocketnet_client_config_resolve( NULL, true, &client_transport, &message, &kbps ) );
-    rocketnet_check( kbps == ROCKETNET_DEFAULT_CLIENT_SEND_KBPS && message.num_channels == 32 && strcmp( client_transport.transport, "auto" ) == 0 );
+    rocketnet_check( kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS && message.num_channels == 32 && strcmp( client_transport.transport, "auto" ) == 0 );
     rocketnet_check( rocketnet_server_config_resolve( NULL, true, &server_transport, &message, &kbps ) );
-    rocketnet_check( kbps == ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS && server_transport.max_clients == 1000 && server_transport.public_address[0] == '\0' );
+    rocketnet_check( kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS && server_transport.max_clients == 1000 && server_transport.public_address[0] == '\0' );
 
     // every client field lands
 
@@ -12784,16 +12784,14 @@ void rocketnet_test_public_config_resolve()
     unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" );
     unsetenv( "ROCKETNET_CLIENT_NUM_CHANNELS" );
 
-    // 0 is the default rate, ROCKETNET_SEND_BUDGET_MAX_KBPS is the ceiling, a
-    // negative rate is refused, and past the ceiling is refused, never clamped
+    // 0 is the default rate, ROCKETNET_SEND_KBPS_UNLIMITED is no budget (0 to
+    // the message layer, uncapped), and a negative rate is refused
 
     client.send_kbps = 0;
-    rocketnet_check( rocketnet_client_config_resolve( &client, false, &client_transport, &message, &kbps ) && kbps == ROCKETNET_DEFAULT_CLIENT_SEND_KBPS );
-    client.send_kbps = ROCKETNET_SEND_BUDGET_MAX_KBPS;
-    rocketnet_check( rocketnet_client_config_resolve( &client, false, &client_transport, &message, &kbps ) && kbps == ROCKETNET_SEND_BUDGET_MAX_KBPS );
+    rocketnet_check( rocketnet_client_config_resolve( &client, false, &client_transport, &message, &kbps ) && kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
+    client.send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;
+    rocketnet_check( rocketnet_client_config_resolve( &client, false, &client_transport, &message, &kbps ) && kbps == 0 && message.client_send_kbps == 0 );
     client.send_kbps = -5;
-    rocketnet_check( !rocketnet_client_config_resolve( &client, false, &client_transport, &message, &kbps ) );
-    client.send_kbps = ROCKETNET_SEND_BUDGET_MAX_KBPS + 1;
     rocketnet_check( !rocketnet_client_config_resolve( &client, false, &client_transport, &message, &kbps ) );
     client.send_kbps = 1234;
 
@@ -12840,7 +12838,7 @@ void rocketnet_test_public_config_resolve()
     setenv( "ROCKETNET_SERVER_NUM_CHANNELS", "4", 1 );
     setenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", "0", 1 );
     rocketnet_check( rocketnet_server_config_resolve( &server, true, &server_transport, &message, &kbps ) );
-    rocketnet_check( server_transport.max_clients == 3 && message.num_channels == 4 && kbps == ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS );
+    rocketnet_check( server_transport.max_clients == 3 && message.num_channels == 4 && kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
 
     char long_address[300];
     memset( long_address, '1', sizeof( long_address ) - 1 );
@@ -13112,10 +13110,10 @@ void rocketnet_test_public_send_kbps_default_and_negative()
     // client: 0 resolves to the default rate and creates
     struct rocketnet_client_config_t client_config;
     rocketnet_check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
-    rocketnet_check( client_config.send_kbps == ROCKETNET_DEFAULT_CLIENT_SEND_KBPS );
+    rocketnet_check( client_config.send_kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
     client_config.send_kbps = 0;
     rocketnet_check( rocketnet_client_config_resolve( &client_config, true, &client_transport, &message, &kbps ) );
-    rocketnet_check( kbps == ROCKETNET_DEFAULT_CLIENT_SEND_KBPS && message.client_send_kbps == ROCKETNET_DEFAULT_CLIENT_SEND_KBPS );
+    rocketnet_check( kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS && message.client_send_kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
     enum rocketnet_status_t status = ROCKETNET_STATUS_INVALID_ARGUMENT;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
     rocketnet_check( client != NULL && status == ROCKETNET_STATUS_OK );
@@ -13125,7 +13123,7 @@ void rocketnet_test_public_send_kbps_default_and_negative()
 
     // the setter: the rate is checked first, then the connection
     rocketnet_check( rocketnet_client_set_send_kbps( client, -1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
-    rocketnet_check( rocketnet_client_set_send_kbps( client, ROCKETNET_SEND_BUDGET_MAX_KBPS + 1 ) == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+    rocketnet_check( rocketnet_client_set_send_kbps( client, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_INVALID_ARGUMENT );   // in range, but not CONNECTED
     rocketnet_check( rocketnet_client_set_send_kbps( client, 0 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     rocketnet_client_destroy( client );
 
@@ -13139,16 +13137,16 @@ void rocketnet_test_public_send_kbps_default_and_negative()
     // server: the same for per_client_send_kbps
     struct rocketnet_server_config_t server_config;
     rocketnet_check( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
-    rocketnet_check( server_config.per_client_send_kbps == ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS );
+    rocketnet_check( server_config.per_client_send_kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
     server_config.max_clients = 4;
     server_config.per_client_send_kbps = 0;
     rocketnet_check( rocketnet_server_config_resolve( &server_config, true, &server_transport, &message, &kbps ) );
-    rocketnet_check( kbps == ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS && message.server_send_kbps == ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS );
+    rocketnet_check( kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS && message.server_send_kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
     status = ROCKETNET_STATUS_INVALID_ARGUMENT;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &status );
     rocketnet_check( server != NULL && status == ROCKETNET_STATUS_OK );
     rocketnet_check( rocketnet_server_set_send_kbps( server, 0, -1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
-    rocketnet_check( rocketnet_server_set_send_kbps( server, 0, ROCKETNET_SEND_BUDGET_MAX_KBPS + 1 ) == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+    rocketnet_check( rocketnet_server_set_send_kbps( server, 0, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_INVALID_ARGUMENT );   // in range, but no CONNECTED client
     rocketnet_check( rocketnet_server_set_send_kbps( server, 0, 0 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     rocketnet_server_destroy( server );
 

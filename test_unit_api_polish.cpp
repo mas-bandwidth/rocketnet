@@ -222,10 +222,10 @@ static_assert( ROCKETNET_RELIABILITY_UNRELIABLE == 0 && ROCKETNET_RELIABILITY_UN
                ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED == 4 && ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT == 5 &&
                ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT == 6 && ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT == 7, "ruling 3: reliability values" );
 static_assert( ROCKETNET_RECEIPT_STATUS_NONE == 0 && ROCKETNET_RECEIPT_STATUS_ACKED == 1 && ROCKETNET_RECEIPT_STATUS_LOSS == 2, "ruling 3: receipt values" );
-static_assert( ROCKETNET_DISCONNECT_REASON_NONE == 0 && ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH == 1 &&
-               ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION == 3 &&
-               ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT == 4 && ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED == 5 &&
-               ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED == 6, "ruling 3: disconnect reason values, 2 reserved" );
+static_assert( ROCKETNET_DISCONNECT_REASON_NONE == 0 && ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH == -1 &&
+               ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION == -2 &&
+               ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT == -3 && ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED == -4 &&
+               ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED == -5, "disconnect reasons: dense, failures below zero" );
 static_assert( ROCKETNET_UPDATE_OK == 0 && ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED == -1, "ruling 3: the internal message layer's update values" );
 static_assert( rn_same<decltype( rocketnet_client_update( NULL, 1000.0 ) ), void>::value, "ruling 3: client update returns void" );
 static_assert( rn_same<decltype( rocketnet_server_update( NULL, 1000.0 ) ), void>::value, "ruling 3: server update returns void" );
@@ -328,7 +328,7 @@ static void test_api_polish_lookups_say_unknown()
     check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION ), "protocol violation" ) == 0 );
     check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH ), "config mismatch" ) == 0 );
     check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED ), "message memory exhausted" ) == 0 );
-    check( strcmp( rocketnet_client_state_name( (rocketnet_client_state_t) -13 ), "unknown" ) == 0 );
+    check( strcmp( rocketnet_client_state_name( (rocketnet_client_state_t) -14 ), "unknown" ) == 0 );
 
     check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_NONE ), "none" ) == 0 );
     check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT ), "reliable timeout" ) == 0 );
@@ -354,7 +354,7 @@ static void test_api_polish_zero_receipt_and_dense_reasons()
         ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED,
         ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED,
     };
-    const int reason_values[] = { 0, 1, 3, 4, 5, 6 };
+    const int reason_values[] = { 0, -1, -2, -3, -4, -5 };
     for ( int i = 0; i < (int) ( sizeof( reasons ) / sizeof( reasons[0] ) ); i++ )
     {
         check( (int) reasons[i] == reason_values[i] );
@@ -407,7 +407,7 @@ static void api_polish_quiet_assert( const char * condition, const char * functi
 
 static void test_api_polish_null_client_state_is_invalid()
 {
-    static_assert( ROCKETNET_CLIENT_STATE_INVALID == -100, "ruling 9: the value" );
+    static_assert( ROCKETNET_CLIENT_STATE_INVALID == -13, "dense: INVALID follows the last failure state" );
     rocketnet_assert_function( api_polish_quiet_assert );
     const uint64_t before = rocketnet_api_misuse_count();
     check( rocketnet_client_state( NULL ) == ROCKETNET_CLIENT_STATE_INVALID );

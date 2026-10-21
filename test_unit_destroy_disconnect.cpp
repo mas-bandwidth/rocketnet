@@ -129,7 +129,7 @@ static rocketnet_server_t * destroy_disconnect_server_create( const destroy_disc
     rn_message_server_link( &link, transport );
     rocketnet_message_server_t * running = (rocketnet_message_server_t *) rn_message_object_create(
         NULL, &link, 1, DESTROY_DISCONNECT_MAX_CLIENTS, NULL, NULL, 0,
-        ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, now );
+        ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, now );
     check( running != NULL );
 
     // the public server wraps the running message server: its destroy is
@@ -167,7 +167,7 @@ static rocketnet_client_t * destroy_disconnect_client_create( const destroy_disc
     rn_message_client_link( &link, transport );
     rocketnet_message_client_t * connection = (rocketnet_message_client_t *) rn_message_object_create(
         NULL, &link, 0, 1, NULL, NULL, 0,
-        ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 );
+        ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 );
     check( connection != NULL );
 
     // the public client wraps the message client: its destroy is
@@ -252,7 +252,7 @@ static rocketnet_client_t * destroy_disconnect_observed_client_create( const des
     rn_message_client_link( &link, transport );
     rocketnet_message_client_t * connection = (rocketnet_message_client_t *) rn_message_object_create(
         NULL, &link, 0, 1, NULL, NULL, 0,
-        ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 );
+        ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 );
     check( connection != NULL );
 
     // the public client wraps the message client: its destroy is

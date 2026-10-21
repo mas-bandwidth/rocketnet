@@ -18,8 +18,7 @@ budget, the server's tick, and message latency in frames.
    carries the frame it was queued in, and the receiver counts frames since.
 
 Every run is in memory over the `loopback` transport: the in-memory transport
-holds `ROCKETNET_LOOPBACK_MAX_ENDPOINTS` endpoints, one server and up to
-`ROCKETNET_MAX_CLIENTS` clients. Clients join 50 a frame; timing starts once
+holds one server and up to `ROCKETNET_MAX_CLIENTS` clients. Clients join 50 a frame; timing starts once
 all are connected.
 
 ## Run it

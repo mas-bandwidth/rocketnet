@@ -259,9 +259,9 @@ static void test_budgets_are_per_connection()
 {
     rocketnet_send_budget_t client;
     rocketnet_send_budget_t slot[2];
-    check( rocketnet_send_budget_init( &client, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 ) );
-    check( rocketnet_send_budget_init( &slot[0], ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, 0.0 ) );
-    check( rocketnet_send_budget_init( &slot[1], ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, 0.0 ) );
+    check( rocketnet_send_budget_init( &client, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 ) );
+    check( rocketnet_send_budget_init( &slot[0], ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, 0.0 ) );
+    check( rocketnet_send_budget_init( &slot[1], ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, 0.0 ) );
     check( client.kbps == 1000 && slot[0].kbps == 10000 && slot[1].kbps == 10000 );
 
     // drain slot 0
@@ -587,9 +587,9 @@ static void test_send_budget_no_allocation_after_create()
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     rocketnet_send_budget_t budgets[4];
-    check( rocketnet_send_budget_init( &budgets[0], ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 ) );
+    check( rocketnet_send_budget_init( &budgets[0], ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 ) );
     for ( int i = 1; i < 4; i++ )
-        check( rocketnet_send_budget_init( &budgets[i], ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, 0.0 ) );
+        check( rocketnet_send_budget_init( &budgets[i], ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, 0.0 ) );
 
     // a live heap allocation through the hooks, so the counter is known to see them
     void * probe = rocketnet_malloc( NULL, 16 );

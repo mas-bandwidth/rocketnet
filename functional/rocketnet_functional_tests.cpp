@@ -483,7 +483,7 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * transport,
             received++;
         }
 
-        static uint8_t drain[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+        static uint8_t drain[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
         int drain_bytes;
         while ( ( drain_bytes = rocketnet_client_transport_receive_packet( client, drain, (int) sizeof(drain) ) ) > 0 )
             rocketnet_check( drain_bytes == PAYLOAD_BYTES );
@@ -518,7 +518,7 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * transport,
             received++;
         }
 
-        static uint8_t drain[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+        static uint8_t drain[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
         int drain_bytes;
         while ( ( drain_bytes = rocketnet_client_transport_receive_packet( client, drain, (int) sizeof(drain) ) ) > 0 )
             rocketnet_check( drain_bytes == PAYLOAD_BYTES );
@@ -3079,7 +3079,7 @@ void rocketnet_test_transport_fragmentation()
         rocketnet_client_transport_update( client, rocketnet_platform_time() );
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( server );
-        uint8_t small_buffer[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+        uint8_t small_buffer[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
         rocketnet_check( rocketnet_client_transport_receive_packet( client, small_buffer, (int) sizeof(small_buffer) ) == 0 );
         rocketnet_platform_sleep( 0.001 );
     }
@@ -3520,7 +3520,7 @@ void rocketnet_test_server_handshake_deadline_from_config()
     struct rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create( NULL, &peer_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
         ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
     rocketnet_check( peer );
-    uint8_t packet[ROCKETNET_MAX_PACKET_BYTES], payload[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+    uint8_t packet[ROCKETNET_RECEIVE_PACKET_BYTES], payload[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
     int packet_bytes = 0;
     rocketnet_client_protocol_update( &client, start_time - 0.5, packet, &packet_bytes );
     rocketnet_check( packet_bytes > 0 );
@@ -7098,7 +7098,7 @@ static void rocketnet_test_max_size_packet_crosses( const char * host_env, const
             server_received++;
         }
 
-        static uint8_t packet[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+        static uint8_t packet[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
         int packet_bytes;
         while ( ( packet_bytes = rocketnet_client_transport_receive_packet( client, packet, (int) sizeof(packet) ) ) > 0 )
         {
@@ -7504,7 +7504,7 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
             server_received++;
         }
 
-        static uint8_t packet[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+        static uint8_t packet[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
         int packet_bytes;
         while ( ( packet_bytes = rocketnet_client_transport_receive_packet( client, packet, (int) sizeof(packet) ) ) > 0 )
         {

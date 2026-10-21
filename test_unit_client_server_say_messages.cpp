@@ -84,8 +84,8 @@ static const allowlist_row_t allowlist[] =
     { F_H, "The packet size", "TRANSPORT SIZE" },
     { F_H, "_Packet", "TRANSPORT SIZE" },
     { F_H, "packet crosses a 1500", "TRANSPORT SIZE" },
-    { F_H, "ROCKETNET_MAX_PACKET_BYTES_IPV6", "TRANSPORT SIZE" },
     { F_H, "ROCKETNET_MAX_PACKET_BYTES", "TRANSPORT SIZE" },
+    { F_H, "ROCKETNET_RECEIVE_PACKET_BYTES", "TRANSPORT SIZE" },
 
     // FRAGMENT PACKING: how messages are packed into packets.
     { F_H, "message one packet carries", "FRAGMENT PACKING" },

@@ -232,7 +232,7 @@ static void test_receipts_listed_per_update_by_the_c_api()
     memset( &transport, 0, sizeof( transport ) );
     rn_message_link_t link = receipt_link( &transport );
     rocketnet_message_client_t * client = (rocketnet_message_client_t *) rn_message_object_create( NULL, &link, 0, 1, NULL, NULL, 0,
-                                                                                                     ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 );
+                                                                                                     ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 );
     rocketnet_unit_check( client != NULL );
     rocketnet_unit_check( rocketnet_message_client_update( client, 0.005 ) == ROCKETNET_UPDATE_OK );
     rocketnet_message_client_send_packets( client );                               // the connection's CONFIG goes first and is acked (CHANNELS.md 10.3)
@@ -293,7 +293,7 @@ static void test_promoted_type5_block_replays_last_index_and_reliable_loss_witne
     memset( &transport, 0, sizeof( transport ) );
     rn_message_link_t link = receipt_link( &transport );
     rocketnet_message_client_t * client = (rocketnet_message_client_t *) rn_message_object_create( NULL, &link, 0, 1, &config, NULL, 0,
-                                                                                                     ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 );
+                                                                                                     ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 );
     rocketnet_unit_check( client != NULL );
     rn_message_connection_t * connection = &client->object.connections[0];
     rocketnet_unit_check( rocketnet_message_client_update( client, 1.0 ) == ROCKETNET_UPDATE_OK );

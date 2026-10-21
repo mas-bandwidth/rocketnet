@@ -442,14 +442,14 @@ static void test_loopback_transport_reliable_ordered_survives_loss_and_reorder()
     struct rn_message_link_t server_link;
     rn_message_server_link( &server_link, pair.server );
     struct rn_message_object_t * server = rn_message_object_create(
-        NULL, &server_link, 1, 1, &message_config, NULL, 0, ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, pair.time );
+        NULL, &server_link, 1, 1, &message_config, NULL, 0, ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, pair.time );
     check( server != NULL );
 
     struct rn_message_link_t client_link;
     rn_message_client_link( &client_link, pair.client );
     client_link.clock_from_first_update = 0;
     struct rn_message_object_t * client = rn_message_object_create(
-        NULL, &client_link, 0, 1, &message_config, NULL, 0, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, pair.time );
+        NULL, &client_link, 0, 1, &message_config, NULL, 0, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, pair.time );
     check( client != NULL );
 
     const int total_messages = 1000;

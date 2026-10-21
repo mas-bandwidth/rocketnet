@@ -316,7 +316,7 @@ struct rocketnet_server_transport_t
     // +8: serialize's BitReader loads 8-byte windows at byte granularity, so
     // any buffer a ReadStream is bound over must extend at least 8 bytes past
     // the end of its data -- this is the last member, so the slack is real.
-    uint8_t payload_storage[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES*ROCKETNET_MAX_PAYLOADS_PER_UPDATE + 8];
+    uint8_t payload_storage[ROCKETNET_RECEIVE_PAYLOAD_BYTES*ROCKETNET_MAX_PAYLOADS_PER_UPDATE + 8];
 };
 
 void rocketnet_server_transport_poison_slot_for_test( struct rocketnet_server_transport_t * server, int client_index )
@@ -1932,7 +1932,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             continue;
 
         uint8_t * payload = server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE ?
-            server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES : NULL;
+            server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_RECEIVE_PAYLOAD_BYTES : NULL;
 
         uint8_t payload_overflow[ROCKETNET_RECEIVE_CEILING];
         int payload_bytes = 0;
@@ -1951,7 +1951,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
                                          current_timestamp, current_time,
                                          response ? response : response_overflow, &response_bytes,
                                          payload ? payload : payload_overflow,
-                                         payload ? ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES : (int) sizeof(payload_overflow),
+                                         payload ? ROCKETNET_RECEIVE_PAYLOAD_BYTES : (int) sizeof(payload_overflow),
                                          &payload_bytes, &payload_client_index );
 
         // a packet that opened under a connection's keys teaches the transport
@@ -2090,7 +2090,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
                 continue;
 
             uint8_t * payload = server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE ?
-                server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES : NULL;
+                server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_RECEIVE_PAYLOAD_BYTES : NULL;
 
             uint8_t payload_overflow[ROCKETNET_RECEIVE_CEILING];
             int payload_bytes = 0;
@@ -2108,7 +2108,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
                                              current_timestamp, current_time,
                                              response ? response : response_overflow, &response_bytes,
                                              payload ? payload : payload_overflow,
-                                             payload ? ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES : (int) sizeof(payload_overflow),
+                                             payload ? ROCKETNET_RECEIVE_PAYLOAD_BYTES : (int) sizeof(payload_overflow),
                                              &payload_bytes, &payload_client_index );
 
             int wire_client_after = wire_client_before;

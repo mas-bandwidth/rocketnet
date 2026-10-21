@@ -140,7 +140,7 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
 // Processes one received packet. Returns 1 when the packet was accepted and
 // advanced or fed the connection, 0 when it was refused -- the counters name
 // why. out_payload_capacity is the true size of out_payload, which must be at
-// least ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES: a smaller capacity refuses the
+// least ROCKETNET_RECEIVE_PAYLOAD_BYTES: a smaller capacity refuses the
 // call at entry, before the packet is read, counts RECEIVE_CURSOR_TOO_SMALL,
 // leaves out_payload and the protocol state untouched, and never overruns.
 // An ordinary single-packet payload lands in out_payload with its length in

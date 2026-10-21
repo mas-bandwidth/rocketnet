@@ -185,8 +185,8 @@ static void test_config_env_budget_is_never_a_message_field()
     const std::vector<std::string> overrides = env_names_overrides( capture.log );
     check( !env_names_contains( overrides, "ROCKETNET_CLIENT_CLIENT_SEND_KBPS" ) );
     check( !env_names_contains( overrides, "ROCKETNET_SERVER_SERVER_SEND_KBPS" ) );
-    check( client_kbps == ROCKETNET_DEFAULT_CLIENT_SEND_KBPS );
-    check( server_kbps == ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS );
+    check( client_kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
+    check( server_kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
 }
 REGISTER_UNIT_TEST( test_config_env_budget_is_never_a_message_field );
 
@@ -367,10 +367,10 @@ static std::vector<std::string> env_names_set_candidates()
         }
     }
     char text[32];
-    snprintf( text, sizeof( text ), "%d", ROCKETNET_DEFAULT_CLIENT_SEND_KBPS );
+    snprintf( text, sizeof( text ), "%d", ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
     env_names_setenv( "ROCKETNET_CLIENT_SEND_KBPS", text );
     set.push_back( "ROCKETNET_CLIENT_SEND_KBPS" );
-    snprintf( text, sizeof( text ), "%d", ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS );
+    snprintf( text, sizeof( text ), "%d", ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
     env_names_setenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", text );
     set.push_back( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" );
     struct rocketnet_server_config_t server_defaults;
@@ -525,7 +525,7 @@ static std::vector<std::string> env_names_pass_reads()
     const struct rocketnet_config_field_t * client_fields = rocketnet_client_transport_config_fields( &num_client_fields );
     for ( int i = 0; i < num_client_fields; i++ )
     {
-        if ( strcmp( client_fields[i].name, "transport" ) == 0 )
+        if ( strcmp( client_fields[i].name, "transport" ) == 0 || ( client_fields[i].flags & ROCKETNET_CONFIG_NO_ENV ) != 0 )
             continue;
         char name[128];
         check( rocketnet_config_env_var_name_for( "client", client_fields[i].name, name, sizeof( name ) ) );
@@ -536,7 +536,7 @@ static std::vector<std::string> env_names_pass_reads()
     const struct rocketnet_config_field_t * server_fields = rocketnet_server_transport_config_fields( &num_server_fields );
     for ( int i = 0; i < num_server_fields; i++ )
     {
-        if ( strcmp( server_fields[i].name, "transport" ) == 0 )
+        if ( strcmp( server_fields[i].name, "transport" ) == 0 || ( server_fields[i].flags & ROCKETNET_CONFIG_NO_ENV ) != 0 )
             continue;
         char name[128];
         check( rocketnet_config_env_var_name_for( "server", server_fields[i].name, name, sizeof( name ) ) );

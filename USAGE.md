@@ -173,7 +173,7 @@ row per field of both public structs.
 | state_change_callback | none | `void (*)( void *, int, int )` | `NULL` | no environment form |
 | time_callback | none | `double (*)( void * )` | `NULL` (platform clock) | no environment form |
 | step_driven | ROCKETNET_CLIENT_STEP_DRIVEN | int | `0` | refuses the create unless `0` or `1` |
-| send_kbps | ROCKETNET_CLIENT_SEND_KBPS | int | `1000` | a non-integer, or above `10000000`: refuses the create; `0` is the default (`1000`); a negative value refuses the create with `ROCKETNET_STATUS_INVALID_ARGUMENT`; `ROCKETNET_SEND_BUDGET_MAX_KBPS` (10 Gbit/s) is the ceiling, NOT RECOMMENDED; each connection's starting rate |
+| send_kbps | ROCKETNET_CLIENT_SEND_KBPS | int | `1000` | a non-integer refuses the create; `0` is the default (`1000`); a negative value refuses the create with `ROCKETNET_STATUS_INVALID_ARGUMENT`; `ROCKETNET_SEND_KBPS_UNLIMITED` is no send budget; each connection's starting rate |
 | num_channels | ROCKETNET_CLIENT_NUM_CHANNELS | int | `32` | refuses the create unless `1..32` |
 | window_messages | ROCKETNET_CLIENT_WINDOW_MESSAGES | int | `1024` | refuses the create unless `64..1048576` and a power of two |
 | receive_ring_bytes | ROCKETNET_CLIENT_RECEIVE_RING_BYTES | int | `262144` | refuses the create unless `4096..1048576` and a multiple of 16 |
@@ -208,7 +208,7 @@ row per field of both public structs.
 | transport | ROCKETNET_SERVER_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, or a list with no usable candidate: refuses the create |
 | public_address | ROCKETNET_SERVER_PUBLIC_ADDRESS | const char * | `NULL` | an address that does not parse: refuses the create |
 | second_public_address | ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS | const char * | `NULL` | an address that does not parse or duplicates the first address family: refuses the create |
-| per_client_send_kbps | ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS | int | `10000` | a non-integer, or above `10000000`: refuses the create; `0` is the default (`10000`); a negative value refuses the create with `ROCKETNET_STATUS_INVALID_ARGUMENT`; `ROCKETNET_SEND_BUDGET_MAX_KBPS` (10 Gbit/s) is the ceiling, NOT RECOMMENDED; each client connection's starting rate |
+| per_client_send_kbps | ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS | int | `10000` | a non-integer refuses the create; `0` is the default (`10000`); a negative value refuses the create with `ROCKETNET_STATUS_INVALID_ARGUMENT`; `ROCKETNET_SEND_KBPS_UNLIMITED` is no send budget; each client connection's starting rate |
 | num_channels | ROCKETNET_SERVER_NUM_CHANNELS | int | `32` | refuses the create unless `1..32` |
 | window_messages | ROCKETNET_SERVER_WINDOW_MESSAGES | int | `1024` | refuses the create unless `64..1048576` and a power of two |
 | receive_ring_bytes | ROCKETNET_SERVER_RECEIVE_RING_BYTES | int | `262144` | refuses the create unless `4096..1048576` and a multiple of 16 |
@@ -451,7 +451,7 @@ The reliability is one of `ROCKETNET_RELIABILITY_UNRELIABLE`,
 `ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED`, `ROCKETNET_RELIABILITY_RELIABLE`,
 `ROCKETNET_RELIABILITY_RELIABLE_ORDERED`, `ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED`,
 `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT`, `ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT`
-or `ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT`. Plain UNRELIABLE is one record in one packet up to 1,411 bytes, which is `ROCKETNET_MESSAGE_SINGLE_BYTES - 1 - ROCKETNET_MESSAGE_RECORD_FIXED_BYTES`;
+or `ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT`. Plain UNRELIABLE is one packet up to `ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES` (1,411 bytes);
 above 1,411 bytes it promotes to its reliable twin (`ROCKETNET_RELIABILITY_RELIABLE`),
 which fragments across packets transparently up to `max_message_bytes`, as RakNet's
 reliability layer does.
@@ -506,10 +506,10 @@ uint32_t queue_state( struct rocketnet_client_t * client, const uint8_t * state,
 The config's `send_kbps` and `per_client_send_kbps` set a connection's starting
 rate. `rocketnet_client_set_send_kbps` and `rocketnet_server_set_send_kbps`
 change a CONNECTED connection's budget at runtime. In the config and in both
-calls, `0` is the default rate (`ROCKETNET_DEFAULT_CLIENT_SEND_KBPS`, 1000, or
-`ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS`, 10000), a positive value up to
-`ROCKETNET_SEND_BUDGET_MAX_KBPS` caps it, and `ROCKETNET_SEND_BUDGET_MAX_KBPS`
-(10 Gbit/s) itself is the explicit ceiling, NOT RECOMMENDED. Each call returns
+calls, `0` is the default rate (`ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS`, 1000, or
+`ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS`, 10000), a positive value below
+`ROCKETNET_SEND_KBPS_UNLIMITED` caps it, and `ROCKETNET_SEND_KBPS_UNLIMITED`
+means no send budget. Each call returns
 `ROCKETNET_STATUS_OK`, `ROCKETNET_STATUS_INVALID_ARGUMENT` for a negative value,
 or `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE` above the maximum, the rate unchanged
 on a refusal. On a connection that is not

@@ -7,9 +7,9 @@ what a budget does when it is exceeded.
 
 ## What it shows
 
-1. Print the client send budget default (`ROCKETNET_DEFAULT_CLIENT_SEND_KBPS`)
+1. Print the client send budget default (`ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS`)
    and the server per-client send budget default
-   (`ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS`).
+   (`ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS`).
 2. Set the client's send budget lower in its config at create, then change it
    again at run time with `rocketnet_client_set_send_kbps`.
 3. Queue a burst of unreliable messages far above the budget. Unreliable

@@ -41,8 +41,8 @@ Read the current stats with `rocketnet_client_stats`, `rocketnet_server_stats` a
 and server stats include the process-wide API misuse and thread-priority
 refusal counters.
 
-A send budget of `0` selects the default. `ROCKETNET_SEND_BUDGET_MAX_KBPS`
-selects no send budget (10 Gbit/s ceiling); negative rates are refused. Configure logging
+A send budget of `0` selects the default. `ROCKETNET_SEND_KBPS_UNLIMITED`
+selects no send budget; negative rates are refused. Configure logging
 with `rocketnet_log_level`, `rocketnet_quiet` and `rocketnet_log_function`.
 Use `rocketnet_assert_function` for assertion handling and install a custom
 allocator with `rocketnet_allocator` before initialization.
