@@ -1,5 +1,5 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
-// The manual worker computes the production snapshot with an explicit step.
+// The manual worker consumes production ACK deltas with an explicit step.
 // Transport updates and publication still run through the public server.
 
 #include "test/unit_shutdown.h"
@@ -174,6 +174,47 @@ static void stats_check_unchanged( const rocketnet_server_client_stats_t & actua
     check(actual.bandwidth_acked_kbps == prior.bandwidth_acked_kbps);
 }
 
+// Exercise the same producer calls used by accepted protocol sends, receives
+// and ACKs. Direct writes to live history would bypass the worker's deltas.
+static int stats_ack_one( rocketnet_ack_endpoint_t * endpoint, uint64_t sequence, double time )
+{
+    rocketnet_ack_block_t block = {};
+    block.largest = sequence;
+    block.first_range_length = 1;
+    uint64_t ids[1] = {}, unknown = 0, full = 0;
+    int count = 0;
+    const int newly_acked = rocketnet_ack_endpoint_process_block(endpoint, &block, time,
+        ids, 1, &count, &unknown, &full);
+    check(unknown == 0 && full == 0);
+    return newly_acked;
+}
+
+static uint64_t stats_add_sample( rocketnet_ack_endpoint_t * endpoint, double time, double rtt_ms )
+{
+    // Keep synthetic producer records ahead of the real loopback connection's
+    // wire sequence so its later maintenance cannot overwrite this cohort.
+    const uint64_t sequence = endpoint->highest_sequence + ROCKETNET_SENT_PACKET_BUFFER_SIZE + 1;
+    check(rocketnet_ack_endpoint_record_sent_classified(endpoint, sequence, 120, 0, 0, 0, time)
+          != ROCKETNET_ACK_SENT_REFUSED_STALE);
+    check(stats_ack_one(endpoint, sequence, time + rtt_ms / 1000.0) == 1);
+    return sequence;
+}
+
+static rocketnet_ack_endpoint_t * stats_reference( const rocketnet_ack_endpoint_t * endpoint )
+{
+    rocketnet_ack_endpoint_t * expected = new rocketnet_ack_endpoint_t(*endpoint);
+    expected->stats_delta = NULL;
+    rocketnet_ack_endpoint_update_stats(expected);
+    return expected;
+}
+
+static void stats_step_and_update( stats_world_t * world )
+{
+    check(rocketnet_server_transport_stats_worker_step_for_test(stats_transport(world)));
+    world->time += 0.001;
+    rocketnet_server_update(world->server, world->time);
+}
+
 static void test_server_stats_worker_publishes_only_on_next_update()
 {
     stats_env_pin_t pin;
@@ -183,42 +224,31 @@ static void test_server_stats_worker_publishes_only_on_next_update()
     rocketnet_server_transport_t * transport = stats_transport(&world);
     rocketnet_ack_endpoint_t * endpoint = rocketnet_server_transport_stats_endpoint_for_test(transport, world.slots[0]);
     check(endpoint);
+    for ( int i = 0; i < 4; ++i ) stats_step_and_update(&world);
 
-    // Both banks can be held by the test. Release the older one, then capture
-    // the exact live ACK state after the new immutable submission.
-    check(rocketnet_server_transport_stats_worker_step_for_test(transport));
-    rocketnet_server_update(world.server, world.time);
-    for ( size_t i = 0; i < sizeof(endpoint->rtt_history) / sizeof(endpoint->rtt_history[0]); ++i )
-        endpoint->rtt_history[i] = -1.0f;
-    endpoint->rtt_history[0] = 7.0f;
-    endpoint->rtt_history[1] = 17.0f;
+    stats_add_sample(endpoint, world.time, 7.0);
+    stats_add_sample(endpoint, world.time, 17.0);
     rocketnet_ack_endpoint_record_received(endpoint, 200, 100, world.time);
     rocketnet_ack_endpoint_record_received(endpoint, 201, 100, world.time + 0.01);
-    // A held bank must prevent a synchronous stats recomputation.
-    rocketnet_server_client_stats_t before = rn_server_client_stats_of(world.server, world.slots[0]);
-    uint64_t submitted = 0, completed = 0, published = 0, busy = 0;
-    check(rocketnet_server_transport_stats_worker_status_for_test(transport, &submitted, &completed, &published, &busy));
+    const rocketnet_server_client_stats_t before = rn_server_client_stats_of(world.server, world.slots[0]);
+    uint64_t submitted = 0, completed = 0, busy = 0;
+    check(rocketnet_server_transport_stats_worker_status_for_test(transport, &submitted, &completed, NULL, &busy));
     rocketnet_server_update(world.server, world.time + 0.02);
-    uint64_t submitted_after = 0, busy_after = 0;
-    check(rocketnet_server_transport_stats_worker_status_for_test(transport, &submitted_after, NULL, NULL, &busy_after));
-    check(submitted_after == submitted && busy_after == busy + 1);
+    uint64_t submitted_after = 0, completed_after = 0, busy_after = 0;
+    check(rocketnet_server_transport_stats_worker_status_for_test(transport, &submitted_after, &completed_after, NULL, &busy_after));
+    check(submitted_after == submitted && completed_after == completed && busy_after == busy + 1);
     stats_check_unchanged(rn_server_client_stats_of(world.server, world.slots[0]), before);
-    // Complete the other old bank; the following update submits the seeded
-    // history and the endpoint copy is an independent reference computation.
-    check(rocketnet_server_transport_stats_worker_step_for_test(transport));
-    rocketnet_server_update(world.server, world.time + 0.03);
-    rocketnet_ack_endpoint_t * expected = new rocketnet_ack_endpoint_t(*endpoint);
-    rocketnet_ack_endpoint_update_stats(expected);
-    check(expected->rtt == 7.0f && expected->jitter == 5.0f);
-    check(expected->bandwidth_received_kbps > 0.0f);
-    // The earlier unseeded bank must publish first; then the seeded bank is
-    // computed off-thread (inline only in this deterministic test mode).
-    check(rocketnet_server_transport_stats_worker_step_for_test(transport));
-    rocketnet_server_update(world.server, world.time + 0.04);
-    rocketnet_server_client_stats_t prior = rn_server_client_stats_of(world.server, world.slots[0]);
+
+    // Finish the older sealed delta, then swap in the producer mutations.
+    world.time += 0.02;
+    stats_step_and_update(&world);
+    rocketnet_ack_endpoint_t * expected = stats_reference(endpoint);
+    check(fabs(expected->rtt - 7.0f) < 0.001 && expected->bandwidth_received_kbps > 0.0f);
+    const rocketnet_server_client_stats_t prior = rn_server_client_stats_of(world.server, world.slots[0]);
     check(rocketnet_server_transport_stats_worker_step_for_test(transport));
     stats_check_unchanged(rn_server_client_stats_of(world.server, world.slots[0]), prior);
-    rocketnet_server_update(world.server, world.time + 0.05);
+    world.time += 0.001;
+    rocketnet_server_update(world.server, world.time);
     stats_check_six(rn_server_client_stats_of(world.server, world.slots[0]), *expected);
     delete expected;
     stats_world_destroy(&world);
@@ -239,13 +269,8 @@ static void test_server_stats_worker_late_batch_keeps_modulo_fairness()
     rocketnet_ack_endpoint_t * first = rocketnet_server_transport_stats_endpoint_for_test(transport, world.slots[0]);
     rocketnet_ack_endpoint_t * second = rocketnet_server_transport_stats_endpoint_for_test(transport, world.slots[1]);
     check(first && second);
-    for ( size_t i = 0; i < sizeof(first->rtt_history) / sizeof(first->rtt_history[0]); ++i )
-    {
-        first->rtt_history[i] = -1.0f;
-        second->rtt_history[i] = -1.0f;
-    }
-    first->rtt_history[0] = 11.0f;
-    second->rtt_history[0] = 29.0f;
+    stats_add_sample(first, world.time, 11.0);
+    stats_add_sample(second, world.time, 29.0);
 
     uint64_t submitted = 0, completed = 0, published = 0, busy = 0;
     check(rocketnet_server_transport_stats_worker_status_for_test(transport, &submitted, &completed, &published, &busy));
@@ -289,10 +314,9 @@ static void test_server_stats_worker_reused_slot_rejects_old_publication()
     rocketnet_server_transport_t * transport = stats_transport(&world);
     rocketnet_ack_endpoint_t * old_endpoint = rocketnet_server_transport_stats_endpoint_for_test(transport, world.slots[0]);
     check(old_endpoint);
-    for ( size_t i = 0; i < sizeof(old_endpoint->rtt_history) / sizeof(old_endpoint->rtt_history[0]); ++i )
-        old_endpoint->rtt_history[i] = -1.0f;
-    old_endpoint->rtt_history[0] = 71.0f;
-    // Make room for a snapshot that definitely names A, then hold that bank.
+    for ( int n = 0; n < 4; ++n ) stats_step_and_update(&world);
+    stats_add_sample(old_endpoint, world.time, 71.0);
+    // Make room for a sealed delta that definitely names A, then hold that bank.
     check(rocketnet_server_transport_stats_worker_step_for_test(transport));
     world.time += 0.01;
     rocketnet_server_update(world.server, world.time);
@@ -304,9 +328,7 @@ static void test_server_stats_worker_reused_slot_rejects_old_publication()
     check(world.slots[1] == world.slots[0]);
     rocketnet_ack_endpoint_t * new_endpoint = rocketnet_server_transport_stats_endpoint_for_test(transport, world.slots[1]);
     check(new_endpoint);
-    for ( size_t i = 0; i < sizeof(new_endpoint->rtt_history) / sizeof(new_endpoint->rtt_history[0]); ++i )
-        new_endpoint->rtt_history[i] = -1.0f;
-    new_endpoint->rtt_history[0] = 13.0f;
+    stats_add_sample(new_endpoint, world.time, 13.0);
     // A READY bank names the old connection. It must not apply to B even
     // when it finishes after the slot is reused.
     for ( int n = 0; n < 2; ++n )
@@ -328,6 +350,91 @@ static void test_server_stats_worker_reused_slot_rejects_old_publication()
 }
 
 REGISTER_UNIT_TEST(test_server_stats_worker_reused_slot_rejects_old_publication);
+
+static void test_server_stats_worker_coalesces_wrapped_history_and_late_ack()
+{
+    stats_env_pin_t pin;
+    stats_world_t world;
+    stats_world_create(&world, 1, 1);
+    stats_connect(&world, 0, 0xAC41);
+    rocketnet_server_transport_t * transport = stats_transport(&world);
+    rocketnet_ack_endpoint_t * endpoint = rocketnet_server_transport_stats_endpoint_for_test(transport, world.slots[0]);
+    check(endpoint && endpoint->stats_delta);
+    for ( int n = 0; n < 4; ++n ) stats_step_and_update(&world);
+
+    // Hold the sealed input while the producer laps each history ring twice.
+    // Repeated writes to one index must retain the newest sequence and ACK bit.
+    const uint64_t sent_base = endpoint->highest_sequence + ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+    for ( int i = 0; i < 2 * ROCKETNET_SENT_PACKET_BUFFER_SIZE + 17; ++i )
+    {
+        const uint64_t sequence = sent_base + (uint64_t)i;
+        const double sent_time = world.time + i * 0.00001;
+        check(rocketnet_ack_endpoint_record_sent_classified(endpoint, sequence,
+            100 + i % 23, 0, 0, 0, sent_time) != ROCKETNET_ACK_SENT_REFUSED_STALE);
+        if ( i % 2 == 0 )
+            check(stats_ack_one(endpoint, sequence, sent_time + 0.020 + (i % 3) * 0.001) == 1);
+    }
+    const uint64_t received_base = endpoint->highest_received_sequence + ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE;
+    for ( int i = 0; i < 2 * ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE + 17; ++i )
+        rocketnet_ack_endpoint_record_received(endpoint, received_base + (uint64_t)i,
+            90 + i % 17, world.time + i * 0.00002);
+
+    uint64_t submitted = 0, completed = 0;
+    check(rocketnet_server_transport_stats_worker_status_for_test(transport, &submitted, &completed, NULL, NULL));
+    rocketnet_ack_stats_delta_t * active = endpoint->stats_delta;
+    for ( int n = 0; n < 5; ++n )
+    {
+        world.time += 0.001;
+        rocketnet_server_update(world.server, world.time);
+        check(endpoint->stats_delta == active);
+    }
+    uint64_t held_submitted = 0, held_completed = 0;
+    check(rocketnet_server_transport_stats_worker_status_for_test(transport, &held_submitted, &held_completed, NULL, NULL));
+    check(held_submitted == submitted && held_completed == completed);
+
+    // Swapping changes only ownership. Real ACK mutations after the swap
+    // belong to the newly active bank; the sealed input remains immutable.
+    stats_step_and_update(&world);
+    check(endpoint->stats_delta != active);
+    rocketnet_ack_stats_delta_t * sealed_copy = new rocketnet_ack_stats_delta_t;
+    memcpy(sealed_copy, active, sizeof(*sealed_copy)); // test oracle, never a production handoff
+    rocketnet_ack_endpoint_t * before_ack = stats_reference(endpoint);
+    check(before_ack->rtt > 0.0f && before_ack->jitter > 0.0f);
+    check(before_ack->packet_loss > 0.0f && before_ack->bandwidth_sent_kbps > 0.0f);
+    check(before_ack->bandwidth_received_kbps > 0.0f && before_ack->bandwidth_acked_kbps > 0.0f);
+
+    const uint64_t oldest = endpoint->highest_sequence - ROCKETNET_SENT_PACKET_BUFFER_SIZE + 1;
+    uint64_t late_sequence = oldest;
+    while ( late_sequence < oldest + ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2 &&
+            endpoint->sent[late_sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE].acked )
+        ++late_sequence;
+    check(late_sequence < oldest + ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2);
+    const double late_time = endpoint->sent[late_sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE].send_time + 0.011;
+    check(stats_ack_one(endpoint, late_sequence, late_time) == 1);
+    check(stats_ack_one(endpoint, late_sequence, late_time + 9.0) == 0);
+    // The duplicate must neither resample RTT nor re-ACK another record.
+    check(fabs(endpoint->rtt_history[late_sequence % ROCKETNET_RTT_HISTORY_SIZE] - 11.0) < 0.001);
+    check(memcmp(active, sealed_copy, sizeof(*active)) == 0);
+    rocketnet_ack_endpoint_t * after_ack = stats_reference(endpoint);
+    check(after_ack->packet_loss < before_ack->packet_loss);
+    check(after_ack->rtt < before_ack->rtt);
+
+    check(rocketnet_server_transport_stats_worker_step_for_test(transport));
+    world.time += 0.001;
+    rocketnet_server_update(world.server, world.time);
+    stats_check_six(rn_server_client_stats_of(world.server, world.slots[0]), *before_ack);
+    check(rocketnet_server_transport_stats_worker_step_for_test(transport));
+    world.time += 0.001;
+    rocketnet_server_update(world.server, world.time);
+    stats_check_six(rn_server_client_stats_of(world.server, world.slots[0]), *after_ack);
+    delete after_ack;
+    delete before_ack;
+    delete sealed_copy;
+    stats_world_destroy(&world);
+    check(pin.restore());
+}
+
+REGISTER_UNIT_TEST(test_server_stats_worker_coalesces_wrapped_history_and_late_ack);
 
 static void test_server_stats_worker_stop_discards_ready_batch()
 {
@@ -406,7 +513,7 @@ static void test_server_stats_worker_start_failure_cleans_allocations()
     stats_transport_config(&config);
 
     // The injected refusal occurs before native wake/thread creation, but
-    // after worker, two banks and scratch are allocated. All must be freed.
+    // after worker, two banks, slot storage and scratch are allocated. All must be freed.
     rocketnet_server_transport_fail_stats_worker_thread_for_test();
     status = -1;
     check(rocketnet_server_transport_create_ex(&state, "127.0.0.1:0", &config, 1000.0, &status) == NULL);
@@ -414,7 +521,7 @@ static void test_server_stats_worker_start_failure_cleans_allocations()
     check(state.live == 0);
 
     // A successful manual create establishes the allocation count. The final
-    // four allocations belong to worker, two banks and scratch respectively.
+    // five allocations belong to worker, two banks, slot storage and scratch.
     rocketnet_server_transport_set_stats_worker_manual_for_test(true);
     const int start_calls = state.calls;
     status = -1;
@@ -422,11 +529,11 @@ static void test_server_stats_worker_start_failure_cleans_allocations()
         &state, "127.0.0.1:0", &config, 1000.0, &status);
     check(server && status == ROCKETNET_STATUS_OK);
     const int create_calls = state.calls - start_calls;
-    check(create_calls >= 4);
+    check(create_calls >= 5);
     rn_test_server_transport_stop_and_destroy(server);
     check(state.live == 0);
 
-    for ( int last = 3; last >= 0; --last )
+    for ( int last = 4; last >= 0; --last )
     {
         state.fail_at = state.calls + create_calls - last;
         rocketnet_server_transport_set_stats_worker_manual_for_test(true);
