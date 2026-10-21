@@ -547,6 +547,9 @@ static bool rocketnet_platform_send_failure_should_inject( rocketnet_platform_so
 #include <sys/eventfd.h>
 #include <poll.h>
 #endif // #if defined(__linux__)
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
+#include <sys/event.h>
+#endif
 
 // the BSDs have no CLOCK_MONOTONIC_RAW; CLOCK_MONOTONIC is their
 // unadjusted-rate monotonic clock and serves the same reads
@@ -1226,6 +1229,78 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 }
 
 #endif // #if defined(__linux__)
+
+// ---------------------------------------------------
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
+
+// BSD server workers need an event-only reusable wake. Keep socket-backed
+// wakes unsupported so BSD clients retain their existing synchronous path.
+struct rocketnet_platform_wake_t
+{
+    void * context;
+    int kq;
+};
+
+rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket )
+{
+    if ( socket )
+        return NULL;
+    rocketnet_platform_wake_t * wake = (rocketnet_platform_wake_t*) rocketnet_malloc( context, sizeof( rocketnet_platform_wake_t ) );
+    if ( !wake )
+        return NULL;
+    wake->context = context;
+    wake->kq = kqueue();
+    if ( wake->kq < 0 )
+    {
+        rocketnet_free( context, wake );
+        return NULL;
+    }
+    struct kevent change;
+    EV_SET( &change, 1, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, NULL );
+    if ( kevent( wake->kq, &change, 1, NULL, 0, NULL ) < 0 )
+    {
+        close( wake->kq );
+        rocketnet_free( context, wake );
+        return NULL;
+    }
+    return wake;
+}
+
+void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
+{
+    rocketnet_assert( wake );
+    close( wake->kq );
+    rocketnet_free( wake->context, wake );
+}
+
+bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readable, double timeout_seconds )
+{
+    rocketnet_assert( wake );
+    if ( readable )
+        return false;
+    struct timespec timeout = {};
+    if ( timeout_seconds > 0.0 )
+    {
+        timeout.tv_sec = (time_t) timeout_seconds;
+        timeout.tv_nsec = (long) ( ( timeout_seconds - (double) timeout.tv_sec ) * 1000000000.0 );
+        if ( timeout.tv_nsec >= 1000000000L )
+            timeout.tv_nsec = 999999999L;
+    }
+    struct kevent event;
+    const int result = kevent( wake->kq, NULL, 0, &event, 1, &timeout );
+    return result == 1 && !( event.flags & EV_ERROR );
+}
+
+void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
+{
+    rocketnet_assert( wake );
+    struct kevent change;
+    EV_SET( &change, 1, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL );
+    kevent( wake->kq, &change, 1, NULL, 0, NULL );
+}
+
+#endif // ROCKETNET_PLATFORM_BSD
 
 // ---------------------------------------------------
 
@@ -4930,12 +5005,13 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
 // ----------------------------------------------------------------
 
 // the client I/O wake's portable fallback: a platform that does not define
-// ROCKETNET_PLATFORM_HAS_WAKE and has no platform wake of its own (macOS and
-// iOS build the kqueue wake above, Windows the event wake above) has no wake.
+// ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE and has no platform wake of its own
+// (BSD has the event-only kqueue above; macOS and iOS build the socket-capable
+// kqueue wake above; Windows builds the event wake above) has no wake.
 // create returns NULL, destroy asserts its argument is NULL, wait returns
 // false and set does nothing.
 
-#if !defined( ROCKETNET_PLATFORM_HAS_WAKE ) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_MAC && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_IOS && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE ) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_MAC && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_IOS && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket )
 {
@@ -4962,7 +5038,7 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
     (void) wake;
 }
 
-#endif // #if !defined( ROCKETNET_PLATFORM_HAS_WAKE ) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_MAC && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_IOS && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#endif // #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE ) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_MAC && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_IOS && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 // ----------------------------------------------------------------
 
@@ -5040,7 +5116,7 @@ uint64_t rocketnet_platform_thread_allocation_bytes()
 
 uint64_t rocketnet_platform_wake_allocation_bytes()
 {
-#if defined(ROCKETNET_PLATFORM_HAS_WAKE)
+#if defined(ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE)
     return rocketnet_memory_allocations({sizeof(rocketnet_platform_wake_t)});
 #else
     return 0;

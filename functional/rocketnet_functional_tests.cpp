@@ -6672,7 +6672,7 @@ void rocketnet_test_message_objects_loopback_from_t1000()
 // after consumption wakes again, and invalid socket-read waits neither block
 // nor consume the pending signal.
 
-#if defined(ROCKETNET_PLATFORM_HAS_WAKE)
+#if defined(ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE)
 static void rocketnet_test_platform_wake_event_only_set_thread( void * arg )
 {
     rocketnet_platform_sleep( 0.01 );
@@ -8663,7 +8663,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_receive_drops_oversize_datagram", rocketnet_test_receive_drops_oversize_datagram, NULL },
     { "test_platform_batch_pump", rocketnet_test_platform_batch_pump, NULL },
     { "test_platform_batch_pump_degraded", rocketnet_test_platform_batch_pump_degraded, NULL },
-#if defined(ROCKETNET_PLATFORM_HAS_WAKE)
+#if defined(ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE)
     { "test_platform_wake_event_only", rocketnet_test_platform_wake_event_only, NULL },
 #endif
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX

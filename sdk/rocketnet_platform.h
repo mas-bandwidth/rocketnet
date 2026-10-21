@@ -595,7 +595,8 @@ int rocketnet_platform_socket_receive_packets_mmsg( struct rocketnet_platform_so
 // and returns true when woken or readable; with readable false the socket's
 // readiness is ignored, so a full receive buffer waits on the wake alone. set may run on any thread; a set made while no wait
 // runs makes the next wait return at once. Platforms that define
-// ROCKETNET_PLATFORM_HAS_WAKE implement it; elsewhere create returns NULL.
+// ROCKETNET_PLATFORM_HAS_WAKE implement socket-backed waits. BSD supports
+// event-only wakes without changing its socket-backed client path.
 // Linux builds the eventfd wake; macOS and iOS build the kqueue wake
 // (docs/CLIENT-IO.md "The wake"), so the msgx
 // client runs on the I/O thread there. Windows builds the event wake,
@@ -604,6 +605,9 @@ int rocketnet_platform_socket_receive_packets_mmsg( struct rocketnet_platform_so
 // thread there.
 #if ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined(__linux__) ) || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #define ROCKETNET_PLATFORM_HAS_WAKE 1
+#endif
+#if defined(ROCKETNET_PLATFORM_HAS_WAKE) || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
+#define ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE 1
 #endif
 /**
  * @brief Opaque reusable level-triggered wake object, optionally associated with a socket.
@@ -617,7 +621,8 @@ struct rocketnet_platform_wake_t;
  *
  * @param context Allocator context; NULL uses the default allocator.
  * @param socket Optional live socket that remains open until the wake is destroyed.
- * Pass NULL for an event-only wake.
+ * Pass NULL for an event-only wake. BSD supports this event-only form but
+ * continues to refuse socket-backed wakes.
  * @return Owned wake object, or NULL if this platform does not implement wakes
  * or allocation/native wake creation fails.
  */
