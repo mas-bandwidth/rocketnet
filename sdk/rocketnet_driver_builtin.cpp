@@ -33,6 +33,7 @@ struct portable_server_t
     rocketnet_platform_wake_t * wake = NULL;
     rocketnet_platform_thread_t * thread = NULL;
     rocketnet_platform_mutex_t mutex = {};
+    std::atomic<bool> stopping{false};
     std::atomic<bool> quit{false};
     std::atomic<bool> exited{false};
     std::atomic<uint64_t> dropped{0};
@@ -113,11 +114,16 @@ static void portable_server_cleanup( portable_server_t * server )
     if ( server->socket ) rocketnet_platform_socket_destroy( server->socket );
     void * context = server->context;
     server->~portable_server_t();
-    rocketnet_free( context, server );
+    rocketnet_clear_and_free( context, server, sizeof( portable_server_t ) );
 }
 
 static void * portable_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
+#if !defined(ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE)
+    (void) context; (void) config; (void) bind;
+    rocketnet_warn( "portable server TX worker requires an event-only wake on this platform" );
+    return NULL;
+#else
 #if defined( __OpenBSD__ )
     if ( config->transport && config->transport->second_public_address[0] != '\0' )
     {
@@ -134,18 +140,35 @@ static void * portable_create( void * context, const rocketnet_server_transport_
     new (server) portable_server_t();
     server->context = context;
     server->socket = (rocketnet_platform_socket_t*) portable_socket_create( context, config->name, bind );
-    if ( server->socket && rocketnet_platform_mutex_create( &server->mutex ) )
-        server->wake = rocketnet_platform_wake_create( context, NULL );
-    if ( server->wake )
-        server->thread = rocketnet_platform_thread_create( context, portable_tx_worker, server );
-    if ( !server->thread )
+    if ( !server->socket )
     {
         portable_server_cleanup( server );
         return NULL;
     }
+    if ( !rocketnet_platform_mutex_create( &server->mutex ) )
+    {
+        if ( config->status ) *config->status = ROCKETNET_STATUS_MUTEX_CREATE_FAILED;
+        portable_server_cleanup( server );
+        return NULL;
+    }
+    server->wake = rocketnet_platform_wake_create( context, NULL );
+    if ( !server->wake )
+    {
+        portable_server_cleanup( server );
+        return NULL;
+    }
+    server->thread = rocketnet_platform_thread_create( context, portable_tx_worker, server );
+    if ( !server->thread )
+    {
+        if ( config->status ) *config->status = ROCKETNET_STATUS_THREAD_CREATE_FAILED;
+        portable_server_cleanup( server );
+        return NULL;
+    }
     return server;
+#endif
 }
 static void portable_destroy( void * transport ) { portable_server_cleanup( (portable_server_t*) transport ); }
+static void portable_socket_destroy( void * transport ) { rocketnet_platform_socket_destroy( (rocketnet_platform_socket_t*) transport ); }
 static void synchronous_stop( void * ) {}
 static bool synchronous_stopped( void * ) { return true; }
 static void portable_send( void * transport, const rocketnet_platform_send_t * packets, int count )
@@ -153,7 +176,7 @@ static void portable_send( void * transport, const rocketnet_platform_send_t * p
     portable_server_t * server = (portable_server_t*) transport;
     for ( int i = 0; i < count; ++i )
     {
-        if ( server->quit.load( std::memory_order_acquire ) )
+        if ( server->stopping.load( std::memory_order_acquire ) )
         {
             server->dropped.fetch_add( (uint64_t)( count - i ), std::memory_order_relaxed );
             return;
@@ -188,7 +211,7 @@ static int portable_receive( void * transport, rocketnet_address_t * from, uint8
 static void portable_stop( void * transport )
 {
     portable_server_t * server = (portable_server_t*) transport;
-    if ( server->quit.exchange( true, std::memory_order_acq_rel ) ) return;
+    if ( server->stopping.exchange( true, std::memory_order_acq_rel ) ) return;
     // The worker never reads the main-owned unpublished producer. If the
     // final try cannot publish it, account and drop it before completion.
     if ( !portable_tx_publish( server ) )
@@ -196,6 +219,9 @@ static void portable_stop( void * transport )
         server->dropped.fetch_add( (uint64_t)server->bank[server->producer].count, std::memory_order_relaxed );
         server->bank[server->producer].count = 0;
     }
+    // Publish or drop the main-owned bank before allowing an empty-ready
+    // worker to exit. Releasing quit before publication would lose this batch.
+    server->quit.store( true, std::memory_order_release );
     rocketnet_platform_wake_set( server->wake );
 }
 static bool portable_stopped( void * transport )
@@ -205,6 +231,8 @@ static uint64_t portable_send_failures( void * transport )
     portable_server_t * server = (portable_server_t*) transport;
     return rocketnet_platform_socket_send_failures( server->socket ) + server->dropped.load( std::memory_order_relaxed );
 }
+static uint64_t portable_socket_send_failures( void * transport )
+{ return rocketnet_platform_socket_send_failures( (rocketnet_platform_socket_t*) transport ); }
 static const rocketnet_server_transport_io_operations_t portable_server_operations =
 {
     ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE, portable_create, portable_destroy, portable_stop, portable_stopped,
@@ -215,14 +243,14 @@ static const rocketnet_server_transport_io_operations_t msgx_server_operations =
 {
     ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE, []( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind ) -> void *
         { return portable_socket_create( context, config->name, bind ); },
-    []( void * socket ) { rocketnet_platform_socket_destroy( (rocketnet_platform_socket_t*) socket ); },
+    portable_socket_destroy,
     synchronous_stop, synchronous_stopped, NULL, NULL, NULL, NULL, NULL,
     []( void * socket, const rocketnet_platform_send_t * sends, int count )
         { rocketnet_platform_socket_send_packets( (rocketnet_platform_socket_t*) socket, sends, count ); },
     []( void * socket, rocketnet_address_t * from, uint8_t * data, int stride, int * bytes, int count ) -> int
         { return rocketnet_platform_socket_receive_packets( (rocketnet_platform_socket_t*) socket, from, data, stride, bytes, count ); },
     NULL, NULL, NULL, NULL, NULL,
-    []( void * socket ) -> uint64_t { return rocketnet_platform_socket_send_failures( (rocketnet_platform_socket_t*) socket ); }, NULL
+    portable_socket_send_failures, NULL
 };
 #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 // The portable client on a platform with the client I/O wake: an eight-callback
@@ -324,13 +352,13 @@ static int portable_client_receive_batch( void * transport, rocketnet_address_t 
 { return rocketnet_platform_socket_receive_packets_mmsg( (rocketnet_platform_socket_t*) transport, from, data, stride, bytes, count ); }
 #endif
 static const rocketnet_client_transport_io_operations_t portable_client_operations =
-{ portable_client_create, portable_destroy, portable_client_send, portable_client_receive,
+{ portable_client_create, portable_socket_destroy, portable_client_send, portable_client_receive,
 #if defined(__linux__)
   portable_client_send_batch, portable_client_receive_batch,
 #else
   NULL, NULL,
 #endif
-  NULL, NULL, portable_send_failures
+  NULL, NULL, portable_socket_send_failures
 };
 #endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 extern const rocketnet_transport_backend_t rocketnet_portable_transport = { &portable_server_operations, &portable_client_operations };
@@ -581,6 +609,9 @@ bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_confi
     (void) config; // read only by the Linux and Windows transports below
     if (strcmp(transport, "portable") == 0)
     {
+#if !defined(ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE)
+        return false;
+#else
         uint64_t bytes = rocketnet_memory_allocations({sizeof(portable_server_t)});
         if ( !bytes || !rocketnet_memory_add( bytes, 1, rocketnet_platform_socket_allocation_bytes() ) ||
              !rocketnet_memory_add( bytes, 1, rocketnet_platform_wake_allocation_bytes() ) ||
@@ -589,6 +620,7 @@ bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_confi
         plan.transport_io_bytes = bytes;
         plan.worker_threads = 1;
         plan.sockets = 1;
+#endif
     }
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     else if (strcmp(transport, "msgx") == 0)
