@@ -42,7 +42,11 @@ runner keeps each raw load output and checks all five correctness criteria,
 baseline. All four baseline fd/thread fields must exist as nonnegative
 integers. It retains each run's legacy server-update p99 and any `frame_*`
 histogram fields, listing missing call names and exact at-or-above-budget
-counts. Do **not** average away a failing run; a qualifying gate must enforce
+counts. A present category with count zero and zero percentile/max/miss fields
+is retained as `UNMEASURED`; it is distinct from an absent category. Missing
+fields or nonzero values for a zero-sample category make the receipt
+`INCOMPLETE`. Neither state qualifies the every-main-call budget. Do **not**
+average away a failing run; a qualifying gate must enforce
 the strict per-call threshold on each run, keep counts and raw distributions,
 and cover every main call. The existing `load.c` cannot make that claim.
 

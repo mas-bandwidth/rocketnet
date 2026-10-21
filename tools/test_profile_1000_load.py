@@ -34,6 +34,11 @@ VM_STAT = ("Mach Virtual Memory Statistics: (page size of 16384 bytes)\n"
            "Pages inactive:                           300000.\n"
            "Pages speculative:                        50000.\n"
            "Pages wired down:                         100000.\n")
+ZERO_CALL = (" frame_server_disconnect_reason_count=0"
+             " frame_server_disconnect_reason_p50_upper_us=0"
+             " frame_server_disconnect_reason_p99_upper_us=0"
+             " frame_server_disconnect_reason_max_us=0.000"
+             " frame_server_disconnect_reason_overbudget_count=0")
 
 
 class MacMemoryTests(unittest.TestCase):
@@ -63,6 +68,29 @@ class ReceiptTests(unittest.TestCase):
         self.assertEqual(result["reported_calls_at_or_above_100us"], ["frame_server_update"])
         self.assertIn("frame_client_update", result["missing_frame_calls"])
         self.assertEqual(result["every_main_call_budget"], "UNMEASURED")
+
+    def test_zero_sample_category_is_present_but_unmeasured(self):
+        result = profile.parse_load(SUMMARY.rstrip() + ZERO_CALL + "\n", "portable", "portable")
+        category = result["reported_frame_calls"]["frame_server_disconnect_reason"]
+        self.assertEqual(category["status"], "UNMEASURED")
+        self.assertEqual(category["count"], 0)
+        self.assertIn("frame_server_disconnect_reason", result["unmeasured_frame_calls"])
+        self.assertNotIn("frame_server_disconnect_reason", result["missing_frame_calls"])
+        self.assertEqual(result["every_main_call_budget"], "UNMEASURED")
+
+    def test_zero_sample_category_must_be_complete_and_all_zero(self):
+        for line in (ZERO_CALL.replace("frame_server_disconnect_reason_count=0", ""),
+                     ZERO_CALL.replace("frame_server_disconnect_reason_p99_upper_us=0", ""),
+                     ZERO_CALL.replace("frame_server_disconnect_reason_p50_upper_us=0",
+                                       "frame_server_disconnect_reason_p50_upper_us=1"),
+                     ZERO_CALL.replace("frame_server_disconnect_reason_p99_upper_us=0",
+                                       "frame_server_disconnect_reason_p99_upper_us=1"),
+                     ZERO_CALL.replace("frame_server_disconnect_reason_max_us=0.000",
+                                       "frame_server_disconnect_reason_max_us=1.000"),
+                     ZERO_CALL.replace("frame_server_disconnect_reason_overbudget_count=0",
+                                       "frame_server_disconnect_reason_overbudget_count=1")):
+            with self.subTest(line=line), self.assertRaises(ValueError):
+                profile.parse_load(SUMMARY.rstrip() + line + "\n", "portable", "portable")
 
     def test_missing_or_invalid_resource_counts_fail_closed(self):
         for line in (SUMMARY.replace("fds_start=4 ", ""),

@@ -188,18 +188,23 @@ def parse_load(stdout, server_transport, client_transport):
             maximum = float(fields[f"{stem}_max_us"])
         except (KeyError, ValueError) as error:
             raise ValueError(f"incomplete or invalid histogram fields for {name}") from error
-        if count <= 0 or overbudget < 0 or overbudget > count:
+        if count < 0 or overbudget < 0 or overbudget > count:
             raise ValueError(f"invalid histogram counts for {name}")
         if any(not math.isfinite(x) or x < 0 for x in (p50, p99, maximum)):
             raise ValueError(f"nonfinite or negative histogram values for {name}")
+        if count == 0 and any(x != 0 for x in (p50, p99, maximum, overbudget)):
+            raise ValueError(f"zero-sample histogram has nonzero values for {name}")
         reported_calls[stem] = dict(count=count, p50_upper_us=p50,
                                     p99_upper_us=p99, max_us=maximum,
-                                    overbudget_count=overbudget)
+                                    overbudget_count=overbudget,
+                                    status="UNMEASURED" if count == 0 else "MEASURED")
     return dict(raw=summaries[0], fields=fields, server_update_p99_us=server_p99,
                 server_update_under_100us=server_p99 < 100.0,
                 reported_frame_calls=reported_calls,
                 missing_frame_calls=sorted("frame_" + name for name in EXPECTED_FRAME_CALLS
                                            if "frame_" + name not in reported_calls),
+                unmeasured_frame_calls=sorted(name for name, values in reported_calls.items()
+                                              if values["status"] == "UNMEASURED"),
                 reported_calls_at_or_above_100us=sorted(name for name, values in reported_calls.items()
                                                       if values["overbudget_count"] > 0),
                 every_main_call_budget="UNMEASURED")
