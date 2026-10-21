@@ -5,7 +5,7 @@
     Load: single-process many-client load harness driving the public API.
     Stands up one public server (rocketnet_server_t) and N public clients
     (rocketnet_client_t, N up to ROCKETNET_MAX_CLIENTS = 1000) in one process
-    on loopback, connects every client within 10 seconds, drives the light
+    on loopback, connects every client within 10 seconds, drives the selected
     profile (10 Hz updates, one message per client per update in each
     direction: the client-to-server message rotates through all eight
     reliability modes via client_next_combo, and the server-to-client
@@ -18,13 +18,11 @@
       5. counters_agree
 
     Configuration:
-    The server runs rocketnet_server_default_config with the published
-    development keys set by hand, and each client runs
-    rocketnet_client_default_config, with the following explicit
-    non-default settings for the light profile:
-      - server.max_clients: set to the requested client count (default 1000)
-      - server.handshake_deadline_seconds: 10 (default 5, matching LOAD_CONNECT_DEADLINE_S)
-    All other configuration fields retain their default values.
+    LOAD_PROFILE=default (the default) keeps the SDK's default message and
+    transport sizing. LOAD_PROFILE=light keeps the same offered traffic and
+    pass criteria but sizes both endpoints for the harness's 32-byte messages,
+    eight reliability cases, and one transport fragment slot. The server's
+    max_clients and 10-second handshake deadline are set in both profiles.
 
     Linux. ROCKETNET_SERVER_TRANSPORT pins the server transport and
     ROCKETNET_CLIENT_TRANSPORT=portable the clients; the summary line's
@@ -515,6 +513,16 @@ int main( int argc, char ** argv )
     const int num_clients = (int) parsed_clients;
     const double duration_seconds = (double) parsed_seconds;
 
+    char profile[256] = { 0 };
+    const int profile_found = rocketnet_test_getenv( "LOAD_PROFILE", profile, sizeof( profile ) );
+    const char * profile_name = profile_found && profile[0] != 0 ? profile : "default";
+    if ( strcmp( profile_name, "light" ) != 0 && strcmp( profile_name, "default" ) != 0 )
+    {
+        fprintf( stderr, "load: LOAD_PROFILE=%s is not light or default\n", profile_name );
+        return 2;
+    }
+    const int light_profile = strcmp( profile_name, "light" ) == 0;
+
 #if !defined(_WIN32)
     struct load_fd_limit_t fd_limit;
     if ( !ensure_fd_limit( num_clients, &fd_limit ) )
@@ -542,8 +550,8 @@ int main( int argc, char ** argv )
     if ( !rocketnet_test_getenv( "ROCKETNET_LOG_LEVEL", log_level, sizeof( log_level ) ) )
         rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
-    /* Public server and client configuration: default configs except the
-       explicit settings required by the light profile */
+    /* Public server and client configurations. The default profile preserves
+       SDK defaults; light narrows memory geometry to the workload below. */
     struct rocketnet_server_config_t server_config;
     /* the published development backend key, set by hand (a real server
        brings its backend's key); the server makes its own keypair at create,
@@ -557,6 +565,38 @@ int main( int argc, char ** argv )
 
     struct rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
+
+    if ( light_profile )
+    {
+        /* Each endpoint emits one 32-byte message per 100 ms. The eight
+           reliability cases rotate across updates, so 2.56 kbps is the
+           payload rate in each direction. 64 kbps leaves 25x payload-only
+           headroom for protocol and acknowledgement traffic. */
+        server_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+        server_config.max_fragmented_messages = 1;
+        server_config.per_client_send_kbps = 64;
+        server_config.num_channels = 8;
+        server_config.reliable_messages_in_flight = 64;
+        server_config.receive_message_buffer_bytes = 4096;
+        server_config.max_message_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;
+        server_config.send_message_buffer_bytes = 12288;
+        server_config.send_queue_messages = 16;
+        server_config.packets_in_flight = 16;
+
+        client_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+        client_config.max_fragmented_messages = 1;
+        client_config.send_kbps = 64;
+        client_config.num_channels = 8;
+        client_config.reliable_messages_in_flight = 64;
+        client_config.receive_message_buffer_bytes = 4096;
+        client_config.max_message_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;
+        client_config.send_message_buffer_bytes = 12288;
+        client_config.send_queue_messages = 16;
+        client_config.packets_in_flight = 16;
+    }
+
+    const size_t client_public_required_bytes = rocketnet_client_required_memory( &client_config );
+    const size_t server_public_required_bytes = rocketnet_server_required_memory( &server_config );
 
     char server_bind_buf[64];
     char server_bind_env[sizeof( server_bind_buf ) - 2];   // room to append ":0"
@@ -790,13 +830,6 @@ int main( int argc, char ** argv )
     int drop_injected = 0;
     double max_server_update_s = 0.0;
     double max_server_update_at = 0.0;
-
-    char profile[256];
-    if ( rocketnet_test_getenv( "LOAD_PROFILE", profile, sizeof( profile ) ) && profile[0] != 0 && strcmp( profile, "light" ) != 0 && strcmp( profile, "default" ) != 0 )
-    {
-        fprintf( stderr, "load: LOAD_PROFILE=%s is not light or default\n", profile );
-        return 2;
-    }
 
     double next_slice_time = traffic_start;
     static int client_update_cursor = 0;
@@ -1181,6 +1214,7 @@ int main( int argc, char ** argv )
     if ( pass )
     {
         printf( "load: connected=%d connect_s=%.3f connect_p50_s=%.3f connect_max_s=%.3f "
+                "profile=%s client_public_required_bytes=%zu server_public_required_bytes=%zu "
                 "connect_within_10s=PASS no_unexpected_disconnect=PASS "
                 "reliable_delivery=PASS unreliable_integrity=PASS counters_agree=PASS "
                 "sent=%" PRIu64 " received=%" PRIu64 " drops=%" PRIu64 " "
@@ -1189,6 +1223,7 @@ int main( int argc, char ** argv )
                 "fd_limit_soft=%s fd_limit_hard=%s fds_start=%ld fds_peak=%ld fds_end=%ld "
                 "threads_start=%ld threads_peak=%ld threads_end=%ld verdict=PASS\n",
                 connected_count, connect_elapsed, connect_p50_s, connect_max_s,
+                profile_name, client_public_required_bytes, server_public_required_bytes,
                 c2s_sent_total, c2s_received_total, total_counted_drops,
                 p50_us, p99_us, rss_mb,
                 server_transport_io, client_transport_io,
@@ -1199,6 +1234,7 @@ int main( int argc, char ** argv )
     else
     {
         printf( "load: connected=%d connect_s=%.3f connect_p50_s=%.3f connect_max_s=%.3f "
+                "profile=%s client_public_required_bytes=%zu server_public_required_bytes=%zu "
                 "connect_within_10s=%s no_unexpected_disconnect=%s "
                 "reliable_delivery=%s unreliable_integrity=%s counters_agree=%s "
                 "sent=%" PRIu64 " received=%" PRIu64 " drops=%" PRIu64 " "
@@ -1208,6 +1244,7 @@ int main( int argc, char ** argv )
                 "threads_start=%ld threads_peak=%ld threads_end=%ld "
                 "failed_criterion=%s verdict=FAIL\n",
                 connected_count, connect_elapsed, connect_p50_s, connect_max_s,
+                profile_name, client_public_required_bytes, server_public_required_bytes,
                 crit1_connect_within_10s ? "PASS" : "FAIL",
                 crit2_no_unexpected_disconnect ? "PASS" : "FAIL",
                 crit3_reliable_delivery ? "PASS" : "FAIL",
