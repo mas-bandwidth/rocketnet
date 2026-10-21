@@ -1511,6 +1511,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         {
             if ( status )
                 *status = ROCKETNET_STATUS_MUTEX_CREATE_FAILED;
+            rocketnet_network_simulator_destroy( server_transport->link_simulator );
+            server_transport->link_simulator = NULL;
             rocketnet_server_transport_abort_create( server_transport );
             return NULL;
         }
@@ -2871,6 +2873,8 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
             rocketnet_server_transport_io_send_packets( server_transport );
         }
 
+        rocketnet_server_link_flush( server_transport );
+
         rocketnet_send_arena_reset( server_transport->send_arena );
         return;
     }
@@ -3200,6 +3204,55 @@ int rocketnet_server_transport_test_xdp_reflush()
     transport->~rocketnet_server_transport_t();
     rocketnet_free( NULL, storage );
     return flushes;
+}
+
+// A staged send must close the simulator's partial reverse window at the
+// end of the frame, just as the portable send path does.
+int rocketnet_server_transport_test_staged_simulator_flush()
+{
+    void * storage = rocketnet_malloc( NULL, sizeof(rocketnet_server_transport_t) );
+    if ( !storage ) return -1;
+    auto * transport = new (storage) rocketnet_server_transport_t();
+    transport->send_arena = rocketnet_send_arena_create( NULL, 1, 1 );
+    transport->link_simulator = rocketnet_network_simulator_create( NULL, 4, 1 );
+    const bool mutex_created = transport->link_simulator &&
+                               rocketnet_platform_mutex_create( &transport->link_simulator_mutex );
+    int result = -1;
+    if ( transport->send_arena && transport->link_simulator && mutex_created &&
+         rocketnet_network_simulator_patterns( transport->link_simulator, 0, 2 ) )
+    {
+        int flushes = 0;
+        rocketnet_server_transport_io_operations_t operations = {};
+        operations.flags = ROCKETNET_TRANSPORT_STAGED;
+        operations.flush = rocketnet_server_transport_test_count_flush;
+        transport->io.operations = &operations;
+        transport->io.instance = &flushes;
+        transport->transport = ROCKETNET_TRANSPORT_XDP;
+        transport->time = 1000.0;
+        rocketnet_address_t to;
+        if ( rocketnet_address_parse( &to, "127.0.0.1:40000" ) )
+        {
+            const uint8_t packet = 0x5A;
+            rocketnet_server_link_send( transport, &to, &packet, 1 );
+            rocketnet_address_t from, received_to;
+            uint8_t received[ROCKETNET_RECEIVE_CEILING];
+            const int before = rocketnet_network_simulator_receive_any( transport->link_simulator,
+                                                                         1000.0, &from, &received_to, received );
+            rocketnet_server_transport_send_packets( transport );
+            const int after = rocketnet_network_simulator_receive_any( transport->link_simulator,
+                                                                        1000.0, &from, &received_to, received );
+            result = before == 0 && after == 1 && received[0] == packet && flushes == 1 ? 1 : 0;
+        }
+    }
+    if ( mutex_created )
+        rocketnet_platform_mutex_destroy( &transport->link_simulator_mutex );
+    if ( transport->link_simulator )
+        rocketnet_network_simulator_destroy( transport->link_simulator );
+    if ( transport->send_arena )
+        rocketnet_send_arena_destroy( transport->send_arena );
+    transport->~rocketnet_server_transport_t();
+    rocketnet_free( NULL, storage );
+    return result;
 }
 #endif
 
