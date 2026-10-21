@@ -279,11 +279,10 @@ static void loopback_send( void * transport, const rocketnet_address_t * to, con
         return;
     rocketnet_loopback_endpoint_t * sender = (rocketnet_loopback_endpoint_t*) transport;
     rocketnet_loopback_state_t & state = loopback_state();
-    if ( !loopback_try_send_lock( state ) )
-    {
-        loopback_send_failed( sender, 1 );
-        return;
-    }
+    // Ordinary client sends preserve in-process delivery under concurrent
+    // receive traffic. Disconnect/stop/check never invoke this callback:
+    // the client stages its final burst for the worker or explicit update.
+    rocketnet_platform_mutex_acquire( &state.mutex );
     rocketnet_loopback_endpoint_t * dst = loopback_find_destination( state, *to );
     if ( !dst )
     {
