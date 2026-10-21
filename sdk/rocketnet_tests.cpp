@@ -8091,7 +8091,7 @@ void rocketnet_test_public_api_null()
 
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_default_config_internal( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_default_config( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_create( NULL, NULL, NULL, NULL ) == NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_create( NULL, NULL, NULL, NULL, NULL ) == NULL ) );
     RN_TEST_SILENT_NULL( rocketnet_server_destroy( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_start( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_stop( NULL ) );
@@ -8159,7 +8159,7 @@ void rocketnet_test_public_api_null()
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     rocketnet_check( rocketnet_client_create( NULL, &client_config, &create_status ) == NULL && create_status == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
     create_status = ROCKETNET_STATUS_OK;
-    rocketnet_check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &create_status ) == NULL && create_status == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
+    rocketnet_check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status ) == NULL && create_status == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
     rocketnet_check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
     rocketnet_check( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
 
@@ -12606,7 +12606,6 @@ static const struct rn_test_config_field_t rn_test_server_config_fields[] =
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, max_timeout_seconds ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, handshake_deadline_seconds ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, transport ),
-    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, public_address ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, per_client_send_kbps ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_channels ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, reliable_messages_in_flight ),
@@ -12623,7 +12622,6 @@ static const struct rn_test_config_field_t rn_test_server_config_fields[] =
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, message_resend_delay_min_ms ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, message_resend_delay_max_ms ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, reliable_message_timeout_ms ),
-    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, second_public_address ),
 };
 
 #undef RN_TEST_CONFIG_FIELD
@@ -12798,8 +12796,7 @@ void rocketnet_test_public_config_resolve()
     // every server field lands
 
     // the defaults with the published development keys set by hand:
-    // rocketnet_server_config_resolve reads the whole struct,
-    // second_public_address included
+    // rocketnet_server_config_resolve reads the whole struct
     struct rocketnet_server_config_t server;
     rocketnet_test_server_dev_keys_config( &server );
     server.protocol_id = 0x1122334455667788ULL;
@@ -12808,7 +12805,6 @@ void rocketnet_test_public_config_resolve()
     server.num_xdp_queues = 2; server.num_os_cpus = 3; server.max_payload_bytes = 3000; server.max_fragmented_messages = 4;
     server.max_timeout_seconds = 30; server.handshake_deadline_seconds = 7;
     server.transport = "gso,portable";
-    server.public_address = "127.0.0.1:40123";
     server.per_client_send_kbps = 4321;
     server.num_channels = 6; server.reliable_message_timeout_ms = 6000;
     struct rocketnet_server_config_t dev;
@@ -12819,7 +12815,7 @@ void rocketnet_test_public_config_resolve()
     rocketnet_check( memcmp( server_transport.backend_public_key, dev.backend_public_key, 32 ) == 0 );
     rocketnet_check( server_transport.num_xdp_queues == 2 && server_transport.num_os_cpus == 3 && server_transport.max_payload_bytes == 3000 && server_transport.max_fragmented_messages == 4 );
     rocketnet_check( server_transport.max_timeout_seconds == 30 && server_transport.handshake_deadline_seconds == 7 );
-    rocketnet_check( strcmp( server_transport.transport, "gso,portable" ) == 0 && strcmp( server_transport.public_address, "127.0.0.1:40123" ) == 0 );
+    rocketnet_check( strcmp( server_transport.transport, "gso,portable" ) == 0 );
     rocketnet_check( kbps == 4321 && message.num_channels == 6 && message.reliable_message_timeout_ms == 6000 );
 
     // max_clients sizes both layers, so its override applies in the split
@@ -12830,10 +12826,10 @@ void rocketnet_test_public_config_resolve()
     rocketnet_check( rocketnet_server_config_resolve( &server, true, &server_transport, &message, &kbps ) );
     rocketnet_check( server_transport.max_clients == 3 && message.num_channels == 4 && kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
 
-    char long_address[300];
-    memset( long_address, '1', sizeof( long_address ) - 1 );
-    long_address[sizeof( long_address ) - 1] = '\0';
-    server.public_address = long_address;
+    char long_transport[300];
+    memset( long_transport, 'p', sizeof( long_transport ) - 1 );
+    long_transport[sizeof( long_transport ) - 1] = '\0';
+    server.transport = long_transport;
     rocketnet_check( !rocketnet_server_config_resolve( &server, false, &server_transport, &message, &kbps ) );
 
     rocketnet_test_env_restore( &server_kbps_guard );
@@ -12899,7 +12895,7 @@ void rocketnet_test_public_config_zeroed_refused()
     memset( &server_config, 0, sizeof( server_config ) );
     rocketnet_check( rocketnet_server_required_memory( &server_config ) == 0 );
     status = ROCKETNET_STATUS_OK;
-    rocketnet_check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &status ) == NULL );
+    rocketnet_check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status ) == NULL );
     rocketnet_check( status == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
     rocketnet_check( rocketnet_server_default_config_internal( &server_config ) == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
     rocketnet_check( memcmp( &server_config, zero, sizeof( server_config ) ) == 0 );
@@ -12931,7 +12927,7 @@ void rocketnet_test_public_default_config_sets_config_bytes()
     server_config.max_clients = 4;
     rocketnet_check( rocketnet_server_required_memory( &server_config ) > 0 );
     status = ROCKETNET_STATUS_INVALID_ARGUMENT;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &status );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
     rocketnet_check( server != NULL && status == ROCKETNET_STATUS_OK );
     rocketnet_check( !rocketnet_server_running( server ) );
     rocketnet_check( rocketnet_server_max_clients( server ) == 4 );
@@ -13026,7 +13022,7 @@ void rocketnet_test_public_config_bytes_older_and_newer()
 
         older.max_clients = 4;
         enum rocketnet_status_t status = ROCKETNET_STATUS_INVALID_ARGUMENT;
-        struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &older, &status );
+        struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &older, &status );
         rocketnet_check( server != NULL && status == ROCKETNET_STATUS_OK );
         rocketnet_check( rocketnet_server_max_clients( server ) == 4 );
         rocketnet_server_destroy( server );
@@ -13044,7 +13040,7 @@ void rocketnet_test_public_config_bytes_older_and_newer()
 
         newer.config.max_clients = 4;
         enum rocketnet_status_t status = ROCKETNET_STATUS_INVALID_ARGUMENT;
-        struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &newer.config, &status );
+        struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &newer.config, &status );
         rocketnet_check( server != NULL && status == ROCKETNET_STATUS_OK );
         rocketnet_server_destroy( server );
         rocketnet_check( rn_test_bytes_are( newer.tail, sizeof( newer.tail ), RN_TEST_CONFIG_SENTINEL ) );
@@ -13133,7 +13129,7 @@ void rocketnet_test_public_send_kbps_default_and_negative()
     rocketnet_check( rocketnet_server_config_resolve( &server_config, true, &server_transport, &message, &kbps ) );
     rocketnet_check( kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS && message.server_send_kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
     status = ROCKETNET_STATUS_INVALID_ARGUMENT;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &status );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
     rocketnet_check( server != NULL && status == ROCKETNET_STATUS_OK );
     rocketnet_check( rocketnet_server_set_send_kbps( server, 0, -1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     rocketnet_check( rocketnet_server_set_send_kbps( server, 0, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );   // in range, no CONNECTED client: a no-op
@@ -13143,7 +13139,7 @@ void rocketnet_test_public_send_kbps_default_and_negative()
     server_config.per_client_send_kbps = -1;
     rocketnet_check( !rocketnet_server_config_resolve( &server_config, true, &server_transport, &message, &kbps ) );
     status = ROCKETNET_STATUS_OK;
-    rocketnet_check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &status ) == NULL );
+    rocketnet_check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status ) == NULL );
     rocketnet_check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
 
     rocketnet_test_env_restore( &server_kbps_guard );
@@ -15091,7 +15087,7 @@ static struct rocketnet_server_t * rocketnet_test_public_loopback_server()
     config.max_clients = 4;
     config.transport = "loopback";
     enum rocketnet_status_t status = ROCKETNET_STATUS_INVALID_ARGUMENT;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, &status );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, &status );
     rocketnet_check( server != NULL && status == ROCKETNET_STATUS_OK );
     if ( !server )
         return NULL;

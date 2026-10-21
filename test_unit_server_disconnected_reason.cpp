@@ -54,7 +54,7 @@ static rocketnet_server_t * server_disconnected_server_create( server_disconnect
     config.max_clients = 2;
     memcpy( config.backend_public_key, identity->backend_public, sizeof( config.backend_public_key ) );
     config.transport = "loopback";
-    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL );
+    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, NULL );
     check( server != NULL );
     rocketnet_server_public_key( server, identity->server_public );
     check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );

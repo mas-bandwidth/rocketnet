@@ -142,7 +142,7 @@ int main( int argc, char ** argv )
     memcpy( config.backend_public_key, dev_backend_public_key, sizeof( config.backend_public_key ) );
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    server = rocketnet_server_create( NULL, address, &config, &create_status );
+    server = rocketnet_server_create( NULL, address, NULL, &config, &create_status );
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {

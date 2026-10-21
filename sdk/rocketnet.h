@@ -1242,14 +1242,6 @@ struct rocketnet_client_config_t
 /// registers them with its backend over its own authenticated channel; the
 /// backend mints connect tokens to that key and those addresses; the client
 /// connects with one.
-///
-/// public_address, when set, displaces the create call's address at start,
-/// so the address the transport binds and the address connect tokens are
-/// checked against are always the same one. ROCKETNET_SERVER_PUBLIC_ADDRESS
-/// and ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS are consumed together by the
-/// first server start in the process, and say so in the log, so a process
-/// with several servers is never redirected wholesale by ambient address
-/// variables.
 
 struct rocketnet_server_config_t
 {
@@ -1308,15 +1300,9 @@ struct rocketnet_server_config_t
     int handshake_deadline_seconds;
 
     /// ROCKETNET_SERVER_TRANSPORT: the candidate list; NULL is "auto". Every
-    /// transport serves IPv4, IPv6, or both when second_public_address names
-    /// the other family on the same port.
+    /// transport serves IPv4, IPv6, or both.
 
     const char * transport;
-
-    /// ROCKETNET_SERVER_PUBLIC_ADDRESS: "a.b.c.d:port" or "[v6]:port"; NULL
-    /// is the create call's address.
-
-    const char * public_address;
 
     /// ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS: each client's send budget in
     /// kbps, the starting rate of each client connection;
@@ -1407,12 +1393,6 @@ struct rocketnet_server_config_t
     /// 1000 .. 600000; default 10000.
 
     int reliable_message_timeout_ms;
-
-    /// ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS: the other family's
-    /// "a.b.c.d:port" or "[v6]:port" on the same port; NULL or empty serves
-    /// one family.
-
-    const char * second_public_address;
 };
 
 /// -----------------------------------------
@@ -1786,8 +1766,11 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet
 /// Creates a stopped server, or returns NULL with the refusal in status.
 /// Create is the one check of the config: every field's range, the transport
 /// list's parse and the message rules; it logs the rule a refusal broke. The
-/// backend key is checked at start. address is where clients reach the
-/// server, "a.b.c.d:port" or "[v6]:port"; a port of 0 takes an ephemeral
+/// backend key is checked at start. ipv4_address ("a.b.c.d:port") and
+/// ipv6_address ("[v6]:port") are the addresses the server serves and clients
+/// reach; either may be NULL, not both, and with both the two share one port.
+/// ROCKETNET_SERVER_IPV4_ADDRESS and ROCKETNET_SERVER_IPV6_ADDRESS, when set,
+/// override them for every server created. A port of 0 takes an ephemeral
 /// port, read back with rocketnet_server_port once started. The server binds
 /// nothing until start. NULL config is the defaults, which start refuses
 /// until a backend key is given. context is an opaque caller pointer handed
@@ -1796,13 +1779,13 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet
 /// status, when not NULL, receives ROCKETNET_STATUS_OK with a server, or the
 /// refusal's code with NULL: NOT_INITIALIZED before init;
 /// CONFIG_NOT_INITIALIZED for a config_bytes too small, checked first;
-/// INVALID_ARGUMENT for a NULL address or a negative per_client_send_kbps;
-/// INVALID_ADDRESS for an over-long address; CONFIG_OUT_OF_RANGE,
+/// INVALID_ARGUMENT for no address at all or a negative per_client_send_kbps;
+/// INVALID_ADDRESS for an address that is over-long or not of its family; CONFIG_OUT_OF_RANGE,
 /// INVALID_TRANSPORT_LIST or MEMORY_BUDGET_EXCEEDED for the config;
 /// CONFIG_ENV_INVALID for an environment override that does not parse; or
 /// OUT_OF_MEMORY for a failed allocation.
 
-ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * context, const char * address, const struct rocketnet_server_config_t * config, enum rocketnet_status_t * status );
+ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * context, const char * ipv4_address, const char * ipv6_address, const struct rocketnet_server_config_t * config, enum rocketnet_status_t * status );
 
 /// Binds the transport at the address and accepts clients, up to the config's
 /// max_clients. A running server returns ROCKETNET_STATUS_SERVER_NOT_STOPPED

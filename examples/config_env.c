@@ -66,7 +66,7 @@ static int run_show_default_and_struct( void )
     config.transport = "loopback";
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, &create_status );
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, &create_status );
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     CHECK( server != NULL );
     printf( "struct max_clients: %d\n", rocketnet_server_max_clients( server ) );
@@ -97,7 +97,7 @@ static int run_show_env_wins( void )
     config.transport = "loopback";
 
     enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
-    server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, &create_status_2 );
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, &create_status_2 );
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     CHECK( server != NULL );
     printf( "environment max_clients: %d\n", rocketnet_server_max_clients( server ) );
@@ -129,7 +129,7 @@ static int run_show_bad_refused( void )
     config.transport = "loopback";
 
     enum rocketnet_status_t create_status_3 = ROCKETNET_STATUS_OK;
-    server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, &create_status_3 );
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, &create_status_3 );
     CHECK( server == NULL );
     printf( "bad value refused: %s\n", rocketnet_status_name( create_status_3 ) );
 

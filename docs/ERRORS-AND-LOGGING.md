@@ -38,7 +38,7 @@ message, and increments `messages_dropped_not_connected`, never the misuse count
 | `rocketnet_client_connect( client, token )` | the status code: `CLIENT_NOT_DISCONNECTED`, `INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, or a transport's code |
 | `rocketnet_server_default_config( config )` | `INVALID_ARGUMENT` for a NULL config, counted |
 | `rocketnet_server_required_memory( config )` | `0` for a refused config, a `config_bytes` too small included |
-| `rocketnet_server_create( context, address, config, status )` | `NULL` with one error line; `status` holds the refusal's code (the client's codes, plus `INVALID_ADDRESS` for an over-long address), or `OK` with the handle |
+| `rocketnet_server_create( context, address, NULL, config, status )` | `NULL` with one error line; `status` holds the refusal's code (the client's codes, plus `INVALID_ADDRESS` for an over-long address), or `OK` with the handle |
 | `rocketnet_server_start( server )` | the status code: `SERVER_NOT_STOPPED`, or the transport's code (`TRANSPORT_LADDER_EXHAUSTED`, `MISSING_KEYS`, ...) |
 | `rocketnet_client_update( client, time )` / `rocketnet_server_update( server, time )` | nothing (`void`); a refused time is counted as API misuse and logged |
 | `rocketnet_create_dev_connect_token`, `*_set_send_kbps` | the status code; see each declaration in `sdk/rocketnet.h` |

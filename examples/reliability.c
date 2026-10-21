@@ -55,7 +55,7 @@ int main( void ) {
     memcpy( server_config.backend_public_key, dev_backend_public_key, sizeof( server_config.backend_public_key ) );
     server_config.transport = "loopback"; server_config.num_channels = NUM_MODES;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &create_status );
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
     // the development network simulator: 20 ms latency, 35 ms jitter, 25% loss
     if ( server )
         rocketnet_server_network_simulator( server, 20, 35, 25, 0 );

@@ -3597,7 +3597,7 @@ void rocketnet_test_public_client_server_queries()
     server_config.transport = "portable";
     const uint64_t memory_bytes = rocketnet_server_required_memory( &server_config );
     rocketnet_check( memory_bytes > 0 );
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -5053,28 +5053,14 @@ void rocketnet_test_config_env_aliases()
     struct rocketnet_server_transport_config_t config;
     struct rocketnet_server_transport_t * server;
 
-    // the public address rides the table, scoped first-create-consumes
-    // for the env layer. proven deterministically, no fixed port: the
-    // create PARAMETER is unparseable, so the create succeeds if and only
-    // if the env override displaced it -- and the second create proves the
-    // consumption, succeeding-by-refusal when the parameter (not the still
-    // exported variable) is what create reads.
-
-    struct rocketnet_test_env_guard_t address_guard;
-    rocketnet_test_env_save( &address_guard, "ROCKETNET_SERVER_PUBLIC_ADDRESS" );
-    setenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS", "127.0.0.1:0", 1 );
+    // the served address is read at the public create
+    // (ROCKETNET_SERVER_IPV4_ADDRESS, test_server_address_environment_applies_to_every_server);
+    // the transport create takes its address parameter as given
 
     rocketnet_server_transport_dev_config( &config );
     snprintf( config.transport, sizeof(config.transport), "portable" );
-
-    server = rocketnet_server_transport_create( NULL, "not.an.address", &config);
-    rocketnet_check( server );
-    rocketnet_check( rocketnet_server_transport_port( server ) != 0 );
-    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
-
     rocketnet_check( rocketnet_server_transport_create( NULL, "not.an.address", &config) == NULL );
 
-    rocketnet_test_env_restore( &address_guard );
     rocketnet_test_env_restore( &transport_guard );
 }
 
@@ -8330,7 +8316,7 @@ static void rocketnet_test_public_client_reads_server_disconnected()
     memcpy( server_config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
     server_config.max_clients = 2;
     server_config.transport = "portable";
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -8408,7 +8394,7 @@ static void rocketnet_test_two_address_token_connects_over_ipv4()
     server_config.max_clients = 2;
     server_config.transport = "portable";
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &create_status );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
     rocketnet_check( server && create_status == ROCKETNET_STATUS_OK );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {

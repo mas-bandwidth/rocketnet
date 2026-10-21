@@ -210,7 +210,7 @@ int main( void )
         struct rocketnet_client_t * null_client = rocketnet_client_create( NULL, NULL, &status );
         CHECK( null_client != NULL && status == ROCKETNET_STATUS_OK );
         rocketnet_client_destroy( null_client );
-        struct rocketnet_server_t * null_server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &status );
+        struct rocketnet_server_t * null_server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, NULL, &status );
         CHECK( null_server != NULL && status == ROCKETNET_STATUS_OK );
         rocketnet_server_destroy( null_server );
         CHECK( rocketnet_client_required_memory( NULL ) > 0 );
@@ -230,7 +230,7 @@ int main( void )
         CHECK( status == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
         CHECK( capture.lines == 1 && capture.level == ROCKETNET_LOG_LEVEL_ERROR );
         status = ROCKETNET_STATUS_OK;
-        CHECK( rocketnet_server_create( NULL, "127.0.0.1:0", &zeroed_server, &status ) == NULL );
+        CHECK( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &zeroed_server, &status ) == NULL );
         CHECK( status == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
         CHECK( capture.lines == 2 );
         CHECK( rocketnet_client_required_memory( &zeroed_client ) == 0 );
@@ -260,7 +260,7 @@ int main( void )
     CHECK( rocketnet_server_required_memory( &server_config ) > 0 );
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &create_status );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     CHECK( server != NULL );
     CHECK( !rocketnet_server_running( server ) );

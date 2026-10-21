@@ -110,7 +110,7 @@ static void fair_world_create( fair_world_t * world, int num_clients, int capaci
 
     rocketnet_server_transport_set_create_send_capacity_for_test( capacity );
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    world->server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &create_status );
+    world->server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
     check( world->server != NULL );
     rocketnet_server_public_key( world->server, world->identity.server_public );
     check( create_status == ROCKETNET_STATUS_OK );

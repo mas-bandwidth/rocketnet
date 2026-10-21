@@ -119,7 +119,7 @@ static int create_and_prove( const char * label, const char * transport )
     config.max_clients = 2;
     config.transport = transport;
     enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
-    server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, &create_status_2 );
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, &create_status_2 );
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
@@ -166,7 +166,7 @@ int main( void )
     config.transport = "not-a-transport";
     {
         enum rocketnet_status_t create_status_3 = ROCKETNET_STATUS_OK;
-        struct rocketnet_server_t * refused = rocketnet_server_create( NULL, "127.0.0.1:0", &config, &create_status_3 );
+        struct rocketnet_server_t * refused = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, &create_status_3 );
         if ( !refused ) printf( "create refused: %s\n", rocketnet_status_name( create_status_3 ) );
         const int started = refused ? (int) rocketnet_server_start( refused ) : -1;
         if ( refused )

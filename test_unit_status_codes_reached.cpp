@@ -64,7 +64,7 @@ static rocketnet_server_t * reached_server_create( void * context, const reached
     memcpy( config.backend_public_key, identity->backend_public, sizeof( config.backend_public_key ) );
     config.transport = "loopback";
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    rocketnet_server_t * server = rocketnet_server_create( context, "127.0.0.1:0", &config, &create_status );
+    rocketnet_server_t * server = rocketnet_server_create( context, "127.0.0.1:0", NULL, &config, &create_status );
     check( server != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
     check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );

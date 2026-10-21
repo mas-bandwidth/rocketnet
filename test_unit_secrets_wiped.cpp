@@ -293,7 +293,7 @@ static void secrets_wiped_pair_exchange( secrets_wiped_pair_t * pair )
     memcpy( server_config.backend_public_key, identity.backend_public, sizeof( server_config.backend_public_key ) );
     server_config.transport = "loopback";
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    pair->server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &create_status );
+    pair->server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
     check( pair->server != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
     rocketnet_server_public_key( pair->server, identity.server_public );

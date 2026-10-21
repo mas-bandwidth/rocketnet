@@ -203,7 +203,7 @@ int main( int argc, char ** argv ) {
     s_cfg.sequenced_messages_held = c_cfg.sequenced_messages_held = 8;
     s_cfg.message_resend_delay_min_ms = c_cfg.message_resend_delay_min_ms = s_cfg.message_resend_delay_initial_ms = c_cfg.message_resend_delay_initial_ms = 200; s_cfg.message_resend_delay_max_ms = c_cfg.message_resend_delay_max_ms = 500;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    server = rocketnet_server_create( NULL, "127.0.0.1:0", &s_cfg, &create_status );
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &s_cfg, &create_status );
     // the development network simulator: lose 1% of every packet both ways
     if ( server )
         rocketnet_server_network_simulator( server, 0, 0, 1, 0 );

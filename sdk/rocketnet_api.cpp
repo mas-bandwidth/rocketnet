@@ -295,16 +295,9 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
         if ( failure ) *failure = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return false;
     }
-    if ( !rn_copy_config_string( transport->public_address, sizeof( transport->public_address ), config->public_address, "", "server", "public_address" ) )
-    {
-        if ( failure ) *failure = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
-        return false;
-    }
-    if ( !rn_copy_config_string( transport->second_public_address, sizeof( transport->second_public_address ), config->second_public_address, "", "server", "second_public_address" ) )
-    {
-        if ( failure ) *failure = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
-        return false;
-    }
+    // the served addresses come from create's arguments (rn_server_addresses)
+    transport->public_address[0] = '\0';
+    transport->second_public_address[0] = '\0';
 
     rocketnet_message_default_config( message );
 #define RN_COPY( name ) message->name = config->name;
@@ -1186,8 +1179,6 @@ static void rn_server_config_from_transport_current( struct rocketnet_server_con
     config->max_timeout_seconds = transport->max_timeout_seconds;
     config->handshake_deadline_seconds = transport->handshake_deadline_seconds;
     config->transport = NULL;
-    config->public_address = NULL;
-    config->second_public_address = NULL;
     config->per_client_send_kbps = ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS;
     struct rocketnet_message_config_t message;
     rocketnet_message_default_config( &message );
@@ -1296,7 +1287,61 @@ size_t rocketnet_server_required_memory( const struct rocketnet_server_config_t 
     return result;
 }
 
-static struct rocketnet_server_t * rn_server_create_current( void * context, const char * address, const struct rocketnet_server_config_t * config, void * memory, size_t memory_bytes, enum rocketnet_status_t * status )
+// The addresses a server serves: create's IPv4 and IPv6 arguments, each
+// overridden by ROCKETNET_SERVER_IPV4_ADDRESS or ROCKETNET_SERVER_IPV6_ADDRESS
+// when that is set, for every server created. Either may be NULL, not both;
+// each must parse as its own family. The first served address is the one the
+// transport binds; with both, the IPv6 one is the second family on the same
+// port.
+static enum rocketnet_status_t rn_server_addresses( const char * ipv4_address, const char * ipv6_address,
+                                                    char * primary, size_t primary_bytes, char * second, size_t second_bytes )
+{
+    char ipv4_env[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+    char ipv6_env[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+    const int ipv4_found = rocketnet_platform_getenv( "ROCKETNET_SERVER_IPV4_ADDRESS", ipv4_env, sizeof( ipv4_env ) );
+    const int ipv6_found = rocketnet_platform_getenv( "ROCKETNET_SERVER_IPV6_ADDRESS", ipv6_env, sizeof( ipv6_env ) );
+    if ( ipv4_found < 0 || ipv6_found < 0 )
+    {
+        rocketnet_error( "server create refused: ROCKETNET_SERVER_IPV%s_ADDRESS is too long", ipv4_found < 0 ? "4" : "6" );
+        return ROCKETNET_STATUS_CONFIG_ENV_INVALID;
+    }
+    if ( ipv4_found == 1 && ipv4_env[0] != '\0' )
+    {
+        rocketnet_info( "server config override ROCKETNET_SERVER_IPV4_ADDRESS=%s (displaces %s)", ipv4_env, ipv4_address ? ipv4_address : "none" );
+        ipv4_address = ipv4_env;
+    }
+    if ( ipv6_found == 1 && ipv6_env[0] != '\0' )
+    {
+        rocketnet_info( "server config override ROCKETNET_SERVER_IPV6_ADDRESS=%s (displaces %s)", ipv6_env, ipv6_address ? ipv6_address : "none" );
+        ipv6_address = ipv6_env;
+    }
+    if ( !ipv4_address && !ipv6_address )
+    {
+        rocketnet_api_misuse_record();
+        rocketnet_error( "server create refused: no address; pass an IPv4 address, an IPv6 address, or both" );
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    }
+    const char * addresses[2] = { ipv4_address, ipv6_address };
+    const int families[2] = { ROCKETNET_ADDRESS_IPV4, ROCKETNET_ADDRESS_IPV6 };
+    for ( int i = 0; i < 2; i++ )
+    {
+        if ( !addresses[i] )
+            continue;
+        struct rocketnet_address_t parsed;
+        if ( memchr( addresses[i], '\0', ROCKETNET_MAX_ADDRESS_STRING_BYTES ) == NULL || !rocketnet_address_parse( &parsed, addresses[i] ) || parsed.type != families[i] )
+        {
+            rocketnet_error( "server create refused: the %s address does not parse as one", i == 0 ? "IPv4" : "IPv6" );
+            return ROCKETNET_STATUS_INVALID_ADDRESS;
+        }
+    }
+    const char * first = ipv4_address ? ipv4_address : ipv6_address;
+    const char * other = ipv4_address && ipv6_address ? ipv6_address : "";
+    rocketnet_copy_string( primary, first, primary_bytes );
+    rocketnet_copy_string( second, other, second_bytes );
+    return ROCKETNET_STATUS_OK;
+}
+
+static struct rocketnet_server_t * rn_server_create_current( void * context, const char * ipv4_address, const char * ipv6_address, const struct rocketnet_server_config_t * config, void * memory, size_t memory_bytes, enum rocketnet_status_t * status )
 {
     if ( status )
         *status = ROCKETNET_STATUS_OK;
@@ -1311,17 +1356,13 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
             *status = ROCKETNET_STATUS_NOT_INITIALIZED;
         return NULL;
     }
-    if ( !rocketnet_api_null_guard( address ) )
+    char address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+    char second_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+    const enum rocketnet_status_t address_status = rn_server_addresses( ipv4_address, ipv6_address, address, sizeof( address ), second_address, sizeof( second_address ) );
+    if ( address_status != ROCKETNET_STATUS_OK )
     {
         if ( status )
-            *status = ROCKETNET_STATUS_INVALID_ARGUMENT;
-        return NULL;
-    }
-    if ( memchr( address, '\0', ROCKETNET_MAX_ADDRESS_STRING_BYTES ) == NULL )
-    {
-        rocketnet_error( "server create refused: the address is too long" );
-        if ( status )
-            *status = ROCKETNET_STATUS_INVALID_ADDRESS;
+            *status = address_status;
         return NULL;
     }
     struct rocketnet_server_transport_config_t transport;
@@ -1335,6 +1376,7 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
             *status = failure;
         return NULL;
     }
+    rocketnet_copy_string( transport.second_public_address, second_address, sizeof( transport.second_public_address ) );
     const enum rocketnet_status_t valid = rn_server_config_valid( &transport, &message );
     if ( valid != ROCKETNET_STATUS_OK )
     {
@@ -1408,7 +1450,7 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
     return server;
 }
 
-struct rocketnet_server_t * rocketnet_server_create( void * context, const char * address, const struct rocketnet_server_config_t * config, enum rocketnet_status_t * status )
+struct rocketnet_server_t * rocketnet_server_create( void * context, const char * ipv4_address, const char * ipv6_address, const struct rocketnet_server_config_t * config, enum rocketnet_status_t * status )
 {
     if ( status )
         *status = ROCKETNET_STATUS_OK;
@@ -1422,7 +1464,7 @@ struct rocketnet_server_t * rocketnet_server_create( void * context, const char 
             *status = read_status;
         return NULL;
     }
-    struct rocketnet_server_t * result = rn_server_create_current( context, address, read, NULL, 0, status );
+    struct rocketnet_server_t * result = rn_server_create_current( context, ipv4_address, ipv6_address, read, NULL, 0, status );
 
     sodium_memzero( &current, sizeof( current ) );
 

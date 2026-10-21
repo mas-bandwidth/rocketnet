@@ -92,17 +92,21 @@ static void both_families_token( const both_families_identity_t * identity, uint
     check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 }
 
-static enum rocketnet_status_t both_families_start( both_families_identity_t * identity, const char * first, const char * second, struct rocketnet_server_t ** out )
+// creates with the IPv4 and IPv6 addresses, then starts; a refused create
+// returns its status with *out NULL
+static enum rocketnet_status_t both_families_start( both_families_identity_t * identity, const char * ipv4, const char * ipv6, struct rocketnet_server_t ** out )
 {
     rocketnet_server_config_t config;
     both_families_fill( &config, identity, 2 );
-    config.public_address = first;
-    config.second_public_address = second;
     both_families_now = 1000.0;
     rocketnet_quiet( 1 );
-    enum rocketnet_status_t create_status = ROCKETNET_STATUS_COUNT;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, first, &config, &create_status );
-    check( server != NULL );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, ipv4, ipv6, &config, &create_status );
+    if ( !server )
+    {
+        *out = NULL;
+        return create_status;
+    }
     rocketnet_server_public_key( server, identity->server_public );
     check( create_status == ROCKETNET_STATUS_OK );
     enum rocketnet_status_t status = rocketnet_server_start( server );
@@ -151,11 +155,12 @@ static void test_server_refuses_an_unparseable_second_address()
 }
 REGISTER_UNIT_TEST( test_server_refuses_an_unparseable_second_address );
 
-static void test_public_address_environment_pair_is_consumed_together()
+static void test_server_address_environment_applies_to_every_server()
 {
-    check( both_families_setenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS", "127.0.0.1:40000" ) == 0 );
-    check( both_families_setenv( "ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS", "[::1]:40000" ) == 0 );
+    check( both_families_setenv( "ROCKETNET_SERVER_IPV4_ADDRESS", "127.0.0.1:40000" ) == 0 );
 
+    // every server created while the variable is set takes it, whatever
+    // address its create names
     both_families_identity_t identity;
     both_families_identity( &identity );
     struct rocketnet_server_t * first = NULL;
@@ -164,18 +169,37 @@ static void test_public_address_environment_pair_is_consumed_together()
     check( rocketnet_server_port( first ) == 40000 );
     both_families_stop( first );
 
-    // Both address overrides belonged to the first successful create. The
-    // second create uses its own one-family address and port.
     struct rocketnet_server_t * second = NULL;
     status = both_families_start( &identity, "127.0.0.1:40001", NULL, &second );
     check( status == ROCKETNET_STATUS_OK );
-    check( rocketnet_server_port( second ) == 40001 );
+    check( rocketnet_server_port( second ) == 40000 );
     both_families_stop( second );
 
-    check( both_families_unsetenv( "ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS" ) == 0 );
-    check( both_families_unsetenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS" ) == 0 );
+    check( both_families_unsetenv( "ROCKETNET_SERVER_IPV4_ADDRESS" ) == 0 );
+
+    // unset: the create argument again
+    struct rocketnet_server_t * third = NULL;
+    status = both_families_start( &identity, "127.0.0.1:40001", NULL, &third );
+    check( status == ROCKETNET_STATUS_OK );
+    check( rocketnet_server_port( third ) == 40001 );
+    both_families_stop( third );
 }
-REGISTER_UNIT_TEST( test_public_address_environment_pair_is_consumed_together );
+REGISTER_UNIT_TEST( test_server_address_environment_applies_to_every_server );
+
+static void test_server_create_refuses_no_address()
+{
+    both_families_identity_t identity;
+    both_families_identity( &identity );
+    struct rocketnet_server_t * server = NULL;
+    const uint64_t misuse = rocketnet_api_misuse_count();
+    check( both_families_start( &identity, NULL, NULL, &server ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( server == NULL );
+    check( rocketnet_api_misuse_count() == misuse + 1 );
+    // each argument must be its own family
+    check( both_families_start( &identity, "[::1]:0", NULL, &server ) == ROCKETNET_STATUS_INVALID_ADDRESS );
+    check( both_families_start( &identity, NULL, "127.0.0.1:0", &server ) == ROCKETNET_STATUS_INVALID_ADDRESS );
+}
+REGISTER_UNIT_TEST( test_server_create_refuses_no_address );
 
 static void both_families_pump( struct rocketnet_server_t * server, struct rocketnet_client_t * ipv4, struct rocketnet_client_t * ipv6, double * time )
 {

@@ -60,7 +60,7 @@ int main( int argc, char ** argv )
     config.transport = "portable";
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, address, &config, &create_status );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, address, NULL, &config, &create_status );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );

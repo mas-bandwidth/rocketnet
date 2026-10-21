@@ -572,7 +572,7 @@ int main( int argc, char ** argv )
     server_host[strcspn( server_host, ":" )] = 0;
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, server_bind, &server_config, &create_status );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, server_bind, NULL, &server_config, &create_status );
     if ( !server )
     {
         fprintf( stderr, "load: failed to create server: %s\n", rocketnet_status_name( create_status ) );

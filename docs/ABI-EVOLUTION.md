@@ -128,7 +128,7 @@ abort act on its one pending start and take no destination. The endpoint-wide
 receive queue uses `rocketnet_message_batch_t` and needs no release call.
 
 `rocketnet_client_create( context, config, &status )` and
-`rocketnet_server_create( context, address, config, &status )` take a nullable
+`rocketnet_server_create( context, address, NULL, config, &status )` take a nullable
 status out-parameter, so a NULL result has a specific `rocketnet_status_t`.
 Each makes one block through the allocator; `rocketnet_client_required_memory`
 and `rocketnet_server_required_memory` give its size. The process-wide

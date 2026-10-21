@@ -207,7 +207,8 @@ public:
                 clear(name);
             }
         }
-        clear("ROCKETNET_SERVER_PUBLIC_ADDRESS");
+        clear("ROCKETNET_SERVER_IPV4_ADDRESS");
+        clear("ROCKETNET_SERVER_IPV6_ADDRESS");
         clear("ROCKETNET_SERVER_NUM_OS_CPUS");
         clear("ROCKETNET_GATEWAY_ETHERNET_ADDRESS");
     }

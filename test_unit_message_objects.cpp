@@ -3001,7 +3001,7 @@ static void test_same_client_id_reconnect_in_one_update_resets_the_slot()
     server_config.max_clients = 1;                                              // the new connection can only take slot 0
     memcpy( server_config.backend_public_key, world.backend_public, sizeof( server_config.backend_public_key ) );
     server_config.transport = "loopback";
-    world.server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL );
+    world.server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
     check( world.server != NULL );
     rocketnet_server_public_key( world.server, world.server_public );
     check( rocketnet_server_start( world.server ) == ROCKETNET_STATUS_OK );

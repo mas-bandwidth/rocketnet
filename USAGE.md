@@ -143,9 +143,9 @@ known name this endpoint does not have is skipped with one log line; a name
 that is no transport anywhere is a typo and fails loudly. The accessor on each
 end reports the transport that won.
 
-Every transport serves IPv4, IPv6, or both. `second_public_address` NULL or
-empty serves the family of the public address. When it names the other family
-on the same port (both 0, or equal), the server binds the IPv6 wildcard on
+Every transport serves IPv4, IPv6, or both: `rocketnet_server_create` takes an
+IPv4 address and an IPv6 address, either NULL but not both. With both, on the
+same port (both 0, or equal), the server binds the IPv6 wildcard on
 that port with `IPV6_V6ONLY` off and advertises both named addresses.
 `"auto"` tries `xdp` first when both addresses are on one interface. `xdp` on
 two interfaces, and `portable` where `IPV6_V6ONLY` cannot be cleared, refuse
@@ -153,10 +153,8 @@ with `TRANSPORT_FAMILIES_UNSUPPORTED` and the ladder continues. A connect
 token is accepted when its address of the arrival family is one the server
 advertises (`TokenAddressAdvertised`).
 
-`public_address` on the server displaces the address passed to create.
-`second_public_address` is the other family on that same port.
-`ROCKETNET_SERVER_PUBLIC_ADDRESS` and `ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS`
-apply together to the first server start in the process only.
+`ROCKETNET_SERVER_IPV4_ADDRESS` and `ROCKETNET_SERVER_IPV6_ADDRESS`, when set,
+override the create arguments for every server created, with a log line.
 
 ### Environment overrides
 
@@ -200,8 +198,6 @@ row per field of both public structs.
 | max_timeout_seconds | ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS | int | `60` | refuses the create unless `1..3600` |
 | handshake_deadline_seconds | ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS | int | `5` | refuses the create unless `1..60` |
 | transport | ROCKETNET_SERVER_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, or a list with no usable candidate: refuses the create |
-| public_address | ROCKETNET_SERVER_PUBLIC_ADDRESS | const char * | `NULL` | an address that does not parse: refuses the create |
-| second_public_address | ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS | const char * | `NULL` | an address that does not parse or duplicates the first address family: refuses the create |
 | per_client_send_kbps | ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS | int | `10000` | a non-integer refuses the create; `0` is the default (`10000`); a negative value refuses the create with `ROCKETNET_STATUS_INVALID_ARGUMENT`; `ROCKETNET_SEND_KBPS_UNLIMITED` is no send budget; each client connection's starting rate |
 | num_channels | ROCKETNET_SERVER_NUM_CHANNELS | int | `32` | refuses the create unless `1..32` |
 | reliable_messages_in_flight | ROCKETNET_SERVER_RELIABLE_MESSAGES_IN_FLIGHT | int | `1024` | refuses the create unless `64..1048576` and a power of two |
@@ -218,7 +214,6 @@ row per field of both public structs.
 | message_resend_delay_min_ms | ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MIN_MS | int | `0` (disabled) | refuses the create unless `0..60000` |
 | message_resend_delay_max_ms | ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MAX_MS | int | `2000` | refuses the create unless `10..60000` |
 | reliable_message_timeout_ms | ROCKETNET_SERVER_RELIABLE_MESSAGE_TIMEOUT_MS | int | `10000` | refuses the create unless `1000..600000` |
-| second_public_address | ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS | const char * | `NULL` | empty serves one family; the same family, a different port, or a string that does not parse: refuses the create |
 
 The message fields marked WIRE must be identical on both ends; the connection
 verifies them. The cross rules are in [docs/CHANNELS.md](docs/CHANNELS.md)
@@ -257,7 +252,7 @@ any other state it is refused with `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`.
 A negative state says how the last attempt or connection ended and stays until
 disconnect.
 
-`rocketnet_server_create( context, address, config, &status )` takes the bind
+`rocketnet_server_create( context, address, NULL, config, &status )` takes the bind
 address, config and nullable status out-parameter. It returns a stopped server
 with `ROCKETNET_STATUS_OK`, or NULL with the specific refusal status, and binds
 nothing. `rocketnet_server_start` binds the
@@ -331,7 +326,7 @@ struct rocketnet_client_t * start_client( const uint8_t * token, const struct ro
 struct rocketnet_server_t * start_server( const struct rocketnet_server_config_t * config )
 {
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "0.0.0.0:40000", config, &status );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "0.0.0.0:40000", NULL, config, &status );
     if ( !server )
         printf( "create refused: %s\n", rocketnet_status_name( status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )

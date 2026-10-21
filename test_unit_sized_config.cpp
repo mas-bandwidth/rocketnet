@@ -367,7 +367,7 @@ do                                                                              
     c.max_clients = 4;                                                                                          \
     mutation;                                                                                                   \
     enum rocketnet_status_t made_status = ROCKETNET_STATUS_COUNT;                                               \
-    struct rocketnet_server_t * made = rocketnet_server_create( NULL, "127.0.0.1:0", &c, &made_status );        \
+    struct rocketnet_server_t * made = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &c, &made_status );        \
     check( ( made != NULL ) == (accepted) );                                                                    \
     check( (accepted) ? made_status == ROCKETNET_STATUS_OK                                                      \
                       : ( made_status != ROCKETNET_STATUS_OK && made_status != ROCKETNET_STATUS_COUNT ) );      \
@@ -399,11 +399,11 @@ static void test_sized_config_create_refuses_before_init()
     check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();
-    check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, NULL ) == NULL );
+    check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, NULL, NULL ) == NULL );
     check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();
-    check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL ) == NULL );
+    check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL ) == NULL );
     check( rocketnet_api_misuse_count() == before + 1 );
 
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
@@ -412,7 +412,7 @@ static void test_sized_config_create_refuses_before_init()
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
     check( client != NULL );
     rocketnet_client_destroy( client );
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
     check( server != NULL );
     rocketnet_server_destroy( server );
 
@@ -502,12 +502,12 @@ static void test_public_config_bytes_zeroed_is_refused()
     server_config.max_clients = 4;
     server_config.config_bytes = 0;
     status = ROCKETNET_STATUS_OK;
-    check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &status ) == NULL );
+    check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status ) == NULL );
     check( status == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
     check( rocketnet_server_required_memory( &server_config ) == 0 );
     memset( &server_config, 0, sizeof( server_config ) );
     status = ROCKETNET_STATUS_OK;
-    check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &status ) == NULL );
+    check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status ) == NULL );
     check( status == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
     check( rocketnet_server_required_memory( &server_config ) == 0 );
 
@@ -577,7 +577,7 @@ static void test_public_config_bytes_older_smaller_reads_the_prefix()
     server_config.num_channels = 0;
     server_config.reliable_message_timeout_ms = -1;
     status = ROCKETNET_STATUS_COUNT;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &status );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
     check( server != NULL );
     check( status == ROCKETNET_STATUS_OK );
     rocketnet_server_destroy( server );
@@ -588,7 +588,7 @@ static void test_public_config_bytes_older_smaller_reads_the_prefix()
 
     server_config.max_clients = 0;
     status = ROCKETNET_STATUS_OK;
-    check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &status ) == NULL );
+    check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status ) == NULL );
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 }
 
@@ -646,7 +646,7 @@ static void test_public_config_bytes_newer_larger_ignores_the_tail()
     memcpy( newer_server.config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
     newer_server.config.max_clients = 4;
     status = ROCKETNET_STATUS_COUNT;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &newer_server.config, &status );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &newer_server.config, &status );
     check( server != NULL );
     check( status == ROCKETNET_STATUS_OK );
     rocketnet_server_destroy( server );
@@ -657,7 +657,7 @@ static void test_public_config_bytes_newer_larger_ignores_the_tail()
 
     newer_server.config.max_clients = 0;
     status = ROCKETNET_STATUS_OK;
-    check( rocketnet_server_create( NULL, "127.0.0.1:0", &newer_server.config, &status ) == NULL );
+    check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &newer_server.config, &status ) == NULL );
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 }
 
@@ -730,7 +730,7 @@ static bool public_config_pair_connects( int server_loss_percent )
     struct rocketnet_server_config_t server_config;
     public_config_server( &server_config, &identity );
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &create_status );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
     check( server != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
     // above 100: set 100, then try the out-of-range value over it
@@ -839,7 +839,7 @@ static void test_public_config_default_fills_every_field()
     // the dev keys over the defaults, read whole by create: a valid struct
     dev_a.max_clients = 4;
     status = ROCKETNET_STATUS_COUNT;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &dev_a, &status );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &dev_a, &status );
     check( server != NULL );
     check( status == ROCKETNET_STATUS_OK );
     rocketnet_server_destroy( server );

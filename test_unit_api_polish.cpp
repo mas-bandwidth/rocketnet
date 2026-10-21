@@ -131,7 +131,7 @@ static void test_api_polish_status_returns()
     struct rocketnet_server_config_t server_config;
     api_polish_dev_server_config( &server_config );
     create_status = ROCKETNET_STATUS_COUNT;
-    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &create_status );
+    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
     check( server != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
     rocketnet_server_destroy( server );
@@ -394,9 +394,9 @@ REGISTER_UNIT_TEST( test_api_polish_zero_receipt_and_dense_reasons );
 static_assert( rn_same<decltype( rocketnet_client_required_memory( (struct rocketnet_client_config_t *) NULL ) ), size_t>::value, "ruling 8: client required memory" );
 static_assert( rn_same<decltype( rocketnet_server_required_memory( (struct rocketnet_server_config_t *) NULL ) ), size_t>::value, "ruling 8: server required memory" );
 static_assert( rn_same<decltype( static_cast<rocketnet_client_t * (*)( void *, const rocketnet_client_config_t *, rocketnet_status_t * )>( &rocketnet_client_create ) ), rocketnet_client_t * (*)( void *, const rocketnet_client_config_t *, rocketnet_status_t * )>::value, "ruling 8: client create" );
-static_assert( rn_same<decltype( static_cast<rocketnet_server_t * (*)( void *, const char *, const rocketnet_server_config_t *, rocketnet_status_t * )>( &rocketnet_server_create ) ), rocketnet_server_t * (*)( void *, const char *, const rocketnet_server_config_t *, rocketnet_status_t * )>::value, "ruling 8: server create" );
+static_assert( rn_same<decltype( &rocketnet_server_create ), rocketnet_server_t * (*)( void *, const char *, const char *, const rocketnet_server_config_t *, rocketnet_status_t * )>::value, "ruling 8: server create" );
 
-// --- ruling 9: a NULL client reads INVALID, counted ----------------------------
+// --- ruling 9: a NULL client reads DISCONNECTED, counted ----------------------------
 
 static void api_polish_quiet_assert( const char * condition, const char * function, const char * file, int line )
 {
@@ -450,7 +450,7 @@ static void test_api_polish_client_index_is_minus_one_until_connected()
     server_config.transport = "loopback";
     memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &create_status );
+    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
     check( server != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
     check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
@@ -519,7 +519,7 @@ static void test_api_polish_server_abort_message_without_start_is_a_no_op()
     api_polish_dev_server_config( &config );
     config.max_clients = 16;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, &create_status );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, &create_status );
     check( server != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
 

@@ -142,7 +142,7 @@ int main( void )
     client_config.transport = "loopback";
 
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
-    server = rocketnet_server_create( NULL, "127.0.0.1:40000", &server_config, &status );
+    server = rocketnet_server_create( NULL, "127.0.0.1:40000", NULL, &server_config, &status );
     if ( !server || status != ROCKETNET_STATUS_OK ||
          rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
         goto cleanup;
@@ -256,10 +256,11 @@ frame and retransmission controls use these final names:
 | `message_resend_delay_max_ms` | `ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MAX_MS` | `ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MAX_MS` | `2000` ms |
 | `transport` | `ROCKETNET_CLIENT_TRANSPORT` | `ROCKETNET_SERVER_TRANSPORT` | `NULL` (`"auto"`) |
 
-The server's `public_address` and optional `second_public_address` advertise
-one IPv4 address, one IPv6 address, or one of each. Their environment names are
-`ROCKETNET_SERVER_PUBLIC_ADDRESS` and
-`ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS`. A transport that cannot serve both
+`rocketnet_server_create` takes the addresses the server serves: one IPv4
+address, one IPv6 address, or one of each on the same port (either may be
+NULL, not both). `ROCKETNET_SERVER_IPV4_ADDRESS` and
+`ROCKETNET_SERVER_IPV6_ADDRESS`, when set, override them for every server
+created. A transport that cannot serve both
 configured families refuses start with
 `ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED`.
 

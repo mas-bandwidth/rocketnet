@@ -65,7 +65,7 @@ int main( void )
     server_config.max_clients = 2;
     server_config.transport = "loopback";
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &create_status );
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {

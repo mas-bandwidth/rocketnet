@@ -506,7 +506,7 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
                                                                          ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     INT_FIELD(    max_fragmented_messages,  0,                              1, ROCKETNET_MAX_FRAGMENTS,                            ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     STRING_FIELD( transport,                ROCKETNET_TRANSPORT_STRING_LENGTH, "auto",                                               0 )                          \
-    STRING_FIELD( public_address,        ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              0 )                          \
+    STRING_FIELD( public_address,        ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              ROCKETNET_CONFIG_NO_ENV )                          \
     INT_FIELD(    max_timeout_seconds,   60,                             1, 3600,                                              0 )                          \
     INT_FIELD(    handshake_deadline_seconds, 5,                         1, 60,                                                0 )                          \
     UINT64_FIELD( game_clock_epoch,           0,                                                                              0 )                          \
@@ -516,7 +516,7 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
     INT_FIELD(    simulated_duplicate_percent, 0,                         0, 100,                                              ROCKETNET_CONFIG_NO_ENV )                          \
     INT_FIELD(    simulated_drop_every_nth,    0,                         2, 1000000,                                          ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     INT_FIELD(    simulated_reverse_window,    0,                         2, 64,                                               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
-    STRING_FIELD( second_public_address, ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              0 )
+    STRING_FIELD( second_public_address, ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              ROCKETNET_CONFIG_NO_ENV )
 
 /** @brief Size in bytes of the server transport config before game_clock_epoch. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, handshake_deadline_seconds ) + sizeof( int ), sizeof( uint64_t ) )

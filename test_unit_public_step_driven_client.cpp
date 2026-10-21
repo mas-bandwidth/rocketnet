@@ -119,7 +119,7 @@ static void public_step_pair_create( public_step_pair_t * pair, const public_ste
     public_step_server_config( &server_config, identity );
     char bind[64];
     snprintf( bind, sizeof( bind ), "127.0.0.1:%u", (unsigned) fixed_port );
-    pair->server = rocketnet_server_create( NULL, bind, &server_config, NULL );
+    pair->server = rocketnet_server_create( NULL, bind, NULL, &server_config, NULL );
     check( pair->server != NULL );
     check( rocketnet_server_start( pair->server ) == ROCKETNET_STATUS_OK );
 
@@ -330,7 +330,7 @@ static void test_public_step_driven_client_loss_100_drops_everything()
     rocketnet_quiet( 1 );
     rocketnet_server_config_t server_config;
     public_step_server_config( &server_config, &identity );
-    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL );
+    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
     check( server != NULL );
     check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
 
