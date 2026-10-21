@@ -36,7 +36,8 @@
     1000-count loops run 100 times, since every create attaches to the pair.
     ROCKETNET_POSIX_LIFECYCLE_CELLS, a comma list of server transport names, runs
     only those cells. On Linux every case is registered once per server cell
-    (posix_<case>_<cell>), so each run covers one cell.
+    (posix_<case>_<cell>), so each run covers one cell. On macOS the 1000-cycle
+    connect/disconnect case is registered once per exact server/client pair.
 
     A connect waits on the client's send rate: the client sends at most once
     per 1/send_rate, 10 per second (sdk/rocketnet_client_protocol.cpp:88 and
@@ -412,9 +413,18 @@ static bool posix_io_uring_offered()
 // ROCKETNET_POSIX_LIFECYCLE_CELLS, when set, names the server transports whose
 // cells run
 static const char * posix_only_server_transport_io = NULL;
+#if defined(__APPLE__)
+// A macOS connect/disconnect case selects one exact server/client pair. The
+// server-only selector would run both client transports under one watchdog.
+static const char * posix_only_client_transport_io = NULL;
+#endif
 
 static bool posix_cell_selected( const posix_cell_t * cell )
 {
+#if defined(__APPLE__)
+    if ( posix_only_client_transport_io && strcmp( posix_only_client_transport_io, cell->client_transport_io ) != 0 )
+        return false;
+#endif
     if ( posix_only_server_transport_io && strcmp( posix_only_server_transport_io, cell->server_transport_io ) != 0 )
         return false;
     const char * list = getenv( "ROCKETNET_POSIX_LIFECYCLE_CELLS" );
@@ -1191,6 +1201,26 @@ POSIX_LINUX_CELL_CASES( posix_connect_disconnect_1000 )
 POSIX_LINUX_CELL_CASES( posix_destroy_under_traffic_100 )
 
 #endif // #if defined(__linux__)
+
+#if defined(__APPLE__)
+// Keep all four 1000-cycle pairs, with the same resource assertions and the
+// same per-test watchdog. Each registered case runs exactly one pair.
+#define POSIX_MAC_CONNECT_CASE( server_io, client_io )                             \
+void rocketnet_test_posix_connect_disconnect_1000_##server_io##_##client_io()      \
+{                                                                                  \
+    posix_only_server_transport_io = #server_io;                                   \
+    posix_only_client_transport_io = #client_io;                                   \
+    rocketnet_test_posix_connect_disconnect_1000();                                \
+    posix_only_client_transport_io = NULL;                                         \
+    posix_only_server_transport_io = NULL;                                         \
+}
+
+POSIX_MAC_CONNECT_CASE( portable, portable )
+POSIX_MAC_CONNECT_CASE( portable, msgx )
+POSIX_MAC_CONNECT_CASE( msgx, portable )
+POSIX_MAC_CONNECT_CASE( msgx, msgx )
+#undef POSIX_MAC_CONNECT_CASE
+#endif
 
 #endif // #if !defined(_WIN32)
 
