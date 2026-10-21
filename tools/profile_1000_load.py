@@ -9,6 +9,7 @@ never emits a frame-budget PASS from that one measurement.
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -28,6 +29,13 @@ MIN_DISK_BYTES = 8 * 1024**3
 CRITERIA = (
     "connect_within_10s", "no_unexpected_disconnect", "reliable_delivery",
     "unreliable_integrity", "counters_agree",
+)
+EXPECTED_FRAME_CALLS = (
+    "client_update", "client_send_packets", "client_state", "client_index",
+    "client_receive_messages", "client_receipts", "client_start_message",
+    "client_finish_message", "server_update", "server_send_packets",
+    "server_client_connected", "server_num_connected_clients",
+    "server_receive_messages", "server_start_message", "server_finish_message",
 )
 
 
@@ -121,7 +129,10 @@ def parse_load(stdout, server_transport, client_transport):
                  if line.startswith("load: connected=") and "verdict=" in line]
     if len(summaries) != 1:
         raise ValueError(f"expected one final load summary, found {len(summaries)}")
-    fields = dict(re.findall(r"\b([A-Za-z_][A-Za-z_0-9]*)=([^\s]+)", summaries[0]))
+    pairs = re.findall(r"\b([A-Za-z_][A-Za-z_0-9]*)=([^\s]+)", summaries[0])
+    fields = dict(pairs)
+    if len(fields) != len(pairs):
+        raise ValueError("duplicate fields in final load summary")
     if fields.get("connected") != "1000" or fields.get("verdict") != "PASS":
         raise ValueError("population or load verdict failed")
     if any(fields.get(name) != "PASS" for name in CRITERIA):
@@ -129,24 +140,55 @@ def parse_load(stdout, server_transport, client_transport):
     if fields.get("server_transport_io") != server_transport or fields.get("client_transport_io") != client_transport:
         raise ValueError("granted transport differs from requested transport")
     for name in ("fds", "threads"):
-        if fields.get(f"{name}_start") != fields.get(f"{name}_end"):
+        try:
+            start = int(fields[f"{name}_start"])
+            end = int(fields[f"{name}_end"])
+        except (KeyError, ValueError) as error:
+            raise ValueError(f"{name} baseline counts missing or invalid") from error
+        if start < 0 or end < 0:
+            raise ValueError(f"{name} baseline counts must be nonnegative")
+        if start != end:
             raise ValueError(f"{name} did not return to baseline")
     try:
         server_p99 = float(fields["server_update_p99_us"])
     except (KeyError, ValueError) as error:
         raise ValueError("server_update_p99_us absent or invalid") from error
+    if not math.isfinite(server_p99) or server_p99 < 0:
+        raise ValueError("server_update_p99_us nonfinite or negative")
     reported_calls = {}
-    for name, value in fields.items():
-        if name.startswith("frame_") and name.endswith("_p99_us"):
-            try:
-                reported_calls[name] = float(value)
-            except ValueError as error:
-                raise ValueError(f"invalid {name}") from error
+    histogram_suffixes = ("p50_upper_us", "p99_upper_us", "max_us", "overbudget_count", "count")
+    present_stems = set()
+    for name in fields:
+        if not name.startswith("frame_"):
+            continue
+        suffix = next((part for part in histogram_suffixes if name.endswith("_" + part)), None)
+        if suffix is None:
+            raise ValueError(f"unrecognized frame histogram field {name}")
+        present_stems.add(name.removesuffix("_" + suffix))
+    for stem in sorted(present_stems):
+        name = stem + "_p99_upper_us"
+        try:
+            count = int(fields[f"{stem}_count"])
+            overbudget = int(fields[f"{stem}_overbudget_count"])
+            p50 = float(fields[f"{stem}_p50_upper_us"])
+            p99 = float(fields[name])
+            maximum = float(fields[f"{stem}_max_us"])
+        except (KeyError, ValueError) as error:
+            raise ValueError(f"incomplete or invalid histogram fields for {name}") from error
+        if count <= 0 or overbudget < 0 or overbudget > count:
+            raise ValueError(f"invalid histogram counts for {name}")
+        if any(not math.isfinite(x) or x < 0 for x in (p50, p99, maximum)):
+            raise ValueError(f"nonfinite or negative histogram values for {name}")
+        reported_calls[stem] = dict(count=count, p50_upper_us=p50,
+                                    p99_upper_us=p99, max_us=maximum,
+                                    overbudget_count=overbudget)
     return dict(raw=summaries[0], fields=fields, server_update_p99_us=server_p99,
                 server_update_under_100us=server_p99 < 100.0,
-                reported_frame_call_p99_us=reported_calls,
-                reported_calls_at_or_above_100us=sorted(name for name, value in reported_calls.items()
-                                                      if value >= 100.0),
+                reported_frame_calls=reported_calls,
+                missing_frame_calls=sorted("frame_" + name for name in EXPECTED_FRAME_CALLS
+                                           if "frame_" + name not in reported_calls),
+                reported_calls_at_or_above_100us=sorted(name for name, values in reported_calls.items()
+                                                      if values["overbudget_count"] > 0),
                 every_main_call_budget="UNMEASURED")
 
 
@@ -154,8 +196,6 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--mode", choices=("timings", "samples"), required=True)
     p.add_argument("--source", type=Path, required=True)
-    p.add_argument("--build-dir", type=Path, required=True)
-    p.add_argument("--binary", type=Path, required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--server-transport", required=True)
@@ -164,10 +204,11 @@ def main():
     args = p.parse_args()
     if args.seconds < 60:
         p.error("use at least 60 seconds of traffic")
-    source, build_dir, binary = (path.resolve() for path in
-                                 (args.source, args.build_dir, args.binary))
+    source = args.source.resolve()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=False)
+    build_dir = out / "build"
+    binary = out / "bin" / "load"
     record = dict(mode=args.mode, source=str(source), build_dir=str(build_dir),
                   binary=str(binary), requested_head=args.expected_head,
                   server_transport=args.server_transport,
@@ -179,6 +220,24 @@ def main():
         record["head"] = head
         if head != args.expected_head or status:
             raise ValueError("source is dirty or differs from expected head")
+        record["preflight"] = preflight(out)
+        if record["preflight"]["failures"]:
+            raise ValueError("capacity guard: " + "; ".join(record["preflight"]["failures"]))
+        if args.mode == "samples" and platform.system() != "Darwin":
+            raise ValueError("Time Profiler sampling mode requires macOS")
+        configure = ["cmake", "-S", str(source), "-B", str(build_dir),
+                     "-DCMAKE_BUILD_TYPE=Release",
+                     f"-DCMAKE_RUNTIME_OUTPUT_DIRECTORY={out / 'bin'}"]
+        build = ["cmake", "--build", str(build_dir), "--target", "load", "--parallel", "4"]
+        record["configure_command"] = configure
+        record["build_command"] = build
+        for label, argv in (("configure", configure), ("build", build)):
+            code, stdout, stderr, timed_out = run_capture(argv, source, os.environ.copy(), 1200)
+            (out / f"{label}.stdout.log").write_text(stdout)
+            (out / f"{label}.stderr.log").write_text(stderr)
+            record[f"{label}_exit"] = code
+            if timed_out or code != 0:
+                raise ValueError(f"{label} failed: exit={code} timeout={timed_out}")
         cache = (build_dir / "CMakeCache.txt").read_text()
         if not re.search(r"^CMAKE_BUILD_TYPE:STRING=Release$", cache, re.M):
             raise ValueError("CMake build type is not Release")
@@ -187,12 +246,11 @@ def main():
             raise ValueError("CMake build source differs from requested source")
         if not binary.is_file() or not os.access(binary, os.X_OK):
             raise ValueError("load binary missing or not executable")
+        if command(["git", "rev-parse", "HEAD"], source) != head or command(["git", "status", "--porcelain"], source):
+            raise ValueError("source changed during configure/build")
+        record["cmake_cache_sha256"] = sha256(build_dir / "CMakeCache.txt")
         record["binary_sha256"] = sha256(binary)
-        record["preflight"] = preflight(out)
-        if record["preflight"]["failures"]:
-            raise ValueError("capacity guard: " + "; ".join(record["preflight"]["failures"]))
-        if args.mode == "samples" and platform.system() != "Darwin":
-            raise ValueError("Time Profiler sampling mode requires macOS")
+        record["binary_provenance"] = "fresh Release CMake configure and target load build in this receipt"
         env = os.environ.copy()
         env.update(LOAD_PROFILE="light", ROCKETNET_SERVER_TRANSPORT=args.server_transport,
                    ROCKETNET_CLIENT_TRANSPORT=args.client_transport)
