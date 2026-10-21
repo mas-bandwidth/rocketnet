@@ -207,9 +207,14 @@ MCServerConnectionServesBothFamilies.cfg	MCServerConnection.tla	pass	-	ignore-te
 MCServerConnectionBrokenOneFamilyServed.cfg	MCServerConnection.tla	temporal	BothFamiliesConnect	ignore-terminal	serverconnection	required	-
 MCClientSession.cfg	MCClientSession.tla	pass	-	ignore-terminal	clientsession	required	-
 MCClientSessionUnreset.cfg	MCClientSession.tla	invariant	ReconnectObservesNothing	ignore-terminal	clientsession	required	-
-MCClientSessionConnectAnywhere.cfg	MCClientSession.tla	invariant	ConnectOnlyFromDisconnected	ignore-terminal	clientsession	required	-
+MCClientSessionConnectAnywhere.cfg	MCClientSession.tla	invariant	ConnectOnlyFromTerminal	ignore-terminal	clientsession	required	-
 MCClientSessionQueueBeforeConnected.cfg	MCClientSession.tla	invariant	NoSendUnlessConnected	ignore-terminal	clientsession	required	-
 MCClientSessionDestroySilent.cfg	MCClientSession.tla	invariant	DestroyDisconnectsLive	ignore-terminal	clientsession	required	-
+MCClientSessionReconnectStuck.cfg	MCClientSession.tla	pass	-	ignore-terminal	clientsession	required	-
+MCClientSessionReusePending.cfg	MCClientSession.tla	invariant	NoReuseBeforeComplete	ignore-terminal	clientsession	required	-
+MCClientSessionSkipStop.cfg	MCClientSession.tla	invariant	PendingRefuses	ignore-terminal	clientsession	required	-
+MCClientSessionCompletionRefused.cfg	MCClientSession.tla	invariant	TerminalRetryEnabled	ignore-terminal	clientsession	required	-
+MCClientSessionReuseKeys.cfg	MCClientSession.tla	invariant	ReconnectObservesNothing	ignore-terminal	clientsession	required	-
 MCServerSession.cfg	MCServerSession.tla	pass	-	ignore-terminal	serversession	required	-
 MCServerSessionUnresetSlot.cfg	MCServerSession.tla	invariant	SlotReuseObservesNothing	ignore-terminal	serversession	required	-
 MCServerSessionStopLeavesClient.cfg	MCServerSession.tla	invariant	NoClientWhileStopped	ignore-terminal	serversession	required	-
