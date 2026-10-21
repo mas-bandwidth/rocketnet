@@ -249,6 +249,29 @@ bool rocketnet_portable_tx_test_handoff()
 #if !defined(ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE)
     return true;
 #else
+    // Exercise the same cleanup entry with each partially constructed owner.
+    // Sanitizer/allocator gates can detect a leaked wake or bank allocation.
+    for ( int stage = 0; stage < 3; ++stage )
+    {
+        void * partial_storage = rocketnet_malloc( NULL, sizeof( portable_server_t ) );
+        if ( !partial_storage ) return false;
+        portable_server_t * partial = new (partial_storage) portable_server_t();
+        if ( stage >= 1 && !rocketnet_platform_mutex_create( &partial->mutex ) )
+        {
+            portable_server_cleanup( partial );
+            return false;
+        }
+        if ( stage >= 2 )
+        {
+            partial->wake = rocketnet_platform_wake_create( NULL, NULL );
+            if ( !partial->wake )
+            {
+                portable_server_cleanup( partial );
+                return false;
+            }
+        }
+        portable_server_cleanup( partial );
+    }
     void * storage = rocketnet_malloc( NULL, sizeof( portable_server_t ) );
     if ( !storage ) return false;
     portable_server_t * server = new (storage) portable_server_t();
