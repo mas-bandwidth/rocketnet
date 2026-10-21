@@ -249,7 +249,7 @@ static void test_config_env_log_level_applies_before_init_logs()
 
     env_names_log_t log;
     rocketnet_log_function( env_names_log_capture, &log );
-    const rocketnet_status_t status = rocketnet_init( NULL );
+    const rocketnet_status_t status = rocketnet_init( NULL, NULL, NULL );
     rocketnet_log_function( NULL, NULL );
     const rocketnet_log_level_t after = rocketnet_log_level_current();
 
@@ -415,8 +415,6 @@ static std::vector<std::string> env_names_set_candidates()
     set.push_back( "ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS" );
     env_names_setenv( "ROCKETNET_SERVER_TRANSPORT", "loopback" );
     set.push_back( "ROCKETNET_SERVER_TRANSPORT" );
-    env_names_setenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS", "127.0.0.1:0" );
-    set.push_back( "ROCKETNET_SERVER_PUBLIC_ADDRESS" );
 
     // public link simulator fields (documented in sdk/rocketnet.h)
 
@@ -574,7 +572,8 @@ static void test_config_env_every_name_read_is_documented()
     check( env_names_contains( documented, "ROCKETNET_SERVER_BACKEND_PUBLIC_KEY" ) );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_SERVER_PUBLIC_KEY" ) );     // the server keypair is the server's own
     check( env_names_contains( documented, "ROCKETNET_SERVER_TRANSPORT" ) );
-    check( env_names_contains( documented, "ROCKETNET_SERVER_PUBLIC_ADDRESS" ) );
+    check( env_names_contains( documented, "ROCKETNET_SERVER_IPV4_ADDRESS" ) );
+    check( env_names_contains( documented, "ROCKETNET_SERVER_IPV6_ADDRESS" ) );
 
     const std::vector<std::string> set = env_names_set_candidates();
 
@@ -628,10 +627,10 @@ static void test_config_env_every_name_read_is_documented()
     check( env_names_contains( overrides, "ROCKETNET_SERVER_PROTOCOL_ID" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_BACKEND_PUBLIC_KEY" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_TRANSPORT" ) );
-    check( env_names_contains( overrides, "ROCKETNET_SERVER_PUBLIC_ADDRESS" ) );
     check( documented.size() == 68 );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_SERVER_SECRET_KEY" ) );
-    check( env_names_contains( documented, "ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS" ) );
+    check( !env_names_contains( documented, "ROCKETNET_SERVER_PUBLIC_ADDRESS" ) );
+    check( !env_names_contains( documented, "ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS" ) );
     check( env_names_contains( documented, "ROCKETNET_LOG_LEVEL" ) );
     check( env_names_contains( documented, "ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT" ) );
     check( env_names_contains( documented, "ROCKETNET_DEV_CLIENT_LATENCY_MS" ) );

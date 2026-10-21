@@ -105,13 +105,13 @@ static void test_create_reports_status_success()
     create_status_dev_server_config( &server_config );
     server_config.max_clients = 4;
 
-    enum rocketnet_status_t status = ROCKETNET_STATUS_COUNT;
+    enum rocketnet_status_t status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
     check( client != NULL );
     check( status == ROCKETNET_STATUS_OK );
     rocketnet_client_destroy( client );
 
-    status = ROCKETNET_STATUS_COUNT;
+    status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
     check( server != NULL );
     check( status == ROCKETNET_STATUS_OK );
@@ -143,7 +143,7 @@ static void test_create_reports_status_not_initialized()
     check( rocketnet_client_create( NULL, &client_config, NULL ) == NULL );
     check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL ) == NULL );
 
-    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
     rocketnet_assert_function( saved_assert );
 }
 REGISTER_UNIT_TEST( test_create_reports_status_not_initialized );
@@ -292,7 +292,10 @@ static void test_create_reports_status_config_refusals()
     check( status == ROCKETNET_STATUS_OK );
     rocketnet_client_destroy( unlimited_client );
 
+    // four clients, as every server here: a full 1000-client server plans
+    // 13 GB and touches about 1.5 GB of it at create
     create_status_dev_server_config( &server_config );
+    server_config.max_clients = 4;
     server_config.per_client_send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;
     status = ROCKETNET_STATUS_INVALID_ARGUMENT;
     struct rocketnet_server_t * unlimited_server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
@@ -307,7 +310,7 @@ static void test_create_reports_status_config_refusals()
     check( rocketnet_client_create( NULL, &client_config, &status ) == NULL );
     check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
     client_config.send_kbps = 0;
-    status = ROCKETNET_STATUS_COUNT;
+    status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_client_t * default_rate_client = rocketnet_client_create( NULL, &client_config, &status );
     check( default_rate_client != NULL );
     check( status == ROCKETNET_STATUS_OK );
@@ -358,7 +361,7 @@ static void test_create_reports_status_config_refusals()
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
     client_config.max_fragmented_messages = 256;
     client_config.max_payload_bytes = 305408;
-    status = ROCKETNET_STATUS_COUNT;
+    status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_client_t * budget_client = rocketnet_client_create( NULL, &client_config, &status );
     check( budget_client != NULL );
     check( status == ROCKETNET_STATUS_OK );
@@ -395,9 +398,8 @@ static void test_create_reports_status_out_of_memory()
     create_status_allocator_t state;
     memset( &state, 0, sizeof( state ) );
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
-    check( rocketnet_allocator_ex( create_status_allocate, create_status_release ) == ROCKETNET_STATUS_OK );
     int init_status = -1;
-    check( rocketnet_init_ex( &state, &init_status ) );
+    check( rocketnet_init_ex( &state, create_status_allocate, create_status_release, &init_status ) );
     check( init_status == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_config_t client_config;
@@ -447,8 +449,7 @@ static void test_create_reports_status_out_of_memory()
     state.fail_at = 0;
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     check( state.live == 0 );
-    check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 REGISTER_UNIT_TEST( test_create_reports_status_out_of_memory );
 
@@ -486,7 +487,7 @@ REGISTER_UNIT_TEST( test_create_reports_status_null_status );
 
 static void test_create_reports_status_null_config_macro()
 {
-    enum rocketnet_status_t status = ROCKETNET_STATUS_COUNT;
+    enum rocketnet_status_t status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, NULL, &status );
     check( client != NULL );
     check( status == ROCKETNET_STATUS_OK );

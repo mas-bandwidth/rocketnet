@@ -157,7 +157,7 @@ static void test_server_transport_create_ex_reports_every_status()
 
     // init with the fault-injecting allocator's state as the context
     status = -1;
-    check( rocketnet_init_ex( &state, &status ) );
+    check( rocketnet_init_ex( &state, allocate, release, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 
     // S2: an invalid environment value refuses apply_env

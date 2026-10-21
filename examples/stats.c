@@ -134,7 +134,7 @@ int main( void )
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     int result = 1;
     double time_base = 1000.0;
-    CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    CHECK( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
     // the published development backend key (rocketnet.h) and the examples protocol id (dev_keys.h); the server makes its own keypair at create. A real server brings its own backend key, recommended through ROCKETNET_SERVER_BACKEND_PUBLIC_KEY, or set in code
     rocketnet_server_default_config( &server_config );
     server_config.protocol_id = EXAMPLE_PROTOCOL_ID;

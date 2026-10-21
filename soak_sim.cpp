@@ -361,7 +361,7 @@ int main( int argc, char ** argv )
 {
     signal( SIGINT, interrupt_handler );
 
-    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
         return 1;
 
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );

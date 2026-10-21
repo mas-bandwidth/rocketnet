@@ -53,9 +53,8 @@ template <typename A, typename B> struct rn_same { static const bool value = std
 
 // --- ruling 1: status returns ------------------------------------------------
 
-static_assert( rn_same<decltype( rocketnet_init( NULL ) ), rocketnet_status_t>::value, "ruling 1: init" );
+static_assert( rn_same<decltype( rocketnet_init( NULL, NULL, NULL ) ), rocketnet_status_t>::value, "ruling 1: init" );
 static_assert( rn_same<decltype( rocketnet_term() ), rocketnet_status_t>::value, "ruling 1: term" );
-static_assert( rn_same<decltype( rocketnet_allocator( NULL, NULL ) ), rocketnet_status_t>::value, "ruling 1 and 5: set_allocator" );
 static_assert( rn_same<decltype( rocketnet_generate_backend_keypair( NULL, NULL ) ), rocketnet_status_t>::value, "ruling 1: backend keypair" );
 static_assert( rn_same<decltype( rocketnet_generate_backend_keypair_from_seed( NULL, NULL, NULL ) ), rocketnet_status_t>::value, "ruling 1: seeded keypair" );
 static_assert( rn_same<decltype( rocketnet_generate_server_keypair( NULL, NULL ) ), rocketnet_status_t>::value, "ruling 1: server keypair" );
@@ -89,9 +88,9 @@ static void api_polish_free( void * context, void * p ) { (void) context; free( 
 // says why it refused, where the old bool said only false
 static void test_api_polish_status_returns()
 {
-    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_ALREADY_INITIALIZED );
-    check( rocketnet_allocator( api_polish_malloc, api_polish_free ) == ROCKETNET_STATUS_ALREADY_INITIALIZED );
-    check( rocketnet_allocator( api_polish_malloc, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_ALREADY_INITIALIZED );
+    check( rocketnet_init( NULL, api_polish_malloc, api_polish_free ) == ROCKETNET_STATUS_ALREADY_INITIALIZED );
+    check( rocketnet_init( NULL, api_polish_malloc, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
 
     // a live allocation refuses term, with the reason, and nothing changes
     void * held = rocketnet_malloc( NULL, 64 );
@@ -116,13 +115,13 @@ static void test_api_polish_status_returns()
     struct rocketnet_client_config_t client_config;
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
     check( client_config.config_bytes == sizeof( client_config ) );
-    enum rocketnet_status_t create_status = ROCKETNET_STATUS_COUNT;
+    enum rocketnet_status_t create_status = ROCKETNET_TEST_STATUS_UNSET;
     rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &create_status );
     check( client != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
     rocketnet_client_destroy( client );
     client_config.num_channels = 0;
-    create_status = ROCKETNET_STATUS_COUNT;
+    create_status = ROCKETNET_TEST_STATUS_UNSET;
     check( rocketnet_client_create( NULL, &client_config, &create_status ) == NULL );
     check( create_status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
     // a config never filled is refused by name
@@ -130,7 +129,7 @@ static void test_api_polish_status_returns()
     check( rocketnet_client_default_config_internal( &client_config ) == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
     struct rocketnet_server_config_t server_config;
     api_polish_dev_server_config( &server_config );
-    create_status = ROCKETNET_STATUS_COUNT;
+    create_status = ROCKETNET_TEST_STATUS_UNSET;
     rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
     check( server != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
@@ -312,8 +311,8 @@ static void test_api_polish_lookups_say_unknown()
 {
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_OK ), "OK" ) == 0 );
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_FLOW_ID_RESERVED ), "FLOW_ID_RESERVED" ) == 0 );
-    check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_COUNT ), "UNKNOWN" ) == 0 );
-    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -1 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -28 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( (rocketnet_status_t) 1 ), "UNKNOWN" ) == 0 );
 
     check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_NONE ), "NONE" ) == 0 );
     check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_WARN ), "WARN" ) == 0 );
@@ -363,7 +362,7 @@ static void test_api_polish_zero_receipt_and_dense_reasons()
     check( strcmp( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) 2 ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) 7 ), "UNKNOWN" ) == 0 );
 
-    for ( int status = 0; status < (int) ROCKETNET_STATUS_COUNT; status++ )
+    for ( int status = (int) ROCKETNET_STATUS_OK; status >= (int) ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED; status-- )
     {
         const char * name = rocketnet_status_name( (enum rocketnet_status_t) status );
         check( name != NULL && strcmp( name, "UNKNOWN" ) != 0 );

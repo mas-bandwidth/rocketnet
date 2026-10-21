@@ -125,7 +125,7 @@ int main( void )
     int result = 1;
     double time_base = 1000.0;
 
-    CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    CHECK( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 
     // the server takes the published development keys, the loopback pin, and
     // an ephemeral port that is read back below

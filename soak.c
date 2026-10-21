@@ -287,7 +287,7 @@ int main( int argc, char ** argv )
 
     signal( SIGINT, interrupt_handler );
 
-    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;

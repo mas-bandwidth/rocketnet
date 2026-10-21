@@ -910,39 +910,39 @@ static void test_config_packets_per_update_range()
     check( server_config.packets_per_update == 256 );
 
     // the struct
-    enum rocketnet_status_t create_status = ROCKETNET_STATUS_COUNT;
+    enum rocketnet_status_t create_status = ROCKETNET_TEST_STATUS_UNSET;
     client_config.packets_per_update = 1024;
     rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &create_status );
     check( client != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
     rocketnet_client_destroy( client );
     client_config.packets_per_update = 1025;
-    create_status = ROCKETNET_STATUS_COUNT;
+    create_status = ROCKETNET_TEST_STATUS_UNSET;
     client = rocketnet_client_create( NULL, &client_config, &create_status );
     check( client == NULL );
-    check( create_status != ROCKETNET_STATUS_OK && create_status != ROCKETNET_STATUS_COUNT );
+    check( create_status != ROCKETNET_STATUS_OK && create_status != ROCKETNET_TEST_STATUS_UNSET );
     client_config.packets_per_update = 0;
-    create_status = ROCKETNET_STATUS_COUNT;
+    create_status = ROCKETNET_TEST_STATUS_UNSET;
     client = rocketnet_client_create( NULL, &client_config, &create_status );
     check( client == NULL );
-    check( create_status != ROCKETNET_STATUS_OK && create_status != ROCKETNET_STATUS_COUNT );
+    check( create_status != ROCKETNET_STATUS_OK && create_status != ROCKETNET_TEST_STATUS_UNSET );
 
     server_config.packets_per_update = 1024;
-    create_status = ROCKETNET_STATUS_COUNT;
+    create_status = ROCKETNET_TEST_STATUS_UNSET;
     rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
     check( server != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
     rocketnet_server_destroy( server );
     server_config.packets_per_update = 1025;
-    create_status = ROCKETNET_STATUS_COUNT;
+    create_status = ROCKETNET_TEST_STATUS_UNSET;
     server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
     check( server == NULL );
-    check( create_status != ROCKETNET_STATUS_OK && create_status != ROCKETNET_STATUS_COUNT );
+    check( create_status != ROCKETNET_STATUS_OK && create_status != ROCKETNET_TEST_STATUS_UNSET );
     server_config.packets_per_update = 0;
-    create_status = ROCKETNET_STATUS_COUNT;
+    create_status = ROCKETNET_TEST_STATUS_UNSET;
     server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
     check( server == NULL );
-    check( create_status != ROCKETNET_STATUS_OK && create_status != ROCKETNET_STATUS_COUNT );
+    check( create_status != ROCKETNET_STATUS_OK && create_status != ROCKETNET_TEST_STATUS_UNSET );
 
     // the environment
     rocketnet_client_default_config( &client_config );

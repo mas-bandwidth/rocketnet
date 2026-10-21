@@ -267,8 +267,7 @@ static void reliable_receipt_free( void *, void * pointer )
 static void test_no_allocation_after_create_reliable_receipts()
 {
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_allocator( reliable_receipt_malloc, reliable_receipt_free ) == ROCKETNET_STATUS_OK );
-    rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL, reliable_receipt_malloc, reliable_receipt_free ) == ROCKETNET_STATUS_OK );
 
     reliable_receipt_fixture_t f;
     uint64_t after_create = 0;
@@ -280,8 +279,7 @@ static void test_no_allocation_after_create_reliable_receipts()
     reliable_fixture_destroy( &f );
 
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-    rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
 REGISTER_UNIT_TEST( test_reliable_receipt_acked_never_loss );

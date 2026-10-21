@@ -34,7 +34,7 @@ static const char happy_pattern[] = "rocketnet-happy-path";
 
 int main( int argc, char ** argv )
 {
-    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;

@@ -158,10 +158,9 @@ static void test_client_transport_create_ex_reports_every_status()
     // allocator can be installed and the pre-init refusal is reachable. the
     // token is non-NULL so the refusal is the pre-init check, not C1.
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
-    check( rocketnet_allocator_ex( allocate, release ) == ROCKETNET_STATUS_OK );
     check_create_status( ROCKETNET_STATUS_NOT_INITIALIZED, token, NULL, &state, &status );
 
-    check( rocketnet_init_ex( &state, &status ) );
+    check( rocketnet_init_ex( &state, allocate, release, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 
     // C2: an invalid environment overlay refuses at the env apply

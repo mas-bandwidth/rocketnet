@@ -506,8 +506,7 @@ static void ep_free( void * context, void * p )
 static void test_endpoint_never_allocates_or_reads_a_clock()
 {
     rocketnet_term();
-    check( rocketnet_allocator( ep_malloc, ep_free ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, ep_malloc, ep_free ) == ROCKETNET_STATUS_OK );
 
     rocketnet_message_config_t config;
     ep_config( &config );
@@ -568,8 +567,7 @@ static void test_endpoint_never_allocates_or_reads_a_clock()
     check( traces[0] == traces[1] );
 
     rocketnet_term();
-    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
 // R6 (docs/CHANNELS.md 11.5; tla/RNSendBudget.tla UncappedNeverDropsOrWaits):

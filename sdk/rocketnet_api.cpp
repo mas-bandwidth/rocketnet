@@ -425,6 +425,7 @@ struct rocketnet_client_t
     int owns_block;                                     // 1: this struct and the block are one rocketnet_malloc
     uint8_t * block;                                    // the connection's memory, ROCKETNET_ALLOCATION_ALIGNMENT aligned
     uint64_t block_bytes;
+    int block_used;                                     // 1 once a connect handed the block to a connection
     struct rocketnet_message_client_t * connection;     // NULL while DISCONNECTED or after a refused connect
     int refused_state;                                  // the error state a refused connect left, 0 otherwise
     uint64_t lifetime[RN_CLIENT_COUNT];                 // the counts of every ended connection
@@ -765,6 +766,7 @@ enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * cl
         return ROCKETNET_STATUS_INVALID_CONNECT_TOKEN;
     }
     int status = ROCKETNET_STATUS_OK;
+    client->block_used = 1;
     client->connection = rocketnet_message_client_create_ex( client->context, connect_token, &client->transport, &client->message,
                                                               client->block, client->block_bytes, client->kbps, &status, client->message.client_send_kbps <= 0 );
     sodium_memzero( connect_token, sizeof( connect_token ) );
@@ -784,10 +786,11 @@ void rocketnet_client_destroy( struct rocketnet_client_t * client )
     rn_client_end_connection( client );
     // the header and the connection block after it hold the last
     // connection's message bytes: all of it is wiped, then freed or given
-    // back (an adopted client is the header alone)
+    // back (an adopted client is the header alone). A block no connect ever
+    // used holds nothing, and wiping it would touch every page it plans.
     void * context = client->context;
     const int owns_block = client->owns_block;
-    const size_t bytes = client->block ? (size_t) ( rn_client_header_bytes + client->block_bytes ) : sizeof( *client );
+    const size_t bytes = client->block ? (size_t) ( rn_client_header_bytes + ( client->block_used ? client->block_bytes : 0 ) ) : sizeof( *client );
     sodium_memzero( client, bytes );
     if ( owns_block )
         rocketnet_free( context, client );
@@ -1097,6 +1100,7 @@ struct rocketnet_server_t
     int owns_block;
     uint8_t * block;
     uint64_t block_bytes;
+    int block_used;                                         // 1 once a start handed the block to a message server
     struct rocketnet_message_server_t * running;            // NULL while stopped
     uint64_t lifetime[RN_SERVER_COUNT];                     // the counts of every earlier run
     struct rocketnet_message_batch_t batch;                 // the one receive batch across every client (in the create-time block)
@@ -1503,6 +1507,7 @@ enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * serv
         return ROCKETNET_STATUS_SERVER_NOT_STOPPED;
     }
     int status = ROCKETNET_STATUS_OK;
+    server->block_used = 1;
     server->running = rocketnet_message_server_create_ex( server->context, server->address, &server->transport, &server->message,
                                                           server->block, server->block_bytes, server->kbps, &status, server->message.server_send_kbps <= 0 );
     if ( server->running )
@@ -1571,10 +1576,12 @@ void rocketnet_server_destroy( struct rocketnet_server_t * server )
     rocketnet_server_stop( server );
     // the header, keys included, and the running block after it, which held
     // every connection's message bytes: all of it is wiped, then freed or
-    // given back (an adopted server is the header alone)
+    // given back (an adopted server is the header alone). A block no start
+    // ever used holds nothing, and wiping it would touch every page of a plan
+    // that can reach 13 GB.
     void * context = server->context;
     const int owns_block = server->owns_block;
-    const size_t bytes = server->block ? (size_t) ( rn_server_header_bytes + server->block_bytes ) : sizeof( *server );
+    const size_t bytes = server->block ? (size_t) ( rn_server_header_bytes + ( server->block_used ? server->block_bytes : 0 ) ) : sizeof( *server );
     sodium_memzero( server, bytes );
     if ( owns_block )
         rocketnet_free( context, server );

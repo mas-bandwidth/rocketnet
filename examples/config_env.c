@@ -148,7 +148,7 @@ int main( int argc, char ** argv )
     char env[256];
     const int have_env = example_getenv( "ROCKETNET_SERVER_MAX_CLIENTS", env, sizeof( env ) );
 
-    CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    CHECK( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 
     if ( !have_env )
     {

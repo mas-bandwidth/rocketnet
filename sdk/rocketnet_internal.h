@@ -42,33 +42,19 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES <= ROCKETNET_RECEIVE_PACKET_
 //          status-returning lifecycle forms
 // -----------------------------------------
 
-// The int-status forms of rocketnet_init, rocketnet_term and
-// rocketnet_allocator, which the public calls wrap: the public calls
-// return the same code as enum rocketnet_status_t.
+// The int-status forms of rocketnet_init and rocketnet_term, which the
+// public calls wrap, and the allocator seam the unit tests install directly.
+// The public calls return the same code as enum rocketnet_status_t.
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/**
- * @brief Initializes RocketNet and optionally returns the exact status code.
- *
- * This has the same lifecycle and logging behavior as rocketnet_init, which is
- * this call with a NULL status. It writes the exact section-2.1 code to status
- * on every return path when status is non-NULL; a failure logs one error line.
- * No client or server may be created until initialization succeeds.
- *
- * @param context Opaque allocator context retained for platform allocations; NULL is allowed.
- * @param status Optional writable int receiving a ROCKETNET_STATUS_* value; NULL skips the write.
- * @return true on success; false on an existing transition or platform/crypto failure.
- * @code
- * int status;
- * if (!rocketnet_init_ex(NULL, &status)) {
- *     fprintf(stderr, "init failed: %s\n", rocketnet_status_name(status));
- * }
- * @endcode
- */
-bool rocketnet_init_ex( void * context, int * status );
+// rocketnet_init with the exact status code in status, when not NULL, on
+// every return path. It returns true on success. A failure logs one error
+// line. context goes to init's own allocations, platform discovery among
+// them. NULL for both allocator functions is the system allocator.
+bool rocketnet_init_ex( void * context, void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ), int * status );
 
 /**
  * @brief Terminates the library and returns why termination did or did not occur.
@@ -84,7 +70,11 @@ bool rocketnet_init_ex( void * context, int * status );
  */
 int rocketnet_term_ex( void );
 
-/** @brief Replaces allocator callbacks and returns the refusal reason. @param malloc_function Non-NULL allocator callback. @param free_function Non-NULL matching deallocator. @return The section-2.1 code: ROCKETNET_STATUS_OK, INVALID_ARGUMENT for a partial pair, ALREADY_INITIALIZED after init or during the transition, or LIVE_ALLOCATIONS with outstanding allocations. A failure logs one error line. Install before init with no live allocations. */
+// Replaces the allocator outside init, for tests that allocate without
+// initializing the library. Both functions are required. Returns
+// ROCKETNET_STATUS_OK, INVALID_ARGUMENT for a NULL function,
+// ALREADY_INITIALIZED after init or during the transition, or
+// LIVE_ALLOCATIONS with outstanding allocations. A refusal logs one line.
 int rocketnet_allocator_ex( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) );
 
 // The connection a public client holds (NULL while DISCONNECTED) and the

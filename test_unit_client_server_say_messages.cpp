@@ -81,13 +81,26 @@ struct allowlist_row_t
 static const allowlist_row_t allowlist[] =
 {
     // TRANSPORT SIZE: the UDP payload of one datagram, a transport quantity.
-    { F_H, "packet crosses a 1500", "TRANSPORT SIZE" },
     { F_H, "ROCKETNET_MAX_PACKET_BYTES", "TRANSPORT SIZE" },
+    { F_H, "UDP payload bytes per packet", "TRANSPORT SIZE" },
+    { F_H, "application payload bytes per packet", "TRANSPORT SIZE" },
+    { F_H, "RocketNet packet overhead", "TRANSPORT SIZE" },
+    { F_H, "fit in one packet", "TRANSPORT SIZE" },
+    { F_H, "Packet-filter bytes", "PACKET FILTER AND ACK TRACKING" },
+    { F_H, "is the title packet filter", "PACKET FILTER AND ACK TRACKING" },
+    { F_H, "A lost packet loses the message", "FRAGMENT PACKING" },
+    { F_H, "Packets from the server that opened", "TRANSPORT COUNTERS AND STATS" },
+    { F_H, "Packets from clients that opened", "TRANSPORT COUNTERS AND STATS" },
+    { F_H, "between packet arrivals", "TRANSPORT COUNTERS AND STATS" },
+    { F_H, "Receive-side packet loss", "TRANSPORT COUNTERS AND STATS" },
+    { F_H, "Send-side packet loss", "TRANSPORT COUNTERS AND STATS" },
+    { F_H, "Simulates outgoing server packets", "NETWORK SIMULATOR" },
+    { F_H, "then send packets", "SEND PACKETS" },
+    { F_H, "queued messages in packets", "SEND PACKETS" },
     { F_H, "ROCKETNET_MAX_PACKET_PAYLOAD_BYTES", "TRANSPORT SIZE" },
     { F_H, "ROCKETNET_PACKET_FILTER_BYTES", "PACKET FILTER AND ACK TRACKING" },
     { F_API, "ROCKETNET_PACKET_FILTER_BYTES", "PACKET FILTER AND ACK TRACKING" },
     { F_H, "latency, jitter, packet", "NETWORK SIMULATOR" },
-    { F_H, "outgoing packets, to see", "NETWORK SIMULATOR" },
     { F_H, "PACKET_LOSS_PERCENT", "NETWORK SIMULATOR" },
     { F_API, "PACKET_LOSS_PERCENT", "NETWORK SIMULATOR" },
     { F_S, "ROCKETNET_MAX_PACKET_PAYLOAD_BYTES", "TRANSPORT SIZE" },
@@ -95,12 +108,6 @@ static const allowlist_row_t allowlist[] =
     { "sdk/rocketnet_message.h", "ROCKETNET_MAX_PACKET_PAYLOAD_BYTES", "TRANSPORT SIZE" },
     { F_H, "packet_filter", "PACKET FILTER AND ACK TRACKING" },
     { F_API, "packet_filter", "PACKET FILTER AND ACK TRACKING" },
-    { F_H, "The largest packet", "TRANSPORT SIZE" },
-    { F_H, "packet's own overhead", "TRANSPORT SIZE" },
-    { F_H, "split across packets", "TRANSPORT SIZE" },
-    { F_H, "fits in one packet", "TRANSPORT SIZE" },
-    { F_H, "Packets: UDP", "TRANSPORT SIZE" },
-    { F_H, "Payloads: packets", "TRANSPORT SIZE" },
     { F_H, "packet sequence", "TRANSPORT SIZE" },
     { F_H, "Packets per second", "TRANSPORT SIZE" },
     { F_H, "packets sent to this client", "TRANSPORT SIZE" },
@@ -108,7 +115,6 @@ static const allowlist_row_t allowlist[] =
     { F_H, "PACKETS_PER_UPDATE", "TRANSPORT SIZE" },
 
     // FRAGMENT PACKING: how messages are packed into packets.
-    { F_H, "A lost packet loses it", "FRAGMENT PACKING" },
     { F_O, "one record in one packet", "FRAGMENT PACKING" },
     { F_M, "the record ends this packet", "FRAGMENT PACKING" },
     { "sdk/rocketnet_message.h", "message-to-packet", "FRAGMENT PACKING" },
@@ -129,7 +135,6 @@ static const allowlist_row_t allowlist[] =
     { F_API, "packet_loss", "TRANSPORT COUNTERS AND STATS" },
 
     // PACKET FILTER AND ACK TRACKING: per-datagram transport state.
-    { F_H, "per-title packet filter", "PACKET FILTER AND ACK TRACKING" },
     { F_H, "packets_in_flight", "PACKET FILTER AND ACK TRACKING" },
     { F_API, "packets_in_flight", "PACKET FILTER AND ACK TRACKING" },
 
@@ -185,7 +190,6 @@ static const allowlist_row_t allowlist[] =
     { F_H, "rocketnet_client_send_packets", "SEND PACKETS" },
     { F_H, "rocketnet_server_send_packets", "SEND PACKETS" },
     { F_H, "disconnect packets", "SEND PACKETS" },
-    { F_H, "this update's packets", "SEND PACKETS" },
     { F_API, "rocketnet_client_send_packets", "SEND PACKETS" },
     { F_API, "rocketnet_message_client_send_packets", "SEND PACKETS" },
     { F_API, "rocketnet_server_send_packets", "SEND PACKETS" },

@@ -209,7 +209,7 @@ int main( int argc, char ** argv )
 
     rocketnet_dst_substream_init( &dst_keys_stream, seeds_a, "keys" );
     randombytes_set_implementation( &dst_keys_implementation );
-    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
         return 1;
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
 

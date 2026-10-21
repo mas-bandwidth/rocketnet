@@ -158,7 +158,7 @@ int main( void )
     CHECK( rocketnet_version() == ROCKETNET_VERSION );
     CHECK( ROCKETNET_VERSION == ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH );
 
-    for ( int i = 0; i < ROCKETNET_STATUS_COUNT; i++ )
+    for ( int i = ROCKETNET_STATUS_OK; i >= ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED; i-- )
         CHECK( rocketnet_status_name( (enum rocketnet_status_t) i ) != NULL );
     CHECK( strcmp( rocketnet_status_name( ROCKETNET_STATUS_OK ), "OK" ) == 0 );
     CHECK( strcmp( rocketnet_status_name( ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED ), "CONFIG_NOT_INITIALIZED" ) == 0 );
@@ -180,11 +180,10 @@ int main( void )
 
     // ---- process-wide setup, before init
 
-    CHECK( rocketnet_allocator( consumer_malloc, consumer_free ) == ROCKETNET_STATUS_OK );
     rocketnet_thread_priority( true );
     rocketnet_assert_function( consumer_assert );
 
-    CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    CHECK( rocketnet_init( NULL, consumer_malloc, consumer_free ) == ROCKETNET_STATUS_OK );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
     // ---- the backend public key the server verifies tokens with: the

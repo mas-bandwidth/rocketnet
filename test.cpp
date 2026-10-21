@@ -28,7 +28,7 @@ int rocketnet_channels_test_count();
 const char * rocketnet_channels_test_name( int index );
 const char * rocketnet_channels_test_resolve( const char * name );
 int rocketnet_channels_run_named( const char * name );
-void rocketnet_channels_prepare( const char * name );
+void rocketnet_channels_prepare( const char * name, void * (**malloc_function)( void * context, size_t bytes ), void (**free_function)( void * context, void * p ) );
 void rocketnet_channels_prepare_log( const char * name );
 
 static int rocketnet_suite_test_count()
@@ -93,26 +93,33 @@ static int rocketnet_unit_worker( const char * name )
     // init reads this before the suite installs its config isolation. The
     // unit suite must never run against a pin-selected real-socket transport, so
     // both transport pins are cleared for every case, like LOG_LEVEL above.
+    // The served address overrides are cleared too.
 #if defined(_WIN32)
     const int cleared = _putenv_s( "ROCKETNET_LOG_LEVEL", "" );
     const int cleared_server = _putenv_s( "ROCKETNET_SERVER_TRANSPORT", "" );
     const int cleared_client = _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", "" );
+    const int cleared_ipv4 = _putenv_s( "ROCKETNET_SERVER_IPV4_ADDRESS", "" );
+    const int cleared_ipv6 = _putenv_s( "ROCKETNET_SERVER_IPV6_ADDRESS", "" );
 #else
     const int cleared = unsetenv( "ROCKETNET_LOG_LEVEL" );
     const int cleared_server = unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
     const int cleared_client = unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
+    const int cleared_ipv4 = unsetenv( "ROCKETNET_SERVER_IPV4_ADDRESS" );
+    const int cleared_ipv6 = unsetenv( "ROCKETNET_SERVER_IPV6_ADDRESS" );
 #endif
-    if ( cleared != 0 || cleared_server != 0 || cleared_client != 0 )
+    if ( cleared != 0 || cleared_server != 0 || cleared_client != 0 || cleared_ipv4 != 0 || cleared_ipv6 != 0 )
         return 1;
 
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
-    // allocator cases install their hooks here: replacement is refused after init
-    rocketnet_channels_prepare( name );
+    // allocator cases pass their hooks to init
+    void * (*malloc_function)( void * context, size_t bytes ) = NULL;
+    void (*free_function)( void * context, void * p ) = NULL;
+    rocketnet_channels_prepare( name, &malloc_function, &free_function );
 
     rocketnet_platform_set_network_lookups_for_testing( &rocketnet_unit_fake_network_lookups );
 
-    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_init( NULL, malloc_function, free_function ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;

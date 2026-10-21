@@ -224,8 +224,7 @@ static void test_builder_obeys_budget_and_class_order()
 static void test_packet_builder_no_allocation_after_create()
 {
     rocketnet_term();                                           // the allocator is replaced only before init
-    rocketnet_unit_check( rocketnet_allocator( builder_malloc, builder_free ) == ROCKETNET_STATUS_OK );
-    rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL, builder_malloc, builder_free ) == ROCKETNET_STATUS_OK );
 
     builder_allocs = 0;
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );
@@ -278,8 +277,7 @@ static void test_packet_builder_no_allocation_after_create()
 
     rn_arena_destroy( arena );
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-    rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
 // rocketnet_message_record_valid (sdk/rocketnet_message.cpp) is the writer's

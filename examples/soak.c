@@ -184,7 +184,7 @@ int main( int argc, char ** argv ) {
     struct rocketnet_server_t * server = NULL;
     int * index_client = NULL;
     CHECK( c2s && s2c && clients && srv_us && cli_us );
-    CHECK( rocketnet_allocator( soak_malloc, soak_free ) == ROCKETNET_STATUS_OK && rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    CHECK( rocketnet_init( NULL, soak_malloc, soak_free ) == ROCKETNET_STATUS_OK );
     inited = true;
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
     struct rocketnet_server_config_t s_cfg;

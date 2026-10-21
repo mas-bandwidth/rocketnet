@@ -20,7 +20,7 @@ int main(int argc, char ** argv)
     CHECK(payload_bytes >= 1 && payload_bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES && batches > 0);
     CHECK(strlen(transport) < sizeof(rocketnet_server_transport_config_t().transport));
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
-    CHECK(rocketnet_init( NULL ) == ROCKETNET_STATUS_OK);
+    CHECK(rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK);
     rocketnet_forbid_xdp_commit();
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config(&config);

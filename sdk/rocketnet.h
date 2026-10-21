@@ -184,9 +184,8 @@ extern "C" {
 #endif
 
 /// Status-returning calls use these values.
-/// OK is the only success value.
-/// Every failure is positive.
-/// Values and meanings are stable.
+/// OK is zero and the only success value.
+/// Every failure is negative. Test status < 0 for a failure.
 ///
 /// Create calls return NULL when refused. Finish-message calls return 0 when
 /// refused. Required-memory calls return 0 when refused. Stats calls fill a
@@ -196,132 +195,128 @@ enum rocketnet_status_t
 {
     /// Success.
 
-    ROCKETNET_STATUS_OK                                 = 0,
+    ROCKETNET_STATUS_OK                                 =  0,
 
-    /// rocketnet_init, or an allocator change, after the library was
-    /// initialized or while it is initializing or terminating.
+    /// rocketnet_init came after the library was initialized, or while it is
+    /// initializing or terminating.
 
-    ROCKETNET_STATUS_ALREADY_INITIALIZED                = 1,
+    ROCKETNET_STATUS_ALREADY_INITIALIZED                = -1,
 
     /// A call that needs rocketnet_init came before it, or a term found nothing
     /// to terminate.
 
-    ROCKETNET_STATUS_NOT_INITIALIZED                    = 2,
+    ROCKETNET_STATUS_NOT_INITIALIZED                    = -2,
 
-    /// Term or an allocator change refused. The library still holds
+    /// Term, or init with a new allocator, refused. The library still holds
     /// allocations.
 
-    ROCKETNET_STATUS_LIVE_ALLOCATIONS                   = 3,
+    ROCKETNET_STATUS_LIVE_ALLOCATIONS                   = -3,
 
     /// The platform's socket layer did not start. Correct the platform setup
     /// before retrying.
 
-    ROCKETNET_STATUS_PLATFORM_INIT_FAILED               = 4,
+    ROCKETNET_STATUS_PLATFORM_INIT_FAILED               = -4,
 
     /// The crypto library did not start. Initialization does not complete.
 
-    ROCKETNET_STATUS_CRYPTO_INIT_FAILED                 = 5,
+    ROCKETNET_STATUS_CRYPTO_INIT_FAILED                 = -5,
 
     /// An argument, or a combination of arguments, is NULL, out of range, or
     /// inconsistent with another.
 
-    ROCKETNET_STATUS_INVALID_ARGUMENT                   = 6,
+    ROCKETNET_STATUS_INVALID_ARGUMENT                   = -6,
 
     /// An environment override is malformed. It did not parse.
 
-    ROCKETNET_STATUS_CONFIG_ENV_INVALID                 = 7,
+    ROCKETNET_STATUS_CONFIG_ENV_INVALID                 = -7,
 
     /// A config field, from the struct or the environment, is out of its
     /// supported range.
 
-    ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE                = 8,
+    ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE                = -8,
 
     /// The memory the config needs is past the operator's memory budget.
 
-    ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED             = 9,
+    ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED             = -9,
 
     /// Start refused. The server config's backend_public_key is all zeros.
 
-    ROCKETNET_STATUS_MISSING_KEYS                       = 10,
+    ROCKETNET_STATUS_MISSING_KEYS                       = -10,
 
     /// The protocol id is 0, or not the expected value.
 
-    ROCKETNET_STATUS_INVALID_PROTOCOL_ID                = 11,
+    ROCKETNET_STATUS_INVALID_PROTOCOL_ID                = -11,
 
     /// Start refused. A release build was given the published development
     /// backend key.
 
-    ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE                = 12,
+    ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE                = -12,
 
     /// An address string did not parse or cannot be used.
 
-    ROCKETNET_STATUS_INVALID_ADDRESS                    = 13,
+    ROCKETNET_STATUS_INVALID_ADDRESS                    = -13,
 
     /// The transport candidate list did not parse, or holds no usable
     /// candidate.
 
-    ROCKETNET_STATUS_INVALID_TRANSPORT_LIST             = 14,
+    ROCKETNET_STATUS_INVALID_TRANSPORT_LIST             = -14,
 
     /// The connect token fails the client's pre-send checks. It did not parse,
     /// or is not for this protocol.
 
-    ROCKETNET_STATUS_INVALID_CONNECT_TOKEN              = 15,
+    ROCKETNET_STATUS_INVALID_CONNECT_TOKEN              = -15,
 
     /// The connect token expired before the first packet was sent. Obtain a
     /// fresh token before connecting.
 
-    ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED              = 16,
+    ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED              = -16,
 
     /// A pinned transport cannot take port 0, an ephemeral port.
 
-    ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED    = 17,
+    ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED    = -17,
 
     /// Every transport in the candidate list refused to start.
 
-    ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED         = 18,
+    ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED         = -18,
 
     /// An allocation the operation needs failed.
 
-    ROCKETNET_STATUS_OUT_OF_MEMORY                      = 19,
+    ROCKETNET_STATUS_OUT_OF_MEMORY                      = -19,
 
     /// The platform refused a mutex.
 
-    ROCKETNET_STATUS_MUTEX_CREATE_FAILED                = 20,
+    ROCKETNET_STATUS_MUTEX_CREATE_FAILED                = -20,
 
     /// The platform refused a thread.
 
-    ROCKETNET_STATUS_THREAD_CREATE_FAILED               = 21,
+    ROCKETNET_STATUS_THREAD_CREATE_FAILED               = -21,
 
     /// The platform refused a timer.
 
-    ROCKETNET_STATUS_TIMER_CREATE_FAILED                = 22,
+    ROCKETNET_STATUS_TIMER_CREATE_FAILED                = -22,
 
     /// Connect refused because the client is not disconnected. Nothing changed.
     /// Call rocketnet_client_disconnect before retrying.
 
-    ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED            = 23,
+    ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED            = -23,
 
     /// Start refused, nothing changed. The server is already running.
 
-    ROCKETNET_STATUS_SERVER_NOT_STOPPED                 = 24,
+    ROCKETNET_STATUS_SERVER_NOT_STOPPED                 = -24,
 
     /// A destination id has the reserved ROCKETNET_FLOW_ID_BIT set. The send is
     /// refused.
 
-    ROCKETNET_STATUS_FLOW_ID_RESERVED                   = 25,
+    ROCKETNET_STATUS_FLOW_ID_RESERVED                   = -25,
 
     /// A transport cannot serve both named families on this machine.
 
-    ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED     = 26,
+    ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED     = -26,
 
     /// A config's config_bytes is 0 or too small. Fill the config with its
     /// default_config call first.
 
-    ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED             = 27,
-
-    /// The count of codes, OK included. Never an operation's result.
-
-    ROCKETNET_STATUS_COUNT                              = 28
+    ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED             = -27
 };
 
 
@@ -845,19 +840,30 @@ struct rocketnet_server_t;
 ROCKETNET_EXPORT uint32_t rocketnet_version( void );
 
 /// Initializes the library, platform and crypto state. Call before creating
-/// clients or servers. Do not race this call with term. context goes to the
-/// allocator callbacks. NULL selects the default.
+/// clients or servers. Do not race this call with term.
 ///
-/// Returns ROCKETNET_STATUS_OK, ROCKETNET_STATUS_ALREADY_INITIALIZED,
-/// ROCKETNET_STATUS_PLATFORM_INIT_FAILED or
+/// malloc_function and free_function are the allocator for every library
+/// allocation. NULL for both selects the system allocator. Passing only one
+/// returns ROCKETNET_STATUS_INVALID_ARGUMENT. Both must be thread-safe.
+/// malloc_function returns memory aligned for any fundamental type, or NULL.
+/// The library aligns its blocks to ROCKETNET_ALLOCATION_ALIGNMENT itself, so
+/// each request is larger than the bytes it uses. free_function receives the
+/// pointer malloc_function returned.
+///
+/// context goes to the allocator calls init makes. Each create call passes
+/// its own context to the allocator calls for that object.
+///
+/// Returns ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT,
+/// ROCKETNET_STATUS_ALREADY_INITIALIZED,
+/// ROCKETNET_STATUS_LIVE_ALLOCATIONS when the allocator changes while
+/// allocations are live, ROCKETNET_STATUS_PLATFORM_INIT_FAILED or
 /// ROCKETNET_STATUS_CRYPTO_INIT_FAILED.
 ///
 /// ROCKETNET_LOG_LEVEL sets the maximum level before init logs. Values are
 /// 0 .. 5, from ROCKETNET_LOG_LEVEL_NONE to ROCKETNET_LOG_LEVEL_SPAM. Other
 /// values are ignored with a warning.
 
-
-ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_init( void * context );
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_init( void * context, void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) );
 
 /// Terminates the library after every client and server is destroyed. Do not
 /// call while other library calls are running. A refusal logs one error.
@@ -937,7 +943,7 @@ ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t function,
 /// - A required argument is NULL.
 /// - A client index or destination id is outside 0 .. max_clients - 1. This
 ///   includes a destination id with ROCKETNET_FLOW_ID_BIT set.
-/// - Create runs before rocketnet_init, or rocketnet_allocator is refused.
+/// - Create runs before rocketnet_init, or init refuses its allocator.
 /// - Update receives a non-finite time or a time that goes backwards. The last
 ///   good time is kept.
 /// - An unreliable start message of at most
@@ -977,22 +983,6 @@ ROCKETNET_EXPORT double rocketnet_time( void );
 /// above 2000 sleep for 2000 seconds.
 
 ROCKETNET_EXPORT void rocketnet_sleep( double seconds );
-
-/// Allocator
-
-/// Replaces the allocator. Call before init, with no outstanding allocations.
-/// Both callbacks must be thread-safe. malloc_function returns memory aligned
-/// for any fundamental type, or NULL. free_function receives its pointer. The
-/// library applies ROCKETNET_ALLOCATION_ALIGNMENT itself. The allocation
-/// request is larger than the bytes the library uses.
-///
-/// Returns ROCKETNET_STATUS_OK when installed. Returns
-/// ROCKETNET_STATUS_INVALID_ARGUMENT if either callback is
-/// NULL, ROCKETNET_STATUS_ALREADY_INITIALIZED after init or during init or
-/// term, or ROCKETNET_STATUS_LIVE_ALLOCATIONS while allocations remain.
-/// A refusal logs one line and counts as API misuse.
-
-ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_allocator( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) );
 
 /// Config
 
@@ -1654,8 +1644,9 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet
 /// ipv4_address accepts "a.b.c.d:port". ipv6_address accepts "[v6]:port".
 /// Either may be NULL. That family is then not served. Both NULL is refused.
 /// With both, the two share one port.
-/// ROCKETNET_SERVER_IPV4_ADDRESS and ROCKETNET_SERVER_IPV6_ADDRESS override
-/// them. Every server reads them at create.
+/// ROCKETNET_SERVER_IPV4_ADDRESS overrides ipv4_address.
+/// ROCKETNET_SERVER_IPV6_ADDRESS overrides ipv6_address.
+/// Every server reads both at create. Each override is logged.
 /// Port 0 requests an ephemeral port. Read it after start with
 /// rocketnet_server_port.
 ///

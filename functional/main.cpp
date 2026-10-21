@@ -51,7 +51,7 @@ static int rocketnet_functional_worker( const char * name )
     if ( rocketnet_test_getenv( "ROCKETNET_FUNCTIONAL_THREAD_PRIORITY", thread_priority, sizeof( thread_priority ) ) && strcmp( thread_priority, "off" ) == 0 )
         rocketnet_thread_priority( false );
 
-    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;

@@ -374,8 +374,7 @@ static void secrets_wiped_pair_exchange( secrets_wiped_pair_t * pair )
 static void test_secrets_wiped_destroy_owned_blocks()
 {
     rocketnet_term();
-    check( rocketnet_allocator( secrets_wiped_malloc, secrets_wiped_free ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, secrets_wiped_malloc, secrets_wiped_free ) == ROCKETNET_STATUS_OK );
     std::map<void *, size_t> sizes;
     secrets_wiped_sizes = &sizes;
 
@@ -395,8 +394,7 @@ static void test_secrets_wiped_destroy_owned_blocks()
     secrets_wiped_watched[1] = NULL;
     secrets_wiped_sizes = NULL;
     rocketnet_term();
-    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 
     check( watched_frees == 2 );
     check( watched_pattern == 0 );
@@ -421,8 +419,7 @@ static void secrets_wiped_plant_in_arena( rn_arena_t * arena )
 static void test_secrets_wiped_arena_destroy_owned()
 {
     rocketnet_term();
-    check( rocketnet_allocator( secrets_wiped_malloc, secrets_wiped_free ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, secrets_wiped_malloc, secrets_wiped_free ) == ROCKETNET_STATUS_OK );
     std::map<void *, size_t> sizes;
     secrets_wiped_sizes = &sizes;
 
@@ -441,8 +438,7 @@ static void test_secrets_wiped_arena_destroy_owned()
     secrets_wiped_watched[0] = NULL;
     secrets_wiped_sizes = NULL;
     rocketnet_term();
-    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 
     check( watched_frees == 1 );
     check( watched_pattern == 0 );

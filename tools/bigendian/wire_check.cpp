@@ -364,7 +364,7 @@ int main()
 {
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
-    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;

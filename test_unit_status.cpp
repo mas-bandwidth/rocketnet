@@ -3,10 +3,11 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The status code surface: the stable enum, its count and its names
-// (docs/ERRORS-AND-LOGGING.md 2.1). The table here is the published numbering
-// and spelling: a code that moves, a name that changes and a name that is
-// missing all fail. Out-of-range lookups return NULL and never assert.
+// The status code surface: the enum and its names
+// (docs/ERRORS-AND-LOGGING.md 2.1). OK is 0. The failures are -1, -2, ...
+// with no gap. The table here is the numbering and spelling: a code that
+// moves, a name that changes and a name that is missing all fail. A value
+// that is no code names "UNKNOWN" and never asserts.
 //
 // Every case runs in memory, with no clock, sockets or network.
 
@@ -60,14 +61,14 @@ static const struct
 
 static void test_status_names_cover_every_code()
 {
+    const int num_codes = (int) ( sizeof( status_expected ) / sizeof( status_expected[0] ) );
     check( ROCKETNET_STATUS_OK == 0 );
-    check( ROCKETNET_STATUS_COUNT == 28 );
-    check( ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED == 27 );
-    check( sizeof( status_expected ) / sizeof( status_expected[0] ) == ROCKETNET_STATUS_COUNT );
+    check( ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED == -27 );
+    check( num_codes == 28 );
 
-    for ( int i = 0; i < ROCKETNET_STATUS_COUNT; i++ )
+    for ( int i = 0; i < num_codes; i++ )
     {
-        check( status_expected[i].code == i );
+        check( status_expected[i].code == -i );
 
         const char * name = rocketnet_status_name( (enum rocketnet_status_t) status_expected[i].code );
         check( name != NULL );
@@ -84,9 +85,9 @@ REGISTER_UNIT_TEST( test_status_names_cover_every_code );
 
 static void test_status_name_out_of_range_is_unknown()
 {
-    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) -1 ), "UNKNOWN" ) == 0 );
-    check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_COUNT ), "UNKNOWN" ) == 0 );
-    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) ( ROCKETNET_STATUS_COUNT + 1 ) ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) 1 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) -28 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) -29 ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) INT_MIN ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) INT_MAX ), "UNKNOWN" ) == 0 );
 }

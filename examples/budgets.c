@@ -58,7 +58,7 @@ int main( void )
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     int result = 1;
 
-    CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    CHECK( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
     printf( "client send budget default: %d kbps\n", ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
     printf( "server per-client send budget default: %d kbps\n", ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
 

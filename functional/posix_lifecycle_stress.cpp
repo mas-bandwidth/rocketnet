@@ -771,7 +771,7 @@ void rocketnet_test_posix_init_term_1000()
         for ( int i = 0; i < count; i++ )
         {
             posix_check( rocketnet_term() == ROCKETNET_STATUS_OK );
-            posix_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+            posix_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
         }
         const double seconds = posix_now_seconds() - start;
         const posix_resource_counts_t after = posix_settled_counts( &before );

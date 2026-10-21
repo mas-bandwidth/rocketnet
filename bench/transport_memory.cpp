@@ -94,8 +94,7 @@ int main(int argc, char ** argv)
         (unsigned long long)plan.send_arena_bytes, (unsigned long long)plan.transport_bytes,
         (unsigned long long)plan.umem_bytes, plan.worker_threads, plan.sockets);
     if (plan_only) return 0; // No init, sockets, worker threads or UMEM registration.
-    rocketnet_allocator(allocate, release);
-    if (rocketnet_init( NULL ) != ROCKETNET_STATUS_OK) return 1;
+    if (rocketnet_init( NULL, allocate, release ) != ROCKETNET_STATUS_OK) return 1;
     rocketnet_forbid_xdp_commit();
     auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
     if (!server) { fprintf(stderr, "memory profile configuration refused\n"); rocketnet_term(); return 1; }

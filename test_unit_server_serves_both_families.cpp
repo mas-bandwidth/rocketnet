@@ -245,7 +245,7 @@ static struct rocketnet_client_t * both_families_connect_client( const both_fami
     both_families_token( identity, client_id, address, token );
     rocketnet_client_test_config_t config;
     both_families_client_config( &config );
-    enum rocketnet_status_t create_status = ROCKETNET_STATUS_COUNT;
+    enum rocketnet_status_t create_status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &create_status );
     check( client != NULL );
     check( create_status == ROCKETNET_STATUS_OK );

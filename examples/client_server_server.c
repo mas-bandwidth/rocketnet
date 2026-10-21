@@ -128,7 +128,7 @@ int main( int argc, char ** argv )
     // remove it so the client waits for this run's file
     remove( KEY_FILE );
 
-    CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    CHECK( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 
     // a deployment's server takes its own backend's public key; this one
     // takes the published development backend key (rocketnet.h), whose

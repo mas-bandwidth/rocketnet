@@ -545,7 +545,7 @@ static void test_staged_link_address_hooks()
 int main(int argc, char ** argv)
 {
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
-    CHECK(rocketnet_init( NULL ) == ROCKETNET_STATUS_OK);
+    CHECK(rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK);
     rocketnet_forbid_xdp_commit();
     if (argc == 2)
     {

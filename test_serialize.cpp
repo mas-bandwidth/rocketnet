@@ -30,7 +30,7 @@ do                                                                              
 
 int main()
 {
-    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
     rocketnet_forbid_xdp_commit();
 
     struct rocketnet_server_transport_config_t server_config;

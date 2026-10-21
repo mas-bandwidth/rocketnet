@@ -7476,7 +7476,7 @@ void rocketnet_test_create_before_init_is_refused()
     // a refused create must allocate nothing: install a counting allocator and
     // assert it is never called. both callbacks, uninitialized, nothing live.
     rocketnet_test_allocator_calls = 0;
-    rocketnet_check( rocketnet_allocator( rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_allocator_ex( rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) == ROCKETNET_STATUS_OK );
 
     const uint64_t before = rocketnet_api_misuse_count();
 
@@ -7491,28 +7491,27 @@ void rocketnet_test_create_before_init_is_refused()
     rocketnet_check( rocketnet_test_allocator_calls == 0 );
 
     // restore the default allocator, then the library, for the worker's term
-    rocketnet_check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
 void rocketnet_test_allocator_refusal_is_returned()
 {
-    // after init a replacement is refused and counted
+    // after init, a second init with an allocator is refused
     const uint64_t before = rocketnet_api_misuse_count();
-    rocketnet_check( rocketnet_allocator( rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) != ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_init( NULL, rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) == ROCKETNET_STATUS_ALREADY_INITIALIZED );
 
-    // terminated with no live allocations: a partial set is still refused and
-    // counted; both callbacks are taken and return true
+    // terminated with no live allocations: a partial pair is refused and
+    // counted, and both functions are taken
     rocketnet_term();
-    rocketnet_check( rocketnet_allocator( NULL, rocketnet_test_allocator_free ) != ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_allocator( rocketnet_test_allocator_malloc, NULL ) != ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_api_misuse_count() == before + 3 );
+    rocketnet_check( rocketnet_init( NULL, NULL, rocketnet_test_allocator_free ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    rocketnet_check( rocketnet_init( NULL, rocketnet_test_allocator_malloc, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 2 );
 
-    rocketnet_check( rocketnet_allocator( rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_init( NULL, rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
 
-    // restore the default allocator, then the library, for the worker's term
-    rocketnet_check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    // the system allocator, then the library, for the worker's term
+    rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
 static int rocketnet_test_null_asserts = 0;
@@ -7554,7 +7553,6 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_log_function",
     "rocketnet_time",
     "rocketnet_sleep",
-    "rocketnet_allocator",
     "rocketnet_client_default_config_internal",
     "rocketnet_client_required_memory",
     "rocketnet_client_create",
@@ -7608,7 +7606,6 @@ static const char * rocketnet_test_exports[] =
 
 static const char * rocketnet_test_public_null_case_exports[] =
 {
-    "rocketnet_allocator",
     "rocketnet_client_default_config_internal",
     "rocketnet_client_connect",
     "rocketnet_client_destroy",
@@ -7704,7 +7701,6 @@ static const char * rocketnet_test_layer_exports[] =
     "rocketnet_error",
     "rocketnet_debug",
     "rocketnet_spam",
-    "rocketnet_allocator",
     "rocketnet_allocator_ex",
     "rocketnet_api_misuse_count",
     "rocketnet_get_thread_priority",
@@ -7856,7 +7852,6 @@ static const char * rocketnet_test_layer_null_case_exports[] =
     "rocketnet_error",
     "rocketnet_debug",
     "rocketnet_spam",
-    "rocketnet_allocator",
     "rocketnet_allocator_ex",
     "rocketnet_user_id_string",
     "rocketnet_random_bytes",
@@ -8038,7 +8033,7 @@ void rocketnet_test_public_api_null()
     char token_string[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES] = { 0 };
     char address_string[ROCKETNET_MAX_ADDRESS_STRING_BYTES] = { 0 };
 
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_allocator( NULL, NULL ) != ROCKETNET_STATUS_OK ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_init( NULL, NULL, rocketnet_default_free_function ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_allocator_ex( NULL, NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_generate_backend_keypair( NULL, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_generate_backend_keypair_from_seed( NULL, token, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
@@ -8544,9 +8539,9 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     rocketnet_check( rocketnet_message_server_create_sized( NULL, NULL, NULL, 0, NULL, 0, NULL, 0, 0 ) == NULL );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
-    // rocketnet_allocator refuses a NULL callback in a partial or full set
+    // rocketnet_init refuses a partial allocator pair
     before = rocketnet_api_misuse_count();
-    rocketnet_check( rocketnet_allocator( NULL, NULL ) != ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_init( NULL, rocketnet_default_malloc_function, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();
@@ -13846,7 +13841,8 @@ public:
                 clear(name);
             }
         }
-        clear("ROCKETNET_SERVER_PUBLIC_ADDRESS");
+        clear("ROCKETNET_SERVER_IPV4_ADDRESS");
+        clear("ROCKETNET_SERVER_IPV6_ADDRESS");
         clear("ROCKETNET_SERVER_NUM_OS_CPUS");
         clear("ROCKETNET_GATEWAY_ETHERNET_ADDRESS");
     }
@@ -13864,13 +13860,13 @@ void rocketnet_test_suite_environment()
     const bool server_present = rocketnet_test_getenv_string("ROCKETNET_SERVER_TRANSPORT", &original_server);
     std::string original_client;
     const bool client_present = rocketnet_test_getenv_string("ROCKETNET_CLIENT_TRANSPORT", &original_client);
-    rocketnet_check(unsetenv("ROCKETNET_SERVER_PUBLIC_ADDRESS") == 0);
+    rocketnet_check(unsetenv("ROCKETNET_SERVER_IPV4_ADDRESS") == 0);
     const std::string long_value(4096, 'x');
     rocketnet_check(setenv("ROCKETNET_SERVER_MAX_CLIENTS", long_value.c_str(), 1) == 0);
     {
         rocketnet_test_environment_t isolated;
         rocketnet_check(!rocketnet_test_env_is_set("ROCKETNET_SERVER_MAX_CLIENTS"));
-        rocketnet_check(setenv("ROCKETNET_SERVER_PUBLIC_ADDRESS", "127.0.0.1:1234", 1) == 0);
+        rocketnet_check(setenv("ROCKETNET_SERVER_IPV4_ADDRESS", "127.0.0.1:1234", 1) == 0);
         std::string server_now;
         rocketnet_check(rocketnet_test_getenv_string("ROCKETNET_SERVER_TRANSPORT", &server_now) == server_present);
         if (server_present) rocketnet_check(original_server == server_now);
@@ -13878,7 +13874,7 @@ void rocketnet_test_suite_environment()
         rocketnet_check(rocketnet_test_getenv_string("ROCKETNET_CLIENT_TRANSPORT", &client_now) == client_present);
         if (client_present) rocketnet_check(original_client == client_now);
     }
-    rocketnet_check(!rocketnet_test_env_is_set("ROCKETNET_SERVER_PUBLIC_ADDRESS"));
+    rocketnet_check(!rocketnet_test_env_is_set("ROCKETNET_SERVER_IPV4_ADDRESS"));
     std::string max_clients_now;
     rocketnet_check(rocketnet_test_getenv_string("ROCKETNET_SERVER_MAX_CLIENTS", &max_clients_now));
     rocketnet_check(long_value == max_clients_now);

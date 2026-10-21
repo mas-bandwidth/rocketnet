@@ -398,7 +398,7 @@ struct rocketnet_client_transport_t * rocketnet_client_transport_create( void * 
  * @return A caller-owned transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, INVALID_TRANSPORT_LIST, INVALID_CONNECT_TOKEN, CONNECT_TOKEN_EXPIRED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, MUTEX_CREATE_FAILED, or THREAD_CREATE_FAILED. A transport transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate (sdk/rocketnet_client_transport.cpp:882); nothing the create allocated stays live. Call rocketnet_init first and correct the reported cause before retrying.
  * @code
  * // token, context, config, time, and status are supplied by the game.
- * rocketnet_init(NULL);
+ * rocketnet_init( NULL, NULL, NULL );
  * struct rocketnet_client_transport_t *client = rocketnet_client_transport_create_ex(context, token, config, time, &status);
  * if (client) { rocketnet_client_transport_update(client, time); rocketnet_client_transport_destroy(client); }
  * rocketnet_term();
@@ -908,7 +908,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
  * @return A caller-owned server transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, MISSING_KEYS, INVALID_PROTOCOL_ID, DEV_KEYS_IN_RELEASE, INVALID_TRANSPORT_LIST, INVALID_ADDRESS, TRANSPORT_PORT_ZERO_UNSUPPORTED, TRANSPORT_FAMILIES_UNSUPPORTED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, or MUTEX_CREATE_FAILED. TRANSPORT_FAMILIES_UNSUPPORTED is the status when every candidate that opened refused because it cannot serve both named families. A transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate; nothing the create allocated stays live. Correct the reported cause before retrying. Every failure logs an error line except two: when a simulated loss, latency, jitter, or duplicate setting is non-zero, a failed link-simulator allocation (OUT_OF_MEMORY) or a failed link-simulator mutex creation (MUTEX_CREATE_FAILED) returns without logging.
  * @code
  * // context, address, config, status, time, and dt are supplied by the game.
- * rocketnet_init(NULL);
+ * rocketnet_init( NULL, NULL, NULL );
  * struct rocketnet_server_transport_t *server = rocketnet_server_transport_create_ex(context, address, config, time, &status);
  * if (server) { rocketnet_server_transport_stop(server); while (rocketnet_server_transport_state(server) != ROCKETNET_SERVER_TRANSPORT_STOPPED) { time += dt; rocketnet_server_transport_update(server, time); } rocketnet_server_transport_destroy(server); }
  * rocketnet_term();

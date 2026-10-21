@@ -4,8 +4,8 @@
 */
 
 // The api-polish follow-ups, pinned: the quiet switch is Next SDK named
-// (rocketnet_quiet), the status count is ROCKETNET_STATUS_COUNT like the
-// other *_COUNT values, and the WARN level's name is "warn", matching its
+// (rocketnet_quiet), the last status code is CONFIG_NOT_INITIALIZED at -27,
+// and the WARN level's name is "warn", matching its
 // enum as every other level name does. The assert callback has one way in,
 // rocketnet_assert_function; the internal pointer it writes is
 // rn_assert_function, never exported. Every case runs in memory, with no
@@ -22,7 +22,7 @@
 #define check rocketnet_unit_check
 
 static_assert( std::is_same<decltype( &rocketnet_quiet ), void (*)( bool )>::value, "Next SDK naming: rocketnet_quiet( bool )" );
-static_assert( ROCKETNET_STATUS_COUNT == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED + 1, "ROCKETNET_STATUS_COUNT follows the last code" );
+static_assert( ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED == -27, "the failures are dense down to the last code" );
 
 static int api_polish_followups_count = 0;
 
@@ -56,10 +56,9 @@ static void test_api_polish_followups()
     rocketnet_log_function( NULL, NULL );
     rocketnet_log_level( saved );
 
-    // ROCKETNET_STATUS_COUNT counts every code, OK included
-    check( ROCKETNET_STATUS_COUNT == 28 );
-    check( strcmp( rocketnet_status_name( (rocketnet_status_t) ( ROCKETNET_STATUS_COUNT - 1 ) ), "CONFIG_NOT_INITIALIZED" ) == 0 );
-    check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_COUNT ), "UNKNOWN" ) == 0 );
+    // the last code is CONFIG_NOT_INITIALIZED, and one past it is no code
+    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -27 ), "CONFIG_NOT_INITIALIZED" ) == 0 );
+    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -28 ), "UNKNOWN" ) == 0 );
 
     // every level name matches its enum: WARN is "warn"
     check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_NONE ), "NONE" ) == 0 );

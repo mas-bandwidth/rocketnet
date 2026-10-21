@@ -28,6 +28,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+// A status value no call writes. A test sets a status to it before a call to
+// see that the call wrote the status. Every code is zero or negative.
+#define ROCKETNET_TEST_STATUS_UNSET ( (enum rocketnet_status_t) 1 )
+
 struct rocketnet_unit_file_test_t
 {
     const char * name;

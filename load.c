@@ -528,7 +528,7 @@ int main( int argc, char ** argv )
 #endif
     signal( SIGINT, interrupt_handler );
 
-    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
     {
         fprintf( stderr, "load: rocketnet_init failed\n" );
         return 1;

@@ -287,7 +287,7 @@ func run() int {
 
 	fmt.Println("starting server:")
 	server, err := startChild("server", serverPath, []string{address}, []string{
-		"ROCKETNET_SERVER_PUBLIC_ADDRESS=" + address,
+		"ROCKETNET_SERVER_IPV4_ADDRESS=" + address,
 		"ROCKETNET_SERVER_TRANSPORT=portable",
 	})
 	if err != nil {

@@ -196,51 +196,44 @@ static const char * rocketnet_log_level_word( enum rocketnet_log_level_t level )
     }
 }
 
-// One row per code, in the enum's order. The array is unsized so the static
-// assertion below refuses a code without a name and a name without a code.
-static const char * const rocketnet_status_names[] =
-{
-    "OK",
-    "ALREADY_INITIALIZED",
-    "NOT_INITIALIZED",
-    "LIVE_ALLOCATIONS",
-    "PLATFORM_INIT_FAILED",
-    "CRYPTO_INIT_FAILED",
-    "INVALID_ARGUMENT",
-    "CONFIG_ENV_INVALID",
-    "CONFIG_OUT_OF_RANGE",
-    "MEMORY_BUDGET_EXCEEDED",
-    "MISSING_KEYS",
-    "INVALID_PROTOCOL_ID",
-    "DEV_KEYS_IN_RELEASE",
-    "INVALID_ADDRESS",
-    "INVALID_TRANSPORT_LIST",
-    "INVALID_CONNECT_TOKEN",
-    "CONNECT_TOKEN_EXPIRED",
-    "TRANSPORT_PORT_ZERO_UNSUPPORTED",
-    "TRANSPORT_LADDER_EXHAUSTED",
-    "OUT_OF_MEMORY",
-    "MUTEX_CREATE_FAILED",
-    "THREAD_CREATE_FAILED",
-    "TIMER_CREATE_FAILED",
-    "CLIENT_NOT_DISCONNECTED",
-    "SERVER_NOT_STOPPED",
-    "FLOW_ID_RESERVED",
-    "TRANSPORT_FAMILIES_UNSUPPORTED",
-    "CONFIG_NOT_INITIALIZED",
-};
-
-static_assert( sizeof( rocketnet_status_names ) / sizeof( rocketnet_status_names[0] ) == ROCKETNET_STATUS_COUNT,
-               "every status code has exactly one name" );
-
-// the identifier without the ROCKETNET_STATUS_ prefix, and "UNKNOWN" (never
-// NULL, without asserting) for a value that is not a code.
+// The identifier without the ROCKETNET_STATUS_ prefix, mapped by value.
+// "UNKNOWN", never NULL and without asserting, for a value that is not a code.
 const char * rocketnet_status_name( enum rocketnet_status_t status )
 {
-    const int value = (int) status;
-    if ( value < 0 || value >= ROCKETNET_STATUS_COUNT )
-        return "UNKNOWN";
-    return rocketnet_status_names[value];
+    switch ( status )
+    {
+        case ROCKETNET_STATUS_OK:                              return "OK";
+        case ROCKETNET_STATUS_ALREADY_INITIALIZED:             return "ALREADY_INITIALIZED";
+        case ROCKETNET_STATUS_NOT_INITIALIZED:                 return "NOT_INITIALIZED";
+        case ROCKETNET_STATUS_LIVE_ALLOCATIONS:                return "LIVE_ALLOCATIONS";
+        case ROCKETNET_STATUS_PLATFORM_INIT_FAILED:            return "PLATFORM_INIT_FAILED";
+        case ROCKETNET_STATUS_CRYPTO_INIT_FAILED:              return "CRYPTO_INIT_FAILED";
+        case ROCKETNET_STATUS_INVALID_ARGUMENT:                return "INVALID_ARGUMENT";
+        case ROCKETNET_STATUS_CONFIG_ENV_INVALID:              return "CONFIG_ENV_INVALID";
+        case ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE:             return "CONFIG_OUT_OF_RANGE";
+        case ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED:          return "MEMORY_BUDGET_EXCEEDED";
+        case ROCKETNET_STATUS_MISSING_KEYS:                    return "MISSING_KEYS";
+        case ROCKETNET_STATUS_INVALID_PROTOCOL_ID:             return "INVALID_PROTOCOL_ID";
+        case ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE:             return "DEV_KEYS_IN_RELEASE";
+        case ROCKETNET_STATUS_INVALID_ADDRESS:                 return "INVALID_ADDRESS";
+        case ROCKETNET_STATUS_INVALID_TRANSPORT_LIST:          return "INVALID_TRANSPORT_LIST";
+        case ROCKETNET_STATUS_INVALID_CONNECT_TOKEN:           return "INVALID_CONNECT_TOKEN";
+        case ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED:           return "CONNECT_TOKEN_EXPIRED";
+        case ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED: return "TRANSPORT_PORT_ZERO_UNSUPPORTED";
+        case ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED:      return "TRANSPORT_LADDER_EXHAUSTED";
+        case ROCKETNET_STATUS_OUT_OF_MEMORY:                   return "OUT_OF_MEMORY";
+        case ROCKETNET_STATUS_MUTEX_CREATE_FAILED:             return "MUTEX_CREATE_FAILED";
+        case ROCKETNET_STATUS_THREAD_CREATE_FAILED:            return "THREAD_CREATE_FAILED";
+        case ROCKETNET_STATUS_TIMER_CREATE_FAILED:             return "TIMER_CREATE_FAILED";
+        case ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED:         return "CLIENT_NOT_DISCONNECTED";
+        case ROCKETNET_STATUS_SERVER_NOT_STOPPED:              return "SERVER_NOT_STOPPED";
+        case ROCKETNET_STATUS_FLOW_ID_RESERVED:                return "FLOW_ID_RESERVED";
+        case ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED:  return "TRANSPORT_FAMILIES_UNSUPPORTED";
+        case ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED:          return "CONFIG_NOT_INITIALIZED";
+        default:
+            break;
+    }
+    return "UNKNOWN";
 }
 
 static void default_log_callback( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
@@ -436,30 +429,40 @@ uint64_t rocketnet_allocation_overhead()
     return sizeof(rocketnet_allocation_header_t) + ROCKETNET_ALLOCATION_ALIGNMENT - 1;
 }
 
-enum rocketnet_status_t rocketnet_allocator( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) )
+// Installs the allocator pair with the lifecycle lock held. NULL for both is
+// the system allocator. A partial pair is INVALID_ARGUMENT, a change after
+// init or during the transition is ALREADY_INITIALIZED, and a change with
+// outstanding allocations is LIVE_ALLOCATIONS. The pair already installed is
+// accepted as it is.
+static int rn_allocator_install_locked( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) )
 {
-    return (enum rocketnet_status_t) rocketnet_allocator_ex( malloc_function, free_function );
+    if ( ( malloc_function == NULL ) != ( free_function == NULL ) )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    if ( !malloc_function )
+    {
+        malloc_function = rocketnet_default_malloc_function;
+        free_function = rocketnet_default_free_function;
+    }
+    if ( rocketnet_initialized || rocketnet_transitioning )
+        return ROCKETNET_STATUS_ALREADY_INITIALIZED;
+    if ( malloc_function == rocketnet_malloc_function && free_function == rocketnet_free_function )
+        return ROCKETNET_STATUS_OK;
+    if ( rocketnet_allocations != 0 )
+        return ROCKETNET_STATUS_LIVE_ALLOCATIONS;
+    rocketnet_malloc_function = malloc_function;
+    rocketnet_free_function = free_function;
+    return ROCKETNET_STATUS_OK;
 }
 
 int rocketnet_allocator_ex( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) )
 {
-    // docs/ERRORS-AND-LOGGING.md 1.1 and 2.1: a partial set is INVALID_ARGUMENT,
-    // a replacement after init (or during the transition) is ALREADY_INITIALIZED,
-    // and outstanding allocations are LIVE_ALLOCATIONS.
-    int status = ROCKETNET_STATUS_OK;
+    // docs/ERRORS-AND-LOGGING.md 1.1 and 2.1: the test seam under
+    // rocketnet_init's allocator arguments. It refuses a NULL callback.
+    int status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+    if ( malloc_function && free_function )
     {
         std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
-        if ( !malloc_function || !free_function )
-            status = ROCKETNET_STATUS_INVALID_ARGUMENT;
-        else if ( rocketnet_initialized || rocketnet_transitioning )
-            status = ROCKETNET_STATUS_ALREADY_INITIALIZED;
-        else if ( rocketnet_allocations != 0 )
-            status = ROCKETNET_STATUS_LIVE_ALLOCATIONS;
-        else
-        {
-            rocketnet_malloc_function = malloc_function;
-            rocketnet_free_function = free_function;
-        }
+        status = rn_allocator_install_locked( malloc_function, free_function );
     }
     if ( status != ROCKETNET_STATUS_OK )
     {
@@ -658,31 +661,43 @@ const char * rocketnet_connection_name( int connection_type )
 
 void * rocketnet_global_context = NULL;
 
-enum rocketnet_status_t rocketnet_init( void * context )
+enum rocketnet_status_t rocketnet_init( void * context, void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) )
 {
     int status = ROCKETNET_STATUS_OK;
-    (void) rocketnet_init_ex( context, &status );
+    (void) rocketnet_init_ex( context, malloc_function, free_function, &status );
     return (enum rocketnet_status_t) status;
 }
 
-bool rocketnet_init_ex( void * context, int * status )
+bool rocketnet_init_ex( void * context, void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ), int * status )
 {
-    // docs/ERRORS-AND-LOGGING.md 1.1 and 2.1: re-entry and the transition are
-    // ALREADY_INITIALIZED, a failed platform or sodium start is
-    // PLATFORM_INIT_FAILED or CRYPTO_INIT_FAILED, and success is OK.
-    bool already_initialized = false;
+    // docs/ERRORS-AND-LOGGING.md 1.1 and 2.1: a partial allocator pair is
+    // INVALID_ARGUMENT, re-entry and the transition are ALREADY_INITIALIZED,
+    // an allocator change with outstanding allocations is LIVE_ALLOCATIONS, a
+    // failed platform or sodium start is PLATFORM_INIT_FAILED or
+    // CRYPTO_INIT_FAILED, and success is OK.
+    int refused = ROCKETNET_STATUS_OK;
     {
         std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
-        if ( rocketnet_initialized || rocketnet_transitioning )
-            already_initialized = true;
-        else
+        refused = rn_allocator_install_locked( malloc_function, free_function );
+        if ( refused == ROCKETNET_STATUS_OK )
             rocketnet_transitioning = true;
     }
-    if ( already_initialized )
+    if ( refused != ROCKETNET_STATUS_OK )
     {
         if ( status )
-            *status = ROCKETNET_STATUS_ALREADY_INITIALIZED;
-        rocketnet_error( "rocketnet_init: rocketnet is already initialized" );
+            *status = refused;
+        if ( refused == ROCKETNET_STATUS_ALREADY_INITIALIZED )
+            rocketnet_error( "rocketnet_init: rocketnet is already initialized" );
+        else if ( refused == ROCKETNET_STATUS_INVALID_ARGUMENT )
+        {
+            rocketnet_error( "rocketnet_init: pass both allocator functions, or NULL for both" );
+            rocketnet_api_misuse_record();
+        }
+        else
+        {
+            rocketnet_error( "rocketnet_init: the allocator cannot change while allocations are live" );
+            rocketnet_api_misuse_record();
+        }
         return false;
     }
 

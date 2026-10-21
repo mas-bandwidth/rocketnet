@@ -113,11 +113,11 @@ static void test_platform_init_failed_reached()
     rocketnet_platform_set_priority_calls_for_testing( &fake );
 
     int status = -1;
-    check( !rocketnet_init_ex( NULL, &status ) );
+    check( !rocketnet_init_ex( NULL, NULL, NULL, &status ) );
     check( status == ROCKETNET_STATUS_PLATFORM_INIT_FAILED );
 
     rocketnet_platform_set_priority_calls_for_testing( NULL );
-    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 REGISTER_UNIT_TEST( test_platform_init_failed_reached );
 
@@ -206,8 +206,7 @@ static void test_client_connect_thread_create_failed_reached()
     reached_allocator_t state = { 0, 0, 0 };
 
     check( rocketnet_term() == ROCKETNET_STATUS_OK );
-    check( rocketnet_allocator( reached_allocate, reached_release ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_init( &state ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( &state, reached_allocate, reached_release ) == ROCKETNET_STATUS_OK );
     rocketnet_quiet( 1 );
 
     reached_identity_t identity;
@@ -255,8 +254,7 @@ static void test_client_connect_thread_create_failed_reached()
 
     check( rocketnet_term() == ROCKETNET_STATUS_OK );
     check( state.live == 0 );
-    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 REGISTER_UNIT_TEST( test_client_connect_thread_create_failed_reached );
 

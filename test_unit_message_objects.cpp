@@ -1686,8 +1686,7 @@ static void mo_free( void * context, void * p )
 static void test_message_objects_no_allocation_after_create()
 {
     rocketnet_term();
-    check( rocketnet_allocator( mo_malloc, mo_free ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, mo_malloc, mo_free ) == ROCKETNET_STATUS_OK );
 
     {
         rocketnet_message_config_t config;
@@ -1754,8 +1753,7 @@ static void test_message_objects_no_allocation_after_create()
     }
 
     rocketnet_term();
-    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
 // ---------------------------------------------------------------------------

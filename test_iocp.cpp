@@ -1278,8 +1278,7 @@ static const fault_case_t fault_cases[] = {
 int main( int argc, char ** argv )
 {
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
-    rocketnet_allocator(allocate, release);
-    CHECK(rocketnet_init( NULL ) == ROCKETNET_STATUS_OK);
+    CHECK(rocketnet_init( NULL, allocate, release ) == ROCKETNET_STATUS_OK);
     if ( argc < 2 )
     {
         test_create_cleanup();

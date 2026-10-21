@@ -583,8 +583,7 @@ static void counting_free( void * context, void * p )
 static void test_send_budget_no_allocation_after_create()
 {
     rocketnet_term();
-    check( rocketnet_allocator( counting_malloc, counting_free ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, counting_malloc, counting_free ) == ROCKETNET_STATUS_OK );
 
     rocketnet_send_budget_t budgets[4];
     check( rocketnet_send_budget_init( &budgets[0], ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 ) );
@@ -622,7 +621,7 @@ static void test_send_budget_no_allocation_after_create()
     check( g_alloc_calls == after_create );
 
     rocketnet_term();
-    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
 // ---------------------------------------------------------------------------

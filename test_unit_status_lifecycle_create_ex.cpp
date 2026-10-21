@@ -157,10 +157,10 @@ static void test_lifecycle_ex_reports_every_status()
 
     // init: success, then a second init is the re-entry refusal
     status = -1;
-    check( rocketnet_init_ex( NULL, &status ) );
+    check( rocketnet_init_ex( NULL, NULL, NULL, &status ) );
     check( status == ROCKETNET_STATUS_OK );
     status = -1;
-    check( !rocketnet_init_ex( NULL, &status ) );
+    check( !rocketnet_init_ex( NULL, NULL, NULL, &status ) );
     check( status == ROCKETNET_STATUS_ALREADY_INITIALIZED );
 
     // term with a live allocation is refused and leaves the library up
@@ -168,7 +168,7 @@ static void test_lifecycle_ex_reports_every_status()
     check( live != NULL );
     check( rocketnet_term_ex() == ROCKETNET_STATUS_LIVE_ALLOCATIONS );
     status = -1;
-    check( !rocketnet_init_ex( NULL, &status ) );
+    check( !rocketnet_init_ex( NULL, NULL, NULL, &status ) );
     check( status == ROCKETNET_STATUS_ALREADY_INITIALIZED );
     rocketnet_free( NULL, live );
 
@@ -183,7 +183,7 @@ static void test_lifecycle_ex_reports_every_status()
 
     void * pre_init = rocketnet_malloc( &state, 16 );
     check( pre_init != NULL );
-    check( rocketnet_allocator_ex( allocate, release ) == ROCKETNET_STATUS_LIVE_ALLOCATIONS );
+    check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_LIVE_ALLOCATIONS );
     rocketnet_free( &state, pre_init );
     check( state.live == 0 );
 
@@ -196,7 +196,7 @@ static void test_lifecycle_ex_reports_every_status()
 
     // init with the fault-injecting allocator in context
     status = -1;
-    check( rocketnet_init_ex( &state, &status ) );
+    check( rocketnet_init_ex( &state, allocate, release, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 
     // allocator after init is ALREADY_INITIALIZED

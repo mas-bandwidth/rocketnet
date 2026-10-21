@@ -93,9 +93,8 @@ static void test_client_memory_plan_non_step_driven()
 
     plan_counting_allocator_t state = { 0, 0 };
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
-    check( rocketnet_allocator_ex( plan_alloc, plan_free ) == ROCKETNET_STATUS_OK );
     int status = -1;
-    check( rocketnet_init_ex( &state, &status ) );
+    check( rocketnet_init_ex( &state, plan_alloc, plan_free, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 
     // rocketnet_init_ex runs platform discovery through this context before
@@ -114,8 +113,7 @@ static void test_client_memory_plan_non_step_driven()
 
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     check( state.live == 0 );
-    check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 
     rocketnet_client_transport_set_memory_plan_seam_for_test( false );
 
@@ -139,9 +137,8 @@ static void test_client_memory_plan_step_driven()
 
     plan_counting_allocator_t state = { 0, 0 };
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
-    check( rocketnet_allocator_ex( plan_alloc, plan_free ) == ROCKETNET_STATUS_OK );
     int status = -1;
-    check( rocketnet_init_ex( &state, &status ) );
+    check( rocketnet_init_ex( &state, plan_alloc, plan_free, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 
     // rocketnet_init_ex runs platform discovery through this context before
@@ -160,8 +157,7 @@ static void test_client_memory_plan_step_driven()
 
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     check( state.live == 0 );
-    check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 
     rocketnet_client_transport_set_memory_plan_seam_for_test( false );
 

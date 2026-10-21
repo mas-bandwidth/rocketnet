@@ -71,8 +71,7 @@ void rocketnet_test_lifecycle_transport()
 
     allocator_state state;
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
-    rocketnet_allocator( allocate, release );
-    check( rocketnet_init( &state ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( &state, allocate, release ) == ROCKETNET_STATUS_OK );
     rocketnet_forbid_xdp_commit();
     const int baseline = state.live;
 

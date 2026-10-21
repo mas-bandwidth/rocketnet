@@ -39,16 +39,14 @@ static const char happy_pattern[] = "rocketnet-happy-path";
 
 int main( int argc, char ** argv )
 {
-    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;
     }
 
-    char address_buffer[256];
-    const char * address = address_buffer;
-    if ( !rocketnet_test_getenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS", address_buffer, sizeof( address_buffer ) ) )
-        address = argc > 1 ? argv[1] : "127.0.0.1:0";
+    // ROCKETNET_SERVER_IPV4_ADDRESS, when set, overrides this address in create
+    const char * address = argc > 1 ? argv[1] : "127.0.0.1:0";
 
     struct rocketnet_server_config_t config;
     // the published development backend key (rocketnet.h, development builds); a real server brings its own backend's key, recommended through ROCKETNET_SERVER_BACKEND_PUBLIC_KEY, or set in code

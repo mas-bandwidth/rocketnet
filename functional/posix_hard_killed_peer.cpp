@@ -383,7 +383,7 @@ int rocketnet_posix_hard_killed_child_main( int argc, char ** argv )
         return 2;
     setvbuf( stdout, NULL, _IOLBF, 0 );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
-    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
         return 1;
     const pid_t parent = getppid();
     struct rocketnet_client_transport_t * client = posix_hk_client_create( argv[2], strtoull( argv[3], NULL, 10 ) );

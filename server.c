@@ -918,7 +918,7 @@ int main( int argc, char ** argv )
     if ( self_test )
         return run_self_test( self_test_path, label, seed );
 
-    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;

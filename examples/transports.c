@@ -143,7 +143,7 @@ int main( void )
 {
     struct rocketnet_server_config_t config;
     int result = 1;
-    CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    CHECK( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
     // let the library's own log lines through: they are the reason a
     // transport was granted, skipped, or refused
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );

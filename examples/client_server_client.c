@@ -122,7 +122,7 @@ int main( int argc, char ** argv )
 
     int have_keys = 0;
 
-    CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    CHECK( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 
     // the server writes the key file once it has started, which can take
     // longer than a launcher's head start; wait up to 10 seconds for a

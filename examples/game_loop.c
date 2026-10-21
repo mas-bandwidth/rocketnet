@@ -107,7 +107,7 @@ int main( int argc, char ** argv )
 
     struct rocketnet_server_t * server = NULL;
     struct rocketnet_client_t ** clients = calloc( (size_t) num_clients, sizeof( clients[0] ) );
-    if ( !clients || rocketnet_init( NULL ) != ROCKETNET_STATUS_OK ) { printf( "FAIL: init\n" ); return 1; }
+    if ( !clients || rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK ) { printf( "FAIL: init\n" ); return 1; }
 
     // the in-memory loopback transport holds one server and ROCKETNET_MAX_CLIENTS clients
     struct rocketnet_server_config_t server_config;

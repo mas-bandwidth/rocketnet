@@ -644,7 +644,7 @@ int main()
 {
     allocator_state state;
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
-    rocketnet_allocator( allocate, release );
+    rocketnet_allocator_ex( allocate, release );
     check( rocketnet_malloc( &state, SIZE_MAX ) == NULL );
     check( state.calls == 0 );
     rocketnet_server_transport_config_t memory_config;
@@ -697,17 +697,17 @@ int main()
         rocketnet_free( &state, p );
     }
     void * p = rocketnet_malloc( &state, 1 );
-    rocketnet_allocator( refuse_allocation, refuse_free ); // live allocation prevents replacement
+    rocketnet_allocator_ex( refuse_allocation, refuse_free ); // live allocation prevents replacement
     rocketnet_free( &state, p );
     check( state.live == 0 );
-    check( rocketnet_init( &state ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK );
+    check( rocketnet_init( &state, allocate, release ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK );
     rocketnet_forbid_xdp_commit();
-    rocketnet_allocator( refuse_allocation, refuse_free ); // initialized library prevents replacement
+    rocketnet_allocator_ex( refuse_allocation, refuse_free ); // initialized library prevents replacement
     p = rocketnet_malloc( &state, 16 );
     check( p );
     rocketnet_term(); // live allocation prevents premature shutdown
-    check( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK );
     rocketnet_free( &state, p );
     const int baseline = state.live;
 
@@ -738,10 +738,9 @@ int main()
     rocketnet_term();
     rocketnet_term();
     check( state.live == 0 );
-    rocketnet_allocator( refuse_allocation, refuse_free );
+    rocketnet_allocator_ex( refuse_allocation, refuse_free );
     check( rocketnet_malloc( NULL, 16 ) == NULL );
-    rocketnet_allocator( allocate, release );
-    check( rocketnet_init( &state ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( &state, allocate, release ) == ROCKETNET_STATUS_OK );
     rocketnet_term();
     check( state.live == 0 );
     printf( "lifecycle OK: aligned allocator, component create sweeps, thread refusal and init/term\n" );

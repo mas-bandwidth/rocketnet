@@ -278,8 +278,7 @@ static void loopback_count_free( void * context, void * memory )
 static void test_loopback_transport_io_runtime_does_not_allocate()
 {
     rocketnet_unit_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
-    rocketnet_unit_check( rocketnet_allocator_ex( loopback_count_malloc, loopback_count_free ) == ROCKETNET_STATUS_OK );
-    rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL, loopback_count_malloc, loopback_count_free ) == ROCKETNET_STATUS_OK );
 
     const size_t overhead = (size_t) rocketnet_allocation_overhead();
     const size_t live_before = g_loopback_live_bytes;
@@ -354,8 +353,7 @@ static void test_loopback_transport_io_runtime_does_not_allocate()
     rocketnet_unit_check( g_loopback_live_bytes == live_before );
 
     rocketnet_unit_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
-    rocketnet_unit_check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-    rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
     printf( "test_loopback_transport_io_runtime_does_not_allocate\n" );
 }
 

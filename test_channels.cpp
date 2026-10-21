@@ -4400,9 +4400,8 @@ int rocketnet_channels_run_named( const char * name )
     return 2;
 }
 
-// Allocator cases replace this process's allocation functions. Replacement is
-// refused once the library is initialized (rocketnet.cpp), so the hooks go in
-// before rocketnet_init. rocketnet_unit_prepare then installs the suite's log
+// Allocator cases replace this process's allocation functions. The hooks go
+// to rocketnet_init, which takes the allocator. rocketnet_unit_prepare then installs the suite's log
 // capture; the allocator cases want their own, which counts refusals, so that
 // one is installed again after prepare. Other cases are left alone.
 
@@ -4421,11 +4420,14 @@ static int rocketnet_channels_is_allocator_test( const char * name )
     return 0;
 }
 
-void rocketnet_channels_prepare( const char * name )
+void rocketnet_channels_prepare( const char * name, void * (**malloc_function)( void * context, size_t bytes ), void (**free_function)( void * context, void * p ) )
 {
+    *malloc_function = NULL;
+    *free_function = NULL;
     if ( !rocketnet_channels_is_allocator_test( name ) )
         return;
-    rocketnet_allocator( rn_test_malloc_hook, rn_test_free_hook );
+    *malloc_function = rn_test_malloc_hook;
+    *free_function = rn_test_free_hook;
 }
 
 void rocketnet_channels_prepare_log( const char * name )

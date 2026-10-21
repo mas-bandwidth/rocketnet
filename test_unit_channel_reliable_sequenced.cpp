@@ -431,8 +431,7 @@ static void rs_counted_free( void *, void * memory )
 static void test_reliable_sequenced_no_allocation_after_create()
 {
     rocketnet_term();
-    check( rocketnet_allocator( rs_counted_malloc, rs_counted_free ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, rs_counted_malloc, rs_counted_free ) == ROCKETNET_STATUS_OK );
     rs_node_t sender, receiver;
     rs_init( &sender );
     rs_init( &receiver );
@@ -450,8 +449,7 @@ static void test_reliable_sequenced_no_allocation_after_create()
     rn_arena_destroy( sender.arena );
     rn_arena_destroy( receiver.arena );
     rocketnet_term();
-    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
 REGISTER_UNIT_TEST( test_reliable_sequenced_no_allocation_after_create );

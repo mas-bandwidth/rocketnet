@@ -350,11 +350,11 @@ do                                                                              
     struct rocketnet_client_config_t c;                                                                         \
     check( rocketnet_client_default_config( &c ) == ROCKETNET_STATUS_OK );                                      \
     mutation;                                                                                                   \
-    enum rocketnet_status_t made_status = ROCKETNET_STATUS_COUNT;                                               \
+    enum rocketnet_status_t made_status = ROCKETNET_TEST_STATUS_UNSET;                                               \
     struct rocketnet_client_t * made = rocketnet_client_create( NULL, &c, &made_status );                       \
     check( ( made != NULL ) == (accepted) );                                                                    \
     check( (accepted) ? made_status == ROCKETNET_STATUS_OK                                                      \
-                      : ( made_status != ROCKETNET_STATUS_OK && made_status != ROCKETNET_STATUS_COUNT ) );      \
+                      : ( made_status != ROCKETNET_STATUS_OK && made_status != ROCKETNET_TEST_STATUS_UNSET ) );      \
     if ( made )                                                                                                 \
         rocketnet_client_destroy( made );                                                                       \
 } while ( 0 )
@@ -366,11 +366,11 @@ do                                                                              
     sized_config_dev_server_config( &c );                                                                       \
     c.max_clients = 4;                                                                                          \
     mutation;                                                                                                   \
-    enum rocketnet_status_t made_status = ROCKETNET_STATUS_COUNT;                                               \
+    enum rocketnet_status_t made_status = ROCKETNET_TEST_STATUS_UNSET;                                               \
     struct rocketnet_server_t * made = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &c, &made_status );        \
     check( ( made != NULL ) == (accepted) );                                                                    \
     check( (accepted) ? made_status == ROCKETNET_STATUS_OK                                                      \
-                      : ( made_status != ROCKETNET_STATUS_OK && made_status != ROCKETNET_STATUS_COUNT ) );      \
+                      : ( made_status != ROCKETNET_STATUS_OK && made_status != ROCKETNET_TEST_STATUS_UNSET ) );      \
     if ( made )                                                                                                 \
         rocketnet_server_destroy( made );                                                                       \
 } while ( 0 )
@@ -406,7 +406,7 @@ static void test_sized_config_create_refuses_before_init()
     check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL ) == NULL );
     check( rocketnet_api_misuse_count() == before + 1 );
 
-    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 
     // after init the same calls create
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
@@ -515,7 +515,7 @@ static void test_public_config_bytes_zeroed_is_refused()
     // other field takes its default
     memset( &client_config, 0, sizeof( client_config ) );
     client_config.config_bytes = sizeof( size_t );
-    status = ROCKETNET_STATUS_COUNT;
+    status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
     check( client != NULL );
     check( status == ROCKETNET_STATUS_OK );
@@ -549,7 +549,7 @@ static void test_public_config_bytes_older_smaller_reads_the_prefix()
     client_config.num_channels = 0;
     client_config.reliable_message_timeout_ms = -1;
     client_config.transport = "loopback";
-    enum rocketnet_status_t status = ROCKETNET_STATUS_COUNT;
+    enum rocketnet_status_t status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
     check( client != NULL );
     check( status == ROCKETNET_STATUS_OK );
@@ -576,7 +576,7 @@ static void test_public_config_bytes_older_smaller_reads_the_prefix()
     server_config.max_clients = 4;
     server_config.num_channels = 0;
     server_config.reliable_message_timeout_ms = -1;
-    status = ROCKETNET_STATUS_COUNT;
+    status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
     check( server != NULL );
     check( status == ROCKETNET_STATUS_OK );
@@ -620,7 +620,7 @@ static void test_public_config_bytes_newer_larger_ignores_the_tail()
     check( memcmp( (const uint8_t *) &newer_client.config + sizeof( size_t ), (const uint8_t *) &client_defaults + sizeof( size_t ),
                    sizeof( client_defaults ) - sizeof( size_t ) ) == 0 );
 
-    enum rocketnet_status_t status = ROCKETNET_STATUS_COUNT;
+    enum rocketnet_status_t status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &newer_client.config, &status );
     check( client != NULL );
     check( status == ROCKETNET_STATUS_OK );
@@ -645,7 +645,7 @@ static void test_public_config_bytes_newer_larger_ignores_the_tail()
     newer_server.config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     memcpy( newer_server.config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
     newer_server.config.max_clients = 4;
-    status = ROCKETNET_STATUS_COUNT;
+    status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &newer_server.config, &status );
     check( server != NULL );
     check( status == ROCKETNET_STATUS_OK );
@@ -815,7 +815,7 @@ static void test_public_config_default_fills_every_field()
     check( memcmp( &client_a, &client_b, sizeof( client_a ) ) == 0 );
     check( memcmp( &client_a, &client_sized, sizeof( client_a ) ) == 0 );
     // the default, read whole by create: a valid struct
-    enum rocketnet_status_t status = ROCKETNET_STATUS_COUNT;
+    enum rocketnet_status_t status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_a, &status );
     check( client != NULL );
     check( status == ROCKETNET_STATUS_OK );
@@ -838,7 +838,7 @@ static void test_public_config_default_fills_every_field()
     check( memcmp( &dev_a, &dev_sized, sizeof( dev_a ) ) == 0 );
     // the dev keys over the defaults, read whole by create: a valid struct
     dev_a.max_clients = 4;
-    status = ROCKETNET_STATUS_COUNT;
+    status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &dev_a, &status );
     check( server != NULL );
     check( status == ROCKETNET_STATUS_OK );

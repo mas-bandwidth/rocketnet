@@ -126,9 +126,8 @@ static void transport_oom_begin( transport_oom_allocator_t * state )
 {
     memset( state, 0, sizeof(*state) );
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
-    check( rocketnet_allocator_ex( transport_oom_allocate, transport_oom_release ) == ROCKETNET_STATUS_OK );
     int status = -1;
-    check( rocketnet_init_ex( state, &status ) );
+    check( rocketnet_init_ex( state, transport_oom_allocate, transport_oom_release, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 }
 
@@ -538,10 +537,9 @@ static void test_platform_init_survives_a_refusing_allocator()
     transport_oom_allocator_t state;
     memset( &state, 0, sizeof(state) );
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
-    check( rocketnet_allocator_ex( transport_oom_allocate, transport_oom_release ) == ROCKETNET_STATUS_OK );
     state.refuse_through = TRANSPORT_OOM_GIVE_WAY;
     int status = -1;
-    const bool initialized = rocketnet_init_ex( &state, &status );
+    const bool initialized = rocketnet_init_ex( &state, transport_oom_allocate, transport_oom_release, &status );
     const int asked = state.calls;
     state.refuse_through = 0;
     check( initialized );
