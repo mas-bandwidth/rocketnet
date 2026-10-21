@@ -326,6 +326,17 @@ int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endp
 
 void rocketnet_ack_endpoint_update_stats( struct rocketnet_ack_endpoint_t * endpoint );
 
+// Shared six-field result for direct worker-history calculation. The caller
+// owns the history exclusively while computing; this function never mutates it.
+struct rocketnet_ack_stats_result_t
+{
+    float rtt, jitter, packet_loss, sent_kbps, received_kbps, acked_kbps;
+};
+
+void rocketnet_ack_stats_history_compute( const rocketnet_ack_stats_history_t * history,
+                                           rocketnet_ack_stats_result_t * result );
+
+
 // -----------------------------------------
 //                    the server's acks
 // -----------------------------------------

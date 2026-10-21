@@ -233,10 +233,7 @@ struct rocketnet_server_stats_slot_t
     uint64_t history_generation;
 };
 
-struct rocketnet_server_stats_result_t
-{
-    float rtt, jitter, packet_loss, sent_kbps, received_kbps, acked_kbps;
-};
+typedef rocketnet_ack_stats_result_t rocketnet_server_stats_result_t;
 
 struct rocketnet_server_stats_job_t
 {
@@ -259,7 +256,6 @@ struct rocketnet_server_stats_bank_t
 struct rocketnet_server_stats_worker_t
 {
     rocketnet_server_stats_bank_t * banks[2];
-    rocketnet_ack_endpoint_t * scratch;
     rocketnet_server_stats_slot_t * slots;
     int max_clients;
     rocketnet_platform_mutex_t exchange_mutex;
@@ -381,7 +377,6 @@ static void rocketnet_server_stats_clear_delta( rocketnet_ack_stats_delta_t * de
 
 static void rocketnet_server_stats_compute( rocketnet_server_stats_slot_t * slot,
                                             const rocketnet_ack_stats_delta_t * input,
-                                            rocketnet_ack_endpoint_t * scratch,
                                             rocketnet_server_stats_result_t * output )
 {
     // Only the worker reads or writes rolling history. Coalescing by ring
@@ -404,29 +399,9 @@ static void rocketnet_server_stats_compute( rocketnet_server_stats_slot_t * slot
         if ( input->rtt_dirty[i / 64] & (1ull << (i % 64)) )
             history->rtt_history[i] = input->values.rtt_history[i];
 
-    // Reuse the established statistics math on private worker scratch.
-    // All copying, history scans and calculation are outside the mutex.
-    rocketnet_ack_endpoint_reset(scratch);
-    scratch->highest_sequence = history->highest_sent;
-    scratch->highest_received_sequence = history->highest_received;
-    memcpy(scratch->rtt_history, history->rtt_history, sizeof(scratch->rtt_history));
-    for ( int i = 0; i < ROCKETNET_SENT_PACKET_BUFFER_SIZE; ++i )
-    {
-        scratch->sent[i].sequence = history->sent[i].sequence;
-        scratch->sent[i].send_time = history->sent[i].send_time;
-        scratch->sent[i].wire_bytes = history->sent[i].wire_bytes;
-        scratch->sent[i].acked = history->sent[i].acked;
-    }
-    for ( int i = 0; i < ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE; ++i )
-    {
-        scratch->received[i].sequence = history->received[i].sequence;
-        scratch->received[i].receive_time = history->received[i].receive_time;
-        scratch->received[i].wire_bytes = history->received[i].wire_bytes;
-    }
-    rocketnet_ack_endpoint_update_stats(scratch);
-    *output = {scratch->rtt, scratch->jitter, scratch->packet_loss,
-               scratch->bandwidth_sent_kbps, scratch->bandwidth_received_kbps,
-               scratch->bandwidth_acked_kbps};
+    // Read the worker-owned compact history directly. No scratch reset or
+    // full-ring copy, and no calculation under the exchange mutex.
+    rocketnet_ack_stats_history_compute(history, output);
 }
 
 static bool rocketnet_server_stats_worker_step( rocketnet_server_stats_worker_t * worker )
@@ -448,7 +423,7 @@ static bool rocketnet_server_stats_worker_step( rocketnet_server_stats_worker_t 
     for ( int i = 0; i < chosen->count; ++i )
     {
         rocketnet_server_stats_job_t * job = &chosen->jobs[i];
-        rocketnet_server_stats_compute(&worker->slots[job->slot], job->input, worker->scratch, &job->output);
+        rocketnet_server_stats_compute(&worker->slots[job->slot], job->input, &job->output);
         rocketnet_server_stats_clear_delta(job->input);
     }
     worker->completed.fetch_add(1, std::memory_order_relaxed);
@@ -531,8 +506,6 @@ static void rocketnet_server_stats_worker_destroy( void * context, rocketnet_ser
     }
     if ( worker->wake )
         rocketnet_platform_wake_destroy(worker->wake);
-    if ( worker->scratch )
-        rocketnet_clear_and_free(context, worker->scratch, sizeof(*worker->scratch));
     for ( int i = 0; i < 2; ++i )
         if ( worker->banks[i] )
         {
@@ -556,7 +529,6 @@ static int rocketnet_server_stats_worker_create( void * context, rocketnet_serve
     if ( !worker ) return ROCKETNET_STATUS_OUT_OF_MEMORY;
     new (worker) rocketnet_server_stats_worker_t();
     worker->banks[0] = worker->banks[1] = NULL;
-    worker->scratch = NULL;
     worker->slots = NULL;
     worker->max_clients = max_clients;
     worker->mutex_created = false;
@@ -585,9 +557,6 @@ static int rocketnet_server_stats_worker_create( void * context, rocketnet_serve
         worker->slots[i].deltas[0].reset = true;
         worker->slots[i].spare = &worker->slots[i].deltas[1];
     }
-    worker->scratch = (rocketnet_ack_endpoint_t*) rocketnet_malloc(context, sizeof(rocketnet_ack_endpoint_t));
-    if ( !worker->scratch ) return ROCKETNET_STATUS_OUT_OF_MEMORY;
-    rocketnet_ack_endpoint_reset(worker->scratch);
     if ( !rocketnet_platform_mutex_create(&worker->exchange_mutex) )
         return ROCKETNET_STATUS_MUTEX_CREATE_FAILED;
     worker->mutex_created = true;
@@ -1113,8 +1082,7 @@ bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_con
     }
     const uint64_t stats_bytes = rocketnet_memory_allocations({
         sizeof(rocketnet_server_stats_worker_t), sizeof(rocketnet_server_stats_bank_t),
-        sizeof(rocketnet_server_stats_bank_t), (uint64_t)clients*sizeof(rocketnet_server_stats_slot_t),
-        sizeof(rocketnet_ack_endpoint_t)});
+        sizeof(rocketnet_server_stats_bank_t), (uint64_t)clients*sizeof(rocketnet_server_stats_slot_t)});
     const uint64_t wake_bytes = rocketnet_platform_wake_allocation_bytes();
     const uint64_t thread_bytes = rocketnet_platform_thread_allocation_bytes();
     if (!stats_bytes || !wake_bytes || !thread_bytes ||
