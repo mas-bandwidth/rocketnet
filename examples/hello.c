@@ -48,20 +48,20 @@ static int run_frames( struct rocketnet_server_t * server, struct rocketnet_clie
 
         // (2) receive every message in batches; the next receive or update releases them
 
-        struct rocketnet_message_batch_t batch;
-        while ( rocketnet_client_receive_messages( client, &batch ) )
+        const struct rocketnet_message_batch_t * batch = NULL;
+        while ( ( batch = rocketnet_client_receive_messages( client ) )->num_messages > 0 )
         {
             // the server sends this client nothing, so there is nothing to read
         }
 
         {
-            struct rocketnet_message_batch_t incoming;
-            while ( rocketnet_server_receive_messages( server, &incoming ) )
+            const struct rocketnet_message_batch_t * incoming = NULL;
+            while ( ( incoming = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
             {
-                for ( int i = 0; i < incoming.num_messages; i++ )
+                for ( int i = 0; i < incoming->num_messages; i++ )
                 {
-                    const uint8_t * data = incoming.data[i];
-                    const int bytes = incoming.bytes[i];
+                    const uint8_t * data = incoming->data[i];
+                    const int bytes = incoming->bytes[i];
                     printf( "server received: %.*s\n", bytes, (const char*) data );
 
                     if ( received )

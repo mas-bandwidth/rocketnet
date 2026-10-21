@@ -113,26 +113,26 @@ static int frame( struct rocketnet_server_t * server, struct rocketnet_client_t 
     rocketnet_server_update( server, now );
     rocketnet_client_update( client, now );
 
-    struct rocketnet_message_batch_t batch;
-    while ( rocketnet_server_receive_messages( server, &batch ) )
+    const struct rocketnet_message_batch_t * batch = NULL;
+    while ( ( batch = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
     {
-        for ( int i = 0; i < batch.num_messages; i++ )
+        for ( int i = 0; i < batch->num_messages; i++ )
         {
-            CHECK( batch.client_index[i] == 0 );
-            CHECK( batch.channel[i] == 0 );
+            CHECK( batch->client_index[i] == 0 );
+            CHECK( batch->channel[i] == 0 );
             // a receipt type arrives as its twin: the receipt is the sender's
-            CHECK( batch.reliability[i] == ROCKETNET_RELIABILITY_RELIABLE_ORDERED );
-            CHECK( batch.bytes[i] == (int) sizeof( client_message ) && memcmp( batch.data[i], client_message, sizeof( client_message ) ) == 0 );
+            CHECK( batch->reliability[i] == ROCKETNET_RELIABILITY_RELIABLE_ORDERED );
+            CHECK( batch->bytes[i] == (int) sizeof( client_message ) && memcmp( batch->data[i], client_message, sizeof( client_message ) ) == 0 );
             exchange->server_got++;
         }
     }
 
-    struct rocketnet_message_batch_t incoming;
-    while ( rocketnet_client_receive_messages( client, &incoming ) )
+    const struct rocketnet_message_batch_t * incoming = NULL;
+    while ( ( incoming = rocketnet_client_receive_messages( client ) )->num_messages > 0 )
     {
-        for ( int i = 0; i < incoming.num_messages; i++ )
+        for ( int i = 0; i < incoming->num_messages; i++ )
         {
-            CHECK( incoming.bytes[i] == (int) sizeof( server_message ) && memcmp( incoming.data[i], server_message, sizeof( server_message ) ) == 0 );
+            CHECK( incoming->bytes[i] == (int) sizeof( server_message ) && memcmp( incoming->data[i], server_message, sizeof( server_message ) ) == 0 );
             exchange->client_got++;
         }
     }

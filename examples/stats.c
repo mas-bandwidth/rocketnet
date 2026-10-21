@@ -69,23 +69,23 @@ static int run_connect_and_traffic( struct rocketnet_server_t * server, struct r
         rocketnet_server_update( server, now );
         rocketnet_client_update( client, now );
         {
-            struct rocketnet_message_batch_t batch;
-            while ( rocketnet_client_receive_messages( client, &batch ) )
+            const struct rocketnet_message_batch_t * batch = NULL;
+            while ( ( batch = rocketnet_client_receive_messages( client ) )->num_messages > 0 )
             {
                 // the echoes only need to arrive; the stats count them
             }
         }
         {
-            struct rocketnet_message_batch_t incoming;
-            while ( rocketnet_server_receive_messages( server, &incoming ) )
+            const struct rocketnet_message_batch_t * incoming = NULL;
+            while ( ( incoming = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
             {
-                for ( int j = 0; j < incoming.num_messages; j++ )
+                for ( int j = 0; j < incoming->num_messages; j++ )
                 {
-                    const int bytes = incoming.bytes[j];
-                    uint8_t * out = rocketnet_server_start_message( server, (uint64_t) incoming.client_index[j], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
+                    const int bytes = incoming->bytes[j];
+                    uint8_t * out = rocketnet_server_start_message( server, (uint64_t) incoming->client_index[j], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
                     if ( out )
                     {
-                        memcpy( out, incoming.data[j], (size_t) bytes );
+                        memcpy( out, incoming->data[j], (size_t) bytes );
                         rocketnet_server_finish_message( server, bytes );
                     }
                 }

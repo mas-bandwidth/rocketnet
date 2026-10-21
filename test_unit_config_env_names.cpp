@@ -31,6 +31,7 @@
 #include <string.h>
 #include <string>
 #include <vector>
+#include <algorithm>
 #include "test_unit_registry.h"
 #include "test/portable_crt.h"
 #include "sdk/rocketnet.h"
@@ -307,17 +308,18 @@ static std::vector<std::string> env_names_documented( const char * relative_path
     fclose( file );
     // the header names a variable beside its field or in an Environment: line;
     // docs/ENVIRONMENT.md names each in the first cell of a table row
-    const std::string markers[] = { "///< ROCKETNET_", "/// Environment: ROCKETNET_", "* Environment: ROCKETNET_", "| `ROCKETNET_" };
-    for ( int m = 0; m < 4; m++ )
+    // a header field's comment block starts with its variable's name
+    const std::string markers[] = { "/// ROCKETNET_CLIENT_", "/// ROCKETNET_SERVER_", "/// Environment: ROCKETNET_", "* Environment: ROCKETNET_", "| `ROCKETNET_" };
+    for ( int m = 0; m < 5; m++ )
     {
         const std::string & marker = markers[m];
     for ( size_t at = text.find( marker ); at != std::string::npos; at = text.find( marker, at + 1 ) )
     {
-        size_t begin = at + marker.size() - strlen( "ROCKETNET_" );
+        size_t begin = text.find( "ROCKETNET_", at );
         size_t end = begin;
         while ( end < text.size() && ( ( text[end] >= 'A' && text[end] <= 'Z' ) || ( text[end] >= '0' && text[end] <= '9' ) || text[end] == '_' ) )
             end++;
-        if ( end > begin )
+        if ( end > begin && std::find( names.begin(), names.end(), text.substr( begin, end - begin ) ) == names.end() )
             names.push_back( text.substr( begin, end - begin ) );
     }
     }

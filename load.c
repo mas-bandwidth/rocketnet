@@ -830,16 +830,16 @@ int main( int argc, char ** argv )
                 client_last_update[i] = update_time;
                 rocketnet_client_update( clients[i], update_time );
 
-                struct rocketnet_message_batch_t batch;
-                while ( rocketnet_client_receive_messages( clients[i], &batch ) )
+                const struct rocketnet_message_batch_t * batch = NULL;
+                while ( ( batch = rocketnet_client_receive_messages( clients[i] ) )->num_messages > 0 )
                 {
-                    for ( int j = 0; j < batch.num_messages; j++ )
+                    for ( int j = 0; j < batch->num_messages; j++ )
                     {
                         uint32_t msg_client = 0, msg_combo = 0, msg_seq = 0;
-                        if ( batch.client_index[j] != 0 ||
-                             !verify_message( batch.data[j], batch.bytes[j], LOAD_MAGIC_SV_TO_CLIENT, &msg_client, &msg_combo, &msg_seq ) ||
+                        if ( batch->client_index[j] != 0 ||
+                             !verify_message( batch->data[j], batch->bytes[j], LOAD_MAGIC_SV_TO_CLIENT, &msg_client, &msg_combo, &msg_seq ) ||
                              msg_client != (uint32_t) i || msg_combo != ROCKETNET_RELIABILITY_RELIABLE_ORDERED ||
-                             batch.channel[j] != ROCKETNET_RELIABILITY_RELIABLE_ORDERED )
+                             batch->channel[j] != ROCKETNET_RELIABILITY_RELIABLE_ORDERED )
                         {
                             reliable_errors++;
                         }
@@ -934,16 +934,16 @@ int main( int argc, char ** argv )
                     max_server_update_at = t0 - traffic_start;
                 }
 
-                struct rocketnet_message_batch_t batch;
-                while ( rocketnet_server_receive_messages( server, &batch ) )
+                const struct rocketnet_message_batch_t * batch = NULL;
+                while ( ( batch = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
                 {
-                    for ( int j = 0; j < batch.num_messages; j++ )
+                    for ( int j = 0; j < batch->num_messages; j++ )
                     {
                         c2s_received_total++;
                         uint32_t msg_client = 0, msg_combo = 0, msg_seq = 0;
-                        if ( !verify_message( batch.data[j], batch.bytes[j], LOAD_MAGIC_CLIENT_TO_SV, &msg_client, &msg_combo, &msg_seq ) ||
+                        if ( !verify_message( batch->data[j], batch->bytes[j], LOAD_MAGIC_CLIENT_TO_SV, &msg_client, &msg_combo, &msg_seq ) ||
                              msg_client >= (uint32_t) num_clients || msg_combo >= LOAD_NUM_COMBOS ||
-                             batch.client_index[j] != client_slot[msg_client] )
+                             batch->client_index[j] != client_slot[msg_client] )
                         {
                             reliable_errors++;
                             unreliable_errors++;
@@ -957,7 +957,7 @@ int main( int argc, char ** argv )
                             struct load_stream_state_t * cst = &c2s_streams[(size_t) msg_client * LOAD_NUM_COMBOS + msg_combo];
                             const int dup = stream_seen_test_and_set( cst, msg_seq );
 
-                            if ( batch.channel[j] != expected_rx_ch )
+                            if ( batch->channel[j] != expected_rx_ch )
                             {
                                 if ( combo_is_unreliable_family( msg_combo ) )
                                     unreliable_errors++;

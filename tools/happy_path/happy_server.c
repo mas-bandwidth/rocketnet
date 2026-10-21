@@ -101,13 +101,13 @@ int main( int argc, char ** argv )
         // (2) receive and process every received message for this update
         // from one queue across every client, each message naming its sender
         {
-            struct rocketnet_message_batch_t batch;
-            while ( rocketnet_server_receive_messages( server, &batch ) )
+            const struct rocketnet_message_batch_t * batch = NULL;
+            while ( ( batch = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
             {
-                for ( int i = 0; i < batch.num_messages; i++ )
+                for ( int i = 0; i < batch->num_messages; i++ )
                 {
-                    const uint8_t * data = batch.data[i];
-                    const int bytes = batch.bytes[i];
+                    const uint8_t * data = batch->data[i];
+                    const int bytes = batch->bytes[i];
                     const int mode = bytes > 0 ? data[0] : -1;
                     const int ok = mode >= 0 && mode < 8 &&
                                    bytes == payload_bytes &&

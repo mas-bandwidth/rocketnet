@@ -197,26 +197,26 @@ static void test_public_step_driven_client_delivers_both_ways()
         public_step_pump( &pair );
         const uint8_t * data = NULL; int bytes = 0;
         uint64_t sender = ~0ULL;
-        struct rocketnet_message_batch_t batch;
-        while ( rocketnet_server_receive_messages( pair.server, &batch ) )
+        const struct rocketnet_message_batch_t * batch = NULL;
+        while ( ( batch = rocketnet_server_receive_messages( pair.server ) )->num_messages > 0 )
         {
-            for ( int i = 0; i < batch.num_messages; i++ )
+            for ( int i = 0; i < batch->num_messages; i++ )
             {
-                data = batch.data[i];
-                bytes = batch.bytes[i];
-                sender = batch.client_index[i];
+                data = batch->data[i];
+                bytes = batch->bytes[i];
+                sender = batch->client_index[i];
                 check( sender == 0 );
                 check( at_server < 2 && bytes == 4 && memcmp( data, client_messages[at_server], 4 ) == 0 );
                 at_server++;
             }
         }
-        struct rocketnet_message_batch_t incoming;
-        while ( rocketnet_client_receive_messages( pair.client, &incoming ) )
+        const struct rocketnet_message_batch_t * incoming = NULL;
+        while ( ( incoming = rocketnet_client_receive_messages( pair.client ) )->num_messages > 0 )
         {
-            for ( int i = 0; i < incoming.num_messages; i++ )
+            for ( int i = 0; i < incoming->num_messages; i++ )
             {
-                data = incoming.data[i];
-                bytes = incoming.bytes[i];
+                data = incoming->data[i];
+                bytes = incoming->bytes[i];
                 check( at_client < 2 && bytes == 4 && memcmp( data, server_messages[at_client], 4 ) == 0 );
                 at_client++;
             }

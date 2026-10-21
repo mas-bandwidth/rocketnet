@@ -393,10 +393,10 @@ void client_frame( struct rocketnet_client_t * client, double time )
     rocketnet_client_update( client, time );
 
     /* 2. drain the one receive queue */
-    struct rocketnet_message_batch_t batch;
-    while ( rocketnet_client_receive_messages( client, &batch ) )
-        for ( int i = 0; i < batch.num_messages; i++ )
-            process_message( batch.channel[i], batch.reliability[i], batch.data[i], batch.bytes[i] );
+    const struct rocketnet_message_batch_t * batch = NULL;
+    while ( ( batch = rocketnet_client_receive_messages( client ) )->num_messages > 0 )
+        for ( int i = 0; i < batch->num_messages; i++ )
+            process_message( batch->channel[i], batch->reliability[i], batch->data[i], batch->bytes[i] );
 
     /* 3. run the game simulation for this frame */
 
@@ -537,12 +537,12 @@ void server_frame( struct rocketnet_server_t * server, int client_index, int cha
     rocketnet_server_update( server, time );
 
     /* 2. drain the one receive queue */
-    struct rocketnet_message_batch_t batch;
-    while ( rocketnet_server_receive_messages( server, &batch ) )
+    const struct rocketnet_message_batch_t * batch = NULL;
+    while ( ( batch = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
     {
-        for ( int i = 0; i < batch.num_messages; i++ )
-            process_message( batch.client_index[i], batch.channel[i],
-                             batch.reliability[i], batch.data[i], batch.bytes[i] );
+        for ( int i = 0; i < batch->num_messages; i++ )
+            process_message( batch->client_index[i], batch->channel[i],
+                             batch->reliability[i], batch->data[i], batch->bytes[i] );
     }
 
     /* 3. run the game simulation for this frame */

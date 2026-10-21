@@ -8064,7 +8064,7 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_start_message( NULL, 0, ROCKETNET_RELIABILITY_RELIABLE, 4 ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_finish_message( NULL, 4 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_client_abort_message( NULL ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_client_receive_messages( NULL, NULL ) ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_receive_messages( NULL ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_receipts( NULL, receipts, 2 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_set_send_kbps( NULL, 1000 ) != ROCKETNET_STATUS_OK ) );
 
@@ -8111,7 +8111,7 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_start_message( NULL, 0, 0, ROCKETNET_RELIABILITY_RELIABLE, 4 ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_finish_message( NULL, 4 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_abort_message( NULL ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_server_receive_messages( NULL, NULL ) ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_receive_messages( NULL ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_receipts( NULL, 0, receipts, 2 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_set_send_kbps( NULL, 0, 1000 ) != ROCKETNET_STATUS_OK ) );
 

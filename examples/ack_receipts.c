@@ -93,25 +93,25 @@ int main( void )
         // (2) receive and release incoming messages, and read this frame's receipts
         const uint8_t * data = NULL;
         int bytes = 0;
-        struct rocketnet_message_batch_t batch;
-        while ( rocketnet_client_receive_messages( client, &batch ) )
+        const struct rocketnet_message_batch_t * batch = NULL;
+        while ( ( batch = rocketnet_client_receive_messages( client ) )->num_messages > 0 )
         {
-            for ( int i = 0; i < batch.num_messages; i++ )
+            for ( int i = 0; i < batch->num_messages; i++ )
             {
-                data = batch.data[i];
-                bytes = batch.bytes[i];
+                data = batch->data[i];
+                bytes = batch->bytes[i];
             }
         }
         const int slot = rocketnet_client_index( client ); // -1 until CONNECTED
         int sender = -1;
-        struct rocketnet_message_batch_t arrived;
-        while ( rocketnet_server_receive_messages( server, &arrived ) )
+        const struct rocketnet_message_batch_t * arrived = NULL;
+        while ( ( arrived = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
         {
-            for ( int i = 0; i < arrived.num_messages; i++ )
+            for ( int i = 0; i < arrived->num_messages; i++ )
             {
-                data = arrived.data[i];
-                bytes = arrived.bytes[i];
-                sender = arrived.client_index[i];
+                data = arrived->data[i];
+                bytes = arrived->bytes[i];
+                sender = arrived->client_index[i];
             }
         }
 

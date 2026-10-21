@@ -2952,27 +2952,27 @@ static int reconnect_exchange( reconnect_world_t * world, int client, uint8_t ta
         const uint8_t * data = NULL;
         int bytes = 0;
         uint64_t sender = ~0ULL;
-        struct rocketnet_message_batch_t batch;
-        while ( rocketnet_server_receive_messages( world->server, &batch ) )
+        const struct rocketnet_message_batch_t * batch = NULL;
+        while ( ( batch = rocketnet_server_receive_messages( world->server ) )->num_messages > 0 )
         {
-            for ( int i = 0; i < batch.num_messages; i++ )
+            for ( int i = 0; i < batch->num_messages; i++ )
             {
-                data = batch.data[i];
-                bytes = batch.bytes[i];
-                sender = batch.client_index[i];
+                data = batch->data[i];
+                bytes = batch->bytes[i];
+                sender = batch->client_index[i];
                 check( sender == 0 );
                 check( bytes == 2 && data[0] == tag && data[1] == (uint8_t) at_server );
 
                 at_server++;
             }
         }
-        struct rocketnet_message_batch_t incoming;
-        while ( rocketnet_client_receive_messages( c, &incoming ) )
+        const struct rocketnet_message_batch_t * incoming = NULL;
+        while ( ( incoming = rocketnet_client_receive_messages( c ) )->num_messages > 0 )
         {
-            for ( int i = 0; i < incoming.num_messages; i++ )
+            for ( int i = 0; i < incoming->num_messages; i++ )
             {
-                data = incoming.data[i];
-                bytes = incoming.bytes[i];
+                data = incoming->data[i];
+                bytes = incoming->bytes[i];
                 check( bytes == 2 && data[0] == tag && data[1] == (uint8_t) at_client );
 
                 at_client++;

@@ -91,18 +91,18 @@ int main( void )
         rocketnet_server_update( server, now );
         rocketnet_client_update( client, now );
         // (2) receive and release every received message, checking each byte
-        struct rocketnet_message_batch_t batch;
-        while ( rocketnet_client_receive_messages( client, &batch ) )
+        const struct rocketnet_message_batch_t * batch = NULL;
+        while ( ( batch = rocketnet_client_receive_messages( client ) )->num_messages > 0 )
         {
             // the server sends this client nothing, so there is nothing to read
         }
-        struct rocketnet_message_batch_t incoming;
-        while ( rocketnet_server_receive_messages( server, &incoming ) )
+        const struct rocketnet_message_batch_t * incoming = NULL;
+        while ( ( incoming = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
         {
-            for ( int i = 0; i < incoming.num_messages; i++ )
+            for ( int i = 0; i < incoming->num_messages; i++ )
             {
-                const uint8_t * data = incoming.data[i];
-                const int bytes = incoming.bytes[i];
+                const uint8_t * data = incoming->data[i];
+                const int bytes = incoming->bytes[i];
                 if ( bytes == BIG_BYTES )
                 {
                     CHECK( memcmp( data, expected, BIG_BYTES ) == 0 );

@@ -93,13 +93,13 @@ int main( void ) {
         // (2) receive and release every message, and read resolved ack receipts
         const uint8_t * data = NULL;
         int bytes = 0;
-        struct rocketnet_message_batch_t batch;
-        while ( rocketnet_client_receive_messages( client, &batch ) )
+        const struct rocketnet_message_batch_t * batch = NULL;
+        while ( ( batch = rocketnet_client_receive_messages( client ) )->num_messages > 0 )
         {
-            for ( int i = 0; i < batch.num_messages; i++ )
+            for ( int i = 0; i < batch->num_messages; i++ )
             {
-                data = batch.data[i];
-                bytes = batch.bytes[i];
+                data = batch->data[i];
+                bytes = batch->bytes[i];
                     CHECK( bytes == 2 && data[0] < NUM_MODES && data[1] >= 1 && data[1] <= NUM_MSGS );
                     struct mode_stats_t * s = &stats[data[0]];
                     const uint8_t seq = data[1];
@@ -112,14 +112,14 @@ int main( void ) {
         }
         const int slot = rocketnet_client_index( client ); // -1 until CONNECTED
         int sender = -1;
-        struct rocketnet_message_batch_t incoming;
-        while ( rocketnet_server_receive_messages( server, &incoming ) )
+        const struct rocketnet_message_batch_t * incoming = NULL;
+        while ( ( incoming = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
         {
-            for ( int i = 0; i < incoming.num_messages; i++ )
+            for ( int i = 0; i < incoming->num_messages; i++ )
             {
-                data = incoming.data[i];
-                bytes = incoming.bytes[i];
-                sender = incoming.client_index[i];
+                data = incoming->data[i];
+                bytes = incoming->bytes[i];
+                sender = incoming->client_index[i];
             }
         }
         (void) data; (void) bytes; (void) sender;

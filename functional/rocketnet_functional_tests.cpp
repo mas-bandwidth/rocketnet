@@ -3646,12 +3646,12 @@ void rocketnet_test_public_client_server_queries()
             exchanged++;
         }
         // drain both receive queues: this case checks the counters, not the payloads
-        struct rocketnet_message_batch_t batch;
-        while ( rocketnet_server_receive_messages( server, &batch ) )
+        const struct rocketnet_message_batch_t * batch = NULL;
+        while ( ( batch = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
         {
         }
-        struct rocketnet_message_batch_t incoming;
-        while ( rocketnet_client_receive_messages( client, &incoming ) )
+        const struct rocketnet_message_batch_t * incoming = NULL;
+        while ( ( incoming = rocketnet_client_receive_messages( client ) )->num_messages > 0 )
         {
         }
         rocketnet_client_send_packets( client );

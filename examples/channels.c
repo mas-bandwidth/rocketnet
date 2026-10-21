@@ -92,8 +92,8 @@ int main( void )
         rocketnet_client_update( client, now );
 
         // (2) receive and release every received message on both channels
-        struct rocketnet_message_batch_t incoming;
-        while ( rocketnet_client_receive_messages( client, &incoming ) )
+        const struct rocketnet_message_batch_t * incoming = NULL;
+        while ( ( incoming = rocketnet_client_receive_messages( client ) )->num_messages > 0 )
         {
             // the server sends this client nothing, so there is nothing to read
         }
@@ -104,27 +104,27 @@ int main( void )
             // the server's one queue, in batches: each entry names its sender
             // and the channel it was delivered on, and order holds within a
             // channel; the next batch call or update releases a batch
-            struct rocketnet_message_batch_t batch;
-            while ( rocketnet_server_receive_messages( server, &batch ) )
+            const struct rocketnet_message_batch_t * batch = NULL;
+            while ( ( batch = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
             {
-                for ( int i = 0; i < batch.num_messages; i++ )
+                for ( int i = 0; i < batch->num_messages; i++ )
                 {
-                    CHECK( batch.client_index[i] == 0 );
-                    if ( batch.channel[i] == CHAT_CHANNEL )
+                    CHECK( batch->client_index[i] == 0 );
+                    if ( batch->channel[i] == CHAT_CHANNEL )
                     {
                         uint32_t seq = 0;
-                        CHECK( batch.bytes[i] == (int) sizeof( seq ) );
-                        memcpy( &seq, batch.data[i], sizeof( seq ) );
+                        CHECK( batch->bytes[i] == (int) sizeof( seq ) );
+                        memcpy( &seq, batch->data[i], sizeof( seq ) );
                         CHECK( seq == chat_received + 1 );
                         chat_received = seq;
                         chat_this_frame++;
                     }
                     else
                     {
-                        CHECK( batch.channel[i] == POSITION_CHANNEL );
+                        CHECK( batch->channel[i] == POSITION_CHANNEL );
                         uint32_t pos = 0;
-                        CHECK( batch.bytes[i] == (int) sizeof( pos ) );
-                        memcpy( &pos, batch.data[i], sizeof( pos ) );
+                        CHECK( batch->bytes[i] == (int) sizeof( pos ) );
+                        memcpy( &pos, batch->data[i], sizeof( pos ) );
                         CHECK( pos > last_pos );
                         last_pos = pos;
                         positions_received++;

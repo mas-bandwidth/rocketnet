@@ -174,17 +174,17 @@ int main( void )
         rocketnet_client_update( client, time );
         rocketnet_server_update( server, time );
 
-        struct rocketnet_message_batch_t batch;
-        while ( rocketnet_client_receive_messages( client, &batch ) )
-            for ( int i = 0; i < batch.num_messages; i++ )
-                if ( batch.bytes[i] == 4 && memcmp( batch.data[i], "pong", 4 ) == 0 )
+        const struct rocketnet_message_batch_t * batch = NULL;
+        while ( ( batch = rocketnet_client_receive_messages( client ) )->num_messages > 0 )
+            for ( int i = 0; i < batch->num_messages; i++ )
+                if ( batch->bytes[i] == 4 && memcmp( batch->data[i], "pong", 4 ) == 0 )
                     client_received_reply = 1;
 
         int reply_index = -1;
-        while ( rocketnet_server_receive_messages( server, &batch ) )
-            for ( int i = 0; i < batch.num_messages; i++ )
-                if ( batch.bytes[i] == 4 && memcmp( batch.data[i], "ping", 4 ) == 0 )
-                    reply_index = batch.client_index[i];
+        while ( ( batch = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
+            for ( int i = 0; i < batch->num_messages; i++ )
+                if ( batch->bytes[i] == 4 && memcmp( batch->data[i], "ping", 4 ) == 0 )
+                    reply_index = batch->client_index[i];
 
         /* Simulate the game here, then queue outgoing messages. */
         if ( reply_index >= 0 )

@@ -115,16 +115,16 @@ int main( void )
         // sent on channel 1, so the example checks none was lost. The server
         // takes its one queue in batches, each entry naming its channel; the
         // next batch call or update releases a batch
-        struct rocketnet_message_batch_t incoming;
-        while ( rocketnet_client_receive_messages( client, &incoming ) )
+        const struct rocketnet_message_batch_t * incoming = NULL;
+        while ( ( incoming = rocketnet_client_receive_messages( client ) )->num_messages > 0 )
             ;
         const int slot = (int) rocketnet_client_index( client );
-        struct rocketnet_message_batch_t batch;
-        while ( rocketnet_server_receive_messages( server, &batch ) )
+        const struct rocketnet_message_batch_t * batch = NULL;
+        while ( ( batch = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
         {
-            for ( int i = 0; i < batch.num_messages; i++ )
+            for ( int i = 0; i < batch->num_messages; i++ )
             {
-                if ( batch.client_index[i] == slot && batch.channel[i] == 1 )
+                if ( batch->client_index[i] == slot && batch->channel[i] == 1 )
                     reliable_received++;
             }
         }

@@ -173,14 +173,14 @@ int main( int argc, char ** argv )
             const uint8_t * data = NULL;
             int bytes = 0;
             int i = 0;
-            struct rocketnet_message_batch_t batch;
-            while ( rocketnet_server_receive_messages( server, &batch ) )
+            const struct rocketnet_message_batch_t * batch = NULL;
+            while ( ( batch = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
             {
-                for ( int j = 0; j < batch.num_messages; j++ )
+                for ( int j = 0; j < batch->num_messages; j++ )
                 {
-                    data = batch.data[j];
-                    bytes = batch.bytes[j];
-                    i = batch.client_index[j];
+                    data = batch->data[j];
+                    bytes = batch->bytes[j];
+                    i = batch->client_index[j];
                     printf( "server received: %.*s\n", bytes, (const char*) data );
                     uint8_t * out = rocketnet_server_start_message( server, (uint64_t) i, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
                     if ( out )

@@ -166,13 +166,13 @@ int main( int argc, char ** argv )
         // (2) receive and release every received message
         const uint8_t * data = NULL;
         int bytes = 0;
-        struct rocketnet_message_batch_t batch;
-        while ( rocketnet_client_receive_messages( client, &batch ) )
+        const struct rocketnet_message_batch_t * batch = NULL;
+        while ( ( batch = rocketnet_client_receive_messages( client ) )->num_messages > 0 )
         {
-            for ( int i = 0; i < batch.num_messages; i++ )
+            for ( int i = 0; i < batch->num_messages; i++ )
             {
-                data = batch.data[i];
-                bytes = batch.bytes[i];
+                data = batch->data[i];
+                bytes = batch->bytes[i];
                 printf( "client received: %.*s\n", bytes, (const char*) data );
 
                 received = 1;

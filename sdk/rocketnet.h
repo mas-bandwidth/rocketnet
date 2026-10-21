@@ -1422,8 +1422,8 @@ struct rocketnet_server_config_t
 ///
 /// A send the connection's region has no room for ends the connection: the
 /// server disconnects that client with the reason
-/// ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED, and a client ends in
-/// ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED. The send budget
+/// ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED, and a client ends in the
+/// state ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED. The send budget
 /// governs the wire, never the queue: a reliable message waits for budget and
 /// is never dropped; an unreliable one over budget is dropped and counted
 /// (the budget_drops stat).
@@ -1693,16 +1693,15 @@ ROCKETNET_EXPORT uint32_t rocketnet_client_finish_message( struct rocketnet_clie
 
 ROCKETNET_EXPORT void rocketnet_client_abort_message( struct rocketnet_client_t * client );
 
-/// The client's receive: fills messages with the next messages of the
-/// client's one receive queue, up to ROCKETNET_RECEIVE_BATCH_MESSAGES, every
-/// channel's, each naming the server as its sender (client_index 0), with the
-/// count in num_messages. Returns true when it filled at least one, false when
-/// none is pending; pump it until it returns false. The data pointers point
-/// into the library's storage and are valid until the next call of this
-/// function or of rocketnet_client_update on this client. A NULL client or
-/// messages is a counted no-op that returns false.
+/// The client's receive: refills the client's one batch with the next
+/// messages of its receive queue, up to ROCKETNET_RECEIVE_BATCH_MESSAGES, every
+/// channel's, each naming the server as its sender (client_index 0), and
+/// returns it; num_messages is 0 when none is pending, so pump it until
+/// num_messages is 0. The batch and its data pointers are valid until the next
+/// receive call or update on this client. A NULL client is a counted no-op
+/// that returns NULL.
 
-ROCKETNET_EXPORT bool rocketnet_client_receive_messages( struct rocketnet_client_t * client, struct rocketnet_message_batch_t * messages );
+ROCKETNET_EXPORT const struct rocketnet_message_batch_t * rocketnet_client_receive_messages( struct rocketnet_client_t * client );
 
 /// Copies this update's receipt outcomes into out, which has room for
 /// capacity entries, and returns how many it copied, 0 .. capacity. Call after
@@ -1946,17 +1945,15 @@ ROCKETNET_EXPORT uint32_t rocketnet_server_finish_message( struct rocketnet_serv
 
 ROCKETNET_EXPORT void rocketnet_server_abort_message( struct rocketnet_server_t * server );
 
-/// The server's receive: fills messages with the next messages of the
-/// server's one receive queue across all clients, up to
+/// The server's receive: refills the server's one batch, which covers every
+/// client, with the next messages of its receive queue, up to
 /// ROCKETNET_RECEIVE_BATCH_MESSAGES, each naming its sender in client_index[],
-/// with the count in num_messages. Returns true when it filled at least one,
-/// false when none is pending or the server is stopped; pump it until it
-/// returns false. The data pointers point into the library's storage and are
-/// valid until the next call of this function or of rocketnet_server_update on
-/// this server. A NULL server or messages is a counted no-op that returns
-/// false.
+/// and returns it; num_messages is 0 when none is pending or the server is
+/// stopped, so pump it until num_messages is 0. The batch and its data
+/// pointers are valid until the next receive call or update on this server. A
+/// NULL server is a counted no-op that returns NULL.
 
-ROCKETNET_EXPORT bool rocketnet_server_receive_messages( struct rocketnet_server_t * server, struct rocketnet_message_batch_t * messages );
+ROCKETNET_EXPORT const struct rocketnet_message_batch_t * rocketnet_server_receive_messages( struct rocketnet_server_t * server );
 
 /// As rocketnet_client_receipts, for one client slot: copies this update's
 /// receipt outcomes for the client in the slot. A free slot or a stopped
@@ -1995,29 +1992,29 @@ ROCKETNET_EXPORT void rocketnet_server_client_stats( const struct rocketnet_serv
 /// them, never refused, and they are delivered on channel 0.
 ///
 /// Receiving is pumped: one queue per client,
-/// and one per server across all its clients. Each receive fills the caller's
-/// struct rocketnet_message_batch_t with the queue's next messages, up to
-/// its capacity ROCKETNET_RECEIVE_BATCH_MESSAGES, one array per field: each
-/// message's sender (on a client, index = 0, the server), the channel it was delivered on, its wire type, its
-/// length and a pointer to its bytes in the library's storage, with the count
-/// in num_messages. It returns true
-/// when it filled at least one and false when nothing is pending; pump it until
-/// it returns false. There is no per-update cap: what
+/// and one per server across all its clients. Each client and each server
+/// holds one struct rocketnet_message_batch_t, made at create; each receive
+/// refills it with the queue's next messages, up to its capacity
+/// ROCKETNET_RECEIVE_BATCH_MESSAGES, one array per field: each message's
+/// sender (on a client, index = 0, the server), the channel it was delivered
+/// on, its reliability, its length and a pointer to its bytes in the
+/// library's storage, with the count in num_messages, and returns it. Pump it
+/// until num_messages is 0. There is no per-update cap: what
 /// one call does not return waits for the next call in the same update, in
 /// order. The queue holds every channel's messages: ordered and sequenced
 /// messages keep their order within their channel and sender, and on a server
 /// the queue holds the update's messages client by client in index order:
 ///
-///     struct rocketnet_message_batch_t batch;
-///     while ( rocketnet_server_receive_messages( server, &batch ) )
+///     const struct rocketnet_message_batch_t * batch;
+///     while ( ( batch = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
 ///     {
-///         for ( int i = 0; i < batch.num_messages; i++ )
-///             handle( batch.client_index[i], batch.data[i], batch.bytes[i] );
+///         for ( int i = 0; i < batch->num_messages; i++ )
+///             handle( batch->client_index[i], batch->data[i], batch->bytes[i] );
 ///     }
 ///
-/// The data pointers of one call are valid until the next receive call or the
-/// next update of the same client or server, whichever comes first; that call
-/// releases them, and there is no release call. Copy what is kept longer.
+/// The batch and its data pointers are valid until the next receive call or
+/// the next update of the same client or server, whichever comes first; there
+/// is no release call. Copy what is kept longer.
 
 /// The most messages one receive call fills.
 

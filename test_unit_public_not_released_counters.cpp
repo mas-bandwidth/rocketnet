@@ -354,14 +354,14 @@ static void test_public_not_released_batch_released_by_update()
     check( public_not_released_connect( &pair ) );
     public_not_released_send_from_server( &pair, 11 );
     public_not_released_send_from_client( &pair, 12 );
-    struct rocketnet_message_batch_t at_client;
-    struct rocketnet_message_batch_t at_server;
+    const struct rocketnet_message_batch_t * at_client = NULL;
+    const struct rocketnet_message_batch_t * at_server = NULL;
     bool client_got = false, server_got = false;
     for ( int i = 0; i < 20 && !( client_got && server_got ); i++ )
     {
         public_not_released_pump( &pair );
-        client_got = client_got || rocketnet_client_receive_messages( pair.client, &at_client );
-        server_got = server_got || rocketnet_server_receive_messages( pair.server, &at_server );
+        client_got = client_got || ( ( at_client = rocketnet_client_receive_messages( pair.client ) )->num_messages > 0 );
+        server_got = server_got || ( ( at_server = rocketnet_server_receive_messages( pair.server ) )->num_messages > 0 );
     }
     check( client_got && server_got );
     pair.time += 0.01;

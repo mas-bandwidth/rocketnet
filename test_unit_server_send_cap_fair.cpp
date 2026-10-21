@@ -247,21 +247,21 @@ static void fair_run_case( int num_clients, int capacity = 1 )
 
         for ( int c = 0; c < num_clients; c++ )
         {
-            struct rocketnet_message_batch_t batch;
-            while ( rocketnet_client_receive_messages( world.clients[c], &batch ) )
+            const struct rocketnet_message_batch_t * batch = NULL;
+            while ( ( batch = rocketnet_client_receive_messages( world.clients[c] ) )->num_messages > 0 )
             {
-                for ( int i = 0; i < batch.num_messages; i++ )
+                for ( int i = 0; i < batch->num_messages; i++ )
                 {
-                    if ( batch.channel[i] == FAIR_CHANNEL_RELIABLE )
+                    if ( batch->channel[i] == FAIR_CHANNEL_RELIABLE )
                     {
-                        check( batch.bytes[i] == 2 );
-                        const uint8_t * data = batch.data[i];
+                        check( batch->bytes[i] == 2 );
+                        const uint8_t * data = batch->data[i];
                         const uint16_t value = (uint16_t) ( ( data[0] << 8 ) | data[1] );
                         check( value == (uint16_t) client_reliable[c] );
                         client_reliable[c]++;
                         last_reliable_tick[c] = tick;
                     }
-                    else if ( batch.channel[i] == FAIR_CHANNEL_UNRELIABLE )
+                    else if ( batch->channel[i] == FAIR_CHANNEL_UNRELIABLE )
                     {
                         client_unreliable[c]++;
                     }
@@ -293,24 +293,24 @@ static void fair_run_case( int num_clients, int capacity = 1 )
         fair_server_update( &world );
 
         {
-            struct rocketnet_message_batch_t batch;
-            while ( rocketnet_server_receive_messages( world.server, &batch ) )
+            const struct rocketnet_message_batch_t * batch = NULL;
+            while ( ( batch = rocketnet_server_receive_messages( world.server ) )->num_messages > 0 )
             {
-                for ( int i = 0; i < batch.num_messages; i++ )
+                for ( int i = 0; i < batch->num_messages; i++ )
                 {
                     int c = 0;
-                    while ( c < num_clients && world.server_index[c] != batch.client_index[i] )
+                    while ( c < num_clients && world.server_index[c] != batch->client_index[i] )
                         c++;
                     check( c < num_clients );
-                    if ( batch.channel[i] == FAIR_CHANNEL_RELIABLE )
+                    if ( batch->channel[i] == FAIR_CHANNEL_RELIABLE )
                     {
-                        check( batch.bytes[i] == 2 );
-                        const uint8_t * data = batch.data[i];
+                        check( batch->bytes[i] == 2 );
+                        const uint8_t * data = batch->data[i];
                         const uint16_t value = (uint16_t) ( ( data[0] << 8 ) | data[1] );
                         check( value == (uint16_t) server_reliable[c] );
                         server_reliable[c]++;
                     }
-                    else if ( batch.channel[i] == FAIR_CHANNEL_UNRELIABLE )
+                    else if ( batch->channel[i] == FAIR_CHANNEL_UNRELIABLE )
                     {
                         server_unreliable[c]++;
                     }
@@ -335,15 +335,15 @@ static void fair_run_case( int num_clients, int capacity = 1 )
     fair_update_clients( &world );
     for ( int c = 0; c < num_clients; c++ )
     {
-        struct rocketnet_message_batch_t batch;
-        while ( rocketnet_client_receive_messages( world.clients[c], &batch ) )
+        const struct rocketnet_message_batch_t * batch = NULL;
+        while ( ( batch = rocketnet_client_receive_messages( world.clients[c] ) )->num_messages > 0 )
         {
-            for ( int i = 0; i < batch.num_messages; i++ )
+            for ( int i = 0; i < batch->num_messages; i++ )
             {
-                if ( batch.channel[i] != FAIR_CHANNEL_RELIABLE )
+                if ( batch->channel[i] != FAIR_CHANNEL_RELIABLE )
                     continue;
-                check( batch.bytes[i] == 2 );
-                const uint8_t * data = batch.data[i];
+                check( batch->bytes[i] == 2 );
+                const uint8_t * data = batch->data[i];
                 const uint16_t value = (uint16_t) ( ( data[0] << 8 ) | data[1] );
                 check( value == (uint16_t) client_reliable[c] );
                 client_reliable[c]++;
@@ -423,8 +423,8 @@ static void test_server_send_cap_two_multi_packet_service()
         fair_update_clients( &world );
         for ( int c = 0; c < 3; c++ )
         {
-            struct rocketnet_message_batch_t batch;
-            while ( rocketnet_client_receive_messages( world.clients[c], &batch ) )
+            const struct rocketnet_message_batch_t * batch = NULL;
+            while ( ( batch = rocketnet_client_receive_messages( world.clients[c] ) )->num_messages > 0 )
                 ;
         }
         fair_send_clients( &world );
