@@ -585,6 +585,15 @@ static void make_valid_token( uint8_t * token )
 
 static void check_server_memory_budget( allocator_state & state )
 {
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    const char * transport = "gso";
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    const char * transport = "msgx";
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    const char * transport = "iocp";
+#else
+#error "server memory budget lifecycle test needs a production server transport"
+#endif
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_default_config( &config );
     // non-development keys: the create path only refuses the published
@@ -593,8 +602,8 @@ static void check_server_memory_budget( allocator_state & state )
     memset( config.server_secret_key, 0xCD, 32 );
     memset( config.backend_public_key, 0xEF, 32 );
     config.protocol_id = 1;
-    snprintf( config.transport, sizeof( config.transport ), "%s", "portable" );
-    const uint64_t plan = rocketnet_server_transport_required_memory( &config, "portable" );
+    snprintf( config.transport, sizeof( config.transport ), "%s", transport );
+    const uint64_t plan = rocketnet_server_transport_required_memory( &config, transport );
     check( plan > 0 );
 
     char budget[64];

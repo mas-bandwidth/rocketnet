@@ -9,11 +9,9 @@
 // and the allocation-failure exits (S10, S14) are reached by a fault-injecting
 // allocator failing at each allocation in turn.
 //
-// Not reachable in the unit tier:
-//   * S13 TRANSPORT_LADDER_EXHAUSTED (a non-port-zero transport open refusal), which
-//     needs a transport open to refuse -- a socket -- and no unit-tier transport
-//     refuses without opening one; the port-zero refusal (S12) is reachable
-//     because the ladder refuses the XDP rung before opening anything.
+// A non-port-zero backend-open refusal still needs a live socket. This unit
+// test reaches TRANSPORT_LADDER_EXHAUSTED through the preallocation memory
+// budget instead; the port-zero refusal (S12) also occurs before open.
 
 #include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
@@ -107,6 +105,21 @@ static void production_config( struct rocketnet_server_transport_config_t * conf
     memset( config->server_public_key, 0x43, 32 );
     memset( config->server_secret_key, 0x44, 32 );
     config->protocol_id = 1;
+}
+
+// A named production server rung with a concrete memory plan. The budget=1
+// case refuses before opening it, so this unit test needs no native backend.
+static const char * production_budget_transport()
+{
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    return "gso";
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    return "msgx";
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    return "iocp";
+#else
+#error "server budget status test needs a production server transport"
+#endif
 }
 
 #if ROCKETNET_ASSERTS
@@ -206,12 +219,25 @@ static void test_server_transport_create_ex_reports_every_status()
     {
         struct rocketnet_server_transport_config_t config;
         production_config( &config );
-        snprintf( config.transport, sizeof( config.transport ), "%s", "portable" );
+        // The budget refusal is independent of the backend. This named
+        // production rung has a plan and refuses before any socket opens.
+        snprintf( config.transport, sizeof( config.transport ), "%s", production_budget_transport() );
         status = -1;
         check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
     }
     check( unsetenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" ) == 0 );
+
+    // A production server cannot explicitly select the portable rung. This
+    // policy refusal precedes backend open and cannot fall through to auto.
+    {
+        struct rocketnet_server_transport_config_t config;
+        production_config( &config );
+        snprintf( config.transport, sizeof( config.transport ), "%s", "portable" );
+        status = -1;
+        check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+        check( status == ROCKETNET_STATUS_INVALID_TRANSPORT_LIST );
+    }
 
     // S6: a keyless config (the default shape) is refused
     status = -1;

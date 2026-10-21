@@ -170,7 +170,9 @@ static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketn
     config.max_clients = clients;
     config.max_payload_bytes = payload_limit;
     config.max_fragmented_messages = 1;
-    snprintf(config.transport, sizeof(config.transport), "%s", "portable");
+    // The real adapter is closed immediately below; all behavior under test
+    // runs through the deterministic buffered or staged fixture operations.
+    snprintf(config.transport, sizeof(config.transport), "%s", "loopback");
     auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
     CHECK(server);
     rn_native_server_io_stop_and_close(&server->io);
