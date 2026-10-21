@@ -20,10 +20,10 @@ This guide is the technical reference for an AI coding agent integrating RocketN
 
 RocketNet is a low-level, connection-oriented client/server UDP transport and message library written in C++ with a pure C public interface:
 
-- **Real-time contract:** Public calls do bounded work, and the main frame
-  calls and create are intended to be unnoticeable in a game profiler. The
-  client's disconnect and destroy stop its I/O thread and wait for it, bounded. Long-running soak, load and profiling work belongs to the
-  planned hardening phase and is not a claim of this deliverable.
+- **Frame-time target:** Main frame calls target less than 100 microseconds
+  per call under load in Release builds. Create may take longer. Client
+  disconnect and destroy wait for the I/O thread to exit, with no promised
+  time bound. Long soak, load and profiling runs remain part of hardening.
 
 - **One public header:** [sdk/rocketnet.h](sdk/rocketnet.h). Include it directly from C or C++ (`#include "rocketnet.h"`); the header provides its own `extern "C"` guards when compiled as C++.
 - **One link library:** `RocketNet::rocketnet` (or the `rocketnet` CMake target when embedded via `add_subdirectory`).
@@ -79,7 +79,7 @@ find_package(RocketNet 1.0 CONFIG REQUIRED)
 target_link_libraries(game PRIVATE RocketNet::rocketnet)
 ```
 
-Pass `-DCMAKE_PREFIX_PATH=/path/to/prefix` when configuring the consuming project. For a shared library build, configure RocketNet with `-DBUILD_SHARED_LIBS=ON`.
+Pass `-DCMAKE_PREFIX_PATH=/path/to/prefix` when configuring the consuming project. The `rocketnet` target is always static; `BUILD_SHARED_LIBS` does not change it. See [BUILDING.md](BUILDING.md) for the shared-library target and linking instructions.
 
 When embedding the source tree with `add_subdirectory`:
 
@@ -96,8 +96,8 @@ A RocketNet integration follows a strict lifecycle and per-frame call order:
 
 1. **Initialize the library once per process:** Call `rocketnet_init(NULL)`; it returns `ROCKETNET_STATUS_OK` on success or a `rocketnet_status_t` refusal.
 2. **Create the server and client:**
-   - Fill `struct rocketnet_server_config_t` with `rocketnet_server_default_config(&server_config)`, set `protocol_id`, `backend_public_key`, `server_public_key`, and `server_secret_key` into it (a local development build can copy in the published development keys), call `rocketnet_server_create` with the address and a status out-parameter (it writes the refusal's code on NULL; `rocketnet_status_name` names it), then call `rocketnet_server_start(server)`. Create binds nothing and starts stopped; start binds the transport and accepts clients.
-   - Fill `struct rocketnet_client_config_t` with `rocketnet_client_default_config(&client_config)`, call `rocketnet_client_create` with a status out-parameter (it writes the refusal's code on NULL), then call `rocketnet_client_connect(client, connect_token)` with a `ROCKETNET_CONNECT_TOKEN_BYTES`-byte connect token. The client connects using the token alone; the handshake begins on the first `rocketnet_client_update`.
+   - Fill `struct rocketnet_server_config_t` with `rocketnet_server_default_config(&server_config)`, set `protocol_id` and `backend_public_key` into it (a development build can use `ROCKETNET_DEV_BACKEND_PUBLIC_KEY`), call `rocketnet_server_create` with the address and a status out-parameter (it writes the refusal's code on NULL; `rocketnet_status_name` names it), then call `rocketnet_server_start(server)`. Create generates a fresh server keypair and starts stopped; start binds the transport and accepts clients. Read `rocketnet_server_public_key` and the served IPv4/IPv6 addresses, then register them with the backend over an authenticated channel before it issues tokens.
+   - Fill `struct rocketnet_client_config_t` with `rocketnet_client_default_config(&client_config)`, call `rocketnet_client_create` with a status out-parameter (it writes the refusal's code on NULL), then call `rocketnet_client_connect(client, connect_token)` with an opaque NUL-terminated base64 connect-token string. The client connects using the token alone; the handshake begins on the first `rocketnet_client_update`.
 3. **Run the five-step frame loop in exact order every tick** (using the caller's monotonic `double time` in seconds):
    - **Step 1 — Update:** Call `rocketnet_client_update(client, time)` and `rocketnet_server_update(server, time)` first to pump the transport, process incoming packets and ACKs, and advance connection state.
    - **Step 2 — Receive:** Drain the one receive queue with `rocketnet_client_receive_messages` / `rocketnet_server_receive_messages`. Each call returns one `rocketnet_message_batch_t`; keep calling until it returns false. Process each entry's client index, channel, reliability, byte count and data pointer before the next receive or update on that endpoint. Read ACK/loss receipts with `rocketnet_client_receipts` / `rocketnet_server_receipts`.
@@ -108,100 +108,67 @@ A RocketNet integration follows a strict lifecycle and per-frame call order:
 
 ### Compilable loopback integration example
 
+Link this example with `rocketnet_dev`, which supplies
+`ROCKETNET_DEVELOPMENT=1`. The development key and token helper are available
+only in that build. Production clients receive token strings from a backend.
+
 <!-- check_agents_md:example:begin -->
 ```c
 #include "rocketnet.h"
 
 #include <stdint.h>
-#include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 int main( void )
 {
     if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
         return 1;
 
-    uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
-    uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
-
-    if ( rocketnet_generate_backend_keypair( backend_public_key, backend_secret_key ) != ROCKETNET_STATUS_OK )
-        return 1;
-    if ( rocketnet_generate_server_keypair( server_public_key, server_secret_key ) != ROCKETNET_STATUS_OK )
-        return 1;
-
+    int result = 1;
+    struct rocketnet_server_t * server = NULL;
+    struct rocketnet_client_t * client = NULL;
+    static const uint8_t dev_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
     const uint64_t protocol_id = 0x1122334455667788ULL;
-    const char * server_address = "127.0.0.1:40000";
-
     struct rocketnet_server_config_t server_config;
-    if ( rocketnet_server_default_config( &server_config ) != ROCKETNET_STATUS_OK )
-        return 1;
+    struct rocketnet_client_config_t client_config;
+    if ( rocketnet_server_default_config( &server_config ) != ROCKETNET_STATUS_OK ||
+         rocketnet_client_default_config( &client_config ) != ROCKETNET_STATUS_OK )
+        goto cleanup;
     server_config.protocol_id = protocol_id;
     server_config.max_clients = 8;
     server_config.transport = "loopback";
-    memcpy( server_config.backend_public_key, backend_public_key, sizeof( backend_public_key ) );
-    memcpy( server_config.server_public_key, server_public_key, sizeof( server_public_key ) );
-    memcpy( server_config.server_secret_key, server_secret_key, sizeof( server_secret_key ) );
-
-    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, server_address, &server_config, &create_status );
-    if ( !server || create_status != ROCKETNET_STATUS_OK )
-        return 1;
-    if ( rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
-    {
-        rocketnet_server_destroy( server );
-        return 1;
-    }
-
-    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    if ( rocketnet_write_production_connect_token(
-             backend_secret_key,
-             server_public_key,
-             protocol_id,
-             &server_address,
-             1,
-             42ULL,
-             1ULL,
-             4102444800ULL,
-             15,
-             NULL,
-             connect_token,
-             sizeof( connect_token ) ) != ROCKETNET_STATUS_OK )
-    {
-        rocketnet_server_destroy( server );
-        return 1;
-    }
-
-    struct rocketnet_client_config_t client_config;
-    if ( rocketnet_client_default_config( &client_config ) != ROCKETNET_STATUS_OK )
-    {
-        rocketnet_server_destroy( server );
-        return 1;
-    }
+    memcpy( server_config.backend_public_key, dev_key, sizeof( dev_key ) );
     client_config.transport = "loopback";
-    client_config.step_driven = 1;
+    client_config.step_driven = true;
 
-    create_status = ROCKETNET_STATUS_OK;
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &create_status );
-    if ( !client || create_status != ROCKETNET_STATUS_OK )
-    {
-        rocketnet_server_destroy( server );
-        return 1;
-    }
-    if ( rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
-    {
-        rocketnet_client_destroy( client );
-        rocketnet_server_destroy( server );
-        return 1;
-    }
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    server = rocketnet_server_create( NULL, "127.0.0.1:40000", &server_config, &status );
+    if ( !server || status != ROCKETNET_STATUS_OK ||
+         rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+        goto cleanup;
+
+    uint8_t public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    char address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    rocketnet_server_public_key( server, public_key );
+    if ( !rocketnet_server_ipv4_address( server, address, sizeof( address ) ) )
+        goto cleanup;
+    const time_t now = time( NULL );
+    if ( now == (time_t) -1 || rocketnet_create_dev_connect_token(
+             address, NULL, public_key, 60, 15, 42, protocol_id,
+             (uint64_t) now, NULL, token ) != ROCKETNET_STATUS_OK )
+        goto cleanup;
+
+    client = rocketnet_client_create( NULL, &client_config, &status );
+    if ( !client || status != ROCKETNET_STATUS_OK ||
+         rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
+        goto cleanup;
 
     double time = 1000.0;
     const double dt = 1.0 / 60.0;
     int client_sent = 0;
-    int server_received_and_replied = 0;
     int client_received_reply = 0;
-
     for ( int tick = 0; tick < 120 && !client_received_reply; tick++, time += dt )
     {
         rocketnet_client_update( client, time );
@@ -209,63 +176,47 @@ int main( void )
 
         struct rocketnet_message_batch_t batch;
         while ( rocketnet_client_receive_messages( client, &batch ) )
-        {
             for ( int i = 0; i < batch.num_messages; i++ )
                 if ( batch.bytes[i] == 4 && memcmp( batch.data[i], "pong", 4 ) == 0 )
                     client_received_reply = 1;
-        }
 
-        int reply_pending = 0;
-        uint64_t reply_index = 0;
+        int reply_index = -1;
         while ( rocketnet_server_receive_messages( server, &batch ) )
-        {
             for ( int i = 0; i < batch.num_messages; i++ )
-            {
                 if ( batch.bytes[i] == 4 && memcmp( batch.data[i], "ping", 4 ) == 0 )
-                {
-                    reply_pending = 1;
-                    reply_index = (uint64_t) batch.client_index[i];
-                }
-            }
-        }
+                    reply_index = batch.client_index[i];
 
-        if ( reply_pending )
+        /* Simulate the game here, then queue outgoing messages. */
+        if ( reply_index >= 0 )
         {
-            uint8_t * reply = rocketnet_server_start_message( server, reply_index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
-            if ( !reply )
-                return 1;
-            memcpy( reply, "pong", 4 );
-            if ( rocketnet_server_finish_message( server, 4 ) == 0 )
-                return 1;
-            server_received_and_replied = 1;
+            uint8_t * out = rocketnet_server_start_message( server, (uint64_t) reply_index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
+            if ( !out )
+                goto cleanup;
+            memcpy( out, "pong", 4 );
+            if ( !rocketnet_server_finish_message( server, 4 ) )
+                goto cleanup;
         }
-
         if ( !client_sent && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
             uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
             if ( !out )
-                return 1;
+                goto cleanup;
             memcpy( out, "ping", 4 );
-            if ( rocketnet_client_finish_message( client, 4 ) == 0 )
-                return 1;
+            if ( !rocketnet_client_finish_message( client, 4 ) )
+                goto cleanup;
             client_sent = 1;
         }
-
         rocketnet_client_send_packets( client );
         rocketnet_server_send_packets( server );
     }
+    result = client_received_reply ? 0 : 1;
 
-    if ( !client_sent || !server_received_and_replied || !client_received_reply )
-        return 1;
-
-    rocketnet_client_disconnect( client );
+cleanup:
     rocketnet_client_destroy( client );
     rocketnet_server_destroy( server );
-
     if ( rocketnet_term() != ROCKETNET_STATUS_OK )
         return 1;
-
-    return 0;
+    return result;
 }
 ```
 <!-- check_agents_md:example:end -->
@@ -320,10 +271,9 @@ Other key defaults are `num_channels = 32`, `window_messages = 1024`,
 `per_client_send_kbps = 10000`, and server `max_clients = 1000`. A send rate of
 `0` means the default rate, a negative rate is refused with
 `ROCKETNET_STATUS_INVALID_ARGUMENT`, and `ROCKETNET_SEND_BUDGET_MAX_KBPS` is the
-explicit ceiling. The four
-`simulated_*` fields default to zero and are development-only. Server key
-fields default to zero; start refuses them until the program sets keys into
-the config (or the operator supplies them through the environment).
+no-send-budget setting (10 Gbit/s ceiling). The four
+`simulated_*` fields default to zero and are development-only. The backend public key and protocol ID default to zero and must be supplied
+through the config or environment. The server generates its own keypair at create.
 
 ---
 
@@ -348,29 +298,52 @@ RocketNet implements all eight RakNet `PacketReliability` modes across up to `RO
 
 RocketNet's security model is documented in [SECURITY.md](SECURITY.md):
 
-- **Who mints connect tokens:** A client never connects to a raw IP address. Instead, your authentication or matchmaking backend mints a `ROCKETNET_CONNECT_TOKEN_BYTES`-byte (`768`-byte) connect token using `rocketnet_write_production_connect_token` and hands it to the client over HTTPS. For local development and tests built with the development library, `rocketnet_write_dev_connect_token` mints a token against the published development keys.
-- **Address binding:** A token carries one IPv4 address, one IPv6 address, or
-  one of each. A dual-family client selects the family it can open. The server
-  accepts either advertised family it serves, and an active token is bound to
-  one source address; replaying that token from another address is refused.
-- **Keys and key generation:**
-  - **Backend signing keypair (Ed25519):** Generated via `rocketnet_generate_backend_keypair` or deterministically via `rocketnet_generate_backend_keypair_from_seed` (`ROCKETNET_BACKEND_SEED_BYTES` = `32`, `ROCKETNET_BACKEND_PUBLIC_KEY_BYTES` = `32`, `ROCKETNET_BACKEND_SECRET_KEY_BYTES` = `64`). The backend keeps `backend_secret_key`; each game server receives `backend_public_key` (`ROCKETNET_SERVER_BACKEND_PUBLIC_KEY`).
-  - **Server sealing keypair (X25519):** Generated via `rocketnet_generate_server_keypair` (`ROCKETNET_SERVER_PUBLIC_KEY_BYTES` = `32`, `ROCKETNET_SERVER_SECRET_KEY_BYTES` = `32`). The backend seals private token data to `server_public_key`; the server opens it with `server_secret_key` (`ROCKETNET_SERVER_SERVER_PUBLIC_KEY`, `ROCKETNET_SERVER_SERVER_SECRET_KEY`).
-  - **No default production keys:** `rocketnet_server_default_config` leaves the three key fields all-zero, and `rocketnet_server_start` refuses to bind until non-zero keys are provided. A program sets `protocol_id` and the three keys into the config itself after default_config; for a server the environment (`ROCKETNET_SERVER_BACKEND_PUBLIC_KEY`, `ROCKETNET_SERVER_SERVER_PUBLIC_KEY`, `ROCKETNET_SERVER_SERVER_SECRET_KEY`) is the recommended route, and setting them in code also works. A client needs no keys in its config: the connect token carries them, minted in code by the backend, generated, or read from the environment.
-  - **User data:** Each token carries `ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES` (`256` bytes) of signed application metadata.
-- **What the server checks on every handshake:**
-  1. Packet size, `filter_value` (`ROCKETNET_SERVER_FILTER_VALUE` / `ROCKETNET_CLIENT_FILTER_VALUE`), wire version, `protocol_id` (`ROCKETNET_SERVER_PROTOCOL_ID`), and `create_timestamp <= expire_timestamp`.
-  2. Current timestamp within `[create_timestamp, expire_timestamp)` and the server's advertised `public_address` (`ROCKETNET_SERVER_PUBLIC_ADDRESS`) present in the token's address list.
-  3. Stateless cookie challenge before spending asymmetric cryptography under load, plus a per-update signature verification budget (the `handshakes_over_budget` field of `struct rocketnet_server_stats_t`).
-  4. Ed25519 signature verification over the signed token fields under `backend_public_key`.
-  5. Single-use token replay history and active client/address tables (`rocketnet_server_client_id`).
-  6. X25519 sealed-box decryption of the private token block under `server_secret_key` and `server_public_key`, binding the 32-byte session keys to the authenticated client.
+The backend issues opaque base64 token strings and sends them to clients over
+an authenticated channel. A client passes the string directly to
+`rocketnet_client_connect`; it does not decode or construct it. Allow
+`ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES`, including the NUL terminator,
+when storing a token. The C API exposes no production token minting or
+key-generation functions.
+
+A real server starts as follows:
+
+1. Set `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY` to the backend's Ed25519 public
+   key, base64-encoded, and `ROCKETNET_SERVER_PROTOCOL_ID` to the nonzero
+   protocol ID in decimal. Config fields can also supply them; environment
+   values take precedence. Keep the signing secret on the backend.
+2. Initialize the config, create the server and check the pointer and status.
+   Create generates a fresh X25519 keypair for this server object. Start the
+   server and check that status before serving clients.
+3. Read `rocketnet_server_public_key` into a buffer of
+   `ROCKETNET_SERVER_PUBLIC_KEY_BYTES`. Read the served addresses with
+   `rocketnet_server_ipv4_address` and `rocketnet_server_ipv6_address`, using
+   `ROCKETNET_MAX_ADDRESS_STRING_BYTES` for each buffer. A false getter result
+   means that family is unavailable; do not register that empty string.
+4. Register the public key and served addresses with the backend over an
+   authenticated channel. It signs tokens for this protocol and seals them to
+   the server's key. Register again when creating a new server object.
+
+In development, link `rocketnet_dev` and initialize the server's backend key
+from `ROCKETNET_DEV_BACKEND_PUBLIC_KEY`. Call
+`rocketnet_create_dev_connect_token` with the served IPv4 and IPv6 addresses
+(`NULL` for an unavailable family, but not both), generated server public key,
+positive expiry duration and idle timeout in seconds, client ID, protocol ID,
+current Unix timestamp, optional `ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES`
+user data (`NULL` means zeros), and output string. Check its returned status.
+The declaration and development key exist only with `ROCKETNET_DEVELOPMENT`.
+A production server refuses that published key.
+
+Tokens bind the client ID, protocol ID, server addresses, lifetime and signed
+user data. The server verifies the signature, opens the token with its own
+key and enforces expiry and replay checks. A dual-family client selects a
+family it can open; this is not a guarantee of fallback after a reachability
+failure. See [standard/TRANSPORT.md](standard/TRANSPORT.md) for the wire format.
 
 ---
 
 ## Errors and refusals
 
-RocketNet never clamps invalid configuration or silently ignores API misuse; every refusal is explicit and counted.
+RocketNet refuses invalid configuration rather than clamping it. Check returned status codes, pointers and serials. Only the misuse cases listed in `sdk/rocketnet.h` increment `api_misuse`; a refusal is not automatically misuse.
 
 - **Status codes (`enum rocketnet_status_t` and `rocketnet_status_name`):**
   - `ROCKETNET_STATUS_OK` (`0`): operation succeeded (`ROCKETNET_STATUS_COUNT`, `28`, bounds the enum).
@@ -424,7 +397,7 @@ RocketNet never clamps invalid configuration or silently ignores API misuse; eve
 4. **Passing a dishonest maximum to `start` or writing past it:** `start` reserves room for `bytes` bytes (`1 .. max_message_bytes`). Writing past `bytes` corrupts adjacent region memory; passing `bytes_written < 1` or `bytes_written > bytes` to `finish` is refused (`0` returned, and the pending `start` is aborted).
 5. **Calling `send_packets` before queuing messages:** Calling `rocketnet_client_send_packets` or `rocketnet_server_send_packets` at the top of the frame instead of the end leaves every message queued during the frame sitting in the region until the next frame, adding a full tick of latency.
 6. **Passing wall-clock time in deterministic tests:** Mixing wall-clock time with simulated ticks causes non-deterministic timeouts (`ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT` on the client, `ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT` for the server's slot). Pass a controlled monotonic `time` variable instead.
-7. **Forgetting keys on `rocketnet_server_default_config`:** `rocketnet_server_default_config` zeroes `backend_public_key`, `server_public_key`, and `server_secret_key`; `rocketnet_server_start` returns `ROCKETNET_STATUS_MISSING_KEYS` unless the program sets valid keys into the config (in development, the published development keys) or the operator supplies them through the environment.
+7. **Forgetting the backend key or protocol ID:** The server default config leaves both zero. Supply them before create, through the config or environment; start refuses missing keys. A development server can use `ROCKETNET_DEV_BACKEND_PUBLIC_KEY`. The server's own keypair is generated at create and is not a config field.
 8. **Leaving a `start` open across `update` or `send_packets`:** An in-place start (a fitting unreliable message, written into the packet buffer) still pending when `rocketnet_client_update` / `rocketnet_server_update` or `rocketnet_client_send_packets` / `rocketnet_server_send_packets` runs is aborted there and counted as API misuse (the stats' `api_misuse`); nothing is sent, and its later `finish` returns `0`. Which path `start` took is not visible to the caller, so finish or abort every start before the next `update` or `send_packets`.
 9. **Sending before the connection is up:** a send before the connection is `ROCKETNET_CLIENT_STATE_CONNECTED` is dropped: start returns NULL, finish returns 0, nothing is queued, on the client and the server alike. It is a normal drop, never API misuse: `api_misuse` is unchanged, and each dropped start adds 1 to the `not_connected_drops` stat on the client or the server. Gate the first send on `rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED`, or on `rocketnet_server_client_connected` for the slot, as the example above does.
 
