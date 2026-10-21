@@ -35,6 +35,7 @@ MCClientConnectionBrokenDeniedKeepsKeys.cfg	MCClientConnection.tla	invariant	Key
 MCReplayWindow.cfg	MCReplayWindow.tla	pass	-	check	replaywindow	required	-
 MCReplayWindowMid.cfg	MCReplayWindow.tla	pass	-	check	replaywindow	bench	mid-window-seven-by-three-over-budget
 MCReplayWindowBrokenLongSkip.cfg	MCReplayWindow.tla	invariant	WindowIsTruth	check	replaywindow	required	-
+MCReplayWindowBrokenOpenBeforeGate.cfg	MCReplayWindow.tla	invariant	NoOpenBeforeConnect	check	replaywindow	required	-
 MCRNSendStore.cfg	MCRNSendStore.tla	pass	-	check	rnsendstore	required	-
 MCRNRing.cfg	MCRNRing.tla	pass	-	check	rnring	required	-
 MCRNRingBrokenFloorAtU.cfg	MCRNRing.tla	invariant	LiveSpansDisjoint	check	rnring	required	-

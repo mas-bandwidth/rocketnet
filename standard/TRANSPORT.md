@@ -2103,13 +2103,16 @@ a row marked server or client applies only at that end.
     session nonce sits between the sequence and the sealed data; a client
     MUST derive handshake keys into temporary storage and MUST commit them
     only after the open succeeds.
-12. A receiver MUST open the sealed data with the key for the type and the
+12. A server MUST reject a session packet whose mapping has no assigned
+    slot as `NOT_CONNECTED`, before decryption. The packet is not opened, so
+    the drop says nothing of its authenticity: it MUST NOT increment the
+    integrity-failure count or a `DID_NOT_OPEN` counter. The connection
+    response is not a session packet and is not gated here.
+13. A receiver MUST open the sealed data with the key for the type and the
     associated data of [t9 Packet protection](#t9). A packet that does not
     open, or whose expected handshake plaintext size is not exact, is
     `DID_NOT_OPEN`; this check alone increments the integrity-failure count
     that [t14 Replay protection](#t14) bounds.
-13. A server MUST reject a session packet whose mapping has no assigned
-    slot as `NOT_CONNECTED`, after the open and before marking the sequence.
 14. For the session types, a receiver MUST mark the sequence received and
     then advance the most recent sequence.
 15. For session types, a receiver MUST read and validate the ack block at
@@ -2143,8 +2146,8 @@ a row marked server or client applies only at that end.
 | 8 | server mapping | before decryption | `NO_MAPPING` |
 | 9 | sequence reconstruction | before decryption | `ZERO_SEQUENCE` |
 | 10 | replay already received | before decryption | `ALREADY_RECEIVED` |
-| 12 | sealed open and expected handshake plaintext size | decryption | `DID_NOT_OPEN` |
-| 13 | server slot gate | after decryption, before the replay mark | `NOT_CONNECTED` |
+| 12 | server slot gate | before decryption | `NOT_CONNECTED` |
+| 13 | sealed open and expected handshake plaintext size | decryption | `DID_NOT_OPEN` |
 | 15 | session ack block | after decryption | `BAD_ACK_BLOCK` |
 | 16 | session opened size less the ack block | after decryption | `WRONG_OPENED_SIZE` |
 | 17 | client keep-alive index and slot count | after decryption, before ack application | `CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE` |
@@ -3119,8 +3122,8 @@ A receiver MUST apply the replay window to the five session packet types:
 connection keep-alive, connection payload, connection disconnect, connection
 ack and connection payload fragment. Handshake packet types are outside the
 window. A server MUST NOT move the window of a session packet whose source
-address has no assigned client slot: it opens the packet, ignores it, and does
-not mark it.
+address has no assigned client slot: it ignores the packet before decryption,
+as [t10 Receive processing](#t10) step 12 states, and does not mark it.
 
 Each endpoint MUST count, per connection and across all of that connection's
 keys, every sealed packet that fails to open, and MUST disconnect the
