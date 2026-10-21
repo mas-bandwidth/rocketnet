@@ -162,6 +162,8 @@ struct rocketnet_server_socket_process_packets_t * rocketnet_server_gso_process_
 void rocketnet_server_gso_test_force_create_flags( int flags );
 void rocketnet_server_gso_test_fail_receives( struct rocketnet_server_gso_t * gso, int count, int error );
 void rocketnet_server_gso_test_fail_sends( struct rocketnet_server_gso_t * gso, int count, int error );
+// Observe publication without consuming it; returns false on lock contention.
+bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gso, int queue_index );
 #endif
 
 #endif // #ifndef ROCKETNET_SERVER_GSO_H

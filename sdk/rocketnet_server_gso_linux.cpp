@@ -111,7 +111,6 @@ struct rocketnet_server_gso_recv_buffer_t
     uint64_t dropped_source;
     uint64_t gro_batches;
     uint64_t gro_cmsg_faults;                   // a GRO cmsg this worker refused
-    uint64_t syscalls;
     uint64_t receive_errors;
     rocketnet_address_t from[ROCKETNET_GSO_RECV_QUEUE_SIZE];
     int packet_bytes[ROCKETNET_GSO_RECV_QUEUE_SIZE];
@@ -145,6 +144,8 @@ struct rocketnet_server_gso_queue_t
     struct rocketnet_server_gso_recv_buffer_t * main_buffer;
     struct rocketnet_server_gso_recv_buffer_t * free_buffer;
     rocketnet_platform_mutex_t receive_mutex;
+    // Idle EAGAIN calls still count without publishing an empty ready buffer.
+    std::atomic<uint64_t> receive_syscalls{0};
 
     uint8_t padding_3[4096];
 
@@ -190,8 +191,8 @@ struct rocketnet_server_gso_t
     struct sockaddr_storage send_names[ROCKETNET_GSO_SEND_BATCH];
     char send_controls[ROCKETNET_GSO_SEND_BATCH][CMSG_SPACE(sizeof(uint16_t))];
 
-    // main-thread counters, folded with the per-buffer receive counters in
-    // rocketnet_server_gso_counters
+    // main-thread counters, folded from claimed receive buffers and the
+    // per-queue syscall atomics during receive_packets
 
     uint64_t counter_packets_sent;
     uint64_t counter_send_syscalls;
@@ -244,6 +245,18 @@ void rocketnet_server_gso_test_fail_sends( struct rocketnet_server_gso_t * gso, 
     rocketnet_assert( gso );
     gso->test_fail_send_error = error;
     gso->test_fail_sends = count > 0 ? count : 0;
+}
+
+bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gso, int queue_index )
+{
+    rocketnet_assert( gso );
+    rocketnet_assert( queue_index >= 0 && queue_index < gso->num_queues );
+    struct rocketnet_server_gso_queue_t * queue = &gso->queues[queue_index];
+    if ( !rocketnet_platform_mutex_try_acquire( &queue->receive_mutex ) )
+        return false;
+    const bool ready = queue->ready_buffer && queue->ready_buffer->num_packets > 0;
+    rocketnet_platform_mutex_release( &queue->receive_mutex );
+    return ready;
 }
 
 #endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
@@ -551,7 +564,7 @@ static void rocketnet_server_gso_worker( void * data )
             // poll wakeups are not counted; they are the worker's idle
             // heartbeat, not the receive path.
 
-            buffer->syscalls++;
+            queue->receive_syscalls.fetch_add( 1, std::memory_order_relaxed );
 
             // a failed call other than an empty socket is counted; the
             // worker goes back to poll and tries again. an interrupted call
@@ -657,6 +670,12 @@ static void rocketnet_server_gso_worker( void * data )
             if ( count < ROCKETNET_GSO_RECV_BATCH )
                 break;                              // the socket is drained; go back to poll
         }
+
+        const bool has_results = buffer->num_packets || buffer->dropped_size || buffer->dropped_overflow ||
+                                 buffer->dropped_source || buffer->gro_batches || buffer->gro_cmsg_faults ||
+                                 buffer->receive_errors;
+        if ( !has_results )
+            continue;
 
         rocketnet_platform_mutex_acquire( &queue->receive_mutex );
         if ( !queue->ready_buffer && queue->free_buffer )
@@ -1275,6 +1294,10 @@ void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso )
     {
         struct rocketnet_server_gso_queue_t * queue = &gso->queues[queue_index];
 
+        // This counter has no buffer ownership. Fold even when there is no
+        // ready packet buffer or a pointer handoff loses the try-lock race.
+        gso->counter_receive_syscalls += queue->receive_syscalls.exchange( 0, std::memory_order_relaxed );
+
         // Claim the oldest completed buffer, returning the previous main
         // view as free storage. A contended lock leaves ready and worker
         // buffers intact for the next frame. All gathering follows unlock.
@@ -1292,7 +1315,6 @@ void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso )
         rocketnet_platform_mutex_release( &queue->receive_mutex );
 
         gso->counter_packets_received += buffer->num_packets;
-        gso->counter_receive_syscalls += buffer->syscalls;
         gso->counter_receive_dropped_size += buffer->dropped_size;
         gso->counter_receive_dropped_too_large += buffer->dropped_too_large;
         gso->counter_receive_dropped_overflow += buffer->dropped_overflow;
@@ -1300,7 +1322,6 @@ void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso )
         gso->counter_receive_errors += buffer->receive_errors;
         gso->counter_gro_batches += buffer->gro_batches;
         gso->counter_gro_cmsg_faults += buffer->gro_cmsg_faults;
-        buffer->syscalls = 0;
         buffer->receive_errors = 0;
         buffer->dropped_size = 0;
         buffer->dropped_too_large = 0;

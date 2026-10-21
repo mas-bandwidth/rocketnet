@@ -5689,6 +5689,66 @@ void rocketnet_test_server_gso_shutdown_send_interruptions()
     rocketnet_server_gso_destroy( gso );
 }
 
+void rocketnet_test_server_gso_held_receive_view()
+{
+    rocketnet_address_t bind, peer_address;
+    rocketnet_check( rocketnet_address_parse( &bind, "127.0.0.1" ) );
+    rocketnet_check( rocketnet_address_parse( &peer_address, "127.0.0.1" ) );
+    rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &bind, 1,
+        ROCKETNET_SERVER_GSO_DISABLE_SEGMENT | ROCKETNET_SERVER_GSO_DISABLE_GRO );
+    rocketnet_check( gso );
+    struct rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create( NULL, &peer_address,
+        ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, ROCKETNET_SOCKET_SEND_BUFFER_SIZE,
+        ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+    rocketnet_check( peer );
+
+    rocketnet_address_t server_address;
+    rocketnet_check( rocketnet_address_parse( &server_address, "127.0.0.1" ) );
+    server_address.port = bind.port;
+    uint8_t first[ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES];
+    uint8_t second[ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES];
+    memset( first, 0xA5, sizeof(first) );
+    memset( second, 0x5A, sizeof(second) );
+    rocketnet_platform_socket_send_packet( peer, &server_address, first, sizeof(first) );
+
+    uint8_t * held_view = NULL;
+    const double first_deadline = rocketnet_time() + 5.0;
+    while ( !held_view && rocketnet_time() < first_deadline )
+    {
+        rocketnet_server_gso_receive_packets( gso );
+        struct rocketnet_server_socket_process_packets_t * received = rocketnet_server_gso_process_packets( gso );
+        if ( received->num_packets )
+        {
+            rocketnet_check( received->num_packets == 1 );
+            rocketnet_check( received->packet_bytes[0] == (int) sizeof(first) );
+            held_view = received->packet_data[0];
+            rocketnet_check( memcmp( held_view, first, sizeof(first) ) == 0 );
+        }
+        else
+            rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( held_view );
+
+    // The worker must publish a second packet without touching the main-held
+    // first view. This condition poll observes ownership, not elapsed sleep.
+    rocketnet_platform_socket_send_packet( peer, &server_address, second, sizeof(second) );
+    const double ready_deadline = rocketnet_time() + 5.0;
+    while ( !rocketnet_server_gso_test_receive_ready( gso, 0 ) && rocketnet_time() < ready_deadline )
+        rocketnet_platform_sleep( 0.001 );
+    rocketnet_check( rocketnet_server_gso_test_receive_ready( gso, 0 ) );
+    rocketnet_check( memcmp( held_view, first, sizeof(first) ) == 0 );
+
+    rocketnet_server_gso_receive_packets( gso );
+    struct rocketnet_server_socket_process_packets_t * received = rocketnet_server_gso_process_packets( gso );
+    rocketnet_check( received->num_packets == 1 );
+    rocketnet_check( received->packet_bytes[0] == (int) sizeof(second) );
+    rocketnet_check( memcmp( received->packet_data[0], second, sizeof(second) ) == 0 );
+
+    rocketnet_platform_socket_destroy( peer );
+    rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop,
+        rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
+}
+
 // The io_uring transport's own tests, linux only, in the gso section's shape:
 // over the wire on loopback through real sockets and a real io_uring, the
 // peer the portable platform socket. They are in the suite only where the
@@ -8750,6 +8810,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_gso_transport_server_wire_dual_stack", rocketnet_test_server_gso_wire_dual_stack, NULL },
     { "test_gso_transport_server_send_overflow", rocketnet_test_server_gso_send_overflow, NULL },
     { "test_gso_shutdown_send_interruptions", rocketnet_test_server_gso_shutdown_send_interruptions, NULL },
+    { "test_gso_transport_held_receive_view", rocketnet_test_server_gso_held_receive_view, NULL },
     { "test_io_uring_transport_server_probe", rocketnet_test_server_uring_probe, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_ipv4", rocketnet_test_server_uring_wire_ipv4, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_ipv6", rocketnet_test_server_uring_wire_ipv6, rocketnet_server_uring_available },
