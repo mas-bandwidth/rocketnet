@@ -901,9 +901,9 @@ static const rn_delivery_t * rn_message_object_next( struct rn_message_object_t 
 {
     for ( int i = object->receive_connection; i < object->num_connections; i++ )
     {
-        rn_message_connection_t * connection = &object->connections[i];
-        if ( connection->hot->state == RN_MESSAGE_CONNECTION_CONNECTED )
+        if ( object->hot_connections[i].state == RN_MESSAGE_CONNECTION_CONNECTED )
         {
+            rn_message_connection_t * connection = &object->connections[i];
             const uint32_t deliveries = connection->ordered.channels.deliveries;
             const rn_delivery_t * table = connection->region->deliveries;
             for ( uint32_t k = connection->hot->cursors[0]; k < deliveries; k++ )
@@ -1010,11 +1010,13 @@ void rn_message_object_release( struct rn_message_object_t * object, const uint8
         return;
 
     const int at = object->receive_connection < object->num_connections ? object->receive_connection : object->num_connections - 1;
-    if ( rn_message_connection_release_view( &object->connections[at], data ) )
+    if ( object->hot_connections[at].held > 0 &&
+         rn_message_connection_release_view( &object->connections[at], data ) )
         return;
     for ( int i = 0; i < object->num_connections; i++ )
     {
-        if ( i != at && rn_message_connection_release_view( &object->connections[i], data ) )
+        if ( i != at && object->hot_connections[i].held > 0 &&
+             rn_message_connection_release_view( &object->connections[i], data ) )
             return;
     }
 
