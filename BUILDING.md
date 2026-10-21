@@ -460,8 +460,8 @@ of the public client and server API.
 
 The internal transport plan, allocated at start, includes the transport, protocol tables and ACK history, reassembly and
 its delivered mirror, send arena, native transport queues and SDK worker allocations,
-including the two background stats snapshot banks, worker scratch storage and
-socket-free wake, plus the SDK allocator's ownership/alignment overhead. XDP UMEM is counted
+including two background stats job banks, per-slot delta buffers and worker-owned
+history, and the socket-free wake, plus the SDK allocator's ownership/alignment overhead. XDP UMEM is counted
 separately and included in the total. Worker startup shims are included even if
 some have already been freed by the time create returns. OS thread stacks, kernel
 socket/ring storage, libbpf/libxdp allocations, libc bookkeeping, loader and
