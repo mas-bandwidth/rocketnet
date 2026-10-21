@@ -2,6 +2,6 @@
 # Format and rules: standard/STYLE.md section 10.
 #include "rocketnet_message.h"
 sequenced hold data bytes	ROCKETNET_MAX_PACKET_PAYLOAD_BYTES	1416
-default sequenced holds	rn_pin_message_default_sequenced_holds	16
-default unreliable deliveries	rn_pin_message_default_unreliable_messages_per_update	256
+default sequenced holds	rn_pin_message_default_sequenced_messages_held	16
+default unreliable deliveries	rn_pin_message_default_unreliable_messages_per_update	1024
 counter modulus	( ROCKETNET_MESSAGE_U24_MASK + 1 )	16777216

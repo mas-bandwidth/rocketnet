@@ -2,7 +2,7 @@
 
 Flows are a planned server-side grouping layer for applications that need to
 send the same message to a changing set of connected clients. They are not part
-of the first-deliverable public API. Today an application broadcasts by
+of the public API in this release. Today an application broadcasts by
 iterating connected client slots and calling `rocketnet_server_start_message`
 and `rocketnet_server_finish_message` for each destination.
 

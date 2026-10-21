@@ -15,8 +15,8 @@ names. See [docs/LINUX.md](LINUX.md) for the Linux build, transport ladder, kern
 
 | Operating system | Architecture | Compiler | Transports | Tier | Workflow | Runner label |
 | --- | --- | --- | --- | --- | --- | --- |
-| Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | GCC 13 | portable, gso, xdp | supported | .github/workflows/ci.yml | self-hosted, Linux, X64, fleet |
-| Ubuntu 24.04 (Linux, cross/QEMU) | s390x | s390x-linux-gnu-gcc | portable | supported | .github/workflows/ci.yml | ubuntu-24.04 |
+| Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | GCC 13 | portable, gso, io_uring, xdp | supported | .github/workflows/ci.yml | self-hosted, Linux, X64, fleet |
+| Ubuntu 24.04 (Linux, cross/QEMU) | s390x | s390x-linux-gnu-gcc | portable | supported | .github/workflows/ci.yml | self-hosted, Linux, X64, fleet |
 | [macOS 27 (self-hosted fleet)](MACOS.md) | arm64 | Apple Clang | portable, msgx | supported | .github/workflows/ci.yml | self-hosted, macOS, ARM64, rocketnet-macos |
 | Windows 11 (self-hosted fleet) | x86_64 | MSVC | portable, iocp, rio | supported | .github/workflows/ci.yml | self-hosted, Windows, X64, rocketnet-windows |
 | Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | GCC | portable, gso, xdp | nightly | .github/workflows/nightly-leaks.yml | self-hosted, Linux, X64, fleet |
@@ -43,8 +43,8 @@ and checks its exports. Nothing runs on arm64, so its row stays unsupported.
 The macOS rows link to [MACOS.md](MACOS.md), the guide for building, pinning
 and verifying on a Mac. The transports column names the backends the row actually
 exercises or proves in CI. The registry (`rocketnet_drivers.inc`) also lists
-portable on every platform, gso and xdp on Linux, msgx on macOS and iocp and rio
-on Windows. A transport that the row does not name is not part of that row's claim.
+portable and loopback on every platform, gso, io_uring and xdp on Linux, msgx on
+macOS, and iocp and rio on Windows. A transport that the row does not name is not part of that row's claim.
 
 ## Policy rules
 
@@ -105,10 +105,10 @@ one thing the policy exists to prevent.
 These workflows run on a platform already in the table and add checks, not a
 new support claim:
 
-- `release-check.yml` runs its version-consistency job on hosted
-  `ubuntu-24.04` per commit and its wire-change job on pushes to `main`. It
+- `release-check.yml` runs its version-consistency job on
+  `self-hosted, Linux, X64, fleet` per commit and its wire-change job on pushes to `main`. It
   checks release metadata, not the library build.
-- `cbmc.yml` runs arithmetic proofs on hosted `ubuntu-24.04` for pull requests
+- `cbmc.yml` runs arithmetic proofs on `self-hosted, Linux, X64, fleet` for pull requests
   that touch `sdk/` or `proofs/cbmc/`.
 - `static.yml`, `tlc.yml`, `msan.yml` and `nightly-leaks.yml` run on the
   self-hosted `[self-hosted, Linux, X64, fleet]` runners. They are analysis
@@ -131,7 +131,8 @@ new support claim:
 - `ci.yml`'s `platform-selftests` job runs on the
   `self-hosted, Linux, X64, fleet` and
   `self-hosted, macOS, ARM64, rocketnet-macos` labels.
-- `fuzz-nightly.yml` runs on the `self-hosted, Linux, X64, fleet` label.
+- `fuzz-nightly.yml` runs on the `self-hosted, Linux, X64, fleet` label, and
+  its fuzz-macos job on `self-hosted, macOS, ARM64, rocketnet-macos`.
 
 ## Checking the table
 

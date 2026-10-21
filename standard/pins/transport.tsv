@@ -2,6 +2,7 @@
 # Format and rules: standard/STYLE.md section 10. Section cards add rows to
 # standard/pins/<section id>.tsv, never to this file.
 #include "rocketnet_constants.h"
+#include "rocketnet_layers.h"
 replay window depth minimum	ROCKETNET_HISTORY_PACKETS_MIN	4096
 replay window depth maximum	ROCKETNET_HISTORY_PACKETS_MAX	32768
 version	ROCKETNET_WIRE_VERSION	0x4E7C1A93
@@ -69,13 +70,12 @@ used-token history per slot	ROCKETNET_USED_TOKEN_HISTORY_RATIO	8
 server protocol_id	rn_pin_server_default_protocol_id	0
 server max_clients	rn_pin_server_default_max_clients	1000
 server max_clients limit	ROCKETNET_MAX_CLIENTS	1000
-server max_payload_bytes	ROCKETNET_MAX_PACKET_PAYLOAD_BYTES	1416
+server max_payload_bytes	ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES	16384
 server max_fragmented_messages	ROCKETNET_DEFAULT_REASSEMBLY_SLOTS	8
 server transport	rn_pin_server_default_transport	"auto"
-server public_address	rn_pin_server_default_public_address	""
 server max_timeout_seconds	rn_pin_server_default_max_timeout_seconds	60
 server handshake_deadline_seconds	rn_pin_server_default_handshake_deadline_seconds	5
-client max_payload_bytes	ROCKETNET_MAX_PACKET_PAYLOAD_BYTES	1416
+client max_payload_bytes	ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES	16384
 client max_fragmented_messages	ROCKETNET_DEFAULT_REASSEMBLY_SLOTS	8
 client transport	rn_pin_client_default_transport	"auto"
 fragmented payload maximum	ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES	361728

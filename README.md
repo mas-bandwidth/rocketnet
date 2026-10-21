@@ -2,8 +2,8 @@
 
 Low-level client/server UDP transport library.
 
-Main frame calls target less than 100 microseconds under load in Release
-builds. Create may take longer. Client disconnect and destroy wait for the
+Main frame calls aim for less than 100 microseconds in Release builds. This
+target is not yet established under a 1000-client load. Create may take longer. Client disconnect and destroy wait for the
 I/O thread to exit, with no promised time bound.
 
 ## Quick start
@@ -75,7 +75,7 @@ See [BUILDING.md](BUILDING.md). Binaries land in `bin/`, and on Windows in
 - [standard/TRANSPORT.md](standard/TRANSPORT.md) — the transport standard: the wire format.
 - [standard/MESSAGES.md](standard/MESSAGES.md) — the message standard.
 - [standard/RATIONALE.md](standard/RATIONALE.md) — the rationale for both.
-- [ROADMAP.md](ROADMAP.md) — the releases, streams and cards planned, rendered from the work record.
+- [ROADMAP.md](ROADMAP.md) — the releases and the work planned.
 - [CLAUDE.md](CLAUDE.md) — contributor guide.
 
 Private repository. License: [AGPL-3.0](LICENSE).

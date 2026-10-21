@@ -37,7 +37,7 @@ message, and increments `messages_dropped_not_connected`, never the misuse count
 | `rocketnet_client_connect( client, token )` | the status code: `CLIENT_NOT_DISCONNECTED`, `INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, or a transport's code |
 | `rocketnet_server_default_config( config )` | `INVALID_ARGUMENT` for a NULL config, counted |
 | `rocketnet_server_required_memory( config )` | `0` for a refused config, a `config_bytes` too small included |
-| `rocketnet_server_create( context, address, NULL, config, status )` | `NULL` with one error line; `status` holds the refusal's code (the client's codes, plus `INVALID_ADDRESS` for an over-long address), or `OK` with the handle |
+| `rocketnet_server_create( context, ipv4_address, ipv6_address, config, status )` | `NULL` with one error line; `status` holds the refusal's code (the client's codes, plus `INVALID_ADDRESS` for an address that does not parse or names the wrong family), or `OK` with the handle |
 | `rocketnet_server_start( server )` | the status code: `SERVER_NOT_STOPPED`, or the transport's code (`TRANSPORT_LADDER_EXHAUSTED`, `MISSING_KEYS`, ...) |
 | `rocketnet_client_update( client, time )` / `rocketnet_server_update( server, time )` | nothing (`void`); a refused time is counted as API misuse and logged |
 | `rocketnet_create_dev_connect_token`, `*_set_send_kbps` | the status code; see each declaration in `sdk/rocketnet.h` |
@@ -72,11 +72,9 @@ them.
 
 ## 2. STATUS CODES
 
-### 2.1 Stable Status Code Enum (`rocketnet_status_t`)
+### 2.1 Status Code Enum (`rocketnet_status_t`)
 
-Status codes follow the same numbering discipline as `ROCKETNET_MESSAGE_VIOLATION_*`
-(`sdk/rocketnet_message.h:85-98`) and `ROCKETNET_COUNTER_*`
-(`sdk/rocketnet_counters.h:37-350`):
+Status codes follow these rules:
 
 1. `ROCKETNET_STATUS_OK = 0` is the sole success value.
 2. Every failure code is negative, dense from `-1` to `-27`. `status < 0`
@@ -130,10 +128,9 @@ enum rocketnet_status_t
 ```
 
 Every public call that can fail returns `enum rocketnet_status_t`:
-`rocketnet_init` reports `ALREADY_INITIALIZED`, `PLATFORM_INIT_FAILED` or
-`CRYPTO_INIT_FAILED`; `rocketnet_term` reports `NOT_INITIALIZED` or
-`LIVE_ALLOCATIONS`; `rocketnet_allocator` reports `INVALID_ARGUMENT`,
-`ALREADY_INITIALIZED` or `LIVE_ALLOCATIONS`. The client and server create
+`rocketnet_init` reports `INVALID_ARGUMENT`, `ALREADY_INITIALIZED`,
+`LIVE_ALLOCATIONS`, `PLATFORM_INIT_FAILED` or `CRYPTO_INIT_FAILED`.
+`rocketnet_term` reports `NOT_INITIALIZED` or `LIVE_ALLOCATIONS`. The client and server create
 calls return a handle or `NULL`, write the code through the status
 out-parameter, and log one `ERROR` line with the reason: `NOT_INITIALIZED`,
 `CONFIG_NOT_INITIALIZED`, `INVALID_ARGUMENT`, `CONFIG_ENV_INVALID`,
@@ -144,24 +141,23 @@ return the token and transport codes: `CLIENT_NOT_DISCONNECTED`,
 `TRANSPORT_LADDER_EXHAUSTED`, `TRANSPORT_FAMILIES_UNSUPPORTED`, `MISSING_KEYS`,
 `TRANSPORT_PORT_ZERO_UNSUPPORTED`, `MUTEX_CREATE_FAILED`,
 `THREAD_CREATE_FAILED` and `TIMER_CREATE_FAILED`.
-`ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED` is 26: a transport returns it
+`ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED` is -26: a transport returns it
 when it cannot serve both named families, and start returns it when every
 candidate that opened refused for that reason.
-`ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED` is 27, the last code: a config whose
+`ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED` is -27, the last code: a config whose
 `config_bytes` is 0 or smaller than the field itself, one that skipped its
 default_config call, is refused with it before any other check
 (`docs/ABI-EVOLUTION.md`). Its string is `CONFIG_NOT_INITIALIZED`
-(`rocketnet_status_names` in `sdk/rocketnet.cpp`).
+(`rocketnet_status_name` in `sdk/rocketnet.cpp`).
 
 ### 2.2 Reporting
 
-Init, term and the allocator return the section-2.1 code directly (the SDK's
+Init and term return the section-2.1 code directly (the SDK's
 internal `_ex` forms write the same code to an `int *`). The client and server
 create calls return a handle or `NULL` and write the refusal's code through the
 final status out-parameter; their refusals are logged. A create before init is
 counted in the process-wide `api_misuses` stat; other create refusals are not
-automatically counted as misuse. `rocketnet_status_name` names any code, and
-`rocketnet_num_status_codes` gives the count. The internal transport layer
+automatically counted as misuse. `rocketnet_status_name` names any code. The internal transport layer
 keeps `_ex` create forms for the SDK's own tests.
 
 ## 3. LOGGING
@@ -173,8 +169,8 @@ Every log line is formatted once into a 1024-byte stack buffer and handed to
 the installed callback, or to the default sink (stdout) when none is
 installed. The level is `enum rocketnet_log_level_t`, set with
 `rocketnet_log_level` (the SDK reads it internally with `rocketnet_log_level_current`);
-`rocketnet_log_level_name` names a level by its enum (`"none"`, `"error"`,
-`"warn"`, `"info"`, `"debug"`, `"spam"`), and `"unknown"` for a value outside
+`rocketnet_log_level_name` names a level by its enum (`"NONE"`, `"ERROR"`,
+`"WARN"`, `"INFO"`, `"DEBUG"`, `"SPAM"`), and `"UNKNOWN"` for a value outside
 the enum. `rocketnet_quiet( true )` suppresses every line and
 `rocketnet_quiet( false )` resumes them, without changing the level.
 `log_quiet` and `log_level` are relaxed atomics read before any formatting.
@@ -229,8 +225,8 @@ ROCKETNET_EXPORT void rocketnet_log_function(
 
 ### 3.4 Refused Thread Priority Calls
 
-The library's network-thread priority calls (`docs/CLIENT-IO.md`, Thread
-priority; `TRANSPORTS.md`, Server network threads) check each result. A refused
+The library's network-thread priority calls (`TRANSPORTS.md`, Server network threads and their
+priority) check each result. A refused
 call (`pthread_setschedparam` nonzero, `pthread_setaffinity_np` nonzero on the
 XDP thread, `SetThreadPriority` FALSE, `timeBeginPeriod` or `timeEndPeriod`
 not `TIMERR_NOERROR`) adds one to a process-wide count, read from the

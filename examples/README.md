@@ -21,9 +21,10 @@ static development library. Each page lives in `docs/examples/`.
 
 An example that needs two processes is split into `<name>_server.c` and
 `<name>_client.c`, built as `example_<name>_server` and
-`example_<name>_client` and run server first. Such a pair takes its port from
-`--port <n>`, else the environment variable `ROCKETNET_EXAMPLE_PORT`, else the
-default `40000`. Every other example is one program, binds `127.0.0.1:0` so
+`example_<name>_client` and run server first. The server of such a pair takes
+its port from `--port <n>`, else the environment variable
+`ROCKETNET_EXAMPLE_PORT`, else the default `40000`. The client reads the
+server's address from the key file the server writes. Every other example is one program, binds `127.0.0.1:0` so
 the operating system picks a free port, and runs alone.
 
 Build everything as usual; `examples/CMakeLists.txt` builds each
@@ -35,8 +36,8 @@ python3 tools/check_examples.py        # includes and public API only
 python3 tools/run_examples.py --build build
 ```
 
-`tools/check_examples.py` refuses an include that is not `rocketnet.h` or a C
-standard header, and a `rocketnet_` name that `sdk/rocketnet.h` does not
+`tools/check_examples.py` refuses an include that is not `rocketnet.h`,
+`dev_keys.h` or an allowed C standard header, and a `rocketnet_` name that `sdk/rocketnet.h` does not
 declare. `tools/run_examples.py` runs every example under a 120-second
 timeout and requires `PASS` as the last output line. It runs each pair in its
 own temporary working directory on a free UDP port it picks and passes through

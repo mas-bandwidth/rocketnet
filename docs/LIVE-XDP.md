@@ -15,7 +15,7 @@ falls back. An ordered candidate list may name another transport explicitly.
 See [LINUX.md](LINUX.md) and [TRANSPORTS.md](../TRANSPORTS.md) for setup and
 selection.
 
-The short first-deliverable gates are:
+The short gates for this release are:
 
 - build the XDP object and user-space transport;
 - run the unit suite, including frame parsing and transport selection;
@@ -26,4 +26,4 @@ The short first-deliverable gates are:
 
 Multi-host stress, long soak, throughput and profiler campaigns are planned
 hardening work. Their scripts remain operator tools and their results are not
-part of the first-deliverable contract.
+part of this release's contract.

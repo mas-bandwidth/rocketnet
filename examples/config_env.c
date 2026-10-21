@@ -6,7 +6,7 @@
     prints a server field's default, sets it in the config struct and creates,
     then shows the matching ROCKETNET_ environment variable winning, with the
     library's override log line, and finally a bad value refused with the
-    config-invalid status.
+    out-of-range status.
 
     The C standard library cannot set an environment variable in-process, and
     the header offers no config-read call that takes an explicit environment,
@@ -75,7 +75,7 @@ static int run_show_default_and_struct( void )
     server = NULL;
     result = 0;
 cleanup:
-    // destroy on NULL is a counted misuse that asserts in a debug build (rocketnet_api_null_guard)
+    // destroy on NULL is a no-op, as free(NULL) is
     if ( server )
         rocketnet_server_destroy( server );
     return result;
@@ -107,7 +107,7 @@ static int run_show_env_wins( void )
     server = NULL;
     result = 0;
 cleanup:
-    // destroy on NULL is a counted misuse that asserts in a debug build (rocketnet_api_null_guard)
+    // destroy on NULL is a no-op, as free(NULL) is
     if ( server )
         rocketnet_server_destroy( server );
     return result;
@@ -135,7 +135,7 @@ static int run_show_bad_refused( void )
 
     result = 0;
 cleanup:
-    // destroy on NULL is a counted misuse that asserts in a debug build (rocketnet_api_null_guard)
+    // destroy on NULL is a no-op, as free(NULL) is
     if ( server )
         rocketnet_server_destroy( server );
     return result;

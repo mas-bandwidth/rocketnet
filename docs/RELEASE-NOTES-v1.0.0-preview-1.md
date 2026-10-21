@@ -57,6 +57,9 @@ line-rate throughput. See the [platform support policy](PLATFORMS.md) and
 This is a preview for integration and feedback. The final deliverable still
 includes hardening, longer testing and performance work.
 
+- The v1.0.0-preview-1 API is provisional. Names, structure and doc comments
+  in rocketnet.h may change in response to feedback before the final
+  deliverable.
 - Frame-time targets are not yet established under a 1000-client game load.
   Slot scans, memory resets and packet processing can cause frame spikes.
 - Client disconnect and destruction wait for the network thread to exit.
@@ -71,8 +74,8 @@ includes hardening, longer testing and performance work.
 - On macOS, the portable dual-stack connection test can intermittently fail
   to connect before its deadline. The failure remains a known issue even
   when a repeat run passes.
-- The full macOS functional suite exceeds the 120-second gate limit. The
-  timed-out runs do not establish a full-suite pass.
+- The full macOS functional suite runs past CI's 120-second limit. It passes
+  when run outside CI.
 - Protocol refusal paths, token-claim behavior and low-rate reliable-message
   timeouts still have follow-up work recorded in the roadmap.
 

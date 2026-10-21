@@ -75,7 +75,7 @@ AF_XDP requires an XDP program to be loaded on the interface, and the MTU
 requirements that apply to XDP also apply to AF_XDP
 (https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/ena/README.rst).
 The ENA AF_XDP UMEM supports only 4 KB buffers, with a minimum buffer size of
-2 KB and a mandatory XDP messagePACKET_HEADROOM of 256 bytes
+2 KB and a mandatory XDP_PACKET_HEADROOM of 256 bytes
 (https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/ena/README.rst).
 AF_XDP zero-copy support was added in ENA r2.7.0, marked experimental in
 r2.7.3, and re-enabled in r2.13.0
@@ -114,23 +114,15 @@ uses `sudo docker` on the underlying fleet instance
 
 ## Recommendation
 
-The deciding fact is whether the game server process GameLift launches on a
-managed fleet retains root or the CAP_NET_ADMIN/CAP_BPF/CAP_NET_RAW
-capabilities. ENA supports native XDP and AF_XDP zero-copy
+ENA supports native XDP and AF_XDP zero-copy
 (https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/ena/README.rst),
 and the managed fleet OS (Amazon Linux 2023, kernel 6.1) is new enough for both
-(https://docs.aws.amazon.com/gameliftservers/latest/developerguide/reference-ec2-ami-version-history.html),
-so the only open question is capability possession at launch.
+(https://docs.aws.amazon.com/gameliftservers/latest/developerguide/reference-ec2-ami-version-history.html).
 
-(a) If capabilities survive, the XDP transport works on managed fleets: build for
-Linux, use `sudo setcap` in the install script, and let the auto ladder grant
-xdp; verify on a real fleet. (b) If they do not survive, XDP works only on
-Anywhere or container fleets, where the builder controls the user and can run
-with root or set capabilities, and managed fleets fall back to RocketNet's GSO
-(or io_uring) transport. (c) If the capabilities are not retained, the managed
-fleet path is RocketNet's GSO or io_uring transport.
-
-A ten-minute test on a real managed EC2 fleet settles it: connect via SSM,
-install the build with `sudo setcap cap_net_admin,cap_bpf,cap_net_raw+ep <server>`, launch the game server, then check that `getcap <server>` still
-shows the capabilities and that RocketNet's xdp transport create succeeds and
-binds an AF_XDP socket on the ENA interface.
+The xdp transport requires euid 0. File capabilities alone do not pass its
+pre-flight. It also requires the provisioned boot tier (isolcpus, nohz_full and
+irqaffinity on the kernel command line), IRQ pinning, SMT off and a matching
+NIC channel count. A managed fleet runs the server as a limited user, so it
+gets RocketNet's gso or io_uring transport. XDP is possible only on Anywhere or
+container fleets where the builder runs the server as root on a provisioned
+host.

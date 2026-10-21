@@ -1,21 +1,20 @@
 # Soak
 
 `examples/soak.c` is the stress demo and profiling harness: up to 1000 clients
-against one server over a 1% lossy simulated link for N seconds at 60 Hz,
+against one server over a 1% lossy simulated link (development library) for N seconds at 60 Hz,
 checking every message's integrity and order, and measuring server tick and
 client update timings, packet/byte rates, and steady-state allocations. This is
 a demo and a profiling instrument, not a load claim.
 
 ## What it shows
 
-1. Install a counting allocator via `rocketnet_allocator` before `rocketnet_init`
-   to verify `allocs/tick == 0` during the steady-state soak and zero leaks at teardown.
+1. Pass a counting allocator to `rocketnet_init` to verify `allocs/tick == 0` during the steady-state soak and zero leaks at teardown.
 2. Connect `--clients <n>` (1..1000, default 1000) to one server in a single
    process over `loopback` by default (1000 real UDP sockets in one process on
    one machine need OS socket-buffer care; `loopback` measures the library, not
    the kernel). `--transport <name>` (or `ROCKETNET_SERVER_TRANSPORT`) selects
    `portable`, `gso`, `msgx`, or `xdp` (`xdp` requires root and its own machine).
-3. Run a deterministic 60 Hz step for `--seconds <n>` (default 3 in CI; use
+3. Run a deterministic 60 Hz step for `--seconds <n>` (default 3; use
    `--seconds 60` for full profiling) with fixed `--seed <n>` (default 1),
    exchanging `ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED` state messages and
    `ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT` event messages in both directions.
@@ -60,12 +59,11 @@ xctrace record --template 'Time Profiler' --output soak.trace --launch -- ./bin/
 
 ## Public calls it uses
 
-- `rocketnet_init`, `rocketnet_term`, `rocketnet_log_level`,
-  `rocketnet_allocator`
+- `rocketnet_init`, `rocketnet_term`, `rocketnet_log_level`
 - `rocketnet_server_default_config`, `rocketnet_server_create`,
   `rocketnet_server_start`, `rocketnet_server_destroy`,
   `rocketnet_server_update`, `rocketnet_server_send_packets`,
-  `rocketnet_server_port`, `rocketnet_server_ipv4_address`,
+  `rocketnet_server_ipv4_address`,
   `rocketnet_server_public_key`, `rocketnet_server_num_connected_clients`,
   `rocketnet_server_start_message`, `rocketnet_server_finish_message`,
   `rocketnet_server_receive_messages`, `rocketnet_server_receipts`,
@@ -77,6 +75,7 @@ xctrace record --template 'Time Profiler' --output soak.trace --launch -- ./bin/
   `rocketnet_client_index`, `rocketnet_client_start_message`,
   `rocketnet_client_finish_message`, `rocketnet_client_receive_messages`,
   `rocketnet_client_receipts`
+- `rocketnet_client_network_simulator`, `rocketnet_server_network_simulator`
 - `rocketnet_create_dev_connect_token` and
   `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` (development library only)
 - `rocketnet_status_name`, `rocketnet_time`

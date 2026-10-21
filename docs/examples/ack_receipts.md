@@ -6,7 +6,7 @@ Sending with `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT` gives each snap
 
 ## What it shows
 
-1. Create a server and a client over the `loopback` transport, with `simulated_loss_percent = 30` on the client (`rocketnet_client_default_config` and `rocketnet_client_create`) so some packets arrive and some are lost.
+1. Create a server and a client over the `loopback` transport, with 30 percent loss on outgoing client packets from `rocketnet_client_network_simulator`, so some packets arrive and some are lost.
 2. Queue 20 state updates with `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT` (`rocketnet_client_start_message` and `rocketnet_client_finish_message`), recording the nonzero serial returned for each update.
 3. Read `rocketnet_client_receipts` each frame after `rocketnet_client_update` and match each `rocketnet_receipt_t` serial back to the update that sent it.
 4. Print `ACKED` (`ROCKETNET_RECEIPT_STATUS_ACKED`) or `LOSS` (`ROCKETNET_RECEIPT_STATUS_LOSS`) for each update and verify that all 20 sends receive exactly one receipt.
@@ -42,7 +42,7 @@ Each `update <n> (serial <s>): ACKED|LOSS` line reports the single outcome for t
 - `rocketnet_server_default_config`, `rocketnet_server_create`,
   `rocketnet_server_start`, `rocketnet_server_destroy`,
   `rocketnet_server_update`, `rocketnet_server_send_packets`,
-  `rocketnet_server_port`, `rocketnet_server_ipv4_address`,
+  `rocketnet_server_ipv4_address`,
   `rocketnet_server_public_key`, `rocketnet_server_client_connected`,
   `rocketnet_server_start_message`, `rocketnet_server_finish_message`,
   `rocketnet_server_receive_messages`
@@ -51,7 +51,8 @@ Each `update <n> (serial <s>): ACKED|LOSS` line reports the single outcome for t
   `rocketnet_client_update`, `rocketnet_client_send_packets`,
   `rocketnet_client_state`, `rocketnet_client_index`,
   `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
-  `rocketnet_client_receive_messages`, `rocketnet_client_receipts`
+  `rocketnet_client_receive_messages`, `rocketnet_client_receipts`,
+  `rocketnet_client_network_simulator`
 - `rocketnet_create_dev_connect_token` and
   `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` (development library only)
 - `rocketnet_status_name`, `rocketnet_time`, `rocketnet_sleep`

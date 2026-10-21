@@ -11,7 +11,7 @@ Each endpoint uses the same bounded frame order:
 1. call `rocketnet_client_update` or `rocketnet_server_update` with the
    caller's monotonic time;
 2. drain the endpoint-wide queue with `rocketnet_client_receive_messages` or
-   `rocketnet_server_receive_messages` until it returns false;
+   `rocketnet_server_receive_messages` until it returns NULL;
 3. run the game simulation;
 4. reserve, write and finish outgoing messages;
 5. call `rocketnet_client_send_packets` or `rocketnet_server_send_packets`
@@ -67,7 +67,8 @@ public stat and status exactly.
 Message stores, queues, delivery batches, receipt rings, replay windows and
 reassembly slots have bounded capacity derived from the public config. Their
 storage lifecycle uses the caller allocator and a refused allocation is
-reported. Message frame calls do not block. Exhausting connection message memory ends
+reported. Message frame calls do not wait on the network. Client update can
+briefly wait for a lock shared with the I/O thread. Exhausting connection message memory ends
 that connection: the server's slot reads
 `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED` and the client's state
 reads `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED`. Unreliable work may be

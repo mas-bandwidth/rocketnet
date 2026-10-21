@@ -28,9 +28,9 @@ keep it inside the private report.
 ## Versions that receive fixes
 
 The newest tagged minor release line receives security fixes in a patch release;
-the first line is 1.0.x. Until the first tag exists there is no supported
-release, and the development branch and untagged commits are not supported for
-production use. Older minor lines are not maintained: a fix ships in the newest
+the first line is 1.0.x. Until v1.0.0 is tagged there is no supported
+release. Previews such as v1.0.0-preview-1, the development branch and untagged
+commits are not supported for production use. Older minor lines are not maintained: a fix ships in the newest
 line and upgrading is the remedy. An advisory always names the affected versions
 and the first fixed version.
 
@@ -74,8 +74,9 @@ layer. Those sections are the authority; this file does not restate their
 reasoning.
 
 The connect-token create and expire checks read the application's clock: by
-default the wall clock, or with `game_clock_epoch` set, that epoch plus the time
-the caller passes. The application already supplies the clock every other
+default the wall clock. With `ROCKETNET_CLIENT_GAME_CLOCK_EPOCH` or
+`ROCKETNET_SERVER_GAME_CLOCK_EPOCH` set, it is that epoch plus the time the
+caller passes. The application already supplies the clock every other
 deadline reads, so the token clock has the same trust; the expire check stays
 and only its clock source changes.
 
