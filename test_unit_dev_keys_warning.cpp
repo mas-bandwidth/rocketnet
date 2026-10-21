@@ -137,7 +137,7 @@ static int test_unset_environment( const char * name )
 #endif
 }
 
-static void dev_keys_warn_on_every_start()
+static void test_dev_keys_warn_on_every_start()
 {
     // the server, development keys: a warning on create, and in a release
     // build (the unit suite's build) the published keys are refused.
@@ -201,4 +201,4 @@ static void dev_keys_warn_on_every_start()
     }
 }
 
-REGISTER_UNIT_TEST( dev_keys_warn_on_every_start );
+REGISTER_UNIT_TEST( test_dev_keys_warn_on_every_start );

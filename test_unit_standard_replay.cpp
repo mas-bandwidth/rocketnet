@@ -116,7 +116,7 @@ static int standard_replay_generate( const char * id, uint8_t * out, int capacit
     return -1;
 }
 
-static void standard_replay_vectors()
+static void test_standard_replay_vectors()
 {
     const int count = (int) ( sizeof( standard_replay_table ) / sizeof( standard_replay_table[0] ) );
     rocketnet_unit_check( rn_standard_vectors_walk( standard_replay_table, count, standard_replay_generate ) == 4 );
@@ -137,4 +137,4 @@ static void standard_replay_vectors()
     rocketnet_unit_check( standard_replay_generate( "t14.no-such-vector", scratch, 0 ) == -1 );
 }
 
-REGISTER_UNIT_TEST( standard_replay_vectors );
+REGISTER_UNIT_TEST( test_standard_replay_vectors );

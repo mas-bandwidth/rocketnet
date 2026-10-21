@@ -424,7 +424,7 @@ static std::vector<ctv_file_vector_t> ctv_load()
 // rename, so a reader never sees half a file) only when the explicit
 // ROCKETNET_REGENERATE_CONNECT_TOKEN_VECTORS=1 flag is set, so a read-only
 // checkout never fails
-static void vectors_regenerate_byte_identical()
+static void test_vectors_regenerate_byte_identical()
 {
     std::string generated = ctv_generate_json();
     std::string generated_again = ctv_generate_json();
@@ -460,7 +460,7 @@ static void vectors_regenerate_byte_identical()
 // every vector in the file: its seed expands to the test backend key, its
 // signature verifies, its sealed block opens with the test server secret, and
 // every field read back out of the token equals the field the file states
-static void each_vector_verifies_and_opens()
+static void test_each_vector_verifies_and_opens()
 {
     std::vector<ctv_file_vector_t> vectors = ctv_load();
     rocketnet_unit_check( (int) vectors.size() == ctv_input_count );
@@ -527,7 +527,7 @@ static void each_vector_verifies_and_opens()
 // crypto_box_open_easy under the blake2b-192(epk || pk) nonce; the same
 // inputs mint the same token twice; and outside the sealed block and the
 // signature it is the production writer's token exactly
-static void deterministic_seal_matches_libsodium_open()
+static void test_deterministic_seal_matches_libsodium_open()
 {
     for ( int v = 0; v < ctv_input_count; v++ )
     {
@@ -592,7 +592,7 @@ static void deterministic_seal_matches_libsodium_open()
 // one flipped byte anywhere in the signed connect data or the signature is
 // refused by the signature check; one flipped byte in the sealed block,
 // re-signed so the signature passes, is refused by the seal open
-static void tampered_vector_refused()
+static void test_tampered_vector_refused()
 {
     std::vector<ctv_file_vector_t> vectors = ctv_load();
     rocketnet_unit_check( vectors.size() >= 4 );
@@ -659,7 +659,7 @@ static ctv_dev_token_writer_t ctv_dev_token_writer()
 // constant, and its lifetime from the expiry constant. Mint one with the
 // development writer at timestamp 1000 and read its signed fields back with
 // the development backend key, pinning both values.
-static void dev_connect_token_timeout_is_the_named_constant()
+static void test_dev_connect_token_timeout_is_the_named_constant()
 {
     const uint64_t now = 1000;
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
@@ -679,11 +679,11 @@ static void dev_connect_token_timeout_is_the_named_constant()
     rocketnet_unit_check( parsed.expire_timestamp - parsed.create_timestamp == ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS );
 }
 
-REGISTER_UNIT_TEST( vectors_regenerate_byte_identical );
-REGISTER_UNIT_TEST( dev_connect_token_timeout_is_the_named_constant );
-REGISTER_UNIT_TEST( each_vector_verifies_and_opens );
-REGISTER_UNIT_TEST( deterministic_seal_matches_libsodium_open );
-REGISTER_UNIT_TEST( tampered_vector_refused );
+REGISTER_UNIT_TEST( test_vectors_regenerate_byte_identical );
+REGISTER_UNIT_TEST( test_dev_connect_token_timeout_is_the_named_constant );
+REGISTER_UNIT_TEST( test_each_vector_verifies_and_opens );
+REGISTER_UNIT_TEST( test_deterministic_seal_matches_libsodium_open );
+REGISTER_UNIT_TEST( test_tampered_vector_refused );
 
 // ---------------------------------------------------------------------------
 // Wycheproof Ed25519. The rule these tests pin is RFC 8032 section 5.1.7 as
@@ -812,7 +812,7 @@ static int wp_ed25519_run( bool accept_all, wp_ed25519_tally_t * tally,
 // against all 151 Ed25519 vectors, then drives the SDK wrapper itself: S
 // replaced by S + L (RFC 8032 section 5.1.7), a flipped R bit, flipped data
 // and the identity public key encoding are all refused.
-static void wycheproof_ed25519_vectors()
+static void test_wycheproof_ed25519_vectors()
 {
     wp_ed25519_tally_t tally;
     rocketnet_unit_check( wp_ed25519_run( false, &tally, NULL ) == 0 );
@@ -874,7 +874,7 @@ static void wycheproof_ed25519_vectors()
 // exactly the 51 invalid vectors whose 64-byte signature the verify branch in
 // sdk/rocketnet_connect_token.cpp rocketnet_verify_signed_connect_data exists
 // to refuse. A green witness means the main test would not catch that bug.
-static void wycheproof_ed25519_witness_accept_all_goes_red()
+static void test_wycheproof_ed25519_witness_accept_all_goes_red()
 {
     wp_ed25519_tally_t tally;
     std::vector<wp_ed25519_disagreement_t> disagreements;
@@ -888,7 +888,7 @@ static void wycheproof_ed25519_witness_accept_all_goes_red()
     }
 }
 
-REGISTER_UNIT_TEST( wycheproof_ed25519_vectors );
-REGISTER_UNIT_TEST( wycheproof_ed25519_witness_accept_all_goes_red );
+REGISTER_UNIT_TEST( test_wycheproof_ed25519_vectors );
+REGISTER_UNIT_TEST( test_wycheproof_ed25519_witness_accept_all_goes_red );
 
 #endif // !defined(ROCKETNET_USE_SYSTEM_SODIUM), rocketnet-wycheproof-ed25519

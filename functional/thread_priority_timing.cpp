@@ -20,13 +20,13 @@
     ROCKETNET_TIMING_SECONDS set): in the parallel suite, 2 x cores spinning
     threads would starve the cases running beside it.
 
-      thread_priority_timing_receive_gaps            default; on Linux under
+      test_thread_priority_timing_receive_gaps            default; on Linux under
                                                      2 x cores busy-spinning
                                                      threads of its own
-      thread_priority_timing_taskpolicy_background   macOS: the same case, the
+      test_thread_priority_timing_taskpolicy_background   macOS: the same case, the
                                                      whole process under
                                                      `taskpolicy -b`
-      thread_priority_windows_readback               Windows: each network
+      test_thread_priority_windows_readback               Windows: each network
                                                      thread's priority read back
 */
 
@@ -609,18 +609,16 @@ void thread_priority_timing_receive_gaps()
 #endif
 }
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 void thread_priority_windows_readback()
 {
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     priority_timing_run( "windows_readback", 0, true );
-#else
-    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "thread_priority_windows_readback [SKIPPED windows only: GetThreadPriority]" );
-#endif
 }
+#endif
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 void thread_priority_timing_taskpolicy_background()
 {
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     if ( getenv( PRIORITY_TIMING_CHILD_ENV ) )
     {
         priority_timing_run( "taskpolicy_background", 0, false );
@@ -633,7 +631,7 @@ void thread_priority_timing_taskpolicy_background()
     char taskpolicy[] = "/usr/sbin/taskpolicy";
     char background[] = "-b";
     char run[] = "--run";
-    char name[] = "thread_priority_timing_taskpolicy_background";
+    char name[] = "test_thread_priority_timing_taskpolicy_background";
     char * argv[] = { taskpolicy, background, exe, run, name, NULL };
     pid_t pid = 0;
     const int spawned = posix_spawn( &pid, taskpolicy, NULL, NULL, argv, environ );
@@ -642,7 +640,5 @@ void thread_priority_timing_taskpolicy_background()
     int child_status = 0;
     priority_timing_require( waitpid( pid, &child_status, 0 ) == pid );
     priority_timing_require( WIFEXITED( child_status ) && WEXITSTATUS( child_status ) == 0 );
-#else
-    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "thread_priority_timing_taskpolicy_background [SKIPPED mac only: taskpolicy is macOS]" );
-#endif
 }
+#endif

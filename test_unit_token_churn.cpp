@@ -205,7 +205,7 @@ static void tc_disconnect( struct tc_server_t * t, struct tc_client_t * c, uint6
 // expired. Five cycles, each with a fresh token from a fresh address, are
 // all admitted now, and nothing is ever denied.
 
-static void server_admits_sequential_fresh_tokens_past_twice_max_clients()
+static void test_server_admits_sequential_fresh_tokens_past_twice_max_clients()
 {
     static struct tc_server_t t;
     tc_server_setup( &t, 1, 8 );
@@ -242,7 +242,7 @@ static void server_admits_sequential_fresh_tokens_past_twice_max_clients()
     tc_server_teardown( &t );
 }
 
-REGISTER_UNIT_TEST( server_admits_sequential_fresh_tokens_past_twice_max_clients );
+REGISTER_UNIT_TEST( test_server_admits_sequential_fresh_tokens_past_twice_max_clients );
 
 // One token, one live connection. A token a connected client holds is
 // refused from any other address by the used-token history, before the
@@ -254,7 +254,7 @@ REGISTER_UNIT_TEST( server_admits_sequential_fresh_tokens_past_twice_max_clients
 // The four clients are static: an unoptimised MSVC build stacks them all at
 // once, past the default 1 MB stack. tc_client_init resets each in full.
 
-static void server_refuses_a_token_connected_now()
+static void test_server_refuses_a_token_connected_now()
 {
     static struct tc_server_t t;
     tc_server_setup( &t, 2, 1 );
@@ -311,13 +311,13 @@ static void server_refuses_a_token_connected_now()
     tc_server_teardown( &t );
 }
 
-REGISTER_UNIT_TEST( server_refuses_a_token_connected_now );
+REGISTER_UNIT_TEST( test_server_refuses_a_token_connected_now );
 
 // The short expiry is the fast reject: the expire timestamp is in the signed
 // connect data, read at a fixed offset before the cookie gate, so an expired
 // token is refused before any MAC, signature verify or open runs.
 
-static void server_rejects_an_expired_token_before_any_crypto()
+static void test_server_rejects_an_expired_token_before_any_crypto()
 {
     static struct tc_server_t t;
     tc_server_setup( &t, 1, 8 );
@@ -362,13 +362,13 @@ static void server_rejects_an_expired_token_before_any_crypto()
     tc_server_teardown( &t );
 }
 
-REGISTER_UNIT_TEST( server_rejects_an_expired_token_before_any_crypto );
+REGISTER_UNIT_TEST( test_server_rejects_an_expired_token_before_any_crypto );
 
 // A token whose connection has closed may connect again inside its short
 // expiry: the residual risk accepted by the design (docs/SESSION.md, Token
 // reuse). This pins it, so a change to the rule is a change to this test.
 
-static void server_admits_a_token_again_after_its_connection_closes()
+static void test_server_admits_a_token_again_after_its_connection_closes()
 {
     static struct tc_server_t t;
     tc_server_setup( &t, 1, 8 );
@@ -391,4 +391,4 @@ static void server_admits_a_token_again_after_its_connection_closes()
     tc_server_teardown( &t );
 }
 
-REGISTER_UNIT_TEST( server_admits_a_token_again_after_its_connection_closes );
+REGISTER_UNIT_TEST( test_server_admits_a_token_again_after_its_connection_closes );

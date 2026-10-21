@@ -206,7 +206,7 @@ static void drop_counters_run( bool batch )
 // rocketnet_client_transport_create_step_driven reads only the fields before
 // the link simulator's and would leave simulated_drop_every_nth unread and the
 // I/O core on.
-static void client_receive_counts_prefilter_drops_without_io_core()
+static void test_client_receive_counts_prefilter_drops_without_io_core()
 {
     rocketnet_public_link_simulator_test_development( 1 );
 
@@ -250,13 +250,13 @@ static void client_receive_counts_prefilter_drops_without_io_core()
     rocketnet_public_link_simulator_test_development( 0 );
 }
 
-REGISTER_UNIT_TEST( client_receive_counts_prefilter_drops_without_io_core );
+REGISTER_UNIT_TEST( test_client_receive_counts_prefilter_drops_without_io_core );
 
 // after the client disconnects, the reset clears the dialed address
 // (sdk/rocketnet_connection_reset.cpp:42), and the former server's redundant
 // disconnect packets still arrive: dropped as before, never counted as a
 // foreign source (sdk/rocketnet_client_transport.cpp:1296-1301)
-static void client_receive_foreign_source_not_counted_after_disconnect()
+static void test_client_receive_foreign_source_not_counted_after_disconnect()
 {
     rocketnet_client_transport_io_operations_t operations = rocketnet_fake_client_operations_io;
     operations.receive = drop_counters_receive;
@@ -282,18 +282,18 @@ static void client_receive_foreign_source_not_counted_after_disconnect()
     delete driver;
 }
 
-REGISTER_UNIT_TEST( client_receive_foreign_source_not_counted_after_disconnect );
+REGISTER_UNIT_TEST( test_client_receive_foreign_source_not_counted_after_disconnect );
 
-static void client_receive_counts_prefilter_and_foreign_source_drops_per_packet()
+static void test_client_receive_counts_prefilter_and_foreign_source_drops_per_packet()
 {
     drop_counters_run( false );
 }
 
-REGISTER_UNIT_TEST( client_receive_counts_prefilter_and_foreign_source_drops_per_packet );
+REGISTER_UNIT_TEST( test_client_receive_counts_prefilter_and_foreign_source_drops_per_packet );
 
-static void client_receive_counts_prefilter_and_foreign_source_drops_batch()
+static void test_client_receive_counts_prefilter_and_foreign_source_drops_batch()
 {
     drop_counters_run( true );
 }
 
-REGISTER_UNIT_TEST( client_receive_counts_prefilter_and_foreign_source_drops_batch );
+REGISTER_UNIT_TEST( test_client_receive_counts_prefilter_and_foreign_source_drops_batch );

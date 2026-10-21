@@ -84,8 +84,8 @@ static uint32_t resend_timing_pass( resend_timing_fixture_t * f, double now )
     return rn_window_ack_resend( &f->ack, now, &f->next_packet_id, out, 16 );
 }
 
-// resend_delay_is_adaptive_resend_delay: both paths use one resend delay equation, without a fixed cap.
-static void resend_delay_is_adaptive_resend_delay()
+// test_resend_delay_is_adaptive_resend_delay: both paths use one resend delay equation, without a fixed cap.
+static void test_resend_delay_is_adaptive_resend_delay()
 {
     // short path: one 20 ms sample gives resend_delay = 40 + 80 + 30 = 150 ms
     {
@@ -121,11 +121,11 @@ static void resend_delay_is_adaptive_resend_delay()
     }
 }
 
-REGISTER_UNIT_TEST( resend_delay_is_adaptive_resend_delay );
+REGISTER_UNIT_TEST( test_resend_delay_is_adaptive_resend_delay );
 
 // The equation honors caller bounds; RakNet's 2 s default is not an override
 // of an application's explicit maximum.
-static void resend_delay_uses_configured_bounds()
+static void test_resend_delay_uses_configured_bounds()
 {
     check( fabs( rn_window_ack_compute_resend_delay( 1.0, 0.5, 0.0, 5.0 ) - 4.03 ) < 1e-12 );
     check( fabs( rn_window_ack_compute_resend_delay( 1.0, 0.5, 0.0, 3.0 ) - 3.0 ) < 1e-12 );
@@ -133,12 +133,12 @@ static void resend_delay_uses_configured_bounds()
     check( fabs( rn_window_ack_compute_resend_delay( 0.001, 0.001, 0.05, 5.0 ) - 0.05 ) < 1e-12 );
 }
 
-REGISTER_UNIT_TEST( resend_delay_uses_configured_bounds );
+REGISTER_UNIT_TEST( test_resend_delay_uses_configured_bounds );
 
 // The first deviation equals the first RTT; every subsequent sample moves
 // deviation 5% toward the absolute RTT error and smoothed RTT 5% toward
 // the sample, as in RakNet CC.cpp:210-222.
-static void raknet_rtt_estimator_moves_five_percent()
+static void test_raknet_rtt_estimator_moves_five_percent()
 {
     resend_timing_fixture_t f;
     rocketnet_message_default_config( &f.config );
@@ -170,11 +170,11 @@ static void raknet_rtt_estimator_moves_five_percent()
     resend_timing_close( &f );
 }
 
-REGISTER_UNIT_TEST( raknet_rtt_estimator_moves_five_percent );
+REGISTER_UNIT_TEST( test_raknet_rtt_estimator_moves_five_percent );
 
-// no_backoff_between_resends: a record that is never acked repeats its
+// test_no_backoff_between_resends: a record that is never acked repeats its
 // configured initial resend delay on every pass.
-static void no_backoff_between_resends()
+static void test_no_backoff_between_resends()
 {
     resend_timing_fixture_t f;
     rocketnet_message_default_config( &f.config );
@@ -209,11 +209,11 @@ static void no_backoff_between_resends()
     resend_timing_close( &f );
 }
 
-REGISTER_UNIT_TEST( no_backoff_between_resends );
+REGISTER_UNIT_TEST( test_no_backoff_between_resends );
 
-// first_resend_before_any_sample_at_resend_delay_initial: a fresh connection waits for
+// test_first_resend_before_any_sample_at_resend_delay_initial: a fresh connection waits for
 // the configured default resend delay until its first sample.
-static void first_resend_before_any_sample_at_resend_delay_initial()
+static void test_first_resend_before_any_sample_at_resend_delay_initial()
 {
     resend_timing_fixture_t f;
     rocketnet_message_default_config( &f.config );
@@ -230,13 +230,13 @@ static void first_resend_before_any_sample_at_resend_delay_initial()
     resend_timing_close( &f );
 }
 
-REGISTER_UNIT_TEST( first_resend_before_any_sample_at_resend_delay_initial );
+REGISTER_UNIT_TEST( test_first_resend_before_any_sample_at_resend_delay_initial );
 
-// config_refuses_fewer_than_four_attempts: reliable_timeout_ms must fit four
+// test_config_refuses_fewer_than_four_attempts: reliable_timeout_ms must fit four
 // sends of the longest first delay, max( the 100 ms resend interval,
 // resend_delay_initial_ms ).
 // Validation refuses and never clamps.
-static void config_refuses_fewer_than_four_attempts()
+static void test_config_refuses_fewer_than_four_attempts()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
@@ -261,16 +261,16 @@ static void config_refuses_fewer_than_four_attempts()
     check( config.resend_delay_initial_ms == 2000 && config.reliable_timeout_ms == 8000 );
 }
 
-REGISTER_UNIT_TEST( config_refuses_fewer_than_four_attempts );
+REGISTER_UNIT_TEST( test_config_refuses_fewer_than_four_attempts );
 
-// resend_timing_witness_replays: the schedule of
+// test_resend_timing_witness_replays: the schedule of
 // tla/MCRNResendTimingBrokenBackoff.cfg against the code. The first version's
 // resend delay settings (resend_delay_initial 1000 ms, resend_delay_min 50 ms, resend_delay_max 2000 ms,
 // reliable_timeout 10 s), one RTT sample of 500 ms (which drives the first
 // version's resend_delay to exactly 1.5 s), and the record's own sends all lost. The
 // witness fits three sends before the timeout (0, 1.5 and 4.5 s); the code
 // must make at least ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS.
-static void resend_timing_witness_replays()
+static void test_resend_timing_witness_replays()
 {
     resend_timing_fixture_t f;
     rocketnet_message_default_config( &f.config );
@@ -315,15 +315,15 @@ static void resend_timing_witness_replays()
     resend_timing_close( &f );
 }
 
-REGISTER_UNIT_TEST( resend_timing_witness_replays );
+REGISTER_UNIT_TEST( test_resend_timing_witness_replays );
 
-// message_config_abi_size_is_unchanged: the ABI canary. The resend schedule's
+// test_message_config_abi_size_is_unchanged: the ABI canary. The resend schedule's
 // interval and RTT scale are constants, so they add no field: revision 1's 15
 // int fields keep their layout as the prefix ABI1 callers allocate, and the
 // struct is revision 2 (the two R6 send budget fields, docs/ABI-EVOLUTION.md
 // 4). A field added to ROCKETNET_MESSAGE_CONFIG_TABLE without a new revision
 // grows this and fails here first.
-static void message_config_abi_size_is_unchanged()
+static void test_message_config_abi_size_is_unchanged()
 {
     check( ROCKETNET_MESSAGE_CONFIG_BYTES_1 == ROCKETNET_MESSAGE_CONFIG_ABI1_BYTES );
     check( offsetof( rocketnet_message_config_t, reliable_timeout_ms ) == ROCKETNET_MESSAGE_CONFIG_ABI1_BYTES - sizeof( int ) );
@@ -331,7 +331,7 @@ static void message_config_abi_size_is_unchanged()
     check( sizeof( rocketnet_message_config_t ) == ROCKETNET_MESSAGE_CONFIG_ABI1_BYTES + 2 * sizeof( int ) );
 }
 
-REGISTER_UNIT_TEST( message_config_abi_size_is_unchanged );
+REGISTER_UNIT_TEST( test_message_config_abi_size_is_unchanged );
 
 // ---------------------------------------------------------------------------
 // The chunks of a block wait the resend delay alone (docs/CHANNELS.md 6.4 "Resend";
@@ -386,7 +386,7 @@ static bool resend_timing_contains( const uint64_t * numbers, uint32_t count, ui
 
 // On a 200 ms path, the RakNet resend delay is 1230 ms. Chunks wait the adaptive resend delay,
 // with no fixed 100 ms cap or retry back-off.
-static void chunk_resend_paced_by_rtt_not_interval()
+static void test_chunk_resend_paced_by_rtt_not_interval()
 {
     resend_timing_fixture_t f;
     rocketnet_message_default_config( &f.config );
@@ -423,11 +423,11 @@ static void chunk_resend_paced_by_rtt_not_interval()
     resend_timing_close( &f );
 }
 
-REGISTER_UNIT_TEST( chunk_resend_paced_by_rtt_not_interval );
+REGISTER_UNIT_TEST( test_chunk_resend_paced_by_rtt_not_interval );
 
 // A small record sent behind a block remains independently due in its own
 // FIFO; its position in the small FIFO is independent of chunk timing.
-static void small_record_behind_a_chunk_not_held()
+static void test_small_record_behind_a_chunk_not_held()
 {
     resend_timing_fixture_t f;
     rocketnet_message_default_config( &f.config );
@@ -451,15 +451,15 @@ static void small_record_behind_a_chunk_not_held()
     resend_timing_close( &f );
 }
 
-REGISTER_UNIT_TEST( small_record_behind_a_chunk_not_held );
+REGISTER_UNIT_TEST( test_small_record_behind_a_chunk_not_held );
 
-// both_fifos_walk_only_what_is_due: each class is walked from its head while
+// test_both_fifos_walk_only_what_is_due: each class is walked from its head while
 // due and no further. Tripwires show it: a number marked acked by hand while
 // still linked is unlinked by the first walk that reaches it, so resend_count
 // drops only when a walk goes as far as a tripwire. One tripwire sits in each
 // class behind numbers that are not yet due; while the walks stop before
 // them the count holds, and a walk past a stop point would remove them.
-static void both_fifos_walk_only_what_is_due()
+static void test_both_fifos_walk_only_what_is_due()
 {
     resend_timing_fixture_t f;
     rocketnet_message_default_config( &f.config );
@@ -521,4 +521,4 @@ static void both_fifos_walk_only_what_is_due()
     resend_timing_close( &f );
 }
 
-REGISTER_UNIT_TEST( both_fifos_walk_only_what_is_due );
+REGISTER_UNIT_TEST( test_both_fifos_walk_only_what_is_due );

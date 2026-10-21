@@ -21,7 +21,7 @@ static int standard_transport_appendices_generate( const char * id, uint8_t * ou
     return -1;
 }
 
-static void standard_transport_appendices_vectors()
+static void test_standard_transport_appendices_vectors()
 {
     const int count = rn_standard_vectors_walk( NULL, 0, standard_transport_appendices_generate );
     rocketnet_unit_check( count == 0 );
@@ -31,4 +31,4 @@ static void standard_transport_appendices_vectors()
     rocketnet_unit_check( standard_transport_appendices_generate( "tc.no-such-vector", scratch, (int) sizeof( scratch ) ) == -1 );
 }
 
-REGISTER_UNIT_TEST( standard_transport_appendices_vectors );
+REGISTER_UNIT_TEST( test_standard_transport_appendices_vectors );

@@ -15,6 +15,9 @@
 
 #include "test_unit_registry.h"
 
+// the AF_XDP code is Linux only, so its tests are built there only
+#if defined(__linux__)
+
 void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consumed,
     void (*cancel)( void * ring, uint32_t count ),
     void (*release)( void * ring, uint32_t count ),
@@ -98,7 +101,7 @@ namespace
 // The staging buffer has room for 3 of the 8 descriptors a peek returns.
 // The 5 not taken go back to the ring: the consumer index does not lag the
 // cached one, and the next peek returns exactly those 5, in order.
-static void xdp_receive_ring_returns_descriptors_the_staging_buffer_cannot_take()
+static void test_xdp_transport_receive_ring_returns_descriptors_the_staging_buffer_cannot_take()
 {
     fake_rx_ring_t ring;
     memset( &ring, 0, sizeof( ring ) );
@@ -127,7 +130,7 @@ static void xdp_receive_ring_returns_descriptors_the_staging_buffer_cannot_take(
 
 // A full staging buffer takes nothing: every peeked descriptor goes back,
 // and the ring is exactly as it was before the peek.
-static void xdp_receive_ring_full_staging_returns_every_descriptor()
+static void test_xdp_transport_receive_ring_full_staging_returns_every_descriptor()
 {
     fake_rx_ring_t ring;
     memset( &ring, 0, sizeof( ring ) );
@@ -150,7 +153,7 @@ static void xdp_receive_ring_full_staging_returns_every_descriptor()
 // the fill queue (the worker's pending return). Every frame is in exactly
 // one of the fill queue, the RX ring or the worker's hands, and receive
 // never stalls while frames are free: every pass with staging room takes.
-static void xdp_receive_ring_conserves_frames_and_never_stalls()
+static void test_xdp_transport_receive_ring_conserves_frames_and_never_stalls()
 {
     fake_rx_ring_t ring;
     memset( &ring, 0, sizeof( ring ) );
@@ -205,6 +208,8 @@ static void xdp_receive_ring_conserves_frames_and_never_stalls()
     rocketnet_unit_check( received >= 64 );
 }
 
-REGISTER_UNIT_TEST( xdp_receive_ring_returns_descriptors_the_staging_buffer_cannot_take );
-REGISTER_UNIT_TEST( xdp_receive_ring_full_staging_returns_every_descriptor );
-REGISTER_UNIT_TEST( xdp_receive_ring_conserves_frames_and_never_stalls );
+REGISTER_UNIT_TEST( test_xdp_transport_receive_ring_returns_descriptors_the_staging_buffer_cannot_take );
+REGISTER_UNIT_TEST( test_xdp_transport_receive_ring_full_staging_returns_every_descriptor );
+REGISTER_UNIT_TEST( test_xdp_transport_receive_ring_conserves_frames_and_never_stalls );
+
+#endif // #if defined(__linux__)

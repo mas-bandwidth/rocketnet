@@ -62,9 +62,10 @@ mkdir -p "$reports"
 
 # Per-process logs keep each origin trace with its warning. The suite runner
 # spawns tests in parallel, and a shared stderr interleaves those traces.
-# exitcode makes a test whose only problem is an MSan report leave a distinct
-# status the gate can tell apart from a crash or an ordinary test failure.
-export MSAN_OPTIONS="halt_on_error=0:print_stats=0:exitcode=${msan_exitcode}:log_path=${reports}/msan"
+# exitcode=0 lets a test whose only problem is an MSan report pass, so the
+# suite (which stops at its first failing test) runs every test; each report
+# is judged below from the per-process logs against the known list.
+export MSAN_OPTIONS="halt_on_error=0:print_stats=0:exitcode=0:log_path=${reports}/msan"
 
 set +e
 "$test_bin" >"$log" 2>&1
@@ -83,7 +84,7 @@ failed = []
 saw_fail = False
 if os.path.exists(log_path):
     for line in open(log_path, errors="replace"):
-        m = re.match(r"^test_timing_fail_\d+ \[SKIPPED (.*)\]\s*$", line)
+        m = re.match(r"^check failed: (test_[a-z0-9_]+ (?:signal \d+|exceeded .+|exit \d+|wait failed))\s*$", line)
         if not m:
             continue
         saw_fail = True

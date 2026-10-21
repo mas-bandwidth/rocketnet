@@ -132,7 +132,7 @@ static int standard_message_forms_generate( const char * id, uint8_t * out, int 
     return -1;
 }
 
-static void standard_message_forms_vectors()
+static void test_standard_message_forms_vectors()
 {
     const int count = (int) ( sizeof( standard_message_forms_table ) / sizeof( standard_message_forms_table[0] ) );
     rocketnet_unit_check( rn_standard_vectors_walk( standard_message_forms_table, count, standard_message_forms_generate ) == count );
@@ -141,4 +141,4 @@ static void standard_message_forms_vectors()
     rocketnet_unit_check( rocketnet_message_single_capacity( ROCKETNET_MAX_PAYLOAD_BYTES ) == ROCKETNET_MESSAGE_SINGLE_BYTES );
 }
 
-REGISTER_UNIT_TEST( standard_message_forms_vectors );
+REGISTER_UNIT_TEST( test_standard_message_forms_vectors );

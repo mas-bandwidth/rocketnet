@@ -26,7 +26,7 @@ static void handshake_init( rocketnet_client_receive_handshake_t * handshake )
 
 // RNClientIo.tla ExposedStable: once update holds an exposed buffer, no
 // I/O-side action changes that buffer or its count until update returns it.
-static void client_io_receive_exposed_stable_until_update()
+static void test_client_io_receive_exposed_stable_until_update()
 {
     rocketnet_client_receive_handshake_t handshake;
     handshake_init( &handshake );
@@ -66,7 +66,7 @@ static void client_io_receive_exposed_stable_until_update()
 // RNClientIo.tla NoReceiveStall: a batch read while update holds the other
 // buffer is published by the first update that returns it, with the owed
 // wake returned true, and reaches the next expose.
-static void client_io_receive_handoff_never_stalls()
+static void test_client_io_receive_handoff_never_stalls()
 {
     rocketnet_client_receive_handshake_t handshake;
     handshake_init( &handshake );
@@ -96,7 +96,7 @@ static void client_io_receive_handoff_never_stalls()
 // RNClientIo.tla FullWaitsOnWake: a full buffer with no Free buffer refuses
 // the publish, sets the owed flag and waits on the wake alone; update's
 // return frees the other buffer and the publish then succeeds.
-static void client_io_receive_full_waits_for_update()
+static void test_client_io_receive_full_waits_for_update()
 {
     rocketnet_client_receive_handshake_t handshake;
     handshake_init( &handshake );
@@ -124,6 +124,6 @@ static void client_io_receive_full_waits_for_update()
     rocketnet_client_receive_handshake_update_return( &handshake );
 }
 
-REGISTER_UNIT_TEST( client_io_receive_exposed_stable_until_update );
-REGISTER_UNIT_TEST( client_io_receive_handoff_never_stalls );
-REGISTER_UNIT_TEST( client_io_receive_full_waits_for_update );
+REGISTER_UNIT_TEST( test_client_io_receive_exposed_stable_until_update );
+REGISTER_UNIT_TEST( test_client_io_receive_handoff_never_stalls );
+REGISTER_UNIT_TEST( test_client_io_receive_full_waits_for_update );

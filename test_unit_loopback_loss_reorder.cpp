@@ -11,7 +11,7 @@
 // random draw (tla/Link.tla "everynth" and ReverseWindow). The cases run on
 // the loopback transport, with time passed as an argument from 1000.0, no socket.
 //
-// loopback_patterns_off_same_trace compares a fixed run, with both fields zero
+// test_loopback_transport_patterns_off_same_trace compares a fixed run, with both fields zero
 // and with the link simulator on and off, against counters recorded at the base
 // (sprint/rocketnet-proof cac844d) before this change existed.
 
@@ -262,7 +262,7 @@ static const struct loopback_trace_t loopback_base_trace_simulator_off =
 static const struct loopback_trace_t loopback_base_trace_simulator_on =
     { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0xa1e383b20d9ce6a7 ), UINT64_C( 0x72c482d03a2a0e45 ), 26 };
 
-static void loopback_patterns_off_same_trace()
+static void test_loopback_transport_patterns_off_same_trace()
 {
     struct loopback_trace_t off;
     struct loopback_trace_t on;
@@ -274,14 +274,14 @@ static void loopback_patterns_off_same_trace()
     loopback_check_trace( &off, &loopback_base_trace_simulator_off );
     loopback_check_trace( &on, &loopback_base_trace_simulator_on );
 
-    printf( "loopback_patterns_off_same_trace\n" );
+    printf( "test_loopback_transport_patterns_off_same_trace\n" );
 }
 
-REGISTER_UNIT_TEST( loopback_patterns_off_same_trace );
+REGISTER_UNIT_TEST( test_loopback_transport_patterns_off_same_trace );
 
 // ---- the pattern cases (they need the config fields) ------------------------
 
-static void loopback_drop_every_nth()
+static void test_loopback_transport_drop_every_nth()
 {
     struct loopback_pattern_t client_pattern = { 7, 0, 0 };
     struct loopback_pattern_t server_pattern = { 5, 0, 0 };
@@ -343,10 +343,10 @@ static void loopback_drop_every_nth()
     check( cstats.packets_received == sstats.packets_sent - sstats.packets_sent / 5 );
 
     loopback_transport_pair_teardown( &pair );
-    printf( "loopback_drop_every_nth\n" );
+    printf( "test_loopback_transport_drop_every_nth\n" );
 }
 
-REGISTER_UNIT_TEST( loopback_drop_every_nth );
+REGISTER_UNIT_TEST( test_loopback_transport_drop_every_nth );
 
 static void loopback_send_window( struct loopback_transport_pair_t * pair, uint8_t first, uint8_t count )
 {
@@ -368,7 +368,7 @@ static void loopback_send_window( struct loopback_transport_pair_t * pair, uint8
     rocketnet_server_transport_update( pair->server, pair->time );
 }
 
-static void loopback_reverse_window()
+static void test_loopback_transport_reverse_window()
 {
     struct loopback_pattern_t client_pattern = { 0, 4, 0 };
     struct loopback_pattern_t server_pattern = { 0, 0, 0 };
@@ -412,12 +412,12 @@ static void loopback_reverse_window()
         check( payloads[i][0] == expected_six[i] );
 
     loopback_transport_pair_teardown( &pair );
-    printf( "loopback_reverse_window\n" );
+    printf( "test_loopback_transport_reverse_window\n" );
 }
 
-REGISTER_UNIT_TEST( loopback_reverse_window );
+REGISTER_UNIT_TEST( test_loopback_transport_reverse_window );
 
-static void loopback_reliable_ordered_survives_loss_and_reorder()
+static void test_loopback_transport_reliable_ordered_survives_loss_and_reorder()
 {
     struct loopback_pattern_t pattern = { 7, 4, 0 };
     struct loopback_transport_pair_t pair;
@@ -519,10 +519,10 @@ static void loopback_reliable_ordered_survives_loss_and_reorder()
     rn_message_object_destroy( server );
     rocketnet_public_link_simulator_test_development( 0 );
 
-    printf( "loopback_reliable_ordered_survives_loss_and_reorder\n" );
+    printf( "test_loopback_transport_reliable_ordered_survives_loss_and_reorder\n" );
 }
 
-REGISTER_UNIT_TEST( loopback_reliable_ordered_survives_loss_and_reorder );
+REGISTER_UNIT_TEST( test_loopback_transport_reliable_ordered_survives_loss_and_reorder );
 
 // ---- the production refusal, the ranges and the env overlay ------------------
 
@@ -605,7 +605,7 @@ static void loopback_fields_present( const struct rocketnet_config_field_t * fie
     check( reverse == 1 );
 }
 
-static void loopback_loss_reorder_production_refusal()
+static void test_loopback_transport_loss_reorder_production_refusal()
 {
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config_current( &client_config );
@@ -741,7 +741,7 @@ static void loopback_loss_reorder_production_refusal()
     check( loopback_error_lines >= 12 );
     loopback_error_end();
 
-    printf( "loopback_loss_reorder_production_refusal\n" );
+    printf( "test_loopback_transport_loss_reorder_production_refusal\n" );
 }
 
-REGISTER_UNIT_TEST( loopback_loss_reorder_production_refusal );
+REGISTER_UNIT_TEST( test_loopback_transport_loss_reorder_production_refusal );

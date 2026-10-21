@@ -133,12 +133,12 @@ Every other server config field has the overlay `ROCKETNET_SERVER_<FIELD>`
 (`sdk/rocketnet.h:805`, `sdk/rocketnet_internal.h:480-481`).
 
 CI's transport matrix pins each Linux server transport against the portable
-client on four cases, `transport_env_pin_is_honoured` among them, which proves
+client on four cases, `test_transport_env_pin_is_honoured` among them, which proves
 the pinned transport is the one granted (`.github/workflows/ci.yml:280-305`,
 `:321`, `:358`). The same matrix, `xdp` aside (section 6):
 
 ```sh
-for pair in "portable portable" "gso portable" "io_uring portable" "loopback loopback"; do set -- $pair; for c in test_transport_udp_loopback test_transport_ipv6_loopback test_transport_dual_stack_ipv4_client transport_env_pin_is_honoured; do ROCKETNET_SERVER_TRANSPORT=$1 ROCKETNET_CLIENT_TRANSPORT=$2 ./bin/functional --run $c >/dev/null || { echo "FAIL $1/$2 $c"; break 2; }; echo "ok $1/$2 $c"; done; done
+for pair in "portable portable" "gso portable" "io_uring portable" "loopback loopback"; do set -- $pair; for c in test_loopback_transport_udp test_loopback_transport_ipv6 test_transport_dual_stack_ipv4_client test_transport_env_pin_is_honoured; do ROCKETNET_SERVER_TRANSPORT=$1 ROCKETNET_CLIENT_TRANSPORT=$2 ./bin/functional --run $c >/dev/null || { echo "FAIL $1/$2 $c"; break 2; }; echo "ok $1/$2 $c"; done; done
 ```
 
 ## 4. gso
@@ -299,7 +299,7 @@ kernel, never on the host (`.github/workflows/ci.yml:290-295`, `:335-349`;
 older and newer `vng` releases pass it to the guest shell alike:
 
 ```sh
-vng --run "$HOME/vm-kernels/vmlinuz-$(uname -r)" --memory 1536M --cpus 3 --append "irqaffinity=0 isolcpus=1-2 nohz_full=1-2" --rwdir "$PWD" -- "sudo ./bin/functional --run xdp_max_size_both_ways_ipv4 && sudo ./bin/functional --run xdp_max_size_both_ways_ipv6"
+vng --run "$HOME/vm-kernels/vmlinuz-$(uname -r)" --memory 1536M --cpus 3 --append "irqaffinity=0 isolcpus=1-2 nohz_full=1-2" --rwdir "$PWD" -- "sudo ./bin/functional --run test_xdp_transport_max_size_both_ways_ipv4 && sudo ./bin/functional --run test_xdp_transport_max_size_both_ways_ipv6"
 vng --run "$HOME/vm-kernels/vmlinuz-$(uname -r)" --memory 1536M --cpus 3 --append "irqaffinity=0 isolcpus=1-2 nohz_full=1-2" --rwdir "$PWD" -- "sudo ./bin/test_xdp_filter -v"
 ```
 

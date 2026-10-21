@@ -346,7 +346,7 @@ static bool counters_is_received( int counter )
 // ---------------------------------------------------------------------------
 // 1: every counter has a class and a name, and the names are BASE's, in order
 
-static void counters_every_counter_has_a_class()
+static void test_counters_every_counter_has_a_class()
 {
     check( COUNTERS_NUM_BASE == 215 );
     check( ROCKETNET_NUM_COUNTERS == COUNTERS_NUM_BASE + COUNTERS_NUM_APPENDED );
@@ -429,7 +429,7 @@ static void counters_every_counter_has_a_class()
     check( rocketnet_counter_class( ROCKETNET_COUNTER_SEND_FAILED ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
 }
 
-REGISTER_UNIT_TEST( counters_every_counter_has_a_class );
+REGISTER_UNIT_TEST( test_counters_every_counter_has_a_class );
 
 // ---------------------------------------------------------------------------
 // the source audit: which counters do the tests name, which have a code path
@@ -568,7 +568,7 @@ static bool counters_in_list( const counters_exception_t * list, const std::stri
     return false;
 }
 
-static void counters_every_counter_is_named_by_a_test()
+static void test_counters_every_counter_is_named_by_a_test()
 {
     const std::set<std::string> named = counters_named_by_tests();
     const std::set<std::string> counted = counters_named_by_sdk();
@@ -619,7 +619,7 @@ static void counters_every_counter_is_named_by_a_test()
     }
 }
 
-REGISTER_UNIT_TEST( counters_every_counter_is_named_by_a_test );
+REGISTER_UNIT_TEST( test_counters_every_counter_is_named_by_a_test );
 
 // ---------------------------------------------------------------------------
 // 2: an outcome sits in at most one family
@@ -710,7 +710,7 @@ static std::vector<std::string> counters_incremented( const std::string & text )
     return names;
 }
 
-static void counters_every_outcome_in_at_most_one_family()
+static void test_counters_every_outcome_in_at_most_one_family()
 {
     int shared = 0;
     for ( size_t i = 0; i < sizeof(counters_ladders) / sizeof(counters_ladders[0]); i++ )
@@ -751,7 +751,7 @@ static void counters_every_outcome_in_at_most_one_family()
     check( counters_rows[ROCKETNET_COUNTER_CONNECTION_RESPONSE_INTERNAL_ERROR].family == ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED );
 }
 
-REGISTER_UNIT_TEST( counters_every_outcome_in_at_most_one_family );
+REGISTER_UNIT_TEST( test_counters_every_outcome_in_at_most_one_family );
 
 // ---------------------------------------------------------------------------
 // 3: conservation reports the first unbalanced family
@@ -783,7 +783,7 @@ static void counters_expected_null_assert( const char *, const char *, const cha
 }
 #endif
 
-static void counters_conservation_reports_the_first_unbalanced_family()
+static void test_counters_conservation_reports_the_first_unbalanced_family()
 {
     char report[256];
 
@@ -877,12 +877,12 @@ static void counters_conservation_reports_the_first_unbalanced_family()
     check( rocketnet_api_misuse_count() == misuse_before + 1 );
 }
 
-REGISTER_UNIT_TEST( counters_conservation_reports_the_first_unbalanced_family );
+REGISTER_UNIT_TEST( test_counters_conservation_reports_the_first_unbalanced_family );
 
 // ---------------------------------------------------------------------------
 // 4: the exact-delta helper fails on a counter nobody named
 
-static void counters_expect_fails_on_an_unnamed_move()
+static void test_counters_expect_fails_on_an_unnamed_move()
 {
     struct rocketnet_counters_t before;
     memset( &before, 0, sizeof(before) );
@@ -953,4 +953,4 @@ static void counters_expect_fails_on_an_unnamed_move()
     rocketnet_counters_assert_conserved( &balanced );
 }
 
-REGISTER_UNIT_TEST( counters_expect_fails_on_an_unnamed_move );
+REGISTER_UNIT_TEST( test_counters_expect_fails_on_an_unnamed_move );

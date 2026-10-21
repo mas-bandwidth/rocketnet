@@ -263,9 +263,9 @@ class RenderTest( unittest.TestCase ):
         text = '(:title "T" :owed "deferred" :areas (%s))' % area( "platforms", [
             '(:feature "f" :cells (y o n) :evidence "Linux: t" :pending ((macOS "card-a (waiting)")))' ] )
         lines = render.render( render.parse( text ) ).split( "\n" )
-        self.assertIn( "| f | ✅ | OWED | ❌ |", lines )
+        self.assertIn( "| f | ✅ | planned for the final deliverable | ❌ |", lines )
         self.assertIn( "| complete | 100% | 0% | 0% |", lines )
-        self.assertIn( "OWED: deferred", lines )
+        self.assertIn( "Planned for the final deliverable: deferred", lines )
 
     def test_owed_cell_needs_a_note_and_the_page_note( self ):
         bare = '(:title "T" :owed "deferred" :areas (%s))' % area( "platforms", [ '(:feature "f" :cells (n o n))' ], aid="ow" )
@@ -377,21 +377,21 @@ class RenderTest( unittest.TestCase ):
     def test_planned_cell_shows_planned_and_needs_a_note( self ):
         text = page( [ area( "platforms", [ '(:feature "f" :cells (y p n) :evidence "Linux: t" :pending ((macOS "card-a (working)")))' ] ) ] )
         lines = render.render( render.parse( text ) ).split( "\n" )
-        self.assertIn( "| f | ✅ | PLANNED | ❌ |", lines )
+        self.assertIn( "| f | ✅ | planned for the final deliverable | ❌ |", lines )
         self.assertIn( "| complete | 100% | 0% | 0% |", lines )
         message = self.refusal( page( [ area( "platforms", [ '(:feature "f" :cells (n p n))' ], aid="pl" ) ] ) )
         self.assertIn( "area pl", message )
         self.assertIn( "macOS", message )
         self.assertIn( "pending", self.refusal( page( [ self.specific( "platforms", [ '(:feature "f" :on Linux :cell p)' ] ) ] ) ) )
         lines = render.render( render.parse( page( [ self.specific( "platforms", [ '(:feature "f" :on Linux :cell p :pending "card-a (waiting)")' ] ) ] ) ) ).split( "\n" )
-        self.assertIn( "| f | Linux | PLANNED |", lines )
+        self.assertIn( "| f | Linux | planned for the final deliverable |", lines )
 
     def test_release_column_is_one_status_column( self ):
         text = page( [ area( "release", [ '(:feature "model" :cells (y) :evidence "status: run 1")', '(:feature "review" :cells (p) :pending ((status "no card")))' ] ) ] )
         lines = render.render( render.parse( text ) ).split( "\n" )
         self.assertIn( "| feature | status |", lines )
         self.assertIn( "| model | ✅ |", lines )
-        self.assertIn( "| review | PLANNED |", lines )
+        self.assertIn( "| review | planned for the final deliverable |", lines )
         self.assertIn( "| complete | 50% |", lines )
         self.assertIn( "no evidence", self.refusal( page( [ area( "release", [ '(:feature "model" :cells (y))' ] ) ] ) ) )
 
@@ -412,33 +412,44 @@ class RenderTest( unittest.TestCase ):
                 out.append( render.plist( r, "row" ) )
         return top, out
 
-    def test_the_testing_plan_names_every_deferred_card_as_owed_or_planned( self ):
-        # The deferred work the owner listed on 2026-10-20: each is a row of the plan, OWED or
-        # PLANNED, except a known red, which stays ❌ with its card.
-        known_red = { "example-soak-disconnect-regression" }
-        deferred = [ "lan-1000-client-soak-matrix", "linux-transport-matrix-repeat", "macos-transport-matrix-repeat",
-                     "win-transport-matrix-repeat", "win-load-1000-clients", "win-soak-per-transport", "linux-soak-per-transport",
-                     "load-light-profile-linux", "load-light-profile-macos", "load-light-profile-windows",
-                     "macos-nightly-soak-green-at-base", "linux-nightly-soak-green-at-base", "example-soak-disconnect-regression",
-                     "r1-receipt-loss-after-its-own-deadline", "server-send-capacity-sized-from-config", "format-netcode-style-v1",
-                     "macos-sanitizers-and-leaks", "win-libfuzzer-clang-cl", "linux-hard-killed-peer-never-stalls-receive",
-                     "win-lifecycle-stress", "r1-windows-nightlies-all-run", "r1-tla-ledger-current" ]
+    def test_the_testing_plan_keeps_every_deferred_run_open( self ):
+        # The long runs deferred to the final deliverable on 2026-10-20: each is a row of the
+        # plan, and every cell of it that is not green is planned (o or p), never dropped,
+        # except the example soak, a known red that stays a ❌.
+        known_red = { "Example soak (example_soak)" }
+        deferred = [ "Functional suite repeated, zero flakes", "Transport matrix, every cell fifty times",
+                     "1000 clients, load harness", "1000 light clients (10 Hz, 1 packet per update)",
+                     "Soak (30 minutes per transport under impairment)", "Nightlies (every nightly job's steps green on this branch)",
+                     "Every matrix cell fifty times, zero flakes", "Soak under impairment, flat resources",
+                     "1000 clients over the LAN, every guarantee checked (soak matrix)", "Sanitizers per transport",
+                     "Sanitizers (ASan, UBSan, TSan; MSVC ASan on Windows)", "Leaks (LSan, the leaks tool, App Verifier's leak layer)",
+                     "libFuzzer (corpus replay and fuzz runs; clang-cl on Windows)", "Lifecycle stress (init/term, create/destroy, restart, destroy under traffic)",
+                     "Hard-killed peer never stalls receive", "Receipt loss reported after its own deadline",
+                     "Send budget: packets_per_update 256 at 60 Hz, receive sized at least 2x",
+                     "Source format in the netcode style (clang-format check)",
+                     "TLA+ ledger current (tla/CASES.tsv and tla/COVERAGE.tsv match the models)",
+                     "Example soak (example_soak)" ]
         top, rows = self.plan_rows()
         self.assertEqual( render.sym( top.get( "rows-name-source" ) ), "t" )
         for name in deferred:
-            card = "rocketnet-" + name
             marks = []
             for row in rows:
-                pending = row.get( "pending" )
-                notes = [ pending ] if isinstance( pending, str ) else [ p[1] for p in ( pending or [] ) ]
-                if card in row.get( "source", "" ) or any( re.search( re.escape( card ) + r"\b(?!-)", n ) for n in notes ):
+                if row["feature"] == name:
                     cells = [ row["cell"] ] if "cell" in row else row["cells"]
                     marks += [ render.sym( c ) for c in cells ]
-            self.assertTrue( marks, card )
+            self.assertTrue( marks, name )
             if name in known_red:
-                self.assertIn( "n", marks, card )
+                self.assertIn( "n", marks, name )
             else:
-                self.assertTrue( set( marks ) & { "o", "p" }, card )
+                self.assertTrue( set( marks ) <= { "y", "o", "p" }, name )
+                self.assertTrue( set( marks ) & { "o", "p" }, name )
+
+    def test_the_plan_names_no_card_or_process_word( self ):
+        # The data files are read by integrators: no work-item ids and no process jargon.
+        for name in ( "roadmap.sexp", "testing.sexp" ):
+            with open( os.path.join( ROOT, "docs", name ), encoding="utf-8" ) as f:
+                text = f.read()
+            self.assertIsNone( re.search( r"rocketnet-[a-z0-9]+-[a-z0-9-]+|\bsprint\b|\bcards?\b|\bOWED\b|\bPLANNED\b", text ), name )
 
     def test_the_testing_plan_covers_every_planned_test( self ):
         _, rows = self.plan_rows()
@@ -448,7 +459,7 @@ class RenderTest( unittest.TestCase ):
                       "Toolchain matrix (MSVC, clang-cl", "Xcode universal", "gcc and clang", "Soak under impairment",
                       "Transport matrix, every cell fifty times", "1000 light clients (10 Hz, 1 packet per update)",
                       "1000 clients over the LAN", "Hard-killed peer never stalls receive", "Lifecycle stress", "Socket error paths",
-                      "SIO_UDP_CONNRESET", "Nightlies", "Live XDP fleet test", "Holistic review: six", "Frama-C",
+                      "SIO_UDP_CONNRESET", "Nightlies", "Live XDP test", "Holistic review: six", "Frama-C",
                       "Main API calls under 0.1 ms each, Release, under load", "Security pass: per-client resource exhaustion",
                       "Send budget: packets_per_update 256 at 60 Hz, receive sized at least 2x" ):
             self.assertIn( test, features )

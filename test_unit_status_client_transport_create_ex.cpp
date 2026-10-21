@@ -130,7 +130,7 @@ static void client_create_ex_expected_null_assert( const char *, const char *, c
 }
 #endif
 
-static void client_transport_create_ex_reports_every_status()
+static void test_client_transport_create_ex_reports_every_status()
 {
     env_pin_saved pin;
     env_pin_set_aside( &pin );
@@ -262,4 +262,4 @@ static void client_transport_create_ex_reports_every_status()
     env_pin_put_back( &pin );
 }
 
-REGISTER_UNIT_TEST( client_transport_create_ex_reports_every_status );
+REGISTER_UNIT_TEST( test_client_transport_create_ex_reports_every_status );

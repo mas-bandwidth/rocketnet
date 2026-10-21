@@ -172,12 +172,12 @@ declarations before its first call. They pin this rule three ways:
   size formula to equal the compiler's `sizeof`, so a formula wrong for a
   target fails the build there (`sdk/rocketnet_abi.cpp:6-7` for the public
   client and server configs).
-- `public_config_default_fills_every_field` and
-  `public_config_plain_create_applies_simulation` (`test_unit_sized_config.cpp`)
+- `test_public_config_default_fills_every_field` and
+  `test_public_config_plain_create_applies_simulation` (`test_unit_sized_config.cpp`)
   require the unsized defaults to write the same whole struct as the sized
   defaults at `sizeof`, and the unsized creates to carry the `simulated_*`
   controls to the transport.
-- `sized_config_accepts_every_known_size` (`test_unit_sized_config.cpp`)
+- `test_sized_config_accepts_every_known_size` (`test_unit_sized_config.cpp`)
   requires each known-size list to be strictly growing and to end at the size
   `rocketnet_abi_type_size` reports, so a revision added without its size, or
   a field that does not grow the struct, fails the suite.

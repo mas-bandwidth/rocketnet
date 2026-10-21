@@ -25,7 +25,7 @@ static struct rocketnet_dst_options_t dst_test_options( uint64_t steps )
     return options;
 }
 
-static void dst_same_seed_same_trace()
+static void test_dst_same_seed_same_trace()
 {
     const struct rocketnet_dst_options_t options = dst_test_options( 200 );
     struct rocketnet_dst_result_t a;
@@ -37,7 +37,7 @@ static void dst_same_seed_same_trace()
     rocketnet_unit_check( a.trace_hash == b.trace_hash );
 }
 
-static void dst_seeds_differ()
+static void test_dst_seeds_differ()
 {
     const struct rocketnet_dst_options_t options = dst_test_options( 200 );
     struct rocketnet_dst_result_t a;
@@ -49,7 +49,7 @@ static void dst_seeds_differ()
     rocketnet_unit_check( a.trace_hash != b.trace_hash );
 }
 
-static void dst_seed_range_uint64_max_terminates()
+static void test_dst_seed_range_uint64_max_terminates()
 {
     const uint64_t maximum = ~(uint64_t) 0;
     uint64_t next = maximum;
@@ -59,7 +59,7 @@ static void dst_seed_range_uint64_max_terminates()
     rocketnet_unit_check( next == maximum );
 }
 
-static void dst_substreams_independent()
+static void test_dst_substreams_independent()
 {
     const uint64_t seed = 0x1122334455667788ULL;
     struct rocketnet_dst_substream_t alone;
@@ -80,7 +80,7 @@ static void dst_substreams_independent()
         rocketnet_unit_check( rocketnet_dst_substream_draw( &after ) == drawn[i] );
 }
 
-static void dst_fail_names_seed()
+static void test_dst_fail_names_seed()
 {
     const uint64_t seed = 0xABCDEF0123456789ULL;
     struct rocketnet_dst_options_t options = dst_test_options( 100 );
@@ -114,8 +114,8 @@ static void dst_fail_names_seed()
     rocketnet_unit_check( replay.step == first.step );
 }
 
-REGISTER_UNIT_TEST( dst_same_seed_same_trace );
-REGISTER_UNIT_TEST( dst_seeds_differ );
-REGISTER_UNIT_TEST( dst_substreams_independent );
-REGISTER_UNIT_TEST( dst_seed_range_uint64_max_terminates );
-REGISTER_UNIT_TEST( dst_fail_names_seed );
+REGISTER_UNIT_TEST( test_dst_same_seed_same_trace );
+REGISTER_UNIT_TEST( test_dst_seeds_differ );
+REGISTER_UNIT_TEST( test_dst_substreams_independent );
+REGISTER_UNIT_TEST( test_dst_seed_range_uint64_max_terminates );
+REGISTER_UNIT_TEST( test_dst_fail_names_seed );

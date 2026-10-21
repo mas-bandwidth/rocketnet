@@ -20,6 +20,9 @@
 
 #include <stdlib.h>
 
+// the AF_XDP code is Linux only, so its tests are built there only
+#if defined(__linux__)
+
 static const uint8_t server_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 };
 static const uint8_t gateway_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x02 };
 static const uint8_t golden_payload[4] = { 0xDE, 0xAD, 0xBE, 0xEF };
@@ -43,7 +46,7 @@ static const uint8_t golden_ipv6[] = {
     0xde,0xad,0xbe,0xef
 };
 
-static void ipv4_frame_matches_golden()
+static void test_ipv4_frame_matches_golden()
 {
     rocketnet_address_t src, dst;
     rocketnet_unit_check( rocketnet_address_parse( &src, "192.168.1.10:40000" ) );
@@ -60,7 +63,7 @@ static void ipv4_frame_matches_golden()
     rocketnet_unit_check( memcmp( frame, golden_ipv4, sizeof(golden_ipv4) ) == 0 );
 }
 
-static void ipv6_frame_matches_golden()
+static void test_ipv6_frame_matches_golden()
 {
     rocketnet_address_t src, dst;
     rocketnet_unit_check( rocketnet_address_parse( &src, "[2001:db8::1]:40000" ) );
@@ -100,7 +103,7 @@ static uint32_t sum_words( const uint8_t * data, size_t bytes )
     return sum;
 }
 
-static void ipv6_udp_checksum_verifies()
+static void test_ipv6_udp_checksum_verifies()
 {
     rocketnet_address_t src, dst;
     rocketnet_unit_check( rocketnet_address_parse( &src, "[2001:db8::1]:40000" ) );
@@ -128,7 +131,7 @@ static void ipv6_udp_checksum_verifies()
 // checksum helper with a crafted pseudo-header + UDP segment whose ones-sum
 // folds to 0xFFFF.
 
-static void ipv6_checksum_zero_is_sent_as_ffff()
+static void test_ipv6_checksum_zero_is_sent_as_ffff()
 {
     uint8_t src[16], dst[16];
     memset( src, 0, sizeof(src) );
@@ -138,7 +141,7 @@ static void ipv6_checksum_zero_is_sent_as_ffff()
     rocketnet_unit_check( csum == 0xFFFF );
 }
 
-static void ipv6_max_payload_is_1452_and_fits_1514()
+static void test_ipv6_max_payload_is_1452_and_fits_1514()
 {
     rocketnet_address_t src, dst;
     rocketnet_unit_check( rocketnet_address_parse( &src, "[2001:db8::1]:40000" ) );
@@ -154,7 +157,7 @@ static void ipv6_max_payload_is_1452_and_fits_1514()
     rocketnet_unit_check( len == 1514 );
 }
 
-static void ipv6_payload_over_budget_is_refused()
+static void test_ipv6_payload_over_budget_is_refused()
 {
     rocketnet_address_t src, dst;
     rocketnet_unit_check( rocketnet_address_parse( &src, "[2001:db8::1]:40000" ) );
@@ -175,7 +178,7 @@ static void ipv6_payload_over_budget_is_refused()
     rocketnet_unit_check( len == 0 );
 }
 
-static void parse_round_trips_both_families()
+static void test_parse_round_trips_both_families()
 {
     rocketnet_address_t src4, dst4, src6, dst6;
     rocketnet_unit_check( rocketnet_address_parse( &src4, "192.168.1.10:40000" ) );
@@ -209,7 +212,7 @@ static void parse_round_trips_both_families()
     rocketnet_unit_check( payload_bytes == 4 && memcmp( payload, golden_payload, 4 ) == 0 );
 }
 
-static void parse_refuses_extension_headers()
+static void test_parse_refuses_extension_headers()
 {
     rocketnet_address_t src6, dst6;
     rocketnet_unit_check( rocketnet_address_parse( &src6, "[2001:db8::1]:40000" ) );
@@ -245,7 +248,7 @@ static void parse_refuses_extension_headers()
     rocketnet_unit_check( !rocketnet_xdp_frame_parse( frame, sizeof(frame), &from, &payload, &payload_bytes ) );
 }
 
-static void parse_refuses_truncated_ipv6_frames()
+static void test_parse_refuses_truncated_ipv6_frames()
 {
     // every length from 42 to 61 is refused before the source address or UDP
     // port is read. Each truncated frame sits in a heap buffer of exactly its
@@ -269,7 +272,7 @@ static void parse_refuses_truncated_ipv6_frames()
 
 static struct rocketnet_xdp_reply_macs_t reply_macs_under_test;
 
-static void xdp_reply_mac_follows_the_peer()
+static void test_xdp_transport_reply_mac_follows_the_peer()
 {
     static const uint8_t peer_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x0a };
     static const uint8_t peer_new_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x0b };
@@ -410,7 +413,7 @@ static const uint8_t flow_label_ipv6[] = {
     0xde,0xad,0xbe,0xef
 };
 
-static void xdp_frame_parse_ipv6_udp()
+static void test_xdp_transport_frame_parse_ipv6_udp()
 {
     rocketnet_address_t from;
     const uint8_t * payload = NULL;
@@ -444,7 +447,7 @@ static void xdp_frame_parse_ipv6_udp()
 // frame buffer still holding a previous datagram's bytes, as a reused UMEM
 // frame does, so a stale checksum field cannot leak into the sum.
 
-static void xdp_frame_build_ipv6_checksum_vector()
+static void test_xdp_transport_frame_build_ipv6_checksum_vector()
 {
     rocketnet_address_t src, dst;
     rocketnet_unit_check( rocketnet_address_parse( &src, "[2001:db8::1]:40000" ) );
@@ -468,7 +471,7 @@ static void xdp_frame_build_ipv6_checksum_vector()
 // header is dropped and counted under ipv6_extension, never parsed at the
 // UDP offsets, whatever sits behind the header.
 
-static void xdp_receive_ipv6_extension_dropped_counted()
+static void test_xdp_transport_receive_ipv6_extension_dropped_counted()
 {
     static const uint8_t extensions[6] = { 0, 43, 44, 60, 51, 50 };
 
@@ -509,7 +512,7 @@ static void xdp_receive_ipv6_extension_dropped_counted()
 // IPv4 is unchanged: the build into a dirty buffer is the golden bytes, the
 // parse reads them back, and the receive takes them at the IPv4 offsets.
 
-static void xdp_frame_ipv4_unchanged()
+static void test_xdp_transport_frame_ipv4_unchanged()
 {
     rocketnet_address_t src, dst;
     rocketnet_unit_check( rocketnet_address_parse( &src, "192.168.1.10:40000" ) );
@@ -555,7 +558,7 @@ static void xdp_frame_ipv4_unchanged()
 // the family the server does not serve, a frame that is neither family and a
 // frame too short for any server packet are each dropped and counted.
 
-static void xdp_receive_dispatches_both_families_counted()
+static void test_xdp_transport_receive_dispatches_both_families_counted()
 {
     rocketnet_address_t src4, dst4, src6, dst6;
     rocketnet_unit_check( rocketnet_address_parse( &src4, "192.168.1.10:40000" ) );
@@ -630,7 +633,7 @@ static void xdp_receive_dispatches_both_families_counted()
 // The server ladder keeps xdp for either family: the list parses the same
 // for an IPv4 and an IPv6 server, with xdp first under "auto".
 
-static void xdp_ladder_keeps_xdp_for_ipv6()
+static void test_xdp_transport_ladder_keeps_xdp_for_ipv6()
 {
     const int linux_server[] = { ROCKETNET_TRANSPORT_XDP, ROCKETNET_TRANSPORT_GSO, ROCKETNET_TRANSPORT_PORTABLE };
     struct rocketnet_transport_ladder_t ladder;
@@ -651,7 +654,7 @@ static void xdp_ladder_keeps_xdp_for_ipv6()
 // refuses there, before any socket opens. No line says the transport serves
 // IPv4 only, and the status is not INVALID_TRANSPORT_LIST. The xdp row
 // exists only on Linux: elsewhere a pin of it falls to the auto order, whose
-// transports open a real socket, so off Linux the case is a named skip.
+// transports open a real socket, so the case is built on Linux only.
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
@@ -669,19 +672,15 @@ static void xdp_ipv6_capture( void *, enum rocketnet_log_level_t level, const ch
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
-static void xdp_ipv6_pin_reaches_the_xdp_transport_at_create()
-{
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+static void test_xdp_transport_ipv6_pin_reaches_the_xdp_transport_at_create()
+{
     int num_available = 0;
     const int * available = rocketnet_server_transport_io_availability( &num_available );
     bool xdp_available = false;
     for ( int i = 0; i < num_available; i++ )
         xdp_available = xdp_available || available[i] == ROCKETNET_TRANSPORT_XDP;
-    if ( !xdp_available )
-    {
-        printf( "xdp_ipv6_pin_reaches_the_xdp_transport_at_create [SKIPPED: this build has no xdp row]\n" );
-        return;
-    }
+    rocketnet_unit_check( xdp_available );
 
     // the env pin wins over the struct's list: set it aside for the case
 
@@ -718,25 +717,27 @@ static void xdp_ipv6_pin_reaches_the_xdp_transport_at_create()
     rocketnet_unit_check( status != ROCKETNET_STATUS_INVALID_TRANSPORT_LIST );
     rocketnet_unit_check( xdp_ipv6_family_refusals == 0 );
     rocketnet_unit_check( xdp_ipv6_barrier_lines == 1 );
-#else
-    printf( "xdp_ipv6_pin_reaches_the_xdp_transport_at_create [SKIPPED off linux: the xdp row is not built, so a pin of it falls to the auto order]\n" );
-#endif
 }
+#endif
 
-REGISTER_UNIT_TEST( ipv4_frame_matches_golden );
-REGISTER_UNIT_TEST( ipv6_frame_matches_golden );
-REGISTER_UNIT_TEST( ipv6_udp_checksum_verifies );
-REGISTER_UNIT_TEST( ipv6_checksum_zero_is_sent_as_ffff );
-REGISTER_UNIT_TEST( ipv6_max_payload_is_1452_and_fits_1514 );
-REGISTER_UNIT_TEST( ipv6_payload_over_budget_is_refused );
-REGISTER_UNIT_TEST( parse_round_trips_both_families );
-REGISTER_UNIT_TEST( parse_refuses_extension_headers );
-REGISTER_UNIT_TEST( parse_refuses_truncated_ipv6_frames );
-REGISTER_UNIT_TEST( xdp_reply_mac_follows_the_peer );
-REGISTER_UNIT_TEST( xdp_frame_parse_ipv6_udp );
-REGISTER_UNIT_TEST( xdp_frame_build_ipv6_checksum_vector );
-REGISTER_UNIT_TEST( xdp_receive_ipv6_extension_dropped_counted );
-REGISTER_UNIT_TEST( xdp_frame_ipv4_unchanged );
-REGISTER_UNIT_TEST( xdp_receive_dispatches_both_families_counted );
-REGISTER_UNIT_TEST( xdp_ladder_keeps_xdp_for_ipv6 );
-REGISTER_UNIT_TEST( xdp_ipv6_pin_reaches_the_xdp_transport_at_create );
+REGISTER_UNIT_TEST( test_ipv4_frame_matches_golden );
+REGISTER_UNIT_TEST( test_ipv6_frame_matches_golden );
+REGISTER_UNIT_TEST( test_ipv6_udp_checksum_verifies );
+REGISTER_UNIT_TEST( test_ipv6_checksum_zero_is_sent_as_ffff );
+REGISTER_UNIT_TEST( test_ipv6_max_payload_is_1452_and_fits_1514 );
+REGISTER_UNIT_TEST( test_ipv6_payload_over_budget_is_refused );
+REGISTER_UNIT_TEST( test_parse_round_trips_both_families );
+REGISTER_UNIT_TEST( test_parse_refuses_extension_headers );
+REGISTER_UNIT_TEST( test_parse_refuses_truncated_ipv6_frames );
+REGISTER_UNIT_TEST( test_xdp_transport_reply_mac_follows_the_peer );
+REGISTER_UNIT_TEST( test_xdp_transport_frame_parse_ipv6_udp );
+REGISTER_UNIT_TEST( test_xdp_transport_frame_build_ipv6_checksum_vector );
+REGISTER_UNIT_TEST( test_xdp_transport_receive_ipv6_extension_dropped_counted );
+REGISTER_UNIT_TEST( test_xdp_transport_frame_ipv4_unchanged );
+REGISTER_UNIT_TEST( test_xdp_transport_receive_dispatches_both_families_counted );
+REGISTER_UNIT_TEST( test_xdp_transport_ladder_keeps_xdp_for_ipv6 );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+REGISTER_UNIT_TEST( test_xdp_transport_ipv6_pin_reaches_the_xdp_transport_at_create );
+#endif
+
+#endif // #if defined(__linux__)

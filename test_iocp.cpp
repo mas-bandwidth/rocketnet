@@ -90,7 +90,7 @@ static void test_create_cleanup()
     CHECK(handles <= handle_baseline + 2); // Repeated failure must not leak handles.
     CHECK(!rocketnet_server_iocp_create(NULL, &bind, ROCKETNET_IOCP_MAX_WORKERS + 1));
     CHECK(!rocketnet_server_iocp_create(NULL, &bind, -1));
-    printf("test_iocp_create_cleanup\n");
+    printf("test_iocp_transport_create_cleanup\n");
 }
 
 static void test_completion_owns_frames()
@@ -178,7 +178,7 @@ static void test_completion_owns_frames()
     wait_stopped(transport);
     rocketnet_server_iocp_destroy(transport);
     rocketnet_platform_socket_destroy(peer);
-    printf("test_iocp_completion_owns_frames\n");
+    printf("test_iocp_transport_completion_owns_frames\n");
 }
 
 static void test_uso_run_owns_frames()
@@ -188,7 +188,6 @@ static void test_uso_run_owns_frames()
     CHECK(transport);
     if ( !(rocketnet_server_iocp_features(transport) & ROCKETNET_IOCP_FEATURE_USO) )
     {
-        printf("test_iocp_uso_run_owns_frames [SKIPPED this host has no USO feature (UDP_SEND_MSG_SIZE refused)]\n");
         wait_stopped(transport);
         rocketnet_server_iocp_destroy(transport);
         return;
@@ -248,7 +247,7 @@ static void test_uso_run_owns_frames()
     wait_stopped(transport);
     rocketnet_server_iocp_destroy(transport);
     rocketnet_platform_socket_destroy(peer);
-    printf("test_iocp_uso_run_owns_frames\n");
+    printf("test_iocp_transport_uso_run_owns_frames\n");
 }
 
 static void test_datagrams_and_producers()
@@ -355,7 +354,7 @@ static void test_datagrams_and_producers()
     rocketnet_server_iocp_stop(transport);
     rocketnet_server_iocp_destroy(transport);
     rocketnet_platform_socket_destroy(peer);
-    printf("test_iocp_datagrams_and_producers\n");
+    printf("test_iocp_transport_datagrams_and_producers\n");
 }
 
 static void test_receive_boundaries()
@@ -395,7 +394,7 @@ static void test_receive_boundaries()
     wait_stopped(transport); // Cancellation with idle, outstanding receives too.
     rocketnet_server_iocp_destroy(transport);
     closesocket(peer);
-    printf("test_iocp_receive_boundaries\n");
+    printf("test_iocp_transport_receive_boundaries\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -612,7 +611,7 @@ static void test_iocp_send_completion_fails()
     }
     iocp_exchange(transport, &bind, peer, &peer_address, 16);
     iocp_finish(transport, peer);
-    printf("iocp_send_completion_fails\n");
+    printf("test_iocp_transport_send_completion_fails\n");
 }
 
 static void test_iocp_send_post_fails()
@@ -649,7 +648,7 @@ static void test_iocp_send_post_fails()
         iocp_exchange(transport, &bind, peer, &peer_address, 32);
         iocp_finish(transport, peer);
     }
-    printf("iocp_send_post_fails\n");
+    printf("test_iocp_transport_send_post_fails\n");
 }
 
 static void test_iocp_receive_completion_fails()
@@ -706,7 +705,7 @@ static void test_iocp_receive_completion_fails()
     CHECK(iocp_counter(transport, ROCKETNET_IOCP_RECEIVE_REPOST_FAILED) - repost_failed == 300);
     iocp_exchange(transport, &bind, peer, &peer_address, 64);
     iocp_finish(transport, peer);
-    printf("iocp_receive_completion_fails\n");
+    printf("test_iocp_transport_receive_completion_fails\n");
 }
 
 static void test_iocp_send_queue_full_recovers()
@@ -738,8 +737,7 @@ static void test_iocp_send_queue_full_recovers()
     iocp_wait_depth(transport, 1);
     iocp_all_frames_free(transport, &peer_address);
     iocp_exchange(transport, &bind, peer, &peer_address, 64);
-    printf("iocp_send_queue_full_recovers [send failed %llu of %d]\n",
-        (unsigned long long) iocp_counter(transport, ROCKETNET_IOCP_SEND_FAILED), ROCKETNET_IOCP_SEND_QUEUE_SIZE);
+    printf("test_iocp_transport_send_queue_full_recovers\n");
     iocp_finish(transport, peer);
 }
 
@@ -810,7 +808,7 @@ static void test_iocp_destroy_never_hangs()
         iocp_destroy_watched(transport, &slowest);
     }
     rocketnet_platform_socket_destroy(peer);
-    printf("iocp_destroy_never_hangs: 200 destroys, slowest %.3f ms\n", slowest * 1000.0);
+    printf("test_iocp_transport_destroy_never_hangs\n");
 }
 
 // ---- RIO ----
@@ -910,7 +908,7 @@ static void rio_finish( rocketnet_server_rio_t * rio, rocketnet_platform_socket_
 
 static void test_rio_send_post_fails()
 {
-    if ( !rocketnet_server_rio_available() ) { printf("rio_send_post_fails [SKIPPED no RIO on this host]\n"); return; }
+    CHECK(rocketnet_server_rio_available());
     rocketnet_address_t bind;
     rocketnet_server_rio_t * rio = rio_open(&bind);
     rocketnet_address_t peer_address;
@@ -951,12 +949,12 @@ static void test_rio_send_post_fails()
     rio_settle(rio);
     rio_exchange(rio, &bind, peer, &peer_address, 32);
     rio_finish(rio, peer);
-    printf("rio_send_post_fails\n");
+    printf("test_rio_transport_send_post_fails\n");
 }
 
 static void test_rio_request_queue_full()
 {
-    if ( !rocketnet_server_rio_available() ) { printf("rio_request_queue_full [SKIPPED no RIO on this host]\n"); return; }
+    CHECK(rocketnet_server_rio_available());
     rocketnet_address_t bind;
     rocketnet_server_rio_t * rio = rio_open(&bind);
     rocketnet_address_t peer_address;
@@ -1011,7 +1009,7 @@ static void test_rio_request_queue_full()
     rio_settle(rio);
     rio_exchange(rio, &bind, peer, &peer_address, 64);
     rio_finish(rio, peer);
-    printf("rio_request_queue_full\n");
+    printf("test_rio_transport_request_queue_full\n");
 }
 
 static void test_rio_completion_queue_full()
@@ -1034,7 +1032,7 @@ static void test_rio_completion_queue_full()
     CHECK( seam_reposts == 2 * ROCKETNET_RIO_RECEIVES );
     CHECK( seam_pending == ROCKETNET_RIO_RECEIVES );
 #endif
-    if ( !rocketnet_server_rio_available() ) { printf("rio_completion_queue_full [SKIPPED no RIO on this host]\n"); return; }
+    CHECK(rocketnet_server_rio_available());
     rocketnet_address_t bind;
     rocketnet_server_rio_t * rio = rio_open(&bind);
     rocketnet_address_t peer_address;
@@ -1074,13 +1072,12 @@ static void test_rio_completion_queue_full()
         // drain what the sender left before the next attempt
         for ( int i = 0; i < 20; ++i ) { rocketnet_server_rio_receive_packets(rio); rocketnet_platform_sleep(0.005); }
     }
-    printf("rio_completion_queue_full: tail %d after %d attempts\n", tail, attempts);
     CHECK(tail > 0);
     CHECK(rio_counter(rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW) == overflow);
     rio_settle(rio);
     rio_exchange(rio, &bind, peer, &peer_address, 64);
     rio_finish(rio, peer);
-    printf("rio_completion_queue_full\n");
+    printf("test_rio_transport_completion_queue_full\n");
 }
 
 // Sends a refused RIO_MSG_COMMIT_ONLY left deferred at destroy are
@@ -1090,7 +1087,7 @@ static void test_rio_completion_queue_full()
 // checked.
 static void test_rio_destroy_commits_deferred_sends()
 {
-    if ( !rocketnet_server_rio_available() ) { printf("rio_destroy_commits_deferred_sends [SKIPPED no RIO on this host]\n"); return; }
+    CHECK(rocketnet_server_rio_available());
     rocketnet_address_t bind;
     rocketnet_server_rio_t * rio = rio_open(&bind);
     rocketnet_address_t peer_address;
@@ -1107,12 +1104,11 @@ static void test_rio_destroy_commits_deferred_sends()
     const double start = rocketnet_platform_time();
     rocketnet_server_rio_destroy(rio);
     const double elapsed = rocketnet_platform_time() - start;
-    printf("rio_destroy_commits_deferred_sends: destroy %.3f ms\n", elapsed * 1000.0);
     CHECK(rocketnet_server_rio_leaked_regions() == 0);
     CHECK(elapsed < 1.0);
-    printf("rio_destroy_commits_deferred_sends: peer received %d of 10\n", fault_peer_receive(peer, round, 10));
+    fault_peer_receive(peer, round, 10);
     rocketnet_platform_socket_destroy(peer);
-    printf("rio_destroy_commits_deferred_sends\n");
+    printf("test_rio_transport_destroy_commits_deferred_sends\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -1205,8 +1201,7 @@ static void test_windows_port_exclusive()
             SOCKET thief;
             const bool bound = port_thief_binds(&target, &thief);
             const int stolen = bound ? port_thief_steals(&target, thief) : 0;
-            printf("  %s %s port %d: second bind of %s with SO_REUSEADDR %s, %d of 8 datagrams stolen\n", transports[d], binds[b],
-                owner.port, targets[b], bound ? "ACCEPTED" : "refused", stolen);
+            (void) stolen;
             closesocket(thief);
             if ( portable ) rocketnet_platform_socket_destroy(portable);
             if ( iocp ) { wait_stopped(iocp); rocketnet_server_iocp_destroy(iocp); }
@@ -1214,7 +1209,7 @@ static void test_windows_port_exclusive()
             CHECK(!bound);
         }
     }
-    printf("windows_port_exclusive\n");
+    printf("test_windows_port_exclusive\n");
 }
 
 static std::atomic<int> send_failed_logs{0};
@@ -1253,8 +1248,6 @@ static void test_windows_send_failures_counted()
             rocketnet_platform_socket_send_packet(socket, &peer_address, oversize.data(), (int) oversize.size());
         rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_NONE);
         rocketnet_set_log_callback(NULL, NULL);
-        printf("  %s to %s: SEND_FAILED %llu after 3 refused sends, %d logged with WSA error 10040\n", binds[c], peers[c],
-            (unsigned long long) rocketnet_platform_socket_send_failures(socket), send_failed_logs.load());
         CHECK(rocketnet_platform_socket_send_failures(socket) == 3);
         CHECK(send_failed_logs.load() == 3);
         rocketnet_platform_socket_send_packet(socket, &peer_address, data, FAULT_BYTES);
@@ -1262,23 +1255,23 @@ static void test_windows_send_failures_counted()
         rocketnet_platform_socket_destroy(peer);
         rocketnet_platform_socket_destroy(socket);
     }
-    printf("windows_send_failures_counted\n");
+    printf("test_windows_send_failures_counted\n");
 }
 
 struct fault_case_t { const char * name; void (*run)(); };
 
 static const fault_case_t fault_cases[] = {
-    { "iocp_send_completion_fails", test_iocp_send_completion_fails },
-    { "iocp_send_post_fails", test_iocp_send_post_fails },
-    { "iocp_receive_completion_fails", test_iocp_receive_completion_fails },
-    { "iocp_send_queue_full_recovers", test_iocp_send_queue_full_recovers },
-    { "iocp_destroy_never_hangs", test_iocp_destroy_never_hangs },
-    { "rio_completion_queue_full", test_rio_completion_queue_full },
-    { "rio_request_queue_full", test_rio_request_queue_full },
-    { "rio_send_post_fails", test_rio_send_post_fails },
-    { "rio_destroy_commits_deferred_sends", test_rio_destroy_commits_deferred_sends },
-    { "windows_port_exclusive", test_windows_port_exclusive },
-    { "windows_send_failures_counted", test_windows_send_failures_counted },
+    { "test_iocp_transport_send_completion_fails", test_iocp_send_completion_fails },
+    { "test_iocp_transport_send_post_fails", test_iocp_send_post_fails },
+    { "test_iocp_transport_receive_completion_fails", test_iocp_receive_completion_fails },
+    { "test_iocp_transport_send_queue_full_recovers", test_iocp_send_queue_full_recovers },
+    { "test_iocp_transport_destroy_never_hangs", test_iocp_destroy_never_hangs },
+    { "test_rio_transport_completion_queue_full", test_rio_completion_queue_full },
+    { "test_rio_transport_request_queue_full", test_rio_request_queue_full },
+    { "test_rio_transport_send_post_fails", test_rio_send_post_fails },
+    { "test_rio_transport_destroy_commits_deferred_sends", test_rio_destroy_commits_deferred_sends },
+    { "test_windows_port_exclusive", test_windows_port_exclusive },
+    { "test_windows_send_failures_counted", test_windows_send_failures_counted },
 };
 
 // With no argument every case runs; with names, only those cases run.

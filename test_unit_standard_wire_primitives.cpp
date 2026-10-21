@@ -81,7 +81,7 @@ static int standard_wire_primitives_generate( const char * id, uint8_t * out, in
     return -1;
 }
 
-static void standard_wire_primitives_vectors()
+static void test_standard_wire_primitives_vectors()
 {
     const int count = (int) ( sizeof( standard_wire_primitives_table ) / sizeof( standard_wire_primitives_table[0] ) );
     rocketnet_unit_check( rn_standard_vectors_walk( standard_wire_primitives_table, count, standard_wire_primitives_generate ) == count );
@@ -103,4 +103,4 @@ static void standard_wire_primitives_vectors()
     rocketnet_unit_check( standard_wire_primitives_generate( "t4.no-such-vector", scratch, (int) sizeof( scratch ) ) == -1 );
 }
 
-REGISTER_UNIT_TEST( standard_wire_primitives_vectors );
+REGISTER_UNIT_TEST( test_standard_wire_primitives_vectors );

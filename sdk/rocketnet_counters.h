@@ -203,7 +203,7 @@
     /* EXPECTED: the session-end race. The server ended the session (a */ \
     /* disconnect, a timeout) with the client's packets in flight; no network */ \
     /* fault is needed (test_unit_client_receive_counters.cpp, */ \
-    /* session_end_races_move_only_expected_counters). */ \
+    /* test_session_end_races_move_only_expected_counters). */ \
     /** @brief ROCKETNET_COUNTER_KEEP_ALIVE_NO_MAPPING: Counts late packets received after the source mapping has been removed. Unit: occurrences. Class: expected; family: KEEP_ALIVE_RECEIVED. */ \
     X( KEEP_ALIVE_NO_MAPPING, EXPECTED, KEEP_ALIVE_RECEIVED ) \
     /* REFUSAL from here to the end of the type: a refused packet reads 0 on */ \

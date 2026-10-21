@@ -22,7 +22,7 @@
 //       "none"): two handshakes, each with its own token for one client id;
 //       the client-id check at the response refuses the second while the
 //       first lives, and seats it once the first closes. The same-token case
-//       is server_refuses_a_token_connected_now (test_unit_token_churn.cpp).
+//       is test_server_refuses_a_token_connected_now (test_unit_token_churn.cpp).
 //   RepeatKeepAlive = FALSE and KeepAliveClock = "anysend"
 //       (ClientConnection, ServerConnection): the establishing keep-alive is
 //       repeated on its own clock, and ordinary traffic does not suppress it.
@@ -516,7 +516,7 @@ static int rocketnet_handshake_disconnect_returns_disconnected( struct rocketnet
 // denial, request timeout, challenge timeout and response timeout.
 // ---------------------------------------------------------------------------
 
-static void TestClientEphemeralErasedOutsideHandshake()
+static void test_client_ephemeral_erased_outside_handshake()
 {
     const int failure_states[4] = {
         ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED,                 // -1 denial
@@ -545,7 +545,7 @@ static void TestClientEphemeralErasedOutsideHandshake()
 // returns DISCONNECTED.
 // ---------------------------------------------------------------------------
 
-static void TestDisconnectAbsorbsTerminalState()
+static void test_disconnect_absorbs_terminal_state()
 {
     const int terminal_states[7] = {
         ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED,             // -7
@@ -582,7 +582,7 @@ static void TestDisconnectAbsorbsTerminalState()
 // the short expiry (docs/SESSION.md 1.6).
 // ---------------------------------------------------------------------------
 
-static void TestOneConnectionPerTokenAfterHistoryFlush()
+static void test_one_connection_per_token_after_history_flush()
 {
     struct rocketnet_handshake_server_t test;
     rocketnet_handshake_server_setup( &test );
@@ -682,7 +682,7 @@ static void TestOneConnectionPerTokenAfterHistoryFlush()
 // wire is otherwise idle.
 // ---------------------------------------------------------------------------
 
-static void TestServerRepeatsKeepAliveWhileIdle()
+static void test_server_repeats_keep_alive_while_idle()
 {
     struct rocketnet_handshake_server_t test;
     rocketnet_handshake_server_setup( &test );
@@ -723,7 +723,7 @@ static void TestServerRepeatsKeepAliveWhileIdle()
 // not restamp the keep-alive clock, and the keep-alive is still due on it.
 // ---------------------------------------------------------------------------
 
-static void TestKeepAliveClockCountsOnlyKeepAlives()
+static void test_keep_alive_clock_counts_only_keep_alives()
 {
     struct rocketnet_handshake_server_t test;
     rocketnet_handshake_server_setup( &test );
@@ -768,7 +768,7 @@ static void TestKeepAliveClockCountsOnlyKeepAlives()
 // rocketnet_server_protocol_process_connection_request)
 // ---------------------------------------------------------------------------
 
-static void token_created_past_skew_is_refused()
+static void test_token_created_past_skew_is_refused()
 {
     struct rocketnet_handshake_server_t test;
     rocketnet_handshake_server_setup( &test );
@@ -793,7 +793,7 @@ static void token_created_past_skew_is_refused()
     rocketnet_handshake_server_teardown( &test );
 }
 
-static void token_created_within_skew_passes_the_rung()
+static void test_token_created_within_skew_passes_the_rung()
 {
     struct rocketnet_handshake_server_t test;
     rocketnet_handshake_server_setup( &test );
@@ -817,7 +817,7 @@ static void token_created_within_skew_passes_the_rung()
     rocketnet_handshake_server_teardown( &test );
 }
 
-static void token_create_skew_unchecked_without_lifetime_cap()
+static void test_token_create_skew_unchecked_without_lifetime_cap()
 {
     struct rocketnet_handshake_server_t test;
     rocketnet_handshake_server_setup( &test );
@@ -841,11 +841,11 @@ static void token_create_skew_unchecked_without_lifetime_cap()
     rocketnet_handshake_server_teardown( &test );
 }
 
-REGISTER_UNIT_TEST( TestClientEphemeralErasedOutsideHandshake );
-REGISTER_UNIT_TEST( token_created_past_skew_is_refused );
-REGISTER_UNIT_TEST( token_created_within_skew_passes_the_rung );
-REGISTER_UNIT_TEST( token_create_skew_unchecked_without_lifetime_cap );
-REGISTER_UNIT_TEST( TestDisconnectAbsorbsTerminalState );
-REGISTER_UNIT_TEST( TestOneConnectionPerTokenAfterHistoryFlush );
-REGISTER_UNIT_TEST( TestServerRepeatsKeepAliveWhileIdle );
-REGISTER_UNIT_TEST( TestKeepAliveClockCountsOnlyKeepAlives );
+REGISTER_UNIT_TEST( test_client_ephemeral_erased_outside_handshake );
+REGISTER_UNIT_TEST( test_token_created_past_skew_is_refused );
+REGISTER_UNIT_TEST( test_token_created_within_skew_passes_the_rung );
+REGISTER_UNIT_TEST( test_token_create_skew_unchecked_without_lifetime_cap );
+REGISTER_UNIT_TEST( test_disconnect_absorbs_terminal_state );
+REGISTER_UNIT_TEST( test_one_connection_per_token_after_history_flush );
+REGISTER_UNIT_TEST( test_server_repeats_keep_alive_while_idle );
+REGISTER_UNIT_TEST( test_keep_alive_clock_counts_only_keep_alives );

@@ -124,8 +124,8 @@ static int rocketnet_unit_worker( const char * name )
     // cases create a client transport through the public API before stepping
     // it themselves; run those step-driven, after the isolation, so the unit
     // suite starts no client I/O thread.
-    if ( strcmp( name, "token_time_game_clock_admits_a_fixed_token" ) == 0 ||
-         strcmp( name, "public_link_simulator_revision_1_prefixes" ) == 0 )
+    if ( strcmp( name, "test_token_time_game_clock_admits_a_fixed_token" ) == 0 ||
+         strcmp( name, "test_public_link_simulator_revision_1_prefixes" ) == 0 )
     {
 #if defined(_WIN32)
         if ( _putenv_s( "ROCKETNET_CLIENT_STEP_DRIVEN", "1" ) != 0 )
@@ -254,7 +254,7 @@ int main( int argc, char ** argv )
     }
     else
     {
-        result = suite_main( argc, argv, rocketnet_unit_worker, rocketnet_suite_test_count, rocketnet_suite_test_name, NULL, 0, NULL, 0, true );
+        result = suite_main( argc, argv, rocketnet_unit_worker, rocketnet_suite_test_count, rocketnet_suite_test_name, NULL, 0 );
     }
 
 #if defined(_WIN32)

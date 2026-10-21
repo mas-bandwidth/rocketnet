@@ -118,7 +118,7 @@ static void server_create_ex_expected_null_assert( const char *, const char *, c
 }
 #endif
 
-static void server_transport_create_ex_reports_every_status()
+static void test_server_transport_create_ex_reports_every_status()
 {
     env_pin_saved pin;
     env_pin_set_aside( &pin );
@@ -258,19 +258,17 @@ static void server_transport_create_ex_reports_every_status()
     // TRANSPORT_PORT_ZERO_UNSUPPORTED. The xdp row exists only on Linux:
     // elsewhere the ladder skips "xdp" for the platform and falls to the
     // auto order (sdk/rocketnet_tests.cpp checks that fall), whose transports
-    // open a real socket, so off Linux the case is a named skip
-    {
+    // open a real socket, so the step runs on Linux only
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    {
         struct rocketnet_server_transport_config_t config;
         production_config( &config );
         snprintf( config.transport, sizeof( config.transport ), "%s", "xdp" );
         status = -1;
         check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:0", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED );
-#else
-        printf( "server_transport_create_ex_reports_every_status S12 [SKIPPED off linux: the xdp row is not built, so a pin of it falls to the auto order]\n" );
-#endif
     }
+#endif
 
     // S10 and S14: a fault-injecting allocator failing at each allocation in
     // turn yields OUT_OF_MEMORY, and once every allocation succeeds the create
@@ -316,4 +314,4 @@ static void server_transport_create_ex_reports_every_status()
     env_pin_put_back( &pin );
 }
 
-REGISTER_UNIT_TEST( server_transport_create_ex_reports_every_status );
+REGISTER_UNIT_TEST( test_server_transport_create_ex_reports_every_status );

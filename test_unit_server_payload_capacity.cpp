@@ -20,7 +20,7 @@ int rocketnet_server_payload_copy( uint8_t * out_payload, int out_payload_capaci
                                    const uint8_t * type_data, int type_data_bytes,
                                    int * out_payload_bytes, uint64_t * counters );
 
-static void server_payload_copy_refuses_a_small_capacity()
+static void test_server_payload_copy_refuses_a_small_capacity()
 {
     uint8_t type_data[64];
     for ( int i = 0; i < (int) sizeof(type_data); i++ )
@@ -56,4 +56,4 @@ static void server_payload_copy_refuses_a_small_capacity()
     rocketnet_unit_check( counters[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL] == 1 );
 }
 
-REGISTER_UNIT_TEST( server_payload_copy_refuses_a_small_capacity );
+REGISTER_UNIT_TEST( test_server_payload_copy_refuses_a_small_capacity );

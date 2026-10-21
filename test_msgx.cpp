@@ -87,7 +87,7 @@ int main()
     CHECK(send_calls == 2 && socket->msgx_down_until == 0.0);
     drain(socket, address, 1);
     CHECK(strcmp(rocketnet_platform_socket_pump(socket), "msgx") == 0);
-    printf("test_msgx_send_pause_fallback_reprobe\n");
+    printf("test_msgx_transport_send_pause_fallback_reprobe\n");
 
     rocketnet_platform_socket_send_packets(socket, sends, 4);
     int receive_before = receive_calls;
@@ -102,7 +102,7 @@ int main()
     drain(socket, address, 1);
     CHECK(receive_calls > receive_before + 1 && socket->msgx_down_until == 0.0);
     CHECK(strcmp(rocketnet_platform_socket_pump(socket), "msgx") == 0);
-    printf("test_msgx_receive_pause_fallback_reprobe\n");
+    printf("test_msgx_transport_receive_pause_fallback_reprobe\n");
 
     rocketnet_sendmsg_x = real_send; rocketnet_recvmsg_x = real_receive;
     rocketnet_platform_socket_destroy(socket);

@@ -155,7 +155,7 @@ static void public_step_connect( public_step_pair_t * pair )
     check( rocketnet_server_client_connected( pair->server, 0 ) != 0 );
 }
 
-static void public_step_driven_client_connects_without_a_thread()
+static void test_public_step_driven_client_connects_without_a_thread()
 {
     public_step_identity_t identity;
     public_step_identity( &identity );
@@ -166,9 +166,9 @@ static void public_step_driven_client_connects_without_a_thread()
     public_step_connect( &pair );
     public_step_pair_destroy( &pair );
 }
-REGISTER_UNIT_TEST( public_step_driven_client_connects_without_a_thread );
+REGISTER_UNIT_TEST( test_public_step_driven_client_connects_without_a_thread );
 
-static void public_step_driven_client_delivers_both_ways()
+static void test_public_step_driven_client_delivers_both_ways()
 {
     public_step_identity_t identity;
     public_step_identity( &identity );
@@ -220,7 +220,7 @@ static void public_step_driven_client_delivers_both_ways()
     check( at_server == 2 && at_client == 2 );
     public_step_pair_destroy( &pair );
 }
-REGISTER_UNIT_TEST( public_step_driven_client_delivers_both_ways );
+REGISTER_UNIT_TEST( test_public_step_driven_client_delivers_both_ways );
 
 static void public_step_trace( const public_step_identity_t * identity, const uint8_t * token, uint16_t port,
                                uint64_t * counters )
@@ -239,7 +239,7 @@ static void public_step_trace( const public_step_identity_t * identity, const ui
     public_step_pair_destroy( &pair );
 }
 
-static void public_step_driven_client_same_inputs_same_trace()
+static void test_public_step_driven_client_same_inputs_same_trace()
 {
     public_step_identity_t identity;
     public_step_identity( &identity );
@@ -252,9 +252,9 @@ static void public_step_driven_client_same_inputs_same_trace()
     public_step_trace( &identity, token, port, second );
     check( memcmp( first, second, sizeof( first ) ) == 0 );
 }
-REGISTER_UNIT_TEST( public_step_driven_client_same_inputs_same_trace );
+REGISTER_UNIT_TEST( test_public_step_driven_client_same_inputs_same_trace );
 
-static void public_step_driven_client_refused_on_a_threaded_only_transport()
+static void test_public_step_driven_client_refused_on_a_threaded_only_transport()
 {
     public_step_identity_t identity;
     public_step_identity( &identity );
@@ -271,7 +271,7 @@ static void public_step_driven_client_refused_on_a_threaded_only_transport()
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
     check( fake.destroy_calls == 1 );
 }
-REGISTER_UNIT_TEST( public_step_driven_client_refused_on_a_threaded_only_transport );
+REGISTER_UNIT_TEST( test_public_step_driven_client_refused_on_a_threaded_only_transport );
 
 static int public_step_setenv( const char * name, const char * value )
 {
@@ -290,7 +290,7 @@ static int public_step_unsetenv( const char * name )
 #endif
 }
 
-static void public_step_driven_client_env_selects_the_mode()
+static void test_public_step_driven_client_env_selects_the_mode()
 {
     char saved[64] = {};
     const bool present = rocketnet_test_getenv( "ROCKETNET_CLIENT_STEP_DRIVEN", saved, sizeof( saved ) ) && saved[0] != '\0';
@@ -309,9 +309,9 @@ static void public_step_driven_client_env_selects_the_mode()
     if ( present ) check( public_step_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", saved ) == 0 );
     else check( public_step_unsetenv( "ROCKETNET_CLIENT_STEP_DRIVEN" ) == 0 );
 }
-REGISTER_UNIT_TEST( public_step_driven_client_env_selects_the_mode );
+REGISTER_UNIT_TEST( test_public_step_driven_client_env_selects_the_mode );
 
-static void public_step_driven_client_loss_100_drops_everything()
+static void test_public_step_driven_client_loss_100_drops_everything()
 {
     rocketnet_public_link_simulator_test_development( 1 );
     public_step_identity_t identity;
@@ -354,4 +354,4 @@ static void public_step_driven_client_loss_100_drops_everything()
     rocketnet_server_destroy( server );
     rocketnet_public_link_simulator_test_development( 0 );
 }
-REGISTER_UNIT_TEST( public_step_driven_client_loss_100_drops_everything );
+REGISTER_UNIT_TEST( test_public_step_driven_client_loss_100_drops_everything );

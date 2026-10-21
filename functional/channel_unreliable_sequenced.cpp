@@ -69,7 +69,7 @@ void state_stream_never_goes_backwards_over_lossy_link()
     sequenced_functional_check( last >= 100, "latest state did not arrive" );
     sequenced_functional_check( rocketnet_channel_harness_overflows( &h ) == 0, "delivery ring overflow" );
     sequenced_functional_check( rocketnet_channel_allocator_calls == h.allocation_snapshot, "allocation after create" );
-    printf( "state_stream_never_goes_backwards_over_lossy_link: accepted=%u delivered=%u last=%u resends=%llu wire_to_server=%lld wire_to_client=%lld seed=0x5EED5EED5EED5EED\n",
+    printf( "test_state_stream_never_goes_backwards_over_lossy_link: accepted=%u delivered=%u last=%u resends=%llu wire_to_server=%lld wire_to_client=%lld seed=0x5EED5EED5EED5EED\n",
             accepted, delivered, last, (unsigned long long) h.resends,
             (long long) h.wire_bytes_to_server, (long long) h.wire_bytes_to_client );
     rocketnet_channel_harness_destroy( &h );
@@ -122,7 +122,7 @@ void large_unreliable_sequenced_uses_transport_fragments()
     sequenced_functional_check( rocketnet_channel_harness_overflows( &h ) == 0, "large delivery ring overflow" );
     const rocketnet_counters_t * counters = rocketnet_message_client_counters( client );
     sequenced_functional_check( counters->values[ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED] == 1, "large unreliable promotion counted" );
-    printf( "large_unreliable_sequenced_uses_transport_fragments: bytes=%d delivered=%d promoted=%llu\n",
+    printf( "test_large_unreliable_sequenced_uses_transport_fragments: bytes=%d delivered=%d promoted=%llu\n",
             message_bytes, received, (unsigned long long) counters->values[ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED] );
 
     rocketnet_channel_harness_destroy( &h );

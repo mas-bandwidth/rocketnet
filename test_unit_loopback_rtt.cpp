@@ -284,15 +284,15 @@ static void loopback_rtt_check( int side )
     rocketnet_unit_check( m.duplicate == 0 );
 }
 
-static void loopback_rtt_server_sends( void ) { loopback_rtt_check( LOOPBACK_RTT_SERVER ); }
-static void loopback_rtt_client_sends( void ) { loopback_rtt_check( LOOPBACK_RTT_CLIENT ); }
+static void test_loopback_transport_rtt_server_sends( void ) { loopback_rtt_check( LOOPBACK_RTT_SERVER ); }
+static void test_loopback_transport_rtt_client_sends( void ) { loopback_rtt_check( LOOPBACK_RTT_CLIENT ); }
 
-REGISTER_UNIT_TEST( loopback_rtt_server_sends );
-REGISTER_UNIT_TEST( loopback_rtt_client_sends );
+REGISTER_UNIT_TEST( test_loopback_transport_rtt_server_sends );
+REGISTER_UNIT_TEST( test_loopback_transport_rtt_client_sends );
 
 // Retain a full maximum resend delay payload budget without acknowledging any record.
 // Exercise each documented typical fixed-pool size and the large-span path.
-static void max_resend_delay_payload_reserve_without_acks()
+static void test_max_resend_delay_payload_reserve_without_acks()
 {
     const int budgets[] = { 1000, 10000 };
     const int payloads[] = { 128, 512, 1024, 1153, 16384 };
@@ -327,4 +327,4 @@ static void max_resend_delay_payload_reserve_without_acks()
         rn_arena_destroy( arena );
     }
 }
-REGISTER_UNIT_TEST( max_resend_delay_payload_reserve_without_acks );
+REGISTER_UNIT_TEST( test_max_resend_delay_payload_reserve_without_acks );

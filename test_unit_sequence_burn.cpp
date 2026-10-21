@@ -72,13 +72,13 @@ static void check_bits_match_ring( struct rocketnet_ack_endpoint_t * ep )
     }
 }
 
-// sequence_burn_sender_walk_is_harmless: a refused start burns sequence 6
+// test_sequence_burn_sender_walk_is_harmless: a refused start burns sequence 6
 // (spent, never recorded). A block naming the opened span around it acks
 // exactly the real records, the walk visits only them, no sequence is
 // unknown (none is counted lost), and the shadow bitmaps equal the ring.
 // A second identical block visits nothing: the burn resends nothing.
 
-static void sequence_burn_sender_walk_is_harmless()
+static void test_sequence_burn_sender_walk_is_harmless()
 {
     const uint64_t N = ROCKETNET_SENT_PACKET_BUFFER_SIZE;
     struct rocketnet_ack_endpoint_t * ep = (struct rocketnet_ack_endpoint_t*)
@@ -130,7 +130,7 @@ static void sequence_burn_sender_walk_is_harmless()
     rocketnet_free( NULL, acked );
     rocketnet_free( NULL, ep );
 }
-REGISTER_UNIT_TEST( sequence_burn_sender_walk_is_harmless );
+REGISTER_UNIT_TEST( test_sequence_burn_sender_walk_is_harmless );
 
 // the ack block a decoder expands
 
@@ -155,12 +155,12 @@ static int seq_claimed( const struct rocketnet_ack_block_t * b, uint64_t seq )
     return 0;
 }
 
-// sequence_burn_receiver_block_skips_unopened: the receiver opened 1..3 and
+// test_sequence_burn_receiver_block_skips_unopened: the receiver opened 1..3 and
 // 5..6; sequence 4 is burned (never sent, never opened). The ack block it
 // builds names only what it opened, so the burned sequence never appears in a
 // block and never skews the sender's walk.
 
-static void sequence_burn_receiver_block_skips_unopened()
+static void test_sequence_burn_receiver_block_skips_unopened()
 {
     struct rocketnet_replay_protection_t replay;
     memset( &replay, 0, sizeof(replay) );
@@ -191,7 +191,7 @@ static void sequence_burn_receiver_block_skips_unopened()
     rocketnet_unit_check( seq_claimed( &block, 6 ) );
     rocketnet_unit_check( !seq_claimed( &block, 7 ) );
 }
-REGISTER_UNIT_TEST( sequence_burn_receiver_block_skips_unopened );
+REGISTER_UNIT_TEST( test_sequence_burn_receiver_block_skips_unopened );
 
 // ---- real refused starts over the loopback transports --------------------
 //
@@ -528,16 +528,16 @@ static void sequence_burn_compare( int side, int kind, const char * name )
     rocketnet_unit_check( burned.client_loss == control.client_loss );
 }
 
-static void sequence_burn_server_ring_full_is_harmless() { sequence_burn_compare( BURN_SIDE_SERVER, BURN_KIND_RING, "server.ring" ); }
-REGISTER_UNIT_TEST( sequence_burn_server_ring_full_is_harmless );
-static void sequence_burn_server_arena_full_is_harmless() { sequence_burn_compare( BURN_SIDE_SERVER, BURN_KIND_ARENA, "server.arena" ); }
-REGISTER_UNIT_TEST( sequence_burn_server_arena_full_is_harmless );
-static void sequence_burn_client_ring_full_is_harmless() { sequence_burn_compare( BURN_SIDE_CLIENT, BURN_KIND_RING, "client.ring" ); }
-REGISTER_UNIT_TEST( sequence_burn_client_ring_full_is_harmless );
-static void sequence_burn_client_arena_full_is_harmless() { sequence_burn_compare( BURN_SIDE_CLIENT, BURN_KIND_ARENA, "client.arena" ); }
-REGISTER_UNIT_TEST( sequence_burn_client_arena_full_is_harmless );
+static void test_sequence_burn_server_ring_full_is_harmless() { sequence_burn_compare( BURN_SIDE_SERVER, BURN_KIND_RING, "server.ring" ); }
+REGISTER_UNIT_TEST( test_sequence_burn_server_ring_full_is_harmless );
+static void test_sequence_burn_server_arena_full_is_harmless() { sequence_burn_compare( BURN_SIDE_SERVER, BURN_KIND_ARENA, "server.arena" ); }
+REGISTER_UNIT_TEST( test_sequence_burn_server_arena_full_is_harmless );
+static void test_sequence_burn_client_ring_full_is_harmless() { sequence_burn_compare( BURN_SIDE_CLIENT, BURN_KIND_RING, "client.ring" ); }
+REGISTER_UNIT_TEST( test_sequence_burn_client_ring_full_is_harmless );
+static void test_sequence_burn_client_arena_full_is_harmless() { sequence_burn_compare( BURN_SIDE_CLIENT, BURN_KIND_ARENA, "client.arena" ); }
+REGISTER_UNIT_TEST( test_sequence_burn_client_arena_full_is_harmless );
 
-static void sequence_burn_server_finish_populates_sequence()
+static void test_sequence_burn_server_finish_populates_sequence()
 {
     struct sequence_burn_pair_t pair;
     rocketnet_unit_check( sequence_burn_pair_setup( &pair ) );
@@ -573,7 +573,7 @@ static void sequence_burn_server_finish_populates_sequence()
     }
     sequence_burn_pair_teardown( &pair );
 }
-REGISTER_UNIT_TEST( sequence_burn_server_finish_populates_sequence );
+REGISTER_UNIT_TEST( test_sequence_burn_server_finish_populates_sequence );
 
 enum sequence_burn_uncommitted_kind_t
 {
@@ -647,32 +647,32 @@ static float sequence_burn_server_uncommitted_loss( int kind, bool fill_ring = f
     return client_stats.packet_loss;
 }
 
-static void sequence_burn_server_abort_does_not_count_as_loss()
+static void test_sequence_burn_server_abort_does_not_count_as_loss()
 {
     const float control = sequence_burn_server_uncommitted_loss( BURN_UNCOMMITTED_NONE );
     const float burned = sequence_burn_server_uncommitted_loss( BURN_UNCOMMITTED_ABORT );
     rocketnet_unit_check( control == 0.0f );
     rocketnet_unit_check( burned == control );
 }
-REGISTER_UNIT_TEST( sequence_burn_server_abort_does_not_count_as_loss );
+REGISTER_UNIT_TEST( test_sequence_burn_server_abort_does_not_count_as_loss );
 
-static void sequence_burn_server_refused_finish_does_not_count_as_loss()
+static void test_sequence_burn_server_refused_finish_does_not_count_as_loss()
 {
     const float control = sequence_burn_server_uncommitted_loss( BURN_UNCOMMITTED_NONE );
     const float burned = sequence_burn_server_uncommitted_loss( BURN_UNCOMMITTED_REFUSED_FINISH );
     rocketnet_unit_check( control == 0.0f );
     rocketnet_unit_check( burned == control );
 }
-REGISTER_UNIT_TEST( sequence_burn_server_refused_finish_does_not_count_as_loss );
+REGISTER_UNIT_TEST( test_sequence_burn_server_refused_finish_does_not_count_as_loss );
 
-static void sequence_burn_server_unreserved_fragment_finish_does_not_count_as_loss()
+static void test_sequence_burn_server_unreserved_fragment_finish_does_not_count_as_loss()
 {
     const float control = sequence_burn_server_uncommitted_loss( BURN_UNCOMMITTED_NONE, true );
     const float burned = sequence_burn_server_uncommitted_loss( BURN_UNCOMMITTED_FRAGMENT_RESERVE, true );
     rocketnet_unit_check( control == 0.0f );
     rocketnet_unit_check( burned == control );
 }
-REGISTER_UNIT_TEST( sequence_burn_server_unreserved_fragment_finish_does_not_count_as_loss );
+REGISTER_UNIT_TEST( test_sequence_burn_server_unreserved_fragment_finish_does_not_count_as_loss );
 
 // ---- the reliable channel and its resend delay over real refused starts -------------
 //
@@ -969,7 +969,7 @@ static void sequence_burn_message_compare( int side, const char * name )
     rocketnet_unit_check( fabs( burned.resend_delay - control.resend_delay ) <= resend_delay_difference_bound );
 }
 
-static void sequence_burn_server_reliable_and_resend_delay_unchanged() { sequence_burn_message_compare( BURN_SIDE_SERVER, "server.message" ); }
-REGISTER_UNIT_TEST( sequence_burn_server_reliable_and_resend_delay_unchanged );
-static void sequence_burn_client_reliable_and_resend_delay_unchanged() { sequence_burn_message_compare( BURN_SIDE_CLIENT, "client.message" ); }
-REGISTER_UNIT_TEST( sequence_burn_client_reliable_and_resend_delay_unchanged );
+static void test_sequence_burn_server_reliable_and_resend_delay_unchanged() { sequence_burn_message_compare( BURN_SIDE_SERVER, "server.message" ); }
+REGISTER_UNIT_TEST( test_sequence_burn_server_reliable_and_resend_delay_unchanged );
+static void test_sequence_burn_client_reliable_and_resend_delay_unchanged() { sequence_burn_message_compare( BURN_SIDE_CLIENT, "client.message" ); }
+REGISTER_UNIT_TEST( test_sequence_burn_client_reliable_and_resend_delay_unchanged );

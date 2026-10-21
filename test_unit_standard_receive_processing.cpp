@@ -541,7 +541,7 @@ static void standard_receive_processing_counters()
     }
 }
 
-static void standard_receive_processing_vectors()
+static void test_standard_receive_processing_vectors()
 {
     const int count = (int) ( sizeof( standard_receive_processing_table ) / sizeof( standard_receive_processing_table[0] ) );
     rocketnet_unit_check( rn_standard_vectors_walk( standard_receive_processing_table, count, standard_receive_processing_generate ) == count );
@@ -549,4 +549,4 @@ static void standard_receive_processing_vectors()
     standard_receive_processing_counters();
 }
 
-REGISTER_UNIT_TEST( standard_receive_processing_vectors );
+REGISTER_UNIT_TEST( test_standard_receive_processing_vectors );

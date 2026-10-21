@@ -140,7 +140,7 @@ enum server_disconnected_how_t
 // update after it reads SERVER_DISCONNECTED with the client DISCONNECTED;
 // the reason is kept through further updates and through the next
 // handshake, and the next CONNECTED reads NONE.
-static void server_disconnect_sets_server_disconnected_reason()
+static void test_server_disconnect_sets_server_disconnected_reason()
 {
     rocketnet_set_quiet( 1 );
     server_disconnected_identity_t identity;
@@ -196,11 +196,11 @@ static void server_disconnect_sets_server_disconnected_reason()
     }
 }
 
-REGISTER_UNIT_TEST( server_disconnect_sets_server_disconnected_reason );
+REGISTER_UNIT_TEST( test_server_disconnect_sets_server_disconnected_reason );
 
 // DONE-WHEN (4): a deliberate client disconnect reads NONE, and so does a
 // connection timeout, whose state is CONNECTION_TIMED_OUT.
-static void client_disconnect_and_timeout_read_none()
+static void test_client_disconnect_and_timeout_read_none()
 {
     rocketnet_set_quiet( 1 );
     server_disconnected_identity_t identity;
@@ -249,7 +249,7 @@ static void client_disconnect_and_timeout_read_none()
     }
 }
 
-REGISTER_UNIT_TEST( client_disconnect_and_timeout_read_none );
+REGISTER_UNIT_TEST( test_client_disconnect_and_timeout_read_none );
 
 // A client message object over a link that is not a client transport (the
 // unit suites' in-memory links, the functional channel harness): the link
@@ -348,12 +348,12 @@ static void server_disconnected_fake_case( int names_end_reason, int expected_re
     rn_message_object_destroy( object );
 }
 
-static void client_link_without_end_reason_reads_none()
+static void test_client_link_without_end_reason_reads_none()
 {
     server_disconnected_fake_case( 0, ROCKETNET_DISCONNECT_REASON_NONE );
     server_disconnected_fake_case( 1, ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
 }
-REGISTER_UNIT_TEST( client_link_without_end_reason_reads_none );
+REGISTER_UNIT_TEST( test_client_link_without_end_reason_reads_none );
 
 // A server disconnect ends the slot in every query and send at once, before
 // the next update: rocketnet_server_disconnect_client and
@@ -445,14 +445,14 @@ static void server_disconnect_now_case( bool all )
     rocketnet_server_destroy( server );
 }
 
-static void server_disconnect_client_ends_slot_at_once()
+static void test_server_disconnect_client_ends_slot_at_once()
 {
     server_disconnect_now_case( false );
 }
-REGISTER_UNIT_TEST( server_disconnect_client_ends_slot_at_once );
+REGISTER_UNIT_TEST( test_server_disconnect_client_ends_slot_at_once );
 
-static void server_disconnect_all_clients_ends_slots_at_once()
+static void test_server_disconnect_all_clients_ends_slots_at_once()
 {
     server_disconnect_now_case( true );
 }
-REGISTER_UNIT_TEST( server_disconnect_all_clients_ends_slots_at_once );
+REGISTER_UNIT_TEST( test_server_disconnect_all_clients_ends_slots_at_once );

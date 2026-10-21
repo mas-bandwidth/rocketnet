@@ -6,10 +6,10 @@
 // test_unit_cpp_interfaces.cpp -- the ABI layout queries of sdk/rocketnet.h,
 // called from C++, checked against the compiled transport types.
 //
-//   * abi_queries_match_the_compiled_layout: every answer equals sizeof and
+//   * test_abi_queries_match_the_compiled_layout: every answer equals sizeof and
 //     offsetof of the compiled types.
 //
-//   * abi_queries_refuse_unknown_names: unknown types and fields are refused.
+//   * test_abi_queries_refuse_unknown_names: unknown types and fields are refused.
 //
 // No socket, no clock.
 
@@ -21,7 +21,7 @@
 #include <stdint.h>
 
 // ---------------------------------------------------------------------------
-// abi_queries_match_the_compiled_layout
+// test_abi_queries_match_the_compiled_layout
 // ---------------------------------------------------------------------------
 //
 // The ABI layout queries (sdk/rocketnet_abi.cpp, find_type and find_field)
@@ -31,7 +31,7 @@
 // compiled types. Field counts are the lengths of the fields arrays in
 // sdk/rocketnet_abi.cpp at 7ffb924.
 
-static void abi_queries_match_the_compiled_layout()
+static void test_abi_queries_match_the_compiled_layout()
 {
     rocketnet_unit_check( rocketnet_abi_version() == ROCKETNET_ABI_VERSION );
 
@@ -84,14 +84,14 @@ static void abi_queries_match_the_compiled_layout()
 }
 
 // ---------------------------------------------------------------------------
-// abi_queries_refuse_unknown_names
+// test_abi_queries_refuse_unknown_names
 // ---------------------------------------------------------------------------
 //
 // The oneBI layout queries (sdk/rocketnet_abi.cpp) refuse unknown names: an
 // unknown type or field returns SIZE_MAX for sizes and offsets and -1 for a
 // field count.
 
-static void abi_queries_refuse_unknown_names()
+static void test_abi_queries_refuse_unknown_names()
 {
     rocketnet_unit_check( rocketnet_abi_type_size( "rocketnet_nothing_t" ) == SIZE_MAX );
     rocketnet_unit_check( rocketnet_abi_field_count( "rocketnet_nothing_t" ) == -1 );
@@ -101,5 +101,5 @@ static void abi_queries_refuse_unknown_names()
     rocketnet_unit_check( rocketnet_abi_field_size( "rocketnet_nothing_t", "frame" ) == SIZE_MAX );
 }
 
-REGISTER_UNIT_TEST( abi_queries_match_the_compiled_layout );
-REGISTER_UNIT_TEST( abi_queries_refuse_unknown_names );
+REGISTER_UNIT_TEST( test_abi_queries_match_the_compiled_layout );
+REGISTER_UNIT_TEST( test_abi_queries_refuse_unknown_names );

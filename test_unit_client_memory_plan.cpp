@@ -76,7 +76,7 @@ static void plan_make_token( uint8_t * token )
 
 extern void rocketnet_client_transport_set_memory_plan_seam_for_test( bool enable );
 
-static void client_memory_plan_non_step_driven()
+static void test_client_memory_plan_non_step_driven()
 {
     rocketnet_client_transport_set_memory_plan_seam_for_test( true );
 
@@ -122,7 +122,7 @@ static void client_memory_plan_non_step_driven()
     check( plan_bytes >= allocated );
 }
 
-static void client_memory_plan_step_driven()
+static void test_client_memory_plan_step_driven()
 {
     rocketnet_client_transport_set_memory_plan_seam_for_test( true );
 
@@ -168,5 +168,5 @@ static void client_memory_plan_step_driven()
     check( plan_bytes >= allocated );
 }
 
-REGISTER_UNIT_TEST( client_memory_plan_non_step_driven );
-REGISTER_UNIT_TEST( client_memory_plan_step_driven );
+REGISTER_UNIT_TEST( test_client_memory_plan_non_step_driven );
+REGISTER_UNIT_TEST( test_client_memory_plan_step_driven );

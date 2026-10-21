@@ -44,7 +44,7 @@ static void dispatch_record( struct rocketnet_message_record_t * record, int cod
 // region's C slots, and a delivery on channel c moves only c's read index
 // (7.1, RNChannel!DeliverMessage).
 
-static void dispatch_reaches_each_of_n_channels()
+static void test_dispatch_reaches_each_of_n_channels()
 {
     rn_region_t * region = dispatch_region();
     rocketnet_unit_check( region != NULL );
@@ -87,7 +87,7 @@ static void dispatch_reaches_each_of_n_channels()
 // Every type outside the current send mask is refused and counted. Later
 // type cards may add bits without weakening refusal for the remaining types.
 
-static void disabled_codes_are_refused_and_counted()
+static void test_disabled_codes_are_refused_and_counted()
 {
     rn_region_t * region = dispatch_region();
     rocketnet_unit_check( region != NULL );
@@ -144,7 +144,7 @@ static void disabled_codes_are_refused_and_counted()
 // an unreliable record is delivered as a view into the transport's batch: no
 // copy, pointer identity (R3, THE COPIES (b)).
 
-static void unreliable_delivered_as_a_view()
+static void test_unreliable_delivered_as_a_view()
 {
     rn_region_t * region = dispatch_region();
     rocketnet_unit_check( region != NULL );
@@ -181,7 +181,7 @@ static void unreliable_delivered_as_a_view()
 // allow, so it is neither a delivery nor a violation. The next update starts
 // the count again.
 
-static void unreliable_delivery_budget_drops_and_counts()
+static void test_unreliable_delivery_budget_drops_and_counts()
 {
     rn_region_t * region = dispatch_region();
     rocketnet_unit_check( region != NULL );
@@ -221,7 +221,7 @@ static void unreliable_delivery_budget_drops_and_counts()
 // an unreliable record never takes a reliable number (I3): no descriptor, no
 // send-store chunk, no window movement, nothing to ack.
 
-static void unreliable_never_takes_a_number()
+static void test_unreliable_never_takes_a_number()
 {
     rn_region_t * region = dispatch_region();
     rocketnet_unit_check( region != NULL );
@@ -255,7 +255,7 @@ static void unreliable_never_takes_a_number()
 // numbers the packet they name carried -- including a resend, whose packet is
 // keyed by the id the transport assigned to that send.
 
-static void ack_feed_marks_only_carried_numbers()
+static void test_ack_feed_marks_only_carried_numbers()
 {
     rn_region_t * region = dispatch_region();
     rocketnet_unit_check( region != NULL );
@@ -323,7 +323,7 @@ static void ack_feed_marks_only_carried_numbers()
 // the reversed witnesses of tla/README-RNChannel.md that concern dispatch and
 // the builder: the code refuses the broken step.
 
-static void rnchannel_witness_replays()
+static void test_rnchannel_witness_replays()
 {
     rn_region_t * region = dispatch_region();
     rocketnet_unit_check( region != NULL );
@@ -398,7 +398,7 @@ static void rnchannel_witness_replays()
 // one ordering index (PROTOCOL_VIOLATION), and a block holding an in-turn
 // ordering (PROTOCOL_VIOLATION).
 
-static void ordered_dispatch_refuses_collisions_and_bad_rings()
+static void test_ordered_dispatch_refuses_collisions_and_bad_rings()
 {
     rn_region_t * region = dispatch_region();
     rocketnet_unit_check( region != NULL );
@@ -533,7 +533,7 @@ static void ordered_dispatch_refuses_collisions_and_bad_rings()
 // The first version's mask enables all eight types; a caller's narrower mask
 // leaves out what it does not enable, counted once per refused send (7.5).
 
-static void default_mask_enables_all_eight_types()
+static void test_default_mask_enables_all_eight_types()
 {
     rn_region_t * region = dispatch_region();
     rocketnet_unit_check( region != NULL );
@@ -559,12 +559,12 @@ static void default_mask_enables_all_eight_types()
     rn_region_reset( region );
 }
 
-REGISTER_UNIT_TEST( dispatch_reaches_each_of_n_channels );
-REGISTER_UNIT_TEST( disabled_codes_are_refused_and_counted );
-REGISTER_UNIT_TEST( unreliable_delivered_as_a_view );
-REGISTER_UNIT_TEST( unreliable_never_takes_a_number );
-REGISTER_UNIT_TEST( ack_feed_marks_only_carried_numbers );
-REGISTER_UNIT_TEST( rnchannel_witness_replays );
-REGISTER_UNIT_TEST( unreliable_delivery_budget_drops_and_counts );
-REGISTER_UNIT_TEST( default_mask_enables_all_eight_types );
-REGISTER_UNIT_TEST( ordered_dispatch_refuses_collisions_and_bad_rings );
+REGISTER_UNIT_TEST( test_dispatch_reaches_each_of_n_channels );
+REGISTER_UNIT_TEST( test_disabled_codes_are_refused_and_counted );
+REGISTER_UNIT_TEST( test_unreliable_delivered_as_a_view );
+REGISTER_UNIT_TEST( test_unreliable_never_takes_a_number );
+REGISTER_UNIT_TEST( test_ack_feed_marks_only_carried_numbers );
+REGISTER_UNIT_TEST( test_rnchannel_witness_replays );
+REGISTER_UNIT_TEST( test_unreliable_delivery_budget_drops_and_counts );
+REGISTER_UNIT_TEST( test_default_mask_enables_all_eight_types );
+REGISTER_UNIT_TEST( test_ordered_dispatch_refuses_collisions_and_bad_rings );

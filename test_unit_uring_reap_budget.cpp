@@ -30,7 +30,7 @@
 
 #define check rocketnet_unit_check
 
-#if defined(__linux__) && defined(IORING_RECV_MULTISHOT) && defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+#if defined(__linux__) && defined(IORING_RECV_MULTISHOT) && defined(ROCKETNET_URING_REAP_TEST_HOOKS) && defined(ROCKETNET_IO_URING)
 
 #define URING_FAKE_CAPACITY             ( 1 << 18 )
 
@@ -200,18 +200,13 @@ static void uring_stage_sends( struct rocketnet_server_uring_t * uring, int coun
 // budget, with exactly a budget's datagrams exposed and the rest deferred,
 // none dropped
 
-static void uring_reap_receive_flood_returns_within_budget()
+static void test_io_uring_transport_reap_receive_flood_returns_within_budget()
 {
     struct rocketnet_server_uring_test_source_t source;
     struct uring_fake_t * fake = uring_fake_create( 4 * (int64_t) ROCKETNET_URING_RECEIVE_BUDGET, &source );
 
     struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, 2, &source );
-    if ( !uring )
-    {
-        printf( "[SKIPPED the io_uring transport is not built]\n" );
-        free( fake );
-        return;
-    }
+    rocketnet_unit_check( uring );
 
     const uint64_t leaked_before = rocketnet_server_uring_leaked_transports();
 
@@ -251,18 +246,13 @@ static void uring_reap_receive_flood_returns_within_budget()
 // deferred, the reservation index is not reset while the kernel owns their
 // slots, and later updates, each within its budgets, retire every send
 
-static void uring_reap_send_retires_under_receive_pressure()
+static void test_io_uring_transport_reap_send_retires_under_receive_pressure()
 {
     struct rocketnet_server_uring_test_source_t source;
     struct uring_fake_t * fake = uring_fake_create( 4 * (int64_t) ROCKETNET_URING_SEND_BUDGET, &source );
 
     struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, 1, &source );
-    if ( !uring )
-    {
-        printf( "[SKIPPED the io_uring transport is not built]\n" );
-        free( fake );
-        return;
-    }
+    rocketnet_unit_check( uring );
 
     const uint64_t leaked_before = rocketnet_server_uring_leaked_transports();
 
@@ -331,18 +321,13 @@ static void uring_reap_send_retires_under_receive_pressure()
 // still behind it when destroy runs. destroy drains it a budget at a time,
 // the cancels end the floods, and the drained transport is freed, never leaked
 
-static void uring_reap_destroy_after_saturation()
+static void test_io_uring_transport_reap_destroy_after_saturation()
 {
     struct rocketnet_server_uring_test_source_t source;
     struct uring_fake_t * fake = uring_fake_create( 4 * (int64_t) ROCKETNET_URING_SEND_BUDGET, &source );
 
     struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, 2, &source );
-    if ( !uring )
-    {
-        printf( "[SKIPPED the io_uring transport is not built]\n" );
-        free( fake );
-        return;
-    }
+    rocketnet_unit_check( uring );
 
     const uint64_t leaked_before = rocketnet_server_uring_leaked_transports();
 
@@ -377,19 +362,14 @@ static void uring_reap_destroy_after_saturation()
 // counted in RECEIVE_DROPPED_NO_BUFFER, never delivered; a completion that
 // names a buffer is still delivered
 
-static void uring_receive_without_a_buffer_is_counted()
+static void test_io_uring_transport_receive_without_a_buffer_is_counted()
 {
     struct rocketnet_server_uring_test_source_t source;
     struct uring_fake_t * fake = uring_fake_create( 1000, &source );
     fake->flood_on_arm = false;
 
     struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, 1, &source );
-    if ( !uring )
-    {
-        printf( "[SKIPPED the io_uring transport is not built]\n" );
-        free( fake );
-        return;
-    }
+    rocketnet_unit_check( uring );
 
     const uint64_t leaked_before = rocketnet_server_uring_leaked_transports();
     const uint64_t recv_tag = rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, 0, 0 );
@@ -421,31 +401,9 @@ static void uring_receive_without_a_buffer_is_counted()
     free( fake );
 }
 
-#else
-
-static void uring_receive_without_a_buffer_is_counted()
-{
-    printf( "uring_receive_without_a_buffer_is_counted [SKIPPED the io_uring completion seam requires Linux]\n" );
-}
-
-static void uring_reap_receive_flood_returns_within_budget()
-{
-    printf( "uring_reap_receive_flood_returns_within_budget [SKIPPED the io_uring completion seam requires Linux]\n" );
-}
-
-static void uring_reap_send_retires_under_receive_pressure()
-{
-    printf( "uring_reap_send_retires_under_receive_pressure [SKIPPED the io_uring completion seam requires Linux]\n" );
-}
-
-static void uring_reap_destroy_after_saturation()
-{
-    printf( "uring_reap_destroy_after_saturation [SKIPPED the io_uring completion seam requires Linux]\n" );
-}
+REGISTER_UNIT_TEST( test_io_uring_transport_reap_receive_flood_returns_within_budget );
+REGISTER_UNIT_TEST( test_io_uring_transport_reap_send_retires_under_receive_pressure );
+REGISTER_UNIT_TEST( test_io_uring_transport_reap_destroy_after_saturation );
+REGISTER_UNIT_TEST( test_io_uring_transport_receive_without_a_buffer_is_counted );
 
 #endif
-
-REGISTER_UNIT_TEST( uring_reap_receive_flood_returns_within_budget );
-REGISTER_UNIT_TEST( uring_reap_send_retires_under_receive_pressure );
-REGISTER_UNIT_TEST( uring_reap_destroy_after_saturation );
-REGISTER_UNIT_TEST( uring_receive_without_a_buffer_is_counted );

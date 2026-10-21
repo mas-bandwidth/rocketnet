@@ -283,7 +283,7 @@ static void rocketnet_iocp_retire_send( rocketnet_server_iocp_t * iocp, rocketne
 // when it has none. A UDP_COALESCED_INFO header whose cmsg_len is shorter
 // than WSA_CMSG_LEN( sizeof( DWORD ) ) carries no whole DWORD and yields 0:
 // only bytes the header claims are read. Not static: the unit suite calls it
-// over a built WSAMSG (windows_coalesced_cmsg_short_length_is_not_read).
+// over a built WSAMSG (test_windows_coalesced_cmsg_short_length_is_not_read).
 DWORD rocketnet_iocp_coalesced_stride( WSAMSG * message )
 {
     for ( WSACMSGHDR * cmsg = WSA_CMSG_FIRSTHDR( message ); cmsg; cmsg = WSA_CMSG_NXTHDR( message, cmsg ) )

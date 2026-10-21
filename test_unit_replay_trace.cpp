@@ -253,7 +253,7 @@ static void replay_trace_dfs( replay_window_ref_t & model, struct rocketnet_repl
 
 // The model-to-C++ trace: the code and the reference agree on the accepted
 // projection after every action sequence of length up to five.
-static void TestReplayWindowModelTrace()
+static void test_replay_window_model_trace()
 {
     replay_window_ref_t model;
     model.reset( /* ClearedWords */ k_model_words, /* GateBeforeAdvance */ 0 );
@@ -281,7 +281,7 @@ static void TestReplayWindowModelTrace()
 // never refused as already received. STANDARD.md:1539-1541. At BASE
 // sdk/rocketnet_replay.cpp:56-59 clears only window[0..3] and the stale bit
 // for 300 reads as received (README-ReplayWindow.md "What TLC found" 1).
-static void TestReplayLongSkipClearsTheWholeWindow()
+static void test_replay_long_skip_clears_the_whole_window()
 {
     struct rocketnet_replay_protection_t replay;
     memset( &replay, 0, sizeof(replay) );
@@ -312,7 +312,7 @@ static void TestReplayLongSkipClearsTheWholeWindow()
 // moves its session window, so the server checks the slot before the mark.
 // STANDARD.md:1486-1494. At BASE sdk/rocketnet_server_protocol.cpp:962
 // advances before :967 checks client_index, so the window moves.
-static void TestSlotlessPacketNeverMovesTheSessionWindow()
+static void test_slotless_packet_never_moves_the_session_window()
 {
     struct rocketnet_server_protocol_t server;
     memset( &server, 0, sizeof(server) );
@@ -374,6 +374,6 @@ static void TestSlotlessPacketNeverMovesTheSessionWindow()
     rocketnet_counters_assert_conserved( &counters );
 }
 
-REGISTER_UNIT_TEST( TestReplayWindowModelTrace );
-REGISTER_UNIT_TEST( TestReplayLongSkipClearsTheWholeWindow );
-REGISTER_UNIT_TEST( TestSlotlessPacketNeverMovesTheSessionWindow );
+REGISTER_UNIT_TEST( test_replay_window_model_trace );
+REGISTER_UNIT_TEST( test_replay_long_skip_clears_the_whole_window );
+REGISTER_UNIT_TEST( test_slotless_packet_never_moves_the_session_window );

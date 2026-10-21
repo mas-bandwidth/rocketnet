@@ -39,7 +39,7 @@ static const double rocketnet_ordered_timeout = 180.0;
 // also pays the two-message pipeline, the 50 ms link, the resend of every lost
 // chunk and head-of-line waits, so the multiple sits well above 1 even on a
 // clean link. Over 10% loss and seeds 1-2000 of scripts/channel-seed-sweep
-// (ordered_256k_chunked_stream_over_lossy_reordering_link, the larger factor)
+// (test_ordered_256k_chunked_stream_over_lossy_reordering_link, the larger factor)
 // the completed runs have a median of 13.5 and a maximum of 17.67; the
 // multiple is that maximum plus a margin of about 13%. The earlier 15.0 came
 // from three runs on the pinned seed and 6% of seeds exceeded it. A run that
@@ -281,10 +281,10 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
 
 void ordered_256k_chunked_stream_over_lossy_reordering_link()
 {
-    rocketnet_ordered_run( "ordered_256k_chunked_stream_over_lossy_reordering_link", 0 );
+    rocketnet_ordered_run( "test_ordered_256k_chunked_stream_over_lossy_reordering_link", 0 );
 }
 
 void ordered_small_and_large_interleaved()
 {
-    rocketnet_ordered_run( "ordered_small_and_large_interleaved", 1 );
+    rocketnet_ordered_run( "test_ordered_small_and_large_interleaved", 1 );
 }

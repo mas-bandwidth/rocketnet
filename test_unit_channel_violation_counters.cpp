@@ -96,7 +96,7 @@ static int violation_write( violation_node_t * node, double now, violation_packe
 // reader's check 5 (MESSAGE_BAD_CHANNEL) before any dispatch. The live path
 // counts that violation by its own counter, then MESSAGE_PROTOCOL_VIOLATION
 // once for the ended connection (rn_channels_count_violation).
-static void violation_malformed_ordered_record_moves_its_own_counter()
+static void test_violation_malformed_ordered_record_moves_its_own_counter()
 {
     rocketnet_message_config_t sender_config, receiver_config;
     violation_config( &sender_config, 16 );
@@ -119,12 +119,12 @@ static void violation_malformed_ordered_record_moves_its_own_counter()
     rn_arena_destroy( receiver.arena );
 }
 
-REGISTER_UNIT_TEST( violation_malformed_ordered_record_moves_its_own_counter );
+REGISTER_UNIT_TEST( test_violation_malformed_ordered_record_moves_its_own_counter );
 
 // A connection whose mask enables RELIABLE_WITH_RECEIPT and not RELIABLE takes
 // wire code 2 (rocketnet_message_enabled_codes), so the reader admits the
 // record and the dispatch delivers it: no TYPE_NOT_ENABLED, no violation.
-static void violation_receipt_only_reliable_connection_takes_its_records()
+static void test_violation_receipt_only_reliable_connection_takes_its_records()
 {
     rocketnet_message_config_t config;
     violation_config( &config, 8 );
@@ -156,7 +156,7 @@ static void violation_receipt_only_reliable_connection_takes_its_records()
     rn_arena_destroy( receiver.arena );
 }
 
-REGISTER_UNIT_TEST( violation_receipt_only_reliable_connection_takes_its_records );
+REGISTER_UNIT_TEST( test_violation_receipt_only_reliable_connection_takes_its_records );
 
 #if ROCKETNET_MAX_CHANNELS > 256
 
@@ -165,7 +165,7 @@ REGISTER_UNIT_TEST( violation_receipt_only_reliable_connection_takes_its_records
 // sdk/rocketnet_message.cpp:52) and the form byte.
 // The largest single record is payload_capacity - 17 bytes; one byte more is
 // a block. The boundary size payload_capacity - 16 is written and delivered.
-static void violation_wide_reliable_sequenced_boundary_is_sent()
+static void test_violation_wide_reliable_sequenced_boundary_is_sent()
 {
     rocketnet_message_config_t config;
     violation_config( &config, 300 );
@@ -194,16 +194,9 @@ static void violation_wide_reliable_sequenced_boundary_is_sent()
     rn_arena_destroy( receiver.arena );
 }
 
-#else
-
-static void violation_wide_reliable_sequenced_boundary_is_sent()
-{
-    printf( "violation_wide_reliable_sequenced_boundary_is_sent [SKIPPED wide channel tests require ROCKETNET_MAX_CHANNELS > 256]\n" );
-}
+REGISTER_UNIT_TEST( test_violation_wide_reliable_sequenced_boundary_is_sent );
 
 #endif // #if ROCKETNET_MAX_CHANNELS > 256
-
-REGISTER_UNIT_TEST( violation_wide_reliable_sequenced_boundary_is_sent );
 
 // The remaining wire-check violations (STANDARD.md _Messages_ checks 1 to 4,
 // 9, 10 and 12) each move their own counter beside MESSAGE_PROTOCOL_VIOLATION,
@@ -222,7 +215,7 @@ static void violation_feed_refuses( violation_node_t * receiver, const uint8_t *
     check( rn_ordered_decide( &receiver->ordered ) == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
 }
 
-static void violation_reader_and_window_checks_move_their_own_counters()
+static void test_violation_reader_and_window_checks_move_their_own_counters()
 {
     // check 1: BAD_FORM
     {
@@ -336,7 +329,7 @@ static void violation_reader_and_window_checks_move_their_own_counters()
     }
 }
 
-REGISTER_UNIT_TEST( violation_reader_and_window_checks_move_their_own_counters );
+REGISTER_UNIT_TEST( test_violation_reader_and_window_checks_move_their_own_counters );
 
 // Append one code 3 (RELIABLE_ORDERED) record: flags, length 1, number, ring 0,
 // ordering, channel, then its one data byte.
@@ -368,7 +361,7 @@ static int violation_finish_records( uint8_t * p )
 // index (rn_channels_dispatch, sdk/rocketnet_channel.cpp), counted
 // MESSAGE_DUPLICATE_ORDERING and, once for the ended connection,
 // MESSAGE_PROTOCOL_VIOLATION.
-static void violation_two_ordered_records_with_one_ordering_index_get_their_own_counter()
+static void test_violation_two_ordered_records_with_one_ordering_index_get_their_own_counter()
 {
     rocketnet_message_config_t config;
     violation_config( &config, 8 );
@@ -390,14 +383,14 @@ static void violation_two_ordered_records_with_one_ordering_index_get_their_own_
     rn_arena_destroy( receiver.arena );
 }
 
-REGISTER_UNIT_TEST( violation_two_ordered_records_with_one_ordering_index_get_their_own_counter );
+REGISTER_UNIT_TEST( test_violation_two_ordered_records_with_one_ordering_index_get_their_own_counter );
 
 // SLOT_COLLISION (check 10) is reachable from the wire: a held record keeps its
 // descriptor live after the receive cursor passes its number, so a later
 // number one window above lands on the same slot. Record 0 delivers on channel
 // 0 and advances R; record 1 waits on channel 1 and keeps slot 1 live; number
 // W+1 on channel 2 maps to slot 1 and is refused as SLOT_COLLISION.
-static void violation_slot_collision_is_reachable_from_the_wire()
+static void test_violation_slot_collision_is_reachable_from_the_wire()
 {
     rocketnet_message_config_t config;
     violation_config( &config, 8 );
@@ -428,4 +421,4 @@ static void violation_slot_collision_is_reachable_from_the_wire()
     rn_arena_destroy( receiver.arena );
 }
 
-REGISTER_UNIT_TEST( violation_slot_collision_is_reachable_from_the_wire );
+REGISTER_UNIT_TEST( test_violation_slot_collision_is_reachable_from_the_wire );

@@ -138,7 +138,7 @@ void config_mismatch_over_loopback()
     const double elapsed = h.now - start;
     if ( client_reason != ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH ||
          server_reason != ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH )
-        rocketnet_config_print_failure( "config_mismatch_over_loopback", &h, elapsed,
+        rocketnet_config_print_failure( "test_loopback_transport_config_mismatch", &h, elapsed,
                                         client_reason, server_reason, 0, 0 );
 
     rocketnet_config_check( client_reason == ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH );
@@ -264,7 +264,7 @@ void config_equal_over_lossy_loopback()
                    !order_error && rocketnet_channel_harness_overflows( &h ) == 0;
 
     if ( !ok )
-        rocketnet_config_print_failure( "config_equal_over_lossy_loopback", &h, elapsed,
+        rocketnet_config_print_failure( "test_loopback_transport_config_equal_over_lossy", &h, elapsed,
                                         client_reason, server_reason, delivered_client, delivered_server );
 
     rocketnet_config_check( h.connected );
