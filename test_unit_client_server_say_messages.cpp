@@ -189,6 +189,7 @@ static const allowlist_row_t allowlist[] =
     { F_API, "rocketnet_message_client_send_packets", "SEND PACKETS" },
     { F_API, "rocketnet_server_send_packets", "SEND PACKETS" },
     { F_API, "rocketnet_message_server_send_packets", "SEND PACKETS" },
+    { F_API, "rocketnet_server_transport_send_packets_shutdown", "SEND PACKETS" },
     { F_API, "packets, then the per-slot connection reset", "SEND PACKETS" },
     { F_C, "rocketnet_message_client_send_packets", "SEND PACKETS" },
     { F_C, "rn_message_object_send_packets", "SEND PACKETS" },
