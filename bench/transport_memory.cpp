@@ -69,7 +69,9 @@ static int number(const char * text)
 
 // The public endpoint and transport each resolve environment settings. A pure
 // inventory cannot promise their equality while the process environment may
-// change between planning and start, so reject ambient server overrides.
+// change between planning and start. Development server impairment overrides
+// also allocate simulator storage omitted by the concrete transport plan.
+// Reject both classes rather than presenting an incomplete high-water figure.
 static bool server_environment_overridden()
 {
 #if defined(_WIN32)
@@ -78,7 +80,8 @@ static bool server_environment_overridden()
     char ** variables = environ;
 #endif
     for ( char ** entry = variables; entry && *entry; ++entry )
-        if ( strncmp( *entry, "ROCKETNET_SERVER_", 17 ) == 0 )
+        if ( strncmp( *entry, "ROCKETNET_SERVER_", 17 ) == 0 ||
+             strncmp( *entry, "ROCKETNET_DEV_SERVER_", 21 ) == 0 )
             return true;
     return false;
 }
@@ -108,7 +111,7 @@ int main(int argc, char ** argv)
     if (session_plan_only)
     {
         if (server_environment_overridden())
-        { fprintf(stderr, "session inventory requires no ROCKETNET_SERVER_ environment overrides\n"); return 1; }
+        { fprintf(stderr, "session inventory requires no ROCKETNET_SERVER_ or ROCKETNET_DEV_SERVER_ environment overrides\n"); return 1; }
         rocketnet_server_config_t endpoint;
         if (rocketnet_server_default_config(&endpoint) != ROCKETNET_STATUS_OK)
             return 1;

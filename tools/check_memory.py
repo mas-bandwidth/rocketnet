@@ -75,6 +75,11 @@ env['ROCKETNET_SERVER_MAX_CLIENTS'] = '2'
 refused_env = subprocess.run([str(binary), '1', '1416', '1', 'portable', '0', '--session-plan-only'],
                              capture_output=True, text=True, timeout=10, env=env)
 assert refused_env.returncode != 0 and 'environment overrides' in refused_env.stderr
+env.pop('ROCKETNET_SERVER_MAX_CLIENTS')
+env['ROCKETNET_DEV_SERVER_LATENCY_MS'] = '1'
+refused_impairment = subprocess.run([str(binary), '1', '1416', '1', 'portable', '0', '--session-plan-only'],
+                                    capture_output=True, text=True, timeout=10, env=env)
+assert refused_impairment.returncode != 0 and 'environment overrides' in refused_impairment.stderr
 refused_candidate = subprocess.run([str(binary), '1', '1416', '1', 'auto', '0', '--session-plan-only'],
                                    capture_output=True, text=True, timeout=10)
 assert refused_candidate.returncode != 0 and 'memory plan unavailable' in refused_candidate.stderr
