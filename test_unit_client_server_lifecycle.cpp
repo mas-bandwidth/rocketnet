@@ -1412,3 +1412,51 @@ static void test_message_receive_pumped_past_one_batch_in_order()
     lifecycle_world_destroy( &world );
 }
 REGISTER_UNIT_TEST( test_message_receive_pumped_past_one_batch_in_order );
+
+// The library owns one receive batch per object: each receive refills and
+// returns it, an empty receive is num_messages 0 (never NULL), the second of
+// two receives in a row overwrites the first, and a NULL object is one
+// counted misuse that returns NULL.
+static void test_receive_returns_the_objects_one_batch()
+{
+    lifecycle_world_t world;
+    lifecycle_world_create( &world, 2, 1 );
+    rocketnet_client_t * client = world.clients[0];
+    lifecycle_connect( &world, 0, 0x1B02 );
+
+    const struct rocketnet_message_batch_t * empty = rocketnet_server_receive_messages( world.server );
+    check( empty != NULL && empty->num_messages == 0 );
+    const struct rocketnet_message_batch_t * client_empty = rocketnet_client_receive_messages( client );
+    check( client_empty != NULL && client_empty->num_messages == 0 );
+
+    for ( int i = 0; i < 2; i++ )
+    {
+        uint8_t * p = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1 );
+        check( p != NULL );
+        if ( p )
+        {
+            p[0] = (uint8_t) ( 0x40 + i );
+            check( rocketnet_client_finish_message( client, 1 ) != 0 );
+        }
+    }
+    const struct rocketnet_message_batch_t * first = NULL;
+    for ( int step = 0; step < 50; step++ )
+    {
+        lifecycle_pump( &world );
+        first = rocketnet_server_receive_messages( world.server );
+        if ( first->num_messages > 0 )
+            break;
+    }
+    check( first != NULL && first->num_messages == 2 && first->data[0][0] == 0x40 );
+    const struct rocketnet_message_batch_t * second = rocketnet_server_receive_messages( world.server );
+    check( second == first );                                  // the same one batch, refilled
+    check( second->num_messages == 0 );                        // the first's entries are gone
+
+    const uint64_t misuse = rocketnet_api_misuse_count();
+    check( rocketnet_server_receive_messages( NULL ) == NULL );
+    check( rocketnet_api_misuse_count() == misuse + 1 );
+    check( rocketnet_client_receive_messages( NULL ) == NULL );
+    check( rocketnet_api_misuse_count() == misuse + 2 );
+    lifecycle_world_destroy( &world );
+}
+REGISTER_UNIT_TEST( test_receive_returns_the_objects_one_batch );
