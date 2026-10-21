@@ -4707,7 +4707,11 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
             return NULL;
         }
     }
-    wake->wake_event = CreateEvent( NULL, TRUE, FALSE, NULL );
+    // Event-only wakes are reused by a worker. Auto-reset consumes a wake
+    // atomically with wait success, so a concurrent SetEvent cannot be erased
+    // by a later ResetEvent. Socket-backed client wakes keep their existing
+    // manual-reset behavior.
+    wake->wake_event = CreateEvent( NULL, socket ? TRUE : FALSE, FALSE, NULL );
     if ( wake->wake_event == NULL )
     {
         if ( socket )
@@ -4762,7 +4766,8 @@ bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readab
     }
     if ( result == WAIT_OBJECT_0 )
     {
-        ResetEvent( wake->wake_event );
+        if ( wake->read_event != WSA_INVALID_EVENT )
+            ResetEvent( wake->wake_event );
         return true;
     }
     if ( readable && result == WAIT_OBJECT_0 + 1 )
