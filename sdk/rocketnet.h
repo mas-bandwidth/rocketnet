@@ -284,8 +284,9 @@ enum rocketnet_status_t
 
     ROCKETNET_STATUS_TIMER_CREATE_FAILED                = -22,
 
-    /// Connect refused because the client is not disconnected. Nothing changed.
-    /// Call rocketnet_client_disconnect before retrying.
+    /// Connect refused while an active attempt exists or a previous worker
+    /// still owns its storage. A terminal retry requests shutdown and keeps
+    /// the terminal state; poll disconnected and retry with the token.
 
     ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED            = -23,
 
@@ -459,8 +460,8 @@ enum rocketnet_disconnect_reason_t
 /// A connect attempt moves from DISCONNECTED through the handshake states to
 /// CONNECTED. Negative values describe how an attempt or connection ended.
 /// rocketnet_client_disconnect clears a negative value to DISCONNECTED.
-/// rocketnet_client_connect may replace a connection that ended after reaching
-/// CONNECTED. Call rocketnet_client_disconnect after other failures.
+/// rocketnet_client_connect can retry from any negative terminal state. If an
+/// old worker still owns the attempt, the state stays negative until retry.
 
 enum rocketnet_client_state_t
 {
@@ -1464,12 +1465,13 @@ ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * con
 /// Malformed strings return ROCKETNET_STATUS_INVALID_CONNECT_TOKEN without
 /// changing the client.
 ///
-/// Connect accepts a client whose previous shutdown has completed. From a
-/// connection-ended state it first requests shutdown; while the worker still
-/// owns that attempt it returns ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED.
-/// Poll rocketnet_client_disconnected and retry, or explicitly call disconnect
-/// and wait for disconnected before connect. Call disconnect first after a
-/// handshake or token failure. Other active states are refused.
+/// Connect accepts DISCONNECTED and every negative terminal state. From a
+/// terminal state with an old transport it first requests shutdown; while its
+/// worker still owns that attempt it returns ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED
+/// and retains the terminal state. Poll rocketnet_client_disconnected and retry
+/// with the token. After completion connect joins and frees the old attempt,
+/// then starts the new one. Explicit disconnect still clears the state to
+/// DISCONNECTED. Active handshake and CONNECTED states are refused.
 ///
 /// Failed token checks set INVALID_CONNECT_TOKEN or CONNECT_TOKEN_EXPIRED.
 /// A socket or thread failure leaves the client DISCONNECTED.

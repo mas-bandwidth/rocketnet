@@ -456,7 +456,7 @@ static void test_server_start_refused_unless_stopped()
 }
 REGISTER_UNIT_TEST( test_server_start_refused_unless_stopped );
 
-static void test_client_error_state_then_disconnect_then_connect()
+static void test_client_error_state_retries_after_completion()
 {
     // denied: a server of one slot, held by client 0; client 1 is refused
     lifecycle_world_t world;
@@ -469,14 +469,26 @@ static void test_client_error_state_then_disconnect_then_connect()
     for ( int i = 0; i < 400 && rocketnet_client_state( late ) > ROCKETNET_CLIENT_STATE_DISCONNECTED; i++ )
         lifecycle_pump( &world );
     check( rocketnet_client_state( late ) == ROCKETNET_CLIENT_STATE_CONNECTION_DENIED );
+    rocketnet_message_client_t * old_message = rocketnet_client_message_client( late );
+    check( old_message != NULL );
+    check( rocketnet_client_connect( late, "bad" ) == ROCKETNET_STATUS_INVALID_CONNECT_TOKEN );
+    check( rocketnet_client_state( late ) == ROCKETNET_CLIENT_STATE_CONNECTION_DENIED );
+    check( !rocketnet_client_disconnected( late ) ); // malformed input did not retire it
+    check( rocketnet_client_message_client( late ) == old_message );
     check( rocketnet_client_connect( late, token ) == ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED );
     check( rocketnet_client_state( late ) == ROCKETNET_CLIENT_STATE_CONNECTION_DENIED );
+    for ( int i = 0; i < 8; ++i )
+    {
+        check( !rocketnet_client_disconnected( late ) ); // no hidden caller step
+        check( rocketnet_client_message_client( late ) == old_message );
+    }
 
-    // free the slot, then disconnect the denied client and connect it again
+    // Free the slot and explicitly advance the pending old worker. The retry
+    // preserves its denied state and old message pointer until finalization.
     lifecycle_disconnect( &world, 0 );
-    rocketnet_client_disconnect( late );
     rn_test_client_wait_disconnected( late );
-    check( rocketnet_client_state( late ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    check( rocketnet_client_state( late ) == ROCKETNET_CLIENT_STATE_CONNECTION_DENIED );
+    check( rocketnet_client_message_client( late ) == old_message ); // completed but not yet finalized
     lifecycle_connect( &world, 1, 0x1403 );
     lifecycle_exchange( &world, 1, 0xF1, 2 );
     lifecycle_world_destroy( &world );
@@ -493,14 +505,37 @@ static void test_client_error_state_then_disconnect_then_connect()
     check( ended == ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT || ended == ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT );
     check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED );
     check( rocketnet_client_state( client ) == ended );
-    rocketnet_client_disconnect( client );
+    for ( int i = 0; i < 8; ++i )
+        check( !rocketnet_client_disconnected( client ) );
     rn_test_client_wait_disconnected( client );
-    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    check( rocketnet_client_state( client ) == ended );
     lifecycle_connect( &world, 0, 0x1405 );
     lifecycle_exchange( &world, 0, 0xF2, 2 );
     lifecycle_world_destroy( &world );
 }
-REGISTER_UNIT_TEST( test_client_error_state_then_disconnect_then_connect );
+REGISTER_UNIT_TEST( test_client_error_state_retries_after_completion );
+
+// Explicit disconnect remains a distinct operation: it clears a negative
+// connection-backed state, even when the client did not ask to retry.
+static void test_client_disconnect_clears_denied_state()
+{
+    lifecycle_world_t world;
+    lifecycle_world_create( &world, 1, 2 );
+    lifecycle_connect( &world, 0, 0x1411 );
+    rocketnet_client_t * denied = world.clients[1];
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    lifecycle_token( world.server, rocketnet_server_port( world.server ), &world.identity, 0x1412, 300, token );
+    check( rocketnet_client_connect( denied, token ) == ROCKETNET_STATUS_OK );
+    for ( int i = 0; i < 400 && rocketnet_client_state( denied ) > ROCKETNET_CLIENT_STATE_DISCONNECTED; i++ )
+        lifecycle_pump( &world );
+    check( rocketnet_client_state( denied ) == ROCKETNET_CLIENT_STATE_CONNECTION_DENIED );
+    rocketnet_client_disconnect( denied );
+    check( rocketnet_client_state( denied ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    rn_test_client_wait_disconnected( denied );
+    check( rocketnet_client_state( denied ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    lifecycle_world_destroy( &world );
+}
+REGISTER_UNIT_TEST( test_client_disconnect_clears_denied_state );
 
 // A send on a connection that is not CONNECTED is dropped and counted, on the
 // client and on the server alike (standard/MESSAGES.md m1.5;
@@ -1184,11 +1219,10 @@ static void test_client_reconnects_after_server_stop_without_disconnect()
 }
 REGISTER_UNIT_TEST( test_client_reconnects_after_server_stop_without_disconnect );
 
-// A connection that ends with a reason reads it as the client state until
-// disconnect or the next connect ends it: a config mismatch (num_channels is
-// a WIRE field) ends the first, disconnect reads DISCONNECTED, and the next
-// connect runs a fresh handshake to CONNECTED.
-static void test_client_connection_ended_state_kept_until_disconnect()
+// A config mismatch (num_channels is a WIRE field) ends the first attempt.
+// Direct retry retains its public reason while the old generation retires,
+// then starts a fresh handshake without an explicit disconnect.
+static void test_client_connection_ended_state_kept_until_retry()
 {
     lifecycle_world_t world;
     memset( &world, 0, sizeof( world ) );
@@ -1219,9 +1253,6 @@ static void test_client_connection_ended_state_kept_until_disconnect()
     for ( int i = 0; i < 10; i++ )
         lifecycle_pump( &world );
     check( rocketnet_client_state( client ) == ended );
-    rocketnet_client_disconnect( client );
-    rn_test_client_wait_disconnected( client );
-    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
 
     // a matching server: the next connect runs a fresh handshake
     rn_test_server_stop_and_destroy( world.server );
@@ -1229,6 +1260,11 @@ static void test_client_connection_ended_state_kept_until_disconnect()
     world.server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
     check( world.server && rocketnet_server_start( world.server ) == ROCKETNET_STATUS_OK );
     lifecycle_token( world.server, rocketnet_server_port( world.server ), &world.identity, 0x1D02, 300, token );
+    check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED );
+    check( rocketnet_client_state( client ) == ended );
+    check( !rocketnet_client_disconnected( client ) );
+    rn_test_client_wait_disconnected( client );
+    check( rocketnet_client_state( client ) == ended );
     check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
     check( rocketnet_client_state( client ) > ROCKETNET_CLIENT_STATE_DISCONNECTED );
     check( rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED );
@@ -1237,10 +1273,10 @@ static void test_client_connection_ended_state_kept_until_disconnect()
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
     lifecycle_world_destroy( &world );
 }
-REGISTER_UNIT_TEST( test_client_connection_ended_state_kept_until_disconnect );
+REGISTER_UNIT_TEST( test_client_connection_ended_state_kept_until_retry );
 
-// connect with an expired token: the status and the matching error state,
-// refused again until disconnect.
+// A token-only expiry owns no transport worker, so a fresh token can retry
+// immediately. Reusing the expired token still reports its expiry.
 static void test_client_connect_token_expired()
 {
     lifecycle_world_t world;
@@ -1254,14 +1290,35 @@ static void test_client_connect_token_expired()
         LIFECYCLE_PROTOCOL, addresses, 1, 0x1E01, 0, 1, 300, NULL, token ) == ROCKETNET_STATUS_OK );
     check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED );
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED );
-    check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED );
+    check( rocketnet_client_disconnected( client ) );
+    check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED );
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED );
     rocketnet_client_disconnect( client );
-    rn_test_client_wait_disconnected( client );
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED );
     lifecycle_connect( &world, 0, 0x1E02 );
     lifecycle_world_destroy( &world );
 }
 REGISTER_UNIT_TEST( test_client_connect_token_expired );
+
+// A correctly sized, decodable but invalid token is a terminal failure with
+// no transport owner. A subsequent valid token starts immediately.
+static void test_client_invalid_token_retries_without_disconnect()
+{
+    lifecycle_world_t world;
+    lifecycle_world_create( &world, 1, 1 );
+    rocketnet_client_t * client = world.clients[0];
+    char invalid[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    memset( invalid, 'A', sizeof( invalid ) - 1 );
+    invalid[sizeof( invalid ) - 1] = '\0';
+    check( rocketnet_client_connect( client, invalid ) == ROCKETNET_STATUS_INVALID_CONNECT_TOKEN );
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN );
+    check( rocketnet_client_disconnected( client ) );
+    lifecycle_connect( &world, 0, 0x1E03 );
+    lifecycle_exchange( &world, 0, 0xE3, 1 );
+    lifecycle_world_destroy( &world );
+}
+REGISTER_UNIT_TEST( test_client_invalid_token_retries_without_disconnect );
 
 // One update sends more packets than one builder call tracks
 // (ROCKETNET_PACKET_BUILDER_MAX_PACKETS, 16): the per-update limit is the

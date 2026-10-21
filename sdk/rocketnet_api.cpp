@@ -428,7 +428,7 @@ struct rocketnet_client_t
     int block_used;                                     // 1 once a connect handed the block to a connection
     struct rocketnet_message_client_t * connection;     // NULL while DISCONNECTED or after a refused connect
     struct rocketnet_message_client_t * retiring;       // retained until worker completion and synchronous reclamation
-    int refused_state;                                  // the error state a refused connect left, 0 otherwise
+    int refused_state;                                  // token refusal or terminal state retained during retry, 0 otherwise
     uint64_t lifetime[RN_CLIENT_COUNT];                 // the counts of every ended connection
     struct rocketnet_message_batch_t batch;             // the one receive batch, refilled by each receive (in the create-time block)
 };
@@ -737,31 +737,47 @@ enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * cl
     // connect reads no clock: the connection's clock starts at its first
     // update, as create's always has (documented in rocketnet.h)
 
-    // a connection the server ended (or a kick) is DISCONNECTED while its
-    // object still exists: end it first, so its counters and reason are kept
-    // and nothing of it survives into the new one
-    if ( client->connection && rocketnet_message_client_state( client->connection ) == ROCKETNET_CLIENT_STATE_DISCONNECTED )
-        rocketnet_client_disconnect( client );
-
-    if ( client->retiring )
-    {
-        if ( !rocketnet_client_disconnected( client ) )
-            return ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED;
-        rn_client_end_connection( client );
-    }
-
-    if ( rn_client_state( client ) != ROCKETNET_CLIENT_STATE_DISCONNECTED )
+    if ( rn_client_state( client ) > ROCKETNET_CLIENT_STATE_DISCONNECTED )
     {
         rocketnet_api_misuse_record();
         rocketnet_error( "client connect refused: the client is not disconnected" );
         return ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED;
     }
+
+    // Reject a malformed string before changing a terminal attempt. The
+    // caller submits the token again after an old worker completes; no token
+    // or key material is retained across that pending interval.
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     if ( !rn_connect_token_decode( connect_token_string, connect_token ) )
     {
         sodium_memzero( connect_token, sizeof( connect_token ) );
         return ROCKETNET_STATUS_INVALID_CONNECT_TOKEN;
     }
+
+    // Every terminal state may retry. Preserve its public state while the
+    // old worker retires; the explicit disconnect API still clears it to
+    // DISCONNECTED. A DISCONNECTED message object may carry a more specific
+    // server/message reason through rocketnet_client_state.
+    if ( client->connection )
+    {
+        const int terminal_state = rocketnet_client_state( client );
+        rocketnet_client_disconnect( client );
+        client->refused_state = terminal_state;
+    }
+
+    if ( client->retiring )
+    {
+        if ( !rocketnet_client_disconnected( client ) )
+        {
+            sodium_memzero( connect_token, sizeof( connect_token ) );
+            return ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED;
+        }
+        rn_client_end_connection( client );
+    }
+
+    // A fresh attempt starts here. A later socket/thread failure must leave
+    // DISCONNECTED, while invalid/expired token failures set their own state.
+    client->refused_state = ROCKETNET_CLIENT_STATE_DISCONNECTED;
     int status = ROCKETNET_STATUS_OK;
     client->block_used = 1;
     client->connection = rocketnet_message_client_create_ex( client->context, connect_token, &client->transport, &client->message,
