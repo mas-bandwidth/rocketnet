@@ -404,6 +404,7 @@ static void sequence_burn_round( struct sequence_burn_pair_t * pair, int side, i
 
     rocketnet_server_transport_send_packets( pair->server );
     rocketnet_client_transport_send_packets( pair->client );
+    rocketnet_unit_check( rocketnet_server_transport_stats_worker_step_for_test( pair->server ) );
 }
 
 static void sequence_burn_run( int side, int kind, bool burn, const int * control_counts, struct sequence_burn_measures_t * m )
@@ -426,7 +427,9 @@ static void sequence_burn_run( int side, int kind, bool burn, const int * contro
     }
     rocketnet_unit_check( connected );
 
-    for ( int round = 0; round < BURN_ROUNDS + BURN_SETTLE_ROUNDS; round++ )
+    // One final no-payload frame publishes the snapshot completed after the
+    // last settling frame. Every intermediate stats batch is stepped below.
+    for ( int round = 0; round <= BURN_ROUNDS + BURN_SETTLE_ROUNDS; round++ )
         sequence_burn_round( &pair, side, kind, burn, round, control_counts, m );
 
     const struct rocketnet_counters_t * sender = sequence_burn_counters( &pair, side );
@@ -514,6 +517,7 @@ static void sequence_burn_compare( int side, int kind, const char * name )
         rocketnet_unit_check( m->receiver_delivered == (uint64_t) m->real_sent );
         rocketnet_unit_check( m->receiver_already == 0 );
         rocketnet_unit_check( m->receiver_did_not_open == 0 );
+        rocketnet_unit_check( m->server_rtt > 0.0f );
     }
 
     // rtt and the sender's loss (sent and never acked) are the control's
