@@ -396,11 +396,11 @@ static void test_sealed_packet_at_max_size_opens()
         while ( rocketnet_encryption_map_next( pair.server.encryption_map, &iterator ) )
         {
             mapping = rocketnet_encryption_map_entry( pair.server.encryption_map, iterator );
-            if ( mapping->client_index == 0 )
+            if ( mapping->control->client_index == 0 )
                 break;
         }
     }
-    check( mapping && mapping->client_index == 0 );
+    check( mapping && mapping->control->client_index == 0 );
 
     // a block with these ranges is far larger than the room a max payload leaves
     {

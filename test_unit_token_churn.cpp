@@ -408,14 +408,14 @@ static void test_response_replay_does_not_refresh_connected_slot()
     const int index = rocketnet_encryption_map_find( t.server.encryption_map, &c.address );
     check( index >= 0 );
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( t.server.encryption_map, index );
-    const double received = mapping->last_receive_time;
+    const double received = mapping->control->last_receive_time;
     uint8_t response[ROCKETNET_RECEIVE_CEILING], payload[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0, payload_bytes = 0, client_index = -1;
     check( rocketnet_server_protocol_process_packet( &t.server, &c.address,
         c.client.stored_response, ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES, TC_NOW,
         received + 1.0, response, &response_bytes, payload, &payload_bytes, &client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-    check( mapping->last_receive_time == received );
-    rocketnet_server_protocol_update( &t.server, received + mapping->timeout_seconds );
+    check( mapping->control->last_receive_time == received );
+    rocketnet_server_protocol_update( &t.server, received + mapping->control->timeout_seconds );
     check( rocketnet_client_slots_num_connected( t.server.client_slots ) == 0 );
     tc_client_destroy( &c );
     tc_server_teardown( &t );

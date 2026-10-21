@@ -89,6 +89,20 @@ static const rocketnet_reset_member_t encryption_mapping_layout[] =
 };
 #undef MAPPING_MEMBER
 
+#define CONTROL_DECISION( decision, field ) ROCKETNET_RESET_MEMBER( rocketnet_encryption_mapping_control_t, field, #decision[0] == 'R' ),
+static const rocketnet_reset_member_t encryption_mapping_control_fields[] =
+{
+    ROCKETNET_ENCRYPTION_MAPPING_CONTROL_CONNECTION_FIELDS( CONTROL_DECISION )
+};
+#undef CONTROL_DECISION
+
+#define CONTROL_MEMBER( field, declaration ) ROCKETNET_RESET_MEMBER( rocketnet_encryption_mapping_control_t, field, -1 ),
+static const rocketnet_reset_member_t encryption_mapping_control_layout[] =
+{
+    ROCKETNET_ENCRYPTION_MAPPING_CONTROL_LAYOUT_FIELDS( CONTROL_MEMBER )
+};
+#undef CONTROL_MEMBER
+
 #define ENDPOINT_DECISION( decision, field ) ROCKETNET_RESET_MEMBER( rn_endpoint_t, field, #decision[0] == 'R' ),
 static const rocketnet_reset_member_t endpoint_fields[] =
 {
@@ -169,6 +183,10 @@ static void test_connection_reset_inventory_covers_every_field()
         encryption_mapping_layout, RESET_COUNT( encryption_mapping_layout ),
         encryption_mapping_fields, RESET_COUNT( encryption_mapping_fields ), 0,
         sizeof(rocketnet_encryption_mapping_t), alignof(rocketnet_encryption_mapping_t), failure, sizeof(failure) ), failure );
+    reset_walk_passes( rocketnet_reset_inventory_matches( "rocketnet_encryption_mapping_control_t",
+        encryption_mapping_control_layout, RESET_COUNT( encryption_mapping_control_layout ),
+        encryption_mapping_control_fields, RESET_COUNT( encryption_mapping_control_fields ), 0,
+        sizeof(rocketnet_encryption_mapping_control_t), alignof(rocketnet_encryption_mapping_control_t), failure, sizeof(failure) ), failure );
     reset_walk_passes( rocketnet_reset_inventory_matches( "rn_endpoint_t",
         endpoint_layout, RESET_COUNT( endpoint_layout ), endpoint_fields, RESET_COUNT( endpoint_fields ), 0,
         sizeof(rn_endpoint_t), alignof(rn_endpoint_t), failure, sizeof(failure) ), failure );
@@ -217,6 +235,7 @@ static void test_connection_reset_inventory_covers_every_field()
     const int mapping_index = rocketnet_encryption_map_add( map, &address, 1005.0 );
     check( mapping_index == 0 );
     rocketnet_encryption_mapping_t fresh_mapping = *rocketnet_encryption_map_entry( map, mapping_index );
+    rocketnet_encryption_mapping_control_t fresh_control = *rocketnet_encryption_map_control( map, mapping_index );
 #define POISON_MAPPING_RESET( field ) memset( &rocketnet_encryption_map_entry( map, mapping_index )->field, 0xA5, sizeof(rocketnet_encryption_map_entry( map, mapping_index )->field) );
 #define POISON_MAPPING_KEEP( field )
 #define POISON_MAPPING( decision, field ) POISON_MAPPING_##decision( field )
@@ -224,6 +243,13 @@ static void test_connection_reset_inventory_covers_every_field()
 #undef POISON_MAPPING
 #undef POISON_MAPPING_KEEP
 #undef POISON_MAPPING_RESET
+#define POISON_CONTROL_RESET( field ) memset( &rocketnet_encryption_map_control( map, mapping_index )->field, 0xA5, sizeof(rocketnet_encryption_map_control( map, mapping_index )->field) );
+#define POISON_CONTROL_KEEP( field )
+#define POISON_CONTROL( decision, field ) POISON_CONTROL_##decision( field )
+    ROCKETNET_ENCRYPTION_MAPPING_CONTROL_CONNECTION_FIELDS( POISON_CONTROL )
+#undef POISON_CONTROL
+#undef POISON_CONTROL_KEEP
+#undef POISON_CONTROL_RESET
     rocketnet_encryption_map_remove( map, mapping_index );
     check( rocketnet_encryption_map_add( map, &address, 1005.0 ) == mapping_index );
     rocketnet_encryption_mapping_t * reused_mapping = rocketnet_encryption_map_entry( map, mapping_index );
@@ -234,6 +260,14 @@ static void test_connection_reset_inventory_covers_every_field()
 #undef CHECK_MAPPING
 #undef CHECK_MAPPING_KEEP
 #undef CHECK_MAPPING_RESET
+    rocketnet_encryption_mapping_control_t * reused_control = rocketnet_encryption_map_control( map, mapping_index );
+#define CHECK_CONTROL_RESET( field ) reset_field_holds( "rocketnet_encryption_mapping_control_t", #field, "RESET", &reused_control->field, &fresh_control.field, sizeof(reused_control->field) );
+#define CHECK_CONTROL_KEEP( field )
+#define CHECK_CONTROL( decision, field ) CHECK_CONTROL_##decision( field )
+    ROCKETNET_ENCRYPTION_MAPPING_CONTROL_CONNECTION_FIELDS( CHECK_CONTROL )
+#undef CHECK_CONTROL
+#undef CHECK_CONTROL_KEEP
+#undef CHECK_CONTROL_RESET
     rocketnet_encryption_map_destroy( map );
 
     // The endpoint and message connection are opaque to callers but visible
@@ -644,8 +678,8 @@ static int reset_server_assign( reset_server_fixture_t * f, const char * address
     const int slot = rocketnet_client_slots_assign( f->server.client_slots, client_id, mapping_index, user_data );
     check( slot >= 0 );
     rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( f->server.encryption_map, mapping_index );
-    mapping->client_index = slot;
-    mapping->established = 1;
+    mapping->control->client_index = slot;
+    mapping->control->established = 1;
     mapping->send_sequence_session = 17;
     f->connection_ids[slot] = client_id + 100;
     return slot;

@@ -347,8 +347,8 @@ bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_tra
         member = "rocketnet_client_slots_t.connected";
     int iterator = -1;
     while ( !member && rocketnet_encryption_map_next( protocol->encryption_map, &iterator ) )
-        if ( rocketnet_encryption_map_entry( protocol->encryption_map, iterator )->client_index == client_index )
-            member = "rocketnet_encryption_mapping_t.client_index";
+        if ( rocketnet_encryption_map_control( protocol->encryption_map, iterator )->client_index == client_index )
+            member = "rocketnet_encryption_mapping_control_t.client_index";
     if ( !member && protocol->connection_ids[client_index] != 0 )
         member = "rocketnet_server_protocol_t.connection_ids";
     if ( !member )
@@ -480,7 +480,7 @@ static int rocketnet_server_wire_client_index( struct rocketnet_server_transport
     const int mapping_index = rocketnet_encryption_map_find( server_transport->protocol.encryption_map, address );
     if ( mapping_index < 0 )
         return -1;
-    return rocketnet_encryption_map_entry( server_transport->protocol.encryption_map, mapping_index )->client_index;
+    return rocketnet_encryption_map_control( server_transport->protocol.encryption_map, mapping_index )->client_index;
 }
 
 static void rocketnet_server_wire_totals_assign( struct rocketnet_server_transport_t * server_transport,

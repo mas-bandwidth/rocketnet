@@ -67,14 +67,17 @@ struct rn_message_object_t;
     X( RESET, packet_loss_tracker ) X( RESET, jitter_tracker )
 
 #define ROCKETNET_ENCRYPTION_MAPPING_CONNECTION_FIELDS( X ) \
-    X( RESET, keys ) X( RESET, connection_salt ) X( RESET, session_nonce ) \
+    X( KEEP, control ) X( RESET, keys ) X( RESET, connection_salt ) X( RESET, session_nonce ) \
     X( RESET, server_ephemeral_public_key ) X( RESET, client_ephemeral_public_key ) \
     X( RESET, challenge_packet ) X( RESET, client_id ) X( RESET, user_data ) \
-    X( RESET, token_identifier ) X( RESET, token_expire_timestamp ) X( RESET, timeout_seconds ) \
-    X( RESET, established ) X( RESET, client_index ) X( RESET, handshake_deadline ) \
-    X( RESET, last_receive_time ) X( RESET, last_send_time ) X( RESET, last_keep_alive_send_time ) \
+    X( RESET, token_identifier ) X( RESET, token_expire_timestamp ) \
+    X( RESET, last_send_time ) X( RESET, last_keep_alive_send_time ) \
     X( RESET, send_sequence_handshake ) X( RESET, send_sequence_session ) X( RESET, send_fragment_payload_id ) \
     X( RESET, replay_handshake ) X( RESET, replay_session ) X( RESET, integrity_failures )
+
+#define ROCKETNET_ENCRYPTION_MAPPING_CONTROL_CONNECTION_FIELDS( X ) \
+    X( RESET, handshake_deadline ) X( RESET, last_receive_time ) \
+    X( RESET, timeout_seconds ) X( RESET, client_index ) X( RESET, established )
 
 #define ROCKETNET_ENDPOINT_CONNECTION_FIELDS( X ) \
     X( KEEP, region ) X( RESET, ordered ) X( RESET, unreliable_builder ) X( RESET, budget ) \

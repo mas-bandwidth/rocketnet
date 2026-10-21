@@ -2205,9 +2205,9 @@ void rocketnet_test_encryption_map()
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( map, index_a );
     rocketnet_check( mapping->send_sequence_handshake == 1 );
     rocketnet_check( mapping->send_sequence_session == 1 );
-    rocketnet_check( mapping->client_index == -1 );
-    rocketnet_check( !mapping->established );
-    rocketnet_check( mapping->handshake_deadline == 100.0 );
+    rocketnet_check( mapping->control->client_index == -1 );
+    rocketnet_check( !mapping->control->established );
+    rocketnet_check( mapping->control->handshake_deadline == 100.0 );
 
     // both families coexist
     int index_b = rocketnet_encryption_map_add( map, &address_b, 100.0 );
@@ -2225,11 +2225,16 @@ void rocketnet_test_encryption_map()
 
     // remove zeroes the key material and frees the slot for reuse
     memset( &mapping->keys, 0xAB, sizeof(mapping->keys) );
+    rocketnet_encryption_mapping_control_t * control = mapping->control;
+    control->last_receive_time = 42.0;
     rocketnet_encryption_map_remove( map, index_a );
     rocketnet_check( rocketnet_encryption_map_find( map, &address_a ) == -1 );
     rocketnet_check( rocketnet_encryption_map_num_mappings( map ) == 3 );
     const uint8_t * raw = (const uint8_t*) mapping;
     for ( int i = 0; i < (int) sizeof(struct rocketnet_encryption_mapping_t); i++ )
+        rocketnet_check( raw[i] == 0 );
+    raw = (const uint8_t*) control;
+    for ( int i = 0; i < (int) sizeof(struct rocketnet_encryption_mapping_control_t); i++ )
         rocketnet_check( raw[i] == 0 );
     rocketnet_check( rocketnet_encryption_map_add( map, &address_e, 100.0 ) != -1 );
 
@@ -2500,10 +2505,10 @@ void rocketnet_test_request_path_happy()
 
     // the mapping is filled exactly: identity, deadlines, sequences
     rocketnet_check( mapping->client_id == 0x1111222233334444ULL );
-    rocketnet_check( mapping->timeout_seconds == ROCKETNET_TEST_TIMEOUT );
-    rocketnet_check( !mapping->established );
-    rocketnet_check( mapping->client_index == -1 );
-    rocketnet_check( mapping->handshake_deadline == 105.0 );
+    rocketnet_check( mapping->control->timeout_seconds == ROCKETNET_TEST_TIMEOUT );
+    rocketnet_check( !mapping->control->established );
+    rocketnet_check( mapping->control->client_index == -1 );
+    rocketnet_check( mapping->control->handshake_deadline == 105.0 );
     rocketnet_check( mapping->send_sequence_handshake == 2 );
 
     // a retransmitted request is answered byte-identical, and nothing new is
@@ -3479,7 +3484,7 @@ void rocketnet_test_request_path_ordering()
     {
         int connected_mapping = rocketnet_encryption_map_add( test.server.encryption_map, &test.client_address, 1000.0 );
         rocketnet_check( connected_mapping != -1 );
-        rocketnet_encryption_map_entry( test.server.encryption_map, connected_mapping )->client_index = 0;
+        rocketnet_encryption_map_entry( test.server.encryption_map, connected_mapping )->control->client_index = 0;
         rocketnet_test_build_request( request, 0x0C0C, rocketnet_test_salt );
         before = test.counters;
         rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
@@ -3635,7 +3640,7 @@ void rocketnet_test_request_path_config_branches()
         rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
         int index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
         rocketnet_check( index != -1 );
-        rocketnet_check( rocketnet_encryption_map_entry( test.server.encryption_map, index )->timeout_seconds == 30 );
+        rocketnet_check( rocketnet_encryption_map_entry( test.server.encryption_map, index )->control->timeout_seconds == 30 );
     }
 
     // a negative timeout is accepted when explicitly configured, refused
@@ -3657,7 +3662,7 @@ void rocketnet_test_request_path_config_branches()
         rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
         int index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
         rocketnet_check( index != -1 );
-        rocketnet_check( rocketnet_encryption_map_entry( test.server.encryption_map, index )->timeout_seconds == -1 );
+        rocketnet_check( rocketnet_encryption_map_entry( test.server.encryption_map, index )->control->timeout_seconds == -1 );
     }
 
     // the previous cookie key: a cookie minted under the old key is accepted
@@ -4277,7 +4282,7 @@ void rocketnet_test_slotless_session_packet_leaves_window()
     int mapping_index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
     rocketnet_check( mapping_index != -1 );
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, mapping_index );
-    rocketnet_check( mapping->client_index == -1 );
+    rocketnet_check( mapping->control->client_index == -1 );
 
     // a keep-alive at session sequence 1, sealed under the mapping's own
     // session key: it opens, then must be ignored for having no slot
@@ -4343,8 +4348,8 @@ void rocketnet_test_server_full_connect()
     int mapping_index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
     rocketnet_check( mapping_index != -1 );
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, mapping_index );
-    rocketnet_check( mapping->established );
-    rocketnet_check( mapping->client_index == 0 );
+    rocketnet_check( mapping->control->established );
+    rocketnet_check( mapping->control->client_index == 0 );
 
     // the client opens the keep-alive -- the sealed plaintext begins with
     // the server's fresh ack block -- and learns its index behind it
@@ -9690,7 +9695,7 @@ void rocketnet_test_ack_bad_block_refusals()
         rocketnet_write_uint16( &p, 1 );
         memset( p, 0x77, 9 );                                                           // nine bytes where the keep-alive fields want eight
 
-        double last_receive_before = m->last_receive_time;
+        double last_receive_before = m->control->last_receive_time;
         int num_acked_before = test.server.acks->num_acked;
 
         bytes = rocketnet_test_write_raw_session_packet( packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, client.send_sequence_session++,
@@ -9701,7 +9706,7 @@ void rocketnet_test_ack_bad_block_refusals()
         rocketnet_check( test.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_WRONG_OPENED_SIZE] == 1 );
         rocketnet_check( !test.server.acks->endpoints[0].sent[target_sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE].acked );
         rocketnet_check( test.server.acks->num_acked == num_acked_before );
-        rocketnet_check( m->last_receive_time == last_receive_before );
+        rocketnet_check( m->control->last_receive_time == last_receive_before );
 
         // the same block behind the right size applies: the withholding was
         // the size gate, not the block
@@ -9713,7 +9718,7 @@ void rocketnet_test_ack_bad_block_refusals()
                                                           ROCKETNET_TEST_CREATE_TS, 200.37, response, &response_bytes,
                                                           payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
         rocketnet_check( test.server.acks->endpoints[0].sent[target_sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE].acked );
-        rocketnet_check( m->last_receive_time == 200.37 );
+        rocketnet_check( m->control->last_receive_time == 200.37 );
     }
 
     // NEGATIVE: below the type's wire floor is WRONG_SIZE, never a later
@@ -11855,7 +11860,7 @@ void rocketnet_test_token_bound_at_response_open()
     {
         int attacker_mapping = rocketnet_encryption_map_find( test.server.encryption_map, &attacker_address );
         rocketnet_check( attacker_mapping != -1 );
-        rocketnet_check( rocketnet_encryption_map_entry( test.server.encryption_map, attacker_mapping )->client_index == -1 );
+        rocketnet_check( rocketnet_encryption_map_entry( test.server.encryption_map, attacker_mapping )->control->client_index == -1 );
 
     }
 
@@ -14459,7 +14464,7 @@ void rocketnet_test_client_index_range_checked()
     int iterator = -1;
     while( rocketnet_encryption_map_next( test.server.encryption_map, &iterator ) ) {
         struct rocketnet_encryption_mapping_t * m = rocketnet_encryption_map_entry( test.server.encryption_map, iterator );
-        if( m->established ) {
+        if( m->control->established ) {
              mapping = m;
              break;
         }
@@ -14604,7 +14609,7 @@ void rocketnet_test_token_timeout_clamped()
     // Verify the timeout was clamped to max_timeout_seconds (default 60)
     int index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
     rocketnet_check( index != -1 );
-    rocketnet_check( rocketnet_encryption_map_entry( test.server.encryption_map, index )->timeout_seconds == 60 );
+    rocketnet_check( rocketnet_encryption_map_entry( test.server.encryption_map, index )->control->timeout_seconds == 60 );
 
     rocketnet_test_server_teardown( &test );
 }

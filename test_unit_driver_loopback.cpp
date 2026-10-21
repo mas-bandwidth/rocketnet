@@ -503,10 +503,10 @@ static void test_wire_totals_staged_finish_counts_exactly()
         struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->protocol.encryption_map, index );
         uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
         rocketnet_unit_check( rocketnet_client_slots_assign( server->protocol.client_slots, i + 1, index, user_data ) == i );
-        mapping->client_index = i;
+        mapping->control->client_index = i;
         mapping->client_id = i + 1;
-        mapping->established = 1;
-        mapping->timeout_seconds = 1000;
+        mapping->control->established = 1;
+        mapping->control->timeout_seconds = 1000;
         memset( &mapping->keys, i + 1, sizeof(mapping->keys) );
         server->protocol.acks->endpoints[i].rtt_history[0] = 17.0f;
     }

@@ -304,7 +304,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         if ( existing != -1 )
         {
             struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, existing );
-            if ( mapping->client_index != -1 )
+            if ( mapping->control->client_index != -1 )
             {
                 rocketnet_debug( "server ignored connection request. a client is already connected from this address" );
                 counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_ALREADY_CONNECTED]++;
@@ -313,7 +313,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
             // standard/TRANSPORT.md t12 rule 3: a mapping answers every request from its address with its stored challenge, whatever the request's salt.
             // t12 rule 3 and t17 rule 4: only a request whose salt matches the mapping's refreshes the half-open idle deadline.
             if ( sodium_memcmp( connection_salt, mapping->connection_salt, ROCKETNET_CONNECTION_SALT_BYTES ) == 0 )
-                mapping->last_receive_time = current_time;
+                mapping->control->last_receive_time = current_time;
             memcpy( response_packet, mapping->challenge_packet, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
             *response_bytes = ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES;
             rocketnet_debug( "server resent stored connection challenge" );
@@ -740,8 +740,8 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         memcpy( mapping->user_data, private_data->user_data, ROCKETNET_USER_DATA_BYTES );
         memcpy( mapping->token_identifier, token_identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES );
         mapping->token_expire_timestamp = token_expire_timestamp;
-        mapping->timeout_seconds = timeout_seconds;
-        mapping->last_receive_time = current_time;
+        mapping->control->timeout_seconds = timeout_seconds;
+        mapping->control->last_receive_time = current_time;
         mapping->last_send_time = current_time;
         mapping->last_keep_alive_send_time = current_time;
 
@@ -812,7 +812,7 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
                                              mapping->token_expire_timestamp, current_timestamp );
     }
 
-    if ( mapping->client_index != -1 )
+    if ( mapping->control->client_index != -1 )
     {
         rocketnet_spam( "server ignored connection response. client is already connected" );
         counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_ALREADY_CONNECTED]++;
@@ -862,8 +862,8 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
     rocketnet_assert( client_index != -1 );     // num_free was checked above
     rocketnet_server_connection_id_assigned( server, client_index );
 
-    mapping->client_index = client_index;
-    mapping->established = 1;
+    mapping->control->client_index = client_index;
+    mapping->control->established = 1;
 
     mapping->last_send_time = current_time;
 
@@ -915,7 +915,7 @@ static void rocketnet_server_integrity_failure( struct rocketnet_server_protocol
     if ( mapping->integrity_failures < ROCKETNET_INTEGRITY_LIMIT )
         return;
 
-    int client_index = mapping->client_index;
+    int client_index = mapping->control->client_index;
     rocketnet_debug( "server removed encryption mapping. integrity limit reached (client %d)", client_index );
     if ( client_index != -1 )
     {
@@ -1126,8 +1126,8 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
 
         // A response retransmission is not fresh session activity. Only a
         // half-open mapping may refresh its idle clock from a response.
-        if ( mapping->client_index == -1 )
-            mapping->last_receive_time = current_time;
+        if ( mapping->control->client_index == -1 )
+            mapping->control->last_receive_time = current_time;
 
         return rocketnet_server_process_connection_response( server, mapping_index, current_timestamp, current_time, response_packet, response_bytes );
     }
@@ -1142,7 +1142,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     // session traffic for a mapping with no slot is a lost-response race or
     // an injection; the retransmitted response repairs the former
 
-    if ( mapping->client_index == -1 )
+    if ( mapping->control->client_index == -1 )
     {
         rocketnet_spam( "server ignored sealed packet. not connected" );
         counters[type_counters->not_connected]++;
@@ -1151,7 +1151,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
 
     rocketnet_replay_advance( replay, sequence );
 
-    int client_index = mapping->client_index;
+    int client_index = mapping->control->client_index;
 
     // the ack block at the front of the opened data, validated on the
     // reconstructed 64-bit largest against this end's own highest sent
@@ -1191,7 +1191,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     // never elicits: that exemption is what makes the ack conversation
     // terminate.
 
-    mapping->last_receive_time = current_time;
+    mapping->control->last_receive_time = current_time;
 
     if ( !rocketnet_client_slots_confirmed( server->client_slots, client_index ) )
         rocketnet_client_slots_confirm( server->client_slots, client_index );
@@ -1455,18 +1455,18 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
     int iterator = -1;
     while ( rocketnet_encryption_map_next( server->encryption_map, &iterator ) )
     {
-        const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, iterator );
+        const struct rocketnet_encryption_mapping_control_t * control = rocketnet_encryption_map_control( server->encryption_map, iterator );
 
-        if ( !mapping->established )
+        if ( !control->established )
         {
             // STANDARD.md _Half-open state_: the earlier of the idle and handshake deadlines removes the mapping.
-            if ( current_time >= mapping->handshake_deadline )
+            if ( current_time >= control->handshake_deadline )
             {
                 rocketnet_debug( "server removed encryption mapping. handshake deadline expired" );
                 rocketnet_encryption_map_remove( server->encryption_map, iterator );
                 counters[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED]++;
             }
-            else if ( current_time >= mapping->last_receive_time + ROCKETNET_HALF_OPEN_IDLE_TIMEOUT_SECONDS )
+            else if ( current_time >= control->last_receive_time + ROCKETNET_HALF_OPEN_IDLE_TIMEOUT_SECONDS )
             {
                 rocketnet_debug( "server removed encryption mapping. half-open idle timeout" );
                 rocketnet_encryption_map_remove( server->encryption_map, iterator );
@@ -1475,9 +1475,9 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
             continue;
         }
 
-        if ( mapping->timeout_seconds > 0 && current_time >= mapping->last_receive_time + mapping->timeout_seconds )
+        if ( control->timeout_seconds > 0 && current_time >= control->last_receive_time + control->timeout_seconds )
         {
-            int client_index = mapping->client_index;
+            int client_index = control->client_index;
             rocketnet_debug( "client %d timed out", client_index );
             if ( client_index != -1 )
             {

@@ -193,8 +193,8 @@ static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketn
         auto * mapping = rocketnet_encryption_map_entry(server->protocol.encryption_map, index);
         uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
         CHECK(rocketnet_client_slots_assign(server->protocol.client_slots, i + 1, index, user_data) == i);
-        mapping->client_index = i; mapping->client_id = i + 1; mapping->established = 1;
-        mapping->timeout_seconds = 1000;
+        mapping->control->client_index = i; mapping->client_id = i + 1; mapping->control->established = 1;
+        mapping->control->timeout_seconds = 1000;
         // Synthetic connections have test keys; this fixture does not
         // model authentication. It exercises the real update/send scheduler.
         memset(&mapping->keys, i + 1, sizeof(mapping->keys));
@@ -368,7 +368,7 @@ static void test_entries_carry_connection_id(bool staged)
         protocol->connection_ids[i] = ++protocol->next_connection_id;
         auto * mapping = rocketnet_encryption_map_entry(protocol->encryption_map,
             rocketnet_client_slots_mapping_index(protocol->client_slots, i));
-        mapping->last_receive_time = time;
+        mapping->control->last_receive_time = time;
     }
     CHECK(rocketnet_server_transport_client_connection_id(server, 0) == 1);
     CHECK(rocketnet_server_transport_client_connection_id(server, 1) == 2);
@@ -508,7 +508,7 @@ static void test_staged_link_address_hooks()
     protocol->connection_ids[0] = ++protocol->next_connection_id;
     auto * mapping = rocketnet_encryption_map_entry(protocol->encryption_map,
         rocketnet_client_slots_mapping_index(protocol->client_slots, 0));
-    mapping->last_receive_time = time;
+    mapping->control->last_receive_time = time;
 
     CHECK(rocketnet_address_parse(&f->feed_from[0], "127.0.0.1:3000"));
     memset(f->feed_data[0], 0x5A, 64);

@@ -169,14 +169,14 @@ void control_denied_when_server_full()
         struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( h.server.encryption_map, mapping_index );
         mapping->client_id = (uint64_t) ( 1000 + i );
         memcpy( mapping->user_data, user_data, ROCKETNET_USER_DATA_BYTES );
-        mapping->timeout_seconds = -1;
-        mapping->last_receive_time = h.now;
+        mapping->control->timeout_seconds = -1;
+        mapping->control->last_receive_time = h.now;
         mapping->last_send_time = h.now;
         mapping->last_keep_alive_send_time = h.now;
         const int slot = rocketnet_client_slots_assign( h.server.client_slots, mapping->client_id, mapping_index, mapping->user_data );
         control_check( slot >= 0, "slot assign" );
-        mapping->client_index = slot;
-        mapping->established = 1;
+        mapping->control->client_index = slot;
+        mapping->control->established = 1;
     }
     const uint64_t denied_before = h.server_counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS];
     for ( int i = 0; i < 60 * 5; i++ )
