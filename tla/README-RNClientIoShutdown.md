@@ -13,7 +13,7 @@ returns false until all worker ownership has ended. Destroy is synchronous,
 requires completion, joins threads, then frees. Restart/reconnect may finalize
 the previous generation synchronously after completion; storage reuse requires
 its old joins. A freshly created endpoint has no worker and is already complete.
-The source corresponds to core candidate `552048eb9cc525c3e40e87e885c2f47344ff3ec1`;
+The source corresponds to combined candidate `2d043ab7bd6748eb17c9cbb47415c6a3fa944e47`;
 exact final implementation correspondence still requires source review.
 
 ## Actions and ownership

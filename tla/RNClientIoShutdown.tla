@@ -58,7 +58,7 @@ BeginRestart ==
     /\ IdleCaller /\ generation > 0 /\ generation < MaxGenerations
     /\ phase = "stopped" \/ (Defect = "reuseearly" /\ phase = "stopping")
     /\ phase' = "restarting"
-    /\ badReuse' = badReuse \/ ~Quiescent
+    /\ badReuse' = (badReuse \/ ~Quiescent)
     /\ UNCHANGED <<generation, worker, keys, ring, ioRing, request, poll,
                     pollValue, callbacks, contextLive>>
 Start ==
@@ -74,7 +74,7 @@ Start ==
                               ELSE IF r = 0 THEN "sending" ELSE "filling"]
     /\ ioRing' = IF HasRings THEN 0 ELSE -1
     /\ request' = "idle" /\ poll' = "idle" /\ pollValue' = FALSE
-    /\ badReuse' = badReuse \/ ~Joined
+    /\ badReuse' = (badReuse \/ ~Joined)
     /\ UNCHANGED <<callbacks, contextLive>>
 RequestStop ==
     /\ IdleCaller /\ phase = "running"
