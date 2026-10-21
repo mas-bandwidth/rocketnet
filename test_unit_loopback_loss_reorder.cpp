@@ -71,9 +71,9 @@ static bool loopback_transport_pair_setup( struct loopback_transport_pair_t * pa
 
     const uint64_t protocol_id = 0x6c6f6f706261636bULL;
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret_key[RN_TEST_BACKEND_SECRET_KEY_BYTES];
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret_key[RN_TEST_SERVER_SECRET_KEY_BYTES];
     check( rocketnet_generate_backend_keypair( backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
     check( rocketnet_generate_server_keypair( server_public_key, server_secret_key ) == ROCKETNET_STATUS_OK );
 

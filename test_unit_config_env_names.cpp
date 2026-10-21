@@ -379,10 +379,6 @@ static std::vector<std::string> env_names_set_candidates()
     const char * dummy32_base64 = "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=";
     env_names_setenv( "ROCKETNET_SERVER_BACKEND_PUBLIC_KEY", dummy32_base64 );
     set.push_back( "ROCKETNET_SERVER_BACKEND_PUBLIC_KEY" );
-    env_names_setenv( "ROCKETNET_SERVER_SERVER_PUBLIC_KEY", dummy32_base64 );
-    set.push_back( "ROCKETNET_SERVER_SERVER_PUBLIC_KEY" );
-    env_names_setenv( "ROCKETNET_SERVER_SERVER_SECRET_KEY", dummy32_base64 );
-    set.push_back( "ROCKETNET_SERVER_SERVER_SECRET_KEY" );
     env_names_setenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES", "4" );
     set.push_back( "ROCKETNET_SERVER_NUM_XDP_QUEUES" );
     env_names_setenv( "ROCKETNET_SERVER_NUM_OS_CPUS", "2" );
@@ -568,7 +564,8 @@ static void test_config_env_every_name_read_is_documented()
     check( env_names_contains( documented, "ROCKETNET_CLIENT_STEP_DRIVEN" ) );
     check( env_names_contains( documented, "ROCKETNET_CLIENT_TRANSPORT" ) );
     check( env_names_contains( documented, "ROCKETNET_SERVER_PROTOCOL_ID" ) );
-    check( env_names_contains( documented, "ROCKETNET_SERVER_SERVER_PUBLIC_KEY" ) );
+    check( env_names_contains( documented, "ROCKETNET_SERVER_BACKEND_PUBLIC_KEY" ) );
+    check( !env_names_contains( documented, "ROCKETNET_SERVER_SERVER_PUBLIC_KEY" ) );     // the server keypair is the server's own
     check( env_names_contains( documented, "ROCKETNET_SERVER_TRANSPORT" ) );
     check( env_names_contains( documented, "ROCKETNET_SERVER_PUBLIC_ADDRESS" ) );
 
@@ -622,10 +619,10 @@ static void test_config_env_every_name_read_is_documented()
     check( env_names_contains( overrides, "ROCKETNET_CLIENT_STEP_DRIVEN" ) );
     check( env_names_contains( overrides, "ROCKETNET_CLIENT_TRANSPORT" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_PROTOCOL_ID" ) );
-    check( env_names_contains( overrides, "ROCKETNET_SERVER_SERVER_PUBLIC_KEY" ) );
+    check( env_names_contains( overrides, "ROCKETNET_SERVER_BACKEND_PUBLIC_KEY" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_TRANSPORT" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_PUBLIC_ADDRESS" ) );
-    check( documented.size() == 70 );
+    check( documented.size() == 59 );
     check( env_names_contains( documented, "ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS" ) );
     check( env_names_contains( documented, "ROCKETNET_LOG_LEVEL" ) );
     check( env_names_contains( documented, "ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT" ) );

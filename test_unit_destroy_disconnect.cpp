@@ -95,9 +95,9 @@ struct destroy_disconnect_env_guard_t
 struct destroy_disconnect_keys_t
 {
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret[RN_TEST_BACKEND_SECRET_KEY_BYTES];
     uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret[RN_TEST_SERVER_SECRET_KEY_BYTES];
 };
 
 static void destroy_disconnect_make_keys( destroy_disconnect_keys_t * keys )
@@ -151,7 +151,6 @@ static void destroy_disconnect_mint_token( const destroy_disconnect_keys_t * key
 
 static rocketnet_client_t * destroy_disconnect_client_create( const destroy_disconnect_keys_t * keys, uint16_t port, uint64_t client_id )
 {
-    (void) now;
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     destroy_disconnect_mint_token( keys, port, client_id, token );
 
