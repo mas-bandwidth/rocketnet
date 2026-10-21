@@ -937,11 +937,11 @@ static inline int rocketnet_channel_harness_create( rocketnet_channel_harness_t 
     return rocketnet_channel_harness_create_with_config( h, NULL );
 }
 
-static inline int rocketnet_channel_harness_create_with_unreliable_deliveries( rocketnet_channel_harness_t * h, int deliveries )
+static inline int rocketnet_channel_harness_create_with_unreliable_messages_per_update( rocketnet_channel_harness_t * h, int deliveries )
 {
     struct rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.unreliable_deliveries = deliveries;
+    config.unreliable_messages_per_update = deliveries;
     return rocketnet_channel_harness_create_with_config( h, &config );
 }
 

@@ -1067,7 +1067,7 @@ static void test_channels_allocator_layout()
     // odd shapes pad, and the padding is all the region adds to the formula
 
     config.num_channels = 3;
-    config.unreliable_deliveries = 1;
+    config.unreliable_messages_per_update = 1;
     config.sequenced_holds = 1;
     config.receipt_ring = 17;
     check( rn_region_layout( &config, &layout ) );
@@ -1169,7 +1169,7 @@ static void test_channels_allocator_validation()
     config.send_buffer_bytes = 65536;
     config.send_queue_messages = 256;
     config.packets_in_flight = 64;
-    config.unreliable_deliveries = 128;
+    config.unreliable_messages_per_update = 128;
     check( rocketnet_message_validate_config( &config ) == 0 );
     config.max_message_bytes = 18 * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     check( rocketnet_message_validate_config( &config ) == 1 );
@@ -1193,7 +1193,7 @@ static void test_channels_allocator_validation()
     config.send_queue_messages = 16;
     config.packets_in_flight = 16;
     config.packets_per_update = 1;
-    config.unreliable_deliveries = 1;
+    config.unreliable_messages_per_update = 1;
     config.sequenced_holds = 0;
     config.receipt_ring = 16;
     config.resend_delay_min_ms = 1;
@@ -1529,7 +1529,7 @@ static void test_channels_allocator_arena()
         check( region->held_entries == 2 * region->window );
         check( region->sent_index_entries == 2 * region->packets );
         check( region->sent_ref_entries == 16 * region->packets );
-        check( region->delivery_entries == region->window + (uint32_t) config.unreliable_deliveries );
+        check( region->delivery_entries == region->window + (uint32_t) config.unreliable_messages_per_update );
     }
 
     // the receiver's ring bounds check

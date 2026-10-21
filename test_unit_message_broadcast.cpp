@@ -337,7 +337,7 @@ static void mb_config( rocketnet_message_config_t * config )
     config->send_queue_messages = 64;
     config->packets_in_flight = 64;
     config->packets_per_update = 8;
-    config->unreliable_deliveries = 64;
+    config->unreliable_messages_per_update = 64;
     config->resend_delay_initial_ms = 100;
     config->resend_delay_min_ms = 20;
     config->resend_delay_max_ms = 400;

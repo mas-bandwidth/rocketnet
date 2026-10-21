@@ -1171,9 +1171,9 @@ struct rocketnet_client_config_t
 
     int packets_per_update;
 
-    /// ROCKETNET_CLIENT_UNRELIABLE_DELIVERIES: unreliable messages delivered per update; per update; 1 .. 1 << 16; default 1024
+    /// ROCKETNET_CLIENT_UNRELIABLE_MESSAGES_PER_UPDATE: unreliable messages delivered per update; per update; 1 .. 1 << 16; default 1024
 
-    int unreliable_deliveries;
+    int unreliable_messages_per_update;
 
     /// ROCKETNET_CLIENT_SEQUENCED_HOLDS: sequenced messages held for order; 0 .. 4096; default 16
 
@@ -1332,9 +1332,9 @@ struct rocketnet_server_config_t
 
     int packets_per_update;
 
-    /// ROCKETNET_SERVER_UNRELIABLE_DELIVERIES: unreliable messages delivered per update; per client per update; 1 .. 1 << 16; default 1024
+    /// ROCKETNET_SERVER_UNRELIABLE_MESSAGES_PER_UPDATE: unreliable messages delivered per update; per client per update; 1 .. 1 << 16; default 1024
 
-    int unreliable_deliveries;
+    int unreliable_messages_per_update;
 
     /// ROCKETNET_SERVER_SEQUENCED_HOLDS: sequenced messages held for order; 0 .. 4096; default 16
 

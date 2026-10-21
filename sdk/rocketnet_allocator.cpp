@@ -131,7 +131,7 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
     if ( Q >= UINT32_MAX || SR > UINT32_MAX )
         return false;
     const uint64_t P = (uint64_t) config->packets_in_flight;
-    const uint64_t Du = (uint64_t) config->unreliable_deliveries;
+    const uint64_t Du = (uint64_t) config->unreliable_messages_per_update;
     const uint64_t Ru = (uint64_t) config->sequenced_holds;
     const uint64_t Rq = (uint64_t) config->receipt_ring;
 
@@ -404,7 +404,7 @@ static void rn_region_point( rn_region_t * region, uint8_t * base, const rn_regi
     region->held_entries = 2 * region->window;
     region->sent_index_entries = 2 * region->packets;
     region->sent_ref_entries = 16 * region->packets;
-    region->delivery_entries = region->window + (uint32_t) config->unreliable_deliveries;
+    region->delivery_entries = region->window + (uint32_t) config->unreliable_messages_per_update;
     region->holds = (uint32_t) config->sequenced_holds;
     region->receipt_entries = (uint32_t) config->receipt_ring;
     region->max_message_bytes = (uint32_t) config->max_message_bytes;
@@ -1320,7 +1320,7 @@ int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t
     rn_text_append( &text, "connection_bytes = 48C + 104.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq + SR, Q/S/SR include maximum resend-delay payload reserve (typical pool payloads 128/512/1024 bytes)\n" );
     rn_text_append( &text, "C=%d W=%d B=%d S=%d Q=%d P=%d Du=%d Ru=%d Rq=%d\n",
                     config->num_channels, config->window_messages, config->receive_ring_bytes, config->send_buffer_bytes,
-                    config->send_queue_messages, config->packets_in_flight, config->unreliable_deliveries,
+                    config->send_queue_messages, config->packets_in_flight, config->unreliable_messages_per_update,
                     config->sequenced_holds, config->receipt_ring );
     for ( int part = 0; part < RN_NUM_PARTS; part++ )
         rn_text_append( &text, "  %-24s %-9s %" PRIu64 "\n", rn_part_names[part], rn_part_formulas[part], layout.bytes[part] );

@@ -38,7 +38,7 @@ void unreliable_over_receive_budget_dropped_and_counted()
     const int budget = 8;
     const int count = 12;
     rocketnet_channel_harness_t h;
-    unreliable_budget_check( rocketnet_channel_harness_create_with_unreliable_deliveries( &h, budget ), "create" );
+    unreliable_budget_check( rocketnet_channel_harness_create_with_unreliable_messages_per_update( &h, budget ), "create" );
     rocketnet_channel_harness_set_link( &h, 0.0, 0.0, 0.0f, 0.0f );
     unreliable_budget_check( rocketnet_channel_harness_connect( &h, 600 ), "connect" );
     unreliable_budget_check( rocketnet_channel_harness_set_budgets( &h, 10000, 10000 ), "send budget" );
@@ -81,7 +81,7 @@ void reliable_delivered_when_unreliable_budget_full()
     const int unreliable_count = 12;
     const int reliable_count = 4;
     rocketnet_channel_harness_t h;
-    unreliable_budget_check( rocketnet_channel_harness_create_with_unreliable_deliveries( &h, budget ), "create" );
+    unreliable_budget_check( rocketnet_channel_harness_create_with_unreliable_messages_per_update( &h, budget ), "create" );
     rocketnet_channel_harness_set_link( &h, 0.0, 0.0, 0.0f, 0.0f );
     unreliable_budget_check( rocketnet_channel_harness_connect( &h, 600 ), "connect" );
     unreliable_budget_check( rocketnet_channel_harness_set_budgets( &h, 10000, 10000 ), "send budget" );

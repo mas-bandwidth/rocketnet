@@ -198,7 +198,7 @@ int main( int argc, char ** argv ) {
     s_cfg.per_client_send_kbps = c_cfg.send_kbps = 100000; s_cfg.max_message_bytes = c_cfg.max_message_bytes = 2048;
     s_cfg.num_channels = c_cfg.num_channels = s_cfg.num_reassembly_slots = c_cfg.num_reassembly_slots = 2;
     s_cfg.window_messages = c_cfg.window_messages = s_cfg.send_queue_messages = c_cfg.send_queue_messages = 64;
-    s_cfg.packets_in_flight = c_cfg.packets_in_flight = s_cfg.unreliable_deliveries = c_cfg.unreliable_deliveries = s_cfg.receipt_ring = c_cfg.receipt_ring = 64;
+    s_cfg.packets_in_flight = c_cfg.packets_in_flight = s_cfg.unreliable_messages_per_update = c_cfg.unreliable_messages_per_update = s_cfg.receipt_ring = c_cfg.receipt_ring = 64;
     s_cfg.receive_ring_bytes = c_cfg.receive_ring_bytes = s_cfg.send_buffer_bytes = c_cfg.send_buffer_bytes = 32768;
     s_cfg.sequenced_holds = c_cfg.sequenced_holds = 8; s_cfg.simulated_loss_percent = c_cfg.simulated_loss_percent = 1;
     s_cfg.resend_delay_min_ms = c_cfg.resend_delay_min_ms = s_cfg.resend_delay_initial_ms = c_cfg.resend_delay_initial_ms = 200; s_cfg.resend_delay_max_ms = c_cfg.resend_delay_max_ms = 500;

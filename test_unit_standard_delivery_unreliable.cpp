@@ -142,7 +142,7 @@ static int code0_delivery_trace( rn_delivery_trace_t * trace )
     };
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.unreliable_deliveries = 2;
+    config.unreliable_messages_per_update = 2;
     return run_trace( &config, steps, (int) ( sizeof( steps ) / sizeof( steps[0] ) ), trace );
 }
 

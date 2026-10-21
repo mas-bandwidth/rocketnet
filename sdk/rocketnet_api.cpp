@@ -65,7 +65,7 @@ uint32_t rocketnet_version( void )
 
 #define RN_PUBLIC_MESSAGE_FIELDS( X ) \
     X( num_channels ) X( window_messages ) X( receive_ring_bytes ) X( max_message_bytes ) X( send_buffer_bytes ) \
-    X( send_queue_messages ) X( packets_in_flight ) X( packets_per_update ) X( unreliable_deliveries )      \
+    X( send_queue_messages ) X( packets_in_flight ) X( packets_per_update ) X( unreliable_messages_per_update )      \
     X( sequenced_holds ) X( receipt_ring ) X( resend_delay_initial_ms ) X( resend_delay_min_ms ) X( resend_delay_max_ms ) X( reliable_timeout_ms )
 
 // the send budget fields: one int each, read under the endpoint's env name.

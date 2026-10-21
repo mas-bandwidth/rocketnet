@@ -1526,7 +1526,7 @@ struct rocketnet_message_config_t
     /** @brief Packets sent per connection per update, in-place unreliable messages and the send pass together; 1 through 1024, default 256. */
     int packets_per_update;         // 1 .. 1024; default 256
     /** @brief Unreliable deliveries per connection per update; 1 through 1<<16, default 256. */
-    int unreliable_deliveries;          // per connection per update; 1 .. 1 << 16; default 256
+    int unreliable_messages_per_update;          // per connection per update; 1 .. 1 << 16; default 256
     /** @brief Messages held for sequenced delivery; 0 through 4096, default 16. */
     int sequenced_holds;                // 0 .. 4096; default 16
     /** @brief Receipt history entries; 16 through 1<<16, default 256; a full ring drops its oldest. */

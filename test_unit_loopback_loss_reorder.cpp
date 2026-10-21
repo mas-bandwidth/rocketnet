@@ -433,7 +433,7 @@ static void test_loopback_transport_reliable_ordered_survives_loss_and_reorder()
     message_config.send_queue_messages = 1024;
     message_config.packets_in_flight = 64;
     message_config.packets_per_update = 8;
-    message_config.unreliable_deliveries = 64;
+    message_config.unreliable_messages_per_update = 64;
     message_config.resend_delay_initial_ms = 100;
     message_config.resend_delay_min_ms = 20;
     message_config.resend_delay_max_ms = 400;

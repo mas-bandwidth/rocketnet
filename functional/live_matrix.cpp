@@ -1109,7 +1109,7 @@ void live_message_matrix_loopback()
     m->message_config.send_queue_messages = 16384;
     m->message_config.packets_in_flight = 2048;
     m->message_config.packets_per_update = 64;
-    m->message_config.unreliable_deliveries = 8192;
+    m->message_config.unreliable_messages_per_update = 8192;
     m->message_config.receipt_ring = 4096;
     m->message_config.window_messages = 4096;
     m->message_config.receive_ring_bytes = 1 << 20;

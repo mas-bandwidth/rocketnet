@@ -182,7 +182,7 @@ row per field of both public structs.
 | send_queue_messages | ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES | int | `1024` | refuses the create unless `16..1048576` |
 | packets_in_flight | ROCKETNET_CLIENT_PACKETS_IN_FLIGHT | int | `256` | refuses the create unless `16..65536` |
 | packets_per_update | ROCKETNET_CLIENT_PACKETS_PER_UPDATE | int | `256` | refuses the create unless `1..1024` |
-| unreliable_deliveries | ROCKETNET_CLIENT_UNRELIABLE_DELIVERIES | int | `1024` | refuses the create unless `1..65536` |
+| unreliable_messages_per_update | ROCKETNET_CLIENT_UNRELIABLE_MESSAGES_PER_UPDATE | int | `1024` | refuses the create unless `1..65536` |
 | sequenced_holds | ROCKETNET_CLIENT_SEQUENCED_HOLDS | int | `16` | refuses the create unless `0..4096` |
 | receipt_ring | ROCKETNET_CLIENT_RECEIPT_RING | int | `256` | refuses the create unless `16..65536` |
 | resend_delay_initial_ms | ROCKETNET_CLIENT_RESEND_DELAY_INITIAL_MS | int | `2000` | refuses the create unless `10..60000` |
@@ -217,7 +217,7 @@ row per field of both public structs.
 | send_queue_messages | ROCKETNET_SERVER_SEND_QUEUE_MESSAGES | int | `1024` (per client) | refuses the create unless `16..1048576` |
 | packets_in_flight | ROCKETNET_SERVER_PACKETS_IN_FLIGHT | int | `256` (per client) | refuses the create unless `16..65536` |
 | packets_per_update | ROCKETNET_SERVER_PACKETS_PER_UPDATE | int | `256` (per client) | refuses the create unless `1..1024` |
-| unreliable_deliveries | ROCKETNET_SERVER_UNRELIABLE_DELIVERIES | int | `1024` (per client per update) | refuses the create unless `1..65536` |
+| unreliable_messages_per_update | ROCKETNET_SERVER_UNRELIABLE_MESSAGES_PER_UPDATE | int | `1024` (per client per update) | refuses the create unless `1..65536` |
 | sequenced_holds | ROCKETNET_SERVER_SEQUENCED_HOLDS | int | `16` | refuses the create unless `0..4096` |
 | receipt_ring | ROCKETNET_SERVER_RECEIPT_RING | int | `256` | refuses the create unless `16..65536` |
 | resend_delay_initial_ms | ROCKETNET_SERVER_RESEND_DELAY_INITIAL_MS | int | `2000` | refuses the create unless `10..60000` |

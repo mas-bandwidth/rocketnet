@@ -83,7 +83,7 @@ static bool rn_message_object_layout( const rocketnet_message_config_t * config,
     if ( arena_bytes == 0 )
         return false;
 
-    const uint64_t deliveries = (uint64_t) config->window_messages + (uint64_t) config->unreliable_deliveries;
+    const uint64_t deliveries = (uint64_t) config->window_messages + (uint64_t) config->unreliable_messages_per_update;
     const uint64_t n = (uint64_t) num_connections;
 
     memset( layout, 0, sizeof( *layout ) );

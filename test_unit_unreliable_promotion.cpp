@@ -154,7 +154,7 @@ struct boundary_pair_t { boundary_net_t * net; rocketnet_message_server_t * serv
 struct boundary_received_t { int channel; std::vector<uint8_t> data; };
 static void boundary_config(rocketnet_message_config_t * c) {
     rocketnet_message_default_config(c); c->num_channels=BOUNDARY_TEST_NUM_CHANNELS; c->window_messages=64; c->receive_ring_bytes=65536; c->max_message_bytes=16384;
-    c->send_buffer_bytes=65536; c->send_queue_messages=64; c->packets_in_flight=64; c->packets_per_update=8; c->unreliable_deliveries=64;
+    c->send_buffer_bytes=65536; c->send_queue_messages=64; c->packets_in_flight=64; c->packets_per_update=8; c->unreliable_messages_per_update=64;
     c->resend_delay_initial_ms=100; c->resend_delay_min_ms=20; c->resend_delay_max_ms=400; c->reliable_timeout_ms=120000;
 }
 // The default configuration's maximum message is above the u16 record length (65535),
