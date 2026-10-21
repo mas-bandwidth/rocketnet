@@ -48,7 +48,7 @@ static inline int rocketnet_disconnect_reason_standard_code( int reason )
     {
         case ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH:           return 1;
         case ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION:        return 3;
-        case ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT:          return 4;
+        case ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT:          return 4;
         case ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED:  return 5;
         case ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED:       return 6;
         default:                                                    return 0;
@@ -66,7 +66,7 @@ enum rocketnet_update_result_t
 /// own tests, which save and restore it. Not exported.
 enum rocketnet_log_level_t rocketnet_log_level_current( void );
 
-/// The process-wide reads the public stats structs carry (api_misuse,
+/// The process-wide reads the public stats structs carry (api_misuses,
 /// thread_priority_refusals) and the thread priority setting, for the SDK's
 /// own code and tests. Not exported.
 uint64_t rocketnet_api_misuse_count( void );

@@ -146,6 +146,10 @@
 
 #define ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES            256
 
+/// The size in bytes of the per-title packet filter in both configs.
+
+#define ROCKETNET_PACKET_FILTER_BYTES                       4
+
 /// The size in bytes of the backend's signing public key.
 
 #define ROCKETNET_BACKEND_PUBLIC_KEY_BYTES                  32
@@ -480,7 +484,7 @@ enum rocketnet_disconnect_reason_t
     /// A reliable message went unacknowledged past
     /// reliable_message_timeout_ms.
 
-    ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT                = -3,
+    ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT              = -3,
 
     /// The connection's message memory had no room for a message it must not
     /// drop.
@@ -507,10 +511,6 @@ enum rocketnet_disconnect_reason_t
 
 enum rocketnet_client_state_t
 {
-    /// What a NULL client reads as; no client is ever in this state.
-
-    ROCKETNET_CLIENT_STATE_INVALID                          = -13,
-
     /// The connection's message memory had no room for a message it must not
     /// drop.
 
@@ -621,7 +621,7 @@ struct rocketnet_client_stats_t
 
     /// Messages: reliable messages received a second time and dropped.
 
-    uint64_t messages_duplicate;
+    uint64_t messages_duplicated;
 
     /// Receipts: sends with a receipt that the server acknowledged.
 
@@ -639,19 +639,16 @@ struct rocketnet_client_stats_t
     /// Messages: unreliable messages dropped because the send budget was
     /// spent.
 
-    uint64_t budget_drops;
+    uint64_t messages_dropped_over_budget;
 
-    /// Hand-offs: sends that left with the next hand-off to the send thread
-
-    uint64_t send_deferred;
 
     /// Messages: sends dropped because the connection was not CONNECTED.
 
-    uint64_t not_connected_drops;
+    uint64_t messages_dropped_not_connected;
 
     /// Process-wide: API misuses since the process started.
 
-    uint64_t api_misuse;
+    uint64_t api_misuses;
 
     /// Process-wide: thread priority and timer period calls the operating
     /// system refused since the process started.
@@ -717,16 +714,16 @@ struct rocketnet_server_stats_t
 
     /// Connections: clients that completed the handshake.
 
-    uint64_t clients_connected;
+    uint64_t connections_accepted;
 
     /// Requests: connect attempts refused because every client slot was
     /// taken.
 
-    uint64_t clients_denied_full;
+    uint64_t connections_denied_full;
 
     /// Requests: connect attempts dropped by the per-update handshake budget.
 
-    uint64_t handshakes_over_budget;
+    uint64_t handshakes_dropped_over_budget;
 
     /// Payloads: packets from clients that opened and carried messages.
 
@@ -738,7 +735,7 @@ struct rocketnet_server_stats_t
 
     /// Messages: reliable messages received a second time and dropped.
 
-    uint64_t messages_duplicate;
+    uint64_t messages_duplicated;
 
     /// Receipts: sends with a receipt that a client acknowledged.
 
@@ -756,15 +753,15 @@ struct rocketnet_server_stats_t
     /// Messages: unreliable messages dropped because a client's send budget
     /// was spent.
 
-    uint64_t budget_drops;
+    uint64_t messages_dropped_over_budget;
 
     /// Messages: sends dropped because the connection was not CONNECTED.
 
-    uint64_t not_connected_drops;
+    uint64_t messages_dropped_not_connected;
 
     /// Process-wide: API misuses since the process started.
 
-    uint64_t api_misuse;
+    uint64_t api_misuses;
 
     /// Process-wide: thread priority and timer period calls the operating
     /// system refused since the process started.
@@ -1004,7 +1001,7 @@ ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t function,
 /// misuse, and the call does nothing and returns its zero value: 0, false,
 /// NULL, ROCKETNET_DISCONNECT_REASON_NONE, or
 /// ROCKETNET_STATUS_INVALID_ARGUMENT for a status return. Three calls differ:
-/// rocketnet_client_state returns ROCKETNET_CLIENT_STATE_INVALID,
+/// rocketnet_client_state returns ROCKETNET_CLIENT_STATE_DISCONNECTED,
 /// rocketnet_client_index returns -1, and a stats call with a NULL client or
 /// server still fills the process-wide fields and zeroes the rest. A NULL to
 /// either destroy does nothing and is not counted, as free(NULL).
@@ -1013,7 +1010,7 @@ ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t function,
 /// while one is pending, a bytes_written out of range, a channel or
 /// reliability out of range) returns NULL or 0 and logs. A send on a
 /// connection that is not CONNECTED is a normal drop, counted in the
-/// not_connected_drops stat. Update or send_packets on a stopped server does
+/// messages_dropped_not_connected stat. Update or send_packets on a stopped server does
 /// nothing. A setter called on a client that is not connected, or for a
 /// server's client slot with no connected client, does nothing and returns
 /// ROCKETNET_STATUS_OK; only a bad value returns
@@ -1125,7 +1122,7 @@ struct rocketnet_client_config_t
     /// ROCKETNET_CLIENT_PACKET_FILTER: the per-title packet filter; it must
     /// match the server's.
 
-    uint8_t packet_filter[4];
+    uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES];
 
     /// ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES: the largest payload this end
     /// fragments and reassembles; a lost fragment loses the whole payload;
@@ -1273,13 +1270,13 @@ struct rocketnet_server_config_t
     /// ROCKETNET_SERVER_PACKET_FILTER: the per-title packet filter; it must
     /// match the clients'.
 
-    uint8_t packet_filter[4];
+    uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES];
 
     /// ROCKETNET_SERVER_BACKEND_PUBLIC_KEY: the backend's public key, the
     /// server's one configured key; required: start refuses all zeros with
     /// ROCKETNET_STATUS_MISSING_KEYS.
 
-    uint8_t backend_public_key[32];
+    uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
 
     /// ROCKETNET_SERVER_NUM_XDP_QUEUES: xdp and gso only; 1 .. 1024; 0 is the
     /// transport default.
@@ -1441,7 +1438,7 @@ struct rocketnet_server_config_t
 ///
 /// The send budget governs sending, never the queue: a reliable message waits
 /// for budget and is never dropped; an unreliable message over budget is
-/// dropped and counted in the budget_drops stat. A send the connection's
+/// dropped and counted in the messages_dropped_over_budget stat. A send the connection's
 /// message memory has no room for ends the connection: the server
 /// disconnects that client with the reason
 /// ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED, and a client ends in
@@ -1687,12 +1684,12 @@ ROCKETNET_EXPORT const char * rocketnet_client_transport_name( const struct rock
 /// message is pending per client at a time. A message larger than the
 /// config's max_message_bytes is refused. A message is sent only while the
 /// client is CONNECTED; in every other state the send is dropped: start
-/// message returns NULL, logs nothing and adds 1 to the not_connected_drops
+/// message returns NULL, logs nothing and adds 1 to the messages_dropped_not_connected
 /// stat, and finish message returns 0. Nothing is held for a later send. The
 /// same if ( p ) that covers the other NULL returns covers it, so game code
 /// sends from create on with no state check.
 
-ROCKETNET_EXPORT uint8_t * rocketnet_client_start_message( struct rocketnet_client_t * client, int channel, enum rocketnet_reliability_t reliability, int bytes );
+ROCKETNET_EXPORT uint8_t * rocketnet_client_start_message( struct rocketnet_client_t * client, int channel, enum rocketnet_reliability_t reliability, int max_bytes );
 
 /// Queues the pending start message with bytes_written bytes, 1 .. the bytes
 /// started, and returns its receipt serial, nonzero. Returns 0 when no start
@@ -1913,7 +1910,7 @@ ROCKETNET_EXPORT void rocketnet_server_disconnect_all_clients( struct rocketnet_
 
 ROCKETNET_EXPORT enum rocketnet_disconnect_reason_t rocketnet_server_disconnect_reason( const struct rocketnet_server_t * server, int client_index );
 
-/// The name of a disconnect reason ("NONE", "RELIABLE_TIMEOUT"), or "UNKNOWN"
+/// The name of a disconnect reason ("NONE", "RELIABLE_TIMED_OUT"), or "UNKNOWN"
 /// for a value that is not one, never NULL.
 
 ROCKETNET_EXPORT const char * rocketnet_disconnect_reason_name( enum rocketnet_disconnect_reason_t reason );
@@ -1934,12 +1931,12 @@ ROCKETNET_EXPORT const char * rocketnet_disconnect_reason_name( enum rocketnet_d
 /// max_clients, is refused; the log names ROCKETNET_STATUS_FLOW_ID_RESERVED
 /// for the bit. A send to a client index with no CONNECTED client, on a
 /// running or a stopped server, is dropped as on the client and counted in
-/// the server's not_connected_drops stat. One start message is pending per
+/// the server's messages_dropped_not_connected stat. One start message is pending per
 /// server at a time, so finish message and abort message take no
 /// destination. To send to every connected client, loop over the client
 /// indexes.
 
-ROCKETNET_EXPORT uint8_t * rocketnet_server_start_message( struct rocketnet_server_t * server, uint64_t destination_id, int channel, enum rocketnet_reliability_t reliability, int bytes );
+ROCKETNET_EXPORT uint8_t * rocketnet_server_start_message( struct rocketnet_server_t * server, uint64_t destination_id, int channel, enum rocketnet_reliability_t reliability, int max_bytes );
 
 /// As rocketnet_client_finish_message, for the server's pending start
 /// message.

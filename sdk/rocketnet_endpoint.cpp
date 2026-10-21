@@ -644,7 +644,7 @@ void rn_endpoint_config_tick( struct rn_endpoint_t * endpoint, int transport_con
     }
     const double reliable_timeout = (double) endpoint->config->reliable_message_timeout_ms / 1000.0;
     if ( now - endpoint->config_wait_start >= reliable_timeout )
-        endpoint->config_error = ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT;
+        endpoint->config_error = ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT;
 }
 
 uint32_t rn_endpoint_begin_update( struct rn_endpoint_t * endpoint )

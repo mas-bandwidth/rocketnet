@@ -832,11 +832,11 @@ static void test_message_config_never_received_is_reliable_timeout()
     // past reliable_timeout: the client ends it
     for ( int i = 0; i < 5; i++ )
         mc_step( &pair, NULL, NULL, 0.1 );
-    check( rocketnet_message_client_disconnect_reason( pair.clients[0] ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
+    check( rocketnet_message_client_disconnect_reason( pair.clients[0] ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
     check( pair.net->clients[0]->disconnects == 1 );
 
     // the server's CONFIG was never acked: it times out too (RNEndpoint Tick)
-    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
+    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
 
     mc_pair_teardown( &pair );
 }

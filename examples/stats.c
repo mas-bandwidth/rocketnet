@@ -41,7 +41,7 @@ static int print_client_stats( const struct rocketnet_client_t * client )
             stats.rtt, stats.jitter, stats.packet_loss, stats.bandwidth_sent_kbps, stats.bandwidth_received_kbps );
     printf( "client bytes sent %llu received %llu, messages resent %llu, api misuse %llu\n",
             (unsigned long long) stats.bytes_sent, (unsigned long long) stats.bytes_received,
-            (unsigned long long) stats.messages_resent, (unsigned long long) stats.api_misuse );
+            (unsigned long long) stats.messages_resent, (unsigned long long) stats.api_misuses );
 
     if ( !( stats.rtt >= 0.0 && stats.jitter >= 0.0 && stats.packet_loss >= 0.0 &&
             stats.bandwidth_sent_kbps >= 0.0 && stats.bandwidth_received_kbps >= 0.0 ) )
@@ -176,9 +176,9 @@ int main( void )
         struct rocketnet_server_stats_t server_stats;
         rocketnet_server_stats( server, &server_stats );
         printf( "server clients connected %llu, packets sent %llu received %llu\n",
-                (unsigned long long) server_stats.clients_connected,
+                (unsigned long long) server_stats.connections_accepted,
                 (unsigned long long) server_stats.packets_sent, (unsigned long long) server_stats.packets_received );
-        CHECK( server_stats.clients_connected >= 1 );
+        CHECK( server_stats.connections_accepted >= 1 );
     }
     // disconnect, then read how the connection ended on both ends: the client
     // reads its state (a negative state names how the server or the protocol

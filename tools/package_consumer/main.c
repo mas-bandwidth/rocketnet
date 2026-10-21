@@ -165,15 +165,15 @@ int main( void )
 
     for ( int i = ROCKETNET_LOG_LEVEL_NONE; i <= ROCKETNET_LOG_LEVEL_SPAM; i++ )
         CHECK( rocketnet_log_level_name( (enum rocketnet_log_level_t) i ) != NULL );
-    CHECK( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_ERROR ), "error" ) == 0 );
+    CHECK( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_ERROR ), "ERROR" ) == 0 );
 
     for ( int i = ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED; i <= ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
         CHECK( rocketnet_client_state_name( (enum rocketnet_client_state_t) i ) != NULL );
-    CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED ), "server disconnected" ) == 0 );
-    CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT ), "reliable timed out" ) == 0 );
-    CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION ), "protocol violation" ) == 0 );
-    CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH ), "config mismatch" ) == 0 );
-    CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED ), "message memory exhausted" ) == 0 );
+    CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED ), "SERVER_DISCONNECTED" ) == 0 );
+    CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT ), "RELIABLE_TIMED_OUT" ) == 0 );
+    CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION ), "PROTOCOL_VIOLATION" ) == 0 );
+    CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH ), "CONFIG_MISMATCH" ) == 0 );
+    CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED ), "MESSAGE_MEMORY_EXHAUSTED" ) == 0 );
 
     CHECK( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_NONE ) != NULL );
     CHECK( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED ) != NULL );
@@ -421,11 +421,11 @@ int main( void )
     struct rocketnet_server_stats_t server_stats;
     rocketnet_server_stats( server, &server_stats );
     CHECK( server_stats.packets_sent > 0 && server_stats.packets_received > 0 );
-    CHECK( server_stats.clients_connected == 1 );
+    CHECK( server_stats.connections_accepted == 1 );
     CHECK( server_stats.payloads_received > 0 );
     CHECK( server_stats.receipts_acked >= 1 );
     CHECK( server_stats.receipts_dropped == 0 );
-    CHECK( server_stats.api_misuse == client_stats.api_misuse );
+    CHECK( server_stats.api_misuses == client_stats.api_misuses );
 
     struct rocketnet_server_client_stats_t slot_stats;
     rocketnet_server_client_stats( server, 0, &slot_stats );
@@ -443,20 +443,20 @@ int main( void )
     CHECK( client_stats.packets_sent == 0 && client_stats.receipts_dropped == 0 );
     struct rocketnet_server_stats_t server_stats;
     rocketnet_server_stats( server, &server_stats );
-    CHECK( server_stats.clients_connected == 0 && server_stats.receipts_dropped == 0 );
-    CHECK( server_stats.api_misuse == client_stats.api_misuse );
+    CHECK( server_stats.connections_accepted == 0 && server_stats.receipts_dropped == 0 );
+    CHECK( server_stats.api_misuses == client_stats.api_misuses );
 #endif
 
     // ---- api misuse is a stats field: two deliberate NULL calls count two
     // (a debug library also calls the installed assert function for each)
 
     {
-        const uint64_t misuse_before = server_stats.api_misuse;
+        const uint64_t misuse_before = server_stats.api_misuses;
         const int assertions_before = assertions;
-        CHECK( rocketnet_client_state( NULL ) == ROCKETNET_CLIENT_STATE_INVALID );
+        CHECK( rocketnet_client_state( NULL ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
         struct rocketnet_client_stats_t null_stats;
         rocketnet_client_stats( NULL, &null_stats );
-        CHECK( null_stats.api_misuse == misuse_before + 2 );
+        CHECK( null_stats.api_misuses == misuse_before + 2 );
         CHECK( null_stats.packets_sent == 0 );
         CHECK( assertions == assertions_before + EXPECTED_NULL_ASSERTIONS );
     }

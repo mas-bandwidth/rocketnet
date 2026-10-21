@@ -173,7 +173,7 @@ int main( void )
 
     struct rocketnet_client_stats_t stats;
     rocketnet_client_stats( client, &stats );
-    const uint64_t drops = stats.budget_drops;
+    const uint64_t drops = stats.messages_dropped_over_budget;
     printf( "unreliable over-budget drops: %llu\n", (unsigned long long) drops );
     printf( "reliable messages arrived: %d/%d\n", reliable_received, RELIABLE_COUNT );
     CHECK( drops > 0 );

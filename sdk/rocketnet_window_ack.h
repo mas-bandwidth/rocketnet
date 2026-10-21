@@ -84,7 +84,7 @@ struct rn_window_ack_t
     uint8_t has_rtt;                // 0 before the first valid ack sample, 1 after
     uint8_t has_oldest;             // 1 while oldest_number is tracked at U
     uint16_t pad;
-    int error;                      // ROCKETNET_DISCONNECT_REASON_NONE or ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT
+    int error;                      // ROCKETNET_DISCONNECT_REASON_NONE or ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT
 
     // Two resend FIFOs over the one link array region->resend_fifo, one per
     // delay class (docs/CHANNELS.md 6.4 "Resend"; tla/RNResendTiming.tla
@@ -220,7 +220,7 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
 // Checks the per-connection reliable timeout before resending (docs/CHANNELS.md
 // 6.4 "Giving up"). If U < next and the oldest unacked number at U has
 // now - first_send >= reliable_timeout, sets ack->error to
-// ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT and returns 1. Otherwise returns
+// ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT and returns 1. Otherwise returns
 // whether ack->error is already set.
 int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now );
 

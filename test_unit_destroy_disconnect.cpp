@@ -426,7 +426,10 @@ static void test_destroy_server_sends_disconnect_to_every_connected_client()
 REGISTER_UNIT_TEST( test_destroy_server_sends_disconnect_to_every_connected_client );
 
 // Steps a public client against a loopback server until the client reaches
-// the target handshake state (or, for ROCKETNET_CLIENT_STATE_INVALID, not at
+// no handshake target: destroy at once, before any handshake state
+#define DESTROY_DISCONNECT_NO_TARGET ( (enum rocketnet_client_state_t) -100 )
+
+// the target handshake state (or, for DESTROY_DISCONNECT_NO_TARGET, not at
 // all: the client is destroyed right after create), hands off whatever the client has queued, and lets the server
 // read it. Then destroys the client with rocketnet_client_destroy and runs
 // one server update: the server must receive nothing across the destroy.
@@ -436,7 +439,7 @@ static void destroy_disconnect_public_client_destroy_sends_nothing( const destro
     rocketnet_server_t * server = destroy_disconnect_server_create( keys, time );
     rocketnet_client_t * client = destroy_disconnect_client_create( keys, rocketnet_server_port( server ), client_id );
 
-    if ( target_state != ROCKETNET_CLIENT_STATE_INVALID )
+    if ( target_state != DESTROY_DISCONNECT_NO_TARGET )
     {
         bool reached = false;
         for ( int i = 0; i < 200 && !reached; i++ )
@@ -526,7 +529,7 @@ static void test_destroy_without_live_connection_sends_nothing()
     // connection: right after create, while requesting a cookie, and while
     // sending the connection request. Before the session keys exist there is
     // nothing to seal, so the server receives nothing across the destroy.
-    destroy_disconnect_public_client_destroy_sends_nothing( &keys, 0xE320ULL, ROCKETNET_CLIENT_STATE_INVALID );
+    destroy_disconnect_public_client_destroy_sends_nothing( &keys, 0xE320ULL, DESTROY_DISCONNECT_NO_TARGET );
     destroy_disconnect_public_client_destroy_sends_nothing( &keys, 0xE321ULL, ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE );
     destroy_disconnect_public_client_destroy_sends_nothing( &keys, 0xE322ULL, ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST );
 

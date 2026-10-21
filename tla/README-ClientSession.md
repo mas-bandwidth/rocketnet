@@ -63,7 +63,7 @@ state: `SERVER_DISCONNECTED` reads `ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED` 
 `CLIENT_DISCONNECTED` returns the client to `ROCKETNET_CLIENT_STATE_DISCONNECTED`.
 | `DisconnectFromError` | disconnect from an error state: back to DISCONNECTED, the reason kept |
 | `Send` | message start/finish, only while CONNECTED (the `queuebeforeconnected` defect also enables it in a handshake state) |
-| `DropSend` | message start outside CONNECTED (`rocketnet_client_start_message` returns NULL and counts the `not_connected_drops` stat; the message layer's `MESSAGE_SEND_NOT_CONNECTED`, `rn_message_object_start` in `sdk/rocketnet_message_server.cpp`): no per-connection field changes, nothing is held; the ghost `droppedIn` is `{st}` after a drop and `{}` after any other step (RN-2 m1.5) |
+| `DropSend` | message start outside CONNECTED (`rocketnet_client_start_message` returns NULL and counts the `messages_dropped_not_connected` stat; the message layer's `MESSAGE_SEND_NOT_CONNECTED`, `rn_message_object_start` in `sdk/rocketnet_message_server.cpp`): no per-connection field changes, nothing is held; the ghost `droppedIn` is `{st}` after a drop and `{}` after any other step (RN-2 m1.5) |
 | `ServerSend(s)`, `Deliver(s)`, `Lose(s)` | the server's packets of any session ever started, delivered, or lost; a packet opens only under the session keys it was sealed with |
 
 Every path out of a connection goes through `End`, which applies the one `Reset`. Reconnect is

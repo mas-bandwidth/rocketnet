@@ -70,7 +70,7 @@ struct rn_endpoint_config_t
     X( send_error, int send_error ) /* ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED once a send found no room (R5), else NONE */                  \
     /* CONFIG (10.3): the wait for the peer's CONFIG */                                                                                               \
     X( config_wait_start, double config_wait_start ) /* when this end began waiting for the peer's CONFIG, or -1 before its transport is connected */ \
-    X( config_error, int config_error ) /* ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT once the peer's CONFIG is past reliable_timeout, else NONE */     \
+    X( config_error, int config_error ) /* ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT once the peer's CONFIG is past reliable_timeout, else NONE */     \
     X( serial, uint32_t serial ) /* the receipt serial of the last finished send (7.4) */                                                             \
     /* the start between start and finish (one at a time) */                                                                                          \
     X( pending_type, int pending_type ) /* -1 when no start is pending */                                                                             \

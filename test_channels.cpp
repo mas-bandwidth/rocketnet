@@ -3410,7 +3410,7 @@ static void test_channels_window_reliable_timeout_enters_the_error_state()
 
     // At t = 15.00 (now - first_send == 10.0 == reliable_timeout): enters error state and stops resending.
     check( rn_window_ack_resend( &ack, 15.00, &next_pkt, out, 4 ) == 0 );
-    check( ack.error == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
+    check( ack.error == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
     check( rn_window_ack_check_timeout( &ack, 15.00 ) == 1 );
 
     rn_arena_destroy( arena );

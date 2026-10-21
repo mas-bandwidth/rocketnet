@@ -84,11 +84,11 @@ REGISTER_UNIT_TEST( test_status_names_cover_every_code );
 
 static void test_status_name_out_of_range_is_unknown()
 {
-    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) -1 ), "unknown" ) == 0 );
-    check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_COUNT ), "unknown" ) == 0 );
-    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) ( ROCKETNET_STATUS_COUNT + 1 ) ), "unknown" ) == 0 );
-    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) INT_MIN ), "unknown" ) == 0 );
-    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) INT_MAX ), "unknown" ) == 0 );
+    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) -1 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_COUNT ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) ( ROCKETNET_STATUS_COUNT + 1 ) ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) INT_MIN ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) INT_MAX ), "UNKNOWN" ) == 0 );
 }
 
 REGISTER_UNIT_TEST( test_status_name_out_of_range_is_unknown );

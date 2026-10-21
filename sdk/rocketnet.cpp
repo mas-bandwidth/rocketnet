@@ -167,17 +167,32 @@ enum rocketnet_log_level_t rocketnet_log_level_current( void )
     return (enum rocketnet_log_level_t) log_level.load( std::memory_order_relaxed );
 }
 
+// the enum suffix, upper case, or "UNKNOWN" for a value that is not a level
 const char * rocketnet_log_level_name( enum rocketnet_log_level_t level )
 {
     switch ( (int) level )
     {
-        case ROCKETNET_LOG_LEVEL_NONE:  return "none";
+        case ROCKETNET_LOG_LEVEL_NONE:  return "NONE";
+        case ROCKETNET_LOG_LEVEL_ERROR: return "ERROR";
+        case ROCKETNET_LOG_LEVEL_WARN:  return "WARN";
+        case ROCKETNET_LOG_LEVEL_INFO:  return "INFO";
+        case ROCKETNET_LOG_LEVEL_DEBUG: return "DEBUG";
+        case ROCKETNET_LOG_LEVEL_SPAM:  return "SPAM";
+        default:                        return "UNKNOWN";
+    }
+}
+
+// the default sink's line prefix, lower case as it has always printed
+static const char * rocketnet_log_level_word( enum rocketnet_log_level_t level )
+{
+    switch ( (int) level )
+    {
         case ROCKETNET_LOG_LEVEL_ERROR: return "error";
         case ROCKETNET_LOG_LEVEL_WARN:  return "warn";
         case ROCKETNET_LOG_LEVEL_INFO:  return "info";
         case ROCKETNET_LOG_LEVEL_DEBUG: return "debug";
         case ROCKETNET_LOG_LEVEL_SPAM:  return "spam";
-        default:                        return "unknown";
+        default:                        return "none";
     }
 }
 
@@ -218,13 +233,13 @@ static const char * const rocketnet_status_names[] =
 static_assert( sizeof( rocketnet_status_names ) / sizeof( rocketnet_status_names[0] ) == ROCKETNET_STATUS_COUNT,
                "every status code has exactly one name" );
 
-// the identifier without the ROCKETNET_STATUS_ prefix, and "unknown" (never
+// the identifier without the ROCKETNET_STATUS_ prefix, and "UNKNOWN" (never
 // NULL, without asserting) for a value that is not a code.
 const char * rocketnet_status_name( enum rocketnet_status_t status )
 {
     const int value = (int) status;
     if ( value < 0 || value >= ROCKETNET_STATUS_COUNT )
-        return "unknown";
+        return "UNKNOWN";
     return rocketnet_status_names[value];
 }
 
@@ -234,7 +249,7 @@ static void default_log_callback( void * context, enum rocketnet_log_level_t lev
     (void) context;
     if ( level != ROCKETNET_LOG_LEVEL_NONE )
     {
-        const char * level_string = rocketnet_log_level_name( level );
+        const char * level_string = rocketnet_log_level_word( level );
         printf( "%.6f: %s: %.*s\n", rocketnet_platform_time(), level_string, (int) length, message );
     }
     else

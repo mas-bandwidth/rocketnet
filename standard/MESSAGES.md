@@ -2598,10 +2598,10 @@ at the first update whose time is at least the number's last send plus its
 resend delay, and MUST NOT resend it before then. A resend MUST use a fresh
 connection layer sequence and MUST move the number to the tail of its queue.
 
-The sender MUST end the connection with ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT
+The sender MUST end the connection with ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT
 when the oldest unacknowledged reliable number has stood unacknowledged for
 reliable_message_timeout_ms or more, measured from its first send. A connection that
-ends with ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT MUST stop resending.
+ends with ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT MUST stop resending.
 
 ### m9.4. Send budget
 

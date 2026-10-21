@@ -84,6 +84,8 @@ static const allowlist_row_t allowlist[] =
     { F_H, "packet crosses a 1500", "TRANSPORT SIZE" },
     { F_H, "ROCKETNET_MAX_PACKET_BYTES", "TRANSPORT SIZE" },
     { F_H, "ROCKETNET_MAX_PACKET_PAYLOAD_BYTES", "TRANSPORT SIZE" },
+    { F_H, "ROCKETNET_PACKET_FILTER_BYTES", "PACKET FILTER AND ACK TRACKING" },
+    { F_API, "ROCKETNET_PACKET_FILTER_BYTES", "PACKET FILTER AND ACK TRACKING" },
     { F_H, "latency, jitter, packet", "NETWORK SIMULATOR" },
     { F_H, "outgoing packets, to see", "NETWORK SIMULATOR" },
     { F_H, "PACKET_LOSS_PERCENT", "NETWORK SIMULATOR" },

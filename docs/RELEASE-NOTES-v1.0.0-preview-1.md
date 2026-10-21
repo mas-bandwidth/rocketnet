@@ -47,6 +47,14 @@ with `rocketnet_log_level`, `rocketnet_quiet` and `rocketnet_log_function`.
 Use `rocketnet_assert_function` for assertion handling and install a custom
 allocator with `rocketnet_allocator` before initialization.
 
+The network simulator is a development feature. A development library has
+`rocketnet_client_network_simulator` and `rocketnet_server_network_simulator`,
+which add latency, jitter, packet loss and duplication to outgoing packets,
+and the `ROCKETNET_DEV_CLIENT_*` and `ROCKETNET_DEV_SERVER_*` environment
+variables that set the same values at create. The config structs are the same
+in development and production builds; a production library has neither the
+calls nor the variables.
+
 ## Starting a server
 
 Supply your backend's Ed25519 public key through

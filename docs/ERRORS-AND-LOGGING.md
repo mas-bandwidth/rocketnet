@@ -20,12 +20,12 @@ The public header is `sdk/rocketnet.h`. A game initializes the library, fills a
 client or server config, creates one client or server, and checks the result.
 Refusals have the return behavior documented by each declaration in
 `sdk/rocketnet.h`; only the specific caller errors listed under “API misuse”
-there increment the process-wide `api_misuse` field. A refusal is not
+there increment the process-wide `api_misuses` field. A refusal is not
 automatically a misuse, and not every refusal logs an error. For example,
 invalid send arguments return `NULL` or `0` and log, but do not increment
-`api_misuse`. A message send on a connection that is not CONNECTED is a normal
+`api_misuses`. A message send on a connection that is not CONNECTED is a normal
 drop that logs nothing, returns `NULL` from start message and `0` from finish
-message, and increments `not_connected_drops`, never the misuse count.
+message, and increments `messages_dropped_not_connected`, never the misuse count.
 
 | Public Entry Point | Return on Refusal |
 | :--- | :--- |
@@ -167,7 +167,7 @@ Init, term and the allocator return the section-2.1 code directly (the SDK's
 internal `_ex` forms write the same code to an `int *`). The client and server
 create calls return a handle or `NULL` and write the refusal's code through the
 final status out-parameter; their refusals are logged. A create before init is
-counted in the process-wide `api_misuse` stat; other create refusals are not
+counted in the process-wide `api_misuses` stat; other create refusals are not
 automatically counted as misuse. `rocketnet_status_name` names any code, and
 `rocketnet_num_status_codes` gives the count. The internal transport layer
 keeps `_ex` create forms for the SDK's own tests.
@@ -268,7 +268,7 @@ each filling a caller struct with the current stats:
 `rocketnet_client_stats` (`struct rocketnet_client_stats_t`),
 `rocketnet_server_stats` (`struct rocketnet_server_stats_t`) and
 `rocketnet_server_client_stats` (`struct rocketnet_server_client_stats_t`, one
-slot). The client and server structs also carry the process-wide `api_misuse`
+slot). The client and server structs also carry the process-wide `api_misuses`
 and `thread_priority_refusals` counts. A NULL stats pointer is a counted no-op;
 a NULL client or server fills only the process-wide fields and zeroes the rest.
 The generic counter introspection functions (`rocketnet_num_counters`,
@@ -277,7 +277,7 @@ SDK (`sdk/rocketnet_layers.h`).
 
 Client counts are lifetime totals across connections; server aggregate counts
 are lifetime totals across starts and stops. Both begin at zero at object
-creation. Process-wide `api_misuse` and `thread_priority_refusals` do not reset
+creation. Process-wide `api_misuses` and `thread_priority_refusals` do not reset
 with an object. Client measurements cover the current connection, and client
 and server rates cover the trailing second; these read as zero without an
 active connection or while the server is stopped. Per-slot statistics

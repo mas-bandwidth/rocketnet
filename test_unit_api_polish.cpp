@@ -19,7 +19,7 @@
 //   6. one log sink: rocketnet_log_function; the log level is an enum
 //   7. every lookup ends in _name and returns "unknown" for an unknown value
 //   8. memory and buffer sizes are size_t; create takes the config alone
-//   9. a NULL client's state is ROCKETNET_CLIENT_STATE_INVALID
+//   9. a NULL client's state is ROCKETNET_CLIENT_STATE_DISCONNECTED, counted as misuse
 
 #include "test_unit_registry.h"
 
@@ -224,7 +224,7 @@ static_assert( ROCKETNET_RELIABILITY_UNRELIABLE == 0 && ROCKETNET_RELIABILITY_UN
 static_assert( ROCKETNET_RECEIPT_STATUS_NONE == 0 && ROCKETNET_RECEIPT_STATUS_ACKED == 1 && ROCKETNET_RECEIPT_STATUS_LOSS == 2, "ruling 3: receipt values" );
 static_assert( ROCKETNET_DISCONNECT_REASON_NONE == 0 && ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH == -1 &&
                ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION == -2 &&
-               ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT == -3 && ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED == -4 &&
+               ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT == -3 && ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED == -4 &&
                ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED == -5, "disconnect reasons: dense, failures below zero" );
 static_assert( ROCKETNET_UPDATE_OK == 0 && ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED == -1, "ruling 3: the internal message layer's update values" );
 static_assert( rn_same<decltype( rocketnet_client_update( NULL, 1000.0 ) ), void>::value, "ruling 3: client update returns void" );
@@ -312,28 +312,27 @@ static void test_api_polish_lookups_say_unknown()
 {
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_OK ), "OK" ) == 0 );
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_FLOW_ID_RESERVED ), "FLOW_ID_RESERVED" ) == 0 );
-    check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_COUNT ), "unknown" ) == 0 );
-    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -1 ), "unknown" ) == 0 );
+    check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_COUNT ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -1 ), "UNKNOWN" ) == 0 );
 
-    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_NONE ), "none" ) == 0 );
-    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_WARN ), "warn" ) == 0 );
-    check( strcmp( rocketnet_log_level_name( (rocketnet_log_level_t) 6 ), "unknown" ) == 0 );
-    check( strcmp( rocketnet_log_level_name( (rocketnet_log_level_t) -1 ), "unknown" ) == 0 );
+    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_NONE ), "NONE" ) == 0 );
+    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_WARN ), "WARN" ) == 0 );
+    check( strcmp( rocketnet_log_level_name( (rocketnet_log_level_t) 6 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_log_level_name( (rocketnet_log_level_t) -1 ), "UNKNOWN" ) == 0 );
 
-    check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_CONNECTED ), "connected" ) == 0 );
-    check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_INVALID ), "invalid" ) == 0 );
-    check( strcmp( rocketnet_client_state_name( (rocketnet_client_state_t) 5 ), "unknown" ) == 0 );
-    check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED ), "server disconnected" ) == 0 );
-    check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT ), "reliable timed out" ) == 0 );
-    check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION ), "protocol violation" ) == 0 );
-    check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH ), "config mismatch" ) == 0 );
-    check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED ), "message memory exhausted" ) == 0 );
-    check( strcmp( rocketnet_client_state_name( (rocketnet_client_state_t) -14 ), "unknown" ) == 0 );
+    check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_CONNECTED ), "CONNECTED" ) == 0 );
+    check( strcmp( rocketnet_client_state_name( (rocketnet_client_state_t) 5 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED ), "SERVER_DISCONNECTED" ) == 0 );
+    check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT ), "RELIABLE_TIMED_OUT" ) == 0 );
+    check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION ), "PROTOCOL_VIOLATION" ) == 0 );
+    check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH ), "CONFIG_MISMATCH" ) == 0 );
+    check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED ), "MESSAGE_MEMORY_EXHAUSTED" ) == 0 );
+    check( strcmp( rocketnet_client_state_name( (rocketnet_client_state_t) -14 ), "UNKNOWN" ) == 0 );
 
-    check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_NONE ), "none" ) == 0 );
-    check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT ), "reliable timeout" ) == 0 );
-    check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED ), "server disconnected" ) == 0 );
-    check( strcmp( rocketnet_disconnect_reason_name( (rocketnet_disconnect_reason_t) 7 ), "unknown" ) == 0 );
+    check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_NONE ), "NONE" ) == 0 );
+    check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT ), "RELIABLE_TIMED_OUT" ) == 0 );
+    check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED ), "SERVER_DISCONNECTED" ) == 0 );
+    check( strcmp( rocketnet_disconnect_reason_name( (rocketnet_disconnect_reason_t) 7 ), "UNKNOWN" ) == 0 );
 }
 REGISTER_UNIT_TEST( test_api_polish_lookups_say_unknown );
 
@@ -350,7 +349,7 @@ static void test_api_polish_zero_receipt_and_dense_reasons()
         ROCKETNET_DISCONNECT_REASON_NONE,
         ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH,
         ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION,
-        ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT,
+        ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT,
         ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED,
         ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED,
     };
@@ -359,26 +358,25 @@ static void test_api_polish_zero_receipt_and_dense_reasons()
     {
         check( (int) reasons[i] == reason_values[i] );
         const char * name = rocketnet_disconnect_reason_name( reasons[i] );
-        check( name != NULL && name[0] != '\0' && strcmp( name, "unknown" ) != 0 );
+        check( name != NULL && name[0] != '\0' && strcmp( name, "UNKNOWN" ) != 0 );
     }
-    check( strcmp( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) 2 ), "unknown" ) == 0 );
-    check( strcmp( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) 7 ), "unknown" ) == 0 );
+    check( strcmp( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) 2 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) 7 ), "UNKNOWN" ) == 0 );
 
     for ( int status = 0; status < (int) ROCKETNET_STATUS_COUNT; status++ )
     {
         const char * name = rocketnet_status_name( (enum rocketnet_status_t) status );
-        check( name != NULL && strcmp( name, "unknown" ) != 0 );
+        check( name != NULL && strcmp( name, "UNKNOWN" ) != 0 );
     }
     for ( int level = (int) ROCKETNET_LOG_LEVEL_NONE; level <= (int) ROCKETNET_LOG_LEVEL_SPAM; level++ )
     {
         const char * name = rocketnet_log_level_name( (enum rocketnet_log_level_t) level );
-        check( name != NULL && strcmp( name, "unknown" ) != 0 );
+        check( name != NULL && strcmp( name, "UNKNOWN" ) != 0 );
     }
-    check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_INVALID ), "unknown" ) != 0 );
     for ( int state = (int) ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED; state <= (int) ROCKETNET_CLIENT_STATE_CONNECTED; state++ )
     {
         const char * name = rocketnet_client_state_name( (enum rocketnet_client_state_t) state );
-        check( name != NULL && strcmp( name, "unknown" ) != 0 && strcmp( name, "???" ) != 0 );
+        check( name != NULL && strcmp( name, "UNKNOWN" ) != 0 && strcmp( name, "???" ) != 0 );
     }
 
     check( sizeof( enum rocketnet_status_t ) == sizeof( int ) );
@@ -405,16 +403,16 @@ static void api_polish_quiet_assert( const char * condition, const char * functi
     (void) condition; (void) function; (void) file; (void) line;
 }
 
-static void test_api_polish_null_client_state_is_invalid()
+static void test_api_polish_null_client_state_is_disconnected()
 {
-    static_assert( ROCKETNET_CLIENT_STATE_INVALID == -13, "dense: INVALID follows the last failure state" );
+    static_assert( ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED == -12, "dense: the last failure state is -12" );
     rocketnet_assert_function( api_polish_quiet_assert );
     const uint64_t before = rocketnet_api_misuse_count();
-    check( rocketnet_client_state( NULL ) == ROCKETNET_CLIENT_STATE_INVALID );
+    check( rocketnet_client_state( NULL ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
     check( rocketnet_api_misuse_count() == before + 1 );
     rocketnet_assert_function( NULL );
 }
-REGISTER_UNIT_TEST( test_api_polish_null_client_state_is_invalid );
+REGISTER_UNIT_TEST( test_api_polish_null_client_state_is_disconnected );
 
 // --- a client index before CONNECTED is -1, never an assert --------------------
 

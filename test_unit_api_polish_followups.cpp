@@ -59,15 +59,15 @@ static void test_api_polish_followups()
     // ROCKETNET_STATUS_COUNT counts every code, OK included
     check( ROCKETNET_STATUS_COUNT == 28 );
     check( strcmp( rocketnet_status_name( (rocketnet_status_t) ( ROCKETNET_STATUS_COUNT - 1 ) ), "CONFIG_NOT_INITIALIZED" ) == 0 );
-    check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_COUNT ), "unknown" ) == 0 );
+    check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_COUNT ), "UNKNOWN" ) == 0 );
 
     // every level name matches its enum: WARN is "warn"
-    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_NONE ), "none" ) == 0 );
-    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_ERROR ), "error" ) == 0 );
-    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_WARN ), "warn" ) == 0 );
-    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_INFO ), "info" ) == 0 );
-    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_DEBUG ), "debug" ) == 0 );
-    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_SPAM ), "spam" ) == 0 );
+    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_NONE ), "NONE" ) == 0 );
+    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_ERROR ), "ERROR" ) == 0 );
+    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_WARN ), "WARN" ) == 0 );
+    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_INFO ), "INFO" ) == 0 );
+    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_DEBUG ), "DEBUG" ) == 0 );
+    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_SPAM ), "SPAM" ) == 0 );
 
     // the setter is the one way in: it writes the internal pointer, and NULL restores the default
     rocketnet_assert_function_t original = rn_assert_function;

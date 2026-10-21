@@ -19,7 +19,7 @@ struct the caller owns, and the program reads the fields from that struct.
    reliable-ordered message each frame and the server echoes one back, so both
    directions have traffic to measure.
 5. Print the client's state name, then RTT, jitter, packet loss, bandwidth sent
-   and received, and a few counters (`api_misuse` among them) from one
+   and received, and a few counters (`api_misuses` among them) from one
    `struct rocketnet_client_stats_t` filled by `rocketnet_client_stats`.
 6. Print the server's per-client view of the same connection from one
    `struct rocketnet_server_client_stats_t` filled by

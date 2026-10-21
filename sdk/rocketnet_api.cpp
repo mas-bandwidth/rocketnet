@@ -159,6 +159,7 @@ static enum rocketnet_status_t rn_apply_message_and_budget_env( const char * end
 }
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_ADDRESS_STRING_LENGTH == ROCKETNET_MAX_ADDRESS_STRING_BYTES, "one address string bound, public and internal" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_FILTER_VALUE_BYTES == ROCKETNET_PACKET_FILTER_BYTES, "one packet filter size, public and wire" );
 
 // The development network simulator's environment form, read at create in a
 // development library only: ROCKETNET_DEV_CLIENT_LATENCY_MS and the rest; an
@@ -833,7 +834,7 @@ enum rocketnet_client_state_t rocketnet_client_state( const struct rocketnet_cli
     if ( !rocketnet_api_null_guard( client ) )
     {
         rocketnet_error( "rocketnet_client_state: the client is NULL" );
-        return ROCKETNET_CLIENT_STATE_INVALID;
+        return ROCKETNET_CLIENT_STATE_DISCONNECTED;
     }
     const int state = rn_client_state( client );
     if ( state != ROCKETNET_CLIENT_STATE_DISCONNECTED || !client->connection )
@@ -844,7 +845,7 @@ enum rocketnet_client_state_t rocketnet_client_state( const struct rocketnet_cli
     switch ( rocketnet_message_client_disconnect_reason( client->connection ) )
     {
         case ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED:       return ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED;
-        case ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT:          return ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT;
+        case ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT:          return ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT;
         case ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION:        return ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION;
         case ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH:           return ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH;
         case ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED:  return ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED;
@@ -852,35 +853,44 @@ enum rocketnet_client_state_t rocketnet_client_state( const struct rocketnet_cli
     }
 }
 
+// the enum suffix, upper case, or "UNKNOWN" for a value that is not a state
 const char * rocketnet_client_state_name( enum rocketnet_client_state_t state )
 {
-    const int value = (int) state;
-    switch ( value )
+    switch ( (int) state )
     {
-        case ROCKETNET_CLIENT_STATE_INVALID:                    return "invalid";
-        case ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED:   return "message memory exhausted";
-        case ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH:            return "config mismatch";
-        case ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION:         return "protocol violation";
-        case ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT:         return "reliable timed out";
-        case ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED:        return "server disconnected";
-        default:                                                break;
+        case ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED:       return "MESSAGE_MEMORY_EXHAUSTED";
+        case ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH:                return "CONFIG_MISMATCH";
+        case ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION:             return "PROTOCOL_VIOLATION";
+        case ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT:             return "RELIABLE_TIMED_OUT";
+        case ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED:            return "SERVER_DISCONNECTED";
+        case ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED:          return "CONNECT_TOKEN_EXPIRED";
+        case ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN:          return "INVALID_CONNECT_TOKEN";
+        case ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT:           return "CONNECTION_TIMED_OUT";
+        case ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT:  return "CONNECTION_RESPONSE_TIMED_OUT";
+        case ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT:   return "CONNECTION_REQUEST_TIMED_OUT";
+        case ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT:       return "COOKIE_REQUEST_TIMED_OUT";
+        case ROCKETNET_CLIENT_STATE_CONNECTION_DENIED:              return "CONNECTION_DENIED";
+        case ROCKETNET_CLIENT_STATE_DISCONNECTED:                   return "DISCONNECTED";
+        case ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE:              return "REQUESTING_COOKIE";
+        case ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST:     return "SENDING_CONNECTION_REQUEST";
+        case ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE:    return "SENDING_CONNECTION_RESPONSE";
+        case ROCKETNET_CLIENT_STATE_CONNECTED:                      return "CONNECTED";
+        default:                                                    return "UNKNOWN";
     }
-    if ( value < ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED || value > ROCKETNET_CLIENT_STATE_CONNECTED )
-        return "unknown";
-    return rocketnet_client_transport_state_name( value );
 }
 
+// the enum suffix, upper case, or "UNKNOWN" for a value that is not a reason
 const char * rocketnet_disconnect_reason_name( enum rocketnet_disconnect_reason_t reason )
 {
     switch ( (int) reason )
     {
-        case ROCKETNET_DISCONNECT_REASON_NONE:                      return "none";
-        case ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH:           return "config mismatch";
-        case ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION:        return "protocol violation";
-        case ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT:          return "reliable timeout";
-        case ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED:  return "message memory exhausted";
-        case ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED:       return "server disconnected";
-        default:                                                    return "unknown";
+        case ROCKETNET_DISCONNECT_REASON_NONE:                      return "NONE";
+        case ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH:           return "CONFIG_MISMATCH";
+        case ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION:        return "PROTOCOL_VIOLATION";
+        case ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT:        return "RELIABLE_TIMED_OUT";
+        case ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED:  return "MESSAGE_MEMORY_EXHAUSTED";
+        case ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED:       return "SERVER_DISCONNECTED";
+        default:                                                    return "UNKNOWN";
     }
 }
 
@@ -914,7 +924,7 @@ const char * rocketnet_client_transport_name( const struct rocketnet_client_t * 
 // NOT_CONNECTED_DROPS. With no connection object the count goes straight to
 // the lifetime counters; with one, the message layer drops it and counts
 // MESSAGE_SEND_NOT_CONNECTED, which the public counter reads.
-uint8_t * rocketnet_client_start_message( struct rocketnet_client_t * client, int channel, enum rocketnet_reliability_t reliability, int bytes )
+uint8_t * rocketnet_client_start_message( struct rocketnet_client_t * client, int channel, enum rocketnet_reliability_t reliability, int max_bytes )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return NULL;
@@ -923,7 +933,7 @@ uint8_t * rocketnet_client_start_message( struct rocketnet_client_t * client, in
         client->lifetime[RN_CLIENT_NOT_CONNECTED_DROPS]++;
         return NULL;
     }
-    return rocketnet_message_client_start( client->connection, channel, (int) reliability, bytes );
+    return rocketnet_message_client_start( client->connection, channel, (int) reliability, max_bytes );
 }
 
 // a finish with no start pending (a dropped start included) returns 0,
@@ -990,8 +1000,9 @@ enum rocketnet_status_t rocketnet_client_set_send_kbps( struct rocketnet_client_
     const enum rocketnet_status_t range = rn_send_kbps_runtime( "client", kbps, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, &resolved );
     if ( range != ROCKETNET_STATUS_OK )
         return range;
+    // not connected: nothing to set, a plain no-op
     if ( rn_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED )
-        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+        return ROCKETNET_STATUS_OK;
     return rocketnet_message_client_set_send_kbps( client->connection, resolved ) ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_INVALID_ARGUMENT;
 }
 
@@ -1033,7 +1044,7 @@ void rocketnet_client_stats( const struct rocketnet_client_t * client, struct ro
         return;
     memset( stats, 0, sizeof( *stats ) );
     const bool null_client = !rocketnet_api_null_guard( client );
-    stats->api_misuse = rocketnet_api_misuse_count();
+    stats->api_misuses = rocketnet_api_misuse_count();
     stats->thread_priority_refusals = rocketnet_get_thread_priority_refusals();
     if ( null_client )
         return;
@@ -1060,13 +1071,12 @@ void rocketnet_client_stats( const struct rocketnet_client_t * client, struct ro
     stats->bytes_received = counts[RN_CLIENT_BYTES_RECEIVED];
     stats->payloads_received = counts[RN_CLIENT_PAYLOADS_RECEIVED];
     stats->messages_resent = counts[RN_CLIENT_MESSAGES_RESENT];
-    stats->messages_duplicate = counts[RN_CLIENT_MESSAGES_DUPLICATE];
+    stats->messages_duplicated = counts[RN_CLIENT_MESSAGES_DUPLICATE];
     stats->receipts_acked = counts[RN_CLIENT_RECEIPTS_ACKED];
     stats->receipts_lost = counts[RN_CLIENT_RECEIPTS_LOST];
     stats->receipts_dropped = counts[RN_CLIENT_RECEIPTS_DROPPED];
-    stats->budget_drops = counts[RN_CLIENT_BUDGET_DROPS];
-    stats->send_deferred = counts[RN_CLIENT_SEND_DEFERRED];
-    stats->not_connected_drops = counts[RN_CLIENT_NOT_CONNECTED_DROPS];
+    stats->messages_dropped_over_budget = counts[RN_CLIENT_BUDGET_DROPS];
+    stats->messages_dropped_not_connected = counts[RN_CLIENT_NOT_CONNECTED_DROPS];
 }
 
 // ---------------------------------------------------------------
@@ -1511,11 +1521,9 @@ void rocketnet_server_update( struct rocketnet_server_t * server, double time )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return;
+    // a stopped server has nothing to update or send: a plain no-op
     if ( !server->running )
-    {
-        rocketnet_api_misuse_record();
         return;
-    }
     (void) rocketnet_message_server_update( server->running, time );
 }
 
@@ -1523,11 +1531,9 @@ void rocketnet_server_send_packets( struct rocketnet_server_t * server )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return;
+    // a stopped server has nothing to update or send: a plain no-op
     if ( !server->running )
-    {
-        rocketnet_api_misuse_record();
         return;
-    }
     rocketnet_message_server_send_packets( server->running );
 }
 
@@ -1662,7 +1668,7 @@ enum rocketnet_disconnect_reason_t rocketnet_server_disconnect_reason( const str
 // counted once in NOT_CONNECTED_DROPS (the message layer's
 // MESSAGE_SEND_NOT_CONNECTED while running, the lifetime counters while
 // stopped). An index at or past max_clients is misuse.
-uint8_t * rocketnet_server_start_message( struct rocketnet_server_t * server, uint64_t destination_id, int channel, enum rocketnet_reliability_t reliability, int bytes )
+uint8_t * rocketnet_server_start_message( struct rocketnet_server_t * server, uint64_t destination_id, int channel, enum rocketnet_reliability_t reliability, int max_bytes )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return NULL;
@@ -1678,7 +1684,7 @@ uint8_t * rocketnet_server_start_message( struct rocketnet_server_t * server, ui
         server->lifetime[RN_SERVER_NOT_CONNECTED_DROPS]++;
         return NULL;
     }
-    return rocketnet_message_server_start( rn_server( server ), (int) destination_id, channel, reliability, bytes );
+    return rocketnet_message_server_start( rn_server( server ), (int) destination_id, channel, reliability, max_bytes );
 }
 
 // finish and abort act on the one pending start (rn_message_object_t
@@ -1742,11 +1748,15 @@ enum rocketnet_status_t rocketnet_server_set_send_kbps( struct rocketnet_server_
         return range;
     int slot;
     if ( !rn_server_slot( server, client_index, &slot ) )
-        return ROCKETNET_STATUS_INVALID_ARGUMENT;
-    // a slot with no CONNECTED client has no budget to set: the slot's reset
-    // starts each connection at the config's rate
+    {
+        // an index outside 0 .. max_clients - 1 is misuse; a stopped server
+        // has nothing to set, a plain no-op
+        return ( client_index < 0 || client_index >= server->max_clients ) ? ROCKETNET_STATUS_INVALID_ARGUMENT : ROCKETNET_STATUS_OK;
+    }
+    // a slot with no CONNECTED client has no budget to set, a plain no-op:
+    // the slot's reset starts each connection at the config's rate
     if ( !rocketnet_message_server_client_connected( rn_server( server ), slot ) )
-        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+        return ROCKETNET_STATUS_OK;
     return rocketnet_message_server_set_send_kbps( rn_server( server ), slot, resolved ) ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_INVALID_ARGUMENT;
 }
 
@@ -1790,7 +1800,7 @@ void rocketnet_server_stats( const struct rocketnet_server_t * server, struct ro
         return;
     memset( stats, 0, sizeof( *stats ) );
     const bool null_server = !rocketnet_api_null_guard( server );
-    stats->api_misuse = rocketnet_api_misuse_count();
+    stats->api_misuses = rocketnet_api_misuse_count();
     stats->thread_priority_refusals = rocketnet_get_thread_priority_refusals();
     if ( null_server )
         return;
@@ -1810,17 +1820,17 @@ void rocketnet_server_stats( const struct rocketnet_server_t * server, struct ro
     stats->packets_received = counts[RN_SERVER_PACKETS_RECEIVED];
     stats->bytes_sent = counts[RN_SERVER_BYTES_SENT];
     stats->bytes_received = counts[RN_SERVER_BYTES_RECEIVED];
-    stats->clients_connected = counts[RN_SERVER_CLIENTS_CONNECTED];
-    stats->clients_denied_full = counts[RN_SERVER_CLIENTS_DENIED_FULL];
-    stats->handshakes_over_budget = counts[RN_SERVER_HANDSHAKES_OVER_BUDGET];
+    stats->connections_accepted = counts[RN_SERVER_CLIENTS_CONNECTED];
+    stats->connections_denied_full = counts[RN_SERVER_CLIENTS_DENIED_FULL];
+    stats->handshakes_dropped_over_budget = counts[RN_SERVER_HANDSHAKES_OVER_BUDGET];
     stats->payloads_received = counts[RN_SERVER_PAYLOADS_RECEIVED];
     stats->messages_resent = counts[RN_SERVER_MESSAGES_RESENT];
-    stats->messages_duplicate = counts[RN_SERVER_MESSAGES_DUPLICATE];
+    stats->messages_duplicated = counts[RN_SERVER_MESSAGES_DUPLICATE];
     stats->receipts_acked = counts[RN_SERVER_RECEIPTS_ACKED];
     stats->receipts_lost = counts[RN_SERVER_RECEIPTS_LOST];
     stats->receipts_dropped = counts[RN_SERVER_RECEIPTS_DROPPED];
-    stats->budget_drops = counts[RN_SERVER_BUDGET_DROPS];
-    stats->not_connected_drops = counts[RN_SERVER_NOT_CONNECTED_DROPS];
+    stats->messages_dropped_over_budget = counts[RN_SERVER_BUDGET_DROPS];
+    stats->messages_dropped_not_connected = counts[RN_SERVER_NOT_CONNECTED_DROPS];
 }
 
 void rocketnet_server_client_stats( const struct rocketnet_server_t * server, int client_index, struct rocketnet_server_client_stats_t * stats )

@@ -249,7 +249,7 @@ static void test_connection_reset_inventory_covers_every_field()
     rocketnet_client_connection_reset( object );
     const rn_endpoint_t fresh_endpoint = *connection;
     const rn_message_connection_t fresh_connection = *connection;
-    connection->disconnect_reason = ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT;
+    connection->disconnect_reason = ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT;
     memset( connection->views, 0xA5, connection->region->delivery_entries );
     memset( connection->cursors, 0xA5,
             sizeof(uint32_t) * (size_t) connection->region->num_channels );
@@ -475,8 +475,8 @@ static void reset_loopback_slot_reuse_scenario()
     reset_loopback_step( &f );
     rocketnet_server_transport_poison_slot_for_test( rocketnet_message_server_transport( f.server ), a_slot );
 
-    rn_message_object_kick( &f.server->object, a_slot, ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
-    check( rocketnet_message_server_disconnect_reason( f.server, a_slot ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
+    rn_message_object_kick( &f.server->object, a_slot, ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
+    check( rocketnet_message_server_disconnect_reason( f.server, a_slot ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
     reset_loopback_step( &f );
     check( !rocketnet_message_server_client_connected( f.server, a_slot ) );
     reset_loopback_step( &f );
@@ -558,7 +558,7 @@ static void reset_loopback_other_slot_scenario()
     const uint8_t payload[] = { 's', 'u', 'r', 'v', 'i', 'v', 'e' };
     check( rocketnet_message_client_send( f.clients[1], 2, ROCKETNET_RELIABILITY_RELIABLE_ORDERED,
         payload, sizeof(payload) ) != 0 );
-    rn_message_object_kick( &f.server->object, a, ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
+    rn_message_object_kick( &f.server->object, a, ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
     int delivered = 0;
     for ( int i = 0; i < 400 && !delivered; i++ )
     {
@@ -1006,17 +1006,17 @@ static void reset_loopback_server_reliable_timeout_reason_scenario( const rocket
     rocketnet_message_server_send_packets( f.server );
 
     // Do not update the client: the real endpoint resend window expires.
-    for ( int i = 0; i < 40 && rocketnet_message_server_disconnect_reason( f.server, slot ) != ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT; i++ )
+    for ( int i = 0; i < 40 && rocketnet_message_server_disconnect_reason( f.server, slot ) != ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT; i++ )
     {
         f.now += 0.05;
         check( rocketnet_message_server_update( f.server, f.now ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_server_send_packets( f.server );
     }
-    check( rocketnet_message_server_disconnect_reason( f.server, slot ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
+    check( rocketnet_message_server_disconnect_reason( f.server, slot ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
     check( rocketnet_message_server_disconnect_reason( f.server, 1 - slot ) == ROCKETNET_DISCONNECT_REASON_NONE );
     f.now += 0.01;
     check( rocketnet_message_server_update( f.server, f.now ) == ROCKETNET_UPDATE_OK );
-    check( rocketnet_message_server_disconnect_reason( f.server, slot ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
+    check( rocketnet_message_server_disconnect_reason( f.server, slot ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
 
     rocketnet_message_client_destroy( f.clients[0] );
     f.clients[0] = NULL;
@@ -1044,16 +1044,16 @@ static void reset_loopback_client_reliable_timeout_reason_scenario( const rocket
     rocketnet_message_client_send_packets( f.clients[0] );
 
     // Do not update the server: the client endpoint ends the connection.
-    for ( int i = 0; i < 40 && rocketnet_message_client_disconnect_reason( f.clients[0] ) != ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT; i++ )
+    for ( int i = 0; i < 40 && rocketnet_message_client_disconnect_reason( f.clients[0] ) != ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT; i++ )
     {
         f.now += 0.05;
         check( rocketnet_message_client_update( f.clients[0], f.now ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_client_send_packets( f.clients[0] );
     }
-    check( rocketnet_message_client_disconnect_reason( f.clients[0] ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
+    check( rocketnet_message_client_disconnect_reason( f.clients[0] ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
     f.now += 0.01;
     check( rocketnet_message_client_update( f.clients[0], f.now ) == ROCKETNET_UPDATE_OK );
-    check( rocketnet_message_client_disconnect_reason( f.clients[0] ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
+    check( rocketnet_message_client_disconnect_reason( f.clients[0] ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
 
     // BASE has no reconnect operation on an existing client object. A newly
     // established real client starts with NONE; the retained old object above

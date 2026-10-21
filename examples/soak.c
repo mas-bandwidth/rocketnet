@@ -363,8 +363,8 @@ int main( int argc, char ** argv ) {
     uint64_t srv_bytes_tx = srv_stats.bytes_sent;
     uint64_t srv_bytes_rx = srv_stats.bytes_received;
     CHECK( srv_stats.receipts_lost == 0 );
-    CHECK( srv_stats.budget_drops == 0 );
-    CHECK( srv_stats.api_misuse == 0 );
+    CHECK( srv_stats.messages_dropped_over_budget == 0 );
+    CHECK( srv_stats.api_misuses == 0 );
     CHECK( sent_rel > 0 && recv_rel == sent_rel && acked_total == sent_rel && recv_seq > 0 && corrupt == 0 && gaps == 0 );
     for ( int pass = 0; pass < 2 && rocketnet_server_num_connected_clients( server ) > 0; pass++ ) {
         for ( int base = 0; base < num_clients; base += DISCONNECT_BATCH ) {

@@ -228,7 +228,7 @@ static void test_public_step_driven_client_delivers_both_ways()
 REGISTER_UNIT_TEST( test_public_step_driven_client_delivers_both_ways );
 
 // the client's counters, in the stats struct's order
-#define PUBLIC_STEP_NUM_COUNTERS 12
+#define PUBLIC_STEP_NUM_COUNTERS 11
 
 static void public_step_trace( const public_step_identity_t * identity, uint16_t port,
                                uint64_t * counters )
@@ -245,8 +245,8 @@ static void public_step_trace( const public_step_identity_t * identity, uint16_t
     struct rocketnet_client_stats_t stats;
     rocketnet_client_stats( pair.client, &stats );
     const uint64_t values[PUBLIC_STEP_NUM_COUNTERS] = { stats.packets_sent, stats.packets_received, stats.bytes_sent,
-        stats.bytes_received, stats.payloads_received, stats.messages_resent, stats.messages_duplicate,
-        stats.receipts_acked, stats.receipts_lost, stats.budget_drops, stats.send_deferred, stats.not_connected_drops };
+        stats.bytes_received, stats.payloads_received, stats.messages_resent, stats.messages_duplicated,
+        stats.receipts_acked, stats.receipts_lost, stats.messages_dropped_over_budget, stats.messages_dropped_not_connected };
     memcpy( counters, values, sizeof( values ) );
     public_step_pair_destroy( &pair );
 }

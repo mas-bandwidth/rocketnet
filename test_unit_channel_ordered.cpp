@@ -572,7 +572,7 @@ static void test_small_packed_and_resent_until_packet_acked()
         check( write_packets( c, 1.6, sent, 4 ) >= 0 );                  // resent, still inside the timeout
         check( rn_ordered_decide( &c->ordered ) == ROCKETNET_DISCONNECT_REASON_NONE );
         check( write_packets( c, 2.5, sent, 4 ) == 0 );                  // past it: nothing more is sent
-        check( rn_ordered_decide( &c->ordered ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
+        check( rn_ordered_decide( &c->ordered ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
         node_free( c );
     }
 

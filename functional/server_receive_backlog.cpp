@@ -196,7 +196,7 @@ void rocketnet_test_server_receive_keeps_up_with_max_clients()
 
         if ( attempts >= 600 && elapsed >= connect_deadline )
         {
-            printf( "server_receive_backlog connect deadline: attempts=%d clients_connected=%d server_connected=%d elapsed=%.6fs\n",
+            printf( "server_receive_backlog connect deadline: attempts=%d connections_accepted=%d server_connected=%d elapsed=%.6fs\n",
                     attempts,
                     server_receive_backlog_connected_clients( clients ),
                     rocketnet_server_transport_num_connected_clients( server ),

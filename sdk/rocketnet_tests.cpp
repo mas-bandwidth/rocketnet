@@ -8060,7 +8060,7 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_client_update( NULL, 1000.0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_client_send_packets( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_client_disconnect( NULL ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_state( NULL ) == ROCKETNET_CLIENT_STATE_INVALID ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_state( NULL ) == ROCKETNET_CLIENT_STATE_DISCONNECTED ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_index( NULL ) == -1 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_transport_name( NULL ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_start_message( NULL, 0, ROCKETNET_RELIABILITY_RELIABLE, 4 ) == NULL ) );
@@ -8078,12 +8078,12 @@ void rocketnet_test_public_api_null()
         RN_TEST_ONE_MISUSE( rocketnet_client_stats( NULL, NULL ) );
         memset( &client_stats, 0xA5, sizeof( client_stats ) );
         RN_TEST_ONE_MISUSE( rocketnet_client_stats( NULL, &client_stats ) );
-        rocketnet_check( client_stats.api_misuse == rocketnet_api_misuse_count() );
+        rocketnet_check( client_stats.api_misuses == rocketnet_api_misuse_count() );
         rocketnet_check( client_stats.thread_priority_refusals == rocketnet_get_thread_priority_refusals() );
         rocketnet_check( client_stats.packets_sent == 0 && client_stats.packets_received == 0 && client_stats.bytes_sent == 0 && client_stats.bytes_received == 0 );
-        rocketnet_check( client_stats.payloads_received == 0 && client_stats.messages_resent == 0 && client_stats.messages_duplicate == 0 );
-        rocketnet_check( client_stats.receipts_acked == 0 && client_stats.receipts_lost == 0 && client_stats.budget_drops == 0 );
-        rocketnet_check( client_stats.send_deferred == 0 && client_stats.not_connected_drops == 0 );
+        rocketnet_check( client_stats.payloads_received == 0 && client_stats.messages_resent == 0 && client_stats.messages_duplicated == 0 );
+        rocketnet_check( client_stats.receipts_acked == 0 && client_stats.receipts_lost == 0 && client_stats.messages_dropped_over_budget == 0 );
+        rocketnet_check( client_stats.messages_dropped_not_connected == 0 );
         rocketnet_check( client_stats.rtt == 0.0 && client_stats.jitter == 0.0 && client_stats.packet_loss == 0.0 );
         rocketnet_check( client_stats.packets_sent_per_second == 0.0 && client_stats.packets_received_per_second == 0.0 );
         rocketnet_check( client_stats.bandwidth_sent_kbps == 0.0 && client_stats.bandwidth_received_kbps == 0.0 );
@@ -8122,12 +8122,12 @@ void rocketnet_test_public_api_null()
         RN_TEST_ONE_MISUSE( rocketnet_server_stats( NULL, NULL ) );
         memset( &server_stats, 0xA5, sizeof( server_stats ) );
         RN_TEST_ONE_MISUSE( rocketnet_server_stats( NULL, &server_stats ) );
-        rocketnet_check( server_stats.api_misuse == rocketnet_api_misuse_count() );
+        rocketnet_check( server_stats.api_misuses == rocketnet_api_misuse_count() );
         rocketnet_check( server_stats.thread_priority_refusals == rocketnet_get_thread_priority_refusals() );
         rocketnet_check( server_stats.packets_sent == 0 && server_stats.packets_received == 0 && server_stats.bytes_sent == 0 && server_stats.bytes_received == 0 );
-        rocketnet_check( server_stats.clients_connected == 0 && server_stats.clients_denied_full == 0 && server_stats.handshakes_over_budget == 0 );
-        rocketnet_check( server_stats.payloads_received == 0 && server_stats.messages_resent == 0 && server_stats.messages_duplicate == 0 );
-        rocketnet_check( server_stats.receipts_acked == 0 && server_stats.receipts_lost == 0 && server_stats.budget_drops == 0 && server_stats.not_connected_drops == 0 );
+        rocketnet_check( server_stats.connections_accepted == 0 && server_stats.connections_denied_full == 0 && server_stats.handshakes_dropped_over_budget == 0 );
+        rocketnet_check( server_stats.payloads_received == 0 && server_stats.messages_resent == 0 && server_stats.messages_duplicated == 0 );
+        rocketnet_check( server_stats.receipts_acked == 0 && server_stats.receipts_lost == 0 && server_stats.messages_dropped_over_budget == 0 && server_stats.messages_dropped_not_connected == 0 );
         rocketnet_check( server_stats.packets_sent_per_second == 0.0 && server_stats.packets_received_per_second == 0.0 );
         rocketnet_check( server_stats.bandwidth_sent_kbps == 0.0 && server_stats.bandwidth_received_kbps == 0.0 );
 
@@ -13113,8 +13113,8 @@ void rocketnet_test_public_send_kbps_default_and_negative()
 
     // the setter: the rate is checked first, then the connection
     rocketnet_check( rocketnet_client_set_send_kbps( client, -1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
-    rocketnet_check( rocketnet_client_set_send_kbps( client, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_INVALID_ARGUMENT );   // in range, but not CONNECTED
-    rocketnet_check( rocketnet_client_set_send_kbps( client, 0 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    rocketnet_check( rocketnet_client_set_send_kbps( client, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );   // in range, not CONNECTED: a no-op
+    rocketnet_check( rocketnet_client_set_send_kbps( client, 0 ) == ROCKETNET_STATUS_OK );
     rocketnet_client_destroy( client );
 
     // client: a negative rate is refused at create
@@ -13136,8 +13136,8 @@ void rocketnet_test_public_send_kbps_default_and_negative()
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &status );
     rocketnet_check( server != NULL && status == ROCKETNET_STATUS_OK );
     rocketnet_check( rocketnet_server_set_send_kbps( server, 0, -1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
-    rocketnet_check( rocketnet_server_set_send_kbps( server, 0, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_INVALID_ARGUMENT );   // in range, but no CONNECTED client
-    rocketnet_check( rocketnet_server_set_send_kbps( server, 0, 0 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    rocketnet_check( rocketnet_server_set_send_kbps( server, 0, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );   // in range, no CONNECTED client: a no-op
+    rocketnet_check( rocketnet_server_set_send_kbps( server, 0, 0 ) == ROCKETNET_STATUS_OK );
     rocketnet_server_destroy( server );
 
     server_config.per_client_send_kbps = -1;

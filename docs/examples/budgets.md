@@ -15,7 +15,7 @@ what a budget does when it is exceeded.
 3. Queue a burst of unreliable messages far above the budget. Unreliable
    messages over budget are dropped and counted. The example calls
    `rocketnet_client_stats` and prints
-   `rocketnet_client_stats_t.budget_drops`.
+   `rocketnet_client_stats_t.messages_dropped_over_budget`.
 4. Queue a burst of reliable messages of the same size. Reliable messages wait
    for budget and are never dropped, and the example prints how many arrived.
 
@@ -43,7 +43,7 @@ inside sixty seconds and prints `PASS` as its last line; any failure prints one
 
 The program prints the two header defaults, the configured client rate, the
 numeric status from `rocketnet_client_set_send_kbps`, the final
-`budget_drops` value, and the reliable arrival count. A successful runtime
+`messages_dropped_over_budget` value, and the reliable arrival count. A successful runtime
 change prints status `0`, the numeric value of `ROCKETNET_STATUS_OK`. The drop
 count is run-dependent but must be nonzero, while the reliable arrival line
 must report every queued reliable message.

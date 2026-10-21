@@ -446,7 +446,7 @@ static void test_endpoint_back_to_back_over_lossy_array()
         rn_endpoint_config_tick( &b->endpoint, 1, start + timeout * 0.5 );
         check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
         rn_endpoint_config_tick( &b->endpoint, 0, start + timeout );   // started, the wait times out whatever the transport says
-        check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
+        check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
         rn_endpoint_reset( &b->endpoint, start + timeout );
         check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
     }

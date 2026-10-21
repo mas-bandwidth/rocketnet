@@ -3686,12 +3686,11 @@ void rocketnet_test_public_client_server_queries()
     rocketnet_check( rn_client_stats_of( client ).payloads_received == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_CLIENT_PAYLOAD_DELIVERED ) );
     rocketnet_check( rn_client_stats_of( client ).payloads_received > 0 );
     rocketnet_check( rn_client_stats_of( client ).messages_resent == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_MESSAGE_RESENT ) );
-    rocketnet_check( rn_client_stats_of( client ).messages_duplicate == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_MESSAGE_DUPLICATE ) );
+    rocketnet_check( rn_client_stats_of( client ).messages_duplicated == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_MESSAGE_DUPLICATE ) );
     rocketnet_check( rn_client_stats_of( client ).receipts_acked == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED ) );
     rocketnet_check( rn_client_stats_of( client ).receipts_acked > 0 );
     rocketnet_check( rn_client_stats_of( client ).receipts_lost == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS ) );
-    rocketnet_check( rn_client_stats_of( client ).budget_drops == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET ) );
-    rocketnet_check( rn_client_stats_of( client ).send_deferred == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED ) );
+    rocketnet_check( rn_client_stats_of( client ).messages_dropped_over_budget == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET ) );
 
     rocketnet_check( rn_client_stats_of( client ).rtt == (double) cs.rtt );
     rocketnet_check( rn_client_stats_of( client ).jitter == (double) cs.jitter );
@@ -3712,18 +3711,18 @@ void rocketnet_test_public_client_server_queries()
     rocketnet_check( rn_server_stats_of( server ).packets_received == ss.packets_received && ss.packets_received > 0 );
     rocketnet_check( rn_server_stats_of( server ).bytes_sent == ss.bytes_sent && ss.bytes_sent > ss.packets_sent );
     rocketnet_check( rn_server_stats_of( server ).bytes_received == ss.bytes_received && ss.bytes_received > ss.packets_received );
-    rocketnet_check( rn_server_stats_of( server ).clients_connected == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_CLIENT_CONNECTED ) );
-    rocketnet_check( rn_server_stats_of( server ).clients_connected == 1 );
-    rocketnet_check( rn_server_stats_of( server ).clients_denied_full == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS ) + rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_SLOTS ) );
-    rocketnet_check( rn_server_stats_of( server ).handshakes_over_budget == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED ) );
+    rocketnet_check( rn_server_stats_of( server ).connections_accepted == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_CLIENT_CONNECTED ) );
+    rocketnet_check( rn_server_stats_of( server ).connections_accepted == 1 );
+    rocketnet_check( rn_server_stats_of( server ).connections_denied_full == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS ) + rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_SLOTS ) );
+    rocketnet_check( rn_server_stats_of( server ).handshakes_dropped_over_budget == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED ) );
     rocketnet_check( rn_server_stats_of( server ).payloads_received == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_PAYLOAD_DELIVERED ) );
     rocketnet_check( rn_server_stats_of( server ).payloads_received > 0 );
     rocketnet_check( rn_server_stats_of( server ).messages_resent == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_MESSAGE_RESENT ) );
-    rocketnet_check( rn_server_stats_of( server ).messages_duplicate == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_MESSAGE_DUPLICATE ) );
+    rocketnet_check( rn_server_stats_of( server ).messages_duplicated == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_MESSAGE_DUPLICATE ) );
     rocketnet_check( rn_server_stats_of( server ).receipts_acked == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED ) );
     rocketnet_check( rn_server_stats_of( server ).receipts_acked > 0 );
     rocketnet_check( rn_server_stats_of( server ).receipts_lost == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS ) );
-    rocketnet_check( rn_server_stats_of( server ).budget_drops == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET ) );
+    rocketnet_check( rn_server_stats_of( server ).messages_dropped_over_budget == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET ) );
 
     rocketnet_check( rn_server_stats_of( server ).packets_sent_per_second == (double) ss.packets_sent_per_second );
     rocketnet_check( rn_server_stats_of( server ).packets_received_per_second == (double) ss.packets_received_per_second );

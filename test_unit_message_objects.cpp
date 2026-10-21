@@ -3028,7 +3028,7 @@ static void test_same_client_id_reconnect_in_one_update_resets_the_slot()
     check( rocketnet_server_client_id( world.server, 0 ) == RECONNECT_CLIENT_ID );
     check( reconnect_exchange( &world, 0, 0xA1, 3 ) );
     check( rocketnet_client_state( world.clients[1] ) == ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE );
-    check( rn_server_stats_of( world.server ).clients_connected == 1 );
+    check( rn_server_stats_of( world.server ).connections_accepted == 1 );
 
     // A disconnects; in the next server update its disconnect is processed
     // and then B's response, which takes slot 0 with the same client id. B's
@@ -3036,7 +3036,7 @@ static void test_same_client_id_reconnect_in_one_update_resets_the_slot()
     world.time += 0.25;
     rocketnet_client_disconnect( world.clients[0] );
     reconnect_pump( &world );
-    check( rn_server_stats_of( world.server ).clients_connected == 2 );
+    check( rn_server_stats_of( world.server ).connections_accepted == 2 );
     check( rocketnet_server_client_connected( world.server, 0 ) != 0 );
     check( rocketnet_server_client_id( world.server, 0 ) == RECONNECT_CLIENT_ID );
 

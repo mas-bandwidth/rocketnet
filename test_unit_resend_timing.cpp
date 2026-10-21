@@ -310,7 +310,7 @@ static void test_resend_timing_witness_replays()
 
     check( sampled );
     check( timed_out );                                            // every send lost: the timeout ends it
-    check( f.ack.error == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
+    check( f.ack.error == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
     check( attempts >= 4 );                                        // ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS
     resend_timing_close( &f );
 }

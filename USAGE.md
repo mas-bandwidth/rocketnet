@@ -34,7 +34,7 @@ shutdown and process-wide logging setup are serialized with application work.
 Set custom allocator callbacks before initialization, with no live allocations.
 A refused `rocketnet_allocator` replacement returns its status; an accepted
 one returns `ROCKETNET_STATUS_OK`. Every refused API call logs one line and increments
-the process-wide `api_misuse` count that the client and server stats structs
+the process-wide `api_misuses` count that the client and server stats structs
 carry.
 
 The public API is NULL safe at the boundary. Every entry point checks each
@@ -429,13 +429,13 @@ the server alike: the client while `rocketnet_client_state` is
 client from create until CONNECTED, or after it disconnects; a server index
 below `max_clients` with no CONNECTED client, or a stopped server) is dropped:
 start message returns `NULL`, logs nothing and adds 1 to the
-`not_connected_drops` field of the client or server stats, and finish message
+`messages_dropped_not_connected` field of the client or server stats, and finish message
 returns `0`.
 The drop is normal, never misuse, and nothing is held for a later send. A game
 that sends every frame needs no state check: the same `if ( out )` that covers
 the other `NULL` returns covers this one, and the first frame after CONNECTED
 carries the current state. A server index at or past `max_clients` is misuse,
-counted in the stats' `api_misuse`.
+counted in the stats' `api_misuses`.
 
 The reliability is one of `ROCKETNET_RELIABILITY_UNRELIABLE`,
 `ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED`, `ROCKETNET_RELIABILITY_RELIABLE`,
@@ -583,13 +583,13 @@ Three calls each fill a caller struct with the current stats:
 `rocketnet_server_stats` fills `struct rocketnet_server_stats_t`, and
 `rocketnet_server_client_stats` fills `struct rocketnet_server_client_stats_t`
 for one slot. The counts (`packets_sent`, `bytes_received`, `messages_resent`,
-`receipts_lost`, `budget_drops`, `not_connected_drops` and the rest) are
+`receipts_lost`, `messages_dropped_over_budget`, `messages_dropped_not_connected` and the rest) are
 monotonic over the object's life and start at zero at create. The measured
 values are doubles: `rtt` and `jitter` in milliseconds, `packet_loss` as a
 percentage, and trailing rates (`bandwidth_sent_kbps` and the others). The
 per-client stats cover the slot's current connection and go back to zero when a
 new connection takes the slot. The client and server structs also carry two
-process-wide counts, `api_misuse` and `thread_priority_refusals`.
+process-wide counts, `api_misuses` and `thread_priority_refusals`.
 
 Watch jitter and loss when conditions worsen; the rtt figure is the minimum
 over the retained history, so it cannot track latency upward until every lower
@@ -610,7 +610,7 @@ void report_quality( const struct rocketnet_client_t * client, const struct rock
 
     struct rocketnet_server_stats_t server_stats;
     rocketnet_server_stats( server, &server_stats );
-    uint64_t clients_connected = server_stats.clients_connected;
+    uint64_t connections_accepted = server_stats.connections_accepted;
 
     struct rocketnet_server_client_stats_t slot_stats;
     rocketnet_server_client_stats( server, client_index, &slot_stats );
@@ -620,7 +620,7 @@ void report_quality( const struct rocketnet_client_t * client, const struct rock
     (void) receipts_lost;
     (void) rtt_ms;
     (void) loss_percent;
-    (void) clients_connected;
+    (void) connections_accepted;
     (void) client_rtt_ms;
 }
 ```
@@ -651,7 +651,7 @@ mismatch and exhausted message memory read `ROCKETNET_CLIENT_STATE_RELIABLE_TIME
 `ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION`, `ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH`
 and `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED`. Each stays until
 disconnect, or until connect ends it to start the next connection. A NULL
-client reads as `ROCKETNET_CLIENT_STATE_INVALID`.
+client reads as `ROCKETNET_CLIENT_STATE_DISCONNECTED`, counted as misuse.
 
 ```c
 #include "rocketnet.h"

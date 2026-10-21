@@ -58,8 +58,8 @@ Receipt-bearing sends report `ROCKETNET_RECEIPT_STATUS_ACKED` or
 `rocketnet_server_receipts`. Receipt serials are scoped to their endpoint.
 The stats structs filled by `rocketnet_client_stats`, `rocketnet_server_stats`
 and `rocketnet_server_client_stats` distinguish ordinary connection-state drops
-(`not_connected_drops`), budget drops (`budget_drops`) and API misuse
-(`api_misuse`). The field and enum comments in `sdk/rocketnet.h` define each
+(`messages_dropped_not_connected`), budget drops (`messages_dropped_over_budget`) and API misuse
+(`api_misuses`). The field and enum comments in `sdk/rocketnet.h` define each
 public stat and status exactly.
 
 ## Memory and failure

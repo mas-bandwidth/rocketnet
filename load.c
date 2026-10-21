@@ -429,15 +429,15 @@ static int cmp_double( const void * a, const void * b )
    one stats call fills the struct, and the table walks its fields. */
 #define LOAD_SERVER_COUNTER_FIELDS( X ) \
     X( packets_sent ) X( packets_received ) X( bytes_sent ) X( bytes_received ) \
-    X( clients_connected ) X( clients_denied_full ) X( handshakes_over_budget ) \
-    X( payloads_received ) X( messages_resent ) X( messages_duplicate ) \
-    X( receipts_acked ) X( receipts_lost ) X( budget_drops ) X( not_connected_drops )
+    X( connections_accepted ) X( connections_denied_full ) X( handshakes_dropped_over_budget ) \
+    X( payloads_received ) X( messages_resent ) X( messages_duplicated ) \
+    X( receipts_acked ) X( receipts_lost ) X( messages_dropped_over_budget ) X( messages_dropped_not_connected )
 
 #define LOAD_CLIENT_COUNTER_FIELDS( X ) \
     X( packets_sent ) X( packets_received ) X( bytes_sent ) X( bytes_received ) \
-    X( payloads_received ) X( messages_resent ) X( messages_duplicate ) \
-    X( receipts_acked ) X( receipts_lost ) X( budget_drops ) X( send_deferred ) \
-    X( not_connected_drops )
+    X( payloads_received ) X( messages_resent ) X( messages_duplicated ) \
+    X( receipts_acked ) X( receipts_lost ) X( messages_dropped_over_budget ) \
+    X( messages_dropped_not_connected )
 
 #define LOAD_COUNT_ONE( name ) + 1
 #define LOAD_NAME_ONE( name ) #name,
@@ -1040,8 +1040,8 @@ int main( int argc, char ** argv )
         {
             struct rocketnet_client_stats_t stats;
             rocketnet_client_stats( clients[i], &stats );
-            client_counted_drops += stats.budget_drops;
-            client_counted_drops += stats.not_connected_drops;
+            client_counted_drops += stats.messages_dropped_over_budget;
+            client_counted_drops += stats.messages_dropped_not_connected;
         }
     }
 
@@ -1049,8 +1049,8 @@ int main( int argc, char ** argv )
     {
         struct rocketnet_server_stats_t stats;
         rocketnet_server_stats( server, &stats );
-        server_counted_drops += stats.budget_drops;
-        server_counted_drops += stats.not_connected_drops;
+        server_counted_drops += stats.messages_dropped_over_budget;
+        server_counted_drops += stats.messages_dropped_not_connected;
     }
 
     const uint64_t total_counted_drops = client_counted_drops + server_counted_drops;
