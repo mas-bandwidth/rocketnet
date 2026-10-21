@@ -456,6 +456,12 @@ if(ROCKETNET_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 if(ROCKETNET_BUILD_TESTS)
+    # A real C translation unit must link the internal token helpers used by
+    # client.c and soak.c against their C++ implementation.
+    add_executable(test_internal_c tools/internal_c/main.c)
+    set_target_properties(test_internal_c PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+    target_link_libraries(test_internal_c PRIVATE rocketnet_dev)
+    rocketnet_warning_floor(test_internal_c)
     add_executable(test_sodium test_sodium.c)
     target_link_libraries(test_sodium PRIVATE rocketnet)
     rocketnet_use_sodium(test_sodium)
