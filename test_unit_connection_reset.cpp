@@ -263,8 +263,8 @@ static void test_connection_reset_inventory_covers_every_field()
         message_connection_fields, RESET_COUNT( message_connection_fields ), sizeof(rn_endpoint_t),
         sizeof(rn_message_connection_t), alignof(rn_message_connection_t), failure, sizeof(failure) ), failure );
     rocketnet_client_connection_reset( object );
-    const rn_endpoint_t fresh_endpoint = *connection;
     const rn_message_connection_t fresh_connection = *connection;
+    const rn_endpoint_t & fresh_endpoint = fresh_connection;
     const rn_message_connection_hot_t fresh_hot = *connection->hot;
     connection->disconnect_reason = ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT;
     memset( connection->hot->views, 0xA5, connection->region->delivery_entries );
