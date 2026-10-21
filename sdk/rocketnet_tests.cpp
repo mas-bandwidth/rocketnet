@@ -7726,6 +7726,8 @@ static const char * rocketnet_test_layer_exports[] =
     "rocketnet_client_transport_create",
     "rocketnet_client_transport_create_ex",
     "rocketnet_client_transport_create_sized",
+    "rocketnet_client_transport_stop",
+    "rocketnet_client_transport_stopped",
     "rocketnet_client_transport_destroy",
     "rocketnet_client_transport_update",
     "rocketnet_client_transport_send_packet",
@@ -7756,6 +7758,7 @@ static const char * rocketnet_test_layer_exports[] =
     "rocketnet_server_transport_create_sized",
     "rocketnet_server_transport_destroy",
     "rocketnet_server_transport_stop",
+    "rocketnet_server_transport_stopped",
     "rocketnet_server_transport_state",
     "rocketnet_server_transport_port",
     "rocketnet_server_transport_io_name",
@@ -7863,6 +7866,8 @@ static const char * rocketnet_test_layer_null_case_exports[] =
     "rocketnet_client_transport_create",
     "rocketnet_client_transport_create_ex",
     "rocketnet_client_transport_create_sized",
+    "rocketnet_client_transport_stop",
+    "rocketnet_client_transport_stopped",
     "rocketnet_client_transport_destroy",
     "rocketnet_client_transport_update",
     "rocketnet_client_transport_send_packet",
@@ -7892,6 +7897,7 @@ static const char * rocketnet_test_layer_null_case_exports[] =
     "rocketnet_server_transport_create_sized",
     "rocketnet_server_transport_destroy",
     "rocketnet_server_transport_stop",
+    "rocketnet_server_transport_stopped",
     "rocketnet_server_transport_state",
     "rocketnet_server_transport_port",
     "rocketnet_server_transport_io_name",
@@ -12904,6 +12910,27 @@ void rocketnet_test_public_config_zeroed_refused()
 // struct this file compiled against, and a config filled that way creates.
 // The server is created stopped and binds nothing.
 
+// These SDK fixtures are pristine handles or explicitly caller-stepped
+// loopback endpoints. Shutdown progress is a bounded number of synthetic
+// update steps; no socket, sleeping or real-time wait belongs in this suite.
+static void rn_test_client_shutdown( struct rocketnet_client_t * client )
+{
+    rocketnet_client_disconnect( client );
+    for ( int i = 0; i < 8 && !rocketnet_client_disconnected( client ); ++i )
+        rocketnet_client_update( client, 1000.0 );
+    rocketnet_check( rocketnet_client_disconnected( client ) );
+    rocketnet_client_destroy( client );
+}
+
+static void rn_test_server_shutdown( struct rocketnet_server_t * server )
+{
+    rocketnet_server_stop( server );
+    for ( int i = 0; i < 8 && !rocketnet_server_stopped( server ); ++i )
+        rocketnet_server_update( server, 1000.0 );
+    rocketnet_check( rocketnet_server_stopped( server ) );
+    rocketnet_server_destroy( server );
+}
+
 void rocketnet_test_public_default_config_sets_config_bytes()
 {
     struct rocketnet_client_config_t client_config;
@@ -12915,7 +12942,7 @@ void rocketnet_test_public_default_config_sets_config_bytes()
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
     rocketnet_check( client != NULL && status == ROCKETNET_STATUS_OK );
     rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
-    rocketnet_client_destroy( client );
+    rn_test_client_shutdown( client );
 
     struct rocketnet_server_config_t server_config;
     memset( &server_config, 0, sizeof( server_config ) );
@@ -12928,7 +12955,7 @@ void rocketnet_test_public_default_config_sets_config_bytes()
     rocketnet_check( server != NULL && status == ROCKETNET_STATUS_OK );
     rocketnet_check( !rocketnet_server_running( server ) );
     rocketnet_check( rocketnet_server_max_clients( server ) == 4 );
-    rocketnet_server_destroy( server );
+    rn_test_server_shutdown( server );
 }
 
 // docs/ABI-EVOLUTION.md at the exported fill: an older caller's smaller
@@ -12981,7 +13008,7 @@ void rocketnet_test_public_config_bytes_older_and_newer()
         enum rocketnet_status_t status = ROCKETNET_STATUS_INVALID_ARGUMENT;
         struct rocketnet_client_t * client = rocketnet_client_create( NULL, &older, &status );
         rocketnet_check( client != NULL && status == ROCKETNET_STATUS_OK );
-        rocketnet_client_destroy( client );
+        rn_test_client_shutdown( client );
         rocketnet_check( rocketnet_client_required_memory( &older ) == rocketnet_client_required_memory( &client_defaults ) );
     }
 
@@ -12999,7 +13026,7 @@ void rocketnet_test_public_config_bytes_older_and_newer()
         enum rocketnet_status_t status = ROCKETNET_STATUS_INVALID_ARGUMENT;
         struct rocketnet_client_t * client = rocketnet_client_create( NULL, &newer.config, &status );
         rocketnet_check( client != NULL && status == ROCKETNET_STATUS_OK );
-        rocketnet_client_destroy( client );
+        rn_test_client_shutdown( client );
         rocketnet_check( rn_test_bytes_are( newer.tail, sizeof( newer.tail ), RN_TEST_CONFIG_SENTINEL ) );
     }
 
@@ -13022,7 +13049,7 @@ void rocketnet_test_public_config_bytes_older_and_newer()
         struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &older, &status );
         rocketnet_check( server != NULL && status == ROCKETNET_STATUS_OK );
         rocketnet_check( rocketnet_server_max_clients( server ) == 4 );
-        rocketnet_server_destroy( server );
+        rn_test_server_shutdown( server );
     }
 
     {
@@ -13039,7 +13066,7 @@ void rocketnet_test_public_config_bytes_older_and_newer()
         enum rocketnet_status_t status = ROCKETNET_STATUS_INVALID_ARGUMENT;
         struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &newer.config, &status );
         rocketnet_check( server != NULL && status == ROCKETNET_STATUS_OK );
-        rocketnet_server_destroy( server );
+        rn_test_server_shutdown( server );
         rocketnet_check( rn_test_bytes_are( newer.tail, sizeof( newer.tail ), RN_TEST_CONFIG_SENTINEL ) );
     }
 }
@@ -13067,7 +13094,7 @@ void rocketnet_test_public_client_index_not_connected()
     rocketnet_check( rocketnet_client_index( client ) == -1 );
     rocketnet_client_update( client, 1000.0 );
     rocketnet_check( rocketnet_client_index( client ) == -1 );
-    rocketnet_client_destroy( client );
+    rn_test_client_shutdown( client );
 }
 
 // Send rates: 0 is the endpoint's default rate, never the ceiling, and
@@ -13108,7 +13135,7 @@ void rocketnet_test_public_send_kbps_default_and_negative()
     rocketnet_check( rocketnet_client_set_send_kbps( client, -1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     rocketnet_check( rocketnet_client_set_send_kbps( client, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );   // in range, not CONNECTED: a no-op
     rocketnet_check( rocketnet_client_set_send_kbps( client, 0 ) == ROCKETNET_STATUS_OK );
-    rocketnet_client_destroy( client );
+    rn_test_client_shutdown( client );
 
     // client: a negative rate is refused at create
     client_config.send_kbps = -1;
@@ -13131,7 +13158,7 @@ void rocketnet_test_public_send_kbps_default_and_negative()
     rocketnet_check( rocketnet_server_set_send_kbps( server, 0, -1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     rocketnet_check( rocketnet_server_set_send_kbps( server, 0, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );   // in range, no CONNECTED client: a no-op
     rocketnet_check( rocketnet_server_set_send_kbps( server, 0, 0 ) == ROCKETNET_STATUS_OK );
-    rocketnet_server_destroy( server );
+    rn_test_server_shutdown( server );
 
     server_config.per_client_send_kbps = -1;
     rocketnet_check( !rocketnet_server_config_resolve( &server_config, true, &server_transport, &message, &kbps ) );
@@ -15094,7 +15121,7 @@ static struct rocketnet_server_t * rocketnet_test_public_loopback_server()
     if ( rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_check( false );
-        rocketnet_server_destroy( server );
+        rn_test_server_shutdown( server );
         return NULL;
     }
     return server;
@@ -15174,7 +15201,7 @@ void rocketnet_test_public_connect_token_string_refused()
     rocketnet_assert_function( saved_assert );
     rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
 
-    rocketnet_client_destroy( client );
+    rn_test_client_shutdown( client );
 }
 
 // The public development round trip: a public loopback server makes its own
@@ -15193,7 +15220,7 @@ void rocketnet_test_public_dev_connect_token_round_trip()
     struct rocketnet_client_t * client = rocketnet_test_public_loopback_client();
     if ( !client )
     {
-        rocketnet_server_destroy( server );
+        rn_test_server_shutdown( server );
         return;
     }
 
@@ -15213,7 +15240,7 @@ void rocketnet_test_public_dev_connect_token_round_trip()
     rocketnet_check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
     rocketnet_check( rocketnet_client_state( client ) > ROCKETNET_CLIENT_STATE_DISCONNECTED );
 
-    rocketnet_client_destroy( client );
-    rocketnet_server_destroy( server );
+    rn_test_client_shutdown( client );
+    rn_test_server_shutdown( server );
 #endif // #if ROCKETNET_DEVELOPMENT
 }
