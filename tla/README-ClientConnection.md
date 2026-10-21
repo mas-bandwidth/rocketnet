@@ -81,6 +81,7 @@ Safety, checked under every loss pattern with no fairness:
 | `TimeoutPairing` | a timeout from waiting state N lands in -(N+1) (S:2074-2077) |
 | `TimeoutHonoured`, `DeadlineHonoured` | the idle timeout and the total deadline fire when due |
 | `NoSendOnArrival` | no receive sends (S:2178-2182) |
+| `OnlyAuthenticatedRefreshes` | the client trusts only the server: in states 1 and 2 of one attempt nothing restarts the receive clock; a cookie's salt is in the clear, so only the challenge and the session packets after it reset it (TRANSPORT.md t11 rule 8, t11.1) |
 | `TypeOK` | types, including both links' |
 
 Liveness, under the fairness described below:
@@ -407,3 +408,63 @@ original parameters and is not a completed proof.
 | 31 | `MCClientConnectionF8Terminal.cfg` | pass |
 | 32 | `MCClientConnectionObsKeys.cfg` | invariant / KeysErasedWhenDown |
 | 33 | `MCClientConnectionBrokenDeniedKeepsKeys.cfg` | invariant / KeysErasedWhenDown |
+
+### 2026-10-21: the cookie restarts nothing (OnlyAuthenticatedRefreshes)
+
+`ClientRecvCookie` no longer sets `cSinceRecv' = 0`, matching
+`rocketnet_client_process_cookie`, which no longer writes
+`last_receive_time` (and no longer takes the round-trip sample). The action
+property `OnlyAuthenticatedRefreshes` says that within one attempt, while
+the client is in states 1 or 2, `cSinceRecv` never goes down.
+`MCClientConnectionCookieTrust.cfg` checks it with a responsive server and
+the idle timeout on (Timeout 3), with `SafetyInvariants`, `TimeoutPairing`
+and `StepsForwardOrFails`: pass, 28,946 distinct states.
+`MCClientConnectionBrokenCookieRefreshes.cfg` is the reversed witness: the
+pre-fix cookie (`ClientRecvCookieRefreshes`, only in `SpecCookieRefreshes`).
+TLC exits 13 with `OnlyAuthenticatedRefreshes` violated in 6 states: connect
+(`cSinceRecv` 0), the request, the server's cookie, one tick (`cSinceRecv`
+1), then the cookie delivered, `cstate` 1 -> 2 and `cSinceRecv` 0. Checked
+against the code by hand: `rocketnet_client_protocol_connect` sets
+`last_receive_time` to the connect time, and the old cookie path set it again
+to the cookie's arrival time, which is what
+`test_client_cookie_does_not_refresh_idle_timer` catches on the old code.
+
+The whole `clientconnection` group was re-measured on captain (Linux, pinned
+jar, `/opt/tla/tlacheck`, one shard per case, 110 s each). Every declared
+outcome holds. Three bench debt cases that timed out before now finish
+inside the budget, because a cookie no longer resets the clock and the state
+space shrank: `SFirst` (2,234 distinct), `SFirstkind` (12,162) and `SDelay`
+(2,196). The other six debt cases still exit 124. `tlacheck merge --keep
+tla/RUNS.tsv` refuses to join these records while eight other groups are
+already stale on the base branch (fragmentsandacks, replaywindow, rnblocks,
+rnchannel, rnchanneltypes, rnreceipts, rnscheduler, rnslots), so
+`tla/RUNS.tsv` is not edited by hand. The records the runner wrote,
+verbatim, for the merge that refreshes those groups:
+
+```
+MCClientConnection.cfg	MCClientConnection.tla	ddf55aaccbc5790c87892c7607906cc80b71773ee3bc5ede2e42868812a4d646	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T15:33:50.570443+00:00	2	192207	33480	78.509	0	PASS	pass	-	110	bounded
+MCClientConnectionLNone.cfg	MCClientConnection.tla	4ab9d74ebc804a598a76386b0dc28ceab82ff2f3a9b42da45e8408a21588d01f	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T15:33:50.563772+00:00	2	81974	14521	33.217	0	PASS	pass	-	110	bounded
+MCClientConnectionLFirst.cfg	MCClientConnection.tla	028907294be906bac8e5815520ab6fa5718e3b311bd456cee256f9090ac91ce7	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T15:33:50.559050+00:00	2	81857	14489	33.492	0	PASS	pass	-	110	bounded
+MCClientConnectionLAlternate.cfg	MCClientConnection.tla	949c9563bfb39374592463c45ef06de67ab1414ec81bfd46d9a873c5fea05db7	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T15:33:50.574947+00:00	2	211590	36965	83.695	0	PASS	pass	-	110	bounded
+MCClientConnectionLBurst.cfg	MCClientConnection.tla	d8a75b1af0d30141854f2f89be7b33589830414b16c40aba29e04d1ce2a12361	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T15:33:50.565091+00:00	2	81851	14487	33.253	0	PASS	pass	-	110	bounded
+MCClientConnectionLArbitrary.cfg	MCClientConnection.tla	596f380c50abf27eafaaec9f85061a32b61d3f439260616e0aedcddd8967f023	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T15:33:50.570376+00:00	2	-	-	110.187	124	FAIL	pass	-	110	bounded
+MCClientConnectionWOnceFirstkind.cfg	MCClientConnection.tla	28d3f45f044955682ccdaf8e2df8a047af485768caefdbdf095d03f61147fe6c	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T15:33:50.562103+00:00	1	9983	2232	8.920	13	PASS	temporal	Connects	110	bounded
+MCClientConnectionWOnceAlternate.cfg	MCClientConnection.tla	eeaf31351f0038b5fc5b95bdae92a654f40eb2fc36e0e43007a60713462bdda2	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T15:33:50.568377+00:00	1	123838	23789	27.353	13	PASS	temporal	Connects	110	bounded
+MCClientConnectionWAnysend.cfg	MCClientConnection.tla	125baa624c3370cda6aa669a6405212ffea285e3d7f81e32a0b3dbe6047c4244	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T15:33:59.664124+00:00	1	183567	33480	37.500	13	PASS	temporal	Connects	110	bounded
+MCClientConnectionLSilent.cfg	MCClientConnection.tla	905e0cc557a194d97ad6ccdc3d702c66d1f6a0be35a43bf14dd210588e14fb70	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T15:34:18.083888+00:00	2	36	20	1.929	0	PASS	pass	-	110	bounded
+MCClientConnectionLCrash.cfg	MCClientConnection.tla	7e4afe9ee715240b818caecea40f2e1eb339f58b3d3b83cb65ad45f7dd6925e2	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T15:34:20.166660+00:00	2	-	-	110.160	124	FAIL	pass	-	110	bounded
+MCClientConnectionSNone.cfg	MCClientConnection.tla	9d719bfa2e2ebbe02773068454c690a2ccc1b3c90571db94d243b1c6e1d0aceb	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T15:34:23.924894+00:00	2	-	-	110.366	124	FAIL	pass	-	110	bounded
+MCClientConnectionSFirst.cfg	MCClientConnection.tla	821f38bea9f788912d056aa43c70510ed4531bbac4f27f2f6ba41a3a88eb5d65	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T15:34:23.955105+00:00	2	9355	2234	4.727	0	PASS	pass	-	110	bounded
+MCClientConnectionSAlternate.cfg	MCClientConnection.tla	ef73ee059c5a8ca6cf97658bc6fbaeb2823d5d42e2075fd6a9f14ed4c79940de	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T15:34:24.199145+00:00	2	-	-	110.287	124	FAIL	pass	-	110	bounded
+MCClientConnectionSBurst.cfg	MCClientConnection.tla	a2751e8a887bb07994eae0fd74626c853e7a26af96543e789a34c0fa4b239c53	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T15:34:28.852588+00:00	2	-	-	110.334	124	FAIL	pass	-	110	bounded
+MCClientConnectionSArbitrary.cfg	MCClientConnection.tla	a0096a06302c3eb3c69054d2cdb608eada41ea30f7dc7a9deb2523382145fe2c	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T15:34:37.499331+00:00	2	-	-	110.264	124	FAIL	pass	-	110	bounded
+MCClientConnectionSFirstkind.cfg	MCClientConnection.tla	42600b4fcbb6ac75c96ee2e824a19ee1005fbdb738ab24674febc69bfba2fad5	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T15:35:09.252298+00:00	2	101789	12162	6.607	0	PASS	pass	-	110	bounded
+MCClientConnectionSDelay.cfg	MCClientConnection.tla	8a674bc41263151014d4bac30ebde134ec16939b6bded3b2f83d5fa999e0916c	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T15:35:14.433799+00:00	2	15104	2196	4.389	0	PASS	pass	-	110	bounded
+MCClientConnectionF4Ephemeral.cfg	MCClientConnection.tla	ee5729eefd5699b5cf00710cd660cbffc3e90749abe2cc47751b6c1bef6e7b83	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T15:35:16.025146+00:00	2	36	20	2.139	0	PASS	pass	-	110	bounded
+MCClientConnectionF8Terminal.cfg	MCClientConnection.tla	abfddd92e891b45f83bc9f5d1f8769973ee9d984168239fee43b7c5b6528d28c	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T15:35:18.392077+00:00	2	357	149	2.030	0	PASS	pass	-	110	bounded
+MCClientConnectionObsKeys.cfg	MCClientConnection.tla	d7988610aba60a605552e02c0e31d42d589025c202f8d2ed487bafc3ad75c82e	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T15:35:18.988305+00:00	1	70215	13010	5.343	12	PASS	invariant	KeysErasedWhenDown	110	bounded
+MCClientConnectionBrokenDeniedKeepsKeys.cfg	MCClientConnection.tla	2e8b7f001fd5174976d3c1c7be58c0156fc3fdadeabe09d7f3277c36be93440e	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T15:35:20.603031+00:00	1	640	250	2.127	12	PASS	invariant	KeysErasedWhenDown	110	bounded
+MCClientConnectionBrokenEarlyFragment.cfg	MCClientConnection.tla	9d54bce581d6400a1e4ff7507b4395bda46ec0cdd1a6d7a0c15bae39ba2fefb1	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T15:35:22.901695+00:00	1	148	78	2.553	12	PASS	invariant	FragmentOnlyWhenConnected	110	bounded
+MCClientConnectionCookieTrust.cfg	MCClientConnection.tla	c1cae5d943c86fcf45aa694fcf808f8030ae8bf4bf486a68fb558c06e7d1fef8	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T15:35:24.497942+00:00	2	158359	28946	7.094	0	PASS	pass	-	110	bounded
+MCClientConnectionBrokenCookieRefreshes.cfg	MCClientConnection.tla	7dd153d222db343a3d957ba53eb60871c865eaf3272311ddfd1ce95a33c4e648	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T15:35:25.618085+00:00	1	30	22	2.288	13	PASS	action	OnlyAuthenticatedRefreshes	110	bounded
+```
