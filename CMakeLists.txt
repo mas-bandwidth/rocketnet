@@ -39,6 +39,7 @@ option(ROCKETNET_BUILD_EXAMPLES "Build the client/server examples" ${ROCKETNET_T
 option(ROCKETNET_BUILD_TOOLS "Build keygen and soak tools" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_IO_URING "Build the io_uring server transport against liburing when it is found (Linux)" ON)
 option(ROCKETNET_SANITIZE_ADDRESS "Build every target with AddressSanitizer" OFF)
+option(ROCKETNET_TEST_DEVELOPMENT "Build the unit test library with ROCKETNET_DEVELOPMENT=1, so ./bin/test runs the development paths" OFF)
 if(ROCKETNET_SANITIZE_ADDRESS)
     if(MSVC)
         add_compile_options(/fsanitize=address /Zi)
@@ -359,7 +360,8 @@ foreach(target rocketnet rocketnet_dev rocketnet_shared rocketnet_shared_dev ${r
     set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_compile_features(${target} PRIVATE cxx_std_11)
     rocketnet_warning_floor(${target})
-    if(target STREQUAL "rocketnet_dev" OR target STREQUAL "rocketnet_shared_dev")
+    if(target STREQUAL "rocketnet_dev" OR target STREQUAL "rocketnet_shared_dev" OR
+       (ROCKETNET_TEST_DEVELOPMENT AND target STREQUAL "rocketnet_test_hooks"))
         target_compile_definitions(${target} PUBLIC ROCKETNET_DEVELOPMENT=1)
     else()
         target_compile_definitions(${target} PRIVATE ROCKETNET_DEVELOPMENT=0)
