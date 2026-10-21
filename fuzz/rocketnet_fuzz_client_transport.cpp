@@ -16,11 +16,11 @@
 //                      after it: the cookie, challenge and denied paths
 // each record is [mode][u16 length][length bytes]:
 //   mode 0: the bytes, raw, from the server's address
-//   mode 1: sealed with the live keys: bytes[0] picks the packet type,
+//   mode 1: sealed with the live keys: bytes[0] picks the session type,
 //           bytes[1] the sequence skip, the rest is the plaintext -- the
-//           post-decrypt parse of every server -> client type, the
-//           challenge and the denied included (they need the mapping the
-//           server makes at the request, so they open only once it exists)
+//           post-decrypt parse of every server -> client session type.
+//           The handshake types (challenge, denied) are not sealed by this
+//           target: see fuzz/README.md, "Exclusions".
 //   mode 2: an unsealed cookie for the client's own salt: bytes[0..7] the
 //           expire timestamp, bytes[8..23] the mac
 //   mode 3: a real server datagram from the wire, with the bytes XORed over
@@ -35,11 +35,13 @@
 
 #include "rocketnet_fuzz_pair.h"
 
+#include <filesystem>
+#include <string>
+
 static const uint8_t rocketnet_fuzz_s2c_types[] =
 {
     ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_CONNECTION_DISCONNECT_PACKET,
-    ROCKETNET_CONNECTION_ACK_PACKET, ROCKETNET_CONNECTION_FRAGMENT_PACKET, ROCKETNET_CONNECTION_CHALLENGE_PACKET,
-    ROCKETNET_CONNECTION_DENIED_PACKET
+    ROCKETNET_CONNECTION_ACK_PACKET, ROCKETNET_CONNECTION_FRAGMENT_PACKET
 };
 
 static struct rocketnet_fuzz_pair_t rocketnet_fuzz_client_pair;
@@ -159,11 +161,184 @@ static uint64_t rocketnet_fuzz_client_run( const uint8_t * data, size_t size )
         rocketnet_fuzz_client_step( pair );
     }
 
+    // one more step: what the last record sent the client's way is read
+    rocketnet_fuzz_client_step( pair );
+
     char report[240];
+    rocketnet_fuzz_pair_require( rocketnet_counters_conserved( rocketnet_fuzz_pair_client_counters( pair ), report, sizeof( report ) ) != 0,
+                                 "the client transport's counters are conserved" );
     rocketnet_fuzz_pair_require( rocketnet_counters_conserved( rocketnet_message_client_counters( pair->client ), report, sizeof( report ) ) != 0,
-                                 "the client's counters are conserved" );
+                                 "the message client's counters are conserved" );
     rocketnet_fuzz_pair_check_no_allocation( pair );
     return rocketnet_fuzz_pair_fingerprint( pair );
 }
 
-ROCKETNET_FUZZ_PAIR_TARGET( rocketnet_fuzz_client_run )
+// -----------------------------------------------------------------------
+//  the seed generator (ROCKETNET_FUZZ_SEED_DIR=<dir>, rocketnet_fuzz_pair.h)
+//
+// For every server -> client type the client reads (denied, challenge,
+// keep-alive, payload, disconnect, cookie, ack, fragment): the real datagram,
+// raw, from the server's address; its real plaintext sealed under the live
+// keys; and for the cookie, its real expire and mac through the cookie mode.
+// Each seed must raise its type's counter when replayed: the received
+// counter for raw and cookie seeds, the accepted counter for sealed ones.
+//
+// EXCLUDED, by name, so the check stays exact for everything else: the
+// sealed denied and sealed challenge seeds are not generated, and the server
+// never denies this pair, so the denied has no seed at all. Not generated:
+// blocked by a safety classifier 2026-10-21; Glenn decides (fuzz/README.md,
+// "Exclusions").
+// -----------------------------------------------------------------------
+
+struct rocketnet_fuzz_client_seed_type_t
+{
+    uint8_t type;
+    int received;
+    int accepted;           // -1: the type is not sealed
+};
+
+static const struct rocketnet_fuzz_client_seed_type_t rocketnet_fuzz_client_seed_types[] =
+{
+    { ROCKETNET_CONNECTION_DENIED_PACKET,     ROCKETNET_COUNTER_CLIENT_DENIED_RECEIVED,     ROCKETNET_COUNTER_CLIENT_DENIED_ACCEPTED },
+    { ROCKETNET_CONNECTION_CHALLENGE_PACKET,  ROCKETNET_COUNTER_CLIENT_CHALLENGE_RECEIVED,  ROCKETNET_COUNTER_CLIENT_CHALLENGE_ACCEPTED },
+    { ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_RECEIVED, ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ACCEPTED },
+    { ROCKETNET_CONNECTION_PAYLOAD_PACKET,    ROCKETNET_COUNTER_CLIENT_PAYLOAD_RECEIVED,    ROCKETNET_COUNTER_CLIENT_PAYLOAD_DELIVERED },
+    { ROCKETNET_CONNECTION_DISCONNECT_PACKET, ROCKETNET_COUNTER_CLIENT_DISCONNECT_RECEIVED, ROCKETNET_COUNTER_CLIENT_DISCONNECT_ACCEPTED },
+    { ROCKETNET_CONNECTION_COOKIE_PACKET,     ROCKETNET_COUNTER_CLIENT_COOKIE_RECEIVED,     -1 },
+    { ROCKETNET_CONNECTION_ACK_PACKET,        ROCKETNET_COUNTER_CLIENT_ACK_RECEIVED,        ROCKETNET_COUNTER_CLIENT_ACK_ACCEPTED },
+    { ROCKETNET_CONNECTION_FRAGMENT_PACKET,   ROCKETNET_COUNTER_CLIENT_FRAGMENT_RECEIVED,   ROCKETNET_COUNTER_CLIENT_FRAGMENT_ACCEPTED },
+};
+
+static bool rocketnet_fuzz_client_excluded( uint8_t type )
+{
+    return type == ROCKETNET_CONNECTION_DENIED_PACKET || type == ROCKETNET_CONNECTION_CHALLENGE_PACKET;
+}
+
+static int rocketnet_fuzz_client_type_index( uint8_t type )
+{
+    for ( int i = 0; i < (int) sizeof( rocketnet_fuzz_s2c_types ); i++ )
+        if ( rocketnet_fuzz_s2c_types[i] == type )
+            return i;
+    return -1;
+}
+
+static bool rocketnet_fuzz_client_generate( const char * dir )
+{
+    static struct rocketnet_fuzz_recording_t recording;
+    static uint8_t seed[4 + 3 * 300 + ROCKETNET_RECEIVE_CEILING + 8];
+    struct rocketnet_fuzz_pair_t * pair = &rocketnet_fuzz_client_pair;
+    rocketnet_fuzz_pair_record( pair, &recording );
+
+    bool complete = true;
+    char name[256];
+    for ( size_t k = 0; k < sizeof( rocketnet_fuzz_client_seed_types ) / sizeof( rocketnet_fuzz_client_seed_types[0] ); k++ )
+    {
+        const struct rocketnet_fuzz_client_seed_type_t * t = &rocketnet_fuzz_client_seed_types[k];
+        const struct rocketnet_fuzz_recorded_t * r = &recording.s2c[t->type];
+        const char * type_name = rocketnet_fuzz_packet_type_names[t->type];
+        const bool denied = t->type == ROCKETNET_CONNECTION_DENIED_PACKET;
+        if ( denied )
+        {
+            printf( "seed generator: excluded: denied (not generated: blocked by a safety classifier 2026-10-21, Glenn decides)\n" );
+            continue;
+        }
+        if ( r->bytes == 0 )
+        {
+            fprintf( stderr, "seed generator: no real %s was recorded\n", type_name );
+            complete = false;
+            continue;
+        }
+        const bool handshake = r->handshake;
+        const int step = r->step;
+        const uint8_t selector = handshake ? 0x10 : 0x00;
+        const int wait_from = handshake ? step - 4 : 0;
+        const int wait_to = handshake ? step + 4 : 2;
+
+        {
+            const int bytes = rocketnet_fuzz_seed_place( seed, rocketnet_fuzz_client_run, rocketnet_fuzz_pair_client_counters, t->received,
+                                                         selector, wait_from, wait_to, 0, r->data, r->bytes, NULL, 0 );
+            snprintf( name, sizeof( name ), "raw_%s", type_name );
+            if ( bytes > 0 )
+                complete = rocketnet_fuzz_seed_write( dir, name, seed, bytes ) && complete;
+            else
+            {
+                fprintf( stderr, "seed generator: the raw %s seed reaches no %s\n", type_name, rocketnet_counter_name( t->received ) );
+                complete = false;
+            }
+        }
+
+        if ( t->type == ROCKETNET_CONNECTION_COOKIE_PACKET )
+        {
+            // the cookie mode carries the real expire timestamp and mac
+            const int at = ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES;
+            const int bytes = rocketnet_fuzz_seed_place( seed, rocketnet_fuzz_client_run, rocketnet_fuzz_pair_client_counters, t->received,
+                                                         selector, wait_from, wait_to, 2, r->data + at, 8 + ROCKETNET_COOKIE_MAC_BYTES, NULL, 0 );
+            if ( bytes > 0 )
+                complete = rocketnet_fuzz_seed_write( dir, "cookie_fields", seed, bytes ) && complete;
+            else
+            {
+                fprintf( stderr, "seed generator: the cookie-mode seed reaches no %s\n", rocketnet_counter_name( t->received ) );
+                complete = false;
+            }
+        }
+
+        if ( t->accepted < 0 )
+            continue;
+        if ( rocketnet_fuzz_client_excluded( t->type ) )
+        {
+            printf( "seed generator: excluded: sealed %s (not generated: blocked by a safety classifier 2026-10-21, Glenn decides)\n", type_name );
+            continue;
+        }
+        if ( r->plaintext_bytes < 0 )
+        {
+            fprintf( stderr, "seed generator: the recorded %s did not open\n", type_name );
+            complete = false;
+            continue;
+        }
+        const uint8_t head[2] = { (uint8_t) rocketnet_fuzz_client_type_index( t->type ), 0 };
+        const int bytes = rocketnet_fuzz_seed_place( seed, rocketnet_fuzz_client_run, rocketnet_fuzz_pair_client_counters, t->accepted,
+                                                     selector, wait_from, wait_to, 1, head, 2,
+                                                     r->plaintext, r->plaintext_bytes );
+        snprintf( name, sizeof( name ), "sealed_%s", type_name );
+        if ( bytes > 0 )
+            complete = rocketnet_fuzz_seed_write( dir, name, seed, bytes ) && complete;
+        else
+        {
+            fprintf( stderr, "seed generator: the sealed %s seed reaches no %s\n", type_name, rocketnet_counter_name( t->accepted ) );
+            complete = false;
+        }
+    }
+
+    // the committed wire corpus, each datagram from the server's address
+    char from[1024];
+    if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_FROM", from, sizeof( from ) ) )
+    {
+        int wrapped = 0;
+        for ( const auto & entry : std::filesystem::directory_iterator( from ) )
+        {
+            const std::string file = entry.path().filename().string();
+            if ( file.rfind( "prefilter_", 0 ) != 0 || !entry.is_regular_file() )
+                continue;
+            static uint8_t body[ROCKETNET_RECEIVE_CEILING + 2];
+            FILE * f = rocketnet_test_fopen( entry.path().string().c_str(), "rb" );
+            if ( !f )
+                continue;
+            const int got = (int) fread( body, 1, sizeof( body ), f );
+            fclose( f );
+            if ( got < 2 )
+                continue;
+            const int datagram = got - 1 > ROCKETNET_RECEIVE_CEILING ? ROCKETNET_RECEIVE_CEILING : got - 1;
+            seed[0] = 0x00;
+            const int bytes = 1 + rocketnet_fuzz_record_write( seed + 1, 0, body + 1, datagram, NULL, 0 );
+            snprintf( name, sizeof( name ), "wire_%s", file.c_str() + strlen( "prefilter_" ) );
+            complete = rocketnet_fuzz_seed_write( dir, name, seed, bytes ) && complete;
+            wrapped++;
+        }
+        printf( "seed generator: wrapped %d committed wire seeds\n", wrapped );
+    }
+
+    printf( "seed generator: %s\n", complete ? "every server -> client type outside the exclusion list has a seed that reaches its reader" : "INCOMPLETE" );
+    return complete;
+}
+
+ROCKETNET_FUZZ_PAIR_TARGET( rocketnet_fuzz_client_run, rocketnet_fuzz_client_generate )
