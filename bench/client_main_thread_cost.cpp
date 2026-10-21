@@ -1,6 +1,7 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Public-API per-frame main-thread cost microbenchmark. See client_main_thread_cost.md.
 #include "rocketnet_internal.h"
+#include "rocketnet_connect_token.h"
 #include <algorithm>
 #include <chrono>
 #include <stdio.h>
@@ -45,7 +46,7 @@ int main(int argc, char ** argv)
     char address[64];
     snprintf(address, sizeof(address), "127.0.0.1:%u", rocketnet_server_transport_port(server));
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    CHECK(rocketnet_write_dev_connect_token(address, 1234, (uint64_t)time(NULL), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK);
+    CHECK(rocketnet_write_test_connect_token(address, 1234, (uint64_t)time(NULL), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK);
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config(&client_config);
     snprintf(client_config.transport, sizeof(client_config.transport), "%s", transport);
