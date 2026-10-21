@@ -41,6 +41,15 @@ separate test with traffic crossing the intended physical link for line-rate
 acceptance, and compare its aggregate directional rate with measured link
 capacity.
 
+All load and performance measurements must isolate the server on a dedicated
+machine and run the load-generating clients on other machines, with traffic
+crossing the intended network path. Same-host or single-process client/server
+runs, including the current `bin/load` harness, are correctness tests only.
+Their timing diagnostics are confounded by colocated client and server work and
+never qualify server performance. Preserve previously collected results with
+their original topology and scope labels as historical diagnostics; do not
+erase or present colocated timings as server-performance measurements.
+
 Set `LOAD_PLAN_ONLY=1` with the same client count, profile and SDK environment
 as the intended run to get a `load_plan:` receipt without creating endpoints
 or binding a socket. It reports `client_public_required_bytes`,
