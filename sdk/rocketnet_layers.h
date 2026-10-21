@@ -26,11 +26,10 @@ extern "C" {
 #define ROCKETNET_CLIENT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, reliable_message_timeout_ms ) + sizeof( int ), sizeof( void * ) )
 #define ROCKETNET_SERVER_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, reliable_message_timeout_ms ) + sizeof( int ), sizeof( void * ) )
 
-/// The receive bounds: a receiver accepts what one 1500-MTU IPv4 datagram
-/// carries, 1472 bytes, and its payload, 1439 bytes, wider than the send side
-/// (ROCKETNET_RECEIVE_PACKET_BYTES, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES). Internal.
-#define ROCKETNET_RECEIVE_PACKET_BYTES                     ( 1500 - 20 - 8 )
-#define ROCKETNET_RECEIVE_PAYLOAD_BYTES                    1439    // 1472 - 26 - 7
+/// Receive bounds match the sender's datagram and unfragmented payload limits.
+/// Internal; fragments retain their separate, unrounded stride bound.
+#define ROCKETNET_RECEIVE_PACKET_BYTES                     ROCKETNET_MAX_PACKET_BYTES
+#define ROCKETNET_RECEIVE_PAYLOAD_BYTES                    ROCKETNET_MAX_PACKET_PAYLOAD_BYTES
 
 /// The defaults the public header states as numbers in each field's comment.
 #define ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES                16384
@@ -728,7 +727,7 @@ typedef int (*rocketnet_server_admission_callback_t)( void * context, const stru
 // reassembles, and the per-client reassembly slot count. zero means the
 // defaults. budget arithmetic, all spent once at create, approximately --
 // slot records ride along: the reassembly arena is max_clients x slots x
-// (max payload + 1433 staging) per the standard; the delivered mirror of
+// (max payload + 1413 staging) per the standard; the delivered mirror of
 // slots x max payload per client -- the per-update home of completed
 // payloads; and the ack endpoints' fragment aggregate rings, about 48KB per
 // client slot.

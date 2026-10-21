@@ -78,10 +78,9 @@ static inline int rocketnet_wire_header_bytes( int address_type )
     return 0;
 }
 
-// the receive ceiling: fixed for every receiver, whatever its send budget --
-// anything one 1500-MTU IPv4 datagram can carry, 1472 bytes
+// The receive ceiling matches the send budget for both address families.
 
-#define ROCKETNET_RECEIVE_CEILING               ( ROCKETNET_LINK_MTU_BYTES - ROCKETNET_IPV4_HEADER_BYTES - ROCKETNET_UDP_HEADER_BYTES )
+#define ROCKETNET_RECEIVE_CEILING               ROCKETNET_SEND_BUDGET
 
 // the send budget: a sender never emits a packet larger than this. It is the
 // smaller family's packet, the IPv6 UDP payload of a 1500-byte MTU, 1452

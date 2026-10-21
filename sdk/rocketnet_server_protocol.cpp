@@ -1173,7 +1173,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     int type_data_bytes = opened_bytes - block_bytes;
 
     if ( ( packet_type == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET && type_data_bytes != 8 ) ||
-         ( packet_type == ROCKETNET_CONNECTION_PAYLOAD_PACKET && type_data_bytes < 1 ) ||
+         ( packet_type == ROCKETNET_CONNECTION_PAYLOAD_PACKET && ( type_data_bytes < 1 || type_data_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ) ) ||
          ( packet_type == ROCKETNET_CONNECTION_DISCONNECT_PACKET && type_data_bytes != 0 ) ||
          ( packet_type == ROCKETNET_CONNECTION_ACK_PACKET && type_data_bytes != 0 ) ||
          ( packet_type == ROCKETNET_CONNECTION_FRAGMENT_PACKET && type_data_bytes < ROCKETNET_FRAGMENT_HEADER_BYTES + 1 ) )

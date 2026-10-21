@@ -40,7 +40,7 @@
     typedef char ROCKETNET_STATIC_ASSERT_JOIN( rocketnet_static_assert_, __LINE__ )[(condition) ? 1 : -1]
 #endif
 
-ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES <= ROCKETNET_RECEIVE_PACKET_BYTES, "the IPv6 packet is the smaller of the two families" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES == ROCKETNET_RECEIVE_PACKET_BYTES, "send and receive packet bounds match" );
 
 // -----------------------------------------
 //          status-returning lifecycle forms
@@ -379,8 +379,8 @@ inline void rocketnet_endian_fix( uint64_t * value )
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES % 8 == 0, "the payload capacity is a multiple of eight" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES < ROCKETNET_MAX_PACKET_BYTES, "the payload capacity fits the send budget" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PAYLOAD_BYTES - ROCKETNET_MAX_PACKET_PAYLOAD_BYTES >=
-                         ROCKETNET_RECEIVE_PACKET_BYTES - ROCKETNET_MAX_PACKET_BYTES, "the receive payload is the capacity plus the family difference and the rounding" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PAYLOAD_BYTES == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,
+                         "send and receive payload bounds match" );
 
 // -----------------------------------------
 //                  transport config tables
