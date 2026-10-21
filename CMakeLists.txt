@@ -114,7 +114,7 @@ endif()
 # a customer compiles these sources inside their game with their own warning
 # flags, so the tree ships with no warning at the floor and the floor fails
 # the build. ROCKETNET_STRICT_WARNINGS adds the strict set a game is likely
-# to use (CI builds the library with it); ROCKETNET_WARNINGS_AS_ERRORS=OFF
+# to use (not yet clean: a known issue in ROADMAP.md); ROCKETNET_WARNINGS_AS_ERRORS=OFF
 # keeps the warnings and drops only the failure, for a compiler newer than
 # the ones the tree is checked on.
 option(ROCKETNET_WARNINGS_AS_ERRORS "Fail the build on any compiler warning" ON)

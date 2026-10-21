@@ -53,11 +53,14 @@ fails loudly and the edit is reviewed again:
 | `crypto_scalarmult/curve25519/scalarmult_curve25519.c` | C4459 (amalgamation: the local `d` hides ed25519's file-scope `d`) | `d` added to the file's `renames` |
 | `crypto_generichash/blake2b/ref/blake2b-compress-avx2.h` | `-Wunused-function` | `LOADU64`, never called, removed |
 | `crypto_generichash/blake2b/ref/blake2b-ref.c` | C4245 (`int` -1 into `uint64_t`) | `(uint64_t) -1`, the same value |
+| baseline `sodium.h` (`sodium_private_common.h`) | none: it turned C4127, C4244, C4668 and C4456 off for every file including `sodium.h` | the four `#pragma warning(disable:...)` lines removed; the warnings they hid are fixed at their sites |
+| `fe_25_5/fe.h` `fe25519_tobytes`; `ed25519_ref10.c` `sc25519_mul`, `sc25519_muladd`, `sc25519_reduce`, `slide_vartime`; `salsa20_ref.c` `stream_ref`, `stream_ref_xor_ic` | C4244 (a 64- or 32-bit limb stored into a byte) | each such store spelled with the cast the implicit conversion performs, `(unsigned char) (expr)` (`NARROWING_STORES`): the same value |
 
 None changes cryptographic arithmetic; `test_sodium` and the oracle check
-below cover the result. The upstream MSVC `#pragma warning(disable:...)`
-lines in `sodium_private_common.h` and upstream's `-Wlong-long` pragmas are
-the inputs' own and are kept as written.
+below cover the result. Upstream's own `#pragma GCC diagnostic ignored
+"-Wlong-long"` lines in its public headers are kept as written. The strict
+set (`ROCKETNET_STRICT_WARNINGS`: `-Wconversion`, `-Wsign-conversion` and
+the rest) is not yet clean here; that is a known issue in ROADMAP.md.
 
 ## Reproduce
 
