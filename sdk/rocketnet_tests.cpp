@@ -8186,14 +8186,13 @@ void rocketnet_test_version_is_one_integer()
     rocketnet_check( ROCKETNET_VERSION == ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH );
 #if ROCKETNET_DEVELOPMENT
     rocketnet_check( strcmp( ROCKETNET_VERSION_FULL, "dev" ) == 0 );
-    rocketnet_check( strcmp( ROCKETNET_VERSION_PRERELEASE, "" ) == 0 );
 #else // #if ROCKETNET_DEVELOPMENT
+    // the text form starts with the integers, then the end or a "-" prerelease
     char expected[64];
-    if ( ROCKETNET_VERSION_PRERELEASE[0] != '\0' )
-        snprintf( expected, sizeof( expected ), "%d.%d.%d-%s", ROCKETNET_VERSION_MAJOR, ROCKETNET_VERSION_MINOR, ROCKETNET_VERSION_PATCH, ROCKETNET_VERSION_PRERELEASE );
-    else
-        snprintf( expected, sizeof( expected ), "%d.%d.%d", ROCKETNET_VERSION_MAJOR, ROCKETNET_VERSION_MINOR, ROCKETNET_VERSION_PATCH );
-    rocketnet_check( strcmp( ROCKETNET_VERSION_FULL, expected ) == 0 );
+    snprintf( expected, sizeof( expected ), "%d.%d.%d", ROCKETNET_VERSION_MAJOR, ROCKETNET_VERSION_MINOR, ROCKETNET_VERSION_PATCH );
+    const size_t length = strlen( expected );
+    rocketnet_check( strncmp( ROCKETNET_VERSION_FULL, expected, length ) == 0 );
+    rocketnet_check( ROCKETNET_VERSION_FULL[length] == '\0' || ROCKETNET_VERSION_FULL[length] == '-' );
 #endif // #if ROCKETNET_DEVELOPMENT
 }
 

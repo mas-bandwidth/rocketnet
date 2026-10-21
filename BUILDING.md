@@ -5,8 +5,8 @@ only into `test` through `rocketnet_test_support`. Shared builds hide unannotate
 implementation symbols; `tools/exports.txt` lists the supported C exports. CI
 compares the built shared library with that list and checks that the static
 archive contains no test suite. Review intentional ABI changes in the list as
-part of the same change. `ROCKETNET_ABI_VERSION` identifies SDK calling/layout
-compatibility separately from the wire version; see the ABI rules below.
+part of the same change. The major version names SDK calling/layout
+compatibility, separately from the wire version; see the ABI rules below.
 
 Deploying a server on Linux: [docs/LINUX.md](docs/LINUX.md) covers the build, the `xdp -> gso -> io_uring -> portable` transport ladder and pinning, what `gso`, `io_uring` and `xdp` need from the host, socket errors and ICMP, the fd and memlock limits for 1000 clients, containers, and how to verify a host.
 
@@ -349,7 +349,7 @@ finds every later 1.x patch. The imported targets
 hand a consumer no floating-point option and no memory-budget definition: the
 only compile definition they carry is `ROCKETNET_SHARED` on
 `RocketNet::rocketnet_shared`. `tools/check_package.py` checks both.
-The Unix shared-library soname follows `ROCKETNET_ABI_VERSION`.
+The Unix shared-library soname follows the major version.
 Use a separate install prefix for each build configuration. With Visual Studio
 or another multi-config generator, pass `--config Debug` or `--config Release`
 to build/install and select the same configuration in the consumer. A
@@ -397,8 +397,8 @@ reads a larger config as far as it knows and a smaller one as a prefix with
 defaults after it, so a config struct can grow at its end without breaking a
 program built against an older header (`docs/ABI-EVOLUTION.md`).
 
-An incompatible layout or calling-contract change must increment
-`ROCKETNET_ABI_VERSION`. Additive functions alone do not require a revision
+An incompatible layout or calling-contract change must increment the
+major version. Additive functions alone do not require a revision
 change. The other public structs carry no size, so a header and a library from
 different ABI revisions must not be mixed; compare `rocketnet_version()` with
 `ROCKETNET_VERSION` to catch a header and a shared library from different

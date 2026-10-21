@@ -17,6 +17,11 @@
 #include "rocketnet.h"
 #include "rocketnet_constants.h"
 
+// The loopback transport's process-wide endpoint table: one server and
+// ROCKETNET_MAX_CLIENTS clients. Loopback is a production transport, chosen
+// by name ("loopback"); auto never selects it.
+#define ROCKETNET_LOOPBACK_MAX_ENDPOINTS          ( ROCKETNET_MAX_CLIENTS + 1 )
+
 #include <stddef.h>
 #include <stdint.h>
 

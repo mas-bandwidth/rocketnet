@@ -80,10 +80,6 @@ jobs:
                 echo "::error::The development version is \"dev\" but its integers are $major.$minor.$patch, not the 255.255.255 sentinel."
                 fail=1
               fi
-              if [ -n "$prerelease" ]; then
-                echo "::error::The development version is \"dev\" but its ROCKETNET_VERSION_PRERELEASE is \"$prerelease\", not empty."
-                fail=1
-              fi
               return
             fi
             # a release is MAJOR.MINOR.PATCH, or MAJOR.MINOR.PATCH-PRERELEASE
@@ -93,7 +89,7 @@ jobs:
               expected="$expected-$prerelease"
             fi
             if [ "$full" != "$expected" ]; then
-              echo "::error::ROCKETNET_VERSION_FULL ($full) does not match ROCKETNET_VERSION_MAJOR/MINOR/PATCH and ROCKETNET_VERSION_PRERELEASE ($expected) in the $branch_name branch of sdk/rocketnet.h."
+              echo "::error::ROCKETNET_VERSION_FULL ($full) does not start with ROCKETNET_VERSION_MAJOR/MINOR/PATCH ($expected) in the $branch_name branch of sdk/rocketnet.h."
               fail=1
             fi
           }
@@ -103,13 +99,13 @@ jobs:
           shipping_major=$(awk '/#if !ROCKETNET_DEVELOPMENT/,/#else/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_MAJOR[[:space:]]+([0-9]+).*/\1/p' | head -n1)
           shipping_minor=$(awk '/#if !ROCKETNET_DEVELOPMENT/,/#else/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_MINOR[[:space:]]+([0-9]+).*/\1/p' | head -n1)
           shipping_patch=$(awk '/#if !ROCKETNET_DEVELOPMENT/,/#else/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_PATCH[[:space:]]+([0-9]+).*/\1/p' | head -n1)
-          shipping_prerelease=$(awk '/#if !ROCKETNET_DEVELOPMENT/,/#else/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_PRERELEASE[[:space:]]+"([^"]*)".*/\1/p' | head -n1)
+          shipping_prerelease=$(printf '%s' "$shipping_full" | sed -nE 's/^[0-9]+\.[0-9]+\.[0-9]+-?//p')
 
           dev_full=$(awk '/#else \/\/\/? !ROCKETNET_DEVELOPMENT/,/#endif \/\/\/? !ROCKETNET_DEVELOPMENT/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_FULL[[:space:]]+"([^"]+)".*/\1/p' | head -n1)
           dev_major=$(awk '/#else \/\/\/? !ROCKETNET_DEVELOPMENT/,/#endif \/\/\/? !ROCKETNET_DEVELOPMENT/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_MAJOR[[:space:]]+([0-9]+).*/\1/p' | head -n1)
           dev_minor=$(awk '/#else \/\/\/? !ROCKETNET_DEVELOPMENT/,/#endif \/\/\/? !ROCKETNET_DEVELOPMENT/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_MINOR[[:space:]]+([0-9]+).*/\1/p' | head -n1)
           dev_patch=$(awk '/#else \/\/\/? !ROCKETNET_DEVELOPMENT/,/#endif \/\/\/? !ROCKETNET_DEVELOPMENT/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_PATCH[[:space:]]+([0-9]+).*/\1/p' | head -n1)
-          dev_prerelease=$(awk '/#else \/\/\/? !ROCKETNET_DEVELOPMENT/,/#endif \/\/\/? !ROCKETNET_DEVELOPMENT/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_PRERELEASE[[:space:]]+"([^"]*)".*/\1/p' | head -n1)
+          dev_prerelease=""
 
           check_branch "shipping" "$shipping_full" "$shipping_major" "$shipping_minor" "$shipping_patch" "$shipping_prerelease"
           check_branch "development" "$dev_full" "$dev_major" "$dev_minor" "$dev_patch" "$dev_prerelease"

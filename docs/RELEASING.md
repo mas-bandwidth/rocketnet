@@ -9,16 +9,13 @@ The version lives in one file, `sdk/rocketnet.h`, in two branches selected by
 `ROCKETNET_DEVELOPMENT`:
 
 - the shipping branch (`#if !ROCKETNET_DEVELOPMENT`) carries
-  `ROCKETNET_VERSION_FULL`, the prerelease string `ROCKETNET_VERSION_PRERELEASE`,
-  and the integer macros `ROCKETNET_VERSION_MAJOR`, `ROCKETNET_VERSION_MINOR`,
+  `ROCKETNET_VERSION_FULL` and the integer macros `ROCKETNET_VERSION_MAJOR`, `ROCKETNET_VERSION_MINOR`,
   and `ROCKETNET_VERSION_PATCH`;
 - the development branch (`#else // !ROCKETNET_DEVELOPMENT`) carries
-  `ROCKETNET_VERSION_FULL "dev"`, an empty `ROCKETNET_VERSION_PRERELEASE`, and
-  the `255.255.255` integer sentinel.
+  `ROCKETNET_VERSION_FULL "dev"` and the `255.255.255` integer sentinel.
 
 The first release is **v1.0.0-preview-1**: `ROCKETNET_VERSION_FULL` is
-`"1.0.0-preview-1"`, `ROCKETNET_VERSION_PRERELEASE` is `"preview-1"`, and the
-integers are `1.0.0`. The integers, `ROCKETNET_VERSION`, the CMake project
+`"1.0.0-preview-1"` and the integers are `1.0.0`. The integers, `ROCKETNET_VERSION`, the CMake project
 `VERSION` and the installed package's `RocketNetConfigVersion.cmake` stay
 numeric (`1.0.0`), because those are compared; the label rides beside them.
 `CMakeLists.txt` reads `ROCKETNET_VERSION_FULL` from the header into
@@ -30,15 +27,14 @@ These are the version sites that the `version-consistency` job in
 [.github/workflows/release-check.yml](.github/workflows/release-check.yml)
 reads. That job checks both branches, because the branch that is not compiled
 today is the one that drifts. In the shipping branch, `ROCKETNET_VERSION_FULL`
-must equal `MAJOR.MINOR.PATCH`, followed by `-PRERELEASE` when
-`ROCKETNET_VERSION_PRERELEASE` is not empty; in the development branch, the full
-version must be `dev`, the prerelease empty, and the integers `255.255.255`. On a `v*` tag push, the part of
+must be `MAJOR.MINOR.PATCH`, optionally followed by `-` and a prerelease
+label; in the development branch, the full version must be `dev` and the
+integers `255.255.255`. On a `v*` tag push, the part of
 the tag after the `v` must equal the shipping `ROCKETNET_VERSION_FULL`.
 
 The public C ABI revision is separate from the wire and release version. If a
-release changes the public C layout or calling contract, update
-`ROCKETNET_ABI_VERSION` in `sdk/rocketnet.h` and `tools/exports.txt` in the same
-change, as [BUILDING.md](BUILDING.md) describes.
+release changes the public C layout or calling contract, bump the major
+version and update `tools/exports.txt` in the same change, as [BUILDING.md](BUILDING.md) describes.
 
 ## The wire-change rule
 
@@ -93,12 +89,12 @@ later merge.
 
 1. Check out `main` and confirm the worktree is clean and up to date. Do not
    release from a branch or a detached commit.
-2. Set the shipping version in `sdk/rocketnet.h`: `ROCKETNET_VERSION_FULL`,
-   `ROCKETNET_VERSION_PRERELEASE` (empty for a final release), and the three
+2. Set the shipping version in `sdk/rocketnet.h`: `ROCKETNET_VERSION_FULL`
+   (with a `-` prerelease label, or none for a final release) and the three
    integer macros. Change the `project(... VERSION ...)` in `CMakeLists.txt`
    when the integers change; configure refuses a mismatch. Leave the development branch at `dev` and
-   `255.255.255`. If the public C ABI changed, update `ROCKETNET_ABI_VERSION`
-   and `tools/exports.txt`.
+   `255.255.255`. If the exported names changed, update
+   `tools/exports.txt`.
 3. Run `python3 tools/check_release_doc.py`. It exits 0 when this document names
    every version site that `release-check.yml`'s `version-consistency` job reads,
    and exits 1 naming any site this document omits.

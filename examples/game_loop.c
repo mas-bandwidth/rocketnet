@@ -100,8 +100,7 @@ int main( int argc, char ** argv )
     struct rocketnet_client_t ** clients = calloc( (size_t) num_clients, sizeof( clients[0] ) );
     if ( !clients || rocketnet_init( NULL ) != ROCKETNET_STATUS_OK ) { printf( "FAIL: init\n" ); return 1; }
 
-    // the in-memory loopback transport holds ROCKETNET_LOOPBACK_MAX_ENDPOINTS
-    // endpoints: one server and ROCKETNET_MAX_CLIENTS clients
+    // the in-memory loopback transport holds one server and ROCKETNET_MAX_CLIENTS clients
     struct rocketnet_server_config_t server_config;
     // the published development backend key (rocketnet.h) and the examples protocol id (dev_keys.h); the server makes its own keypair at create. A real server brings its own backend key, recommended through ROCKETNET_SERVER_BACKEND_PUBLIC_KEY, or set in code
     rocketnet_server_default_config( &server_config );

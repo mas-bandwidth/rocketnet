@@ -66,10 +66,7 @@
 #if !ROCKETNET_DEVELOPMENT
 
     /// @brief Text form of the SDK version: the release version string, or "dev" in a development build.
-    /// It is MAJOR.MINOR.PATCH, followed by "-" and ROCKETNET_VERSION_PRERELEASE when that is not empty.
     #define ROCKETNET_VERSION_FULL                     "1.0.0-preview-1"
-    /// @brief Prerelease part of the SDK version ("preview-1"), or "" for a final release and in a development build.
-    #define ROCKETNET_VERSION_PRERELEASE                       "preview-1"
     /// @brief Major component of the SDK version; development builds use 255.
     #define ROCKETNET_VERSION_MAJOR                                    1
     /// @brief Minor component of the SDK version; development builds use 255.
@@ -80,7 +77,6 @@
 #else /// !ROCKETNET_DEVELOPMENT
 
     #define ROCKETNET_VERSION_FULL                                 "dev"
-    #define ROCKETNET_VERSION_PRERELEASE                              ""
     #define ROCKETNET_VERSION_MAJOR                                  255
     #define ROCKETNET_VERSION_MINOR                                  255
     #define ROCKETNET_VERSION_PATCH                                  255
@@ -89,7 +85,7 @@
 
 /// The version as one comparable integer: major * 10000 + minor * 100 + patch,
 /// 10000 for 1.0.0. The prerelease is not in the integer: v1.0.0-preview-1 is
-/// 10000 too, and ROCKETNET_VERSION_PRERELEASE tells it apart. A development
+/// 10000 too, and ROCKETNET_VERSION_FULL tells it apart. A development
 /// build is 2575755, above every release.
 /// rocketnet_version returns the value the library was built with.
 #define ROCKETNET_VERSION   ( ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH )
@@ -123,12 +119,6 @@
 /// destination id with it set, as counted API misuse.
 
 #define ROCKETNET_FLOW_ID_BIT                                       ( 1ULL << 63 )
-
-/// The in-memory loopback transport holds this many endpoints in one process:
-/// enough for one server and ROCKETNET_MAX_CLIENTS clients. It is chosen only
-/// by name ("loopback"), for tests and examples; auto never selects it.
-
-#define ROCKETNET_LOOPBACK_MAX_ENDPOINTS          ( ROCKETNET_MAX_CLIENTS + 1 )
 
 /// The packet size: the UDP payload of one datagram on a 1500-byte MTU link,
 /// the number every other size limit derives from (STANDARD.md _Packet

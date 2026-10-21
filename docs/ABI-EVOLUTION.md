@@ -4,12 +4,12 @@ This document is the rule for growing a public struct of `sdk/rocketnet.h`
 without breaking a caller compiled against an older header. It is the document
 `docs/ERRORS-AND-LOGGING.md` refers to as `docs/ABI-EVOLUTION.md`.
 
-The SDK's ABI revision is `ROCKETNET_ABI_VERSION` (`sdk/rocketnet.h`), and the
-shared library's soname follows it (`CMakeLists.txt`, `ROCKETNET_ABI_SOVERSION`).
-A change this document admits is additive: it keeps `ROCKETNET_ABI_VERSION`
-and adds exports to `tools/exports.txt`. A change it does not admit (a field
-moved, removed, resized or retyped) is an incompatible change and bumps
-`ROCKETNET_ABI_VERSION`.
+The SDK's ABI revision is its major version (`ROCKETNET_VERSION_MAJOR`), and
+the shared library's soname follows it (`CMakeLists.txt`,
+`ROCKETNET_ABI_SOVERSION`). A change this document admits is additive: it keeps
+the major version and adds exports to `tools/exports.txt`. A change it does not
+admit (a field moved, removed, resized or retyped) is an incompatible change
+and bumps the major version.
 
 ## 1. The Rule
 
@@ -73,7 +73,7 @@ The steps for adding a field:
 3. Add a case to `test_unit_sized_config.cpp` that passes the previous
    revision's size as `config_bytes` and checks the new field reads its
    default.
-4. Leave `ROCKETNET_ABI_VERSION` unchanged.
+4. Leave the major version unchanged.
 
 ## 3. The Implementation
 
@@ -109,13 +109,13 @@ configs need no such list, because rules 3 and 4 accept every size of at least
 | `rocketnet_message_batch_t` | out | no |
 
 The structs marked "no" carry no size, so their revision 1 layout is frozen: a
-field added to one of them is an incompatible change and bumps
-`ROCKETNET_ABI_VERSION`. `rocketnet_receipt_t` is also the element of an array
+field added to one of them is an incompatible change and bumps the major
+version. `rocketnet_receipt_t` is also the element of an array
 the library hands out, so its stride is part of the ABI.
 
 ## 5. The lifecycle API in ABI 1
 
-`ROCKETNET_ABI_VERSION` is 1 at v1.0.0-preview-1 (soname `librocketnet.so.1`).
+The ABI revision is 1 at v1.0.0-preview-1 (soname `librocketnet.so.1`).
 Client creation returns a disconnected object and connection begins with
 `rocketnet_client_connect`. Server creation returns a stopped object;
 `rocketnet_server_start`, `rocketnet_server_stop` and
