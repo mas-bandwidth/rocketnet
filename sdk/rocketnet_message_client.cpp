@@ -308,7 +308,8 @@ int rocketnet_message_client_receive_messages( struct rocketnet_message_client_t
 
 int rocketnet_message_client_receipts( struct rocketnet_message_client_t * client, struct rocketnet_message_receipt_t * out, int capacity )
 {
-    if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( out ) || capacity < 1 )
+    if ( !rocketnet_api_null_guard( client ) || capacity < 0 ||
+         ( capacity > 0 && !rocketnet_api_null_guard( out ) ) )
         return 0;
     return rn_endpoint_take_receipts( &client->object.connections[0], out, capacity );
 }

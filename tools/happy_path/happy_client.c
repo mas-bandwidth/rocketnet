@@ -190,7 +190,7 @@ int main( int argc, char ** argv )
 
             struct rocketnet_receipt_t receipts[64];
             const int num_receipts = rocketnet_client_receipts( client, receipts, 64 );
-            for ( int i = 0; i < num_receipts; i++ )
+            for ( int i = 0; i < num_receipts && i < 64; i++ )
             {
                 for ( int mode = 5; mode <= 7; mode++ )
                 {

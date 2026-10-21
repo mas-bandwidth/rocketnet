@@ -1575,8 +1575,10 @@ ROCKETNET_EXPORT void rocketnet_client_abort_message( struct rocketnet_client_t 
 
 ROCKETNET_EXPORT const struct rocketnet_message_batch_t * rocketnet_client_receive_messages( struct rocketnet_client_t * client );
 
-/// Copies up to capacity receipt outcomes into out and returns the count.
-/// Returns 0 if capacity is less than 1.
+/// Returns the number of available receipt outcomes and copies up to capacity
+/// entries into out. Only min(returned_count, capacity) entries are written.
+/// Pass NULL and zero capacity to query the count without copying.
+/// A negative capacity, or NULL out with positive capacity, returns 0.
 ///
 /// Use each receipt's serial to identify its send.
 /// Only the three _WITH_ACK_RECEIPT reliability modes produce receipts.
@@ -1590,6 +1592,8 @@ ROCKETNET_EXPORT const struct rocketnet_message_batch_t * rocketnet_client_recei
 ///
 /// Read receipts after update. They remain until the next update.
 /// Reading does not consume them. Repeated reads copy the same first entries.
+/// If the returned count exceeds capacity, use a larger buffer and read again
+/// before the next update to get every available receipt.
 /// A full queue drops its oldest receipt and increments receipts_dropped.
 /// The queue holds max_message_receipts entries.
 

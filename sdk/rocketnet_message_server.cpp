@@ -1373,7 +1373,8 @@ int rocketnet_message_server_receive_messages( struct rocketnet_message_server_t
 
 int rocketnet_message_server_receipts( struct rocketnet_message_server_t * server, int client_index, struct rocketnet_message_receipt_t * out, int capacity )
 {
-    if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( out ) || capacity < 1 )
+    if ( !rocketnet_api_null_guard( server ) || capacity < 0 ||
+         ( capacity > 0 && !rocketnet_api_null_guard( out ) ) )
         return 0;
     rn_message_connection_t * connection = rn_message_object_connection( &server->object, client_index );
     if ( !connection || connection->state != RN_MESSAGE_CONNECTION_CONNECTED )

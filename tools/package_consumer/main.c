@@ -382,11 +382,11 @@ int main( void )
 
         struct rocketnet_receipt_t receipts[16];
         const int client_receipts = rocketnet_client_receipts( client, receipts, 16 );
-        for ( int i = 0; i < client_receipts; i++ )
+        for ( int i = 0; i < client_receipts && i < 16; i++ )
             if ( receipts[i].serial == client_serial && receipts[i].status == ROCKETNET_RECEIPT_STATUS_ACKED )
                 client_acked = 1;
         const int server_receipts = rocketnet_server_receipts( server, 0, receipts, 16 );
-        for ( int i = 0; i < server_receipts; i++ )
+        for ( int i = 0; i < server_receipts && i < 16; i++ )
             if ( receipts[i].serial == server_serial && receipts[i].status == ROCKETNET_RECEIPT_STATUS_ACKED )
                 server_acked = 1;
 

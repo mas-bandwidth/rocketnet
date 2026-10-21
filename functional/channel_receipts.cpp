@@ -89,6 +89,7 @@ void unreliable_receipts_over_lossy_link()
 
         rocketnet_message_receipt_t events[256];
         int count = rocketnet_message_client_receipts( h.message_client, events, 256 );
+        receipt_check( count >= 0 && count <= 256 );
         for ( int j = 0; j < count; j++ )
         {
             const int i = receipt_find_serial( client_serial, messages, events[j].serial );
@@ -98,6 +99,7 @@ void unreliable_receipts_over_lossy_link()
             if ( events[j].status == ROCKETNET_RECEIPT_STATUS_ACKED ) client_acked++; else client_lost++;
         }
         count = rocketnet_message_server_receipts( h.message_server, h.client_slot, events, 256 );
+        receipt_check( count >= 0 && count <= 256 );
         for ( int j = 0; j < count; j++ )
         {
             const int i = receipt_find_serial( server_serial, messages, events[j].serial );
@@ -177,6 +179,7 @@ void promoted_receipts_over_lossy_reliable_blocks()
 
         rocketnet_message_receipt_t events[256];
         int count = rocketnet_message_client_receipts( h.message_client, events, 256 );
+        receipt_check( count >= 0 && count <= 256 );
         for ( int j = 0; j < count; j++ )
         {
             const int i = receipt_find_serial( client_serial, 3, events[j].serial );
@@ -184,6 +187,7 @@ void promoted_receipts_over_lossy_reliable_blocks()
             client_receipt[i] = 1;
         }
         count = rocketnet_message_server_receipts( h.message_server, h.client_slot, events, 256 );
+        receipt_check( count >= 0 && count <= 256 );
         for ( int j = 0; j < count; j++ )
         {
             const int i = receipt_find_serial( server_serial, 3, events[j].serial );

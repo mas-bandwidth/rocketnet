@@ -128,7 +128,7 @@ int main( void ) {
         (void) data; (void) bytes; (void) sender;
         struct rocketnet_receipt_t receipts[32];
         const int n_rec = slot >= 0 ? rocketnet_server_receipts( server, slot, receipts, 32 ) : 0;
-        for ( int r = 0; r < n_rec; r++ )
+        for ( int r = 0; r < n_rec && r < 32; r++ )
             for ( int m = 5; m < NUM_MODES; m++ )
                 for ( int i = 0; i < NUM_MSGS; i++ )
                     if ( stats[m].serials[i] == receipts[r].serial )

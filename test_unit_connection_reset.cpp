@@ -534,6 +534,7 @@ static void reset_loopback_slot_reuse_scenario()
         }
         rocketnet_message_receipt_t receipts[8];
         const int n = rocketnet_message_client_receipts( f.clients[1], receipts, 8 );
+        check( n >= 0 && n <= 8 );
         for ( int r = 0; r < n; r++ )
         {
             check( receipts[r].serial == b_receipt );

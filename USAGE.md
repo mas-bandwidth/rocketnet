@@ -549,7 +549,7 @@ void server_frame( struct rocketnet_server_t * server, int client_index, int cha
 
     struct rocketnet_receipt_t receipts[64];
     int count = rocketnet_server_receipts( server, client_index, receipts, 64 );
-    for ( int i = 0; i < count; i++ )
+    for ( int i = 0; i < count && i < 64; i++ )
     {
         if ( receipts[i].status == ROCKETNET_RECEIPT_STATUS_LOSS )
         {
@@ -563,7 +563,10 @@ void server_frame( struct rocketnet_server_t * server, int client_index, int cha
 
 Every send returns a serial. `rocketnet_client_receipts` and
 `rocketnet_server_receipts` copy this update's outcomes into a caller array, up
-to its capacity, and return the copied count. Each entry carries the serial and
+to its capacity, and return the available count. Iterate only over the smaller
+of the returned count and the array capacity. Pass NULL and zero capacity to
+query the count without copying. If the buffer is too small, read again into
+a larger buffer before the next update. Each entry carries the serial and
 a status. A zero-filled receipt reads `ROCKETNET_RECEIPT_STATUS_NONE`. The library
 writes `ROCKETNET_RECEIPT_STATUS_ACKED` or `ROCKETNET_RECEIPT_STATUS_LOSS`. Repeated calls see the
 same list until the next update. A full receipt ring drops its oldest entry;

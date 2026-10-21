@@ -190,6 +190,8 @@ void rn_window_ack_receipt_begin_update( rn_window_ack_t * ack );
 void rn_window_ack_receipt_end_update( rn_window_ack_t * ack );
 void rn_window_ack_receipt_sweep( rn_window_ack_t * ack, double now );
 void rn_window_ack_receipt_emit_loss( rn_window_ack_t * ack, uint32_t serial );
+// Returns the available count and copies at most capacity entries. NULL out
+// with zero capacity is a count query; invalid arguments return zero.
 int rn_window_ack_receipts( const rn_window_ack_t * ack, rocketnet_message_receipt_t * out, int capacity );
 
 // Processes one acked transport sequence `packet_id` at time `now`

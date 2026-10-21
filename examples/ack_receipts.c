@@ -130,7 +130,8 @@ int main( void )
         (void) data; (void) bytes; (void) sender;
         struct rocketnet_receipt_t receipts[32];
         const int count = rocketnet_client_receipts( client, receipts, 32 );
-        for ( int r = 0; r < count; r++ )
+        CHECK( count <= 32 );
+        for ( int r = 0; r < count && r < 32; r++ )
         {
             int idx = -1;
             for ( int i = 0; i < sent; i++ )

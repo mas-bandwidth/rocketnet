@@ -286,7 +286,8 @@ int main( int argc, char ** argv ) {
                 }
                 struct rocketnet_receipt_t recs[16];
                 int nrec = rocketnet_client_receipts( clients[c], recs, 16 );
-                for ( int r = 0; r < nrec; r++ ) if ( recs[r].status == ROCKETNET_RECEIPT_STATUS_ACKED ) c2s[c].acked_events++;
+                CHECK( nrec <= 16 );
+                for ( int r = 0; r < nrec && r < 16; r++ ) if ( recs[r].status == ROCKETNET_RECEIPT_STATUS_ACKED ) c2s[c].acked_events++;
                 // (3) simulate & (4) queue this frame's outgoing messages
                 if ( tick < soak_ticks && ( ( c + tick ) % stride == 0 ) ) {
                     uint8_t * p0 = rocketnet_client_start_message( clients[c], 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, 48 );
@@ -327,7 +328,8 @@ int main( int argc, char ** argv ) {
                 const int client_idx = rocketnet_client_index( clients[c] );
                 struct rocketnet_receipt_t recs[16];
                 int nrec = rocketnet_server_receipts( server, client_idx, recs, 16 );
-                for ( int r = 0; r < nrec; r++ ) if ( recs[r].status == ROCKETNET_RECEIPT_STATUS_ACKED ) s2c[c].acked_events++;
+                CHECK( nrec <= 16 );
+                for ( int r = 0; r < nrec && r < 16; r++ ) if ( recs[r].status == ROCKETNET_RECEIPT_STATUS_ACKED ) s2c[c].acked_events++;
                 // (3) simulate & (4) server queue outgoing messages
                 if ( tick < soak_ticks && ( ( c + tick ) % stride == 0 ) ) {
                     uint8_t * p0 = rocketnet_server_start_message( server, (uint64_t) client_idx, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, 48 );

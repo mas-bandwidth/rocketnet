@@ -178,6 +178,80 @@ static void lifecycle_server_send( rocketnet_server_t * server, uint64_t index, 
     check( rocketnet_server_finish_message( server, 2 ) != 0 );
 }
 
+static void test_public_receipts_report_available_on_both_ends()
+{
+    lifecycle_world_t world;
+    lifecycle_world_create( &world, 1, 1 );
+    lifecycle_connect( &world, 0, 42 );
+    rocketnet_client_t * client = world.clients[0];
+    const int index = rocketnet_client_index( client );
+    uint32_t client_serials[3];
+    uint32_t server_serials[3];
+    for ( int i = 0; i < 3; i++ )
+    {
+        uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 1 );
+        check( out != NULL );
+        *out = (uint8_t) i;
+        client_serials[i] = rocketnet_client_finish_message( client, 1 );
+        check( client_serials[i] != 0 );
+        out = rocketnet_server_start_message( world.server, (uint64_t) index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 1 );
+        check( out != NULL );
+        *out = (uint8_t) i;
+        server_serials[i] = rocketnet_server_finish_message( world.server, 1 );
+        check( server_serials[i] != 0 );
+    }
+    bool client_checked = false;
+    bool server_checked = false;
+    for ( int tick = 0; tick < 400 && !( client_checked && server_checked ); tick++ )
+    {
+        lifecycle_pump( &world );
+        for ( int side = 0; side < 2; side++ )
+        {
+            if ( side == 0 ? client_checked : server_checked )
+                continue;
+            const uint64_t misuse_before = rocketnet_api_misuse_count();
+            const int available = side == 0 ? rocketnet_client_receipts( client, NULL, 0 )
+                                           : rocketnet_server_receipts( world.server, index, NULL, 0 );
+            check( rocketnet_api_misuse_count() == misuse_before );
+            if ( available == 0 )
+                continue;
+            check( available == 3 );
+            rocketnet_receipt_t receipts[3];
+            memset( receipts, 0, sizeof( receipts ) );
+            const int short_count = side == 0 ? rocketnet_client_receipts( client, receipts, 1 )
+                                             : rocketnet_server_receipts( world.server, index, receipts, 1 );
+            check( short_count == available );
+            check( receipts[1].serial == 0 && receipts[2].serial == 0 );
+            const int query_count = side == 0 ? rocketnet_client_receipts( client, receipts, 0 )
+                                             : rocketnet_server_receipts( world.server, index, receipts, 0 );
+            check( query_count == available );
+            const int invalid_count = side == 0 ? rocketnet_client_receipts( client, receipts, -1 )
+                                               : rocketnet_server_receipts( world.server, index, receipts, -1 );
+            check( invalid_count == 0 );
+            check( receipts[1].serial == 0 && receipts[2].serial == 0 );
+            check( rocketnet_api_misuse_count() == misuse_before );
+            const int full_count = side == 0 ? rocketnet_client_receipts( client, receipts, 3 )
+                                            : rocketnet_server_receipts( world.server, index, receipts, 3 );
+            check( full_count == available );
+            for ( int i = 0; i < 3; i++ )
+            {
+                check( receipts[i].serial == ( side == 0 ? client_serials[i] : server_serials[i] ) );
+                check( receipts[i].status == ROCKETNET_RECEIPT_STATUS_ACKED );
+            }
+            if ( side == 0 ) client_checked = true;
+            else server_checked = true;
+        }
+    }
+    check( client_checked && server_checked );
+    lifecycle_pump( &world );
+    check( rocketnet_client_receipts( client, NULL, 0 ) == 0 );
+    check( rocketnet_server_receipts( world.server, index, NULL, 0 ) == 0 );
+    rocketnet_server_stop( world.server );
+    check( rocketnet_server_receipts( world.server, index, NULL, 0 ) == 0 );
+    lifecycle_world_destroy( &world );
+}
+REGISTER_UNIT_TEST( test_public_receipts_report_available_on_both_ends );
+
 // Pumps until the server holds `want` messages from slot index and the client
 // `want` from the server, all tagged `tag` and in order; anything with another
 // tag fails the test.

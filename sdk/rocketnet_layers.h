@@ -1765,7 +1765,9 @@ int rocketnet_message_client_receive_messages( struct rocketnet_message_client_t
 int rocketnet_message_client_receive_channel( struct rocketnet_message_client_t * client, int channel, const uint8_t ** data, int * bytes );
 
 // Copies this update's receipt list into out, up to capacity entries; returns
-// the copied count. Repeated calls see the same list until the next update.
+// the available count. NULL out with zero capacity queries without copying.
+// Repeated calls see the same list until the next update. Negative capacity
+// or NULL out with positive capacity returns zero.
 int rocketnet_message_client_receipts( struct rocketnet_message_client_t * client, struct rocketnet_message_receipt_t * out, int capacity );
 
 // a NULL client or data is a counted no-op; a pointer that is not a held view is a counted misuse.

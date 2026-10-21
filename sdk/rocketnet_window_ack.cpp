@@ -707,21 +707,20 @@ void rn_window_ack_receipt_sweep( rn_window_ack_t * ack, double now )
 // tla/RNReceipts.tla TakeReceipt
 int rn_window_ack_receipts( const rn_window_ack_t * ack, rocketnet_message_receipt_t * out, int capacity )
 {
-    if ( !ack || !out || capacity < 1 )
+    if ( !ack || capacity < 0 || ( !out && capacity > 0 ) )
         return 0;
     uint64_t first = ack->receipt_visible_head;
     if ( first < ack->receipt_head )
         first = ack->receipt_head;
-    uint64_t count = ack->receipt_visible_tail > first ? ack->receipt_visible_tail - first : 0;
-    if ( count > (uint64_t) capacity )
-        count = (uint64_t) capacity;
-    for ( uint64_t i = 0; i < count; i++ )
+    const uint64_t available = ack->receipt_visible_tail > first ? ack->receipt_visible_tail - first : 0;
+    const uint64_t copied = available < (uint64_t) capacity ? available : (uint64_t) capacity;
+    for ( uint64_t i = 0; i < copied; i++ )
     {
         const rn_receipt_t * event = &ack->region->receipts[( first + i ) % ack->region->receipt_entries];
         out[i].serial = event->serial;
         out[i].status = event->status;
     }
-    return (int) count;
+    return (int) available;
 }
 
 uint32_t rn_window_ack_on_acks( rn_window_ack_t * ack, const uint64_t * packet_ids, uint32_t count, double now )
