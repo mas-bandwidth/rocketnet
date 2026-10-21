@@ -1,5 +1,11 @@
 # ClientSession: the client object's life across connections, and the per-connection reset
 
+**Shutdown scope:** This model retains its earlier synchronous shutdown
+abstraction and exact historical evidence. The approved request/completion API
+is separately modeled in [RNClientIoShutdown](README-RNClientIoShutdown.md).
+That additive ownership model is not a proved refinement of this one; existing
+data-path/session checks do not establish the new shutdown implementation.
+
 `tla/ClientSession.tla` models the client object over many connections: create (no token,
 DISCONNECTED), connect(token), the handshake abstracted to its three stages, CONNECTED, every
 path out of a connection, disconnect back to DISCONNECTED, connect again, and destroy. The

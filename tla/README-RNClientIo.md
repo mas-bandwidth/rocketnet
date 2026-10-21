@@ -1,5 +1,11 @@
 # RNClientIo
 
+**Shutdown scope:** This model retains its earlier synchronous shutdown
+abstraction and exact historical evidence. The approved request/completion API
+is separately modeled in [RNClientIoShutdown](README-RNClientIoShutdown.md).
+That additive ownership model is not a proved refinement of this one; existing
+data-path/session checks do not establish the new shutdown implementation.
+
 The client transport with its socket I/O on one I/O thread, as
 `docs/CLIENT-IO.md` designs it. The design replaces code in
 `sdk/rocketnet_client_transport.cpp` at the base of the design: the payload
