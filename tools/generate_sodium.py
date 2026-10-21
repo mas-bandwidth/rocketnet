@@ -37,6 +37,12 @@ BASELINE_ADAPTATIONS = {
         # compilers' own marker for a deliberate one.
         ('typedef unsigned __int128 uint128_t;',
          '__extension__ typedef unsigned __int128 uint128_t;'),
+        # -Wtsan (GCC): ThreadSanitizer does not model a standalone fence and
+        # GCC says so for every use. The acquire fence is a speculation
+        # barrier, not synchronisation, so a ThreadSanitizer build (a test
+        # build only) takes upstream's no-fence fallback.
+        ('#if !defined(HAVE_GCC_MEMORY_FENCES) && (defined(__GNUC__) || defined(__clang__))\n',
+         '#if !defined(HAVE_GCC_MEMORY_FENCES) && (defined(__GNUC__) || defined(__clang__)) && \\\n    !defined(__SANITIZE_THREAD__)\n'),
     ],
     'sodium.c': [
         # -Wunknown-pragmas (clang): clang defines __GNUC__ but has no GCC

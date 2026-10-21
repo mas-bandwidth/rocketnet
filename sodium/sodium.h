@@ -1312,7 +1312,8 @@ int crypto_stream_chacha20_ietf_ext_xor_ic(unsigned char *c, const unsigned char
    produced, so a speculative read cannot reach unauthenticated plaintext.
    Falling back to (void) 0 matches upstream's behaviour when autoconf detects
    no fence primitive: correct and interoperable, without the hardening. */
-#if !defined(HAVE_GCC_MEMORY_FENCES) && (defined(__GNUC__) || defined(__clang__))
+#if !defined(HAVE_GCC_MEMORY_FENCES) && (defined(__GNUC__) || defined(__clang__)) && \
+    !defined(__SANITIZE_THREAD__)
 # define HAVE_GCC_MEMORY_FENCES 1
 #endif
 #if !defined(HAVE_INLINE_ASM) && (defined(__GNUC__) || defined(__clang__)) && \

@@ -47,6 +47,7 @@ fails loudly and the edit is reviewed again:
 | Input | Warning | Edit |
 | --- | --- | --- |
 | baseline `sodium.h` (`uint128_t`) | `-Wpedantic` (`__int128` is an extension) | `__extension__ typedef` |
+| baseline `sodium.h` (`ACQUIRE_FENCE`) | `-Wtsan` (GCC: ThreadSanitizer does not support a standalone fence) | a ThreadSanitizer build (`__SANITIZE_THREAD__`, test builds only) takes upstream's no-fence fallback; the fence is a speculation barrier, not synchronisation |
 | baseline `sodium_verify.c` | `-Wunknown-pragmas` (Clang: no GCC target pragma) | the SSE2 target pragma is GCC-only; the block already requires `__SSE2__` |
 | `crypto_core/ed25519/ref10/ed25519_ref10.c` | `-Wunused-function` | `ge25519_p3_to_precomp`, never called by the subset, removed |
 | `crypto_core/ed25519/ref10/ed25519_ref10.c` | C4459 (local `d` hides the curve constant `d`) | the local in `ge25519_is_canonical` and `ristretto255_is_canonical` is `d_` |
