@@ -1057,7 +1057,6 @@ int main( int argc, char ** argv )
             {
                 const double t0 = rocketnet_time();
                 LOAD_TIMED_VOID( &timing, LOAD_TIMING_SERVER_UPDATE, rocketnet_server_update( server, t0 ) );
-                const double t1 = rocketnet_time();
                 LOAD_TIMED_VOID( &timing, LOAD_TIMING_SERVER_SEND_PACKETS, rocketnet_server_send_packets( server ) );
             }
         }
