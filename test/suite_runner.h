@@ -480,7 +480,7 @@ inline int suite_finish( const std::vector<suite_result> & results, bool passed 
     suite_print_report( results );
     if ( !passed )
         return 1;
-    printf( "\n*** ALL TESTS PASSED ***\n" );
+    printf( "\n*** ALL TESTS PASSED ***\n\n" );
     fflush( stdout );
     return 0;
 }
