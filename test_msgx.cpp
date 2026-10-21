@@ -109,10 +109,13 @@ int main()
     // the per-packet path; this assertion does not wait for packet delivery.
     interrupt_send = true;
     const int calls_before_interrupt = send_calls;
+    const uint64_t failures_before_interrupt = rocketnet_platform_socket_send_failures(socket);
     rocketnet_platform_socket_send_packets(socket, sends, 4);
     CHECK(send_calls == calls_before_interrupt + 1);
     CHECK(strcmp(rocketnet_platform_socket_pump(socket), "msgx") == 0);
     interrupt_send = false;
+    drain(socket, address, 4);
+    CHECK(rocketnet_platform_socket_send_failures(socket) == failures_before_interrupt);
     printf("test_msgx_transport_send_eintr_bounded\n");
 
     rocketnet_sendmsg_x = real_send; rocketnet_recvmsg_x = real_receive;
