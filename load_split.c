@@ -51,11 +51,13 @@ struct split_result_t
     uint64_t c2s_offered, c2s_accepted, c2s_received;
     uint64_t s2c_offered, s2c_accepted, s2c_received;
     uint64_t expected_offers, missed_due_slots;
+    uint64_t late_application_deliveries;
     uint64_t wire_up, wire_down;
     double max_peer_up_kbps, max_peer_down_kbps;
     int connected, identity_errors, payload_errors, order_errors, duplicate_errors;
     int unexpected_disconnects, offer_refusals, protocol_errors;
     int startup_complete, traffic_complete, drain_complete, barrier_complete, load_complete, wire_valid;
+    int barrier_active;
     int timing_valid, timing_budget_met;
     double connect_seconds, start_seconds, traffic_seconds, drain_seconds, barrier_seconds;
     double aggregate_up_kbps, aggregate_down_kbps;
@@ -317,6 +319,11 @@ static void split_receive_c2s( struct split_result_t * result, struct split_serv
             result->payload_errors++;
             continue;
         }
+        if ( result->barrier_active )
+        {
+            result->late_application_deliveries++;
+            continue;
+        }
         struct load_stream_state_t * stream = &clients[message.client].c2s[message.combo];
         const int duplicate = stream_seen_test_and_set(stream, message.seq);
         if ( duplicate != 0 ) result->duplicate_errors++;
@@ -345,6 +352,11 @@ static void split_receive_s2c( struct split_result_t * result, struct split_clie
              batch->client_index[j] != 0 )
         {
             result->payload_errors++;
+            continue;
+        }
+        if ( result->barrier_active )
+        {
+            result->late_application_deliveries++;
             continue;
         }
         if ( stream_seen_test_and_set(&client->s2c, message.seq) != 0 ) result->duplicate_errors++;
@@ -483,7 +495,7 @@ static int split_print_receipt( const char * role, uint64_t run_id, int total, i
         result->connect_seconds <= LOAD_CONNECT_DEADLINE_S &&
         population && !result->identity_errors && !result->payload_errors && !result->order_errors &&
         !result->duplicate_errors && !result->unexpected_disconnects && !result->offer_refusals &&
-        !result->protocol_errors && result->wire_valid;
+        !result->protocol_errors && !result->late_application_deliveries && result->wire_valid;
     const int bandwidth = result->max_peer_up_kbps < 100.0 && result->max_peer_down_kbps < 100.0 &&
         result->aggregate_up_kbps < aggregate_limit_kbps && result->aggregate_down_kbps < aggregate_limit_kbps;
     const int timing = strcmp(role, "server") != 0 ||
@@ -495,6 +507,7 @@ static int split_print_receipt( const char * role, uint64_t run_id, int total, i
            "traffic_start_utc_s=%" PRIu64 " traffic_end_utc_s=%" PRIu64 " "
            "connected=%d startup_complete=%d traffic_complete=%d drain_complete=%d barrier_complete=%d "
            "expected_offers=%" PRIu64 " missed_due_slots=%" PRIu64 " load_complete=%d "
+           "late_application_deliveries=%" PRIu64 " "
            "c2s_offered=%" PRIu64 " c2s_accepted=%" PRIu64 " c2s_received=%" PRIu64 " "
            "s2c_offered=%" PRIu64 " s2c_accepted=%" PRIu64 " s2c_received=%" PRIu64 " "
            "identity_errors=%d payload_errors=%d order_errors=%d duplicate_errors=%d "
@@ -502,23 +515,26 @@ static int split_print_receipt( const char * role, uint64_t run_id, int total, i
            "wire_valid=%d wire_up=%" PRIu64 " wire_down=%" PRIu64 " "
            "max_peer_up_kbps=%.6f max_peer_down_kbps=%.6f aggregate_up_kbps=%.6f "
            "aggregate_down_kbps=%.6f aggregate_limit_kbps=%.6f wire_scope=pre_run_to_traffic_end_conservative "
-           "workload_scope=traffic_plus_drain_plus_barrier transport=%s profile=default payload_bytes=32 "
+           "wire_rate_denominator_s=%d "
+           "workload_scope=traffic_plus_drain transport=%s profile=default payload_bytes=32 "
            "rate_target_hz=1 fds_pre_init=%ld fds_post_init=%ld fds_pre_term=%ld fds_post_term=%ld "
            "threads_pre_init=%ld threads_post_init=%ld threads_pre_term=%ld threads_post_term=%ld "
            "term_status_code=%d resource_baseline=%s delivery_verdict=%s load_verdict=%s "
-           "bandwidth_verdict=%s timing_verdict=%s timing_budget_us=100 verdict=%s\n",
+           "bandwidth_verdict=%s timing_verdict=%s timing_budget_us=100 "
+           "timing_budget_basis=server_update_send_p99_upper verdict=%s\n",
            role, run_id, total, first, count, duration, result->connect_seconds, result->start_seconds,
            result->traffic_seconds, result->drain_seconds, result->barrier_seconds, result->startup_utc_s,
            result->traffic_start_utc_s, result->traffic_end_utc_s, result->connected,
            result->startup_complete, result->traffic_complete, result->drain_complete, result->barrier_complete,
            result->expected_offers, result->missed_due_slots, result->load_complete,
+           result->late_application_deliveries,
            result->c2s_offered, result->c2s_accepted, result->c2s_received,
            result->s2c_offered, result->s2c_accepted, result->s2c_received,
            result->identity_errors, result->payload_errors, result->order_errors, result->duplicate_errors,
            result->unexpected_disconnects, result->offer_refusals, result->protocol_errors,
            result->wire_valid, result->wire_up, result->wire_down,
            result->max_peer_up_kbps, result->max_peer_down_kbps,
-           result->aggregate_up_kbps, result->aggregate_down_kbps, aggregate_limit_kbps,
+           result->aggregate_up_kbps, result->aggregate_down_kbps, aggregate_limit_kbps, duration,
            transport ? transport : "none", fds_pre_init, fds_post_init, fds_pre_term, fds_post_term,
            threads_pre_init, threads_post_init, threads_pre_term, threads_post_term,
            (int) term_status, resources ? "PASS" : "FAIL", correctness ? "PASS" : "FAIL",
@@ -728,13 +744,13 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
                 const uint64_t down = stats.bytes_received - clients[i].wire_start.received;
                 result.wire_up += up;
                 result.wire_down += down;
-                const double up_kbps = (double) up * 8.0 / (result.traffic_seconds * 1000.0);
-                const double down_kbps = (double) down * 8.0 / (result.traffic_seconds * 1000.0);
+                const double up_kbps = (double) up * 8.0 / ((double) duration * 1000.0);
+                const double down_kbps = (double) down * 8.0 / ((double) duration * 1000.0);
                 if ( up_kbps > result.max_peer_up_kbps ) result.max_peer_up_kbps = up_kbps;
                 if ( down_kbps > result.max_peer_down_kbps ) result.max_peer_down_kbps = down_kbps;
             }
-            result.aggregate_up_kbps = (double) result.wire_up * 8.0 / (result.traffic_seconds * 1000.0);
-            result.aggregate_down_kbps = (double) result.wire_down * 8.0 / (result.traffic_seconds * 1000.0);
+            result.aggregate_up_kbps = (double) result.wire_up * 8.0 / ((double) duration * 1000.0);
+            result.aggregate_down_kbps = (double) result.wire_down * 8.0 / ((double) duration * 1000.0);
             result.traffic_complete = result.traffic_seconds >= (double) duration;
         }
         LOAD_TIMED_VOID(&timing, LOAD_TIMING_SERVER_UPDATE, rocketnet_server_update(server, now));
@@ -772,6 +788,7 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
     result.load_complete = result.s2c_offered == result.expected_offers && !result.missed_due_slots;
     timing.enabled = 0;
     if ( !traffic_sampled ) goto cleanup;
+    result.barrier_active = 1;
     /* The shard starts its full local duration only after all local RUNs.
      * Wait for its own drain to complete; this bounded teardown phase is not
      * part of the server's measured three-second drain. */
@@ -1054,13 +1071,13 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
                 const uint64_t down = clients[i].wire_end.received - clients[i].wire_start.received;
                 result.wire_up += up;
                 result.wire_down += down;
-                const double up_kbps = (double) up * 8.0 / (result.traffic_seconds * 1000.0);
-                const double down_kbps = (double) down * 8.0 / (result.traffic_seconds * 1000.0);
+                const double up_kbps = (double) up * 8.0 / ((double) duration * 1000.0);
+                const double down_kbps = (double) down * 8.0 / ((double) duration * 1000.0);
                 if ( up_kbps > result.max_peer_up_kbps ) result.max_peer_up_kbps = up_kbps;
                 if ( down_kbps > result.max_peer_down_kbps ) result.max_peer_down_kbps = down_kbps;
             }
-            result.aggregate_up_kbps = (double) result.wire_up * 8.0 / (result.traffic_seconds * 1000.0);
-            result.aggregate_down_kbps = (double) result.wire_down * 8.0 / (result.traffic_seconds * 1000.0);
+            result.aggregate_up_kbps = (double) result.wire_up * 8.0 / ((double) duration * 1000.0);
+            result.aggregate_down_kbps = (double) result.wire_down * 8.0 / ((double) duration * 1000.0);
             result.traffic_complete = result.traffic_seconds >= (double) duration;
             for ( int i = 0; i < count; ++i )
                 if ( !split_client_send(clients[i].api, SPLIT_DONE_MAGIC,
@@ -1116,6 +1133,7 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
     result.drain_complete = result.drain_seconds >= 3.0;
     result.load_complete = result.c2s_offered == result.expected_offers && !result.missed_due_slots;
     if ( !traffic_sampled ) goto cleanup;
+    result.barrier_active = 1;
     const double barrier_start = rocketnet_time();
     for ( int i = 0; i < count; ++i )
     {

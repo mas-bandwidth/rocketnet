@@ -85,18 +85,25 @@ Each role emits one `split_receipt:` after endpoint shutdown and SDK term,
 plus one `split_stream:` line for every global client/direction/mode it owns,
 and one `split_wire:` byte record per client. The server receipt separates
 delivery, target load, bandwidth, server API timing, and resource verdicts;
-overall PASS requires all of them. Server API p99 histogram upper bounds
-must each be at most 100 microseconds, a conservative test of the budget.
+overall PASS requires all of them. The timing budget is specifically the p99
+upper bound of server update and send-packets calls; each must be at most 100
+microseconds. Maxima are reported separately and do not define this p99
+budget.
 Traffic wire counters are sampled just before RUN and at the role's traffic
-boundary. They conservatively include RUN/startup bytes and divide by only
-the measured traffic duration. Per-client upload and download must each stay
+boundary. They conservatively include RUN/startup bytes and divide by the
+requested traffic duration, even if boundary sampling is late, so a scheduler
+pause cannot dilute the reported rate. The actual monotonic interval is
+reported separately. Per-client upload and download must each stay
 strictly below 100 kbps; each role and the merged client shards must stay
 strictly below the operator-supplied aggregate cap. These byte counters
 include IP/UDP overhead, not Ethernet framing. Whole-run verified message
-counts include any delayed delivery during the bounded barrier; they are
-separate from the traffic wire interval. The merger recomputes aggregate and
-per-peer rates from the raw per-peer byte records and actual monotonic
-traffic interval, accounting for six-decimal receipt rounding.
+counts stop at each role's fixed three-second drain boundary; they are
+separate from the traffic wire interval. Application packets observed during
+the later completion barrier increment `late_application_deliveries` and fail
+delivery qualification rather than repairing a missed drain deadline. The
+merger recomputes aggregate and per-peer rates from the raw per-peer byte
+records and conservative requested-duration denominator, accounting for
+six-decimal receipt rounding.
 
 The gate owner must provide a `split_allocation_v1` JSON manifest from the
 actual runner/bench allocation record. It identifies the dedicated server

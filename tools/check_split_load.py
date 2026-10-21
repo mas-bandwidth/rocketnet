@@ -64,7 +64,7 @@ def validate_receipt(fields, role, run_id, total, duration, limit):
     expected(fields, schema="split_v1", role=role, run_id=run_id, total=total,
              duration_target_s=duration, profile="default", payload_bytes=32,
              rate_target_hz=1, wire_scope="pre_run_to_traffic_end_conservative",
-             workload_scope="traffic_plus_drain_plus_barrier", startup_complete=1,
+             workload_scope="traffic_plus_drain", startup_complete=1,
              traffic_complete=1, drain_complete=1, barrier_complete=1,
              load_complete=1, wire_valid=1, resource_baseline="PASS",
              delivery_verdict="PASS", load_verdict="PASS", bandwidth_verdict="PASS",
@@ -76,6 +76,8 @@ def validate_receipt(fields, role, run_id, total, duration, limit):
                  "unexpected_disconnects", "offer_refusals", "protocol_errors"):
         if integer(fields, name) != 0:
             raise ValueError(f"{name}: nonzero")
+    if integer(fields, "late_application_deliveries"):
+        raise ValueError("application packet arrived after fixed drain")
     if integer(fields, "connected") != integer(fields, "count", 1):
         raise ValueError("population not fully connected")
     if finite(fields, "connect_elapsed_s") > 10.0:
@@ -115,6 +117,9 @@ def validate_receipt(fields, role, run_id, total, duration, limit):
         raise ValueError("target offer rate was not sustained")
     if finite(fields, "aggregate_limit_kbps", 0.000001) != limit:
         raise ValueError("aggregate cap differs from requested limit")
+    if finite(fields, "wire_rate_denominator_s", 0.000001) != duration:
+        raise ValueError("wire rate denominator must be target duration")
+    expected(fields, timing_budget_basis="server_update_send_p99_upper")
     for name in ("max_peer_up_kbps", "max_peer_down_kbps"):
         if finite(fields, name) >= 100.0:
             raise ValueError(f"{name}: exceeds per-client cap")
@@ -135,7 +140,7 @@ def wire_map(text, role, run_id, first, count, receipt):
         raise ValueError("per-client wire coverage mismatch")
     if any(up == 0 or down == 0 for up, down in found.values()):
         raise ValueError("zero per-client wire traffic")
-    window = finite(receipt, "traffic_actual_s", 0.000001)
+    window = finite(receipt, "wire_rate_denominator_s", 0.000001)
     for label, index, field in (("up", 0, "wire_up"), ("down", 1, "wire_down")):
         total_bytes = sum(pair[index] for pair in found.values())
         if total_bytes != integer(receipt, field):
@@ -299,7 +304,7 @@ def validate(server_text, shard_texts, run_id, total, duration, limit,
         raise ValueError("no application traffic")
     # Shards measure independent monotonic intervals. Divide their summed
     # traffic bytes by the shortest interval for a conservative aggregate bound.
-    minimum_window = min(finite(shard, "traffic_actual_s", 0.000001) for shard in shards)
+    minimum_window = min(finite(shard, "wire_rate_denominator_s", 0.000001) for shard in shards)
     aggregate_up = sum(integer(shard, "wire_up") for shard in shards) * 8 / (minimum_window * 1000)
     aggregate_down = sum(integer(shard, "wire_down") for shard in shards) * 8 / (minimum_window * 1000)
     if aggregate_up >= limit or aggregate_down >= limit:

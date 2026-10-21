@@ -15,7 +15,7 @@ def line(name, fields):
 
 def receipt(role, first, count, total=2):
     server = role == "server"
-    window = 60.01
+    window = 60.0
     max_rate = 10000 * 8 / (window * 1000)
     aggregate_rate = max_rate * count
     return dict(schema="split_v1", role=role, run_id=RUN, total=total,
@@ -25,6 +25,7 @@ def receipt(role, first, count, total=2):
                 startup_utc_s=1000, traffic_start_utc_s=1002, traffic_end_utc_s=1062,
                 connected=count, startup_complete=1, traffic_complete=1, drain_complete=1,
                 barrier_complete=1, expected_offers=60 * count, missed_due_slots=0, load_complete=1,
+                late_application_deliveries=0,
                 c2s_offered=0 if server else 60 * count, c2s_accepted=0 if server else 60 * count,
                 c2s_received=60 * count if server else 0,
                 s2c_offered=60 * count if server else 0, s2c_accepted=60 * count if server else 0,
@@ -35,16 +36,17 @@ def receipt(role, first, count, total=2):
                 wire_up=10000 * count, wire_down=10000 * count,
                 max_peer_up_kbps=f"{max_rate:.6f}", max_peer_down_kbps=f"{max_rate:.6f}",
                 aggregate_up_kbps=f"{aggregate_rate:.6f}", aggregate_down_kbps=f"{aggregate_rate:.6f}",
-                aggregate_limit_kbps="1000.0",
+                aggregate_limit_kbps="1000.0", wire_rate_denominator_s=60,
                 wire_scope="pre_run_to_traffic_end_conservative",
-                workload_scope="traffic_plus_drain_plus_barrier", transport="portable",
+                workload_scope="traffic_plus_drain", transport="portable",
                 profile="default", payload_bytes=32, rate_target_hz=1,
                 fds_pre_init=10, fds_post_init=11, fds_pre_term=11, fds_post_term=10,
                 threads_pre_init=2, threads_post_init=3,
                 threads_pre_term=3, threads_post_term=2,
                 term_status_code=0, resource_baseline="PASS", delivery_verdict="PASS",
                 load_verdict="PASS", bandwidth_verdict="PASS",
-                timing_verdict="PASS" if server else "NA", timing_budget_us=100, verdict="PASS")
+                timing_verdict="PASS" if server else "NA", timing_budget_us=100,
+                timing_budget_basis="server_update_send_p99_upper", verdict="PASS")
 
 
 def stream_lines(role, clients):
@@ -205,12 +207,12 @@ class SplitReceiptTests(unittest.TestCase):
     def test_false_aggregate_rate(self):
         server, shards = fixture()
         with self.assertRaisesRegex(ValueError, "reported aggregate rate"):
-            self.check(server.replace("aggregate_up_kbps=2.666222", "aggregate_up_kbps=2.0"), shards)
+            self.check(server.replace("aggregate_up_kbps=2.666667", "aggregate_up_kbps=2.0"), shards)
 
     def test_false_peer_max(self):
         server, shards = fixture()
         with self.assertRaisesRegex(ValueError, "reported max peer rate"):
-            self.check(server.replace("max_peer_up_kbps=1.333111", "max_peer_up_kbps=0.0"), shards)
+            self.check(server.replace("max_peer_up_kbps=1.333333", "max_peer_up_kbps=0.0"), shards)
 
     def test_same_machine_allocation(self):
         server, shards = fixture()
@@ -235,6 +237,18 @@ class SplitReceiptTests(unittest.TestCase):
         server, shards = fixture()
         with self.assertRaisesRegex(ValueError, "barrier_complete"):
             self.check(server.replace("barrier_complete=1", "barrier_complete=0"), shards)
+
+    def test_late_delivery_does_not_rescue_drain(self):
+        server, shards = fixture()
+        with self.assertRaisesRegex(ValueError, "after fixed drain"):
+            self.check(server.replace("late_application_deliveries=0",
+                                      "late_application_deliveries=1"), shards)
+
+    def test_long_sample_cannot_dilute_bandwidth(self):
+        server, shards = fixture()
+        with self.assertRaisesRegex(ValueError, "wire rate denominator"):
+            self.check(server.replace("wire_rate_denominator_s=60",
+                                      "wire_rate_denominator_s=70"), shards)
 
 
 if __name__ == "__main__":
