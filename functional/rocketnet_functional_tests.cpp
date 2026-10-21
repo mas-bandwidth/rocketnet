@@ -25,6 +25,7 @@
 #include "rocketnet_client_io.h"
 
 #include <math.h>
+#include <errno.h>
 
 #include "rocketnet_wire.h"
 #include "rocketnet_fragment.h"

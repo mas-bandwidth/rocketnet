@@ -78,26 +78,8 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_BANK_SIZE >= ROCKETNET_URING_SEND_BUDGE
 
 // send_packets waits at most once per call, this long, for a completion
 
-#define ROCKETNET_URING_SEND_WAIT_SECONDS                                0.001
-
-// destroy waits this long per round for the cancels, and gives up waiting
-// after this many empty rounds, or after ROCKETNET_URING_DESTROY_MAX_ROUNDS
-// rounds of at most ROCKETNET_URING_RECEIVE_BUDGET completions each. a destroy that gives up exits the ring and
-// closes the sockets, but leaks the buffer rings, the queues and the transport
-// allocation: the kernel may still write them (see rocketnet_server_uring_destroy)
-
-#define ROCKETNET_URING_DESTROY_WAIT_SECONDS                                 1
-#define ROCKETNET_URING_DESTROY_WAIT_ROUNDS                                  5
-#define ROCKETNET_URING_DESTROY_MAX_ROUNDS                                  64
-
-// destroy's wait ends after ROCKETNET_URING_DESTROY_WAIT_ROUNDS silent rounds,
-// or after ROCKETNET_URING_DESTROY_MAX_ROUNDS rounds however many of them
-// completed, so steady completions cannot hold it open
-
-static bool rocketnet_server_uring_destroy_wait_over( int empty_rounds, int rounds )
-{
-    return empty_rounds >= ROCKETNET_URING_DESTROY_WAIT_ROUNDS || rounds >= ROCKETNET_URING_DESTROY_MAX_ROUNDS;
-}
+// Only private synchronous create-failure cleanup waits for kernel ownership.
+#define ROCKETNET_URING_ABORT_CREATE_WAIT_SECONDS 0.001
 
 // each slot's info is the slot's msghdr, iovec and destination, which the
 // kernel reads until the send's CQE. finish threads write packet_bytes, so a
@@ -868,7 +850,7 @@ static void rocketnet_server_uring_abort_create( rocketnet_server_uring_t * urin
 {
     rocketnet_server_uring_stop( uring );
     while ( !rocketnet_server_uring_stopped( uring ) )
-        rocketnet_server_uring_wait( uring, ROCKETNET_URING_DESTROY_WAIT_SECONDS );
+        rocketnet_server_uring_wait( uring, ROCKETNET_URING_ABORT_CREATE_WAIT_SECONDS );
     rocketnet_server_uring_destroy( uring );
 }
 
