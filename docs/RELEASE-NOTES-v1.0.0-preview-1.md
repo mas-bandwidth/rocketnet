@@ -1,8 +1,5 @@
 # RocketNet v1.0.0-preview-1
 
-Release draft. Final API review and the release unit and functional checks
-on Linux, macOS and Windows are still pending. No release tag has been made.
-
 RocketNet is a client/server UDP library for multiplayer games. It provides
 a C API that can be called from C or C++. Your game supplies message bytes,
 drives the frame loop and decides what those messages mean.
