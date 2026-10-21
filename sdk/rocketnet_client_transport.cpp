@@ -907,7 +907,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
     rocketnet_address_t bind_address;
     memset( &bind_address, 0, sizeof(bind_address) );
-    bind_address.type = bind_family;
+    bind_address.type = (uint8_t) bind_family;
 
     // IMPORTANT: for many platforms it's best practice to bind to ipv6 and go dual stack on the client
     if ( bind_family == ROCKETNET_ADDRESS_IPV6 )
@@ -930,7 +930,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         if ( preferred_client_port != 0 )
         {
             rocketnet_info( "client socket using preferred port %d", preferred_client_port );
-            bind_address.port = preferred_client_port;
+            bind_address.port = (uint16_t) preferred_client_port;
         }
     }
 

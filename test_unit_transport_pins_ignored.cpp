@@ -51,14 +51,8 @@ static void unit_transport_pins_ignored()
 {
     char saved_server[64] = "";
     char saved_client[64] = "";
-    char orig_server[4096];
-    char orig_client[4096];
-    const bool had_server = rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", orig_server, sizeof( orig_server ) ) != 0;
-    const bool had_client = rocketnet_test_getenv( "ROCKETNET_CLIENT_TRANSPORT", orig_client, sizeof( orig_client ) ) != 0;
-    if ( had_server )
-        snprintf( saved_server, sizeof( saved_server ), "%s", orig_server );
-    if ( had_client )
-        snprintf( saved_client, sizeof( saved_client ), "%s", orig_client );
+    const bool had_server = rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", saved_server, sizeof( saved_server ) ) != 0;
+    const bool had_client = rocketnet_test_getenv( "ROCKETNET_CLIENT_TRANSPORT", saved_client, sizeof( saved_client ) ) != 0;
 
     pins_set( "ROCKETNET_SERVER_TRANSPORT", "io_uring" );
     pins_set( "ROCKETNET_CLIENT_TRANSPORT", "io_uring" );

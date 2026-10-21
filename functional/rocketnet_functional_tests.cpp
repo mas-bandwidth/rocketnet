@@ -7219,7 +7219,7 @@ static void rocketnet_test_max_size_packet_crosses( const char * host_env, const
     if ( !rocketnet_test_getenv( host_env, host_value, sizeof( host_value ) ) || host_value[0] == '\0' )
         host = loopback_host;
 
-    char bind_host[128];
+    char bind_host[sizeof( host_value ) + 2];
     if ( ipv6 && host[0] != '[' )
         snprintf( bind_host, sizeof(bind_host), "[%s]", host );
     else

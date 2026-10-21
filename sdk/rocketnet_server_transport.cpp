@@ -2753,19 +2753,19 @@ static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
         const int mapping_index = rocketnet_client_slots_mapping_index( server_transport->protocol.client_slots, context->client_index );
-        const rocketnet_address_t * to = rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
+        const rocketnet_address_t * mapped_to = rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
         if ( server_transport->link_simulator )
         {
-            rocketnet_server_link_send( server_transport, to,
+            rocketnet_server_link_send( server_transport, mapped_to,
                                         context->frame + ROCKETNET_FRAME_WIRE_OFFSET, wire_bytes );
             rocketnet_server_transport_io_abort_packet( server_transport, backend_id, context->frame );
         }
         else
             rocketnet_server_transport_io_finish_packet( server_transport, backend_id, context->frame, wire_bytes );
         rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_packets_sent, 1 );
-        rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_bytes_sent, (uint64_t) ( wire_bytes + rocketnet_wire_header_bytes( to ? to->type : ROCKETNET_ADDRESS_NONE ) ) );
+        rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_bytes_sent, (uint64_t) ( wire_bytes + rocketnet_wire_header_bytes( mapped_to ? mapped_to->type : ROCKETNET_ADDRESS_NONE ) ) );
         rocketnet_server_wire_totals_add_sent_atomic( server_transport, context->client_index,
-                                                      to ? to->type : ROCKETNET_ADDRESS_NONE, wire_bytes );
+                                                      mapped_to ? mapped_to->type : ROCKETNET_ADDRESS_NONE, wire_bytes );
     }
     else
     {

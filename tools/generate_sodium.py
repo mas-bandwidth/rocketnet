@@ -87,6 +87,37 @@ UPSTREAM_ADAPTATIONS = {
 }
 
 
+# C4244 (MSVC /W4): the ref10 byte encoders store 64- and 32-bit limbs into
+# unsigned char outputs through the implicit narrowing conversion. Inside each
+# named function body, every `out[k] = expr;` store is written with the cast
+# that conversion already performs, `(type) (expr)`: the same value, by
+# definition of the conversion. (function, output array, its element type)
+NARROWING_STORES = {
+    'crypto_core/ed25519/ref10/fe_25_5/fe.h': [('fe25519_tobytes(', 's', 'unsigned char', r'.*>>.*')],
+    'crypto_core/ed25519/ref10/ed25519_ref10.c': [
+        ('sc25519_mul(', 's', 'unsigned char', r'.*>>.*'), ('sc25519_muladd(', 's', 'unsigned char', r'.*>>.*'),
+        ('sc25519_reduce(', 's', 'unsigned char', r'.*>>.*'), ('slide_vartime(', 'r', 'signed char', r'cmp')],
+    'crypto_stream/salsa20/ref/salsa20_ref.c': [
+        ('stream_ref(', 'in', 'unsigned char', r'u'), ('stream_ref_xor_ic(', 'in', 'unsigned char', r'u')],
+}
+
+
+def cast_narrowing_stores(text, stores, where):
+    """Casts each `array[k] = value;` store whose value matches the pattern, in the function's body."""
+    for function, array, element, value in stores:
+        if text.count('\n' + function) != 1:
+            raise SystemExit(f"narrowing-store function does not match once in {where}: {function}")
+        start = text.index('\n' + function)
+        end = text.index('\n}\n', start)
+        body = text[start:end]
+        store = re.compile(r'^(\s+' + re.escape(array) + r'\[[^\]]+\]\s*= )(' + value + r');$', re.M)
+        cast, count = store.subn(lambda m: f'{m[1]}({element}) ({m[2]});', body)
+        if count == 0:
+            raise SystemExit(f"no narrowing store in {where}: {function}")
+        text = text[:start] + cast + text[end:]
+    return text
+
+
 def adapt(text, replacements, where):
     for old, new in replacements:
         if text.count(old) != 1:
@@ -136,6 +167,8 @@ def main():
                  for m in tar.getmembers() if m.isfile() and m.name.startswith(prefix)}
     for path, replacements in UPSTREAM_ADAPTATIONS.items():
         files[path] = adapt(files[path], replacements, path)
+    for path, stores in NARROWING_STORES.items():
+        files[path] = cast_narrowing_stores(files[path], stores, path)
     for name, replacements in BASELINE_ADAPTATIONS.items():
         baseline[name] = adapt(baseline[name], replacements, name)
     baseline_guards = set(re.findall(r'^#ifndef (\w+)', baseline['sodium.h'], re.M))

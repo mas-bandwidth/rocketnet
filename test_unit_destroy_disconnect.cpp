@@ -80,7 +80,7 @@ struct destroy_disconnect_env_guard_t
         }
     }
 
-    ~destroy_disconnect_env_guard_t()
+    ~destroy_disconnect_env_guard_t() noexcept( false ) // check() throws under the expected-fail harness
     {
         for ( int i = 0; i < NUM_NAMES; i++ )
         {

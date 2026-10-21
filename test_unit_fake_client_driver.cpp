@@ -223,13 +223,11 @@ struct fake_disconnect_env_guard_t
     {
         for ( int i = 0; i < 2; i++ )
         {
-            char prior[4096];
-            if ( rocketnet_test_getenv( names[i], prior, sizeof( prior ) ) )
-                snprintf( saved[i], sizeof( saved[i] ), "%s", prior );
+            rocketnet_test_getenv( names[i], saved[i], sizeof( saved[i] ) );
             rocketnet_unit_check( fake_disconnect_setenv( names[i], "" ) == 0 );
         }
     }
-    ~fake_disconnect_env_guard_t()
+    ~fake_disconnect_env_guard_t() noexcept( false ) // check() throws under the expected-fail harness
     {
         for ( int i = 0; i < 2; i++ )
             rocketnet_unit_check( fake_disconnect_setenv( names[i], saved[i] ) == 0 );

@@ -37,6 +37,16 @@
 #include "sdk/rocketnet_send_budget.h"
 #include "sdk/rocketnet_wire.h"
 
+// copies count bytes into a vector; a zero count copies nothing, so a NULL
+// source with no bytes is never handed to memmove (gcc 15 -Wnonnull sees
+// vector::assign's memmove with a possibly-NULL source)
+static void ip_copy_bytes( std::vector<uint8_t> & to, const uint8_t * from, size_t count )
+{
+    to.resize( count );
+    if ( count > 0 )
+        memcpy( to.data(), from, count );
+}
+
 #define check rocketnet_unit_check
 
 // ---------------------------------------------------------------------------
@@ -220,7 +230,7 @@ static int ip_finish_packet( void * transport, rocketnet_packet_context_t * cont
     ip_packet_t packet;
     packet.id = e->frame_id[f];
     packet.slot = 0;
-    packet.data.assign( payload, payload + payload_bytes );
+    ip_copy_bytes( packet.data, payload, (size_t) payload_bytes );
     packet.acks.swap( e->acks_due );
     e->sent.push_back( packet );
     ip_end_t * peer = e->is_server ? &e->net->client : &e->net->server;
@@ -360,7 +370,7 @@ static void ip_step( ip_pair_t * pair, std::vector<ip_received_t> * server_got, 
         {
             ip_received_t r;
             r.channel = batch.channel[i];
-            r.bytes.assign( batch.data[i], batch.data[i] + batch.bytes[i] );
+            ip_copy_bytes( r.bytes, batch.data[i], (size_t) batch.bytes[i] );
             server_got->push_back( r );
         }
     }
@@ -374,7 +384,7 @@ static void ip_step( ip_pair_t * pair, std::vector<ip_received_t> * server_got, 
         {
             ip_received_t r;
             r.channel = batch.channel[i];
-            r.bytes.assign( batch.data[i], batch.data[i] + batch.bytes[i] );
+            ip_copy_bytes( r.bytes, batch.data[i], (size_t) batch.bytes[i] );
             client_got->push_back( r );
         }
     }

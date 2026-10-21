@@ -73,11 +73,7 @@ struct transport_oom_env_pin_t
 
 static void transport_oom_env_set_aside( const char * name, transport_oom_env_pin_t * saved )
 {
-    char value[4096];
-    saved->was_set = rocketnet_test_getenv( name, value, sizeof(value) ) != 0;
-    saved->value[0] = '\0';
-    if ( saved->was_set )
-        snprintf( saved->value, sizeof(saved->value), "%s", value );
+    saved->was_set = rocketnet_test_getenv( name, saved->value, sizeof(saved->value) ) != 0;
     unsetenv( name );
 }
 

@@ -293,15 +293,18 @@ static void check_frame_conservation()
         ++written;
     };
     auto submit = [&](uint32_t count) { check(written == (int)count); published += count; };
+    // the refusing reserve reads its zero through a volatile, so the optimiser
+    // cannot prove flush's code after the refusal unreachable (MSVC C4702)
+    volatile uint32_t refused = 0;
     for (int i = 0; i < 10; ++i)
-        check(!pending.flush([](uint32_t, uint32_t *) { return 0U; }, write, submit));
+        check(!pending.flush([&](uint32_t, uint32_t *) { return (uint32_t) refused; }, write, submit));
     check(pending.count == 4 && written == 0 && published == 0);
     check(pending.append(second, 4) && pending.available() == 0);
     check(!pending.append(first, 1) && pending.count == 8);
     check(pending.flush([](uint32_t count, uint32_t * index) { *index = 0; return count; }, write, submit));
     check(pending.count == 0 && published == 8);
     for (int i = 0; i < 8; ++i) check(submitted[i] == (uint64_t)(11 + i));
-    check(pending.flush([](uint32_t, uint32_t *) { check(false); return 0U; }, write, submit));
+    check(pending.flush([&](uint32_t, uint32_t *) { check(false); return (uint32_t) refused; }, write, submit));
     check(published == 8); // no frame submitted twice after successful retry
 }
 

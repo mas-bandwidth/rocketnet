@@ -292,10 +292,8 @@ static int public_step_unsetenv( const char * name )
 
 static void public_step_driven_client_env_selects_the_mode()
 {
-    char prior[4096];
     char saved[64] = {};
-    const bool present = rocketnet_test_getenv( "ROCKETNET_CLIENT_STEP_DRIVEN", prior, sizeof( prior ) ) && prior[0] != '\0';
-    if ( present ) snprintf( saved, sizeof( saved ), "%s", prior );
+    const bool present = rocketnet_test_getenv( "ROCKETNET_CLIENT_STEP_DRIVEN", saved, sizeof( saved ) ) && saved[0] != '\0';
 
     rocketnet_client_transport_config_t config;
     int num_fields = 0;

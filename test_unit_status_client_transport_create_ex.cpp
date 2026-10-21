@@ -64,11 +64,7 @@ struct env_pin_saved
 
 static void env_pin_set_aside( env_pin_saved * saved )
 {
-    char value[4096];
-    saved->was_set = rocketnet_test_getenv( "ROCKETNET_CLIENT_TRANSPORT", value, sizeof(value) ) != 0;
-    saved->value[0] = '\0';
-    if ( saved->was_set )
-        snprintf( saved->value, sizeof(saved->value), "%s", value );
+    saved->was_set = rocketnet_test_getenv( "ROCKETNET_CLIENT_TRANSPORT", saved->value, sizeof(saved->value) ) != 0;
     unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
 }
 
