@@ -96,6 +96,11 @@
 
 #define ROCKETNET_FLOW_ID_BIT                                       ( 1ULL << 63 )
 
+/// Absolute maximum application message bytes. Configured message limits
+/// also require sufficient receive-buffer, reliable-window and send-store capacity.
+
+#define ROCKETNET_MAX_MESSAGE_BYTES                       ( 1 << 20 )
+
 /// Maximum UDP payload bytes per packet.
 /// This fits an IPv6 datagram within a 1500-byte MTU.
 
@@ -1058,7 +1063,8 @@ struct rocketnet_client_config_t
 
     /// ROCKETNET_CLIENT_MAX_MESSAGE_BYTES sets the largest message. Both ends
     /// must match. It cannot exceed receive_message_buffer_bytes. Range is
-    /// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 .. 1048576. Default is 262144.
+    /// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 .. ROCKETNET_MAX_MESSAGE_BYTES.
+    /// Default is 262144.
 
     int max_message_bytes;
 
@@ -1227,7 +1233,8 @@ struct rocketnet_server_config_t
 
     /// ROCKETNET_SERVER_MAX_MESSAGE_BYTES sets the largest message. Both ends
     /// must match. It cannot exceed receive_message_buffer_bytes. Range is
-    /// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 .. 1048576. Default is 262144.
+    /// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 .. ROCKETNET_MAX_MESSAGE_BYTES.
+    /// Default is 262144.
 
     int max_message_bytes;
 

@@ -317,7 +317,7 @@ struct rocketnet_client_transport_config_t
     /** @brief Per-title 4-byte packet filter; peers with a different value cannot connect. */
     uint8_t packet_filter[4];
     /** @brief Largest sent and reassembled payload in bytes; zero selects the default, otherwise ROCKETNET_MAX_PACKET_PAYLOAD_BYTES through 361728. */
-    int max_payload_bytes;                          // ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. 305,408; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
+    int max_payload_bytes;                          // ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
     /** @brief Concurrent fragmented payloads per connection; zero selects the default, otherwise 1 through 256. */
     int max_fragmented_messages;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
     /** @brief Ordered transport candidate list; defaults to auto. */
@@ -765,7 +765,7 @@ struct rocketnet_server_transport_config_t
     /** @brief Cores reserved for the operating system by XDP; zero selects the transport default, otherwise 1 through 256. */
     int num_os_cpus;                                // 1 .. 256; 0 is the transport default
     /** @brief Largest sent and reassembled payload in bytes; zero selects the default, otherwise ROCKETNET_MAX_PACKET_PAYLOAD_BYTES through 361728. */
-    int max_payload_bytes;                          // ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. 305,408; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
+    int max_payload_bytes;                          // ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
     /** @brief Concurrent fragmented payloads per client; zero selects the default, otherwise 1 through 256. */
     int max_fragmented_messages;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
     /** @brief Ordered transport candidate list; defaults to auto. */
@@ -1513,7 +1513,7 @@ struct rocketnet_message_config_t
     /** @brief Receive ring bytes; WIRE, multiple of 16 from 4096 through 1<<20, default 262144. */
     int receive_message_buffer_bytes;             // WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
     /** @brief Maximum message bytes; WIRE, at most receive_message_buffer_bytes and from ROCKETNET_MESSAGE_SINGLE_BYTES through 1<<20, default 262144. */
-    int max_message_bytes;              // WIRE, <= receive_message_buffer_bytes; ROCKETNET_MESSAGE_SINGLE_BYTES .. 1 << 20; default 262144
+    int max_message_bytes;              // WIRE, <= receive_message_buffer_bytes; ROCKETNET_MESSAGE_SINGLE_BYTES .. ROCKETNET_MAX_MESSAGE_BYTES; default 262144
     /** @brief Per-connection queued payload bytes; 12288 through 1<<28, default 800000. */
     int send_message_buffer_bytes;              // 12288 .. 1 << 28; default 800000
     /** @brief Queued message count; 16 through 1<<20, default 1024. */
