@@ -465,10 +465,13 @@ static void windows_socket_errors_prefilter_read( struct rocketnet_client_transp
 // counter its size and bytes name. rocketnet_platform_socket_send_packet
 // sends no zero-length datagram (it asserts packet_bytes > 0), so the empty
 // one goes in the second leg only. Then from the raw test socket, a source
-// the client did not dial: every datagram, the empty one included, counts
-// CLIENT_RECEIVE_FOREIGN_SOURCE (sdk/rocketnet_client_transport.cpp:1296-1301)
-// and none reaches the prefilter. The case proves each datagram is counted
-// once, the I/O thread keeps receiving and the client stays connected.
+// the client did not dial: the client trusts only the server (TRANSPORT.md
+// t11), its socket is connected to the server, so the stack drops every one
+// of these, the empty one included, before the client reads it: none counts
+// CLIENT_RECEIVE_FOREIGN_SOURCE, none is a refusal and none reaches the
+// prefilter. On an unconnected socket each would count
+// CLIENT_RECEIVE_FOREIGN_SOURCE. The case proves each server datagram is
+// counted once, the I/O thread keeps receiving and the client stays connected.
 static void windows_client_drops_oversize_and_garbage( bool ipv6 )
 {
     windows_socket_errors_transport_t transport = { "portable", ipv6 };
@@ -525,7 +528,7 @@ static void windows_client_drops_oversize_and_garbage( bool ipv6 )
     const uint64_t server_leg_refusals = windows_socket_errors_refusals( rocketnet_client_transport_counters( session.client ) ) - refusals_before;
     const uint64_t server_leg_foreign = rocketnet_counter_value( rocketnet_client_transport_counters( session.client ), ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE ) - foreign_before;
 
-    // leg 2: from the raw test socket, a foreign source
+    // leg 2: from the raw test socket, a foreign source the connected socket drops
     const uint64_t refusals_mid = windows_socket_errors_refusals( rocketnet_client_transport_counters( session.client ) );
     const uint64_t foreign_mid = rocketnet_counter_value( rocketnet_client_transport_counters( session.client ), ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE );
     windows_socket_errors_prefilter_t prefilter_mid;
@@ -565,8 +568,8 @@ static void windows_client_drops_oversize_and_garbage( bool ipv6 )
     windows_socket_errors_require( wrong_value == expect.wrong_value );
     windows_socket_errors_require( server_leg_refusals == sent_from_server );
     windows_socket_errors_require( server_leg_foreign == 0 );
-    windows_socket_errors_require( foreign_drops == (uint64_t) datagrams.size() );
-    windows_socket_errors_require( foreign_refusals == foreign_drops );
+    windows_socket_errors_require( foreign_drops == 0 );
+    windows_socket_errors_require( foreign_refusals == 0 );
     windows_socket_errors_require( prefilter_unchanged );
     windows_socket_errors_require( rocketnet_client_transport_state( session.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     windows_socket_errors_require( rocketnet_server_transport_is_client_connected( session.server, session.client_index ) );
