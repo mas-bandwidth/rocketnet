@@ -630,13 +630,13 @@ if(ROCKETNET_BUILD_TESTS)
     # probes the release library; the connect-token vectors load the dev
     # library's token writer through test_dev_connect_token_timeout_is_the_named_constant.
     add_dependencies(test rocketnet_shared rocketnet_shared_dev)
-    # Both development-library probes dlopen this absolute build path, so the
-    # unit suite passes from any working directory, not only bin/.
+    # Probe the exact shared targets built for this configuration, so the unit
+    # suite passes when the output directory or working directory changes.
     target_compile_definitions(test PRIVATE
-        "ROCKETNET_DEV_LIBRARY_PATH=\"$<TARGET_FILE:rocketnet_shared_dev>\"")
-    # The release-library probe (sdk/rocketnet_tests.cpp) falls back to the
-    # bare soname when its rooted name misses; the executable's RUNPATH lets
-    # that fallback resolve from any working directory.
+        "ROCKETNET_DEV_LIBRARY_PATH=\"$<TARGET_FILE:rocketnet_shared_dev>\""
+        "ROCKETNET_RELEASE_LIBRARY_PATH=\"$<TARGET_FILE:rocketnet_shared>\"")
+    # Keep the shared target directory in the executable's RUNPATH for other
+    # runtime loads that use a bare soname.
     set_property(TARGET test APPEND PROPERTY BUILD_RPATH "$<TARGET_FILE_DIR:rocketnet_shared>")
     # Functional-tier binaries (BUILDING.md, "Test binaries and their tiers"):
     # test_lifecycle, test_transport, test_serialize, test_transport_control,

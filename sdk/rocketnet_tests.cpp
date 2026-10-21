@@ -15070,7 +15070,7 @@ void rocketnet_test_dev_token_minting_absent_in_release()
     rocketnet_check( strlen( token ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 #else
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    HMODULE library = LoadLibraryA( "rocketnet.dll" );
+    HMODULE library = LoadLibraryA( ROCKETNET_RELEASE_LIBRARY_PATH );
     rocketnet_check( library != NULL );
     if ( library != NULL )
     {
@@ -15078,18 +15078,9 @@ void rocketnet_test_dev_token_minting_absent_in_release()
         FreeLibrary( library );
     }
 #else
-    // ./bin/test runs from the repository root, so the shared library sits
-    // under bin/; a checkout that runs the binary in place (./test) resolves
-    // the bare name instead. Try the rooted name first, then the bare name.
-    const char * library_name = "bin/librocketnet.so";
-    const char * library_bare_name = "librocketnet.so";
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
-    library_name = "bin/librocketnet.dylib";
-    library_bare_name = "librocketnet.dylib";
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC ...
-    void * library = dlopen( library_name, RTLD_NOW | RTLD_LOCAL );
-    if ( library == NULL )
-        library = dlopen( library_bare_name, RTLD_NOW | RTLD_LOCAL );
+    // CMake may place the shared library outside the source tree. Probe the
+    // exact release target built alongside this test, independent of cwd.
+    void * library = dlopen( ROCKETNET_RELEASE_LIBRARY_PATH, RTLD_NOW | RTLD_LOCAL );
     rocketnet_check( library != NULL );
     if ( library != NULL )
     {
