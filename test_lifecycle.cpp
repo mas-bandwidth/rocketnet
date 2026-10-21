@@ -432,11 +432,11 @@ static void check_component_create_sweeps( allocator_state & state )
 {
     const int baseline = state.live;
 
-    // 1. rocketnet_encryption_map_create: 6 allocations (fail N=1..6, succeed N=7).
+    // 1. rocketnet_encryption_map_create: 7 allocations (fail N=1..7, succeed N=8).
     check( sweep_component_create<rocketnet_encryption_map_t>(
         state,
         [&]() { return rocketnet_encryption_map_create( &state, 16 ); },
-        []( rocketnet_encryption_map_t * m ) { rocketnet_encryption_map_destroy( m ); } ) == 6 );
+        []( rocketnet_encryption_map_t * m ) { rocketnet_encryption_map_destroy( m ); } ) == 7 );
 
     // 2. rocketnet_used_token_history_create: 17 allocations (fail N=1..17, succeed N=18).
     //    the history holder plus two independent eight-allocation tables, the
