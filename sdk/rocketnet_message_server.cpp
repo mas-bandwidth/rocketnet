@@ -866,7 +866,6 @@ void rn_message_object_send_packets( struct rn_message_object_t * object )
             const int i = ( start + offset ) % num_connections;
             if ( object->hot_connections[i].state != RN_MESSAGE_CONNECTION_CONNECTED )
                 continue;
-            rn_message_connection_t * connection = &object->connections[i];
             // The client's CONFIG waits unnumbered until the transport connects.
             if ( !object->is_server && object->link.connection( object->link.transport, 0 ) == 0 )
                 continue;
