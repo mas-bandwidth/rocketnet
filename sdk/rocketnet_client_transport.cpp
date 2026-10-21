@@ -1252,6 +1252,8 @@ static const rocketnet_address_t * rocketnet_client_transport_fill_destination( 
     return &client_transport->client_io.to[client_transport->client_io.rings.fill];
 }
 
+// tla/RNClientIoShutdown.tla abstracts this request/completion ownership;
+// native backend and thread behavior still need their platform gates.
 // Requests never join, call a backend send, or wait for a ring. The final
 // filling ring is published without reopening the other ring: no producer may
 // touch either ring after stop, and the worker can drain both independently.
