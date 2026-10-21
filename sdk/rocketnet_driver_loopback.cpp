@@ -250,25 +250,32 @@ static void loopback_send( void * transport, const rocketnet_address_t * to, con
         return;
     rocketnet_loopback_endpoint_t * sender = (rocketnet_loopback_endpoint_t*) transport;
     rocketnet_loopback_state_t & state = loopback_state();
-    rocketnet_platform_mutex_guard( &state.mutex );
+    if ( !rocketnet_platform_mutex_try_acquire( &state.mutex ) ) return;
     rocketnet_loopback_endpoint_t * dst = loopback_find_destination( state, *to );
     if ( !dst )
+    {
+        rocketnet_platform_mutex_release( &state.mutex );
         return;
+    }
     rocketnet_loopback_packet_t * packet = loopback_queue_tail( dst );
     if ( !packet )
+    {
+        rocketnet_platform_mutex_release( &state.mutex );
         return;
+    }
     packet->bytes = bytes;
     packet->from = loopback_sender_address( sender->bind, *to );
     memcpy( packet->data, data, (size_t) bytes );
     ++dst->tail;
     ++dst->count;
+    rocketnet_platform_mutex_release( &state.mutex );
 }
 
 static void loopback_server_send_batch( void * transport, const rocketnet_platform_send_t * packets, int count )
 {
     rocketnet_loopback_endpoint_t * sender = (rocketnet_loopback_endpoint_t*) transport;
     rocketnet_loopback_state_t & state = loopback_state();
-    rocketnet_platform_mutex_guard( &state.mutex );
+    if ( !rocketnet_platform_mutex_try_acquire( &state.mutex ) ) return;
     for ( int i = 0; i < count; ++i )
     {
         const rocketnet_platform_send_t & packet = packets[i];
@@ -286,6 +293,7 @@ static void loopback_server_send_batch( void * transport, const rocketnet_platfo
         ++dst->tail;
         ++dst->count;
     }
+    rocketnet_platform_mutex_release( &state.mutex );
 }
 
 static int loopback_server_receive_batch( void * transport, rocketnet_address_t * from, uint8_t * data, int stride, int * bytes, int count )
