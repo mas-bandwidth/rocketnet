@@ -2471,6 +2471,23 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
     }
 }
 
+void rocketnet_client_transport_step_legacy_for_test( rocketnet_client_transport_t * client_transport )
+{
+    rocketnet_assert( client_transport && client_transport->step_driven &&
+                      !client_transport->thread && !rocketnet_client_io_core( client_transport ) );
+    if ( !client_transport || !client_transport->step_driven ||
+         client_transport->thread || rocketnet_client_io_core( client_transport ) )
+        return;
+    if ( client_transport->stop_requested )
+    {
+        if ( !rocketnet_client_transport_stopped( client_transport ) )
+            rocketnet_client_transport_finish_stop( client_transport );
+        return;
+    }
+    rocketnet_client_transport_flush_disconnect( client_transport );
+    rocketnet_client_receive_packets( client_transport );
+}
+
 static void rocketnet_client_thread_function( void * data )
 {
     rocketnet_client_transport_t * client_transport = (rocketnet_client_transport_t*) data;

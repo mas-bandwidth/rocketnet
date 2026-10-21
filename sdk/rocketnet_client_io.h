@@ -587,6 +587,10 @@ struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_dri
     const struct rocketnet_client_transport_config_t * config, double time,
     const rocketnet_client_transport_io_operations_t * operations, void * transport_context, int * status );
 
+// Unit tests only: execute one legacy receive-worker iteration on a transport
+// created by the no-thread fixture. Never use concurrently with a real worker.
+void rocketnet_client_transport_step_legacy_for_test( struct rocketnet_client_transport_t * client_transport );
+
 // The transport's I/O core, or NULL on the BASE path.
 rocketnet_client_io_t * rocketnet_client_transport_client_io( struct rocketnet_client_transport_t * client_transport );
 
