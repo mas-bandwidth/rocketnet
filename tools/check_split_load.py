@@ -2,6 +2,8 @@
 """Fail-closed merger for one server and disjoint remote client-shard receipts."""
 
 import argparse
+import hashlib
+import json
 import math
 import re
 import sys
@@ -62,9 +64,12 @@ def validate_receipt(fields, role, run_id, total, duration, limit):
     expected(fields, schema="split_v1", role=role, run_id=run_id, total=total,
              duration_target_s=duration, profile="default", payload_bytes=32,
              rate_target_hz=1, wire_scope="pre_run_to_traffic_end_conservative",
-             workload_scope="traffic_plus_drain", startup_complete=1,
-             traffic_complete=1, drain_complete=1, wire_valid=1,
-             resource_baseline="PASS", verdict="PASS")
+             workload_scope="traffic_plus_drain_plus_barrier", startup_complete=1,
+             traffic_complete=1, drain_complete=1, barrier_complete=1,
+             load_complete=1, wire_valid=1, resource_baseline="PASS",
+             delivery_verdict="PASS", load_verdict="PASS", bandwidth_verdict="PASS",
+             timing_budget_us=100, verdict="PASS")
+    expected(fields, timing_verdict="PASS" if role == "server" else "NA")
     if fields.get("transport") in (None, "none"):
         raise ValueError("missing granted transport")
     for name in ("identity_errors", "payload_errors", "order_errors", "duplicate_errors",
@@ -79,6 +84,12 @@ def validate_receipt(fields, role, run_id, total, duration, limit):
         raise ValueError("startup deadline exceeded")
     if finite(fields, "traffic_actual_s") < duration or finite(fields, "drain_actual_s") < 3.0:
         raise ValueError("short traffic or drain window")
+    if finite(fields, "barrier_actual_s") > (33.1 if role == "server" else 30.1):
+        raise ValueError("barrier exceeded bounded teardown")
+    if integer(fields, "expected_offers") != duration * integer(fields, "count", 1):
+        raise ValueError("wrong expected offer count")
+    if integer(fields, "missed_due_slots"):
+        raise ValueError("missed due slots")
     for name in ("startup_utc_s", "traffic_start_utc_s", "traffic_end_utc_s"):
         integer(fields, name, 1)
     if integer(fields, "traffic_end_utc_s") < integer(fields, "traffic_start_utc_s"):
@@ -99,6 +110,9 @@ def validate_receipt(fields, role, run_id, total, duration, limit):
             raise ValueError(f"{offer}: application offer refused")
     for name in ("c2s_received", "s2c_received", "wire_up", "wire_down"):
         integer(fields, name)
+    application_offered = "s2c_offered" if role == "server" else "c2s_offered"
+    if integer(fields, application_offered) != integer(fields, "expected_offers"):
+        raise ValueError("target offer rate was not sustained")
     if finite(fields, "aggregate_limit_kbps", 0.000001) != limit:
         raise ValueError("aggregate cap differs from requested limit")
     for name in ("max_peer_up_kbps", "max_peer_down_kbps"):
@@ -107,6 +121,78 @@ def validate_receipt(fields, role, run_id, total, duration, limit):
     for name in ("aggregate_up_kbps", "aggregate_down_kbps"):
         if finite(fields, name) >= limit:
             raise ValueError(f"{name}: exceeds aggregate cap")
+
+
+def wire_map(text, role, run_id, first, count, receipt):
+    found = {}
+    for fields in records(text, "split_wire"):
+        expected(fields, role=role, run_id=run_id)
+        client = integer(fields, "client")
+        if client in found:
+            raise ValueError("duplicate per-client wire record")
+        found[client] = (integer(fields, "sent_bytes"), integer(fields, "received_bytes"))
+    if found.keys() != set(range(first, first + count)):
+        raise ValueError("per-client wire coverage mismatch")
+    if any(up == 0 or down == 0 for up, down in found.values()):
+        raise ValueError("zero per-client wire traffic")
+    window = finite(receipt, "traffic_actual_s", 0.000001)
+    for label, index, field in (("up", 0, "wire_up"), ("down", 1, "wire_down")):
+        total_bytes = sum(pair[index] for pair in found.values())
+        if total_bytes != integer(receipt, field):
+            raise ValueError(f"{label}: per-client wire sum mismatch")
+        aggregate = total_bytes * 8 / (window * 1000)
+        maximum = max(pair[index] * 8 / (window * 1000) for pair in found.values())
+        if not math.isclose(aggregate, finite(receipt, f"aggregate_{label}_kbps"), abs_tol=0.000002):
+            raise ValueError(f"{label}: reported aggregate rate mismatch")
+        if not math.isclose(maximum, finite(receipt, f"max_peer_{label}_kbps"), abs_tol=0.000002):
+            raise ValueError(f"{label}: reported max peer rate mismatch")
+    return found
+
+
+def validate_timing(text, receipt, run_id):
+    timing = one(text, "split_server_timing")
+    expected(timing, run_id=run_id, scope="traffic_plus_drain")
+    if integer(timing, "server_update_count", 1) == 0 or integer(timing, "server_send_count", 1) == 0:
+        raise ValueError("server timing has no samples")
+    if integer(timing, "clock_pair_count") != 10000:
+        raise ValueError("server timing lacks clock calibration")
+    p50 = finite(timing, "server_update_p50_upper_us")
+    p99 = finite(timing, "server_update_p99_upper_us")
+    finite(timing, "server_update_max_us")
+    send_p99 = finite(timing, "server_send_p99_upper_us")
+    if p50 > p99 or p99 > 100 or send_p99 > 100:
+        raise ValueError("server timing budget failed")
+
+
+def validate_allocation(manifest, server_text, shard_texts, run_id, total, shards):
+    if not isinstance(manifest, dict) or manifest.get("schema") != "split_allocation_v1" or manifest.get("run_id") != run_id:
+        raise ValueError("missing or mismatched allocation manifest")
+    server = manifest.get("server")
+    entries = manifest.get("shards")
+    if not isinstance(server, dict) or not isinstance(entries, list) or len(entries) != len(shard_texts):
+        raise ValueError("allocation role coverage mismatch")
+    def check_role(entry, text, role):
+        if entry.get("role") != role or entry.get("log_sha256") != hashlib.sha256(text.encode()).hexdigest():
+            raise ValueError("allocation does not bind exact role log")
+        for key in ("host_id", "allocation_id", "runner_id", "allocation_ref"):
+            if not isinstance(entry.get(key), str) or not entry[key].strip():
+                raise ValueError(f"allocation lacks {key}")
+    check_role(server, server_text, "server")
+    if server.get("allocation_type") != "dedicated_server":
+        raise ValueError("server lacks dedicated allocation")
+    if server.get("total") != total:
+        raise ValueError("server allocation population mismatch")
+    seen = set()
+    for entry, text, shard in zip(entries, shard_texts, shards):
+        if not isinstance(entry, dict):
+            raise ValueError("malformed shard allocation")
+        check_role(entry, text, "client-shard")
+        if entry.get("allocation_type") != "client_host" or entry.get("host_id") == server["host_id"] or entry.get("allocation_id") == server["allocation_id"]:
+            raise ValueError("client shard is not allocated away from server")
+        key = (entry.get("first"), entry.get("count"))
+        if key != (integer(shard, "first"), integer(shard, "count")) or key in seen:
+            raise ValueError("shard allocation range mismatch")
+        seen.add(key)
 
 
 def stream_map(text, role, run_id):
@@ -139,7 +225,7 @@ def validate_streams(streams, first, count):
 
 
 def validate(server_text, shard_texts, run_id, total, duration, limit,
-             server_transport=None, client_transport=None):
+             server_transport=None, client_transport=None, allocation_manifest=None):
     if not RUN_ID.fullmatch(run_id):
         raise ValueError("run ID must be exactly 16 hexadecimal characters")
     run_id = run_id.lower()
@@ -150,6 +236,8 @@ def validate(server_text, shard_texts, run_id, total, duration, limit,
         raise ValueError("server readiness lacks address or public key")
     server = one(server_text, "split_receipt")
     validate_receipt(server, "server", run_id, total, duration, limit)
+    validate_timing(server_text, server, run_id)
+    wire_map(server_text, "server", run_id, 0, total, server)
     if server_transport is not None and server.get("transport") != server_transport:
         raise ValueError("server transport differs from requested transport")
     if ready.get("transport") != server.get("transport"):
@@ -182,10 +270,12 @@ def validate(server_text, shard_texts, run_id, total, duration, limit,
         covered |= current
         streams = stream_map(text, "client-shard", run_id)
         validate_streams(streams, first, count)
+        wire_map(text, "client-shard", run_id, first, count, shard)
         client_streams.update(streams)
         shards.append(shard)
     if covered != set(range(total)):
         raise ValueError("missing client shard range")
+    validate_allocation(allocation_manifest, server_text, shard_texts, run_id, total, shards)
     for key, server_pair in server_streams.items():
         client_pair = client_streams[key]
         if key[1] == "c2s":
@@ -230,6 +320,7 @@ def main():
     parser.add_argument("--aggregate-limit-kbps", required=True, type=float)
     parser.add_argument("--server-transport", required=True)
     parser.add_argument("--client-transport", required=True)
+    parser.add_argument("--allocation-manifest", required=True, type=Path)
     args = parser.parse_args()
     try:
         if not (1 <= args.total <= 1000 and 1 <= args.duration <= 3600 and
@@ -237,7 +328,8 @@ def main():
             raise ValueError("invalid expected population, duration, or aggregate cap")
         result = validate(args.server.read_text(), [path.read_text() for path in args.shard],
                           args.run_id, args.total, args.duration, args.aggregate_limit_kbps,
-                          args.server_transport, args.client_transport)
+                          args.server_transport, args.client_transport,
+                          json.loads(args.allocation_manifest.read_text()))
     except (OSError, ValueError) as error:
         print(f"split_merge: verdict=FAIL reason={error}", file=sys.stderr)
         return 1

@@ -63,19 +63,67 @@ the existing three-second drain. Every traffic message is 32 bytes and
 contains its run ID, global client index, reliability mode and sequence.
 Client-to-server offers rotate through all eight reliability modes once per
 client due time; server-to-client offers are reliable ordered. Neither role
-catches up with a burst after a delayed update.
+catches up with a burst after a delayed update. Each client keeps an absolute
+one-second due phase. A missed due slot is counted and makes load
+qualification fail; `expected_offers` is duration times local client count.
+Delivery success and target-load success are separate receipt fields.
+
+At each local traffic boundary, clients send a run-ID-bound DONE and keep
+pumping for their unchanged three-second drain. They then send DRAINED and
+wait for the server's FINISH. The server keeps its endpoint alive until every
+client has reported DRAINED, sends FINISH, waits for every FINISH ACK, and
+sends CONFIRM. Clients close only after CONFIRM. The bounded completion
+handshake has its own `barrier_actual_s` and `barrier_complete` fields; it does
+not extend or relabel either measured traffic or drain interval. A late or
+incomplete handshake is a failure. The server keeps a three-second
+confirmation retransmission grace; missing client confirmation fails in the
+merged receipts.
 
 The server alone samples public server update/send API call histograms.
 `split_server_timing:` covers traffic plus drain, with clock overhead retained.
 Each role emits one `split_receipt:` after endpoint shutdown and SDK term,
-plus one `split_stream:` line for every global client/direction/mode it owns.
+plus one `split_stream:` line for every global client/direction/mode it owns,
+and one `split_wire:` byte record per client. The server receipt separates
+delivery, target load, bandwidth, server API timing, and resource verdicts;
+overall PASS requires all of them. Server API p99 histogram upper bounds
+must each be at most 100 microseconds, a conservative test of the budget.
 Traffic wire counters are sampled just before RUN and at the role's traffic
 boundary. They conservatively include RUN/startup bytes and divide by only
 the measured traffic duration. Per-client upload and download must each stay
 strictly below 100 kbps; each role and the merged client shards must stay
 strictly below the operator-supplied aggregate cap. These byte counters
 include IP/UDP overhead, not Ethernet framing. Whole-run verified message
-counts include the drain; they are separate from the traffic wire interval.
+counts include any delayed delivery during the bounded barrier; they are
+separate from the traffic wire interval. The merger recomputes aggregate and
+per-peer rates from the raw per-peer byte records and actual monotonic
+traffic interval, accounting for six-decimal receipt rounding.
+
+The gate owner must provide a `split_allocation_v1` JSON manifest from the
+actual runner/bench allocation record. It identifies the dedicated server
+host and each shard's separate client host, allocation ID, allocation
+reference, and runner ID, and binds every exact role log by SHA-256. A
+hostname typed into a log is not machine-allocation evidence. The merger
+checks that the server allocation is distinct from every shard allocation;
+the recorded allocation references must be independently auditable. For
+example, with `shard0.log`:
+
+```json
+{
+  "schema": "split_allocation_v1",
+  "run_id": "0123456789abcdef",
+  "server": {"role": "server", "total": 1000,
+             "host_id": "server-bench-id", "allocation_id": "server-lease-id",
+             "allocation_ref": "gate/server-lease-receipt", "runner_id": "server-runner-id",
+             "allocation_type": "dedicated_server", "log_sha256": "<sha256-of-server.log>"},
+  "shards": [{"role": "client-shard", "first": 0, "count": 250,
+              "host_id": "client-bench-id", "allocation_id": "client-lease-id",
+              "allocation_ref": "gate/client-lease-receipt", "runner_id": "client-runner-id",
+              "allocation_type": "client_host", "log_sha256": "<sha256-of-shard0.log>"}]
+}
+```
+
+The manifest needs one `shards` entry for each `--shard` log in the same
+order. The example must be expanded to the complete shard partition.
 
 Collect the unmodified server and every shard log, then run:
 
@@ -84,13 +132,14 @@ python3 tools/check_split_load.py --server server.log \
   --shard shard0.log --shard shard1.log --shard shard2.log --shard shard3.log \
   --run-id 0123456789abcdef --total 1000 --duration 60 \
   --aggregate-limit-kbps 80000 --server-transport portable \
-  --client-transport portable
+  --client-transport portable --allocation-manifest allocation.json
 ```
 
 The merger requires exactly one successful readiness and final receipt per
 role, a complete nonoverlapping shard partition, matching run metadata,
-full monotonic windows, strict cleanup phase equality, accepted offers,
-byte caps, and every per-client stream count to match across roles. It
+full monotonic windows, bounded completion, strict cleanup phase equality,
+the exact target offer count, finite complete timing, byte caps, auditable
+host allocations, and every per-client stream count to match across roles. It
 rejects missing, duplicated or mixed-run records. A local PASS alone is not
 an end-to-end PASS. The initial same-host smoke, if run later, proves only
 protocol and receipt correctness; it is not a dedicated-server performance
