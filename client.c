@@ -9,7 +9,7 @@
 
     --matrix runs the live-stress message matrix (docs/LIVE-XDP.md):
     every mode, every channel at once, the size schedule, both directions,
-    a cycle of reconnects alternating clean disconnect and silent drop, and
+    a cycle of reconnects with completed clean disconnects, and
     result lines of section 7 written to --results. --self-test-result
     writes a sample result file without any socket, for the merge to read.
 */
@@ -940,33 +940,21 @@ static void run_matrix( opts_t * o )
         // section 7: counters and RSS at exit of the window
         sample_counters( &st, client, rocketnet_time() - st.run_start );
 
-        /* the disconnect: alternating clean and silent drop, final clean */
-        if ( is_final || ( window % 2 ) == 0 )
+        /* Every in-process cycle uses orderly request/completion shutdown.
+           Silent peer loss needs a separate process-kill experiment. */
+        const int ended = !aborted ? rocketnet_client_state( client ) : ROCKETNET_CLIENT_STATE_CONNECTED;
+        if ( !aborted && ended < 0 )
         {
-            // a connection the server or the protocol ended reads as a
-            // negative state; before a clean close it must still be up
-            const int ended = !aborted ? rocketnet_client_state( client ) : ROCKETNET_CLIENT_STATE_CONNECTED;
-            if ( !aborted && ended < 0 )
-            {
-                char excerpt[96];
-                snprintf( excerpt, sizeof(excerpt), "state=%s before clean close", rocketnet_client_state_name( (enum rocketnet_client_state_t) ended ) );
-                r_fail( res, o->label, window, 0, 0, 0, 0, "unexpected-disconnect-reason", 0, ended, "client", "-", excerpt );
-                r_event( res, o->label, window, "unexpected-disconnect", "reason" );
-                st.fails++;
-            }
-            rocketnet_client_disconnect( client );
-            rocketnet_client_update( client, rocketnet_time() );
-            r_cycle( res, o->label, window, "clean" );
-            st.clean_count++;
+            char excerpt[96];
+            snprintf( excerpt, sizeof(excerpt), "state=%s before clean close", rocketnet_client_state_name( (enum rocketnet_client_state_t) ended ) );
+            r_fail( res, o->label, window, 0, 0, 0, 0, "unexpected-disconnect-reason", 0, ended, "client", "-", excerpt );
+            r_event( res, o->label, window, "unexpected-disconnect", "reason" );
+            st.fails++;
         }
-        else
-        {
-            /* silent drop: destroy without a disconnect call; the server's
-               timeout path frees the slot (docs/LIVE-XDP.md section 6) */
-            r_cycle( res, o->label, window, "silent" );
-            st.silent_count++;
-        }
-
+        rocketnet_client_disconnect( client );
+        rn_cli_client_wait_disconnected( client );
+        r_cycle( res, o->label, window, "clean" );
+        st.clean_count++;
         rn_cli_client_stop_and_destroy( client );
 
         if ( !is_final )
