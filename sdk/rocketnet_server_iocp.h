@@ -11,8 +11,9 @@
 // Windows server transport. The public transport API is unchanged. Fill threads
 // acquire and seal directly into transport-owned frames. Flush posts overlapped
 // UDP sends; only their completions return those frames to the free pool.
-// Receive workers dequeue completions in batches and publish private double
-// buffers, following the existing GSO/XDP receive ownership contract.
+// Receive workers dequeue completions in batches and publish private four-bank
+// buffers. Completion work never runs under the publication mutex; the main
+// receive call swaps bank ownership without waiting for that mutex.
 
 // One worker by default: workers race on the one completion port and each
 // publishes its own buffer, so more than one reorders a client's datagrams
@@ -96,9 +97,12 @@ int rocketnet_server_iocp_features( rocketnet_server_iocp_t * iocp );
 void rocketnet_server_iocp_test_force_flags( int flags );
 
 #if defined(ROCKETNET_IOCP_TESTS)
-// Hold/release must be paired on the same thread. Do not call stop there while
-// holding: Windows CRITICAL_SECTION is recursive. A different thread must stop.
+// Hold/release pauses completion work through a test-only atomic gate.
 void rocketnet_server_iocp_test_hold_completions( rocketnet_server_iocp_t * iocp, bool hold );
+// Hold/release the short publication mutexes on one thread. The main receive
+// call must return promptly with an empty view while another thread holds them.
+void rocketnet_server_iocp_test_hold_publication( rocketnet_server_iocp_t * iocp, bool hold );
+int rocketnet_server_iocp_test_ready_banks( rocketnet_server_iocp_t * iocp, int worker_index );
 bool rocketnet_server_iocp_test_receive_view_published( rocketnet_server_iocp_t * iocp, const uint8_t * view );
 bool rocketnet_server_iocp_test_stopping( rocketnet_server_iocp_t * iocp );
 

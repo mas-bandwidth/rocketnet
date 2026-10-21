@@ -325,9 +325,8 @@ static void test_datagrams_and_producers()
         ++count;
     }
     CHECK(count == 256);
-    // Hold the publication locks used by completion/repost. The stop request
-    // must return while these locks remain held, but completion must stay false
-    // until releasing them lets cancellation and worker exit proceed.
+    // Pause completion work. Stop must return while a worker is paused, but
+    // completion stays false until the worker can drain cancellation.
     rocketnet_server_iocp_test_hold_completions(transport, true);
     std::atomic<bool> sending{true};
     std::thread incoming([&]() {
@@ -357,6 +356,71 @@ static void test_datagrams_and_producers()
     rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
     rocketnet_platform_socket_destroy(peer);
     printf("test_iocp_transport_datagrams_and_producers\n");
+}
+
+static void test_receive_publication_never_waits()
+{
+    rocketnet_address_t bind = address("127.0.0.1:0");
+    rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create(NULL, &bind, 1);
+    CHECK(transport);
+    std::atomic<bool> held{false};
+    std::atomic<bool> release_lock{false};
+    std::atomic<bool> receive_returned{false};
+    std::thread holder([&]() {
+        rocketnet_server_iocp_test_hold_publication(transport, true);
+        held.store(true);
+        while (!release_lock.load()) rocketnet_platform_sleep(0.001);
+        rocketnet_server_iocp_test_hold_publication(transport, false);
+    });
+    const double hold_deadline = rocketnet_platform_time() + 5.0;
+    while (!held.load() && rocketnet_platform_time() < hold_deadline)
+        rocketnet_platform_sleep(0.001);
+    CHECK(held.load());
+    std::thread receiver([&]() {
+        rocketnet_server_iocp_receive_packets(transport);
+        receive_returned.store(true);
+    });
+    const double return_deadline = rocketnet_platform_time() + 1.0;
+    while (!receive_returned.load() && rocketnet_platform_time() < return_deadline)
+        rocketnet_platform_sleep(0.001);
+    const bool returned_before_release = receive_returned.load();
+    release_lock.store(true);
+    receiver.join();
+    holder.join();
+    CHECK(returned_before_release);
+    CHECK(rocketnet_server_iocp_process_packets(transport)->num_packets == 0);
+    wait_stopped(transport);
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+    printf("test_iocp_transport_receive_publication_never_waits\n");
+}
+
+static void test_receive_ready_banks_fifo()
+{
+    rocketnet_address_t bind = address("127.0.0.1:0");
+    rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create(NULL, &bind, 1);
+    CHECK(transport && bind.port);
+    rocketnet_address_t peer_address = address("127.0.0.1:0");
+    rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create(NULL, &peer_address,
+        ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 4 * 1024 * 1024, 4 * 1024 * 1024);
+    CHECK(peer);
+    for ( int marker = 1; marker <= 2; ++marker )
+    {
+        const uint8_t payload = (uint8_t) marker;
+        rocketnet_platform_socket_send_packet(peer, &bind, &payload, 1);
+        const double deadline = rocketnet_platform_time() + 5.0;
+        while (rocketnet_server_iocp_test_ready_banks(transport, 0) < marker && rocketnet_platform_time() < deadline)
+            rocketnet_platform_sleep(0.001);
+        CHECK(rocketnet_server_iocp_test_ready_banks(transport, 0) == marker);
+    }
+    rocketnet_server_iocp_receive_packets(transport);
+    rocketnet_server_socket_process_packets_t * batch = rocketnet_server_iocp_process_packets(transport);
+    CHECK(batch->num_packets == 2);
+    for ( int i = 0; i < 2; ++i )
+        CHECK(batch->packet_bytes[i] == 1 && batch->packet_data[i][0] == i + 1);
+    wait_stopped(transport);
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+    rocketnet_platform_socket_destroy(peer);
+    printf("test_iocp_transport_receive_ready_banks_fifo\n");
 }
 
 static void test_receive_boundaries()
@@ -1315,6 +1379,8 @@ int main( int argc, char ** argv )
         test_completion_owns_frames();
         test_uso_run_owns_frames();
         test_datagrams_and_producers();
+        test_receive_publication_never_waits();
+        test_receive_ready_banks_fifo();
         test_receive_boundaries();
         for ( const fault_case_t & c : fault_cases ) c.run();
     }
