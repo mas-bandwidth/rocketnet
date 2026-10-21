@@ -775,13 +775,13 @@ if(ROCKETNET_BUILD_TOOLS)
     # build in ci.yml.
     #
     # The pair harnesses (fuzz/rocketnet_fuzz_pair.h: the server and client
-    # transports' real receive loops over the
+    # transports' real receive loops and the scripted session over the
     # loopback transport) compile sdk/rocketnet_server_transport.cpp and
     # sdk/rocketnet_driver_loopback.cpp into the harness, as the unit suite's
     # loopback case does, so the harness object goes first on the link line:
     # lld-link loads an archive member as soon as an earlier object
     # references one of its symbols (see ROCKETNET_UNIT_TRANSPORT_SOURCE).
-    set(ROCKETNET_FUZZ_PAIR_HARNESSES rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport)
+    set(ROCKETNET_FUZZ_PAIR_HARNESSES rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session)
     foreach(harness rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured ${ROCKETNET_FUZZ_PAIR_HARNESSES})
         if(harness IN_LIST ROCKETNET_FUZZ_PAIR_HARNESSES)
             add_executable(fuzz_replay_${harness} fuzz/${harness}.cpp fuzz/replay_main.cpp)
