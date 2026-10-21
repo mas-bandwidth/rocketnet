@@ -1256,6 +1256,7 @@ void rocketnet_client_transport_stop( rocketnet_client_transport_t * client_tran
     if ( !rocketnet_api_null_guard( client_transport ) || client_transport->stop_requested )
         return;
     client_transport->stop_requested = true;
+    client_transport->packet_leases.reset();
     if ( rocketnet_client_io_core( client_transport ) )
     {
         rocketnet_client_io_t * io = &client_transport->client_io;
@@ -1755,6 +1756,9 @@ uint8_t * rocketnet_client_transport_start_packet( rocketnet_client_transport_t 
     rocketnet_assert( context );
 
     memset( context, 0, sizeof(struct rocketnet_packet_context_t) );
+
+    if ( client_transport->stop_requested )
+        return NULL;
 
     if ( request_bytes < 1 || request_bytes > client_transport->max_payload_bytes )
     {

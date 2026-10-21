@@ -1693,6 +1693,7 @@ void rocketnet_server_transport_stop( struct rocketnet_server_transport_t * serv
     if ( !rocketnet_api_null_guard( server_transport ) || server_transport->state != ROCKETNET_SERVER_TRANSPORT_RUNNING )
         return;
     server_transport->state = ROCKETNET_SERVER_TRANSPORT_STOPPING;
+    server_transport->packet_leases.reset();
     rocketnet_server_transport_io_stop( &server_transport->io );
 }
 
@@ -2835,6 +2836,8 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
     if ( !rocketnet_api_null_guard( server_transport ) )
         return;
     rocketnet_assert( server_transport );
+    if ( server_transport->state != ROCKETNET_SERVER_TRANSPORT_RUNNING )
+        return;
     server_transport->packet_leases.reset();
 
     const int stats_index = server_transport->current_stats_index;
