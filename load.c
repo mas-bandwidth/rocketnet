@@ -23,6 +23,8 @@
     pass criteria but sizes both endpoints for the harness's 32-byte messages,
     eight reliability cases, and one transport fragment slot. The server's
     max_clients and 10-second handshake deadline are set in both profiles.
+    LOAD_HANDSHAKE_DIAGNOSTICS=1 prints token age, client setup, and connect
+    sweep timing to stderr for handshake triage; it changes no pass criteria.
 
     Linux. ROCKETNET_SERVER_TRANSPORT pins the server transport and
     ROCKETNET_CLIENT_TRANSPORT=portable the clients; the summary line's
@@ -799,6 +801,11 @@ int main( int argc, char ** argv )
         return 2;
     }
     const int light_profile = strcmp( profile_name, "light" ) == 0;
+    char handshake_diagnostics_env[8] = { 0 };
+    const int handshake_diagnostics =
+        rocketnet_test_getenv( "LOAD_HANDSHAKE_DIAGNOSTICS", handshake_diagnostics_env,
+                               sizeof( handshake_diagnostics_env ) ) &&
+        strcmp( handshake_diagnostics_env, "1" ) == 0;
 
 #if !defined(_WIN32)
     struct load_fd_limit_t fd_limit;
@@ -958,6 +965,7 @@ int main( int argc, char ** argv )
     for ( int i = 0; i < num_clients; i++ )
         client_connect_seconds[i] = -1.0;
 
+    const double token_setup_start = rocketnet_time();
     const uint64_t token_now = (uint64_t) time( NULL );
 
 #if defined(__linux__)
@@ -1020,6 +1028,17 @@ int main( int argc, char ** argv )
     }
 #endif
     sample_resources( &fds_peak, &threads_peak );
+    const double token_setup_elapsed = rocketnet_time() - token_setup_start;
+    if ( handshake_diagnostics )
+    {
+        const uint64_t setup_end_unix_s = (uint64_t) time( NULL );
+        fprintf( stderr,
+                 "load handshake diagnostic: token_mint_unix_s=%" PRIu64
+                 " setup_end_unix_s=%" PRIu64 " setup_elapsed_s=%.3f"
+                 " token_age_at_setup_end_s=%" PRIu64 " clients=%d\n",
+                 token_now, setup_end_unix_s, token_setup_elapsed,
+                 setup_end_unix_s - token_now, num_clients );
+    }
 
     int connected_count = 0;
     int all_connected = 0;
@@ -1034,8 +1053,12 @@ int main( int argc, char ** argv )
 
     /* Step 1: Connect all clients within 10s */
     const double start_time = rocketnet_time();
+    uint64_t connect_sweeps = 0;
+    double first_connect_sweep_s = 0.0;
+    double last_connect_sweep_s = 0.0;
     while ( !quit )
     {
+        const double sweep_start = rocketnet_time();
         const double now = rocketnet_time();
         connected_count = 0;
         for ( int i = 0; i < num_clients; i++ )
@@ -1065,18 +1088,59 @@ int main( int argc, char ** argv )
                 LOAD_TIMED_VOID( &timing, LOAD_TIMING_SERVER_SEND_PACKETS, rocketnet_server_send_packets( server ) );
             }
         }
+        if ( handshake_diagnostics )
+        {
+            last_connect_sweep_s = rocketnet_time() - sweep_start;
+            if ( connect_sweeps == 0 )
+                first_connect_sweep_s = last_connect_sweep_s;
+            connect_sweeps++;
+            if ( connect_sweeps <= 4 )
+            {
+                const uint64_t sweep_end_unix_s = (uint64_t) time( NULL );
+                fprintf( stderr,
+                         "load handshake diagnostic: sweep=%" PRIu64
+                         " end_unix_s=%" PRIu64 " token_age_s=%" PRIu64
+                         " elapsed_s=%.3f connected_clients=%d\n",
+                         connect_sweeps, sweep_end_unix_s, sweep_end_unix_s - token_now,
+                         last_connect_sweep_s, connected_count );
+            }
+        }
 
         if ( connected_count == num_clients &&
              timed_server_num_connected_clients( &timing, server ) == num_clients )
         {
             all_connected = 1;
             connect_elapsed = rocketnet_time() - start_time;
+            if ( handshake_diagnostics )
+            {
+                const uint64_t diagnostic_now = (uint64_t) time( NULL );
+                fprintf( stderr,
+                         "load handshake diagnostic: result=connected now_unix_s=%" PRIu64
+                         " token_age_s=%" PRIu64 " setup_elapsed_s=%.3f"
+                         " connect_elapsed_s=%.3f sweeps=%" PRIu64
+                         " first_sweep_s=%.3f last_sweep_s=%.3f\n",
+                         diagnostic_now, diagnostic_now - token_now, token_setup_elapsed,
+                         connect_elapsed, connect_sweeps, first_connect_sweep_s,
+                         last_connect_sweep_s );
+            }
             break;
         }
 
         if ( rocketnet_time() - start_time > LOAD_CONNECT_DEADLINE_S )
         {
             connect_elapsed = rocketnet_time() - start_time;
+            if ( handshake_diagnostics )
+            {
+                const uint64_t diagnostic_now = (uint64_t) time( NULL );
+                fprintf( stderr,
+                         "load handshake diagnostic: result=deadline now_unix_s=%" PRIu64
+                         " token_age_s=%" PRIu64 " setup_elapsed_s=%.3f"
+                         " connect_elapsed_s=%.3f sweeps=%" PRIu64
+                         " first_sweep_s=%.3f last_sweep_s=%.3f connected_clients=%d\n",
+                         diagnostic_now, diagnostic_now - token_now, token_setup_elapsed,
+                         connect_elapsed, connect_sweeps, first_connect_sweep_s,
+                         last_connect_sweep_s, connected_count );
+            }
             int named = 0;
             for ( int i = 0; i < num_clients && named < 8; i++ )
             {
