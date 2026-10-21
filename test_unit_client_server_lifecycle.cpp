@@ -340,6 +340,52 @@ static void test_client_reconnects_with_a_second_token()
 }
 REGISTER_UNIT_TEST( test_client_reconnects_with_a_second_token );
 
+static int lifecycle_premature_destroy_asserts;
+
+static void lifecycle_premature_destroy_assert_hook( const char *, const char *, const char *, int )
+{
+    ++lifecycle_premature_destroy_asserts;
+}
+
+// A connected step-driven client retains its sealed disconnect burst until
+// the caller explicitly steps its worker. Polling and a duplicate request
+// cannot retire that generation; neither reconnect nor destroy may consume it.
+static void test_client_disconnect_requires_explicit_completion_before_reuse()
+{
+    lifecycle_world_t world;
+    lifecycle_world_create( &world, 2, 1 );
+    lifecycle_connect( &world, 0, 0x1011 );
+    rocketnet_client_t * client = world.clients[0];
+    char pending_token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    lifecycle_token( world.server, rocketnet_server_port( world.server ), &world.identity, 0x1012, 300, pending_token );
+
+    rocketnet_client_disconnect( client );
+    rocketnet_client_disconnect( client );
+    for ( int i = 0; i < 8; ++i )
+        check( !rocketnet_client_disconnected( client ) );
+    check( rocketnet_client_connect( client, pending_token ) == ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED );
+    check( !rocketnet_client_disconnected( client ) );
+
+    auto saved_assert = rn_assert_function;
+    lifecycle_premature_destroy_asserts = 0;
+    rocketnet_assert_function( lifecycle_premature_destroy_assert_hook );
+    rocketnet_client_destroy( client );
+    rocketnet_assert_function( saved_assert );
+#if ROCKETNET_ASSERTS
+    check( lifecycle_premature_destroy_asserts == 1 );
+#else
+    check( lifecycle_premature_destroy_asserts == 0 );
+#endif
+    check( !rocketnet_client_disconnected( client ) );
+
+    rocketnet_client_update( client, world.time );
+    check( rocketnet_client_disconnected( client ) );
+    lifecycle_connect( &world, 0, 0x1013 );
+    lifecycle_exchange( &world, 0, 0xA3, 1 );
+    lifecycle_world_destroy( &world );
+}
+REGISTER_UNIT_TEST( test_client_disconnect_requires_explicit_completion_before_reuse );
+
 static void test_client_destroy_then_create_and_connect()
 {
     lifecycle_world_t world;

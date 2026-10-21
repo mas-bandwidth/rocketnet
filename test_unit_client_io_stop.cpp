@@ -148,9 +148,9 @@ static void test_client_io_stop_exits_with_nothing_new()
 }
 REGISTER_UNIT_TEST( test_client_io_stop_exits_with_nothing_new );
 
-// Handing off after stop asserts once through the installed non-aborting hook.
-// RNClientIo Stop (nothing new after stop); the assert compiles out in a
-// release build (ROCKETNET_ASSERTS 0), so the hook stays quiet there.
+// A late hand-off after worker exit asserts in Debug and is refused even when
+// the assertion hook returns or assertions are compiled out. It cannot bind
+// a destination, mutate either ring, or wake the exited worker.
 static int client_io_stop_hand_off_asserts = 0;
 
 static void client_io_stop_hand_off_assert_hook( const char * condition, const char * function,
@@ -192,13 +192,33 @@ static void test_client_io_hand_off_after_stop_asserts()
     rocketnet_address_load_ipv4( &to, 0x7f000001, 9200 );
 
     rocketnet_client_io_stop( &io );
-    rocketnet_client_io_hand_off( &io, 1, &to );
+    rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_EXITED );
+    rocketnet_unit_check( io.stopped.load( std::memory_order_acquire ) );
+    const int fill = io.rings.fill;
+    const int state0 = io.rings.state[0].load( std::memory_order_relaxed );
+    const int state1 = io.rings.state[1].load( std::memory_order_relaxed );
+    const uint64_t committed0 = io.rings.committed[0];
+    const uint64_t committed1 = io.rings.committed[1];
+    const rocketnet_address_t destination0 = io.to[0];
+    const rocketnet_address_t destination1 = io.to[1];
+    const bool held0 = io.to_held[0];
+    const bool held1 = io.to_held[1];
+    const int wakes = fake.wake_calls;
+    rocketnet_unit_check( rocketnet_client_io_hand_off( &io, 1, &to ) == ROCKETNET_CLIENT_RINGS_EMPTY );
 
 #if ROCKETNET_ASSERTS
     rocketnet_unit_check( client_io_stop_hand_off_asserts == 1 );
 #else
     rocketnet_unit_check( client_io_stop_hand_off_asserts == 0 );
 #endif
+    rocketnet_unit_check( io.rings.fill == fill );
+    rocketnet_unit_check( io.rings.state[0].load( std::memory_order_relaxed ) == state0 );
+    rocketnet_unit_check( io.rings.state[1].load( std::memory_order_relaxed ) == state1 );
+    rocketnet_unit_check( io.rings.committed[0] == committed0 && io.rings.committed[1] == committed1 );
+    rocketnet_unit_check( memcmp( &io.to[0], &destination0, sizeof( destination0 ) ) == 0 );
+    rocketnet_unit_check( memcmp( &io.to[1], &destination1, sizeof( destination1 ) ) == 0 );
+    rocketnet_unit_check( io.to_held[0] == held0 && io.to_held[1] == held1 );
+    rocketnet_unit_check( fake.wake_calls == wakes );
 
     rocketnet_assert_function( saved_assert );
 
