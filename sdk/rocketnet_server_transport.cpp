@@ -830,7 +830,7 @@ bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_con
     if (!rocketnet_builtin_server_memory_plan(config, transport, plan)) return false;
     if (!plan.transport_bytes || !plan.send_arena_bytes || !plan.transport_io_bytes) return false;
     for (uint64_t bytes : {plan.transport_bytes, plan.protocol_bytes, plan.reassembly_bytes,
-        plan.send_arena_bytes, plan.transport_io_bytes, plan.umem_bytes})
+        plan.send_arena_bytes, plan.transport_io_bytes, plan.umem_bytes, plan.registered_region_bytes})
         if (!rocketnet_memory_add(plan.total_bytes, 1, bytes)) return false;
     return plan.total_bytes <= SIZE_MAX;
 }
@@ -886,8 +886,9 @@ bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_ser
 
     struct rocketnet_host_memory_estimate_t e;
     memset( &e, 0, sizeof(e) );
-    e.allocator_bytes = plan.total_bytes - plan.umem_bytes;
+    e.allocator_bytes = plan.total_bytes - plan.umem_bytes - plan.registered_region_bytes;
     e.umem_bytes = plan.umem_bytes;
+    e.registered_region_bytes = plan.registered_region_bytes;
     e.sockets = plan.sockets;
     e.worker_threads = plan.worker_threads;
 
@@ -917,7 +918,7 @@ bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_ser
             return false;
     }
 
-    for ( uint64_t bytes : { e.allocator_bytes, e.umem_bytes, e.socket_send_buffer_bytes,
+    for ( uint64_t bytes : { e.allocator_bytes, e.umem_bytes, e.registered_region_bytes, e.socket_send_buffer_bytes,
                              e.socket_receive_buffer_bytes, e.xdp_ring_bytes, e.thread_stack_bytes } )
     {
         if ( !rocketnet_memory_add( e.total_bytes, 1, bytes ) )

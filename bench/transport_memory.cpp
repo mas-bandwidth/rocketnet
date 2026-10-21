@@ -16,6 +16,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if !defined(_WIN32)
+extern "C" char ** environ;
+#endif
 
 struct alignas(max_align_t) allocation_t { size_t bytes; };
 static std::atomic<size_t> live{0}, peak{0}, count{0};
@@ -63,16 +66,33 @@ static int number(const char * text)
     { fprintf(stderr, "invalid nonnegative integer\n"); exit(1); }
     return (int)value;
 }
+
+// The public endpoint and transport each resolve environment settings. A pure
+// inventory cannot promise their equality while the process environment may
+// change between planning and start, so reject ambient server overrides.
+static bool server_environment_overridden()
+{
+#if defined(_WIN32)
+    char ** variables = _environ;
+#else
+    char ** variables = environ;
+#endif
+    for ( char ** entry = variables; entry && *entry; ++entry )
+        if ( strncmp( *entry, "ROCKETNET_SERVER_", 17 ) == 0 )
+            return true;
+    return false;
+}
 int main(int argc, char ** argv)
 {
     if (argc < 4 || argc > 7)
     {
-        fprintf(stderr, "usage: transport_memory clients payload_bytes reassembly_slots [transport [queues [--plan-only]]]\n");
+        fprintf(stderr, "usage: transport_memory clients payload_bytes reassembly_slots [transport [queues [--plan-only|--session-plan-only]]]\n");
         return 1;
     }
     const char * transport = argc >= 5 ? argv[4] : "portable";
     const bool plan_only = argc == 7 && strcmp(argv[6], "--plan-only") == 0;
-    if (argc == 7 && !plan_only) return 1;
+    const bool session_plan_only = argc == 7 && strcmp(argv[6], "--session-plan-only") == 0;
+    if (argc == 7 && !plan_only && !session_plan_only) return 1;
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config(&config);
@@ -85,6 +105,48 @@ int main(int argc, char ** argv)
     rocketnet_server_memory_plan_t plan;
     if (!rocketnet_server_transport_memory_plan(&config, transport, plan))
     { fprintf(stderr, "memory plan unavailable for this geometry/transport/platform\n"); return 1; }
+    if (session_plan_only)
+    {
+        if (server_environment_overridden())
+        { fprintf(stderr, "session inventory requires no ROCKETNET_SERVER_ environment overrides\n"); return 1; }
+        rocketnet_server_config_t endpoint;
+        if (rocketnet_server_default_config(&endpoint) != ROCKETNET_STATUS_OK)
+            return 1;
+        endpoint.transport = transport;
+        endpoint.max_clients = config.max_clients;
+        endpoint.max_payload_bytes = config.max_payload_bytes;
+        endpoint.max_fragmented_messages = config.max_fragmented_messages;
+        endpoint.num_xdp_queues = config.num_xdp_queues;
+        const size_t endpoint_payload = rocketnet_server_required_memory(&endpoint);
+        rocketnet_host_memory_estimate_t host = {};
+        uint64_t endpoint_callback_bytes = endpoint_payload;
+        uint64_t known_active_requests = endpoint_payload;
+        if (!endpoint_payload || !rocketnet_server_transport_host_memory_estimate(&config, transport, &host) ||
+            !rocketnet_memory_add(endpoint_callback_bytes, 1, rocketnet_allocation_overhead()) ||
+            !rocketnet_memory_add(known_active_requests, 1, rocketnet_allocation_overhead()) ||
+            !rocketnet_memory_add(known_active_requests, 1, host.total_bytes))
+        { fprintf(stderr, "session inventory unavailable for this geometry/transport/platform\n"); return 1; }
+        // Public start refuses a running/stopping generation. Once stopped,
+        // it destroys the retained generation before constructing the next.
+        // The active/stopping high-water therefore owns one candidate's SDK
+        // storage, but native retained-on-cancellation bytes remain unknown.
+        printf("{\"scope\":\"one_public_server_one_pinned_transport\",\"transport\":\"%s\","
+            "\"create_payload_bytes\":%llu,\"create_callback_request_bytes\":%llu,"
+            "\"active_transport_sdk_callback_bytes\":%llu,\"active_xdp_umem_bytes\":%llu,"
+            "\"active_rio_registered_region_bytes\":%llu,\"active_socket_send_request_bytes\":%llu,"
+            "\"active_socket_receive_request_bytes\":%llu,\"active_xdp_ring_request_bytes\":%llu,"
+            "\"active_thread_stack_reserve_bytes\":%llu,\"known_active_or_stopping_requests_bytes\":%llu,"
+            "\"concurrent_sdk_generations\":1,\"native_retained_on_failed_cancel_bytes\":null,"
+            "\"io_uring_mapping_bytes\":null,\"libc_and_kernel_accounting_bytes\":null,"
+            "\"config_snapshot_frozen_for_future_start\":false,\"one_block_sufficient\":false}\n",
+            transport, (unsigned long long) endpoint_payload, (unsigned long long) endpoint_callback_bytes,
+            (unsigned long long) host.allocator_bytes, (unsigned long long) host.umem_bytes,
+            (unsigned long long) host.registered_region_bytes,
+            (unsigned long long) host.socket_send_buffer_bytes, (unsigned long long) host.socket_receive_buffer_bytes,
+            (unsigned long long) host.xdp_ring_bytes, (unsigned long long) host.thread_stack_bytes,
+            (unsigned long long) known_active_requests);
+        return 0;
+    }
     printf("{\"transport\":\"%s\",\"clients\":%d,\"payload_bytes\":%d,\"reassembly_slots\":%d,"
         "\"planned_bytes\":%llu,\"transport_bytes\":%llu,\"protocol_bytes\":%llu,\"reassembly_bytes\":%llu,"
         "\"send_arena_bytes\":%llu,\"transport_allocator_bytes\":%llu,\"umem_bytes\":%llu,"

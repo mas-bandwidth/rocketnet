@@ -420,11 +420,18 @@ uint64_t rocketnet_server_rio_allocation_bytes()
     if ( !rocketnet_rio_layout_plan( ROCKETNET_RIO_SEND_FRAMES, ROCKETNET_RIO_RECEIVES, ROCKETNET_FRAME_STRIDE,
                                      ROCKETNET_RIO_RECEIVE_SLICE_BYTES, (int) sizeof(SOCKADDR_INET), 4096, &layout ) )
         return 0;
-    uint64_t bytes = rocketnet_memory_allocations( { sizeof(rocketnet_server_rio_t),
+    return rocketnet_memory_allocations( { sizeof(rocketnet_server_rio_t),
         (uint64_t) ROCKETNET_RIO_SEND_FRAMES * sizeof(int),
         2 * (uint64_t) sizeof(rocketnet_rio_bank_t) } );
-    if ( !bytes || !rocketnet_memory_add( bytes, 1, layout.total_bytes ) ) return 0;
-    return bytes <= SIZE_MAX ? bytes : 0;
+}
+
+uint64_t rocketnet_server_rio_registered_region_bytes()
+{
+    rocketnet_rio_layout_t layout;
+    if ( !rocketnet_rio_layout_plan( ROCKETNET_RIO_SEND_FRAMES, ROCKETNET_RIO_RECEIVES, ROCKETNET_FRAME_STRIDE,
+                                     ROCKETNET_RIO_RECEIVE_SLICE_BYTES, (int) sizeof(SOCKADDR_INET), 4096, &layout ) )
+        return 0;
+    return layout.total_bytes;
 }
 
 static bool rocketnet_rio_load_table( SOCKET socket, RIO_EXTENSION_FUNCTION_TABLE * table )

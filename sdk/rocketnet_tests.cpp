@@ -14679,13 +14679,16 @@ void rocketnet_test_connection_type_probe_ends_on_receive_error()
 
 static uint64_t rocketnet_test_host_memory_sum( const struct rocketnet_host_memory_estimate_t & e )
 {
-    return e.allocator_bytes + e.umem_bytes + e.socket_send_buffer_bytes + e.socket_receive_buffer_bytes +
+    return e.allocator_bytes + e.umem_bytes + e.registered_region_bytes + e.socket_send_buffer_bytes + e.socket_receive_buffer_bytes +
            e.xdp_ring_bytes + e.thread_stack_bytes;
 }
 
 void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
 {
-    const char * transports[] = { "portable", "msgx", "gso", "io_uring", "xdp", "iocp" };
+    uint64_t near_limit = UINT64_MAX - 1;
+    rocketnet_check( !rocketnet_memory_add( near_limit, 1, 2 ) );
+    rocketnet_check( near_limit == UINT64_MAX - 1 );
+    const char * transports[] = { "portable", "msgx", "gso", "io_uring", "xdp", "iocp", "rio" };
     int estimated = 0;
     for ( const char * transport : transports )
     {
@@ -14708,14 +14711,14 @@ void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
             rocketnet_check( estimate.exclusions[i] && estimate.exclusions[i][0] != '\0' );
 
         // every component is non-negative and no component wrapped past the total
-        const uint64_t components[] = { estimate.allocator_bytes, estimate.umem_bytes, estimate.socket_send_buffer_bytes,
+        const uint64_t components[] = { estimate.allocator_bytes, estimate.umem_bytes, estimate.registered_region_bytes, estimate.socket_send_buffer_bytes,
                                         estimate.socket_receive_buffer_bytes, estimate.xdp_ring_bytes, estimate.thread_stack_bytes };
         for ( uint64_t bytes : components )
             rocketnet_check( bytes <= estimate.total_bytes );
 
         rocketnet_check( estimate.total_bytes == rocketnet_test_host_memory_sum( estimate ) );
         rocketnet_check( estimate.total_bytes >= required );
-        rocketnet_check( estimate.allocator_bytes + estimate.umem_bytes == required );
+        rocketnet_check( estimate.allocator_bytes + estimate.umem_bytes + estimate.registered_region_bytes == required );
         rocketnet_check( estimate.thread_stack_bytes == (uint64_t) estimate.worker_threads * estimate.thread_stack_bytes_per_thread );
         if ( estimate.worker_threads > 0 )
             rocketnet_check( estimate.thread_stack_bytes_per_thread > 0 );
@@ -14723,6 +14726,7 @@ void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
         rocketnet_server_memory_plan_t plan;
         rocketnet_check( rocketnet_server_transport_memory_plan( NULL, transport, plan ) );
         rocketnet_check( estimate.umem_bytes == plan.umem_bytes );
+        rocketnet_check( estimate.registered_region_bytes == plan.registered_region_bytes );
         rocketnet_check( estimate.sockets == plan.sockets );
         rocketnet_check( estimate.worker_threads == plan.worker_threads );
 
@@ -14740,6 +14744,8 @@ void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
         }
         if ( strcmp( transport, "portable" ) == 0 )
             rocketnet_check( estimate.sockets == 1 && estimate.worker_threads == 0 && estimate.thread_stack_bytes == 0 );
+        if ( strcmp( transport, "rio" ) == 0 )
+            rocketnet_check( estimate.registered_region_bytes > 0 && estimate.allocator_bytes > 0 );
     }
     rocketnet_check( estimated >= 1 );
 

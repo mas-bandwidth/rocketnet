@@ -828,7 +828,7 @@ void rocketnet_server_transport_dev_config( struct rocketnet_server_transport_co
 /** @brief Measure SDK allocator bytes for one server transport transport.
  * @param[in] config Numeric server settings to measure, or NULL for defaults. Environment overrides are not applied.
  * @param[in] transport One concrete built-in transport name; `auto` and candidate lists are not plans.
- * @return The planned SDK allocator bytes, including XDP UMEM where applicable, or 0 for invalid geometry, overflow, an unknown/custom transport, or a transport not built for this platform.
+ * @return The planned request bytes (SDK allocator plus XDP UMEM or RIO registered storage where applicable), or 0 for invalid geometry, overflow, an unknown/custom transport, or a transport not built for this platform.
  * @details This is allocation-free and does not validate keys, inspect environment overrides, probe sockets, or enforce a host memory budget. It excludes OS stacks, kernel/libbpf/libxdp resources, libc bookkeeping, and application memory. It measures one transport candidate; the result is not a reservation or grant.
  */
 uint64_t rocketnet_server_transport_required_memory( const struct rocketnet_server_transport_config_t * config, const char * transport );
@@ -836,13 +836,14 @@ uint64_t rocketnet_server_transport_required_memory( const struct rocketnet_serv
 // Allocation-free whole-host memory estimate for one built-in transport name: the
 // required_memory plan plus the kernel-facing memory the transport requests. Each
 // component is a request, never a grant: allocator_bytes is the SDK allocator
-// plan (required_memory minus UMEM); umem_bytes is XDP UMEM, the frame memory,
+// plan (required_memory minus UMEM and RIO registered storage); umem_bytes is XDP UMEM, the frame memory,
 // equal to the plan's; the socket buffer fields sum the SO_SNDBUF and SO_RCVBUF
 // sizes asked of every socket the transport opens; xdp_ring_bytes is the AF_XDP
 // RX and TX descriptor rings asked of every XDP socket; thread_stack_bytes is
 // worker_threads x thread_stack_bytes_per_thread, the stack each transport thread
 // is created with (the platform default: the transport passes no stack size), as
-// reserved address space. total_bytes is the sum of the six byte components
+// reserved address space. registered_region_bytes is the RIO VirtualAlloc
+// request, outside the SDK allocator. total_bytes is the sum of the seven byte components
 // and is at least required_memory. exclusions names, in static strings, what
 // the library cannot know and does not count. Same config and transport rules as
 // required_memory: NULL config means defaults; false (and a zeroed estimate)
@@ -857,6 +858,8 @@ struct rocketnet_host_memory_estimate_t
     uint64_t allocator_bytes;
     /** @brief Requested XDP UMEM bytes. */
     uint64_t umem_bytes;
+    /** @brief Requested RIO VirtualAlloc registered-region bytes. */
+    uint64_t registered_region_bytes;
     /** @brief Sum of requested socket send-buffer bytes. */
     uint64_t socket_send_buffer_bytes;
     /** @brief Sum of requested socket receive-buffer bytes. */
@@ -884,7 +887,7 @@ struct rocketnet_host_memory_estimate_t
  * @param[in] transport One concrete built-in transport name; NULL or an unsupported transport makes the call fail.
  * @param[out] estimate Receives the estimate; NULL is counted misuse and returns false. On failure the struct remains zeroed.
  * @return true with a populated estimate, or false when the transport/config has no valid plan, arithmetic overflows, or estimate is NULL.
- * @details This allocation-free estimate separates SDK allocator bytes, UMEM, requested socket buffers or XDP rings, and worker stack address space. They are requests, not grants. Exclusions point to static strings whose storage remains valid for the process lifetime. This is not a host RAM limit.
+ * @details This allocation-free estimate separates SDK allocator bytes, UMEM, RIO registered storage, requested socket buffers or XDP rings, and worker stack address space. They are requests, not grants. Exclusions point to static strings whose storage remains valid for the process lifetime. This is not a host RAM limit.
  */
 bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_server_transport_config_t * config, const char * transport, struct rocketnet_host_memory_estimate_t * estimate );
 

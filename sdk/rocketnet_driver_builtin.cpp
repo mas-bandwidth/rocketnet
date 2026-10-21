@@ -443,6 +443,8 @@ bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_confi
     else if (strcmp(transport, "rio") == 0)
     {
         plan.transport_io_bytes = rocketnet_server_rio_allocation_bytes();
+        plan.registered_region_bytes = rocketnet_server_rio_registered_region_bytes();
+        if ( !plan.registered_region_bytes ) return false;
         plan.worker_threads = 0; plan.sockets = 1;
     }
 #endif
