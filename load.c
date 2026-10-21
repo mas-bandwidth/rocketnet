@@ -1162,13 +1162,13 @@ int main( int argc, char ** argv )
                 break;
             const int i = client_update_cursor;
             client_update_cursor = ( client_update_cursor + 1 ) % num_clients;
-            if ( !in_traffic_window && !drain_visited[i] )
-            {
-                drain_visited[i] = 1;
-                drain_clients_visited++;
-            }
             if ( !( drop_injected && i == 0 ) )
             {
+                if ( !in_traffic_window && !drain_visited[i] )
+                {
+                    drain_visited[i] = 1;
+                    drain_clients_visited++;
+                }
                 const double update_time = rocketnet_time();
                 if ( client_last_update[i] > 0.0 && update_time - client_last_update[i] > client_max_update_gap[i] )
                     client_max_update_gap[i] = update_time - client_last_update[i];
@@ -1547,7 +1547,9 @@ int main( int argc, char ** argv )
                 "server_update_p50_us=%" PRIu64 " server_update_p99_us=%" PRIu64 " rss_mb=%.2f "
                 "server_transport_io=%s client_transport_io=%s "
                 "fd_limit_soft=%s fd_limit_hard=%s fds_start=%ld fds_peak=%ld fds_end=%ld "
-                "threads_start=%ld threads_peak=%ld threads_end=%ld verdict=PASS",
+                "threads_start=%ld threads_peak=%ld threads_end=%ld "
+                "timing_scope=traffic_and_drain drain_schedule=recent_first_cyclic "
+                "timing_baseline=fair_drain_v1 verdict=PASS",
                 connected_count, connect_elapsed, connect_p50_s, connect_max_s,
                 profile_name, client_public_required_bytes, server_public_required_bytes,
                 c2s_sent_total, c2s_received_total, total_counted_drops,
@@ -1570,6 +1572,8 @@ int main( int argc, char ** argv )
                 "server_transport_io=%s client_transport_io=%s "
                 "fd_limit_soft=%s fd_limit_hard=%s fds_start=%ld fds_peak=%ld fds_end=%ld "
                 "threads_start=%ld threads_peak=%ld threads_end=%ld "
+                "timing_scope=traffic_and_drain drain_schedule=recent_first_cyclic "
+                "timing_baseline=fair_drain_v1 "
                 "failed_criterion=%s verdict=FAIL",
                 connected_count, connect_elapsed, connect_p50_s, connect_max_s,
                 profile_name, client_public_required_bytes, server_public_required_bytes,
