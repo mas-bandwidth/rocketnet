@@ -51,6 +51,10 @@
 #include "rocketnet_fuzz_pair.h"
 #include "../dst_checks.h"
 
+#include <filesystem>
+#include <string>
+#include <vector>
+
 #define ROCKETNET_FUZZ_SESSION_MAGIC       0xF7
 #define ROCKETNET_FUZZ_SESSION_HEADER      8
 #define ROCKETNET_FUZZ_SESSION_SERVER      0       // the dst session the server's slot 0 receives on
@@ -62,6 +66,7 @@ static struct rocketnet_dst_check_state_t rocketnet_fuzz_session_checks;
 static uint32_t rocketnet_fuzz_session_next[2][8];     // [direction][channel] next sequence
 static bool rocketnet_fuzz_session_tainted;
 static uint64_t rocketnet_fuzz_session_step;
+static uint64_t rocketnet_fuzz_session_delivered_tally[2][ROCKETNET_FUZZ_NUM_CHANNELS];   // the generator's every-type check
 
 static int rocketnet_fuzz_session_stream_index( int session, int channel )
 {
@@ -164,6 +169,7 @@ static void rocketnet_fuzz_session_delivered( struct rocketnet_fuzz_pair_t * pai
         return;     // a forged peer can repeat a real message's bytes; the safety rows assume an honest one
     const int session = direction == 0 ? ROCKETNET_FUZZ_SESSION_SERVER : ROCKETNET_FUZZ_SESSION_CLIENT;
     st->step = rocketnet_fuzz_session_step;
+    rocketnet_fuzz_session_delivered_tally[direction][channel]++;
     rocketnet_dst_check_delivery( st, pair->time, session, channel, channel, sequence, 1, 0, 1, 0, bytes, 1, 0 );
     if ( st->failed )
     {
@@ -440,4 +446,138 @@ static uint64_t rocketnet_fuzz_session_run( const uint8_t * data, size_t size )
     return rocketnet_fuzz_pair_fingerprint( pair );
 }
 
-ROCKETNET_FUZZ_PAIR_TARGET( rocketnet_fuzz_session_run )
+// -----------------------------------------------------------------------
+//  the seed generator (ROCKETNET_FUZZ_SEED_DIR=<dir>, rocketnet_fuzz_pair.h)
+//
+// Scripts, not packets: every op of the script language at least once, each
+// with legitimate traffic around it -- every reliability type on its channel
+// both ways, small and block-fragmented sizes, each wire fault, a silence,
+// and garbage injected from each of the three places, the garbage being the
+// committed wire corpus (ROCKETNET_FUZZ_SEED_FROM=fuzz/corpus) rather than
+// anything written here. Every script must replay clean through this target,
+// and together they must deliver every reliability type in both directions.
+// -----------------------------------------------------------------------
+
+static void rocketnet_fuzz_session_op_send( std::vector<uint8_t> & s, int direction, int channel, int bytes )
+{
+    s.push_back( (uint8_t) ( direction == 0 ? 1 : 2 ) );
+    s.push_back( (uint8_t) channel );
+    s.push_back( (uint8_t) ( bytes & 0xFF ) );
+    s.push_back( (uint8_t) ( bytes >> 8 ) );
+}
+
+static void rocketnet_fuzz_session_traffic( std::vector<uint8_t> & s, int bytes )
+{
+    for ( int channel = 0; channel < ROCKETNET_FUZZ_NUM_CHANNELS; channel++ )
+    {
+        rocketnet_fuzz_session_op_send( s, 0, channel, bytes + channel );
+        rocketnet_fuzz_session_op_send( s, 1, channel, bytes + 2 * channel );
+        s.push_back( 0 );
+    }
+}
+
+static bool rocketnet_fuzz_session_generate( const char * dir )
+{
+    struct named_t { std::string name; std::vector<uint8_t> script; };
+    std::vector<named_t> seeds;
+
+    { named_t n = { "every_type_small", { 0x00 } }; rocketnet_fuzz_session_traffic( n.script, 16 ); seeds.push_back( n ); }
+    { named_t n = { "every_type_blocks", { 0x00 } }; rocketnet_fuzz_session_traffic( n.script, 6000 ); seeds.push_back( n ); }
+    { named_t n = { "handshake_start", { 0x10 } }; for ( int i = 0; i < 40; i++ ) n.script.push_back( 0 ); rocketnet_fuzz_session_traffic( n.script, 64 ); seeds.push_back( n ); }
+    {
+        // the faulty tick, each decision in turn: deliver, drop, duplicate, hold
+        named_t n = { "faulty_ticks", { 0x00 } };
+        for ( int round = 0; round < 8; round++ )
+        {
+            rocketnet_fuzz_session_traffic( n.script, 200 * round + 16 );
+            n.script.push_back( 3 );
+            for ( int d = 0; d < 32; d++ )
+                n.script.push_back( (uint8_t) ( ( d + round ) & 3 ) );
+        }
+        seeds.push_back( n );
+    }
+    {
+        const uint8_t ops[] = { 4, 5, 6, 7 };
+        const char * names[] = { "drop_c2s", "drop_s2c", "duplicate", "reverse" };
+        for ( int k = 0; k < 4; k++ )
+        {
+            named_t n = { names[k], { 0x00 } };
+            for ( int round = 0; round < 6; round++ )
+            {
+                rocketnet_fuzz_session_traffic( n.script, 300 * round + 16 );
+                n.script.push_back( ops[k] );
+            }
+            seeds.push_back( n );
+        }
+    }
+    {
+        named_t n = { "corrupt", { 0x00 } };
+        for ( int round = 0; round < 6; round++ )
+        {
+            rocketnet_fuzz_session_traffic( n.script, 100 * round + 16 );
+            const uint8_t corrupt[] = { 8, (uint8_t) round, (uint8_t) ( 7 + round ), 0, 0x5a };
+            n.script.insert( n.script.end(), corrupt, corrupt + sizeof( corrupt ) );
+        }
+        seeds.push_back( n );
+    }
+    {
+        named_t n = { "silence", { 0x00 } };
+        rocketnet_fuzz_session_traffic( n.script, 64 );
+        n.script.push_back( 11 );
+        n.script.push_back( 40 );
+        rocketnet_fuzz_session_traffic( n.script, 64 );
+        seeds.push_back( n );
+    }
+
+    // garbage from each of the three places: the committed wire corpus
+    char from[1024];
+    if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_FROM", from, sizeof( from ) ) )
+    {
+        int count = 0;
+        for ( const auto & entry : std::filesystem::directory_iterator( from ) )
+        {
+            const std::string file = entry.path().filename().string();
+            if ( file.rfind( "prefilter_", 0 ) != 0 || !entry.is_regular_file() || count >= 12 )
+                continue;
+            static uint8_t body[ROCKETNET_RECEIVE_CEILING + 2];
+            FILE * f = rocketnet_test_fopen( entry.path().string().c_str(), "rb" );
+            if ( !f )
+                continue;
+            const int got = (int) fread( body, 1, sizeof( body ), f );
+            fclose( f );
+            if ( got < 2 )
+                continue;
+            const int datagram = got - 1 > ROCKETNET_RECEIVE_CEILING ? ROCKETNET_RECEIVE_CEILING : got - 1;
+            named_t n = { "garbage_" + file.substr( strlen( "prefilter_" ) ), { 0x00 } };
+            rocketnet_fuzz_session_traffic( n.script, 32 );
+            n.script.push_back( 9 );
+            n.script.push_back( (uint8_t) ( count % 3 ) );
+            n.script.push_back( (uint8_t) ( datagram & 0xFF ) );
+            n.script.push_back( (uint8_t) ( datagram >> 8 ) );
+            n.script.insert( n.script.end(), body + 1, body + 1 + datagram );
+            rocketnet_fuzz_session_traffic( n.script, 32 );
+            seeds.push_back( n );
+            count++;
+        }
+    }
+
+    memset( rocketnet_fuzz_session_delivered_tally, 0, sizeof( rocketnet_fuzz_session_delivered_tally ) );
+    bool complete = true;
+    for ( const named_t & n : seeds )
+    {
+        rocketnet_fuzz_session_run( n.script.data(), n.script.size() );
+        complete = rocketnet_fuzz_seed_write( dir, n.name.c_str(), n.script.data(), (int) n.script.size() ) && complete;
+    }
+    for ( int direction = 0; direction < 2; direction++ )
+        for ( int channel = 0; channel < ROCKETNET_FUZZ_NUM_CHANNELS; channel++ )
+            if ( rocketnet_fuzz_session_delivered_tally[direction][channel] == 0 )
+            {
+                fprintf( stderr, "seed generator: no seed delivers reliability %d %s\n", channel, direction == 0 ? "client -> server" : "server -> client" );
+                complete = false;
+            }
+    printf( "seed generator: %d scripts; %s\n", (int) seeds.size(),
+            complete ? "every reliability type is delivered both ways" : "INCOMPLETE" );
+    return complete;
+}
+
+ROCKETNET_FUZZ_PAIR_TARGET( rocketnet_fuzz_session_run, rocketnet_fuzz_session_generate )
