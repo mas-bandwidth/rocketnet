@@ -3564,8 +3564,8 @@ void rocketnet_test_server_handshake_deadline_from_config()
 
 // The public client and server over the portable transport on 127.0.0.1:
 // the server's max_clients override sizes the message server and the
-// transport alike, and every query enum value reads the internal value it
-// names -- each counter and stat compared with the stats struct field or
+// transport alike, and every stats struct field reads the internal value it
+// names -- each counter and stat compared with the transport stats field or
 // the counter-block slot it maps to, after real traffic both ways.
 
 static uint64_t rocketnet_test_block_sum( const struct rocketnet_counters_t * a, const struct rocketnet_counters_t * b, int counter )
@@ -3580,7 +3580,11 @@ void rocketnet_test_public_client_server_queries()
     setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "3", 1 );
 
     struct rocketnet_server_config_t server_config;
-    rocketnet_server_dev_config( &server_config );
+    rocketnet_server_default_config( &server_config );
+    server_config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
+    memcpy( server_config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
+    memcpy( server_config.server_public_key, rocketnet_dev_server_public_key, 32 );
+    memcpy( server_config.server_secret_key, rocketnet_dev_server_secret_key, 32 );
     server_config.max_clients = 5;
     server_config.transport = "portable";
     const uint64_t memory_bytes = rocketnet_server_required_memory( &server_config );
@@ -3616,8 +3620,8 @@ void rocketnet_test_public_client_server_queries()
     while ( exchanged < 20 && rocketnet_time() - wall_start < 10.0 )
     {
         const double now = 1000.0 + ( rocketnet_time() - wall_start );
-        rocketnet_check( rocketnet_server_update( server, now ) == ROCKETNET_UPDATE_OK );
-        rocketnet_check( rocketnet_client_update( client, now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_server_update( server, now );
+        rocketnet_client_update( client, now );
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
             const uint8_t payload[16] = { 1, 2, 3 };
@@ -3633,7 +3637,7 @@ void rocketnet_test_public_client_server_queries()
         }
         const uint8_t * data = NULL;
         int bytes = 0;
-        uint64_t sender = 0;
+        int sender = -1;
         struct rocketnet_message_batch_t batch;
         while ( rocketnet_server_receive_messages( server, &batch ) )
         {
@@ -3653,6 +3657,9 @@ void rocketnet_test_public_client_server_queries()
                 bytes = incoming.bytes[i];
             }
         }
+        (void) data;
+        (void) bytes;
+        (void) sender;
         rocketnet_client_send_packets( client );
         rocketnet_server_send_packets( server );
         rocketnet_sleep( 0.005 );
@@ -3668,7 +3675,7 @@ void rocketnet_test_public_client_server_queries()
         rocketnet_sleep( 0.005 );
     }
 
-    // read every value through its getter and through the layer it names,
+    // read every value through its stats call and through the layer it names,
     // with no update between, so both see the same numbers
 
     struct rocketnet_message_client_t * message_client = rocketnet_client_message_client( client );
@@ -3691,7 +3698,6 @@ void rocketnet_test_public_client_server_queries()
     rocketnet_check( rn_client_stats_of( client ).receipts_lost == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS ) );
     rocketnet_check( rn_client_stats_of( client ).budget_drops == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET ) );
     rocketnet_check( rn_client_stats_of( client ).send_deferred == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED ) );
-    rocketnet_check( rocketnet_client_counter( client, ROCKETNET_CLIENT_COUNTER_COUNT ) == 0 );
 
     rocketnet_check( rn_client_stats_of( client ).rtt == (double) cs.rtt );
     rocketnet_check( rn_client_stats_of( client ).jitter == (double) cs.jitter );
@@ -3700,7 +3706,6 @@ void rocketnet_test_public_client_server_queries()
     rocketnet_check( rn_client_stats_of( client ).packets_received_per_second == (double) cs.packets_received_per_second );
     rocketnet_check( rn_client_stats_of( client ).bandwidth_sent_kbps == (double) cs.bandwidth_sent_kbps );
     rocketnet_check( rn_client_stats_of( client ).bandwidth_received_kbps == (double) cs.bandwidth_received_kbps );
-    rocketnet_check( rocketnet_client_stat( client, ROCKETNET_CLIENT_STAT_COUNT ) == 0.0 );
 
     struct rocketnet_message_server_t * message_server = rocketnet_server_message_server( server );
     struct rocketnet_server_transport_t * server_transport = rocketnet_message_server_transport( message_server );
@@ -3725,13 +3730,11 @@ void rocketnet_test_public_client_server_queries()
     rocketnet_check( rn_server_stats_of( server ).receipts_acked > 0 );
     rocketnet_check( rn_server_stats_of( server ).receipts_lost == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS ) );
     rocketnet_check( rn_server_stats_of( server ).budget_drops == rocketnet_test_block_sum( st, sm, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET ) );
-    rocketnet_check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_COUNT ) == 0 );
 
     rocketnet_check( rn_server_stats_of( server ).packets_sent_per_second == (double) ss.packets_sent_per_second );
     rocketnet_check( rn_server_stats_of( server ).packets_received_per_second == (double) ss.packets_received_per_second );
     rocketnet_check( rn_server_stats_of( server ).bandwidth_sent_kbps == (double) ss.bandwidth_sent_kbps );
     rocketnet_check( rn_server_stats_of( server ).bandwidth_received_kbps == (double) ss.bandwidth_received_kbps );
-    rocketnet_check( rocketnet_server_stat( server, ROCKETNET_SERVER_STAT_COUNT ) == 0.0 );
 
     const int slot = rocketnet_client_index( client );
     rocketnet_check( rocketnet_server_client_connected( server, slot ) && rocketnet_server_client_id( server, slot ) == 77 );
@@ -3741,14 +3744,12 @@ void rocketnet_test_public_client_server_queries()
     rocketnet_check( rn_server_client_stats_of( server, slot ).packets_received == cls.packets_received && cls.packets_received > 0 );
     rocketnet_check( rn_server_client_stats_of( server, slot ).bytes_sent == cls.bytes_sent && cls.bytes_sent > cls.packets_sent );
     rocketnet_check( rn_server_client_stats_of( server, slot ).bytes_received == cls.bytes_received && cls.bytes_received > cls.packets_received );
-    rocketnet_check( rocketnet_server_client_counter( server, slot, ROCKETNET_SERVER_CLIENT_COUNTER_COUNT ) == 0 );
     rocketnet_check( rn_server_client_stats_of( server, slot ).rtt == (double) cls.rtt );
     rocketnet_check( rn_server_client_stats_of( server, slot ).jitter == (double) cls.jitter );
     rocketnet_check( rn_server_client_stats_of( server, slot ).packet_loss == (double) cls.packet_loss );
     rocketnet_check( rn_server_client_stats_of( server, slot ).bandwidth_sent_kbps == (double) cls.bandwidth_sent_kbps );
     rocketnet_check( rn_server_client_stats_of( server, slot ).bandwidth_received_kbps == (double) cls.bandwidth_received_kbps );
     rocketnet_check( rn_server_client_stats_of( server, slot ).bandwidth_acked_kbps == (double) cls.bandwidth_acked_kbps );
-    rocketnet_check( rocketnet_server_client_stat( server, slot, ROCKETNET_SERVER_CLIENT_STAT_COUNT ) == 0.0 );
 
     // a free slot, and a slot past max_clients, read 0
     const int free_slot = slot == 0 ? 1 : 0;
@@ -8549,14 +8550,18 @@ void rocketnet_test_client_receive_thread_quit_wake_before_wait_returns()
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 // A real client and server over the portable transport on 127.0.0.1 (port
-// 0): the server disconnects the connected client, and the client reads
-// ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED once its update accepts the
-// server's disconnect packet, DISCONNECTED and not timed out.
+// 0): the server disconnects the connected client, and the client state reads
+// ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED once its update accepts the
+// server's disconnect packet, not CONNECTION_TIMED_OUT.
 
 static void rocketnet_test_public_client_reads_server_disconnected()
 {
     struct rocketnet_server_config_t server_config;
-    rocketnet_server_dev_config( &server_config );
+    rocketnet_server_default_config( &server_config );
+    server_config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
+    memcpy( server_config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
+    memcpy( server_config.server_public_key, rocketnet_dev_server_public_key, 32 );
+    memcpy( server_config.server_secret_key, rocketnet_dev_server_secret_key, 32 );
     server_config.max_clients = 2;
     server_config.transport = "portable";
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL );
@@ -8587,8 +8592,8 @@ static void rocketnet_test_public_client_reads_server_disconnected()
     while ( rocketnet_time() - wall_start < 10.0 )
     {
         const double now = 1000.0 + ( rocketnet_time() - wall_start );
-        rocketnet_check( rocketnet_server_update( server, now ) == ROCKETNET_UPDATE_OK );
-        rocketnet_check( rocketnet_client_update( client, now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_server_update( server, now );
+        rocketnet_client_update( client, now );
         rocketnet_client_send_packets( client );
         rocketnet_server_send_packets( server );
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
@@ -8597,9 +8602,8 @@ static void rocketnet_test_public_client_reads_server_disconnected()
         rocketnet_sleep( 0.005 );
     }
     rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
-    rocketnet_check( rocketnet_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
-    const uint64_t index = rocketnet_client_index( client );
+    const int index = rocketnet_client_index( client );
     rocketnet_server_disconnect_client( server, index );
     rocketnet_server_send_packets( server );
 
@@ -8608,13 +8612,12 @@ static void rocketnet_test_public_client_reads_server_disconnected()
     while ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED && rocketnet_time() - disconnect_start < 2.0 )
     {
         const double now = 1000.0 + ( rocketnet_time() - wall_start );
-        rocketnet_check( rocketnet_server_update( server, now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_server_update( server, now );
         rocketnet_server_send_packets( server );
-        rocketnet_check( rocketnet_client_update( client, now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_client_update( client, now );
         rocketnet_sleep( 0.005 );
     }
-    rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
-    rocketnet_check( rocketnet_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
+    rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED );
     rocketnet_check( !rocketnet_server_client_connected( server, index ) );
 
     rocketnet_client_destroy( client );
@@ -8641,7 +8644,11 @@ static void rocketnet_test_two_address_token_connects_over_ipv4()
     rocketnet_check( rocketnet_generate_server_keypair( server_public, server_secret ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_server_config_t server_config;
-    rocketnet_server_dev_config( &server_config );
+    rocketnet_server_default_config( &server_config );
+    server_config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
+    memcpy( server_config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
+    memcpy( server_config.server_public_key, rocketnet_dev_server_public_key, 32 );
+    memcpy( server_config.server_secret_key, rocketnet_dev_server_secret_key, 32 );
     server_config.max_clients = 2;
     server_config.transport = "portable";
     memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
@@ -8685,8 +8692,8 @@ static void rocketnet_test_two_address_token_connects_over_ipv4()
     while ( rocketnet_time() - wall_start < 10.0 )
     {
         const double now = 1000.0 + ( rocketnet_time() - wall_start );
-        rocketnet_check( rocketnet_server_update( server, now ) == ROCKETNET_UPDATE_OK );
-        rocketnet_check( rocketnet_client_update( client, now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_server_update( server, now );
+        rocketnet_client_update( client, now );
         rocketnet_client_send_packets( client );
         rocketnet_server_send_packets( server );
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED &&

@@ -74,15 +74,17 @@ void * rocketnet_server_transport_io_name_for_testing( struct rocketnet_server_t
 // forcing the gso plain tiers: every following gso create probes neither
 // UDP_SEGMENT nor UDP_GRO, and each pair proves it got the plain tiers
 
+#if defined(__linux__)
+
 static int posix_gso_forced_plain = 0;
 
 static void posix_force_gso_plain( int on )
 {
-#if defined(__linux__)
     rocketnet_server_gso_test_force_create_flags( on ? ( ROCKETNET_SERVER_GSO_DISABLE_SEGMENT | ROCKETNET_SERVER_GSO_DISABLE_GRO ) : 0 );
-#endif
     posix_gso_forced_plain = on;
 }
+
+#endif // #if defined(__linux__)
 
 #define POSIX_NATIVE_NONE   0
 #define POSIX_NATIVE_GSO    1
