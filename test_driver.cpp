@@ -114,19 +114,44 @@ static void test_transport_registry()
         CHECK(definition->backend && definition->backend->server);
         if (i) CHECK(rocketnet_transport_definition(servers[i-1])->server_preference <= definition->server_preference);
     }
+    // The production library linked by test_transport omits the portable
+    // server from availability; development gives it rank 30. Read the linked
+    // registry so these exact lists also cover a development-linked fixture.
+    const bool portable_server = rocketnet_transport_definition(ROCKETNET_TRANSPORT_PORTABLE)->server_preference != 0;
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     if (rocketnet_transport_definition(ROCKETNET_TRANSPORT_IO_URING)->backend) // built with liburing
-        CHECK(count == 5 && servers[0] == ROCKETNET_TRANSPORT_XDP && servers[1] == ROCKETNET_TRANSPORT_GSO &&
-              servers[2] == ROCKETNET_TRANSPORT_IO_URING && servers[3] == ROCKETNET_TRANSPORT_PORTABLE && servers[4] == ROCKETNET_TRANSPORT_LOOPBACK);
+    {
+        if (portable_server)
+            CHECK(count == 5 && servers[0] == ROCKETNET_TRANSPORT_XDP && servers[1] == ROCKETNET_TRANSPORT_GSO &&
+                  servers[2] == ROCKETNET_TRANSPORT_IO_URING && servers[3] == ROCKETNET_TRANSPORT_PORTABLE && servers[4] == ROCKETNET_TRANSPORT_LOOPBACK);
+        else
+            CHECK(count == 4 && servers[0] == ROCKETNET_TRANSPORT_XDP && servers[1] == ROCKETNET_TRANSPORT_GSO &&
+                  servers[2] == ROCKETNET_TRANSPORT_IO_URING && servers[3] == ROCKETNET_TRANSPORT_LOOPBACK);
+    }
     else
-        CHECK(count == 4 && servers[0] == ROCKETNET_TRANSPORT_XDP && servers[1] == ROCKETNET_TRANSPORT_GSO && servers[2] == ROCKETNET_TRANSPORT_PORTABLE && servers[3] == ROCKETNET_TRANSPORT_LOOPBACK);
+    {
+        if (portable_server)
+            CHECK(count == 4 && servers[0] == ROCKETNET_TRANSPORT_XDP && servers[1] == ROCKETNET_TRANSPORT_GSO && servers[2] == ROCKETNET_TRANSPORT_PORTABLE && servers[3] == ROCKETNET_TRANSPORT_LOOPBACK);
+        else
+            CHECK(count == 3 && servers[0] == ROCKETNET_TRANSPORT_XDP && servers[1] == ROCKETNET_TRANSPORT_GSO && servers[2] == ROCKETNET_TRANSPORT_LOOPBACK);
+    }
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-    CHECK(count == 3 && servers[0] == ROCKETNET_TRANSPORT_MSGX && servers[1] == ROCKETNET_TRANSPORT_PORTABLE && servers[2] == ROCKETNET_TRANSPORT_LOOPBACK);
+    if (portable_server)
+        CHECK(count == 3 && servers[0] == ROCKETNET_TRANSPORT_MSGX && servers[1] == ROCKETNET_TRANSPORT_PORTABLE && servers[2] == ROCKETNET_TRANSPORT_LOOPBACK);
+    else
+        CHECK(count == 2 && servers[0] == ROCKETNET_TRANSPORT_MSGX && servers[1] == ROCKETNET_TRANSPORT_LOOPBACK);
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    CHECK(count == 4 && servers[0] == ROCKETNET_TRANSPORT_PORTABLE && servers[1] == ROCKETNET_TRANSPORT_IOCP &&
-          servers[2] == ROCKETNET_TRANSPORT_RIO && servers[3] == ROCKETNET_TRANSPORT_LOOPBACK);
+    if (portable_server)
+        CHECK(count == 4 && servers[0] == ROCKETNET_TRANSPORT_PORTABLE && servers[1] == ROCKETNET_TRANSPORT_IOCP &&
+              servers[2] == ROCKETNET_TRANSPORT_RIO && servers[3] == ROCKETNET_TRANSPORT_LOOPBACK);
+    else
+        CHECK(count == 3 && servers[0] == ROCKETNET_TRANSPORT_IOCP && servers[1] == ROCKETNET_TRANSPORT_RIO &&
+              servers[2] == ROCKETNET_TRANSPORT_LOOPBACK);
 #else
-    CHECK(count == 2 && servers[0] == ROCKETNET_TRANSPORT_PORTABLE && servers[1] == ROCKETNET_TRANSPORT_LOOPBACK);
+    if (portable_server)
+        CHECK(count == 2 && servers[0] == ROCKETNET_TRANSPORT_PORTABLE && servers[1] == ROCKETNET_TRANSPORT_LOOPBACK);
+    else
+        CHECK(count == 1 && servers[0] == ROCKETNET_TRANSPORT_LOOPBACK);
 #endif
     const int * clients = rocketnet_client_transport_io_availability(&count);
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
