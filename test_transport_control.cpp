@@ -229,8 +229,13 @@ static void test_buffered_control_pressure(int clients = 300)
     rocketnet_server_transport_io_operations_t operations;
     auto * server = make_server(f, &operations, clients, false);
     f->requests = ROCKETNET_SERVER_MAX_RECEIVE_PACKETS;
+    // Publication still follows the transport's modulo phases. Exercise
+    // every configured slot before checking the high slots' RTT; keep the
+    // response and ACK/keep-alive checks on every individual update.
+    const int stats_phases = ( clients + ROCKETNET_CLIENT_STATS_SLOTS_PER_UPDATE - 1 ) /
+                             ROCKETNET_CLIENT_STATS_SLOTS_PER_UPDATE;
     const double begin = rocketnet_time();
-    for (int step = 0; step < 6; ++step)
+    for (int step = 0; step < stats_phases; ++step)
     {
         double now = 1.0 + step;
         // Half the clients owe standalone ACKs while their keep-alive clock
