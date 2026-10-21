@@ -9,7 +9,7 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | test | Windows | macOS | Linux |
 |---|:---:|:---:|:---:|
 | Unit suite (./bin/test) | ✅ | ✅ | ✅ |
-| Functional suite (./bin/functional) | ✅ | ❌ | ✅ |
+| Functional suite (./bin/functional) | ✅ | ✅ | ✅ |
 | Functional suite repeated, zero flakes | planned for the final deliverable | planned for the final deliverable | planned for the final deliverable |
 | Transport matrix, every cell fifty times | planned for the final deliverable | planned for the final deliverable | planned for the final deliverable |
 | Sanitizers (ASan, UBSan, TSan; MSVC ASan on Windows) | ✅ | planned for the final deliverable | planned for the final deliverable |
@@ -28,7 +28,7 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | Main API calls under 0.1 ms each, Release, under load | planned for the final deliverable | planned for the final deliverable | planned for the final deliverable |
 | Nightlies (every nightly job's steps green on this branch) | planned for the final deliverable | planned for the final deliverable | planned for the final deliverable |
 | CI (ci.yml, every step green on this branch) | ❌ | ❌ | ❌ |
-| complete | 30% | 40% | 40% |
+| complete | 30% | 45% | 40% |
 
 ## Platform-specific tests
 
