@@ -3,8 +3,9 @@
 How a game's debug overlay reads connection quality: a server and a client in
 one process over the in-memory `loopback` transport. The client connects,
 exchanges a little traffic, then prints the client's and the server's state and
-counters. Each stats call copies the current value of every counter and stat into a
-struct the caller owns, and the program reads the fields from that struct.
+counters. Each stats call fills a caller-owned struct. Client quality stats are
+computed synchronously; the server per-client call copies its latest published
+ACK-derived quality values without waiting for their background calculation.
 
 ## What it shows
 
@@ -72,13 +73,19 @@ Jitter is the mean excess of retained positive first-ACK round-trip samples over
 their minimum, in milliseconds. It includes peer ACK scheduling and caller
 update cadence. Zero-time samples are excluded from both the minimum and mean.
 These histories do not expire with elapsed time; reconnect resets them. Client
-stats recompute on read. Server slots retain the modulo publication schedule,
-now in `ceil(max_clients / 20)` phases: no more than 20 configured slots are
-visited per update, and each connected slot refreshes once per full phase
-cycle. Free slots consume a visit without recomputing ACK statistics. At 1000
-configured slots, the cycle is 50 updates; the published values may therefore
-lag more than under the former six-phase schedule. Connection reset still
-clears the slot's published values immediately.
+stats recompute on read. Server updates snapshot at most 20 connected slots in
+a modulo phase and apply at most 20 results from one completed batch per
+update. A background worker computes the ACK-derived server-slot statistics
+from immutable snapshots; the caller's server-slot stats call only copies the
+most recently published values. If the worker is busy, update does not wait or
+submit a later phase; it retries the same submitted-job ordinal on a later
+update. The ordinal cycles through `ceil(max_clients / 20)` phases, so every
+phase is revisited without starvation. At 1,000 configured slots, a full set
+of phases takes 50 successfully submitted batches, and worker lag can make
+published values older still. Results carry the connection ID and are applied
+only while the slot still has that connection; a reset clears the published
+values and rejects stale results from a prior connection. Snapshot copying
+remains on the main update path and has no 100-us time guarantee.
 
 The final API changes the client's previous receive-direction, one-second loss
 estimate and smoothed arrival-gap jitter to these shared definitions. Existing

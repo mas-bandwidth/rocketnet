@@ -267,7 +267,16 @@ allocator. `rocketnet_client_required_memory` and
 `rocketnet_server_required_memory` report that block's size, so a program that
 wants every byte up front can pass `rocketnet_init` an allocator
 over a block of its own, aligned to `ROCKETNET_ALLOCATION_ALIGNMENT`. Connect
-and start may also allocate transport memory.
+and start may also allocate transport memory. Starting a server also prepares
+the background stats worker and its snapshot storage. If that storage cannot
+be allocated, `rocketnet_server_start` returns
+`ROCKETNET_STATUS_OUT_OF_MEMORY`; if the worker thread cannot be created, it
+returns `ROCKETNET_STATUS_THREAD_CREATE_FAILED` and leaves the server stopped.
+The server does not fall back to computing these stats synchronously on the
+frame thread. After a successful start, stop requests worker shutdown;
+`rocketnet_server_stopped` remains false until both transport I/O and the stats
+worker have exited. Destroy requires completion and synchronously joins the
+worker before freeing its storage.
 
 ### Server memory footprint
 
@@ -590,18 +599,39 @@ the `max_message_receipts` config field sets its size.
 
 ## Counters and stats
 
-Three calls each fill a caller struct with the current stats:
+Three calls fill caller-owned structs:
 `rocketnet_client_stats` fills `struct rocketnet_client_stats_t`,
 `rocketnet_server_stats` fills `struct rocketnet_server_stats_t`, and
 `rocketnet_server_client_stats` fills `struct rocketnet_server_client_stats_t`
-for one slot. The counts (`packets_sent`, `bytes_received`, `messages_resent`,
-`receipts_lost`, `messages_dropped_over_budget`, `messages_dropped_not_connected` and the rest) are
-monotonic over the object's life and start at zero at create. The measured
-values are doubles: `rtt_ms` and `jitter_ms` in milliseconds, `packet_loss_percent` as a
-percentage, and trailing rates (`bandwidth_sent_kbps` and the others). The
-per-client stats cover the slot's current connection and go back to zero when a
-new connection takes the slot. The client and server structs also carry two
-process-wide counts, `api_misuses` and `thread_priority_refusals`.
+for one slot. Public fields, units and meanings are unchanged. Cumulative
+counts such as `packets_sent`, `bytes_received`, `messages_resent`,
+`receipts_lost`, `messages_dropped_over_budget` and
+`messages_dropped_not_connected` remain monotonic over their documented object
+or connection lifetime. The measured values are doubles: `rtt_ms` and
+`jitter_ms` in milliseconds, `packet_loss_percent` as a percentage, and
+trailing rates such as `bandwidth_sent_kbps`. Per-client fields cover the
+slot's current connection and reset when a new connection takes the slot. The
+client and server structs also carry the process-wide counts `api_misuses` and
+`thread_priority_refusals`.
+
+Client quality stats are computed synchronously when `rocketnet_client_stats`
+is called. Server-wide totals are copied from the server's current counters.
+Server per-client stats combine current counters with the latest published
+ACK-derived quality values. The per-client API call copies those published
+values; it does not calculate them or wait for the stats worker. Server update
+copies immutable snapshots for at most 20 connected slots in one modulo phase,
+then applies results from at most one completed batch (also at most 20 slots).
+The worker computes ACK-derived RTT, jitter, loss and bandwidth from those
+snapshots while the main thread continues its frame work. A busy worker does
+not block update: no new batch is submitted and the submitted-job ordinal does
+not advance, so a skipped phase is retried rather than starved. At 1,000
+configured slots, a full set of phases spans 50 successfully submitted jobs;
+when the worker falls behind, published quality values can lag further. A
+connection ID accompanies each snapshot, so a result for a reset or reused slot
+is discarded. Reset clears that slot's published quality values immediately.
+The main-thread snapshot copy can be as large as approximately 2.2 MiB per
+batch; its cost still needs measurement, and this behavior makes no 100-us
+update-time promise.
 
 Watch jitter and loss when conditions worsen; the rtt figure is the minimum
 over the retained history, so it cannot track latency upward until every lower
