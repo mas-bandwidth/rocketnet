@@ -721,7 +721,8 @@ void rocketnet_ack_endpoint_update_stats( struct rocketnet_ack_endpoint_t * endp
         endpoint->rtt = min_rtt;
     }
 
-    // jitter: the mean deviation of the samples above the minimum
+    // jitter: use the same positive samples as the minimum. A zero-time
+    // ACK is not a positive RTT and must not contribute negative deviation.
 
     {
         float sum = 0.0f;
@@ -729,7 +730,7 @@ void rocketnet_ack_endpoint_update_stats( struct rocketnet_ack_endpoint_t * endp
         for ( int i = 0; i < ROCKETNET_RTT_HISTORY_SIZE; i++ )
         {
             const float sample = endpoint->rtt_history[i];
-            if ( sample >= 0.0f )
+            if ( sample > 0.0f )
             {
                 sum += sample - min_rtt;
                 count++;
