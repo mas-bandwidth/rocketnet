@@ -72,7 +72,13 @@ Jitter is the mean excess of retained positive first-ACK round-trip samples over
 their minimum, in milliseconds. It includes peer ACK scheduling and caller
 update cadence. Zero-time samples are excluded from both the minimum and mean.
 These histories do not expire with elapsed time; reconnect resets them. Client
-stats recompute on read; each server slot refreshes once per six updates.
+stats recompute on read. Server slots retain the modulo publication schedule,
+now in `ceil(max_clients / 20)` phases: no more than 20 configured slots are
+visited per update, and each connected slot refreshes once per full phase
+cycle. Free slots consume a visit without recomputing ACK statistics. At 1000
+configured slots, the cycle is 50 updates; the published values may therefore
+lag more than under the former six-phase schedule. Connection reset still
+clears the slot's published values immediately.
 
 The final API changes the client's previous receive-direction, one-second loss
 estimate and smoothed arrival-gap jitter to these shared definitions. Existing

@@ -41,7 +41,9 @@ static void test_server_idle_stats_skips_free_endpoints()
     {
         idle_stats_fixture_t f( capacity );
         int calls = 0;
-        for ( int phase = 0; phase < ROCKETNET_CLIENT_STATS_UPDATE_PHASES; phase++ )
+        const int phases = ( capacity + ROCKETNET_CLIENT_STATS_SLOTS_PER_UPDATE - 1 ) /
+                           ROCKETNET_CLIENT_STATS_SLOTS_PER_UPDATE;
+        for ( int phase = 0; phase < phases; phase++ )
             calls += f.phase( phase );
         printf( "capacity=%d free endpoint stats calls=%d\n", capacity, calls );
         rocketnet_unit_check( calls == 0 );
@@ -50,8 +52,8 @@ static void test_server_idle_stats_skips_free_endpoints()
 
 static void test_server_idle_stats_preserves_phase_reset_and_reuse()
 {
-    idle_stats_fixture_t f( 13 );
-    // Keep slots in two phases, including the non-multiple-of-six tail.
+    idle_stats_fixture_t f( 101 );
+    // Six modulo phases for this capacity; keep slots in two of them.
     for ( int i = 0; i < 13; i++ )
         rocketnet_unit_check( f.assign( (uint64_t) i + 1 ) == i );
     for ( int i = 0; i < 13; i++ )
@@ -68,7 +70,9 @@ static void test_server_idle_stats_preserves_phase_reset_and_reuse()
     rocketnet_ack_endpoint_update_stats( expected );
 
     int calls = 0;
-    for ( int phase = 1; phase <= ROCKETNET_CLIENT_STATS_UPDATE_PHASES; phase++ )
+    const int phases = ( 101 + ROCKETNET_CLIENT_STATS_SLOTS_PER_UPDATE - 1 ) /
+                       ROCKETNET_CLIENT_STATS_SLOTS_PER_UPDATE;
+    for ( int phase = 1; phase <= phases; phase++ )
     {
         const int visited = f.phase( phase );
         rocketnet_unit_check( visited == ( phase == 1 || phase == 6 ? 1 : 0 ) );
@@ -100,5 +104,22 @@ static void test_server_idle_stats_preserves_phase_reset_and_reuse()
     rocketnet_unit_check( endpoint->rtt == 9.0f && endpoint->jitter == 0.0f );
 }
 
+static void test_server_stats_modulo_schedule_caps_twenty_visits()
+{
+    idle_stats_fixture_t f( 1000 );
+    for ( int i = 0; i < 1000; i++ )
+        rocketnet_unit_check( f.assign( (uint64_t) i + 1 ) == i );
+    int calls = 0;
+    for ( int phase = 0; phase < 50; phase++ )
+    {
+        const int updated = f.phase( (uint64_t) phase );
+        rocketnet_unit_check( updated == ROCKETNET_CLIENT_STATS_SLOTS_PER_UPDATE );
+        calls += updated;
+    }
+    rocketnet_unit_check( calls == 1000 );
+    rocketnet_unit_check( f.phase( 50 ) == ROCKETNET_CLIENT_STATS_SLOTS_PER_UPDATE );
+}
+
 REGISTER_UNIT_TEST( test_server_idle_stats_skips_free_endpoints );
 REGISTER_UNIT_TEST( test_server_idle_stats_preserves_phase_reset_and_reuse );
+REGISTER_UNIT_TEST( test_server_stats_modulo_schedule_caps_twenty_visits );

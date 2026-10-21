@@ -2638,8 +2638,8 @@ void rocketnet_test_transport_acks_and_client_stats()
     // slot of an eight-slot server, payloads flow on the highest slot, and
     // the delivery notifications surface the packet ids from start_packet on
     // both ends -- the join key, through real sockets. The per-client stats
-    // for the HIGH slot must move after traffic: the round-robin recompute
-    // covers all slots, a sixth per update, which is exactly the test the
+    // for the HIGH slot must move after traffic: the modulo recompute
+    // covers all slots with at most 20 visits per update, which is the test the
     // reference's literal i == update_count % 6 predicate fails --
     // that form never updates any slot past five.
 

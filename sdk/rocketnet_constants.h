@@ -180,10 +180,9 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE == ROCK
 // Retained for historical benchmark comparisons; it does not cap live resends.
 #define ROCKETNET_MESSAGE_RESEND_INTERVAL_MS                              100
 
-// the per-client statistics recompute runs round-robin, a sixth of the
-// slots per update, every slot covered -- the reference's amortization
-
-#define ROCKETNET_CLIENT_STATS_UPDATE_PHASES                              6
+// Bound per-client ACK statistics publication to this many slot visits per
+// server update. Free slots consume a visit but never touch cold endpoints.
+#define ROCKETNET_CLIENT_STATS_SLOTS_PER_UPDATE                           20
 
 #define ROCKETNET_PACKET_LOSS_TRACKER_HISTORY                             1024
 #define ROCKETNET_PACKET_LOSS_TRACKER_SAFETY                                30

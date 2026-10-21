@@ -1352,9 +1352,9 @@ void rocketnet_server_transport_stats( struct rocketnet_server_transport_t * ser
 // Per-client connection quality, per slot: rtt and jitter in milliseconds,
 // packet loss as the percentage of this end's sent packets never
 // acknowledged, and the trailing bandwidth sent, received and acknowledged.
-// Fed by the ack blocks every session packet carries; recomputed round-robin,
-// a sixth of the slots per update, every slot covered, so the per-update
-// cost is flat at any client count. The cumulative totals count every wire
+// Fed by the ack blocks every session packet carries; recomputed by modulo
+// phase, at most 20 configured slots visited per update, every slot covered
+// once per phase cycle. The cumulative totals count every wire
 // datagram and byte over the slot's current connection, zeroed when a new
 // connection takes the slot.
 

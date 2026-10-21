@@ -1842,23 +1842,26 @@ static void rocketnet_server_update_stats( struct rocketnet_server_transport_t *
     }
 }
 
-// Keep connected slots on the six-update publication schedule, independent
-// of send-pool progress. Free slots have reset endpoints and read as zero;
-// do not walk their cold RTT and packet histories.
+// Keep the modulo-phase publication schedule, but visit only the chosen
+// phase's slots. The phase count scales with capacity so no update examines
+// more than 20 slots; free slots do not touch cold ACK histories.
 static int rocketnet_server_update_client_stats( const rocketnet_client_slots_t * slots,
                                                  rocketnet_server_acks_t * acks )
 {
     int updated = 0;
     const int max_clients = rocketnet_client_slots_max_clients( slots );
-    for ( int i = 0; i < max_clients; i++ )
+    if ( max_clients <= 0 )
+        return 0;
+    const int phase_count = ( max_clients + ROCKETNET_CLIENT_STATS_SLOTS_PER_UPDATE - 1 ) /
+                            ROCKETNET_CLIENT_STATS_SLOTS_PER_UPDATE;
+    const int phase = (int) ( acks->update_count % (uint64_t) phase_count );
+    for ( int i = phase; i < max_clients; i += phase_count )
     {
-        if ( (uint64_t) ( i % ROCKETNET_CLIENT_STATS_UPDATE_PHASES ) !=
-             acks->update_count % ROCKETNET_CLIENT_STATS_UPDATE_PHASES )
-            continue;
-        if ( !rocketnet_client_slots_connected( slots, i ) )
-            continue;
-        rocketnet_ack_endpoint_update_stats( &acks->endpoints[i] );
-        updated++;
+        if ( rocketnet_client_slots_connected( slots, i ) )
+        {
+            rocketnet_ack_endpoint_update_stats( &acks->endpoints[i] );
+            updated++;
+        }
     }
     return updated;
 }
@@ -2213,8 +2216,8 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     // the sweep, then per client: the paced keep-alive or -- when the ack
     // debt has reached the threshold with no other block going out -- the
-    // standalone ack, into send frames. a sixth of the slots also recompute
-    // their published statistics, every slot covered over six updates.
+    // standalone ack, into send frames. At most 20 slots also recompute their
+    // published ACK statistics; modulo phases cover all slots over time.
 
     rocketnet_server_protocol_update( &server_transport->protocol, current_time );
 
