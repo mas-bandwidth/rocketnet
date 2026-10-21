@@ -513,9 +513,9 @@ static void test_api_polish_client_index_is_minus_one_until_connected()
     rocketnet_quiet( false );
 }
 REGISTER_UNIT_TEST( test_api_polish_client_index_is_minus_one_until_connected );
-// --- ruling 11: server abort_message past max_clients counts misuse ------------
+// --- server abort_message acts on the pending start: with none, a no-op ---------
 
-static void test_api_polish_server_abort_message_misuse()
+static void test_api_polish_server_abort_message_without_start_is_a_no_op()
 {
     rocketnet_server_config_t config;
     api_polish_dev_server_config( &config );
@@ -528,14 +528,14 @@ static void test_api_polish_server_abort_message_misuse()
     rocketnet_assert_function( api_polish_quiet_assert );
     const uint64_t before = rocketnet_api_misuse_count();
     rocketnet_server_abort_message( server );
-    check( rocketnet_api_misuse_count() == before + 1 );
-    rocketnet_server_abort_message( server );
-    check( rocketnet_api_misuse_count() == before + 2 );
+    check( rocketnet_api_misuse_count() == before );
+    check( rocketnet_server_finish_message( server, 4 ) == 0 );
+    check( rocketnet_api_misuse_count() == before );
     rocketnet_assert_function( NULL );
 
     rocketnet_server_destroy( server );
 }
-REGISTER_UNIT_TEST( test_api_polish_server_abort_message_misuse );
+REGISTER_UNIT_TEST( test_api_polish_server_abort_message_without_start_is_a_no_op );
 
 // --- the production minter refuses a token no peer accepts ---------------------
 

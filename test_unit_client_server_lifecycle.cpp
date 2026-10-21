@@ -545,7 +545,7 @@ static void test_server_send_dropped_to_slot_not_connected()
     check( rocketnet_server_start_message( server, 3, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 2 ) == NULL );
     check( rocketnet_server_finish_message( server, 2 ) == 0 );
     check( rocketnet_server_start_message( server, 1000, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 2 ) == NULL );
-    check( rocketnet_api_misuse_count() == misuse + 3 );
+    check( rocketnet_api_misuse_count() == misuse + 2 );     // the finish with no start pending is not misuse
     check( rn_server_stats_of( server ).not_connected_drops == 1 );
 
     // the connected slot still sends; then its client leaves and the slot drops
@@ -563,7 +563,7 @@ static void test_server_send_dropped_to_slot_not_connected()
     misuse = rocketnet_api_misuse_count();
     check( rocketnet_server_start_message( server, 3, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 2 ) == NULL );
     check( rocketnet_server_finish_message( server, 2 ) == 0 );
-    check( rocketnet_api_misuse_count() == misuse + 2 );
+    check( rocketnet_api_misuse_count() == misuse + 1 );
     check( rn_server_stats_of( server ).not_connected_drops == 4 );
 
     // start again: nothing dropped is sent to the client that connects next
@@ -814,15 +814,15 @@ static void test_server_destination_flow_id_refused()
     uint64_t misuse = rocketnet_api_misuse_count();
     check( rocketnet_server_start_message( world.server, flow, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 ) == NULL );
     check( rocketnet_api_misuse_count() == misuse + 1 && lifecycle_flow_logs == 1 );
+    // finish and abort act on the pending start: the refused one left none,
+    // so each returns its empty value, uncounted, with no flow log
     misuse = rocketnet_api_misuse_count();
     check( rocketnet_server_finish_message( world.server, 4 ) == 0 );
-    check( rocketnet_api_misuse_count() == misuse + 1 && lifecycle_flow_logs == 2 );
-    misuse = rocketnet_api_misuse_count();
     rocketnet_server_abort_message( world.server );
-    check( rocketnet_api_misuse_count() == misuse + 1 && lifecycle_flow_logs == 3 );
+    check( rocketnet_api_misuse_count() == misuse && lifecycle_flow_logs == 1 );
+    // an index merely out of range is counted misuse without the flow log
     check( rocketnet_server_start_message( world.server, 5, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 ) == NULL );
-    check( rocketnet_server_finish_message( world.server, 4 ) == 0 );
-    check( lifecycle_flow_logs == 3 );
+    check( rocketnet_api_misuse_count() == misuse + 1 && lifecycle_flow_logs == 1 );
     rocketnet_log_function( NULL, NULL );
     rocketnet_quiet( 1 );
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_FLOW_ID_RESERVED ), "FLOW_ID_RESERVED" ) == 0 );
