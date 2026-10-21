@@ -64,7 +64,7 @@ static void lifecycle_server_config( rocketnet_server_config_t * config, const l
     lifecycle_queue_config( &config->reliable_messages_in_flight, &config->send_queue_messages, &config->send_message_buffer_bytes );
 }
 
-static void lifecycle_client_config( rocketnet_client_config_t * config )
+static void lifecycle_client_config( rocketnet_client_test_config_t * config )
 {
     rocketnet_client_default_config( config );
     config->transport = "loopback";
@@ -110,7 +110,7 @@ static void lifecycle_world_create( lifecycle_world_t * world, int max_clients, 
     world->num_clients = num_clients;
     for ( int i = 0; i < num_clients; i++ )
     {
-        rocketnet_client_config_t client_config;
+        rocketnet_client_test_config_t client_config;
         lifecycle_client_config( &client_config );
         world->clients[i] = rocketnet_client_create( NULL, &client_config, NULL );
         check( world->clients[i] != NULL );
@@ -276,7 +276,7 @@ static void test_client_destroy_then_create_and_connect()
         lifecycle_pump( &world );
     check( rocketnet_server_client_connected( world.server, index ) == 0 );
 
-    rocketnet_client_config_t client_config;
+    rocketnet_client_test_config_t client_config;
     lifecycle_client_config( &client_config );
     world.clients[0] = rocketnet_client_create( NULL, &client_config, NULL );
     check( world.clients[0] != NULL );
@@ -1066,7 +1066,7 @@ static void test_client_connection_ended_state_kept_until_disconnect()
     lifecycle_server_config( &server_config, &world.identity, 1 );     // 32 channels
     world.server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL );
     check( world.server && rocketnet_server_start( world.server ) == ROCKETNET_STATUS_OK );
-    rocketnet_client_config_t client_config;
+    rocketnet_client_test_config_t client_config;
     lifecycle_client_config( &client_config );
     client_config.num_channels = 4;
     world.clients[0] = rocketnet_client_create( NULL, &client_config, NULL );
@@ -1134,7 +1134,7 @@ static void test_client_one_update_sends_more_than_sixteen_packets()
 {
     lifecycle_world_t world;
     lifecycle_world_create( &world, 1, 0 );
-    rocketnet_client_config_t client_config;
+    rocketnet_client_test_config_t client_config;
     lifecycle_client_config( &client_config );
     client_config.send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;   // no budget: the packet limit alone bounds the update
     world.clients[0] = rocketnet_client_create( NULL, &client_config, NULL );

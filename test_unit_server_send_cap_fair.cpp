@@ -119,7 +119,7 @@ static void fair_world_create( fair_world_t * world, int num_clients, int capaci
 
     for ( int i = 0; i < num_clients; i++ )
     {
-        rocketnet_client_config_t client_config;
+        rocketnet_client_test_config_t client_config;
         check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
         client_config.transport = "loopback";
         client_config.step_driven = true;

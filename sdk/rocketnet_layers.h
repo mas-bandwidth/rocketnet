@@ -23,7 +23,7 @@ extern "C" {
 /// revision each, the whole struct; a config_bytes the library does not know
 /// is refused.
 #define ROCKETNET_CONFIG_REVISION_BYTES( end, align ) ( ( ( end ) + ( align ) - 1 ) / ( align ) * ( align ) )
-#define ROCKETNET_CLIENT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, simulated_duplicate_percent ) + sizeof( int ), sizeof( void * ) )
+#define ROCKETNET_CLIENT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, reliable_message_timeout_ms ) + sizeof( int ), sizeof( void * ) )
 #define ROCKETNET_SERVER_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, second_public_address ) + sizeof( const char * ), sizeof( void * ) )
 
 /// The receive bounds: a receiver accepts what one 1500-MTU IPv4 datagram
@@ -601,6 +601,8 @@ int rocketnet_client_transport_state( struct rocketnet_client_transport_t * clie
  * @return Transport-owned granted transport name, valid until destroy, or NULL.
  */
 const char * rocketnet_client_transport_io_name( struct rocketnet_client_transport_t * client_transport );
+bool rocketnet_client_transport_network_simulator( struct rocketnet_client_transport_t * client_transport, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
+bool rocketnet_server_transport_network_simulator( struct rocketnet_server_transport_t * server_transport, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
 
 // a NULL client_transport is a counted no-op that returns 0.
 /** @brief Read the server-assigned index of the connected client.

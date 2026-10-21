@@ -1115,17 +1115,9 @@ struct rocketnet_client_config_t
 
     void (*state_change_callback)( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state );
 
-    /// No env form: the receive stamp clock; NULL is the platform clock. Runs on the I/O thread, and on the caller's thread during disconnect and destroy.
-
-    double (*time_callback)( void * context );
-
     /// ROCKETNET_CLIENT_PACKET_FILTER: the per-title packet filter, as the server's
 
     uint8_t packet_filter[4];
-
-    /// ROCKETNET_CLIENT_STEP_DRIVEN: nonzero (env 1) runs the client I/O step inside update and send_packets on the caller's thread, with no I/O thread; 0 (the default) keeps the I/O thread
-
-    int step_driven;
 
     /// ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES: ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. 305,408; 0 is the default, 16384
 
@@ -1199,23 +1191,6 @@ struct rocketnet_client_config_t
 
     int reliable_message_timeout_ms;
 
-    /// Simulated link conditions: development only. A release library refuses nonzero simulated_* fields with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE.
-
-    /// ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT: development only: outgoing loss 0..100; 0 is off
-
-    int simulated_loss_percent;
-
-    /// ROCKETNET_CLIENT_SIMULATED_LATENCY_MS: development only: outgoing latency 0..60000 milliseconds; 0 is off
-
-    int simulated_latency_ms;
-
-    /// ROCKETNET_CLIENT_SIMULATED_JITTER_MS: development only: outgoing jitter 0..60000 milliseconds; 0 is off
-
-    int simulated_jitter_ms;
-
-    /// ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT: development only: outgoing duplication 0..100; 0 is off
-
-    int simulated_duplicate_percent;
 };
 
 /// The server is configured explicitly: rocketnet_server_default_config gives
@@ -1359,24 +1334,6 @@ struct rocketnet_server_config_t
     /// ROCKETNET_SERVER_RELIABLE_MESSAGE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
 
     int reliable_message_timeout_ms;
-
-    /// Simulated link conditions: development only. A release library refuses nonzero simulated_* fields with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE.
-
-    /// ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT: development only: outgoing loss 0..100; 0 is off
-
-    int simulated_loss_percent;
-
-    /// ROCKETNET_SERVER_SIMULATED_LATENCY_MS: development only: outgoing latency 0..60000 milliseconds; 0 is off
-
-    int simulated_latency_ms;
-
-    /// ROCKETNET_SERVER_SIMULATED_JITTER_MS: development only: outgoing jitter 0..60000 milliseconds; 0 is off
-
-    int simulated_jitter_ms;
-
-    /// ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT: development only: outgoing duplication 0..100; 0 is off
-
-    int simulated_duplicate_percent;
 
     /// ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS: the other family's "a.b.c.d:port" or "[v6]:port" on the same port; NULL or empty serves one family
 
@@ -1558,6 +1515,23 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_create_dev_connect_token( con
                                                                             uint64_t unix_timestamp,
                                                                             const uint8_t * user_data,
                                                                             char * connect_token );
+
+/// The network simulator, for development: applies latency, jitter, packet
+/// loss and duplication to this client's or server's outgoing packets, to see
+/// how the game plays over a bad link. latency_ms and jitter_ms are 0 .. 60000,
+/// packet_loss_percent and duplicate_percent 0 .. 100; all zeros is off. Call
+/// it at any time; it applies to the connection from the next connect (client)
+/// or start (server), and at once to a connection that already runs one. An
+/// out-of-range value is counted as misuse and changes nothing. The
+/// environment variables ROCKETNET_DEV_CLIENT_LATENCY_MS,
+/// ROCKETNET_DEV_CLIENT_JITTER_MS, ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT and
+/// ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT (and the ROCKETNET_DEV_SERVER_ forms)
+/// set the same values at create.
+
+ROCKETNET_EXPORT void rocketnet_client_network_simulator( struct rocketnet_client_t * client, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
+
+ROCKETNET_EXPORT void rocketnet_server_network_simulator( struct rocketnet_server_t * server, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
+
 #endif /// #if ROCKETNET_DEVELOPMENT
 
 /// A DISCONNECTED client, or NULL with the refusal in status: create is the one

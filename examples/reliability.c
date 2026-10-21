@@ -54,9 +54,11 @@ int main( void ) {
     server_config.protocol_id = EXAMPLE_PROTOCOL_ID;
     memcpy( server_config.backend_public_key, dev_backend_public_key, sizeof( server_config.backend_public_key ) );
     server_config.transport = "loopback"; server_config.num_channels = NUM_MODES;
-    server_config.simulated_loss_percent = 25; server_config.simulated_latency_ms = 20; server_config.simulated_jitter_ms = 35;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &create_status );
+    // the development network simulator: 20 ms latency, 35 ms jitter, 25% loss
+    if ( server )
+        rocketnet_server_network_simulator( server, 20, 35, 25, 0 );
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
@@ -70,10 +72,11 @@ int main( void ) {
     CHECK( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, 4102444800ull, NULL, connect_token ) == ROCKETNET_STATUS_OK );
 
     CHECK( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
-    client_config.transport = "loopback"; client_config.num_channels = NUM_MODES; client_config.step_driven = true;
-    client_config.simulated_loss_percent = 25; client_config.simulated_latency_ms = 20; client_config.simulated_jitter_ms = 35;
+    client_config.transport = "loopback"; client_config.num_channels = NUM_MODES;
     enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
     client = rocketnet_client_create( NULL, &client_config, &create_status_2 );
+    if ( client )
+        rocketnet_client_network_simulator( client, 20, 35, 25, 0 );
     if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {

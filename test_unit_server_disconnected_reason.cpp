@@ -63,7 +63,7 @@ static rocketnet_server_t * server_disconnected_server_create( server_disconnect
 
 static rocketnet_client_t * server_disconnected_client_create()
 {
-    rocketnet_client_config_t config;
+    rocketnet_client_test_config_t config;
     rocketnet_client_default_config( &config );
     config.transport = "loopback";
     config.step_driven = true;

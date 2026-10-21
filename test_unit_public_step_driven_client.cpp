@@ -100,7 +100,7 @@ static void public_step_token_string( const rocketnet_server_t * server, const p
 static double public_step_now = 1000.0;
 static double public_step_clock( void * ) { return public_step_now; }
 
-static void public_step_client_config( rocketnet_client_config_t * config )
+static void public_step_client_config( rocketnet_client_test_config_t * config )
 {
     rocketnet_client_default_config( config );
     config->transport = "loopback";
@@ -125,7 +125,7 @@ static void public_step_pair_create( public_step_pair_t * pair, const public_ste
 
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     public_step_token_string( pair->server, identity, token );
-    rocketnet_client_config_t client_config;
+    rocketnet_client_test_config_t client_config;
     public_step_client_config( &client_config );
     pair->threads_before_client = public_step_thread_count();
     pair->client = rocketnet_client_create( NULL, &client_config, NULL );
@@ -337,13 +337,13 @@ static void test_public_step_driven_client_loss_100_drops_everything()
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     public_step_token_string( server, &identity, token );
 
-    rocketnet_client_config_t client_config;
+    rocketnet_client_test_config_t client_config;
     memset( &client_config, 0, sizeof( client_config ) );
     public_step_client_config( &client_config );
-    client_config.simulated_loss_percent = 100;
 
     rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
     check( client != NULL );
+    rocketnet_client_network_simulator( client, 0, 0, 100, 0 );
     check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
 
     double now = 1000.0;

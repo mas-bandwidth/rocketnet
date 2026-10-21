@@ -2456,3 +2456,20 @@ static void rocketnet_client_thread_function( void * data )
         rocketnet_platform_thread_wait( 0.001 );
     }
 }
+
+// The development network simulator call on a live transport: reconfigures
+// the link simulator when one is running (a client with a link simulator has
+// no network thread, so the caller's thread owns it); false when none runs,
+// and the settings then take effect at the next connect.
+bool rocketnet_client_transport_network_simulator( struct rocketnet_client_transport_t * client_transport, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent )
+{
+    rocketnet_assert( client_transport );
+    client_transport->config.simulated_latency_ms = latency_ms;
+    client_transport->config.simulated_jitter_ms = jitter_ms;
+    client_transport->config.simulated_loss_percent = packet_loss_percent;
+    client_transport->config.simulated_duplicate_percent = duplicate_percent;
+    if ( !client_transport->link_simulator )
+        return false;
+    rocketnet_network_simulator_config( client_transport->link_simulator, latency_ms / 1000.0, jitter_ms / 1000.0, (float) packet_loss_percent, (float) duplicate_percent );
+    return true;
+}

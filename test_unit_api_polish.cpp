@@ -244,14 +244,14 @@ static_assert( rn_same<decltype( &rocketnet_server_start_message ), uint8_t * (*
 
 static_assert( rn_same<decltype( rocketnet_server_running( NULL ) ), bool>::value, "ruling 4: running" );
 static_assert( rn_same<decltype( rocketnet_server_client_connected( NULL, 0 ) ), bool>::value, "ruling 4: client connected" );
-static_assert( rn_same<decltype( ( (rocketnet_client_config_t *) 0 )->step_driven ), int>::value, "step_driven is an int flag (0/1)" );
+static_assert( rn_same<decltype( ( (rocketnet_client_testing_t *) 0 )->step_driven ), bool>::value, "step_driven is a bool flag" );
 
 static void test_api_polish_bool_field_abi()
 {
-    // the flag is an int, as send_kbps is
-    check( sizeof( ( (rocketnet_client_config_t *) 0 )->step_driven ) == sizeof( int ) );
+    // the flag is a bool; send_kbps is an int
+    check( sizeof( ( (rocketnet_client_testing_t *) 0 )->step_driven ) == sizeof( bool ) );
     check( sizeof( ( (rocketnet_client_config_t *) 0 )->send_kbps ) == sizeof( int ) );
-    struct rocketnet_client_config_t config;
+    struct rocketnet_client_test_config_t config;
     check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
     check( config.step_driven == 0 );
 }
@@ -395,8 +395,8 @@ REGISTER_UNIT_TEST( test_api_polish_zero_receipt_and_dense_reasons );
 
 static_assert( rn_same<decltype( rocketnet_client_required_memory( (struct rocketnet_client_config_t *) NULL ) ), size_t>::value, "ruling 8: client required memory" );
 static_assert( rn_same<decltype( rocketnet_server_required_memory( (struct rocketnet_server_config_t *) NULL ) ), size_t>::value, "ruling 8: server required memory" );
-static_assert( rn_same<decltype( &rocketnet_client_create ), rocketnet_client_t * (*)( void *, const rocketnet_client_config_t *, rocketnet_status_t * )>::value, "ruling 8: client create" );
-static_assert( rn_same<decltype( &rocketnet_server_create ), rocketnet_server_t * (*)( void *, const char *, const rocketnet_server_config_t *, rocketnet_status_t * )>::value, "ruling 8: server create" );
+static_assert( rn_same<decltype( static_cast<rocketnet_client_t * (*)( void *, const rocketnet_client_config_t *, rocketnet_status_t * )>( &rocketnet_client_create ) ), rocketnet_client_t * (*)( void *, const rocketnet_client_config_t *, rocketnet_status_t * )>::value, "ruling 8: client create" );
+static_assert( rn_same<decltype( static_cast<rocketnet_server_t * (*)( void *, const char *, const rocketnet_server_config_t *, rocketnet_status_t * )>( &rocketnet_server_create ) ), rocketnet_server_t * (*)( void *, const char *, const rocketnet_server_config_t *, rocketnet_status_t * )>::value, "ruling 8: server create" );
 
 // --- ruling 9: a NULL client reads INVALID, counted ----------------------------
 
@@ -464,7 +464,7 @@ static void test_api_polish_client_index_is_minus_one_until_connected()
     check( rn_test_server_token_string( backend_secret, server, API_POLISH_INDEX_PROTOCOL, addresses, 1,
         0x1D, 1000, 1ULL << 40, 300, NULL, token ) == ROCKETNET_STATUS_OK );
 
-    struct rocketnet_client_config_t client_config;
+    struct rocketnet_client_test_config_t client_config;
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
     client_config.transport = "loopback";
     client_config.step_driven = 1;

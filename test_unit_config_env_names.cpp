@@ -419,23 +419,7 @@ static std::vector<std::string> env_names_set_candidates()
     set.push_back( "ROCKETNET_SERVER_PUBLIC_ADDRESS" );
 
     // public link simulator fields (documented in sdk/rocketnet.h)
-    env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT", "0" );
-    set.push_back( "ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT" );
-    env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_LATENCY_MS", "0" );
-    set.push_back( "ROCKETNET_CLIENT_SIMULATED_LATENCY_MS" );
-    env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_JITTER_MS", "0" );
-    set.push_back( "ROCKETNET_CLIENT_SIMULATED_JITTER_MS" );
-    env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT", "0" );
-    set.push_back( "ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT" );
 
-    env_names_setenv( "ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT", "0" );
-    set.push_back( "ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT" );
-    env_names_setenv( "ROCKETNET_SERVER_SIMULATED_LATENCY_MS", "0" );
-    set.push_back( "ROCKETNET_SERVER_SIMULATED_LATENCY_MS" );
-    env_names_setenv( "ROCKETNET_SERVER_SIMULATED_JITTER_MS", "0" );
-    set.push_back( "ROCKETNET_SERVER_SIMULATED_JITTER_MS" );
-    env_names_setenv( "ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT", "0" );
-    set.push_back( "ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT" );
 
     // internal transport rows the passes read through the same tables
     env_names_setenv( "ROCKETNET_CLIENT_GAME_CLOCK_EPOCH", "1000" );
@@ -483,6 +467,7 @@ static void env_names_add_literal_reads( std::vector<std::string> & reads )
     const char * sources[] =
     {
         "sdk/rocketnet.cpp",
+        "sdk/rocketnet_api.cpp",
         "sdk/rocketnet_config.cpp",
         "sdk/rocketnet_platform.cpp",
         "sdk/rocketnet_server_socket_linux.cpp"
@@ -648,14 +633,14 @@ static void test_config_env_every_name_read_is_documented()
     check( !env_names_contains( documented, "ROCKETNET_SERVER_SERVER_SECRET_KEY" ) );
     check( env_names_contains( documented, "ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS" ) );
     check( env_names_contains( documented, "ROCKETNET_LOG_LEVEL" ) );
-    check( env_names_contains( documented, "ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT" ) );
-    check( env_names_contains( documented, "ROCKETNET_CLIENT_SIMULATED_LATENCY_MS" ) );
-    check( env_names_contains( documented, "ROCKETNET_CLIENT_SIMULATED_JITTER_MS" ) );
-    check( env_names_contains( documented, "ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT" ) );
-    check( env_names_contains( documented, "ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT" ) );
-    check( env_names_contains( documented, "ROCKETNET_SERVER_SIMULATED_LATENCY_MS" ) );
-    check( env_names_contains( documented, "ROCKETNET_SERVER_SIMULATED_JITTER_MS" ) );
-    check( env_names_contains( documented, "ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT" ) );
+    check( env_names_contains( documented, "ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT" ) );
+    check( env_names_contains( documented, "ROCKETNET_DEV_CLIENT_LATENCY_MS" ) );
+    check( env_names_contains( documented, "ROCKETNET_DEV_CLIENT_JITTER_MS" ) );
+    check( env_names_contains( documented, "ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT" ) );
+    check( env_names_contains( documented, "ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT" ) );
+    check( env_names_contains( documented, "ROCKETNET_DEV_SERVER_LATENCY_MS" ) );
+    check( env_names_contains( documented, "ROCKETNET_DEV_SERVER_JITTER_MS" ) );
+    check( env_names_contains( documented, "ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT" ) );
     check( env_names_contains( documented, "ROCKETNET_CLIENT_GAME_CLOCK_EPOCH" ) );
     check( env_names_contains( documented, "ROCKETNET_SERVER_GAME_CLOCK_EPOCH" ) );
     check( env_names_contains( documented, "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH" ) );
@@ -692,14 +677,6 @@ static void test_config_env_transport_passes_exercise_all_rows()
     // 1. Internal & simulator rows:
     env_names_setenv( "ROCKETNET_CLIENT_GAME_CLOCK_EPOCH", "2000" );
     env_names_setenv( "ROCKETNET_SERVER_GAME_CLOCK_EPOCH", "3000" );
-    env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT", "5" );
-    env_names_setenv( "ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT", "6" );
-    env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_LATENCY_MS", "50" );
-    env_names_setenv( "ROCKETNET_SERVER_SIMULATED_LATENCY_MS", "60" );
-    env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_JITTER_MS", "10" );
-    env_names_setenv( "ROCKETNET_SERVER_SIMULATED_JITTER_MS", "12" );
-    env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT", "2" );
-    env_names_setenv( "ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT", "3" );
     env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH", "10" );
     env_names_setenv( "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH", "20" );
     env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW", "8" );
@@ -731,14 +708,6 @@ static void test_config_env_transport_passes_exercise_all_rows()
 
     env_names_unsetenv( "ROCKETNET_CLIENT_GAME_CLOCK_EPOCH" );
     env_names_unsetenv( "ROCKETNET_SERVER_GAME_CLOCK_EPOCH" );
-    env_names_unsetenv( "ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT" );
-    env_names_unsetenv( "ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT" );
-    env_names_unsetenv( "ROCKETNET_CLIENT_SIMULATED_LATENCY_MS" );
-    env_names_unsetenv( "ROCKETNET_SERVER_SIMULATED_LATENCY_MS" );
-    env_names_unsetenv( "ROCKETNET_CLIENT_SIMULATED_JITTER_MS" );
-    env_names_unsetenv( "ROCKETNET_SERVER_SIMULATED_JITTER_MS" );
-    env_names_unsetenv( "ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT" );
-    env_names_unsetenv( "ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT" );
     env_names_unsetenv( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH" );
     env_names_unsetenv( "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH" );
     env_names_unsetenv( "ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW" );
@@ -752,24 +721,16 @@ static void test_config_env_transport_passes_exercise_all_rows()
     check( server_budget_ok && server_budget == 209715200 );
 
     check( client_transport.game_clock_epoch == 2000 );
-    check( client_transport.simulated_loss_percent == 5 );
-    check( client_transport.simulated_latency_ms == 50 );
-    check( client_transport.simulated_jitter_ms == 10 );
-    check( client_transport.simulated_duplicate_percent == 2 );
     check( client_transport.simulated_drop_every_nth == 10 );
     check( client_transport.simulated_reverse_window == 8 );
 
     check( server_transport.game_clock_epoch == 3000 );
-    check( server_transport.simulated_loss_percent == 6 );
-    check( server_transport.simulated_latency_ms == 60 );
-    check( server_transport.simulated_jitter_ms == 12 );
-    check( server_transport.simulated_duplicate_percent == 3 );
     check( server_transport.simulated_drop_every_nth == 20 );
     check( server_transport.simulated_reverse_window == 16 );
 
     const std::vector<std::string> overrides = env_names_overrides( capture.log );
     check( env_names_contains( overrides, "ROCKETNET_CLIENT_GAME_CLOCK_EPOCH" ) );
-    check( env_names_contains( overrides, "ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT" ) );
+    check( env_names_contains( overrides, "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW" ) );
 

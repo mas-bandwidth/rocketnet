@@ -312,7 +312,7 @@ static void secrets_wiped_pair_exchange( secrets_wiped_pair_t * pair )
     sodium_memzero( &identity, sizeof( identity ) );
     sodium_memzero( &server_config, sizeof( server_config ) );
 
-    rocketnet_client_config_t client_config;
+    rocketnet_client_test_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "loopback";
     client_config.step_driven = true;

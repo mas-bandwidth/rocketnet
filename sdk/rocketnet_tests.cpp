@@ -12571,9 +12571,7 @@ static const struct rn_test_config_field_t rn_test_client_config_fields[] =
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, config_bytes ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, transport ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, state_change_callback ),
-    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, time_callback ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, packet_filter ),
-    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, step_driven ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, max_payload_bytes ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, max_fragmented_messages ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, send_kbps ),
@@ -12592,10 +12590,6 @@ static const struct rn_test_config_field_t rn_test_client_config_fields[] =
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, message_resend_delay_min_ms ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, message_resend_delay_max_ms ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, reliable_message_timeout_ms ),
-    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, simulated_loss_percent ),
-    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, simulated_latency_ms ),
-    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, simulated_jitter_ms ),
-    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, simulated_duplicate_percent ),
 };
 
 static const struct rn_test_config_field_t rn_test_server_config_fields[] =
@@ -12629,10 +12623,6 @@ static const struct rn_test_config_field_t rn_test_server_config_fields[] =
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, message_resend_delay_min_ms ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, message_resend_delay_max_ms ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, reliable_message_timeout_ms ),
-    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, simulated_loss_percent ),
-    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, simulated_latency_ms ),
-    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, simulated_jitter_ms ),
-    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, simulated_duplicate_percent ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, second_public_address ),
 };
 
@@ -12696,9 +12686,9 @@ static void rocketnet_test_public_config_fields_have_env( const char * type, con
         rocketnet_check( offsets[next] - end < align || ( offsets[next] == end ) );
         end = offsets[next] + sizes[next];
     }
-    // the two configs have no tail padding, so a field missing from the
-    // descriptors at the end shows here too
-    rocketnet_check( type_size == end );
+    // a field missing from the descriptors at the end shows here too: only
+    // the struct's tail padding may follow the last field
+    rocketnet_check( type_size == ( end + sizeof( void * ) - 1 ) / sizeof( void * ) * sizeof( void * ) );
 }
 
 
@@ -12712,7 +12702,6 @@ static void rocketnet_test_server_dev_keys_config( struct rocketnet_server_confi
 }
 
 static void rocketnet_test_resolve_state_change( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state ) { (void) context; (void) previous_state; (void) current_state; }
-static double rocketnet_test_resolve_time( void * context ) { (void) context; return 1000.0; }
 
 // The split create makes: every public field lands in its layer field, the
 // strings are copied, a budget of 0 is the default rate and a negative one is
@@ -12756,7 +12745,6 @@ void rocketnet_test_public_config_resolve()
     client.max_fragmented_messages = 3;
     client.transport = "portable";
     client.state_change_callback = rocketnet_test_resolve_state_change;
-    client.time_callback = rocketnet_test_resolve_time;
     client.send_kbps = 1234;
     client.num_channels = 7; client.reliable_messages_in_flight = 128; client.receive_message_buffer_bytes = 8192; client.max_message_bytes = 4096;
     client.send_message_buffer_bytes = 20000; client.send_queue_messages = 32; client.packets_in_flight = 32; client.packets_per_update = 2;
@@ -12766,7 +12754,7 @@ void rocketnet_test_public_config_resolve()
     rocketnet_check( memcmp( client_transport.packet_filter, filter, 4 ) == 0 );
     rocketnet_check( client_transport.max_payload_bytes == 2000 && client_transport.max_fragmented_messages == 3 );
     rocketnet_check( strcmp( client_transport.transport, "portable" ) == 0 );
-    rocketnet_check( client_transport.state_change_callback == rocketnet_test_resolve_state_change && client_transport.time_callback == rocketnet_test_resolve_time );
+    rocketnet_check( client_transport.state_change_callback == rocketnet_test_resolve_state_change );
     rocketnet_check( kbps == 1234 );
     rocketnet_check( message.num_channels == 7 && message.reliable_messages_in_flight == 128 && message.receive_message_buffer_bytes == 8192 && message.max_message_bytes == 4096 );
     rocketnet_check( message.send_message_buffer_bytes == 20000 && message.send_queue_messages == 32 && message.packets_in_flight == 32 && message.packets_per_update == 2 );
@@ -12986,9 +12974,9 @@ void rocketnet_test_public_config_bytes_older_and_newer()
     struct rocketnet_client_config_t client_defaults;
     rocketnet_check( rocketnet_client_default_config( &client_defaults ) == ROCKETNET_STATUS_OK );
 
-    // older and smaller: everything from simulated_loss_percent on is past it
+    // older and smaller: everything from message_resend_delay_initial_ms on is past it
     {
-        const size_t cut = offsetof( struct rocketnet_client_config_t, simulated_loss_percent );
+        const size_t cut = offsetof( struct rocketnet_client_config_t, message_resend_delay_initial_ms );
         struct rocketnet_client_config_t older;
         memset( &older, RN_TEST_CONFIG_SENTINEL, sizeof( older ) );
         older.config_bytes = cut;
@@ -13027,7 +13015,7 @@ void rocketnet_test_public_config_bytes_older_and_newer()
     rocketnet_check( rocketnet_server_default_config( &server_defaults ) == ROCKETNET_STATUS_OK );
 
     {
-        const size_t cut = offsetof( struct rocketnet_server_config_t, simulated_loss_percent );
+        const size_t cut = offsetof( struct rocketnet_server_config_t, message_resend_delay_initial_ms );
         struct rocketnet_server_config_t older;
         memset( &older, RN_TEST_CONFIG_SENTINEL, sizeof( older ) );
         older.config_bytes = cut;
@@ -15119,7 +15107,7 @@ static struct rocketnet_server_t * rocketnet_test_public_loopback_server()
 
 static struct rocketnet_client_t * rocketnet_test_public_loopback_client()
 {
-    struct rocketnet_client_config_t config;
+    struct rocketnet_client_test_config_t config;
     rocketnet_check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
     config.transport = "loopback";
     config.step_driven = 1;

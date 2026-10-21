@@ -22,6 +22,7 @@
 #include "rocketnet_base64.h"
 #include "rocketnet_address.h"
 #include "rocketnet_connect_token.h"
+#include "rocketnet_platform.h"
 
 #include <sodium.h>
 
@@ -159,11 +160,54 @@ static enum rocketnet_status_t rn_apply_message_and_budget_env( const char * end
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_ADDRESS_STRING_LENGTH == ROCKETNET_MAX_ADDRESS_STRING_BYTES, "one address string bound, public and internal" );
 
+// The development network simulator's environment form, read at create in a
+// development library only: ROCKETNET_DEV_CLIENT_LATENCY_MS and the rest; an
+// unset or empty variable leaves the field, a bad value refuses the create.
+#if ROCKETNET_DEVELOPMENT
+// one variable: found is rocketnet_platform_getenv's answer (1 set, 0 unset,
+// -1 too long) and text its value
+static bool rn_dev_env_int( const char * name, int found, const char * text, int min_value, int max_value, int * value )
+{
+    if ( found == 0 || ( found == 1 && text[0] == '\0' ) )
+        return true;
+    char * end = NULL;
+    const long parsed = found == 1 ? strtol( text, &end, 10 ) : 0;
+    if ( found != 1 || end == text || *end != '\0' || parsed < min_value || parsed > max_value )
+    {
+        rocketnet_error( "%s=\"%s\" refused: expected %d .. %d", name, text, min_value, max_value );
+        return false;
+    }
+    *value = (int) parsed;
+    return true;
+}
+#endif // ROCKETNET_DEVELOPMENT
+
+template <typename transport_config_t> static bool rn_dev_simulator_env( const char * side, transport_config_t * transport )
+{
+#if ROCKETNET_DEVELOPMENT
+    char text[64];
+    if ( side[0] == 'c' )
+        return rn_dev_env_int( "ROCKETNET_DEV_CLIENT_LATENCY_MS", rocketnet_platform_getenv( "ROCKETNET_DEV_CLIENT_LATENCY_MS", text, sizeof( text ) ), text, 0, 60000, &transport->simulated_latency_ms ) &&
+               rn_dev_env_int( "ROCKETNET_DEV_CLIENT_JITTER_MS", rocketnet_platform_getenv( "ROCKETNET_DEV_CLIENT_JITTER_MS", text, sizeof( text ) ), text, 0, 60000, &transport->simulated_jitter_ms ) &&
+               rn_dev_env_int( "ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT", rocketnet_platform_getenv( "ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT", text, sizeof( text ) ), text, 0, 100, &transport->simulated_loss_percent ) &&
+               rn_dev_env_int( "ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT", rocketnet_platform_getenv( "ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT", text, sizeof( text ) ), text, 0, 100, &transport->simulated_duplicate_percent );
+    return rn_dev_env_int( "ROCKETNET_DEV_SERVER_LATENCY_MS", rocketnet_platform_getenv( "ROCKETNET_DEV_SERVER_LATENCY_MS", text, sizeof( text ) ), text, 0, 60000, &transport->simulated_latency_ms ) &&
+           rn_dev_env_int( "ROCKETNET_DEV_SERVER_JITTER_MS", rocketnet_platform_getenv( "ROCKETNET_DEV_SERVER_JITTER_MS", text, sizeof( text ) ), text, 0, 60000, &transport->simulated_jitter_ms ) &&
+           rn_dev_env_int( "ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT", rocketnet_platform_getenv( "ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT", text, sizeof( text ) ), text, 0, 100, &transport->simulated_loss_percent ) &&
+           rn_dev_env_int( "ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT", rocketnet_platform_getenv( "ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT", text, sizeof( text ) ), text, 0, 100, &transport->simulated_duplicate_percent );
+#else
+    (void) side;
+    (void) transport;
+    return true;
+#endif
+}
+
 static void rn_client_default_config_current( struct rocketnet_client_config_t * config );
 static void rn_server_default_config_current( struct rocketnet_server_config_t * config );
 
 static bool rn_client_split( const struct rocketnet_client_config_t * config, bool read_env,
-                             struct rocketnet_client_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps, enum rocketnet_status_t * failure = NULL )
+                             struct rocketnet_client_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps, enum rocketnet_status_t * failure = NULL,
+                             const struct rocketnet_client_testing_t * testing = NULL )
 {
     struct rocketnet_client_config_t defaults;
     if ( !config )
@@ -182,12 +226,16 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
         return false;
     }
     transport->state_change_callback = config->state_change_callback;
-    transport->time_callback = config->time_callback;
-    transport->step_driven = config->step_driven ? 1 : 0;
-    transport->simulated_loss_percent = config->simulated_loss_percent;
-    transport->simulated_latency_ms = config->simulated_latency_ms;
-    transport->simulated_jitter_ms = config->simulated_jitter_ms;
-    transport->simulated_duplicate_percent = config->simulated_duplicate_percent;
+    if ( testing )
+    {
+        transport->time_callback = testing->time_callback;
+        transport->step_driven = testing->step_driven ? 1 : 0;
+    }
+    if ( read_env && !rn_dev_simulator_env( "client", transport ) )
+    {
+        if ( failure ) *failure = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
+        return false;
+    }
 
     rocketnet_message_default_config( message );
 #define RN_COPY( name ) message->name = config->name;
@@ -236,10 +284,11 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     transport->max_fragmented_messages = config->max_fragmented_messages;
     transport->max_timeout_seconds = config->max_timeout_seconds;
     transport->handshake_deadline_seconds = config->handshake_deadline_seconds;
-    transport->simulated_loss_percent = config->simulated_loss_percent;
-    transport->simulated_latency_ms = config->simulated_latency_ms;
-    transport->simulated_jitter_ms = config->simulated_jitter_ms;
-    transport->simulated_duplicate_percent = config->simulated_duplicate_percent;
+    if ( read_env && !rn_dev_simulator_env( "server", transport ) )
+    {
+        if ( failure ) *failure = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
+        return false;
+    }
     if ( !rn_copy_config_string( transport->transport, sizeof( transport->transport ), config->transport, "auto", "server", "transport" ) )
     {
         if ( failure ) *failure = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
@@ -429,12 +478,6 @@ static void rn_client_default_config_current( struct rocketnet_client_config_t *
     config->max_fragmented_messages = transport.max_fragmented_messages;
     config->transport = NULL;
     config->state_change_callback = transport.state_change_callback;
-    config->time_callback = transport.time_callback;
-    config->step_driven = transport.step_driven != 0;
-    config->simulated_loss_percent = transport.simulated_loss_percent;
-    config->simulated_latency_ms = transport.simulated_latency_ms;
-    config->simulated_jitter_ms = transport.simulated_jitter_ms;
-    config->simulated_duplicate_percent = transport.simulated_duplicate_percent;
     config->send_kbps = ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS;
     struct rocketnet_message_config_t message;
     rocketnet_message_default_config( &message );
@@ -549,7 +592,7 @@ size_t rocketnet_client_required_memory( const struct rocketnet_client_config_t 
     return rn_client_required_memory_current( read );
 }
 
-static struct rocketnet_client_t * rn_client_create_current( void * context, const struct rocketnet_client_config_t * config, void * memory, size_t memory_bytes, enum rocketnet_status_t * status )
+static struct rocketnet_client_t * rn_client_create_current( void * context, const struct rocketnet_client_config_t * config, const struct rocketnet_client_testing_t * testing, void * memory, size_t memory_bytes, enum rocketnet_status_t * status )
 {
     if ( status )
         *status = ROCKETNET_STATUS_OK;
@@ -568,7 +611,7 @@ static struct rocketnet_client_t * rn_client_create_current( void * context, con
     struct rocketnet_message_config_t message;
     uint32_t kbps = 0;
     enum rocketnet_status_t failure = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
-    if ( !rn_client_split( config, true, &transport, &message, &kbps, &failure ) )
+    if ( !rn_client_split( config, true, &transport, &message, &kbps, &failure, testing ) )
     {
         if ( status )
             *status = failure;
@@ -627,6 +670,11 @@ static struct rocketnet_client_t * rn_client_create_current( void * context, con
 
 struct rocketnet_client_t * rocketnet_client_create( void * context, const struct rocketnet_client_config_t * config, enum rocketnet_status_t * status )
 {
+    return rocketnet_client_create_testing( context, config, NULL, status );
+}
+
+struct rocketnet_client_t * rocketnet_client_create_testing( void * context, const struct rocketnet_client_config_t * config, const struct rocketnet_client_testing_t * testing, enum rocketnet_status_t * status )
+{
     if ( status )
         *status = ROCKETNET_STATUS_OK;
     struct rocketnet_client_config_t current;
@@ -638,7 +686,7 @@ struct rocketnet_client_t * rocketnet_client_create( void * context, const struc
             *status = read_status;
         return NULL;
     }
-    return rn_client_create_current( context, read, NULL, 0, status );
+    return rn_client_create_current( context, read, testing, NULL, 0, status );
 }
 
 static void rn_client_connection_counts( struct rocketnet_message_client_t * message_client, uint64_t counts[RN_CLIENT_COUNT], struct rocketnet_client_transport_stats_t * transport_stats );
@@ -1127,10 +1175,6 @@ static void rn_server_config_from_transport_current( struct rocketnet_server_con
     config->max_fragmented_messages = transport->max_fragmented_messages;
     config->max_timeout_seconds = transport->max_timeout_seconds;
     config->handshake_deadline_seconds = transport->handshake_deadline_seconds;
-    config->simulated_loss_percent = transport->simulated_loss_percent;
-    config->simulated_latency_ms = transport->simulated_latency_ms;
-    config->simulated_jitter_ms = transport->simulated_jitter_ms;
-    config->simulated_duplicate_percent = transport->simulated_duplicate_percent;
     config->transport = NULL;
     config->public_address = NULL;
     config->second_public_address = NULL;
@@ -1806,3 +1850,58 @@ void rocketnet_server_client_stats( const struct rocketnet_server_t * server, in
     stats->bandwidth_received_kbps = transport_stats.bandwidth_received_kbps;
     stats->bandwidth_acked_kbps = transport_stats.bandwidth_acked_kbps;
 }
+
+// ---------------------------------------------------------------------------
+// The development network simulator: a development library's calls, and a
+// unit-test build's (the test hooks switch the development posture on).
+
+#if ROCKETNET_DEVELOPMENT || ROCKETNET_LINK_SIMULATOR_TEST_HOOKS
+
+static bool rn_network_simulator_valid( const char * who, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent )
+{
+    if ( !rocketnet_public_link_simulator_development() )
+    {
+        rocketnet_api_misuse_record();
+        rocketnet_error( "%s network simulator refused: a production library has no network simulator", who );
+        return false;
+    }
+    if ( latency_ms < 0 || latency_ms > 60000 || jitter_ms < 0 || jitter_ms > 60000 ||
+         packet_loss_percent < 0 || packet_loss_percent > 100 || duplicate_percent < 0 || duplicate_percent > 100 )
+    {
+        rocketnet_api_misuse_record();
+        rocketnet_error( "%s network simulator refused: latency and jitter are 0 .. 60000 ms, loss and duplicate 0 .. 100 percent", who );
+        return false;
+    }
+    return true;
+}
+
+void rocketnet_client_network_simulator( struct rocketnet_client_t * client, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent )
+{
+    if ( !rocketnet_api_null_guard( client ) )
+        return;
+    if ( !rn_network_simulator_valid( "client", latency_ms, jitter_ms, packet_loss_percent, duplicate_percent ) )
+        return;
+    client->transport.simulated_latency_ms = latency_ms;
+    client->transport.simulated_jitter_ms = jitter_ms;
+    client->transport.simulated_loss_percent = packet_loss_percent;
+    client->transport.simulated_duplicate_percent = duplicate_percent;
+    if ( client->connection )
+        (void) rocketnet_client_transport_network_simulator( rocketnet_message_client_transport( client->connection ), latency_ms, jitter_ms, packet_loss_percent, duplicate_percent );
+}
+
+void rocketnet_server_network_simulator( struct rocketnet_server_t * server, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+        return;
+    if ( !rn_network_simulator_valid( "server", latency_ms, jitter_ms, packet_loss_percent, duplicate_percent ) )
+        return;
+    server->transport.simulated_latency_ms = latency_ms;
+    server->transport.simulated_jitter_ms = jitter_ms;
+    server->transport.simulated_loss_percent = packet_loss_percent;
+    server->transport.simulated_duplicate_percent = duplicate_percent;
+    struct rocketnet_server_transport_t * transport = rn_server_transport( server );
+    if ( transport )
+        (void) rocketnet_server_transport_network_simulator( transport, latency_ms, jitter_ms, packet_loss_percent, duplicate_percent );
+}
+
+#endif // ROCKETNET_DEVELOPMENT || ROCKETNET_LINK_SIMULATOR_TEST_HOOKS

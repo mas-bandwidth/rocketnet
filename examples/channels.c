@@ -81,11 +81,13 @@ int main( void )
 
     CHECK( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
     client_config.transport = "loopback";
-    client_config.simulated_loss_percent = 35;
     client_config.message_resend_delay_initial_ms = 120;
     client_config.message_resend_delay_min_ms = 120;
     enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
     client = rocketnet_client_create( NULL, &client_config, &create_status_2 );
+    // the development network simulator: lose 35% of the client's packets
+    if ( client )
+        rocketnet_client_network_simulator( client, 0, 0, 35, 0 );
     if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {

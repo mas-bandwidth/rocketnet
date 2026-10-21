@@ -140,7 +140,6 @@ int main( void )
     server_config.transport = "loopback";
     memcpy( server_config.backend_public_key, dev_key, sizeof( dev_key ) );
     client_config.transport = "loopback";
-    client_config.step_driven = true;
 
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
     server = rocketnet_server_create( NULL, "127.0.0.1:40000", &server_config, &status );
@@ -378,16 +377,15 @@ RocketNet refuses invalid configuration rather than clamping it. Check returned 
 ## Threading rules
 
 - **Main-thread ownership:** A `rocketnet_client_t` or `rocketnet_server_t` instance is owned by one caller thread for its frame loop. Run `rocketnet_client_update` / `rocketnet_server_update`, `rocketnet_client_receive_messages` / `rocketnet_server_receive_messages`, `rocketnet_client_start_message` / `rocketnet_server_start_message`, `rocketnet_client_finish_message` / `rocketnet_server_finish_message`, `rocketnet_client_abort_message` / `rocketnet_server_abort_message`, `rocketnet_client_send_packets` / `rocketnet_server_send_packets`, `rocketnet_client_receipts` / `rocketnet_server_receipts`, and `rocketnet_client_disconnect` / `rocketnet_server_disconnect_client` sequentially on that owning thread—never concurrently on the same object.
-- **What the background I/O thread does:** By default (`step_driven == 0`), socket transports run background I/O threads that pull UDP datagrams off the NIC, decrypt and authenticate packets off the main thread, and drain staged outgoing batches when `rocketnet_client_send_packets` / `rocketnet_server_send_packets` flushes them. The caller thread never touches locks during message reads or writes; handoff happens inside `update` and `send_packets`.
-- **Step-driven client mode (`step_driven`):** Setting `client_config.step_driven = 1` (or `ROCKETNET_CLIENT_STEP_DRIVEN=1` in the environment) disables the client's background I/O thread. The client then runs its socket/transport receive step inside `rocketnet_client_update` and its send step inside `rocketnet_client_send_packets` directly on the caller's thread. Use `step_driven = 1` in deterministic simulations, single-threaded harnesses, or when the host engine manages every thread explicitly.
+- **What the network thread does:** Socket transports run background I/O threads that pull UDP datagrams off the NIC, decrypt and authenticate packets off the main thread, and drain staged outgoing batches when `rocketnet_client_send_packets` / `rocketnet_server_send_packets` flushes them. The caller thread never touches locks during message reads or writes; handoff happens inside `update` and `send_packets`.
 
 ---
 
 ## Testing an integration
 
-- **Use the `"loopback"` transport:** Set `server_config.transport = "loopback"` and `client_config.transport = "loopback"` (with `client_config.step_driven = 1`). The `"loopback"` transport routes datagrams in memory across up to 1001 endpoints per process (one server and `ROCKETNET_MAX_CLIENTS` clients) without opening any OS socket or touching the network stack.
+- **Use the `"loopback"` transport:** Set `server_config.transport = "loopback"` and `client_config.transport = "loopback"`. The `"loopback"` transport routes datagrams in memory across up to 1001 endpoints per process (one server and `ROCKETNET_MAX_CLIENTS` clients) without opening any OS socket or touching the network stack.
 - **Pass synthetic monotonic `time`:** Both `rocketnet_client_update(client, time)` and `rocketnet_server_update(server, time)` take `double time` in seconds as an explicit parameter. Start test clocks at a fixed value such as `1000.0` and advance by `1.0 / 60.0` per tick—never sleep or read wall-clock time in unit tests.
-- **Simulate packet loss, latency, jitter, and duplicates:** In builds linked against the development library, set `simulated_loss_percent` (`0..100`), `simulated_latency_ms`, `simulated_jitter_ms`, and `simulated_duplicate_percent` (`0..100`) on `rocketnet_client_config_t` and `rocketnet_server_config_t` to exercise retransmission, ordering, and `ROCKETNET_RECEIPT_STATUS_LOSS` handling deterministically over `"loopback"`.
+- **Simulate packet loss, latency, jitter, and duplicates:** In builds linked against the development library, set the environment variables `ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT` / `ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT` (`0 .. 100`), `..._SIMULATED_LATENCY_MS`, `..._SIMULATED_JITTER_MS` and `..._SIMULATED_DUPLICATE_PERCENT` (`0 .. 100`) to exercise retransmission, ordering, and `ROCKETNET_RECEIPT_STATUS_LOSS` handling deterministically over `"loopback"`.
 
 ---
 

@@ -27,7 +27,6 @@ int main( void )
         return 1;
     server_config.transport = "loopback";
     client_config.transport = "loopback";
-    client_config.step_driven = 1;
 
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &status );

@@ -429,26 +429,12 @@ static void test_sized_config_client_create_checks_the_config()
     SIZED_CONFIG_CLIENT_CREATE( c.transport = "portable", true );
     SIZED_CONFIG_CLIENT_CREATE( c.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, true );
     SIZED_CONFIG_CLIENT_CREATE( c.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS, true );
-    // a nonzero simulated value: accepted in the development posture,
-    // refused in the production one (rocketnet_public_link_simulator_development)
-    rocketnet_public_link_simulator_test_development( 1 );
-    SIZED_CONFIG_CLIENT_CREATE( c.simulated_loss_percent = 5, true );
-    rocketnet_public_link_simulator_test_development( 0 );
-    if ( !rocketnet_public_link_simulator_development() )
-        SIZED_CONFIG_CLIENT_CREATE( c.simulated_loss_percent = 5, false );
 
     // transport fields out of range: refused
     SIZED_CONFIG_CLIENT_CREATE( c.max_payload_bytes = -1, false );
     SIZED_CONFIG_CLIENT_CREATE( c.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES + 1, false );
     SIZED_CONFIG_CLIENT_CREATE( c.max_fragmented_messages = -1, false );
     SIZED_CONFIG_CLIENT_CREATE( c.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS + 1, false );
-
-    // negative or out-of-range simulated values: refused
-    SIZED_CONFIG_CLIENT_CREATE( c.simulated_loss_percent = -1, false );
-    SIZED_CONFIG_CLIENT_CREATE( c.simulated_latency_ms = -1, false );
-    SIZED_CONFIG_CLIENT_CREATE( c.simulated_jitter_ms = -1, false );
-    SIZED_CONFIG_CLIENT_CREATE( c.simulated_duplicate_percent = -1, false );
-    SIZED_CONFIG_CLIENT_CREATE( c.simulated_loss_percent = 101, false );
 
     // a transport list that does not parse: refused
     SIZED_CONFIG_CLIENT_CREATE( c.transport = "bogus", false );
@@ -467,13 +453,6 @@ static void test_sized_config_server_create_checks_the_config()
     SIZED_CONFIG_SERVER_CREATE( c.transport = "portable", true );
     SIZED_CONFIG_SERVER_CREATE( c.max_timeout_seconds = 3600, true );
     SIZED_CONFIG_SERVER_CREATE( c.handshake_deadline_seconds = 60, true );
-    // a nonzero simulated value: accepted in the development posture,
-    // refused in the production one (rocketnet_public_link_simulator_development)
-    rocketnet_public_link_simulator_test_development( 1 );
-    SIZED_CONFIG_SERVER_CREATE( c.simulated_loss_percent = 5, true );
-    rocketnet_public_link_simulator_test_development( 0 );
-    if ( !rocketnet_public_link_simulator_development() )
-        SIZED_CONFIG_SERVER_CREATE( c.simulated_loss_percent = 5, false );
 
     // transport fields out of range: refused
     SIZED_CONFIG_SERVER_CREATE( c.max_clients = 0, false );
@@ -490,13 +469,6 @@ static void test_sized_config_server_create_checks_the_config()
     SIZED_CONFIG_SERVER_CREATE( c.max_timeout_seconds = 3601, false );
     SIZED_CONFIG_SERVER_CREATE( c.handshake_deadline_seconds = 0, false );
     SIZED_CONFIG_SERVER_CREATE( c.handshake_deadline_seconds = 61, false );
-
-    // negative or out-of-range simulated values: refused
-    SIZED_CONFIG_SERVER_CREATE( c.simulated_loss_percent = -1, false );
-    SIZED_CONFIG_SERVER_CREATE( c.simulated_latency_ms = -1, false );
-    SIZED_CONFIG_SERVER_CREATE( c.simulated_jitter_ms = -1, false );
-    SIZED_CONFIG_SERVER_CREATE( c.simulated_duplicate_percent = -1, false );
-    SIZED_CONFIG_SERVER_CREATE( c.simulated_duplicate_percent = 101, false );
 
     // a transport list that does not parse: refused
     SIZED_CONFIG_SERVER_CREATE( c.transport = "bogus", false );
@@ -691,11 +663,10 @@ static void test_public_config_bytes_newer_larger_ignores_the_tail()
 
 // The public client and server configs have one revision, the whole struct
 // (docs/ABI-EVOLUTION.md section 4): the plain default fills every field, and
-// the plain create reads every field, the four simulated_* link-simulator
-// controls included. Every case runs in memory: the loopback transport, step
-// driven, time from 1000.0, no socket and no clock.
+// the plain create reads every field. The network simulator is a call, not a
+// field. Every case runs in memory: the loopback transport, step driven, time
+// from 1000.0, no socket and no clock.
 
-#if !ROCKETNET_DEVELOPMENT
 #define PUBLIC_CONFIG_PROTOCOL 0x0C0F16A11FEDULL
 
 struct public_config_identity_t
@@ -727,7 +698,7 @@ static void public_config_server( struct rocketnet_server_config_t * config, con
     config->transport = "loopback";
 }
 
-static void public_config_client( struct rocketnet_client_config_t * config )
+static void public_config_client( struct rocketnet_client_test_config_t * config )
 {
     check( rocketnet_client_default_config( config ) == ROCKETNET_STATUS_OK );
     config->transport = "loopback";
@@ -758,17 +729,20 @@ static bool public_config_pair_connects( int server_loss_percent )
 
     struct rocketnet_server_config_t server_config;
     public_config_server( &server_config, &identity );
-    server_config.simulated_loss_percent = server_loss_percent;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &create_status );
     check( server != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
+    // above 100: set 100, then try the out-of-range value over it
+    rocketnet_server_network_simulator( server, 0, 0, server_loss_percent > 100 ? 100 : server_loss_percent, 0 );
+    if ( server_loss_percent > 100 )
+        rocketnet_server_network_simulator( server, 0, 0, server_loss_percent, 0 );
     check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
 
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     public_config_token( server, &identity, token );
 
-    struct rocketnet_client_config_t client_config;
+    struct rocketnet_client_test_config_t client_config;
     public_config_client( &client_config );
     create_status = ROCKETNET_STATUS_OK;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &create_status );
@@ -792,50 +766,38 @@ static bool public_config_pair_connects( int server_loss_percent )
     return connected;
 }
 
-static void test_public_config_plain_create_applies_simulation()
+static void test_network_simulator_applies_to_outgoing_packets()
 {
     rocketnet_quiet( 1 );
     const bool development = rocketnet_public_link_simulator_development();
 
-    // Client and server creates validate the full config before allocation
-    // (rn_client_config_valid and rn_server_config_valid in sdk/rocketnet_api.cpp), including simulated_* fields.
-
+#if !ROCKETNET_DEVELOPMENT
+    // a production posture has no network simulator: the call is counted
+    // misuse and changes nothing, so the pair connects under "100% loss"
     rocketnet_public_link_simulator_test_development( 0 );
     {
-        public_config_identity_t identity;
-        public_config_identity( &identity );
-
-        struct rocketnet_server_config_t server_config;
-        public_config_server( &server_config, &identity );
-        server_config.simulated_loss_percent = 25;
-        enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-        struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &create_status );
-        check( server == NULL );
-        check( create_status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
-
-        struct rocketnet_client_config_t client_config;
-        public_config_client( &client_config );
-        client_config.simulated_loss_percent = 25;
-        create_status = ROCKETNET_STATUS_OK;
-        struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &create_status );
-        check( client == NULL );
-        check( create_status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+        const uint64_t misuse = rocketnet_api_misuse_count();
+        check( public_config_pair_connects( 100 ) );
+        check( rocketnet_api_misuse_count() == misuse + 1 );
     }
+#endif // !ROCKETNET_DEVELOPMENT
 
-    // a development posture honours it: the server's total loss, set through
-    // the plain create, keeps the pair from connecting; none connects. (A
-    // step-driven client sends through its I/O rings, which bypass the client
-    // link simulator, so the client's own loss is pinned by the refusal above.)
-
+    // a development posture honours it: the server's total loss keeps the
+    // pair from connecting; none connects
     rocketnet_public_link_simulator_test_development( 1 );
     check( public_config_pair_connects( 0 ) );
-    const bool server_loss_connects = public_config_pair_connects( 100 );
-    check( !server_loss_connects );
+    check( !public_config_pair_connects( 100 ) );
+
+    // an out-of-range value is counted misuse and leaves the 100% set before it
+    {
+        const uint64_t misuse = rocketnet_api_misuse_count();
+        check( !public_config_pair_connects( 101 ) );
+        check( rocketnet_api_misuse_count() == misuse + 1 );
+    }
 
     rocketnet_public_link_simulator_test_development( development ? 1 : 0 );
     rocketnet_quiet( 0 );
 }
-#endif // !ROCKETNET_DEVELOPMENT: a development build accepts what this checks is refused
 
 static void test_public_config_default_fills_every_field()
 {
@@ -850,10 +812,6 @@ static void test_public_config_default_fills_every_field()
     check( rocketnet_client_default_config( &client_b ) == ROCKETNET_STATUS_OK );
     client_sized.config_bytes = sizeof( client_sized );
     check( rocketnet_client_default_config_internal( &client_sized ) == ROCKETNET_STATUS_OK );
-    check( client_a.simulated_loss_percent == 0 );
-    check( client_a.simulated_latency_ms == 0 );
-    check( client_a.simulated_jitter_ms == 0 );
-    check( client_a.simulated_duplicate_percent == 0 );
     check( memcmp( &client_a, &client_b, sizeof( client_a ) ) == 0 );
     check( memcmp( &client_a, &client_sized, sizeof( client_a ) ) == 0 );
     // the default, read whole by create: a valid struct
@@ -875,10 +833,6 @@ static void test_public_config_default_fills_every_field()
     check( rocketnet_server_default_config_internal( &server_sized ) == ROCKETNET_STATUS_OK );
     sized_config_dev_server_config( &dev_a );
     sized_config_dev_server_config( &dev_sized );
-    check( server_a.simulated_loss_percent == 0 );
-    check( server_a.simulated_latency_ms == 0 );
-    check( server_a.simulated_jitter_ms == 0 );
-    check( server_a.simulated_duplicate_percent == 0 );
     check( memcmp( &server_a, &server_b, sizeof( server_a ) ) == 0 );
     check( memcmp( &server_a, &server_sized, sizeof( server_a ) ) == 0 );
     check( memcmp( &dev_a, &dev_sized, sizeof( dev_a ) ) == 0 );
@@ -892,9 +846,7 @@ static void test_public_config_default_fills_every_field()
 }
 
 
-#if !ROCKETNET_DEVELOPMENT
-REGISTER_UNIT_TEST( test_public_config_plain_create_applies_simulation );
-#endif // !ROCKETNET_DEVELOPMENT: a development build accepts what this checks is refused
+REGISTER_UNIT_TEST( test_network_simulator_applies_to_outgoing_packets );
 REGISTER_UNIT_TEST( test_public_config_default_fills_every_field );
 REGISTER_UNIT_TEST( test_sized_config_accepts_every_known_size );
 REGISTER_UNIT_TEST( test_sized_config_message_revision_1_reads_budget_defaults );

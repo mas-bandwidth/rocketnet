@@ -568,6 +568,20 @@ static void rocketnet_server_link_send( rocketnet_server_transport_t * transport
     rocketnet_platform_mutex_release( &transport->link_simulator_mutex );
 }
 
+// The development network simulator call on a running transport: reconfigures
+// the link simulator under its mutex when one is running; false when none
+// runs, and the settings then take effect at the next start.
+bool rocketnet_server_transport_network_simulator( struct rocketnet_server_transport_t * server_transport, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent )
+{
+    rocketnet_assert( server_transport );
+    if ( !server_transport->link_simulator )
+        return false;
+    rocketnet_platform_mutex_acquire( &server_transport->link_simulator_mutex );
+    rocketnet_network_simulator_config( server_transport->link_simulator, latency_ms / 1000.0, jitter_ms / 1000.0, (float) packet_loss_percent, (float) duplicate_percent );
+    rocketnet_platform_mutex_release( &server_transport->link_simulator_mutex );
+    return true;
+}
+
 static void rocketnet_server_link_send_batch( rocketnet_server_transport_t * transport,
                                               const rocketnet_platform_send_t * sends, int num_sends )
 {
@@ -3176,3 +3190,4 @@ int rocketnet_server_transport_test_xdp_reflush()
     return flushes;
 }
 #endif
+

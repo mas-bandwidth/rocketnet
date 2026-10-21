@@ -74,7 +74,7 @@ static void both_families_fill( rocketnet_server_config_t * config, const both_f
     config->transport = "loopback";
 }
 
-static void both_families_client_config( rocketnet_client_config_t * config )
+static void both_families_client_config( rocketnet_client_test_config_t * config )
 {
     rocketnet_client_default_config( config );
     config->transport = "loopback";
@@ -199,7 +199,7 @@ static struct rocketnet_client_t * both_families_connect_client( const both_fami
 {
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     both_families_token( identity, client_id, address, token );
-    rocketnet_client_config_t config;
+    rocketnet_client_test_config_t config;
     both_families_client_config( &config );
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_COUNT;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &create_status );
