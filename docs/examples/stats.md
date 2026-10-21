@@ -58,6 +58,28 @@ means the client connected, traffic flowed both ways, and the disconnect was
 seen on both ends. The informational log lines before the output come from the
 library and are not part of the check.
 
+Both endpoints use the same ACK-based connection-quality definitions. Client
+loss estimates its outgoing packets to the server; a server slot estimates
+its outgoing packets to that client. The values need not match on asymmetric
+paths. This is an unacknowledged-packet estimate, not a message failure rate:
+delayed or lost returning ACKs can affect it, and later ACKs can reduce it.
+
+Loss excludes the newest half of the sequence-history window, including during
+startup, and ignores sequence positions never recorded as sent. With the default
+4096-position history, no sends are eligible until the highest sent sequence
+exceeds 2048. Zero therefore also means that there are no eligible samples.
+Jitter is the mean excess of retained positive first-ACK round-trip samples over
+their minimum, in milliseconds. It includes peer ACK scheduling and caller
+update cadence. Zero-time samples are excluded from both the minimum and mean.
+These histories do not expire with elapsed time; reconnect resets them. Client
+stats recompute on read; each server slot refreshes once per six updates.
+
+The final API changes the client's previous receive-direction, one-second loss
+estimate and smoothed arrival-gap jitter to these shared definitions. Existing
+dashboard directions and alert thresholds must be reviewed; historical values
+are not directly comparable. Field names, units, struct layouts and the wire
+format are unchanged.
+
 ## Public calls it uses
 
 - `rocketnet_init`, `rocketnet_term`

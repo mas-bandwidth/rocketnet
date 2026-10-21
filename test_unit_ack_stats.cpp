@@ -107,3 +107,33 @@ static void test_ack_stats_loss_excludes_newest_half()
 }
 
 REGISTER_UNIT_TEST( test_ack_stats_loss_excludes_newest_half );
+
+#include "rocketnet_layers.h"
+extern void rocketnet_client_transport_ack_stats_for_test( const rocketnet_ack_endpoint_t *, rocketnet_client_transport_stats_t * );
+
+static void test_ack_stats_client_uses_outbound_history()
+{
+    auto * endpoint = stats_endpoint();
+    const uint64_t half = ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2;
+    stats_sent( endpoint, 1 );
+    stats_sent( endpoint, 2 );
+    stats_sent( endpoint, 3 );
+    stats_ack( endpoint, 1, 1000.020 );
+    stats_ack( endpoint, 2, 1000.040 );
+    stats_sent( endpoint, half + 3, 1000.040 );
+    rocketnet_client_transport_stats_t stats;
+    rocketnet_client_transport_ack_stats_for_test( endpoint, &stats );
+    rocketnet_unit_check( fabsf( stats.rtt - 20.0f ) < 0.001f );
+    rocketnet_unit_check( fabsf( stats.jitter - 10.0f ) < 0.001f );
+    rocketnet_unit_check( fabsf( stats.packet_loss - 100.0f / 3.0f ) < 0.001f );
+    // A later ACK lowers outgoing loss without changing the receive trackers.
+    stats_ack( endpoint, 3, 1000.050 );
+    rocketnet_client_transport_ack_stats_for_test( endpoint, &stats );
+    rocketnet_unit_check( stats.packet_loss == 0 );
+    rocketnet_ack_endpoint_reset( endpoint );
+    rocketnet_client_transport_ack_stats_for_test( endpoint, &stats );
+    rocketnet_unit_check( stats.rtt == 0 && stats.jitter == 0 && stats.packet_loss == 0 );
+    rocketnet_free( NULL, endpoint );
+}
+
+REGISTER_UNIT_TEST( test_ack_stats_client_uses_outbound_history );

@@ -2358,8 +2358,8 @@ void rocketnet_client_transport_stats( rocketnet_client_transport_t * client_tra
     stats->rtt = client_transport->protocol.ack.rtt > 0.0f ?
         client_transport->protocol.ack.rtt :
         (float) ( client_transport->protocol.rtt_estimate * 1000.0 );
-    stats->jitter = (float) ( client_transport->jitter_tracker.jitter * 1000.0 );
-    stats->packet_loss = client_transport->client_stats.packet_loss;
+    stats->jitter = client_transport->protocol.ack.jitter;
+    stats->packet_loss = client_transport->protocol.ack.packet_loss;
 
     stats->packets_sent_per_second = client_transport->client_stats.packets_sent_per_second;
     stats->packets_received_per_second = client_transport->client_stats.packets_received_per_second;
@@ -2370,6 +2370,24 @@ void rocketnet_client_transport_stats( rocketnet_client_transport_t * client_tra
     stats->bytes_sent = client_transport->client_stats.bytes_sent;
     stats->bytes_received = client_transport->client_stats.bytes_received;
 }
+
+#if defined(ROCKETNET_ACK_STATS_TEST_HOOKS)
+// Exercise the real getter with causal ACK history and deliberately different
+// receive estimates. No transport lifecycle, I/O, thread or wall clock is used.
+void rocketnet_client_transport_ack_stats_for_test( const rocketnet_ack_endpoint_t * endpoint,
+                                                   rocketnet_client_transport_stats_t * stats )
+{
+    auto * client = (rocketnet_client_transport_t *) rocketnet_malloc( NULL, sizeof(rocketnet_client_transport_t) );
+    rocketnet_assert( client );
+    new ( client ) rocketnet_client_transport_t();
+    client->protocol.ack = *endpoint;
+    client->jitter_tracker.jitter = 0.250;
+    client->client_stats.packet_loss = 75.0f;
+    rocketnet_client_transport_stats( client, stats );
+    client->~rocketnet_client_transport_t();
+    rocketnet_free( NULL, client );
+}
+#endif
 
 static void rocketnet_client_receive_packets( rocketnet_client_transport_t * client_transport )
 {

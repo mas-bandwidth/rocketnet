@@ -138,7 +138,7 @@ struct rocketnet_ack_endpoint_t
     uint64_t ack_debt;                          // eliciting packets received since the last block sent
 
     // published per-connection statistics, recomputed by update_stats --
-    // amortized round-robin across slots on the server, every update on the
+    // amortized round-robin across slots on the server, on each stats read on the
     // client. rtt and jitter in milliseconds, loss as a percentage.
     float rtt;
     float jitter;
@@ -270,10 +270,11 @@ int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endp
                                           uint64_t * batch_full_counter );
 
 // The per-connection statistics recompute, the reference's shape: rtt
-// is the minimum over the rtt history, jitter the mean deviation from it,
+// is the minimum over positive rtt history, jitter their mean deviation from it,
 // packet loss the unacked fraction of the sent window's older half -- the
-// newer half is excluded because its acks are still in flight -- and the
-// bandwidth numbers integrate the same windows.
+// newest half-window is excluded even during warmup; no eligible sends
+// publishes zero. The window is sequence-based, without time expiry. The
+// bandwidth numbers retain their original cohorts, including during warmup.
 
 void rocketnet_ack_endpoint_update_stats( struct rocketnet_ack_endpoint_t * endpoint );
 

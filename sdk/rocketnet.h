@@ -604,13 +604,16 @@ struct rocketnet_client_stats_t
 
     double rtt_ms;
 
-    /// Receive jitter in milliseconds.
-    /// Moving average of changes in the interval between packet arrivals.
+    /// Round-trip jitter in milliseconds.
+    /// Mean excess of retained positive first-ACK RTT samples over their
+    /// minimum. Zero without positive samples; samples do not expire with time.
 
     double jitter_ms;
 
-    /// Receive-side packet loss as a percentage.
-    /// Missing share of the server's packet sequence over the trailing second.
+    /// Outbound session packets not yet acknowledged, as a percentage of
+    /// eligible retained sends. Excludes the newest half-window of sequences;
+    /// zero without eligible sends. Delayed or lost ACKs affect this estimate.
+    /// The window advances with sent sequences, not elapsed time.
 
     double packet_loss_percent;
 
@@ -753,12 +756,15 @@ struct rocketnet_server_client_stats_t
     double rtt_ms;
 
     /// Round-trip jitter in milliseconds.
-    /// This is the mean excess over the smallest recent sample.
+    /// Mean excess of retained positive first-ACK RTT samples over their
+    /// minimum. Zero without positive samples; samples do not expire with time.
 
     double jitter_ms;
 
-    /// Send-side packet loss as a percentage.
-    /// This is the unacknowledged share of recent packets sent to this client.
+    /// Outbound session packets not yet acknowledged, as a percentage of
+    /// eligible retained sends. Excludes the newest half-window of sequences;
+    /// zero without eligible sends. Delayed or lost ACKs affect this estimate.
+    /// The window advances with sent sequences, not elapsed time.
 
     double packet_loss_percent;
 
