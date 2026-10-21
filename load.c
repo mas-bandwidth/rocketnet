@@ -184,10 +184,8 @@ static uint64_t load_clock_ns( void )
 #endif
 }
 
-static void load_timing_record( struct load_timing_t * timing, enum load_timing_call_t call, uint64_t start_ns )
+static void load_timing_record_elapsed( struct load_timing_t * timing, enum load_timing_call_t call, uint64_t elapsed_ns )
 {
-    const uint64_t end_ns = load_clock_ns();
-    const uint64_t elapsed_ns = end_ns >= start_ns ? end_ns - start_ns : 0;
     const uint64_t bucket = elapsed_ns / LOAD_TIMING_BUCKET_NS;
     const uint64_t bounded_bucket = bucket <= LOAD_TIMING_MAX_BUCKET_US ? bucket : LOAD_TIMING_MAX_BUCKET_US;
     timing->buckets[(size_t) call * (size_t) LOAD_TIMING_BUCKET_COUNT + (size_t) bounded_bucket]++;
@@ -196,6 +194,12 @@ static void load_timing_record( struct load_timing_t * timing, enum load_timing_
         timing->max_ns[call] = elapsed_ns;
     if ( elapsed_ns >= 100000ULL )
         timing->overbudget_count[call]++;
+}
+
+static void load_timing_record( struct load_timing_t * timing, enum load_timing_call_t call, uint64_t start_ns )
+{
+    const uint64_t end_ns = load_clock_ns();
+    load_timing_record_elapsed( timing, call, end_ns >= start_ns ? end_ns - start_ns : 0 );
 }
 
 static int load_timing_init( struct load_timing_t * timing )
@@ -265,6 +269,35 @@ static void load_timing_print( const struct load_timing_t * timing )
         load_timing_record( (timing), (call), load_timing_start_ns ); \
     } else { (output) = (expression); } \
 } while ( 0 )
+
+static int load_timing_selftest( void )
+{
+    struct load_timing_t timing;
+    memset( &timing, 0, sizeof( timing ) );
+    timing.buckets = (uint64_t *) calloc( (size_t) LOAD_TIMING_BUCKET_COUNT, sizeof( uint64_t ) );
+    if ( !timing.buckets )
+        return 0;
+
+    int calls = 0;
+    LOAD_TIMED_VOID( &timing, LOAD_TIMING_CLIENT_UPDATE, calls++ );
+    int ok = calls == 1 && timing.count[LOAD_TIMING_CLIENT_UPDATE] == 0 &&
+             load_timing_quantile_upper_us( &timing, LOAD_TIMING_CLIENT_UPDATE, 50 ) == 0;
+
+    load_timing_record_elapsed( &timing, LOAD_TIMING_CLIENT_UPDATE, 99999ULL );
+    load_timing_record_elapsed( &timing, LOAD_TIMING_CLIENT_UPDATE, 100000ULL );
+    load_timing_record_elapsed( &timing, LOAD_TIMING_CLIENT_UPDATE, 100000001ULL );
+    ok = ok && timing.count[LOAD_TIMING_CLIENT_UPDATE] == 3 &&
+         timing.overbudget_count[LOAD_TIMING_CLIENT_UPDATE] == 2 &&
+         timing.max_ns[LOAD_TIMING_CLIENT_UPDATE] == 100000001ULL &&
+         load_timing_quantile_upper_us( &timing, LOAD_TIMING_CLIENT_UPDATE, 50 ) == 101 &&
+         load_timing_quantile_upper_us( &timing, LOAD_TIMING_CLIENT_UPDATE, 99 ) == 100001;
+
+    timing.enabled = 0;
+    LOAD_TIMED_VOID( &timing, LOAD_TIMING_CLIENT_UPDATE, calls++ );
+    ok = ok && calls == 2 && timing.count[LOAD_TIMING_CLIENT_UPDATE] == 3;
+    free( timing.buckets );
+    return ok;
+}
 
 static enum rocketnet_client_state_t timed_client_state( struct load_timing_t * timing, struct rocketnet_client_t * client )
 {
@@ -786,6 +819,12 @@ int main( int argc, char ** argv )
         fprintf( stderr, "load: timing histogram allocation failed\n" );
         return 1;
     }
+    if ( !load_timing_selftest() )
+    {
+        fprintf( stderr, "load: timing histogram self-test failed\n" );
+        free( timing.buckets );
+        return 1;
+    }
     for ( int i = 0; i < 10000; i++ )
     {
         const uint64_t start_ns = load_clock_ns();
@@ -1297,8 +1336,10 @@ int main( int argc, char ** argv )
             rocketnet_sleep( left );
     }
 
+    timing.enabled = 0;
+
     /* Final verification of all 5 criteria */
-    if ( timed_server_num_connected_clients( &timing, server ) != num_clients )
+    if ( rocketnet_server_num_connected_clients( server ) != num_clients )
         unexpected_disconnects++;
 
     for ( int i = 0; i < num_clients; i++ )
