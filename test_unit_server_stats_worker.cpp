@@ -518,7 +518,7 @@ static void test_server_stats_worker_start_failure_cleans_allocations()
     stats_transport_config(&config);
 
     // The injected refusal occurs before native wake/thread creation, but
-    // after worker, two banks and slot storage are allocated. All must be freed.
+    // after worker, two banks, cold slots and spare pointers are allocated.
     rocketnet_server_transport_fail_stats_worker_thread_for_test();
     status = -1;
     check(rocketnet_server_transport_create_ex(&state, "127.0.0.1:0", &config, 1000.0, &status) == NULL);
@@ -526,7 +526,7 @@ static void test_server_stats_worker_start_failure_cleans_allocations()
     check(state.live == 0);
 
     // A successful manual create establishes the allocation count. The final
-    // four allocations belong to worker, two banks and slot storage.
+    // five allocations belong to worker, two banks, cold slots and spare pointers.
     rocketnet_server_transport_set_stats_worker_manual_for_test(true);
     const int start_calls = state.calls;
     status = -1;
@@ -534,11 +534,11 @@ static void test_server_stats_worker_start_failure_cleans_allocations()
         &state, "127.0.0.1:0", &config, 1000.0, &status);
     check(server && status == ROCKETNET_STATUS_OK);
     const int create_calls = state.calls - start_calls;
-    check(create_calls >= 4);
+    check(create_calls >= 5);
     rn_test_server_transport_stop_and_destroy(server);
     check(state.live == 0);
 
-    for ( int last = 3; last >= 0; --last )
+    for ( int last = 4; last >= 0; --last )
     {
         state.fail_at = state.calls + create_calls - last;
         rocketnet_server_transport_set_stats_worker_manual_for_test(true);

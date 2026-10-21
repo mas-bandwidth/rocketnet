@@ -228,7 +228,6 @@ struct rocketnet_server_payloads_t
 struct rocketnet_server_stats_slot_t
 {
     rocketnet_ack_stats_delta_t deltas[2];
-    rocketnet_ack_stats_delta_t * spare;          // main-owned; NULL while sealed
     rocketnet_ack_stats_history_t history;       // worker-owned
     uint64_t history_generation;
 };
@@ -257,6 +256,9 @@ struct rocketnet_server_stats_worker_t
 {
     rocketnet_server_stats_bank_t * banks[2];
     rocketnet_server_stats_slot_t * slots;
+    // Main-owned handoff metadata stays contiguous, separate from large cold
+    // history/delta storage. NULL means that slot's other buffer is sealed.
+    rocketnet_ack_stats_delta_t ** spares;
     int max_clients;
     rocketnet_platform_mutex_t exchange_mutex;
     bool mutex_created;
@@ -514,6 +516,8 @@ static void rocketnet_server_stats_worker_destroy( void * context, rocketnet_ser
         }
     if ( worker->slots )
         rocketnet_clear_and_free(context, worker->slots, (size_t)worker->max_clients * sizeof(*worker->slots));
+    if ( worker->spares )
+        rocketnet_clear_and_free(context, worker->spares, (size_t)worker->max_clients * sizeof(*worker->spares));
     if ( worker->mutex_created )
         rocketnet_platform_mutex_destroy(&worker->exchange_mutex);
     worker->~rocketnet_server_stats_worker_t();
@@ -530,6 +534,7 @@ static int rocketnet_server_stats_worker_create( void * context, rocketnet_serve
     new (worker) rocketnet_server_stats_worker_t();
     worker->banks[0] = worker->banks[1] = NULL;
     worker->slots = NULL;
+    worker->spares = NULL;
     worker->max_clients = max_clients;
     worker->mutex_created = false;
     worker->wake = NULL;
@@ -550,12 +555,14 @@ static int rocketnet_server_stats_worker_create( void * context, rocketnet_serve
     worker->slots = (rocketnet_server_stats_slot_t*) rocketnet_malloc(context, (size_t)max_clients * sizeof(*worker->slots));
     if ( !worker->slots ) return ROCKETNET_STATUS_OUT_OF_MEMORY;
     memset(worker->slots, 0, (size_t)max_clients * sizeof(*worker->slots));
+    worker->spares = (rocketnet_ack_stats_delta_t**) rocketnet_malloc(context, (size_t)max_clients * sizeof(*worker->spares));
+    if ( !worker->spares ) return ROCKETNET_STATUS_OUT_OF_MEMORY;
     for ( int i = 0; i < max_clients; ++i )
     {
         worker->slots[i].deltas[0].generation = 1;
         worker->slots[i].deltas[1].generation = 1;
         worker->slots[i].deltas[0].reset = true;
-        worker->slots[i].spare = &worker->slots[i].deltas[1];
+        worker->spares[i] = &worker->slots[i].deltas[1];
     }
     if ( !rocketnet_platform_mutex_create(&worker->exchange_mutex) )
         return ROCKETNET_STATUS_MUTEX_CREATE_FAILED;
@@ -1082,7 +1089,8 @@ bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_con
     }
     const uint64_t stats_bytes = rocketnet_memory_allocations({
         sizeof(rocketnet_server_stats_worker_t), sizeof(rocketnet_server_stats_bank_t),
-        sizeof(rocketnet_server_stats_bank_t), (uint64_t)clients*sizeof(rocketnet_server_stats_slot_t)});
+        sizeof(rocketnet_server_stats_bank_t), (uint64_t)clients*sizeof(rocketnet_server_stats_slot_t),
+        (uint64_t)clients*sizeof(rocketnet_ack_stats_delta_t*)});
     const uint64_t wake_bytes = rocketnet_platform_wake_allocation_bytes();
     const uint64_t thread_bytes = rocketnet_platform_thread_allocation_bytes();
     if (!stats_bytes || !wake_bytes || !thread_bytes ||
@@ -2200,8 +2208,8 @@ static void rocketnet_server_stats_publish_and_submit( rocketnet_server_transpor
         for ( int i = 0; i < bank->count; ++i )
         {
             rocketnet_server_stats_job_t * job = &bank->jobs[i];
-            rocketnet_assert(worker->slots[job->slot].spare == NULL);
-            worker->slots[job->slot].spare = job->input;
+            rocketnet_assert(worker->spares[job->slot] == NULL);
+            worker->spares[job->slot] = job->input;
             job->input = NULL;
         }
         rocketnet_platform_mutex_release(&worker->exchange_mutex);
@@ -2252,7 +2260,7 @@ static void rocketnet_server_stats_publish_and_submit( rocketnet_server_transpor
             continue;
         // A late worker keeps its sealed buffer. Continue coalescing into
         // active, and retry the same modulo phase instead of losing history.
-        rocketnet_ack_stats_delta_t * spare = worker->slots[slot].spare;
+        rocketnet_ack_stats_delta_t * spare = worker->spares[slot];
         if ( !spare )
         {
             worker->busy_skips++;
@@ -2282,8 +2290,8 @@ static void rocketnet_server_stats_publish_and_submit( rocketnet_server_transpor
     for ( int i = 0; i < free_bank->count; ++i )
     {
         const int slot = free_bank->jobs[i].slot;
-        server->protocol.acks->endpoints[slot].stats_delta = worker->slots[slot].spare;
-        worker->slots[slot].spare = NULL;
+        server->protocol.acks->endpoints[slot].stats_delta = worker->spares[slot];
+        worker->spares[slot] = NULL;
     }
     worker->next_submit++;
     free_bank->state.store(ROCKETNET_STATS_BANK_READY, std::memory_order_release);
