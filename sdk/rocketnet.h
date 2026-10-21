@@ -2008,7 +2008,7 @@ ROCKETNET_EXPORT void rocketnet_server_client_stats( const struct rocketnet_serv
 /// messages keep their order within their channel and sender, and on a server
 /// the queue holds the update's messages client by client in index order:
 ///
-///     static struct rocketnet_message_batch_t batch;
+///     struct rocketnet_message_batch_t batch;
 ///     while ( rocketnet_server_receive_messages( server, &batch ) )
 ///     {
 ///         for ( int i = 0; i < batch.num_messages; i++ )
@@ -2019,13 +2019,12 @@ ROCKETNET_EXPORT void rocketnet_server_client_stats( const struct rocketnet_serv
 /// next update of the same client or server, whichever comes first; that call
 /// releases them, and there is no release call. Copy what is kept longer.
 
-/// The messages one receive hands out at most.
+/// The most messages one receive call fills.
 
 #define ROCKETNET_RECEIVE_BATCH_MESSAGES                   4096
 
 /// @brief One batch of received messages, one array per field, entry i of
-/// every array describing message i, in receive order. It is about 96 KB:
-/// keep it in static or heap storage, not on the stack.
+/// every array describing message i, in receive order.
 
 struct rocketnet_message_batch_t
 {
