@@ -89,14 +89,6 @@ struct rocketnet_server_socket_send_buffer_t
 
     std::atomic<int> num_packets{0};
 
-    // finish_base for this generation: the count of packets already published
-    // when reopen handed the generation back. A finish or abort through a
-    // pointer from before the publish refuses an index below base, so a stale
-    // pointer cannot rewrite a published packet. Written by the producer on
-    // acquire/reopen; read by the producer on finish/abort. tla/SendHandoff.tla
-    // models the guard as FinishBase.
-    int base = 0;
-
     uint8_t padding_1[4096];
 
     int packet_start_index;
@@ -2420,13 +2412,6 @@ void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * s
     if ( packet_index < 0 || packet_index >= ROCKETNET_XDP_SEND_QUEUE_SIZE )
         return;
 
-    // a pointer from before a reopen points into the packets that generation
-    // already published; refuse it so it cannot rewrite a published packet
-    // (tla/SendHandoff.tla, FinishBase)
-
-    if ( packet_index < send_buffer->base )
-        return;
-
     // the packet is complete wire bytes as the protocol wrote them; nothing
     // is prepended here -- the xdp thread adds the ethernet, ip and udp
     // headers when it copies the packet into its umem frame
@@ -2454,9 +2439,6 @@ void rocketnet_server_socket_abort_packet( struct rocketnet_server_socket_t * se
     if ( packet_index < 0 || packet_index >= ROCKETNET_XDP_SEND_QUEUE_SIZE )
         return;
 
-    if ( packet_index < send_buffer->base )
-        return;
-
     send_buffer->packet_info[packet_index].packet_bytes = 0;
 }
 
@@ -2479,7 +2461,6 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
             // stays outside the handoff lock, before publication to fills.
             socket->send_buffer[replacement].num_packets.store( 0, std::memory_order_relaxed );
             socket->send_buffer[replacement].packet_start_index = 0;
-            socket->send_buffer[replacement].base = 0;
             socket->send_flow_index.store( replacement, std::memory_order_release );
             continue;
         }
@@ -2670,6 +2651,8 @@ bool rocketnet_server_socket_test_buffer_exchange()
     valid &= socket->receive_held_index == 0;
     valid &= server->process_packets.num_packets == 1;
     valid &= server->process_packets.packet_data[0] == socket->receive_buffer[0].packet_data[0];
+    // A failed game-thread try-lock may clear the expired view, but it must
+    // retain ownership and retry recycling on the following call.
     rocketnet_platform_mutex_acquire( &socket->receive_mutex );
     rocketnet_server_socket_receive_packets( server );
     valid &= socket->receive_held_index == 0;
@@ -3230,7 +3213,6 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
                 {
                     send_buffer->num_packets.store( 0, std::memory_order_relaxed );
                     send_buffer->packet_start_index = 0;
-                    send_buffer->base = 0;
                     rocketnet_platform_mutex_acquire( &socket->send_mutex );
                     socket->send_handoff.recycle( on_index );
                     rocketnet_platform_mutex_release( &socket->send_mutex );
