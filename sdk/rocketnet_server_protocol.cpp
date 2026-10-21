@@ -1120,7 +1120,10 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         if ( sequence > replay->highest_opened )
             replay->highest_opened = sequence;
 
-        mapping->last_receive_time = current_time;
+        // A response retransmission is not fresh session activity. Only a
+        // half-open mapping may refresh its idle clock from a response.
+        if ( mapping->client_index == -1 )
+            mapping->last_receive_time = current_time;
 
         return rocketnet_server_process_connection_response( server, mapping_index, current_timestamp, current_time, response_packet, response_bytes );
     }
