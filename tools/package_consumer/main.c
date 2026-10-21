@@ -1,6 +1,19 @@
+/*
+    RocketNet. Copyright 2026 Más Bandwidth LLC.
+    Licensed under the GNU Affero General Public License v3.0
+*/
+
+// The installed-package consumer: rocketnet.h and the installed library
+// through find_package( RocketNet ), built as C and (through main.cpp) as C++
+// against both the static and the shared target, -Wall -Wextra -Werror. It
+// calls every function the header declares (the development connect token
+// only where the library is a development build): the lifecycle and logging
+// setters, the name and status tables, the server's public key and addresses, the development connect token, the config
+// refusals (a zeroed config is CONFIG_NOT_INITIALIZED), a server and a client
+// on 127.0.0.1 with one receipted message each way, every stats struct, the
+// server ending the connection, a reconnect, and a clean teardown.
+
 #include <rocketnet.h>
-#include <stdio.h>
-#include <string.h>
 
 #if defined(EXPECT_SHARED) && !defined(ROCKETNET_SHARED)
 #error Shared consumer did not inherit the DLL import contract
@@ -9,92 +22,494 @@
 #error Static consumer inherited the DLL import contract
 #endif
 /* This consumer builds in the package's configuration, so its NDEBUG is the
-   library's: the library asserts on a NULL query exactly when NDEBUG is off. */
+   library's: the library asserts on a NULL argument exactly when NDEBUG is off. */
 #ifdef NDEBUG
 #define EXPECTED_NULL_ASSERTIONS 0
 #else
 #define EXPECTED_NULL_ASSERTIONS 2
 #endif
-#define CHECK(c) do { if (!(c)) { fprintf(stderr, "consumer failed: %s\n", #c); return 1; } } while (0)
 
-static int expected_null_assertions;
-static void count_null_assertion(const char * condition, const char * function, const char * file, int line)
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#define CHECK( condition )                                                                  \
+    do                                                                                      \
+    {                                                                                       \
+        if ( !( condition ) )                                                               \
+        {                                                                                   \
+            fprintf( stderr, "consumer failed: %s (line %d)\n", #condition, __LINE__ ); \
+            return 1;                                                                       \
+        }                                                                                   \
+    } while ( 0 )
+
+#define PROTOCOL_ID 0x7061636b61676501ull
+#define CLIENT_ID 1234
+
+
+// ---------------------------------------------------------------------------
+// the process-wide hooks: allocator, assert function, log function, and the
+// client's state change callback
+
+static void * consumer_malloc( void * context, size_t bytes )
+{
+    (void) context;
+    return malloc( bytes );
+}
+
+static void consumer_free( void * context, void * p )
+{
+    (void) context;
+    free( p );
+}
+
+static int assertions;
+
+static void consumer_assert( const char * condition, const char * function, const char * file, int line )
 {
     (void) condition;
     (void) function;
     (void) file;
     (void) line;
-    ++expected_null_assertions;
+    ++assertions;
 }
 
-int main(void)
+struct log_capture_t
 {
-    CHECK(rocketnet_abi_version() == ROCKETNET_ABI_VERSION);
-    CHECK(rocketnet_version() == ROCKETNET_VERSION);
-#ifdef EXPECT_VERSION_FULL
-    CHECK(strcmp(ROCKETNET_VERSION_FULL, EXPECT_VERSION_FULL) == 0);
-#endif
-    CHECK(rocketnet_abi_type_size("rocketnet_client_config_t") == sizeof(struct rocketnet_client_config_t));
-    CHECK(rocketnet_abi_field_offset("rocketnet_client_config_t", "state_change_callback") == offsetof(struct rocketnet_client_config_t, state_change_callback));
-    CHECK(rocketnet_abi_field_size("rocketnet_server_config_t", "transport") == sizeof(const char *));
-    CHECK(rocketnet_abi_field_count("rocketnet_receipt_t") == 2);
-    const uint64_t misuse_before = rocketnet_api_misuse_count();
-    /* Deliberate NULL queries retain their counted Debug assertion contract. */
-    rocketnet_set_assert_callback(count_null_assertion);
-    CHECK(rocketnet_abi_type_size(NULL) == SIZE_MAX);
-    CHECK(rocketnet_abi_field_count("missing") == -1);
-    CHECK(rocketnet_abi_field_offset("rocketnet_receipt_t", "missing") == SIZE_MAX);
-    CHECK(rocketnet_abi_field_size("missing", NULL) == SIZE_MAX);
-    rocketnet_set_assert_callback(NULL);
-    CHECK(rocketnet_api_misuse_count() == misuse_before + 2);
-    CHECK(expected_null_assertions == EXPECTED_NULL_ASSERTIONS);
-    CHECK(rocketnet_client_state_name(ROCKETNET_CLIENT_STATE_CONNECTED) != NULL);
-    CHECK(rocketnet_init(NULL) == ROCKETNET_STATUS_OK);
-    rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_ERROR);
-    struct rocketnet_server_config_t config;
-    /* Public TEST VECTORS, never production credentials. This consumer only
-       creates and destroys a loopback server; it sends no authenticated traffic.
-       X25519 Alice: https://www.rfc-editor.org/rfc/rfc7748#section-6.1
-       Ed25519 test 1: https://www.rfc-editor.org/rfc/rfc8032#section-7.1 */
-    static const uint8_t test_server_secret_key[32] = {
-        0x77, 0x07, 0x6d, 0x0a, 0x73, 0x18, 0xa5, 0x7d,
-        0x3c, 0x16, 0xc1, 0x72, 0x51, 0xb2, 0x66, 0x45,
-        0xdf, 0x4c, 0x2f, 0x87, 0xeb, 0xc0, 0x99, 0x2a,
-        0xb1, 0x77, 0xfb, 0xa5, 0x1d, 0xb9, 0x2c, 0x2a
-    };
-    static const uint8_t test_server_public_key[32] = {
-        0x85, 0x20, 0xf0, 0x09, 0x89, 0x30, 0xa7, 0x54,
-        0x74, 0x8b, 0x7d, 0xdc, 0xb4, 0x3e, 0xf7, 0x5a,
-        0x0d, 0xbf, 0x3a, 0x0d, 0x26, 0x38, 0x1a, 0xf4,
-        0xeb, 0xa4, 0xa9, 0x8e, 0xaa, 0x9b, 0x4e, 0x6a
-    };
-    static const uint8_t test_backend_public_key[32] = {
-        0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7,
-        0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64, 0x07, 0x3a,
-        0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25,
-        0xaf, 0x02, 0x1a, 0x68, 0xf7, 0x07, 0x51, 0x1a
-    };
-    rocketnet_server_default_config(&config);
-    memcpy(config.server_secret_key, test_server_secret_key, sizeof(config.server_secret_key));
-    memcpy(config.server_public_key, test_server_public_key, sizeof(config.server_public_key));
-    memcpy(config.backend_public_key, test_backend_public_key, sizeof(config.backend_public_key));
-    config.protocol_id = 1;
-    config.max_clients = 1;
-    config.transport = "portable";
-    CHECK(rocketnet_server_validate_config(&config) == ROCKETNET_STATUS_OK);
-    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0, &create_status );
-    if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
-    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    int lines;
+    enum rocketnet_log_level_t level;
+};
+
+static void consumer_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
+{
+    struct log_capture_t * capture = (struct log_capture_t *) context;
+    (void) message;
+    (void) length;
+    capture->lines++;
+    capture->level = level;
+}
+
+static int saw_connected;
+
+static void consumer_state_change( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state )
+{
+    (void) context;
+    (void) previous_state;
+    if ( current_state == ROCKETNET_CLIENT_STATE_CONNECTED )
+        saw_connected = 1;
+}
+
+#if ROCKETNET_DEVELOPMENT
+
+static const char client_message[] = "hello from the client";
+static const char server_message[] = "hello from the server";
+
+// ---------------------------------------------------------------------------
+// one frame for both ends, in the order a game runs it: update, receive,
+// queue (done by the caller between frames), send last
+
+struct exchange_t
+{
+    int server_got;
+    int client_got;
+};
+
+static int frame( struct rocketnet_server_t * server, struct rocketnet_client_t * client, double now, struct exchange_t * exchange )
+{
+    rocketnet_server_update( server, now );
+    rocketnet_client_update( client, now );
+
+    const struct rocketnet_message_batch_t * batch = NULL;
+    while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
     {
-        rocketnet_server_destroy( server );
-        server = NULL;
+        for ( int i = 0; i < batch->num_messages; i++ )
+        {
+            CHECK( batch->client_index[i] == 0 );
+            CHECK( batch->channel[i] == 0 );
+            // a receipt type arrives as its twin: the receipt is the sender's
+            CHECK( batch->reliability[i] == ROCKETNET_RELIABILITY_RELIABLE_ORDERED );
+            CHECK( batch->bytes[i] == (int) sizeof( client_message ) && memcmp( batch->data[i], client_message, sizeof( client_message ) ) == 0 );
+            exchange->server_got++;
+        }
     }
-    CHECK(server != NULL);
-    CHECK(strcmp(rocketnet_server_transport_name(server), "portable") == 0);
-    CHECK(rocketnet_server_port(server) != 0);
-    rocketnet_server_destroy(server);
-    rocketnet_term();
-    puts("installed SDK consumer passed");
+
+    const struct rocketnet_message_batch_t * incoming = NULL;
+    while ( ( incoming = rocketnet_client_receive_messages( client ) ) != NULL )
+    {
+        for ( int i = 0; i < incoming->num_messages; i++ )
+        {
+            CHECK( incoming->bytes[i] == (int) sizeof( server_message ) && memcmp( incoming->data[i], server_message, sizeof( server_message ) ) == 0 );
+            exchange->client_got++;
+        }
+    }
+
+    rocketnet_client_send_packets( client );
+    rocketnet_server_send_packets( server );
+    return 0;
+}
+
+#endif // #if ROCKETNET_DEVELOPMENT
+
+int main( void )
+{
+    // ---- version, tables and names: no init needed
+
+    CHECK( rocketnet_version() == ROCKETNET_VERSION );
+    CHECK( ROCKETNET_VERSION == ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH );
+
+    for ( int i = ROCKETNET_STATUS_OK; i >= ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED; i-- )
+        CHECK( rocketnet_status_name( (enum rocketnet_status_t) i ) != NULL );
+    CHECK( strcmp( rocketnet_status_name( ROCKETNET_STATUS_OK ), "OK" ) == 0 );
+    CHECK( strcmp( rocketnet_status_name( ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED ), "CONFIG_NOT_INITIALIZED" ) == 0 );
+
+    for ( int i = ROCKETNET_LOG_LEVEL_NONE; i <= ROCKETNET_LOG_LEVEL_SPAM; i++ )
+        CHECK( rocketnet_log_level_name( (enum rocketnet_log_level_t) i ) != NULL );
+    CHECK( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_ERROR ), "ERROR" ) == 0 );
+
+    for ( int i = ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED; i <= ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
+        CHECK( rocketnet_client_state_name( (enum rocketnet_client_state_t) i ) != NULL );
+    CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED ), "SERVER_DISCONNECTED" ) == 0 );
+    CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT ), "RELIABLE_TIMED_OUT" ) == 0 );
+    CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION ), "PROTOCOL_VIOLATION" ) == 0 );
+    CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH ), "CONFIG_MISMATCH" ) == 0 );
+    CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED ), "MESSAGE_MEMORY_EXHAUSTED" ) == 0 );
+
+    CHECK( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_NONE ) != NULL );
+    CHECK( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED ) != NULL );
+
+    // ---- process-wide setup, before init
+
+    rocketnet_thread_priority( true );
+    rocketnet_assert_function( consumer_assert );
+
+    CHECK( rocketnet_init( NULL, consumer_malloc, consumer_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+
+    // ---- the backend public key the server verifies tokens with: the
+    // published development key in the development library (its tokens come
+    // from rocketnet_create_dev_connect_token); in a release library, which
+    // refuses the development key, any other backend's key
+
+#if ROCKETNET_DEVELOPMENT
+    static const uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
+#else
+    uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    for ( int i = 0; i < ROCKETNET_BACKEND_PUBLIC_KEY_BYTES; i++ )
+        backend_public_key[i] = (uint8_t) ( 0x51 + 3 * i );
+#endif
+
+    // ---- configs: create is the one check. A NULL config is the defaults; a
+    // zeroed config was never filled by default_config and is refused with
+    // CONFIG_NOT_INITIALIZED and one log line (through the log function); in
+    // quiet mode the same refusal logs nothing
+
+    {
+        enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+        struct rocketnet_client_t * null_client = rocketnet_client_create( NULL, NULL, &status );
+        CHECK( null_client != NULL && status == ROCKETNET_STATUS_OK );
+        rocketnet_client_destroy( null_client );
+        struct rocketnet_server_t * null_server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, NULL, &status );
+        CHECK( null_server != NULL && status == ROCKETNET_STATUS_OK );
+        rocketnet_server_destroy( null_server );
+        CHECK( rocketnet_client_required_memory( NULL ) > 0 );
+        CHECK( rocketnet_server_required_memory( NULL ) > 0 );
+
+        struct rocketnet_client_config_t zeroed_client;
+        struct rocketnet_server_config_t zeroed_server;
+        memset( &zeroed_client, 0, sizeof( zeroed_client ) );
+        memset( &zeroed_server, 0, sizeof( zeroed_server ) );
+
+        struct log_capture_t capture;
+        memset( &capture, 0, sizeof( capture ) );
+        rocketnet_log_function( consumer_log, &capture );
+
+        status = ROCKETNET_STATUS_OK;
+        CHECK( rocketnet_client_create( NULL, &zeroed_client, &status ) == NULL );
+        CHECK( status == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
+        CHECK( capture.lines == 1 && capture.level == ROCKETNET_LOG_LEVEL_ERROR );
+        status = ROCKETNET_STATUS_OK;
+        CHECK( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &zeroed_server, &status ) == NULL );
+        CHECK( status == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
+        CHECK( capture.lines == 2 );
+        CHECK( rocketnet_client_required_memory( &zeroed_client ) == 0 );
+        CHECK( rocketnet_server_required_memory( &zeroed_server ) == 0 );
+        const int lines_before_quiet = capture.lines;
+
+        rocketnet_quiet( true );
+        status = ROCKETNET_STATUS_OK;
+        CHECK( rocketnet_client_create( NULL, &zeroed_client, &status ) == NULL );
+        CHECK( status == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
+        rocketnet_quiet( false );
+        CHECK( capture.lines == lines_before_quiet );
+
+        rocketnet_log_function( NULL, NULL );
+    }
+
+    // ---- the server: the backend key set in code; the server makes its own
+    // keypair at create
+
+    struct rocketnet_server_config_t server_config;
+    CHECK( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
+    CHECK( server_config.config_bytes == sizeof( server_config ) );
+    server_config.protocol_id = PROTOCOL_ID;
+    server_config.max_clients = 2;
+    server_config.transport = "portable";
+    memcpy( server_config.backend_public_key, backend_public_key, sizeof( server_config.backend_public_key ) );
+    CHECK( rocketnet_server_required_memory( &server_config ) > 0 );
+
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
+    if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
+    CHECK( server != NULL );
+    CHECK( !rocketnet_server_running( server ) );
+    CHECK( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+    CHECK( rocketnet_server_running( server ) );
+    CHECK( strcmp( rocketnet_server_transport_name( server ), "portable" ) == 0 );
+    CHECK( rocketnet_server_max_clients( server ) == 2 );
+    CHECK( rocketnet_server_port( server ) != 0 );
+
+    // ---- the server's own public key (valid from create) and the addresses
+    // it advertises once started: IPv4 only here, bound to 127.0.0.1
+
+    uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    uint8_t zero_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    memset( server_public_key, 0, sizeof( server_public_key ) );
+    memset( zero_key, 0, sizeof( zero_key ) );
+    rocketnet_server_public_key( server, server_public_key );
+    CHECK( memcmp( server_public_key, zero_key, sizeof( zero_key ) ) != 0 );
+
+    char server_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+    char expected_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+    snprintf( expected_address, sizeof( expected_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
+    CHECK( rocketnet_server_ipv4_address( server, server_address, sizeof( server_address ) ) );
+    CHECK( strcmp( server_address, expected_address ) == 0 );
+    {
+        char ipv6_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+        CHECK( !rocketnet_server_ipv6_address( server, ipv6_address, sizeof( ipv6_address ) ) );
+        CHECK( ipv6_address[0] == '\0' );
+    }
+
+#if ROCKETNET_DEVELOPMENT
+    // ---- a development connect token, a string, for this server's address
+    // and public key
+
+    char connect_token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    CHECK( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, CLIENT_ID, PROTOCOL_ID,
+                                               (uint64_t) time( NULL ), NULL, connect_token ) == ROCKETNET_STATUS_OK );
+    CHECK( strlen( connect_token ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
+#endif
+
+    // ---- the client
+
+    struct rocketnet_client_config_t client_config;
+    CHECK( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    CHECK( client_config.config_bytes == sizeof( client_config ) );
+    client_config.transport = "portable";
+    client_config.state_change_callback = consumer_state_change;
+    CHECK( rocketnet_client_required_memory( &client_config ) > 0 );
+
+    enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &create_status_2 );
+    if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
+    CHECK( client != NULL );
+    CHECK( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    CHECK( rocketnet_client_index( client ) == -1 );
+    // a connect token is the NUL-terminated string the backend gives; anything
+    // else is refused
+    CHECK( rocketnet_client_connect( client, "not a connect token" ) == ROCKETNET_STATUS_INVALID_CONNECT_TOKEN );
+    CHECK( rocketnet_client_state( client ) <= ROCKETNET_CLIENT_STATE_DISCONNECTED );
+
+#if ROCKETNET_DEVELOPMENT
+    CHECK( rocketnet_client_connect( client, connect_token ) == ROCKETNET_STATUS_OK );
+    CHECK( strcmp( rocketnet_client_transport_name( client ), "portable" ) == 0 );
+
+    // ---- connect, then one receipted message each way
+
+    // the game's clock starts at 1000.0, with real seconds on top
+    const double wall_start = rocketnet_time();
+    double now = 1000.0;
+    struct exchange_t exchange;
+    memset( &exchange, 0, sizeof( exchange ) );
+    uint32_t client_serial = 0;
+    uint32_t server_serial = 0;
+    int client_acked = 0;
+    int server_acked = 0;
+
+    while ( !( exchange.server_got && exchange.client_got && client_acked && server_acked ) && rocketnet_time() - wall_start < 10.0 )
+    {
+        now = 1000.0 + ( rocketnet_time() - wall_start );
+        CHECK( frame( server, client, now, &exchange ) == 0 );
+        CHECK( rocketnet_client_state( client ) > ROCKETNET_CLIENT_STATE_DISCONNECTED );
+
+        if ( !client_serial && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
+        {
+            CHECK( rocketnet_client_index( client ) == 0 );
+            CHECK( rocketnet_client_set_send_kbps( client, 0 ) == ROCKETNET_STATUS_OK );
+            CHECK( rocketnet_client_set_send_kbps( client, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );
+            CHECK( rocketnet_client_set_send_kbps( client, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS ) == ROCKETNET_STATUS_OK );
+
+            // an aborted start sends nothing, and the next start is free
+            CHECK( rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 8 ) != NULL );
+            rocketnet_client_abort_message( client );
+
+            uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, (int) sizeof( client_message ) );
+            CHECK( out != NULL );
+            memcpy( out, client_message, sizeof( client_message ) );
+            client_serial = rocketnet_client_finish_message( client, (int) sizeof( client_message ) );
+            CHECK( client_serial != 0 );
+        }
+
+        if ( exchange.server_got && !server_serial )
+        {
+            CHECK( rocketnet_server_set_send_kbps( server, 0, 0 ) == ROCKETNET_STATUS_OK );
+
+            // an aborted start sends nothing
+            CHECK( rocketnet_server_start_message( server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 8 ) != NULL );
+            rocketnet_server_abort_message( server );
+
+            // a refused finish aborts the pending start, so the next start is
+            // never blocked
+            CHECK( rocketnet_server_start_message( server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 8 ) != NULL );
+            CHECK( rocketnet_server_finish_message( server, 0 ) == 0 );
+
+            uint8_t * out = rocketnet_server_start_message( server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, (int) sizeof( server_message ) );
+            CHECK( out != NULL );
+            memcpy( out, server_message, sizeof( server_message ) );
+            server_serial = rocketnet_server_finish_message( server, (int) sizeof( server_message ) );
+            CHECK( server_serial != 0 );
+        }
+
+        struct rocketnet_receipt_t receipts[16];
+        const int client_receipts = rocketnet_client_receipts( client, receipts, 16 );
+        for ( int i = 0; i < client_receipts; i++ )
+            if ( receipts[i].serial == client_serial && receipts[i].status == ROCKETNET_RECEIPT_STATUS_ACKED )
+                client_acked = 1;
+        const int server_receipts = rocketnet_server_receipts( server, 0, receipts, 16 );
+        for ( int i = 0; i < server_receipts; i++ )
+            if ( receipts[i].serial == server_serial && receipts[i].status == ROCKETNET_RECEIPT_STATUS_ACKED )
+                server_acked = 1;
+
+        rocketnet_sleep( 0.001 );
+    }
+
+    CHECK( saw_connected );
+    CHECK( exchange.server_got == 1 );
+    CHECK( exchange.client_got == 1 );
+    CHECK( client_acked && server_acked );
+
+    // ---- the queries and the three stats structs, each one call into a
+    // snapshot the caller owns
+
+    CHECK( rocketnet_server_num_connected_clients( server ) == 1 );
+    CHECK( rocketnet_server_client_connected( server, 0 ) );
+    CHECK( !rocketnet_server_client_connected( server, 1 ) );
+    CHECK( rocketnet_server_client_id( server, 0 ) == CLIENT_ID );
+    CHECK( rocketnet_server_disconnect_reason( server, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
+
+    struct rocketnet_client_stats_t client_stats;
+    rocketnet_client_stats( client, &client_stats );
+    CHECK( client_stats.packets_sent > 0 && client_stats.packets_received > 0 );
+    CHECK( client_stats.bytes_sent > 0 && client_stats.bytes_received > 0 );
+    CHECK( client_stats.payloads_received > 0 );
+    CHECK( client_stats.receipts_acked >= 1 );
+    CHECK( client_stats.receipts_dropped == 0 );
+    CHECK( client_stats.rtt >= 0.0 && client_stats.jitter >= 0.0 && client_stats.packet_loss >= 0.0 );
+    CHECK( client_stats.bandwidth_sent_kbps >= 0.0 && client_stats.bandwidth_received_kbps >= 0.0 );
+
+    struct rocketnet_server_stats_t server_stats;
+    rocketnet_server_stats( server, &server_stats );
+    CHECK( server_stats.packets_sent > 0 && server_stats.packets_received > 0 );
+    CHECK( server_stats.connections_accepted == 1 );
+    CHECK( server_stats.payloads_received > 0 );
+    CHECK( server_stats.receipts_acked >= 1 );
+    CHECK( server_stats.receipts_dropped == 0 );
+    CHECK( server_stats.api_misuses == client_stats.api_misuses );
+
+    struct rocketnet_server_client_stats_t slot_stats;
+    rocketnet_server_client_stats( server, 0, &slot_stats );
+    CHECK( slot_stats.packets_sent > 0 && slot_stats.bytes_received > 0 );
+    CHECK( slot_stats.rtt >= 0.0 && slot_stats.bandwidth_acked_kbps >= 0.0 );
+    rocketnet_server_client_stats( server, 1, &slot_stats );
+    CHECK( slot_stats.packets_sent == 0 && slot_stats.packets_received == 0 );
+
+#else
+    // ---- a release library mints no tokens: the client stays disconnected,
+    // and the stats structs read the idle objects
+
+    struct rocketnet_client_stats_t client_stats;
+    rocketnet_client_stats( client, &client_stats );
+    CHECK( client_stats.packets_sent == 0 && client_stats.receipts_dropped == 0 );
+    struct rocketnet_server_stats_t server_stats;
+    rocketnet_server_stats( server, &server_stats );
+    CHECK( server_stats.connections_accepted == 0 && server_stats.receipts_dropped == 0 );
+    CHECK( server_stats.api_misuses == client_stats.api_misuses );
+#endif
+
+    // ---- api misuse is a stats field: two deliberate NULL calls count two
+    // (a debug library also calls the installed assert function for each)
+
+    {
+        const uint64_t misuse_before = server_stats.api_misuses;
+        const int assertions_before = assertions;
+        CHECK( rocketnet_client_state( NULL ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+        struct rocketnet_client_stats_t null_stats;
+        rocketnet_client_stats( NULL, &null_stats );
+        CHECK( null_stats.api_misuses == misuse_before + 2 );
+        CHECK( null_stats.packets_sent == 0 );
+        CHECK( assertions == assertions_before + EXPECTED_NULL_ASSERTIONS );
+    }
+
+#if ROCKETNET_DEVELOPMENT
+    // ---- the server ends the connection: the client's state says how, and
+    // connect is accepted again from that ended state
+
+    rocketnet_server_disconnect_client( server, 0 );
+    while ( rocketnet_client_state( client ) > ROCKETNET_CLIENT_STATE_DISCONNECTED && rocketnet_time() - wall_start < 20.0 )
+    {
+        now = 1000.0 + ( rocketnet_time() - wall_start );
+        CHECK( frame( server, client, now, &exchange ) == 0 );
+        rocketnet_sleep( 0.001 );
+    }
+    CHECK( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED );
+    CHECK( rocketnet_client_index( client ) == -1 );
+    CHECK( !rocketnet_server_client_connected( server, 0 ) );
+
+    CHECK( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, CLIENT_ID, PROTOCOL_ID,
+                                               (uint64_t) time( NULL ), NULL, connect_token ) == ROCKETNET_STATUS_OK );
+    CHECK( rocketnet_client_connect( client, connect_token ) == ROCKETNET_STATUS_OK );
+    while ( rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED && rocketnet_time() - wall_start < 30.0 )
+    {
+        now = 1000.0 + ( rocketnet_time() - wall_start );
+        CHECK( frame( server, client, now, &exchange ) == 0 );
+        CHECK( rocketnet_client_state( client ) > ROCKETNET_CLIENT_STATE_DISCONNECTED );
+        rocketnet_sleep( 0.001 );
+    }
+    CHECK( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+
+    rocketnet_server_disconnect_all_clients( server );
+    while ( rocketnet_client_state( client ) > ROCKETNET_CLIENT_STATE_DISCONNECTED && rocketnet_time() - wall_start < 40.0 )
+    {
+        now = 1000.0 + ( rocketnet_time() - wall_start );
+        CHECK( frame( server, client, now, &exchange ) == 0 );
+        rocketnet_sleep( 0.001 );
+    }
+    CHECK( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED );
+    CHECK( rocketnet_server_num_connected_clients( server ) == 0 );
+#endif
+
+    // ---- teardown
+
+    rocketnet_client_disconnect( client );
+    CHECK( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    rocketnet_client_destroy( client );
+    rocketnet_server_stop( server );
+    CHECK( !rocketnet_server_running( server ) );
+    rocketnet_server_destroy( server );
+
+    rocketnet_assert_function( NULL );
+    CHECK( rocketnet_term() == ROCKETNET_STATUS_OK );
+
+    puts( "installed SDK consumer passed" );
     return 0;
 }

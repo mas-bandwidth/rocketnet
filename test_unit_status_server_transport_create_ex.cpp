@@ -44,6 +44,7 @@ static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
 // by design, so a CI leg pinned by ROCKETNET_SERVER_TRANSPORT would otherwise
 // never reach the struct's list
 
+#if !ROCKETNET_DEVELOPMENT
 struct env_pin_saved
 {
     bool was_set;
@@ -136,11 +137,11 @@ static void test_server_transport_create_ex_reports_every_status()
 #if ROCKETNET_ASSERTS
     void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
     server_create_ex_expected_null_asserts = 0;
-    rocketnet_set_assert_callback( server_create_ex_expected_null_assert );
+    rocketnet_assert_function( server_create_ex_expected_null_assert );
 #endif
     check( rocketnet_server_transport_create_ex( NULL, NULL, NULL, 1000.0, &status ) == NULL );
 #if ROCKETNET_ASSERTS
-    rocketnet_set_assert_callback( saved_assert );
+    rocketnet_assert_function( saved_assert );
     check( server_create_ex_expected_null_asserts == 1 );
 #endif
     check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
@@ -156,7 +157,7 @@ static void test_server_transport_create_ex_reports_every_status()
 
     // init with the fault-injecting allocator's state as the context
     status = -1;
-    check( rocketnet_init_ex( &state, &status ) );
+    check( rocketnet_init_ex( &state, allocate, release, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 
     // S2: an invalid environment value refuses apply_env
@@ -181,7 +182,7 @@ static void test_server_transport_create_ex_reports_every_status()
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_default_config( &config );
         config.max_clients = ROCKETNET_MAX_CLIENTS;
-        config.num_reassembly_slots = 256;    // ROCKETNET_MAX_FRAGMENTS
+        config.max_fragmented_messages = 256;    // ROCKETNET_MAX_FRAGMENTS
         status = -1;
         check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED );
@@ -315,3 +316,4 @@ static void test_server_transport_create_ex_reports_every_status()
 }
 
 REGISTER_UNIT_TEST( test_server_transport_create_ex_reports_every_status );
+#endif // !ROCKETNET_DEVELOPMENT: a development build accepts what this checks is refused

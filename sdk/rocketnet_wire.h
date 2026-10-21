@@ -113,6 +113,29 @@ static inline int rocketnet_wire_header_bytes( int address_type )
 #define ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES  41  // 6 + 4 + 7 + 8 + 16
 #define ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES     34  // 6 + 4 + 7 + 1 + 16
 #define ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES  33  // 6 + 4 + 7 + 0 + 16
+
+// Every handshake packet fits one datagram on the smaller family's budget:
+// 1500 - 40 - 8 = 1452 UDP payload bytes over IPv6 (ROCKETNET_MAX_PACKET_BYTES
+// in rocketnet.h; written out here because this header stands alone in the
+// XDP program). A token change that would push the connection request past
+// one IPv6 datagram fails to compile.
+
+#define ROCKETNET_HANDSHAKE_MAX_WIRE_BYTES              1452    // ( 1500 - 40 - 8 )
+
+#ifdef __cplusplus
+#define ROCKETNET_WIRE_STATIC_ASSERT( condition, message ) static_assert( condition, message )
+#elif defined( __GNUC__ ) || defined( __clang__ )
+#define ROCKETNET_WIRE_STATIC_ASSERT( condition, message ) _Static_assert( condition, message )
+#else // MSVC C has no _Static_assert before /std:c11: a negative array size refuses the build
+#define ROCKETNET_WIRE_STATIC_ASSERT_JOIN2( a, b ) a##b
+#define ROCKETNET_WIRE_STATIC_ASSERT_JOIN( a, b ) ROCKETNET_WIRE_STATIC_ASSERT_JOIN2( a, b )
+#define ROCKETNET_WIRE_STATIC_ASSERT( condition, message ) typedef char ROCKETNET_WIRE_STATIC_ASSERT_JOIN( rocketnet_wire_static_assert_, __LINE__ )[( condition ) ? 1 : -1]
+#endif
+
+ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES <= ROCKETNET_HANDSHAKE_MAX_WIRE_BYTES, "the connection request fits one IPv6 datagram" );
+ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_DENIED_WIRE_BYTES <= ROCKETNET_HANDSHAKE_MAX_WIRE_BYTES, "the connection denied fits one IPv6 datagram" );
+ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES <= ROCKETNET_HANDSHAKE_MAX_WIRE_BYTES, "the connection challenge fits one IPv6 datagram" );
+ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES <= ROCKETNET_HANDSHAKE_MAX_WIRE_BYTES, "the connection response fits one IPv6 datagram" );
 #define ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES          38
 #define ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES         33  // 6 + 4 + 7 + 0 + 16
 #define ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES    40  // 6 + 4 + 7 + 6 + 1 + 16
@@ -154,7 +177,7 @@ struct rocketnet_server_xdp_config_t
 {
     uint32_t public_address;                    // big endian; 0 = accept any destination address
     uint16_t public_port;                       // big endian
-    uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES];
+    uint8_t packet_filter[ROCKETNET_FILTER_VALUE_BYTES];
     uint8_t filter_epoch;                       // the only epoch this server accepts; 0 in 1.0
     uint8_t pad[5];                             // zero; fills offsets 11 to 15, up to the IPv6 destination
     uint8_t public_address_ipv6[16];            // network order; all zero = accept any IPv6 destination address
@@ -164,7 +187,7 @@ struct rocketnet_server_xdp_config_t
 static_assert( sizeof(struct rocketnet_server_xdp_config_t) == 32, "the XDP config map value is 32 bytes" );
 static_assert( __builtin_offsetof( struct rocketnet_server_xdp_config_t, pad ) == 11, "the XDP config pad follows the epoch" );
 static_assert( __builtin_offsetof( struct rocketnet_server_xdp_config_t, public_address_ipv6 ) == 16, "the XDP config IPv6 destination is 4-byte aligned" );
-#else // #ifdef __cplusplus
+#elif defined( __GNUC__ ) || defined( __clang__ ) // C: __builtin_offsetof is a GNU form; MSVC C checks none of this
 _Static_assert( sizeof(struct rocketnet_server_xdp_config_t) == 32, "the XDP config map value is 32 bytes" );
 _Static_assert( __builtin_offsetof( struct rocketnet_server_xdp_config_t, pad ) == 11, "the XDP config pad follows the epoch" );
 _Static_assert( __builtin_offsetof( struct rocketnet_server_xdp_config_t, public_address_ipv6 ) == 16, "the XDP config IPv6 destination is 4-byte aligned" );
@@ -196,7 +219,7 @@ static_assert( sizeof(struct rocketnet_server_xdp_replay_key_t) == 20, "the XDP 
 static_assert( __builtin_offsetof( struct rocketnet_server_xdp_replay_key_t, port ) == 2, "the XDP replay port is at offset 2" );
 static_assert( __builtin_offsetof( struct rocketnet_server_xdp_replay_key_t, address ) == 4, "the XDP replay address is at offset 4" );
 static_assert( sizeof(struct rocketnet_server_xdp_replay_value_t) == 8, "the XDP replay value is 8 bytes" );
-#else // #ifdef __cplusplus
+#elif defined( __GNUC__ ) || defined( __clang__ ) // C: __builtin_offsetof is a GNU form; MSVC C checks none of this
 _Static_assert( sizeof(struct rocketnet_server_xdp_replay_key_t) == 20, "the XDP replay key is 20 bytes" );
 _Static_assert( __builtin_offsetof( struct rocketnet_server_xdp_replay_key_t, port ) == 2, "the XDP replay port is at offset 2" );
 _Static_assert( __builtin_offsetof( struct rocketnet_server_xdp_replay_key_t, address ) == 4, "the XDP replay address is at offset 4" );

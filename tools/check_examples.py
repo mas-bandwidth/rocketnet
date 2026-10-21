@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Check the examples against the house rules.
 
-Each examples/*.c may include only "rocketnet.h" and the C standard headers
-below, and may name only rocketnet_ identifiers that sdk/rocketnet.h declares.
+Each examples/*.c may include only "rocketnet.h", "dev_keys.h" (the published
+development keys as data) and the C standard headers below, and may name only rocketnet_ identifiers that sdk/rocketnet.h declares.
 Prints one OK line per source; exits 1 naming file:line for a refusal.
 """
 
@@ -16,6 +16,7 @@ HEADER = ROOT / "sdk" / "rocketnet.h"
 
 ALLOWED_HEADERS = {
     "rocketnet.h",
+    "dev_keys.h",
     "stdio.h",
     "stdlib.h",
     "string.h",

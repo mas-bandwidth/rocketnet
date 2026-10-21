@@ -11,7 +11,7 @@
     ranges below. A refused payload yields no record. An accepted record's
     bytes lie inside the payload and stop before the trailing form byte,
     so nothing is read past the given length. A holdable record's span,
-    and a block's span, lie inside receive_ring_bytes. The config reader
+    and a block's span, lie inside receive_message_buffer_bytes. The config reader
     refuses a null buffer, an empty buffer, and a 4-byte buffer, and a
     28-byte buffer stays inside that object.
 
@@ -47,12 +47,12 @@ static void fill_limits( struct rocketnet_message_limits_t * limits )
     limits->num_channels = nondet_int();
     __CPROVER_assume( limits->num_channels >= 1 && limits->num_channels <= 65536 );
     limits->enabled_codes = nondet_uint();
-    limits->window_messages = nondet_int();
-    __CPROVER_assume( limits->window_messages >= 1 && limits->window_messages <= 4096 );
+    limits->reliable_messages_in_flight = nondet_int();
+    __CPROVER_assume( limits->reliable_messages_in_flight >= 1 && limits->reliable_messages_in_flight <= 4096 );
     limits->max_message_bytes = nondet_int();
     __CPROVER_assume( limits->max_message_bytes >= 1 && limits->max_message_bytes <= 65536 );
-    limits->receive_ring_bytes = nondet_int();
-    __CPROVER_assume( limits->receive_ring_bytes >= 0 && limits->receive_ring_bytes <= 65536 );
+    limits->receive_message_buffer_bytes = nondet_int();
+    __CPROVER_assume( limits->receive_message_buffer_bytes >= 0 && limits->receive_message_buffer_bytes <= 65536 );
 }
 
 static void harness_reader( void )
@@ -87,13 +87,13 @@ static void harness_reader( void )
             const int last = record.fragment == record.fragments;
             const int span = (int) record.fragments * F + ( last ? round16( record.bytes ) : 16 );
             __CPROVER_assert( base >= 0, "block base is inside the ring" );
-            __CPROVER_assert( (long long) base * 16 + span <= limits.receive_ring_bytes,
+            __CPROVER_assert( (long long) base * 16 + span <= limits.receive_message_buffer_bytes,
                 "block span fits the ring" );
         }
         else if ( record.code == ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED
                   || record.code == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED )
         {
-            __CPROVER_assert( (long long) record.ring * 16 + round16( record.bytes ) <= limits.receive_ring_bytes,
+            __CPROVER_assert( (long long) record.ring * 16 + round16( record.bytes ) <= limits.receive_message_buffer_bytes,
                 "holdable span fits the ring" );
         }
 

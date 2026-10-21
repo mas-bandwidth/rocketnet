@@ -195,7 +195,7 @@ static uint8_t * ip_start_packet( void * transport, int client_index, int reques
         e->frame_id[f] = ++e->net->next_id;
         context->frame = e->frames[f];
         context->payload_index = IP_PAYLOAD_INDEX;
-        const int capacity = request_bytes > ROCKETNET_MAX_PAYLOAD_BYTES ? IP_ARENA_BYTES : ROCKETNET_MAX_PAYLOAD_BYTES;
+        const int capacity = request_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? IP_ARENA_BYTES : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
         context->payload_capacity = capacity;
         context->packet_id = e->frame_id[f];
         context->client_index = client_index;
@@ -235,8 +235,8 @@ static int ip_finish_packet( void * transport, rocketnet_packet_context_t * cont
     e->sent.push_back( packet );
     ip_end_t * peer = e->is_server ? &e->net->client : &e->net->server;
     peer->inbound.push_back( packet );
-    if ( payload_bytes > ROCKETNET_MAX_PAYLOAD_BYTES )
-        return payload_bytes + 64 * ( payload_bytes / ROCKETNET_MAX_PAYLOAD_BYTES + 1 );   // the fragments' wire bytes
+    if ( payload_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
+        return payload_bytes + 64 * ( payload_bytes / ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1 );   // the fragments' wire bytes
     return rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, payload_bytes );
 }
 
@@ -322,7 +322,7 @@ static void ip_pair_setup( ip_pair_t * pair, int packets_per_update = 8 )
     rocketnet_message_default_config( &config );
     config.num_channels = 4;
     config.packets_per_update = packets_per_update;
-    config.resend_delay_initial_ms = 100;
+    config.message_resend_delay_initial_ms = 100;
     pair->net = new ip_net_t();
     pair->net->server.net = pair->net;
     pair->net->server.is_server = true;
@@ -333,8 +333,8 @@ static void ip_pair_setup( ip_pair_t * pair, int packets_per_update = 8 )
     pair->net->next_id = 5000;
     rn_message_link_t server_link = ip_link( &pair->net->server );
     rn_message_link_t client_link = ip_link( &pair->net->client );
-    pair->server = (rocketnet_message_server_t *) rn_message_object_create( NULL, &server_link, 1, 1, &config, NULL, 0, ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, IP_T0 );
-    pair->client = (rocketnet_message_client_t *) rn_message_object_create( NULL, &client_link, 0, 1, &config, NULL, 0, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, IP_T0 );
+    pair->server = (rocketnet_message_server_t *) rn_message_object_create( NULL, &server_link, 1, 1, &config, NULL, 0, ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, IP_T0 );
+    pair->client = (rocketnet_message_client_t *) rn_message_object_create( NULL, &client_link, 0, 1, &config, NULL, 0, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, IP_T0 );
     check( pair->server && pair->client );
     pair->time = IP_T0;
 }
@@ -362,7 +362,7 @@ static void ip_step( ip_pair_t * pair, std::vector<ip_received_t> * server_got, 
     // it was delivered on
     for ( ;; )
     {
-        rocketnet_message_batch_t batch;
+        static rocketnet_message_batch_t batch;     // 1.5 MB: never on the stack (Windows gives 1 MB)
         const int count = rocketnet_message_server_receive_messages( pair->server, &batch );
         if ( count == 0 )
             break;
@@ -376,7 +376,7 @@ static void ip_step( ip_pair_t * pair, std::vector<ip_received_t> * server_got, 
     }
     for ( ;; )
     {
-        rocketnet_message_batch_t batch;
+        static rocketnet_message_batch_t batch;     // 1.5 MB: never on the stack (Windows gives 1 MB)
         const int count = rocketnet_message_client_receive_messages( pair->client, &batch );
         if ( count == 0 )
             break;
@@ -444,7 +444,7 @@ static void ip_send_in_place( ip_pair_t * pair, bool from_server, int mode, int 
     const ip_buffer_t & sent = e->finished.back();
     check( sent.address == e->handed.back().address );                    // the same buffer: identity
     check( ip_inside( p, bytes, sent ) );                                  // the written bytes lie in the sent range
-    uint8_t expected[ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t expected[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     ip_fill( expected, id, bytes );
     const ip_packet_t & wire = e->sent.back();
     check( memcmp( wire.data.data() + ( p - sent.address ), expected, (size_t) bytes ) == 0 );
@@ -847,9 +847,9 @@ static void test_in_place_unreliable_keeps_acks_and_order()
 // ---------------------------------------------------------------------------
 
 static enum rocketnet_status_t ip_write_connect_token( const char * server_address_string, uint64_t client_id, uint64_t current_timestamp, uint8_t * connect_token, size_t connect_token_bytes );
-#define rocketnet_write_dev_connect_token ip_write_connect_token
+#define rocketnet_write_test_connect_token ip_write_connect_token
 #include "functional/channel_harness.h"
-#undef rocketnet_write_dev_connect_token
+#undef rocketnet_write_test_connect_token
 
 static enum rocketnet_status_t ip_write_connect_token( const char * server_address_string, uint64_t client_id, uint64_t current_timestamp, uint8_t * connect_token, size_t connect_token_bytes )
 {
@@ -902,7 +902,7 @@ static void test_unreliable_fit_in_place_every_transport()
             const int slot = e->pending_frame;
             check( slot >= 0 );                                            // start holds a transport frame
             const uint8_t * root = e->frame[slot] + ROCKETNET_FRAME_PAYLOAD_OFFSET;
-            check( p >= root && p + bytes <= root + ROCKETNET_MAX_PAYLOAD_BYTES );
+            check( p >= root && p + bytes <= root + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
             ip_fill( p, 500 + (uint32_t) ( 10 * side + m ), bytes );
             const int staged = e->outgoing_count;
             check( ( from_server ? rocketnet_message_server_finish( h.message_server, h.client_slot, bytes )
@@ -935,8 +935,8 @@ static void test_unreliable_fit_in_place_every_transport()
 
 // A burst of start/finish sends as fast as the caller can make them, many
 // thousands across several updates, with the reliable bytes in flight well
-// under the send store (send_buffer_bytes, send_queue_messages and
-// window_messages at their defaults): the connection stays up, no exhaustion
+// under the send store (send_message_buffer_bytes, send_queue_messages and
+// reliable_messages_in_flight at their defaults): the connection stays up, no exhaustion
 // or refusal counter moves, and every message is delivered, in order, in a
 // later update. The client's budget is uncapped so the packet allowance and
 // the 16-record packet bound are the only pacing.

@@ -18,7 +18,7 @@
 #define check rocketnet_unit_check
 #define BOUNDARY_MAX_FRAMES 64
 #define BOUNDARY_PAYLOAD_INDEX 16
-#define BOUNDARY_FRAME_CAPACITY (ROCKETNET_MAX_PAYLOAD_BYTES + 256)
+#define BOUNDARY_FRAME_CAPACITY (ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 256)
 // the padding to data and after it is written out, so the compiler adds none (MSVC C4324)
 struct boundary_packet_t { uint64_t id; int slot; int bytes; int fragment; uint8_t head_pad[32 - sizeof(uint64_t) - 3 * sizeof(int)]; alignas(16) uint8_t data[BOUNDARY_FRAME_CAPACITY]; uint8_t tail_pad[(BOUNDARY_FRAME_CAPACITY + 15) / 16 * 16 - BOUNDARY_FRAME_CAPACITY]; };
 struct boundary_net_t;
@@ -95,7 +95,7 @@ static int boundary_finish_packet(void * transport,rocketnet_packet_context_t * 
     check(f>=0); check(payload_bytes>=1 && payload_bytes<=context->payload_capacity); e->frame_used[f]=false;
     boundary_endpoint_t * receiver=e->is_server ? e->net->client : e->net->server;
     const uint8_t * payload=e->frames[f]+BOUNDARY_PAYLOAD_INDEX;
-    if(payload_bytes<=ROCKETNET_MAX_PAYLOAD_BYTES) {
+    if(payload_bytes<=ROCKETNET_MAX_PACKET_PAYLOAD_BYTES) {
         boundary_packet_t p = {}; p.id=e->frame_id[f]; p.slot=e->frame_slot[f]; p.bytes=payload_bytes;
         memcpy(p.data,payload,(size_t)payload_bytes); receiver->inbound.push_back(p);
         return rocketnet_send_budget_wire_bytes(ROCKETNET_ACK_BLOCK_MIN_BYTES,payload_bytes);
@@ -139,9 +139,9 @@ static rn_message_link_t boundary_link(boundary_endpoint_t * e) {
 struct boundary_pair_t { boundary_net_t * net; rocketnet_message_server_t * server; rocketnet_message_client_t * client; double time; };
 struct boundary_received_t { int channel; std::vector<uint8_t> data; };
 static void boundary_config(rocketnet_message_config_t * c) {
-    rocketnet_message_default_config(c); c->num_channels=4; c->window_messages=64; c->receive_ring_bytes=65536; c->max_message_bytes=16384;
-    c->send_buffer_bytes=65536; c->send_queue_messages=64; c->packets_in_flight=64; c->packets_per_update=8; c->unreliable_deliveries=64;
-    c->resend_delay_initial_ms=100; c->resend_delay_min_ms=20; c->resend_delay_max_ms=400; c->reliable_timeout_ms=120000;
+    rocketnet_message_default_config(c); c->num_channels=4; c->reliable_messages_in_flight=64; c->receive_message_buffer_bytes=65536; c->max_message_bytes=16384;
+    c->send_message_buffer_bytes=65536; c->send_queue_messages=64; c->packets_in_flight=64; c->packets_per_update=8; c->unreliable_messages_per_update=64;
+    c->message_resend_delay_initial_ms=100; c->message_resend_delay_min_ms=20; c->message_resend_delay_max_ms=400; c->reliable_message_timeout_ms=120000;
 }
 static void boundary_setup(boundary_pair_t * pair) {
     rocketnet_message_config_t config; boundary_config(&config); pair->net=new boundary_net_t(); pair->net->slot_connection=100; pair->net->next_packet_id=1000; pair->net->next_payload_id=1; memset(pair->net->fragment_counters,0,sizeof(pair->net->fragment_counters));
@@ -163,7 +163,7 @@ static void boundary_teardown(boundary_pair_t * pair) {
 static void boundary_drain(boundary_pair_t * pair,std::vector<boundary_received_t> * got) {
     // the one receive queue, in batches: each entry names the channel it was delivered on
     for(;;) {
-        rocketnet_message_batch_t batch;
+        static rocketnet_message_batch_t batch;     // 1.5 MB: never on the stack (Windows gives 1 MB)
         const int count = rocketnet_message_server_receive_messages( pair->server, &batch );
         if( count == 0 ) break;
         for(int i=0;i<batch.num_messages;++i) {
@@ -243,7 +243,7 @@ static void test_message_boundary_sizes_every_mode_every_channel() {
         check(pair.net->fragment_counters[ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID]==0);
         check(pair.net->fragment_counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE]==0);
         // An oversize unreliable send is promoted, not transport-fragmented
-        // (RakNet ReliabilityLayer): no type-9 fragments in any mode.
+        // (the promotion rule): no type-9 fragments in any mode.
         check(pair.net->fragment_counters[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED]==0);
         check(pair.net->fragment_counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED]==0);
         // Code 1 promotes 1406, the first size past one packet's record.

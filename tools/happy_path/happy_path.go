@@ -287,7 +287,7 @@ func run() int {
 
 	fmt.Println("starting server:")
 	server, err := startChild("server", serverPath, []string{address}, []string{
-		"ROCKETNET_SERVER_PUBLIC_ADDRESS=" + address,
+		"ROCKETNET_SERVER_IPV4_ADDRESS=" + address,
 		"ROCKETNET_SERVER_TRANSPORT=portable",
 	})
 	if err != nil {
@@ -301,10 +301,19 @@ func run() int {
 	if err := waitForLine(server, "server transport portable", deadline, seconds, "server", "the transport line arrived"); err != nil {
 		return fail(err)
 	}
+	serverKey := ""
+	for _, line := range strings.Split(server.buf.String(), "\n") {
+		if key, ok := strings.CutPrefix(strings.TrimRight(line, "\r"), "server public key "); ok {
+			serverKey = key
+		}
+	}
+	if serverKey == "" {
+		return fail(fmt.Errorf("server: the server did not print its public key"))
+	}
 	fmt.Println("verifying server ... OK")
 
 	fmt.Println("starting client:")
-	client, err := startChild("client", clientPath, []string{address}, []string{
+	client, err := startChild("client", clientPath, []string{address, serverKey}, []string{
 		"ROCKETNET_CLIENT_CONNECT_ADDRESS=" + address,
 		"ROCKETNET_CLIENT_TRANSPORT=portable",
 	})

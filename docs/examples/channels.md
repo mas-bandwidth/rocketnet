@@ -47,15 +47,17 @@ conditions held.
 ## Public calls it uses
 
 - `rocketnet_init`, `rocketnet_term`
-- `rocketnet_server_dev_config_sized`, `rocketnet_server_create_sized`,
-  `rocketnet_server_port`, `rocketnet_server_update`,
-  `rocketnet_server_client_connected`, `rocketnet_server_receive_messages`,
-  `rocketnet_server_send_packets`,
-  `rocketnet_server_destroy`
-- `rocketnet_client_default_config_sized`, `rocketnet_client_create_sized`,
-  `rocketnet_client_state`, `rocketnet_client_update`,
-  `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
-  `rocketnet_client_receive_messages`,
-  `rocketnet_client_send_packets`, `rocketnet_client_destroy`
-- `rocketnet_write_dev_connect_token`
-- `rocketnet_time`, `rocketnet_sleep`
+- `rocketnet_server_default_config`, `rocketnet_server_create`,
+  `rocketnet_server_start`, `rocketnet_server_destroy`,
+  `rocketnet_server_update`, `rocketnet_server_send_packets`,
+  `rocketnet_server_port`, `rocketnet_server_ipv4_address`,
+  `rocketnet_server_public_key`, `rocketnet_server_client_connected`,
+  `rocketnet_server_receive_messages`
+- `rocketnet_client_default_config`, `rocketnet_client_create`,
+  `rocketnet_client_connect`, `rocketnet_client_destroy`,
+  `rocketnet_client_update`, `rocketnet_client_send_packets`,
+  `rocketnet_client_state`, `rocketnet_client_start_message`,
+  `rocketnet_client_finish_message`, `rocketnet_client_receive_messages`
+- `rocketnet_create_dev_connect_token` and
+  `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` (development library only)
+- `rocketnet_status_name`, `rocketnet_time`, `rocketnet_sleep`

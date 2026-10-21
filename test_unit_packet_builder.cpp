@@ -95,9 +95,9 @@ static void test_small_records_packed_several_per_packet()
     memset( &limits, 0, sizeof( limits ) );
     limits.num_channels = (int) region->num_channels;
     limits.enabled_codes = rocketnet_message_enabled_codes( ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION );
-    limits.window_messages = (int) region->window;
+    limits.reliable_messages_in_flight = (int) region->window;
     limits.max_message_bytes = (int) region->max_message_bytes;
-    limits.receive_ring_bytes = (int) region->ring_bytes;
+    limits.receive_message_buffer_bytes = (int) region->ring_bytes;
 
     const int payload_bytes = (int) builder.packet[0].payload_bytes;
     rocketnet_unit_check( payload_bytes > 0 );
@@ -169,9 +169,9 @@ static void test_builder_obeys_budget_and_class_order()
     memset( &limits, 0, sizeof( limits ) );
     limits.num_channels = (int) region->num_channels;
     limits.enabled_codes = rocketnet_message_enabled_codes( ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION );
-    limits.window_messages = (int) region->window;
+    limits.reliable_messages_in_flight = (int) region->window;
     limits.max_message_bytes = (int) region->max_message_bytes;
-    limits.receive_ring_bytes = (int) region->ring_bytes;
+    limits.receive_message_buffer_bytes = (int) region->ring_bytes;
 
     struct rocketnet_message_reader_t reader;
     rocketnet_unit_check( rocketnet_message_reader_begin( &reader, frames[0], (int) builder.packet[0].payload_bytes, &limits ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
@@ -224,8 +224,7 @@ static void test_builder_obeys_budget_and_class_order()
 static void test_packet_builder_no_allocation_after_create()
 {
     rocketnet_term();                                           // the allocator is replaced only before init
-    rocketnet_unit_check( rocketnet_set_allocator( builder_malloc, builder_free ) == ROCKETNET_STATUS_OK );
-    rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL, builder_malloc, builder_free ) == ROCKETNET_STATUS_OK );
 
     builder_allocs = 0;
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );
@@ -278,8 +277,7 @@ static void test_packet_builder_no_allocation_after_create()
 
     rn_arena_destroy( arena );
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-    rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
 // rocketnet_message_record_valid (sdk/rocketnet_message.cpp) is the writer's

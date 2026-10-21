@@ -11,8 +11,8 @@
     order, the sequenced modes for strictly increasing sequences, the receipt
     modes for exactly one receipt per serial, and the over-maximum start is
     refused with its named counter. Codes 0 and 1 one past their
-    single-record maxima start as their reliable twins (promotion, as
-    RakNet's ReliabilityLayer does); their over-maximum is max_message_bytes.
+    single-record maxima start as their reliable twins (the promotion
+    rule); their over-maximum is max_message_bytes.
 
     One window on one connection, ending in a clean disconnect the server
     sees: every mode at once on every channel the config allows, both
@@ -113,7 +113,7 @@ static int live_matrix_sequenced( int mode )
     return mode == 1 || mode == 4;
 }
 
-// RakNet ReliabilityLayer promotion: code 0 above 1,411 travels as code 2,
+// The promotion rule: code 0 above 1,411 travels as code 2,
 // and code 1 above 1,405 (channels below 256) as code 4
 static int live_matrix_promoted( int mode, uint32_t length )
 {
@@ -633,7 +633,7 @@ static void live_matrix_flush( struct live_matrix_t * m )
 static void live_matrix_connect( struct live_matrix_t * m )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    live_matrix_check( rocketnet_write_dev_connect_token( m->server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( 0, live_matrix_now( m ) ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    live_matrix_check( rocketnet_write_test_connect_token( m->server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( 0, live_matrix_now( m ) ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     m->client = rocketnet_message_client_create_ex( NULL, token, NULL, &m->message_config, NULL, 0, LIVE_MATRIX_SEND_KBPS, NULL, 1 );
     live_matrix_check( m->client );
 
@@ -671,7 +671,7 @@ static void live_matrix_over_maximum( struct live_matrix_t * m, int direction )
             uint32_t over = rocketnet_live_mode_max( &m->live, mode ) + 1;
             if ( mode <= 1 )
             {
-                // RakNet ReliabilityLayer promotion: one past the single-record
+                // The promotion rule: one past the single-record
                 // maximum of codes 0 and 1 starts as its reliable twin, never a
                 // refusal; abort gives the room back, so nothing is sent
                 const uint64_t failed_before = live_matrix_counter( live_matrix_sender_counters( m, direction ), ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
@@ -1105,14 +1105,14 @@ void live_message_matrix_loopback()
     // sized so nothing is dropped for want of room
     rocketnet_message_default_config( &m->message_config );
     m->message_config.num_channels = LIVE_MATRIX_CHANNELS;
-    m->message_config.send_buffer_bytes = 128 * 1024 * 1024;
+    m->message_config.send_message_buffer_bytes = 128 * 1024 * 1024;
     m->message_config.send_queue_messages = 16384;
     m->message_config.packets_in_flight = 2048;
     m->message_config.packets_per_update = 64;
-    m->message_config.unreliable_deliveries = 8192;
-    m->message_config.receipt_ring = 4096;
-    m->message_config.window_messages = 4096;
-    m->message_config.receive_ring_bytes = 1 << 20;
+    m->message_config.unreliable_messages_per_update = 8192;
+    m->message_config.max_message_receipts = 4096;
+    m->message_config.reliable_messages_in_flight = 4096;
+    m->message_config.receive_message_buffer_bytes = 1 << 20;
 
     m->live.seed = 0x5EED0001u;
     m->live.max_message_bytes = (uint32_t) m->message_config.max_message_bytes;

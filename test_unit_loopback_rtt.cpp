@@ -28,6 +28,7 @@
 #include "test/portable_crt.h"
 
 #include "rocketnet_internal.h"
+#include "rocketnet_connect_token.h"
 #include "sdk/rocketnet.h"
 #include "rocketnet_config.h"
 #include "rocketnet_counters.h"
@@ -111,13 +112,13 @@ static bool loopback_rtt_pair_setup( struct loopback_rtt_pair_t * pair )
     memset( pair, 0, sizeof( *pair ) );
     pair->time = 1000.0;
     loopback_rtt_clock = pair->time;
-    rocketnet_set_quiet( 1 );
+    rocketnet_quiet( 1 );
 
     const uint64_t protocol_id = 0x6c6f6f7072747431ULL;
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret_key[RN_TEST_BACKEND_SECRET_KEY_BYTES];
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret_key[RN_TEST_SERVER_SECRET_KEY_BYTES];
     rocketnet_unit_check( rocketnet_generate_backend_keypair( backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_generate_server_keypair( server_public_key, server_secret_key ) == ROCKETNET_STATUS_OK );
 
@@ -306,7 +307,7 @@ static void test_max_resend_delay_payload_reserve_without_acks()
         rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
         rocketnet_unit_check( arena != NULL );
         rn_region_t * region = rn_arena_region( arena, 0 );
-        const uint64_t budget = (uint64_t) budgets[side] * 125 * config.resend_delay_max_ms / 1000;
+        const uint64_t budget = (uint64_t) budgets[side] * 125 * config.message_resend_delay_max_ms / 1000;
         for ( int p = 0; p < 5; ++p )
         {
             rn_region_carve( region );

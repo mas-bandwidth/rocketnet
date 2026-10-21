@@ -41,6 +41,7 @@
 #include "rocketnet_config.h"
 #include "rocketnet_allocator.h"
 #include "rocketnet_memory.h"
+#include "rocketnet_message_object.h"
 
 // The interrupt matcher matches fixture lines. Transport creates live in functional/.
 
@@ -184,7 +185,7 @@ static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level
 // ROCKETNET_TEST_VERBOSE state, and restores the default printer -- which
 // is what verbose wants.
 
-static rocketnet_log_callback_t rocketnet_test_suite_log_function = NULL;
+static rocketnet_log_function_t rocketnet_test_suite_log_function = NULL;
 
 static void rocketnet_test_log_ring_clear()
 {
@@ -251,7 +252,7 @@ static void rocketnet_test_update_time_clamp_assert_hook( const char * condition
 
 void rocketnet_test_update_time_clamp()
 {
-    rocketnet_set_assert_callback( rocketnet_test_update_time_clamp_assert_hook );
+    rocketnet_assert_function( rocketnet_test_update_time_clamp_assert_hook );
     rocketnet_test_update_time_clamp_asserts = 0;
 
     const double last_good = 10.0;
@@ -295,7 +296,7 @@ void rocketnet_test_update_time_clamp()
 
     // restore the default (trapping) hook for the rest of the suite
 
-    rocketnet_set_assert_callback( NULL );
+    rocketnet_assert_function( NULL );
 }
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
@@ -1625,9 +1626,9 @@ void rocketnet_test_prefilter()
     // never drift: the send capacity is the largest multiple of eight
     // inside the budget less the fixed overhead and the minimum ack block,
     // and the receive constant is the ceiling less the same
-    rocketnet_check( ROCKETNET_MAX_PAYLOAD_BYTES ==
+    rocketnet_check( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ==
                      ( ( ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES ) / 8 ) * 8 );
-    rocketnet_check( ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES ==
+    rocketnet_check( ROCKETNET_RECEIVE_PAYLOAD_BYTES ==
                      ROCKETNET_RECEIVE_CEILING - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES );
 
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
@@ -2318,7 +2319,7 @@ static void rocketnet_test_server_setup( struct rocketnet_test_server_t * test )
     struct rocketnet_server_protocol_t * server = &test->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    memcpy( server->filter_value, tag, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( server->packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server->backend_public_key, rocketnet_test_backend_public_key, 32 );
     memcpy( server->server_public_key, rocketnet_test_server_public_key, 32 );
     memcpy( server->server_secret_key, rocketnet_test_server_secret_key, 32 );
@@ -2462,7 +2463,7 @@ void rocketnet_test_request_path_happy()
     // the client completes its side from the wire bytes alone: reconstruct
     // the sequence, read the clear nonce, derive, open, recover the server
     // ephemeral -- the full loop the handshake depends on
-    rocketnet_check( rocketnet_prefilter_check( response, response_bytes, test.server.filter_value ) == ROCKETNET_CONNECTION_CHALLENGE_PACKET );
+    rocketnet_check( rocketnet_prefilter_check( response, response_bytes, test.server.packet_filter ) == ROCKETNET_CONNECTION_CHALLENGE_PACKET );
     const uint8_t * p = response + ROCKETNET_PREFILTER_BYTES;
     uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), 0 );
     rocketnet_check( sequence == 1 );
@@ -3210,7 +3211,7 @@ void rocketnet_test_request_path_slots_and_denial()
 
     // the client opens the denied from the wire: sequence 1, the clear
     // nonce, handshake keys derived from it
-    rocketnet_check( rocketnet_prefilter_check( response, response_bytes, test.server.filter_value ) == ROCKETNET_CONNECTION_DENIED_PACKET );
+    rocketnet_check( rocketnet_prefilter_check( response, response_bytes, test.server.packet_filter ) == ROCKETNET_CONNECTION_DENIED_PACKET );
     const uint8_t * p = response + ROCKETNET_PREFILTER_BYTES;
     uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), 0 );
     rocketnet_check( sequence == 1 );
@@ -4195,7 +4196,7 @@ static int rocketnet_test_write_session_packet_salted( uint8_t * packet, uint8_t
                                                        const uint8_t * salt, const uint8_t * key )
 {
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     memset( plaintext, 0, ROCKETNET_ACK_BLOCK_MIN_BYTES );
     if ( type_data_bytes > 0 )
         memcpy( plaintext + ROCKETNET_ACK_BLOCK_MIN_BYTES, type_data, (size_t) type_data_bytes );
@@ -4221,7 +4222,7 @@ static int rocketnet_test_write_session_packet_acking( uint8_t * packet, uint8_t
     block.first_range_length = run_length;
     block.num_ranges = 0;
 
-    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     int block_bytes = rocketnet_ack_block_write( plaintext, &block );
     if ( type_data_bytes > 0 )
         memcpy( plaintext + block_bytes, type_data, (size_t) type_data_bytes );
@@ -5243,7 +5244,7 @@ void rocketnet_test_keep_alive_pacing_survives_early_ack()
                 int block_bytes = rocketnet_ack_block_build( block, ROCKETNET_ACK_BLOCK_MAX_BYTES, &client.replay_session );
                 uint8_t early_ack[ROCKETNET_RECEIVE_CEILING];
                 int early_ack_bytes = rocketnet_write_sealed_packet( early_ack, ROCKETNET_CONNECTION_ACK_PACKET,
-                                                                     client.filter_value, client.send_sequence_session,
+                                                                     client.packet_filter, client.send_sequence_session,
                                                                      NULL, block, block_bytes,
                                                                      client.signed_fields.protocol_id, client.connection_salt,
                                                                      NULL, client.keys.session_client_to_server );
@@ -6722,6 +6723,7 @@ void rocketnet_test_server_keyless_config_has_no_keys()
     rocketnet_check( memcmp( config.server_public_key, zero, 32 ) != 0 );
 }
 
+#if !ROCKETNET_DEVELOPMENT
 void rocketnet_test_dev_keys_refused_in_release()
 {
     // In a release build a server whose config carries either published
@@ -6755,6 +6757,7 @@ void rocketnet_test_dev_keys_refused_in_release()
 
     rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40899", &config) == NULL );
 }
+#endif // !ROCKETNET_DEVELOPMENT: a development build accepts what this checks is refused
 
 
 void rocketnet_test_transport_payload_capacity()
@@ -6776,10 +6779,10 @@ void rocketnet_test_transport_payload_capacity()
     // fixed ceiling whatever this end's own send budget -- or the same loss
     // returns as an overrun instead
 
-    rocketnet_check( ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES ==
+    rocketnet_check( ROCKETNET_RECEIVE_PAYLOAD_BYTES ==
                      ROCKETNET_RECEIVE_CEILING - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES );
-    rocketnet_check( (size_t) ROCKETNET_MAX_PAYLOADS_PER_UPDATE * ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES
-                     >= (size_t) ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS * ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES );
+    rocketnet_check( (size_t) ROCKETNET_MAX_PAYLOADS_PER_UPDATE * ROCKETNET_RECEIVE_PAYLOAD_BYTES
+                     >= (size_t) ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS * ROCKETNET_RECEIVE_PAYLOAD_BYTES );
 }
 
 
@@ -6882,7 +6885,7 @@ void rocketnet_test_payload_size_sweep()
     rocketnet_check( rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
     rocketnet_check( rocketnet_test_pump( &test, &client, -1, 5.0 ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
-    uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
@@ -6892,7 +6895,7 @@ void rocketnet_test_payload_size_sweep()
 
     double time = 200.0;
 
-    for ( int size = 1; size <= ROCKETNET_MAX_PAYLOAD_BYTES; size++ )
+    for ( int size = 1; size <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES; size++ )
     {
         time += 0.001;
 
@@ -6917,8 +6920,8 @@ void rocketnet_test_payload_size_sweep()
     }
 
     // one past the maximum refuses to build, both sides
-    rocketnet_check( rocketnet_client_protocol_write_payload( &client, payload, ROCKETNET_MAX_PAYLOAD_BYTES + 1, time, packet ) == 0 );
-    rocketnet_check( rocketnet_server_protocol_write_payload( &test.server, 0, payload, ROCKETNET_MAX_PAYLOAD_BYTES + 1, time, packet ) == 0 );
+    rocketnet_check( rocketnet_client_protocol_write_payload( &client, payload, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1, time, packet ) == 0 );
+    rocketnet_check( rocketnet_server_protocol_write_payload( &test.server, 0, payload, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1, time, packet ) == 0 );
 
     rocketnet_test_server_teardown( &test );
     rocketnet_counters_assert_conserved( &client_counters );
@@ -7473,7 +7476,7 @@ void rocketnet_test_create_before_init_is_refused()
     // a refused create must allocate nothing: install a counting allocator and
     // assert it is never called. both callbacks, uninitialized, nothing live.
     rocketnet_test_allocator_calls = 0;
-    rocketnet_check( rocketnet_set_allocator( rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_allocator_ex( rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) == ROCKETNET_STATUS_OK );
 
     const uint64_t before = rocketnet_api_misuse_count();
 
@@ -7488,28 +7491,27 @@ void rocketnet_test_create_before_init_is_refused()
     rocketnet_check( rocketnet_test_allocator_calls == 0 );
 
     // restore the default allocator, then the library, for the worker's term
-    rocketnet_check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
 void rocketnet_test_allocator_refusal_is_returned()
 {
-    // after init a replacement is refused and counted
+    // after init, a second init with an allocator is refused
     const uint64_t before = rocketnet_api_misuse_count();
-    rocketnet_check( rocketnet_set_allocator( rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) != ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_init( NULL, rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) == ROCKETNET_STATUS_ALREADY_INITIALIZED );
 
-    // terminated with no live allocations: a partial set is still refused and
-    // counted; both callbacks are taken and return true
+    // terminated with no live allocations: a partial pair is refused and
+    // counted, and both functions are taken
     rocketnet_term();
-    rocketnet_check( rocketnet_set_allocator( NULL, rocketnet_test_allocator_free ) != ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_set_allocator( rocketnet_test_allocator_malloc, NULL ) != ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_api_misuse_count() == before + 3 );
+    rocketnet_check( rocketnet_init( NULL, NULL, rocketnet_test_allocator_free ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    rocketnet_check( rocketnet_init( NULL, rocketnet_test_allocator_malloc, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 2 );
 
-    rocketnet_check( rocketnet_set_allocator( rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_init( NULL, rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
 
-    // restore the default allocator, then the library, for the worker's term
-    rocketnet_check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    // the system allocator, then the library, for the worker's term
+    rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
 static int rocketnet_test_null_asserts = 0;
@@ -7540,40 +7542,20 @@ static void rocketnet_test_null_assert_hook( const char * condition, const char 
 static const char * rocketnet_test_exports[] =
 {
     "rocketnet_version",
-    "rocketnet_abi_version",
-    "rocketnet_abi_type_size",
-    "rocketnet_abi_field_count",
-    "rocketnet_abi_field_offset",
-    "rocketnet_abi_field_size",
     "rocketnet_init",
     "rocketnet_term",
-    "rocketnet_num_status_codes",
     "rocketnet_status_name",
-    "rocketnet_set_assert_callback",
-    "rocketnet_set_quiet",
-    "rocketnet_set_log_level",
-    "rocketnet_set_thread_priority",
-    "rocketnet_get_thread_priority",
-    "rocketnet_get_thread_priority_refusals",
-    "rocketnet_get_log_level",
+    "rocketnet_assert_function",
+    "rocketnet_quiet",
+    "rocketnet_log_level",
+    "rocketnet_thread_priority",
     "rocketnet_log_level_name",
-    "rocketnet_set_log_callback",
-    "rocketnet_api_misuse_count",
+    "rocketnet_log_function",
     "rocketnet_time",
     "rocketnet_sleep",
-    "rocketnet_set_allocator",
-    "rocketnet_generate_backend_keypair",
-    "rocketnet_generate_backend_keypair_from_seed",
-    "rocketnet_generate_server_keypair",
-    "rocketnet_write_production_connect_token",
-    "rocketnet_client_default_config",
-    "rocketnet_client_default_config_sized",
-    "rocketnet_client_validate_config",
-    "rocketnet_client_validate_config_sized",
+    "rocketnet_client_default_config_internal",
     "rocketnet_client_required_memory",
-    "rocketnet_client_required_memory_sized",
     "rocketnet_client_create",
-    "rocketnet_client_create_sized",
     "rocketnet_client_connect",
     "rocketnet_client_destroy",
     "rocketnet_client_update",
@@ -7581,8 +7563,6 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_client_disconnect",
     "rocketnet_client_state",
     "rocketnet_client_state_name",
-    "rocketnet_disconnect_reason_name",
-    "rocketnet_client_disconnect_reason",
     "rocketnet_client_index",
     "rocketnet_client_transport_name",
     "rocketnet_client_start_message",
@@ -7591,18 +7571,10 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_client_receive_messages",
     "rocketnet_client_receipts",
     "rocketnet_client_set_send_kbps",
-    "rocketnet_client_counter",
-    "rocketnet_client_stat",
-    "rocketnet_server_default_config",
-    "rocketnet_server_default_config_sized",
-    "rocketnet_server_dev_config",
-    "rocketnet_server_dev_config_sized",
-    "rocketnet_server_validate_config",
-    "rocketnet_server_validate_config_sized",
+    "rocketnet_client_stats",
+    "rocketnet_server_default_config_internal",
     "rocketnet_server_required_memory",
-    "rocketnet_server_required_memory_sized",
     "rocketnet_server_create",
-    "rocketnet_server_create_sized",
     "rocketnet_server_start",
     "rocketnet_server_stop",
     "rocketnet_server_running",
@@ -7610,6 +7582,9 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_server_update",
     "rocketnet_server_send_packets",
     "rocketnet_server_port",
+    "rocketnet_server_public_key",
+    "rocketnet_server_ipv4_address",
+    "rocketnet_server_ipv6_address",
     "rocketnet_server_transport_name",
     "rocketnet_server_max_clients",
     "rocketnet_server_num_connected_clients",
@@ -7618,38 +7593,26 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_server_disconnect_client",
     "rocketnet_server_disconnect_all_clients",
     "rocketnet_server_disconnect_reason",
+    "rocketnet_disconnect_reason_name",
     "rocketnet_server_start_message",
     "rocketnet_server_finish_message",
     "rocketnet_server_abort_message",
     "rocketnet_server_receive_messages",
     "rocketnet_server_receipts",
     "rocketnet_server_set_send_kbps",
-    "rocketnet_server_counter",
-    "rocketnet_server_stat",
-    "rocketnet_server_client_counter",
-    "rocketnet_server_client_stat",
+    "rocketnet_server_stats",
+    "rocketnet_server_client_stats",
 };
 
 static const char * rocketnet_test_public_null_case_exports[] =
 {
-    "rocketnet_abi_type_size",
-    "rocketnet_abi_field_count",
-    "rocketnet_abi_field_offset",
-    "rocketnet_abi_field_size",
-    "rocketnet_set_allocator",
-    "rocketnet_generate_backend_keypair",
-    "rocketnet_generate_backend_keypair_from_seed",
-    "rocketnet_generate_server_keypair",
-    "rocketnet_write_production_connect_token",
-    "rocketnet_client_default_config",
-    "rocketnet_client_default_config_sized",
+    "rocketnet_client_default_config_internal",
     "rocketnet_client_connect",
     "rocketnet_client_destroy",
     "rocketnet_client_update",
     "rocketnet_client_send_packets",
     "rocketnet_client_disconnect",
     "rocketnet_client_state",
-    "rocketnet_client_disconnect_reason",
     "rocketnet_client_index",
     "rocketnet_client_transport_name",
     "rocketnet_client_start_message",
@@ -7658,14 +7621,9 @@ static const char * rocketnet_test_public_null_case_exports[] =
     "rocketnet_client_receive_messages",
     "rocketnet_client_receipts",
     "rocketnet_client_set_send_kbps",
-    "rocketnet_client_counter",
-    "rocketnet_client_stat",
-    "rocketnet_server_default_config",
-    "rocketnet_server_default_config_sized",
-    "rocketnet_server_dev_config",
-    "rocketnet_server_dev_config_sized",
+    "rocketnet_client_stats",
+    "rocketnet_server_default_config_internal",
     "rocketnet_server_create",
-    "rocketnet_server_create_sized",
     "rocketnet_server_start",
     "rocketnet_server_stop",
     "rocketnet_server_running",
@@ -7673,6 +7631,9 @@ static const char * rocketnet_test_public_null_case_exports[] =
     "rocketnet_server_update",
     "rocketnet_server_send_packets",
     "rocketnet_server_port",
+    "rocketnet_server_public_key",
+    "rocketnet_server_ipv4_address",
+    "rocketnet_server_ipv6_address",
     "rocketnet_server_transport_name",
     "rocketnet_server_max_clients",
     "rocketnet_server_num_connected_clients",
@@ -7687,44 +7648,29 @@ static const char * rocketnet_test_public_null_case_exports[] =
     "rocketnet_server_receive_messages",
     "rocketnet_server_receipts",
     "rocketnet_server_set_send_kbps",
-    "rocketnet_server_counter",
-    "rocketnet_server_stat",
-    "rocketnet_server_client_counter",
-    "rocketnet_server_client_stat",
+    "rocketnet_server_stats",
+    "rocketnet_server_client_stats",
 };
 
 static const char * rocketnet_test_public_null_exempt_exports[] =
 {
     "rocketnet_version",
-    "rocketnet_abi_version",
     "rocketnet_init",
     "rocketnet_term",
-    "rocketnet_num_status_codes",
     "rocketnet_status_name",
-    "rocketnet_set_assert_callback",
-    "rocketnet_set_quiet",
-    "rocketnet_set_log_level",
-    "rocketnet_set_thread_priority",
-    "rocketnet_get_thread_priority",
-    "rocketnet_get_thread_priority_refusals",
-    "rocketnet_get_log_level",
+    "rocketnet_assert_function",
+    "rocketnet_quiet",
+    "rocketnet_log_level",
+    "rocketnet_thread_priority",
     "rocketnet_log_level_name",
-    "rocketnet_set_log_callback",
-    "rocketnet_api_misuse_count",
+    "rocketnet_log_function",
     "rocketnet_time",
     "rocketnet_sleep",
-    "rocketnet_client_validate_config",
-    "rocketnet_client_validate_config_sized",
     "rocketnet_client_required_memory",
-    "rocketnet_client_required_memory_sized",
     "rocketnet_client_create",
-    "rocketnet_client_create_sized",
     "rocketnet_client_state_name",
-    "rocketnet_disconnect_reason_name",
-    "rocketnet_server_validate_config",
-    "rocketnet_server_validate_config_sized",
     "rocketnet_server_required_memory",
-    "rocketnet_server_required_memory_sized",
+    "rocketnet_disconnect_reason_name",
 };
 
 
@@ -7739,30 +7685,26 @@ static const char * rocketnet_test_public_null_exempt_exports[] =
 // here, any table name the header does not declare, and any duplicate.
 static const char * rocketnet_test_layer_exports[] =
 {
-    "rocketnet_abi_version",
-    "rocketnet_abi_type_size",
-    "rocketnet_abi_field_count",
-    "rocketnet_abi_field_offset",
-    "rocketnet_abi_field_size",
     "rocketnet_init",
     "rocketnet_init_ex",
     "rocketnet_term",
     "rocketnet_term_ex",
-    "rocketnet_set_assert_callback",
-    "rocketnet_set_quiet",
-    "rocketnet_set_log_level",
-    "rocketnet_get_log_level",
+    "rocketnet_assert_function",
+    "rocketnet_quiet",
+    "rocketnet_log_level",
+    "rocketnet_log_level_current",
     "rocketnet_log_level_name",
-    "rocketnet_set_log_callback",
+    "rocketnet_log_function",
     "rocketnet_printf",
     "rocketnet_info",
     "rocketnet_warn",
     "rocketnet_error",
     "rocketnet_debug",
     "rocketnet_spam",
-    "rocketnet_set_allocator",
     "rocketnet_allocator_ex",
     "rocketnet_api_misuse_count",
+    "rocketnet_get_thread_priority",
+    "rocketnet_get_thread_priority_refusals",
     "rocketnet_malloc",
     "rocketnet_free",
     "rocketnet_clear_and_free",
@@ -7851,7 +7793,6 @@ static const char * rocketnet_test_layer_exports[] =
     "rocketnet_message_connection_bytes",
     "rocketnet_message_connection_sizing",
     "rocketnet_message_print_connection_sizing",
-    "rocketnet_num_status_codes",
     "rocketnet_status_name",
     "rocketnet_num_counters",
     "rocketnet_counter_value",
@@ -7905,17 +7846,12 @@ static const char * rocketnet_test_layer_exports[] =
 
 static const char * rocketnet_test_layer_null_case_exports[] =
 {
-    "rocketnet_abi_type_size",
-    "rocketnet_abi_field_count",
-    "rocketnet_abi_field_offset",
-    "rocketnet_abi_field_size",
     "rocketnet_printf",
     "rocketnet_info",
     "rocketnet_warn",
     "rocketnet_error",
     "rocketnet_debug",
     "rocketnet_spam",
-    "rocketnet_set_allocator",
     "rocketnet_allocator_ex",
     "rocketnet_user_id_string",
     "rocketnet_random_bytes",
@@ -8028,18 +7964,19 @@ static const char * rocketnet_test_layer_null_case_exports[] =
 
 static const char * rocketnet_test_layer_null_exempt_exports[] =
 {
-    "rocketnet_abi_version",
     "rocketnet_init",
     "rocketnet_init_ex",
     "rocketnet_term",
     "rocketnet_term_ex",
-    "rocketnet_set_assert_callback",
-    "rocketnet_set_quiet",
-    "rocketnet_set_log_level",
-    "rocketnet_get_log_level",
+    "rocketnet_assert_function",
+    "rocketnet_quiet",
+    "rocketnet_log_level",
+    "rocketnet_log_level_current",
     "rocketnet_log_level_name",
-    "rocketnet_set_log_callback",
+    "rocketnet_log_function",
     "rocketnet_api_misuse_count",
+    "rocketnet_get_thread_priority",
+    "rocketnet_get_thread_priority_refusals",
     "rocketnet_malloc",
     "rocketnet_free",
     "rocketnet_clear_and_free",
@@ -8060,7 +7997,6 @@ static const char * rocketnet_test_layer_null_exempt_exports[] =
     "rocketnet_message_connection_bytes",
     "rocketnet_message_connection_sizing",
     "rocketnet_message_print_connection_sizing",
-    "rocketnet_num_status_codes",
     "rocketnet_status_name",
     "rocketnet_num_counters",
     "rocketnet_counter_name",
@@ -8087,19 +8023,17 @@ static bool rocketnet_test_name_in( const char * name, const char * const * list
 void rocketnet_test_public_api_null()
 {
     void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) = rn_assert_function;
-    rocketnet_set_assert_callback( rocketnet_test_null_assert_hook );
+    rocketnet_assert_function( rocketnet_test_null_assert_hook );
 
     struct rocketnet_receipt_t receipts[2];
     struct rocketnet_client_config_t client_config;
     struct rocketnet_server_config_t server_config;
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES] = { 0 };
     const char * production_address[] = { "127.0.0.1:40000" };
+    char token_string[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES] = { 0 };
+    char address_string[ROCKETNET_MAX_ADDRESS_STRING_BYTES] = { 0 };
 
-    RN_TEST_ONE_MISUSE( rocketnet_abi_type_size( NULL ) );
-    RN_TEST_ONE_MISUSE( rocketnet_abi_field_count( NULL ) );
-    RN_TEST_ONE_MISUSE( rocketnet_abi_field_offset( NULL, NULL ) );
-    RN_TEST_ONE_MISUSE( rocketnet_abi_field_size( NULL, NULL ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_set_allocator( NULL, NULL ) != ROCKETNET_STATUS_OK ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_init( NULL, NULL, rocketnet_default_free_function ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_allocator_ex( NULL, NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_generate_backend_keypair( NULL, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_generate_backend_keypair_from_seed( NULL, token, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
@@ -8108,39 +8042,61 @@ void rocketnet_test_public_api_null()
                                                                                   1, 0, 1, 10, NULL, NULL,
                                                                                   ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
 
-    RN_TEST_ONE_MISUSE( (rocketnet_client_default_config_sized)( NULL, 0 ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( (rocketnet_client_default_config_sized)( NULL, sizeof( client_config ) ) != ROCKETNET_STATUS_OK ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_connect( NULL, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    // the inline default_config and the exported fill it calls: a NULL config
+    // is one counted misuse either way
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_default_config_internal( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_default_config( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+#if ROCKETNET_DEVELOPMENT
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_create_dev_connect_token( "127.0.0.1:40000", NULL, NULL, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 0, NULL, token_string ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_create_dev_connect_token( "127.0.0.1:40000", NULL, token, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 0, NULL, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+#endif // #if ROCKETNET_DEVELOPMENT
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_connect( NULL, token_string ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_SILENT_NULL( rocketnet_client_destroy( NULL ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_update( NULL, 1000.0 ) == ROCKETNET_UPDATE_OK ) );
+    RN_TEST_ONE_MISUSE( rocketnet_client_update( NULL, 1000.0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_client_send_packets( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_client_disconnect( NULL ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_state( NULL ) == ROCKETNET_CLIENT_STATE_INVALID ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_disconnect_reason( NULL ) == ROCKETNET_DISCONNECT_REASON_NONE ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_index( NULL ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_state( NULL ) == ROCKETNET_CLIENT_STATE_DISCONNECTED ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_index( NULL ) == -1 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_transport_name( NULL ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_start_message( NULL, 0, ROCKETNET_RELIABILITY_RELIABLE, 4 ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_finish_message( NULL, 4 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_client_abort_message( NULL ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_client_receive_messages( NULL, NULL ) ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_receive_messages( NULL ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_receipts( NULL, receipts, 2 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_set_send_kbps( NULL, 1000 ) != ROCKETNET_STATUS_OK ) );
-    for ( int i = 0; i <= ROCKETNET_CLIENT_COUNTER_COUNT; i++ )
-        RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_counter( NULL, (enum rocketnet_client_counter_t) i ) == 0 ) );
-    for ( int i = 0; i <= ROCKETNET_CLIENT_STAT_COUNT; i++ )
-        RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_stat( NULL, (enum rocketnet_client_stat_t) i ) == 0.0 ) );
 
-    RN_TEST_ONE_MISUSE( (rocketnet_server_default_config_sized)( NULL, 0 ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( (rocketnet_server_default_config_sized)( NULL, sizeof( server_config ) ) != ROCKETNET_STATUS_OK ) );
-    RN_TEST_ONE_MISUSE( (rocketnet_server_dev_config_sized)( NULL, 0 ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( (rocketnet_server_create_sized)( NULL, NULL, NULL, 0, NULL, 0, NULL ) == NULL ) );
+    // stats: a NULL stats pointer is one counted misuse and writes nothing; a
+    // NULL client is one counted misuse that zeroes the struct except the two
+    // process-wide fields, read after the misuse is counted
+    {
+        struct rocketnet_client_stats_t client_stats;
+        RN_TEST_ONE_MISUSE( rocketnet_client_stats( NULL, NULL ) );
+        memset( &client_stats, 0xA5, sizeof( client_stats ) );
+        RN_TEST_ONE_MISUSE( rocketnet_client_stats( NULL, &client_stats ) );
+        rocketnet_check( client_stats.api_misuses == rocketnet_api_misuse_count() );
+        rocketnet_check( client_stats.thread_priority_refusals == rocketnet_get_thread_priority_refusals() );
+        rocketnet_check( client_stats.packets_sent == 0 && client_stats.packets_received == 0 && client_stats.bytes_sent == 0 && client_stats.bytes_received == 0 );
+        rocketnet_check( client_stats.payloads_received == 0 && client_stats.messages_resent == 0 && client_stats.messages_duplicated == 0 );
+        rocketnet_check( client_stats.receipts_acked == 0 && client_stats.receipts_lost == 0 && client_stats.messages_dropped_over_budget == 0 );
+        rocketnet_check( client_stats.messages_dropped_not_connected == 0 );
+        rocketnet_check( client_stats.rtt == 0.0 && client_stats.jitter == 0.0 && client_stats.packet_loss == 0.0 );
+        rocketnet_check( client_stats.packets_sent_per_second == 0.0 && client_stats.packets_received_per_second == 0.0 );
+        rocketnet_check( client_stats.bandwidth_sent_kbps == 0.0 && client_stats.bandwidth_received_kbps == 0.0 );
+    }
+
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_default_config_internal( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_default_config( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_create( NULL, NULL, NULL, NULL, NULL ) == NULL ) );
     RN_TEST_SILENT_NULL( rocketnet_server_destroy( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_start( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_stop( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_running( NULL ) == 0 ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_update( NULL, 1000.0 ) == ROCKETNET_UPDATE_OK ) );
+    RN_TEST_ONE_MISUSE( rocketnet_server_update( NULL, 1000.0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_send_packets( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_port( NULL ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_server_public_key( NULL, token ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_server_ipv4_address( NULL, address_string, sizeof( address_string ) ) ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_server_ipv6_address( NULL, address_string, sizeof( address_string ) ) ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_transport_name( NULL ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_max_clients( NULL ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_num_connected_clients( NULL ) == 0 ) );
@@ -8150,39 +8106,57 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_server_disconnect_all_clients( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_disconnect_reason( NULL, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_start_message( NULL, 0, 0, ROCKETNET_RELIABILITY_RELIABLE, 4 ) == NULL ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_finish_message( NULL, 0, 4 ) == 0 ) );
-    RN_TEST_ONE_MISUSE( rocketnet_server_abort_message( NULL, 0 ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_server_receive_messages( NULL, NULL ) ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_finish_message( NULL, 4 ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_server_abort_message( NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_receive_messages( NULL ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_receipts( NULL, 0, receipts, 2 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_set_send_kbps( NULL, 0, 1000 ) != ROCKETNET_STATUS_OK ) );
-    for ( int i = 0; i <= ROCKETNET_SERVER_COUNTER_COUNT; i++ )
-        RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_counter( NULL, (enum rocketnet_server_counter_t) i ) == 0 ) );
-    for ( int i = 0; i <= ROCKETNET_SERVER_STAT_COUNT; i++ )
-        RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_stat( NULL, (enum rocketnet_server_stat_t) i ) == 0.0 ) );
-    for ( int i = 0; i <= ROCKETNET_SERVER_CLIENT_COUNTER_COUNT; i++ )
-        RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_client_counter( NULL, 0, (enum rocketnet_server_client_counter_t) i ) == 0 ) );
-    for ( int i = 0; i <= ROCKETNET_SERVER_CLIENT_STAT_COUNT; i++ )
-        RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_client_stat( NULL, 0, (enum rocketnet_server_client_stat_t) i ) == 0.0 ) );
+
+    {
+        struct rocketnet_server_stats_t server_stats;
+        RN_TEST_ONE_MISUSE( rocketnet_server_stats( NULL, NULL ) );
+        memset( &server_stats, 0xA5, sizeof( server_stats ) );
+        RN_TEST_ONE_MISUSE( rocketnet_server_stats( NULL, &server_stats ) );
+        rocketnet_check( server_stats.api_misuses == rocketnet_api_misuse_count() );
+        rocketnet_check( server_stats.thread_priority_refusals == rocketnet_get_thread_priority_refusals() );
+        rocketnet_check( server_stats.packets_sent == 0 && server_stats.packets_received == 0 && server_stats.bytes_sent == 0 && server_stats.bytes_received == 0 );
+        rocketnet_check( server_stats.connections_accepted == 0 && server_stats.connections_denied_full == 0 && server_stats.handshakes_dropped_over_budget == 0 );
+        rocketnet_check( server_stats.payloads_received == 0 && server_stats.messages_resent == 0 && server_stats.messages_duplicated == 0 );
+        rocketnet_check( server_stats.receipts_acked == 0 && server_stats.receipts_lost == 0 && server_stats.messages_dropped_over_budget == 0 && server_stats.messages_dropped_not_connected == 0 );
+        rocketnet_check( server_stats.packets_sent_per_second == 0.0 && server_stats.packets_received_per_second == 0.0 );
+        rocketnet_check( server_stats.bandwidth_sent_kbps == 0.0 && server_stats.bandwidth_received_kbps == 0.0 );
+
+        // the per-client struct has no process-wide fields: a NULL server zeroes all of it
+        struct rocketnet_server_client_stats_t slot_stats;
+        RN_TEST_ONE_MISUSE( rocketnet_server_client_stats( NULL, 0, NULL ) );
+        memset( &slot_stats, 0xA5, sizeof( slot_stats ) );
+        RN_TEST_ONE_MISUSE( rocketnet_server_client_stats( NULL, 0, &slot_stats ) );
+        rocketnet_check( slot_stats.packets_sent == 0 && slot_stats.packets_received == 0 && slot_stats.bytes_sent == 0 && slot_stats.bytes_received == 0 );
+        rocketnet_check( slot_stats.rtt == 0.0 && slot_stats.jitter == 0.0 && slot_stats.packet_loss == 0.0 );
+        rocketnet_check( slot_stats.bandwidth_sent_kbps == 0.0 && slot_stats.bandwidth_received_kbps == 0.0 && slot_stats.bandwidth_acked_kbps == 0.0 );
+    }
 
     // the exempt: NULL is the defaults, or there is no pointer
     const uint64_t before = rocketnet_api_misuse_count();
     rocketnet_check( rocketnet_version() == ROCKETNET_VERSION );
-    rocketnet_check( (rocketnet_client_validate_config_sized)( NULL, 0 ) == ROCKETNET_STATUS_OK );
-    rocketnet_check( (rocketnet_client_required_memory_sized)( NULL, 0 ) > 0 );
-    rocketnet_check( (rocketnet_server_validate_config_sized)( NULL, 0 ) == ROCKETNET_STATUS_OK );
-    rocketnet_check( (rocketnet_server_required_memory_sized)( NULL, 0 ) > 0 );
+    rocketnet_check( rocketnet_client_required_memory( NULL ) > 0 );
+    rocketnet_check( rocketnet_server_required_memory( NULL ) > 0 );
     rocketnet_check( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_CONNECTED ) != NULL );
     rocketnet_check( rocketnet_api_misuse_count() == before );
 
-    // a wrong size is refused before anything else, NULL config or not
-    rocketnet_client_default_config( &client_config );
-    rocketnet_server_default_config( &server_config );
-    rocketnet_check( (rocketnet_client_default_config_sized)( &client_config, sizeof( client_config ) - 4 ) != ROCKETNET_STATUS_OK );
-    rocketnet_check( (rocketnet_server_default_config_sized)( &server_config, sizeof( server_config ) - 4 ) != ROCKETNET_STATUS_OK );
-    rocketnet_check( (rocketnet_client_create_sized)( NULL, &client_config, sizeof( client_config ) - 4, NULL, 0, NULL ) == NULL );
-    rocketnet_check( (rocketnet_server_create_sized)( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) - 4, NULL, 0, NULL ) == NULL );
-    rocketnet_check( (rocketnet_client_default_config_sized)( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
-    rocketnet_check( (rocketnet_server_default_config_sized)( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
+    // a config_bytes below the first field is refused before anything else
+    rocketnet_check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
+    client_config.config_bytes = sizeof( size_t ) - 1;
+    server_config.config_bytes = sizeof( size_t ) - 1;
+    rocketnet_check( rocketnet_client_default_config_internal( &client_config ) == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
+    rocketnet_check( rocketnet_server_default_config_internal( &server_config ) == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    rocketnet_check( rocketnet_client_create( NULL, &client_config, &create_status ) == NULL && create_status == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
+    create_status = ROCKETNET_STATUS_OK;
+    rocketnet_check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status ) == NULL && create_status == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
+    rocketnet_check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
 
     // the audit itself: every export is a case or exempt, exactly once
     const int num_exports = (int)( sizeof(rocketnet_test_exports) / sizeof(rocketnet_test_exports[0]) );
@@ -8196,12 +8170,12 @@ void rocketnet_test_public_api_null()
     }
     rocketnet_check( num_cases + num_exempt == num_exports );
 
-    rocketnet_set_assert_callback( saved_assert );
+    rocketnet_assert_function( saved_assert );
 }
 
 // The version is one integer, and the library and the header agree on it.
-// The text form is the integers plus the prerelease: "1.0.0-preview-1" for
-// v1.0.0-preview-1, "1.0.0" for a final release, "dev" in a development build.
+// The text form is "v", the integers and the prerelease: "v1.0.0-preview-1"
+// for this release, "dev" in a development build.
 
 void rocketnet_test_version_is_one_integer()
 {
@@ -8209,21 +8183,20 @@ void rocketnet_test_version_is_one_integer()
     rocketnet_check( ROCKETNET_VERSION == ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH );
 #if ROCKETNET_DEVELOPMENT
     rocketnet_check( strcmp( ROCKETNET_VERSION_FULL, "dev" ) == 0 );
-    rocketnet_check( strcmp( ROCKETNET_VERSION_PRERELEASE, "" ) == 0 );
 #else // #if ROCKETNET_DEVELOPMENT
+    // the text form is "v" and the integers, then the end or a "-" prerelease
     char expected[64];
-    if ( ROCKETNET_VERSION_PRERELEASE[0] != '\0' )
-        snprintf( expected, sizeof( expected ), "%d.%d.%d-%s", ROCKETNET_VERSION_MAJOR, ROCKETNET_VERSION_MINOR, ROCKETNET_VERSION_PATCH, ROCKETNET_VERSION_PRERELEASE );
-    else
-        snprintf( expected, sizeof( expected ), "%d.%d.%d", ROCKETNET_VERSION_MAJOR, ROCKETNET_VERSION_MINOR, ROCKETNET_VERSION_PATCH );
-    rocketnet_check( strcmp( ROCKETNET_VERSION_FULL, expected ) == 0 );
+    snprintf( expected, sizeof( expected ), "v%d.%d.%d", ROCKETNET_VERSION_MAJOR, ROCKETNET_VERSION_MINOR, ROCKETNET_VERSION_PATCH );
+    const size_t length = strlen( expected );
+    rocketnet_check( strncmp( ROCKETNET_VERSION_FULL, expected, length ) == 0 );
+    rocketnet_check( ROCKETNET_VERSION_FULL[length] == '\0' || ROCKETNET_VERSION_FULL[length] == '-' );
 #endif // #if ROCKETNET_DEVELOPMENT
 }
 
 void rocketnet_test_public_api_null_is_a_counted_no_op()
 {
     void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) = rn_assert_function;
-    rocketnet_set_assert_callback( rocketnet_test_null_assert_hook );
+    rocketnet_assert_function( rocketnet_test_null_assert_hook );
     rocketnet_test_null_asserts = 0;
 
     uint64_t before;
@@ -8493,22 +8466,6 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     rocketnet_check( rocketnet_user_id_string( 0, NULL, 0 ) == NULL );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
-    before = rocketnet_api_misuse_count();
-    rocketnet_check( rocketnet_abi_type_size( NULL ) == SIZE_MAX );
-    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
-
-    before = rocketnet_api_misuse_count();
-    rocketnet_check( rocketnet_abi_field_count( NULL ) == -1 );
-    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
-
-    before = rocketnet_api_misuse_count();
-    rocketnet_check( rocketnet_abi_field_offset( NULL, NULL ) == SIZE_MAX );
-    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
-
-    before = rocketnet_api_misuse_count();
-    rocketnet_check( rocketnet_abi_field_size( NULL, NULL ) == SIZE_MAX );
-    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
-
     // the log entry points refuse a NULL format
 
     before = rocketnet_api_misuse_count();
@@ -8582,9 +8539,9 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     rocketnet_check( rocketnet_message_server_create_sized( NULL, NULL, NULL, 0, NULL, 0, NULL, 0, 0 ) == NULL );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
-    // rocketnet_set_allocator refuses a NULL callback in a partial or full set
+    // rocketnet_init refuses a partial allocator pair
     before = rocketnet_api_misuse_count();
-    rocketnet_check( rocketnet_set_allocator( NULL, NULL ) != ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_init( NULL, rocketnet_default_malloc_function, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();
@@ -8709,7 +8666,7 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
 
     (void) client_index;
 
-    rocketnet_set_assert_callback( saved_assert );
+    rocketnet_assert_function( saved_assert );
 }
 
 // --- the general acks ---
@@ -10440,12 +10397,12 @@ void rocketnet_test_ack_payload_seal_with_ranges()
     // range needs, so its block truncates to the minimum.
 
     const int full = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES - 4;
-    rocketnet_check( full <= ROCKETNET_MAX_PAYLOAD_BYTES );
+    rocketnet_check( full <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
 
     uint8_t frame[2048];
     memset( frame, 0xEE, sizeof(frame) );
 
-    uint8_t expected[ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t expected[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     rocketnet_test_generate_payload( expected, full );
     memcpy( frame + ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET, expected, (size_t) full );
 
@@ -10525,14 +10482,14 @@ void rocketnet_test_fragment_plan()
     int count, stride;
     rocketnet_check( !rocketnet_fragment_plan( 0, &count, &stride ) );
     rocketnet_check( !rocketnet_fragment_plan( 1, &count, &stride ) );
-    rocketnet_check( !rocketnet_fragment_plan( ROCKETNET_MAX_PAYLOAD_BYTES, &count, &stride ) );
+    rocketnet_check( !rocketnet_fragment_plan( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &count, &stride ) );
     rocketnet_check( !rocketnet_fragment_plan( ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES + 1, &count, &stride ) );
 
     // one byte over a single packet splits into two near-halves, never a
     // full fragment and an empty remainder
-    rocketnet_check( rocketnet_fragment_plan( ROCKETNET_MAX_PAYLOAD_BYTES + 1, &count, &stride ) );
+    rocketnet_check( rocketnet_fragment_plan( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1, &count, &stride ) );
     rocketnet_check( count == 2 );
-    rocketnet_check( stride == ( ROCKETNET_MAX_PAYLOAD_BYTES + 2 ) / 2 );
+    rocketnet_check( stride == ( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 2 ) / 2 );
 
     // exactly two full strides is two full fragments
     rocketnet_check( rocketnet_fragment_plan( 2 * ROCKETNET_MAX_FRAGMENT_BYTES, &count, &stride ) );
@@ -10546,7 +10503,7 @@ void rocketnet_test_fragment_plan()
 
     // the whole range: every plan reconstructs its payload exactly, inside
     // every cap, with a non-empty remainder
-    for ( int payload_bytes = ROCKETNET_MAX_PAYLOAD_BYTES + 1; payload_bytes <= ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES; payload_bytes++ )
+    for ( int payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1; payload_bytes <= ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES; payload_bytes++ )
     {
         rocketnet_check( rocketnet_fragment_plan( payload_bytes, &count, &stride ) );
         rocketnet_check( count >= 2 && count <= ROCKETNET_MAX_FRAGMENTS );
@@ -11029,7 +10986,7 @@ void rocketnet_test_client_protocol_refuses_a_small_capacity()
     // the same packet, untouched by the refused call, is accepted whole into a
     // full buffer and lands byte-exact
 
-    uint8_t full[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+    uint8_t full[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
     payload_bytes = 0;
     rocketnet_check( rocketnet_client_protocol_process_packet( &pair.client, packet, packet_bytes, pair.time,
                                                               full, (int) sizeof(full), &payload_bytes ) );
@@ -11182,7 +11139,7 @@ static int rocketnet_test_seal_raw_fragment( struct rocketnet_test_fragment_pair
     uint64_t sequence;
     rocketnet_check( rocketnet_client_protocol_start_fragments( &pair->client, 1, &sequence ) );
     int bytes = rocketnet_write_sealed_packet( out_packet, ROCKETNET_CONNECTION_FRAGMENT_PACKET,
-                                               pair->client.filter_value, sequence,
+                                               pair->client.packet_filter, sequence,
                                                NULL, plaintext, plaintext_bytes,
                                                pair->client.signed_fields.protocol_id, pair->client.connection_salt,
                                                NULL, pair->client.keys.session_client_to_server );
@@ -11529,7 +11486,7 @@ void rocketnet_test_fragment_before_connected_touches_no_reassembly()
     // sealed by hand under the client's live session keys: the send path
     // itself is connected-only, so the crafted packet names sequence 1
     int sealed = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_FRAGMENT_PACKET,
-                                                pair.client.filter_value, 1,
+                                                pair.client.packet_filter, 1,
                                                 NULL, plaintext, ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES + 1,
                                                 pair.client.signed_fields.protocol_id, pair.client.connection_salt,
                                                 NULL, pair.client.keys.session_client_to_server );
@@ -12394,6 +12351,13 @@ static void rocketnet_test_env_save( struct rocketnet_test_env_guard_t * guard, 
         snprintf( guard->saved, sizeof(guard->saved), "%s", value.c_str() );
 }
 
+// save the variable, then clear it for the test; env_restore puts it back
+static void rocketnet_test_env_clear( struct rocketnet_test_env_guard_t * guard, const char * name )
+{
+    rocketnet_test_env_save( guard, name );
+    unsetenv( name );
+}
+
 // the same platform truth the empty-value case below is skipped for bounds
 // this restore on windows: a guard that saved a set-but-empty value would
 // put back a DELETED variable rather than an empty one. the state is
@@ -12439,6 +12403,8 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
     for ( int i = 0; i < num_fields; i++ )
     {
         const struct rocketnet_config_field_t * field = &fields[i];
+        if ( ( field->flags & ROCKETNET_CONFIG_NO_ENV ) != 0 )
+            continue;                                   // the public server makes its own keypair: no env form
 
         char env_name[128];
         rocketnet_check( rocketnet_config_env_var_name_for( transport_name, field->name, env_name, sizeof(env_name) ) );
@@ -12576,33 +12542,107 @@ static const struct rocketnet_config_field_t * rocketnet_test_find_field( const 
     return NULL;
 }
 
-// Every field of a public config struct, walked from its ABI descriptors, is
-// one row of the tables the env overlay reads -- the endpoint's transport
-// table, the message table or the budget table -- except the callbacks, which
+// Every field of a public config struct, walked from the local descriptor
+// tables below (one row per field, offsetof and sizeof), is one row of the
+// tables the env overlay reads -- the endpoint's transport table, the message
+// table or the budget table -- except config_bytes and the callbacks, which
 // have no env form. The descriptors are proven complete first: sorted by
-// offset they tile the struct with no gap a field could hide in. So a field
-// added to the struct without a table row, or to the struct without a
-// descriptor, fails here; and each table's rows round-trip from the
-// environment in rocketnet_test_config_table_round_trip.
+// offset they tile the struct with no gap a field could hide in, and they end
+// at its size. So a field added to the struct without a table row, or to the
+// struct without a descriptor, fails here; and each table's rows round-trip
+// from the environment in rocketnet_test_config_table_round_trip.
+
+struct rn_test_config_field_t
+{
+    const char * name;
+    size_t offset;
+    size_t size;
+};
+
+#define RN_TEST_CONFIG_FIELD( type, field ) { #field, offsetof( struct type, field ), sizeof( ( (struct type *) NULL )->field ) }
+
+static const struct rn_test_config_field_t rn_test_client_config_fields[] =
+{
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, config_bytes ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, transport ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, state_change_callback ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, packet_filter ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, max_payload_bytes ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, max_fragmented_messages ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, send_kbps ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, num_channels ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, reliable_messages_in_flight ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, receive_message_buffer_bytes ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, max_message_bytes ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, send_message_buffer_bytes ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, send_queue_messages ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, packets_in_flight ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, packets_per_update ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, unreliable_messages_per_update ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, sequenced_messages_held ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, max_message_receipts ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, message_resend_delay_initial_ms ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, message_resend_delay_min_ms ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, message_resend_delay_max_ms ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, reliable_message_timeout_ms ),
+};
+
+static const struct rn_test_config_field_t rn_test_server_config_fields[] =
+{
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, config_bytes ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, protocol_id ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, max_clients ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, packet_filter ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, backend_public_key ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_xdp_queues ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_os_cpus ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, max_payload_bytes ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, max_fragmented_messages ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, max_timeout_seconds ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, handshake_deadline_seconds ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, transport ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, per_client_send_kbps ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_channels ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, reliable_messages_in_flight ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, receive_message_buffer_bytes ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, max_message_bytes ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, send_message_buffer_bytes ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, send_queue_messages ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, packets_in_flight ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, packets_per_update ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, unreliable_messages_per_update ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, sequenced_messages_held ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, max_message_receipts ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, message_resend_delay_initial_ms ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, message_resend_delay_min_ms ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, message_resend_delay_max_ms ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, reliable_message_timeout_ms ),
+};
+
+#undef RN_TEST_CONFIG_FIELD
 
 static void rocketnet_test_public_config_fields_have_env( const char * type, const char * endpoint,
+                                                          const struct rn_test_config_field_t * descriptors, int count, size_t type_size,
                                                           const struct rocketnet_config_field_t * transport_fields, int num_transport_fields,
                                                           const struct rocketnet_config_field_t * message_fields, int num_message_fields,
                                                           const struct rocketnet_config_field_t * budget_fields, int num_budget_fields )
 {
-    const int count = rocketnet_abi_field_count( type );
     rocketnet_check( count > 0 && count <= 64 );
+
+    // config_bytes is the first field, at offset 0, the size of a size_t
+    rocketnet_check( strcmp( descriptors[0].name, "config_bytes" ) == 0 );
+    rocketnet_check( descriptors[0].offset == 0 && descriptors[0].size == sizeof( size_t ) );
 
     size_t offsets[64];
     size_t sizes[64];
     for ( int i = 0; i < count; i++ )
     {
-        const char * name = rocketnet_abi_field_name( type, i );
+        const char * name = descriptors[i].name;
         rocketnet_check( name != NULL );
-        offsets[i] = rocketnet_abi_field_offset( type, name );
-        sizes[i] = rocketnet_abi_field_size( type, name );
+        offsets[i] = descriptors[i].offset;
+        sizes[i] = descriptors[i].size;
 
-        if ( strcmp( name, "state_change_callback" ) == 0 || strcmp( name, "time_callback" ) == 0 )
+        if ( strcmp( name, "config_bytes" ) == 0 || strcmp( name, "state_change_callback" ) == 0 || strcmp( name, "time_callback" ) == 0 )
             continue;
 
         const char * row = strcmp( name, "transport" ) == 0 ? "transport" : name;
@@ -12639,17 +12679,26 @@ static void rocketnet_test_public_config_fields_have_env( const char * type, con
         rocketnet_check( offsets[next] - end < align || ( offsets[next] == end ) );
         end = offsets[next] + sizes[next];
     }
-    // the two configs have no tail padding, so a field missing from the
-    // descriptors at the end shows here too
-    rocketnet_check( rocketnet_abi_type_size( type ) == end );
+    // a field missing from the descriptors at the end shows here too: only
+    // the struct's tail padding may follow the last field
+    rocketnet_check( type_size == ( end + sizeof( void * ) - 1 ) / sizeof( void * ) * sizeof( void * ) );
 }
 
 
+// the defaults, then the published development keys set by hand, explicitly:
+// there is no dev_config helper
+static void rocketnet_test_server_dev_keys_config( struct rocketnet_server_config_t * config )
+{
+    rocketnet_check( rocketnet_server_default_config( config ) == ROCKETNET_STATUS_OK );
+    config->protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
+    memcpy( config->backend_public_key, rocketnet_dev_backend_public_key, 32 );
+}
+
 static void rocketnet_test_resolve_state_change( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state ) { (void) context; (void) previous_state; (void) current_state; }
-static double rocketnet_test_resolve_time( void * context ) { (void) context; return 1000.0; }
 
 // The split create makes: every public field lands in its layer field, the
-// strings are copied, a budget of 0 or less is the ceiling, a string too long
+// strings are copied, a budget of 0 is the default rate and a negative one is
+// refused, the ceiling is asked for explicitly, a string too long
 // for its layer field is refused, and the env overrides displace the struct
 // (DEFAULT < STRUCT < ENV) for the fields the split owns. No socket.
 
@@ -12675,36 +12724,35 @@ void rocketnet_test_public_config_resolve()
     // NULL is the defaults
 
     rocketnet_check( rocketnet_client_config_resolve( NULL, true, &client_transport, &message, &kbps ) );
-    rocketnet_check( kbps == ROCKETNET_DEFAULT_CLIENT_SEND_KBPS && message.num_channels == 32 && strcmp( client_transport.transport, "auto" ) == 0 );
+    rocketnet_check( kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS && message.num_channels == 32 && strcmp( client_transport.transport, "auto" ) == 0 );
     rocketnet_check( rocketnet_server_config_resolve( NULL, true, &server_transport, &message, &kbps ) );
-    rocketnet_check( kbps == ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS && server_transport.max_clients == 1000 && server_transport.public_address[0] == '\0' );
+    rocketnet_check( kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS && server_transport.max_clients == 1000 && server_transport.public_address[0] == '\0' );
 
     // every client field lands
 
     struct rocketnet_client_config_t client;
     rocketnet_client_default_config( &client );
     const uint8_t filter[4] = { 1, 2, 3, 4 };
-    memcpy( client.filter_value, filter, 4 );
+    memcpy( client.packet_filter, filter, 4 );
     client.max_payload_bytes = 2000;
-    client.num_reassembly_slots = 3;
+    client.max_fragmented_messages = 3;
     client.transport = "portable";
     client.state_change_callback = rocketnet_test_resolve_state_change;
-    client.time_callback = rocketnet_test_resolve_time;
     client.send_kbps = 1234;
-    client.num_channels = 7; client.window_messages = 128; client.receive_ring_bytes = 8192; client.max_message_bytes = 4096;
-    client.send_buffer_bytes = 20000; client.send_queue_messages = 32; client.packets_in_flight = 32; client.packets_per_update = 2;
-    client.unreliable_deliveries = 17; client.sequenced_holds = 5; client.receipt_ring = 32; client.resend_delay_initial_ms = 200;
-    client.resend_delay_min_ms = 20; client.resend_delay_max_ms = 300; client.reliable_timeout_ms = 5000;
+    client.num_channels = 7; client.reliable_messages_in_flight = 128; client.receive_message_buffer_bytes = 8192; client.max_message_bytes = 4096;
+    client.send_message_buffer_bytes = 20000; client.send_queue_messages = 32; client.packets_in_flight = 32; client.packets_per_update = 2;
+    client.unreliable_messages_per_update = 17; client.sequenced_messages_held = 5; client.max_message_receipts = 32; client.message_resend_delay_initial_ms = 200;
+    client.message_resend_delay_min_ms = 20; client.message_resend_delay_max_ms = 300; client.reliable_message_timeout_ms = 5000;
     rocketnet_check( rocketnet_client_config_resolve( &client, true, &client_transport, &message, &kbps ) );
-    rocketnet_check( memcmp( client_transport.filter_value, filter, 4 ) == 0 );
-    rocketnet_check( client_transport.max_payload_bytes == 2000 && client_transport.num_reassembly_slots == 3 );
+    rocketnet_check( memcmp( client_transport.packet_filter, filter, 4 ) == 0 );
+    rocketnet_check( client_transport.max_payload_bytes == 2000 && client_transport.max_fragmented_messages == 3 );
     rocketnet_check( strcmp( client_transport.transport, "portable" ) == 0 );
-    rocketnet_check( client_transport.state_change_callback == rocketnet_test_resolve_state_change && client_transport.time_callback == rocketnet_test_resolve_time );
+    rocketnet_check( client_transport.state_change_callback == rocketnet_test_resolve_state_change );
     rocketnet_check( kbps == 1234 );
-    rocketnet_check( message.num_channels == 7 && message.window_messages == 128 && message.receive_ring_bytes == 8192 && message.max_message_bytes == 4096 );
-    rocketnet_check( message.send_buffer_bytes == 20000 && message.send_queue_messages == 32 && message.packets_in_flight == 32 && message.packets_per_update == 2 );
-    rocketnet_check( message.unreliable_deliveries == 17 && message.sequenced_holds == 5 && message.receipt_ring == 32 && message.resend_delay_initial_ms == 200 );
-    rocketnet_check( message.resend_delay_min_ms == 20 && message.resend_delay_max_ms == 300 && message.reliable_timeout_ms == 5000 );
+    rocketnet_check( message.num_channels == 7 && message.reliable_messages_in_flight == 128 && message.receive_message_buffer_bytes == 8192 && message.max_message_bytes == 4096 );
+    rocketnet_check( message.send_message_buffer_bytes == 20000 && message.send_queue_messages == 32 && message.packets_in_flight == 32 && message.packets_per_update == 2 );
+    rocketnet_check( message.unreliable_messages_per_update == 17 && message.sequenced_messages_held == 5 && message.max_message_receipts == 32 && message.message_resend_delay_initial_ms == 200 );
+    rocketnet_check( message.message_resend_delay_min_ms == 20 && message.message_resend_delay_max_ms == 300 && message.reliable_message_timeout_ms == 5000 );
 
     // the env displaces the struct
 
@@ -12719,13 +12767,14 @@ void rocketnet_test_public_config_resolve()
     unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" );
     unsetenv( "ROCKETNET_CLIENT_NUM_CHANNELS" );
 
-    // 0 or less is the ceiling; past the ceiling is refused, never clamped
+    // 0 is the default rate, ROCKETNET_SEND_KBPS_UNLIMITED is no budget (0 to
+    // the message layer, uncapped), and a negative rate is refused
 
     client.send_kbps = 0;
-    rocketnet_check( rocketnet_client_config_resolve( &client, false, &client_transport, &message, &kbps ) && kbps == 10000000 );
+    rocketnet_check( rocketnet_client_config_resolve( &client, false, &client_transport, &message, &kbps ) && kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
+    client.send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;
+    rocketnet_check( rocketnet_client_config_resolve( &client, false, &client_transport, &message, &kbps ) && kbps == 0 && message.client_send_kbps == 0 );
     client.send_kbps = -5;
-    rocketnet_check( rocketnet_client_config_resolve( &client, false, &client_transport, &message, &kbps ) && kbps == 10000000 );
-    client.send_kbps = 10000001;
     rocketnet_check( !rocketnet_client_config_resolve( &client, false, &client_transport, &message, &kbps ) );
     client.send_kbps = 1234;
 
@@ -12741,32 +12790,28 @@ void rocketnet_test_public_config_resolve()
 
     // every server field lands
 
-    // the sized form fills every revision: rocketnet_server_config_resolve
-    // reads the whole struct, second_public_address included
+    // the defaults with the published development keys set by hand:
+    // rocketnet_server_config_resolve reads the whole struct
     struct rocketnet_server_config_t server;
-    rocketnet_server_dev_config_sized( &server, sizeof( server ) );
+    rocketnet_test_server_dev_keys_config( &server );
     server.protocol_id = 0x1122334455667788ULL;
     server.max_clients = 5;
-    memcpy( server.filter_value, filter, 4 );
-    server.server_secret_key[0] ^= 0x5a;
-    server.num_xdp_queues = 2; server.num_os_cpus = 3; server.max_payload_bytes = 3000; server.num_reassembly_slots = 4;
+    memcpy( server.packet_filter, filter, 4 );
+    server.num_xdp_queues = 2; server.num_os_cpus = 3; server.max_payload_bytes = 3000; server.max_fragmented_messages = 4;
     server.max_timeout_seconds = 30; server.handshake_deadline_seconds = 7;
     server.transport = "gso,portable";
-    server.public_address = "127.0.0.1:40123";
     server.per_client_send_kbps = 4321;
-    server.num_channels = 6; server.reliable_timeout_ms = 6000;
+    server.num_channels = 6; server.reliable_message_timeout_ms = 6000;
     struct rocketnet_server_config_t dev;
-    rocketnet_server_dev_config_sized( &dev, sizeof( dev ) );
+    rocketnet_test_server_dev_keys_config( &dev );
     rocketnet_check( rocketnet_server_config_resolve( &server, true, &server_transport, &message, &kbps ) );
     rocketnet_check( server_transport.protocol_id == 0x1122334455667788ULL && server_transport.max_clients == 5 );
-    rocketnet_check( memcmp( server_transport.filter_value, filter, 4 ) == 0 );
+    rocketnet_check( memcmp( server_transport.packet_filter, filter, 4 ) == 0 );
     rocketnet_check( memcmp( server_transport.backend_public_key, dev.backend_public_key, 32 ) == 0 );
-    rocketnet_check( memcmp( server_transport.server_public_key, dev.server_public_key, 32 ) == 0 );
-    rocketnet_check( server_transport.server_secret_key[0] == (uint8_t) ( dev.server_secret_key[0] ^ 0x5a ) );
-    rocketnet_check( server_transport.num_xdp_queues == 2 && server_transport.num_os_cpus == 3 && server_transport.max_payload_bytes == 3000 && server_transport.num_reassembly_slots == 4 );
+    rocketnet_check( server_transport.num_xdp_queues == 2 && server_transport.num_os_cpus == 3 && server_transport.max_payload_bytes == 3000 && server_transport.max_fragmented_messages == 4 );
     rocketnet_check( server_transport.max_timeout_seconds == 30 && server_transport.handshake_deadline_seconds == 7 );
-    rocketnet_check( strcmp( server_transport.transport, "gso,portable" ) == 0 && strcmp( server_transport.public_address, "127.0.0.1:40123" ) == 0 );
-    rocketnet_check( kbps == 4321 && message.num_channels == 6 && message.reliable_timeout_ms == 6000 );
+    rocketnet_check( strcmp( server_transport.transport, "gso,portable" ) == 0 );
+    rocketnet_check( kbps == 4321 && message.num_channels == 6 && message.reliable_message_timeout_ms == 6000 );
 
     // max_clients sizes both layers, so its override applies in the split
 
@@ -12774,12 +12819,12 @@ void rocketnet_test_public_config_resolve()
     setenv( "ROCKETNET_SERVER_NUM_CHANNELS", "4", 1 );
     setenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", "0", 1 );
     rocketnet_check( rocketnet_server_config_resolve( &server, true, &server_transport, &message, &kbps ) );
-    rocketnet_check( server_transport.max_clients == 3 && message.num_channels == 4 && kbps == 10000000 );
+    rocketnet_check( server_transport.max_clients == 3 && message.num_channels == 4 && kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
 
-    char long_address[300];
-    memset( long_address, '1', sizeof( long_address ) - 1 );
-    long_address[sizeof( long_address ) - 1] = '\0';
-    server.public_address = long_address;
+    char long_transport[300];
+    memset( long_transport, 'p', sizeof( long_transport ) - 1 );
+    long_transport[sizeof( long_transport ) - 1] = '\0';
+    server.transport = long_transport;
     rocketnet_check( !rocketnet_server_config_resolve( &server, false, &server_transport, &message, &kbps ) );
 
     rocketnet_test_env_restore( &server_kbps_guard );
@@ -12811,8 +12856,333 @@ void rocketnet_test_public_config_env_round_trip()
     rocketnet_test_config_table_round_trip( "server", &kbps, rocketnet_test_budget_default_erased, server_budget, num_server_budget );
 
     // and every public field is a row of one of those tables
-    rocketnet_test_public_config_fields_have_env( "rocketnet_client_config_t", "client", client_fields, num_client_fields, message_fields, num_message_fields, client_budget, num_client_budget );
-    rocketnet_test_public_config_fields_have_env( "rocketnet_server_config_t", "server", server_fields, num_server_fields, message_fields, num_message_fields, server_budget, num_server_budget );
+    rocketnet_test_public_config_fields_have_env( "rocketnet_client_config_t", "client",
+                                                  rn_test_client_config_fields, (int) ( sizeof( rn_test_client_config_fields ) / sizeof( rn_test_client_config_fields[0] ) ),
+                                                  sizeof( struct rocketnet_client_config_t ),
+                                                  client_fields, num_client_fields, message_fields, num_message_fields, client_budget, num_client_budget );
+    rocketnet_test_public_config_fields_have_env( "rocketnet_server_config_t", "server",
+                                                  rn_test_server_config_fields, (int) ( sizeof( rn_test_server_config_fields ) / sizeof( rn_test_server_config_fields[0] ) ),
+                                                  sizeof( struct rocketnet_server_config_t ),
+                                                  server_fields, num_server_fields, message_fields, num_message_fields, server_budget, num_server_budget );
+}
+
+// A memset-zero config was never filled: create refuses it with
+// CONFIG_NOT_INITIALIZED and required_memory reads 0, for both endpoints, and
+// the fill itself refuses it and writes nothing. No socket: a refused create
+// allocates nothing and a server binds only at start.
+
+void rocketnet_test_public_config_zeroed_refused()
+{
+    uint8_t zero[sizeof( struct rocketnet_server_config_t ) > sizeof( struct rocketnet_client_config_t ) ?
+                 sizeof( struct rocketnet_server_config_t ) : sizeof( struct rocketnet_client_config_t )];
+    memset( zero, 0, sizeof( zero ) );
+
+    struct rocketnet_client_config_t client_config;
+    memset( &client_config, 0, sizeof( client_config ) );
+    rocketnet_check( rocketnet_client_required_memory( &client_config ) == 0 );
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    rocketnet_check( rocketnet_client_create( NULL, &client_config, &status ) == NULL );
+    rocketnet_check( status == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
+    rocketnet_check( rocketnet_client_default_config_internal( &client_config ) == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
+    rocketnet_check( memcmp( &client_config, zero, sizeof( client_config ) ) == 0 );
+
+    struct rocketnet_server_config_t server_config;
+    memset( &server_config, 0, sizeof( server_config ) );
+    rocketnet_check( rocketnet_server_required_memory( &server_config ) == 0 );
+    status = ROCKETNET_STATUS_OK;
+    rocketnet_check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status ) == NULL );
+    rocketnet_check( status == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
+    rocketnet_check( rocketnet_server_default_config_internal( &server_config ) == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
+    rocketnet_check( memcmp( &server_config, zero, sizeof( server_config ) ) == 0 );
+
+    rocketnet_check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED ), "CONFIG_NOT_INITIALIZED" ) == 0 );
+}
+
+// The header's inline default_config sets config_bytes to the size of the
+// struct this file compiled against, and a config filled that way creates.
+// The server is created stopped and binds nothing.
+
+void rocketnet_test_public_default_config_sets_config_bytes()
+{
+    struct rocketnet_client_config_t client_config;
+    memset( &client_config, 0, sizeof( client_config ) );
+    rocketnet_check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( client_config.config_bytes == sizeof( struct rocketnet_client_config_t ) );
+    rocketnet_check( rocketnet_client_required_memory( &client_config ) > 0 );
+    enum rocketnet_status_t status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
+    rocketnet_check( client != NULL && status == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    rocketnet_client_destroy( client );
+
+    struct rocketnet_server_config_t server_config;
+    memset( &server_config, 0, sizeof( server_config ) );
+    rocketnet_check( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( server_config.config_bytes == sizeof( struct rocketnet_server_config_t ) );
+    server_config.max_clients = 4;
+    rocketnet_check( rocketnet_server_required_memory( &server_config ) > 0 );
+    status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
+    rocketnet_check( server != NULL && status == ROCKETNET_STATUS_OK );
+    rocketnet_check( !rocketnet_server_running( server ) );
+    rocketnet_check( rocketnet_server_max_clients( server ) == 4 );
+    rocketnet_server_destroy( server );
+}
+
+// docs/ABI-EVOLUTION.md at the exported fill: an older caller's smaller
+// config_bytes is filled only below that size (every byte at and past it
+// keeps the caller's sentinel), and a newer caller's larger struct is filled
+// in every field this library knows while its tail is never touched. Create
+// accepts both sizes. The bytes written equal the current defaults byte for
+// byte, padding included, because the library fills from a zeroed struct.
+
+#define RN_TEST_CONFIG_SENTINEL 0xA5
+
+static bool rn_test_bytes_are( const void * p, size_t bytes, uint8_t value )
+{
+    const uint8_t * b = (const uint8_t *) p;
+    for ( size_t i = 0; i < bytes; i++ )
+        if ( b[i] != value )
+            return false;
+    return true;
+}
+
+struct rn_test_newer_client_config_t
+{
+    struct rocketnet_client_config_t config;
+    uint8_t tail[64];
+};
+
+struct rn_test_newer_server_config_t
+{
+    struct rocketnet_server_config_t config;
+    uint8_t tail[64];
+};
+
+void rocketnet_test_public_config_bytes_older_and_newer()
+{
+    // client: the current defaults, the reference
+    struct rocketnet_client_config_t client_defaults;
+    rocketnet_check( rocketnet_client_default_config( &client_defaults ) == ROCKETNET_STATUS_OK );
+
+    // older and smaller: everything from message_resend_delay_initial_ms on is past it
+    {
+        const size_t cut = offsetof( struct rocketnet_client_config_t, message_resend_delay_initial_ms );
+        struct rocketnet_client_config_t older;
+        memset( &older, RN_TEST_CONFIG_SENTINEL, sizeof( older ) );
+        older.config_bytes = cut;
+        rocketnet_check( rocketnet_client_default_config_internal( &older ) == ROCKETNET_STATUS_OK );
+        rocketnet_check( older.config_bytes == cut );
+        rocketnet_check( memcmp( (const uint8_t *) &older + sizeof( size_t ), (const uint8_t *) &client_defaults + sizeof( size_t ), cut - sizeof( size_t ) ) == 0 );
+        rocketnet_check( rn_test_bytes_are( (const uint8_t *) &older + cut, sizeof( older ) - cut, RN_TEST_CONFIG_SENTINEL ) );
+
+        enum rocketnet_status_t status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+        struct rocketnet_client_t * client = rocketnet_client_create( NULL, &older, &status );
+        rocketnet_check( client != NULL && status == ROCKETNET_STATUS_OK );
+        rocketnet_client_destroy( client );
+        rocketnet_check( rocketnet_client_required_memory( &older ) == rocketnet_client_required_memory( &client_defaults ) );
+    }
+
+    // newer and larger: every field filled, the tail untouched
+    {
+        struct rn_test_newer_client_config_t newer;
+        memset( &newer, RN_TEST_CONFIG_SENTINEL, sizeof( newer ) );
+        newer.config.config_bytes = sizeof( newer );
+        rocketnet_check( rocketnet_client_default_config_internal( &newer.config ) == ROCKETNET_STATUS_OK );
+        rocketnet_check( newer.config.config_bytes == sizeof( newer ) );
+        rocketnet_check( memcmp( (const uint8_t *) &newer.config + sizeof( size_t ), (const uint8_t *) &client_defaults + sizeof( size_t ),
+                                 sizeof( struct rocketnet_client_config_t ) - sizeof( size_t ) ) == 0 );
+        rocketnet_check( rn_test_bytes_are( newer.tail, sizeof( newer.tail ), RN_TEST_CONFIG_SENTINEL ) );
+
+        enum rocketnet_status_t status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+        struct rocketnet_client_t * client = rocketnet_client_create( NULL, &newer.config, &status );
+        rocketnet_check( client != NULL && status == ROCKETNET_STATUS_OK );
+        rocketnet_client_destroy( client );
+        rocketnet_check( rn_test_bytes_are( newer.tail, sizeof( newer.tail ), RN_TEST_CONFIG_SENTINEL ) );
+    }
+
+    // server: the same, with a small max_clients so create stays small
+    struct rocketnet_server_config_t server_defaults;
+    rocketnet_check( rocketnet_server_default_config( &server_defaults ) == ROCKETNET_STATUS_OK );
+
+    {
+        const size_t cut = offsetof( struct rocketnet_server_config_t, message_resend_delay_initial_ms );
+        struct rocketnet_server_config_t older;
+        memset( &older, RN_TEST_CONFIG_SENTINEL, sizeof( older ) );
+        older.config_bytes = cut;
+        rocketnet_check( rocketnet_server_default_config_internal( &older ) == ROCKETNET_STATUS_OK );
+        rocketnet_check( older.config_bytes == cut );
+        rocketnet_check( memcmp( (const uint8_t *) &older + sizeof( size_t ), (const uint8_t *) &server_defaults + sizeof( size_t ), cut - sizeof( size_t ) ) == 0 );
+        rocketnet_check( rn_test_bytes_are( (const uint8_t *) &older + cut, sizeof( older ) - cut, RN_TEST_CONFIG_SENTINEL ) );
+
+        older.max_clients = 4;
+        enum rocketnet_status_t status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+        struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &older, &status );
+        rocketnet_check( server != NULL && status == ROCKETNET_STATUS_OK );
+        rocketnet_check( rocketnet_server_max_clients( server ) == 4 );
+        rocketnet_server_destroy( server );
+    }
+
+    {
+        struct rn_test_newer_server_config_t newer;
+        memset( &newer, RN_TEST_CONFIG_SENTINEL, sizeof( newer ) );
+        newer.config.config_bytes = sizeof( newer );
+        rocketnet_check( rocketnet_server_default_config_internal( &newer.config ) == ROCKETNET_STATUS_OK );
+        rocketnet_check( newer.config.config_bytes == sizeof( newer ) );
+        rocketnet_check( memcmp( (const uint8_t *) &newer.config + sizeof( size_t ), (const uint8_t *) &server_defaults + sizeof( size_t ),
+                                 sizeof( struct rocketnet_server_config_t ) - sizeof( size_t ) ) == 0 );
+        rocketnet_check( rn_test_bytes_are( newer.tail, sizeof( newer.tail ), RN_TEST_CONFIG_SENTINEL ) );
+
+        newer.config.max_clients = 4;
+        enum rocketnet_status_t status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+        struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &newer.config, &status );
+        rocketnet_check( server != NULL && status == ROCKETNET_STATUS_OK );
+        rocketnet_server_destroy( server );
+        rocketnet_check( rn_test_bytes_are( newer.tail, sizeof( newer.tail ), RN_TEST_CONFIG_SENTINEL ) );
+    }
+}
+
+#undef RN_TEST_CONFIG_SENTINEL
+
+// rocketnet_client_index is -1 for a NULL client (a counted misuse) and for a
+// client that is not CONNECTED: only a CONNECTED client holds a server slot.
+
+void rocketnet_test_public_client_index_not_connected()
+{
+    void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) = rn_assert_function;
+    rocketnet_assert_function( rocketnet_test_null_assert_hook );
+    const uint64_t before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_client_index( NULL ) == -1 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+    rocketnet_assert_function( saved_assert );
+
+    struct rocketnet_client_config_t config;
+    rocketnet_check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
+    enum rocketnet_status_t status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &status );
+    rocketnet_check( client != NULL && status == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    rocketnet_check( rocketnet_client_index( client ) == -1 );
+    rocketnet_client_update( client, 1000.0 );
+    rocketnet_check( rocketnet_client_index( client ) == -1 );
+    rocketnet_client_destroy( client );
+}
+
+// Send rates: 0 is the endpoint's default rate, never the ceiling, and
+// creates; a negative rate is refused at create with INVALID_ARGUMENT. The
+// setters check the rate before the connection: a negative rate is
+// INVALID_ARGUMENT and a rate past the ceiling CONFIG_OUT_OF_RANGE even on a
+// client or slot that is not CONNECTED, and a valid rate there is
+// INVALID_ARGUMENT (no connection to set it on). This file has no CONNECTED
+// public client fixture, so the order is what is tested. The environment's
+// rate overrides are cleared for the test.
+
+void rocketnet_test_public_send_kbps_default_and_negative()
+{
+    struct rocketnet_test_env_guard_t client_kbps_guard, server_kbps_guard;
+    rocketnet_test_env_clear( &client_kbps_guard, "ROCKETNET_CLIENT_SEND_KBPS" );
+    rocketnet_test_env_clear( &server_kbps_guard, "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" );
+
+    struct rocketnet_client_transport_config_t client_transport;
+    struct rocketnet_server_transport_config_t server_transport;
+    struct rocketnet_message_config_t message;
+    uint32_t kbps = 0;
+
+    // client: 0 resolves to the default rate and creates
+    struct rocketnet_client_config_t client_config;
+    rocketnet_check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( client_config.send_kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
+    client_config.send_kbps = 0;
+    rocketnet_check( rocketnet_client_config_resolve( &client_config, true, &client_transport, &message, &kbps ) );
+    rocketnet_check( kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS && message.client_send_kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
+    enum rocketnet_status_t status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
+    rocketnet_check( client != NULL && status == ROCKETNET_STATUS_OK );
+    rocketnet_client_update( client, 1000.0 );
+    rocketnet_client_send_packets( client );
+    rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+
+    // the setter: the rate is checked first, then the connection
+    rocketnet_check( rocketnet_client_set_send_kbps( client, -1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    rocketnet_check( rocketnet_client_set_send_kbps( client, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );   // in range, not CONNECTED: a no-op
+    rocketnet_check( rocketnet_client_set_send_kbps( client, 0 ) == ROCKETNET_STATUS_OK );
+    rocketnet_client_destroy( client );
+
+    // client: a negative rate is refused at create
+    client_config.send_kbps = -1;
+    rocketnet_check( !rocketnet_client_config_resolve( &client_config, true, &client_transport, &message, &kbps ) );
+    status = ROCKETNET_STATUS_OK;
+    rocketnet_check( rocketnet_client_create( NULL, &client_config, &status ) == NULL );
+    rocketnet_check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
+
+    // server: the same for per_client_send_kbps
+    struct rocketnet_server_config_t server_config;
+    rocketnet_check( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( server_config.per_client_send_kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
+    server_config.max_clients = 4;
+    server_config.per_client_send_kbps = 0;
+    rocketnet_check( rocketnet_server_config_resolve( &server_config, true, &server_transport, &message, &kbps ) );
+    rocketnet_check( kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS && message.server_send_kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
+    status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
+    rocketnet_check( server != NULL && status == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_server_set_send_kbps( server, 0, -1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    rocketnet_check( rocketnet_server_set_send_kbps( server, 0, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );   // in range, no CONNECTED client: a no-op
+    rocketnet_check( rocketnet_server_set_send_kbps( server, 0, 0 ) == ROCKETNET_STATUS_OK );
+    rocketnet_server_destroy( server );
+
+    server_config.per_client_send_kbps = -1;
+    rocketnet_check( !rocketnet_server_config_resolve( &server_config, true, &server_transport, &message, &kbps ) );
+    status = ROCKETNET_STATUS_OK;
+    rocketnet_check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status ) == NULL );
+    rocketnet_check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
+
+    rocketnet_test_env_restore( &server_kbps_guard );
+    rocketnet_test_env_restore( &client_kbps_guard );
+}
+
+// A refused finish aborts the pending start (rn_message_object_finish, the
+// one path under rocketnet_client_finish_message and
+// rocketnet_server_finish_message; tla/RNSlots.tla FinishPending): finish with
+// 0 bytes, or more than were started, returns 0 and leaves no start pending,
+// so the next start is never refused as one already pending. A bare client
+// message object on an empty link: no transport, no socket, no clock.
+
+void rocketnet_test_refused_finish_aborts_pending_start()
+{
+    rn_message_link_t link;
+    memset( &link, 0, sizeof( link ) );
+    rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 1, NULL, NULL, 0, 1, 1000.0 );
+    rocketnet_check( object != NULL );
+    if ( !object )
+        return;
+
+    // bytes_written 0 is refused: the start is aborted
+    uint8_t * pointer = rn_message_object_start( object, 0, 0, ROCKETNET_RELIABILITY_RELIABLE, 8 );
+    rocketnet_check( pointer != NULL );
+    rocketnet_check( object->pending_connection == 0 );
+    rocketnet_check( rn_message_object_finish( object, 0, 0 ) == 0 );
+    rocketnet_check( object->pending_connection == -1 );
+
+    // a new start is not refused as one already pending; bytes_written past
+    // the start's bytes is refused and aborts it too
+    pointer = rn_message_object_start( object, 0, 0, ROCKETNET_RELIABILITY_RELIABLE, 8 );
+    rocketnet_check( pointer != NULL );
+    rocketnet_check( rn_message_object_finish( object, 0, 9 ) == 0 );
+    rocketnet_check( object->pending_connection == -1 );
+
+    // a finish with nothing pending is 0 and changes nothing
+    rocketnet_check( rn_message_object_finish( object, 0, 8 ) == 0 );
+
+    // and the next start and a valid finish send
+    pointer = rn_message_object_start( object, 0, 0, ROCKETNET_RELIABILITY_RELIABLE, 8 );
+    rocketnet_check( pointer != NULL );
+    if ( pointer )
+        memset( pointer, 0x5a, 8 );
+    rocketnet_check( rn_message_object_finish( object, 0, 8 ) != 0 );
+    rocketnet_check( object->pending_connection == -1 );
+
+    rn_message_object_destroy( object );
 }
 
 void rocketnet_test_config_env_round_trip()
@@ -12955,7 +13325,7 @@ void rocketnet_test_config_validation()
     rocketnet_server_transport_default_config_current( &config );
     config.max_payload_bytes = -1;
     rocketnet_check( !rocketnet_config_validate( "server", &config, fields, num_fields ) );
-    config.max_payload_bytes = ROCKETNET_MAX_PAYLOAD_BYTES - 1;
+    config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;
     rocketnet_check( !rocketnet_config_validate( "server", &config, fields, num_fields ) );
     config.max_payload_bytes = 0;
     rocketnet_check( rocketnet_config_validate( "server", &config, fields, num_fields ) );
@@ -13016,14 +13386,14 @@ void rocketnet_test_config_validation()
     rocketnet_server_transport_default_config_current( &config );
 
     rocketnet_test_captured_log[0] = '\0';
-    const enum rocketnet_log_level_t empty_saved_level = rocketnet_get_log_level();
-    rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    const enum rocketnet_log_level_t empty_saved_level = rocketnet_log_level_current();
+    rocketnet_log_function( rocketnet_test_capture_log, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
     rocketnet_check( rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
 
-    rocketnet_set_log_level( empty_saved_level );
-    rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
+    rocketnet_log_level( empty_saved_level );
+    rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 
     rocketnet_check( config.max_clients == 1000 );
     rocketnet_check( strstr( rocketnet_test_captured_log, "config ignores empty ROCKETNET_SERVER_MAX_CLIENTS" ) != NULL );
@@ -13040,15 +13410,15 @@ void rocketnet_test_config_validation()
 
     // byte fields demand base64 of exactly the field's length
 
-    rocketnet_test_env_save( &guard, "ROCKETNET_SERVER_FILTER_VALUE" );
+    rocketnet_test_env_save( &guard, "ROCKETNET_SERVER_PACKET_FILTER" );
     rocketnet_server_transport_default_config_current( &config );
-    setenv( "ROCKETNET_SERVER_FILTER_VALUE", "zzzz", 1 );                  // decodes to 3 bytes, not 4
+    setenv( "ROCKETNET_SERVER_PACKET_FILTER", "zzzz", 1 );                  // decodes to 3 bytes, not 4
     rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
-    setenv( "ROCKETNET_SERVER_FILTER_VALUE", "AAECAw==", 1 );              // 4 bytes: 00 01 02 03
+    setenv( "ROCKETNET_SERVER_PACKET_FILTER", "AAECAw==", 1 );              // 4 bytes: 00 01 02 03
     rocketnet_server_transport_default_config_current( &config );
     rocketnet_check( rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
     const uint8_t expected_filter[4] = { 0x00, 0x01, 0x02, 0x03 };
-    rocketnet_check( memcmp( config.filter_value, expected_filter, 4 ) == 0 );
+    rocketnet_check( memcmp( config.packet_filter, expected_filter, 4 ) == 0 );
     rocketnet_test_env_restore( &guard );
 }
 
@@ -13267,7 +13637,7 @@ static void rocketnet_test_config_bytes_exact_fields( const char * name, void * 
     for ( int i = 0; i < num_fields; ++i )
     {
         const rocketnet_config_field_t * field = &fields[i];
-        if ( field->kind != ROCKETNET_CONFIG_KIND_BYTES )
+        if ( field->kind != ROCKETNET_CONFIG_KIND_BYTES || ( field->flags & ROCKETNET_CONFIG_NO_ENV ) != 0 )
             continue;
         rocketnet_check( field->size >= 1 && field->size <= 256 );
         char env_name[256];
@@ -13333,39 +13703,27 @@ void rocketnet_test_config_override_logging()
     rocketnet_server_transport_default_config( &config );
 
     rocketnet_test_captured_log[0] = '\0';
-    const enum rocketnet_log_level_t saved_level = rocketnet_get_log_level();
-    rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_function( rocketnet_test_capture_log, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
     rocketnet_check( rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
 
-    rocketnet_set_log_level( saved_level );
-    rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
+    rocketnet_log_level( saved_level );
+    rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 
     rocketnet_check( config.max_clients == 77 );
-    rocketnet_check( memcmp( config.server_secret_key, secret_bytes, 32 ) == 0 );
 
     // the non-secret override logs the variable, the value, and what it
-    // displaced; the secret override logs redacted on both sides and the
-    // secret's encoding appears nowhere in the log
+    // displaced. The server's keypair has no env form (the public server
+    // makes its own at create): the secret key variable is not read, so the
+    // key is untouched and its encoding appears nowhere in the log
 
     rocketnet_check( strstr( rocketnet_test_captured_log, "ROCKETNET_SERVER_MAX_CLIENTS=77" ) != NULL );
     rocketnet_check( strstr( rocketnet_test_captured_log, "(displaces 1000)" ) != NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "ROCKETNET_SERVER_SERVER_SECRET_KEY=(redacted)" ) != NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "(displaces (redacted))" ) != NULL );
+    rocketnet_check( memcmp( config.server_secret_key, secret_bytes, 32 ) != 0 );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "ROCKETNET_SERVER_SERVER_SECRET_KEY" ) == NULL );
     rocketnet_check( strstr( rocketnet_test_captured_log, secret_base64 ) == NULL );
-
-    // the failure path redacts too: a mistyped secret is still a secret
-
-    setenv( "ROCKETNET_SERVER_SERVER_SECRET_KEY", "not!valid!base64!secret!material!!", 1 );
-    rocketnet_server_transport_default_config( &config );
-    rocketnet_test_captured_log[0] = '\0';
-    rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
-    rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
-    rocketnet_set_log_level( saved_level );
-    rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "not!valid!base64!secret!material!!" ) == NULL );
 
     rocketnet_test_env_restore( &clients_guard );
     rocketnet_test_env_restore( &secret_guard );
@@ -13383,56 +13741,56 @@ void rocketnet_test_log_level_refuses_out_of_range()
     // the level this test found, restored at the end: moving the level must
     // not leak into the next test
 
-    const enum rocketnet_log_level_t saved_level = rocketnet_get_log_level();
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
 
     // the setter takes only a defined level, NONE (0) through SPAM (5). a
     // value outside that range leaves the level in force rather than
     // storing it, so a caller cannot silence the library by accident
 
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
-    rocketnet_set_log_level( (enum rocketnet_log_level_t) -1 );
-    rocketnet_check( rocketnet_get_log_level() == ROCKETNET_LOG_LEVEL_INFO );
-    rocketnet_set_log_level( (enum rocketnet_log_level_t) 6 );
-    rocketnet_check( rocketnet_get_log_level() == ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_level( (enum rocketnet_log_level_t) -1 );
+    rocketnet_check( rocketnet_log_level_current() == ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_level( (enum rocketnet_log_level_t) 6 );
+    rocketnet_check( rocketnet_log_level_current() == ROCKETNET_LOG_LEVEL_INFO );
 
     // every defined level round-trips
 
     for ( int level = ROCKETNET_LOG_LEVEL_NONE; level <= ROCKETNET_LOG_LEVEL_SPAM; level++ )
     {
-        rocketnet_set_log_level( (enum rocketnet_log_level_t) level );
-        rocketnet_check( rocketnet_get_log_level() == level );
+        rocketnet_log_level( (enum rocketnet_log_level_t) level );
+        rocketnet_check( rocketnet_log_level_current() == level );
     }
 
     // the override path parses strictly and applies only an in-range value:
     // a word, an out-of-range number, a negative and the empty string are
     // all refused, and the level stays where it was
 
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
     rocketnet_log_level_override_apply( "abc" );
-    rocketnet_check( rocketnet_get_log_level() == ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_check( rocketnet_log_level_current() == ROCKETNET_LOG_LEVEL_INFO );
     rocketnet_log_level_override_apply( "9" );
-    rocketnet_check( rocketnet_get_log_level() == ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_check( rocketnet_log_level_current() == ROCKETNET_LOG_LEVEL_INFO );
     rocketnet_log_level_override_apply( "-1" );
-    rocketnet_check( rocketnet_get_log_level() == ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_check( rocketnet_log_level_current() == ROCKETNET_LOG_LEVEL_INFO );
     rocketnet_log_level_override_apply( "" );
-    rocketnet_check( rocketnet_get_log_level() == ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_check( rocketnet_log_level_current() == ROCKETNET_LOG_LEVEL_INFO );
 
     // a valid override behaves exactly as before
 
     rocketnet_log_level_override_apply( "4" );
-    rocketnet_check( rocketnet_get_log_level() == ROCKETNET_LOG_LEVEL_DEBUG );
+    rocketnet_check( rocketnet_log_level_current() == ROCKETNET_LOG_LEVEL_DEBUG );
 
     // a refused value is named in the warning, so a mistyped environment
     // variable tells the operator instead of silencing the library
 
     rocketnet_test_captured_log[0] = '\0';
-    rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
+    rocketnet_log_function( rocketnet_test_capture_log, NULL );
     rocketnet_log_level_override_apply( "abc" );
-    rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
+    rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
     rocketnet_check( strstr( rocketnet_test_captured_log, "abc" ) != NULL );
 
-    rocketnet_set_log_level( saved_level );
+    rocketnet_log_level( saved_level );
 }
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
@@ -13483,7 +13841,8 @@ public:
                 clear(name);
             }
         }
-        clear("ROCKETNET_SERVER_PUBLIC_ADDRESS");
+        clear("ROCKETNET_SERVER_IPV4_ADDRESS");
+        clear("ROCKETNET_SERVER_IPV6_ADDRESS");
         clear("ROCKETNET_SERVER_NUM_OS_CPUS");
         clear("ROCKETNET_GATEWAY_ETHERNET_ADDRESS");
     }
@@ -13501,13 +13860,13 @@ void rocketnet_test_suite_environment()
     const bool server_present = rocketnet_test_getenv_string("ROCKETNET_SERVER_TRANSPORT", &original_server);
     std::string original_client;
     const bool client_present = rocketnet_test_getenv_string("ROCKETNET_CLIENT_TRANSPORT", &original_client);
-    rocketnet_check(unsetenv("ROCKETNET_SERVER_PUBLIC_ADDRESS") == 0);
+    rocketnet_check(unsetenv("ROCKETNET_SERVER_IPV4_ADDRESS") == 0);
     const std::string long_value(4096, 'x');
     rocketnet_check(setenv("ROCKETNET_SERVER_MAX_CLIENTS", long_value.c_str(), 1) == 0);
     {
         rocketnet_test_environment_t isolated;
         rocketnet_check(!rocketnet_test_env_is_set("ROCKETNET_SERVER_MAX_CLIENTS"));
-        rocketnet_check(setenv("ROCKETNET_SERVER_PUBLIC_ADDRESS", "127.0.0.1:1234", 1) == 0);
+        rocketnet_check(setenv("ROCKETNET_SERVER_IPV4_ADDRESS", "127.0.0.1:1234", 1) == 0);
         std::string server_now;
         rocketnet_check(rocketnet_test_getenv_string("ROCKETNET_SERVER_TRANSPORT", &server_now) == server_present);
         if (server_present) rocketnet_check(original_server == server_now);
@@ -13515,7 +13874,7 @@ void rocketnet_test_suite_environment()
         rocketnet_check(rocketnet_test_getenv_string("ROCKETNET_CLIENT_TRANSPORT", &client_now) == client_present);
         if (client_present) rocketnet_check(original_client == client_now);
     }
-    rocketnet_check(!rocketnet_test_env_is_set("ROCKETNET_SERVER_PUBLIC_ADDRESS"));
+    rocketnet_check(!rocketnet_test_env_is_set("ROCKETNET_SERVER_IPV4_ADDRESS"));
     std::string max_clients_now;
     rocketnet_check(rocketnet_test_getenv_string("ROCKETNET_SERVER_MAX_CLIENTS", &max_clients_now));
     rocketnet_check(long_value == max_clients_now);
@@ -14088,7 +14447,7 @@ void rocketnet_test_client_index_range_checked()
 
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     int bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET,
-                                               test.server.filter_value, mapping->send_sequence_session,
+                                               test.server.packet_filter, mapping->send_sequence_session,
                                                NULL, plaintext, block_bytes + 8,
                                                test.server.protocol_id, mapping->connection_salt,
                                                NULL, mapping->keys.session_server_to_client );
@@ -14393,6 +14752,8 @@ struct rocketnet_unit_test_t
 };
 
 void rocketnet_test_dev_token_minting_absent_in_release();
+void rocketnet_test_public_connect_token_string_refused();
+void rocketnet_test_public_dev_connect_token_round_trip();
 
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
@@ -14489,7 +14850,9 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_swarm", rocketnet_test_swarm },
     { "test_payload_size_sweep", rocketnet_test_payload_size_sweep },
     { "test_server_keyless_config_has_no_keys", rocketnet_test_server_keyless_config_has_no_keys },
+#if !ROCKETNET_DEVELOPMENT
     { "test_dev_keys_refused_in_release", rocketnet_test_dev_keys_refused_in_release },
+#endif // !ROCKETNET_DEVELOPMENT: a development build accepts what this checks is refused
     { "test_transport_payload_capacity", rocketnet_test_transport_payload_capacity },
     { "test_client_rtt_handshake", rocketnet_test_client_rtt_handshake },
     { "test_request_path_ordering", rocketnet_test_request_path_ordering },
@@ -14554,6 +14917,8 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_fragment_oversize_refused_in_release", rocketnet_test_fragment_oversize_refused_in_release },
     { "test_fragment_reassembly_refusals", rocketnet_test_fragment_reassembly_refusals },
     { "test_dev_token_minting_absent_in_release", rocketnet_test_dev_token_minting_absent_in_release },
+    { "test_public_connect_token_string_refused", rocketnet_test_public_connect_token_string_refused },
+    { "test_public_dev_connect_token_round_trip", rocketnet_test_public_dev_connect_token_round_trip },
     { "test_fragment_delivery_batch", rocketnet_test_fragment_delivery_batch },
     { "test_fragment_vector", rocketnet_test_fragment_vector },
     { "test_fragment_packet_id_aggregation", rocketnet_test_fragment_packet_id_aggregation },
@@ -14569,6 +14934,12 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_send_arena", rocketnet_test_send_arena },
     { "test_config_env_round_trip", rocketnet_test_config_env_round_trip },
     { "test_public_config_env_round_trip", rocketnet_test_public_config_env_round_trip },
+    { "test_public_config_zeroed_refused", rocketnet_test_public_config_zeroed_refused },
+    { "test_public_default_config_sets_config_bytes", rocketnet_test_public_default_config_sets_config_bytes },
+    { "test_public_config_bytes_older_and_newer", rocketnet_test_public_config_bytes_older_and_newer },
+    { "test_public_client_index_not_connected", rocketnet_test_public_client_index_not_connected },
+    { "test_public_send_kbps_default_and_negative", rocketnet_test_public_send_kbps_default_and_negative },
+    { "test_refused_finish_aborts_pending_start", rocketnet_test_refused_finish_aborts_pending_start },
     { "test_public_config_resolve", rocketnet_test_public_config_resolve },
     { "test_config_env_names_are_per_endpoint", rocketnet_test_config_env_names_are_per_endpoint },
     { "test_config_bytes_exact", rocketnet_test_config_bytes_exact },
@@ -14601,7 +14972,7 @@ void rocketnet_unit_prepare()
     if ( rocketnet_platform_getenv( "ROCKETNET_TEST_VERBOSE", verbose, sizeof( verbose ) ) == 0 )
     {
         rocketnet_test_suite_log_function = rocketnet_test_log_capture;
-        rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
+        rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
     }
     rocketnet_forbid_xdp_commit();
     // the unit suite runs over the loopback transport with no sockets, so a
@@ -14649,7 +15020,7 @@ void rocketnet_run_tests()
         rocketnet_unit_run_named( rocketnet_unit_tests[i].name );
 }
 
-// Verify that rocketnet_write_dev_connect_token is absent from the release
+// Verify that rocketnet_create_dev_connect_token is absent from the release
 // surface. In a release build (ROCKETNET_DEVELOPMENT=0) the development token
 // minting helper and its backend secret key are compiled out, so the shipped
 // shared library must not carry the symbol. The suite links the static
@@ -14661,15 +15032,18 @@ void rocketnet_run_tests()
 void rocketnet_test_dev_token_minting_absent_in_release()
 {
 #if ROCKETNET_DEVELOPMENT
-    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( "127.0.0.1:40000", 1, 0, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    uint8_t server_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    memcpy( server_key, rocketnet_dev_server_public_key, sizeof( server_key ) );
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    rocketnet_check( rocketnet_create_dev_connect_token( "127.0.0.1:40000", NULL, server_key, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 0, NULL, token ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( strlen( token ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 #else
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     HMODULE library = LoadLibraryA( "rocketnet.dll" );
     rocketnet_check( library != NULL );
     if ( library != NULL )
     {
-        rocketnet_check( GetProcAddress( library, "rocketnet_write_dev_connect_token" ) == NULL );
+        rocketnet_check( GetProcAddress( library, "rocketnet_create_dev_connect_token" ) == NULL );
         FreeLibrary( library );
     }
 #else
@@ -14688,9 +15062,154 @@ void rocketnet_test_dev_token_minting_absent_in_release()
     rocketnet_check( library != NULL );
     if ( library != NULL )
     {
-        rocketnet_check( dlsym( library, "rocketnet_write_dev_connect_token" ) == NULL );
+        rocketnet_check( dlsym( library, "rocketnet_create_dev_connect_token" ) == NULL );
         dlclose( library );
     }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #endif
+}
+
+// A public loopback server for the connect token cases: the development
+// backend key and protocol id set by hand, the loopback transport pinned (no
+// socket), port 0 bound by the transport. NULL when create or start refuses.
+// Development only: a release server refuses the development backend key.
+#if ROCKETNET_DEVELOPMENT
+static struct rocketnet_server_t * rocketnet_test_public_loopback_server()
+{
+    struct rocketnet_server_config_t config;
+    rocketnet_check( rocketnet_server_default_config( &config ) == ROCKETNET_STATUS_OK );
+    config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
+    memcpy( config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
+    config.max_clients = 4;
+    config.transport = "loopback";
+    enum rocketnet_status_t status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, &status );
+    rocketnet_check( server != NULL && status == ROCKETNET_STATUS_OK );
+    if ( !server )
+        return NULL;
+    if ( rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_check( false );
+        rocketnet_server_destroy( server );
+        return NULL;
+    }
+    return server;
+}
+#endif // #if ROCKETNET_DEVELOPMENT
+
+static struct rocketnet_client_t * rocketnet_test_public_loopback_client()
+{
+    struct rocketnet_client_test_config_t config;
+    rocketnet_check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
+    config.transport = "loopback";
+    config.step_driven = 1;
+    enum rocketnet_status_t status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &status );
+    rocketnet_check( client != NULL && status == ROCKETNET_STATUS_OK );
+    return client;
+}
+
+// rocketnet_client_connect takes the token as a string of exactly
+// ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 base64 characters. One
+// character too long, one character short, and one non-base64 character are
+// each refused with INVALID_CONNECT_TOKEN, uncounted, and leave the client
+// DISCONNECTED; a NULL string is a counted misuse refused with
+// INVALID_ARGUMENT. The strings are refused before any transport opens: no
+// socket, no clock.
+
+void rocketnet_test_public_connect_token_string_refused()
+{
+    struct rocketnet_client_t * client = rocketnet_test_public_loopback_client();
+    if ( !client )
+        return;
+
+    // a well-formed base64 string of the right length: a real token in a
+    // development build, all 'A' in a release build (where none can be made)
+    char base[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+#if ROCKETNET_DEVELOPMENT
+    uint8_t server_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    memcpy( server_key, rocketnet_dev_server_public_key, sizeof( server_key ) );
+    rocketnet_check( rocketnet_create_dev_connect_token( "127.0.0.1:40000", NULL, server_key, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 1000, NULL, base ) == ROCKETNET_STATUS_OK );
+#else
+    memset( base, 'A', sizeof( base ) - 1 );
+    base[sizeof( base ) - 1] = '\0';
+#endif // #if ROCKETNET_DEVELOPMENT
+    rocketnet_check( strlen( base ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
+
+    // one character too long
+    char too_long[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES + 1];
+    memcpy( too_long, base, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
+    too_long[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1] = 'A';
+    too_long[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES] = '\0';
+
+    // truncated by one character
+    char truncated[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    memcpy( truncated, base, sizeof( truncated ) );
+    truncated[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 2] = '\0';
+
+    // the right length with one character outside the base64 alphabet
+    char bad_character[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    memcpy( bad_character, base, sizeof( bad_character ) );
+    bad_character[100] = '!';
+
+    const char * refused[] = { too_long, truncated, bad_character };
+    for ( int i = 0; i < 3; i++ )
+    {
+        const uint64_t misuse_before = rocketnet_api_misuse_count();
+        rocketnet_check( rocketnet_client_connect( client, refused[i] ) == ROCKETNET_STATUS_INVALID_CONNECT_TOKEN );
+        rocketnet_check( rocketnet_api_misuse_count() == misuse_before );
+        rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    }
+
+    // NULL is counted misuse
+    void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) = rn_assert_function;
+    rocketnet_assert_function( rocketnet_test_null_assert_hook );
+    const uint64_t misuse_before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_client_connect( client, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    rocketnet_check( rocketnet_api_misuse_count() == misuse_before + 1 );
+    rocketnet_assert_function( saved_assert );
+    rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+
+    rocketnet_client_destroy( client );
+}
+
+// The public development round trip: a public loopback server makes its own
+// keypair; its public key and advertised IPv4 address go into
+// rocketnet_create_dev_connect_token with the server's protocol id, and a
+// public client connects with the string. The loopback transport opens no
+// socket. A release build has no development minting and refuses the
+// development backend key, so the case is development only.
+
+void rocketnet_test_public_dev_connect_token_round_trip()
+{
+#if ROCKETNET_DEVELOPMENT
+    struct rocketnet_server_t * server = rocketnet_test_public_loopback_server();
+    if ( !server )
+        return;
+    struct rocketnet_client_t * client = rocketnet_test_public_loopback_client();
+    if ( !client )
+    {
+        rocketnet_server_destroy( server );
+        return;
+    }
+
+    char address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+    rocketnet_check( rocketnet_server_ipv4_address( server, address, sizeof( address ) ) );
+    rocketnet_check( rocketnet_server_port( server ) != 0 );
+    uint8_t server_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    rocketnet_server_public_key( server, server_key );
+    uint8_t zero[ROCKETNET_SERVER_PUBLIC_KEY_BYTES] = { 0 };
+    rocketnet_check( memcmp( server_key, zero, sizeof( zero ) ) != 0 );
+
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    // the token's create stamp is a fixed time far past any test run, so the
+    // client's expiry check at connect passes with no clock read here
+    rocketnet_check( rocketnet_create_dev_connect_token( address, NULL, server_key, 30, 10, 0x1234, ROCKETNET_DEV_PROTOCOL_ID, 4000000000ULL, NULL, token ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( strlen( token ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
+    rocketnet_check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_client_state( client ) > ROCKETNET_CLIENT_STATE_DISCONNECTED );
+
+    rocketnet_client_destroy( client );
+    rocketnet_server_destroy( server );
+#endif // #if ROCKETNET_DEVELOPMENT
 }

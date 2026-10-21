@@ -58,12 +58,6 @@ const struct rocketnet_config_field_t * rocketnet_client_budget_config_fields( i
 
 const struct rocketnet_config_field_t * rocketnet_server_budget_config_fields( int * num_fields );
 
-// the name of a public struct's field by its index in the ABI descriptors
-// (sdk/rocketnet_abi.cpp), NULL past the end: the walk the env completeness
-// test takes over rocketnet_client_config_t and rocketnet_server_config_t.
-
-const char * rocketnet_abi_field_name( const char * type_name, int index );
-
 // the split create makes (sdk/rocketnet_api.cpp): a public config, NULL for
 // the defaults, into the transport config, the message config and the send
 // budget the layers take. read_env applies the message fields', the budget's

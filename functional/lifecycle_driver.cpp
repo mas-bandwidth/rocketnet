@@ -8,6 +8,7 @@
 */
 
 #include "rocketnet_internal.h"
+#include "rocketnet_connect_token.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
 #include "rocketnet_fragment.h"
@@ -69,9 +70,8 @@ void rocketnet_test_lifecycle_transport()
     rocketnet_term();
 
     allocator_state state;
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
-    rocketnet_set_allocator( allocate, release );
-    check( rocketnet_init( &state ) == ROCKETNET_STATUS_OK );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    check( rocketnet_init( &state, allocate, release ) == ROCKETNET_STATUS_OK );
     rocketnet_forbid_xdp_commit();
     const int baseline = state.live;
 
@@ -82,7 +82,7 @@ void rocketnet_test_lifecycle_transport()
         rocketnet_server_transport_config_t config;
         rocketnet_server_transport_dev_config(&config);
         config.max_clients = 1000;
-        config.num_reassembly_slots = 256;
+        config.max_fragmented_messages = 256;
         config.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES;
         snprintf(config.transport, sizeof(config.transport), "%s", "portable");
         check(!rocketnet_server_transport_create(&state, "127.0.0.1", &config));
@@ -103,7 +103,7 @@ void rocketnet_test_lifecycle_transport()
     check( state.live == baseline );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    check( rocketnet_write_dev_connect_token( "127.0.0.1:40000", 1, rocketnet_functional_token_timestamp( 0, 0.0 ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_write_test_connect_token( "127.0.0.1:40000", 1, rocketnet_functional_token_timestamp( 0, 0.0 ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "portable" );

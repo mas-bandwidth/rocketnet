@@ -4,7 +4,7 @@
 */
 
 // The preformatted, FFI-safe log callback (docs/ERRORS-AND-LOGGING.md 3.2
-// and 3.3): a callback installed with rocketnet_set_log_callback receives each
+// and 3.3): a callback installed with rocketnet_log_function receives each
 // line formatted once, with the exact byte length clamped to 1023 and
 // message[length] == '\0'; quiet and level are read before formatting; and
 // of two callbacks the last registration wins, with NULL restoring the
@@ -49,9 +49,9 @@ static void fill_string( char * out, size_t len )
 static void test_log_callback_preformatted_contract()
 {
     const char * ctx = "the-context";
-    enum rocketnet_log_level_t saved = rocketnet_get_log_level();
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_SPAM );
-    rocketnet_set_log_callback( capture_callback, (void*) ctx );
+    enum rocketnet_log_level_t saved = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );
+    rocketnet_log_function( capture_callback, (void*) ctx );
 
     char empty[1];
     empty[0] = '\0';
@@ -83,8 +83,8 @@ static void test_log_callback_preformatted_contract()
     check( g_buf[1023] == '\0' );
     check( memcmp( g_buf, str2048, 1023 ) == 0 );
 
-    rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_set_log_level( saved );
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved );
 }
 
 // --- filtering happens before formatting ----------------------------------
@@ -106,9 +106,9 @@ static void counting_callback( void * context, enum rocketnet_log_level_t level,
 
 static void test_log_callback_filters_before_formatting()
 {
-    enum rocketnet_log_level_t saved = rocketnet_get_log_level();
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
-    rocketnet_set_log_callback( counting_callback, NULL );
+    enum rocketnet_log_level_t saved = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_log_function( counting_callback, NULL );
     g_count = 0;
 
     rocketnet_debug( "hidden debug %d", 42 );
@@ -126,16 +126,16 @@ static void test_log_callback_filters_before_formatting()
     check( g_last_level == ROCKETNET_LOG_LEVEL_ERROR );
     check( strcmp( g_msg, "shows visible-token" ) == 0 );
 
-    rocketnet_set_quiet( true );
+    rocketnet_quiet( true );
     rocketnet_error( "quiet-hidden %s", visible );
     check( g_count == 1 );
-    rocketnet_set_quiet( false );
+    rocketnet_quiet( false );
     rocketnet_error( "after-quiet %s", visible );
     check( g_count == 2 );
     check( g_msglen > 0 );
 
-    rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_set_log_level( saved );
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved );
 }
 
 // --- last registration wins, NULL restores default ------------------------
@@ -163,43 +163,43 @@ static void second_callback( void * context, enum rocketnet_log_level_t level, c
 
 static void test_log_callback_last_registration_wins()
 {
-    enum rocketnet_log_level_t saved = rocketnet_get_log_level();
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_SPAM );
+    enum rocketnet_log_level_t saved = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );
 
-    rocketnet_set_log_callback( first_callback, NULL );
+    rocketnet_log_function( first_callback, NULL );
     g_first_count = g_second_count = 0;
     rocketnet_error( "via first" );
     check( g_first_count == 1 );
     check( g_second_count == 0 );
 
-    rocketnet_set_log_callback( second_callback, NULL );
+    rocketnet_log_function( second_callback, NULL );
     rocketnet_error( "via second" );
     check( g_second_count == 1 );
     check( g_first_count == 1 );
 
-    rocketnet_set_log_callback( first_callback, NULL );
+    rocketnet_log_function( first_callback, NULL );
     rocketnet_error( "first again" );
     check( g_first_count == 2 );
     check( g_second_count == 1 );
 
-    rocketnet_set_log_callback( NULL, NULL );
+    rocketnet_log_function( NULL, NULL );
     // the default sink writes to stdout, and a passing suite prints only names
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     rocketnet_error( "default sink" );
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_SPAM );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );
     check( g_first_count == 2 );
     check( g_second_count == 1 );
 
-    rocketnet_set_log_callback( first_callback, NULL );
-    rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_log_function( first_callback, NULL );
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     rocketnet_error( "default again" );
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_SPAM );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );
     check( g_first_count == 2 );
     check( g_second_count == 1 );
 
-    rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_set_log_level( saved );
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved );
 }
 
 REGISTER_UNIT_TEST( test_log_callback_preformatted_contract );

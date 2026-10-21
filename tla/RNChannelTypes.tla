@@ -59,7 +59,7 @@ vars == <<plan, queue, ordered_write, sequenced_write, written, numbers,
           referenceTrace, connected, reason>>
 
 \* The first three sends of the promote plan are too big for one record, so
-\* each unreliable one is promoted to its reliable twin (RakNet's rule). The
+\* each unreliable one is promoted to its reliable twin (the promotion rule). The
 \* promote scenario also runs the mixed plan with nothing large, so the main
 \* configuration keeps checking it.
 Large(m) == Scenario = "promote" /\ m \in {1,2,3} /\
@@ -74,7 +74,7 @@ Channel(m) == queue[m].channel
 Order(m) == queue[m].ordering
 Sequence(m) == queue[m].sequencing
 Newer(a,b) == Order(a) > Order(b) \/ (Order(a) = Order(b) /\ Sequence(a) > Sequence(b))
-\* r.trace is the application's one receive queue (RakPeer::Receive): every
+\* r.trace is the application's one receive queue, pumped by each receive: every
 \* code's and every channel's deliveries in delivery order, never filtered
 \* by channel (sdk/rocketnet_message_server.cpp, rn_message_object_next). The per-channel
 \* ordered and sequenced traces below are its projections.

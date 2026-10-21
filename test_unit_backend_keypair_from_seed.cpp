@@ -24,7 +24,7 @@
 
 static void backend_seed_fill( uint8_t * seed, uint8_t basis )
 {
-    for ( int i = 0; i < ROCKETNET_BACKEND_SEED_BYTES; i++ )
+    for ( int i = 0; i < RN_TEST_BACKEND_SEED_BYTES; i++ )
         seed[i] = (uint8_t) ( basis + i * 13 + 7 );
 }
 
@@ -41,15 +41,15 @@ static const char * const backend_seed_addresses[] =
 
 void test_backend_keypair_from_seed_round_trip()
 {
-    uint8_t seed[ROCKETNET_BACKEND_SEED_BYTES];
+    uint8_t seed[RN_TEST_BACKEND_SEED_BYTES];
     backend_seed_fill( seed, 0x21 );
 
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret_key[RN_TEST_BACKEND_SECRET_KEY_BYTES];
     rocketnet_unit_check( rocketnet_generate_backend_keypair_from_seed( seed, backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
 
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret_key[RN_TEST_SERVER_SECRET_KEY_BYTES];
     rocketnet_unit_check( rocketnet_generate_server_keypair( server_public_key, server_secret_key ) == ROCKETNET_STATUS_OK );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
@@ -77,26 +77,26 @@ void test_backend_keypair_from_seed_round_trip()
 
 void test_backend_keypair_from_seed_is_deterministic()
 {
-    uint8_t seed_a[ROCKETNET_BACKEND_SEED_BYTES];
-    uint8_t seed_b[ROCKETNET_BACKEND_SEED_BYTES];
+    uint8_t seed_a[RN_TEST_BACKEND_SEED_BYTES];
+    uint8_t seed_b[RN_TEST_BACKEND_SEED_BYTES];
     backend_seed_fill( seed_a, 0x31 );
     backend_seed_fill( seed_b, 0x91 );
 
     uint8_t public_a[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t secret_a[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t secret_a[RN_TEST_BACKEND_SECRET_KEY_BYTES];
     uint8_t public_b[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t secret_b[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t secret_b[RN_TEST_BACKEND_SECRET_KEY_BYTES];
     uint8_t public_c[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t secret_c[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t secret_c[RN_TEST_BACKEND_SECRET_KEY_BYTES];
 
     rocketnet_unit_check( rocketnet_generate_backend_keypair_from_seed( seed_a, public_a, secret_a ) == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_generate_backend_keypair_from_seed( seed_a, public_b, secret_b ) == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_generate_backend_keypair_from_seed( seed_b, public_c, secret_c ) == ROCKETNET_STATUS_OK );
 
     rocketnet_unit_check( memcmp( public_a, public_b, ROCKETNET_BACKEND_PUBLIC_KEY_BYTES ) == 0 );
-    rocketnet_unit_check( memcmp( secret_a, secret_b, ROCKETNET_BACKEND_SECRET_KEY_BYTES ) == 0 );
+    rocketnet_unit_check( memcmp( secret_a, secret_b, RN_TEST_BACKEND_SECRET_KEY_BYTES ) == 0 );
     rocketnet_unit_check( memcmp( public_a, public_c, ROCKETNET_BACKEND_PUBLIC_KEY_BYTES ) != 0 );
-    rocketnet_unit_check( memcmp( secret_a, secret_c, ROCKETNET_BACKEND_SECRET_KEY_BYTES ) != 0 );
+    rocketnet_unit_check( memcmp( secret_a, secret_c, RN_TEST_BACKEND_SECRET_KEY_BYTES ) != 0 );
 
     sodium_memzero( secret_a, sizeof(secret_a) );
     sodium_memzero( secret_b, sizeof(secret_b) );
@@ -105,19 +105,19 @@ void test_backend_keypair_from_seed_is_deterministic()
 
 void test_backend_keypair_from_seed_matches_the_library()
 {
-    uint8_t seed[ROCKETNET_BACKEND_SEED_BYTES];
+    uint8_t seed[RN_TEST_BACKEND_SEED_BYTES];
     backend_seed_fill( seed, 0x51 );
 
     uint8_t public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t secret_key[RN_TEST_BACKEND_SECRET_KEY_BYTES];
     rocketnet_unit_check( rocketnet_generate_backend_keypair_from_seed( seed, public_key, secret_key ) == ROCKETNET_STATUS_OK );
 
     uint8_t library_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t library_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t library_secret_key[RN_TEST_BACKEND_SECRET_KEY_BYTES];
     rocketnet_unit_check( crypto_sign_seed_keypair( library_public_key, library_secret_key, seed ) == 0 );
 
     rocketnet_unit_check( memcmp( public_key, library_public_key, ROCKETNET_BACKEND_PUBLIC_KEY_BYTES ) == 0 );
-    rocketnet_unit_check( memcmp( secret_key, library_secret_key, ROCKETNET_BACKEND_SECRET_KEY_BYTES ) == 0 );
+    rocketnet_unit_check( memcmp( secret_key, library_secret_key, RN_TEST_BACKEND_SECRET_KEY_BYTES ) == 0 );
 
     sodium_memzero( secret_key, sizeof(secret_key) );
     sodium_memzero( library_secret_key, sizeof(library_secret_key) );
@@ -136,16 +136,16 @@ static void backend_keypair_from_seed_assert_hook( const char *, const char *, c
 void test_backend_keypair_from_seed_null_refused()
 {
     void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
-    rocketnet_set_assert_callback( backend_keypair_from_seed_assert_hook );
+    rocketnet_assert_function( backend_keypair_from_seed_assert_hook );
     backend_keypair_from_seed_asserts = 0;
 
-    uint8_t seed[ROCKETNET_BACKEND_SEED_BYTES];
+    uint8_t seed[RN_TEST_BACKEND_SEED_BYTES];
     backend_seed_fill( seed, 0x61 );
 
     uint8_t public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t secret_key[RN_TEST_BACKEND_SECRET_KEY_BYTES];
     uint8_t public_reference[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t secret_reference[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t secret_reference[RN_TEST_BACKEND_SECRET_KEY_BYTES];
 
     memset( public_reference, 0xa5, sizeof(public_reference) );
     memset( secret_reference, 0xa5, sizeof(secret_reference) );
@@ -169,7 +169,7 @@ void test_backend_keypair_from_seed_null_refused()
 #if ROCKETNET_ASSERTS
     rocketnet_unit_check( backend_keypair_from_seed_asserts == 3 );
 #endif
-    rocketnet_set_assert_callback( saved_assert );
+    rocketnet_assert_function( saved_assert );
 }
 
 REGISTER_UNIT_TEST( test_backend_keypair_from_seed_round_trip );

@@ -388,7 +388,7 @@ static int rocketnet_message_decode_record( const uint8_t * record_start, int re
         const bool last = record->fragment == record->fragments;
         if ( record->fragments == 0 || record->fragment > record->fragments )
             return ROCKETNET_MESSAGE_VIOLATION_BAD_BLOCK;
-        if ( k > limits->window_messages || k * F > limits->max_message_bytes + F - 1 )
+        if ( k > limits->reliable_messages_in_flight || k * F > limits->max_message_bytes + F - 1 )
             return ROCKETNET_MESSAGE_VIOLATION_BAD_BLOCK;
         if ( last ? length > F : length != F )
             return ROCKETNET_MESSAGE_VIOLATION_BAD_BLOCK;
@@ -406,18 +406,18 @@ static int rocketnet_message_decode_record( const uint8_t * record_start, int re
         const int base_units = (int) record->ring - (int) record->fragment * ( F / 16 );
         const bool last = record->fragment == record->fragments;
         const int span = (int) record->fragments * F + ( last ? rocketnet_message_round16( length ) : 16 );
-        if ( base_units < 0 || base_units * 16 + span > limits->receive_ring_bytes )
+        if ( base_units < 0 || base_units * 16 + span > limits->receive_message_buffer_bytes )
             return ROCKETNET_MESSAGE_VIOLATION_BAD_RING;
     }
     else if ( rocketnet_message_code_is_holdable( code ) )
     {
-        if ( (int) record->ring * 16 + rocketnet_message_round16( length ) > limits->receive_ring_bytes )
+        if ( (int) record->ring * 16 + rocketnet_message_round16( length ) > limits->receive_message_buffer_bytes )
             return ROCKETNET_MESSAGE_VIOLATION_BAD_RING;
     }
 
     // check 9: reliable and CONTROL records ride only unfragmented payloads (L2.2, L2.4)
 
-    if ( ( rocketnet_message_code_has_number( code ) || control ) && payload_bytes > ROCKETNET_MAX_PAYLOAD_BYTES )
+    if ( ( rocketnet_message_code_has_number( code ) || control ) && payload_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
         return ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE;
 
     record->data = record_start + header;
@@ -529,8 +529,8 @@ void rocketnet_message_write_config_body( uint8_t * output, const struct rocketn
     rocketnet_write_uint8( &p, (uint8_t) body->enabled );
     rocketnet_write_uint8( &p, 0 );
     rocketnet_write_uint32( &p, body->num_channels );
-    rocketnet_write_uint32( &p, body->window_messages );
-    rocketnet_write_uint32( &p, body->receive_ring_bytes );
+    rocketnet_write_uint32( &p, body->reliable_messages_in_flight );
+    rocketnet_write_uint32( &p, body->receive_message_buffer_bytes );
     rocketnet_write_uint32( &p, body->max_message_bytes );
     rocketnet_write_uint32( &p, body->fragment_bytes );
     rocketnet_write_uint32( &p, 0 );
@@ -550,8 +550,8 @@ int rocketnet_message_read_config_body( const uint8_t * data, int bytes, struct 
     body->enabled = rocketnet_read_uint8( &p );
     const uint8_t zero = rocketnet_read_uint8( &p );
     body->num_channels = rocketnet_read_uint32( &p );
-    body->window_messages = rocketnet_read_uint32( &p );
-    body->receive_ring_bytes = rocketnet_read_uint32( &p );
+    body->reliable_messages_in_flight = rocketnet_read_uint32( &p );
+    body->receive_message_buffer_bytes = rocketnet_read_uint32( &p );
     body->max_message_bytes = rocketnet_read_uint32( &p );
     body->fragment_bytes = rocketnet_read_uint32( &p );
     const uint32_t zero_tail = rocketnet_read_uint32( &p );

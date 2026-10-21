@@ -37,7 +37,7 @@ struct rocketnet_server_protocol_t
 {
     uint64_t protocol_id;
     double send_rate;                                       // keep-alives per second per client, default style: 10
-    uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES];
+    uint8_t packet_filter[ROCKETNET_FILTER_VALUE_BYTES];
 
     uint8_t backend_public_key[ROCKETNET_KEY_BYTES];
     uint8_t server_public_key[ROCKETNET_KEY_BYTES];
@@ -111,7 +111,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
 // open, then dispatches. On SEND_* the response is in response_packet with
 // its length in response_bytes. A payload that opens for a connected client
 // returns ACCEPTED with the bytes in out_payload (sized at least
-// ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES) and
+// ROCKETNET_RECEIVE_PAYLOAD_BYTES) and
 // the client index in out_payload_client_index; every other outcome leaves
 // out_payload_bytes zero.
 

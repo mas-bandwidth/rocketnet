@@ -91,12 +91,12 @@ static int standard_message_forms_generate( const char * id, uint8_t * out, int 
         const struct standard_message_vector_input_t * input = &standard_message_forms_inputs[i];
         if ( input->single )
         {
-            if ( capacity < ROCKETNET_MAX_PAYLOAD_BYTES )
+            if ( capacity < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
                 return -1;
             standard_message_forms_data( out, input->bytes );
-            return rocketnet_message_single_finish( out, ROCKETNET_MAX_PAYLOAD_BYTES, input->bytes );
+            return rocketnet_message_single_finish( out, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, input->bytes );
         }
-        static uint8_t data[ROCKETNET_MAX_PAYLOAD_BYTES];
+        static uint8_t data[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
         if ( input->bytes < 1 || input->bytes > (int) sizeof( data ) )
             return -1;
         standard_message_forms_data( data, input->bytes );
@@ -124,7 +124,7 @@ static int standard_message_forms_generate( const char * id, uint8_t * out, int 
         record.data = data;
         record.bytes = input->bytes;
         struct rocketnet_message_writer_t writer;
-        rocketnet_message_writer_begin( &writer, out, ROCKETNET_MAX_PAYLOAD_BYTES );
+        rocketnet_message_writer_begin( &writer, out, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
         if ( !rocketnet_message_writer_add( &writer, &record ) )
             return -1;
         return rocketnet_message_writer_finish( &writer );
@@ -138,7 +138,7 @@ static void test_standard_message_forms_vectors()
     rocketnet_unit_check( rn_standard_vectors_walk( standard_message_forms_table, count, standard_message_forms_generate ) == count );
     uint8_t scratch[2];
     rocketnet_unit_check( standard_message_forms_generate( "m2.no-such-vector", scratch, (int) sizeof( scratch ) ) == -1 );
-    rocketnet_unit_check( rocketnet_message_single_capacity( ROCKETNET_MAX_PAYLOAD_BYTES ) == ROCKETNET_MESSAGE_SINGLE_BYTES );
+    rocketnet_unit_check( rocketnet_message_single_capacity( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ) == ROCKETNET_MESSAGE_SINGLE_BYTES );
 }
 
 REGISTER_UNIT_TEST( test_standard_message_forms_vectors );

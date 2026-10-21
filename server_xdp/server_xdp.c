@@ -257,10 +257,10 @@ static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * 
         return XDP_DROP;
     }
 
-    if ( packet_data[2] != config->filter_value[0] ||
-         packet_data[3] != config->filter_value[1] ||
-         packet_data[4] != config->filter_value[2] ||
-         packet_data[5] != config->filter_value[3] )
+    if ( packet_data[2] != config->packet_filter[0] ||
+         packet_data[3] != config->packet_filter[1] ||
+         packet_data[4] != config->packet_filter[2] ||
+         packet_data[5] != config->packet_filter[3] )
     {
         debug_printf( "wrong filter value" );
         server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_FILTER );

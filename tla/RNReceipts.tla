@@ -17,8 +17,8 @@ EXTENDS Naturals, Sequences, FiniteSets
 \* The bounded API workload consumes distinct serials: a nonreceipt type,
 \* then two single-fragment receipt messages or one two-fragment block.
 \* Each workload exercises the selected source type and size. An unreliable
-\* send too big for one packet is promoted to its reliable twin, as RakNet
-\* does: 0 to 2, 1 to 4 and 5 to 6. Types 6 and 7 never emit LOSS.
+\* send too big for one packet is promoted to its reliable twin
+\* (the promotion rule): 0 to 2, 1 to 4 and 5 to 6. Types 6 and 7 never emit LOSS.
 \* Fragments have independent numbers but share their message's serial.
 \* Outcomes are ghost emission history; ring is the bounded application queue.
 \* Dropping its oldest event is counted and never permits a second emission.

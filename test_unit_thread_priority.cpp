@@ -15,7 +15,7 @@
 //     THREAD_PRIORITY_TIME_CRITICAL ), one call.
 //   Windows platform init: timeBeginPeriod( 1 ) before the timer frequency
 //     query; platform term: timeEndPeriod( 1 ).
-// Off (rocketnet_set_thread_priority( false )) makes no priority call and no
+// Off (rocketnet_thread_priority( false )) makes no priority call and no
 // timer period call. A refused call adds one to the process-wide refusal count
 // and logs one warning per call kind, and the caller carries on.
 
@@ -139,9 +139,9 @@ static void priority_fake_install( bool fail )
     memset( priority_fake_calls, 0, sizeof( priority_fake_calls ) );
     priority_log_lines = 0;
     priority_log_last[0] = '\0';
-    priority_saved_level = rocketnet_get_log_level();
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_SPAM );
-    rocketnet_set_log_callback( priority_log_capture, NULL );
+    priority_saved_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );
+    rocketnet_log_function( priority_log_capture, NULL );
     rocketnet_platform_thread_priority_reset_logged_for_testing();
     rocketnet_platform_set_priority_calls_for_testing( &priority_fake_table );
 }
@@ -150,9 +150,9 @@ static void priority_fake_install( bool fail )
 static void priority_fake_restore()
 {
     rocketnet_platform_set_priority_calls_for_testing( NULL );
-    rocketnet_set_thread_priority( true );
-    rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_set_log_level( priority_saved_level );
+    rocketnet_thread_priority( true );
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( priority_saved_level );
     rocketnet_platform_thread_priority_reset_logged_for_testing();
 }
 
@@ -174,9 +174,9 @@ static void priority_check_one_thread_call( struct rocketnet_platform_thread_t *
 static void test_thread_priority_default_is_on()
 {
     rocketnet_unit_check( rocketnet_get_thread_priority() );
-    rocketnet_set_thread_priority( false );
+    rocketnet_thread_priority( false );
     rocketnet_unit_check( !rocketnet_get_thread_priority() );
-    rocketnet_set_thread_priority( true );
+    rocketnet_thread_priority( true );
     rocketnet_unit_check( rocketnet_get_thread_priority() );
 }
 
@@ -211,7 +211,7 @@ static void test_thread_priority_off_makes_no_calls()
     struct rocketnet_platform_thread_t thread;
     memset( &thread, 0, sizeof( thread ) );
     priority_fake_install( false );
-    rocketnet_set_thread_priority( false );
+    rocketnet_thread_priority( false );
     rocketnet_platform_client_thread_priority( &thread );
     rocketnet_platform_server_thread_priority( &thread );
     rocketnet_unit_check( priority_fake_count == 0 );
@@ -310,9 +310,9 @@ static void priority_frame_sync_log_capture( void * context, enum rocketnet_log_
 static void test_thread_priority_off_frame_sync_takes_no_priority()
 {
     priority_fake_install( false );
-    rocketnet_set_log_callback( priority_frame_sync_log_capture, NULL );
+    rocketnet_log_function( priority_frame_sync_log_capture, NULL );
     priority_frame_sync_lines = 0;
-    rocketnet_set_thread_priority( false );
+    rocketnet_thread_priority( false );
     const int held = rocketnet_frame_sync_elevate_priority_for_testing( 16666666 );
     rocketnet_unit_check( priority_frame_sync_lines == 0 );
     rocketnet_unit_check( held == 0 );

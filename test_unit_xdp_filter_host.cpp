@@ -220,7 +220,7 @@ static void xdp_host_apply_config( const xdp_host_config_t & c )
         memcpy( &config.public_address, xdp_host_server_ipv4, 4 );      // network order, as stored
     const uint8_t port_bytes[2] = { (uint8_t) ( c.port >> 8 ), (uint8_t) ( c.port & 0xff ) };
     memcpy( &config.public_port, port_bytes, 2 );                       // network order, as stored
-    memcpy( config.filter_value, xdp_host_filter_value, 4 );
+    memcpy( config.packet_filter, xdp_host_filter_value, 4 );
     config.filter_epoch = c.epoch;
     if ( !c.any_ipv6 )
         memcpy( config.public_address_ipv6, xdp_host_server_ipv6, 16 );

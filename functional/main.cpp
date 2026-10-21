@@ -42,16 +42,16 @@ static int rocketnet_functional_worker( const char * name )
     if ( cleared != 0 )
         return 1;
 
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
     // the off run of a timing comparison: the library's network-thread
     // priority calls off before init, so the timer period is skipped too
     // (functional/thread_priority_timing.cpp)
     char thread_priority[256];
     if ( rocketnet_test_getenv( "ROCKETNET_FUNCTIONAL_THREAD_PRIORITY", thread_priority, sizeof( thread_priority ) ) && strcmp( thread_priority, "off" ) == 0 )
-        rocketnet_set_thread_priority( false );
+        rocketnet_thread_priority( false );
 
-    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;

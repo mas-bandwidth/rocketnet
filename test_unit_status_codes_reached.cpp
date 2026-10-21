@@ -21,6 +21,8 @@
 //     past the token's timeout ends the attempt in -(state + 1).
 
 #include "test_unit_registry.h"
+#include "sdk/rocketnet_connect_token.h"
+#include "sdk/rocketnet_base64.h"
 
 #include "sdk/rocketnet.h"
 #include "rocketnet_internal.h"
@@ -39,9 +41,9 @@
 struct reached_identity_t
 {
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret[64];
     uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret[sizeof( rocketnet_dev_server_secret_key )];
 };
 
 static void reached_identity( reached_identity_t * identity )
@@ -60,25 +62,27 @@ static rocketnet_server_t * reached_server_create( void * context, const reached
     config.protocol_id = REACHED_PROTOCOL;
     config.max_clients = 1;
     memcpy( config.backend_public_key, identity->backend_public, sizeof( config.backend_public_key ) );
-    memcpy( config.server_public_key, identity->server_public, sizeof( config.server_public_key ) );
-    memcpy( config.server_secret_key, identity->server_secret, sizeof( config.server_secret_key ) );
     config.transport = "loopback";
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    rocketnet_server_t * server = rocketnet_server_create( context, "127.0.0.1:0", &config, NULL, 0, &create_status );
+    rocketnet_server_t * server = rocketnet_server_create( context, "127.0.0.1:0", NULL, &config, &create_status );
     check( server != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
     check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
     return server;
 }
 
-static void reached_token( rocketnet_server_t * server, const reached_identity_t * identity, uint8_t * token )
+static void reached_token( rocketnet_server_t * server, const reached_identity_t * identity, char * token_string )
 {
+    uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    rocketnet_server_public_key( server, server_public );
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     char address[64];
     snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) rocketnet_server_port( server ) );
     const char * addresses[] = { address };
-    check( rocketnet_write_production_connect_token( identity->backend_secret, identity->server_public,
+    check( rocketnet_write_production_connect_token( identity->backend_secret, server_public,
         REACHED_PROTOCOL, addresses, 1, 0x5EED, 1000, 1ULL << 40, REACHED_TIMEOUT_SECONDS, NULL,
         token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 }
 
 static int refuse_platform_start( void )
@@ -109,11 +113,11 @@ static void test_platform_init_failed_reached()
     rocketnet_platform_set_priority_calls_for_testing( &fake );
 
     int status = -1;
-    check( !rocketnet_init_ex( NULL, &status ) );
+    check( !rocketnet_init_ex( NULL, NULL, NULL, &status ) );
     check( status == ROCKETNET_STATUS_PLATFORM_INIT_FAILED );
 
     rocketnet_platform_set_priority_calls_for_testing( NULL );
-    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 REGISTER_UNIT_TEST( test_platform_init_failed_reached );
 
@@ -136,20 +140,20 @@ REGISTER_UNIT_TEST( test_timer_create_failed_reached );
 // a refused mutex create fails client connect with MUTEX_CREATE_FAILED
 static void test_client_mutex_create_failed_reached()
 {
-    rocketnet_set_quiet( 1 );
+    rocketnet_quiet( 1 );
     reached_identity_t identity;
     reached_identity( &identity );
     rocketnet_server_t * server = reached_server_create( NULL, &identity );
 
-    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     reached_token( server, &identity, token );
 
-    rocketnet_client_config_t config;
+    rocketnet_client_test_config_t config;
     rocketnet_client_default_config( &config );
     config.transport = "loopback";
     config.step_driven = true;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL, 0, &create_status );
+    rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &create_status );
     check( client != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
 
@@ -202,22 +206,21 @@ static void test_client_connect_thread_create_failed_reached()
     reached_allocator_t state = { 0, 0, 0 };
 
     check( rocketnet_term() == ROCKETNET_STATUS_OK );
-    check( rocketnet_set_allocator( reached_allocate, reached_release ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_init( &state ) == ROCKETNET_STATUS_OK );
-    rocketnet_set_quiet( 1 );
+    check( rocketnet_init( &state, reached_allocate, reached_release ) == ROCKETNET_STATUS_OK );
+    rocketnet_quiet( 1 );
 
     reached_identity_t identity;
     reached_identity( &identity );
     rocketnet_server_t * server = reached_server_create( &state, &identity );
-    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     reached_token( server, &identity, token );
 
-    rocketnet_client_config_t config;
+    rocketnet_client_test_config_t config;
     rocketnet_client_default_config( &config );
     config.transport = "loopback";
     config.step_driven = false;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    rocketnet_client_t * client = rocketnet_client_create( &state, &config, NULL, 0, &create_status );
+    rocketnet_client_t * client = rocketnet_client_create( &state, &config, &create_status );
     check( client != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
 
@@ -251,8 +254,7 @@ static void test_client_connect_thread_create_failed_reached()
 
     check( rocketnet_term() == ROCKETNET_STATUS_OK );
     check( state.live == 0 );
-    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 REGISTER_UNIT_TEST( test_client_connect_thread_create_failed_reached );
 
@@ -261,22 +263,22 @@ static double reached_clock( void * ) { return reached_now; }
 
 static enum rocketnet_client_state_t reached_handshake_stall( enum rocketnet_client_state_t handshake_state, double * stalled_at, double * ended_at )
 {
-    rocketnet_set_quiet( 1 );
+    rocketnet_quiet( 1 );
     reached_identity_t identity;
     reached_identity( &identity );
     rocketnet_server_t * server = reached_server_create( NULL, &identity );
 
-    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     reached_token( server, &identity, token );
 
-    rocketnet_client_config_t config;
+    rocketnet_client_test_config_t config;
     rocketnet_client_default_config( &config );
     config.transport = "loopback";
     config.step_driven = true;
     config.time_callback = reached_clock;
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL, 0, &create_status );
+    rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &create_status );
     check( client != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
     check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
@@ -288,9 +290,9 @@ static enum rocketnet_client_state_t reached_handshake_stall( enum rocketnet_cli
         reached_now = time;
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE )
             seen_requesting_cookie = 1;
-        check( rocketnet_client_update( client, time ) == ROCKETNET_UPDATE_OK );
+        rocketnet_client_update( client, time );
         rocketnet_client_send_packets( client );
-        check( rocketnet_server_update( server, time ) == ROCKETNET_UPDATE_OK );
+        rocketnet_server_update( server, time );
         rocketnet_server_send_packets( server );
         time += 0.01;
     }
@@ -310,7 +312,7 @@ static enum rocketnet_client_state_t reached_handshake_stall( enum rocketnet_cli
     {
         time += 0.01;
         reached_now = time;
-        check( rocketnet_client_update( client, time ) == ROCKETNET_UPDATE_OK );
+        rocketnet_client_update( client, time );
         rocketnet_client_send_packets( client );
     }
     *ended_at = time;

@@ -1900,11 +1900,11 @@ make the reconstruction unambiguous.
    has not yet seen acknowledged, and `U'` the window base: `U` when no
    unacknowledged block contains `U`, and the first number of the lowest such
    block otherwise. A sender MUST number a record with number `n` only while
-   `n < U' + W`, where `W` is the connection's `window_messages` field and
+   `n < U' + W`, where `W` is the connection's `reliable_messages_in_flight` field and
    the row `window messages default` below gives its default.
 4. A holdable record is a record with code 3, code 4, or a block. For a
    holdable record a sender MUST place the record in the receive ring of `B`
-   bytes, where `B` is the connection's `receive_ring_bytes` field, at the
+   bytes, where `B` is the connection's `receive_message_buffer_bytes` field, at the
    ring span `[p, p + len16)`. `len16` is the record's length rounded up to a
    multiple of the row `ring unit`. `p` is `ring_next` when the span does not
    cross a multiple of `B`; otherwise `p` is the next multiple of `B`, and the
@@ -1977,9 +1977,9 @@ n     = R + delta
 | half range | `8388608` | numbers | the signed half range of the 24-bit counter |
 | ring unit | `16` | bytes | the unit of the ring offset and of `len16` |
 | fragment bytes | `1152` | bytes | the block stride |
-| window messages default | `1024` | records | the default of `window_messages` |
-| receive ring bytes default | `262144` | bytes | the default of `receive_ring_bytes` |
-| window messages limit | `1048576` | records | the largest valid `window_messages` |
+| window messages default | `1024` | records | the default of `reliable_messages_in_flight` |
+| receive ring bytes default | `262144` | bytes | the default of `receive_message_buffer_bytes` |
+| window messages limit | `1048576` | records | the largest valid `reliable_messages_in_flight` |
 | replay window depth minimum | `4096` | sequences | the smallest valid connection layer replay depth |
 | replay window depth maximum | `32768` | sequences | the largest valid connection layer replay depth |
 | minimum numbered record | `7` | bytes | a code 2 header and one data byte |
@@ -2038,10 +2038,10 @@ A sender chooses unreliable or unreliable sequenced in [m1.3 Reliability types](
 1. A sender MUST send an unreliable message as code 0 and an unreliable sequenced message as code 1. A code 0 send larger than one record can carry MUST be sent under code 2, its reliable twin, and a code 1 send larger than one record can carry MUST be sent under code 4, its reliable twin. A receiver MUST deliver a promoted message under the code it arrives as.
 2. A code 0 record and a code 2 record carry no channel field. A receiver MUST deliver a code 0 record, a code 2 record, and the message of application type 5 or 6 that travels as code 0 or 2, on channel 0. A code 1 record MUST be delivered on the channel its record names.
 3. A receiver MUST deliver a code 0 record at most once by appending the record's bytes to the update's delivery list. It MUST NOT take a reliable number, keep a received state, retransmit the record, or acknowledge it at the message layer.
-4. The per-update unreliable delivery allowance is the connection's `unreliable_deliveries` configuration field. A code 0 delivery and a code 1 delivery each count against it. When the update has already made that many code 0 and code 1 deliveries, a receiver MUST drop each further code 0 record and each further code 1 record, MUST count the drop as `MESSAGE_UNRELIABLE_DELIVERY_FULL`, and MUST NOT treat the drop as a violation.
+4. The per-update unreliable delivery allowance is the connection's `unreliable_messages_per_update` configuration field. A code 0 delivery and a code 1 delivery each count against it. When the update has already made that many code 0 and code 1 deliveries, a receiver MUST drop each further code 0 record and each further code 1 record, MUST count the drop as `MESSAGE_UNRELIABLE_DELIVERY_FULL`, and MUST NOT treat the drop as a violation.
 5. A receiver MUST keep, for each channel, an ordered read index and a sequencing watermark. A code 1 record is in its epoch when its ordering index equals the read index. A record in its epoch whose sequencing index is at or after the watermark MUST be delivered, and the receiver MUST then set the watermark to one past that sequencing index modulo the counter modulus.
 6. A code 1 record in its epoch whose sequencing index is before the watermark MUST be dropped and counted `MESSAGE_SEQUENCED_STALE`. A code 1 record whose ordering index is behind the read index, when the difference lies in the upper half of the counter modulus, MUST be dropped and counted `MESSAGE_SEQUENCED_STALE`.
-7. A code 1 record ahead of its epoch by less than the window MUST be held as the channel's newest held message. A receiver MUST keep at most one held code 1 message per channel, in one slot of the connection's `sequenced_holds` configuration field. A newer held message, ordered by ordering index and then by sequencing index, MUST replace the held message, and the replaced message MUST be dropped and counted `MESSAGE_SEQUENCED_SUPERSEDED`. A candidate that is not newer than the held message MUST be dropped and counted `MESSAGE_SEQUENCED_SUPERSEDED`. A record larger than one hold slot, or a record with no free hold slot, MUST be dropped and counted `MESSAGE_SEQUENCED_HOLD_FULL`.
+7. A code 1 record ahead of its epoch by less than the window MUST be held as the channel's newest held message. A receiver MUST keep at most one held code 1 message per channel, in one slot of the connection's `sequenced_messages_held` configuration field. A newer held message, ordered by ordering index and then by sequencing index, MUST replace the held message, and the replaced message MUST be dropped and counted `MESSAGE_SEQUENCED_SUPERSEDED`. A candidate that is not newer than the held message MUST be dropped and counted `MESSAGE_SEQUENCED_SUPERSEDED`. A record larger than one hold slot, or a record with no free hold slot, MUST be dropped and counted `MESSAGE_SEQUENCED_HOLD_FULL`.
 8. When an ordered message is delivered on a channel, the receiver MUST set the channel's read index to one past that ordering index and MUST reset the channel's watermark to zero. The receiver MUST then deliver the channel's held message when its ordering index is the read index and its sequencing index is at or after the watermark, and MUST clear the hold.
 9. A code 1 record ahead of the read index by at least the window MUST be refused as a violation and counted `MESSAGE_ORDERING_AHEAD`. A violation ends the connection.
 10. A sender MUST take a code 1 record's ordering index from the channel's ordered write index and its sequencing index from the channel's sequencing write index, and MUST increment the sequencing write index. An ordered send MUST take the ordered write index as its ordering index, MUST increment the ordered write index, and MUST reset the sequencing write index to zero.
@@ -2083,7 +2083,7 @@ The rows are the code 1 record's outcome on one channel. An event a row does not
 Each vector is one delivery trace. Its input lines name the configuration and one record per step, in order. The bytes are the step outcomes in that same order: one outcome byte, then a count byte, then that many delivered entries. An entry is the delivery's channel (u8), code (u8), length (u16, little-endian) and data bytes. The outcome bytes are `0x00` delivered, `0x01` held, `0x02` stale, `0x03` dropped by the unreliable delivery allowance, `0x04` dropped by the sequenced hold pool, and `0x05` violation.
 
 ```vector m6.code0-delivery-trace
-config: unreliable_deliveries 2
+config: unreliable_messages_per_update 2
 step 1: code 0 channel 0 data 6f 6e 65
 step 2: code 0 channel 0 data 74 77 6f
 step 3: code 0 channel 0 data 74 68 72 65 65
@@ -2116,7 +2116,7 @@ step 14: code 1 channel 0 ordering 1026 sequencing 0 data 78
 ```
 
 ```vector m6.code1-hold-full-trace
-config: sequenced_holds 1
+config: sequenced_messages_held 1
 step 1: code 1 channel 0 ordering 1 sequencing 0 data 78
 step 2: code 1 channel 1 ordering 1 sequencing 0 data 79
 step 3: code 1 channel 0 ordering 1 sequencing 1 data 7a
@@ -2562,17 +2562,17 @@ second time.
 
 ### m9.2. Round-trip estimate and resend delay
 
-The sender MUST estimate the round-trip time as RakNet does. On the first
+The sender MUST estimate the round-trip time as follows. On the first
 sample, it MUST set both the smoothed round-trip time and deviation to the
 sample. On every later sample, the deviation MUST move 5 percent toward
 the absolute difference between the prior smoothed RTT and the new sample;
 the smoothed RTT MUST then move 5 percent toward the new sample. The resend delay is
 
-    clamp( 2 x srtt + 4 x deviation + 30 ms, resend_delay_min_ms, resend_delay_max_ms )
+    clamp( 2 x srtt + 4 x deviation + 30 ms, message_resend_delay_min_ms, message_resend_delay_max_ms )
 
 where srtt and deviation are in seconds. The timeout MUST be 2 seconds before
-the first sample by default. The minimum defaults to 0, which applies no floor
-and matches RakNet; a caller may configure a nonzero minimum. The maximum
+the first sample by default. The minimum defaults to 0, which applies no floor;
+a caller may configure a nonzero minimum. The maximum
 defaults to 2 seconds. The timeout MUST
 NOT back off after a resend: every pass uses the same function of the
 estimates, so a record that is never acknowledged is resent at that delay
@@ -2580,10 +2580,10 @@ until the reliable timeout ends the connection.
 
 | Name | Value | Unit | Meaning |
 |---|---|---|---|
-| resend_delay_initial_ms | 2000 | ms | the timeout before the first round-trip sample |
-| resend_delay_min_ms | 0 | ms | optional floor for the sampled resend delay; zero disables it |
-| resend_delay_max_ms | 2000 | ms | the configured largest timeout |
-| reliable_timeout_ms | 10000 | ms | how long the oldest unacknowledged number may stand |
+| message_resend_delay_initial_ms | 2000 | ms | the timeout before the first round-trip sample |
+| message_resend_delay_min_ms | 0 | ms | optional floor for the sampled resend delay; zero disables it |
+| message_resend_delay_max_ms | 2000 | ms | the configured largest timeout |
+| reliable_message_timeout_ms | 10000 | ms | how long the oldest unacknowledged number may stand |
 | min_resend_attempts | 4 | count | the sends that fit before the reliable timeout |
 
 ### m9.3. Resend classes and the reliable timeout
@@ -2593,15 +2593,15 @@ small-record queue; a fragment of a block is in the chunk queue. A number MUST
 be in at most one queue.
 
 The resend delay of a single-packet record MUST be resend_delay. The resend delay of
-a chunk MUST be min( resend_delay, reliable_timeout_ms / min_resend_attempts ). A sender MUST resend a due number
+a chunk MUST be min( resend_delay, reliable_message_timeout_ms / min_resend_attempts ). A sender MUST resend a due number
 at the first update whose time is at least the number's last send plus its
 resend delay, and MUST NOT resend it before then. A resend MUST use a fresh
 connection layer sequence and MUST move the number to the tail of its queue.
 
-The sender MUST end the connection with ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT
+The sender MUST end the connection with ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT
 when the oldest unacknowledged reliable number has stood unacknowledged for
-reliable_timeout_ms or more, measured from its first send. A connection that
-ends with ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT MUST stop resending.
+reliable_message_timeout_ms or more, measured from its first send. A connection that
+ends with ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT MUST stop resending.
 
 ### m9.4. Send budget
 
@@ -2640,9 +2640,9 @@ earlier class.
 
 The client's budget to the server defaults to client_default_kbps and the
 server's budget to each client defaults to server_default_kbps. A positive
-value outside send_kbps_min to send_kbps_max MUST be refused and MUST leave the
-budget unchanged. A budget of 0 or less sets that direction's budget to
-send_kbps_max; such a budget is NOT RECOMMENDED.
+value above send_kbps_max MUST be refused and MUST leave the budget unchanged,
+and so MUST a negative value. A budget of 0 sets that direction's default
+budget. A budget of send_kbps_max is the ceiling and is NOT RECOMMENDED.
 
 A setter MUST refill at the old rate up to its time argument, then apply the
 new rate and depth from that time, keeping the bucket's bytes capped at the new
@@ -2704,8 +2704,8 @@ wire representation.
    num_channels, and a message endpoint MUST refuse such a send with a channel
    outside that range. A send of reliability 0, 2, 5 or 6 is neither ordered
    nor sequenced: a message endpoint MUST ignore its channel, MUST NOT refuse
-   it for its channel, and sends it with no channel field (rule 2), as RakNet's
-   ordering channel is ignored by its unordered reliabilities
+   it for its channel, and sends it with no channel field (rule 2): the channel
+   orders only the ordered and sequenced reliabilities
    (`rn_message_object_start` in `sdk/rocketnet_message_server.cpp`).
 2. A record with code 1, 3 or 4 MUST carry the channel field in
    [m3 Record format](#m3). Receipt types use their base codes from
@@ -2787,7 +2787,7 @@ configuration: build-specific maximum at least 301; num_channels 301
    compare it; such a body is a CONFIG mismatch and never
    `MESSAGE_BAD_CONTROL`.
 8. An endpoint MUST compare the `version`, `enabled`, `num_channels`,
-   `window_messages`, `receive_ring_bytes`, `max_message_bytes` and
+   `reliable_messages_in_flight`, `receive_message_buffer_bytes`, `max_message_bytes` and
    `fragment_bytes` fields of the body with its own values.
 9. An endpoint MUST end the connection with `CONFIG_MISMATCH` when any
    compared field differs.
@@ -2811,11 +2811,11 @@ reliable number. The payload is 35 bytes:
       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
       |    enabled    |     zero      |         num_channels          |
       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-      |         num_channels          |        window_messages        |
+      |         num_channels          |        reliable_messages_in_flight        |
       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-      |        window_messages        |      receive_ring_bytes       |
+      |        reliable_messages_in_flight        |      receive_message_buffer_bytes       |
       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-      |      receive_ring_bytes       |       max_message_bytes       |
+      |      receive_message_buffer_bytes       |       max_message_bytes       |
       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
       |       max_message_bytes       |        fragment_bytes         |
       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -2835,8 +2835,8 @@ reliable number. The payload is 35 bytes:
 | enabled | 8 | 1 | u8 | bit r set: reliability r may be sent by the application | a mask of enabled reliabilities |
 | reserved byte | 9 | 1 | zero[1] | reserved | `0` |
 | num_channels | 10 | 4 | u32 | the count of channels | the sender's configured count |
-| window_messages | 14 | 4 | u32 | the reliable window W | the sender's configured window |
-| receive_ring_bytes | 18 | 4 | u32 | the receive ring B | the sender's configured ring size |
+| reliable_messages_in_flight | 14 | 4 | u32 | the reliable window W | the sender's configured window |
+| receive_message_buffer_bytes | 18 | 4 | u32 | the receive ring B | the sender's configured ring size |
 | max_message_bytes | 22 | 4 | u32 | the largest message | the sender's configured maximum |
 | fragment_bytes | 26 | 4 | u32 | the block stride F | the fragment bytes row of [m5 Message numbering and the reliable window](#m5) |
 | reserved tail | 30 | 4 | zero[4] | reserved | `0` |
@@ -2926,7 +2926,7 @@ value: 16
 ```
 
 ```vector m11.window-messages-mismatch
-field: window_messages
+field: reliable_messages_in_flight
 value: 512
 22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 02
 00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
@@ -2934,7 +2934,7 @@ value: 512
 ```
 
 ```vector m11.receive-ring-bytes-mismatch
-field: receive_ring_bytes
+field: receive_message_buffer_bytes
 value: 131072
 22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04
 00 00 00 00 02 00 00 00 04 00 80 04 00 00 00 00

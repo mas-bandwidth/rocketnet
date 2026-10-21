@@ -119,7 +119,7 @@ static void feed_cookie( struct rocketnet_client_protocol_t * client, double cur
 {
     uint8_t cookie[ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES];
     const uint8_t cookie_mac[ROCKETNET_COOKIE_MAC_BYTES] = { 0 };
-    rocketnet_write_connection_cookie_packet( cookie, client->filter_value, client->connection_salt,
+    rocketnet_write_connection_cookie_packet( cookie, client->packet_filter, client->connection_salt,
                                               0, cookie_mac );
 
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
@@ -235,7 +235,7 @@ static void test_client_ephemeral_secret_wiped_on_denied()
 
     uint8_t denied[ROCKETNET_RECEIVE_CEILING];
     int denied_bytes = rocketnet_write_sealed_packet( denied, ROCKETNET_CONNECTION_DENIED_PACKET,
-                                                      client.filter_value, 1, session_nonce, NULL, 0,
+                                                      client.packet_filter, 1, session_nonce, NULL, 0,
                                                       client.signed_fields.protocol_id, client.connection_salt,
                                                       NULL, keys.handshake_server_to_client );
     rocketnet_unit_check( denied_bytes == ROCKETNET_CONNECTION_DENIED_WIRE_BYTES );
@@ -297,7 +297,7 @@ static void test_client_ephemeral_secret_wiped_on_connection_response_timeout()
 
     uint8_t challenge[ROCKETNET_RECEIVE_CEILING];
     int ch_bytes = rocketnet_write_sealed_packet( challenge, ROCKETNET_CONNECTION_CHALLENGE_PACKET,
-                                                  client.filter_value, 1, session_nonce,
+                                                  client.packet_filter, 1, session_nonce,
                                                   server_eph_pub, ROCKETNET_KEY_BYTES,
                                                   client.signed_fields.protocol_id, client.connection_salt,
                                                   client.client_ephemeral_public_key,

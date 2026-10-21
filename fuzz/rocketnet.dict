@@ -8,7 +8,7 @@
 # --- the prefilter header (sdk/rocketnet_wire.h) ---
 
 # the published test filter value, ROCKETNET_TEST_FILTER_VALUE
-filter_value="\xb7\x59\x01\x00"
+packet_filter="\xb7\x59\x01\x00"
 
 # full 6-byte prefilter headers at epoch 0: type, epoch, filter value
 prefilter_request="\x00\x00\xb7\x59\x01\x00"

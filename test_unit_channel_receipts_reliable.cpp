@@ -19,8 +19,8 @@
 
 struct reliable_receipt_transport_t
 {
-    alignas( 16 ) uint8_t frame[16 + ROCKETNET_MAX_PAYLOAD_BYTES];
-    uint8_t sent_payloads[16][ROCKETNET_MAX_PAYLOAD_BYTES];
+    alignas( 16 ) uint8_t frame[16 + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    uint8_t sent_payloads[16][ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     int sent_bytes[16];
     uint64_t sent_packets[16];
     int sent_count;
@@ -55,12 +55,12 @@ static int reliable_link_acked( void * context, const int ** slots, const uint64
 static uint8_t * reliable_link_start( void * context, int, int bytes, rocketnet_packet_context_t * packet )
 {
     reliable_receipt_transport_t * t = (reliable_receipt_transport_t *) context;
-    if ( bytes > ROCKETNET_MAX_PAYLOAD_BYTES )
+    if ( bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
         return NULL;
     memset( packet, 0, sizeof( *packet ) );
     packet->frame = t->frame;
     packet->payload_index = 16;
-    packet->payload_capacity = ROCKETNET_MAX_PAYLOAD_BYTES;
+    packet->payload_capacity = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
     packet->packet_id = ++t->next_packet;
     return t->frame;
 }
@@ -68,7 +68,7 @@ static uint8_t * reliable_link_start( void * context, int, int bytes, rocketnet_
 static int reliable_link_finish( void * context, rocketnet_packet_context_t * packet, int bytes )
 {
     reliable_receipt_transport_t * t = (reliable_receipt_transport_t *) context;
-    rocketnet_unit_check( t->sent_count < 16 && bytes <= ROCKETNET_MAX_PAYLOAD_BYTES );
+    rocketnet_unit_check( t->sent_count < 16 && bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
     const int slot = t->sent_count++;
     t->sent_packets[slot] = packet->packet_id;
     t->sent_bytes[slot] = bytes;
@@ -113,13 +113,13 @@ static void reliable_fixture_create( reliable_receipt_fixture_t * f, int type, i
     memset( f, 0, sizeof( *f ) );
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.window_messages = 1024;
-    config.receive_ring_bytes = 262144;
+    config.reliable_messages_in_flight = 1024;
+    config.receive_message_buffer_bytes = 262144;
     config.max_message_bytes = 262144;
-    config.send_buffer_bytes = 800000;
+    config.send_message_buffer_bytes = 800000;
     rn_message_link_t link = reliable_link( &f->transport );
     f->client = (rocketnet_message_client_t *) rn_message_object_create( NULL, &link, 0, 1, &config, NULL, 0,
-                                                                          ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 );
+                                                                          ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 );
     rocketnet_unit_check( f->client != NULL );
     if ( allocation_snapshot )
         *allocation_snapshot = reliable_receipt_allocations;
@@ -267,8 +267,7 @@ static void reliable_receipt_free( void *, void * pointer )
 static void test_no_allocation_after_create_reliable_receipts()
 {
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_set_allocator( reliable_receipt_malloc, reliable_receipt_free ) == ROCKETNET_STATUS_OK );
-    rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL, reliable_receipt_malloc, reliable_receipt_free ) == ROCKETNET_STATUS_OK );
 
     reliable_receipt_fixture_t f;
     uint64_t after_create = 0;
@@ -280,8 +279,7 @@ static void test_no_allocation_after_create_reliable_receipts()
     reliable_fixture_destroy( &f );
 
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-    rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
 REGISTER_UNIT_TEST( test_reliable_receipt_acked_never_loss );

@@ -16,6 +16,7 @@
 #endif
 
 #include "rocketnet.h"
+#include "rocketnet_testing.h"
 #include "rocketnet_layers.h"
 
 #ifdef __linux__
@@ -35,39 +36,25 @@
     typedef char ROCKETNET_STATIC_ASSERT_JOIN( rocketnet_static_assert_, __LINE__ )[(condition) ? 1 : -1]
 #endif
 
-ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 <= ROCKETNET_MAX_PACKET_BYTES, "the IPv6 packet is the smaller of the two families" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES <= ROCKETNET_RECEIVE_PACKET_BYTES, "the IPv6 packet is the smaller of the two families" );
 
 // -----------------------------------------
 //          status-returning lifecycle forms
 // -----------------------------------------
 
-// The int-status forms of rocketnet_init, rocketnet_term and
-// rocketnet_set_allocator, which the public calls wrap: the public calls
-// return the same code as enum rocketnet_status_t.
+// The int-status forms of rocketnet_init and rocketnet_term, which the
+// public calls wrap, and the allocator seam the unit tests install directly.
+// The public calls return the same code as enum rocketnet_status_t.
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/**
- * @brief Initializes RocketNet and optionally returns the exact status code.
- *
- * This has the same lifecycle and logging behavior as rocketnet_init, which is
- * this call with a NULL status. It writes the exact section-2.1 code to status
- * on every return path when status is non-NULL; a failure logs one error line.
- * No client or server may be created until initialization succeeds.
- *
- * @param context Opaque allocator context retained for platform allocations; NULL is allowed.
- * @param status Optional writable int receiving a ROCKETNET_STATUS_* value; NULL skips the write.
- * @return true on success; false on an existing transition or platform/crypto failure.
- * @code
- * int status;
- * if (!rocketnet_init_ex(NULL, &status)) {
- *     fprintf(stderr, "init failed: %s\n", rocketnet_status_name(status));
- * }
- * @endcode
- */
-bool rocketnet_init_ex( void * context, int * status );
+// rocketnet_init with the exact status code in status, when not NULL, on
+// every return path. It returns true on success. A failure logs one error
+// line. context goes to init's own allocations, platform discovery among
+// them. NULL for both allocator functions is the system allocator.
+bool rocketnet_init_ex( void * context, void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ), int * status );
 
 /**
  * @brief Terminates the library and returns why termination did or did not occur.
@@ -83,7 +70,11 @@ bool rocketnet_init_ex( void * context, int * status );
  */
 int rocketnet_term_ex( void );
 
-/** @brief Replaces allocator callbacks and returns the refusal reason. @param malloc_function Non-NULL allocator callback. @param free_function Non-NULL matching deallocator. @return The section-2.1 code: ROCKETNET_STATUS_OK, INVALID_ARGUMENT for a partial pair, ALREADY_INITIALIZED after init or during the transition, or LIVE_ALLOCATIONS with outstanding allocations. A failure logs one error line. Install before init with no live allocations. */
+// Replaces the allocator outside init, for tests that allocate without
+// initializing the library. Both functions are required. Returns
+// ROCKETNET_STATUS_OK, INVALID_ARGUMENT for a NULL function,
+// ALREADY_INITIALIZED after init or during the transition, or
+// LIVE_ALLOCATIONS with outstanding allocations. A refusal logs one line.
 int rocketnet_allocator_ex( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) );
 
 // The connection a public client holds (NULL while DISCONNECTED) and the
@@ -91,6 +82,11 @@ int rocketnet_allocator_ex( void * (*malloc_function)( void * context, size_t by
 // tests and tools that read the layers underneath.
 struct rocketnet_message_client_t * rocketnet_client_message_client( struct rocketnet_client_t * client );
 struct rocketnet_message_server_t * rocketnet_server_message_server( struct rocketnet_server_t * server );
+
+// The address a created server serves for one family, after the
+// environment overrides. Writes it and returns true, or returns false when
+// the server does not serve that family. Reads no socket.
+bool rocketnet_server_served_address( const struct rocketnet_server_t * server, int family, char * address, size_t address_bytes );
 
 // For tests that build the layers by hand: a public client holding an
 // existing connection, and a public server holding an existing running
@@ -267,7 +263,7 @@ __inline int c99_snprintf(char *outBuf, size_t size, const char *format, ...)
 #endif
 
 // The process-wide assert callback the rocketnet_assert macro calls. It is internal
-// and never exported: a caller installs a callback with rocketnet_set_assert_callback,
+// and never exported: a caller installs a callback with rocketnet_assert_function,
 // the only way in, and NULL there restores the default.
 #if defined( __GNUC__ ) || defined( __clang__ )
     #define ROCKETNET_INTERNAL __attribute__((visibility("hidden")))
@@ -275,7 +271,7 @@ __inline int c99_snprintf(char *outBuf, size_t size, const char *format, ...)
     #define ROCKETNET_INTERNAL
 #endif
 
-extern ROCKETNET_INTERNAL rocketnet_assert_callback_t rn_assert_function;
+extern ROCKETNET_INTERNAL rocketnet_assert_function_t rn_assert_function;
 
 #if ROCKETNET_ASSERTS
 #define rocketnet_assert( condition )                                                            \
@@ -377,10 +373,10 @@ inline void rocketnet_endian_fix( uint64_t * value )
 
 // the public payload constants, written in rocketnet.h with their derivation
 
-ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PAYLOAD_BYTES % 8 == 0, "the payload capacity is a multiple of eight" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PAYLOAD_BYTES < ROCKETNET_MAX_PACKET_BYTES_IPV6, "the payload capacity fits the send budget" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES - ROCKETNET_MAX_PAYLOAD_BYTES >=
-                         ROCKETNET_MAX_PACKET_BYTES - ROCKETNET_MAX_PACKET_BYTES_IPV6, "the receive payload is the capacity plus the family difference and the rounding" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES % 8 == 0, "the payload capacity is a multiple of eight" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES < ROCKETNET_MAX_PACKET_BYTES, "the payload capacity fits the send budget" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PAYLOAD_BYTES - ROCKETNET_MAX_PACKET_PAYLOAD_BYTES >=
+                         ROCKETNET_RECEIVE_PACKET_BYTES - ROCKETNET_MAX_PACKET_BYTES, "the receive payload is the capacity plus the family difference and the rounding" );
 
 // -----------------------------------------
 //                  transport config tables
@@ -411,6 +407,8 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES - ROCKETNET_MAX_PAY
 #define ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT     (1<<0)
 /** @brief Config-field flag that redacts its value in override logs. */
 #define ROCKETNET_CONFIG_SECRET                 (1<<1)
+/** @brief Config-field flag for a field no environment variable sets: the public server's own keypair, which create generates. */
+#define ROCKETNET_CONFIG_NO_ENV                 (1<<2)
 
 /** @brief Zero initializer for fixed-size byte-array configuration fields. */
 #define ROCKETNET_CONFIG_ZERO_BYTES             {0}
@@ -424,18 +422,18 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES - ROCKETNET_MAX_PAY
 //   STRING_FIELD( name, capacity, default, flags )
 
 #define ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V1( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                    \
-    BYTES_FIELD(  filter_value,          4,                              ROCKETNET_TEST_FILTER_VALUE,                          0 )                          \
-    INT_FIELD(    max_payload_bytes,     0,                              ROCKETNET_MAX_PAYLOAD_BYTES,                                                       \
+    BYTES_FIELD(  packet_filter,          4,                              ROCKETNET_TEST_FILTER_VALUE,                          0 )                          \
+    INT_FIELD(    max_payload_bytes,     0,                              ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,                                                       \
                                                                          ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
-    INT_FIELD(    num_reassembly_slots,  0,                              1, ROCKETNET_MAX_FRAGMENTS,                            ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
+    INT_FIELD(    max_fragmented_messages,  0,                              1, ROCKETNET_MAX_FRAGMENTS,                            ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     STRING_FIELD( transport,                ROCKETNET_TRANSPORT_STRING_LENGTH, "auto",                                               0 )                          \
     UINT64_FIELD( game_clock_epoch,      0,                                                                                    0 )
 
 #define ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V2( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                    \
-    INT_FIELD(    simulated_loss_percent,      0,                         0, 100,                                              0 )                          \
-    INT_FIELD(    simulated_latency_ms,        0,                         0, 60000,                                            0 )                          \
-    INT_FIELD(    simulated_jitter_ms,         0,                         0, 60000,                                            0 )                          \
-    INT_FIELD(    simulated_duplicate_percent, 0,                         0, 100,                                              0 )
+    INT_FIELD(    simulated_loss_percent,      0,                         0, 100,                                              ROCKETNET_CONFIG_NO_ENV )                          \
+    INT_FIELD(    simulated_latency_ms,        0,                         0, 60000,                                            ROCKETNET_CONFIG_NO_ENV )                          \
+    INT_FIELD(    simulated_jitter_ms,         0,                         0, 60000,                                            ROCKETNET_CONFIG_NO_ENV )                          \
+    INT_FIELD(    simulated_duplicate_percent, 0,                         0, 100,                                              ROCKETNET_CONFIG_NO_ENV )
 
 #define ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V3( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                    \
     INT_FIELD(    simulated_drop_every_nth,    0,                         2, 1000000,                                          ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
@@ -493,27 +491,27 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                       \
     UINT64_FIELD( protocol_id,           0,                                                                                    0 )                          \
     INT_FIELD(    max_clients,        1000,                              1, ROCKETNET_MAX_CLIENTS,                             0 )                          \
-    BYTES_FIELD(  filter_value,          4,                              ROCKETNET_TEST_FILTER_VALUE,                          0 )                          \
+    BYTES_FIELD(  packet_filter,          4,                              ROCKETNET_TEST_FILTER_VALUE,                          0 )                          \
     BYTES_FIELD(  backend_public_key,   32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          0 )                          \
-    BYTES_FIELD(  server_public_key,    32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          0 )                          \
-    BYTES_FIELD(  server_secret_key,    32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          ROCKETNET_CONFIG_SECRET )    \
+    BYTES_FIELD(  server_public_key,    32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          ROCKETNET_CONFIG_NO_ENV )               \
+    BYTES_FIELD(  server_secret_key,    32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          ROCKETNET_CONFIG_SECRET | ROCKETNET_CONFIG_NO_ENV )    \
     INT_FIELD(    num_xdp_queues,        0,                              1, 1024,                                              ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     INT_FIELD(    num_os_cpus,           0,                              1, 256,                                               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
-    INT_FIELD(    max_payload_bytes,     0,                              ROCKETNET_MAX_PAYLOAD_BYTES,                                                       \
+    INT_FIELD(    max_payload_bytes,     0,                              ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,                                                       \
                                                                          ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
-    INT_FIELD(    num_reassembly_slots,  0,                              1, ROCKETNET_MAX_FRAGMENTS,                            ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
+    INT_FIELD(    max_fragmented_messages,  0,                              1, ROCKETNET_MAX_FRAGMENTS,                            ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     STRING_FIELD( transport,                ROCKETNET_TRANSPORT_STRING_LENGTH, "auto",                                               0 )                          \
-    STRING_FIELD( public_address,        ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              0 )                          \
+    STRING_FIELD( public_address,        ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              ROCKETNET_CONFIG_NO_ENV )                          \
     INT_FIELD(    max_timeout_seconds,   60,                             1, 3600,                                              0 )                          \
     INT_FIELD(    handshake_deadline_seconds, 5,                         1, 60,                                                0 )                          \
     UINT64_FIELD( game_clock_epoch,           0,                                                                              0 )                          \
-    INT_FIELD(    simulated_loss_percent,      0,                         0, 100,                                              0 )                          \
-    INT_FIELD(    simulated_latency_ms,        0,                         0, 60000,                                            0 )                          \
-    INT_FIELD(    simulated_jitter_ms,         0,                         0, 60000,                                            0 )                          \
-    INT_FIELD(    simulated_duplicate_percent, 0,                         0, 100,                                              0 )                          \
+    INT_FIELD(    simulated_loss_percent,      0,                         0, 100,                                              ROCKETNET_CONFIG_NO_ENV )                          \
+    INT_FIELD(    simulated_latency_ms,        0,                         0, 60000,                                            ROCKETNET_CONFIG_NO_ENV )                          \
+    INT_FIELD(    simulated_jitter_ms,         0,                         0, 60000,                                            ROCKETNET_CONFIG_NO_ENV )                          \
+    INT_FIELD(    simulated_duplicate_percent, 0,                         0, 100,                                              ROCKETNET_CONFIG_NO_ENV )                          \
     INT_FIELD(    simulated_drop_every_nth,    0,                         2, 1000000,                                          ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     INT_FIELD(    simulated_reverse_window,    0,                         2, 64,                                               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
-    STRING_FIELD( second_public_address, ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              0 )
+    STRING_FIELD( second_public_address, ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              ROCKETNET_CONFIG_NO_ENV )
 
 /** @brief Size in bytes of the server transport config before game_clock_epoch. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, handshake_deadline_seconds ) + sizeof( int ), sizeof( uint64_t ) )
@@ -546,24 +544,24 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
 
 #define ROCKETNET_MESSAGE_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                       \
     INT_FIELD( num_channels,               32,      1, ROCKETNET_MAX_CHANNELS, 0 )   /* WIRE */                            \
-    INT_FIELD( window_messages,          1024,     64, 1 << 20,                0 )   /* WIRE, power of two */              \
-    INT_FIELD( receive_ring_bytes,     262144,   4096, 1 << 20,                0 )   /* WIRE, multiple of 16 */            \
-    INT_FIELD( max_message_bytes,      262144,   ROCKETNET_MESSAGE_SINGLE_BYTES, 1 << 20, 0 )   /* WIRE, <= receive_ring_bytes */     \
-    INT_FIELD( send_buffer_bytes,      800000,  12288, 1 << 28,                0 )                                         \
+    INT_FIELD( reliable_messages_in_flight,          1024,     64, 1 << 20,                0 )   /* WIRE, power of two */              \
+    INT_FIELD( receive_message_buffer_bytes,     262144,   4096, 1 << 20,                0 )   /* WIRE, multiple of 16 */            \
+    INT_FIELD( max_message_bytes,      262144,   ROCKETNET_MESSAGE_SINGLE_BYTES, 1 << 20, 0 )   /* WIRE, <= receive_message_buffer_bytes */     \
+    INT_FIELD( send_message_buffer_bytes,      800000,  12288, 1 << 28,                0 )                                         \
     INT_FIELD( send_queue_messages,      1024,     16, 1 << 20,                0 )                                         \
     INT_FIELD( packets_in_flight,         256,     16, 1 << 16,                0 )                                         \
     INT_FIELD( packets_per_update,    256,      1, 1024,                   0 )                                         \
-    INT_FIELD( unreliable_deliveries,     256,      1, 1 << 16,                0 )   /* per connection per update */       \
-    INT_FIELD( sequenced_holds,            16,      0, 4096,                   0 )                                         \
-    INT_FIELD( receipt_ring,              256,     16, 1 << 16,                0 )                                         \
-    INT_FIELD( resend_delay_initial_ms,           2000,     10, 60000,                  0 )                                         \
-    INT_FIELD( resend_delay_min_ms,                  0,      0, 60000,                  0 )                                         \
-    INT_FIELD( resend_delay_max_ms,               2000,     10, 60000,                  0 )                                         \
-    INT_FIELD( reliable_timeout_ms,     10000,   1000, 600000,                 0 )                                         \
-    INT_FIELD( client_send_kbps,         ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, INT32_MIN, ROCKETNET_SEND_BUDGET_MAX_KBPS, 0 ) \
-    INT_FIELD( server_send_kbps,         ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, INT32_MIN, ROCKETNET_SEND_BUDGET_MAX_KBPS, 0 )
+    INT_FIELD( unreliable_messages_per_update,    1024,      1, 1 << 16,                0 )   /* per connection per update */       \
+    INT_FIELD( sequenced_messages_held,            16,      0, 4096,                   0 )                                         \
+    INT_FIELD( max_message_receipts,              256,     16, 1 << 16,                0 )                                         \
+    INT_FIELD( message_resend_delay_initial_ms,           2000,     10, 60000,                  0 )                                         \
+    INT_FIELD( message_resend_delay_min_ms,                  0,      0, 60000,                  0 )                                         \
+    INT_FIELD( message_resend_delay_max_ms,               2000,     10, 60000,                  0 )                                         \
+    INT_FIELD( reliable_message_timeout_ms,     10000,   1000, 600000,                 0 )                                         \
+    INT_FIELD( client_send_kbps,         ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, INT32_MIN, ROCKETNET_SEND_BUDGET_MAX_KBPS, 0 ) \
+    INT_FIELD( server_send_kbps,         ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, INT32_MIN, ROCKETNET_SEND_BUDGET_MAX_KBPS, 0 )
 
-#define ROCKETNET_MESSAGE_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_message_config_t, reliable_timeout_ms ) + sizeof( int ), sizeof( int ) )
+#define ROCKETNET_MESSAGE_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_message_config_t, reliable_message_timeout_ms ) + sizeof( int ), sizeof( int ) )
 #define ROCKETNET_MESSAGE_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_message_config_t, server_send_kbps ) + sizeof( int ), sizeof( int ) )
 #define ROCKETNET_MESSAGE_CONFIG_KNOWN_BYTES ROCKETNET_MESSAGE_CONFIG_BYTES_1, ROCKETNET_MESSAGE_CONFIG_BYTES_2
 
@@ -599,8 +597,5 @@ void rocketnet_platform_set_network_lookups_for_testing( const struct rocketnet_
 // the duration rocketnet_sleep passes to the platform: 0 for a negative, zero
 // or NaN request, ROCKETNET_SLEEP_MAX_SECONDS for a longer or infinite one
 double rocketnet_sleep_clamp( double seconds );
-
-// Enumerate the actual ABI query table; NULL marks the end.
-const char * rocketnet_abi_layouts( size_t index );
 
 #endif // #ifndef ROCKETNET_INTERNAL_H

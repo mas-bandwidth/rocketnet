@@ -37,7 +37,7 @@ records in `tla/RUNS.tsv`.
 - **The timeout.** A record unacked for `reliable_timeout` (10 s) ends the
   connection with `RELIABLE_TIMEOUT`, and nothing more is sent.
 - **The validation.** A config is refused when
-  `reliable_timeout_ms < ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS × max( ROCKETNET_MESSAGE_RESEND_INTERVAL_MS, resend_delay_initial_ms )`, with
+  `reliable_message_timeout_ms < ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS × max( ROCKETNET_MESSAGE_RESEND_INTERVAL_MS, message_resend_delay_initial_ms )`, with
   `ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS = 4`.
 
 ## What the module covers

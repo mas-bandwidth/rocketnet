@@ -47,7 +47,7 @@ static void wso_init_client( struct rocketnet_client_protocol_t * client,
     static const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     memset( counters, 0, sizeof(*counters) );
     memset( client, 0, sizeof(*client) );
-    memcpy( client->filter_value, tag, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( client->packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
     memset( client->token.client_to_server_key, 0x11, ROCKETNET_KEY_BYTES );
     memset( client->token.server_to_client_key, 0x22, ROCKETNET_KEY_BYTES );
     memset( client->keys.handshake_server_to_client, 0x33, ROCKETNET_KEY_BYTES );

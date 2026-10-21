@@ -99,7 +99,7 @@ static void windows_connreset_server_address( struct rocketnet_server_transport_
 static struct rocketnet_client_transport_t * windows_connreset_client( const char * server_address )
 {
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    windows_connreset_require( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    windows_connreset_require( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
     snprintf( config.transport, sizeof( config.transport ), "%s", "portable" );
@@ -111,7 +111,7 @@ static struct rocketnet_client_transport_t * windows_connreset_client( const cha
 static void windows_connreset_client_tick( struct rocketnet_client_transport_t * client, double now, uint32_t sequence, bool send, uint64_t * sent, uint64_t * received )
 {
     rocketnet_client_transport_update( client, now );
-    uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     while ( rocketnet_client_transport_receive_packet( client, payload, (int) sizeof( payload ) ) > 0 )
     {
         if ( received )

@@ -3,24 +3,33 @@
 How a game's debug overlay reads connection quality: a server and a client in
 one process over the in-memory `loopback` transport. The client connects,
 exchanges a little traffic, then prints the client's and the server's state and
-counters through the public query calls and enums.
+counters. Each stats call copies the current value of every counter and stat into a
+struct the caller owns, and the program reads the fields from that struct.
 
 ## What it shows
 
-1. Initialize the library and create a server on the `loopback` transport.
-2. Mint a development connect token and connect a client.
+1. Initialize the library and create a server on the `loopback` transport,
+   with `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` copied into the config. Create
+   generates the server's ephemeral sealing keypair.
+2. After start, read the server public key and bound address, create an opaque
+   base64 development token with `rocketnet_create_dev_connect_token`, and
+   connect a client with that string.
 3. Run frames until the client reports `ROCKETNET_CLIENT_STATE_CONNECTED`.
 4. Exchange traffic for about one and a half seconds: the client sends a
    reliable-ordered message each frame and the server echoes one back, so both
    directions have traffic to measure.
-5. Print the client's state name, RTT, jitter, packet loss, bandwidth sent and
-   received, and a few counters through `rocketnet_client_stat` and
-   `rocketnet_client_counter`.
-6. Print the server's per-client view of the same connection through
-   `rocketnet_server_client_stat` and `rocketnet_server_client_counter`.
-7. Disconnect, then print the disconnect reason on both ends through
-   `rocketnet_client_disconnect_reason` and
-   `rocketnet_server_disconnect_reason`.
+5. Print the client's state name, then RTT, jitter, packet loss, bandwidth sent
+   and received, and a few counters (`api_misuses` among them) from one
+   `struct rocketnet_client_stats_t` filled by `rocketnet_client_stats`.
+6. Print the server's per-client view of the same connection from one
+   `struct rocketnet_server_client_stats_t` filled by
+   `rocketnet_server_client_stats`, then the server-wide totals from one
+   `struct rocketnet_server_stats_t` filled by `rocketnet_server_stats`.
+7. Disconnect, then print how the connection ended on both ends: the client's
+   state through `rocketnet_client_state` (a negative state names how the
+   server or the protocol ended a connection; after the client's own
+   disconnect it is `disconnected`) and the server's reason for the slot
+   through `rocketnet_server_disconnect_reason`.
 
 Each frame runs the calls in the order a game does: update, drain the one
 receive queue, simulate, queue, then send last. Sending last is what makes this
@@ -41,7 +50,8 @@ one `FAIL: ...` line and exits 1.
 ## What the output means
 
 The output prints the client's state and connection quality, then the server's
-per-client view, then the disconnect reasons, then `PASS`. The check passes
+per-client view and totals, then the client's state and the server's reason
+after the disconnect, then `PASS`. The check passes
 when the numbers are present and sane: RTT, jitter, loss and bandwidth are
 never negative, and bytes sent are above zero after the traffic exchange. `PASS`
 means the client connected, traffic flowed both ways, and the disconnect was
@@ -51,21 +61,22 @@ library and are not part of the check.
 ## Public calls it uses
 
 - `rocketnet_init`, `rocketnet_term`
-- `rocketnet_server_dev_config`, `rocketnet_server_create`,
-  `rocketnet_server_update`, `rocketnet_server_port`,
-  `rocketnet_server_max_clients`, `rocketnet_server_client_connected`,
-  `rocketnet_server_start_message`, `rocketnet_server_finish_message`,
-  `rocketnet_server_receive_messages`,
-  `rocketnet_server_send_packets`, `rocketnet_server_disconnect_reason`,
-  `rocketnet_server_client_stat`, `rocketnet_server_client_counter`,
-  `rocketnet_server_destroy`
+- `rocketnet_server_default_config`, `rocketnet_server_create`,
+  `rocketnet_server_start`, `rocketnet_server_destroy`,
+  `rocketnet_server_update`, `rocketnet_server_send_packets`,
+  `rocketnet_server_port`, `rocketnet_server_ipv4_address`,
+  `rocketnet_server_public_key`, `rocketnet_server_client_connected`,
+  `rocketnet_server_disconnect_reason`, `rocketnet_server_start_message`,
+  `rocketnet_server_finish_message`, `rocketnet_server_receive_messages`,
+  `rocketnet_server_stats`, `rocketnet_server_client_stats`
 - `rocketnet_client_default_config`, `rocketnet_client_create`,
-  `rocketnet_client_state`, `rocketnet_client_state_name`,
-  `rocketnet_client_index`, `rocketnet_client_update`,
+  `rocketnet_client_connect`, `rocketnet_client_destroy`,
+  `rocketnet_client_update`, `rocketnet_client_send_packets`,
+  `rocketnet_client_disconnect`, `rocketnet_client_state`,
+  `rocketnet_client_state_name`, `rocketnet_client_index`,
   `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
-  `rocketnet_client_receive_messages`,
-  `rocketnet_client_send_packets`, `rocketnet_client_disconnect`,
-  `rocketnet_client_disconnect_reason`, `rocketnet_client_stat`,
-  `rocketnet_client_counter`, `rocketnet_client_destroy`
-- `rocketnet_write_dev_connect_token` (development library only)
-- `rocketnet_time`, `rocketnet_sleep`
+  `rocketnet_client_receive_messages`, `rocketnet_client_stats`
+- `rocketnet_create_dev_connect_token` and
+  `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` (development library only)
+- `rocketnet_status_name`, `rocketnet_time`, `rocketnet_sleep`,
+  `rocketnet_disconnect_reason_name`

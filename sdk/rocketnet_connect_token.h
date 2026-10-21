@@ -10,6 +10,7 @@
 
 #include <stdint.h>
 #include "rocketnet_internal.h"
+#include "rocketnet_wire.h"
 
 // The connect token, per STANDARD.md. All layouts are packed little-endian at
 // the exact offsets the standard states; the byte sizes here are the wire
@@ -289,7 +290,40 @@ extern const uint8_t rocketnet_dev_server_secret_key[32];
 /** @brief Connection timeout in seconds carried by a development token. */
 #define ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS 10
 
-// rocketnet_write_dev_connect_token, the development token minting, is
-// declared once, in the public rocketnet.h.
+// The base64 string of a token fills the public string buffer exactly.
+// The sealed private block sits inside the signed connect data, which the
+// connection request carries whole: each fits inside the request, and the
+// request inside one IPv6 datagram (sdk/rocketnet_wire.h).
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES <= ROCKETNET_SIGNED_CONNECT_DATA_BYTES, "the sealed private block fits the signed connect data" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SIGNED_CONNECT_DATA_BYTES < ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, "the signed connect data fits the connection request" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES <= ROCKETNET_MAX_PACKET_BYTES, "the connection request fits one IPv6 datagram" );
+
+ROCKETNET_STATIC_ASSERT( ( ( ROCKETNET_CONNECT_TOKEN_BYTES + 2 ) / 3 ) * 4 + 1 == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES, "ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES is the base64 of the token" );
+
+// The key and token makers the public header does not carry: production
+// minting and key generation belong to the game's backend; the SDK's own tests
+// and tools use these. Not exported.
+enum rocketnet_status_t rocketnet_generate_backend_keypair( uint8_t * public_key, uint8_t * secret_key );
+enum rocketnet_status_t rocketnet_generate_backend_keypair_from_seed( const uint8_t * seed, uint8_t * public_key, uint8_t * secret_key );
+enum rocketnet_status_t rocketnet_generate_server_keypair( uint8_t * public_key, uint8_t * secret_key );
+enum rocketnet_status_t rocketnet_write_production_connect_token( const uint8_t * backend_secret_key,
+                                                                  const uint8_t * server_public_key,
+                                                                  uint64_t protocol_id,
+                                                                  const char * const * server_address_strings,
+                                                                  int server_address_count,
+                                                                  uint64_t client_id,
+                                                                  uint64_t create_timestamp,
+                                                                  uint64_t expire_timestamp,
+                                                                  int32_t timeout_seconds,
+                                                                  const uint8_t * user_data,
+                                                                  uint8_t * connect_token,
+                                                                  size_t connect_token_bytes );
+
+#if ROCKETNET_DEVELOPMENT
+// The layer tests' binary token for one address, sealed to the fixed test
+// server key (rocketnet_dev_server_public_key) that the internal transport
+// dev config carries. Public programs use rocketnet_create_dev_connect_token.
+enum rocketnet_status_t rocketnet_write_test_connect_token( const char * server_address_string, uint64_t client_id, uint64_t current_timestamp, uint8_t * connect_token, size_t connect_token_bytes );
+#endif // #if ROCKETNET_DEVELOPMENT
 
 #endif // #ifndef ROCKETNET_CONNECT_TOKEN_H

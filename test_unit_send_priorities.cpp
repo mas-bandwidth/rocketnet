@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// Layer 6's scheduler, unit tier: RakNet's four send priorities inside the
+// Layer 6's scheduler, unit tier: the four send priorities inside the
 // budget's class order (docs/CHANNELS.md 9.2, tla/RNScheduler.tla). No
 // sockets, no threads, no wall clock.
 //
@@ -57,9 +57,9 @@ static int priorities_read( const rn_region_t * region, const rn_packet_builder_
     memset( &limits, 0, sizeof( limits ) );
     limits.num_channels = (int) region->num_channels;
     limits.enabled_codes = rocketnet_message_enabled_codes( ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION );
-    limits.window_messages = (int) region->window;
+    limits.reliable_messages_in_flight = (int) region->window;
     limits.max_message_bytes = (int) region->max_message_bytes;
-    limits.receive_ring_bytes = (int) region->ring_bytes;
+    limits.receive_message_buffer_bytes = (int) region->ring_bytes;
 
     for ( int p = 0; p < packets; p++ )
     {
@@ -190,7 +190,7 @@ static void test_round_robin_across_channels()
     rn_arena_destroy( arena );
 }
 
-// a LOW channel is not starved by an IMMEDIATE backlog: RakNet's clocks give
+// a LOW channel is not starved by an IMMEDIATE backlog: the level clocks give
 // it a turn once IMMEDIATE's clock passes LOW's seed of 27, and its next turn
 // one LOW stride (35) later. The backlog is still queued when LOW goes.
 
@@ -231,7 +231,7 @@ static void test_no_starvation_of_low()
         last = order[i];
     }
 
-    // the queue drained: the clocks are back at RakNet's seeds
+    // the queue drained: the clocks are back at their seeds
     rocketnet_unit_check( builder.level_clock[ROCKETNET_PRIORITY_IMMEDIATE] == 0 );
     rocketnet_unit_check( builder.level_clock[ROCKETNET_PRIORITY_LOW] == 27 );
 
@@ -344,8 +344,7 @@ static void test_send_priorities_no_allocation_after_create()
     // refused after init, so the test terminates it, installs the counting
     // allocator, and initialises again
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_set_allocator( priorities_malloc, priorities_free ) == ROCKETNET_STATUS_OK );
-    rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL, priorities_malloc, priorities_free ) == ROCKETNET_STATUS_OK );
 
     priorities_allocs = 0;
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &priorities_counters );
@@ -385,8 +384,7 @@ static void test_send_priorities_no_allocation_after_create()
     // the suite's own term follows: hand it back an initialised library on
     // the default allocator
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-    rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
 REGISTER_UNIT_TEST( test_higher_priority_first_within_class );

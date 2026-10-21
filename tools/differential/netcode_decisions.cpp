@@ -247,7 +247,7 @@ static struct decision_t rocketnet_decide( int case_id, uint64_t now )
     memset( &counters, 0, sizeof(counters) );
 
     server.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
-    memcpy( server.filter_value, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( server.packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server.backend_public_key, rocketnet_test_backend_public_key, ROCKETNET_KEY_BYTES );
     memcpy( server.server_public_key, rocketnet_test_server_public_key, ROCKETNET_KEY_BYTES );
     memcpy( server.server_secret_key, rocketnet_test_server_secret_key, ROCKETNET_KEY_BYTES );
@@ -827,7 +827,7 @@ int main( int argc, const char ** argv )
     if ( argc > 1 )
         cases_path = argv[1];
 
-    rocketnet_set_quiet( true );
+    rocketnet_quiet( true );
 
 #if defined( ROCKETNET_DIFFERENTIAL_NETCODE_DIR )
     netcode_log_level( NETCODE_LOG_LEVEL_DEBUG );

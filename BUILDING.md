@@ -5,8 +5,8 @@ only into `test` through `rocketnet_test_support`. Shared builds hide unannotate
 implementation symbols; `tools/exports.txt` lists the supported C exports. CI
 compares the built shared library with that list and checks that the static
 archive contains no test suite. Review intentional ABI changes in the list as
-part of the same change. `ROCKETNET_ABI_VERSION` identifies SDK calling/layout
-compatibility separately from the wire version; see the ABI rules below.
+part of the same change. The major version names SDK calling/layout
+compatibility, separately from the wire version; see the ABI rules below.
 
 Deploying a server on Linux: [docs/LINUX.md](docs/LINUX.md) covers the build, the `xdp -> gso -> io_uring -> portable` transport ladder and pinning, what `gso`, `io_uring` and `xdp` need from the host, socket errors and ICMP, the fd and memlock limits for 1000 clients, containers, and how to verify a host.
 
@@ -349,7 +349,7 @@ finds every later 1.x patch. The imported targets
 hand a consumer no floating-point option and no memory-budget definition: the
 only compile definition they carry is `ROCKETNET_SHARED` on
 `RocketNet::rocketnet_shared`. `tools/check_package.py` checks both.
-The Unix shared-library soname follows `ROCKETNET_ABI_VERSION`.
+The Unix shared-library soname follows the major version.
 Use a separate install prefix for each build configuration. With Visual Studio
 or another multi-config generator, pass `--config Debug` or `--config Release`
 to build/install and select the same configuration in the consumer. A
@@ -364,11 +364,18 @@ Examples, tests and tools default off when embedded, and the parent's
 `ROCKETNET_BUILD_*` options override those defaults.
 
 The installed SDK is the production library, and it has no development token
-minting by design: a client that calls `rocketnet_write_dev_connect_token`
-against it fails to link (on MSVC, `unresolved external symbol rocketnet_write_dev_connect_token`). For a first loopback try, embed the
+minting by design. `rocketnet_create_dev_connect_token` and
+`ROCKETNET_DEV_BACKEND_PUBLIC_KEY` are declared only with
+`ROCKETNET_DEVELOPMENT=1`; defining that macro while linking a production
+library does not provide the development function. For a first loopback try, embed the
 checkout and link both the server and the client to the development library,
-`rocketnet_dev`, which mints development tokens and accepts the published
-development keys. It is a build-tree aid, never installed and never shipped:
+`rocketnet_dev`, which supplies `ROCKETNET_DEVELOPMENT=1`, creates development
+token strings, and accepts the published development backend public key.
+Initialize a server config with `rocketnet_server_default_config`, set a
+nonzero protocol ID and the key from `ROCKETNET_DEV_BACKEND_PUBLIC_KEY`, and
+start the server. Its own keypair is generated at create. Read its public key
+and served addresses to create a development token; pass the resulting
+opaque string directly to `rocketnet_client_connect`. It is a build-tree aid, never installed and never shipped:
 
 ```cmake
 add_subdirectory(path/to/rocketnet rocketnet)
@@ -384,19 +391,18 @@ compiled. These checks are in CI.
 
 ## ABI compatibility
 
-The current public layouts are preserved. New allocation-free `rocketnet_abi_*`
-queries expose the SDK revision, compiler-derived struct sizes, field counts,
-offsets and widths for both configs and packet context.
-They are safe before init and write no caller-owned struct. Unknown names return
-`SIZE_MAX` for size/offset, or `-1` for count. Native dynamic loaders may use
-these before calling struct-writing functions.
+Each public config struct starts with `config_bytes`, the size of the struct
+the caller compiled against, set by the inline default_config call. A library
+reads a larger config as far as it knows and a smaller one as a prefix with
+defaults after it, so a config struct can grow at its end without breaking a
+program built against an older header (`docs/ABI-EVOLUTION.md`).
 
-An incompatible layout or calling-contract change must increment
-`ROCKETNET_ABI_VERSION` and update native ABI regression checks. Additive functions alone
-do not require a revision change. Changes to public fields must also update the
-ABI metadata and native regression checks. The existing unsized C entry points still
-require matching headers and library; this does not make an old native binary
-safe to use with an arbitrary newer library.
+An incompatible layout or calling-contract change must increment the
+major version. Additive functions alone do not require a revision
+change. The other public structs carry no size, so a header and a library from
+different ABI revisions must not be mixed; compare `rocketnet_version()` with
+`ROCKETNET_VERSION` to catch a header and a shared library from different
+releases.
 
 ## History memory budget
 
@@ -422,8 +428,9 @@ still requires roughly 4.2 GiB; select fewer queues or provision that explicitly
 
 ## Pre-allocation server resource plans
 
-`rocketnet_server_required_memory(config)` returns the bytes of the caller memory
-block the server needs for `config` at its `max_clients`. It works before
+`rocketnet_server_required_memory(config)` returns the bytes of the one block
+`rocketnet_server_create` allocates through the allocator for `config` at its
+`max_clients`. It works before
 `rocketnet_init`, opens no sockets, starts no workers and allocates no memory.
 Pass `NULL` config for defaults. The query reads the supplied configuration and
 applies environment overrides (matching create), but does not check keys, probe
@@ -516,66 +523,64 @@ These are the environment variables read by the SDK. Each setting has one name;
 the client and server forms are separate settings. The unit inventory checks this
 list in both directions against the SDK reads and the public header.
 
-* Environment: ROCKETNET_CLIENT_FILTER_VALUE
+* Environment: ROCKETNET_CLIENT_PACKET_FILTER
 * Environment: ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES
-* Environment: ROCKETNET_CLIENT_NUM_REASSEMBLY_SLOTS
+* Environment: ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES
 * Environment: ROCKETNET_CLIENT_STEP_DRIVEN
 * Environment: ROCKETNET_CLIENT_TRANSPORT
 * Environment: ROCKETNET_CLIENT_SEND_KBPS
 * Environment: ROCKETNET_CLIENT_NUM_CHANNELS
-* Environment: ROCKETNET_CLIENT_WINDOW_MESSAGES
-* Environment: ROCKETNET_CLIENT_RECEIVE_RING_BYTES
+* Environment: ROCKETNET_CLIENT_RELIABLE_MESSAGES_IN_FLIGHT
+* Environment: ROCKETNET_CLIENT_RECEIVE_MESSAGE_BUFFER_BYTES
 * Environment: ROCKETNET_CLIENT_MAX_MESSAGE_BYTES
-* Environment: ROCKETNET_CLIENT_SEND_BUFFER_BYTES
+* Environment: ROCKETNET_CLIENT_SEND_MESSAGE_BUFFER_BYTES
 * Environment: ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES
 * Environment: ROCKETNET_CLIENT_PACKETS_IN_FLIGHT
 * Environment: ROCKETNET_CLIENT_PACKETS_PER_UPDATE
-* Environment: ROCKETNET_CLIENT_UNRELIABLE_DELIVERIES
-* Environment: ROCKETNET_CLIENT_SEQUENCED_HOLDS
-* Environment: ROCKETNET_CLIENT_RECEIPT_RING
-* Environment: ROCKETNET_CLIENT_RESEND_DELAY_INITIAL_MS
-* Environment: ROCKETNET_CLIENT_RESEND_DELAY_MIN_MS
-* Environment: ROCKETNET_CLIENT_RESEND_DELAY_MAX_MS
-* Environment: ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS
-* Environment: ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT
-* Environment: ROCKETNET_CLIENT_SIMULATED_LATENCY_MS
-* Environment: ROCKETNET_CLIENT_SIMULATED_JITTER_MS
-* Environment: ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT
+* Environment: ROCKETNET_CLIENT_UNRELIABLE_MESSAGES_PER_UPDATE
+* Environment: ROCKETNET_CLIENT_SEQUENCED_MESSAGES_HELD
+* Environment: ROCKETNET_CLIENT_MAX_MESSAGE_RECEIPTS
+* Environment: ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_INITIAL_MS
+* Environment: ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MIN_MS
+* Environment: ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MAX_MS
+* Environment: ROCKETNET_CLIENT_RELIABLE_MESSAGE_TIMEOUT_MS
+* Environment: ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT
+* Environment: ROCKETNET_DEV_CLIENT_LATENCY_MS
+* Environment: ROCKETNET_DEV_CLIENT_JITTER_MS
+* Environment: ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT
 * Environment: ROCKETNET_SERVER_PROTOCOL_ID
 * Environment: ROCKETNET_SERVER_MAX_CLIENTS
-* Environment: ROCKETNET_SERVER_FILTER_VALUE
+* Environment: ROCKETNET_SERVER_PACKET_FILTER
 * Environment: ROCKETNET_SERVER_BACKEND_PUBLIC_KEY
-* Environment: ROCKETNET_SERVER_SERVER_PUBLIC_KEY
-* Environment: ROCKETNET_SERVER_SERVER_SECRET_KEY
 * Environment: ROCKETNET_SERVER_NUM_XDP_QUEUES
 * Environment: ROCKETNET_SERVER_NUM_OS_CPUS
 * Environment: ROCKETNET_SERVER_MAX_PAYLOAD_BYTES
-* Environment: ROCKETNET_SERVER_NUM_REASSEMBLY_SLOTS
+* Environment: ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES
 * Environment: ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS
 * Environment: ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS
 * Environment: ROCKETNET_SERVER_TRANSPORT
-* Environment: ROCKETNET_SERVER_PUBLIC_ADDRESS
-* Environment: ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS
+* Environment: ROCKETNET_SERVER_IPV4_ADDRESS
+* Environment: ROCKETNET_SERVER_IPV6_ADDRESS
 * Environment: ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS
 * Environment: ROCKETNET_SERVER_NUM_CHANNELS
-* Environment: ROCKETNET_SERVER_WINDOW_MESSAGES
-* Environment: ROCKETNET_SERVER_RECEIVE_RING_BYTES
+* Environment: ROCKETNET_SERVER_RELIABLE_MESSAGES_IN_FLIGHT
+* Environment: ROCKETNET_SERVER_RECEIVE_MESSAGE_BUFFER_BYTES
 * Environment: ROCKETNET_SERVER_MAX_MESSAGE_BYTES
-* Environment: ROCKETNET_SERVER_SEND_BUFFER_BYTES
+* Environment: ROCKETNET_SERVER_SEND_MESSAGE_BUFFER_BYTES
 * Environment: ROCKETNET_SERVER_SEND_QUEUE_MESSAGES
 * Environment: ROCKETNET_SERVER_PACKETS_IN_FLIGHT
 * Environment: ROCKETNET_SERVER_PACKETS_PER_UPDATE
-* Environment: ROCKETNET_SERVER_UNRELIABLE_DELIVERIES
-* Environment: ROCKETNET_SERVER_SEQUENCED_HOLDS
-* Environment: ROCKETNET_SERVER_RECEIPT_RING
-* Environment: ROCKETNET_SERVER_RESEND_DELAY_INITIAL_MS
-* Environment: ROCKETNET_SERVER_RESEND_DELAY_MIN_MS
-* Environment: ROCKETNET_SERVER_RESEND_DELAY_MAX_MS
-* Environment: ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS
-* Environment: ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT
-* Environment: ROCKETNET_SERVER_SIMULATED_LATENCY_MS
-* Environment: ROCKETNET_SERVER_SIMULATED_JITTER_MS
-* Environment: ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT
+* Environment: ROCKETNET_SERVER_UNRELIABLE_MESSAGES_PER_UPDATE
+* Environment: ROCKETNET_SERVER_SEQUENCED_MESSAGES_HELD
+* Environment: ROCKETNET_SERVER_MAX_MESSAGE_RECEIPTS
+* Environment: ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_INITIAL_MS
+* Environment: ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MIN_MS
+* Environment: ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MAX_MS
+* Environment: ROCKETNET_SERVER_RELIABLE_MESSAGE_TIMEOUT_MS
+* Environment: ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT
+* Environment: ROCKETNET_DEV_SERVER_LATENCY_MS
+* Environment: ROCKETNET_DEV_SERVER_JITTER_MS
+* Environment: ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT
 * Environment: ROCKETNET_LOG_LEVEL
 * Environment: ROCKETNET_CLIENT_GAME_CLOCK_EPOCH
 * Environment: ROCKETNET_SERVER_GAME_CLOCK_EPOCH

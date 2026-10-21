@@ -26,7 +26,7 @@
 //
 // The state lives in the connection's region (layer 1): C rn_channel_send_t
 // and C rn_channel_receive_t carved by rn_region_carve, so nothing here
-// allocates (R2). RakNet's four counters and their coupling are present from
+// allocates (R2). The four counters and their coupling are present from
 // the first version and run even though no sequenced type is enabled
 // (CHANNELS.md 7.1, RNChannel's OrderedTraceUnchangedBySequenced).
 //
@@ -102,9 +102,9 @@ struct rn_channels_t
 bool rn_channels_init( struct rn_channels_t * channels, struct rn_region_t * region, uint32_t num_channels, uint32_t enabled_types );
 
 // The payload capacity a frame holds, 1 + the single-record room up to
-// ROCKETNET_MAX_PAYLOAD_BYTES. A reliable ordered message whose record fits
+// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES. A reliable ordered message whose record fits
 // it is SMALL (packed, one record) and a larger one is a block of chunks (8).
-// The default is ROCKETNET_MAX_PAYLOAD_BYTES. Refused (false) below the room
+// The default is ROCKETNET_MAX_PACKET_PAYLOAD_BYTES. Refused (false) below the room
 // one chunk record needs.
 
 bool rn_channels_set_payload_capacity( struct rn_channels_t * channels, uint32_t payload_capacity );

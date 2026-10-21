@@ -1242,12 +1242,12 @@ static void test_windows_send_failures_counted()
         rocketnet_platform_socket_send_packet(socket, &peer_address, data, FAULT_BYTES);
         CHECK(rocketnet_platform_socket_send_failures(socket) == 0);
         send_failed_logs.store(0);
-        rocketnet_set_log_callback(send_failed_log, NULL);
-        rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_DEBUG);
+        rocketnet_log_function(send_failed_log, NULL);
+        rocketnet_log_level(ROCKETNET_LOG_LEVEL_DEBUG);
         for ( int i = 0; i < 3; ++i )
             rocketnet_platform_socket_send_packet(socket, &peer_address, oversize.data(), (int) oversize.size());
-        rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_NONE);
-        rocketnet_set_log_callback(NULL, NULL);
+        rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
+        rocketnet_log_function(NULL, NULL);
         CHECK(rocketnet_platform_socket_send_failures(socket) == 3);
         CHECK(send_failed_logs.load() == 3);
         rocketnet_platform_socket_send_packet(socket, &peer_address, data, FAULT_BYTES);
@@ -1277,9 +1277,8 @@ static const fault_case_t fault_cases[] = {
 // With no argument every case runs; with names, only those cases run.
 int main( int argc, char ** argv )
 {
-    rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_NONE);
-    rocketnet_set_allocator(allocate, release);
-    CHECK(rocketnet_init( NULL ) == ROCKETNET_STATUS_OK);
+    rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
+    CHECK(rocketnet_init( NULL, allocate, release ) == ROCKETNET_STATUS_OK);
     if ( argc < 2 )
     {
         test_create_cleanup();

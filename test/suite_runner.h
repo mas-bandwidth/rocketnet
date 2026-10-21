@@ -236,7 +236,7 @@ inline int suite_layer_of( const std::string & name )
         // client/server: connect, handshake, slots, disconnect, lifecycle
         { "server", "client", "connect", "handshake", "request", "challenge", "slot", "disconnect", "lifecycle", "keep_alive", "frame_sync", "dst", "live", "public", "api", "create", "destroy", "start", "backend", "session", "half", "two", "swarm", "full", "stale", NULL },
         // messages: channels, reliability, message layer, examples
-        { "message", "channel", "rnchannel", "reliab", "unreliable", "ordered", "violation", "wide", "dispatch", "harness", "control", "state", "block", "promoted", "mixed", "raknet", "shares", "example", NULL },
+        { "message", "channel", "rnchannel", "reliab", "unreliable", "ordered", "violation", "wide", "dispatch", "harness", "control", "state", "block", "promoted", "mixed", "rtt_estimator", "shares", "example", NULL },
     };
     const int count = (int) ( sizeof( layers ) / sizeof( layers[0] ) );
     const std::string area = name.compare( 0, 5, "test_" ) == 0 ? name.substr( 5 ) : name;
@@ -480,7 +480,7 @@ inline int suite_finish( const std::vector<suite_result> & results, bool passed 
     suite_print_report( results );
     if ( !passed )
         return 1;
-    printf( "\n*** ALL TESTS PASSED ***\n" );
+    printf( "\n*** ALL TESTS PASSED ***\n\n" );
     fflush( stdout );
     return 0;
 }

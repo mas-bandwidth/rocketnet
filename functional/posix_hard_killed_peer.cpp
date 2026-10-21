@@ -29,6 +29,7 @@
 */
 
 #include "rocketnet_internal.h"
+#include "rocketnet_connect_token.h"
 #include "rocketnet_layers.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
@@ -73,7 +74,7 @@ static void posix_hard_killed_check( bool condition, const char * expression, co
 static const double POSIX_HK_TICK = 1.0 / 60.0;
 static const double POSIX_HK_GAP_BOUND = POSIX_HK_TICK + 0.050;
 
-// the development token's timeout (rocketnet_write_dev_connect_token) and the
+// the development token's timeout (rocketnet_write_test_connect_token) and the
 // server config's handshake deadline: the normal times the dead slot frees
 // in and the fifth client connects in
 
@@ -140,7 +141,7 @@ static struct rocketnet_server_transport_t * posix_hk_server_create( const posix
 static struct rocketnet_client_transport_t * posix_hk_client_create( const char * server_address, uint64_t client_id )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    posix_hard_killed_require( rocketnet_write_dev_connect_token( server_address, client_id, (uint64_t) time( NULL ), token, sizeof(token) ) == ROCKETNET_STATUS_OK );
+    posix_hard_killed_require( rocketnet_write_test_connect_token( server_address, client_id, (uint64_t) time( NULL ), token, sizeof(token) ) == ROCKETNET_STATUS_OK );
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, NULL, rocketnet_platform_time() );
     posix_hard_killed_require( client );
     return client;
@@ -381,8 +382,8 @@ int rocketnet_posix_hard_killed_child_main( int argc, char ** argv )
     if ( argc < 4 )
         return 2;
     setvbuf( stdout, NULL, _IOLBF, 0 );
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
-    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
         return 1;
     const pid_t parent = getppid();
     struct rocketnet_client_transport_t * client = posix_hk_client_create( argv[2], strtoull( argv[3], NULL, 10 ) );
@@ -779,8 +780,8 @@ static void posix_seam_unknown_errno_pauses_msgx()
     // per-packet loop without losing a datagram, the pump reads portable
     // until the pause expires, and the pause logs once
 
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_WARN );
-    rocketnet_set_log_callback( posix_seam_log, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_WARN );
+    rocketnet_log_function( posix_seam_log, NULL );
 
     struct rocketnet_platform_socket_t * socket = posix_seam_socket_with_queue( "msgx" );
     rocketnet_address_t from[32];

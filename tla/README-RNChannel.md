@@ -230,7 +230,7 @@ loss pattern, with `SendCapacity = 1` so one reliable message is outstanding
 at a time. It passes: 723,930 generated / 281,764 distinct states in 33.015 s,
 exit 0, and is a required case.
 
-The deployed channel window is `window_messages` per channel, not `W = 4`.
+The deployed channel window is `reliable_messages_in_flight` per channel, not `W = 4`.
 The checked properties split into two kinds. The ordering, chunk-placement and
 at-most-once rules are local to each accepted message, number and ring slot,
 and their statements do not mention the window size; the mid instance changes
@@ -238,7 +238,7 @@ which reliable numbers share a ring position and still checks the same
 predicates. Ring reuse and the send window's admission rule
 (`n < UPrime + W`) are size-dependent: a wider window admits more numbers
 before the oldest is delivered, and the mid instance exercises that wider
-admission but not the deployed `window_messages`. With `SendCapacity = 1` the
+admission but not the deployed `reliable_messages_in_flight`. With `SendCapacity = 1` the
 mid instance does not cover several reliable messages outstanding at once in
 a `W = 4` window; `MCRNChannelSafety.cfg` covers `W = 4` with
 `SendCapacity = 2` under arbitrary loss, so that dimension is checked in a

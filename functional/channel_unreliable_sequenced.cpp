@@ -80,7 +80,7 @@ void large_unreliable_sequenced_uses_transport_fragments()
     // Run the message objects over the channel harness: the in-memory
     // simulator and the test clock (1000.0), no socket and no sleep. An
     // UNRELIABLE_SEQUENCED send too big for one packet's record is promoted
-    // to RELIABLE_SEQUENCED, as RakNet's ReliabilityLayer does, and is
+    // to RELIABLE_SEQUENCED (the promotion rule), and is
     // counted, never fragmented.
     rocketnet_channel_harness_t h;
     sequenced_functional_check( rocketnet_channel_harness_create( &h ) != 0, "large harness create" );

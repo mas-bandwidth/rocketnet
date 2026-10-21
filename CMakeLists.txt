@@ -10,13 +10,17 @@ endif()
 # read from sdk/rocketnet.h, and the installed package carries both.
 project(rocketnet VERSION 1.0.0 LANGUAGES C CXX)
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/sdk/rocketnet.h" ROCKETNET_VERSION_FULL_LINE
-    REGEX "^ *#define ROCKETNET_VERSION_FULL +\"[0-9]+\\.[0-9]+\\.[0-9]+[^\"]*\"$")
+    REGEX "^ *#define ROCKETNET_VERSION_FULL +\"v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?\"$")
+list(LENGTH ROCKETNET_VERSION_FULL_LINE ROCKETNET_VERSION_FULL_COUNT)
+if(NOT ROCKETNET_VERSION_FULL_COUNT EQUAL 1)
+    message(FATAL_ERROR "Expected one shipping ROCKETNET_VERSION_FULL label beginning with v")
+endif()
 string(REGEX REPLACE ".*\"([^\"]+)\"$" "\\1" ROCKETNET_VERSION_STRING "${ROCKETNET_VERSION_FULL_LINE}")
-string(REGEX REPLACE "^[0-9]+\\.[0-9]+\\.[0-9]+-?" "" ROCKETNET_VERSION_PRERELEASE "${ROCKETNET_VERSION_STRING}")
-if(NOT ROCKETNET_VERSION_STRING STREQUAL PROJECT_VERSION AND
-   NOT ROCKETNET_VERSION_STRING STREQUAL "${PROJECT_VERSION}-${ROCKETNET_VERSION_PRERELEASE}")
+string(REGEX REPLACE "^v([0-9]+\\.[0-9]+\\.[0-9]+).*" "\\1" ROCKETNET_VERSION_NUMERIC "${ROCKETNET_VERSION_STRING}")
+string(REGEX REPLACE "^v[0-9]+\\.[0-9]+\\.[0-9]+-?" "" ROCKETNET_VERSION_PRERELEASE "${ROCKETNET_VERSION_STRING}")
+if(NOT ROCKETNET_VERSION_NUMERIC STREQUAL PROJECT_VERSION)
     message(FATAL_ERROR "sdk/rocketnet.h ROCKETNET_VERSION_FULL \"${ROCKETNET_VERSION_STRING}\" "
-        "is not project VERSION ${PROJECT_VERSION} with an optional -prerelease")
+        "does not match project VERSION ${PROJECT_VERSION}")
 endif()
 if(MSVC)
     add_compile_options(/utf-8)
@@ -39,6 +43,7 @@ option(ROCKETNET_BUILD_EXAMPLES "Build the client/server examples" ${ROCKETNET_T
 option(ROCKETNET_BUILD_TOOLS "Build keygen and soak tools" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_IO_URING "Build the io_uring server transport against liburing when it is found (Linux)" ON)
 option(ROCKETNET_SANITIZE_ADDRESS "Build every target with AddressSanitizer" OFF)
+option(ROCKETNET_TEST_DEVELOPMENT "Build the unit test library with ROCKETNET_DEVELOPMENT=1, so ./bin/test runs the development paths" OFF)
 if(ROCKETNET_SANITIZE_ADDRESS)
     if(MSVC)
         add_compile_options(/fsanitize=address /Zi)
@@ -310,8 +315,8 @@ target_compile_definitions(rocketnet_dev PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS
 target_compile_definitions(rocketnet_shared_dev PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
 
 # The soname follows SDK layout/calling compatibility, independently of wire version.
-file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/sdk/rocketnet.h" ROCKETNET_ABI_LINE REGEX "^#define ROCKETNET_ABI_VERSION [0-9]+$")
-string(REGEX REPLACE ".* ([0-9]+)$" "\\1" ROCKETNET_ABI_SOVERSION "${ROCKETNET_ABI_LINE}")
+# the shared library's soname follows the major version
+set(ROCKETNET_ABI_SOVERSION ${PROJECT_VERSION_MAJOR})
 set_target_properties(rocketnet_shared PROPERTIES
     OUTPUT_NAME rocketnet ARCHIVE_OUTPUT_NAME rocketnet_import
     VERSION ${PROJECT_VERSION} SOVERSION ${ROCKETNET_ABI_SOVERSION}
@@ -359,7 +364,8 @@ foreach(target rocketnet rocketnet_dev rocketnet_shared rocketnet_shared_dev ${r
     set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_compile_features(${target} PRIVATE cxx_std_11)
     rocketnet_warning_floor(${target})
-    if(target STREQUAL "rocketnet_dev" OR target STREQUAL "rocketnet_shared_dev")
+    if(target STREQUAL "rocketnet_dev" OR target STREQUAL "rocketnet_shared_dev" OR
+       (ROCKETNET_TEST_DEVELOPMENT AND target STREQUAL "rocketnet_test_hooks"))
         target_compile_definitions(${target} PUBLIC ROCKETNET_DEVELOPMENT=1)
     else()
         target_compile_definitions(${target} PRIVATE ROCKETNET_DEVELOPMENT=0)
@@ -526,7 +532,7 @@ if(ROCKETNET_BUILD_TESTS)
     # The promotion case exercises the WIDE channel header (an index of 256 or
     # more) on channel 300, past the default build's cap, so this binary
     # compiles the SDK once more with ROCKETNET_MAX_CHANNELS=512 for every file
-    # (RakNet promotion rule: oversize unreliable sends promote to their twin).
+    # (the promotion rule: oversize unreliable sends promote to their reliable twin).
     add_executable(test_wide
         test.cpp test_channels.cpp test_unit_unreliable_promotion.cpp test_unit_channel_violation_counters.cpp
         sdk/rocketnet_tests.cpp ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
@@ -728,13 +734,6 @@ if(ROCKETNET_BUILD_TESTS)
     else()
         add_dependencies(functional test_serialize test_transport_control)
     endif()
-    add_library(rocketnet_abi_mismatch SHARED EXCLUDE_FROM_ALL tools/abi_mismatch.cpp)
-    target_compile_definitions(rocketnet_abi_mismatch PRIVATE ROCKETNET_SHARED ROCKETNET_BUILDING_DLL ROCKETNET_ABI_QUERIES_ONLY)
-    target_compile_features(rocketnet_abi_mismatch PRIVATE cxx_std_11)
-    set_target_properties(rocketnet_abi_mismatch PROPERTIES
-        CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
-    add_library(rocketnet_abi_pre_introspection SHARED EXCLUDE_FROM_ALL tools/abi_pre_introspection.cpp)
-    target_compile_definitions(rocketnet_abi_pre_introspection PRIVATE ROCKETNET_SHARED ROCKETNET_BUILDING_DLL)
 endif()
 if(ROCKETNET_BUILD_TOOLS)
     add_executable(soak soak.c)

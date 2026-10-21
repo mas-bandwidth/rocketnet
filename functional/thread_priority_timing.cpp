@@ -31,6 +31,7 @@
 */
 
 #include "rocketnet_internal.h"
+#include "rocketnet_connect_token.h"
 #include "rocketnet_platform.h"
 #include "../test/portable_crt.h"
 
@@ -400,9 +401,9 @@ static void priority_timing_run( const char * condition, int spinners, bool read
     priority_timing_wakes.intervals = wake_storage.data();
 
     // the refusal lines are warnings: raise the level for the case and count them
-    const enum rocketnet_log_level_t saved_level = rocketnet_get_log_level();
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
-    rocketnet_set_log_callback( priority_timing_log, NULL );
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_function( priority_timing_log, NULL );
 
     const double start = rocketnet_platform_time();
 
@@ -434,7 +435,7 @@ static void priority_timing_run( const char * condition, int spinners, bool read
     client_config.time_callback = priority_timing_time_callback;
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    priority_timing_require( rocketnet_write_dev_connect_token( server_address, 1, rocketnet_functional_token_timestamp( server_config.game_clock_epoch, priority_timing_game_time( start ) ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    priority_timing_require( rocketnet_write_test_connect_token( server_address, 1, rocketnet_functional_token_timestamp( server_config.game_clock_epoch, priority_timing_game_time( start ) ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     // the client create makes the client network thread's priority call
     // (rocketnet_client_transport_create, after its thread create): the
     // refusals it adds are counted around the create alone
@@ -518,8 +519,8 @@ static void priority_timing_run( const char * condition, int spinners, bool read
     rocketnet_server_transport_update( server, priority_timing_game_time( start ) );
     rocketnet_server_transport_destroy( server );
 
-    rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_set_log_level( saved_level );
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved_level );
 
     std::vector<double> wakes( wake_storage.begin(), wake_storage.begin() + (ptrdiff_t) priority_timing_wakes.num_intervals );
     const priority_timing_stats_t w = priority_timing_stats( wakes );

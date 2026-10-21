@@ -31,6 +31,7 @@
 #define ROCKETNET_CHANNEL_HARNESS_H
 
 #include "rocketnet_internal.h"
+#include "rocketnet_connect_token.h"
 #include "rocketnet_allocator.h"
 #include "rocketnet_message_object.h"
 #include "rocketnet_network_simulator.h"
@@ -309,7 +310,7 @@ typedef struct rocketnet_channel_endpoint_t
     int payload_count;
     uint8_t frame[ROCKETNET_CHANNEL_HARNESS_MAX_PACKETS][ROCKETNET_FRAME_STRIDE];
     int frame_bytes[ROCKETNET_CHANNEL_HARNESS_MAX_PACKETS];
-    uint8_t (* payload)[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+    uint8_t (* payload)[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
     uint8_t * payload_ptr[ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS];
     int payload_bytes[ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS];
     int payload_client_index[ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS];
@@ -473,7 +474,7 @@ static inline uint64_t rocketnet_channel_harness_overflows( const rocketnet_chan
 
 static inline void rocketnet_channel_endpoint_payload( rocketnet_channel_endpoint_t * endpoint, int client_index, const uint8_t * data, int bytes )
 {
-    if ( endpoint->payload_count >= ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS || bytes <= 0 || bytes > ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES )
+    if ( endpoint->payload_count >= ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS || bytes <= 0 || bytes > ROCKETNET_RECEIVE_PAYLOAD_BYTES )
     {
         endpoint->harness->overflow_count++;
         return;
@@ -510,7 +511,7 @@ static inline void rocketnet_channel_endpoint_update( void * transport, double t
     struct rocketnet_address_t from;
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
-    uint8_t payload[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+    uint8_t payload[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
 
     if ( endpoint->is_server )
     {
@@ -610,7 +611,7 @@ static inline uint8_t * rocketnet_channel_endpoint_start_packet( void * transpor
 {
     rocketnet_channel_endpoint_t * endpoint = (rocketnet_channel_endpoint_t *) transport;
     rocketnet_channel_harness_t * h = endpoint->harness;
-    if ( endpoint->pending_frame >= 0 || endpoint->outgoing_count >= ROCKETNET_CHANNEL_HARNESS_MAX_PACKETS || request_bytes > ROCKETNET_MAX_PAYLOAD_BYTES )
+    if ( endpoint->pending_frame >= 0 || endpoint->outgoing_count >= ROCKETNET_CHANNEL_HARNESS_MAX_PACKETS || request_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
         return NULL;
 
     const int slot = endpoint->outgoing_count;
@@ -630,7 +631,7 @@ static inline uint8_t * rocketnet_channel_endpoint_start_packet( void * transpor
     memset( context, 0, sizeof(*context) );
     context->frame = wire_start;
     context->payload_index = ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET;
-    context->payload_capacity = ROCKETNET_MAX_PAYLOAD_BYTES;
+    context->payload_capacity = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
     context->packet_id = ++h->next_packet_id;
     context->sequence = sequence;
     context->client_index = client_index;
@@ -828,12 +829,9 @@ static inline int rocketnet_channel_harness_create_with_config( rocketnet_channe
     rocketnet_channel_capture_begin();
     rocketnet_term();
     rocketnet_channel_allocator_calls = 0;
-    if ( rocketnet_set_allocator( rocketnet_channel_counting_malloc, rocketnet_channel_counting_free ) != ROCKETNET_STATUS_OK )
-        return 0;
-    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_init( NULL, rocketnet_channel_counting_malloc, rocketnet_channel_counting_free ) != ROCKETNET_STATUS_OK )
     {
-        rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function );
-        rocketnet_init( NULL );
+        rocketnet_init( NULL, NULL, NULL );
         return 0;
     }
     h->counting_allocator_installed = 1;
@@ -841,9 +839,9 @@ static inline int rocketnet_channel_harness_create_with_config( rocketnet_channe
     // Keep the large fixture payload slots off the caller's stack. Both
     // endpoint buffers belong to this harness and are allocated before the
     // no-allocation snapshot used by the functional cases.
-    h->client_endpoint.payload = (uint8_t (*)[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES])
+    h->client_endpoint.payload = (uint8_t (*)[ROCKETNET_RECEIVE_PAYLOAD_BYTES])
         rocketnet_malloc( NULL, sizeof( *h->client_endpoint.payload ) * ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS );
-    h->server_endpoint.payload = (uint8_t (*)[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES])
+    h->server_endpoint.payload = (uint8_t (*)[ROCKETNET_RECEIVE_PAYLOAD_BYTES])
         rocketnet_malloc( NULL, sizeof( *h->server_endpoint.payload ) * ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS );
     h->held = (uint8_t (*)[ROCKETNET_RECEIVE_CEILING])
         rocketnet_malloc( NULL, sizeof( *h->held ) * ROCKETNET_CHANNEL_HARNESS_MAX_HELD );
@@ -873,7 +871,7 @@ static inline int rocketnet_channel_harness_create_with_config( rocketnet_channe
     // client protocol
     rocketnet_client_protocol_init( &h->client, &h->client_counters );
 
-    if ( rocketnet_write_dev_connect_token( "203.0.113.10:40000", 0xA11CE, h->unix_ts, token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_write_test_connect_token( "203.0.113.10:40000", 0xA11CE, h->unix_ts, token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
         goto failed;
     if ( !rocketnet_client_protocol_connect( &h->client, token, h->now, h->unix_ts ) )
         goto failed;
@@ -882,7 +880,7 @@ static inline int rocketnet_channel_harness_create_with_config( rocketnet_channe
     // signed by (the test vectors are the dev keys)
     server = &h->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
-    memcpy( server->filter_value, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( server->packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server->backend_public_key, rocketnet_test_backend_public_key, 32 );
     memcpy( server->server_public_key, rocketnet_test_server_public_key, 32 );
     memcpy( server->server_secret_key, rocketnet_test_server_secret_key, 32 );
@@ -915,10 +913,10 @@ static inline int rocketnet_channel_harness_create_with_config( rocketnet_channe
     rocketnet_channel_endpoint_link( &server_link, &h->server_endpoint );
     h->message_client = (struct rocketnet_message_client_t *) rn_message_object_create( NULL, &client_link, 0, 1,
                                                                                         &h->message_config, NULL, 0,
-                                                                                        ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, h->now );
+                                                                                        ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, h->now );
     h->message_server = (struct rocketnet_message_server_t *) rn_message_object_create( NULL, &server_link, 1, 4,
                                                                                         &h->message_config, NULL, 0,
-                                                                                        ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, h->now );
+                                                                                        ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, h->now );
     if ( !h->message_client || !h->message_server )
         goto failed;
 
@@ -936,11 +934,11 @@ static inline int rocketnet_channel_harness_create( rocketnet_channel_harness_t 
     return rocketnet_channel_harness_create_with_config( h, NULL );
 }
 
-static inline int rocketnet_channel_harness_create_with_unreliable_deliveries( rocketnet_channel_harness_t * h, int deliveries )
+static inline int rocketnet_channel_harness_create_with_unreliable_messages_per_update( rocketnet_channel_harness_t * h, int deliveries )
 {
     struct rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.unreliable_deliveries = deliveries;
+    config.unreliable_messages_per_update = deliveries;
     return rocketnet_channel_harness_create_with_config( h, &config );
 }
 
@@ -1088,8 +1086,7 @@ static inline void rocketnet_channel_harness_destroy( rocketnet_channel_harness_
     if ( h->counting_allocator_installed )
     {
         rocketnet_term();
-        rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function );
-        rocketnet_init( NULL );
+        rocketnet_init( NULL, NULL, NULL );
     }
     rocketnet_channel_seed_state().live = 0;
     rocketnet_channel_capture_flush();

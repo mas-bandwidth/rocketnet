@@ -97,7 +97,7 @@ struct resend_timing_row_t
     double resend_delay_bound_ms;            // largest formula-derived resend delay during the run
     double early_min_ms;            // min of gap - delay at the resend
     double late_max_ms;             // max of gap - delay at the update before
-    double reliable_timeout_ms;
+    double reliable_message_timeout_ms;
     double ceiling_slack_ms;        // max over messages of latency - its own ceiling
     int max_sends;                  // most sends of one message before its delivery
 };
@@ -276,7 +276,7 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
     row->resend_delay_bound_ms = resend_delay_bound_ms;
     row->early_min_ms = gaps->early_min[0] * 1000.0;
     row->late_max_ms = gaps->late_max[0] * 1000.0;
-    row->reliable_timeout_ms = ack->reliable_timeout * 1000.0;
+    row->reliable_message_timeout_ms = ack->reliable_timeout * 1000.0;
     row->ceiling_slack_ms = ceiling_slack_ms;
     row->max_sends = max_sends;
     resend_timing_check( gaps->count[1] == 0 );         // no chunks in this case
@@ -327,7 +327,7 @@ void resend_timing_table_over_lossy_links()
                 resend_timing_check( row->late_max_ms <= tick_ms + eps_ms );
                 resend_timing_check( row->gap_max_ms <= row->resend_delay_bound_ms + tick_ms + eps_ms );
                 // the attempts rule: MIN_RESEND_ATTEMPTS of the largest gap fit inside reliable_timeout
-                resend_timing_check( (double) ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS * row->gap_max_ms <= row->reliable_timeout_ms );
+                resend_timing_check( (double) ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS * row->gap_max_ms <= row->reliable_message_timeout_ms );
                 // the rule, per message: within its own ceiling
                 resend_timing_check( row->ceiling_slack_ms <= eps_ms );
             }

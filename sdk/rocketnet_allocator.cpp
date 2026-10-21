@@ -30,7 +30,7 @@ static_assert( sizeof(rn_send_descriptor_t) == 64, "a send descriptor is 64 byte
 static_assert( sizeof(rn_sent_packet_t) == 32, "a sent-packet entry is 32 bytes (14)" );
 static_assert( sizeof(rn_sent_index_t) == 16, "a sent-packet index entry is 16 bytes (14)" );
 static_assert( sizeof(rn_delivery_t) == 24, "a delivery is 24 bytes (14)" );
-static_assert( sizeof(rn_sequenced_hold_t) == 16 + ROCKETNET_MAX_PAYLOAD_BYTES, "a sequenced hold is 16 bytes and one payload capacity, 1432 bytes (14)" );
+static_assert( sizeof(rn_sequenced_hold_t) == 16 + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, "a sequenced hold is 16 bytes and one payload capacity, 1432 bytes (14)" );
 static_assert( sizeof(rn_receipt_t) == 16, "a receipt is 16 bytes (14)" );
 static_assert( sizeof(rn_resend_link_t) == 8, "a resend FIFO link is 8 bytes (14)" );
 static_assert( sizeof(((rn_send_descriptor_t*)0)->reserved) >= 9, "layer 3 keeps its first_send and its flag byte in reserved (6.4)" );
@@ -103,13 +103,13 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
         return false;
 
     const uint64_t C = (uint64_t) config->num_channels;
-    const uint64_t W = (uint64_t) config->window_messages;
-    const uint64_t B = (uint64_t) config->receive_ring_bytes;
+    const uint64_t W = (uint64_t) config->reliable_messages_in_flight;
+    const uint64_t B = (uint64_t) config->receive_message_buffer_bytes;
     // Local create-time payload reserve. The documented typical payloads are
     // 128, 512 and 1024 bytes for the fixed pools; descriptors allow 128-byte
     // records. Tiny-record floods retain bounded exhaustion semantics.
     const int kbps = config->client_send_kbps > config->server_send_kbps ? config->client_send_kbps : config->server_send_kbps;
-    const uint64_t reserve = kbps > 0 ? ( (uint64_t) kbps * 125 * (uint64_t) config->resend_delay_max_ms + 999 ) / 1000 : 0;
+    const uint64_t reserve = kbps > 0 ? ( (uint64_t) kbps * 125 * (uint64_t) config->message_resend_delay_max_ms + 999 ) / 1000 : 0;
     const uint64_t Q = (uint64_t) config->send_queue_messages + ( reserve + 127 ) / 128;
     const uint64_t SR = B + rn_align64( reserve + ( ( reserve + 1152 ) / 1153 ) * 15 );
     const uint32_t chunk_bytes[RN_STORE_NUM_CLASSES] = { RN_STORE_SMALL_BYTES, RN_STORE_MEDIUM_BYTES, RN_STORE_LARGE_BYTES };
@@ -119,21 +119,21 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
     for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
     {
         const uint64_t payload_bytes = typical_payload[c];
-        const uint64_t count = rn_send_store_chunks_for( config->send_buffer_bytes, c ) + ( reserve + payload_bytes - 1 ) / payload_bytes;
+        const uint64_t count = rn_send_store_chunks_for( config->send_message_buffer_bytes, c ) + ( reserve + payload_bytes - 1 ) / payload_bytes;
         if ( count >= 0x3FFFFFFFu )
             return false;
         chunks[c] = (uint32_t) count;
         S += rn_align64( count * ( chunk_bytes[c] + sizeof(uint32_t) ) );
     }
     // Keep all original store headroom, including its alignment slack.
-    if ( S < (uint64_t) config->send_buffer_bytes )
-        S = config->send_buffer_bytes;
+    if ( S < (uint64_t) config->send_message_buffer_bytes )
+        S = config->send_message_buffer_bytes;
     if ( Q >= UINT32_MAX || SR > UINT32_MAX )
         return false;
     const uint64_t P = (uint64_t) config->packets_in_flight;
-    const uint64_t Du = (uint64_t) config->unreliable_deliveries;
-    const uint64_t Ru = (uint64_t) config->sequenced_holds;
-    const uint64_t Rq = (uint64_t) config->receipt_ring;
+    const uint64_t Du = (uint64_t) config->unreliable_messages_per_update;
+    const uint64_t Ru = (uint64_t) config->sequenced_messages_held;
+    const uint64_t Rq = (uint64_t) config->max_message_receipts;
 
     memset( layout, 0, sizeof(*layout) );
     layout->bytes[RN_PART_CHANNEL_SEND] = sizeof(rn_channel_send_t) * C;
@@ -397,16 +397,16 @@ static void rn_region_point( rn_region_t * region, uint8_t * base, const rn_regi
     region->counters = counters;
 
     region->num_channels = (uint32_t) config->num_channels;
-    region->window = (uint32_t) config->window_messages;
-    region->ring_bytes = (uint32_t) config->receive_ring_bytes;
+    region->window = (uint32_t) config->reliable_messages_in_flight;
+    region->ring_bytes = (uint32_t) config->receive_message_buffer_bytes;
     region->queue = (uint32_t) ( layout->bytes[RN_PART_SEND_DESCRIPTORS] / sizeof(rn_send_descriptor_t) );
     region->packets = (uint32_t) config->packets_in_flight;
     region->held_entries = 2 * region->window;
     region->sent_index_entries = 2 * region->packets;
     region->sent_ref_entries = 16 * region->packets;
-    region->delivery_entries = region->window + (uint32_t) config->unreliable_deliveries;
-    region->holds = (uint32_t) config->sequenced_holds;
-    region->receipt_entries = (uint32_t) config->receipt_ring;
+    region->delivery_entries = region->window + (uint32_t) config->unreliable_messages_per_update;
+    region->holds = (uint32_t) config->sequenced_messages_held;
+    region->receipt_entries = (uint32_t) config->max_message_receipts;
     region->max_message_bytes = (uint32_t) config->max_message_bytes;
 
     // every typed carve-out at its part's offset, nothing outside the region
@@ -422,7 +422,7 @@ static void rn_region_point( rn_region_t * region, uint8_t * base, const rn_regi
     region->sent_index = (rn_sent_index_t*) ( base + layout->offset[RN_PART_SENT_INDEX] );
     region->sent_refs = (uint32_t*) ( base + layout->offset[RN_PART_SENT_REFS] );
     region->deliveries = (rn_delivery_t*) ( base + layout->offset[RN_PART_DELIVERIES] );
-    region->sequenced_holds = (rn_sequenced_hold_t*) ( base + layout->offset[RN_PART_SEQUENCED_HOLDS] );
+    region->sequenced_messages_held = (rn_sequenced_hold_t*) ( base + layout->offset[RN_PART_SEQUENCED_HOLDS] );
     region->receipts = (rn_receipt_t*) ( base + layout->offset[RN_PART_RECEIPTS] );
     region->resend_fifo = (rn_resend_link_t*) ( base + layout->offset[RN_PART_RESEND_FIFO] );
     region->send_spans = base + layout->offset[RN_PART_SEND_SPANS];
@@ -490,7 +490,7 @@ void rn_region_carve( rn_region_t * region )
     memset( region->deliveries, 0, sizeof(rn_delivery_t) * region->delivery_entries );
     for ( uint32_t h = 0; h < region->holds; h++ )
     {
-        rn_sequenced_hold_t * hold = &region->sequenced_holds[h];
+        rn_sequenced_hold_t * hold = &region->sequenced_messages_held[h];
         hold->bytes = 0;
         hold->ordering = 0;
         hold->sequencing = 0;
@@ -1030,7 +1030,7 @@ static void rn_region_send_room_log( const rn_region_t * region, int is_server, 
     else
         snprintf( who, sizeof(who), "client" );
     rocketnet_warn( "%s send room %s (%u.%u%% of the fullest pool): store %" PRIu64 " of %" PRIu64 " bytes, spans %" PRIu64 " of %" PRIu64 " bytes, "
-                    "messages %u of %u; sends outrun acks, raise send_buffer_bytes, receive_ring_bytes or send_queue_messages, or send less",
+                    "messages %u of %u; sends outrun acks, raise send_message_buffer_bytes, receive_message_buffer_bytes or send_queue_messages, or send less",
                     who, what, room.permille / 10, room.permille % 10, room.store_used_bytes, room.store_bytes, room.span_used_bytes, room.span_bytes,
                     room.used_messages, room.messages );
 }
@@ -1319,9 +1319,9 @@ int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t
     rn_text_append( &text, "message connection sizing (docs/CHANNELS.md section 14)\n" );
     rn_text_append( &text, "connection_bytes = 48C + 104.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq + SR, Q/S/SR include maximum resend-delay payload reserve (typical pool payloads 128/512/1024 bytes)\n" );
     rn_text_append( &text, "C=%d W=%d B=%d S=%d Q=%d P=%d Du=%d Ru=%d Rq=%d\n",
-                    config->num_channels, config->window_messages, config->receive_ring_bytes, config->send_buffer_bytes,
-                    config->send_queue_messages, config->packets_in_flight, config->unreliable_deliveries,
-                    config->sequenced_holds, config->receipt_ring );
+                    config->num_channels, config->reliable_messages_in_flight, config->receive_message_buffer_bytes, config->send_message_buffer_bytes,
+                    config->send_queue_messages, config->packets_in_flight, config->unreliable_messages_per_update,
+                    config->sequenced_messages_held, config->max_message_receipts );
     for ( int part = 0; part < RN_NUM_PARTS; part++ )
         rn_text_append( &text, "  %-24s %-9s %" PRIu64 "\n", rn_part_names[part], rn_part_formulas[part], layout.bytes[part] );
     rn_text_append( &text, "store classes %u x %d, %u x %d, %u x %d\n",

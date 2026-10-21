@@ -68,7 +68,7 @@ Ready(m) ==
  /\ (Order(m) >= ordered_read[Channel(m)] \/ m \in duplicateReady)
  /\ (BrokenOutOfOrder \/ Order(m) = ordered_read[Channel(m)] \/ m \in duplicateReady)
 ReadySet == {m \in Messages : Ready(m)}
-\* The application's one receive queue (RakPeer::Receive): rxQueue is the
+\* The application's one receive queue, pumped by each receive: rxQueue is the
 \* update's deliveries in delivery order, every channel's together, never
 \* filtered by channel (sdk/rocketnet_message_server.cpp, rn_message_object_next); EndUpdate
 \* ends the update's views and moves the queue into trace, what the

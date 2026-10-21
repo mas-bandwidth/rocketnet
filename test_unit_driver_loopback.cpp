@@ -278,8 +278,7 @@ static void loopback_count_free( void * context, void * memory )
 static void test_loopback_transport_io_runtime_does_not_allocate()
 {
     rocketnet_unit_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
-    rocketnet_unit_check( rocketnet_allocator_ex( loopback_count_malloc, loopback_count_free ) == ROCKETNET_STATUS_OK );
-    rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL, loopback_count_malloc, loopback_count_free ) == ROCKETNET_STATUS_OK );
 
     const size_t overhead = (size_t) rocketnet_allocation_overhead();
     const size_t live_before = g_loopback_live_bytes;
@@ -354,8 +353,7 @@ static void test_loopback_transport_io_runtime_does_not_allocate()
     rocketnet_unit_check( g_loopback_live_bytes == live_before );
 
     rocketnet_unit_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
-    rocketnet_unit_check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-    rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
     printf( "test_loopback_transport_io_runtime_does_not_allocate\n" );
 }
 
@@ -750,9 +748,9 @@ static void test_loopback_transport_io_refuses_past_max_endpoints()
 {
     const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
     const int live_before = rocketnet_loopback_endpoints_live();
-    const enum rocketnet_log_level_t saved_level = rocketnet_get_log_level();
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_WARN );
-    rocketnet_set_log_callback( loopback_refusal_log_capture, NULL );
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_WARN );
+    rocketnet_log_function( loopback_refusal_log_capture, NULL );
 
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
@@ -793,8 +791,8 @@ static void test_loopback_transport_io_refuses_past_max_endpoints()
         rocketnet_client_transport_io_close( &clients[i] );
     rocketnet_unit_check( rocketnet_loopback_endpoints_live() == live_before );
 
-    rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_set_log_level( saved_level );
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved_level );
     free( clients );
     printf( "test_loopback_transport_io_refuses_past_max_endpoints\n" );
 }
@@ -835,9 +833,9 @@ static void test_pending_wire_totals_expire_and_reuse_slots()
 {
     const uint64_t protocol_id = UINT64_C(0x70656e64696e6777);
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret_key[RN_TEST_BACKEND_SECRET_KEY_BYTES];
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret_key[RN_TEST_SERVER_SECRET_KEY_BYTES];
     rocketnet_unit_check( rocketnet_generate_backend_keypair( backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_generate_server_keypair( server_public_key, server_secret_key ) == ROCKETNET_STATUS_OK );
 

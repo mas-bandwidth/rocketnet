@@ -6,4 +6,4 @@ wide channel threshold	( 1 << 8 )	256
 message fragment bytes	ROCKETNET_MESSAGE_FRAGMENT_BYTES	1152
 message number modulus	( ROCKETNET_MESSAGE_U24_MASK + 1 )	16777216
 config body bytes	ROCKETNET_MESSAGE_CONFIG_BYTES	28
-payload capacity	ROCKETNET_MAX_PAYLOAD_BYTES	1416
+payload capacity	ROCKETNET_MAX_PACKET_PAYLOAD_BYTES	1416

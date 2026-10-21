@@ -877,7 +877,7 @@ static void probe_ack_does_not_free_held( world_t * w )
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.receive_ring_bytes = 65536;
+    config.receive_message_buffer_bytes = 65536;
     config.max_message_bytes = 32768;
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
@@ -974,7 +974,7 @@ static void probe_walk( world_t * w, uint64_t seed, uint64_t first, int steps, i
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.receive_ring_bytes = 65536;          // the walk's reference model is this ring's, not the default's
+    config.receive_message_buffer_bytes = 65536;          // the walk's reference model is this ring's, not the default's
     config.max_message_bytes = 32768;
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );

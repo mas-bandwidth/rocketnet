@@ -11,7 +11,7 @@ can gate every push in CI.
 
 ## The scenario
 
-Both regions initialize the runtime identically before `rocketnet_init(NULL)`:
+Both regions initialize the runtime identically before `rocketnet_init(NULL, NULL, NULL)`:
 
 - A deterministic `randombytes_implementation` seeded from a fixed 64-bit
   constant (`0x524F434B45544E54`) supplies every key, nonce, salt, and

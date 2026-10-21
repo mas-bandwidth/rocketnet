@@ -211,9 +211,9 @@ settings (`flow_platform.cpp`), unchanged.
 | IOCP (Windows) | one worker per completion thread (`sdk/rocketnet_server_iocp_windows.cpp:568`) | `THREAD_PRIORITY_TIME_CRITICAL`, after each create |
 | io_uring, RIO, portable socket | none | nothing |
 
-`rocketnet_set_thread_priority( false )` turns the priority calls off for
+`rocketnet_thread_priority( false )` turns the priority calls off for
 threads created after it; the XDP thread's pin to its queue's cpu always runs.
-A refused call is counted by `rocketnet_get_thread_priority_refusals` and
+A refused call is counted in the stats structs' `thread_priority_refusals` and
 logged once per call kind (`docs/ERRORS-AND-LOGGING.md` 3.4); the transport starts
 either way. The server task workers of a game and its main thread are the
 game's to set; the library sets nothing on them.
@@ -374,8 +374,8 @@ ICMPv6 (neighbor discovery) above all, passes uncounted, as non-UDP IPv4
 does.
 
 The AF_XDP transport serves IPv4 and IPv6 end to end. A server serves one
-family, or both when `second_public_address` names the other family on the
-same port (`ServedFamilies`). The ladder offers `xdp` for one family, and for
+family, or both when `rocketnet_server_create` is given an IPv4 and an IPv6
+address on the same port (`ServedFamilies`). The ladder offers `xdp` for one family, and for
 both when the two addresses are on one interface. The receive loop dispatches
 each frame on its ethertype through `rocketnet_xdp_frame_receive`
 (`sdk/rocketnet_xdp_frame.h`): IPv4 at its offsets, IPv6 at the 40-byte fixed
@@ -391,8 +391,8 @@ the pre-flight find the interface carrying each address over `AF_INET` or
 family's gateway MAC comes from that family's default route and neighbour
 table; `ROCKETNET_GATEWAY_ETHERNET_ADDRESS` overrides both.
 
-`second_public_address` NULL or empty serves the public address's family. A
-second address of that family, on another port, or that does not parse is one
+A NULL `ipv4_address` or `ipv6_address` leaves that family unserved. An
+address not of its family, on another port, or that does not parse is one
 log line and `INVALID_ADDRESS` (`sdk/rocketnet_server_transport.cpp:1059-1079`).
 The two addresses share the IPv6 wildcard on the one port, with `IPV6_V6ONLY`
 off (`sdk/rocketnet_server_transport.cpp:1086`). `portable`

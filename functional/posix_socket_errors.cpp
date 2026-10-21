@@ -15,6 +15,7 @@
 */
 
 #include "rocketnet_internal.h"
+#include "rocketnet_connect_token.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
 #include "rocketnet_constants.h"
@@ -357,7 +358,7 @@ static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char 
     snprintf( server_address, sizeof(server_address), ipv6 ? "[::1]:%d" : "127.0.0.1:%d", rocketnet_server_transport_port( pair->server ) );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    posix_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(),
+    posix_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(),
                                                     rocketnet_functional_token_timestamp( server_config.game_clock_epoch, 1000.0 ),
                                                     token, sizeof(token) ) == ROCKETNET_STATUS_OK );
 
@@ -1917,7 +1918,7 @@ static void posix_xdp_weather( int ipv6 )
     // namespace
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    posix_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(),
+    posix_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(),
                                                     rocketnet_functional_token_timestamp( server_config.game_clock_epoch, 1000.0 ),
                                                     token, sizeof(token) ) == ROCKETNET_STATUS_OK );
 

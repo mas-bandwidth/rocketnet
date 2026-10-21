@@ -5,40 +5,31 @@ is never moved: if a tag is wrong, cut the next version.
 
 ## Version sites
 
-The version lives in one file, `sdk/rocketnet.h`, in two branches selected by
-`ROCKETNET_DEVELOPMENT`:
+The version lives in `sdk/rocketnet.h`, in two branches selected by
+`ROCKETNET_DEVELOPMENT`.
 
-- the shipping branch (`#if !ROCKETNET_DEVELOPMENT`) carries
-  `ROCKETNET_VERSION_FULL`, the prerelease string `ROCKETNET_VERSION_PRERELEASE`,
-  and the integer macros `ROCKETNET_VERSION_MAJOR`, `ROCKETNET_VERSION_MINOR`,
-  and `ROCKETNET_VERSION_PATCH`;
-- the development branch (`#else // !ROCKETNET_DEVELOPMENT`) carries
-  `ROCKETNET_VERSION_FULL "dev"`, an empty `ROCKETNET_VERSION_PRERELEASE`, and
-  the `255.255.255` integer sentinel.
+The shipping branch carries `ROCKETNET_VERSION_FULL` and the integer macros
+`ROCKETNET_VERSION_MAJOR`, `ROCKETNET_VERSION_MINOR` and
+`ROCKETNET_VERSION_PATCH`. For this preview, the full label is
+`"v1.0.0-preview-1"` and the integers are `1.0.0`. The development branch uses
+`"dev"` and the integer sentinel `255.255.255`.
 
-The first release is **v1.0.0-preview-1**: `ROCKETNET_VERSION_FULL` is
-`"1.0.0-preview-1"`, `ROCKETNET_VERSION_PRERELEASE` is `"preview-1"`, and the
-integers are `1.0.0`. The integers, `ROCKETNET_VERSION`, the CMake project
-`VERSION` and the installed package's `RocketNetConfigVersion.cmake` stay
-numeric (`1.0.0`), because those are compared; the label rides beside them.
-`CMakeLists.txt` reads `ROCKETNET_VERSION_FULL` from the header into
-`ROCKETNET_VERSION_STRING`, refuses to configure when it is not the project
-`VERSION` with an optional `-prerelease`, and the installed `RocketNetConfig.cmake`
-sets `RocketNet_VERSION_STRING` and `RocketNet_VERSION_PRERELEASE` for consumers.
+The numeric `ROCKETNET_VERSION`, CMake project `VERSION` and installed
+`RocketNetConfigVersion.cmake` remain numeric. CMake reads the full label
+from the header and checks that its numeric portion matches the project
+version. It exports `RocketNet_VERSION_STRING` as `v1.0.0-preview-1` and
+derives `RocketNet_VERSION_PRERELEASE` as `preview-1`. A final release has
+an empty prerelease string. There is no separate public prerelease macro.
 
-These are the version sites that the `version-consistency` job in
-[.github/workflows/release-check.yml](.github/workflows/release-check.yml)
-reads. That job checks both branches, because the branch that is not compiled
-today is the one that drifts. In the shipping branch, `ROCKETNET_VERSION_FULL`
-must equal `MAJOR.MINOR.PATCH`, followed by `-PRERELEASE` when
-`ROCKETNET_VERSION_PRERELEASE` is not empty; in the development branch, the full
-version must be `dev`, the prerelease empty, and the integers `255.255.255`. On a `v*` tag push, the part of
-the tag after the `v` must equal the shipping `ROCKETNET_VERSION_FULL`.
+The `version-consistency` job in
+[release-check.yml](../.github/workflows/release-check.yml) checks both
+header branches. A shipping label starts with `vMAJOR.MINOR.PATCH` and may
+have a `-PRERELEASE` suffix. The development label must be `dev`, with the
+sentinel integers. On a `v*` tag push, the complete tag must equal the
+shipping `ROCKETNET_VERSION_FULL`.
 
-The public C ABI revision is separate from the wire and release version. If a
-release changes the public C layout or calling contract, update
-`ROCKETNET_ABI_VERSION` in `sdk/rocketnet.h` and `tools/exports.txt` in the same
-change, as [BUILDING.md](BUILDING.md) describes.
+Review public layout and calling-contract changes separately from the release
+label. Keep the installed libraries, export list and consumers consistent.
 
 ## The wire-change rule
 
@@ -94,11 +85,9 @@ later merge.
 1. Check out `main` and confirm the worktree is clean and up to date. Do not
    release from a branch or a detached commit.
 2. Set the shipping version in `sdk/rocketnet.h`: `ROCKETNET_VERSION_FULL`,
-   `ROCKETNET_VERSION_PRERELEASE` (empty for a final release), and the three
-   integer macros. Change the `project(... VERSION ...)` in `CMakeLists.txt`
+   including any prerelease suffix, and the three integer macros. Change the `project(... VERSION ...)` in `CMakeLists.txt`
    when the integers change; configure refuses a mismatch. Leave the development branch at `dev` and
-   `255.255.255`. If the public C ABI changed, update `ROCKETNET_ABI_VERSION`
-   and `tools/exports.txt`.
+   `255.255.255`. Check the export list and consumers for public API changes.
 3. Run `python3 tools/check_release_doc.py`. It exits 0 when this document names
    every version site that `release-check.yml`'s `version-consistency` job reads,
    and exits 1 naming any site this document omits.
@@ -109,7 +98,7 @@ later merge.
    commit.
 6. On the merged `main` commit, create an annotated tag `vMAJOR.MINOR.PATCH`,
    or `vMAJOR.MINOR.PATCH-PRERELEASE` for a prerelease, for example
-   `v1.0.0-preview-1`, whose version after the `v` equals the shipping
+   `v1.0.0-preview-1`, whose complete label equals the shipping
    `ROCKETNET_VERSION_FULL`. Do not tag a different commit, and do not move or
    reuse a tag after pushing it. Push the tag and let Release Check's
    `version-consistency` job confirm it against the header.

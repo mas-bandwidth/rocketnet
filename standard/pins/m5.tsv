@@ -15,6 +15,6 @@ window messages limit	1 << 20	1048576
 replay window depth minimum	ROCKETNET_HISTORY_PACKETS_MIN	4096
 replay window depth maximum	ROCKETNET_HISTORY_PACKETS_MAX	32768
 minimum numbered record	1 + 6	7
-numbered records per packet maximum	ROCKETNET_MAX_PAYLOAD_BYTES / ( 1 + 6 )	202
+numbered records per packet maximum	ROCKETNET_MAX_PACKET_PAYLOAD_BYTES / ( 1 + 6 )	202
 block fragments maximum	( ( 1 << 20 ) + ROCKETNET_MESSAGE_FRAGMENT_BYTES - 1 ) / ROCKETNET_MESSAGE_FRAGMENT_BYTES	911
-stale copy bound	( 1 << 20 ) + ( ROCKETNET_HISTORY_PACKETS_MAX - 1 ) * ( ROCKETNET_MAX_PAYLOAD_BYTES / ( 1 + 6 ) ) + ( ( 1 << 20 ) + ROCKETNET_MESSAGE_FRAGMENT_BYTES - 1 ) / ROCKETNET_MESSAGE_FRAGMENT_BYTES	7668421
+stale copy bound	( 1 << 20 ) + ( ROCKETNET_HISTORY_PACKETS_MAX - 1 ) * ( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES / ( 1 + 6 ) ) + ( ( 1 << 20 ) + ROCKETNET_MESSAGE_FRAGMENT_BYTES - 1 ) / ROCKETNET_MESSAGE_FRAGMENT_BYTES	7668421

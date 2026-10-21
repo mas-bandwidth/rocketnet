@@ -242,7 +242,7 @@ static void test_transport_results_client_oversized_byte_count_is_a_fault()
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_IDLE );
     rocketnet_unit_check( io.transport_faults == 1 );
     rocketnet_unit_check( rocketnet_client_io_expose( &io ) == NULL );
-    rocketnet_unit_check( lie.max_seen == ROCKETNET_MAX_PACKET_BYTES );
+    rocketnet_unit_check( lie.max_seen == ROCKETNET_RECEIVE_PACKET_BYTES );
 
     transport_results_close_io( &transport, buffers );
     printf( "test_transport_results_client_oversized_byte_count_is_a_fault\n" );

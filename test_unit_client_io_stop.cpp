@@ -167,7 +167,7 @@ static void test_client_io_hand_off_after_stop_asserts()
 {
     void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) =
         rn_assert_function;
-    rocketnet_set_assert_callback( client_io_stop_hand_off_assert_hook );
+    rocketnet_assert_function( client_io_stop_hand_off_assert_hook );
     client_io_stop_hand_off_asserts = 0;
 
     rocketnet_fake_client_transport_io_t fake = {};
@@ -200,7 +200,7 @@ static void test_client_io_hand_off_after_stop_asserts()
     rocketnet_unit_check( client_io_stop_hand_off_asserts == 0 );
 #endif
 
-    rocketnet_set_assert_callback( saved_assert );
+    rocketnet_assert_function( saved_assert );
 
     rocketnet_client_transport_io_close( &transport );
     delete buffers[0];

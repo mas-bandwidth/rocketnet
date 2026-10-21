@@ -41,10 +41,10 @@ struct reliable_test_packet_t
     uint64_t id;
     int bytes;
     uint8_t bytes_pad[16 - sizeof( uint64_t ) - sizeof( int )];                 // explicit: data starts 16-aligned
-    alignas( 16 ) uint8_t data[ROCKETNET_MAX_PAYLOAD_BYTES];
-    uint8_t tail_pad[16 - ROCKETNET_MAX_PAYLOAD_BYTES % 16];                     // explicit: the size rounds up to 16
+    alignas( 16 ) uint8_t data[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    uint8_t tail_pad[16 - ROCKETNET_MAX_PACKET_PAYLOAD_BYTES % 16];                     // explicit: the size rounds up to 16
 };
-static_assert( sizeof( reliable_test_packet_t ) == 16 + ( ROCKETNET_MAX_PAYLOAD_BYTES + 15 ) / 16 * 16, "no implicit padding" );
+static_assert( sizeof( reliable_test_packet_t ) == 16 + ( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 15 ) / 16 * 16, "no implicit padding" );
 static_assert( alignof( reliable_test_packet_t ) == 16, "data is 16-aligned" );
 
 struct reliable_test_node_t
@@ -76,7 +76,7 @@ static void reliable_test_send( reliable_test_node_t * node, const uint8_t * dat
 
 static int reliable_test_write( reliable_test_node_t * node, double now, reliable_test_packet_t * packets, int capacity )
 {
-    alignas( 16 ) uint8_t frames[8][ROCKETNET_MAX_PAYLOAD_BYTES];
+    alignas( 16 ) uint8_t frames[8][ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     uint8_t * pointers[8];
     check( capacity > 0 && capacity <= 8 );
     for ( int i = 0; i < capacity; i++ )
@@ -86,7 +86,7 @@ static int reliable_test_write( reliable_test_node_t * node, double now, reliabl
     {
         packets[i].id = node->next_packet_id++;
         packets[i].bytes = (int) node->ordered.builder.packet[i].payload_bytes;
-        check( packets[i].bytes > 0 && packets[i].bytes <= ROCKETNET_MAX_PAYLOAD_BYTES );
+        check( packets[i].bytes > 0 && packets[i].bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
         memcpy( packets[i].data, frames[i], (size_t) packets[i].bytes );
         rn_ordered_commit( &node->ordered, i, packets[i].id, now );
     }
@@ -96,13 +96,13 @@ static int reliable_test_write( reliable_test_node_t * node, double now, reliabl
 static void reliable_test_config( rocketnet_message_config_t * config )
 {
     rocketnet_message_default_config( config );
-    config->window_messages = 1024;
-    config->receive_ring_bytes = 262144;
+    config->reliable_messages_in_flight = 1024;
+    config->receive_message_buffer_bytes = 262144;
     config->max_message_bytes = 262144;
-    config->send_buffer_bytes = 800000;
-    config->resend_delay_min_ms = 20;
-    config->resend_delay_initial_ms = 100;
-    config->resend_delay_max_ms = 400;
+    config->send_message_buffer_bytes = 800000;
+    config->message_resend_delay_min_ms = 20;
+    config->message_resend_delay_initial_ms = 100;
+    config->message_resend_delay_max_ms = 400;
 }
 
 static void test_reliable_exactly_once_any_order_under_loss_dup_reorder()
@@ -287,8 +287,7 @@ static void reliable_counted_free( void * context, void * memory )
 static void test_reliable_no_allocation_after_create()
 {
     rocketnet_term();
-    check( rocketnet_set_allocator( reliable_counted_malloc, reliable_counted_free ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, reliable_counted_malloc, reliable_counted_free ) == ROCKETNET_STATUS_OK );
 
     rocketnet_message_config_t config;
     reliable_test_config( &config );
@@ -310,8 +309,7 @@ static void test_reliable_no_allocation_after_create()
     rn_arena_destroy( sender.arena );
     rn_arena_destroy( receiver.arena );
     rocketnet_term();
-    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
 REGISTER_UNIT_TEST( test_reliable_no_allocation_after_create );

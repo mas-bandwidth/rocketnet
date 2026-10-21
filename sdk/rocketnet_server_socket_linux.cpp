@@ -1355,11 +1355,11 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
     return provisioned;
 }
 
-rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * public_address_string, const uint8_t * filter_value, int num_queues, int num_os_cpus, const char * second_server_address, int * create_status )
+rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * public_address_string, const uint8_t * packet_filter, int num_queues, int num_os_cpus, const char * second_server_address, int * create_status )
 {
     rocketnet_assert( num_queues >= 1 );
     rocketnet_assert( public_address_string );
-    rocketnet_assert( filter_value );
+    rocketnet_assert( packet_filter );
     rocketnet_address_t second_address;
     memset( &second_address, 0, sizeof( second_address ) );
     int serves_both = 0;
@@ -1836,7 +1836,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             rocketnet_server_socket_ipv6_bytes( &public_address, config.public_address_ipv6 );
         }
         config.public_port = rocketnet_platform_htons( public_address.port );
-        memcpy( config.filter_value, filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+        memcpy( config.packet_filter, packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
         config.filter_epoch = ROCKETNET_FILTER_EPOCH_UNKEYED;
 
         __u32 key = 0;

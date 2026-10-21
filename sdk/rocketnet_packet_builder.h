@@ -38,7 +38,7 @@
 #define ROCKETNET_PACKET_BUILDER_MAX_NUMBERS            16      // the reliable numbers one packet carries (layer 3's reference ring takes 16 per packet)
 #define ROCKETNET_PACKET_BUILDER_MAX_RECORDS            16      // the records one packet carries: a packet's records are tracked to commit or to give back
 
-#define ROCKETNET_PACKET_BUILDER_LEVELS                 4       // RakNet's four priorities, ROCKETNET_PRIORITY_IMMEDIATE (0) to ROCKETNET_PRIORITY_LOW (3)
+#define ROCKETNET_PACKET_BUILDER_LEVELS                 4       // the four priorities, ROCKETNET_PRIORITY_IMMEDIATE (0) to ROCKETNET_PRIORITY_LOW (3)
 
 #define ROCKETNET_PACKET_NUMBER_NONE                    0xFFFFFFFFFFFFFFFFull   // an item that takes no reliable number (I3)
 
@@ -81,7 +81,7 @@ struct rn_packet_builder_t
     uint32_t packets;                           // packets written by the last call
     uint32_t unreliable_dropped;                // unreliable items dropped over budget by the last call
 
-    uint64_t level_clock[ROCKETNET_PACKET_BUILDER_LEVELS];     // RNScheduler's clock per priority level (RakNet's weights, 5.3)
+    uint64_t level_clock[ROCKETNET_PACKET_BUILDER_LEVELS];     // RNScheduler's clock per priority level (the level weights)
     uint64_t clock_base;                        // the clock of the level taken last: a clock behind it is pulled forward to it
 
     struct
@@ -111,7 +111,7 @@ bool rn_packet_builder_init( struct rn_packet_builder_t * builder, struct rn_reg
 //
 // 1. the budget's class order, the outer rule -- retransmits, ordered
 //    progress, new reliable, unreliable -- whatever the priorities;
-// 2. within a class, RakNet's four priority levels: the level with the
+// 2. within a class, the four priority levels: the level with the
 //    smallest clock goes next and its clock advances by its stride (1, 5, 14,
 //    35 for IMMEDIATE to LOW), so under a backlog no level starves;
 // 3. within a level, round robin across channels, one item each (17.3 item
@@ -124,7 +124,7 @@ bool rn_packet_builder_init( struct rn_packet_builder_t * builder, struct rn_reg
 // application queued them. An item whose priority is not 0 to 3 is never
 // taken. Several small records pack per packet (9.3). A record that does not
 // fit ends the packet; it is never split. When every item is taken the clocks
-// reset to RakNet's seeds.
+// reset to their seeds.
 //
 // Each finished packet is admitted against the budget at its own class, at
 // rocketnet_send_budget_max_wire_bytes of its payload. A packet the budget

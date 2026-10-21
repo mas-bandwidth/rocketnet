@@ -339,7 +339,7 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
     // nothing else: no rocketnet_init, so no platform threads and no
     // sodium, and the harness stays as deterministic as the parsers are
 
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
     rocketnet_fuzz_reassembly = rocketnet_reassembly_set_create( NULL, 2, 4, 8192, 2 * 4 );
     if ( rocketnet_fuzz_reassembly == NULL )

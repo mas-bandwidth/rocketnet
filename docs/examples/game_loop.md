@@ -9,8 +9,8 @@ budget, the server's tick, and message latency in frames.
 1. A fixed-step loop: accumulate `rocketnet_time()`, run one frame per 1/60 s
    of it, and `rocketnet_sleep` for the rest.
 2. The frame order, on every client and on the server: (1) `*_update` takes in
-   what arrived; (2) `*_receive` and `*_release` every message; (3) simulate;
-   (4) queue this frame's messages with `*_start` and `*_finish`; (5)
+   what arrived; (2) `*_receive_messages` takes every message in batches; (3) simulate;
+   (4) queue this frame's messages with `*_start_message` and `*_finish_message`; (5)
    `*_send_packets` last, so this frame's messages leave this frame.
 3. Each client sends its position every frame (`ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED`,
    channel 0) and an event twice a second (`ROCKETNET_RELIABILITY_RELIABLE_ORDERED`, channel
@@ -18,8 +18,7 @@ budget, the server's tick, and message latency in frames.
    carries the frame it was queued in, and the receiver counts frames since.
 
 Every run is in memory over the `loopback` transport: the in-memory transport
-holds `ROCKETNET_LOOPBACK_MAX_ENDPOINTS` endpoints, one server and up to
-`ROCKETNET_MAX_CLIENTS` clients. Clients join 50 a frame; timing starts once
+holds one server and up to `ROCKETNET_MAX_CLIENTS` clients. Clients join 50 a frame; timing starts once
 all are connected.
 
 ## Run it
@@ -66,9 +65,19 @@ and at least 1 in the wrong one.
 
 ## Public calls it uses
 
-- `rocketnet_init`, `_term`, `_time`, `_sleep`, `_write_dev_connect_token` (development library only)
-- `rocketnet_server_dev_config`, `_create`, `_port`, `_transport_name`,
-  `_update`, `_client_connected`, `_receive`, `_release`, `_start`, `_finish`,
-  `_send_packets`, `_destroy`
-- `rocketnet_client_default_config`, `_create`, `_update`, `_state`,
-  `_receive`, `_release`, `_start`, `_finish`, `_send_packets`, `_destroy`
+- `rocketnet_init`, `rocketnet_term`
+- `rocketnet_server_default_config`, `rocketnet_server_create`,
+  `rocketnet_server_start`, `rocketnet_server_destroy`,
+  `rocketnet_server_update`, `rocketnet_server_send_packets`,
+  `rocketnet_server_port`, `rocketnet_server_ipv4_address`,
+  `rocketnet_server_public_key`, `rocketnet_server_transport_name`,
+  `rocketnet_server_start_message`, `rocketnet_server_finish_message`,
+  `rocketnet_server_receive_messages`
+- `rocketnet_client_default_config`, `rocketnet_client_create`,
+  `rocketnet_client_connect`, `rocketnet_client_destroy`,
+  `rocketnet_client_update`, `rocketnet_client_send_packets`,
+  `rocketnet_client_state`, `rocketnet_client_start_message`,
+  `rocketnet_client_finish_message`, `rocketnet_client_receive_messages`
+- `rocketnet_create_dev_connect_token` and
+  `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` (development library only)
+- `rocketnet_status_name`, `rocketnet_time`, `rocketnet_sleep`

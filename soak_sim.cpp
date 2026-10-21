@@ -361,10 +361,10 @@ int main( int argc, char ** argv )
 {
     signal( SIGINT, interrupt_handler );
 
-    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
         return 1;
 
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
     uint64_t max_iterations = 0;
     if ( argc > 1 )
@@ -406,7 +406,7 @@ int main( int argc, char ** argv )
     server.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     server.send_rate = 10.0;
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    memcpy( server.filter_value, tag, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( server.packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server.backend_public_key, rocketnet_dev_backend_public_key, 32 );
     memcpy( server.server_public_key, rocketnet_dev_server_public_key, 32 );
     memcpy( server.server_secret_key, rocketnet_dev_server_secret_key, 32 );
@@ -536,7 +536,7 @@ int main( int argc, char ** argv )
     uint64_t failures = 0;
     uint64_t hangs = 0;
     int payload_size = 1;
-    int fragmented_payload_size = ROCKETNET_MAX_PAYLOAD_BYTES + 1;
+    int fragmented_payload_size = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1;
     uint64_t client_id = 1;
 
 
@@ -649,14 +649,14 @@ int main( int argc, char ** argv )
 
         if ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
         {
-            uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES];
+            uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
             generate_payload( payload, payload_size );
             int bytes = 0;
             SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
                 bytes = rocketnet_client_protocol_write_payload( &client, payload, payload_size, time, packet ) );
             if ( bytes > 0 )
                 wire_send( simulator, &client_address[c], &server_address, packet, bytes, time );
-            payload_size = payload_size < ROCKETNET_MAX_PAYLOAD_BYTES ? payload_size + 1 : 1;
+            payload_size = payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? payload_size + 1 : 1;
 
             // an occasional fragmented payload, staggered per client, so
             // reassembly soaks under the same hostile wire: at this loss a
@@ -682,7 +682,7 @@ int main( int argc, char ** argv )
                                    fragment_packet_bytes[i], time );
                     fragmented_sent++;
                 }
-                fragmented_payload_size = fragmented_payload_size < 16384 - 997 ? fragmented_payload_size + 997 : ROCKETNET_MAX_PAYLOAD_BYTES + 1;
+                fragmented_payload_size = fragmented_payload_size < 16384 - 997 ? fragmented_payload_size + 997 : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1;
             }
         }
 

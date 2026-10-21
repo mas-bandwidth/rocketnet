@@ -55,7 +55,7 @@ static std::string prefilter_seed_path( const char * name )
 
 static void test_fuzz_prefilter_seed_names_match_outcomes()
 {
-    const uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    const uint8_t packet_filter[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     for ( size_t i = 0; i < sizeof(prefilter_seeds) / sizeof(prefilter_seeds[0]); i++ )
     {
         const prefilter_seed_t & seed = prefilter_seeds[i];
@@ -74,7 +74,7 @@ static void test_fuzz_prefilter_seed_names_match_outcomes()
         const int datagram_bytes = (int) bytes.size() - 1;  // the datagram follows it
         std::vector<uint8_t> datagram( bytes.begin() + 1, bytes.end() );
         datagram.push_back( 0 );                            // a readable byte for the empty datagram
-        const int result = rocketnet_prefilter_check( datagram.data(), datagram_bytes, filter_value );
+        const int result = rocketnet_prefilter_check( datagram.data(), datagram_bytes, packet_filter );
 
         const bool matches = seed.expected == SEED_ACCEPTED_ANY_TYPE
             ? result > ROCKETNET_CONNECTION_FRAGMENT_PACKET

@@ -173,7 +173,7 @@ struct rn_delivery_t                    // 24 bytes: one delivered message, vali
     uint32_t descriptor;                // the receive descriptor slot to release when the update ends, or RN_DESCRIPTOR_NONE (7.2, 8)
 };
 
-struct rn_sequenced_hold_t              // 16 + ROCKETNET_MAX_PAYLOAD_BYTES = 1432 bytes: the newest unreliable sequenced message held ahead of its epoch (7.3)
+struct rn_sequenced_hold_t              // 16 + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES = 1432 bytes: the newest unreliable sequenced message held ahead of its epoch (7.3)
 {
     uint32_t bytes;
     uint32_t ordering;
@@ -181,13 +181,13 @@ struct rn_sequenced_hold_t              // 16 + ROCKETNET_MAX_PAYLOAD_BYTES = 14
     uint16_t channel;
     uint8_t used;
     uint8_t code;
-    uint8_t data[ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t data[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
 };
 
 struct rn_receipt_t                     // 16 bytes: the receipt ring, Rq entries (7.4)
 {
     uint32_t serial;
-    uint32_t status;                    // ROCKETNET_RECEIPT_*
+    int32_t status;                     // ROCKETNET_RECEIPT_STATUS_*
     uint32_t reserved[2];
 };
 
@@ -351,7 +351,7 @@ struct rn_region_t
     rn_sent_index_t * sent_index;
     uint32_t * sent_refs;
     rn_delivery_t * deliveries;
-    rn_sequenced_hold_t * sequenced_holds;
+    rn_sequenced_hold_t * sequenced_messages_held;
     rn_receipt_t * receipts;
     rn_resend_link_t * resend_fifo;
 
@@ -414,7 +414,7 @@ void rn_region_send_free( rn_region_t * region, uint32_t descriptor );
 
 // The send room is five pools a start message takes from: the send queue's
 // descriptors (send_queue_messages), each of the store's three chunk classes
-// (send_buffer_bytes), and the send spans (receive_ring_bytes). A pool fills
+// (send_message_buffer_bytes), and the send spans (receive_message_buffer_bytes). A pool fills
 // as start messages take room and empties as the peer acks them. Running one
 // out ends the connection (R5), so a debug build warns before it does.
 

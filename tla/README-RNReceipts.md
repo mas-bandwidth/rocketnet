@@ -133,8 +133,8 @@ error or a different safety violation as a substitute for its named property.
 
 ## Reference behavior and differences
 
-The reference study is `docs/RAKNET-RELIABILITY.md` 7.3, 7.4, 10 and I9-I12.
-Both designs allocate a serial at API send, use packet ACKs rather than
+The receipt rules are in `standard/MESSAGES.md` and `docs/RELIABILITY.md`.
+The design allocates a serial at API send, use packet ACKs rather than
 application-consumption reports, never retransmit an unreliable receipt
 record, and never emit reliable LOSS. Types 5/6/7 dispatch as base wire types
 0/2/3; receipt bookkeeping does not introduce a wire ACK protocol. Large type

@@ -40,6 +40,7 @@
 
 #include "rocketnet.h"
 #include "rocketnet_layers.h"
+#include "rocketnet_connect_token.h"
 #include "test/portable_crt.h"
 #include <errno.h>
 #include <stdio.h>
@@ -47,6 +48,60 @@
 #include <time.h>
 #include <stdlib.h>
 #include <signal.h>
+
+// The internal client transport takes the binary token. The C-callable way to
+// mint one is the public string token decoded back to bytes:
+// rocketnet_write_test_connect_token (sdk/rocketnet_connect_token.h) has C++
+// linkage, so a C program cannot link it. Both seal to the fixed internal
+// development server key (rocketnet_dev_server_public_key) that the server
+// transport dev config carries, under ROCKETNET_DEV_PROTOCOL_ID.
+
+// The bytes of rocketnet_dev_server_public_key. That array has C++ linkage, so
+// MSVC decorates its name and a C program cannot link it.
+static const uint8_t soak_dev_server_public_key[32] =
+{
+    0x3d, 0x24, 0x90, 0x88, 0x9d, 0x37, 0x4c, 0x29, 0x6f, 0xab, 0x1d, 0x57,
+    0x70, 0xcb, 0x71, 0x47, 0x6a, 0x06, 0xf7, 0x4e, 0xf2, 0xf2, 0x54, 0x0c,
+    0xf2, 0x21, 0x5f, 0x76, 0x14, 0xf4, 0x80, 0x1c};
+
+static int dev_token_base64_value( char c )
+{
+    if ( c >= 'A' && c <= 'Z' ) return c - 'A';
+    if ( c >= 'a' && c <= 'z' ) return c - 'a' + 26;
+    if ( c >= '0' && c <= '9' ) return c - '0' + 52;
+    if ( c == '+' || c == '-' ) return 62;
+    if ( c == '/' || c == '_' ) return 63;
+    return -1;
+}
+
+static int dev_token_binary( const char * address, uint64_t client_id, uint64_t timestamp, uint8_t * token, size_t token_bytes )
+{
+    char text[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    const int ipv6 = ( address[0] == '[' );
+    if ( rocketnet_create_dev_connect_token( ipv6 ? NULL : address, ipv6 ? address : NULL, soak_dev_server_public_key,
+                                             ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS, ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS,
+                                             client_id, ROCKETNET_DEV_PROTOCOL_ID, timestamp, NULL, text ) != ROCKETNET_STATUS_OK )
+        return 0;
+    size_t written = 0;
+    uint32_t bits = 0;
+    int count = 0;
+    for ( const char * p = text; *p && *p != '='; p++ )
+    {
+        const int v = dev_token_base64_value( *p );
+        if ( v < 0 )
+            return 0;
+        bits = ( bits << 6 ) | (uint32_t) v;
+        count += 6;
+        if ( count >= 8 )
+        {
+            count -= 8;
+            if ( written >= token_bytes )
+                return 0;
+            token[written++] = (uint8_t) ( ( bits >> count ) & 0xFF );
+        }
+    }
+    return written == token_bytes;
+}
 
 #define ROCKETNET_SOAK_MAX_COUNTERS 256
 #define ROCKETNET_SOAK_DISCONNECT_REASONS ( ROCKETNET_CLIENT_STATE_DISCONNECTED - ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED + 1 )
@@ -240,13 +295,13 @@ int main( int argc, char ** argv )
 
     signal( SIGINT, interrupt_handler );
 
-    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;
     }
 
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
@@ -322,7 +377,7 @@ int main( int argc, char ** argv )
                 client = NULL;
             }
             uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-            if ( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
+            if ( !dev_token_binary( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, sizeof( connect_token ) ) )
             {
                 printf( "soak: failed to write dev connect token\n" );
                 failures++;
@@ -370,14 +425,14 @@ int main( int argc, char ** argv )
             }
             // every size cycles through, both directions, every byte checked
 
-            uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES];
+            uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
             generate_payload( payload, payload_size );
             rocketnet_client_transport_send_packet( client, payload, payload_size );
             client_sent++;
             rocketnet_server_transport_send_packet( server, rocketnet_client_transport_client_index( client ), payload, payload_size );
             rocketnet_server_transport_send_packets( server );
             server_sent++;
-            payload_size = payload_size < ROCKETNET_MAX_PAYLOAD_BYTES ? payload_size + 1 : 1;
+            payload_size = payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? payload_size + 1 : 1;
 
             const int num_payloads = rocketnet_server_transport_num_payloads( server );
             for ( int i = 0; i < num_payloads; i++ )

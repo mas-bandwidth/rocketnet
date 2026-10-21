@@ -214,28 +214,28 @@ static void check_addresses()
 
 static void check_prefilter()
 {
-    const uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    const uint8_t packet_filter[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
 
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     memset( packet, 0, sizeof( packet ) );
     uint8_t * p = packet;
-    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_PAYLOAD_PACKET, filter_value );
+    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_PAYLOAD_PACKET, packet_filter );
     CHECK( p - packet == ROCKETNET_PREFILTER_BYTES );
 
     // the header's bytes: type, epoch, then the value
     CHECK( packet[0] == ROCKETNET_CONNECTION_PAYLOAD_PACKET );
     CHECK( packet[1] == ROCKETNET_FILTER_EPOCH_UNKEYED );
-    CHECK( memcmp( packet + 2, filter_value, ROCKETNET_FILTER_VALUE_BYTES ) == 0 );
+    CHECK( memcmp( packet + 2, packet_filter, ROCKETNET_FILTER_VALUE_BYTES ) == 0 );
 
-    CHECK( rocketnet_prefilter_check( packet, 64, filter_value ) == ROCKETNET_CONNECTION_PAYLOAD_PACKET );
-    CHECK( rocketnet_prefilter_check( packet, ROCKETNET_PREFILTER_BYTES - 1, filter_value ) == ROCKETNET_PREFILTER_TOO_SHORT );
-    CHECK( rocketnet_prefilter_check( packet, ROCKETNET_RECEIVE_CEILING + 1, filter_value ) == ROCKETNET_PREFILTER_TOO_LARGE );
+    CHECK( rocketnet_prefilter_check( packet, 64, packet_filter ) == ROCKETNET_CONNECTION_PAYLOAD_PACKET );
+    CHECK( rocketnet_prefilter_check( packet, ROCKETNET_PREFILTER_BYTES - 1, packet_filter ) == ROCKETNET_PREFILTER_TOO_SHORT );
+    CHECK( rocketnet_prefilter_check( packet, ROCKETNET_RECEIVE_CEILING + 1, packet_filter ) == ROCKETNET_PREFILTER_TOO_LARGE );
 
     packet[1] = 1;
-    CHECK( rocketnet_prefilter_check( packet, 64, filter_value ) == ROCKETNET_PREFILTER_WRONG_EPOCH );
+    CHECK( rocketnet_prefilter_check( packet, 64, packet_filter ) == ROCKETNET_PREFILTER_WRONG_EPOCH );
     packet[1] = ROCKETNET_FILTER_EPOCH_UNKEYED;
     packet[2] ^= 0xFF;
-    CHECK( rocketnet_prefilter_check( packet, 64, filter_value ) == ROCKETNET_PREFILTER_WRONG_VALUE );
+    CHECK( rocketnet_prefilter_check( packet, 64, packet_filter ) == ROCKETNET_PREFILTER_WRONG_VALUE );
 }
 
 static void check_sealed_packet()
@@ -244,7 +244,7 @@ static void check_sealed_packet()
     // the sequence on the wire, the AEAD, the clear header. Sockets are not
     // involved and neither is any transport.
 
-    const uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    const uint8_t packet_filter[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
 
     uint8_t key[ROCKETNET_KEY_BYTES];
     for ( int i = 0; i < ROCKETNET_KEY_BYTES; i++ )
@@ -263,7 +263,7 @@ static void check_sealed_packet()
 
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     int packet_bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
-                                                      filter_value, sequence, NULL,
+                                                      packet_filter, sequence, NULL,
                                                       plaintext, (int) sizeof( plaintext ),
                                                       protocol_id, salt, NULL, key );
     CHECK( packet_bytes == (int) sizeof( plaintext ) + ROCKETNET_PACKET_OVERHEAD_BYTES );
@@ -271,10 +271,10 @@ static void check_sealed_packet()
     // the clear header, byte for byte: the prefilter, then the low 32 bits
     // of the sequence in the standard's little-endian order
     CHECK( packet[0] == ROCKETNET_CONNECTION_PAYLOAD_PACKET );
-    CHECK( memcmp( packet + 2, filter_value, ROCKETNET_FILTER_VALUE_BYTES ) == 0 );
+    CHECK( memcmp( packet + 2, packet_filter, ROCKETNET_FILTER_VALUE_BYTES ) == 0 );
     CHECK( packet[6] == 0x78 && packet[7] == 0x56 && packet[8] == 0x34 && packet[9] == 0x12 );
 
-    CHECK( rocketnet_prefilter_check( packet, packet_bytes, filter_value ) == ROCKETNET_CONNECTION_PAYLOAD_PACKET );
+    CHECK( rocketnet_prefilter_check( packet, packet_bytes, packet_filter ) == ROCKETNET_CONNECTION_PAYLOAD_PACKET );
 
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
     int opened_bytes = rocketnet_open_sealed_packet( opened, NULL, (int) sizeof( opened ), packet, packet_bytes,
@@ -362,9 +362,9 @@ static void check_base64_and_config()
 
 int main()
 {
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
-    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;

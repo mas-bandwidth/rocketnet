@@ -75,7 +75,7 @@ CONSTANTS
     BatchCap,       \* acked_capacity: packet ids the batch holds per update
     Window,         \* ROCKETNET_REPLAY_WINDOW_BITS at the receiver
     MaxRanges,      \* ROCKETNET_ACK_BLOCK_MAX_RANGES: runs below the first run
-    Slots,          \* num_reassembly_slots
+    Slots,          \* max_fragmented_messages
     IdSpace,        \* payload ids live in 1..IdSpace-1, arithmetic mod IdSpace
     FirstId,        \* the first payload id the sender issues
     StaleAhead,     \* behind window in this id space; bound of the retired arm

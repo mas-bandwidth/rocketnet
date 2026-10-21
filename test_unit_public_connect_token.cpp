@@ -9,6 +9,7 @@
 // reads a clock, opens a socket or touches anything outside the process.
 
 #include "test_unit_registry.h"
+#include "sdk/rocketnet_base64.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_protocol.h"
@@ -89,7 +90,7 @@ static void public_token_server_setup( struct public_token_server_t * t, uint64_
     memset( t, 0, sizeof(*t) );
     struct rocketnet_server_protocol_t * server = &t->server;
     server->protocol_id = protocol_id;
-    memcpy( server->filter_value, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( server->packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server->backend_public_key, backend_public_key, ROCKETNET_KEY_BYTES );
     memcpy( server->server_public_key, server_public_key, ROCKETNET_KEY_BYTES );
     memcpy( server->server_secret_key, server_secret_key, ROCKETNET_KEY_BYTES );
@@ -128,9 +129,9 @@ static int public_token_connection_request( const uint8_t * token, uint8_t * pac
 void test_public_connect_token_round_trip()
 {
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret_key[64];
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret_key[sizeof( rocketnet_dev_server_secret_key )];
     public_token_make_keys( backend_public_key, backend_secret_key, server_public_key, server_secret_key );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
@@ -180,13 +181,13 @@ void test_public_connect_token_round_trip()
 void test_public_connect_token_wrong_server_key_refused()
 {
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret_key[64];
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret_key[sizeof( rocketnet_dev_server_secret_key )];
     public_token_make_keys( backend_public_key, backend_secret_key, server_public_key, server_secret_key );
 
     uint8_t other_server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t other_server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t other_server_secret_key[sizeof( rocketnet_dev_server_secret_key )];
     rocketnet_unit_check( rocketnet_generate_server_keypair( other_server_public_key, other_server_secret_key ) == ROCKETNET_STATUS_OK );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
@@ -208,9 +209,9 @@ void test_public_connect_token_wrong_server_key_refused()
 void test_public_connect_token_wrong_protocol_id_refused()
 {
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret_key[64];
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret_key[sizeof( rocketnet_dev_server_secret_key )];
     public_token_make_keys( backend_public_key, backend_secret_key, server_public_key, server_secret_key );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
@@ -265,9 +266,9 @@ static void public_token_expected_null_assert( const char *, const char *, const
 void test_public_connect_token_null_or_short_buffer_refused()
 {
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret_key[64];
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret_key[sizeof( rocketnet_dev_server_secret_key )];
     public_token_make_keys( backend_public_key, backend_secret_key, server_public_key, server_secret_key );
 
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
@@ -276,7 +277,7 @@ void test_public_connect_token_null_or_short_buffer_refused()
 #if ROCKETNET_ASSERTS
     void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
     public_token_expected_null_asserts = 0;
-    rocketnet_set_assert_callback( public_token_expected_null_assert );
+    rocketnet_assert_function( public_token_expected_null_assert );
 #endif
     rocketnet_unit_check( rocketnet_write_production_connect_token( backend_secret_key, server_public_key,
                                                                     public_token_protocol_id, public_token_addresses, 2,
@@ -285,7 +286,7 @@ void test_public_connect_token_null_or_short_buffer_refused()
                                                                     user_data, NULL,
                                                                     ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
 #if ROCKETNET_ASSERTS
-    rocketnet_set_assert_callback( saved_assert );
+    rocketnet_assert_function( saved_assert );
     rocketnet_unit_check( public_token_expected_null_asserts == 1 );
 #endif
 
@@ -303,7 +304,7 @@ void test_public_connect_token_null_or_short_buffer_refused()
 #if ROCKETNET_ASSERTS
     saved_assert = rn_assert_function;
     public_token_expected_null_asserts = 0;
-    rocketnet_set_assert_callback( public_token_expected_null_assert );
+    rocketnet_assert_function( public_token_expected_null_assert );
 #endif
     rocketnet_unit_check( rocketnet_write_production_connect_token( NULL, server_public_key,
                                                                     public_token_protocol_id, public_token_one_address, 1,
@@ -312,7 +313,7 @@ void test_public_connect_token_null_or_short_buffer_refused()
                                                                     user_data, token,
                                                                     sizeof(token) ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
 #if ROCKETNET_ASSERTS
-    rocketnet_set_assert_callback( saved_assert );
+    rocketnet_assert_function( saved_assert );
     rocketnet_unit_check( public_token_expected_null_asserts == 1 );
 #endif
 
@@ -338,9 +339,9 @@ void test_public_connect_token_null_or_short_buffer_refused()
 void test_public_connect_token_sealed_block_varies()
 {
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret_key[64];
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret_key[sizeof( rocketnet_dev_server_secret_key )];
     public_token_make_keys( backend_public_key, backend_secret_key, server_public_key, server_secret_key );
 
     uint8_t token_a[ROCKETNET_CONNECT_TOKEN_BYTES];

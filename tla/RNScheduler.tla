@@ -10,11 +10,11 @@
 (*      unreliable items ("unrel").  A lower class is taken only when no   *)
 (*      higher class has an item it may write now, whatever the            *)
 (*      priorities.                                                        *)
-(*   2. RakNet's four priority levels inside a class: the level with the   *)
+(*   2. The four priority levels inside a class: the level with the       *)
 (*      smallest virtual clock goes next and its clock advances by its     *)
 (*      stride, 1, 5, 14, 35 for IMMEDIATE, HIGH, MEDIUM, LOW.  A level    *)
 (*      whose clock fell behind the last level taken is pulled forward to  *)
-(*      it.  When nothing is queued at all the clocks reset to RakNet's    *)
+(*      it.  When nothing is queued at all the clocks reset to their      *)
 (*      seeds.                                                             *)
 (*   3. Round robin across channels inside a level, one item per turn.     *)
 (*                                                                         *)
@@ -77,7 +77,7 @@ ASSUME /\ NC \in Nat \ {0}
        /\ UPerTick \in Nat /\ MaxLoss \in Nat
        /\ ChannelFIFO \in BOOLEAN /\ UnreliableLast \in BOOLEAN
 
-\* RakNet's stride and seed per level (docs/RAKNET-RELIABILITY.md 5.3)
+\* The stride and seed per level
 Pow2(p) == CASE p = 0 -> 1 [] p = 1 -> 2 [] p = 2 -> 4 [] p = 3 -> 8
 Stride(p) == Pow2(p) * (p + 1) + p          \* 1, 5, 14, 35
 Seed(p) == Pow2(p) * p + p                  \* 0, 3, 10, 27
@@ -194,7 +194,7 @@ Queue ==
 (* Write: the builder takes the next item.  The level taken becomes the    *)
 (* clocks' origin: its clock advances by its stride, every other clock is  *)
 (* measured from the taken one and a clock behind it is pulled forward to  *)
-(* zero (RakNet's pull-forward, RL.cpp:3932-3949).                         *)
+(* zero (the pull-forward).                                                *)
 (***************************************************************************)
 Write ==
     /\ CanWrite

@@ -88,7 +88,7 @@ void rocketnet_client_protocol_init( struct rocketnet_client_protocol_t * client
     rocketnet_assert( counters );
     memset( client, 0, sizeof(*client) );
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    memcpy( client->filter_value, tag, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( client->packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
     client->send_rate = 10.0;
     client->counters = counters;
     client->state = ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
@@ -275,7 +275,7 @@ static int rocketnet_client_write_session_packet( struct rocketnet_client_protoc
     uint64_t sequence = client->send_sequence_session;
 
     int bytes = rocketnet_write_sealed_packet( out_packet, packet_type,
-                                               client->filter_value, sequence,
+                                               client->packet_filter, sequence,
                                                NULL, plaintext, block_bytes + type_data_bytes,
                                                client->signed_fields.protocol_id, client->connection_salt,
                                                NULL, client->keys.session_client_to_server );
@@ -340,7 +340,7 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
         case ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE:
         case ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST:
         {
-            rocketnet_write_connection_request_packet( out_packet, client->filter_value,
+            rocketnet_write_connection_request_packet( out_packet, client->packet_filter,
                                                        client->has_cookie ? client->return_cookie : NULL,
                                                        client->connection_salt,
                                                        client->client_ephemeral_public_key,
@@ -544,7 +544,7 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
 
     const uint8_t response_padding[ROCKETNET_RESPONSE_PADDING_BYTES] = { 0 };
     int response_bytes = rocketnet_write_sealed_packet( client->stored_response, ROCKETNET_CONNECTION_RESPONSE_PACKET,
-                                                        client->filter_value, client->send_sequence_handshake,
+                                                        client->packet_filter, client->send_sequence_handshake,
                                                         NULL, response_padding, ROCKETNET_RESPONSE_PADDING_BYTES,
                                                         client->signed_fields.protocol_id, client->connection_salt,
                                                         client->client_ephemeral_public_key,
@@ -1248,7 +1248,7 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
     // overrun cannot happen and the protocol state is left untouched. the
     // transport reports the same condition from its own cursor.
 
-    if ( out_payload_capacity < ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES )
+    if ( out_payload_capacity < ROCKETNET_RECEIVE_PAYLOAD_BYTES )
     {
         rocketnet_spam( "client dropped packet. output capacity too small" );
         counters[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL]++;
@@ -1265,7 +1265,7 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
 
     counters[ROCKETNET_COUNTER_PACKETS_RECEIVED]++;
 
-    int packet_type = rocketnet_prefilter_check( packet_data, packet_bytes, client->filter_value );
+    int packet_type = rocketnet_prefilter_check( packet_data, packet_bytes, client->packet_filter );
     if ( packet_type < 0 )
     {
         rocketnet_spam( "client dropped packet. prefilter" );
@@ -1374,7 +1374,7 @@ int rocketnet_client_protocol_seal_payload_frame( struct rocketnet_client_protoc
     if ( client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
         return 0;
 
-    if ( payload_bytes < 1 || payload_bytes > ROCKETNET_MAX_PAYLOAD_BYTES )
+    if ( payload_bytes < 1 || payload_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
         return 0;
 
     // the application's bytes come first: the block truncates to the
@@ -1387,7 +1387,7 @@ int rocketnet_client_protocol_seal_payload_frame( struct rocketnet_client_protoc
         block_capacity = ROCKETNET_ACK_BLOCK_MAX_BYTES;
     int ack_block_bytes = rocketnet_ack_block_build( ack_block, block_capacity, &client->replay_session );
 
-    int wire_bytes = rocketnet_write_sealed_payload_in_place( wire_start, client->filter_value, sequence,
+    int wire_bytes = rocketnet_write_sealed_payload_in_place( wire_start, client->packet_filter, sequence,
                                                               ack_block, ack_block_bytes,
                                                               payload_bytes, client->signed_fields.protocol_id,
                                                               client->connection_salt,
@@ -1418,10 +1418,10 @@ int rocketnet_client_protocol_write_payload( struct rocketnet_client_protocol_t 
     if ( client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
         return 0;
 
-    if ( payload_bytes < 1 || payload_bytes > ROCKETNET_MAX_PAYLOAD_BYTES )
+    if ( payload_bytes < 1 || payload_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
         return 0;
 
-    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
 
     int block_capacity = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - payload_bytes;
     if ( block_capacity > ROCKETNET_ACK_BLOCK_MAX_BYTES )
@@ -1432,7 +1432,7 @@ int rocketnet_client_protocol_write_payload( struct rocketnet_client_protocol_t 
     uint64_t sequence = client->send_sequence_session;
 
     int bytes = rocketnet_write_sealed_packet( out_packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
-                                               client->filter_value, sequence,
+                                               client->packet_filter, sequence,
                                                NULL, plaintext, block_bytes + payload_bytes,
                                                client->signed_fields.protocol_id, client->connection_salt,
                                                NULL, client->keys.session_client_to_server );
@@ -1522,7 +1522,7 @@ int rocketnet_client_protocol_seal_fragment( struct rocketnet_client_protocol_t 
     memcpy( plaintext + block_bytes + ROCKETNET_FRAGMENT_HEADER_BYTES, fragment_data, (size_t) fragment_bytes );
 
     int bytes = rocketnet_write_sealed_packet( out_packet, ROCKETNET_CONNECTION_FRAGMENT_PACKET,
-                                               client->filter_value, sequence,
+                                               client->packet_filter, sequence,
                                                NULL, plaintext, block_bytes + ROCKETNET_FRAGMENT_HEADER_BYTES + fragment_bytes,
                                                client->signed_fields.protocol_id, client->connection_salt,
                                                NULL, client->keys.session_client_to_server );

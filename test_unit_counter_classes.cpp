@@ -867,11 +867,11 @@ static void test_counters_conservation_reports_the_first_unbalanced_family()
 #if ROCKETNET_ASSERTS
     void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
     counters_expected_null_asserts = 0;
-    rocketnet_set_assert_callback( counters_expected_null_assert );
+    rocketnet_assert_function( counters_expected_null_assert );
 #endif
     check( rocketnet_counters_conserved( NULL, report, sizeof(report) ) == 0 );
 #if ROCKETNET_ASSERTS
-    rocketnet_set_assert_callback( saved_assert );
+    rocketnet_assert_function( saved_assert );
     check( counters_expected_null_asserts == 1 );
 #endif
     check( rocketnet_api_misuse_count() == misuse_before + 1 );

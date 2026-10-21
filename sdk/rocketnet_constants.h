@@ -19,22 +19,22 @@
 // header carries its values as written numbers, since it cannot see the
 // internal constants; these asserts hold them to the derivation.
 
-ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES == ROCKETNET_RECEIVE_CEILING,
+ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PACKET_BYTES == ROCKETNET_RECEIVE_CEILING,
                          "the public packet size is the receive ceiling: the IPv4 UDP payload of the link MTU" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 == ROCKETNET_SEND_BUDGET,
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES == ROCKETNET_SEND_BUDGET,
                          "the public IPv6 packet size is the send budget: the IPv6 UDP payload of the link MTU" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_SEND_BUDGET <= ROCKETNET_RECEIVE_CEILING,
                          "a sender's largest packet is one every receiver accepts" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PAYLOAD_BYTES ==
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ==
                          ( ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES ) / 8 * 8,
                          "the payload capacity is the send budget less the overhead and the minimum ack block, rounded down to eight" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES ==
+ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PAYLOAD_BYTES ==
                          ROCKETNET_RECEIVE_CEILING - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES,
                          "the receive payload is the receive ceiling less the overhead and the minimum ack block" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES == ROCKETNET_MAX_PAYLOAD_BYTES - 1,
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1,
                          "the SINGLE message is the payload capacity less its form byte" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES +
-                         ROCKETNET_UDP_HEADER_BYTES + ROCKETNET_MAX_PACKET_BYTES_IPV6 == 1514,
+                         ROCKETNET_UDP_HEADER_BYTES + ROCKETNET_MAX_PACKET_BYTES == 1514,
                          "one maximum IPv6 packet is exactly one 1500-MTU Ethernet frame" );
 
 #define ROCKETNET_FRAME_SIZE                                              2048
@@ -172,7 +172,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE == ROCK
 
 #define ROCKETNET_ACK_DEBT_THRESHOLD                                       1
 
-// RakNet ReliabilityLayer adaptive resend delay.
+// The adaptive resend delay: it follows the measured round trip.
 
 #define ROCKETNET_MESSAGE_RESEND_DELAY_SCALE_PERCENT                          200
 #define ROCKETNET_MESSAGE_RESEND_DELAY_VARIANCE_SCALE                           4

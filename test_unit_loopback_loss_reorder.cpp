@@ -71,9 +71,9 @@ static bool loopback_transport_pair_setup( struct loopback_transport_pair_t * pa
 
     const uint64_t protocol_id = 0x6c6f6f706261636bULL;
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret_key[RN_TEST_BACKEND_SECRET_KEY_BYTES];
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret_key[RN_TEST_SERVER_SECRET_KEY_BYTES];
     check( rocketnet_generate_backend_keypair( backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
     check( rocketnet_generate_server_keypair( server_public_key, server_secret_key ) == ROCKETNET_STATUS_OK );
 
@@ -426,30 +426,30 @@ static void test_loopback_transport_reliable_ordered_survives_loss_and_reorder()
     struct rocketnet_message_config_t message_config;
     rocketnet_message_default_config( &message_config );
     message_config.num_channels = 4;
-    message_config.window_messages = 64;
-    message_config.receive_ring_bytes = 65536;
+    message_config.reliable_messages_in_flight = 64;
+    message_config.receive_message_buffer_bytes = 65536;
     message_config.max_message_bytes = 16384;
-    message_config.send_buffer_bytes = 65536;
+    message_config.send_message_buffer_bytes = 65536;
     message_config.send_queue_messages = 1024;
     message_config.packets_in_flight = 64;
     message_config.packets_per_update = 8;
-    message_config.unreliable_deliveries = 64;
-    message_config.resend_delay_initial_ms = 100;
-    message_config.resend_delay_min_ms = 20;
-    message_config.resend_delay_max_ms = 400;
-    message_config.reliable_timeout_ms = 120000;
+    message_config.unreliable_messages_per_update = 64;
+    message_config.message_resend_delay_initial_ms = 100;
+    message_config.message_resend_delay_min_ms = 20;
+    message_config.message_resend_delay_max_ms = 400;
+    message_config.reliable_message_timeout_ms = 120000;
 
     struct rn_message_link_t server_link;
     rn_message_server_link( &server_link, pair.server );
     struct rn_message_object_t * server = rn_message_object_create(
-        NULL, &server_link, 1, 1, &message_config, NULL, 0, ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, pair.time );
+        NULL, &server_link, 1, 1, &message_config, NULL, 0, ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, pair.time );
     check( server != NULL );
 
     struct rn_message_link_t client_link;
     rn_message_client_link( &client_link, pair.client );
     client_link.clock_from_first_update = 0;
     struct rn_message_object_t * client = rn_message_object_create(
-        NULL, &client_link, 0, 1, &message_config, NULL, 0, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, pair.time );
+        NULL, &client_link, 0, 1, &message_config, NULL, 0, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, pair.time );
     check( client != NULL );
 
     const int total_messages = 1000;
@@ -524,6 +524,7 @@ static void test_loopback_transport_reliable_ordered_survives_loss_and_reorder()
 
 REGISTER_UNIT_TEST( test_loopback_transport_reliable_ordered_survives_loss_and_reorder );
 
+#if !ROCKETNET_DEVELOPMENT
 // ---- the production refusal, the ranges and the env overlay ------------------
 
 static int loopback_error_lines = 0;
@@ -544,13 +545,13 @@ static void loopback_error_begin( const char * field )
     loopback_error_lines = 0;
     loopback_error_lines_naming = 0;
     loopback_error_field = field;
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
-    rocketnet_set_log_callback( loopback_error_capture, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_log_function( loopback_error_capture, NULL );
 }
 
 static void loopback_error_end()
 {
-    rocketnet_set_log_callback( NULL, NULL );
+    rocketnet_log_function( NULL, NULL );
 }
 
 static int loopback_setenv( const char * name, const char * value )
@@ -745,3 +746,4 @@ static void test_loopback_transport_loss_reorder_production_refusal()
 }
 
 REGISTER_UNIT_TEST( test_loopback_transport_loss_reorder_production_refusal );
+#endif // !ROCKETNET_DEVELOPMENT: a development build accepts what this checks is refused

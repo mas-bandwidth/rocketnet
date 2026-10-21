@@ -1,6 +1,7 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Public-API packet-fill microbenchmark. See transport_fill.md for its limits.
 #include "rocketnet_internal.h"
+#include "rocketnet_connect_token.h"
 #include <chrono>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,10 +17,10 @@ int main(int argc, char ** argv)
     const int batches = argc > 3 ? atoi(argv[3]) : 4000;
     const bool plant = argc > 4 && strcmp(argv[4], "plant") == 0;
     const bool drain = argc > 4 && strcmp(argv[4], "drain") == 0;
-    CHECK(payload_bytes >= 1 && payload_bytes <= ROCKETNET_MAX_PAYLOAD_BYTES && batches > 0);
+    CHECK(payload_bytes >= 1 && payload_bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES && batches > 0);
     CHECK(strlen(transport) < sizeof(rocketnet_server_transport_config_t().transport));
-    rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_NONE);
-    CHECK(rocketnet_init( NULL ) == ROCKETNET_STATUS_OK);
+    rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
+    CHECK(rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK);
     rocketnet_forbid_xdp_commit();
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config(&config);
@@ -30,7 +31,7 @@ int main(int argc, char ** argv)
     char address[64];
     snprintf(address, sizeof(address), "127.0.0.1:%u", rocketnet_server_transport_port(server));
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    CHECK(rocketnet_write_dev_connect_token(address, 1234, (uint64_t)time(NULL), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK);
+    CHECK(rocketnet_write_test_connect_token(address, 1234, (uint64_t)time(NULL), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK);
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config(&client_config);
     memcpy(client_config.transport, "portable", sizeof("portable"));
@@ -52,7 +53,7 @@ int main(int argc, char ** argv)
     }
     CHECK(client_index >= 0 && rocketnet_server_transport_is_client_connected(server, client_index));
     const int batch_size = 128;
-    uint8_t received[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+    uint8_t received[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
     uint64_t wire_bytes = 0, received_packets = 0, drained_packets = 0;
     volatile uint64_t plant_state = 1;
     double elapsed_ns = 0;

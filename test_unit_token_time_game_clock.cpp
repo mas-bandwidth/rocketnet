@@ -95,7 +95,7 @@ static void token_time_game_server_setup( struct token_time_game_server_t * t )
     memset( t, 0, sizeof(*t) );
     struct rocketnet_server_protocol_t * server = &t->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
-    memcpy( server->filter_value, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( server->packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server->backend_public_key, rocketnet_test_backend_public_key, 32 );
     memcpy( server->server_public_key, rocketnet_test_server_public_key, 32 );
     memcpy( server->server_secret_key, rocketnet_test_server_secret_key, 32 );
@@ -163,10 +163,10 @@ static void test_token_time_game_clock_admits_a_fixed_token()
         rocketnet_client_transport_default_config( &defaults );
         memset( &old_caller, 0xEE, sizeof( old_caller ) );
         memcpy( &old_caller, &defaults, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_ORIGINAL );
-        old_caller.num_reassembly_slots = 5;
+        old_caller.max_fragmented_messages = 5;
         memset( &read, 0xAB, sizeof( read ) );
         check( rocketnet_config_read_sized( "rocketnet_client_transport_config_t", &read, &defaults, sizeof( defaults ), &old_caller, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, known, 2 ) == 1 );
-        check( read.num_reassembly_slots == 5 );
+        check( read.max_fragmented_messages == 5 );
         check( read.state_change_callback == NULL );
         check( read.time_callback == NULL );
         check( read.game_clock_epoch == 0 );
