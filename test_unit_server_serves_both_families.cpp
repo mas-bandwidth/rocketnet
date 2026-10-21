@@ -9,6 +9,8 @@
 // opens a socket, or reads a clock. The clock starts at 1000.0.
 
 #include "test_unit_registry.h"
+#include "sdk/rocketnet_connect_token.h"
+#include "sdk/rocketnet_base64.h"
 
 #include "sdk/rocketnet.h"
 
@@ -46,9 +48,9 @@ static int both_families_unsetenv( const char * name ) { return unsetenv( name )
 struct both_families_identity_t
 {
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret[64];
     uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret[sizeof( rocketnet_dev_server_secret_key )];
 };
 
 static double both_families_now = 1000.0;
@@ -69,8 +71,6 @@ static void both_families_fill( rocketnet_server_config_t * config, const both_f
     config->protocol_id = BOTH_FAMILIES_PROTOCOL;
     config->max_clients = max_clients;
     memcpy( config->backend_public_key, identity->backend_public, sizeof( config->backend_public_key ) );
-    memcpy( config->server_public_key, identity->server_public, sizeof( config->server_public_key ) );
-    memcpy( config->server_secret_key, identity->server_secret, sizeof( config->server_secret_key ) );
     config->transport = "loopback";
 }
 
@@ -82,15 +82,17 @@ static void both_families_client_config( rocketnet_client_config_t * config )
     config->time_callback = both_families_clock;
 }
 
-static void both_families_token( const both_families_identity_t * identity, uint64_t client_id, const char * address, uint8_t * token )
+static void both_families_token( const both_families_identity_t * identity, uint64_t client_id, const char * address, char * token_string )
 {
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     const char * addresses[] = { address };
     check( rocketnet_write_production_connect_token( identity->backend_secret, identity->server_public,
         BOTH_FAMILIES_PROTOCOL, addresses, 1, client_id, 1000, 1ULL << 40, 300, NULL,
         token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 }
 
-static enum rocketnet_status_t both_families_start( const both_families_identity_t * identity, const char * first, const char * second, struct rocketnet_server_t ** out )
+static enum rocketnet_status_t both_families_start( both_families_identity_t * identity, const char * first, const char * second, struct rocketnet_server_t ** out )
 {
     rocketnet_server_config_t config;
     both_families_fill( &config, identity, 2 );
@@ -101,6 +103,7 @@ static enum rocketnet_status_t both_families_start( const both_families_identity
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_COUNT;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, first, &config, &create_status );
     check( server != NULL );
+    rocketnet_server_public_key( server, identity->server_public );
     check( create_status == ROCKETNET_STATUS_OK );
     enum rocketnet_status_t status = rocketnet_server_start( server );
     *out = server;
@@ -194,7 +197,7 @@ static void both_families_pump( struct rocketnet_server_t * server, struct rocke
 
 static struct rocketnet_client_t * both_families_connect_client( const both_families_identity_t * identity, uint64_t client_id, const char * address )
 {
-    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     both_families_token( identity, client_id, address, token );
     rocketnet_client_config_t config;
     both_families_client_config( &config );

@@ -24,6 +24,7 @@
 // loopback create/connect.
 
 #include "test_unit_registry.h"
+#include "sdk/rocketnet_base64.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_config.h"
@@ -44,8 +45,6 @@ static void sized_config_dev_server_config( struct rocketnet_server_config_t * c
     check( rocketnet_server_default_config( config ) == ROCKETNET_STATUS_OK );
     config->protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     memcpy( config->backend_public_key, rocketnet_dev_backend_public_key, 32 );
-    memcpy( config->server_public_key, rocketnet_dev_server_public_key, 32 );
-    memcpy( config->server_secret_key, rocketnet_dev_server_secret_key, 32 );
 }
 
 static const size_t client_known_bytes[] = { ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES };
@@ -510,7 +509,7 @@ static void test_sized_config_server_create_checks_the_config()
 
 // default_config sets config_bytes to the caller's sizeof; a config_bytes
 // below the field itself is refused by name at create and sizes nothing
-static void public_config_bytes_zeroed_is_refused()
+static void test_public_config_bytes_zeroed_is_refused()
 {
     struct rocketnet_client_config_t client_config;
     memset( &client_config, 0xAB, sizeof( client_config ) );
@@ -557,7 +556,7 @@ static void public_config_bytes_zeroed_is_refused()
 // an older caller, compiled against a struct that ended before num_channels:
 // the default writes only its prefix, and create reads only its prefix, so
 // the bytes past it (not the caller's memory) are never read or written
-static void public_config_bytes_older_smaller_reads_the_prefix()
+static void test_public_config_bytes_older_smaller_reads_the_prefix()
 {
     const size_t client_older = offsetof( struct rocketnet_client_config_t, num_channels );
     const size_t server_older = offsetof( struct rocketnet_server_config_t, num_channels );
@@ -602,8 +601,6 @@ static void public_config_bytes_older_smaller_reads_the_prefix()
         check( server_bytes[i] == 0xCD );
     server_config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     memcpy( server_config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
-    memcpy( server_config.server_public_key, rocketnet_dev_server_public_key, 32 );
-    memcpy( server_config.server_secret_key, rocketnet_dev_server_secret_key, 32 );
     server_config.max_clients = 4;
     server_config.num_channels = 0;
     server_config.reliable_timeout_ms = -1;
@@ -637,7 +634,7 @@ struct sized_config_newer_server_t
     int tail_field[4];
 };
 
-static void public_config_bytes_newer_larger_ignores_the_tail()
+static void test_public_config_bytes_newer_larger_ignores_the_tail()
 {
     struct sized_config_newer_client_t newer_client;
     memset( &newer_client, 0xEE, sizeof( newer_client ) );
@@ -675,8 +672,6 @@ static void public_config_bytes_newer_larger_ignores_the_tail()
         check( newer_server.tail_field[i] == (int) 0xEEEEEEEE );
     newer_server.config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     memcpy( newer_server.config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
-    memcpy( newer_server.config.server_public_key, rocketnet_dev_server_public_key, 32 );
-    memcpy( newer_server.config.server_secret_key, rocketnet_dev_server_secret_key, 32 );
     newer_server.config.max_clients = 4;
     status = ROCKETNET_STATUS_COUNT;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &newer_server.config, &status );
@@ -705,9 +700,9 @@ static void public_config_bytes_newer_larger_ignores_the_tail()
 struct public_config_identity_t
 {
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret[64];
     uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret[sizeof( rocketnet_dev_server_secret_key )];
 };
 
 static double public_config_now = 1000.0;
@@ -728,8 +723,6 @@ static void public_config_server( struct rocketnet_server_config_t * config, con
     config->protocol_id = PUBLIC_CONFIG_PROTOCOL;
     config->max_clients = 1;
     memcpy( config->backend_public_key, identity->backend_public, sizeof( config->backend_public_key ) );
-    memcpy( config->server_public_key, identity->server_public, sizeof( config->server_public_key ) );
-    memcpy( config->server_secret_key, identity->server_secret, sizeof( config->server_secret_key ) );
     config->transport = "loopback";
 }
 
@@ -741,14 +734,18 @@ static void public_config_client( struct rocketnet_client_config_t * config )
     config->time_callback = public_config_clock;
 }
 
-static void public_config_token( uint16_t port, const public_config_identity_t * identity, uint8_t * token )
+static void public_config_token( const struct rocketnet_server_t * server, const public_config_identity_t * identity, char * token_string )
 {
+    uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    rocketnet_server_public_key( server, server_public );
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     char address[64];
-    snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) port );
+    snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) rocketnet_server_port( server ) );
     const char * addresses[] = { address };
-    check( rocketnet_write_production_connect_token( identity->backend_secret, identity->server_public,
+    check( rocketnet_write_production_connect_token( identity->backend_secret, server_public,
         PUBLIC_CONFIG_PROTOCOL, addresses, 1, 0xC0F1, 1000, 1ULL << 40, 300, NULL,
         token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 }
 
 // pumps a loopback pair for four simulated seconds; returns whether the
@@ -767,8 +764,8 @@ static bool public_config_pair_connects( int server_loss_percent )
     check( create_status == ROCKETNET_STATUS_OK );
     check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
 
-    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    public_config_token( rocketnet_server_port( server ), &identity, token );
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    public_config_token( server, &identity, token );
 
     struct rocketnet_client_config_t client_config;
     public_config_client( &client_config );

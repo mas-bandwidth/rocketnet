@@ -23,6 +23,8 @@
 #include <vector>
 
 #include "test_unit_registry.h"
+#include "sdk/rocketnet_connect_token.h"
+#include "sdk/rocketnet_base64.h"
 
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_allocator.h"
@@ -2893,9 +2895,9 @@ static double reconnect_clock( void * ) { return reconnect_now; }
 struct reconnect_world_t
 {
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret[64];
     uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret[sizeof( rocketnet_dev_server_secret_key )];
     rocketnet_server_t * server;
     rocketnet_client_t * clients[2];
     double time;
@@ -2923,7 +2925,9 @@ static void reconnect_connect( reconnect_world_t * world, int client )
     check( rocketnet_write_production_connect_token( world->backend_secret, world->server_public,
         RECONNECT_PROTOCOL, addresses, 1, RECONNECT_CLIENT_ID, 1000, 1ULL << 40, 300, NULL,
         token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_client_connect( world->clients[client], token ) == ROCKETNET_STATUS_OK );
+    char token_string[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, sizeof( token_string ) ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
+    check( rocketnet_client_connect( world->clients[client], token_string ) == ROCKETNET_STATUS_OK );
 }
 
 // Both directions on channel 0, values counted from 0 in order: a slot that
@@ -2996,11 +3000,10 @@ static void test_same_client_id_reconnect_in_one_update_resets_the_slot()
     server_config.protocol_id = RECONNECT_PROTOCOL;
     server_config.max_clients = 1;                                              // the new connection can only take slot 0
     memcpy( server_config.backend_public_key, world.backend_public, sizeof( server_config.backend_public_key ) );
-    memcpy( server_config.server_public_key, world.server_public, sizeof( server_config.server_public_key ) );
-    memcpy( server_config.server_secret_key, world.server_secret, sizeof( server_config.server_secret_key ) );
     server_config.transport = "loopback";
     world.server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL );
     check( world.server != NULL );
+    rocketnet_server_public_key( world.server, world.server_public );
     check( rocketnet_server_start( world.server ) == ROCKETNET_STATUS_OK );
     for ( int i = 0; i < 2; i++ )
     {

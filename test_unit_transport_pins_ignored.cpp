@@ -9,6 +9,8 @@
 // and expects CONNECTED. The environment it changed is restored on exit.
 
 #include "test_unit_registry.h"
+#include "sdk/rocketnet_connect_token.h"
+#include "sdk/rocketnet_base64.h"
 #include "test/portable_crt.h"
 
 #include "sdk/rocketnet.h"
@@ -66,9 +68,9 @@ static void test_unit_transport_pins_ignored()
 
     const uint64_t protocol_id = 0x70696e73ULL;
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret_key[64];
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret_key[sizeof( rocketnet_dev_server_secret_key )];
     rocketnet_unit_check( rocketnet_generate_backend_keypair( backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_generate_server_keypair( server_public_key, server_secret_key ) == ROCKETNET_STATUS_OK );
 

@@ -246,9 +246,9 @@ static void secrets_wiped_free( void * context, void * p )
 struct secrets_wiped_identity_t
 {
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t backend_secret[64];
     uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t server_secret[sizeof( rocketnet_dev_server_secret_key )];
 };
 
 static double secrets_wiped_now = 1000.0;
@@ -291,13 +291,12 @@ static void secrets_wiped_pair_exchange( secrets_wiped_pair_t * pair )
     server_config.protocol_id = SECRETS_WIPED_PROTOCOL;
     server_config.max_clients = 1;
     memcpy( server_config.backend_public_key, identity.backend_public, sizeof( server_config.backend_public_key ) );
-    memcpy( server_config.server_public_key, identity.server_public, sizeof( server_config.server_public_key ) );
-    memcpy( server_config.server_secret_key, identity.server_secret, sizeof( server_config.server_secret_key ) );
     server_config.transport = "loopback";
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     pair->server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &create_status );
     check( pair->server != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
+    rocketnet_server_public_key( pair->server, identity.server_public );
     check( rocketnet_server_start( pair->server ) == ROCKETNET_STATUS_OK );
 
     char address[64];
@@ -307,6 +306,9 @@ static void secrets_wiped_pair_exchange( secrets_wiped_pair_t * pair )
     check( rocketnet_write_production_connect_token( identity.backend_secret, identity.server_public,
         SECRETS_WIPED_PROTOCOL, addresses, 1, 0x5EED, 1000, 1ULL << 40, 300, NULL,
         token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    char token_string[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, sizeof( token_string ) ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
+    sodium_memzero( token, sizeof( token ) );
     sodium_memzero( &identity, sizeof( identity ) );
     sodium_memzero( &server_config, sizeof( server_config ) );
 
@@ -319,7 +321,8 @@ static void secrets_wiped_pair_exchange( secrets_wiped_pair_t * pair )
     pair->client = rocketnet_client_create( NULL, &client_config, &create_status );
     check( pair->client != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
-    check( rocketnet_client_connect( pair->client, token ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_client_connect( pair->client, token_string ) == ROCKETNET_STATUS_OK );
+    sodium_memzero( token_string, sizeof( token_string ) );
 
     for ( int i = 0; i < 400 && rocketnet_client_state( pair->client ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
         secrets_wiped_pump( pair );
