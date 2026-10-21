@@ -157,7 +157,8 @@ static void rn_message_link_abort_create( const struct rn_message_link_t * link 
     {
         if ( link->update )
             link->update( link->transport, 0.0 ); // stopping updates do not read game time
-        rocketnet_platform_sleep( 0.001 );
+        if ( !link->stopped( link->transport ) )
+            rocketnet_platform_sleep( 0.001 );
     }
     link->destroy( link->transport );
 }
