@@ -778,8 +778,10 @@ int rocketnet_term_ex()
     // bundled copy belongs to this SDK. A system libsodium may be shared with
     // the application, so never close its process-global RNG here.
 #if defined(ROCKETNET_BUNDLED_SODIUM) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-    if ( randombytes_close() != 0 )
-        rocketnet_warn( "could not close bundled sodium random source" );
+    // sodium_init is one-time, so a later empty init/term cycle has no open
+    // RNG descriptor and randombytes_close returns -1 for that valid case.
+    // The strict process resource gate detects a real close failure.
+    (void) randombytes_close();
 #endif
     rocketnet_platform_term();
     rocketnet_global_context = NULL;

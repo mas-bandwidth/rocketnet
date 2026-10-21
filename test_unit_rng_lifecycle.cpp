@@ -38,6 +38,16 @@ static void test_bundled_rng_closes_and_reopens_on_mac()
     const long baseline = rng_lifecycle_fd_count();
     check(baseline >= 0);
 
+    // sodium_init is one-time. Subsequent empty cycles must neither reopen
+    // the RNG descriptor nor retain any other descriptor at termination.
+    for (int cycle = 0; cycle < 3; ++cycle)
+    {
+        check(rocketnet_init(NULL, NULL, NULL) == ROCKETNET_STATUS_OK);
+        check(rng_lifecycle_fd_count() == baseline);
+        check(rocketnet_term() == ROCKETNET_STATUS_OK);
+        check(rng_lifecycle_fd_count() == baseline);
+    }
+
     for (int cycle = 0; cycle < 3; ++cycle)
     {
         check(rocketnet_init(NULL, NULL, NULL) == ROCKETNET_STATUS_OK);
