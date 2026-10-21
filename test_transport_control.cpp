@@ -238,12 +238,17 @@ static void seed_stats_rtt_samples(rocketnet_server_transport_t * server, int cl
     // Generate the sample through the ACK producer so both the live endpoint
     // and its active stats delta see the same 17 ms observation.
     rocketnet_ack_block_t block = {};
-    block.largest = 1;
     block.first_range_length = 1;
     for (int i = 0; i < clients; ++i)
     {
+        auto * mapping = rocketnet_encryption_map_entry(server->protocol.encryption_map,
+            rocketnet_client_slots_mapping_index(server->protocol.client_slots, i));
+        CHECK(mapping);
+        // Account for the synthetic send so maintenance uses the next wire sequence.
+        const uint64_t sequence = mapping->send_sequence_session++;
+        block.largest = sequence;
         auto * endpoint = &server->protocol.acks->endpoints[i];
-        CHECK(rocketnet_ack_endpoint_record_sent_classified(endpoint, 1, 100, 0, 0, 0, 0.0)
+        CHECK(rocketnet_ack_endpoint_record_sent_classified(endpoint, sequence, 100, 0, 0, 0, 0.0)
             == ROCKETNET_ACK_SENT_RECORDED);
         uint64_t acked_ids[1] = {};
         uint64_t unknown = 0, batch_full = 0;
@@ -251,7 +256,7 @@ static void seed_stats_rtt_samples(rocketnet_server_transport_t * server, int cl
         CHECK(rocketnet_ack_endpoint_process_block(endpoint, &block, 0.017,
             acked_ids, 1, &acked_count, &unknown, &batch_full) == 1);
         CHECK(acked_count == 0 && unknown == 0 && batch_full == 0);
-        CHECK(endpoint->rtt_history[1 % ROCKETNET_RTT_HISTORY_SIZE] == 17.0f);
+        CHECK(endpoint->rtt_history[sequence % ROCKETNET_RTT_HISTORY_SIZE] == 17.0f);
     }
 }
 
