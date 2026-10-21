@@ -1626,7 +1626,7 @@ void rocketnet_test_prefilter()
     // never drift: the send capacity is the largest multiple of eight
     // inside the budget less the fixed overhead and the minimum ack block,
     // and the receive constant is the ceiling less the same
-    rocketnet_check( ROCKETNET_MAX_PAYLOAD_BYTES ==
+    rocketnet_check( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ==
                      ( ( ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES ) / 8 ) * 8 );
     rocketnet_check( ROCKETNET_RECEIVE_PAYLOAD_BYTES ==
                      ROCKETNET_RECEIVE_CEILING - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES );
@@ -2319,7 +2319,7 @@ static void rocketnet_test_server_setup( struct rocketnet_test_server_t * test )
     struct rocketnet_server_protocol_t * server = &test->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    memcpy( server->filter_value, tag, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( server->packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server->backend_public_key, rocketnet_test_backend_public_key, 32 );
     memcpy( server->server_public_key, rocketnet_test_server_public_key, 32 );
     memcpy( server->server_secret_key, rocketnet_test_server_secret_key, 32 );
@@ -2463,7 +2463,7 @@ void rocketnet_test_request_path_happy()
     // the client completes its side from the wire bytes alone: reconstruct
     // the sequence, read the clear nonce, derive, open, recover the server
     // ephemeral -- the full loop the handshake depends on
-    rocketnet_check( rocketnet_prefilter_check( response, response_bytes, test.server.filter_value ) == ROCKETNET_CONNECTION_CHALLENGE_PACKET );
+    rocketnet_check( rocketnet_prefilter_check( response, response_bytes, test.server.packet_filter ) == ROCKETNET_CONNECTION_CHALLENGE_PACKET );
     const uint8_t * p = response + ROCKETNET_PREFILTER_BYTES;
     uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), 0 );
     rocketnet_check( sequence == 1 );
@@ -3211,7 +3211,7 @@ void rocketnet_test_request_path_slots_and_denial()
 
     // the client opens the denied from the wire: sequence 1, the clear
     // nonce, handshake keys derived from it
-    rocketnet_check( rocketnet_prefilter_check( response, response_bytes, test.server.filter_value ) == ROCKETNET_CONNECTION_DENIED_PACKET );
+    rocketnet_check( rocketnet_prefilter_check( response, response_bytes, test.server.packet_filter ) == ROCKETNET_CONNECTION_DENIED_PACKET );
     const uint8_t * p = response + ROCKETNET_PREFILTER_BYTES;
     uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), 0 );
     rocketnet_check( sequence == 1 );
@@ -4196,7 +4196,7 @@ static int rocketnet_test_write_session_packet_salted( uint8_t * packet, uint8_t
                                                        const uint8_t * salt, const uint8_t * key )
 {
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     memset( plaintext, 0, ROCKETNET_ACK_BLOCK_MIN_BYTES );
     if ( type_data_bytes > 0 )
         memcpy( plaintext + ROCKETNET_ACK_BLOCK_MIN_BYTES, type_data, (size_t) type_data_bytes );
@@ -4222,7 +4222,7 @@ static int rocketnet_test_write_session_packet_acking( uint8_t * packet, uint8_t
     block.first_range_length = run_length;
     block.num_ranges = 0;
 
-    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     int block_bytes = rocketnet_ack_block_write( plaintext, &block );
     if ( type_data_bytes > 0 )
         memcpy( plaintext + block_bytes, type_data, (size_t) type_data_bytes );
@@ -5244,7 +5244,7 @@ void rocketnet_test_keep_alive_pacing_survives_early_ack()
                 int block_bytes = rocketnet_ack_block_build( block, ROCKETNET_ACK_BLOCK_MAX_BYTES, &client.replay_session );
                 uint8_t early_ack[ROCKETNET_RECEIVE_CEILING];
                 int early_ack_bytes = rocketnet_write_sealed_packet( early_ack, ROCKETNET_CONNECTION_ACK_PACKET,
-                                                                     client.filter_value, client.send_sequence_session,
+                                                                     client.packet_filter, client.send_sequence_session,
                                                                      NULL, block, block_bytes,
                                                                      client.signed_fields.protocol_id, client.connection_salt,
                                                                      NULL, client.keys.session_client_to_server );
@@ -6723,6 +6723,7 @@ void rocketnet_test_server_keyless_config_has_no_keys()
     rocketnet_check( memcmp( config.server_public_key, zero, 32 ) != 0 );
 }
 
+#if !ROCKETNET_DEVELOPMENT
 void rocketnet_test_dev_keys_refused_in_release()
 {
     // In a release build a server whose config carries either published
@@ -6756,6 +6757,7 @@ void rocketnet_test_dev_keys_refused_in_release()
 
     rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40899", &config) == NULL );
 }
+#endif // !ROCKETNET_DEVELOPMENT: a development build accepts what this checks is refused
 
 
 void rocketnet_test_transport_payload_capacity()
@@ -6883,7 +6885,7 @@ void rocketnet_test_payload_size_sweep()
     rocketnet_check( rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
     rocketnet_check( rocketnet_test_pump( &test, &client, -1, 5.0 ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
-    uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
@@ -6893,7 +6895,7 @@ void rocketnet_test_payload_size_sweep()
 
     double time = 200.0;
 
-    for ( int size = 1; size <= ROCKETNET_MAX_PAYLOAD_BYTES; size++ )
+    for ( int size = 1; size <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES; size++ )
     {
         time += 0.001;
 
@@ -6918,8 +6920,8 @@ void rocketnet_test_payload_size_sweep()
     }
 
     // one past the maximum refuses to build, both sides
-    rocketnet_check( rocketnet_client_protocol_write_payload( &client, payload, ROCKETNET_MAX_PAYLOAD_BYTES + 1, time, packet ) == 0 );
-    rocketnet_check( rocketnet_server_protocol_write_payload( &test.server, 0, payload, ROCKETNET_MAX_PAYLOAD_BYTES + 1, time, packet ) == 0 );
+    rocketnet_check( rocketnet_client_protocol_write_payload( &client, payload, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1, time, packet ) == 0 );
+    rocketnet_check( rocketnet_server_protocol_write_payload( &test.server, 0, payload, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1, time, packet ) == 0 );
 
     rocketnet_test_server_teardown( &test );
     rocketnet_counters_assert_conserved( &client_counters );
@@ -10400,12 +10402,12 @@ void rocketnet_test_ack_payload_seal_with_ranges()
     // range needs, so its block truncates to the minimum.
 
     const int full = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES - 4;
-    rocketnet_check( full <= ROCKETNET_MAX_PAYLOAD_BYTES );
+    rocketnet_check( full <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
 
     uint8_t frame[2048];
     memset( frame, 0xEE, sizeof(frame) );
 
-    uint8_t expected[ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t expected[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     rocketnet_test_generate_payload( expected, full );
     memcpy( frame + ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET, expected, (size_t) full );
 
@@ -10485,14 +10487,14 @@ void rocketnet_test_fragment_plan()
     int count, stride;
     rocketnet_check( !rocketnet_fragment_plan( 0, &count, &stride ) );
     rocketnet_check( !rocketnet_fragment_plan( 1, &count, &stride ) );
-    rocketnet_check( !rocketnet_fragment_plan( ROCKETNET_MAX_PAYLOAD_BYTES, &count, &stride ) );
+    rocketnet_check( !rocketnet_fragment_plan( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &count, &stride ) );
     rocketnet_check( !rocketnet_fragment_plan( ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES + 1, &count, &stride ) );
 
     // one byte over a single packet splits into two near-halves, never a
     // full fragment and an empty remainder
-    rocketnet_check( rocketnet_fragment_plan( ROCKETNET_MAX_PAYLOAD_BYTES + 1, &count, &stride ) );
+    rocketnet_check( rocketnet_fragment_plan( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1, &count, &stride ) );
     rocketnet_check( count == 2 );
-    rocketnet_check( stride == ( ROCKETNET_MAX_PAYLOAD_BYTES + 2 ) / 2 );
+    rocketnet_check( stride == ( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 2 ) / 2 );
 
     // exactly two full strides is two full fragments
     rocketnet_check( rocketnet_fragment_plan( 2 * ROCKETNET_MAX_FRAGMENT_BYTES, &count, &stride ) );
@@ -10506,7 +10508,7 @@ void rocketnet_test_fragment_plan()
 
     // the whole range: every plan reconstructs its payload exactly, inside
     // every cap, with a non-empty remainder
-    for ( int payload_bytes = ROCKETNET_MAX_PAYLOAD_BYTES + 1; payload_bytes <= ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES; payload_bytes++ )
+    for ( int payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1; payload_bytes <= ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES; payload_bytes++ )
     {
         rocketnet_check( rocketnet_fragment_plan( payload_bytes, &count, &stride ) );
         rocketnet_check( count >= 2 && count <= ROCKETNET_MAX_FRAGMENTS );
@@ -11142,7 +11144,7 @@ static int rocketnet_test_seal_raw_fragment( struct rocketnet_test_fragment_pair
     uint64_t sequence;
     rocketnet_check( rocketnet_client_protocol_start_fragments( &pair->client, 1, &sequence ) );
     int bytes = rocketnet_write_sealed_packet( out_packet, ROCKETNET_CONNECTION_FRAGMENT_PACKET,
-                                               pair->client.filter_value, sequence,
+                                               pair->client.packet_filter, sequence,
                                                NULL, plaintext, plaintext_bytes,
                                                pair->client.signed_fields.protocol_id, pair->client.connection_salt,
                                                NULL, pair->client.keys.session_client_to_server );
@@ -11489,7 +11491,7 @@ void rocketnet_test_fragment_before_connected_touches_no_reassembly()
     // sealed by hand under the client's live session keys: the send path
     // itself is connected-only, so the crafted packet names sequence 1
     int sealed = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_FRAGMENT_PACKET,
-                                                pair.client.filter_value, 1,
+                                                pair.client.packet_filter, 1,
                                                 NULL, plaintext, ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES + 1,
                                                 pair.client.signed_fields.protocol_id, pair.client.connection_salt,
                                                 NULL, pair.client.keys.session_client_to_server );
@@ -12570,26 +12572,26 @@ static const struct rn_test_config_field_t rn_test_client_config_fields[] =
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, transport ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, state_change_callback ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, time_callback ),
-    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, filter_value ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, packet_filter ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, step_driven ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, max_payload_bytes ),
-    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, num_reassembly_slots ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, max_fragmented_messages ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, send_kbps ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, num_channels ),
-    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, window_messages ),
-    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, receive_ring_bytes ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, reliable_messages_in_flight ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, receive_message_buffer_bytes ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, max_message_bytes ),
-    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, send_buffer_bytes ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, send_message_buffer_bytes ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, send_queue_messages ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, packets_in_flight ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, packets_per_update ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, unreliable_messages_per_update ),
-    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, sequenced_holds ),
-    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, receipt_ring ),
-    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, resend_delay_initial_ms ),
-    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, resend_delay_min_ms ),
-    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, resend_delay_max_ms ),
-    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, reliable_timeout_ms ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, sequenced_messages_held ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, max_message_receipts ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, message_resend_delay_initial_ms ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, message_resend_delay_min_ms ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, message_resend_delay_max_ms ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, reliable_message_timeout_ms ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, simulated_loss_percent ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, simulated_latency_ms ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, simulated_jitter_ms ),
@@ -12601,32 +12603,32 @@ static const struct rn_test_config_field_t rn_test_server_config_fields[] =
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, config_bytes ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, protocol_id ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, max_clients ),
-    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, filter_value ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, packet_filter ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, backend_public_key ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_xdp_queues ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_os_cpus ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, max_payload_bytes ),
-    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_reassembly_slots ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, max_fragmented_messages ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, max_timeout_seconds ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, handshake_deadline_seconds ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, transport ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, public_address ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, per_client_send_kbps ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_channels ),
-    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, window_messages ),
-    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, receive_ring_bytes ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, reliable_messages_in_flight ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, receive_message_buffer_bytes ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, max_message_bytes ),
-    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, send_buffer_bytes ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, send_message_buffer_bytes ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, send_queue_messages ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, packets_in_flight ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, packets_per_update ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, unreliable_messages_per_update ),
-    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, sequenced_holds ),
-    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, receipt_ring ),
-    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, resend_delay_initial_ms ),
-    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, resend_delay_min_ms ),
-    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, resend_delay_max_ms ),
-    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, reliable_timeout_ms ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, sequenced_messages_held ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, max_message_receipts ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, message_resend_delay_initial_ms ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, message_resend_delay_min_ms ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, message_resend_delay_max_ms ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, reliable_message_timeout_ms ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, simulated_loss_percent ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, simulated_latency_ms ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, simulated_jitter_ms ),
@@ -12749,27 +12751,27 @@ void rocketnet_test_public_config_resolve()
     struct rocketnet_client_config_t client;
     rocketnet_client_default_config( &client );
     const uint8_t filter[4] = { 1, 2, 3, 4 };
-    memcpy( client.filter_value, filter, 4 );
+    memcpy( client.packet_filter, filter, 4 );
     client.max_payload_bytes = 2000;
-    client.num_reassembly_slots = 3;
+    client.max_fragmented_messages = 3;
     client.transport = "portable";
     client.state_change_callback = rocketnet_test_resolve_state_change;
     client.time_callback = rocketnet_test_resolve_time;
     client.send_kbps = 1234;
-    client.num_channels = 7; client.window_messages = 128; client.receive_ring_bytes = 8192; client.max_message_bytes = 4096;
-    client.send_buffer_bytes = 20000; client.send_queue_messages = 32; client.packets_in_flight = 32; client.packets_per_update = 2;
-    client.unreliable_messages_per_update = 17; client.sequenced_holds = 5; client.receipt_ring = 32; client.resend_delay_initial_ms = 200;
-    client.resend_delay_min_ms = 20; client.resend_delay_max_ms = 300; client.reliable_timeout_ms = 5000;
+    client.num_channels = 7; client.reliable_messages_in_flight = 128; client.receive_message_buffer_bytes = 8192; client.max_message_bytes = 4096;
+    client.send_message_buffer_bytes = 20000; client.send_queue_messages = 32; client.packets_in_flight = 32; client.packets_per_update = 2;
+    client.unreliable_messages_per_update = 17; client.sequenced_messages_held = 5; client.max_message_receipts = 32; client.message_resend_delay_initial_ms = 200;
+    client.message_resend_delay_min_ms = 20; client.message_resend_delay_max_ms = 300; client.reliable_message_timeout_ms = 5000;
     rocketnet_check( rocketnet_client_config_resolve( &client, true, &client_transport, &message, &kbps ) );
-    rocketnet_check( memcmp( client_transport.filter_value, filter, 4 ) == 0 );
-    rocketnet_check( client_transport.max_payload_bytes == 2000 && client_transport.num_reassembly_slots == 3 );
+    rocketnet_check( memcmp( client_transport.packet_filter, filter, 4 ) == 0 );
+    rocketnet_check( client_transport.max_payload_bytes == 2000 && client_transport.max_fragmented_messages == 3 );
     rocketnet_check( strcmp( client_transport.transport, "portable" ) == 0 );
     rocketnet_check( client_transport.state_change_callback == rocketnet_test_resolve_state_change && client_transport.time_callback == rocketnet_test_resolve_time );
     rocketnet_check( kbps == 1234 );
-    rocketnet_check( message.num_channels == 7 && message.window_messages == 128 && message.receive_ring_bytes == 8192 && message.max_message_bytes == 4096 );
-    rocketnet_check( message.send_buffer_bytes == 20000 && message.send_queue_messages == 32 && message.packets_in_flight == 32 && message.packets_per_update == 2 );
-    rocketnet_check( message.unreliable_messages_per_update == 17 && message.sequenced_holds == 5 && message.receipt_ring == 32 && message.resend_delay_initial_ms == 200 );
-    rocketnet_check( message.resend_delay_min_ms == 20 && message.resend_delay_max_ms == 300 && message.reliable_timeout_ms == 5000 );
+    rocketnet_check( message.num_channels == 7 && message.reliable_messages_in_flight == 128 && message.receive_message_buffer_bytes == 8192 && message.max_message_bytes == 4096 );
+    rocketnet_check( message.send_message_buffer_bytes == 20000 && message.send_queue_messages == 32 && message.packets_in_flight == 32 && message.packets_per_update == 2 );
+    rocketnet_check( message.unreliable_messages_per_update == 17 && message.sequenced_messages_held == 5 && message.max_message_receipts == 32 && message.message_resend_delay_initial_ms == 200 );
+    rocketnet_check( message.message_resend_delay_min_ms == 20 && message.message_resend_delay_max_ms == 300 && message.reliable_message_timeout_ms == 5000 );
 
     // the env displaces the struct
 
@@ -12814,23 +12816,23 @@ void rocketnet_test_public_config_resolve()
     rocketnet_test_server_dev_keys_config( &server );
     server.protocol_id = 0x1122334455667788ULL;
     server.max_clients = 5;
-    memcpy( server.filter_value, filter, 4 );
-    server.num_xdp_queues = 2; server.num_os_cpus = 3; server.max_payload_bytes = 3000; server.num_reassembly_slots = 4;
+    memcpy( server.packet_filter, filter, 4 );
+    server.num_xdp_queues = 2; server.num_os_cpus = 3; server.max_payload_bytes = 3000; server.max_fragmented_messages = 4;
     server.max_timeout_seconds = 30; server.handshake_deadline_seconds = 7;
     server.transport = "gso,portable";
     server.public_address = "127.0.0.1:40123";
     server.per_client_send_kbps = 4321;
-    server.num_channels = 6; server.reliable_timeout_ms = 6000;
+    server.num_channels = 6; server.reliable_message_timeout_ms = 6000;
     struct rocketnet_server_config_t dev;
     rocketnet_test_server_dev_keys_config( &dev );
     rocketnet_check( rocketnet_server_config_resolve( &server, true, &server_transport, &message, &kbps ) );
     rocketnet_check( server_transport.protocol_id == 0x1122334455667788ULL && server_transport.max_clients == 5 );
-    rocketnet_check( memcmp( server_transport.filter_value, filter, 4 ) == 0 );
+    rocketnet_check( memcmp( server_transport.packet_filter, filter, 4 ) == 0 );
     rocketnet_check( memcmp( server_transport.backend_public_key, dev.backend_public_key, 32 ) == 0 );
-    rocketnet_check( server_transport.num_xdp_queues == 2 && server_transport.num_os_cpus == 3 && server_transport.max_payload_bytes == 3000 && server_transport.num_reassembly_slots == 4 );
+    rocketnet_check( server_transport.num_xdp_queues == 2 && server_transport.num_os_cpus == 3 && server_transport.max_payload_bytes == 3000 && server_transport.max_fragmented_messages == 4 );
     rocketnet_check( server_transport.max_timeout_seconds == 30 && server_transport.handshake_deadline_seconds == 7 );
     rocketnet_check( strcmp( server_transport.transport, "gso,portable" ) == 0 && strcmp( server_transport.public_address, "127.0.0.1:40123" ) == 0 );
-    rocketnet_check( kbps == 4321 && message.num_channels == 6 && message.reliable_timeout_ms == 6000 );
+    rocketnet_check( kbps == 4321 && message.num_channels == 6 && message.reliable_message_timeout_ms == 6000 );
 
     // max_clients sizes both layers, so its override applies in the split
 
@@ -13344,7 +13346,7 @@ void rocketnet_test_config_validation()
     rocketnet_server_transport_default_config_current( &config );
     config.max_payload_bytes = -1;
     rocketnet_check( !rocketnet_config_validate( "server", &config, fields, num_fields ) );
-    config.max_payload_bytes = ROCKETNET_MAX_PAYLOAD_BYTES - 1;
+    config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;
     rocketnet_check( !rocketnet_config_validate( "server", &config, fields, num_fields ) );
     config.max_payload_bytes = 0;
     rocketnet_check( rocketnet_config_validate( "server", &config, fields, num_fields ) );
@@ -13429,15 +13431,15 @@ void rocketnet_test_config_validation()
 
     // byte fields demand base64 of exactly the field's length
 
-    rocketnet_test_env_save( &guard, "ROCKETNET_SERVER_FILTER_VALUE" );
+    rocketnet_test_env_save( &guard, "ROCKETNET_SERVER_PACKET_FILTER" );
     rocketnet_server_transport_default_config_current( &config );
-    setenv( "ROCKETNET_SERVER_FILTER_VALUE", "zzzz", 1 );                  // decodes to 3 bytes, not 4
+    setenv( "ROCKETNET_SERVER_PACKET_FILTER", "zzzz", 1 );                  // decodes to 3 bytes, not 4
     rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
-    setenv( "ROCKETNET_SERVER_FILTER_VALUE", "AAECAw==", 1 );              // 4 bytes: 00 01 02 03
+    setenv( "ROCKETNET_SERVER_PACKET_FILTER", "AAECAw==", 1 );              // 4 bytes: 00 01 02 03
     rocketnet_server_transport_default_config_current( &config );
     rocketnet_check( rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
     const uint8_t expected_filter[4] = { 0x00, 0x01, 0x02, 0x03 };
-    rocketnet_check( memcmp( config.filter_value, expected_filter, 4 ) == 0 );
+    rocketnet_check( memcmp( config.packet_filter, expected_filter, 4 ) == 0 );
     rocketnet_test_env_restore( &guard );
 }
 
@@ -14465,7 +14467,7 @@ void rocketnet_test_client_index_range_checked()
 
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     int bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET,
-                                               test.server.filter_value, mapping->send_sequence_session,
+                                               test.server.packet_filter, mapping->send_sequence_session,
                                                NULL, plaintext, block_bytes + 8,
                                                test.server.protocol_id, mapping->connection_salt,
                                                NULL, mapping->keys.session_server_to_client );
@@ -14868,7 +14870,9 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_swarm", rocketnet_test_swarm },
     { "test_payload_size_sweep", rocketnet_test_payload_size_sweep },
     { "test_server_keyless_config_has_no_keys", rocketnet_test_server_keyless_config_has_no_keys },
+#if !ROCKETNET_DEVELOPMENT
     { "test_dev_keys_refused_in_release", rocketnet_test_dev_keys_refused_in_release },
+#endif // !ROCKETNET_DEVELOPMENT: a development build accepts what this checks is refused
     { "test_transport_payload_capacity", rocketnet_test_transport_payload_capacity },
     { "test_client_rtt_handshake", rocketnet_test_client_rtt_handshake },
     { "test_request_path_ordering", rocketnet_test_request_path_ordering },

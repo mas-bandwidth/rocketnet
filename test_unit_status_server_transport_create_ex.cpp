@@ -44,6 +44,7 @@ static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
 // by design, so a CI leg pinned by ROCKETNET_SERVER_TRANSPORT would otherwise
 // never reach the struct's list
 
+#if !ROCKETNET_DEVELOPMENT
 struct env_pin_saved
 {
     bool was_set;
@@ -181,7 +182,7 @@ static void test_server_transport_create_ex_reports_every_status()
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_default_config( &config );
         config.max_clients = ROCKETNET_MAX_CLIENTS;
-        config.num_reassembly_slots = 256;    // ROCKETNET_MAX_FRAGMENTS
+        config.max_fragmented_messages = 256;    // ROCKETNET_MAX_FRAGMENTS
         status = -1;
         check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED );
@@ -315,3 +316,4 @@ static void test_server_transport_create_ex_reports_every_status()
 }
 
 REGISTER_UNIT_TEST( test_server_transport_create_ex_reports_every_status );
+#endif // !ROCKETNET_DEVELOPMENT: a development build accepts what this checks is refused

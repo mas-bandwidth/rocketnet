@@ -83,6 +83,12 @@ static const allowlist_row_t allowlist[] =
     // TRANSPORT SIZE: the UDP payload of one datagram, a transport quantity.
     { F_H, "packet crosses a 1500", "TRANSPORT SIZE" },
     { F_H, "ROCKETNET_MAX_PACKET_BYTES", "TRANSPORT SIZE" },
+    { F_H, "ROCKETNET_MAX_PACKET_PAYLOAD_BYTES", "TRANSPORT SIZE" },
+    { F_S, "ROCKETNET_MAX_PACKET_PAYLOAD_BYTES", "TRANSPORT SIZE" },
+    { F_M, "ROCKETNET_MAX_PACKET_PAYLOAD_BYTES", "TRANSPORT SIZE" },
+    { "sdk/rocketnet_message.h", "ROCKETNET_MAX_PACKET_PAYLOAD_BYTES", "TRANSPORT SIZE" },
+    { F_H, "packet_filter", "PACKET FILTER AND ACK TRACKING" },
+    { F_API, "packet_filter", "PACKET FILTER AND ACK TRACKING" },
     { F_H, "The largest packet", "TRANSPORT SIZE" },
     { F_H, "packet's own overhead", "TRANSPORT SIZE" },
     { F_H, "split across packets", "TRANSPORT SIZE" },

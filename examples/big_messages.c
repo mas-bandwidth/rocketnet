@@ -63,7 +63,7 @@ int main( void )
     // the defaults (262144) already hold 200 KB; set both ends' limits here so
     // the example states the size it needs rather than relying on that default
     server_config.max_message_bytes = LIMIT_BYTES;
-    server_config.receive_ring_bytes = LIMIT_BYTES;
+    server_config.receive_message_buffer_bytes = LIMIT_BYTES;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &create_status );
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
@@ -78,7 +78,7 @@ int main( void )
     rocketnet_client_default_config( &client_config );
     client_config.transport = "loopback";
     client_config.max_message_bytes = LIMIT_BYTES;
-    client_config.receive_ring_bytes = LIMIT_BYTES;
+    client_config.receive_message_buffer_bytes = LIMIT_BYTES;
     // the token names the server and carries the keys; this development token
     // expires thirty seconds after its timestamp, so it uses one far ahead
     CHECK( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, 4102444800ull, NULL, connect_token ) == ROCKETNET_STATUS_OK );

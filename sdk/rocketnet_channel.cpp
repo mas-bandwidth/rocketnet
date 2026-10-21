@@ -202,7 +202,7 @@ bool rn_channels_set_payload_capacity( struct rn_channels_t * channels, uint32_t
 {
     // a chunk's record (the longest header, then F bytes) and the form byte must fit (8)
     const uint32_t least = ROCKETNET_MESSAGE_FRAGMENT_BYTES + ROCKETNET_MESSAGE_RECORD_MAX_HEADER_BYTES + 1;
-    if ( !channels || payload_capacity < least || payload_capacity > ROCKETNET_MAX_PAYLOAD_BYTES )
+    if ( !channels || payload_capacity < least || payload_capacity > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
         return false;
     channels->payload_capacity = payload_capacity;
     return true;
@@ -995,8 +995,8 @@ bool rn_ordered_announce_config( struct rn_ordered_t * ordered, const struct roc
     body->version = ROCKETNET_MESSAGE_CONFIG_VERSION;
     body->enabled = channels->enabled_types & 0xFFu;
     body->num_channels = (uint32_t) config->num_channels;
-    body->window_messages = (uint32_t) config->window_messages;
-    body->receive_ring_bytes = (uint32_t) config->receive_ring_bytes;
+    body->reliable_messages_in_flight = (uint32_t) config->reliable_messages_in_flight;
+    body->receive_message_buffer_bytes = (uint32_t) config->receive_message_buffer_bytes;
     body->max_message_bytes = (uint32_t) config->max_message_bytes;
     body->fragment_bytes = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
 
@@ -1057,8 +1057,8 @@ int rn_ordered_take_config( struct rn_ordered_t * ordered, const struct rocketne
         { "version",            own->version,            peer.version },
         { "enabled",            own->enabled,            peer.enabled },
         { "num_channels",       own->num_channels,       peer.num_channels },
-        { "window_messages",    own->window_messages,    peer.window_messages },
-        { "receive_ring_bytes", own->receive_ring_bytes, peer.receive_ring_bytes },
+        { "reliable_messages_in_flight",    own->reliable_messages_in_flight,    peer.reliable_messages_in_flight },
+        { "receive_message_buffer_bytes", own->receive_message_buffer_bytes, peer.receive_message_buffer_bytes },
         { "max_message_bytes",  own->max_message_bytes,  peer.max_message_bytes },
         { "fragment_bytes",     own->fragment_bytes,     peer.fragment_bytes },
     };
@@ -1113,9 +1113,9 @@ bool rn_ordered_init( struct rn_ordered_t * ordered, struct rn_region_t * region
     ordered->budget = budget;
     ordered->limits.num_channels = (int) region->num_channels;
     ordered->limits.enabled_codes = ordered->channels.enabled_codes;
-    ordered->limits.window_messages = (int) region->window;
+    ordered->limits.reliable_messages_in_flight = (int) region->window;
     ordered->limits.max_message_bytes = (int) region->max_message_bytes;
-    ordered->limits.receive_ring_bytes = (int) region->ring_bytes;
+    ordered->limits.receive_message_buffer_bytes = (int) region->ring_bytes;
 
     return true;
 }

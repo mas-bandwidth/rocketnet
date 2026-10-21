@@ -83,7 +83,7 @@ static bool rn_message_object_layout( const rocketnet_message_config_t * config,
     if ( arena_bytes == 0 )
         return false;
 
-    const uint64_t deliveries = (uint64_t) config->window_messages + (uint64_t) config->unreliable_messages_per_update;
+    const uint64_t deliveries = (uint64_t) config->reliable_messages_in_flight + (uint64_t) config->unreliable_messages_per_update;
     const uint64_t n = (uint64_t) num_connections;
 
     memset( layout, 0, sizeof( *layout ) );
@@ -615,7 +615,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
     const bool unreliable = reliability == ROCKETNET_RELIABILITY_UNRELIABLE || reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
                             reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
     const int transport_max = unreliable && object->link.max_payload_bytes ?
-        object->link.max_payload_bytes( object->link.transport ) : ROCKETNET_MAX_PAYLOAD_BYTES;
+        object->link.max_payload_bytes( object->link.transport ) : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
 
     // RNOutgoingBuild StartInPlace: a fitting unreliable message takes a
     // transport frame and is written in it, its header's room in front and

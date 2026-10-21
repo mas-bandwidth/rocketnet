@@ -107,7 +107,7 @@ static void reply_server_setup( struct reply_server_t * test )
     struct rocketnet_server_protocol_t * server = &test->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    memcpy( server->filter_value, tag, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( server->packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server->backend_public_key, rocketnet_test_backend_public_key, 32 );
     memcpy( server->server_public_key, rocketnet_test_server_public_key, 32 );
     memcpy( server->server_secret_key, rocketnet_test_server_secret_key, 32 );

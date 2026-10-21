@@ -247,7 +247,7 @@ static struct decision_t rocketnet_decide( int case_id, uint64_t now )
     memset( &counters, 0, sizeof(counters) );
 
     server.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
-    memcpy( server.filter_value, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( server.packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server.backend_public_key, rocketnet_test_backend_public_key, ROCKETNET_KEY_BYTES );
     memcpy( server.server_public_key, rocketnet_test_server_public_key, ROCKETNET_KEY_BYTES );
     memcpy( server.server_secret_key, rocketnet_test_server_secret_key, ROCKETNET_KEY_BYTES );

@@ -422,7 +422,7 @@ void rocketnet_client_io_wipe( void * data, size_t bytes )
 static void rocketnet_client_transport_publish_keys( void * context, const struct rocketnet_client_protocol_t * client )
 {
     rocketnet_client_io_publish_keys( (rocketnet_client_io_t *) context, client->keys.session_server_to_client,
-                                      client->signed_fields.protocol_id, client->connection_salt, client->filter_value,
+                                      client->signed_fields.protocol_id, client->connection_salt, client->packet_filter,
                                       &client->server_address );
 }
 
@@ -524,8 +524,8 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
     rocketnet_client_transport_config_t defaults;
     if ( !config ) { rocketnet_client_transport_default_config( &defaults ); config = &defaults; }
     const int payload = config->max_payload_bytes ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
-    const int slots = config->num_reassembly_slots ? config->num_reassembly_slots : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
-    if ( payload < ROCKETNET_MAX_PAYLOAD_BYTES || payload > ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES ||
+    const int slots = config->max_fragmented_messages ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
+    if ( payload < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES || payload > ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES ||
         slots < 1 || slots > ROCKETNET_MAX_FRAGMENTS ) return false;
 
     plan.transport_bytes = rocketnet_memory_allocations( { sizeof(rocketnet_client_transport_t) } );
@@ -710,7 +710,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     // Refuse large cross-field allocations before sockets, transports or arenas
     // are acquired. Independent field maxima do not define a usable budget.
     const int requested_payload = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
-    const int requested_slots = config->num_reassembly_slots > 0 ? config->num_reassembly_slots : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
+    const int requested_slots = config->max_fragmented_messages > 0 ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     if (!rocketnet_reassembly_memory_allowed(1, requested_slots, requested_payload, rocketnet_client_reassembly_delivered_capacity( requested_slots )))
     {
         if ( status )
@@ -800,7 +800,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     // refused anything out of range, loudly, never clamped
 
     client_transport->max_payload_bytes = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
-    const int num_reassembly_slots = config->num_reassembly_slots > 0 ? config->num_reassembly_slots : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
+    const int max_fragmented_messages = config->max_fragmented_messages > 0 ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
 
     // the arena's slot stride stays 16-aligned so every root handed to a
     // caller is aligned for any word-based serializer
@@ -813,8 +813,8 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     // the slot count), so BATCH_FULL stays zero under any load the drain
     // delivers -- about 8.4MB at the default maximum
 
-    client_transport->reassembly = rocketnet_reassembly_set_create( context, 1, num_reassembly_slots, client_transport->max_payload_bytes,
-                                                                    rocketnet_client_reassembly_delivered_capacity( num_reassembly_slots ) );
+    client_transport->reassembly = rocketnet_reassembly_set_create( context, 1, max_fragmented_messages, client_transport->max_payload_bytes,
+                                                                    rocketnet_client_reassembly_delivered_capacity( max_fragmented_messages ) );
     if ( !client_transport->send_arena || !client_transport->reassembly )
     {
         rocketnet_error( "client could not allocate fragmentation storage" );
@@ -836,7 +836,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
     client_transport->protocol.reassembly = client_transport->reassembly;
 
-    memcpy( client_transport->protocol.filter_value, config->filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( client_transport->protocol.packet_filter, config->packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
 
     // the create-time clock is checked the same way an update's is: a
     // non-finite or negative seed would poison every later comparison, so it
@@ -1796,7 +1796,7 @@ uint8_t * rocketnet_client_transport_start_packet( rocketnet_client_transport_t 
 
     uint8_t * frame = NULL;
 
-    if ( request_bytes <= ROCKETNET_MAX_PAYLOAD_BYTES )
+    if ( request_bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
     {
         // at or under the wire's capacity: a real wire frame, written in
         // place, sealed in place, zero copies
@@ -1817,7 +1817,7 @@ uint8_t * rocketnet_client_transport_start_packet( rocketnet_client_transport_t 
         frame = ring->data + slot * ROCKETNET_FRAME_STRIDE;
 
         context->payload_index = ROCKETNET_FRAME_PAYLOAD_OFFSET;
-        context->payload_capacity = ROCKETNET_MAX_PAYLOAD_BYTES;
+        context->payload_capacity = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
     }
     else
     {
@@ -1920,7 +1920,7 @@ static int rocketnet_client_transport_finish_arena_packet( rocketnet_client_tran
     // the ring rings.fill names (RNClientIo Write, Commit)
     struct rocketnet_client_payload_ring_t * ring = rocketnet_client_fill_ring( client_transport );
 
-    if ( payload_bytes <= ROCKETNET_MAX_PAYLOAD_BYTES )
+    if ( payload_bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
     {
         uint64_t slot = rocketnet_platform_atomic_add_u64( &ring->num_packets, 1 );
         if ( slot >= ROCKETNET_CLIENT_PAYLOAD_RING_SIZE )

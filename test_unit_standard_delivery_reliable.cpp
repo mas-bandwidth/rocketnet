@@ -113,11 +113,11 @@ static int trace_run( const delivery_step_t * steps, int count, uint8_t * out, i
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.num_channels = 1;
-    config.window_messages = 64;
-    config.receive_ring_bytes = 4096;
+    config.reliable_messages_in_flight = 64;
+    config.receive_message_buffer_bytes = 4096;
     config.max_message_bytes = 4096;
-    config.send_buffer_bytes = 65536;
-    config.sequenced_holds = 16;
+    config.send_message_buffer_bytes = 65536;
+    config.sequenced_messages_held = 16;
 
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
@@ -134,15 +134,15 @@ static int trace_run( const delivery_step_t * steps, int count, uint8_t * out, i
         rn_arena_destroy( arena );
         return -1;
     }
-    rn_channels_set_payload_capacity( &channels, ROCKETNET_MAX_PAYLOAD_BYTES );
+    rn_channels_set_payload_capacity( &channels, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
     rn_window_receive_init( &receive, region, 0 );
 
     rocketnet_message_limits_t limits;
     limits.num_channels = (int) region->num_channels;
     limits.enabled_codes = rn_channels_enabled_codes( &channels );
-    limits.window_messages = (int) region->window;
+    limits.reliable_messages_in_flight = (int) region->window;
     limits.max_message_bytes = (int) region->max_message_bytes;
-    limits.receive_ring_bytes = (int) region->ring_bytes;
+    limits.receive_message_buffer_bytes = (int) region->ring_bytes;
 
     int used = 0;
 
@@ -150,7 +150,7 @@ static int trace_run( const delivery_step_t * steps, int count, uint8_t * out, i
     {
         const delivery_step_t * step = &steps[i];
 
-        uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES];
+        uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
         rocketnet_message_writer_t writer;
         rocketnet_message_writer_begin( &writer, payload, (int) sizeof( payload ) );
 

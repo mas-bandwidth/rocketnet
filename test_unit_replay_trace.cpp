@@ -320,7 +320,7 @@ static void test_slotless_packet_never_moves_the_session_window()
     memset( &counters, 0, sizeof(counters) );
 
     server.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
-    memcpy( server.filter_value, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( server.packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
     server.encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     server.counters = &counters;
     rocketnet_unit_check( server.encryption_map != NULL );

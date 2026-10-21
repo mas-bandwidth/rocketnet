@@ -99,7 +99,7 @@ static const uint8_t client_ipv4[4] = { 198, 51, 100, 7 };
 static const uint8_t server_ipv6[16] = { 0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10 };
 static const uint8_t other_ipv6[16] = { 0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x11 };
 static const uint8_t client_ipv6[16] = { 0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x07 };
-static const uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES] = { 0xA1, 0xB2, 0xC3, 0xD4 };
+static const uint8_t packet_filter[ROCKETNET_FILTER_VALUE_BYTES] = { 0xA1, 0xB2, 0xC3, 0xD4 };
 static const uint8_t filter_epoch = 0;
 
 #define FRAME_CAPACITY 2048
@@ -140,7 +140,7 @@ static spec_t spec_default( bool ipv6 )
     spec.packet_bytes = ROCKETNET_RECEIVE_CEILING;      // the largest packet a server accepts
     spec.packet_type = ROCKETNET_CONNECTION_PAYLOAD_PACKET;
     spec.epoch = filter_epoch;
-    memcpy( spec.filter, filter_value, sizeof(spec.filter) );
+    memcpy( spec.filter, packet_filter, sizeof(spec.filter) );
     spec.truncate_to = -1;
     spec.sequence = 0;
     spec.source_port = client_port;
@@ -364,7 +364,7 @@ static bool write_config( filter_t * filter, const uint8_t * ipv4, const uint8_t
     if ( ipv4 )
         memcpy( &config.public_address, ipv4, 4 );
     config.public_port = (uint16_t) ( ( server_port >> 8 ) | ( ( server_port & 0xFF ) << 8 ) );
-    memcpy( config.filter_value, filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( config.packet_filter, packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
     config.filter_epoch = filter_epoch;
     if ( ipv6 )
         memcpy( config.public_address_ipv6, ipv6, 16 );

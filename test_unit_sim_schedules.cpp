@@ -424,7 +424,7 @@ static void test_sim_schedule_same_tick_slot_reuse()
     memset( &counters, 0, sizeof(counters) );
 
     server.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
-    memcpy( server.filter_value, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( server.packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
     server.encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     server.client_slots = rocketnet_client_slots_create( NULL, 4 );
     server.counters = &counters;

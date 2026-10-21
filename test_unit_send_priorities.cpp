@@ -57,9 +57,9 @@ static int priorities_read( const rn_region_t * region, const rn_packet_builder_
     memset( &limits, 0, sizeof( limits ) );
     limits.num_channels = (int) region->num_channels;
     limits.enabled_codes = rocketnet_message_enabled_codes( ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION );
-    limits.window_messages = (int) region->window;
+    limits.reliable_messages_in_flight = (int) region->window;
     limits.max_message_bytes = (int) region->max_message_bytes;
-    limits.receive_ring_bytes = (int) region->ring_bytes;
+    limits.receive_message_buffer_bytes = (int) region->ring_bytes;
 
     for ( int p = 0; p < packets; p++ )
     {

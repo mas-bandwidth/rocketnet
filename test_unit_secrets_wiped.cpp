@@ -112,7 +112,7 @@ static void secrets_wiped_reach_connection_request( struct rocketnet_client_prot
 
     uint8_t cookie[ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES];
     const uint8_t cookie_mac[ROCKETNET_COOKIE_MAC_BYTES] = { 0 };
-    rocketnet_write_connection_cookie_packet( cookie, client->filter_value, client->connection_salt, 0, cookie_mac );
+    rocketnet_write_connection_cookie_packet( cookie, client->packet_filter, client->connection_salt, 0, cookie_mac );
 
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
@@ -156,7 +156,7 @@ static void test_secrets_wiped_ephemeral_on_integrity_limit_from_connection_requ
     memset( session_nonce, 0x5A, sizeof(session_nonce) );
     uint8_t denied[ROCKETNET_RECEIVE_CEILING];
     const int denied_bytes = rocketnet_write_sealed_packet( denied, ROCKETNET_CONNECTION_DENIED_PACKET,
-                                                            client.filter_value, 1, session_nonce, NULL, 0,
+                                                            client.packet_filter, 1, session_nonce, NULL, 0,
                                                             client.signed_fields.protocol_id, client.connection_salt,
                                                             NULL, wrong_key );
     check( denied_bytes == ROCKETNET_CONNECTION_DENIED_WIRE_BYTES );

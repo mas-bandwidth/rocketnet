@@ -116,10 +116,10 @@ struct rs_packet_t
     uint64_t id;
     int bytes;
     uint8_t bytes_pad[16 - sizeof( uint64_t ) - sizeof( int )];                 // explicit: data starts 16-aligned
-    alignas( 16 ) uint8_t data[ROCKETNET_MAX_PAYLOAD_BYTES];
-    uint8_t tail_pad[16 - ROCKETNET_MAX_PAYLOAD_BYTES % 16];                     // explicit: the size rounds up to 16
+    alignas( 16 ) uint8_t data[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    uint8_t tail_pad[16 - ROCKETNET_MAX_PACKET_PAYLOAD_BYTES % 16];                     // explicit: the size rounds up to 16
 };
-static_assert( sizeof( rs_packet_t ) == 16 + ( ROCKETNET_MAX_PAYLOAD_BYTES + 15 ) / 16 * 16, "no implicit padding" );
+static_assert( sizeof( rs_packet_t ) == 16 + ( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 15 ) / 16 * 16, "no implicit padding" );
 static_assert( alignof( rs_packet_t ) == 16, "data is 16-aligned" );
 
 static void rs_send( rs_node_t * node, int type, const uint8_t * data, uint32_t bytes )
@@ -132,7 +132,7 @@ static void rs_send( rs_node_t * node, int type, const uint8_t * data, uint32_t 
 
 static int rs_write( rs_node_t * node, double now, rs_packet_t * packets, int capacity, uint64_t first_id )
 {
-    alignas( 16 ) uint8_t frames[8][ROCKETNET_MAX_PAYLOAD_BYTES];
+    alignas( 16 ) uint8_t frames[8][ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     uint8_t * pointers[8];
     check( capacity > 0 && capacity <= 8 );
     for ( int i = 0; i < capacity; i++ )
@@ -142,7 +142,7 @@ static int rs_write( rs_node_t * node, double now, rs_packet_t * packets, int ca
     {
         packets[i].id = first_id + (uint64_t) i;
         packets[i].bytes = (int) node->ordered.builder.packet[i].payload_bytes;
-        check( packets[i].bytes > 0 && packets[i].bytes <= ROCKETNET_MAX_PAYLOAD_BYTES );
+        check( packets[i].bytes > 0 && packets[i].bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
         memcpy( packets[i].data, frames[i], (size_t) packets[i].bytes );
         rn_ordered_commit( &node->ordered, i, packets[i].id, now );
     }

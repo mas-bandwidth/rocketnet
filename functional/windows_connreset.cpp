@@ -111,7 +111,7 @@ static struct rocketnet_client_transport_t * windows_connreset_client( const cha
 static void windows_connreset_client_tick( struct rocketnet_client_transport_t * client, double now, uint32_t sequence, bool send, uint64_t * sent, uint64_t * received )
 {
     rocketnet_client_transport_update( client, now );
-    uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     while ( rocketnet_client_transport_receive_packet( client, payload, (int) sizeof( payload ) ) > 0 )
     {
         if ( received )

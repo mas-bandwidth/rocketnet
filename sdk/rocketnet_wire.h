@@ -173,7 +173,7 @@ struct rocketnet_server_xdp_config_t
 {
     uint32_t public_address;                    // big endian; 0 = accept any destination address
     uint16_t public_port;                       // big endian
-    uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES];
+    uint8_t packet_filter[ROCKETNET_FILTER_VALUE_BYTES];
     uint8_t filter_epoch;                       // the only epoch this server accepts; 0 in 1.0
     uint8_t pad[5];                             // zero; fills offsets 11 to 15, up to the IPv6 destination
     uint8_t public_address_ipv6[16];            // network order; all zero = accept any IPv6 destination address

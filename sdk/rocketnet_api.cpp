@@ -64,9 +64,9 @@ uint32_t rocketnet_version( void )
 // every message field, one row each, in the order of rocketnet_message_config_t
 
 #define RN_PUBLIC_MESSAGE_FIELDS( X ) \
-    X( num_channels ) X( window_messages ) X( receive_ring_bytes ) X( max_message_bytes ) X( send_buffer_bytes ) \
+    X( num_channels ) X( reliable_messages_in_flight ) X( receive_message_buffer_bytes ) X( max_message_bytes ) X( send_message_buffer_bytes ) \
     X( send_queue_messages ) X( packets_in_flight ) X( packets_per_update ) X( unreliable_messages_per_update )      \
-    X( sequenced_holds ) X( receipt_ring ) X( resend_delay_initial_ms ) X( resend_delay_min_ms ) X( resend_delay_max_ms ) X( reliable_timeout_ms )
+    X( sequenced_messages_held ) X( max_message_receipts ) X( message_resend_delay_initial_ms ) X( message_resend_delay_min_ms ) X( message_resend_delay_max_ms ) X( reliable_message_timeout_ms )
 
 // the send budget fields: one int each, read under the endpoint's env name.
 // 0 is the directional default rate, ROCKETNET_SEND_KBPS_UNLIMITED is no
@@ -173,9 +173,9 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
     }
 
     rocketnet_client_transport_default_config_current( transport );
-    memcpy( transport->filter_value, config->filter_value, sizeof( transport->filter_value ) );
+    memcpy( transport->packet_filter, config->packet_filter, sizeof( transport->packet_filter ) );
     transport->max_payload_bytes = config->max_payload_bytes;
-    transport->num_reassembly_slots = config->num_reassembly_slots;
+    transport->max_fragmented_messages = config->max_fragmented_messages;
     if ( !rn_copy_config_string( transport->transport, sizeof( transport->transport ), config->transport, "auto", "client", "transport" ) )
     {
         if ( failure ) *failure = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
@@ -228,12 +228,12 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     rocketnet_server_transport_default_config_current( transport );
     transport->protocol_id = config->protocol_id;
     transport->max_clients = config->max_clients;
-    memcpy( transport->filter_value, config->filter_value, sizeof( transport->filter_value ) );
+    memcpy( transport->packet_filter, config->packet_filter, sizeof( transport->packet_filter ) );
     memcpy( transport->backend_public_key, config->backend_public_key, sizeof( transport->backend_public_key ) );
     transport->num_xdp_queues = config->num_xdp_queues;
     transport->num_os_cpus = config->num_os_cpus;
     transport->max_payload_bytes = config->max_payload_bytes;
-    transport->num_reassembly_slots = config->num_reassembly_slots;
+    transport->max_fragmented_messages = config->max_fragmented_messages;
     transport->max_timeout_seconds = config->max_timeout_seconds;
     transport->handshake_deadline_seconds = config->handshake_deadline_seconds;
     transport->simulated_loss_percent = config->simulated_loss_percent;
@@ -424,9 +424,9 @@ static void rn_client_default_config_current( struct rocketnet_client_config_t *
     config->config_bytes = sizeof( *config );
     struct rocketnet_client_transport_config_t transport;
     rocketnet_client_transport_default_config_current( &transport );
-    memcpy( config->filter_value, transport.filter_value, sizeof( config->filter_value ) );
+    memcpy( config->packet_filter, transport.packet_filter, sizeof( config->packet_filter ) );
     config->max_payload_bytes = transport.max_payload_bytes;
-    config->num_reassembly_slots = transport.num_reassembly_slots;
+    config->max_fragmented_messages = transport.max_fragmented_messages;
     config->transport = NULL;
     config->state_change_callback = transport.state_change_callback;
     config->time_callback = transport.time_callback;
@@ -516,7 +516,7 @@ static enum rocketnet_status_t rn_client_config_valid( const struct rocketnet_cl
     if ( !rocketnet_config_validate_public_link_simulator( "client", transport, fields, num_fields, rocketnet_public_link_simulator_development() ) )
         return ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
     const int requested_payload = transport->max_payload_bytes > 0 ? transport->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
-    const int requested_slots = transport->num_reassembly_slots > 0 ? transport->num_reassembly_slots : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
+    const int requested_slots = transport->max_fragmented_messages > 0 ? transport->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     if ( !rocketnet_reassembly_memory_allowed( 1, requested_slots, requested_payload, rocketnet_client_reassembly_delivered_capacity( requested_slots ) ) )
         return ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED;
     int num_available = 0;
@@ -1119,12 +1119,12 @@ static void rn_server_config_from_transport_current( struct rocketnet_server_con
     config->config_bytes = sizeof( *config );
     config->protocol_id = transport->protocol_id;
     config->max_clients = transport->max_clients;
-    memcpy( config->filter_value, transport->filter_value, sizeof( config->filter_value ) );
+    memcpy( config->packet_filter, transport->packet_filter, sizeof( config->packet_filter ) );
     memcpy( config->backend_public_key, transport->backend_public_key, sizeof( config->backend_public_key ) );
     config->num_xdp_queues = transport->num_xdp_queues;
     config->num_os_cpus = transport->num_os_cpus;
     config->max_payload_bytes = transport->max_payload_bytes;
-    config->num_reassembly_slots = transport->num_reassembly_slots;
+    config->max_fragmented_messages = transport->max_fragmented_messages;
     config->max_timeout_seconds = transport->max_timeout_seconds;
     config->handshake_deadline_seconds = transport->handshake_deadline_seconds;
     config->simulated_loss_percent = transport->simulated_loss_percent;
@@ -1198,7 +1198,7 @@ static enum rocketnet_status_t rn_server_config_valid( const struct rocketnet_se
     if ( !rocketnet_config_validate_public_link_simulator( "server", transport, fields, num_fields, rocketnet_public_link_simulator_development() ) )
         return ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
     const int requested_payload = transport->max_payload_bytes > 0 ? transport->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
-    const int requested_slots = transport->num_reassembly_slots > 0 ? transport->num_reassembly_slots : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
+    const int requested_slots = transport->max_fragmented_messages > 0 ? transport->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     const int requested_clients = transport->max_clients > 0 ? transport->max_clients : ROCKETNET_MAX_CLIENTS;
     if ( !rocketnet_reassembly_memory_allowed_delivered( requested_clients, requested_slots, requested_payload,
             rocketnet_server_reassembly_delivered_capacity( requested_clients, requested_slots ),

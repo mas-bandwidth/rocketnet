@@ -462,7 +462,7 @@ static uint8_t g_frame[ROCKETNET_FRAME_STRIDE];
 
 static void test_wire_bytes_match_the_transport()
 {
-    uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES] = { 1, 2, 3, 4 };
+    uint8_t packet_filter[ROCKETNET_FILTER_VALUE_BYTES] = { 1, 2, 3, 4 };
     uint8_t salt[ROCKETNET_CONNECTION_SALT_BYTES] = { 5, 6, 7, 8, 9, 10, 11, 12 };
     uint8_t test_key[32];
     for ( int i = 0; i < 32; i++ )
@@ -500,7 +500,7 @@ static void test_wire_bytes_match_the_transport()
             for ( int i = 0; i < payload_bytes; i++ )
                 payload[i] = (uint8_t) i;
 
-            const int sealed = rocketnet_write_sealed_payload_in_place( wire_start, filter_value, sequence,
+            const int sealed = rocketnet_write_sealed_payload_in_place( wire_start, packet_filter, sequence,
                                                                         ack_block, block_bytes, payload_bytes,
                                                                         0x1122334455667788ULL, salt, test_key );
             check( sealed > 0 );

@@ -215,9 +215,9 @@ static void test_standard_blocks_vectors()
     memset( &limits, 0, sizeof( limits ) );
     limits.num_channels = 4;
     limits.enabled_codes = 1u << ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED;
-    limits.window_messages = 16;
+    limits.reliable_messages_in_flight = 16;
     limits.max_message_bytes = 2304;
-    limits.receive_ring_bytes = 1168;
+    limits.receive_message_buffer_bytes = 1168;
 
     uint8_t first_payload[RN_STANDARD_VECTOR_MAX_BYTES];
     const int first_bytes = standard_blocks_ring_wrap( "m8.ring-wrap", first_payload, (int) sizeof( first_payload ) );

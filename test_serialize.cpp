@@ -65,7 +65,7 @@ int main()
     {
         serialize::WriteStream stream;
         struct rocketnet_packet_context_t context;
-        uint8_t * frame = rocketnet_client_transport_start_packet( client, ROCKETNET_MAX_PAYLOAD_BYTES, &context );
+        uint8_t * frame = rocketnet_client_transport_start_packet( client, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &context );
         check( frame != NULL );
         stream.Initialize( frame + context.payload_index, context.payload_capacity );
 
@@ -117,7 +117,7 @@ int main()
     {
         serialize::WriteStream stream;
         struct rocketnet_packet_context_t context;
-        uint8_t * frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PAYLOAD_BYTES, &context );
+        uint8_t * frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &context );
         check( frame != NULL );
         stream.Initialize( frame + context.payload_index, context.payload_capacity );
         check( stream.SerializeBits( 0xabad1dea, 32 ) );

@@ -125,14 +125,14 @@ static void test_sized_config_accepts_every_known_size()
         memset( &old_caller, 0xEE, sizeof( old_caller ) );      // past the old prefix is not the caller's memory
         memcpy( &old_caller, &defaults, older );
         old_caller.max_payload_bytes = 4096;
-        old_caller.num_reassembly_slots = 3;
+        old_caller.max_fragmented_messages = 3;
 
         struct rocketnet_client_transport_config_t read;
         memset( &read, 0, sizeof( read ) );
         check( rocketnet_config_read_sized( "rocketnet_client_transport_config_t", &read, &defaults, sizeof( defaults ), &old_caller, older, simulated_known, COUNT( simulated_known ) ) == 1 );
         check( read.max_payload_bytes == 4096 );
-        check( read.num_reassembly_slots == 3 );
-        check( memcmp( read.filter_value, defaults.filter_value, sizeof( read.filter_value ) ) == 0 );
+        check( read.max_fragmented_messages == 3 );
+        check( memcmp( read.packet_filter, defaults.packet_filter, sizeof( read.packet_filter ) ) == 0 );
         check( strcmp( read.transport, defaults.transport ) == 0 );
         check( read.state_change_callback == NULL );
         check( read.time_callback == NULL );
@@ -142,7 +142,7 @@ static void test_sized_config_accepts_every_known_size()
 
     {
         struct rocketnet_client_transport_config_t caller = defaults;
-        caller.num_reassembly_slots = 7;
+        caller.max_fragmented_messages = 7;
         struct rocketnet_client_transport_config_t read;
         memset( &read, 0, sizeof( read ) );
         check( rocketnet_config_read_sized( "rocketnet_client_transport_config_t", &read, &defaults, sizeof( defaults ), &caller, sizeof( caller ), simulated_known, COUNT( simulated_known ) ) == 1 );
@@ -201,7 +201,7 @@ static void test_sized_config_accepts_every_known_size()
 }
 
 // R6 (docs/CHANNELS.md 11.5) at the ABI boundary (docs/ABI-EVOLUTION.md 4):
-// a revision-1 caller's struct ends at reliable_timeout_ms, so reading it
+// a revision-1 caller's struct ends at reliable_message_timeout_ms, so reading it
 // yields the two send budget fields at their defaults, never the bytes past
 // the caller's prefix.
 static void test_sized_config_message_revision_1_reads_budget_defaults()
@@ -216,12 +216,12 @@ static void test_sized_config_message_revision_1_reads_budget_defaults()
     struct rocketnet_message_config_t old_caller;
     memset( &old_caller, 0xEE, sizeof( old_caller ) );          // past the old prefix is not the caller's memory
     memcpy( &old_caller, &defaults, ROCKETNET_MESSAGE_CONFIG_BYTES_1 );
-    old_caller.reliable_timeout_ms = 5000;
+    old_caller.reliable_message_timeout_ms = 5000;
 
     struct rocketnet_message_config_t read;
     memset( &read, 0xAB, sizeof( read ) );
     check( rocketnet_config_read_sized( "rocketnet_message_config_t", &read, &defaults, sizeof( defaults ), &old_caller, ROCKETNET_MESSAGE_CONFIG_BYTES_1, message_known_bytes, COUNT( message_known_bytes ) ) == 1 );
-    check( read.reliable_timeout_ms == 5000 );
+    check( read.reliable_message_timeout_ms == 5000 );
     check( read.client_send_kbps == 1000 );
     check( read.server_send_kbps == 10000 );
 }
@@ -276,7 +276,7 @@ static void test_sized_config_refuses_unknown_size()
     const size_t simulated_known[] = { older, client_current };
     {
         struct rocketnet_client_transport_config_t caller = defaults;
-        caller.num_reassembly_slots = 9;
+        caller.max_fragmented_messages = 9;
         const size_t refused[] = { older - 1, older + 1, client_current + 8 };
         for ( int i = 0; i < COUNT( refused ); i++ )
         {
@@ -428,7 +428,7 @@ static void test_sized_config_client_create_checks_the_config()
     SIZED_CONFIG_CLIENT_CREATE( (void) 0, true );
     SIZED_CONFIG_CLIENT_CREATE( c.transport = "portable", true );
     SIZED_CONFIG_CLIENT_CREATE( c.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, true );
-    SIZED_CONFIG_CLIENT_CREATE( c.num_reassembly_slots = ROCKETNET_MAX_FRAGMENTS, true );
+    SIZED_CONFIG_CLIENT_CREATE( c.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS, true );
     // a nonzero simulated value: accepted in the development posture,
     // refused in the production one (rocketnet_public_link_simulator_development)
     rocketnet_public_link_simulator_test_development( 1 );
@@ -440,8 +440,8 @@ static void test_sized_config_client_create_checks_the_config()
     // transport fields out of range: refused
     SIZED_CONFIG_CLIENT_CREATE( c.max_payload_bytes = -1, false );
     SIZED_CONFIG_CLIENT_CREATE( c.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES + 1, false );
-    SIZED_CONFIG_CLIENT_CREATE( c.num_reassembly_slots = -1, false );
-    SIZED_CONFIG_CLIENT_CREATE( c.num_reassembly_slots = ROCKETNET_MAX_FRAGMENTS + 1, false );
+    SIZED_CONFIG_CLIENT_CREATE( c.max_fragmented_messages = -1, false );
+    SIZED_CONFIG_CLIENT_CREATE( c.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS + 1, false );
 
     // negative or out-of-range simulated values: refused
     SIZED_CONFIG_CLIENT_CREATE( c.simulated_loss_percent = -1, false );
@@ -484,8 +484,8 @@ static void test_sized_config_server_create_checks_the_config()
     SIZED_CONFIG_SERVER_CREATE( c.num_os_cpus = 257, false );
     SIZED_CONFIG_SERVER_CREATE( c.max_payload_bytes = -1, false );
     SIZED_CONFIG_SERVER_CREATE( c.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES + 1, false );
-    SIZED_CONFIG_SERVER_CREATE( c.num_reassembly_slots = -1, false );
-    SIZED_CONFIG_SERVER_CREATE( c.num_reassembly_slots = ROCKETNET_MAX_FRAGMENTS + 1, false );
+    SIZED_CONFIG_SERVER_CREATE( c.max_fragmented_messages = -1, false );
+    SIZED_CONFIG_SERVER_CREATE( c.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS + 1, false );
     SIZED_CONFIG_SERVER_CREATE( c.max_timeout_seconds = 0, false );
     SIZED_CONFIG_SERVER_CREATE( c.max_timeout_seconds = 3601, false );
     SIZED_CONFIG_SERVER_CREATE( c.handshake_deadline_seconds = 0, false );
@@ -575,7 +575,7 @@ static void test_public_config_bytes_older_smaller_reads_the_prefix()
 
     // past the prefix, a value create would refuse if it read it
     client_config.num_channels = 0;
-    client_config.reliable_timeout_ms = -1;
+    client_config.reliable_message_timeout_ms = -1;
     client_config.transport = "loopback";
     enum rocketnet_status_t status = ROCKETNET_STATUS_COUNT;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
@@ -603,7 +603,7 @@ static void test_public_config_bytes_older_smaller_reads_the_prefix()
     memcpy( server_config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
     server_config.max_clients = 4;
     server_config.num_channels = 0;
-    server_config.reliable_timeout_ms = -1;
+    server_config.reliable_message_timeout_ms = -1;
     status = ROCKETNET_STATUS_COUNT;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &status );
     check( server != NULL );
@@ -695,6 +695,7 @@ static void test_public_config_bytes_newer_larger_ignores_the_tail()
 // controls included. Every case runs in memory: the loopback transport, step
 // driven, time from 1000.0, no socket and no clock.
 
+#if !ROCKETNET_DEVELOPMENT
 #define PUBLIC_CONFIG_PROTOCOL 0x0C0F16A11FEDULL
 
 struct public_config_identity_t
@@ -834,6 +835,7 @@ static void test_public_config_plain_create_applies_simulation()
     rocketnet_public_link_simulator_test_development( development ? 1 : 0 );
     rocketnet_quiet( 0 );
 }
+#endif // !ROCKETNET_DEVELOPMENT: a development build accepts what this checks is refused
 
 static void test_public_config_default_fills_every_field()
 {
@@ -890,7 +892,9 @@ static void test_public_config_default_fills_every_field()
 }
 
 
+#if !ROCKETNET_DEVELOPMENT
 REGISTER_UNIT_TEST( test_public_config_plain_create_applies_simulation );
+#endif // !ROCKETNET_DEVELOPMENT: a development build accepts what this checks is refused
 REGISTER_UNIT_TEST( test_public_config_default_fills_every_field );
 REGISTER_UNIT_TEST( test_sized_config_accepts_every_known_size );
 REGISTER_UNIT_TEST( test_sized_config_message_revision_1_reads_budget_defaults );

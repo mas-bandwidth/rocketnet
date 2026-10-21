@@ -83,7 +83,7 @@ void rocketnet_test_lifecycle_transport()
         rocketnet_server_transport_config_t config;
         rocketnet_server_transport_dev_config(&config);
         config.max_clients = 1000;
-        config.num_reassembly_slots = 256;
+        config.max_fragmented_messages = 256;
         config.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES;
         snprintf(config.transport, sizeof(config.transport), "%s", "portable");
         check(!rocketnet_server_transport_create(&state, "127.0.0.1", &config));

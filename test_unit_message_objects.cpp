@@ -53,8 +53,8 @@ struct mo_packet_t
     int bytes;
     // the padding to data and after it is written out, so the compiler adds none (MSVC C4324)
     uint8_t head_pad[16 - sizeof( uint64_t ) - sizeof( int )];
-    alignas( 16 ) uint8_t data[ROCKETNET_MAX_PAYLOAD_BYTES];
-    uint8_t tail_pad[( ROCKETNET_MAX_PAYLOAD_BYTES + 15 ) / 16 * 16 - ROCKETNET_MAX_PAYLOAD_BYTES];
+    alignas( 16 ) uint8_t data[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    uint8_t tail_pad[( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 15 ) / 16 * 16 - ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
 };
 
 struct mo_net_t;
@@ -66,7 +66,7 @@ struct mo_endpoint_t
     int slot;                                       // a client endpoint's slot on the server
 
     // send: frames handed out by start_packet, finished into `outbound`
-    alignas( 16 ) uint8_t frames[MO_MAX_FRAMES][MO_PAYLOAD_INDEX + ROCKETNET_MAX_PAYLOAD_BYTES];
+    alignas( 16 ) uint8_t frames[MO_MAX_FRAMES][MO_PAYLOAD_INDEX + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     bool frame_used[MO_MAX_FRAMES];
     uint64_t frame_id[MO_MAX_FRAMES];
     int frame_slot[MO_MAX_FRAMES];
@@ -243,7 +243,7 @@ static uint8_t * mo_start_packet( void * transport, int client_index, int reques
 {
     mo_endpoint_t * e = (mo_endpoint_t *) transport;
     memset( context, 0, sizeof( *context ) );
-    if ( request_bytes < 1 || request_bytes > ROCKETNET_MAX_PAYLOAD_BYTES || e->net->refuse_start )
+    if ( request_bytes < 1 || request_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES || e->net->refuse_start )
         return NULL;
     if ( e->is_server ? e->net->slot_connection[client_index] == 0 : !e->connected )
         return NULL;
@@ -256,7 +256,7 @@ static uint8_t * mo_start_packet( void * transport, int client_index, int reques
         e->frame_slot[f] = e->is_server ? client_index : e->slot;
         context->frame = e->frames[f];
         context->payload_index = MO_PAYLOAD_INDEX;
-        context->payload_capacity = ROCKETNET_MAX_PAYLOAD_BYTES;
+        context->payload_capacity = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
         context->packet_id = e->frame_id[f];
         context->client_index = client_index;
         return e->frames[f];
@@ -277,7 +277,7 @@ static int mo_finish_packet( void * transport, rocketnet_packet_context_t * cont
     mo_endpoint_t * e = (mo_endpoint_t *) transport;
     const int f = mo_frame_of( e, context );
     check( f >= 0 );
-    check( payload_bytes >= 1 && payload_bytes <= ROCKETNET_MAX_PAYLOAD_BYTES );
+    check( payload_bytes >= 1 && payload_bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
     e->frame_used[f] = false;
     if ( e->net->fail_finish > 0 )
     {
@@ -396,18 +396,18 @@ static void mo_config( rocketnet_message_config_t * config )
 {
     rocketnet_message_default_config( config );
     config->num_channels = 4;
-    config->window_messages = 64;
-    config->receive_ring_bytes = 65536;
+    config->reliable_messages_in_flight = 64;
+    config->receive_message_buffer_bytes = 65536;
     config->max_message_bytes = 16384;
-    config->send_buffer_bytes = 65536;
+    config->send_message_buffer_bytes = 65536;
     config->send_queue_messages = 64;
     config->packets_in_flight = 64;
     config->packets_per_update = 8;
     config->unreliable_messages_per_update = 64;
-    config->resend_delay_initial_ms = 100;
-    config->resend_delay_min_ms = 20;
-    config->resend_delay_max_ms = 400;
-    config->reliable_timeout_ms = 120000;
+    config->message_resend_delay_initial_ms = 100;
+    config->message_resend_delay_min_ms = 20;
+    config->message_resend_delay_max_ms = 400;
+    config->reliable_message_timeout_ms = 120000;
 }
 
 // the clock every case starts at: never 0.0, so a time field left at zero
@@ -1075,7 +1075,7 @@ static void mo_small_config( rocketnet_message_config_t * config )
 {
     mo_config( config );
     config->max_message_bytes = 3 * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
-    config->send_buffer_bytes = 12288;
+    config->send_message_buffer_bytes = 12288;
     config->send_queue_messages = 16;
 }
 
@@ -2113,7 +2113,7 @@ static void test_unreliable_past_limit_promotes_counted_and_not_wedged()
     rocketnet_message_client_t * client = pair.clients[0];
     const rocketnet_counters_t * counters = rocketnet_message_client_counters( client );
     const int limit = (int) client->object.unreliable_limit;
-    check( limit > 1000 && limit < ROCKETNET_MAX_PAYLOAD_BYTES );
+    check( limit > 1000 && limit < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
 
     static uint8_t message[16384];
     mo_fill( message, 1, (uint32_t) limit );
@@ -2404,7 +2404,7 @@ static void mo_room_capture( void * context, enum rocketnet_log_level_t level, c
         mo_room_crossings++;
     if ( strstr( line, "exhausted" ) )
         mo_room_exhausted++;
-    if ( strstr( line, mo_room_name ) && strstr( line, "send_buffer_bytes" ) && strstr( line, "send_queue_messages" ) && strstr( line, " of " ) )
+    if ( strstr( line, mo_room_name ) && strstr( line, "send_message_buffer_bytes" ) && strstr( line, "send_queue_messages" ) && strstr( line, " of " ) )
         mo_room_named++;
 }
 
@@ -3048,7 +3048,7 @@ static void test_same_client_id_reconnect_in_one_update_resets_the_slot()
     // the slot started clean and B received the server's CONFIG: the exchange
     // runs from 0 in order, and B is still connected after the CONFIG wait
     check( reconnect_exchange( &world, 1, 0xB2, 3 ) );
-    const double until = world.time + (double) server_config.reliable_timeout_ms / 1000.0 + 1.0;
+    const double until = world.time + (double) server_config.reliable_message_timeout_ms / 1000.0 + 1.0;
     while ( world.time < until && rocketnet_client_state( world.clients[1] ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         reconnect_pump( &world, 0.05 );
     check( rocketnet_client_state( world.clients[1] ) == ROCKETNET_CLIENT_STATE_CONNECTED );

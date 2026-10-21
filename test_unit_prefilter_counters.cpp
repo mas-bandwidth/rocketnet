@@ -507,9 +507,9 @@ static pcapng_file_result_t pcapng_replay_file( const std::string & path )
     rocketnet_message_default_config( &config );
     replay.limits.num_channels = config.num_channels;
     replay.limits.enabled_codes = rocketnet_message_enabled_codes( ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION );
-    replay.limits.window_messages = config.window_messages;
+    replay.limits.reliable_messages_in_flight = config.reliable_messages_in_flight;
     replay.limits.max_message_bytes = config.max_message_bytes;
-    replay.limits.receive_ring_bytes = config.receive_ring_bytes;
+    replay.limits.receive_message_buffer_bytes = config.receive_message_buffer_bytes;
 
     // time comes from the file, never before the test clock's start
     for ( size_t i = 0; i < packets.size(); i++ )

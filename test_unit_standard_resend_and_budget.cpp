@@ -181,7 +181,7 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
             const int written = request > 0 ? rn_endpoint_write_packet( &endpoint, frame, (int) sizeof( frame ), 1, 1000.0 ) : 0;
             if ( written > 0 )
                 rn_endpoint_packet_sent( &endpoint, 1, written + 26, 1000.0 );
-            out[n++] = (uint8_t) ( written > ROCKETNET_MAX_PAYLOAD_BYTES );
+            out[n++] = (uint8_t) ( written > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
             out[n++] = (uint8_t) ( endpoint.unreliable_count == 0 );
             out[n++] = (uint8_t) ( endpoint.budget.bytes_spent == 0 );
             out[n++] = (uint8_t) ( endpoint.budget.unreliable_dropped == 0 );

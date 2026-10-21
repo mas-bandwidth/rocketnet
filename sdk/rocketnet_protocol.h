@@ -20,7 +20,7 @@
 
 #include "rocketnet_wire.h"
 
-void rocketnet_write_prefilter_header( uint8_t ** p, uint8_t packet_type, const uint8_t * filter_value );
+void rocketnet_write_prefilter_header( uint8_t ** p, uint8_t packet_type, const uint8_t * packet_filter );
 
 // The keyed filter value, from STANDARD.md "The keyed filter value":
 // SipHash-2-4 under the 16-byte magic over the 7-byte input of packet type,
@@ -49,7 +49,7 @@ void rocketnet_keyed_filter_value( const uint8_t * magic,
 #define ROCKETNET_PREFILTER_WRONG_EPOCH     -3
 #define ROCKETNET_PREFILTER_WRONG_VALUE     -4
 
-int rocketnet_prefilter_check( const uint8_t * packet_data, int packet_bytes, const uint8_t * filter_value );
+int rocketnet_prefilter_check( const uint8_t * packet_data, int packet_bytes, const uint8_t * packet_filter );
 
 int rocketnet_prefilter_counter( int refusal_code );
 
@@ -94,7 +94,7 @@ int rocketnet_write_packet_associated_data( uint8_t * associated_data,
 // room.
 
 int rocketnet_write_sealed_payload_in_place( uint8_t * wire_start,
-                                             const uint8_t * filter_value,
+                                             const uint8_t * packet_filter,
                                              uint64_t sequence,
                                              const uint8_t * ack_block,
                                              int ack_block_bytes,
@@ -105,7 +105,7 @@ int rocketnet_write_sealed_payload_in_place( uint8_t * wire_start,
 
 int rocketnet_write_sealed_packet( uint8_t * packet_data,
                                    uint8_t packet_type,
-                                   const uint8_t * filter_value,
+                                   const uint8_t * packet_filter,
                                    uint64_t sequence,
                                    const uint8_t * session_nonce,
                                    const uint8_t * data,
@@ -137,7 +137,7 @@ int rocketnet_open_sealed_packet( uint8_t * out_data,
 // the two unsealed packets
 
 void rocketnet_write_connection_request_packet( uint8_t * packet_data,
-                                                const uint8_t * filter_value,
+                                                const uint8_t * packet_filter,
                                                 const uint8_t * return_cookie,        // 24 bytes, or NULL for all zero
                                                 const uint8_t * connection_salt,
                                                 const uint8_t * client_ephemeral_public_key,
@@ -145,7 +145,7 @@ void rocketnet_write_connection_request_packet( uint8_t * packet_data,
                                                 const uint8_t * signature );
 
 void rocketnet_write_connection_cookie_packet( uint8_t * packet_data,
-                                               const uint8_t * filter_value,
+                                               const uint8_t * packet_filter,
                                                const uint8_t * connection_salt,
                                                uint64_t cookie_expire_timestamp,
                                                const uint8_t * cookie_mac );

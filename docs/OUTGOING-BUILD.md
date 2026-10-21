@@ -12,7 +12,7 @@ sender size rules_.
 
 A message is UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT,
 and it _fits_ when its whole payload, every message header and the form byte
-included, is at most one wire frame (`ROCKETNET_MAX_PAYLOAD_BYTES`, 1416):
+included, is at most one wire frame (`ROCKETNET_MAX_PACKET_PAYLOAD_BYTES`, 1416):
 
 | type | form | header in front of the data | fits when `bytes` is at most |
 |------|------|-----------------------------|------------------------------|

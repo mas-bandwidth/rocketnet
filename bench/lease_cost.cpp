@@ -150,7 +150,7 @@ int main(int argc, char ** argv)
         CHECK(live_bytes.load() == 0);
         return 1;
     }
-    const int batch_size = payload_bytes <= ROCKETNET_MAX_PAYLOAD_BYTES ? 64 : 16;
+    const int batch_size = payload_bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? 64 : 16;
     std::atomic<uint64_t> committed{0}, accessed{0};
     double elapsed_ns = 0;
     uint64_t received = 0;

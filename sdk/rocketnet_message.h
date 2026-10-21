@@ -59,7 +59,7 @@
 // the largest message the SINGLE form carries in one wire frame: the payload
 // capacity less the one form byte (CHANNELS.md 12)
 
-#define ROCKETNET_MESSAGE_SINGLE_BYTES                      ( ROCKETNET_MAX_PAYLOAD_BYTES - 1 )
+#define ROCKETNET_MESSAGE_SINGLE_BYTES                      ( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 )
 
 // the block stride F, a wire constant and a multiple of 16 (CHANNELS.md 8)
 
@@ -201,9 +201,9 @@ struct rocketnet_message_limits_t
 {
     int num_channels;               // 1 to 65536
     uint32_t enabled_codes;         // bit c set: wire code c is accepted on an application record
-    int window_messages;            // W
+    int reliable_messages_in_flight;            // W
     int max_message_bytes;
-    int receive_ring_bytes;         // B, a multiple of 16
+    int receive_message_buffer_bytes;         // B, a multiple of 16
 };
 
 // The wire codes a mask of enabled reliabilities (bit r = reliability r, the
@@ -256,8 +256,8 @@ struct rocketnet_message_config_body_t
     uint32_t version;
     uint32_t enabled;               // bit r set: reliability r may be sent by the application
     uint32_t num_channels;
-    uint32_t window_messages;
-    uint32_t receive_ring_bytes;
+    uint32_t reliable_messages_in_flight;
+    uint32_t receive_message_buffer_bytes;
     uint32_t max_message_bytes;
     uint32_t fragment_bytes;
 };

@@ -1105,14 +1105,14 @@ void live_message_matrix_loopback()
     // sized so nothing is dropped for want of room
     rocketnet_message_default_config( &m->message_config );
     m->message_config.num_channels = LIVE_MATRIX_CHANNELS;
-    m->message_config.send_buffer_bytes = 128 * 1024 * 1024;
+    m->message_config.send_message_buffer_bytes = 128 * 1024 * 1024;
     m->message_config.send_queue_messages = 16384;
     m->message_config.packets_in_flight = 2048;
     m->message_config.packets_per_update = 64;
     m->message_config.unreliable_messages_per_update = 8192;
-    m->message_config.receipt_ring = 4096;
-    m->message_config.window_messages = 4096;
-    m->message_config.receive_ring_bytes = 1 << 20;
+    m->message_config.max_message_receipts = 4096;
+    m->message_config.reliable_messages_in_flight = 4096;
+    m->message_config.receive_message_buffer_bytes = 1 << 20;
 
     m->live.seed = 0x5EED0001u;
     m->live.max_message_bytes = (uint32_t) m->message_config.max_message_bytes;

@@ -82,7 +82,7 @@ static void token_time_setup( struct token_time_server_t * t )
     memset( t, 0, sizeof(*t) );
     struct rocketnet_server_protocol_t * server = &t->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
-    memcpy( server->filter_value, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( server->packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server->backend_public_key, rocketnet_test_backend_public_key, 32 );
     memcpy( server->server_public_key, rocketnet_test_server_public_key, 32 );
     memcpy( server->server_secret_key, rocketnet_test_server_secret_key, 32 );

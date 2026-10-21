@@ -197,7 +197,7 @@ static void windows_socket_errors_tick( windows_socket_errors_session_t * sessio
 {
     const double now = rocketnet_platform_time();
     session->sequence++;
-    uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
 
     rocketnet_client_transport_update( session->client, now );
     while ( rocketnet_client_transport_receive_packet( session->client, payload, (int) sizeof( payload ) ) > 0 )

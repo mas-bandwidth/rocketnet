@@ -210,7 +210,7 @@ REGISTER_UNIT_TEST( test_sequence_burn_receiver_block_skips_unopened );
 #define BURN_SETTLE_ROUNDS 30
 #define BURN_REFUSALS_PER_ROUND 3
 #define BURN_SMALL_BYTES 32
-#define BURN_ARENA_REQUEST ( ROCKETNET_MAX_PAYLOAD_BYTES + 600 )
+#define BURN_ARENA_REQUEST ( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 600 )
 
 enum sequence_burn_side_t { BURN_SIDE_SERVER = 0, BURN_SIDE_CLIENT = 1 };
 enum sequence_burn_kind_t { BURN_KIND_RING = 0, BURN_KIND_ARENA = 1 };
@@ -681,7 +681,7 @@ REGISTER_UNIT_TEST( test_sequence_burn_server_unreserved_fragment_finish_does_no
 // The message layer on the same loopback pair, default message config. Each
 // round the burning side sends one 8-byte reliable ordered message, and every
 // fourth round a 3,000-byte reliable ordered message (fragmented into
-// ROCKETNET_MAX_PAYLOAD_BYTES packets by the message layer). In the burn run,
+// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES packets by the message layer). In the burn run,
 // in each of those fourth rounds the first start_packet the message layer
 // makes finds the transport's payload ring full: the test's seam (the
 // object's link.start_packet, the one transport call the layer starts frames

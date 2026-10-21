@@ -79,7 +79,7 @@ int main(int argc, char ** argv)
     snprintf(config.transport, sizeof(config.transport), "%s", transport);
     config.max_clients = number(argv[1]);
     config.max_payload_bytes = number(argv[2]);
-    config.num_reassembly_slots = number(argv[3]);
+    config.max_fragmented_messages = number(argv[3]);
     config.num_xdp_queues = argc >= 6 ? number(argv[5]) : 0;
     rocketnet_server_memory_plan_t plan;
     if (!rocketnet_server_transport_memory_plan(&config, transport, plan))
@@ -88,7 +88,7 @@ int main(int argc, char ** argv)
         "\"planned_bytes\":%llu,\"transport_bytes\":%llu,\"protocol_bytes\":%llu,\"reassembly_bytes\":%llu,"
         "\"send_arena_bytes\":%llu,\"transport_allocator_bytes\":%llu,\"umem_bytes\":%llu,"
         "\"worker_threads\":%d,\"sockets\":%d,\"os_and_application_bytes\":null}\n",
-        transport, config.max_clients, config.max_payload_bytes, config.num_reassembly_slots,
+        transport, config.max_clients, config.max_payload_bytes, config.max_fragmented_messages,
         (unsigned long long)plan.total_bytes, (unsigned long long)plan.transport_bytes,
         (unsigned long long)plan.protocol_bytes, (unsigned long long)plan.reassembly_bytes,
         (unsigned long long)plan.send_arena_bytes, (unsigned long long)plan.transport_bytes,

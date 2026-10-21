@@ -352,10 +352,10 @@ void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_regi
     memset( ack, 0, sizeof(*ack) );
     ack->send = send;
     ack->region = region;
-    ack->resend_delay_initial = (double) config->resend_delay_initial_ms / 1000.0;
-    ack->resend_delay_min = (double) config->resend_delay_min_ms / 1000.0;
-    ack->resend_delay_max = (double) config->resend_delay_max_ms / 1000.0;
-    ack->reliable_timeout = (double) config->reliable_timeout_ms / 1000.0;
+    ack->resend_delay_initial = (double) config->message_resend_delay_initial_ms / 1000.0;
+    ack->resend_delay_min = (double) config->message_resend_delay_min_ms / 1000.0;
+    ack->resend_delay_max = (double) config->message_resend_delay_max_ms / 1000.0;
+    ack->reliable_timeout = (double) config->reliable_message_timeout_ms / 1000.0;
 
     ack->srtt = 0.0;
     ack->rttvar = 0.0;

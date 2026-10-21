@@ -139,13 +139,13 @@
 
 /// ( ( 1452 - 26 - 7 ) / 8 ) * 8
 
-#define ROCKETNET_MAX_PAYLOAD_BYTES                        1416
+#define ROCKETNET_MAX_PACKET_PAYLOAD_BYTES                 1416
 
 /// Unreliable messages larger than this are split across packets and sent reliably.
 
 #define ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES             1411
 
-/// Payloads above ROCKETNET_MAX_PAYLOAD_BYTES fragment transparently, and a
+/// Payloads above ROCKETNET_MAX_PACKET_PAYLOAD_BYTES fragment transparently, and a
 /// lost fragment loses the whole payload; the config's max_payload_bytes bounds
 /// both what this end fragments and what it reassembles, up to 305,408 bytes.
 
@@ -483,7 +483,7 @@ enum rocketnet_disconnect_reason_t
 
     ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION              = -2,
 
-    /// A reliable message went unacknowledged past reliable_timeout_ms
+    /// A reliable message went unacknowledged past reliable_message_timeout_ms
 
     ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT                = -3,
 
@@ -527,7 +527,7 @@ enum rocketnet_client_state_t
 
     ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION               = -10,
 
-    /// A reliable message went unacknowledged past reliable_timeout_ms
+    /// A reliable message went unacknowledged past reliable_message_timeout_ms
 
     ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT               = -9,
 
@@ -1075,7 +1075,7 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_allocator( void * (*malloc_fu
 /// The message fields marked WIRE must be identical on both ends; the
 /// connection verifies them. Create checks each field's range below and that
 /// the message fields agree with each other (max_message_bytes at most
-/// receive_ring_bytes, and the like), and logs the rule a refusal broke.
+/// receive_message_buffer_bytes, and the like), and logs the rule a refusal broke.
 ///
 /// Create copies every string it is given, so the strings need to live only
 /// for the call.
@@ -1119,21 +1119,21 @@ struct rocketnet_client_config_t
 
     double (*time_callback)( void * context );
 
-    /// ROCKETNET_CLIENT_FILTER_VALUE: the per-title packet filter, as the server's
+    /// ROCKETNET_CLIENT_PACKET_FILTER: the per-title packet filter, as the server's
 
-    uint8_t filter_value[4];
+    uint8_t packet_filter[4];
 
     /// ROCKETNET_CLIENT_STEP_DRIVEN: nonzero (env 1) runs the client I/O step inside update and send_packets on the caller's thread, with no I/O thread; 0 (the default) keeps the I/O thread
 
     int step_driven;
 
-    /// ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES: ROCKETNET_MAX_PAYLOAD_BYTES .. 305,408; 0 is the default, 16384
+    /// ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES: ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. 305,408; 0 is the default, 16384
 
     int max_payload_bytes;
 
-    /// ROCKETNET_CLIENT_NUM_REASSEMBLY_SLOTS: 1 .. 256; 0 is the default, 8
+    /// ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES: 1 .. 256; 0 is the default, 8
 
-    int num_reassembly_slots;
+    int max_fragmented_messages;
 
     /// ROCKETNET_CLIENT_SEND_KBPS: the send budget, kbps; the starting rate of each connection; 0 is the default, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS (1000); ROCKETNET_SEND_KBPS_UNLIMITED is no send budget; 1 .. ROCKETNET_SEND_KBPS_UNLIMITED - 1 is that budget; negative is refused with ROCKETNET_STATUS_INVALID_ARGUMENT
 
@@ -1143,21 +1143,21 @@ struct rocketnet_client_config_t
 
     int num_channels;
 
-    /// ROCKETNET_CLIENT_WINDOW_MESSAGES: reliable messages in flight per channel set; WIRE, power of two; 64 .. 1 << 20; default 1024
+    /// ROCKETNET_CLIENT_RELIABLE_MESSAGES_IN_FLIGHT: reliable messages in flight per channel set; WIRE, power of two; 64 .. 1 << 20; default 1024
 
-    int window_messages;
+    int reliable_messages_in_flight;
 
-    /// ROCKETNET_CLIENT_RECEIVE_RING_BYTES: the receive ring for reassembled messages; WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
+    /// ROCKETNET_CLIENT_RECEIVE_MESSAGE_BUFFER_BYTES: the receive ring for reassembled messages; WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
 
-    int receive_ring_bytes;
+    int receive_message_buffer_bytes;
 
-    /// ROCKETNET_CLIENT_MAX_MESSAGE_BYTES: the largest message; WIRE, <= receive_ring_bytes; 1415 .. 1 << 20; default 262144
+    /// ROCKETNET_CLIENT_MAX_MESSAGE_BYTES: the largest message; WIRE, <= receive_message_buffer_bytes; 1415 .. 1 << 20; default 262144
 
     int max_message_bytes;
 
-    /// ROCKETNET_CLIENT_SEND_BUFFER_BYTES: queued message bytes; 12288 .. 1 << 28; default 800000
+    /// ROCKETNET_CLIENT_SEND_MESSAGE_BUFFER_BYTES: queued message bytes; 12288 .. 1 << 28; default 800000
 
-    int send_buffer_bytes;
+    int send_message_buffer_bytes;
 
     /// ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES: queued messages; 16 .. 1 << 20; default 1024
 
@@ -1175,29 +1175,29 @@ struct rocketnet_client_config_t
 
     int unreliable_messages_per_update;
 
-    /// ROCKETNET_CLIENT_SEQUENCED_HOLDS: sequenced messages held for order; 0 .. 4096; default 16
+    /// ROCKETNET_CLIENT_SEQUENCED_MESSAGES_HELD: sequenced messages held for order; 0 .. 4096; default 16
 
-    int sequenced_holds;
+    int sequenced_messages_held;
 
-    /// ROCKETNET_CLIENT_RECEIPT_RING: receipt outcomes held for rocketnet_client_receipts; a full ring drops its oldest, counted in receipts_dropped; 16 .. 1 << 16; default 256
+    /// ROCKETNET_CLIENT_MAX_MESSAGE_RECEIPTS: receipt outcomes held for rocketnet_client_receipts; a full ring drops its oldest, counted in receipts_dropped; 16 .. 1 << 16; default 256
 
-    int receipt_ring;
+    int max_message_receipts;
 
-    /// ROCKETNET_CLIENT_RESEND_DELAY_INITIAL_MS: the initial resend delay before an rtt sample, milliseconds; 10 .. 60000; default 2000
+    /// ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_INITIAL_MS: the initial resend delay before an rtt sample, milliseconds; 10 .. 60000; default 2000
 
-    int resend_delay_initial_ms;
+    int message_resend_delay_initial_ms;
 
-    /// ROCKETNET_CLIENT_RESEND_DELAY_MIN_MS: optional sampled resend delay floor in milliseconds; 0 disables it; 0 .. 60000; default 0
+    /// ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MIN_MS: optional sampled resend delay floor in milliseconds; 0 disables it; 0 .. 60000; default 0
 
-    int resend_delay_min_ms;
+    int message_resend_delay_min_ms;
 
-    /// ROCKETNET_CLIENT_RESEND_DELAY_MAX_MS: the maximum resend delay, milliseconds; 10 .. 60000; default 2000
+    /// ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MAX_MS: the maximum resend delay, milliseconds; 10 .. 60000; default 2000
 
-    int resend_delay_max_ms;
+    int message_resend_delay_max_ms;
 
-    /// ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
+    /// ROCKETNET_CLIENT_RELIABLE_MESSAGE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
 
-    int reliable_timeout_ms;
+    int reliable_message_timeout_ms;
 
     /// Simulated link conditions: development only. A release library refuses nonzero simulated_* fields with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE.
 
@@ -1256,9 +1256,9 @@ struct rocketnet_server_config_t
 
     int max_clients;
 
-    /// ROCKETNET_SERVER_FILTER_VALUE: the per-title packet filter, as the clients'
+    /// ROCKETNET_SERVER_PACKET_FILTER: the per-title packet filter, as the clients'
 
-    uint8_t filter_value[4];
+    uint8_t packet_filter[4];
 
     /// ROCKETNET_SERVER_BACKEND_PUBLIC_KEY: the backend's public key, the server's one configured key; required, start refuses all zeros (ROCKETNET_STATUS_MISSING_KEYS)
 
@@ -1272,13 +1272,13 @@ struct rocketnet_server_config_t
 
     int num_os_cpus;
 
-    /// ROCKETNET_SERVER_MAX_PAYLOAD_BYTES: ROCKETNET_MAX_PAYLOAD_BYTES .. 305,408; 0 is the default, 16384
+    /// ROCKETNET_SERVER_MAX_PAYLOAD_BYTES: ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. 305,408; 0 is the default, 16384
 
     int max_payload_bytes;
 
-    /// ROCKETNET_SERVER_NUM_REASSEMBLY_SLOTS: per client; 1 .. 256; 0 is the default, 8
+    /// ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES: per client; 1 .. 256; 0 is the default, 8
 
-    int num_reassembly_slots;
+    int max_fragmented_messages;
 
     /// ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS: 1 .. 3600; default 60
 
@@ -1304,21 +1304,21 @@ struct rocketnet_server_config_t
 
     int num_channels;
 
-    /// ROCKETNET_SERVER_WINDOW_MESSAGES: reliable messages in flight per channel set; WIRE, power of two; 64 .. 1 << 20; default 1024
+    /// ROCKETNET_SERVER_RELIABLE_MESSAGES_IN_FLIGHT: reliable messages in flight per channel set; WIRE, power of two; 64 .. 1 << 20; default 1024
 
-    int window_messages;
+    int reliable_messages_in_flight;
 
-    /// ROCKETNET_SERVER_RECEIVE_RING_BYTES: the receive ring for reassembled messages; WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
+    /// ROCKETNET_SERVER_RECEIVE_MESSAGE_BUFFER_BYTES: the receive ring for reassembled messages; WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
 
-    int receive_ring_bytes;
+    int receive_message_buffer_bytes;
 
-    /// ROCKETNET_SERVER_MAX_MESSAGE_BYTES: the largest message; WIRE, <= receive_ring_bytes; 1415 .. 1 << 20; default 262144
+    /// ROCKETNET_SERVER_MAX_MESSAGE_BYTES: the largest message; WIRE, <= receive_message_buffer_bytes; 1415 .. 1 << 20; default 262144
 
     int max_message_bytes;
 
-    /// ROCKETNET_SERVER_SEND_BUFFER_BYTES: queued message bytes; per client; 12288 .. 1 << 28; default 800000
+    /// ROCKETNET_SERVER_SEND_MESSAGE_BUFFER_BYTES: queued message bytes; per client; 12288 .. 1 << 28; default 800000
 
-    int send_buffer_bytes;
+    int send_message_buffer_bytes;
 
     /// ROCKETNET_SERVER_SEND_QUEUE_MESSAGES: queued messages; per client; 16 .. 1 << 20; default 1024
 
@@ -1336,29 +1336,29 @@ struct rocketnet_server_config_t
 
     int unreliable_messages_per_update;
 
-    /// ROCKETNET_SERVER_SEQUENCED_HOLDS: sequenced messages held for order; 0 .. 4096; default 16
+    /// ROCKETNET_SERVER_SEQUENCED_MESSAGES_HELD: sequenced messages held for order; 0 .. 4096; default 16
 
-    int sequenced_holds;
+    int sequenced_messages_held;
 
-    /// ROCKETNET_SERVER_RECEIPT_RING: receipt outcomes held per client for rocketnet_server_receipts; a full ring drops its oldest, counted in receipts_dropped; per client; 16 .. 1 << 16; default 256
+    /// ROCKETNET_SERVER_MAX_MESSAGE_RECEIPTS: receipt outcomes held per client for rocketnet_server_receipts; a full ring drops its oldest, counted in receipts_dropped; per client; 16 .. 1 << 16; default 256
 
-    int receipt_ring;
+    int max_message_receipts;
 
-    /// ROCKETNET_SERVER_RESEND_DELAY_INITIAL_MS: the initial resend delay before an rtt sample, milliseconds; 10 .. 60000; default 2000
+    /// ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_INITIAL_MS: the initial resend delay before an rtt sample, milliseconds; 10 .. 60000; default 2000
 
-    int resend_delay_initial_ms;
+    int message_resend_delay_initial_ms;
 
-    /// ROCKETNET_SERVER_RESEND_DELAY_MIN_MS: optional sampled resend delay floor in milliseconds; 0 disables it; 0 .. 60000; default 0
+    /// ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MIN_MS: optional sampled resend delay floor in milliseconds; 0 disables it; 0 .. 60000; default 0
 
-    int resend_delay_min_ms;
+    int message_resend_delay_min_ms;
 
-    /// ROCKETNET_SERVER_RESEND_DELAY_MAX_MS: the maximum resend delay, milliseconds; 10 .. 60000; default 2000
+    /// ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MAX_MS: the maximum resend delay, milliseconds; 10 .. 60000; default 2000
 
-    int resend_delay_max_ms;
+    int message_resend_delay_max_ms;
 
-    /// ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
+    /// ROCKETNET_SERVER_RELIABLE_MESSAGE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
 
-    int reliable_timeout_ms;
+    int reliable_message_timeout_ms;
 
     /// Simulated link conditions: development only. A release library refuses nonzero simulated_* fields with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE.
 

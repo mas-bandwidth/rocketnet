@@ -21,8 +21,8 @@ void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * cli
     rocketnet_assert( client );
 
     const int terminal_state = client->state;
-    uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES];
-    memcpy( filter_value, client->filter_value, sizeof(filter_value) );
+    uint8_t packet_filter[ROCKETNET_FILTER_VALUE_BYTES];
+    memcpy( packet_filter, client->packet_filter, sizeof(packet_filter) );
     const double send_rate = client->send_rate;
     struct rocketnet_counters_t * counters = client->counters;
     struct rocketnet_reassembly_set_t * reassembly = client->reassembly;
@@ -41,7 +41,7 @@ void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * cli
     sodium_memzero( client->session_nonce, sizeof(client->session_nonce) );
     memset( client, 0, sizeof(*client) );
 
-    memcpy( client->filter_value, filter_value, sizeof(filter_value) );
+    memcpy( client->packet_filter, packet_filter, sizeof(packet_filter) );
     client->send_rate = send_rate;
     client->counters = counters;
     client->state = terminal_state;

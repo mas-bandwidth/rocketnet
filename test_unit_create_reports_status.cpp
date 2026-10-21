@@ -343,7 +343,7 @@ static void test_create_reports_status_config_refusals()
     // server trigger (max clients x max slots) the transport case proves
     create_status_dev_server_config( &server_config );
     server_config.max_clients = ROCKETNET_MAX_CLIENTS;
-    server_config.num_reassembly_slots = 256;
+    server_config.max_fragmented_messages = 256;
     status = ROCKETNET_STATUS_OK;
     check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, &status ) == NULL );
     check( status == ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED );
@@ -356,7 +356,7 @@ static void test_create_reports_status_config_refusals()
     // The server case above proves the code; here the largest client
     // geometry creates.
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
-    client_config.num_reassembly_slots = 256;
+    client_config.max_fragmented_messages = 256;
     client_config.max_payload_bytes = 305408;
     status = ROCKETNET_STATUS_COUNT;
     struct rocketnet_client_t * budget_client = rocketnet_client_create( NULL, &client_config, &status );

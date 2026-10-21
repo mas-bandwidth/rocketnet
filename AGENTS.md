@@ -252,9 +252,9 @@ frame and retransmission controls use these final names:
 | Field | Client environment | Server environment | Default |
 | --- | --- | --- | --- |
 | `packets_per_update` | `ROCKETNET_CLIENT_PACKETS_PER_UPDATE` | `ROCKETNET_SERVER_PACKETS_PER_UPDATE` | `256` packets per connection per update |
-| `resend_delay_initial_ms` | `ROCKETNET_CLIENT_RESEND_DELAY_INITIAL_MS` | `ROCKETNET_SERVER_RESEND_DELAY_INITIAL_MS` | `2000` ms |
-| `resend_delay_min_ms` | `ROCKETNET_CLIENT_RESEND_DELAY_MIN_MS` | `ROCKETNET_SERVER_RESEND_DELAY_MIN_MS` | `0` (no sampled floor) |
-| `resend_delay_max_ms` | `ROCKETNET_CLIENT_RESEND_DELAY_MAX_MS` | `ROCKETNET_SERVER_RESEND_DELAY_MAX_MS` | `2000` ms |
+| `message_resend_delay_initial_ms` | `ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_INITIAL_MS` | `ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_INITIAL_MS` | `2000` ms |
+| `message_resend_delay_min_ms` | `ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MIN_MS` | `ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MIN_MS` | `0` (no sampled floor) |
+| `message_resend_delay_max_ms` | `ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MAX_MS` | `ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MAX_MS` | `2000` ms |
 | `transport` | `ROCKETNET_CLIENT_TRANSPORT` | `ROCKETNET_SERVER_TRANSPORT` | `NULL` (`"auto"`) |
 
 The server's `public_address` and optional `second_public_address` advertise
@@ -264,12 +264,12 @@ one IPv4 address, one IPv6 address, or one of each. Their environment names are
 configured families refuses start with
 `ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED`.
 
-Other key defaults are `num_channels = 32`, `window_messages = 1024`,
-`receive_ring_bytes = 262144`, `max_message_bytes = 262144`,
-`send_buffer_bytes = 800000`, `send_queue_messages = 1024`,
+Other key defaults are `num_channels = 32`, `reliable_messages_in_flight = 1024`,
+`receive_message_buffer_bytes = 262144`, `max_message_bytes = 262144`,
+`send_message_buffer_bytes = 800000`, `send_queue_messages = 1024`,
 `packets_in_flight = 256`, `unreliable_messages_per_update = 256`,
-`sequenced_holds = 16`, `receipt_ring = 256`,
-`reliable_timeout_ms = 10000`, client `send_kbps = 1000`, server
+`sequenced_messages_held = 16`, `max_message_receipts = 256`,
+`reliable_message_timeout_ms = 10000`, client `send_kbps = 1000`, server
 `per_client_send_kbps = 10000`, and server `max_clients = 1000`. A send rate of
 `0` means the default rate, a negative rate is refused with
 `ROCKETNET_STATUS_INVALID_ARGUMENT`, and `ROCKETNET_SEND_KBPS_UNLIMITED` means no
@@ -359,13 +359,13 @@ RocketNet refuses invalid configuration rather than clamping it. Check returned 
 - **Update returns nothing:** `rocketnet_client_update` and `rocketnet_server_update` return `void`; what an update did is read from `rocketnet_client_state`, the server's per-client calls and the stats calls.
 - **Client states (`enum rocketnet_client_state_t`, `rocketnet_client_state`, `rocketnet_client_state_name`):**
   - Progress states: `ROCKETNET_CLIENT_STATE_DISCONNECTED` (`0`), `ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE` (`1`), `ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST` (`2`), `ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE` (`3`), `ROCKETNET_CLIENT_STATE_CONNECTED` (`4`).
-  - Negative states, one for each way an attempt or a connection ends, kept until `rocketnet_client_disconnect`: `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED` (`-12`): the connection's send descriptors (`send_queue_messages`) or send buffer (`send_buffer_bytes`) ran out of room for a send that could not be dropped; `ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH` (`-11`): wire-checked channel configuration fields (`num_channels`, `window_messages`, `receive_ring_bytes`, `max_message_bytes`) differed between client and server; `ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION` (`-10`): the server sent a malformed message record or violated window or ring bounds; `ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT` (`-9`): a reliable message went unacknowledged past `reliable_timeout_ms`; `ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED` (`-8`): the client accepted the server's disconnect packet (the server called `rocketnet_server_disconnect_client`, `rocketnet_server_stop` or `rocketnet_server_destroy`); `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED` (`-7`), `ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN` (`-6`), `ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT` (`-5`), `ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT` (`-4`), `ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT` (`-3`), `ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT` (`-2`), `ROCKETNET_CLIENT_STATE_CONNECTION_DENIED` (`-1`). `rocketnet_client_connect` is accepted from `ROCKETNET_CLIENT_STATE_DISCONNECTED` and from the connection-ended states `-8` to `-12`, which it ends first.
+  - Negative states, one for each way an attempt or a connection ends, kept until `rocketnet_client_disconnect`: `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED` (`-12`): the connection's send descriptors (`send_queue_messages`) or send buffer (`send_message_buffer_bytes`) ran out of room for a send that could not be dropped; `ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH` (`-11`): wire-checked channel configuration fields (`num_channels`, `reliable_messages_in_flight`, `receive_message_buffer_bytes`, `max_message_bytes`) differed between client and server; `ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION` (`-10`): the server sent a malformed message record or violated window or ring bounds; `ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT` (`-9`): a reliable message went unacknowledged past `reliable_message_timeout_ms`; `ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED` (`-8`): the client accepted the server's disconnect packet (the server called `rocketnet_server_disconnect_client`, `rocketnet_server_stop` or `rocketnet_server_destroy`); `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED` (`-7`), `ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN` (`-6`), `ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT` (`-5`), `ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT` (`-4`), `ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT` (`-3`), `ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT` (`-2`), `ROCKETNET_CLIENT_STATE_CONNECTION_DENIED` (`-1`). `rocketnet_client_connect` is accepted from `ROCKETNET_CLIENT_STATE_DISCONNECTED` and from the connection-ended states `-8` to `-12`, which it ends first.
   - `ROCKETNET_CLIENT_STATE_INVALID` (`-100`) is what a NULL client reads as, not a state any client is in.
 - **Server disconnect reasons (`rocketnet_server_disconnect_reason`, `rocketnet_disconnect_reason_name`):** why a server's client slot's connection ended, kept until the slot's next connection.
   - `ROCKETNET_DISCONNECT_REASON_NONE` (`0`): no connection has ended, or the connection is up.
   - `ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH` (`1`): wire-checked channel configuration fields differed between client and server.
   - `ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION` (`3`): the client sent a malformed message record or violated window/ring bounds.
-  - `ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT` (`4`): a reliable message went unacknowledged past `reliable_timeout_ms`.
+  - `ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT` (`4`): a reliable message went unacknowledged past `reliable_message_timeout_ms`.
   - `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED` (`5`): the slot's send descriptors or send buffer ran out of room for a send that could not be dropped.
   - `ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED` (`6`): the server disconnected the client, stopped, or was destroyed.
 - **Counters and stats to watch:**

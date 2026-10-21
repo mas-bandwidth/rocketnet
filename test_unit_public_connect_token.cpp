@@ -90,7 +90,7 @@ static void public_token_server_setup( struct public_token_server_t * t, uint64_
     memset( t, 0, sizeof(*t) );
     struct rocketnet_server_protocol_t * server = &t->server;
     server->protocol_id = protocol_id;
-    memcpy( server->filter_value, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( server->packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server->backend_public_key, backend_public_key, ROCKETNET_KEY_BYTES );
     memcpy( server->server_public_key, server_public_key, ROCKETNET_KEY_BYTES );
     memcpy( server->server_secret_key, server_secret_key, ROCKETNET_KEY_BYTES );

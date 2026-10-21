@@ -126,7 +126,7 @@ static void test_hold_full_drops_and_counts()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.sequenced_holds = 1;
+    config.sequenced_messages_held = 1;
     rocketnet_counters_t counters = {};
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
     rocketnet_unit_check( arena != NULL );
@@ -151,7 +151,7 @@ static void test_large_future_state_drops_without_violation()
     rocketnet_unit_check( region != NULL );
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
-    uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES + 1] = {};
+    uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1] = {};
     rocketnet_message_record_t record;
     rn_delivery_t out;
     sequenced_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 1, 0, payload );
@@ -170,7 +170,7 @@ static void test_large_future_state_drops_without_violation()
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
     rocketnet_unit_check( sequenced_counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL] == before + 2 );
     rocketnet_unit_check( sequenced_counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED] == superseded );
-    rocketnet_unit_check( region->sequenced_holds[region->channel_receive[0].held_sequenced].data[0] == small );
+    rocketnet_unit_check( region->sequenced_messages_held[region->channel_receive[0].held_sequenced].data[0] == small );
     rn_region_reset( region );
 }
 

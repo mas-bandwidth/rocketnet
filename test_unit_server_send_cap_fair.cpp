@@ -62,15 +62,15 @@ static void fair_message_config( rocketnet_server_config_t * server, rocketnet_c
     // tick, both directions, without a refusal
     if ( server )
     {
-        server->send_buffer_bytes = 4 * 1024 * 1024;
+        server->send_message_buffer_bytes = 4 * 1024 * 1024;
         server->send_queue_messages = 4096;
-        server->window_messages = 4096;
+        server->reliable_messages_in_flight = 4096;
     }
     if ( client )
     {
-        client->send_buffer_bytes = 4 * 1024 * 1024;
+        client->send_message_buffer_bytes = 4 * 1024 * 1024;
         client->send_queue_messages = 4096;
-        client->window_messages = 4096;
+        client->reliable_messages_in_flight = 4096;
     }
 }
 
@@ -102,9 +102,9 @@ static void fair_world_create( fair_world_t * world, int num_clients, int capaci
     fair_message_config( &server_config, NULL );
     if ( max_clients >= 256 )
     {
-        server_config.send_buffer_bytes = 12288;
+        server_config.send_message_buffer_bytes = 12288;
         server_config.send_queue_messages = 64;
-        server_config.window_messages = 64;
+        server_config.reliable_messages_in_flight = 64;
         server_config.max_message_bytes = ROCKETNET_MESSAGE_SINGLE_BYTES;
     }
 
@@ -127,7 +127,7 @@ static void fair_world_create( fair_world_t * world, int num_clients, int capaci
         fair_message_config( NULL, &client_config );
         if ( max_clients >= 256 )
         {
-            client_config.window_messages = 64;
+            client_config.reliable_messages_in_flight = 64;
             client_config.max_message_bytes = ROCKETNET_MESSAGE_SINGLE_BYTES;
         }
         create_status = ROCKETNET_STATUS_OK;

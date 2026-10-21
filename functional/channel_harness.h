@@ -611,7 +611,7 @@ static inline uint8_t * rocketnet_channel_endpoint_start_packet( void * transpor
 {
     rocketnet_channel_endpoint_t * endpoint = (rocketnet_channel_endpoint_t *) transport;
     rocketnet_channel_harness_t * h = endpoint->harness;
-    if ( endpoint->pending_frame >= 0 || endpoint->outgoing_count >= ROCKETNET_CHANNEL_HARNESS_MAX_PACKETS || request_bytes > ROCKETNET_MAX_PAYLOAD_BYTES )
+    if ( endpoint->pending_frame >= 0 || endpoint->outgoing_count >= ROCKETNET_CHANNEL_HARNESS_MAX_PACKETS || request_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
         return NULL;
 
     const int slot = endpoint->outgoing_count;
@@ -631,7 +631,7 @@ static inline uint8_t * rocketnet_channel_endpoint_start_packet( void * transpor
     memset( context, 0, sizeof(*context) );
     context->frame = wire_start;
     context->payload_index = ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET;
-    context->payload_capacity = ROCKETNET_MAX_PAYLOAD_BYTES;
+    context->payload_capacity = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
     context->packet_id = ++h->next_packet_id;
     context->sequence = sequence;
     context->client_index = client_index;
@@ -883,7 +883,7 @@ static inline int rocketnet_channel_harness_create_with_config( rocketnet_channe
     // signed by (the test vectors are the dev keys)
     server = &h->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
-    memcpy( server->filter_value, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( server->packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server->backend_public_key, rocketnet_test_backend_public_key, 32 );
     memcpy( server->server_public_key, rocketnet_test_server_public_key, 32 );
     memcpy( server->server_secret_key, rocketnet_test_server_secret_key, 32 );

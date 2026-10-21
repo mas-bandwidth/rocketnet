@@ -290,7 +290,7 @@ void harness_collect_preserves_other_channels()
     }
     const uint8_t channel_zero[] = { 'c', 'h', '0' };
     const uint8_t channel_one[] = { 'c', 'h', '1' };
-    uint8_t large_payload[ROCKETNET_MAX_PAYLOAD_BYTES + 1];
+    uint8_t large_payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1];
     for ( int i = 0; i < (int) sizeof(large_payload); i++ )
         large_payload[i] = (uint8_t) i;
     // Unreliable message objects route to channel 0 on receive. Populate the

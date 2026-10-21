@@ -166,43 +166,43 @@ row per field of both public structs.
 
 | Field | Variable | Type | Default | A bad value |
 |---|---|---|---|---|
-| filter_value | ROCKETNET_CLIENT_FILTER_VALUE | uint8_t[4], base64 | `b7 59 01 00` (test filter) | not exactly 4 bytes, or invalid base64: refuses the create |
+| packet_filter | ROCKETNET_CLIENT_PACKET_FILTER | uint8_t[4], base64 | `b7 59 01 00` (test filter) | not exactly 4 bytes, or invalid base64: refuses the create |
 | max_payload_bytes | ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES | int | `0` (16384) | refuses the create unless `0` or `1416..305408` |
-| num_reassembly_slots | ROCKETNET_CLIENT_NUM_REASSEMBLY_SLOTS | int | `0` (8) | refuses the create unless `0` or `1..256` |
+| max_fragmented_messages | ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES | int | `0` (8) | refuses the create unless `0` or `1..256` |
 | transport | ROCKETNET_CLIENT_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, or a list with no usable candidate: refuses the create |
 | state_change_callback | none | `void (*)( void *, int, int )` | `NULL` | no environment form |
 | time_callback | none | `double (*)( void * )` | `NULL` (platform clock) | no environment form |
 | step_driven | ROCKETNET_CLIENT_STEP_DRIVEN | int | `0` | refuses the create unless `0` or `1` |
 | send_kbps | ROCKETNET_CLIENT_SEND_KBPS | int | `1000` | a non-integer refuses the create; `0` is the default (`1000`); a negative value refuses the create with `ROCKETNET_STATUS_INVALID_ARGUMENT`; `ROCKETNET_SEND_KBPS_UNLIMITED` is no send budget; each connection's starting rate |
 | num_channels | ROCKETNET_CLIENT_NUM_CHANNELS | int | `32` | refuses the create unless `1..32` |
-| window_messages | ROCKETNET_CLIENT_WINDOW_MESSAGES | int | `1024` | refuses the create unless `64..1048576` and a power of two |
-| receive_ring_bytes | ROCKETNET_CLIENT_RECEIVE_RING_BYTES | int | `262144` | refuses the create unless `4096..1048576` and a multiple of 16 |
-| max_message_bytes | ROCKETNET_CLIENT_MAX_MESSAGE_BYTES | int | `262144` | refuses the create unless `1415..1048576` and no larger than `receive_ring_bytes` |
-| send_buffer_bytes | ROCKETNET_CLIENT_SEND_BUFFER_BYTES | int | `800000` | refuses the create unless `12288..268435456` |
+| reliable_messages_in_flight | ROCKETNET_CLIENT_RELIABLE_MESSAGES_IN_FLIGHT | int | `1024` | refuses the create unless `64..1048576` and a power of two |
+| receive_message_buffer_bytes | ROCKETNET_CLIENT_RECEIVE_MESSAGE_BUFFER_BYTES | int | `262144` | refuses the create unless `4096..1048576` and a multiple of 16 |
+| max_message_bytes | ROCKETNET_CLIENT_MAX_MESSAGE_BYTES | int | `262144` | refuses the create unless `1415..1048576` and no larger than `receive_message_buffer_bytes` |
+| send_message_buffer_bytes | ROCKETNET_CLIENT_SEND_MESSAGE_BUFFER_BYTES | int | `800000` | refuses the create unless `12288..268435456` |
 | send_queue_messages | ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES | int | `1024` | refuses the create unless `16..1048576` |
 | packets_in_flight | ROCKETNET_CLIENT_PACKETS_IN_FLIGHT | int | `256` | refuses the create unless `16..65536` |
 | packets_per_update | ROCKETNET_CLIENT_PACKETS_PER_UPDATE | int | `256` | refuses the create unless `1..1024` |
 | unreliable_messages_per_update | ROCKETNET_CLIENT_UNRELIABLE_MESSAGES_PER_UPDATE | int | `1024` | refuses the create unless `1..65536` |
-| sequenced_holds | ROCKETNET_CLIENT_SEQUENCED_HOLDS | int | `16` | refuses the create unless `0..4096` |
-| receipt_ring | ROCKETNET_CLIENT_RECEIPT_RING | int | `256` | refuses the create unless `16..65536` |
-| resend_delay_initial_ms | ROCKETNET_CLIENT_RESEND_DELAY_INITIAL_MS | int | `2000` | refuses the create unless `10..60000` |
-| resend_delay_min_ms | ROCKETNET_CLIENT_RESEND_DELAY_MIN_MS | int | `0` (disabled) | refuses the create unless `0..60000` |
-| resend_delay_max_ms | ROCKETNET_CLIENT_RESEND_DELAY_MAX_MS | int | `2000` | refuses the create unless `10..60000` |
-| reliable_timeout_ms | ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS | int | `10000` | refuses the create unless `1000..600000` |
+| sequenced_messages_held | ROCKETNET_CLIENT_SEQUENCED_MESSAGES_HELD | int | `16` | refuses the create unless `0..4096` |
+| max_message_receipts | ROCKETNET_CLIENT_MAX_MESSAGE_RECEIPTS | int | `256` | refuses the create unless `16..65536` |
+| message_resend_delay_initial_ms | ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_INITIAL_MS | int | `2000` | refuses the create unless `10..60000` |
+| message_resend_delay_min_ms | ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MIN_MS | int | `0` (disabled) | refuses the create unless `0..60000` |
+| message_resend_delay_max_ms | ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MAX_MS | int | `2000` | refuses the create unless `10..60000` |
+| reliable_message_timeout_ms | ROCKETNET_CLIENT_RELIABLE_MESSAGE_TIMEOUT_MS | int | `10000` | refuses the create unless `1000..600000` |
 | simulated_loss_percent | ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT | int | `0` | refuses the create unless `0..100`; development only, and a production library refuses any nonzero value |
 | simulated_latency_ms | ROCKETNET_CLIENT_SIMULATED_LATENCY_MS | int | `0` | refuses the create unless `0..60000`; development only, and a production library refuses any nonzero value |
 | simulated_jitter_ms | ROCKETNET_CLIENT_SIMULATED_JITTER_MS | int | `0` | refuses the create unless `0..60000`; development only, and a production library refuses any nonzero value |
 | simulated_duplicate_percent | ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT | int | `0` | refuses the create unless `0..100`; development only, and a production library refuses any nonzero value |
 | protocol_id | ROCKETNET_SERVER_PROTOCOL_ID | uint64_t | `0` | a non-decimal value, or one past the type: refuses the create |
 | max_clients | ROCKETNET_SERVER_MAX_CLIENTS | int | `1000` | refuses the create unless `1..1000` |
-| filter_value | ROCKETNET_SERVER_FILTER_VALUE | uint8_t[4], base64 | `b7 59 01 00` (test filter) | not exactly 4 bytes, or invalid base64: refuses the create |
+| packet_filter | ROCKETNET_SERVER_PACKET_FILTER | uint8_t[4], base64 | `b7 59 01 00` (test filter) | not exactly 4 bytes, or invalid base64: refuses the create |
 | backend_public_key | ROCKETNET_SERVER_BACKEND_PUBLIC_KEY | uint8_t[32], base64 | all zero (no key) | not exactly 32 bytes, or invalid base64: refuses the create |
 | server_public_key | ROCKETNET_SERVER_SERVER_PUBLIC_KEY | uint8_t[32], base64 | all zero (no key) | not exactly 32 bytes, or invalid base64: refuses the create |
 | server_secret_key | ROCKETNET_SERVER_SERVER_SECRET_KEY | uint8_t[32], base64, secret | all zero (no key) | not exactly 32 bytes, or invalid base64: refuses the create; logs redacted |
 | num_xdp_queues | ROCKETNET_SERVER_NUM_XDP_QUEUES | int | `0` (transport default) | refuses the create unless `0` or `1..1024` |
 | num_os_cpus | ROCKETNET_SERVER_NUM_OS_CPUS | int | `0` (transport default) | refuses the create unless `0` or `1..256` |
 | max_payload_bytes | ROCKETNET_SERVER_MAX_PAYLOAD_BYTES | int | `0` (16384) | refuses the create unless `0` or `1416..305408` |
-| num_reassembly_slots | ROCKETNET_SERVER_NUM_REASSEMBLY_SLOTS | int | `0` (8) | refuses the create unless `0` or `1..256` |
+| max_fragmented_messages | ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES | int | `0` (8) | refuses the create unless `0` or `1..256` |
 | max_timeout_seconds | ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS | int | `60` | refuses the create unless `1..3600` |
 | handshake_deadline_seconds | ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS | int | `5` | refuses the create unless `1..60` |
 | transport | ROCKETNET_SERVER_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, or a list with no usable candidate: refuses the create |
@@ -210,20 +210,20 @@ row per field of both public structs.
 | second_public_address | ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS | const char * | `NULL` | an address that does not parse or duplicates the first address family: refuses the create |
 | per_client_send_kbps | ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS | int | `10000` | a non-integer refuses the create; `0` is the default (`10000`); a negative value refuses the create with `ROCKETNET_STATUS_INVALID_ARGUMENT`; `ROCKETNET_SEND_KBPS_UNLIMITED` is no send budget; each client connection's starting rate |
 | num_channels | ROCKETNET_SERVER_NUM_CHANNELS | int | `32` | refuses the create unless `1..32` |
-| window_messages | ROCKETNET_SERVER_WINDOW_MESSAGES | int | `1024` | refuses the create unless `64..1048576` and a power of two |
-| receive_ring_bytes | ROCKETNET_SERVER_RECEIVE_RING_BYTES | int | `262144` | refuses the create unless `4096..1048576` and a multiple of 16 |
-| max_message_bytes | ROCKETNET_SERVER_MAX_MESSAGE_BYTES | int | `262144` | refuses the create unless `1415..1048576` and no larger than `receive_ring_bytes` |
-| send_buffer_bytes | ROCKETNET_SERVER_SEND_BUFFER_BYTES | int | `800000` (per client) | refuses the create unless `12288..268435456` |
+| reliable_messages_in_flight | ROCKETNET_SERVER_RELIABLE_MESSAGES_IN_FLIGHT | int | `1024` | refuses the create unless `64..1048576` and a power of two |
+| receive_message_buffer_bytes | ROCKETNET_SERVER_RECEIVE_MESSAGE_BUFFER_BYTES | int | `262144` | refuses the create unless `4096..1048576` and a multiple of 16 |
+| max_message_bytes | ROCKETNET_SERVER_MAX_MESSAGE_BYTES | int | `262144` | refuses the create unless `1415..1048576` and no larger than `receive_message_buffer_bytes` |
+| send_message_buffer_bytes | ROCKETNET_SERVER_SEND_MESSAGE_BUFFER_BYTES | int | `800000` (per client) | refuses the create unless `12288..268435456` |
 | send_queue_messages | ROCKETNET_SERVER_SEND_QUEUE_MESSAGES | int | `1024` (per client) | refuses the create unless `16..1048576` |
 | packets_in_flight | ROCKETNET_SERVER_PACKETS_IN_FLIGHT | int | `256` (per client) | refuses the create unless `16..65536` |
 | packets_per_update | ROCKETNET_SERVER_PACKETS_PER_UPDATE | int | `256` (per client) | refuses the create unless `1..1024` |
 | unreliable_messages_per_update | ROCKETNET_SERVER_UNRELIABLE_MESSAGES_PER_UPDATE | int | `1024` (per client per update) | refuses the create unless `1..65536` |
-| sequenced_holds | ROCKETNET_SERVER_SEQUENCED_HOLDS | int | `16` | refuses the create unless `0..4096` |
-| receipt_ring | ROCKETNET_SERVER_RECEIPT_RING | int | `256` | refuses the create unless `16..65536` |
-| resend_delay_initial_ms | ROCKETNET_SERVER_RESEND_DELAY_INITIAL_MS | int | `2000` | refuses the create unless `10..60000` |
-| resend_delay_min_ms | ROCKETNET_SERVER_RESEND_DELAY_MIN_MS | int | `0` (disabled) | refuses the create unless `0..60000` |
-| resend_delay_max_ms | ROCKETNET_SERVER_RESEND_DELAY_MAX_MS | int | `2000` | refuses the create unless `10..60000` |
-| reliable_timeout_ms | ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS | int | `10000` | refuses the create unless `1000..600000` |
+| sequenced_messages_held | ROCKETNET_SERVER_SEQUENCED_MESSAGES_HELD | int | `16` | refuses the create unless `0..4096` |
+| max_message_receipts | ROCKETNET_SERVER_MAX_MESSAGE_RECEIPTS | int | `256` | refuses the create unless `16..65536` |
+| message_resend_delay_initial_ms | ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_INITIAL_MS | int | `2000` | refuses the create unless `10..60000` |
+| message_resend_delay_min_ms | ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MIN_MS | int | `0` (disabled) | refuses the create unless `0..60000` |
+| message_resend_delay_max_ms | ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MAX_MS | int | `2000` | refuses the create unless `10..60000` |
+| reliable_message_timeout_ms | ROCKETNET_SERVER_RELIABLE_MESSAGE_TIMEOUT_MS | int | `10000` | refuses the create unless `1000..600000` |
 | simulated_loss_percent | ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT | int | `0` | refuses the create unless `0..100`; development only, and a production library refuses any nonzero value |
 | simulated_latency_ms | ROCKETNET_SERVER_SIMULATED_LATENCY_MS | int | `0` | refuses the create unless `0..60000`; development only, and a production library refuses any nonzero value |
 | simulated_jitter_ms | ROCKETNET_SERVER_SIMULATED_JITTER_MS | int | `0` | refuses the create unless `0..60000`; development only, and a production library refuses any nonzero value |
@@ -584,7 +584,7 @@ to its capacity, and return the copied count. Each entry carries the serial and
 a status. A zero-filled receipt reads `ROCKETNET_RECEIPT_STATUS_NONE`. The library
 writes `ROCKETNET_RECEIPT_STATUS_ACKED` or `ROCKETNET_RECEIPT_STATUS_LOSS`. Repeated calls see the
 same list until the next update. A full receipt ring drops its oldest entry;
-the `receipt_ring` config field sets its size.
+the `max_message_receipts` config field sets its size.
 
 ## Counters and stats
 

@@ -426,18 +426,18 @@ static void test_loopback_transport_reliable_ordered_survives_loss_and_reorder()
     struct rocketnet_message_config_t message_config;
     rocketnet_message_default_config( &message_config );
     message_config.num_channels = 4;
-    message_config.window_messages = 64;
-    message_config.receive_ring_bytes = 65536;
+    message_config.reliable_messages_in_flight = 64;
+    message_config.receive_message_buffer_bytes = 65536;
     message_config.max_message_bytes = 16384;
-    message_config.send_buffer_bytes = 65536;
+    message_config.send_message_buffer_bytes = 65536;
     message_config.send_queue_messages = 1024;
     message_config.packets_in_flight = 64;
     message_config.packets_per_update = 8;
     message_config.unreliable_messages_per_update = 64;
-    message_config.resend_delay_initial_ms = 100;
-    message_config.resend_delay_min_ms = 20;
-    message_config.resend_delay_max_ms = 400;
-    message_config.reliable_timeout_ms = 120000;
+    message_config.message_resend_delay_initial_ms = 100;
+    message_config.message_resend_delay_min_ms = 20;
+    message_config.message_resend_delay_max_ms = 400;
+    message_config.reliable_message_timeout_ms = 120000;
 
     struct rn_message_link_t server_link;
     rn_message_server_link( &server_link, pair.server );
@@ -524,6 +524,7 @@ static void test_loopback_transport_reliable_ordered_survives_loss_and_reorder()
 
 REGISTER_UNIT_TEST( test_loopback_transport_reliable_ordered_survives_loss_and_reorder );
 
+#if !ROCKETNET_DEVELOPMENT
 // ---- the production refusal, the ranges and the env overlay ------------------
 
 static int loopback_error_lines = 0;
@@ -745,3 +746,4 @@ static void test_loopback_transport_loss_reorder_production_refusal()
 }
 
 REGISTER_UNIT_TEST( test_loopback_transport_loss_reorder_production_refusal );
+#endif // !ROCKETNET_DEVELOPMENT: a development build accepts what this checks is refused

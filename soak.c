@@ -417,14 +417,14 @@ int main( int argc, char ** argv )
             }
             // every size cycles through, both directions, every byte checked
 
-            uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES];
+            uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
             generate_payload( payload, payload_size );
             rocketnet_client_transport_send_packet( client, payload, payload_size );
             client_sent++;
             rocketnet_server_transport_send_packet( server, rocketnet_client_transport_client_index( client ), payload, payload_size );
             rocketnet_server_transport_send_packets( server );
             server_sent++;
-            payload_size = payload_size < ROCKETNET_MAX_PAYLOAD_BYTES ? payload_size + 1 : 1;
+            payload_size = payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? payload_size + 1 : 1;
 
             const int num_payloads = rocketnet_server_transport_num_payloads( server );
             for ( int i = 0; i < num_payloads; i++ )

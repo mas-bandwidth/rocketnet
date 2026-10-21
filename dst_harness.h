@@ -435,7 +435,7 @@ static inline uint8_t * rocketnet_dst_endpoint_start_packet( void * transport, i
     memset( context, 0, sizeof(*context) );
     context->frame = wire_start;
     context->payload_index = ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET;
-    context->payload_capacity = ROCKETNET_MAX_PAYLOAD_BYTES;
+    context->payload_capacity = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
     context->packet_id = ++endpoint->next_packet_id;
     context->sequence = sequence;
     context->client_index = client_index;
@@ -952,7 +952,7 @@ static inline int rocketnet_dst_world_create( rocketnet_dst_world_t * w, uint64_
     rocketnet_dst_check_init( &w->check, seed, 0 );
     w->server.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     w->server.send_rate = 10.0;
-    memcpy( w->server.filter_value, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( w->server.packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( w->server.backend_public_key, rocketnet_test_backend_public_key, 32 );
     memcpy( w->server.server_public_key, rocketnet_test_server_public_key, 32 );
     memcpy( w->server.server_secret_key, rocketnet_test_server_secret_key, 32 );

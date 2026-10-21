@@ -1070,9 +1070,9 @@ static void test_connection_reset_disconnect_reason_kept_until_next_connection()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.resend_delay_initial_ms = 100;
-    config.resend_delay_max_ms = 1000;
-    config.reliable_timeout_ms = 1000;
+    config.message_resend_delay_initial_ms = 100;
+    config.message_resend_delay_max_ms = 1000;
+    config.reliable_message_timeout_ms = 1000;
     reset_loopback_explicit_server_disconnect_reason_scenario();
     reset_loopback_server_reliable_timeout_reason_scenario( &config );
     reset_loopback_client_reliable_timeout_reason_scenario( &config );

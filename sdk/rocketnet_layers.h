@@ -28,7 +28,7 @@ extern "C" {
 
 /// The receive bounds: a receiver accepts what one 1500-MTU IPv4 datagram
 /// carries, 1472 bytes, and its payload, 1439 bytes, wider than the send side
-/// (ROCKETNET_RECEIVE_PACKET_BYTES, ROCKETNET_MAX_PAYLOAD_BYTES). Internal.
+/// (ROCKETNET_RECEIVE_PACKET_BYTES, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES). Internal.
 #define ROCKETNET_RECEIVE_PACKET_BYTES                     ( 1500 - 20 - 8 )
 #define ROCKETNET_RECEIVE_PAYLOAD_BYTES                    1439    // 1472 - 26 - 7
 
@@ -38,7 +38,7 @@ extern "C" {
 
 /// The largest message one packet carries, written in place: the payload
 /// capacity less the one form byte.
-#define ROCKETNET_MESSAGE_SINGLE_BYTES                     ( ROCKETNET_MAX_PAYLOAD_BYTES - 1 )
+#define ROCKETNET_MESSAGE_SINGLE_BYTES                     ( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 )
 
 /// The standard's numbering of the ways a connection ends (standard/MESSAGES.md),
 /// the one place it maps from the public enum, which is dense and negative.
@@ -315,11 +315,11 @@ const char * rocketnet_client_transport_state_name( int state );
 struct rocketnet_client_transport_config_t
 {
     /** @brief Per-title 4-byte packet filter; peers with a different value cannot connect. */
-    uint8_t filter_value[4];
-    /** @brief Largest sent and reassembled payload in bytes; zero selects the default, otherwise ROCKETNET_MAX_PAYLOAD_BYTES through 305408. */
-    int max_payload_bytes;                          // ROCKETNET_MAX_PAYLOAD_BYTES .. 305,408; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
+    uint8_t packet_filter[4];
+    /** @brief Largest sent and reassembled payload in bytes; zero selects the default, otherwise ROCKETNET_MAX_PACKET_PAYLOAD_BYTES through 305408. */
+    int max_payload_bytes;                          // ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. 305,408; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
     /** @brief Concurrent fragmented payloads per connection; zero selects the default, otherwise 1 through 256. */
-    int num_reassembly_slots;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
+    int max_fragmented_messages;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
     /** @brief Ordered transport candidate list; defaults to auto. */
     char transport[ROCKETNET_TRANSPORT_STRING_LENGTH];    // the candidate list; default "auto"
     /** @brief Optional state transition callback; NULL disables it. It receives the create context and previous and current states. */
@@ -722,7 +722,7 @@ typedef int (*rocketnet_server_admission_callback_t)( void * context, const stru
 // count from 1, the gso transport refuses past 32.
 //
 // The fragmentation shape rides max_payload_bytes and
-// num_reassembly_slots: the largest payload this server sends and
+// max_fragmented_messages: the largest payload this server sends and
 // reassembles, and the per-client reassembly slot count. zero means the
 // defaults. budget arithmetic, all spent once at create, approximately --
 // slot records ride along: the reassembly arena is max_clients x slots x
@@ -756,7 +756,7 @@ struct rocketnet_server_transport_config_t
     /** @brief Maximum simultaneous clients; 1 through ROCKETNET_MAX_CLIENTS, default 1000. */
     int max_clients;                                // 1 .. ROCKETNET_MAX_CLIENTS; default 1000
     /** @brief Per-title 4-byte packet filter; peers with a different value cannot connect. */
-    uint8_t filter_value[4];
+    uint8_t packet_filter[4];
     /** @brief 32-byte key used to verify connect-token signatures. */
     uint8_t backend_public_key[32];
     /** @brief 32-byte public key used to seal server-bound token data. */
@@ -767,10 +767,10 @@ struct rocketnet_server_transport_config_t
     int num_xdp_queues;                             // 1 .. 1024; 0 is the transport default
     /** @brief Cores reserved for the operating system by XDP; zero selects the transport default, otherwise 1 through 256. */
     int num_os_cpus;                                // 1 .. 256; 0 is the transport default
-    /** @brief Largest sent and reassembled payload in bytes; zero selects the default, otherwise ROCKETNET_MAX_PAYLOAD_BYTES through 305408. */
-    int max_payload_bytes;                          // ROCKETNET_MAX_PAYLOAD_BYTES .. 305,408; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
+    /** @brief Largest sent and reassembled payload in bytes; zero selects the default, otherwise ROCKETNET_MAX_PACKET_PAYLOAD_BYTES through 305408. */
+    int max_payload_bytes;                          // ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. 305,408; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
     /** @brief Concurrent fragmented payloads per client; zero selects the default, otherwise 1 through 256. */
-    int num_reassembly_slots;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
+    int max_fragmented_messages;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
     /** @brief Ordered transport candidate list; defaults to auto. */
     char transport[ROCKETNET_TRANSPORT_STRING_LENGTH];    // the candidate list; default "auto"
     /** @brief NUL-terminated advertised address; an empty string uses the create address. */
@@ -1114,7 +1114,7 @@ int rocketnet_server_transport_payload_connection_ids( struct rocketnet_server_t
 // everything staged.
 //
 // request_bytes declares the capacity the caller needs, and the cost is
-// declared with it. A request at or under ROCKETNET_MAX_PAYLOAD_BYTES is
+// declared with it. A request at or under ROCKETNET_MAX_PACKET_PAYLOAD_BYTES is
 // a real wire frame: written in place, sealed in place, zero copies. A
 // request above it -- up to the configured maximum payload -- routes to
 // the transport's arena, and finish_packet splits the written payload
@@ -1512,13 +1512,13 @@ struct rocketnet_message_config_t
     /** @brief Message channels; WIRE, 1 through ROCKETNET_MAX_CHANNELS, default 32. */
     int num_channels;                   // WIRE; 1 .. ROCKETNET_MAX_CHANNELS; default 32
     /** @brief Reliable receive window; WIRE, power of two from 64 through 1<<20, default 1024. */
-    int window_messages;                // WIRE, power of two; 64 .. 1 << 20; default 1024
+    int reliable_messages_in_flight;                // WIRE, power of two; 64 .. 1 << 20; default 1024
     /** @brief Receive ring bytes; WIRE, multiple of 16 from 4096 through 1<<20, default 262144. */
-    int receive_ring_bytes;             // WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
-    /** @brief Maximum message bytes; WIRE, at most receive_ring_bytes and from ROCKETNET_MESSAGE_SINGLE_BYTES through 1<<20, default 262144. */
-    int max_message_bytes;              // WIRE, <= receive_ring_bytes; ROCKETNET_MESSAGE_SINGLE_BYTES .. 1 << 20; default 262144
+    int receive_message_buffer_bytes;             // WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
+    /** @brief Maximum message bytes; WIRE, at most receive_message_buffer_bytes and from ROCKETNET_MESSAGE_SINGLE_BYTES through 1<<20, default 262144. */
+    int max_message_bytes;              // WIRE, <= receive_message_buffer_bytes; ROCKETNET_MESSAGE_SINGLE_BYTES .. 1 << 20; default 262144
     /** @brief Per-connection queued payload bytes; 12288 through 1<<28, default 800000. */
-    int send_buffer_bytes;              // 12288 .. 1 << 28; default 800000
+    int send_message_buffer_bytes;              // 12288 .. 1 << 28; default 800000
     /** @brief Queued message count; 16 through 1<<20, default 1024. */
     int send_queue_messages;            // 16 .. 1 << 20; default 1024
     /** @brief Tracked unacknowledged packets; 16 through 1<<16, default 256. */
@@ -1528,17 +1528,17 @@ struct rocketnet_message_config_t
     /** @brief Unreliable deliveries per connection per update; 1 through 1<<16, default 256. */
     int unreliable_messages_per_update;          // per connection per update; 1 .. 1 << 16; default 256
     /** @brief Messages held for sequenced delivery; 0 through 4096, default 16. */
-    int sequenced_holds;                // 0 .. 4096; default 16
+    int sequenced_messages_held;                // 0 .. 4096; default 16
     /** @brief Receipt history entries; 16 through 1<<16, default 256; a full ring drops its oldest. */
-    int receipt_ring;                   // 16 .. 1 << 16; default 256
+    int max_message_receipts;                   // 16 .. 1 << 16; default 256
     /** @brief Initial resend delay in milliseconds; 10 through 60000, default 2000. */
-    int resend_delay_initial_ms;                 // 10 .. 60000; default 2000
+    int message_resend_delay_initial_ms;                 // 10 .. 60000; default 2000
     /** @brief Optional sampled resend delay floor in milliseconds; 0 disables it. 0 through 60000, default 0. */
-    int resend_delay_min_ms;                     // optional resend delay floor; 0 disables; 0 .. 60000; default 0
+    int message_resend_delay_min_ms;                     // optional resend delay floor; 0 disables; 0 .. 60000; default 0
     /** @brief Maximum resend delay in milliseconds; 10 through 60000, default 2000. */
-    int resend_delay_max_ms;                     // 10 .. 60000; default 2000
+    int message_resend_delay_max_ms;                     // 10 .. 60000; default 2000
     /** @brief Reliable-message lifetime in milliseconds; 1000 through 600000, default 10000. */
-    int reliable_timeout_ms;            // 1000 .. 600000; default 10000
+    int reliable_message_timeout_ms;            // 1000 .. 600000; default 10000
     /** @brief Default client send budget in kilobits per second; zero or less is uncapped, positive values may not exceed ROCKETNET_SEND_BUDGET_MAX_KBPS. */
     int client_send_kbps;                // client default budget; 0 or lower uncapped; <= ROCKETNET_SEND_BUDGET_MAX_KBPS
     /** @brief Default per-client server send budget in kilobits per second; zero or less is uncapped, positive values may not exceed ROCKETNET_SEND_BUDGET_MAX_KBPS. */

@@ -48,7 +48,7 @@ struct rn_endpoint_config_t
 {
     const struct rocketnet_message_config_t * config;   // the connection's message config; outlives the endpoint
     int32_t send_kbps;                                  // the send budget a reset starts with (R6); 0 or lower uncapped
-    int max_payload_bytes;                              // the transport's payload cap, for rn_endpoint_send's large unreliable check (0: ROCKETNET_MAX_PAYLOAD_BYTES)
+    int max_payload_bytes;                              // the transport's payload cap, for rn_endpoint_send's large unreliable check (0: ROCKETNET_MAX_PACKET_PAYLOAD_BYTES)
 };
 
 /*

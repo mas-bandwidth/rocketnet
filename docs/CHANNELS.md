@@ -46,9 +46,9 @@ records are retransmitted until acknowledged or the reliable timeout ends the
 connection. Large messages use bounded fragmentation and reassembly sized at
 create.
 
-The resend delay starts at `resend_delay_initial_ms`, follows the shared RTT
-estimator, and remains within `resend_delay_min_ms` and
-`resend_delay_max_ms`. `reliable_timeout_ms` bounds the complete reliable
+The resend delay starts at `message_resend_delay_initial_ms`, follows the shared RTT
+estimator, and remains within `message_resend_delay_min_ms` and
+`message_resend_delay_max_ms`. `reliable_message_timeout_ms` bounds the complete reliable
 operation. `packets_per_update` bounds packet work per connection per update.
 
 ## Receipts and stats

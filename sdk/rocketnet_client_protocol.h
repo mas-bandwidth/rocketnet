@@ -61,7 +61,7 @@ typedef void ( * rocketnet_client_retire_keys_t )( void * context );
     that exact member in test_connection_reset_inventory_covers_every_field.
 */
 #define ROCKETNET_CLIENT_PROTOCOL_LAYOUT_FIELDS( X ) \
-    X( filter_value, uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES] ) \
+    X( packet_filter, uint8_t packet_filter[ROCKETNET_FILTER_VALUE_BYTES] ) \
     X( send_rate, double send_rate ) \
     X( counters, struct rocketnet_counters_t * counters ) \
     X( state, int state ) \

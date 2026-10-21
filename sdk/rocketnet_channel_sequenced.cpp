@@ -53,7 +53,7 @@ static void rn_sequenced_release_hold( rn_channels_t * channels, rn_channel_rece
             rn_sequenced_release_number( channels, (uint64_t) rx->pad + i );
     }
     else
-        region->sequenced_holds[hold].used = 0;
+        region->sequenced_messages_held[hold].used = 0;
     rx->held_sequenced = RN_DESCRIPTOR_NONE;
 }
 
@@ -282,7 +282,7 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
 
     // RNChannelTypes!HoldNewest: only one future state per channel is retained.
     // Code 1 uses Ru; code 4 uses its numbered ring span, including blocks.
-    if ( !reliable && record->bytes > ROCKETNET_MAX_PAYLOAD_BYTES )
+    if ( !reliable && record->bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
     {
         // A fragmented unreliable state is legal. It cannot fit the fixed
         // future-state slot, so drop it without treating the peer as invalid.
@@ -295,8 +295,8 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
     {
         const bool held_reliable = rn_sequenced_reliable_hold( current );
         const uint32_t held_slot = current & ~RN_SEQUENCED_RELIABLE_HOLD;
-        const uint32_t held_ordering = held_reliable ? region->receive_descriptors[held_slot].ordering : region->sequenced_holds[current].ordering;
-        const uint32_t held_sequencing = held_reliable ? region->receive_descriptors[held_slot].sequencing : region->sequenced_holds[current].sequencing;
+        const uint32_t held_ordering = held_reliable ? region->receive_descriptors[held_slot].ordering : region->sequenced_messages_held[current].ordering;
+        const uint32_t held_sequencing = held_reliable ? region->receive_descriptors[held_slot].sequencing : region->sequenced_messages_held[current].sequencing;
         const uint32_t gap = ( ordering - held_ordering ) & ROCKETNET_MESSAGE_U24_MASK;
         const uint32_t sequence_gap = ( sequencing - held_sequencing ) & ROCKETNET_MESSAGE_U24_MASK;
         const bool continuation = reliable && record->block && held_reliable && gap == 0 && sequence_gap == 0 &&
@@ -335,7 +335,7 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
 
     uint32_t slot = RN_DESCRIPTOR_NONE;
     for ( uint32_t i = 0; i < region->holds; i++ )
-        if ( !region->sequenced_holds[i].used )
+        if ( !region->sequenced_messages_held[i].used )
         {
             slot = i;
             break;
@@ -347,7 +347,7 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
     }
     rx->held_sequenced = slot;
 
-    rn_sequenced_hold_t * hold = &region->sequenced_holds[slot];
+    rn_sequenced_hold_t * hold = &region->sequenced_messages_held[slot];
     hold->bytes = (uint32_t) record->bytes;
     hold->ordering = ordering;
     hold->sequencing = sequencing;
@@ -371,7 +371,7 @@ bool rn_channels_drain_sequenced( struct rn_channels_t * channels, uint32_t chan
     const bool reliable = rn_sequenced_reliable_hold( slot );
     rn_receive_descriptor_t * descriptor = reliable ?
         &channels->region->receive_descriptors[slot & ~RN_SEQUENCED_RELIABLE_HOLD] : NULL;
-    rn_sequenced_hold_t * hold = reliable ? NULL : &channels->region->sequenced_holds[slot];
+    rn_sequenced_hold_t * hold = reliable ? NULL : &channels->region->sequenced_messages_held[slot];
     const uint32_t ordering = reliable ? descriptor->ordering : hold->ordering;
     const uint32_t sequencing = reliable ? descriptor->sequencing : hold->sequencing;
     const uint32_t gap = ( ordering - rx->ordered_read ) & ROCKETNET_MESSAGE_U24_MASK;
@@ -416,6 +416,6 @@ void rn_channels_end_update_sequenced( struct rn_channels_t * channels )
         return;
     // RNChannel!EndUpdate: only slots whose views expired return to the pool.
     for ( uint32_t i = 0; i < channels->region->holds; i++ )
-        if ( channels->region->sequenced_holds[i].used == 2 )
-            channels->region->sequenced_holds[i].used = 0;
+        if ( channels->region->sequenced_messages_held[i].used == 2 )
+            channels->region->sequenced_messages_held[i].used = 0;
 }

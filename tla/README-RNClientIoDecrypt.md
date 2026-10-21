@@ -80,7 +80,7 @@ the design, and `tla/COVERAGE.tsv` marks the client-io-decrypt row current.
   opened. `ReplayWindow` checks the ring against that abstraction.
 - The AEAD is a predicate on the datagram: genuine opens, forged does not.
 - The key copy is the boolean `ioKeys`; the open block's other inputs
-  (`protocol_id`, `connection_salt`, `filter_value`) travel with it.
+  (`protocol_id`, `connection_salt`, `packet_filter`) travel with it.
 - Sequence reconstruction is exact: a record holds the 64-bit sequence, so
   `update`'s second reconstruction always agrees with the I/O thread's.
 - The cheap rungs other than the replay check (wire floor, zero sequence) and

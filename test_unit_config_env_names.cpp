@@ -382,12 +382,12 @@ static std::vector<std::string> env_names_set_candidates()
     set.push_back( "ROCKETNET_SERVER_MAX_CLIENTS" );
 
     // public client transport fields
-    env_names_setenv( "ROCKETNET_CLIENT_FILTER_VALUE", "ESIzRA==" );
-    set.push_back( "ROCKETNET_CLIENT_FILTER_VALUE" );
+    env_names_setenv( "ROCKETNET_CLIENT_PACKET_FILTER", "ESIzRA==" );
+    set.push_back( "ROCKETNET_CLIENT_PACKET_FILTER" );
     env_names_setenv( "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES", "1200" );
     set.push_back( "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES" );
-    env_names_setenv( "ROCKETNET_CLIENT_NUM_REASSEMBLY_SLOTS", "64" );
-    set.push_back( "ROCKETNET_CLIENT_NUM_REASSEMBLY_SLOTS" );
+    env_names_setenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", "64" );
+    set.push_back( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
     env_names_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", "1" );
     set.push_back( "ROCKETNET_CLIENT_STEP_DRIVEN" );
     env_names_setenv( "ROCKETNET_CLIENT_TRANSPORT", "loopback" );
@@ -396,8 +396,8 @@ static std::vector<std::string> env_names_set_candidates()
     // public server transport fields
     env_names_setenv( "ROCKETNET_SERVER_PROTOCOL_ID", "12345" );
     set.push_back( "ROCKETNET_SERVER_PROTOCOL_ID" );
-    env_names_setenv( "ROCKETNET_SERVER_FILTER_VALUE", "ESIzRA==" );
-    set.push_back( "ROCKETNET_SERVER_FILTER_VALUE" );
+    env_names_setenv( "ROCKETNET_SERVER_PACKET_FILTER", "ESIzRA==" );
+    set.push_back( "ROCKETNET_SERVER_PACKET_FILTER" );
     const char * dummy32_base64 = "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=";
     env_names_setenv( "ROCKETNET_SERVER_BACKEND_PUBLIC_KEY", dummy32_base64 );
     set.push_back( "ROCKETNET_SERVER_BACKEND_PUBLIC_KEY" );
@@ -407,8 +407,8 @@ static std::vector<std::string> env_names_set_candidates()
     set.push_back( "ROCKETNET_SERVER_NUM_OS_CPUS" );
     env_names_setenv( "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES", "1200" );
     set.push_back( "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" );
-    env_names_setenv( "ROCKETNET_SERVER_NUM_REASSEMBLY_SLOTS", "64" );
-    set.push_back( "ROCKETNET_SERVER_NUM_REASSEMBLY_SLOTS" );
+    env_names_setenv( "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES", "64" );
+    set.push_back( "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES" );
     env_names_setenv( "ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS", "30" );
     set.push_back( "ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS" );
     env_names_setenv( "ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS", "10" );
@@ -582,7 +582,7 @@ static void test_config_env_every_name_read_is_documented()
     check( env_names_contains( documented, "ROCKETNET_CLIENT_SEND_KBPS" ) );
     check( env_names_contains( documented, "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" ) );
     check( env_names_contains( documented, "ROCKETNET_CLIENT_NUM_CHANNELS" ) );
-    check( env_names_contains( documented, "ROCKETNET_CLIENT_FILTER_VALUE" ) );
+    check( env_names_contains( documented, "ROCKETNET_CLIENT_PACKET_FILTER" ) );
     check( env_names_contains( documented, "ROCKETNET_CLIENT_STEP_DRIVEN" ) );
     check( env_names_contains( documented, "ROCKETNET_CLIENT_TRANSPORT" ) );
     check( env_names_contains( documented, "ROCKETNET_SERVER_PROTOCOL_ID" ) );
@@ -637,7 +637,7 @@ static void test_config_env_every_name_read_is_documented()
     const std::vector<std::string> overrides = env_names_overrides( capture.log );
     check( env_names_contains( overrides, "ROCKETNET_CLIENT_SEND_KBPS" ) );       // the passes ran and logged
     check( env_names_contains( overrides, "ROCKETNET_SERVER_NUM_CHANNELS" ) );
-    check( env_names_contains( overrides, "ROCKETNET_CLIENT_FILTER_VALUE" ) );
+    check( env_names_contains( overrides, "ROCKETNET_CLIENT_PACKET_FILTER" ) );
     check( env_names_contains( overrides, "ROCKETNET_CLIENT_STEP_DRIVEN" ) );
     check( env_names_contains( overrides, "ROCKETNET_CLIENT_TRANSPORT" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_PROTOCOL_ID" ) );

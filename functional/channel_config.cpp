@@ -85,7 +85,7 @@ void config_mismatch_over_loopback()
 
     h.message_server->object.config.num_channels = 3;
 
-    const double timeout = (double) h.message_config.reliable_timeout_ms / 1000.0;
+    const double timeout = (double) h.message_config.reliable_message_timeout_ms / 1000.0;
     const double start = h.now;
     int client_reason = ROCKETNET_DISCONNECT_REASON_NONE;
     int server_reason = ROCKETNET_DISCONNECT_REASON_NONE;
@@ -168,7 +168,7 @@ void config_equal_over_lossy_loopback()
     rocketnet_channel_harness_set_link( &h, 0.020, 0.010, rocketnet_config_loss_percent( 10.0f ), 0.0f );
     rocketnet_channel_harness_set_wire( &h, ROCKETNET_CHANNEL_WIRE_HOLD_PAYLOADS, ROCKETNET_CHANNEL_WIRE_HOLD_PAYLOADS );
 
-    const double timeout = (double) h.message_config.reliable_timeout_ms / 1000.0;
+    const double timeout = (double) h.message_config.reliable_message_timeout_ms / 1000.0;
     const double start = h.now;
     int updates = 0;
     int held_to_server = 0;

@@ -50,7 +50,7 @@ int rocketnet_fragment_plan( int payload_bytes, int * out_fragment_count, int * 
     // makes the last fragment floor-sized, at least one byte for every
     // payload the fragment cap admits.
 
-    if ( payload_bytes <= ROCKETNET_MAX_PAYLOAD_BYTES || payload_bytes > ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES )
+    if ( payload_bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES || payload_bytes > ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES )
         return 0;
 
     int count = ( payload_bytes + ROCKETNET_MAX_FRAGMENT_BYTES - 1 ) / ROCKETNET_MAX_FRAGMENT_BYTES;
@@ -87,7 +87,7 @@ static uint64_t rocketnet_reassembly_full_delivered_bytes(int max_payload_bytes,
 uint64_t rocketnet_reassembly_memory_required_delivered(int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity, uint64_t delivered_bytes)
 {
     if (num_connections < 1 || num_slots < 1 || num_slots > ROCKETNET_MAX_FRAGMENTS ||
-        max_payload_bytes < ROCKETNET_MAX_PAYLOAD_BYTES || max_payload_bytes > ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES || delivered_capacity < 1 ||
+        max_payload_bytes < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES || max_payload_bytes > ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES || delivered_capacity < 1 ||
         delivered_bytes < (uint64_t)max_payload_bytes)
         return 0;
     uint64_t total = sizeof(rocketnet_reassembly_set_t);
@@ -167,7 +167,7 @@ int rocketnet_client_reassembly_delivered_capacity( int num_slots )
 uint64_t rocketnet_server_reassembly_delivered_bytes( int max_clients, int num_slots, int max_payload_bytes )
 {
     const int capacity = rocketnet_server_reassembly_delivered_capacity( max_clients, num_slots );
-    if ( capacity < 1 || max_payload_bytes < ROCKETNET_MAX_PAYLOAD_BYTES || max_payload_bytes > ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES )
+    if ( capacity < 1 || max_payload_bytes < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES || max_payload_bytes > ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES )
         return 0;
     const uint64_t by_count = rocketnet_reassembly_full_delivered_bytes( max_payload_bytes, capacity );
     const uint64_t begun_earlier = (uint64_t) max_clients * (uint64_t) num_slots;
@@ -187,7 +187,7 @@ struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create_delivered( v
 {
     rocketnet_assert( num_connections > 0 );
     rocketnet_assert( num_slots > 0 && num_slots <= ROCKETNET_MAX_FRAGMENTS );
-    rocketnet_assert( max_payload_bytes >= ROCKETNET_MAX_PAYLOAD_BYTES );
+    rocketnet_assert( max_payload_bytes >= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
     rocketnet_assert( delivered_capacity > 0 );
 
     if (!rocketnet_reassembly_memory_allowed_delivered(num_connections, num_slots, max_payload_bytes, delivered_capacity, delivered_bytes))

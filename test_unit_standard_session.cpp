@@ -37,7 +37,7 @@ static void rocketnet_session_server_setup( struct rocketnet_session_server_t * 
     struct rocketnet_server_protocol_t * server = &test->server;
     server->protocol_id = 0x1122334455667788ULL;
     server->send_rate = 10.0;
-    memset( server->filter_value, 0x11, ROCKETNET_FILTER_VALUE_BYTES );
+    memset( server->packet_filter, 0x11, ROCKETNET_FILTER_VALUE_BYTES );
     server->encryption_map = rocketnet_encryption_map_create( NULL, 4 );
     server->client_slots = rocketnet_client_slots_create( NULL, 1 );
     server->acks = rocketnet_server_acks_create( NULL, 1 );

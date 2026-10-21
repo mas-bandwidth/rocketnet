@@ -146,9 +146,9 @@ static void standard_receiver_check_limits( rocketnet_message_limits_t * limits,
 {
     limits->num_channels = 4;
     limits->enabled_codes = enabled_codes;
-    limits->window_messages = 1024;
+    limits->reliable_messages_in_flight = 1024;
     limits->max_message_bytes = 262144;
-    limits->receive_ring_bytes = 65536;
+    limits->receive_message_buffer_bytes = 65536;
 }
 
 // Runs the check the vector names and returns the violation it produces.

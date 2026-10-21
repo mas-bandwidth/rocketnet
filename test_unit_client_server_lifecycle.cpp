@@ -45,13 +45,13 @@ static void lifecycle_identity( lifecycle_identity_t * identity )
 // that many messages, on the server and every client the world creates
 static int lifecycle_queue_messages = 0;
 
-static void lifecycle_queue_config( int * window_messages, int * send_queue_messages, int * send_buffer_bytes )
+static void lifecycle_queue_config( int * reliable_messages_in_flight, int * send_queue_messages, int * send_message_buffer_bytes )
 {
     if ( lifecycle_queue_messages == 0 )
         return;
-    *window_messages = lifecycle_queue_messages;
+    *reliable_messages_in_flight = lifecycle_queue_messages;
     *send_queue_messages = lifecycle_queue_messages;
-    *send_buffer_bytes = lifecycle_queue_messages * 256;      // a send-store chunk per message, with room
+    *send_message_buffer_bytes = lifecycle_queue_messages * 256;      // a send-store chunk per message, with room
 }
 
 static void lifecycle_server_config( rocketnet_server_config_t * config, const lifecycle_identity_t * identity, int max_clients )
@@ -61,7 +61,7 @@ static void lifecycle_server_config( rocketnet_server_config_t * config, const l
     config->max_clients = max_clients;
     memcpy( config->backend_public_key, identity->backend_public, sizeof( config->backend_public_key ) );
     config->transport = "loopback";
-    lifecycle_queue_config( &config->window_messages, &config->send_queue_messages, &config->send_buffer_bytes );
+    lifecycle_queue_config( &config->reliable_messages_in_flight, &config->send_queue_messages, &config->send_message_buffer_bytes );
 }
 
 static void lifecycle_client_config( rocketnet_client_config_t * config )
@@ -70,7 +70,7 @@ static void lifecycle_client_config( rocketnet_client_config_t * config )
     config->transport = "loopback";
     config->step_driven = true;
     config->time_callback = lifecycle_clock;
-    lifecycle_queue_config( &config->window_messages, &config->send_queue_messages, &config->send_buffer_bytes );
+    lifecycle_queue_config( &config->reliable_messages_in_flight, &config->send_queue_messages, &config->send_message_buffer_bytes );
 }
 
 // the token string sealed to the server's own key, naming 127.0.0.1:port
@@ -973,25 +973,25 @@ static void test_config_packets_per_update_range()
     check( lifecycle_unsetenv( "ROCKETNET_SERVER_RTO_" "MAX_MS" ) == 0 );
 
     // The new resend-delay names are read for both endpoint configs.
-    check( lifecycle_setenv( "ROCKETNET_CLIENT_RESEND_DELAY_INITIAL_MS", "9" ) == 0 );
+    check( lifecycle_setenv( "ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_INITIAL_MS", "9" ) == 0 );
     check( rocketnet_client_create( NULL, &client_config, NULL ) == NULL );
-    check( lifecycle_unsetenv( "ROCKETNET_CLIENT_RESEND_DELAY_INITIAL_MS" ) == 0 );
-    check( lifecycle_setenv( "ROCKETNET_CLIENT_RESEND_DELAY_MIN_MS", "2001" ) == 0 );
+    check( lifecycle_unsetenv( "ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_INITIAL_MS" ) == 0 );
+    check( lifecycle_setenv( "ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MIN_MS", "2001" ) == 0 );
     check( rocketnet_client_create( NULL, &client_config, NULL ) == NULL );
-    check( lifecycle_unsetenv( "ROCKETNET_CLIENT_RESEND_DELAY_MIN_MS" ) == 0 );
-    check( lifecycle_setenv( "ROCKETNET_CLIENT_RESEND_DELAY_MAX_MS", "9" ) == 0 );
+    check( lifecycle_unsetenv( "ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MIN_MS" ) == 0 );
+    check( lifecycle_setenv( "ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MAX_MS", "9" ) == 0 );
     check( rocketnet_client_create( NULL, &client_config, NULL ) == NULL );
-    check( lifecycle_unsetenv( "ROCKETNET_CLIENT_RESEND_DELAY_MAX_MS" ) == 0 );
+    check( lifecycle_unsetenv( "ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MAX_MS" ) == 0 );
 
-    check( lifecycle_setenv( "ROCKETNET_SERVER_RESEND_DELAY_INITIAL_MS", "9" ) == 0 );
+    check( lifecycle_setenv( "ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_INITIAL_MS", "9" ) == 0 );
     check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL ) == NULL );
-    check( lifecycle_unsetenv( "ROCKETNET_SERVER_RESEND_DELAY_INITIAL_MS" ) == 0 );
-    check( lifecycle_setenv( "ROCKETNET_SERVER_RESEND_DELAY_MIN_MS", "2001" ) == 0 );
+    check( lifecycle_unsetenv( "ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_INITIAL_MS" ) == 0 );
+    check( lifecycle_setenv( "ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MIN_MS", "2001" ) == 0 );
     check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL ) == NULL );
-    check( lifecycle_unsetenv( "ROCKETNET_SERVER_RESEND_DELAY_MIN_MS" ) == 0 );
-    check( lifecycle_setenv( "ROCKETNET_SERVER_RESEND_DELAY_MAX_MS", "9" ) == 0 );
+    check( lifecycle_unsetenv( "ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MIN_MS" ) == 0 );
+    check( lifecycle_setenv( "ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MAX_MS", "9" ) == 0 );
     check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL ) == NULL );
-    check( lifecycle_unsetenv( "ROCKETNET_SERVER_RESEND_DELAY_MAX_MS" ) == 0 );
+    check( lifecycle_unsetenv( "ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MAX_MS" ) == 0 );
 
     check( lifecycle_setenv( "ROCKETNET_CLIENT_PACKETS_PER_UPDATE", "1024" ) == 0 );
     client = rocketnet_client_create( NULL, &client_config, NULL );

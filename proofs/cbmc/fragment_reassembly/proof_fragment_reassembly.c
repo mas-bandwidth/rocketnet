@@ -160,7 +160,7 @@ void harness_header_and_plan( void )
 
     int rc = rocketnet_fragment_plan( payload_bytes, &count, &stride );
 
-    const int needs_fragments = payload_bytes > ROCKETNET_MAX_PAYLOAD_BYTES && payload_bytes <= ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES;
+    const int needs_fragments = payload_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES && payload_bytes <= ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES;
     __CPROVER_assert( rc == needs_fragments, "the plan exists exactly for payloads above one packet and inside the fragment cap" );
 
     if ( rc == 1 )
@@ -526,7 +526,7 @@ void harness_memory_sizing( void )
     const bool allowed_d = rocketnet_reassembly_memory_allowed_delivered( num_connections, num_slots, max_payload, delivered_capacity, bytes );
 
     const int documented = num_connections >= 1 && num_slots >= 1 && num_slots <= ROCKETNET_MAX_FRAGMENTS
-                        && max_payload >= ROCKETNET_MAX_PAYLOAD_BYTES && max_payload <= ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES
+                        && max_payload >= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES && max_payload <= ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES
                         && delivered_capacity >= 1;
 
     __CPROVER_assert( documented || ( required == 0 && required_d == 0 && !allowed && !allowed_d ), "invalid geometry is refused" );

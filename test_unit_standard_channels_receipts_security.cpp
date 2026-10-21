@@ -66,7 +66,7 @@ static int standard_channels_receipts_security_generate( const char * id, uint8_
         rn_endpoint_config_t endpoint_config;
         memset( &endpoint_config, 0, sizeof( endpoint_config ) );
         endpoint_config.config = &config;
-        endpoint_config.max_payload_bytes = ROCKETNET_MAX_PAYLOAD_BYTES;
+        endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
 
         rn_endpoint_t endpoint;
         rn_endpoint_init( &endpoint, rn_arena_region( arena, 0 ), &endpoint_config );
@@ -80,7 +80,7 @@ static int standard_channels_receipts_security_generate( const char * id, uint8_
                                  ROCKETNET_PRIORITY_MEDIUM, 0, 0 ) == 1 );
 
         rn_endpoint_begin_update( &endpoint );
-        static uint8_t frame[ROCKETNET_MAX_PAYLOAD_BYTES];
+        static uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
         int packet_count = 0;
         int selected_bytes = -1;
         for ( int fragment = 0; fragment < 2; fragment++ )

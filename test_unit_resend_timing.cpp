@@ -160,7 +160,7 @@ static void test_rtt_estimator_moves_five_percent()
     resend_timing_close( &f );
 
     rocketnet_message_default_config( &f.config );
-    f.config.resend_delay_min_ms = 200;
+    f.config.message_resend_delay_min_ms = 200;
     resend_timing_open( &f );
     const double floored_start = resend_timing_start;
     resend_timing_send( &f, floored_start, NULL );
@@ -178,7 +178,7 @@ static void test_no_backoff_between_resends()
 {
     resend_timing_fixture_t f;
     rocketnet_message_default_config( &f.config );
-    f.config.resend_delay_initial_ms = 100;
+    f.config.message_resend_delay_initial_ms = 100;
     resend_timing_open( &f );
 
     const double t0 = resend_timing_start;
@@ -232,9 +232,9 @@ static void test_first_resend_before_any_sample_at_resend_delay_initial()
 
 REGISTER_UNIT_TEST( test_first_resend_before_any_sample_at_resend_delay_initial );
 
-// test_config_refuses_fewer_than_four_attempts: reliable_timeout_ms must fit four
+// test_config_refuses_fewer_than_four_attempts: reliable_message_timeout_ms must fit four
 // sends of the longest first delay, max( the 100 ms resend interval,
-// resend_delay_initial_ms ).
+// message_resend_delay_initial_ms ).
 // Validation refuses and never clamps.
 static void test_config_refuses_fewer_than_four_attempts()
 {
@@ -244,21 +244,21 @@ static void test_config_refuses_fewer_than_four_attempts()
 
     // resend_delay_initial 2 s and a 5 s timeout: two and a half first delays
     rocketnet_message_default_config( &config );
-    config.resend_delay_min_ms = 10;
-    config.resend_delay_initial_ms = 2000;
-    config.resend_delay_max_ms = 2000;
-    config.reliable_timeout_ms = 5000;
+    config.message_resend_delay_min_ms = 10;
+    config.message_resend_delay_initial_ms = 2000;
+    config.message_resend_delay_max_ms = 2000;
+    config.reliable_message_timeout_ms = 5000;
     check( !rocketnet_message_validate_config( &config ) );
     check( rocketnet_message_connection_bytes( &config ) == 0 );
 
     // one millisecond short of four is refused; exactly four is accepted
-    config.reliable_timeout_ms = 7999;
+    config.reliable_message_timeout_ms = 7999;
     check( !rocketnet_message_validate_config( &config ) );
-    config.reliable_timeout_ms = 8000;
+    config.reliable_message_timeout_ms = 8000;
     check( rocketnet_message_validate_config( &config ) );
 
     // the config is not repaired by validation
-    check( config.resend_delay_initial_ms == 2000 && config.reliable_timeout_ms == 8000 );
+    check( config.message_resend_delay_initial_ms == 2000 && config.reliable_message_timeout_ms == 8000 );
 }
 
 REGISTER_UNIT_TEST( test_config_refuses_fewer_than_four_attempts );
@@ -274,10 +274,10 @@ static void test_resend_timing_witness_replays()
 {
     resend_timing_fixture_t f;
     rocketnet_message_default_config( &f.config );
-    f.config.resend_delay_initial_ms = 1000;
-    f.config.resend_delay_min_ms = 50;
-    f.config.resend_delay_max_ms = 2000;
-    f.config.reliable_timeout_ms = 10000;
+    f.config.message_resend_delay_initial_ms = 1000;
+    f.config.message_resend_delay_min_ms = 50;
+    f.config.message_resend_delay_max_ms = 2000;
+    f.config.reliable_message_timeout_ms = 10000;
     resend_timing_open( &f );
 
     const double t0 = resend_timing_start;
@@ -326,7 +326,7 @@ REGISTER_UNIT_TEST( test_resend_timing_witness_replays );
 static void test_message_config_abi_size_is_unchanged()
 {
     check( ROCKETNET_MESSAGE_CONFIG_BYTES_1 == ROCKETNET_MESSAGE_CONFIG_ABI1_BYTES );
-    check( offsetof( rocketnet_message_config_t, reliable_timeout_ms ) == ROCKETNET_MESSAGE_CONFIG_ABI1_BYTES - sizeof( int ) );
+    check( offsetof( rocketnet_message_config_t, reliable_message_timeout_ms ) == ROCKETNET_MESSAGE_CONFIG_ABI1_BYTES - sizeof( int ) );
     check( sizeof( rocketnet_message_config_t ) == ROCKETNET_MESSAGE_CONFIG_BYTES_2 );
     check( sizeof( rocketnet_message_config_t ) == ROCKETNET_MESSAGE_CONFIG_ABI1_BYTES + 2 * sizeof( int ) );
 }

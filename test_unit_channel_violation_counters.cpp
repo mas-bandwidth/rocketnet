@@ -25,10 +25,10 @@ struct violation_packet_t
     uint64_t id;
     int bytes;
     uint8_t bytes_pad[16 - sizeof( uint64_t ) - sizeof( int )];                 // explicit: data starts 16-aligned
-    alignas( 16 ) uint8_t data[ROCKETNET_MAX_PAYLOAD_BYTES];
-    uint8_t tail_pad[16 - ROCKETNET_MAX_PAYLOAD_BYTES % 16];                     // explicit: the size rounds up to 16
+    alignas( 16 ) uint8_t data[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    uint8_t tail_pad[16 - ROCKETNET_MAX_PACKET_PAYLOAD_BYTES % 16];                     // explicit: the size rounds up to 16
 };
-static_assert( sizeof( violation_packet_t ) == 16 + ( ROCKETNET_MAX_PAYLOAD_BYTES + 15 ) / 16 * 16, "no implicit padding" );
+static_assert( sizeof( violation_packet_t ) == 16 + ( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 15 ) / 16 * 16, "no implicit padding" );
 static_assert( alignof( violation_packet_t ) == 16, "data is 16-aligned" );
 
 struct violation_node_t
@@ -44,13 +44,13 @@ static void violation_config( rocketnet_message_config_t * config, int num_chann
 {
     rocketnet_message_default_config( config );
     config->num_channels = num_channels;
-    config->window_messages = 1024;
-    config->receive_ring_bytes = 262144;
+    config->reliable_messages_in_flight = 1024;
+    config->receive_message_buffer_bytes = 262144;
     config->max_message_bytes = 262144;
-    config->send_buffer_bytes = 800000;
-    config->resend_delay_min_ms = 20;
-    config->resend_delay_initial_ms = 100;
-    config->resend_delay_max_ms = 400;
+    config->send_message_buffer_bytes = 800000;
+    config->message_resend_delay_min_ms = 20;
+    config->message_resend_delay_initial_ms = 100;
+    config->message_resend_delay_max_ms = 400;
 }
 
 static void violation_init( violation_node_t * node, const rocketnet_message_config_t * config )
@@ -75,7 +75,7 @@ static void violation_send( violation_node_t * node, uint32_t channel, int type,
 
 static int violation_write( violation_node_t * node, double now, violation_packet_t * packets, int capacity )
 {
-    alignas( 16 ) uint8_t frames[8][ROCKETNET_MAX_PAYLOAD_BYTES];
+    alignas( 16 ) uint8_t frames[8][ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     uint8_t * pointers[8];
     check( capacity > 0 && capacity <= 8 );
     for ( int i = 0; i < capacity; i++ )
@@ -85,7 +85,7 @@ static int violation_write( violation_node_t * node, double now, violation_packe
     {
         packets[i].id = node->next_packet_id++;
         packets[i].bytes = (int) node->ordered.builder.packet[i].payload_bytes;
-        check( packets[i].bytes > 0 && packets[i].bytes <= ROCKETNET_MAX_PAYLOAD_BYTES );
+        check( packets[i].bytes > 0 && packets[i].bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
         memcpy( packets[i].data, frames[i], (size_t) packets[i].bytes );
         rn_ordered_commit( &node->ordered, i, packets[i].id, now );
     }
@@ -175,7 +175,7 @@ static void test_violation_wide_reliable_sequenced_boundary_is_sent()
 
     const uint32_t channel = 256;
     const uint32_t bytes = sender.ordered.channels.payload_capacity - 16;
-    static uint8_t data[ROCKETNET_MAX_PAYLOAD_BYTES];
+    static uint8_t data[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     for ( uint32_t i = 0; i < bytes; i++ )
         data[i] = (uint8_t) ( i * 13 + 5 );
     violation_send( &sender, channel, ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED, data, bytes );
@@ -275,7 +275,7 @@ static void test_violation_reader_and_window_checks_move_their_own_counters()
         rocketnet_message_config_t config;
         violation_config( &config, 8 );
         violation_init( &receiver, &config );
-        static uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES + 64];
+        static uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 64];
         uint8_t * p = payload;
         rocketnet_write_uint8( &p, 0x03 );
         rocketnet_write_uint16( &p, 1 );
@@ -284,7 +284,7 @@ static void test_violation_reader_and_window_checks_move_their_own_counters()
         *p++ = 0; *p++ = 0; *p++ = 0;
         *p++ = 0;
         *p++ = 0x00;
-        const int total = ROCKETNET_MAX_PAYLOAD_BYTES + 1;
+        const int total = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1;
         memset( p, 0xFF, (size_t) ( total - 1 - (int) ( p - payload ) ) );
         payload[total - 1] = ROCKETNET_MESSAGE_FORM_RECORDS;
         violation_feed_refuses( &receiver, payload, total, ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE, ROCKETNET_COUNTER_MESSAGE_BAD_SIZE );

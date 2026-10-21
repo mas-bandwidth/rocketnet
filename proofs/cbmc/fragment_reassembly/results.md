@@ -94,7 +94,7 @@ object.
 **Plan.** For every `int` payload size:
 
 - A plan exists exactly when the size is above
-  `ROCKETNET_MAX_PAYLOAD_BYTES` and at most
+  `ROCKETNET_MAX_PACKET_PAYLOAD_BYTES` and at most
   `ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES`.
 - The count is in 2..256.
 - The stride is in 1..`ROCKETNET_MAX_FRAGMENT_BYTES`, and every stride
@@ -203,7 +203,7 @@ bounds are the largest that finished inside a 16 GB address-space limit.
   memory (below), so the largest bound that finishes is the one proved.
 - **harness_process_fragment at `max_payload_bytes` up to
   `ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES` (361,728).** Not proved. The
-  deployed range starts at `ROCKETNET_MAX_PAYLOAD_BYTES` (1416), so no
+  deployed range starts at `ROCKETNET_MAX_PACKET_PAYLOAD_BYTES` (1416), so no
   deployed payload maximum is inside the proved bound. What limits the run
   is the payload maximum, not the fragment size: fragments at the full
   1433 bytes prove in under a minute at `max_payload_bytes` up to 24.

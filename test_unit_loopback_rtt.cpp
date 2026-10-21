@@ -307,7 +307,7 @@ static void test_max_resend_delay_payload_reserve_without_acks()
         rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
         rocketnet_unit_check( arena != NULL );
         rn_region_t * region = rn_arena_region( arena, 0 );
-        const uint64_t budget = (uint64_t) budgets[side] * 125 * config.resend_delay_max_ms / 1000;
+        const uint64_t budget = (uint64_t) budgets[side] * 125 * config.message_resend_delay_max_ms / 1000;
         for ( int p = 0; p < 5; ++p )
         {
             rn_region_carve( region );

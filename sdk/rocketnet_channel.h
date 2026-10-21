@@ -102,9 +102,9 @@ struct rn_channels_t
 bool rn_channels_init( struct rn_channels_t * channels, struct rn_region_t * region, uint32_t num_channels, uint32_t enabled_types );
 
 // The payload capacity a frame holds, 1 + the single-record room up to
-// ROCKETNET_MAX_PAYLOAD_BYTES. A reliable ordered message whose record fits
+// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES. A reliable ordered message whose record fits
 // it is SMALL (packed, one record) and a larger one is a block of chunks (8).
-// The default is ROCKETNET_MAX_PAYLOAD_BYTES. Refused (false) below the room
+// The default is ROCKETNET_MAX_PACKET_PAYLOAD_BYTES. Refused (false) below the room
 // one chunk record needs.
 
 bool rn_channels_set_payload_capacity( struct rn_channels_t * channels, uint32_t payload_capacity );

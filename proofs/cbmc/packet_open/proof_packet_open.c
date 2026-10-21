@@ -148,8 +148,8 @@ void harness_prefilter( void )
     uint8_t * packet = (uint8_t *) malloc( (size_t) packet_bytes );
     __CPROVER_assume( packet != NULL );
 
-    uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES];
-    const int result = rocketnet_prefilter_check( packet, packet_bytes, filter_value );
+    uint8_t packet_filter[ROCKETNET_FILTER_VALUE_BYTES];
+    const int result = rocketnet_prefilter_check( packet, packet_bytes, packet_filter );
 
     if ( packet_bytes < ROCKETNET_PREFILTER_BYTES )
     {
@@ -169,8 +169,8 @@ void harness_prefilter( void )
         return;
     }
 
-    if ( packet[2] != filter_value[0] || packet[3] != filter_value[1] ||
-         packet[4] != filter_value[2] || packet[5] != filter_value[3] )
+    if ( packet[2] != packet_filter[0] || packet[3] != packet_filter[1] ||
+         packet[4] != packet_filter[2] || packet[5] != packet_filter[3] )
     {
         __CPROVER_assert( result == ROCKETNET_PREFILTER_WRONG_VALUE, "a wrong filter value is refused" );
         return;
@@ -195,7 +195,7 @@ void harness_open_sealed_packet( void )
     __CPROVER_assume( packet_bytes >= 0 && packet_bytes <= ROCKETNET_RECEIVE_PACKET_BYTES );
 
     int out_capacity = nondet_int();
-    __CPROVER_assume( out_capacity >= 0 && out_capacity <= ROCKETNET_MAX_PAYLOAD_BYTES );
+    __CPROVER_assume( out_capacity >= 0 && out_capacity <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
 
     uint8_t * packet = (uint8_t *) malloc( (size_t) packet_bytes );
     __CPROVER_assume( packet != NULL );
