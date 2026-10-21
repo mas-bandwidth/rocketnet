@@ -365,19 +365,17 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         }
 
-        // Check max token lifetime: if max_token_lifetime_seconds > 0, refuse tokens
-        // whose lifetime (expire - create) exceeds it. Also refuse if create is in
-        // the future beyond a 5-second skew allowance.
+        // Creation skew is independent of the optional maximum lifetime.
+        // Subtract only after ordering so the allowance cannot wrap at UINT64_MAX.
+        if ( token_create_timestamp > current_timestamp && token_create_timestamp - current_timestamp > 5 )
+        {
+            rocketnet_debug( "server ignored connection request. connect token created in future" );
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE]++;
+            return ROCKETNET_SERVER_PROCESS_IGNORED;
+        }
+
         if ( server->max_token_lifetime_seconds > 0 )
         {
-            if ( token_create_timestamp > current_timestamp + 5 )
-            {
-                rocketnet_debug( "server ignored connection request. connect token created in future" );
-                // one counter per refusal reason (STANDARD.md, Counters).
-                counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE]++;
-                return ROCKETNET_SERVER_PROCESS_IGNORED;
-            }
-
             uint64_t lifetime = token_expire_timestamp > token_create_timestamp ?
                                 token_expire_timestamp - token_create_timestamp : 0;
             if ( lifetime > (uint64_t) server->max_token_lifetime_seconds )
