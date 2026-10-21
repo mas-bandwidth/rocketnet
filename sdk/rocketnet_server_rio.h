@@ -22,8 +22,9 @@
 // commit, and switches the fill phase to the other phase once that phase has
 // no outstanding send. Receive: every slice is posted at create;
 // receive_packets copies each completion into the fill bank of two receive
-// banks, re-posts the slice, then swaps the banks. Destroy closes the socket
-// and drains both completion queues before the region is freed.
+// banks, re-posts the slice, then swaps the banks. Stop commits deferred sends
+// and closes the socket; stopped drains both completion queues before destroy
+// frees the registered region.
 // tla/RNRioDriver.tla models the design; the functions that implement a
 // model action cite it.
 //

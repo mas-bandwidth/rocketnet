@@ -1113,6 +1113,33 @@ static void test_rio_destroy_commits_deferred_sends()
     printf("test_rio_transport_destroy_commits_deferred_sends\n");
 }
 
+// A stop-time commit refusal must leave the request queue usable. Each
+// completion check makes one more nonwaiting commit attempt before closing
+// the socket and retiring the registered storage.
+static void test_rio_stop_retries_refused_deferred_commit()
+{
+    CHECK(rocketnet_server_rio_available());
+    rocketnet_address_t bind;
+    rocketnet_server_rio_t * rio = rio_open(&bind);
+    rocketnet_address_t peer_address;
+    rocketnet_platform_socket_t * peer = fault_peer(&peer_address);
+
+    rocketnet_server_rio_test_fail_next(rio, ROCKETNET_RIO_TEST_FAULT_COMMIT, 3, WSAENOBUFS);
+    rio_stage(rio, &peer_address, ++fault_round & 0xFF, 10);
+    rocketnet_server_rio_send_packets(rio);
+    CHECK(rocketnet_server_rio_test_faults_left(rio, ROCKETNET_RIO_TEST_FAULT_COMMIT) == 2);
+    rocketnet_server_rio_stop(rio);
+    CHECK(rocketnet_server_rio_test_faults_left(rio, ROCKETNET_RIO_TEST_FAULT_COMMIT) == 1);
+    CHECK(!rocketnet_server_rio_stopped(rio));
+    CHECK(rocketnet_server_rio_test_faults_left(rio, ROCKETNET_RIO_TEST_FAULT_COMMIT) == 0);
+    CHECK(rocketnet_server_rio_pending(rio) >= 10);
+
+    rn_native_backend_stop_and_destroy(rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy);
+    CHECK(rocketnet_server_rio_leaked_regions() == 0);
+    rocketnet_platform_socket_destroy(peer);
+    printf("test_rio_transport_stop_retries_refused_deferred_commit\n");
+}
+
 // ---------------------------------------------------------------------------
 // Windows socket rows: the bound port is the socket's alone, and a refused
 // send is counted on the socket and logged with the Winsock error.
@@ -1272,6 +1299,7 @@ static const fault_case_t fault_cases[] = {
     { "test_rio_transport_request_queue_full", test_rio_request_queue_full },
     { "test_rio_transport_send_post_fails", test_rio_send_post_fails },
     { "test_rio_transport_destroy_commits_deferred_sends", test_rio_destroy_commits_deferred_sends },
+    { "test_rio_transport_stop_retries_refused_deferred_commit", test_rio_stop_retries_refused_deferred_commit },
     { "test_windows_port_exclusive", test_windows_port_exclusive },
     { "test_windows_send_failures_counted", test_windows_send_failures_counted },
 };

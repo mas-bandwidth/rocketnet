@@ -344,24 +344,36 @@ static int rocketnet_rio_dequeue_send( rocketnet_server_rio_t * rio )
     }
 }
 
-void rocketnet_server_rio_stop( rocketnet_server_rio_t * rio )
+// A deferred send still occupies request-queue capacity after a refused
+// commit. Keep the socket open so a later completion check can retry the
+// commit before closing the request queue that owns those sends.
+static bool rocketnet_rio_close_socket( rocketnet_server_rio_t * rio )
 {
-    if ( !rio || rio->stopping.exchange( true, std::memory_order_acq_rel ) ) return;
-    // Closing a UDP socket cancels pending RIO requests. Keep its registered
-    // region and queues until their completions have all been observed.
-    if ( rio->request_queue != RIO_INVALID_RQ ) rocketnet_rio_commit( rio );
-    if ( rio->socket != INVALID_SOCKET && closesocket( rio->socket ) == 0 )
-        rio->socket = INVALID_SOCKET;
-}
-
-bool rocketnet_server_rio_stopped( rocketnet_server_rio_t * rio )
-{
-    if ( !rio || !rio->stopping.load( std::memory_order_acquire ) ) return false;
+    if ( rio->request_queue != RIO_INVALID_RQ && rio->uncommitted )
+    {
+        rocketnet_rio_commit( rio );
+        if ( rio->uncommitted ) return false;
+    }
     if ( rio->socket != INVALID_SOCKET )
     {
         if ( closesocket( rio->socket ) != 0 ) return false;
         rio->socket = INVALID_SOCKET;
     }
+    return true;
+}
+
+void rocketnet_server_rio_stop( rocketnet_server_rio_t * rio )
+{
+    if ( !rio || rio->stopping.exchange( true, std::memory_order_acq_rel ) ) return;
+    // Closing a UDP socket cancels pending RIO requests. Keep its registered
+    // region and queues until their completions have all been observed.
+    rocketnet_rio_close_socket( rio );
+}
+
+bool rocketnet_server_rio_stopped( rocketnet_server_rio_t * rio )
+{
+    if ( !rio || !rio->stopping.load( std::memory_order_acquire ) ) return false;
+    if ( !rocketnet_rio_close_socket( rio ) ) return false;
     // Exactly one available batch per queue, never wait for new completions.
     if ( rio->have_table && rio->send_cq != RIO_INVALID_CQ )
     {
