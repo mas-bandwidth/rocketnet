@@ -74,8 +74,8 @@ includes hardening, longer testing and performance work.
 - On macOS, the portable dual-stack connection test can intermittently fail
   to connect before its deadline. The failure remains a known issue even
   when a repeat run passes.
-- The full macOS functional suite exceeds the 120-second gate limit. The
-  timed-out runs do not establish a full-suite pass.
+- The full macOS functional suite runs past CI's 120-second limit. It passes
+  when run outside CI.
 - Protocol refusal paths, token-claim behavior and low-rate reliable-message
   timeouts still have follow-up work recorded in the roadmap.
 
