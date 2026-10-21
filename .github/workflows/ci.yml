@@ -935,6 +935,61 @@ jobs:
           cd tools/happy_path
           go run happy_path.go
 
+  # THE BACKEND EXAMPLES: the Go and C# backends in examples/backend/ that mint
+  # connect tokens, as yojimbo's matcher does. Their unit tests mint every token
+  # in test/connect_token_vectors.json from its fixed inputs and compare byte for
+  # byte, so a change to the token format that the vectors record and the
+  # backends do not follow goes red here. No sockets and no real time, so no C
+  # build: each leg is a toolchain and seconds of tests, its own job with NO
+  # needs, beside build-and-test. The end-to-end run (server, backend, client
+  # over loopback) is the functional tier, in nightly-examples.yml. Linux only:
+  # the backends are portable code and the token bytes are the same everywhere.
+
+  backend-examples:
+    name: backend example / ${{ matrix.backend }}
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 3
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [go, csharp]
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+      DOTNET_NOLOGO: 1
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Check the fleet's toolchain is on PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+          # examples/backend/go/go.mod says go 1.26; the C# projects target net10.0 (the fleet pins go 1.26 and .NET SDK 10)
+          if [ "${{ matrix.backend }}" = "go" ]; then
+            if ! command -v go >/dev/null 2>&1; then echo "TOOL-MISSING go >= 1.26 (missing) on $RUNNER_NAME"; exit 1; fi
+            got="$(go version)"; echo "$got"
+            minor="$(echo "$got" | sed -n 's/.* go1\.\([0-9][0-9]*\).*/\1/p')"
+            if [ -z "$minor" ] || [ "$minor" -lt 26 ]; then echo "TOOL-MISSING go >= 1.26 $got on $RUNNER_NAME"; exit 1; fi
+          else
+            if ! command -v dotnet >/dev/null 2>&1; then echo "TOOL-MISSING dotnet SDK 10 (missing) on $RUNNER_NAME"; exit 1; fi
+            if ! dotnet --list-sdks | grep -q '^10\.'; then echo "TOOL-MISSING dotnet SDK 10 ($(dotnet --list-sdks | tr '\n' ' ')) on $RUNNER_NAME"; exit 1; fi
+          fi
+
+      - name: Unit tests (Go)
+        if: matrix.backend == 'go'
+        working-directory: examples/backend/go
+        run: |
+          test -z "$(gofmt -l .)" || { gofmt -l .; echo "gofmt: the files above are not formatted"; exit 1; }
+          go vet ./...
+          go test -count=1 ./...
+
+      - name: Build the backend and run its unit tests (C#)
+        if: matrix.backend == 'csharp'
+        working-directory: examples/backend/csharp
+        run: |
+          dotnet build Backend -c Release
+          dotnet run --project Tests -c Release
+
   # asan + ubsan over the whole suite, per commit, exactly as serialize runs
   # it: the transport allocates arenas at create, hands out interior pointers
   # into frames, and reads bytes it did not write, which is the shape of

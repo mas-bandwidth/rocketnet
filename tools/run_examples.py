@@ -23,6 +23,9 @@ memory and is killed by an 8 GB process-tree cap when two runs go at once.
 At 64 clients each example stays well under 1 GB, so two runs at once stay
 under 4 GB together. The 1000-client proof is the soak matrix, not this
 script.
+The backend pair (example_backend_server and example_backend_client) is not
+run here: its client takes a token from a backend in examples/backend/, so
+tools/run_backend_examples.py runs it with each backend between the two.
 Each process gets a 120-second timeout and must exit 0 with PASS as its last
 line. Prints one PASS example_<name> line per example; exits 1 on a failure.
 """
@@ -44,6 +47,8 @@ TIMEOUT_SECONDS = 120
 PORT_TRIES = 3
 READY_SECONDS = 30
 SINGLE_ARGS = {"soak": ["--clients", "64"]}
+# pairs that need more than a server and a client, run by their own script
+RUN_ELSEWHERE = {"backend"}  # tools/run_backend_examples.py
 
 
 def binary_dirs(build, config):
@@ -277,6 +282,7 @@ def main():
         if name.endswith("_server") and name[: -len("_server")] + "_client" in names
     }
     used = {base + suffix for base in pair_bases for suffix in ("_server", "_client")}
+    pair_bases -= RUN_ELSEWHERE
 
     groups = [(base, [base + "_server", base + "_client"]) for base in sorted(pair_bases)]
     groups += [(name, [name]) for name in sorted(names) if name not in used]
