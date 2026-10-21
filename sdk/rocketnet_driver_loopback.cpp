@@ -305,15 +305,17 @@ static void loopback_send( void * transport, const rocketnet_address_t * to, con
     rocketnet_platform_mutex_release( &state.mutex );
 }
 
-static void loopback_server_send_batch( void * transport, const rocketnet_platform_send_t * packets, int count )
+static void loopback_server_send_batch_impl( void * transport, const rocketnet_platform_send_t * packets, int count, bool shutdown )
 {
     rocketnet_loopback_endpoint_t * sender = (rocketnet_loopback_endpoint_t*) transport;
     rocketnet_loopback_state_t & state = loopback_state();
-    if ( !loopback_try_send_lock( state ) )
+    if ( shutdown && !loopback_try_send_lock( state ) )
     {
         if ( count > 0 ) loopback_send_failed( sender, (uint64_t) count );
         return;
     }
+    if ( !shutdown )
+        rocketnet_platform_mutex_acquire( &state.mutex );
     for ( int i = 0; i < count; ++i )
     {
         const rocketnet_platform_send_t & packet = packets[i];
@@ -338,6 +340,16 @@ static void loopback_server_send_batch( void * transport, const rocketnet_platfo
         ++dst->count;
     }
     rocketnet_platform_mutex_release( &state.mutex );
+}
+
+static void loopback_server_send_batch( void * transport, const rocketnet_platform_send_t * packets, int count )
+{
+    loopback_server_send_batch_impl( transport, packets, count, false );
+}
+
+static void loopback_server_send_batch_shutdown( void * transport, const rocketnet_platform_send_t * packets, int count )
+{
+    loopback_server_send_batch_impl( transport, packets, count, true );
 }
 
 static int loopback_server_receive_batch( void * transport, rocketnet_address_t * from, uint8_t * data, int stride, int * bytes, int count )
@@ -393,7 +405,7 @@ static const rocketnet_server_transport_io_operations_t loopback_server_operatio
 {
     ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE, loopback_server_create, loopback_destroy, loopback_stop, loopback_stopped,
     NULL, NULL, NULL, NULL, NULL, loopback_server_send_batch, loopback_server_receive_batch,
-    NULL, NULL, NULL, NULL, NULL, loopback_send_failures
+    NULL, NULL, NULL, NULL, NULL, loopback_send_failures, loopback_server_send_batch_shutdown
 };
 
 static const rocketnet_client_transport_io_operations_t loopback_client_operations =

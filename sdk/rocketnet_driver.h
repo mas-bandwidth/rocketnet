@@ -91,8 +91,10 @@ struct rocketnet_server_transport_io_operations_t
 
     // Buffered path: borrow caller storage only for this synchronous call.
     // A transport that retains buffers must use the staged path instead.
-    // send_batch is also used during a stop request: it must make bounded,
-    // nonwaiting attempts, dropping on contention rather than waiting.
+    // Ordinary batches may serialize with a receive worker. Shutdown uses
+    // send_batch_shutdown when provided; that callback must return without
+    // waiting for a worker or mutex, dropping on contention if necessary.
+    // Without it, send_batch must also meet the shutdown requirement.
     void (*send_batch)( void *, const rocketnet_platform_send_t *, int );
     int (*receive_batch)( void *, rocketnet_address_t *, uint8_t *, int, int *, int );
     // optional; a transport with a kernel prefilter writes
@@ -114,6 +116,7 @@ struct rocketnet_server_transport_io_operations_t
     // failed send call, cumulative for the transport's life; the transport
     // surfaces it as SEND_FAILED when its counters are read.
     uint64_t (*send_failures)( void * transport );
+    void (*send_batch_shutdown)( void *, const rocketnet_platform_send_t *, int );
 };
 
 // the start_packet id of a refusal for want of a link-layer destination

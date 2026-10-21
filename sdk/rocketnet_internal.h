@@ -602,4 +602,9 @@ void rocketnet_platform_set_network_lookups_for_testing( const struct rocketnet_
 // or NaN request, ROCKETNET_SLEEP_MAX_SECONDS for a longer or infinite one
 double rocketnet_sleep_clamp( double seconds );
 
+// Internal final-burst operations for public server_stop. They preserve the
+// normal transport API while selecting a nonwaiting backend send on shutdown.
+void rocketnet_server_transport_disconnect_client_shutdown( struct rocketnet_server_transport_t * transport, int client_index );
+void rocketnet_server_transport_send_packets_shutdown( struct rocketnet_server_transport_t * transport );
+
 #endif // #ifndef ROCKETNET_INTERNAL_H

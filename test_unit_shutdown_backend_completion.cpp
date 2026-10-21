@@ -29,13 +29,22 @@ static void test_loopback_shutdown_send_drops_contended_without_waiting()
         packets[i].packet_bytes = sizeof(data);
     }
     rocketnet_loopback_test_send_contention( true );
-    sender.operations->send_batch( sender.instance, packets, 3 );
+    rocketnet_unit_check( sender.operations->send_batch_shutdown );
+    sender.operations->send_batch_shutdown( sender.instance, packets, 3 );
     rocketnet_loopback_test_send_contention( false );
     rocketnet_unit_check( sender.operations->send_failures( sender.instance ) == 3 );
     rocketnet_address_t from[3];
     uint8_t received[3][32];
     int bytes[3];
     rocketnet_unit_check( receiver.operations->receive_batch( receiver.instance, from, &received[0][0], 32, bytes, 3 ) == 0 );
+    // The simulated failed try-acquire applies to shutdown only. An ordinary
+    // batch still reaches the receiver under the same test contention flag.
+    rocketnet_loopback_test_send_contention( true );
+    sender.operations->send_batch( sender.instance, packets, 1 );
+    rocketnet_loopback_test_send_contention( false );
+    rocketnet_unit_check( receiver.operations->receive_batch( receiver.instance, from, &received[0][0], 32, bytes, 3 ) == 1 );
+    rocketnet_unit_check( bytes[0] == 32 && memcmp( received[0], data, 32 ) == 0 );
+    rocketnet_unit_check( sender.operations->send_failures( sender.instance ) == 3 );
     // Pressure has gone: the same storage remains usable and sends exactly once.
     sender.operations->send_batch( sender.instance, packets, 1 );
     rocketnet_unit_check( receiver.operations->receive_batch( receiver.instance, from, &received[0][0], 32, bytes, 3 ) == 1 );

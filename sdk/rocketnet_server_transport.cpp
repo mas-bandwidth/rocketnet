@@ -591,11 +591,14 @@ bool rocketnet_server_transport_network_simulator( struct rocketnet_server_trans
 }
 
 static void rocketnet_server_link_send_batch( rocketnet_server_transport_t * transport,
-                                              const rocketnet_platform_send_t * sends, int num_sends )
+                                              const rocketnet_platform_send_t * sends, int num_sends, bool shutdown = false )
 {
     if ( !transport->link_simulator )
     {
-        transport->io.operations->send_batch( transport->io.instance, sends, num_sends );
+        if ( shutdown && transport->io.operations->send_batch_shutdown )
+            transport->io.operations->send_batch_shutdown( transport->io.instance, sends, num_sends );
+        else
+            transport->io.operations->send_batch( transport->io.instance, sends, num_sends );
         return;
     }
     for ( int i = 0; i < num_sends; i++ )
@@ -652,7 +655,7 @@ static void rocketnet_server_link_drain( rocketnet_server_transport_t * transpor
 // Control frames borrow this buffer only during synchronous send_batch.
 // Drain full batches as update fills them, so receive responses cannot
 // consume the entire maintenance budget and servers can service >256 slots.
-static void rocketnet_server_flush_control_buffer( rocketnet_server_transport_t * server_transport )
+static void rocketnet_server_flush_control_buffer( rocketnet_server_transport_t * server_transport, bool shutdown = false )
 {
     rocketnet_assert( !rocketnet_server_transport_staged( server_transport ) );
     rocketnet_assert( server_transport->io.operations && server_transport->io.operations->send_batch );
@@ -669,7 +672,7 @@ static void rocketnet_server_flush_control_buffer( rocketnet_server_transport_t 
         }
     }
     if ( num_sends > 0 )
-        rocketnet_server_link_send_batch( server_transport, sends, num_sends );
+        rocketnet_server_link_send_batch( server_transport, sends, num_sends, shutdown );
     server_transport->send_buffer.num_packets = 0;
 }
 
@@ -691,7 +694,7 @@ struct rocketnet_server_frame_t
 // tla/RNDriverSendStaging.tla Reserve
 static uint8_t * rocketnet_server_reserve_send_frame( struct rocketnet_server_transport_t * server_transport,
                                                                 const rocketnet_address_t * to,
-                                                                struct rocketnet_server_frame_t * frame )
+                                                                struct rocketnet_server_frame_t * frame, bool shutdown = false )
 {
     frame->to = *to;
     frame->client_index = -1;
@@ -709,7 +712,7 @@ static uint8_t * rocketnet_server_reserve_send_frame( struct rocketnet_server_tr
 
     if ( send_buffer->num_packets >= ROCKETNET_SERVER_MAX_SEND_PACKETS )
     {
-        rocketnet_server_flush_control_buffer( server_transport );
+        rocketnet_server_flush_control_buffer( server_transport, shutdown );
     }
 
     const int index = send_buffer->num_packets;
@@ -2840,7 +2843,7 @@ int rocketnet_server_transport_finish_packet( rocketnet_server_transport_t * ser
 }
 
 // tla/RNDriverSendStaging.tla SendPackets
-void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_t * server_transport )
+static void rocketnet_server_transport_send_packets_impl( struct rocketnet_server_transport_t * server_transport, bool shutdown )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )
         return;
@@ -2907,17 +2910,29 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
     }
 
     if ( num_sends > 0 )
-        rocketnet_server_link_send_batch( server_transport, sends, num_sends );
+        rocketnet_server_link_send_batch( server_transport, sends, num_sends, shutdown );
 
     ring->num_packets = 0;
 
     // The disconnect_client header promise: buffered control frames leave on
     // the next flush even when this fill phase sent no payload-ring packet.
-    rocketnet_server_flush_control_buffer( server_transport );
+    rocketnet_server_flush_control_buffer( server_transport, shutdown );
 
     rocketnet_server_link_flush( server_transport );
 
     rocketnet_send_arena_reset( server_transport->send_arena );
+}
+
+void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_server_transport_send_packets_impl( server_transport, false );
+}
+
+// Internal public-server stop path: the last disconnect burst must not wait
+// for a loopback receive worker that holds the endpoint-table mutex.
+void rocketnet_server_transport_send_packets_shutdown( struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_server_transport_send_packets_impl( server_transport, true );
 }
 
 // the convenience: the same path underneath, plus one memcpy the caller chose
@@ -2948,7 +2963,7 @@ void rocketnet_server_transport_send_packet( struct rocketnet_server_transport_t
 }
 
 // tla/RNDriverSendStaging.tla DisconnectClient
-void rocketnet_server_transport_disconnect_client( struct rocketnet_server_transport_t * server_transport, int client_index )
+static void rocketnet_server_transport_disconnect_client_impl( struct rocketnet_server_transport_t * server_transport, int client_index, bool shutdown )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )
         return;
@@ -2972,7 +2987,7 @@ void rocketnet_server_transport_disconnect_client( struct rocketnet_server_trans
     for ( int i = 0; i < burst_count; i++ )
     {
         struct rocketnet_server_frame_t frame;
-        uint8_t * frame_data = rocketnet_server_reserve_send_frame( server_transport, &client_address, &frame );
+        uint8_t * frame_data = rocketnet_server_reserve_send_frame( server_transport, &client_address, &frame, shutdown );
         if ( !frame_data )
             break;
         frame.client_index = client_index;
@@ -2985,6 +3000,16 @@ void rocketnet_server_transport_disconnect_client( struct rocketnet_server_trans
     // the next send_packets flush even when there is no following update.
     if ( committed && rocketnet_server_transport_staged( server_transport ) )
         server_transport->send_staged++;
+}
+
+void rocketnet_server_transport_disconnect_client( struct rocketnet_server_transport_t * server_transport, int client_index )
+{
+    rocketnet_server_transport_disconnect_client_impl( server_transport, client_index, false );
+}
+
+void rocketnet_server_transport_disconnect_client_shutdown( struct rocketnet_server_transport_t * server_transport, int client_index )
+{
+    rocketnet_server_transport_disconnect_client_impl( server_transport, client_index, true );
 }
 
 int rocketnet_server_transport_num_connected_clients( struct rocketnet_server_transport_t * server_transport )

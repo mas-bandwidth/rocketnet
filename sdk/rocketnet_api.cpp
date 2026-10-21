@@ -1579,11 +1579,26 @@ void rocketnet_server_stop( struct rocketnet_server_t * server )
 {
     if ( !rocketnet_api_null_guard( server ) || !server->running )
         return;
-    rocketnet_server_disconnect_all_clients( server );
-    rocketnet_message_server_send_packets( server->running );
+    struct rocketnet_server_transport_t * transport = rn_server_transport( server );
+    if ( transport )
+    {
+        for ( int i = 0; i < server->max_clients; i++ )
+        {
+            // Disconnect the transport first on the shutdown-only batch path.
+            // The message kick's regular link callback then finds a free slot.
+            if ( rocketnet_server_transport_is_client_connected( transport, i ) )
+                rocketnet_server_transport_disconnect_client_shutdown( transport, i );
+            rn_message_object_kick( &server->running->object, i, ROCKETNET_DISCONNECT_REASON_NONE );
+        }
+        rocketnet_server_transport_send_packets_shutdown( transport );
+    }
+    else
+    {
+        rocketnet_server_disconnect_all_clients( server );
+        rocketnet_message_server_send_packets( server->running );
+    }
     server->retiring = server->running;
     server->running = NULL;
-    struct rocketnet_server_transport_t * transport = rocketnet_message_server_transport( server->retiring );
     if ( transport )
         rocketnet_server_transport_stop( transport );
 }
