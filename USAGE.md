@@ -268,7 +268,7 @@ allocator. `rocketnet_client_required_memory` and
 wants every byte up front can pass `rocketnet_init` an allocator
 over a block of its own, aligned to `ROCKETNET_ALLOCATION_ALIGNMENT`. Connect
 and start may also allocate transport memory. Starting a server also prepares
-the background stats worker and its snapshot storage. If that storage cannot
+the background stats worker and its delta-buffer storage. If that storage cannot
 be allocated, `rocketnet_server_start` returns
 `ROCKETNET_STATUS_OUT_OF_MEMORY`; if the worker thread cannot be created, it
 returns `ROCKETNET_STATUS_THREAD_CREATE_FAILED` and leaves the server stopped.
@@ -621,21 +621,21 @@ ACK-derived quality values. The per-client API call copies those published
 values; it does not calculate them or wait for the stats worker. Server update
 first applies results from at most one previously completed batch (at most 20
 slots), then submits a batch that visits at most 20 configured slots in one
-modulo phase and snapshots only the connected slots among them. Results from a
+modulo phase and hands off delta buffers for connected slots. Results from a
 newly submitted batch can be published no earlier than a later update. The
-worker computes ACK-derived RTT, jitter, loss and bandwidth from those
-snapshots while the main thread continues its frame work. A busy worker does
-not block update. A new batch can still be submitted if the other snapshot
-bank is free; if both banks are occupied, update submits no batch and the
-submitted-job ordinal does not advance, so that phase is retried rather than
-starved. At 1,000
-configured slots, a full set of phases spans 50 successfully submitted jobs;
-when the worker falls behind, published quality values can lag further. A
-connection ID accompanies each snapshot, so a result for a reset or reused slot
-is discarded. Reset clears that slot's published quality values immediately.
-The main-thread snapshot copy can be as large as approximately 2.2 MiB per
-batch; its cost still needs measurement, and this behavior makes no 100-us
-update-time promise.
+worker folds those deltas into its rolling ACK history and computes RTT,
+jitter, loss and bandwidth while the main thread continues its frame work. A
+busy worker does not block update. A new batch can still be submitted if the
+other delta bank is free; if both banks are occupied, update submits no batch
+and the submitted-job ordinal does not advance, so that phase is retried rather
+than starved. At 1,000 configured slots, a full set of phases spans 50
+successfully submitted jobs; when the worker falls behind, published quality
+values can lag further. Each result carries its connection ID, so a result for
+a reset or reused slot is discarded. Reset clears that slot's published quality
+values immediately. Preallocated delta buffers let the worker retain rolling
+ACK history without a full-history copy on the update path. The bounded
+ownership exchange covers at most 20 slots per submitted batch; this
+design makes no 100-us update-time promise.
 
 Watch jitter and loss when conditions worsen; the rtt figure is the minimum
 over the retained history, so it cannot track latency upward until every lower
