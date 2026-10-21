@@ -38,6 +38,7 @@
     uses as its negative control.
 */
 
+#include "test/native_shutdown.h"
 #include "rocketnet.h"
 #include "rocketnet_layers.h"
 #include "rocketnet_connect_token.h"
@@ -325,7 +326,7 @@ int main( int argc, char ** argv )
                 rocketnet_server_transport_update( server, rocketnet_time() );
                 counter_violations += soak_check_counters( "client", rocketnet_client_transport_counters( client ) );
                 soak_accumulate_counters( client_counters, rocketnet_client_transport_counters( client ) );
-                rocketnet_client_transport_destroy( client );
+                rn_native_client_transport_stop_and_destroy( client );
                 client = NULL;
             }
             uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
@@ -514,10 +515,10 @@ int main( int argc, char ** argv )
     fflush( stdout );
 
     if ( client )
-        rocketnet_client_transport_destroy( client );
+        rn_native_client_transport_stop_and_destroy( client );
     rocketnet_server_transport_stop( server );
     rocketnet_server_transport_update( server, rocketnet_time() );
-    rocketnet_server_transport_destroy( server );
+    rn_native_server_transport_stop_and_destroy( server );
 
     rocketnet_term();
 

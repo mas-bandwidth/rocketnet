@@ -58,6 +58,7 @@
 #define _GNU_SOURCE     /* setns, for LOAD_CLIENT_NETNS */
 #endif
 
+#include "examples/shutdown.h"
 #include "rocketnet.h"
 #include "test/portable_crt.h"
 #include <errno.h>
@@ -582,7 +583,7 @@ int main( int argc, char ** argv )
     if ( rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         fprintf( stderr, "load: failed to start server\n" );
-        rocketnet_server_destroy( server );
+        rn_cli_server_stop_and_destroy( server );
         rocketnet_term();
         return 1;
     }
@@ -811,7 +812,7 @@ int main( int argc, char ** argv )
 
         if ( drop_one && !drop_injected && ( elapsed >= drop_at ) )
         {
-            rocketnet_client_destroy( clients[0] );
+            rn_cli_client_stop_and_destroy( clients[0] );
             clients[0] = NULL;
             drop_injected = 1;
         }
@@ -1159,9 +1160,9 @@ int main( int argc, char ** argv )
     for ( int i = 0; i < num_clients; i++ )
     {
         if ( clients[i] )
-            rocketnet_client_destroy( clients[i] );
+            rn_cli_client_stop_and_destroy( clients[i] );
     }
-    rocketnet_server_destroy( server );
+    rn_cli_server_stop_and_destroy( server );
     free( clients );
     free( client_ever_connected );
     free( client_slot );
