@@ -32,12 +32,14 @@ static inline void rn_test_client_wait_disconnected( rocketnet_client_t * client
 }
 
 // Retry a terminal-state reconnect only after its first connect request has
-// retired the old generation. This is test scheduling, not a blocking API.
+// retired the old generation. The public state stays negative while a failed
+// attempt retires; explicit disconnect instead reports DISCONNECTED. This is
+// test scheduling, not a blocking API.
 static inline enum rocketnet_status_t rn_test_client_connect_after_completion( rocketnet_client_t * client, const char * token )
 {
     enum rocketnet_status_t status = rocketnet_client_connect( client, token );
     if ( status == ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED &&
-         rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED )
+         rocketnet_client_state( client ) <= ROCKETNET_CLIENT_STATE_DISCONNECTED )
     {
         rn_test_client_wait_disconnected( client );
         status = rocketnet_client_connect( client, token );
