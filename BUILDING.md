@@ -507,42 +507,44 @@ sizes also depend on platform layout and compile-time limits.
 Build tools normally, then use the resource probe:
 
 ```
-./bin/transport_memory 1000 1192 16 portable 0 --plan-only
+./bin/transport_memory 1000 1416 16 portable 0 --plan-only
 # A live portable server probe requires a development build.
-./bin/transport_memory 1000 1192 16 gso 0
+# Linux live GSO probe:
+./bin/transport_memory 1000 1416 16 gso 0
+# Host requests, including stack reserves, without creating the server:
+./bin/transport_memory 1000 1416 16 gso 0 --session-plan-only
 # Linux only; this prints geometry without attaching XDP or allocating UMEM:
-./bin/transport_memory 1000 1192 1 xdp 7 --plan-only
+./bin/transport_memory 1000 1416 1 xdp 7 --plan-only
 python3 tools/check_memory.py
 ```
 
 Arguments are clients, maximum payload bytes, reassembly slots, concrete transport
 and queue/worker count (zero selects that transport's default). `--plan-only` emits
 a component breakdown, worker/socket counts and an explicit unknown OS/application
-cost, then exits before initialization. Without it, the probe creates a loopback
-server, compares independent allocator live/peak observations against the plan,
+cost, then exits before initialization. `--session-plan-only` reports the public
+server block plus its active transport's SDK allocations and host requests,
+including socket buffers and thread stack reserves, without creating a server.
+It requires no `ROCKETNET_SERVER_` or `ROCKETNET_DEV_SERVER_` environment overrides.
+Without either option, the probe creates a loopback server, compares independent allocator live/peak observations against the plan,
 reports process peak RSS separately and checks that destruction frees every SDK
 allocation. Clear deployment `ROCKETNET_*` overrides when profiling a specific
 argument set: real create still obeys those overrides and a mismatch fails loudly.
 RSS and requested allocator bytes measure different things; untouched allocations
 may not yet be resident. The probe never commits an XDP attachment.
 
-On the shared test machine, Release portable plans matched all 40 live allocations:
+Record the exact build, geometry and output when reporting byte totals. A live
+measurement may be below the constructor plan because worker startup shims are
+freed as their threads begin; the plan includes all of them. This does not relax
+the requirement that destruction frees every SDK allocation. Large legal numeric
+reassembly geometries can be planned without allocating them, while component
+budgets can still refuse creation.
 
-| Clients | Payload bytes | Reassembly slots | Planned/observed allocator bytes |
-| ---: | ---: | ---: | ---: |
-| 1 | 1192 | 1 | 32,609,307 |
-| 2 | 1192 | 1 | 32,937,054 |
-| 1000 | 1192 | 1 | 360,028,560 |
-| 1000 | 1192 | 16 | 417,433,560 |
-| 1000 | 4096 | 16 | 510,407,896 |
-
-These are target-specific constructor measurements, not deployment limits. The
-maximum legal numeric reassembly geometry plans roughly 146 GiB and can be queried
-without allocating it; the default reassembly component budget refuses its create.
-`test_transport_control` also exercises six maintenance passes over 1000 mixed
-ACK/keepalive clients while the buffered transport accepts only 256 controls per send
-batch. Its elapsed time is a diagnostic for that synthetic workload, not a packet
-rate or a frame/send/ACK cadence requirement.
+`test_transport_control` exercises one complete 20-slot stats modulo cycle plus
+a publication update over 1000 mixed ACK/keepalive clients: 51 updates and 50
+manual worker steps at that client count. The buffered transport accepts only
+256 controls per send batch, and the test retains per-update control assertions.
+Its elapsed time is a diagnostic for that synthetic workload, not a packet rate
+or a frame/send/ACK cadence requirement.
 
 ## Runtime environment inventory
 
