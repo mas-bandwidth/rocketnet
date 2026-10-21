@@ -156,9 +156,7 @@ int main( void )
 
     CHECK( rocketnet_version() == ROCKETNET_VERSION );
     CHECK( ROCKETNET_VERSION == ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH );
-    CHECK( ROCKETNET_ABI_VERSION >= 1 );
 
-    CHECK( rocketnet_num_status_codes() == ROCKETNET_STATUS_COUNT );
     for ( int i = 0; i < ROCKETNET_STATUS_COUNT; i++ )
         CHECK( rocketnet_status_name( (enum rocketnet_status_t) i ) != NULL );
     CHECK( strcmp( rocketnet_status_name( ROCKETNET_STATUS_OK ), "OK" ) == 0 );

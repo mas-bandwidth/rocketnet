@@ -236,7 +236,6 @@ static void api_polish_bool_field_abi()
     // the bool field is one byte; the ABI version macro stays
     check( sizeof( ( (rocketnet_client_config_t *) 0 )->step_driven ) == 1 );
     check( sizeof( ( (rocketnet_client_config_t *) 0 )->send_kbps ) == sizeof( int ) );
-    check( ROCKETNET_ABI_VERSION == 1 );
     struct rocketnet_client_config_t config;
     check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
     check( config.step_driven == false );

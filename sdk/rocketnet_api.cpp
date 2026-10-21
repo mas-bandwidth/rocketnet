@@ -345,6 +345,7 @@ enum rn_client_count_t
     RN_CLIENT_MESSAGES_DUPLICATE,
     RN_CLIENT_RECEIPTS_ACKED,
     RN_CLIENT_RECEIPTS_LOST,
+    RN_CLIENT_RECEIPTS_DROPPED,
     RN_CLIENT_BUDGET_DROPS,
     RN_CLIENT_SEND_DEFERRED,
     RN_CLIENT_NOT_CONNECTED_DROPS,
@@ -365,6 +366,7 @@ enum rn_server_count_t
     RN_SERVER_MESSAGES_DUPLICATE,
     RN_SERVER_RECEIPTS_ACKED,
     RN_SERVER_RECEIPTS_LOST,
+    RN_SERVER_RECEIPTS_DROPPED,
     RN_SERVER_BUDGET_DROPS,
     RN_SERVER_NOT_CONNECTED_DROPS,
     RN_SERVER_COUNT
@@ -927,7 +929,9 @@ static enum rocketnet_status_t rn_send_kbps_runtime( const char * endpoint, int 
         rocketnet_error( "%s set_send_kbps refused: %d kbps is negative", endpoint, kbps );
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
     }
-    *resolved = (int32_t) ( kbps == 0 ? default_kbps : kbps );
+    // ROCKETNET_SEND_BUDGET_MAX_KBPS is no send budget: the message layer
+    // holds that as 0, which uncaps the connection
+    *resolved = (int32_t) ( kbps == 0 ? default_kbps : ( kbps >= ROCKETNET_SEND_BUDGET_MAX_KBPS ? 0 : kbps ) );
     return ROCKETNET_STATUS_OK;
 }
 
@@ -968,6 +972,7 @@ static void rn_client_connection_counts( struct rocketnet_message_client_t * mes
     counts[RN_CLIENT_MESSAGES_DUPLICATE] = rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_DUPLICATE );
     counts[RN_CLIENT_RECEIPTS_ACKED] = rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED );
     counts[RN_CLIENT_RECEIPTS_LOST] = rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS );
+    counts[RN_CLIENT_RECEIPTS_DROPPED] = rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_RECEIPT_RING_FULL );
     counts[RN_CLIENT_BUDGET_DROPS] = rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET );
     counts[RN_CLIENT_SEND_DEFERRED] = rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED );
     counts[RN_CLIENT_NOT_CONNECTED_DROPS] = rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED );
@@ -1011,6 +1016,7 @@ void rocketnet_client_stats( const struct rocketnet_client_t * client, struct ro
     stats->messages_duplicate = counts[RN_CLIENT_MESSAGES_DUPLICATE];
     stats->receipts_acked = counts[RN_CLIENT_RECEIPTS_ACKED];
     stats->receipts_lost = counts[RN_CLIENT_RECEIPTS_LOST];
+    stats->receipts_dropped = counts[RN_CLIENT_RECEIPTS_DROPPED];
     stats->budget_drops = counts[RN_CLIENT_BUDGET_DROPS];
     stats->send_deferred = counts[RN_CLIENT_SEND_DEFERRED];
     stats->not_connected_drops = counts[RN_CLIENT_NOT_CONNECTED_DROPS];
@@ -1093,7 +1099,15 @@ static bool rn_server_destination_refused( uint64_t destination_id )
 // a slot index for a client index: in range of max_clients while running
 static bool rn_server_slot( const struct rocketnet_server_t * server, int client_index, int * slot )
 {
-    if ( !server->running || client_index < 0 || client_index >= server->max_clients )
+    // an index outside the config's slots is the caller's error, counted;
+    // a stopped server's slots are valid indexes that read empty
+    if ( client_index < 0 || client_index >= server->max_clients )
+    {
+        rocketnet_api_misuse_record();
+        rocketnet_error( "server call refused: client index %d is outside 0 .. %d", client_index, server->max_clients - 1 );
+        return false;
+    }
+    if ( !server->running )
         return false;
     *slot = client_index;
     return true;
@@ -1713,6 +1727,7 @@ static void rn_server_running_counts( const struct rocketnet_server_t * server, 
     counts[RN_SERVER_MESSAGES_DUPLICATE] = rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_DUPLICATE );
     counts[RN_SERVER_RECEIPTS_ACKED] = rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED );
     counts[RN_SERVER_RECEIPTS_LOST] = rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS );
+    counts[RN_SERVER_RECEIPTS_DROPPED] = rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_RECEIPT_RING_FULL );
     counts[RN_SERVER_BUDGET_DROPS] = rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET );
     counts[RN_SERVER_NOT_CONNECTED_DROPS] = rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED );
     if ( transport_stats )
@@ -1753,6 +1768,7 @@ void rocketnet_server_stats( const struct rocketnet_server_t * server, struct ro
     stats->messages_duplicate = counts[RN_SERVER_MESSAGES_DUPLICATE];
     stats->receipts_acked = counts[RN_SERVER_RECEIPTS_ACKED];
     stats->receipts_lost = counts[RN_SERVER_RECEIPTS_LOST];
+    stats->receipts_dropped = counts[RN_SERVER_RECEIPTS_DROPPED];
     stats->budget_drops = counts[RN_SERVER_BUDGET_DROPS];
     stats->not_connected_drops = counts[RN_SERVER_NOT_CONNECTED_DROPS];
 }

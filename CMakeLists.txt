@@ -287,8 +287,8 @@ target_compile_definitions(rocketnet_dev PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS
 target_compile_definitions(rocketnet_shared_dev PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
 
 # The soname follows SDK layout/calling compatibility, independently of wire version.
-file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/sdk/rocketnet.h" ROCKETNET_ABI_LINE REGEX "^#define ROCKETNET_ABI_VERSION [0-9]+$")
-string(REGEX REPLACE ".* ([0-9]+)$" "\\1" ROCKETNET_ABI_SOVERSION "${ROCKETNET_ABI_LINE}")
+# the shared library's soname follows the major version
+set(ROCKETNET_ABI_SOVERSION ${PROJECT_VERSION_MAJOR})
 set_target_properties(rocketnet_shared PROPERTIES
     OUTPUT_NAME rocketnet ARCHIVE_OUTPUT_NAME rocketnet_import
     VERSION ${PROJECT_VERSION} SOVERSION ${ROCKETNET_ABI_SOVERSION}

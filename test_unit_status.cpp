@@ -63,7 +63,6 @@ static void status_names_cover_every_code()
     check( ROCKETNET_STATUS_OK == 0 );
     check( ROCKETNET_STATUS_COUNT == 28 );
     check( ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED == 27 );
-    check( rocketnet_num_status_codes() == ROCKETNET_STATUS_COUNT );
     check( sizeof( status_expected ) / sizeof( status_expected[0] ) == ROCKETNET_STATUS_COUNT );
 
     for ( int i = 0; i < ROCKETNET_STATUS_COUNT; i++ )

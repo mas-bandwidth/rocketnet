@@ -188,12 +188,6 @@ const char * rocketnet_log_level_name( enum rocketnet_log_level_t level )
     }
 }
 
-// docs/ERRORS-AND-LOGGING.md 2.1 item 4: the count includes the success value.
-int rocketnet_num_status_codes( void )
-{
-    return ROCKETNET_STATUS_COUNT;
-}
-
 // One row per code, in the enum's order. The array is unsized so the static
 // assertion below refuses a code without a name and a name without a code.
 static const char * const rocketnet_status_names[] =

@@ -58,7 +58,6 @@ static void api_polish_followups()
 
     // ROCKETNET_STATUS_COUNT counts every code, OK included
     check( ROCKETNET_STATUS_COUNT == 28 );
-    check( rocketnet_num_status_codes() == ROCKETNET_STATUS_COUNT );
     check( strcmp( rocketnet_status_name( (rocketnet_status_t) ( ROCKETNET_STATUS_COUNT - 1 ) ), "CONFIG_NOT_INITIALIZED" ) == 0 );
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_COUNT ), "unknown" ) == 0 );
 
