@@ -491,12 +491,29 @@ static long count_threads( void )
 static void sample_resources( long * peak_fds, long * peak_threads )
 {
     const long fds = count_open_fds();
+#if !defined(_WIN32)
     const long threads = count_threads();
+#endif
     if ( fds > *peak_fds )
         *peak_fds = fds;
+#if defined(_WIN32)
+    /* The global Toolhelp thread snapshot is expensive at large populations.
+       Windows thread counts are sampled at named phase boundaries instead. */
+    (void) peak_threads;
+#else
+    if ( threads > *peak_threads )
+        *peak_threads = threads;
+#endif
+}
+
+#if defined(_WIN32)
+static void sample_thread_boundary( long * peak_threads )
+{
+    const long threads = count_threads();
     if ( threads > *peak_threads )
         *peak_threads = threads;
 }
+#endif
 
 #if !defined(_WIN32)
 struct load_fd_limit_t
@@ -1169,6 +1186,9 @@ int main( int argc, char ** argv )
     }
 #endif
     sample_resources( &fds_peak, &threads_peak );
+#if defined(_WIN32)
+    sample_thread_boundary( &threads_peak ); /* post setup, before connect */
+#endif
     const double token_setup_elapsed = rocketnet_time() - token_setup_start;
     if ( handshake_diagnostics )
     {
@@ -1325,6 +1345,9 @@ int main( int argc, char ** argv )
         rocketnet_sleep( 0.001 );
     }
 
+#if defined(_WIN32)
+    sample_thread_boundary( &threads_peak ); /* post connect, before traffic */
+#endif
     /* Step 2: Drive traffic for <seconds>, then 3.0s drain for in-flight delivery */
     struct load_wire_sample_t server_wire_start = { 0, 0 };
     struct load_wire_sample_t server_wire_end = { 0, 0 };
@@ -1619,6 +1642,9 @@ int main( int argc, char ** argv )
     }
 
     timing.enabled = 0;
+#if defined(_WIN32)
+    sample_thread_boundary( &threads_peak ); /* after traffic and bounded drain */
+#endif
 
     /* Final verification of all 5 criteria */
     if ( rocketnet_server_num_connected_clients( server ) != num_clients )
@@ -1883,6 +1909,10 @@ int main( int argc, char ** argv )
     free( client_max_update_gap );
     const long fds_pre_term = count_open_fds();
     const long threads_pre_term = count_threads();
+#if defined(_WIN32)
+    if ( threads_pre_term > threads_peak )
+        threads_peak = threads_pre_term;
+#endif
     const enum rocketnet_status_t term_status = rocketnet_term();
 
     const long fds_end = count_open_fds();
@@ -1906,7 +1936,13 @@ int main( int argc, char ** argv )
             failed_criterion = "resource_baseline";
         pass = 0;
     }
+#if defined(_WIN32)
+    const char * timing_baseline = fixed_message_rate ? "fixed_rate_win_boundary_threads_v2" : "fair_drain_win_boundary_threads_v2";
+    const char * thread_peak_scope = "post_init_post_setup_post_connect_post_drain_pre_term_boundaries";
+#else
     const char * timing_baseline = fixed_message_rate ? "fixed_rate_v1" : "fair_drain_v1";
+    const char * thread_peak_scope = "periodic_250ms_plus_setup";
+#endif
 
     if ( pass )
     {
@@ -1972,7 +2008,8 @@ int main( int argc, char ** argv )
                 failed_criterion );
     }
 
-    printf( " offered_rate_mode=%s target_messages_per_client_second=%.6g "
+    printf( " threads_peak_scope=%s fds_peak_scope=periodic_250ms_plus_setup "
+            "offered_rate_mode=%s target_messages_per_client_second=%.6g "
             "application_payload_bytes=%d application_rate_window_seconds=%.3f "
             "offered_c2s_messages=%" PRIu64 " offered_s2c_messages=%" PRIu64 " "
             "accepted_c2s_messages=%" PRIu64 " accepted_s2c_messages=%" PRIu64 " "
@@ -1990,6 +2027,7 @@ int main( int argc, char ** argv )
             "wire_session_scope=handshake_traffic_drain_before_teardown "
             "session_client_wire_bytes_sent=%" PRIu64 " session_client_wire_bytes_received=%" PRIu64 " "
             "session_server_wire_bytes_sent=%" PRIu64 " session_server_wire_bytes_received=%" PRIu64,
+            thread_peak_scope,
             fixed_message_rate ? "per_client_due" : "per_update", messages_per_client_second,
             LOAD_PAYLOAD_BYTES, application_rate_window_seconds,
             c2s_offered_total, s2c_offered_total,

@@ -146,6 +146,21 @@ overhead remains in each API duration and is not subtracted. The legacy
 corresponding upper bounds. Setup and connection, injected-drop stop/destroy,
 final statistics, and general teardown calls are not timed.
 
+On Windows, the periodic resource sample keeps the cheap process handle count
+but does not repeat the global Toolhelp thread census inside the timed loop.
+Exact thread counts remain at pre-init, post-init, pre-term and post-term for
+the strict resource-baseline check. The reported `threads_peak` is the maximum
+**observed at boundaries**: post-init, after setup, after connect, after the
+traffic-and-drain loop, and pre-term. It is not a continuous thread peak;
+`threads_peak_scope` names that sampling policy. A thread census at the
+traffic-to-drain transition would consume the unchanged three-second drain
+deadline, so there is no mid-drain boundary sample. `fds_peak` still uses
+periodic handle counts, labeled by `fds_peak_scope`. Windows timing now carries
+`timing_baseline=fixed_rate_win_boundary_threads_v2` (or
+`fair_drain_win_boundary_threads_v2` without fixed rate), because removing
+periodic Toolhelp scans changes the observed workload. Other platforms keep
+their existing sampling and timing baseline.
+
 For example, `LOAD_PROFILE=light ./bin/load 1000 60` selects the bounded
 workload configuration. Omit `LOAD_PROFILE` or set it to `default` to preserve
 the SDK-default sizing.
