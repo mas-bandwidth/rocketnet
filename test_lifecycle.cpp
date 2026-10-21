@@ -304,7 +304,11 @@ static void check_frame_conservation()
     check(pending.flush([](uint32_t count, uint32_t * index) { *index = 0; return count; }, write, submit));
     check(pending.count == 0 && published == 8);
     for (int i = 0; i < 8; ++i) check(submitted[i] == (uint64_t)(11 + i));
-    check(pending.flush([&](uint32_t, uint32_t *) { check(false); return (uint32_t) refused; }, write, submit));
+    // an empty buffer must not reserve: count the calls, rather than fail
+    // inside the lambda, so flush's code after the reserve stays reachable
+    int empty_reserves = 0;
+    check(pending.flush([&](uint32_t, uint32_t *) { ++empty_reserves; return (uint32_t) refused; }, write, submit));
+    check(empty_reserves == 0);
     check(published == 8); // no frame submitted twice after successful retry
 }
 
