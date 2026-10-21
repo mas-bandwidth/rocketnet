@@ -124,8 +124,12 @@ static inline int rocketnet_wire_header_bytes( int address_type )
 
 #ifdef __cplusplus
 #define ROCKETNET_WIRE_STATIC_ASSERT( condition, message ) static_assert( condition, message )
-#else
+#elif defined( __GNUC__ ) || defined( __clang__ )
 #define ROCKETNET_WIRE_STATIC_ASSERT( condition, message ) _Static_assert( condition, message )
+#else // MSVC C has no _Static_assert before /std:c11: a negative array size refuses the build
+#define ROCKETNET_WIRE_STATIC_ASSERT_JOIN2( a, b ) a##b
+#define ROCKETNET_WIRE_STATIC_ASSERT_JOIN( a, b ) ROCKETNET_WIRE_STATIC_ASSERT_JOIN2( a, b )
+#define ROCKETNET_WIRE_STATIC_ASSERT( condition, message ) typedef char ROCKETNET_WIRE_STATIC_ASSERT_JOIN( rocketnet_wire_static_assert_, __LINE__ )[( condition ) ? 1 : -1]
 #endif
 
 ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES <= ROCKETNET_HANDSHAKE_MAX_WIRE_BYTES, "the connection request fits one IPv6 datagram" );
