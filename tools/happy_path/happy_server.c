@@ -102,7 +102,7 @@ int main( int argc, char ** argv )
         // from one queue across every client, each message naming its sender
         {
             const struct rocketnet_message_batch_t * batch = NULL;
-            while ( ( batch = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
+            while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
             {
                 for ( int i = 0; i < batch->num_messages; i++ )
                 {

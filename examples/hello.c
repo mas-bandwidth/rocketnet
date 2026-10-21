@@ -49,14 +49,14 @@ static int run_frames( struct rocketnet_server_t * server, struct rocketnet_clie
         // (2) receive every message in batches; the next receive or update releases them
 
         const struct rocketnet_message_batch_t * batch = NULL;
-        while ( ( batch = rocketnet_client_receive_messages( client ) )->num_messages > 0 )
+        while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
         {
             // the server sends this client nothing, so there is nothing to read
         }
 
         {
             const struct rocketnet_message_batch_t * incoming = NULL;
-            while ( ( incoming = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
+            while ( ( incoming = rocketnet_server_receive_messages( server ) ) != NULL )
             {
                 for ( int i = 0; i < incoming->num_messages; i++ )
                 {

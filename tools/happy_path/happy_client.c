@@ -127,7 +127,7 @@ int main( int argc, char ** argv )
 
         // (2) receive and process every received message for this update
         const struct rocketnet_message_batch_t * batch = NULL;
-        while ( ( batch = rocketnet_client_receive_messages( client ) )->num_messages > 0 )
+        while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
         {
             // the server sends this client nothing, so there is nothing to read
         }

@@ -253,7 +253,7 @@ int main( int argc, char ** argv ) {
                 // queue: each entry names its channel, and the next batch
                 // call or update releases the batch
                 const struct rocketnet_message_batch_t * batch = NULL;
-                while ( ( batch = rocketnet_client_receive_messages( clients[c] ) )->num_messages > 0 ) {
+                while ( ( batch = rocketnet_client_receive_messages( clients[c] ) ) != NULL ) {
                     for ( int m = 0; m < batch->num_messages; m++ ) {
                         const int ch = batch->channel[m];
                         bool ok = soak_check_msg( batch->data[m], batch->bytes[m], seed, (uint64_t) c, ch, &s2c[c], &corrupt, &gaps );
@@ -290,7 +290,7 @@ int main( int argc, char ** argv ) {
             // (2) server receive, in batches from the one queue across every
             // client: each entry names its sender and its channel
             const struct rocketnet_message_batch_t * batch = NULL;
-            while ( ( batch = rocketnet_server_receive_messages( server ) )->num_messages > 0 ) {
+            while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL ) {
                 for ( int m = 0; m < batch->num_messages; m++ ) {
                     CHECK( batch->client_index[m] >= 0 && batch->client_index[m] < num_clients );
                     const int c = index_client[batch->client_index[m]];

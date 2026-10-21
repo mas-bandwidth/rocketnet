@@ -248,7 +248,7 @@ static void fair_run_case( int num_clients, int capacity = 1 )
         for ( int c = 0; c < num_clients; c++ )
         {
             const struct rocketnet_message_batch_t * batch = NULL;
-            while ( ( batch = rocketnet_client_receive_messages( world.clients[c] ) )->num_messages > 0 )
+            while ( ( batch = rocketnet_client_receive_messages( world.clients[c] ) ) != NULL )
             {
                 for ( int i = 0; i < batch->num_messages; i++ )
                 {
@@ -294,7 +294,7 @@ static void fair_run_case( int num_clients, int capacity = 1 )
 
         {
             const struct rocketnet_message_batch_t * batch = NULL;
-            while ( ( batch = rocketnet_server_receive_messages( world.server ) )->num_messages > 0 )
+            while ( ( batch = rocketnet_server_receive_messages( world.server ) ) != NULL )
             {
                 for ( int i = 0; i < batch->num_messages; i++ )
                 {
@@ -336,7 +336,7 @@ static void fair_run_case( int num_clients, int capacity = 1 )
     for ( int c = 0; c < num_clients; c++ )
     {
         const struct rocketnet_message_batch_t * batch = NULL;
-        while ( ( batch = rocketnet_client_receive_messages( world.clients[c] ) )->num_messages > 0 )
+        while ( ( batch = rocketnet_client_receive_messages( world.clients[c] ) ) != NULL )
         {
             for ( int i = 0; i < batch->num_messages; i++ )
             {
@@ -424,7 +424,7 @@ static void test_server_send_cap_two_multi_packet_service()
         for ( int c = 0; c < 3; c++ )
         {
             const struct rocketnet_message_batch_t * batch = NULL;
-            while ( ( batch = rocketnet_client_receive_messages( world.clients[c] ) )->num_messages > 0 )
+            while ( ( batch = rocketnet_client_receive_messages( world.clients[c] ) ) != NULL )
                 ;
         }
         fair_send_clients( &world );

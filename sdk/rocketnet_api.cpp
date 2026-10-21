@@ -611,7 +611,10 @@ static struct rocketnet_client_t * rn_client_create_current( void * context, con
         }
     }
     struct rocketnet_client_t * client = (struct rocketnet_client_t *) base;
-    memset( client, 0, sizeof( *client ) );
+    // the receive batch is last and is written only as far as each receive
+    // fills it, so its pages are touched only by use
+    memset( client, 0, offsetof( struct rocketnet_client_t, batch ) );
+    client->batch.num_messages = 0;
     client->context = context;
     client->transport = transport;
     client->message = message;
@@ -904,7 +907,7 @@ const struct rocketnet_message_batch_t * rocketnet_client_receive_messages( stru
     client->batch.num_messages = 0;
     if ( client->connection )
         (void) rocketnet_message_client_receive_messages( client->connection, &client->batch );
-    return &client->batch;
+    return client->batch.num_messages > 0 ? &client->batch : NULL;
 }
 
 int rocketnet_client_receipts( struct rocketnet_client_t * client, struct rocketnet_receipt_t * out, int capacity )
@@ -1331,7 +1334,8 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
         return NULL;
     }
     struct rocketnet_server_t * server = (struct rocketnet_server_t *) base;
-    memset( server, 0, sizeof( *server ) );
+    memset( server, 0, offsetof( struct rocketnet_server_t, batch ) );
+    server->batch.num_messages = 0;
     server->context = context;
     {
         // server is zeroed above, so the copy stays NUL-terminated.
@@ -1671,7 +1675,7 @@ const struct rocketnet_message_batch_t * rocketnet_server_receive_messages( stru
     server->batch.num_messages = 0;
     if ( server->running )
         (void) rocketnet_message_server_receive_messages( rn_server( server ), &server->batch );
-    return &server->batch;
+    return server->batch.num_messages > 0 ? &server->batch : NULL;
 }
 
 int rocketnet_server_receipts( struct rocketnet_server_t * server, int client_index, struct rocketnet_receipt_t * out, int capacity )

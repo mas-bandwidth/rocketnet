@@ -2953,7 +2953,7 @@ static int reconnect_exchange( reconnect_world_t * world, int client, uint8_t ta
         int bytes = 0;
         uint64_t sender = ~0ULL;
         const struct rocketnet_message_batch_t * batch = NULL;
-        while ( ( batch = rocketnet_server_receive_messages( world->server ) )->num_messages > 0 )
+        while ( ( batch = rocketnet_server_receive_messages( world->server ) ) != NULL )
         {
             for ( int i = 0; i < batch->num_messages; i++ )
             {
@@ -2967,7 +2967,7 @@ static int reconnect_exchange( reconnect_world_t * world, int client, uint8_t ta
             }
         }
         const struct rocketnet_message_batch_t * incoming = NULL;
-        while ( ( incoming = rocketnet_client_receive_messages( c ) )->num_messages > 0 )
+        while ( ( incoming = rocketnet_client_receive_messages( c ) ) != NULL )
         {
             for ( int i = 0; i < incoming->num_messages; i++ )
             {

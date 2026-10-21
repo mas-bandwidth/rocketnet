@@ -346,7 +346,7 @@ static void secrets_wiped_pair_exchange( secrets_wiped_pair_t * pair )
     {
         secrets_wiped_pump( pair );
         const struct rocketnet_message_batch_t * batch = NULL;
-        while ( ( batch = rocketnet_server_receive_messages( pair->server ) )->num_messages > 0 )
+        while ( ( batch = rocketnet_server_receive_messages( pair->server ) ) != NULL )
         {
             for ( int i = 0; i < batch->num_messages; i++ )
             {
@@ -355,7 +355,7 @@ static void secrets_wiped_pair_exchange( secrets_wiped_pair_t * pair )
                 at_server++;
             }
         }
-        while ( ( batch = rocketnet_client_receive_messages( pair->client ) )->num_messages > 0 )
+        while ( ( batch = rocketnet_client_receive_messages( pair->client ) ) != NULL )
         {
             for ( int i = 0; i < batch->num_messages; i++ )
             {

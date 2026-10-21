@@ -263,7 +263,7 @@ static void test_server_serves_ipv4_and_ipv6_clients_on_one_port()
     {
         both_families_pump( server, ipv4, ipv6, &time );
         const struct rocketnet_message_batch_t * batch = NULL;
-        while ( ( batch = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
+        while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
         {
             for ( int i = 0; i < batch->num_messages; i++ )
             {
@@ -280,7 +280,7 @@ static void test_server_serves_ipv4_and_ipv6_clients_on_one_port()
                 }
             }
         }
-        while ( ( batch = rocketnet_client_receive_messages( ipv4 ) )->num_messages > 0 )
+        while ( ( batch = rocketnet_client_receive_messages( ipv4 ) ) != NULL )
         {
             for ( int i = 0; i < batch->num_messages; i++ )
             {
@@ -288,7 +288,7 @@ static void test_server_serves_ipv4_and_ipv6_clients_on_one_port()
                 got_ipv4++;
             }
         }
-        while ( ( batch = rocketnet_client_receive_messages( ipv6 ) )->num_messages > 0 )
+        while ( ( batch = rocketnet_client_receive_messages( ipv6 ) ) != NULL )
         {
             for ( int i = 0; i < batch->num_messages; i++ )
             {

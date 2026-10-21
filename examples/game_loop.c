@@ -164,7 +164,7 @@ int main( int argc, char ** argv )
             rocketnet_client_update( client, time );                                    // (1) update
             if ( wrong_order ) rocketnet_client_send_packets( client );                 // the mistake: sends last frame's queue
             const struct rocketnet_message_batch_t * incoming = NULL;                      // (2) receive the snapshots,
-            while ( ( incoming = rocketnet_client_receive_messages( client ) )->num_messages > 0 )   // a batch per call
+            while ( ( incoming = rocketnet_client_receive_messages( client ) ) != NULL )   // a batch per call
                 for ( int m = 0; m < incoming->num_messages; m++ )
                     read_message( &to_client, frame, incoming->data[m], incoming->bytes[m] );
             // (3) simulate: nothing moves in this example
@@ -186,7 +186,7 @@ int main( int argc, char ** argv )
         rocketnet_server_update( server, time );                                        // (1) update
         if ( wrong_order ) rocketnet_server_send_packets( server );
         const struct rocketnet_message_batch_t * batch = NULL;                             // (2) receive positions and events:
-        while ( ( batch = rocketnet_server_receive_messages( server ) )->num_messages > 0 )   // one queue across every client,
+        while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )   // one queue across every client,
             for ( int m = 0; m < batch->num_messages; m++ )                             // in batches, no call per message
                 { read_message( &to_server, frame, batch->data[m], batch->bytes[m] ); events_received += batch->channel[m] == 1; }
         // (3) simulate: nothing moves in this example

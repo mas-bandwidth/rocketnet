@@ -1171,7 +1171,7 @@ struct rocketnet_client_config_t
 
     int packets_per_update;
 
-    /// ROCKETNET_CLIENT_UNRELIABLE_DELIVERIES: unreliable messages delivered per update; per update; 1 .. 1 << 16; default 256
+    /// ROCKETNET_CLIENT_UNRELIABLE_DELIVERIES: unreliable messages delivered per update; per update; 1 .. 1 << 16; default 1024
 
     int unreliable_deliveries;
 
@@ -1332,7 +1332,7 @@ struct rocketnet_server_config_t
 
     int packets_per_update;
 
-    /// ROCKETNET_SERVER_UNRELIABLE_DELIVERIES: unreliable messages delivered per update; per client per update; 1 .. 1 << 16; default 256
+    /// ROCKETNET_SERVER_UNRELIABLE_DELIVERIES: unreliable messages delivered per update; per client per update; 1 .. 1 << 16; default 1024
 
     int unreliable_deliveries;
 
@@ -1696,10 +1696,9 @@ ROCKETNET_EXPORT void rocketnet_client_abort_message( struct rocketnet_client_t 
 /// The client's receive: refills the client's one batch with the next
 /// messages of its receive queue, up to ROCKETNET_RECEIVE_BATCH_MESSAGES, every
 /// channel's, each naming the server as its sender (client_index 0), and
-/// returns it; num_messages is 0 when none is pending, so pump it until
-/// num_messages is 0. The batch and its data pointers are valid until the next
-/// receive call or update on this client. A NULL client is a counted no-op
-/// that returns NULL.
+/// returns it, or NULL when it filled nothing: pump it until NULL. The batch
+/// and its data pointers are valid until the next receive call or update on
+/// this client. A NULL client is a counted no-op that returns NULL.
 
 ROCKETNET_EXPORT const struct rocketnet_message_batch_t * rocketnet_client_receive_messages( struct rocketnet_client_t * client );
 
@@ -1948,10 +1947,10 @@ ROCKETNET_EXPORT void rocketnet_server_abort_message( struct rocketnet_server_t 
 /// The server's receive: refills the server's one batch, which covers every
 /// client, with the next messages of its receive queue, up to
 /// ROCKETNET_RECEIVE_BATCH_MESSAGES, each naming its sender in client_index[],
-/// and returns it; num_messages is 0 when none is pending or the server is
-/// stopped, so pump it until num_messages is 0. The batch and its data
-/// pointers are valid until the next receive call or update on this server. A
-/// NULL server is a counted no-op that returns NULL.
+/// and returns it, or NULL when it filled nothing (none pending, or the
+/// server stopped): pump it until NULL. The batch and its data pointers are
+/// valid until the next receive call or update on this server. A NULL server
+/// is a counted no-op that returns NULL.
 
 ROCKETNET_EXPORT const struct rocketnet_message_batch_t * rocketnet_server_receive_messages( struct rocketnet_server_t * server );
 
@@ -1998,15 +1997,15 @@ ROCKETNET_EXPORT void rocketnet_server_client_stats( const struct rocketnet_serv
 /// ROCKETNET_RECEIVE_BATCH_MESSAGES, one array per field: each message's
 /// sender (on a client, index = 0, the server), the channel it was delivered
 /// on, its reliability, its length and a pointer to its bytes in the
-/// library's storage, with the count in num_messages, and returns it. Pump it
-/// until num_messages is 0. There is no per-update cap: what
+/// library's storage, with the count in num_messages, and returns it, or NULL
+/// when it filled nothing. Pump it until NULL. There is no per-update cap: what
 /// one call does not return waits for the next call in the same update, in
 /// order. The queue holds every channel's messages: ordered and sequenced
 /// messages keep their order within their channel and sender, and on a server
 /// the queue holds the update's messages client by client in index order:
 ///
 ///     const struct rocketnet_message_batch_t * batch;
-///     while ( ( batch = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
+///     while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
 ///     {
 ///         for ( int i = 0; i < batch->num_messages; i++ )
 ///             handle( batch->client_index[i], batch->data[i], batch->bytes[i] );
@@ -2018,7 +2017,7 @@ ROCKETNET_EXPORT void rocketnet_server_client_stats( const struct rocketnet_serv
 
 /// The most messages one receive call fills.
 
-#define ROCKETNET_RECEIVE_BATCH_MESSAGES                   4096
+#define ROCKETNET_RECEIVE_BATCH_MESSAGES                   65536
 
 /// @brief One batch of received messages, one array per field, entry i of
 /// every array describing message i, in receive order.

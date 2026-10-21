@@ -114,7 +114,7 @@ static int frame( struct rocketnet_server_t * server, struct rocketnet_client_t 
     rocketnet_client_update( client, now );
 
     const struct rocketnet_message_batch_t * batch = NULL;
-    while ( ( batch = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
+    while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
     {
         for ( int i = 0; i < batch->num_messages; i++ )
         {
@@ -128,7 +128,7 @@ static int frame( struct rocketnet_server_t * server, struct rocketnet_client_t 
     }
 
     const struct rocketnet_message_batch_t * incoming = NULL;
-    while ( ( incoming = rocketnet_client_receive_messages( client ) )->num_messages > 0 )
+    while ( ( incoming = rocketnet_client_receive_messages( client ) ) != NULL )
     {
         for ( int i = 0; i < incoming->num_messages; i++ )
         {

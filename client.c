@@ -493,7 +493,7 @@ static void receive_check( matrix_state_t * st, struct rocketnet_client_t * clie
        delivered on; modes 0, 2, 5, 6 arrive on channel 0. The next batch call
        or update releases a batch */
     const struct rocketnet_message_batch_t * batch = NULL;
-    while ( ( batch = rocketnet_client_receive_messages( client ) )->num_messages > 0 )
+    while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
     {
         for ( int m = 0; m < batch->num_messages; m++ )
         {

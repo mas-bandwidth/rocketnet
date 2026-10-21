@@ -92,12 +92,12 @@ int main( void )
         rocketnet_client_update( client, now );
         // (2) receive and release every received message, checking each byte
         const struct rocketnet_message_batch_t * batch = NULL;
-        while ( ( batch = rocketnet_client_receive_messages( client ) )->num_messages > 0 )
+        while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
         {
             // the server sends this client nothing, so there is nothing to read
         }
         const struct rocketnet_message_batch_t * incoming = NULL;
-        while ( ( incoming = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
+        while ( ( incoming = rocketnet_server_receive_messages( server ) ) != NULL )
         {
             for ( int i = 0; i < incoming->num_messages; i++ )
             {

@@ -70,14 +70,14 @@ static int run_connect_and_traffic( struct rocketnet_server_t * server, struct r
         rocketnet_client_update( client, now );
         {
             const struct rocketnet_message_batch_t * batch = NULL;
-            while ( ( batch = rocketnet_client_receive_messages( client ) )->num_messages > 0 )
+            while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
             {
                 // the echoes only need to arrive; the stats count them
             }
         }
         {
             const struct rocketnet_message_batch_t * incoming = NULL;
-            while ( ( incoming = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
+            while ( ( incoming = rocketnet_server_receive_messages( server ) ) != NULL )
             {
                 for ( int j = 0; j < incoming->num_messages; j++ )
                 {

@@ -175,13 +175,13 @@ int main( void )
         rocketnet_server_update( server, time );
 
         const struct rocketnet_message_batch_t * batch = NULL;
-        while ( ( batch = rocketnet_client_receive_messages( client ) )->num_messages > 0 )
+        while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
             for ( int i = 0; i < batch->num_messages; i++ )
                 if ( batch->bytes[i] == 4 && memcmp( batch->data[i], "pong", 4 ) == 0 )
                     client_received_reply = 1;
 
         int reply_index = -1;
-        while ( ( batch = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
+        while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
             for ( int i = 0; i < batch->num_messages; i++ )
                 if ( batch->bytes[i] == 4 && memcmp( batch->data[i], "ping", 4 ) == 0 )
                     reply_index = batch->client_index[i];

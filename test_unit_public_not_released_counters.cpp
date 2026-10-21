@@ -360,8 +360,8 @@ static void test_public_not_released_batch_released_by_update()
     for ( int i = 0; i < 20 && !( client_got && server_got ); i++ )
     {
         public_not_released_pump( &pair );
-        client_got = client_got || ( ( at_client = rocketnet_client_receive_messages( pair.client ) )->num_messages > 0 );
-        server_got = server_got || ( ( at_server = rocketnet_server_receive_messages( pair.server ) )->num_messages > 0 );
+        client_got = client_got || ( ( at_client = rocketnet_client_receive_messages( pair.client ) ) != NULL );
+        server_got = server_got || ( ( at_server = rocketnet_server_receive_messages( pair.server ) ) != NULL );
     }
     check( client_got && server_got );
     pair.time += 0.01;

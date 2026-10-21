@@ -116,11 +116,11 @@ int main( void )
         // takes its one queue in batches, each entry naming its channel; the
         // next batch call or update releases a batch
         const struct rocketnet_message_batch_t * incoming = NULL;
-        while ( ( incoming = rocketnet_client_receive_messages( client ) )->num_messages > 0 )
+        while ( ( incoming = rocketnet_client_receive_messages( client ) ) != NULL )
             ;
         const int slot = (int) rocketnet_client_index( client );
         const struct rocketnet_message_batch_t * batch = NULL;
-        while ( ( batch = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
+        while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
         {
             for ( int i = 0; i < batch->num_messages; i++ )
             {

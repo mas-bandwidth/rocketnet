@@ -174,7 +174,7 @@ int main( int argc, char ** argv )
             int bytes = 0;
             int i = 0;
             const struct rocketnet_message_batch_t * batch = NULL;
-            while ( ( batch = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
+            while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
             {
                 for ( int j = 0; j < batch->num_messages; j++ )
                 {

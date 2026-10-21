@@ -94,7 +94,7 @@ int main( void )
         const uint8_t * data = NULL;
         int bytes = 0;
         const struct rocketnet_message_batch_t * batch = NULL;
-        while ( ( batch = rocketnet_client_receive_messages( client ) )->num_messages > 0 )
+        while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
         {
             for ( int i = 0; i < batch->num_messages; i++ )
             {
@@ -105,7 +105,7 @@ int main( void )
         const int slot = rocketnet_client_index( client ); // -1 until CONNECTED
         int sender = -1;
         const struct rocketnet_message_batch_t * arrived = NULL;
-        while ( ( arrived = rocketnet_server_receive_messages( server ) )->num_messages > 0 )
+        while ( ( arrived = rocketnet_server_receive_messages( server ) ) != NULL )
         {
             for ( int i = 0; i < arrived->num_messages; i++ )
             {

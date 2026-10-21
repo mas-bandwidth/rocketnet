@@ -198,7 +198,7 @@ static void test_public_step_driven_client_delivers_both_ways()
         const uint8_t * data = NULL; int bytes = 0;
         uint64_t sender = ~0ULL;
         const struct rocketnet_message_batch_t * batch = NULL;
-        while ( ( batch = rocketnet_server_receive_messages( pair.server ) )->num_messages > 0 )
+        while ( ( batch = rocketnet_server_receive_messages( pair.server ) ) != NULL )
         {
             for ( int i = 0; i < batch->num_messages; i++ )
             {
@@ -211,7 +211,7 @@ static void test_public_step_driven_client_delivers_both_ways()
             }
         }
         const struct rocketnet_message_batch_t * incoming = NULL;
-        while ( ( incoming = rocketnet_client_receive_messages( pair.client ) )->num_messages > 0 )
+        while ( ( incoming = rocketnet_client_receive_messages( pair.client ) ) != NULL )
         {
             for ( int i = 0; i < incoming->num_messages; i++ )
             {
