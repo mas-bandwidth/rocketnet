@@ -214,7 +214,6 @@ static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketn
         // Synthetic connections have test keys; this fixture does not
         // model authentication. It exercises the real update/send scheduler.
         memset(&mapping->keys, i + 1, sizeof(mapping->keys));
-        server->protocol.acks->endpoints[i].rtt_history[0] = 17.0f;
     }
     CHECK(rocketnet_address_parse(&f->request_address, "127.0.0.1:20000"));
     int pending = rocketnet_encryption_map_add(server->protocol.encryption_map, &f->request_address, 100.0);
@@ -234,6 +233,28 @@ static void seed_stats_connection_ids(rocketnet_server_transport_t * server, int
         server->protocol.connection_ids[i] = ++server->protocol.next_connection_id;
 }
 
+static void seed_stats_rtt_samples(rocketnet_server_transport_t * server, int clients)
+{
+    // Generate the sample through the ACK producer so both the live endpoint
+    // and its active stats delta see the same 17 ms observation.
+    rocketnet_ack_block_t block = {};
+    block.largest = 1;
+    block.first_range_length = 1;
+    for (int i = 0; i < clients; ++i)
+    {
+        auto * endpoint = &server->protocol.acks->endpoints[i];
+        CHECK(rocketnet_ack_endpoint_record_sent_classified(endpoint, 1, 100, 0, 0, 0, 0.0)
+            == ROCKETNET_ACK_SENT_RECORDED);
+        uint64_t acked_ids[1] = {};
+        uint64_t unknown = 0, batch_full = 0;
+        int acked_count = 0;
+        CHECK(rocketnet_ack_endpoint_process_block(endpoint, &block, 0.017,
+            acked_ids, 1, &acked_count, &unknown, &batch_full) == 1);
+        CHECK(acked_count == 0 && unknown == 0 && batch_full == 0);
+        CHECK(endpoint->rtt_history[1 % ROCKETNET_RTT_HISTORY_SIZE] == 17.0f);
+    }
+}
+
 static void test_buffered_control_pressure(int clients = 300)
 {
     auto * f = new control_fixture_t();
@@ -241,6 +262,7 @@ static void test_buffered_control_pressure(int clients = 300)
     rocketnet_server_transport_set_stats_worker_manual_for_test(true);
     auto * server = make_server(f, &operations, clients, false);
     seed_stats_connection_ids(server, clients);
+    seed_stats_rtt_samples(server, clients);
     f->requests = ROCKETNET_SERVER_MAX_RECEIVE_PACKETS;
     // Publication still follows the transport's modulo phases. Exercise
     // every configured slot before checking the high slots' RTT; keep the
@@ -312,6 +334,7 @@ static void test_staged_control_fairness()
     rocketnet_server_transport_set_stats_worker_manual_for_test(true);
     auto * server = make_server(f, &operations, 12, true);
     seed_stats_connection_ids(server, 12);
+    seed_stats_rtt_samples(server, 12);
     // Every slot remains due, but only two frames are available per update.
     for (int step = 0; step < 6; ++step)
     {
