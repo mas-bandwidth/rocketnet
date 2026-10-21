@@ -46,3 +46,8 @@ int rocketnet_loopback_endpoints_live();
 // The bytes a queue of this many datagrams allocates, before the allocator
 // header rocketnet_malloc adds.
 size_t rocketnet_loopback_queue_bytes( int packets );
+
+#if defined(ROCKETNET_LOOPBACK_TEST_HOOKS)
+// Deterministic send-lock contention seam; test library only.
+void rocketnet_loopback_test_send_contention( bool busy );
+#endif

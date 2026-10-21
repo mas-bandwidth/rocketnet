@@ -1195,9 +1195,8 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, int 
 
             gso->counter_send_syscalls++;
 
-            if ( errno == EINTR )
-                continue;
-
+            // Even EINTR is a best-effort send refusal. Retrying without a
+            // bound can stall a shutdown burst under a stream of signals.
             if ( message_is_gso[sent] && ( errno == EINVAL || errno == EIO || errno == EOPNOTSUPP ) )
             {
                 // the kernel accepted the UDP_SEGMENT probe but refused a

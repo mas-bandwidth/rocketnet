@@ -199,6 +199,7 @@ struct rocketnet_server_uring_t
     const struct rocketnet_server_uring_test_source_t * test_source;
     struct io_uring_sqe test_sqes[ROCKETNET_URING_ENTRIES];
     int test_sqes_queued;
+    int test_wait_calls;
     struct rocketnet_server_uring_test_completion_t test_completions[ROCKETNET_URING_CQE_BATCH];
 
     // the no-kernel-ring seam: a fake transport whose receive_packets runs only
@@ -834,8 +835,10 @@ static void rocketnet_server_uring_submit( struct rocketnet_server_uring_t * uri
 
 static void rocketnet_server_uring_wait( struct rocketnet_server_uring_t * uring, double seconds )
 {
-    if ( ROCKETNET_URING_FAKE( uring ) )
-        return;
+#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+    uring->test_wait_calls++;
+#endif
+    if ( ROCKETNET_URING_FAKE( uring ) ) return;
     struct __kernel_timespec timeout;
     timeout.tv_sec = (long long) seconds;
     timeout.tv_nsec = (long long) ( ( seconds - (double) timeout.tv_sec ) * 1000000000.0 );
@@ -956,24 +959,9 @@ uint64_t rocketnet_server_uring_test_counter( struct rocketnet_server_uring_t * 
     return uring->counters[counter];
 }
 
-// destroy's wait end condition (rocketnet_server_uring_destroy_wait_over):
-// always_completes says every round yields a CQE, so no round is silent.
-// guard is the case's own iteration bound, so a wait that never ends is
-// reported, not run forever.
-
-int rocketnet_server_uring_test_destroy_wait_rounds( bool always_completes, int guard )
+int rocketnet_server_uring_test_wait_calls( rocketnet_server_uring_t * uring )
 {
-    int empty_rounds = 0;
-    int rounds = 0;
-    while ( !rocketnet_server_uring_destroy_wait_over( empty_rounds, rounds ) )
-    {
-        if ( !always_completes )
-            empty_rounds++;
-        rounds++;
-        if ( rounds > guard )
-            return -rounds;
-    }
-    return rounds;
+    return uring->test_wait_calls;
 }
 
 // the fake transport: create's allocations and arms, with the source in place
@@ -1387,8 +1375,7 @@ void rocketnet_server_uring_abort_packet( struct rocketnet_server_uring_t * urin
 // slot with bytes not submitted by an earlier call, in chunks no larger than
 // the free submission queue space, rotated across the group's sockets; then
 // reap, at most ROCKETNET_URING_SEND_BUDGET CQEs in the whole call and after
-// at most one wait of ROCKETNET_URING_SEND_WAIT_SECONDS (receive CQEs met on
-// the way go to the fill bank). The reservation index goes back to 0 only
+// no waits (receive CQEs met on the way go to the fill bank). The reservation index goes back to 0 only
 // when no send is without its CQE and every staged slot is submitted
 // (ResetIndex); otherwise the call returns with the index unchanged, counted
 // SEND_DEFERRED, and a later call submits and retires the rest (SendReturn).
@@ -1405,7 +1392,6 @@ void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * urin
 
     int slot = uring->send_submitted;
     int budget = ROCKETNET_URING_SEND_BUDGET;
-    bool waited = false;
 
     while ( slot < num_slots )
     {
@@ -1416,13 +1402,7 @@ void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * urin
         {
             const int reaped = rocketnet_server_uring_reap_available( uring, budget );
             budget -= reaped;
-            if ( reaped == 0 )
-            {
-                if ( waited || budget == 0 )
-                    break;
-                rocketnet_server_uring_wait( uring, ROCKETNET_URING_SEND_WAIT_SECONDS );
-                waited = true;
-            }
+            if ( reaped == 0 || budget == 0 ) break;
             continue;
         }
 
@@ -1497,17 +1477,11 @@ void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * urin
     uring->send_submitted = slot;
 
     // Reap: the sends still without a CQE, this call's and earlier calls',
-    // within what is left of the budget and after at most one wait
+    // within what is left of the budget, without waiting for another CQE
 
     if ( uring->sends_pending > 0 && budget > 0 )
     {
         budget -= rocketnet_server_uring_reap_available( uring, budget );
-        if ( uring->sends_pending > 0 && budget > 0 && !waited )
-        {
-            rocketnet_server_uring_wait( uring, ROCKETNET_URING_SEND_WAIT_SECONDS );
-            waited = true;
-            budget -= rocketnet_server_uring_reap_available( uring, budget );
-        }
     }
 
     if ( budget == 0 && rocketnet_server_uring_ring_cq_ready( uring ) > 0 )

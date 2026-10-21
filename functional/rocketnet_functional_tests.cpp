@@ -5663,6 +5663,31 @@ void rocketnet_test_server_gso_send_overflow()
 }
 
 
+void rocketnet_test_server_gso_shutdown_send_interruptions()
+{
+    rocketnet_address_t bind, to;
+    rocketnet_check( rocketnet_address_parse( &bind, "127.0.0.1" ) );
+    rocketnet_check( rocketnet_address_parse( &to, "127.0.0.1:40000" ) );
+    rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &bind, 1, ROCKETNET_SERVER_GSO_DISABLE_SEGMENT );
+    rocketnet_check( gso );
+    uint64_t id = 0;
+    uint8_t * frame = rocketnet_server_gso_start_packet( gso, &to, &id );
+    rocketnet_check( frame );
+    memset( frame + ROCKETNET_FRAME_WIRE_OFFSET, 0x55, 64 );
+    rocketnet_server_gso_finish_packet( gso, id, frame, 64 );
+    rocketnet_server_gso_test_fail_sends( gso, 1024, EINTR );
+    rocketnet_server_gso_send_packets( gso );
+    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+    rocketnet_server_gso_counters( gso, counters );
+    rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_SYSCALLS] == 1 );
+    rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] == 1 );
+    rocketnet_server_gso_stop( gso );
+    const double deadline = rocketnet_time() + 5.0;
+    while ( !rocketnet_server_gso_stopped( gso ) && rocketnet_time() < deadline ) rocketnet_sleep( 0.001 );
+    rocketnet_check( rocketnet_server_gso_stopped( gso ) );
+    rocketnet_server_gso_destroy( gso );
+}
+
 // The io_uring transport's own tests, linux only, in the gso section's shape:
 // over the wire on loopback through real sockets and a real io_uring, the
 // peer the portable platform socket. They are in the suite only where the
@@ -5722,45 +5747,41 @@ void rocketnet_test_server_uring_probe()
     rocketnet_check( rocketnet_address_parse( &over_address, "127.0.0.1" ) );
     rocketnet_check( rocketnet_server_uring_create( NULL, &over_address, ROCKETNET_URING_MAX_QUEUES + 1 ) == NULL );
 
-    // a destroy whose wait gives up never frees what the kernel may still
-    // write (RNUringDriver FreedOnlyWhenDrained): one completion that never
-    // arrives, rounds counted and never slept; the ring and the sockets
-    // close, the memory is leaked and counted, and the transport's bytes are
-    // still there to read afterwards
-
+    // A stalled completion leaves the caller-owned transport pending. It
+    // never turns a deadline into permission to abandon or free its storage.
     rocketnet_address_t stall_address;
     rocketnet_check( rocketnet_address_parse( &stall_address, "127.0.0.1" ) );
     struct rocketnet_server_uring_t * stalled = rocketnet_test_server_uring_create_stalled( &stall_address );
     rocketnet_check( stalled );
     const uint16_t stall_port = stall_address.port;
-
     const uint64_t leaked_bytes_before = rocketnet_server_uring_leaked_bytes();
     const uint64_t leaked_transports_before = rocketnet_server_uring_leaked_transports();
-
-    rocketnet_test_captured_log[0] = '\0';
-    const enum rocketnet_log_level_t stall_saved_level = rocketnet_log_level_current();
-    rocketnet_log_function( rocketnet_test_capture_log, NULL );
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_WARN );
-
     rocketnet_server_uring_test_stall_destroy( stalled );
+    rocketnet_server_uring_stop( stalled );
+    for ( int poll = 0; poll < 1024; ++poll )
+        rocketnet_check( !rocketnet_server_uring_stopped( stalled ) );
+    rocketnet_check( rocketnet_server_uring_num_queues( stalled ) == 2 );
+    rocketnet_check( rocketnet_server_uring_leaked_bytes() == leaked_bytes_before );
+    rocketnet_check( rocketnet_server_uring_leaked_transports() == leaked_transports_before );
+    rocketnet_server_uring_test_resume_stop( stalled );
+    const double stop_deadline = rocketnet_time() + 5.0;
+    while ( !rocketnet_server_uring_stopped( stalled ) && rocketnet_time() < stop_deadline )
+        rocketnet_sleep( 0.001 );
+    rocketnet_check( rocketnet_server_uring_stopped( stalled ) );
     rocketnet_server_uring_destroy( stalled );
-
-    rocketnet_log_level( stall_saved_level );
-    rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
-
-    rocketnet_check( strstr( rocketnet_test_captured_log, "destroy gave up waiting" ) != NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "leaked, not freed" ) != NULL );
-    rocketnet_check( rocketnet_server_uring_leaked_transports() == leaked_transports_before + 1 );
-    rocketnet_check( rocketnet_server_uring_leaked_bytes() - leaked_bytes_before + 4096 >= rocketnet_server_uring_allocation_bytes( 2 ) );   // both allocations, less their small overhead
-    rocketnet_check( rocketnet_server_uring_num_queues( stalled ) == 2 );      // not freed: freeing clears the allocation
 
     rocketnet_address_t rebind_address;
     rocketnet_check( rocketnet_address_parse( &rebind_address, "127.0.0.1" ) );
     rebind_address.port = stall_port;
     struct rocketnet_server_uring_t * rebound = rocketnet_server_uring_create( NULL, &rebind_address, 2 );
-    rocketnet_check( rebound );                                                 // the sockets closed
+    rocketnet_check( rebound );
+    rocketnet_server_uring_stop( rebound );
+    const double rebound_deadline = rocketnet_time() + 5.0;
+    while ( !rocketnet_server_uring_stopped( rebound ) && rocketnet_time() < rebound_deadline )
+        rocketnet_sleep( 0.001 );
+    rocketnet_check( rocketnet_server_uring_stopped( rebound ) );
     rocketnet_server_uring_destroy( rebound );
-    rocketnet_check( rocketnet_server_uring_leaked_transports() == leaked_transports_before + 1 );   // a drained destroy leaks nothing
+    rocketnet_check( rocketnet_server_uring_leaked_transports() == leaked_transports_before );
 }
 
 // the wire exchange, the gso exchange's shape for this transport: a plain UDP
@@ -8679,6 +8700,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_gso_transport_server_wire_ipv6", rocketnet_test_server_gso_wire_ipv6, NULL },
     { "test_gso_transport_server_wire_dual_stack", rocketnet_test_server_gso_wire_dual_stack, NULL },
     { "test_gso_transport_server_send_overflow", rocketnet_test_server_gso_send_overflow, NULL },
+    { "test_gso_shutdown_send_interruptions", rocketnet_test_server_gso_shutdown_send_interruptions, NULL },
     { "test_io_uring_transport_server_probe", rocketnet_test_server_uring_probe, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_ipv4", rocketnet_test_server_uring_wire_ipv4, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_ipv6", rocketnet_test_server_uring_wire_ipv6, rocketnet_server_uring_available },
