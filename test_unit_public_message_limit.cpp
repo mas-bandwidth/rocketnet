@@ -1,5 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #include "test_unit_registry.h"
+#include "test/portable_crt.h"
 #include "sdk/rocketnet_internal.h"
 #include "sdk/rocketnet_config.h"
 #include "sdk/rocketnet_fragment.h"
@@ -95,7 +96,12 @@ struct message_limit_env_t
     const char * name;
     bool present;
     std::string previous;
-    explicit message_limit_env_t( const char * key ) : name( key ), present( getenv( key ) != NULL ), previous( present ? getenv( key ) : "" ) {}
+    explicit message_limit_env_t( const char * key ) : name( key ), present( false )
+    {
+        char buffer[4096];
+        present = rocketnet_test_getenv( key, buffer, sizeof( buffer ) ) != 0;
+        previous = buffer;
+    }
     void set( const char * value )
     {
 #if defined( _WIN32 )
