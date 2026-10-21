@@ -55,6 +55,8 @@ struct rn_message_object_t;
 #define ROCKETNET_CLIENT_TRANSPORT_CONNECTION_FIELDS( X ) \
     X( RESET, packet_leases ) X( KEEP, context ) X( KEEP, bound_port ) X( KEEP, transport ) \
     X( KEEP, io ) X( KEEP, thread ) X( KEEP, mutex ) X( KEEP, quit ) \
+    X( KEEP, stop_requested ) X( KEEP, stopped ) X( KEEP, stop_burst ) \
+    X( KEEP, stop_burst_count ) X( KEEP, stop_burst_bytes ) X( KEEP, stop_address ) \
     X( KEEP, receive_buffer_index ) X( RESET, received_packets ) X( KEEP, receive_buffer ) \
     X( KEEP, time ) X( KEEP, frame ) X( KEEP, last_state ) X( KEEP, config ) \
     X( KEEP, max_payload_bytes ) X( KEEP, send_arena ) X( KEEP, reassembly ) \

@@ -40,6 +40,8 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
 #include "rocketnet_memory.h"
 
 // Defined beside the builtin operation tables in rocketnet_driver_builtin.cpp.
+static void rocketnet_server_transport_abort_create( struct rocketnet_server_transport_t * transport );
+
 bool rocketnet_server_transport_io_receive_drops( const struct rocketnet_server_transport_io_operations_t * operations,
                                            void * transport, uint64_t * too_short, uint64_t * too_large );
 
@@ -1380,7 +1382,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
                 rocketnet_error( "server transport create: the %s transport could not allocate its endpoint", rocketnet_transport_name( candidate ) );
                 if ( status )
                     *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
-                rocketnet_server_transport_destroy( server_transport );
+                rocketnet_server_transport_abort_create( server_transport );
                 return NULL;
             }
             if ( granted_transport < 0 )
@@ -1452,7 +1454,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
             else
                 *status = ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED;
         }
-        rocketnet_server_transport_destroy( server_transport );
+        rocketnet_server_transport_abort_create( server_transport );
         return NULL;
     }
 
@@ -1495,14 +1497,14 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         {
             if ( status )
                 *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
-            rocketnet_server_transport_destroy( server_transport );
+            rocketnet_server_transport_abort_create( server_transport );
             return NULL;
         }
         if ( !rocketnet_platform_mutex_create( &server_transport->link_simulator_mutex ) )
         {
             if ( status )
                 *status = ROCKETNET_STATUS_MUTEX_CREATE_FAILED;
-            rocketnet_server_transport_destroy( server_transport );
+            rocketnet_server_transport_abort_create( server_transport );
             return NULL;
         }
         rocketnet_network_simulator_config( server_transport->link_simulator,
@@ -1516,7 +1518,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         {
             if ( status )
                 *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
-            rocketnet_server_transport_destroy( server_transport );
+            rocketnet_server_transport_abort_create( server_transport );
             return NULL;
         }
     }
@@ -1631,7 +1633,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         if ( status )
             *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
         rocketnet_error( "server transport create: could not allocate protocol storage" );
-        rocketnet_server_transport_destroy( server_transport );
+        rocketnet_server_transport_abort_create( server_transport );
         return NULL;
     }
 
@@ -1645,6 +1647,10 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
     if ( !rocketnet_api_null_guard( server_transport ) )
         return;
     rocketnet_assert( server_transport );
+
+    rocketnet_assert( rocketnet_server_transport_stopped( server_transport ) );
+    if ( !rocketnet_server_transport_stopped( server_transport ) )
+        return;
 
     if ( server_transport->protocol.encryption_map )
         rocketnet_encryption_map_destroy( server_transport->protocol.encryption_map );
@@ -1684,10 +1690,29 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
 
 void rocketnet_server_transport_stop( struct rocketnet_server_transport_t * server_transport )
 {
-    if ( !rocketnet_api_null_guard( server_transport ) )
+    if ( !rocketnet_api_null_guard( server_transport ) || server_transport->state != ROCKETNET_SERVER_TRANSPORT_RUNNING )
         return;
-    rocketnet_assert( server_transport );
     server_transport->state = ROCKETNET_SERVER_TRANSPORT_STOPPING;
+    rocketnet_server_transport_io_stop( &server_transport->io );
+}
+
+bool rocketnet_server_transport_stopped( const struct rocketnet_server_transport_t * server_transport )
+{
+    if ( !rocketnet_api_null_guard( server_transport ) || server_transport->state == ROCKETNET_SERVER_TRANSPORT_RUNNING )
+        return false;
+    return rocketnet_server_transport_io_stopped( &server_transport->io );
+}
+
+// A failed create cannot return a live partially constructed object. This
+// private construction-only unwind is allowed to wait; successful objects use
+// the explicit request/completion/destroy contract above.
+static void rocketnet_server_transport_abort_create( struct rocketnet_server_transport_t * transport )
+{
+    transport->state = ROCKETNET_SERVER_TRANSPORT_STOPPING;
+    rocketnet_server_transport_io_stop( &transport->io );
+    while ( !rocketnet_server_transport_io_stopped( &transport->io ) )
+        rocketnet_platform_sleep( 0.001 );
+    rocketnet_server_transport_destroy( transport );
 }
 
 int rocketnet_server_transport_state( struct rocketnet_server_transport_t * server_transport )
@@ -1695,6 +1720,8 @@ int rocketnet_server_transport_state( struct rocketnet_server_transport_t * serv
     if ( !rocketnet_api_null_guard( server_transport ) )
         return 0;
     rocketnet_assert( server_transport );
+    if ( server_transport->state == ROCKETNET_SERVER_TRANSPORT_STOPPING && rocketnet_server_transport_stopped( server_transport ) )
+        return ROCKETNET_SERVER_TRANSPORT_STOPPED;
     return server_transport->state;
 }
 
@@ -1861,6 +1888,13 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         return;
     rocketnet_assert( server_transport );
 
+    if ( server_transport->state != ROCKETNET_SERVER_TRANSPORT_RUNNING )
+    {
+        if ( rocketnet_server_transport_stopped( server_transport ) )
+            server_transport->state = ROCKETNET_SERVER_TRANSPORT_STOPPED;
+        return;
+    }
+
     // the caller's clock is clamped once, before anything reads it: a NaN,
     // an infinity or a step backwards becomes the last good time, counted and
     // loud in a debug build. the last good time starts at zero, the value a
@@ -1876,14 +1910,6 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     rocketnet_server_link_drain( server_transport );
 
     rocketnet_server_update_stats( server_transport, time );
-
-    if ( server_transport->state == ROCKETNET_SERVER_TRANSPORT_STOPPING )
-    {
-        if ( !rocketnet_server_transport_io_stop( &server_transport->io ) )
-            return;
-        server_transport->state = ROCKETNET_SERVER_TRANSPORT_STOPPED;
-        return;
-    }
 
     const double current_time = time;
     const uint64_t current_timestamp = server_transport->test_timestamp ? server_transport->test_timestamp : ( server_transport->game_clock_epoch != 0 ?

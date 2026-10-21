@@ -426,12 +426,18 @@ struct rocketnet_client_transport_t * rocketnet_client_transport_create_ex( void
  */
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_sized( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, size_t config_bytes, double time );
 
-// a NULL client_transport is a counted no-op.
-/** @brief Release a client transport and its owned resources.
- * @param client_transport [in] Transport returned by a create function; NULL is a counted no-op.
- * @return Nothing. Disconnect and update to drain the connection before destroying when graceful remote shutdown is required.
+/** @brief Request transport shutdown without waiting for worker completion.
+ * Call disconnect first to stage a graceful disconnect burst. No producers may
+ * access send storage after stop. A caller-stepped transport progresses shutdown
+ * through update; a threaded transport progresses on its worker.
  */
-void rocketnet_client_transport_destroy( struct rocketnet_client_transport_t * client_transport );      // disconnect and pump a few updates first
+void rocketnet_client_transport_stop( struct rocketnet_client_transport_t * client_transport );
+/** @brief Check worker quiescence without joining or freeing resources. */
+bool rocketnet_client_transport_stopped( const struct rocketnet_client_transport_t * client_transport );
+/** @brief Join completed workers and release transport resources synchronously.
+ * Requires stopped to be true. Premature calls assert and retain the object.
+ */
+void rocketnet_client_transport_destroy( struct rocketnet_client_transport_t * client_transport );
 
 // a NULL client_transport is a counted no-op.
 /** @brief Advance client networking and publish the next receive and acknowledgement batches.
@@ -932,16 +938,17 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_sized( v
 // a NULL server_transport is a counted no-op.
 /** @brief Release a stopped server transport and its owned resources.
  * @param server_transport [in] Transport returned by a create function; NULL is a counted no-op.
- * @return Nothing. Call stop, then update until state is STOPPED before destroying.
+ * @return Nothing. Call stop, then poll stopped before destroying.
  */
 void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * server_transport );      // stop and wait for stopped first
 
 // a NULL server_transport is a counted no-op.
 /** @brief Request an orderly server stop.
  * @param server_transport [in,out] Created server transport; NULL is a counted no-op.
- * @return Nothing. Call update until the state becomes STOPPED, then destroy.
+ * @return Nothing. Poll stopped until true, then destroy.
  */
 void rocketnet_server_transport_stop( struct rocketnet_server_transport_t * server_transport );
+bool rocketnet_server_transport_stopped( const struct rocketnet_server_transport_t * server_transport );
 
 // a NULL server_transport is a counted no-op that returns 0.
 /** @brief Read the server lifecycle state.

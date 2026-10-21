@@ -1476,11 +1476,9 @@ ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * con
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * client, const char * connect_token );
 
-/// Destroys the client from any state.
-/// Sends disconnect packets from SENDING_CONNECTION_RESPONSE or CONNECTED.
-/// Stops the network thread and waits for it to exit.
-/// No time bound is promised.
-/// Wipes and frees the client's memory. All client pointers become invalid.
+/// Requires rocketnet_client_disconnected(client) to be true; asserts otherwise.
+/// Synchronously joins completed workers, wipes and frees the client memory.
+/// All client pointers become invalid. NULL is allowed.
 
 ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * client );
 
@@ -1495,10 +1493,15 @@ ROCKETNET_EXPORT void rocketnet_client_send_packets( struct rocketnet_client_t *
 
 /// Ends the connection and returns the client to DISCONNECTED.
 /// Sends disconnect packets when the connection has session keys.
-/// Stops the network thread and waits for it to exit.
-/// No time bound is promised.
+/// Requests worker shutdown without waiting. Poll rocketnet_client_disconnected
+/// before reconnecting or destroying.
 
 ROCKETNET_EXPORT void rocketnet_client_disconnect( struct rocketnet_client_t * client );
+
+/// Returns true after disconnection has completed and workers no longer access
+/// client storage. Never waits, joins or frees. Keep the client and callback
+/// context alive until destroy. Caller-stepped clients progress via update.
+ROCKETNET_EXPORT bool rocketnet_client_disconnected( const struct rocketnet_client_t * client );
 
 /// The client's state.
 
@@ -1647,18 +1650,22 @@ ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * con
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * server );
 
-/// Sends disconnect packets to all clients and frees their slots.
-/// Releases the transport and leaves the server stopped, ready to start again.
-/// Does nothing if already stopped.
+/// Requests shutdown and queues best-effort disconnect packets to all clients.
+/// Does not wait for workers. Poll rocketnet_server_stopped before restart or
+/// destroy. Repeated requests do nothing.
 
 ROCKETNET_EXPORT void rocketnet_server_stop( struct rocketnet_server_t * server );
+
+/// Returns true once the stop request has completed. Never waits or joins.
+/// Keep the server and callback context alive until synchronous destroy.
+ROCKETNET_EXPORT bool rocketnet_server_stopped( const struct rocketnet_server_t * server );
 
 /// true while running, false while stopped.
 
 ROCKETNET_EXPORT bool rocketnet_server_running( const struct rocketnet_server_t * server );
 
-/// Stops a running server before destroying it.
-/// Wipes and frees its memory, including the keypair.
+/// Requires rocketnet_server_stopped(server) to be true; asserts otherwise.
+/// Synchronously joins completed workers, wipes and frees memory and keys.
 /// All pointers from the server become invalid.
 
 ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * server );

@@ -104,6 +104,16 @@ static int rn_client_link_end_reason( void * transport )
     return ROCKETNET_DISCONNECT_REASON_NONE;
 }
 
+static void rn_client_link_stop( void * transport )
+{
+    rocketnet_client_transport_stop( (rocketnet_client_transport_t *) transport );
+}
+
+static bool rn_client_link_stopped( const void * transport )
+{
+    return rocketnet_client_transport_stopped( (const rocketnet_client_transport_t *) transport );
+}
+
 static void rn_client_link_destroy( void * transport )
 {
     rocketnet_client_transport_destroy( (rocketnet_client_transport_t *) transport );
@@ -127,6 +137,8 @@ void rn_message_client_link( struct rn_message_link_t * link, struct rocketnet_c
     link->disconnect = rn_client_link_disconnect;
     link->state = rn_client_link_state;
     link->end_reason = rn_client_link_end_reason;
+    link->stop = rn_client_link_stop;
+    link->stopped = rn_client_link_stopped;
     link->destroy = rn_client_link_destroy;
     link->clock_from_first_update = 1;
 }

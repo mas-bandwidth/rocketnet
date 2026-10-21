@@ -147,6 +147,21 @@ struct rn_message_connection_t * rn_message_object_connection( struct rn_message
 //                     create and destroy
 // ---------------------------------------------------------------
 
+static void rn_message_link_abort_create( const struct rn_message_link_t * link )
+{
+    if ( !link || !link->destroy )
+        return;
+    if ( link->stop )
+        link->stop( link->transport );
+    while ( link->stopped && !link->stopped( link->transport ) )
+    {
+        if ( link->update )
+            link->update( link->transport, 0.0 ); // stopping updates do not read game time
+        rocketnet_platform_sleep( 0.001 );
+    }
+    link->destroy( link->transport );
+}
+
 struct rn_message_object_t * rn_message_object_create( void * context, const struct rn_message_link_t * link, int is_server, int num_connections,
                                                        const struct rocketnet_message_config_t * config, void * memory, uint64_t memory_bytes,
                                                        int32_t default_kbps, double time, bool reserve_unlimited )
@@ -190,8 +205,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
             rocketnet_error( "message object create refused: send budget %d kbps or time is outside its range", (int) default_kbps );
         else
             rocketnet_error( "message object create refused: the memory block is short or not %d-aligned", ROCKETNET_ALLOCATION_ALIGNMENT );
-        if ( link && link->destroy )
-            link->destroy( link->transport );
+        rn_message_link_abort_create( link );
         return NULL;
     }
 
@@ -204,8 +218,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
         if ( !block )
         {
             rocketnet_error( "message object create failed: could not allocate %llu bytes", (unsigned long long) layout.total );
-            if ( link->destroy )
-                link->destroy( link->transport );
+            rn_message_link_abort_create( link );
             return NULL;
         }
     }
@@ -232,8 +245,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     if ( !object->arena )
     {
         rocketnet_error( "message object create failed: the arena was refused" );
-        if ( link->destroy )
-            link->destroy( link->transport );
+        rn_message_link_abort_create( link );
         if ( owns_block )
             rocketnet_free( context, block );
         return NULL;
@@ -280,6 +292,13 @@ void rn_message_object_destroy( struct rn_message_object_t * object )
 {
     if ( !object )
         return;
+    if ( object->link.stopped )
+    {
+        const bool stopped = object->link.stopped( object->link.transport );
+        rocketnet_assert( stopped );
+        if ( !stopped )
+            return;
+    }
     if ( object->in_place )
         rn_message_connection_cancel_pending( object, object->pending_connection );   // the open frame goes back first
     if ( object->link.destroy )
@@ -1152,6 +1171,16 @@ static int rn_server_link_state( void * transport )
     return rocketnet_server_transport_state( (rocketnet_server_transport_t *) transport );
 }
 
+static void rn_server_link_stop( void * transport )
+{
+    rocketnet_server_transport_stop( (rocketnet_server_transport_t *) transport );
+}
+
+static bool rn_server_link_stopped( const void * transport )
+{
+    return rocketnet_server_transport_stopped( (const rocketnet_server_transport_t *) transport );
+}
+
 static void rn_server_link_destroy( void * transport )
 {
     rocketnet_server_transport_destroy( (rocketnet_server_transport_t *) transport );
@@ -1176,6 +1205,8 @@ void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_s
     link->connection = rn_server_link_connection;
     link->disconnect = rn_server_link_disconnect;
     link->state = rn_server_link_state;
+    link->stop = rn_server_link_stop;
+    link->stopped = rn_server_link_stopped;
     link->destroy = rn_server_link_destroy;
 }
 

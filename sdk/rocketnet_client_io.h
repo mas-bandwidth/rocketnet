@@ -106,6 +106,7 @@ struct rocketnet_client_io_t
     double (*time)( void * context ); void * time_context;
     double guard_timeout_seconds;               // ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS
     std::atomic<bool> quit;
+    std::atomic<bool> stopped; // released only after the final core access
     struct rocketnet_client_io_open_t open;
     uint64_t transport_faults;                     // a receive count or byte count this step refused
     uint64_t * prefilter_too_large;             // optional: counts PREFILTER_TOO_LARGE for a datagram rejected by the byte-count check
@@ -136,6 +137,7 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
     io->time_context = time_context;
     io->guard_timeout_seconds = ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS;
     io->quit.store( false, std::memory_order_relaxed );
+    io->stopped.store( false, std::memory_order_relaxed );
     memset( io->open.session_server_to_client, 0, sizeof( io->open.session_server_to_client ) );
     io->open.protocol_id = 0;
     memset( io->open.connection_salt, 0, sizeof( io->open.connection_salt ) );
@@ -403,7 +405,8 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     // thread exits at once: no receive, no publish, no wait.
     if ( quitting && !rocketnet_client_send_rings_in_flight( &io->rings ) )
     {
-        rocketnet_client_io_drop_keys( io );    // destroy retires; the copy dies with the thread
+        rocketnet_client_io_drop_keys( io );
+        io->stopped.store( true, std::memory_order_release );
         return ROCKETNET_CLIENT_IO_EXITED;
     }
 

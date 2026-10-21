@@ -427,6 +427,7 @@ struct rocketnet_client_t
     uint64_t block_bytes;
     int block_used;                                     // 1 once a connect handed the block to a connection
     struct rocketnet_message_client_t * connection;     // NULL while DISCONNECTED or after a refused connect
+    struct rocketnet_message_client_t * retiring;       // retained until worker completion and synchronous reclamation
     int refused_state;                                  // the error state a refused connect left, 0 otherwise
     uint64_t lifetime[RN_CLIENT_COUNT];                 // the counts of every ended connection
     struct rocketnet_message_batch_t batch;             // the one receive batch, refilled by each receive (in the create-time block)
@@ -441,7 +442,7 @@ static const uint64_t rn_client_header_bytes = rn_round_up_alignment( sizeof( st
 
 struct rocketnet_message_client_t * rocketnet_client_message_client( struct rocketnet_client_t * client )
 {
-    return client ? client->connection : NULL;
+    return client ? ( client->connection ? client->connection : client->retiring ) : NULL;
 }
 
 struct rocketnet_client_t * rocketnet_client_adopt( void * context, struct rocketnet_message_client_t * connection )
@@ -692,27 +693,16 @@ static void rn_client_connection_counts( struct rocketnet_message_client_t * mes
 // -- leaves the block holding nothing of it.
 static void rn_client_end_connection( struct rocketnet_client_t * client )
 {
-    if ( !client->connection )
+    if ( !client->retiring )
         return;
-
-    // From a handshake state or CONNECTED the message connection ends first:
-    // its link performs the transport disconnect synchronously (the redundant
-    // disconnect packets), preserving that transition's callback order.
-    if ( rocketnet_message_client_state( client->connection ) > ROCKETNET_CLIENT_STATE_DISCONNECTED )
-        rn_message_object_kick( &client->connection->object, 0, ROCKETNET_DISCONNECT_REASON_NONE );
+    rocketnet_assert( rocketnet_client_disconnected( client ) );
     uint64_t counts[RN_CLIENT_COUNT];
-    rn_client_connection_counts( client->connection, counts, NULL );
+    rn_client_connection_counts( client->retiring, counts, NULL );
     for ( int i = 0; i < RN_CLIENT_COUNT; i++ )
         client->lifetime[i] += counts[i];
-    // the connection reset (sdk/rocketnet_connection_reset.h) on every end:
-    // the protocol's runs on every terminal transition
-    // (rocketnet_client_set_state, and the disconnect burst), the message
-    // object's runs here; the transport's own reset is left to its destroy,
-    // because run here it would drop the staged disconnect burst before the
-    // destroy sends it
-    rocketnet_client_connection_reset( &client->connection->object );
-    rocketnet_message_client_destroy( client->connection );
-    client->connection = NULL;
+    rocketnet_client_connection_reset( &client->retiring->object );
+    rocketnet_message_client_destroy( client->retiring );
+    client->retiring = NULL;
 }
 
 static int rn_client_state( const struct rocketnet_client_t * client )
@@ -751,7 +741,14 @@ enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * cl
     // object still exists: end it first, so its counters and reason are kept
     // and nothing of it survives into the new one
     if ( client->connection && rocketnet_message_client_state( client->connection ) == ROCKETNET_CLIENT_STATE_DISCONNECTED )
+        rocketnet_client_disconnect( client );
+
+    if ( client->retiring )
+    {
+        if ( !rocketnet_client_disconnected( client ) )
+            return ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED;
         rn_client_end_connection( client );
+    }
 
     if ( rn_client_state( client ) != ROCKETNET_CLIENT_STATE_DISCONNECTED )
     {
@@ -783,6 +780,9 @@ void rocketnet_client_destroy( struct rocketnet_client_t * client )
 {
     if ( !client )
         return;                                         // as free(NULL): silent, uncounted
+    rocketnet_assert( rocketnet_client_disconnected( client ) );
+    if ( !rocketnet_client_disconnected( client ) )
+        return;
     rn_client_end_connection( client );
     // the header and the connection block after it hold the last
     // connection's message bytes: all of it is wiped, then freed or given
@@ -800,6 +800,13 @@ void rocketnet_client_update( struct rocketnet_client_t * client, double time )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return;
+    if ( client->retiring )
+    {
+        struct rocketnet_client_transport_t * transport = rocketnet_message_client_transport( client->retiring );
+        if ( transport )
+            rocketnet_client_transport_update( transport, time );
+        return;
+    }
     if ( !client->connection )
         return;
     (void) rocketnet_message_client_update( client->connection, time );
@@ -818,11 +825,25 @@ void rocketnet_client_disconnect( struct rocketnet_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return;
-
-    // the disconnect packets from a live state, then the connection is torn
-    // down and the client is DISCONNECTED again (rn_client_end_connection)
-    rn_client_end_connection( client );
+    if ( client->connection )
+    {
+        if ( rocketnet_message_client_state( client->connection ) > ROCKETNET_CLIENT_STATE_DISCONNECTED )
+            rn_message_object_kick( &client->connection->object, 0, ROCKETNET_DISCONNECT_REASON_NONE );
+        client->retiring = client->connection;
+        client->connection = NULL;
+        struct rocketnet_client_transport_t * transport = rocketnet_message_client_transport( client->retiring );
+        if ( transport )
+            rocketnet_client_transport_stop( transport );
+    }
     client->refused_state = ROCKETNET_CLIENT_STATE_DISCONNECTED;
+}
+
+bool rocketnet_client_disconnected( const struct rocketnet_client_t * client )
+{
+    if ( !rocketnet_api_null_guard( client ) || client->connection )
+        return false;
+    struct rocketnet_client_transport_t * transport = client->retiring ? rocketnet_message_client_transport( client->retiring ) : NULL;
+    return !transport || rocketnet_client_transport_stopped( transport );
 }
 
 enum rocketnet_client_state_t rocketnet_client_state( const struct rocketnet_client_t * client )
@@ -1046,11 +1067,12 @@ void rocketnet_client_stats( const struct rocketnet_client_t * client, struct ro
         return;
     uint64_t counts[RN_CLIENT_COUNT];
     memcpy( counts, client->lifetime, sizeof( counts ) );
-    if ( client->connection )
+    struct rocketnet_message_client_t * held = client->connection ? client->connection : client->retiring;
+    if ( held )
     {
         uint64_t connection[RN_CLIENT_COUNT];
         struct rocketnet_client_transport_stats_t transport_stats;
-        rn_client_connection_counts( client->connection, connection, &transport_stats );
+        rn_client_connection_counts( held, connection, &transport_stats );
         for ( int i = 0; i < RN_CLIENT_COUNT; i++ )
             counts[i] += connection[i];
         stats->rtt_ms = transport_stats.rtt;
@@ -1101,6 +1123,7 @@ struct rocketnet_server_t
     uint8_t * block;
     uint64_t block_bytes;
     int block_used;                                         // 1 once a start handed the block to a message server
+    struct rocketnet_message_server_t * retiring;           // retained until stop completion
     struct rocketnet_message_server_t * running;            // NULL while stopped
     uint64_t lifetime[RN_SERVER_COUNT];                     // the counts of every earlier run
     struct rocketnet_message_batch_t batch;                 // the one receive batch across every client (in the create-time block)
@@ -1120,7 +1143,7 @@ static inline struct rocketnet_server_transport_t * rn_server_transport( const s
 
 struct rocketnet_message_server_t * rocketnet_server_message_server( struct rocketnet_server_t * server )
 {
-    return server ? server->running : NULL;
+    return server ? ( server->running ? server->running : server->retiring ) : NULL;
 }
 
 bool rocketnet_server_served_address( const struct rocketnet_server_t * server, int family, char * address, size_t address_bytes )
@@ -1496,10 +1519,18 @@ struct rocketnet_server_t * rocketnet_server_create( void * context, const char 
     return result;
 }
 
+static void rn_server_finish_stop( struct rocketnet_server_t * server );
+
 enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * server )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    if ( server->retiring )
+    {
+        if ( !rocketnet_server_stopped( server ) )
+            return ROCKETNET_STATUS_SERVER_NOT_STOPPED;
+        rn_server_finish_stop( server );
+    }
     if ( server->running )
     {
         rocketnet_api_misuse_record();
@@ -1543,23 +1574,40 @@ void rocketnet_server_disconnect_all_clients( struct rocketnet_server_t * server
 
 void rocketnet_server_stop( struct rocketnet_server_t * server )
 {
-    if ( !rocketnet_api_null_guard( server ) )
+    if ( !rocketnet_api_null_guard( server ) || !server->running )
         return;
-    if ( !server->running )
-        return;
-    // one step, RUNNING to STOPPED (tla/ServerSession.tla Stop): each connected
-    // client gets the redundant disconnects, flushed before the transport
-    // goes, and every slot its reset (EndClient)
     rocketnet_server_disconnect_all_clients( server );
     rocketnet_message_server_send_packets( server->running );
-    for ( int i = 0; i < server->max_clients; i++ )
-        rocketnet_server_connection_reset( &server->running->object, i );
+    server->retiring = server->running;
+    server->running = NULL;
+    struct rocketnet_server_transport_t * transport = rocketnet_message_server_transport( server->retiring );
+    if ( transport )
+        rocketnet_server_transport_stop( transport );
+}
+
+bool rocketnet_server_stopped( const struct rocketnet_server_t * server )
+{
+    if ( !rocketnet_api_null_guard( server ) || server->running )
+        return false;
+    struct rocketnet_server_transport_t * transport = server->retiring ? rocketnet_message_server_transport( server->retiring ) : NULL;
+    return !transport || rocketnet_server_transport_stopped( transport );
+}
+
+static void rn_server_finish_stop( struct rocketnet_server_t * server )
+{
+    if ( !server->retiring )
+        return;
+    rocketnet_assert( rocketnet_server_stopped( server ) );
+    server->running = server->retiring;
     uint64_t counts[RN_SERVER_COUNT];
     rn_server_running_counts( server, counts, NULL );
     for ( int i = 0; i < RN_SERVER_COUNT; i++ )
         server->lifetime[i] += counts[i];
+    for ( int i = 0; i < server->max_clients; i++ )
+        rocketnet_server_connection_reset( &server->running->object, i );
     rocketnet_message_server_destroy( server->running );
     server->running = NULL;
+    server->retiring = NULL;
 }
 
 bool rocketnet_server_running( const struct rocketnet_server_t * server )
@@ -1573,7 +1621,10 @@ void rocketnet_server_destroy( struct rocketnet_server_t * server )
 {
     if ( !server )
         return;                                         // as free(NULL): silent, uncounted
-    rocketnet_server_stop( server );
+    rocketnet_assert( rocketnet_server_stopped( server ) );
+    if ( !rocketnet_server_stopped( server ) )
+        return;
+    rn_server_finish_stop( server );
     // the header, keys included, and the running block after it, which held
     // every connection's message bytes: all of it is wiped, then freed or
     // given back (an adopted server is the header alone). A block no start
@@ -1836,11 +1887,12 @@ static void rn_server_running_counts( const struct rocketnet_server_t * server, 
     memset( counts, 0, sizeof( uint64_t ) * RN_SERVER_COUNT );
     if ( transport_stats )
         memset( transport_stats, 0, sizeof( *transport_stats ) );
-    struct rocketnet_server_transport_t * transport = rn_server_transport( server );
+    struct rocketnet_message_server_t * held = server->running ? server->running : server->retiring;
+    struct rocketnet_server_transport_t * transport = held ? rocketnet_message_server_transport( held ) : NULL;
     if ( !transport )
         return;
     const struct rocketnet_counters_t * transport_counters = rocketnet_server_transport_counters( transport );
-    const struct rocketnet_counters_t * message_counters = rocketnet_message_server_counters( rn_server( server ) );
+    const struct rocketnet_counters_t * message_counters = rocketnet_message_server_counters( held );
     struct rocketnet_server_transport_stats_t stats;
     memset( &stats, 0, sizeof( stats ) );
     rocketnet_server_transport_stats( transport, &stats );

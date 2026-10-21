@@ -104,6 +104,8 @@ struct rn_message_link_t
     int (*end_reason)( void * transport );
 
     // NULL: the object does not own the transport
+    void (*stop)( void * transport );
+    bool (*stopped)( const void * transport );
     void (*destroy)( void * transport );
 
     // 1 for a transport whose clock was seeded at 0.0 at create (the client's,
