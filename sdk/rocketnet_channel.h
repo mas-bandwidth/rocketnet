@@ -26,7 +26,7 @@
 //
 // The state lives in the connection's region (layer 1): C rn_channel_send_t
 // and C rn_channel_receive_t carved by rn_region_carve, so nothing here
-// allocates (R2). RakNet's four counters and their coupling are present from
+// allocates (R2). The four counters and their coupling are present from
 // the first version and run even though no sequenced type is enabled
 // (CHANNELS.md 7.1, RNChannel's OrderedTraceUnchangedBySequenced).
 //

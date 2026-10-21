@@ -140,7 +140,7 @@ bool rocketnet_get_thread_priority( void );
 
 #define ROCKETNET_MESSAGE_FRAGMENT_BYTES                             1152
 
-// The reliable resend schedule follows RakNet's adaptive resend delay, with no
+// The reliable resend schedule adapts to the measured round trip, with no
 // per-resend back-off. The timeout uses 2*srtt + 4*rttvar + 30 ms and is
 // capped at 2 s. Validation reserves four sends of the configured initial resend delay.
 

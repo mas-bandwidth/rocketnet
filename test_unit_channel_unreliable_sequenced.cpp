@@ -235,8 +235,8 @@ static void test_large_state_promotes_to_reliable_sequenced()
     link.send_packets = sequenced_large_send_packets;
     rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 1, NULL, NULL, 0, 1, 0.0 );
     rocketnet_unit_check( object != NULL );
-    // An oversize unreliable send is promoted to its reliable twin (RakNet
-    // ReliabilityLayer), never dropped as unreliable.
+    // An oversize unreliable send is promoted to its reliable twin (the
+    // promotion rule), never dropped as unreliable.
     uint8_t * pointer = rn_message_object_start( object, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED,
                                                   ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES );
     rocketnet_unit_check( pointer != NULL );

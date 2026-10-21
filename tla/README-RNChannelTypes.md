@@ -3,7 +3,7 @@
 `RNChannelTypes` is a standalone finite message-stream model for codes 1, 2
 and 4, with the ordered code-3 path needed to delimit sequencing epochs.
 It follows `docs/CHANNELS.md` sections 7.1–7.3 and records the relevant
-`docs/RAKNET-RELIABILITY.md` differences below. It is not a composition proof
+design choices below. It is not a composition proof
 for `RNChannel`, `RNWindow`, a scheduler or the C++ implementation.
 
 ## Interface
@@ -96,16 +96,16 @@ from its delivered sequenced trace; it detects stale watermark leakage.
 
 ## Deliberate differences and abstractions
 
-| Rule | Model/design choice | Study comparison |
+| Rule | Model/design choice | Notes |
 |---|---|---|
-| Ahead-of-epoch sequencing | Keep only newest `(o, s)` per channel | RakNet keeps all and releases in sequence order (§6.2, CHANNELS §7.3) |
+| Ahead-of-epoch sequencing | Keep only newest `(o, s)` per channel | Older ahead-of-epoch values are superseded, never held (CHANNELS §7.3) |
 | Held sequenced delivery | Same `s + 1` watermark as direct delivery | Study item 18's held path uses `s`, admitting a duplicate |
 | Held ordered delivery | Reset watermark to zero on the same delivery path | Study item 19 omits reset and can wrongly discard new-epoch sequenced input |
-| Capacities | Fixed send catalogue and held descriptors; real exhaustion disconnects with `MESSAGE_MEMORY_EXHAUSTED` | Owner exhaustion rule supersedes older CHANNELS wording about refused sends; RakNet's holds are unbounded |
-| Packet input | Fresh packet ids; transport replay suppression is a precondition | RakNet accepts repeated datagram ids before reliability dispatch (§6.2) |
+| Capacities | Fixed send catalogue and held descriptors; real exhaustion disconnects with `MESSAGE_MEMORY_EXHAUSTED` | Owner exhaustion rule supersedes older CHANNELS wording about refused sends; every hold is bounded |
+| Packet input | Fresh packet ids; transport replay suppression is a precondition | Repeated packet ids are refused by the transport before reliability dispatch |
 | ACK | Only packet-id notification retires resend state | Same I8/I12 semantic meaning; no new message ACK protocol |
 | Ordering/sequence wrap | Small nonwrapping counters | Wire half-range/wrap arithmetic is outside this model |
-| Scheduling | First packet writes follow enqueue order; retransmits may overtake | CHANNELS §9.2 requires channel FIFO; RakNet can reorder sends by priority |
+| Scheduling | First packet writes follow enqueue order; retransmits may overtake | CHANNELS §9.2 requires channel FIFO; priority never reorders sends within a channel |
 | Payload | Opaque stable byte-record identity | Allocation, byte lengths, copy counts and view lifetime need implementation tests |
 | Channels | Two channels in the bounded transport | Runtime range checks and up-to-65536 scaling are outside this bound |
 

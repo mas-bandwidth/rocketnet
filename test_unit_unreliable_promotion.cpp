@@ -201,8 +201,8 @@ static std::vector<uint8_t> boundary_data(uint32_t sequence,int bytes) {
     std::vector<uint8_t> data((size_t)bytes); for(int i=0;i<bytes;++i) data[(size_t)i]=(uint8_t)(i+sequence); return data;
 }
 // ---------------------------------------------------------------------------
-// Oversize unreliable sends are promoted to their reliable twin, as RakNet's
-// ReliabilityLayer does: code 0 to 2, code 1 to 4, code 5 to its reliable
+// Oversize unreliable sends are promoted to their reliable twin
+// (the promotion rule): code 0 to 2, code 1 to 4, code 5 to its reliable
 // receipt twin (wire code 2, receipt kept). The threshold is the mode's own
 // one-packet record edge; max_message_bytes is accepted and max+1 is refused.
 // ---------------------------------------------------------------------------
@@ -311,7 +311,7 @@ static void test_unreliable_promotion_every_mode()
     }
 
     // The configured maximum refuses every unreliable source mode on both
-    // start paths before RakNet promotion; none can consume a promotion count.
+    // start paths before promotion; none can consume a promotion count.
     for (int m=0; m<3; ++m) {
         boundary_pair_t pair; boundary_setup(&pair); std::vector<boundary_received_t> got; boundary_step(&pair,&got);
         std::vector<uint8_t> too_big=boundary_data((uint32_t)(7+m),16385);

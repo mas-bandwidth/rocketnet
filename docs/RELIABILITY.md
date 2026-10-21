@@ -1,6 +1,6 @@
-# RakNet reliability mapping
+# Reliability modes
 
-RocketNet exposes the eight RakNet-style reliability choices through
+RocketNet exposes eight reliability choices through
 `enum rocketnet_reliability_t`. The public names and behavior are authoritative
 in `sdk/rocketnet.h`, [USAGE.md](../USAGE.md), and
 [standard/MESSAGES.md](../standard/MESSAGES.md).

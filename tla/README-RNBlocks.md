@@ -98,10 +98,8 @@ while fragment 1 is not" is violated (out-of-order arrival is reached).
 ## The reversed witness: placement by arrival
 
 `PlaceByIndex = FALSE` copies a fragment to `base + have·F`, the next free place
-in arrival order, which is RakNet's concatenation of the split list in list order
-(docs/RAKNET-RELIABILITY.md 8.2: `InsertIntoSplitPacketList` appends,
-`BuildPacketFromSplitPacketList` concatenates, `SortSplitPacketList` is declared
-and never defined). TLC's trace, 13 states:
+in arrival order: a reassembly that appends fragments as they arrive and
+concatenates them in that order, never sorting them by index. TLC's trace, 13 states:
 
 1. `NumberMessage` twice: number 0 is the single record at offset 0; numbers 1, 2,
    3 are the block's fragments 0, 1, 2 at offsets 2, 4, 6, ordering index 1.
@@ -120,4 +118,4 @@ each chunk to `region->receive_ring + record->ring * 16`, its own offset, whatev
 `block_have` is. In the same order of arrival the code writes fragment 2 at
 offset 6 and fragment 1 at offset 4, and the delivered view
 `receive_ring + first->ring * 16` holds the bytes in index order. The witness's
-corruption is the RakNet path's and is not reachable in the code.
+corruption is that arrival-order path's and is not reachable in the code.

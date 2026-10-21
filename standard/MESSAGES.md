@@ -2562,7 +2562,7 @@ second time.
 
 ### m9.2. Round-trip estimate and resend delay
 
-The sender MUST estimate the round-trip time as RakNet does. On the first
+The sender MUST estimate the round-trip time as follows. On the first
 sample, it MUST set both the smoothed round-trip time and deviation to the
 sample. On every later sample, the deviation MUST move 5 percent toward
 the absolute difference between the prior smoothed RTT and the new sample;
@@ -2571,8 +2571,8 @@ the smoothed RTT MUST then move 5 percent toward the new sample. The resend dela
     clamp( 2 x srtt + 4 x deviation + 30 ms, resend_delay_min_ms, resend_delay_max_ms )
 
 where srtt and deviation are in seconds. The timeout MUST be 2 seconds before
-the first sample by default. The minimum defaults to 0, which applies no floor
-and matches RakNet; a caller may configure a nonzero minimum. The maximum
+the first sample by default. The minimum defaults to 0, which applies no floor;
+a caller may configure a nonzero minimum. The maximum
 defaults to 2 seconds. The timeout MUST
 NOT back off after a resend: every pass uses the same function of the
 estimates, so a record that is never acknowledged is resent at that delay
@@ -2704,8 +2704,8 @@ wire representation.
    num_channels, and a message endpoint MUST refuse such a send with a channel
    outside that range. A send of reliability 0, 2, 5 or 6 is neither ordered
    nor sequenced: a message endpoint MUST ignore its channel, MUST NOT refuse
-   it for its channel, and sends it with no channel field (rule 2), as RakNet's
-   ordering channel is ignored by its unordered reliabilities
+   it for its channel, and sends it with no channel field (rule 2): the channel
+   orders only the ordered and sequenced reliabilities
    (`rn_message_object_start` in `sdk/rocketnet_message_server.cpp`).
 2. A record with code 1, 3 or 4 MUST carry the channel field in
    [m3 Record format](#m3). Receipt types use their base codes from

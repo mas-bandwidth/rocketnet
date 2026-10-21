@@ -453,14 +453,13 @@ The reliability is one of `ROCKETNET_RELIABILITY_UNRELIABLE`,
 `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT`, `ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT`
 or `ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT`. Plain UNRELIABLE is one packet up to `ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES` (1,411 bytes);
 above 1,411 bytes it promotes to its reliable twin (`ROCKETNET_RELIABILITY_RELIABLE`),
-which fragments across packets transparently up to `max_message_bytes`, as RakNet's
-reliability layer does.
+which fragments across packets transparently up to `max_message_bytes`.
 
-The channel is RakNet's ordering channel. RELIABLE_ORDERED,
+The channel is the ordering channel. RELIABLE_ORDERED,
 RELIABLE_ORDERED_WITH_ACK_RECEIPT and the two SEQUENCED types are ordered or
 sequenced within it, independently of every other channel, and a channel at or
 past the config's `num_channels` refuses them. UNRELIABLE, RELIABLE and the
-other two receipt types ignore it, as RakNet's `ReliabilityLayer::Send` does:
+other two receipt types ignore it, since they are neither ordered nor sequenced:
 any channel is accepted for them, never refused, and they travel with no
 channel (`rn_message_object_start` in `sdk/rocketnet_message_server.cpp`).
 

@@ -202,7 +202,7 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
         const bool promote = rn_endpoint_unreliable_over_record_capacity( reliability, channel, bytes, record_capacity );
         if ( promote )
         {
-            // RakNet ReliabilityLayer promotion: code 0 to 2, code 1 to 4, and
+            // The promotion rule: code 0 to 2, code 1 to 4, and
             // code 5 to its reliable receipt twin (wire code 2, receipt kept).
             const int twin = reliability == ROCKETNET_RELIABILITY_UNRELIABLE ? ROCKETNET_RELIABILITY_RELIABLE :
                              reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED :
@@ -299,7 +299,7 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
             descriptor->flags |= RN_SEND_FLAG_RECEIPT_PROMOTED; // RNReceipts EffectiveKind: reliable completion, no LOSS
         if ( promoted )
         {
-            // RakNet ReliabilityLayer: every promotion is counted, once per send.
+            // Promotion: every promotion is counted, once per send.
             const int counter = endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE ? ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE :
                                 endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED :
                                 ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT;

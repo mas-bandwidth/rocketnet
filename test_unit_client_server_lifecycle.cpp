@@ -1149,7 +1149,7 @@ static void test_client_one_update_sends_more_than_sixteen_packets()
 REGISTER_UNIT_TEST( test_client_one_update_sends_more_than_sixteen_packets );
 
 // ---------------------------------------------------------------------------
-// The one receive queue, as RakPeer::Receive: every reliability type sent on
+// The one receive queue, pumped by each receive: every reliability type sent on
 // every channel by every client is received through the server's one queue,
 // each naming its sender, and through each client's one queue. The send's
 // channel orders ORDERED and sequences SEQUENCED messages within it and is
@@ -1289,7 +1289,7 @@ static void rq_run( rq_run_t * run )
     lifecycle_world_destroy( &world );
 }
 
-// RakNet's guarantees over one log: nothing twice; every reliable type
+// The delivery guarantees over one log: nothing twice; every reliable type
 // (RELIABLE, RELIABLE_ORDERED and the two reliable receipt types) exactly
 // once whatever channel it was sent on; ordered messages in send order within
 // their sender and channel; sequenced messages never older than one seen
