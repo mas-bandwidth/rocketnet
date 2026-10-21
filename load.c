@@ -1124,15 +1124,27 @@ int main( int argc, char ** argv )
 
     double next_slice_time = traffic_start;
     static int client_update_cursor = 0;
+    int draining = 0;
+    int drain_clients_visited = 0;
+    unsigned char drain_visited[ROCKETNET_MAX_CLIENTS] = { 0 };
+    const double drain_deadline = traffic_start + duration_seconds + drain_seconds;
 
     while ( !quit )
     {
         const double now = rocketnet_time();
         const double elapsed = now - traffic_start;
-        if ( elapsed >= duration_seconds + drain_seconds )
+        if ( now >= drain_deadline )
             break;
 
         const int in_traffic_window = ( elapsed < duration_seconds );
+        if ( !in_traffic_window && !draining )
+        {
+            draining = 1;
+            // Revisit the most recent send cohort first. It has had the least
+            // time to make progress; then visit every client in cyclic order.
+            const int traffic_slice = num_clients < 100 ? num_clients : 100;
+            client_update_cursor = ( client_update_cursor + num_clients - traffic_slice ) % num_clients;
+        }
 
         if ( drop_one && !drop_injected && ( elapsed >= drop_at ) )
         {
@@ -1141,13 +1153,20 @@ int main( int argc, char ** argv )
             drop_injected = 1;
         }
 
-        /* Visit a slice of up to 100 clients every 10 ms. Per-client rate is
-           100 Hz for <=100 clients and 10 Hz at 1000 clients. */
-        const int slice = num_clients < 100 ? num_clients : 100;
+        /* Offer 100-client slices during traffic. At drain, service every
+           client in cyclic order within the same three-second deadline. */
+        const int slice = in_traffic_window ? ( num_clients < 100 ? num_clients : 100 ) : num_clients;
         for ( int k = 0; k < slice; k++ )
         {
+            if ( !in_traffic_window && rocketnet_time() >= drain_deadline )
+                break;
             const int i = client_update_cursor;
             client_update_cursor = ( client_update_cursor + 1 ) % num_clients;
+            if ( !in_traffic_window && !drain_visited[i] )
+            {
+                drain_visited[i] = 1;
+                drain_clients_visited++;
+            }
             if ( !( drop_injected && i == 0 ) )
             {
                 const double update_time = rocketnet_time();
@@ -1247,7 +1266,8 @@ int main( int argc, char ** argv )
                 }
             }
 
-            if ( k + 1 == slice )
+            if ( ( k + 1 ) % 100 == 0 || k + 1 == slice ||
+                 ( !in_traffic_window && rocketnet_time() >= drain_deadline ) )
             {
                 const double t0 = rocketnet_time();
                 LOAD_TIMED_VOID( &timing, LOAD_TIMING_SERVER_UPDATE, rocketnet_server_update( server, t0 ) );
@@ -1385,6 +1405,27 @@ int main( int argc, char ** argv )
     const int crit3_reliable_delivery = ( reliable_errors == 0 && c2s_sent_total > 0 ) ? 1 : 0;
     const int crit4_unreliable_integrity = ( unreliable_errors == 0 ) ? 1 : 0;
     const int crit5_counters_agree = ( c2s_sent_total == c2s_received_total + total_counted_drops ) ? 1 : 0;
+
+    if ( !crit3_reliable_delivery || !crit5_counters_agree )
+    {
+        uint64_t unresolved_c2s = 0;
+        uint64_t unresolved_s2c = 0;
+        for ( int i = 0; i < num_clients; i++ )
+        {
+            for ( uint32_t combo = 0; combo < LOAD_NUM_COMBOS; combo++ )
+            {
+                const struct load_stream_state_t * st = &c2s_streams[(size_t) i * LOAD_NUM_COMBOS + combo];
+                if ( st->sent_count > st->recv_count )
+                    unresolved_c2s += st->sent_count - st->recv_count;
+            }
+            if ( s2c_streams[i].sent_count > s2c_streams[i].recv_count )
+                unresolved_s2c += s2c_streams[i].sent_count - s2c_streams[i].recv_count;
+        }
+        fprintf( stderr, "load: drain clients_visited=%d/%d unresolved_c2s=%" PRIu64
+                         " unresolved_s2c=%" PRIu64 " elapsed_s=%.3f deadline_s=%.3f\n",
+                 drain_clients_visited, num_clients, unresolved_c2s, unresolved_s2c,
+                 rocketnet_time() - traffic_start, duration_seconds + drain_seconds );
+    }
 
     if ( !crit5_counters_agree )
     {
