@@ -336,7 +336,7 @@ The C surface in sdk/rocketnet.h and what a consumer needs to use it.
 | API reference comments: reliability | ✅ | — | — |
 | USAGE.md: the client and server API, with worked usage | ✅ | — | — |
 | The docs job fails on any undocumented public symbol (later) | ❌ | — | — |
-| complete | 95% | 69% | 69% |
+| complete | 95% | 67% | 67% |
 
 [Source data](docs/roadmap.sexp)
 
@@ -429,7 +429,7 @@ What v1.0.0-preview-1 does not yet meet, one row per issue: what it is today, an
 | The acknowledgement statistics sweep scans thousands of records per update. The final deliverable keeps those statistics up to date as acks arrive. | ❌ | ❌ | ❌ |
 | Every main call is meant to take under 0.1 ms in Release under load; this is not yet measured at 1000 clients. The final deliverable measures every main call at 1000 clients on each platform and holds the result in a gate. | ❌ | ❌ | ❌ |
 | Each unreliable message is sent as its own packet; small unreliable messages are not packed together. The final deliverable packs small messages into shared packets and keeps in-place writes for large ones. | ❌ | ❌ | ❌ |
-| Client disconnect and destroy stop the client's I/O thread and wait for it, for a bounded time, and that bound reads the receive-stamp clock callback on the caller's thread. The final deliverable starts the thread at create and parks it between connections, so neither call waits, and times shutdown on its own clock. | ❌ | ❌ | ❌ |
+| Bounded client disconnect/destroy: timed join and deadlines on the platform clock, not the user time callback. Today disconnect and destroy join the client's I/O thread with no time bound, and the hand-off deadlines read the time callback. | ❌ | ❌ | ❌ |
 | On Linux, XDP gateway discovery runs external commands when the server starts. This is acceptable at start; the final deliverable reads the gateway through netlink instead. | ❌ | — | — |
 | Client connect and server start still allocate: the client's transport, socket and I/O thread at each connect, and the server's transport and its tables at each start. The final deliverable builds them at create, so nothing allocates after create. | ❌ | ❌ | ❌ |
 | A few allocations do not go through the caller's allocator: AF_XDP packet memory, io_uring rings, the RIO registered region, thread stacks, interface discovery and the C library's output buffer. The final deliverable routes them through the caller's allocator where the operating system allows, and reports the rest by size. | ❌ | ❌ | ❌ |
@@ -443,11 +443,13 @@ What v1.0.0-preview-1 does not yet meet, one row per issue: what it is today, an
 | The example soak can fail when many clients disconnect at once: the server still counts connected clients after the disconnect pass. The final deliverable fixes the disconnect path and runs the example soak green on every platform. | ❌ | ❌ | ❌ |
 | The full client I/O TLA+ model needs a configuration that fits the CI time budget. The final deliverable splits it into configurations that each finish within the budget. | ❌ | — | — |
 | The reconnect churn and UDP loopback functional cases showed rare timing failures under heavy machine load. The final deliverable makes them independent of machine load. | ❌ | ❌ | ❌ |
-| A refused finish leaves its start pending, which blocks later sends on that client or server until an abort. The final deliverable cancels the start on a refused finish and reports why it was refused. | ❌ | ❌ | ❌ |
-| The receipt list does not say when the caller's buffer was too short, and receipts dropped from a full internal ring are not counted in the public counters. The final deliverable reports the available count and counts the overflow. | ❌ | ❌ | ❌ |
-| A connect token that holds both an IPv4 and an IPv6 address picks IPv6 whenever an IPv6 socket opens, even on a host with no working IPv6 route, with no fallback. The final deliverable adds a family choice and a tested fallback. | ❌ | ❌ | ❌ |
+| The receipt read returns how many outcomes it copied, not how many there were when the caller's buffer is too short (ring overflow is counted, in receipts_dropped). The final deliverable returns the available count. | ❌ | ❌ | ❌ |
+| Connect over whichever family works: send connection requests to the token's IPv4 and IPv6 addresses and keep the first that answers (TLA+ first). | ❌ | ❌ | ❌ |
+| Backend keygen, connect-token minting and a reference server registration in Go and C#. | ❌ | ❌ | ❌ |
+| Client connect from a handshake or token failure state (CONNECTION_DENIED .. CONNECT_TOKEN_EXPIRED) is refused until rocketnet_client_disconnect; the final deliverable lets connect start over from any failure state (TLA+ first). | ❌ | ❌ | ❌ |
+| The *_name lookups return two forms: status names are the enum suffix ("OK") and the client state, log level and disconnect reason names are lower-case words. The final deliverable returns the upper-case enum suffix from all four. | ❌ | ❌ | ❌ |
+| The public header still carries the internal wide-channel build switch (ROCKETNET_INTERNAL_WIDE_BUILD and its ROCKETNET_MAX_CHANNELS override). The final deliverable moves it into an internal header. | ❌ | ❌ | ❌ |
 | A Linux build with XDP off still needs the BPF and XDP development libraries. The final deliverable makes them optional when XDP is off. | ❌ | — | — |
-| The receive batch struct is missing from the ABI layout queries. The final deliverable adds it, so bindings can check its layout. | ❌ | ❌ | ❌ |
 | The public header carries a large volume of comments, some citing internal design references; the examples are longer than they need to be; the build has many targets. The final deliverable states each rule once in the header, shortens the examples and trims the build targets. | ❌ | — | — |
 | complete | 0% | 0% | 0% |
 
