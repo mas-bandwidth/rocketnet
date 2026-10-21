@@ -34,6 +34,52 @@
 #include <unistd.h>
 #endif
 
+// The internal client transport takes the binary token. The C-callable way to
+// mint one is the public string token decoded back to bytes:
+// rocketnet_write_test_connect_token (sdk/rocketnet_connect_token.h) has C++
+// linkage, so a C program cannot link it. Both seal to the fixed internal
+// development server key (rocketnet_dev_server_public_key) that the server
+// transport dev config carries, under ROCKETNET_DEV_PROTOCOL_ID.
+
+static int dev_token_base64_value( char c )
+{
+    if ( c >= 'A' && c <= 'Z' ) return c - 'A';
+    if ( c >= 'a' && c <= 'z' ) return c - 'a' + 26;
+    if ( c >= '0' && c <= '9' ) return c - '0' + 52;
+    if ( c == '+' || c == '-' ) return 62;
+    if ( c == '/' || c == '_' ) return 63;
+    return -1;
+}
+
+static int dev_token_binary( const char * address, uint64_t client_id, uint64_t timestamp, uint8_t * token, size_t token_bytes )
+{
+    char text[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    const int ipv6 = ( address[0] == '[' );
+    if ( rocketnet_create_dev_connect_token( ipv6 ? NULL : address, ipv6 ? address : NULL, rocketnet_dev_server_public_key,
+                                             ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS, ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS,
+                                             client_id, ROCKETNET_DEV_PROTOCOL_ID, timestamp, NULL, text ) != ROCKETNET_STATUS_OK )
+        return 0;
+    size_t written = 0;
+    uint32_t bits = 0;
+    int count = 0;
+    for ( const char * p = text; *p && *p != '='; p++ )
+    {
+        const int v = dev_token_base64_value( *p );
+        if ( v < 0 )
+            return 0;
+        bits = ( bits << 6 ) | (uint32_t) v;
+        count += 6;
+        if ( count >= 8 )
+        {
+            count -= 8;
+            if ( written >= token_bytes )
+                return 0;
+            token[written++] = (uint8_t) ( ( bits >> count ) & 0xFF );
+        }
+    }
+    return written == token_bytes;
+}
+
 static volatile int quit;
 
 void interrupt_handler( int signal )
@@ -705,8 +751,16 @@ static void run_matrix( opts_t * o )
         last_clock = now;
         r_event( res, o->label, window, "clock", "mint" );
 
-        uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-        if ( rocketnet_write_dev_connect_token( o->address, rocketnet_random_uint64(), (uint64_t) now, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
+        // bin/server is an internal message server on the transport dev config,
+        // so its server key is the fixed internal development server key
+        // (rocketnet_dev_server_public_key, sdk/rocketnet_connect_token.h): the
+        // client needs nothing from the server process to mint its token.
+        char connect_token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+        const int address_is_ipv6 = ( o->address[0] == '[' );
+        if ( rocketnet_create_dev_connect_token( address_is_ipv6 ? NULL : o->address, address_is_ipv6 ? o->address : NULL,
+                                                 rocketnet_dev_server_public_key,
+                                                 ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS, ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS,
+                                                 rocketnet_random_uint64(), ROCKETNET_DEV_PROTOCOL_ID, (uint64_t) now, NULL, connect_token ) != ROCKETNET_STATUS_OK )
         {
             r_fail( res, o->label, window, 0, 0, 0, 0, "token-mint-failed", 0, 0, "client", "-", "mint" );
             st.fails++;
@@ -1025,8 +1079,10 @@ int main( int argc, char ** argv )
     // the development connect: mint a token locally against the published
     // development keys. a production client is handed its token by a backend.
 
+    // the binary token of the internal client transport, sealed to the fixed
+    // internal development server key that bin/server's transport dev config carries
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    if ( rocketnet_write_dev_connect_token( connect_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
+    if ( !dev_token_binary( connect_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, sizeof( connect_token ) ) )
     {
         printf( "error: failed to write dev connect token\n" );
         rocketnet_term();
