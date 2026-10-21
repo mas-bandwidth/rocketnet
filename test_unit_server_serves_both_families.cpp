@@ -71,8 +71,6 @@ static void both_families_fill( rocketnet_server_config_t * config, const both_f
     config->protocol_id = BOTH_FAMILIES_PROTOCOL;
     config->max_clients = max_clients;
     memcpy( config->backend_public_key, identity->backend_public, sizeof( config->backend_public_key ) );
-    memcpy( config->server_public_key, identity->server_public, sizeof( config->server_public_key ) );
-    memcpy( config->server_secret_key, identity->server_secret, sizeof( config->server_secret_key ) );
     config->transport = "loopback";
 }
 
@@ -84,15 +82,17 @@ static void both_families_client_config( rocketnet_client_config_t * config )
     config->time_callback = both_families_clock;
 }
 
-static void both_families_token( const both_families_identity_t * identity, uint64_t client_id, const char * address, uint8_t * token )
+static void both_families_token( const both_families_identity_t * identity, uint64_t client_id, const char * address, char * token_string )
 {
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     const char * addresses[] = { address };
     check( rocketnet_write_production_connect_token( identity->backend_secret, identity->server_public,
         BOTH_FAMILIES_PROTOCOL, addresses, 1, client_id, 1000, 1ULL << 40, 300, NULL,
         token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 }
 
-static enum rocketnet_status_t both_families_start( const both_families_identity_t * identity, const char * first, const char * second, struct rocketnet_server_t ** out )
+static enum rocketnet_status_t both_families_start( both_families_identity_t * identity, const char * first, const char * second, struct rocketnet_server_t ** out )
 {
     rocketnet_server_config_t config;
     both_families_fill( &config, identity, 2 );
@@ -103,6 +103,7 @@ static enum rocketnet_status_t both_families_start( const both_families_identity
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_COUNT;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, first, &config, &create_status );
     check( server != NULL );
+    rocketnet_server_public_key( server, identity->server_public );
     check( create_status == ROCKETNET_STATUS_OK );
     enum rocketnet_status_t status = rocketnet_server_start( server );
     *out = server;
@@ -196,7 +197,7 @@ static void both_families_pump( struct rocketnet_server_t * server, struct rocke
 
 static struct rocketnet_client_t * both_families_connect_client( const both_families_identity_t * identity, uint64_t client_id, const char * address )
 {
-    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     both_families_token( identity, client_id, address, token );
     rocketnet_client_config_t config;
     both_families_client_config( &config );
