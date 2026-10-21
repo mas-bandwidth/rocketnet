@@ -179,7 +179,7 @@ def validate_resource_baseline(fields):
 
 
 def parse_load(stdout, server_transport, client_transport, expected_clients=CLIENTS,
-               expected_profile="light"):
+               expected_profile="light", expected_rate=None):
     summaries = [line for line in stdout.splitlines()
                  if line.startswith("load: connected=") and "verdict=" in line]
     if len(summaries) != 1:
@@ -192,6 +192,19 @@ def parse_load(stdout, server_transport, client_transport, expected_clients=CLIE
         raise ValueError("population or load verdict failed")
     if fields.get("profile") != expected_profile:
         raise ValueError("load profile differs from requested profile")
+    expected_rate_mode = "per_client_due" if expected_rate is not None else "per_update"
+    expected_rate_value = expected_rate if expected_rate is not None else 0.0
+    try:
+        reported_rate = float(fields["target_messages_per_client_second"])
+    except (KeyError, ValueError) as error:
+        raise ValueError("target message rate absent or invalid") from error
+    if (fields.get("offered_rate_mode") != expected_rate_mode or
+            not math.isfinite(reported_rate) or reported_rate < 0 or
+            not math.isclose(reported_rate, expected_rate_value, rel_tol=5.1e-7, abs_tol=1e-12)):
+        raise ValueError("offered rate differs from requested rate")
+    expected_offer_status = "PASS" if expected_rate is not None else "UNMEASURED"
+    if fields.get("application_offers_accepted") != expected_offer_status:
+        raise ValueError("application offer acceptance differs from requested rate mode")
     if any(fields.get(name) != "PASS" for name in CRITERIA):
         raise ValueError("one or more load criteria failed")
     if fields.get("server_transport_io") != server_transport or fields.get("client_transport_io") != client_transport:
@@ -234,7 +247,7 @@ def parse_load(stdout, server_transport, client_transport, expected_clients=CLIE
                                     overbudget_count=overbudget,
                                     status="UNMEASURED" if count == 0 else "MEASURED")
     return dict(raw=summaries[0], fields=fields, expected_clients=expected_clients,
-                expected_profile=expected_profile,
+                expected_profile=expected_profile, expected_rate=expected_rate,
                 resource_baseline_schema=resource_baseline_schema,
                 server_update_p99_us=server_p99,
                 server_update_under_100us=server_p99 < 100.0,
@@ -374,13 +387,15 @@ def main():
                 raise ValueError(f"run {index + 1} timed out; process group killed")
             if args.mode == "timings":
                 run["load"] = parse_load(stdout, args.server_transport, args.client_transport,
-                                         args.clients, args.profile)
+                                         args.clients, args.profile,
+                                         args.messages_per_client_second)
             else:
                 target_stdout = out / "load-samples.stdout.log"
                 if not target_stdout.is_file():
                     raise ValueError("xctrace did not preserve target load stdout")
                 run["load"] = parse_load(target_stdout.read_text(), args.server_transport,
-                                         args.client_transport, args.clients, args.profile)
+                                         args.client_transport, args.clients, args.profile,
+                                         args.messages_per_client_second)
                 if not trace.is_dir():
                     raise ValueError("xctrace did not create the Time Profiler trace")
                 run["trace"] = str(trace)

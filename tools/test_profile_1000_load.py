@@ -27,6 +27,8 @@ SUMMARY = ("load: connected=1000 profile=light connect_within_10s=PASS "
            "frame_server_update_max_us=53000 "
            "frame_server_update_overbudget_count=6000 "
            "fds_start=4 fds_end=4 threads_start=1 threads_end=1 "
+           "offered_rate_mode=per_update target_messages_per_client_second=0 "
+           "application_offers_accepted=UNMEASURED "
            "server_transport_io=portable client_transport_io=portable verdict=PASS\n")
 VM_STAT = ("Mach Virtual Memory Statistics: (page size of 16384 bytes)\n"
            "Pages free:                               100000.\n"
@@ -78,6 +80,25 @@ class ReceiptTests(unittest.TestCase):
     def test_profile_must_match_requested_profile(self):
         with self.assertRaisesRegex(ValueError, "profile"):
             profile.parse_load(SUMMARY, "portable", "portable", expected_profile="default")
+
+    def test_rate_mode_and_echo_must_match_request(self):
+        fixed = (SUMMARY.replace("profile=light", "profile=default")
+                 .replace("offered_rate_mode=per_update", "offered_rate_mode=per_client_due")
+                 .replace("target_messages_per_client_second=0",
+                          "target_messages_per_client_second=1")
+                 .replace("application_offers_accepted=UNMEASURED",
+                          "application_offers_accepted=PASS"))
+        result = profile.parse_load(fixed, "portable", "portable", expected_profile="default",
+                                    expected_rate=1.0)
+        self.assertEqual(result["expected_rate"], 1.0)
+        for line in (fixed.replace("target_messages_per_client_second=1",
+                                   "target_messages_per_client_second=2"),
+                     fixed.replace("offered_rate_mode=per_client_due", "offered_rate_mode=per_update"),
+                     fixed.replace("application_offers_accepted=PASS",
+                                   "application_offers_accepted=UNMEASURED")):
+            with self.subTest(line=line), self.assertRaisesRegex(ValueError, "rate"):
+                profile.parse_load(line, "portable", "portable", expected_profile="default",
+                                   expected_rate=1.0)
 
     def test_explicit_phase_pairs_allow_runtime_resources_to_close_at_term(self):
         result = profile.parse_load(PHASE_SUMMARY, "portable", "portable")
@@ -190,6 +211,12 @@ class ProvenanceTests(unittest.TestCase):
                 summary = SUMMARY.replace("connected=1000", f"connected={connected}")
                 if load_profile is not None:
                     summary = summary.replace("profile=light", f"profile={load_profile}")
+                if rate is not None:
+                    summary = (summary.replace("offered_rate_mode=per_update", "offered_rate_mode=per_client_due")
+                               .replace("target_messages_per_client_second=0",
+                                        f"target_messages_per_client_second={rate:.6g}")
+                               .replace("application_offers_accepted=UNMEASURED",
+                                        "application_offers_accepted=PASS"))
                 return 0, summary, "", False
 
             args = ["profile_1000_load.py", "--mode", "timings", "--source", str(source),
@@ -241,6 +268,7 @@ class ProvenanceTests(unittest.TestCase):
         self.assertEqual(receipt["messages_per_client_second"], 2.5)
         self.assertEqual(receipt["rate_environment"], {"LOAD_MESSAGES_PER_CLIENT_SECOND": "2.5"})
         self.assertEqual(receipt["runs"][0]["load"]["expected_clients"], 64)
+        self.assertEqual(receipt["runs"][0]["load"]["expected_rate"], 2.5)
         self.assertEqual(receipt["runs"][0]["command"][1:3], ["64", "60"])
         self.assertEqual(seen[2][1]["LOAD_MESSAGES_PER_CLIENT_SECOND"], "2.5")
         self.assertEqual(seen[2][1]["LOAD_PROFILE"], "light")
