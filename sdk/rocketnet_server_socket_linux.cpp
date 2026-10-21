@@ -2670,6 +2670,11 @@ bool rocketnet_server_socket_test_buffer_exchange()
     valid &= socket->receive_held_index == 0;
     valid &= server->process_packets.num_packets == 1;
     valid &= server->process_packets.packet_data[0] == socket->receive_buffer[0].packet_data[0];
+    rocketnet_platform_mutex_acquire( &socket->receive_mutex );
+    rocketnet_server_socket_receive_packets( server );
+    valid &= socket->receive_held_index == 0;
+    valid &= socket->receive_buffer[0].num_packets == 0;
+    rocketnet_platform_mutex_release( &socket->receive_mutex );
     rocketnet_server_socket_receive_packets( server );
     valid &= socket->receive_held_index == -1;
     valid &= socket->receive_buffer[0].num_packets == 0;
@@ -2894,7 +2899,7 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
         // owned here with its cursor; a finished one may be reset outside
         // the lock and returned before the next FIFO buffer is claimed.
         if ( socket->receive_held_index >= 0 &&
-             socket->receive_read_index == socket->receive_buffer[socket->receive_held_index].num_packets )
+             socket->receive_read_index >= socket->receive_buffer[socket->receive_held_index].num_packets )
         {
             socket->receive_buffer[socket->receive_held_index].num_packets = 0;
             if ( !rocketnet_platform_mutex_try_acquire( &socket->receive_mutex ) )
