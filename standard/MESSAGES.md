@@ -1,6 +1,6 @@
 # RN-2: RocketNet message layer
 
-Version: 1.0 (draft)<br>
+Version: 1.0<br>
 Status: normative<br>
 Companion documents: RN-1 (`TRANSPORT.md`), the connection layer; RN-R
 (`RATIONALE.md`), informative rationale.
@@ -2054,7 +2054,7 @@ A sender chooses unreliable or unreliable sequenced in [m1.3 Reliability types](
 |---|---|---|---|
 | sequenced hold data bytes | `1416` | bytes | the data capacity of one code 1 hold slot |
 | default sequenced holds | `16` | slots | the default number of hold slots in a connection |
-| default unreliable deliveries | `256` | messages | the default per-update code 0 and code 1 delivery allowance |
+| default unreliable deliveries | `1024` | messages | the default per-update code 0 and code 1 delivery allowance |
 | counter modulus | `16777216` | values | the modulus of the ordering and sequencing indexes |
 
 <a id="m6.3"></a>
@@ -2634,14 +2634,14 @@ earlier class.
 | `client_default_kbps` | `1000` | kbps | the send budget of a new client connection |
 | `server_default_kbps` | `10000` | kbps | the send budget of a new server connection to one client |
 | `send_kbps_min` | `1` | kbps | the smallest enabled budget |
-| `send_kbps_max` | `10000000` | kbps | the largest budget |
+| `send_kbps_max` | `2147483646` | kbps | the largest budget |
 | `depth_seconds` | `0.1` | s | the bucket's time depth |
 | `maximum_packet_wire_bytes` | `1452` | bytes | one maximum packet, the smallest bucket depth |
 
 The client's budget to the server defaults to client_default_kbps and the
-server's budget to each client defaults to server_default_kbps. A positive
-value above send_kbps_max MUST be refused and MUST leave the budget unchanged,
-and so MUST a negative value. A budget of 0 sets that direction's default
+server's budget to each client defaults to server_default_kbps. The value
+2147483647, one above send_kbps_max, means no send budget. A negative value
+MUST be refused and MUST leave the budget unchanged. A budget of 0 sets that direction's default
 budget. A budget of send_kbps_max is the ceiling and is NOT RECOMMENDED.
 
 A setter MUST refill at the old rate up to its time argument, then apply the
@@ -2720,10 +2720,11 @@ wire representation.
    queue in the update's delivery order, every channel's together, and MUST
    NOT filter them by channel. A server MUST hand them as one queue across all
    its connections, each message naming the connection it arrived on. Order
-   holds within a channel of a connection as rules [m6](#m6) and [m7](#m7)
-   state it; the queue makes no order between channels or between
+   holds within a channel of a connection as rules
+   [m6 Delivery: unreliable codes 0 and 1](#m6) and
+   [m7 Delivery: reliable codes 2, 3 and 4](#m7) state it; the queue makes no order between channels or between
    connections. The SDK's queue is each connection's deliveries in turn, in
-   connection index order (`sdk/rocketnet_message_server.cpp:870-896`).
+   connection index order.
 
 The diagrams show the channel field alone. Its position in a record is the
 position defined by its code in [m3 Record format](#m3).

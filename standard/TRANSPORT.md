@@ -1,6 +1,6 @@
 # RN-1: RocketNet connection layer
 
-Version: 1.0 (draft)<br>
+Version: 1.0<br>
 Status: normative<br>
 Companion documents: RN-2 (`MESSAGES.md`), the message layer; RN-R
 (`RATIONALE.md`), informative rationale.
@@ -205,24 +205,25 @@ field's default.
 
 | Name | Value | Type | Environment variable | Valid range |
 |---|---|---|---|---|
-| server protocol_id | `0` | u64 | `ROCKETNET_SERVER_PROTOCOL_ID` | any; equal to the connect token's protocol id |
+| server protocol_id | `0` | u64 | `ROCKETNET_SERVER_PROTOCOL_ID` | nonzero; equal to the connect token's protocol id |
 | server max_clients | `1000` | integer | `ROCKETNET_SERVER_MAX_CLIENTS` | 1 to the server max_clients limit |
 | server max_clients limit | `1000` | integer | none: a limit of this revision | |
 | server packet_filter | `none` | bytes[4] | `ROCKETNET_SERVER_PACKET_FILTER` | 4 bytes; unset, the unkeyed filter value of [t5 Prefilter header](#t5) |
 | server backend_public_key | `none` | bytes[32] | `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY` | an Ed25519 public key |
-| server server_public_key | `none` | bytes[32] | `ROCKETNET_SERVER_SERVER_PUBLIC_KEY` | an X25519 public key |
-| server server_secret_key | `none` | bytes[32] | `ROCKETNET_SERVER_SERVER_SECRET_KEY` | an X25519 secret key; secret |
-| server max_payload_bytes | `1416` | integer | `ROCKETNET_SERVER_MAX_PAYLOAD_BYTES` | 0 (the default), or the payload capacity row of [t3 Constants and registries](#t3) to the fragmented payload maximum |
+| server max_payload_bytes | `16384` | integer | `ROCKETNET_SERVER_MAX_PAYLOAD_BYTES` | 0 (the default), or the payload capacity row of [t3 Constants and registries](#t3) to the fragmented payload maximum |
 | server max_fragmented_messages | `8` | integer | `ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES` | 0 (the default), or 1 to the fragments per payload maximum row of [t3 Constants and registries](#t3) |
 | server transport | `"auto"` | string | `ROCKETNET_SERVER_TRANSPORT` | [t2.4 Transport selection](#t2.4) |
 | server ipv4_address and ipv6_address, create arguments | none | string | `ROCKETNET_SERVER_IPV4_ADDRESS` and `ROCKETNET_SERVER_IPV6_ADDRESS` | an address and port of that family, or NULL; not both NULL |
 | server max_timeout_seconds | `60` | integer | `ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS` | 1 to 3600 |
 | server handshake_deadline_seconds | `5` | integer | `ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS` | 1 to 60 |
 | client packet_filter | `none` | bytes[4] | `ROCKETNET_CLIENT_PACKET_FILTER` | 4 bytes; unset, the unkeyed filter value of [t5 Prefilter header](#t5) |
-| client max_payload_bytes | `1416` | integer | `ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES` | as the server field |
+| client max_payload_bytes | `16384` | integer | `ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES` | as the server field |
 | client max_fragmented_messages | `8` | integer | `ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES` | as the server field |
 | client transport | `"auto"` | string | `ROCKETNET_CLIENT_TRANSPORT` | [t2.4 Transport selection](#t2.4) |
 | fragmented payload maximum | `361728` | bytes | none: a limit of this revision | |
+
+The server's X25519 keypair has no configuration field and no environment
+variable. The server generates it at create.
 
 An implementation MAY add fields of its own (for example a count of kernel
 queues for one transport); each one keeps rules 1 to 5.
@@ -2666,7 +2667,7 @@ The server turns a connection request into an encryption mapping, and a connecti
 6. A server MUST then ignore a request whose timeout is zero or negative without permission, then one whose address flags name no family or set a bit above bit 1, then one whose token address of the family the request arrived on (a v4-mapped source is IPv4) is not one this server serves, the token's other-family address unread, and then one whose server public key is not this server's. It MUST NOT answer a request that rules 2, 4, 5 or 6 refuse.
 7. A server MUST require a valid return cookie before any asymmetric work, and MUST answer a request without one, with a forged one, or with an expired one with a fresh connection cookie packet.
 8. A server MUST refuse, unanswered, a request whose cookie is valid when the per-update handshake work budget is spent, counting `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`.
-9. A server MUST refuse, unanswered, a request whose token identifier is bound to a different source address, and a request whose token identifier carries a live request claim held by a different source address, counting `CONNECTION_REQUEST_TOKEN_ALREADY_USED`. The first valid request records the claim for its source address before any signature, seal or keypair work; the claim ends at the handshake deadline or when a response binds the token ([t17 Timing and defaults](#t17) item 12). A server MUST also refuse, unanswered, a request that finds no free encryption mapping slot before the signature, seal and keypair rungs run, counting `CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING` and `MAPPING_TABLE_FULL`. Once the failed-signature budget of the current window is spent, a server MUST refuse a request from a source with a recorded failure in that window, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`. A source with no recorded failure in the window is not refused by that budget ([t17 Timing and defaults](#t17) item 11).
+9. A server MUST refuse, unanswered, a request whose token identifier is bound to a different source address, and a request whose token identifier carries a live request claim held by a different source address, counting `CONNECTION_REQUEST_TOKEN_ALREADY_USED`. The first valid request records the claim for its source address before any signature, seal or keypair work; the claim ends at the handshake deadline or when a response binds the token ([t17 Timing and defaults](#t17) item 13). A server MUST also refuse, unanswered, a request that finds no free encryption mapping slot before the signature, seal and keypair rungs run, counting `CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING` and `MAPPING_TABLE_FULL`. Once the failed-signature budget of the current window is spent, a server MUST refuse a request from a source with a recorded failure in that window, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`. A source with no recorded failure in the window is not refused by that budget ([t17 Timing and defaults](#t17) item 12).
 10. A server MUST verify the signed connect data before opening the sealed private block, MUST open it only with the keypair its public key names, and MUST ignore a request whose sealed fields disagree with the signed fields or whose client id already holds a slot.
 11. A server MUST deny, with a connection denied packet sealed under the handshake server-to-client key, a request that finds no free slot, and MUST NOT create a mapping for it.
 12. A server MUST generate a fresh session nonce and ephemeral keypair for each mapping, MUST derive the connection keys, MUST erase the ephemeral secret, and MUST store the connection challenge in the mapping so that a repeat is byte-identical.
@@ -3634,16 +3635,16 @@ an input ([t1.4 Conventions](#t1.4)).
     connection request validates and before any asymmetric operation. When it
     does, a request past the budget MUST be refused with no reply and counted
     as a refusal, and the budget MUST be reset at the start of each update.
-12. A server SHOULD apply the failed-signature budget before the signature
-    verification. When it does, a request from a source that has already
+12. A server MUST apply the failed-signature budget before the signature
+    verification. A request from a source that has already
     failed in the current failed-signature window MUST be refused before the
     verification runs and counted as a refusal. The budget MUST NOT refuse a
     request from a source with no recorded failure in the window, even when
     the budget is spent and the server can record no further sources; the
     verifications such requests cost are bounded by the handshake work budget
-    of item 10.
- 12. A server SHOULD refuse a request whose token identifier is claimed by a
-     different source address, and MUST refuse one that finds no free
+    of item 11.
+ 13. A server MUST refuse a request whose token identifier is claimed by a
+     different source address, and one that finds no free
      encryption mapping slot, before any signature, seal or keypair work. The
      first valid request for a token records its claim for the source address;
      the claim ends at the handshake deadline or when a response binds the
@@ -4093,8 +4094,7 @@ f0 6e 01 00 00 25 11 95 dc 00 00 00 df ff a1 97
 b6 0b 73 00 00 00 f9 25 ca 24 00 00 00 50 9a 50
 f5 00 00 00 0a 04 26 b7 00 00 00 dd 1a 04 77 00
 00 00 ee 4e 50 1b 00 00 00 37 af 52 db 00 00 00
-7a 31 93 22 00 00 00
-79 b8 15 e7 00 00 00
+7a 31 93 22 00 00 00 79 b8 15 e7 00 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations
@@ -4164,11 +4164,12 @@ input: each row's packet type (u8) and wire size (u16), in the rows' order
 <a id="t19.2"></a>
 ### t19.2. Development keys
 
-The published development keys are a fixed backend signing key, a fixed server
-public key and its secret half, and a fixed development protocol id. They are
-public: anyone who holds them can forge a token a server accepts and open every
-session. They exist so a first wiring works without a backend, and they MUST NOT
-be load-bearing in production.
+The published development key is a fixed backend signing key. Its public half
+is `ROCKETNET_DEV_BACKEND_PUBLIC_KEY`. It is public: anyone who holds it can
+forge a token a server accepts. It exists so a first wiring works without a
+backend, and it MUST NOT be load-bearing in production. A server still
+generates its own keypair, and a development token still needs a nonzero
+protocol id.
 
 1. A development key MUST NOT be used unless a deployment configured it
    explicitly. An endpoint whose configuration supplies no key MUST NOT inherit
@@ -4344,7 +4345,7 @@ Each connection adds a local payload reserve to its configured message-region
 headroom at CREATE. Let `R = ceil(send_kbps * 125 * message_resend_delay_max_ms / 1000)` bytes.
 Client and server creation use their respective resolved per-connection budgets,
 including an explicit creation override. Generic connection sizing conservatively
-uses the larger configured budget. A zero/unlimited budget has no finite reserve.
+uses the larger configured budget. An unlimited budget (`ROCKETNET_SEND_KBPS_UNLIMITED`) has no finite reserve.
 
 The descriptor pool adds `ceil(R / 128)` entries. The 128-, 512-, and 1152-byte
 fixed pools add `ceil(R / 128)`, `ceil(R / 512)`, and `ceil(R / 1024)` chunks,
@@ -4359,5 +4360,4 @@ the corresponding fixed pools, or larger messages in the span arena. Arbitrarily
 tiny records can exhaust bounded descriptors or padding capacity; they retain
 MESSAGE_MEMORY_EXHAUSTED and disconnect behavior. Raising the runtime send budget
 after CREATE does not enlarge this allocation; configure the intended maximum
-budget before creation. The full-budget regression retains one maximum resend delay of
-payload without acknowledgments at both default client and server budgets.
+budget before creation.

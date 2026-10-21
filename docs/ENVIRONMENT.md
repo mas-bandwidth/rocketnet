@@ -6,11 +6,14 @@ the config at the documented lifecycle point, and invalid or out-of-range
 values are refused rather than clamped. `docs/ABI-EVOLUTION.md` describes the
 config-size rules.
 
-The transport also reads these variables at client connect or server start.
-They are not fields of the public config structs:
+The transport reads these variables at client connect or server start. The
+`ROCKETNET_DEV_` variables are read at create. None of them is a field of the
+public config structs:
 
 | Variable | Meaning |
 | --- | --- |
+| `ROCKETNET_SERVER_IPV4_ADDRESS` | Overrides the `ipv4_address` argument of `rocketnet_server_create`, read at create. Form `a.b.c.d:port`. |
+| `ROCKETNET_SERVER_IPV6_ADDRESS` | Overrides the `ipv6_address` argument of `rocketnet_server_create`, read at create. Form `[v6]:port`. |
 | `ROCKETNET_CLIENT_GAME_CLOCK_EPOCH` | Unix seconds at the client's game clock zero, for the connect token's time check; 0 reads the wall clock. |
 | `ROCKETNET_SERVER_GAME_CLOCK_EPOCH` | Unix seconds at the server's game clock zero, for the connect token's time check; 0 reads the wall clock. |
 | `ROCKETNET_CLIENT_STEP_DRIVEN` | 1 runs the client's I/O step inside update and send_packets on the caller's thread, with no network thread; 0 (the default) keeps the network thread. |

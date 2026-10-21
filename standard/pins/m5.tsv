@@ -9,8 +9,8 @@ number mask	ROCKETNET_MESSAGE_U24_MASK	0xFFFFFF
 half range	1u << 23	8388608
 ring unit	16	16
 fragment bytes	ROCKETNET_MESSAGE_FRAGMENT_BYTES	1152
-window messages default	rn_pin_message_default_window_messages	1024
-receive ring bytes default	rn_pin_message_default_receive_ring_bytes	262144
+window messages default	rn_pin_message_default_reliable_messages_in_flight	1024
+receive ring bytes default	rn_pin_message_default_receive_message_buffer_bytes	262144
 window messages limit	1 << 20	1048576
 replay window depth minimum	ROCKETNET_HISTORY_PACKETS_MIN	4096
 replay window depth maximum	ROCKETNET_HISTORY_PACKETS_MAX	32768

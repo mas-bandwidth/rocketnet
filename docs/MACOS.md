@@ -64,9 +64,9 @@ that adds it), `bin/test_lifecycle`, `bin/test_transport`, the
 `bin/example_*` programs, `bin/soak`, `bin/soak_sim`, `bin/load` and
 `bin/transport_memory`.
 
-The CMake cache sets no `CMAKE_OSX_ARCHITECTURES` and no
-`CMAKE_OSX_DEPLOYMENT_TARGET`, so a build is the host's native slice and its
-minimum OS is the SDK it was built with. Check what a build produced:
+The CMake cache sets no `CMAKE_OSX_ARCHITECTURES`, so a build is the host's
+native slice. CMake sets `CMAKE_OSX_DEPLOYMENT_TARGET` to 12.0 unless the
+caller sets it. Check what a build produced:
 
 ```sh
 grep -E 'CMAKE_OSX_(ARCHITECTURES|DEPLOYMENT_TARGET)' build-debug/CMakeCache.txt
@@ -74,12 +74,12 @@ lipo -archs bin/librocketnet.dylib
 vtool -show-build bin/test
 ```
 
-On an Apple-silicon Mac `lipo` prints `arm64` and `vtool` prints `minos`
-equal to `sdk`.
+On an Apple-silicon Mac `lipo` prints `arm64` and `vtool` prints `minos 12.0`.
 
 ### Universal binaries, the Xcode generator, the deployment target
 
-**pending.**
+See [BUILDING.md](../BUILDING.md) for the universal build, the Xcode generator
+and the deployment target.
 
 ## The macOS transports
 
@@ -184,7 +184,7 @@ On macOS the platform layer builds the kqueue wake (`sdk/rocketnet_platform.h`,
 an `EVFILT_USER` trigger (`sdk/rocketnet_platform.cpp`, the kqueue wake). The
 thread is a plain `pthread_create` with default attributes
 (`rocketnet_platform_thread_create`). Right after the create, the creating
-thread makes one call on it, the flow library's setting, unchanged: `pthread_setschedparam( thread, SCHED_RR, { sched_get_priority_min( SCHED_RR ) } )`
+thread makes one call on it: `pthread_setschedparam( thread, SCHED_RR, { sched_get_priority_min( SCHED_RR ) } )`
 (`rocketnet_platform_client_thread_priority` in `sdk/rocketnet_platform.cpp`,
 through `rocketnet_platform_network_thread_priority`).
 That is the only thing the library sets on its macOS network threads: no QoS
@@ -208,12 +208,11 @@ class is never `QOS_CLASS_USER_INTERACTIVE`, on or off, and with the switch on
 the thread reads back `SCHED_RR` at `sched_get_priority_min( SCHED_RR )` or the
 create counted a refusal.
 
-A game that wants the client's I/O on a thread it owns sets `step_driven = 1`
-in `rocketnet_client_config_t` (or `ROCKETNET_CLIENT_STEP_DRIVEN=1`): the
+A game that wants the client's I/O on a thread it owns sets
+`ROCKETNET_CLIENT_STEP_DRIVEN=1`: the
 client then runs the I/O step inside `rocketnet_client_update` and
 `rocketnet_client_send_packets` on the caller's thread and creates no I/O
-thread (`sdk/rocketnet.h`, the `step_driven` field;
-`sdk/rocketnet_client_transport.cpp`, where the thread is created only when
+thread (`sdk/rocketnet_client_transport.cpp`, where the thread is created only when
 neither step mode is set). That thread's QoS is then the game's.
 
 ```sh
@@ -286,7 +285,7 @@ A server binds the wildcard address on its port, whatever host its public
 address names: the bind address is the public address with its host part
 zeroed (`sdk/rocketnet_server_transport.cpp`, `bind_address`). With public
 address `127.0.0.1:0` the log reads `server transport started on 0.0.0.0:<port>` (`./bin/example_transports`). A client binds the wildcard of
-its family too (the log reads `client bound to [::]:<port>`).
+its family. The log reads `client bound to <address> [<transport>]`.
 
 When the macOS application firewall is on, it asks "Do you want the
 application to accept incoming network connections?" the first time an app it
@@ -349,7 +348,7 @@ the debugger, through `--run <case>` (`test/suite_runner.h`, `suite_main`):
 
 ```sh
 lldb -- ./bin/functional --run test_loopback_transport_udp
-lldb -- ./bin/test --run test_time
+lldb -- ./bin/test --run test_protocol_id_zero_refused
 ```
 
 The suites otherwise run each case in a child process, so a breakpoint in a

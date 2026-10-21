@@ -4,7 +4,7 @@
 
     Transports: auto, a pin, and a list. Three servers are created in turn:
     one with the platform's automatic ladder, one pinned to a single
-    transport, and one given a candidate list. After each create the example
+    transport, and one given a candidate list. After each start the example
     prints the transport that the public query reports, and the library's own
     log lines say why each candidate was granted or refused. A fourth create
     pins a name no transport has and shows the loud refusal. Each server that

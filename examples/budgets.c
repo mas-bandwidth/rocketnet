@@ -181,7 +181,7 @@ int main( void )
     result = 0;
 
 cleanup:
-    // destroy on NULL is a counted misuse that asserts in a debug build (rocketnet_api_null_guard)
+    // destroy on NULL is a no-op, as free(NULL) is
     if ( client )
         rocketnet_client_destroy( client );
     if ( server )

@@ -7,9 +7,9 @@ a client exchange over the loopback interface, `127.0.0.1`.
 
 Three kinds of `transport` setting, each created in turn on a server:
 - **auto** (`NULL`): the platform's recommended ladder. A Linux server tries
-  `xdp`, then `gso`, then `portable`; macOS tries `msgx`, then `portable`;
+  `xdp`, then `gso`, then `io_uring`, then `portable`; macOS tries `msgx`, then `portable`;
   Windows uses its own order. The first transport that starts wins.
-- **a pin**: one name. The server gets exactly that transport or create fails
+- **a pin**: one name. The server gets exactly that transport or start fails
   loudly; there is no fallback.
 - **a list**: comma-separated names tried left to right. The first one granted
   wins, and the library logs each refusal, so `xdp,gso,portable` lands on the
@@ -72,7 +72,7 @@ variable and the value it displaced.
 - `rocketnet_server_default_config`, `rocketnet_server_create`,
   `rocketnet_server_start`, `rocketnet_server_destroy`,
   `rocketnet_server_update`, `rocketnet_server_send_packets`,
-  `rocketnet_server_port`, `rocketnet_server_ipv4_address`,
+  `rocketnet_server_ipv4_address`,
   `rocketnet_server_public_key`, `rocketnet_server_transport_name`,
   `rocketnet_server_receive_messages`
 - `rocketnet_client_default_config`, `rocketnet_client_create`,

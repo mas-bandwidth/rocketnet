@@ -11,7 +11,7 @@ Construction may allocate fixed storage and obtain entropy before transitions
 begin. Logging and counters may observe a transition but must not influence
 its result. Transport adapters execute the actions a pure machine produces.
 
-The first-deliverable boundaries are:
+The boundaries in this release are:
 
 - handshake and client-state transitions;
 - slot admission and connection reset;

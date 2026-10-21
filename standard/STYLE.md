@@ -25,7 +25,7 @@ One word for one thing, everywhere:
 
 | Word | Means | Never |
 |---|---|---|
-| transport | one selectable packet carrier below the connection layer, chosen by name: `xdp`, `gso`, `msgx`, `portable`, `iocp` | driver |
+| transport | one selectable packet carrier below the connection layer, chosen by name: `xdp`, `gso`, `io_uring`, `msgx`, `portable`, `iocp`, `rio`, `loopback` | driver |
 | `transport` (config field) | the ordered candidate list of transports for one endpoint; environment `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT` | driver, transport list |
 | client, server | the two endpoints of a connection, by wire role; each is configured by one config struct | host |
 | connection layer | what RN-1 specifies | transport tier |

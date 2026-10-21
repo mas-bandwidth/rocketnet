@@ -22,14 +22,13 @@ A transport with a preference rank at or above `ROCKETNET_TRANSPORT_PIN_ONLY`
 (1000) is pin-only: it stays in the availability list, so an explicit name
 always selects it, but `auto` never chooses it. The loopback transport is the
 one pin-only row. It is in-process, carries datagrams through memory with no
-socket and no system network call, and serves tests and examples; it is never
-chosen by auto. Its process-wide table is `ROCKETNET_LOOPBACK_MAX_ENDPOINTS`
+socket and no system network call. It is a production transport selected only
+by name. auto never chooses it. Its process-wide table is `ROCKETNET_LOOPBACK_MAX_ENDPOINTS`
 records of 72 bytes each (72,072 bytes) under one mutex. Each live endpoint
 allocates its full `ROCKETNET_LOOPBACK_QUEUE_PACKETS` queue at create, so
 runtime sends never allocate or grow it. A process using loopback must budget
 for every live endpoint's complete queue capacity. The cost is paid only by a
-process that explicitly instantiates loopback, which is tests and examples,
-never a game on auto. Lookups scan the table linearly under the mutex.
+process that selects loopback by name. Lookups scan the table linearly under the mutex.
 
 The names `rocketnet_server_uring_available`, `rocketnet_server_uring_leaked_bytes`
 and `rocketnet_server_uring_leaked_transports` are internal transport helpers
@@ -201,8 +200,7 @@ transport creates, from the creating thread right after the create
 (`rocketnet_platform_server_thread_priority`, `sdk/rocketnet_platform.cpp:1434`, `:3142`
 and `:3573`):
 `SCHED_RR` at `sched_get_priority_min( SCHED_RR )` on Linux and macOS,
-`THREAD_PRIORITY_TIME_CRITICAL` on Windows. These are the flow library's
-settings (`flow_platform.cpp`), unchanged.
+`THREAD_PRIORITY_TIME_CRITICAL` on Windows.
 
 | Transport | Threads it creates | What the library sets |
 |---|---|---|
@@ -472,7 +470,7 @@ UDP for both address families: IPv4 byte-identical to the canonical builder
 (ihl 5, DF set, ttl 64, header checksum, UDP checksum 0) and IPv6 with the
 mandatory UDP checksum (RFC 8200 section 8.1) computed in software over the
 pseudo-header. Hardware TX checksum offload (AF_XDP TX metadata, kernel 6.8
-or later) is a follow-up, not yet used.
+or later) is not used.
 
 The filter's decisions also run as ordinary host C in the unit suite, with no
 kernel, no root and no BPF syscall. The `rocketnet_xdp_filter_host` target
@@ -520,7 +518,7 @@ headers, temporary directory or child process. `test_xdp_filter` loads the same
 `server_xdp.o`. A configure without such a clang says
 `XDP off: no clang with the BPF target was found, so server_xdp.o is not built and the xdp server transport refuses at create`,
 embeds a zero-length object, and the `xdp` create refuses with
-`could not load server_xdp program: this build has no server_xdp.o (no clang with the BPF target at configure time)`.
+`could not load server_xdp program: this build has no server_xdp.o (XDP disabled or no clang with the BPF target at configure time)`.
 macOS and Windows do not build the object.
 
 `cmake/XdpSources.cmake` lists the object's inputs: CMake recompiles the object

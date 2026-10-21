@@ -4,8 +4,8 @@ The guide a Linux server operator reads first: how to build, which transport a
 server gets on a given kernel and why, how to pin one, what `gso`, `io_uring`
 and `xdp` need from the host, how socket errors and ICMP behave, the fd and
 memlock limits for 1000 clients, what each transport needs inside a container,
-and the commands that verify a host. Every claim names the file and line that
-backs it; a section whose executable proof is unavailable says **pending**.
+and the commands that verify a host. Each claim names the file that backs it.
+Line numbers can drift as the code changes. A section whose executable proof is unavailable says **pending**.
 
 ## 1. Build
 
@@ -37,8 +37,8 @@ the same disabled-object path. The server host needs no compiler, no
 
 `make` is the front door. It configures `build/` as **Release** and runs the
 child make with `-j` set to the processor count capped at 8; `make JOBS=<n>`
-or the caller's own `-j` overrides it (`Makefile:1-6`). CI builds the same way
-(`.github/workflows/ci.yml:197-199`):
+or the caller's own `-j` overrides it (`Makefile:1-6`). CI's Release rows run
+`make` (`.github/workflows/ci.yml`, "Build (Release, through the Makefile)"):
 
 ```sh
 make JOBS=4
@@ -362,10 +362,8 @@ What each path does with the errors it can see:
   again (section 5); a submit error other than `EINTR`, `EAGAIN` or `EBUSY` is
   logged (`sdk/rocketnet_server_uring_linux.cpp:623-624`).
 
-**Pending:** the cards that prove these paths under load,
-`rocketnet-linux-hard-killed-peer-never-stalls-receive` (a peer killed
-mid-burst never stalls receive for the others, per transport) and
-`rocketnet-linux-socket-error-paths`, have not landed.
+`functional/posix_hard_killed_peer.cpp` and `functional/posix_socket_errors.cpp`
+cover a hard-killed peer and the socket error paths per transport cell.
 
 ## 8. Limits for 1000 clients
 

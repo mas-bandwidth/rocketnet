@@ -14,9 +14,9 @@ needs.
 
 ## What it shows
 
-1. Start a server and a step-driven client over the in-memory `loopback`
-   transport with `simulated_loss_percent = 25`, `simulated_latency_ms = 20`,
-   and `simulated_jitter_ms = 35`.
+1. Start a server and a client over the in-memory `loopback` transport. Both
+   ends run the development network simulator with 25 percent loss, 20 ms
+   latency and 35 ms jitter.
 2. Send a numbered run of eight messages (`1..8`) in each of the eight
    reliability modes (one channel per mode), one message per frame so each send
    faces independent simulated loss and jitter.
@@ -63,7 +63,7 @@ in exact sequence.
 - `rocketnet_server_default_config`, `rocketnet_server_create`,
   `rocketnet_server_start`, `rocketnet_server_destroy`,
   `rocketnet_server_update`, `rocketnet_server_send_packets`,
-  `rocketnet_server_port`, `rocketnet_server_ipv4_address`,
+  `rocketnet_server_ipv4_address`,
   `rocketnet_server_public_key`, `rocketnet_server_client_connected`,
   `rocketnet_server_start_message`, `rocketnet_server_finish_message`,
   `rocketnet_server_receive_messages`, `rocketnet_server_receipts`
@@ -73,6 +73,7 @@ in exact sequence.
   `rocketnet_client_state`, `rocketnet_client_index`,
   `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
   `rocketnet_client_receive_messages`
+- `rocketnet_client_network_simulator`, `rocketnet_server_network_simulator`
 - `rocketnet_create_dev_connect_token` and
   `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` (development library only)
 - `rocketnet_status_name`, `rocketnet_time`, `rocketnet_sleep`

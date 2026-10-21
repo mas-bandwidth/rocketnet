@@ -1,6 +1,6 @@
 # The outgoing build: a fitting unreliable message is the packet
 
-This note decides how `rocketnet_message_client_start` and
+This note describes how `rocketnet_message_client_start` and
 `rocketnet_message_server_start` hand out a pointer inside the transport
 packet buffer for a fitting unreliable message, so that no copy happens
 between the message layer and the transport. The model is
@@ -68,7 +68,7 @@ and stages the packet; `send_packets` flushes it with everything else.
   earlier. That is the reordering the network itself may do: an
   UNRELIABLE_SEQUENCED record carries its channel's ordering index, and a
   receiver holds one that is ahead of its channel's read index until the
-  ordered records before it arrive (CHANNELS 7.3), so nothing is lost.
+  ordered records before it arrive (standard/MESSAGES.md), so nothing is lost.
 - **Ordering within each unreliable mode.** Packets are sealed in finish
   order, so in-place messages leave in send order. The sequencing index of
   an UNRELIABLE_SEQUENCED message is taken at finish, exactly as on the queued
@@ -174,7 +174,7 @@ packet. The price is a packet per message where today several small
 unreliable records share one, which a game that cares about it avoids by
 writing them as one message; that is the zero-copy pattern the layer exists
 to offer, and it is the design the original zero-copy send named
-(CHANNELS 11.2: SINGLE form at the payload root).
+(standard/MESSAGES.md: SINGLE form at the payload root).
 
 What (b) would have needed: an open per-connection frame kept across game
 calls and sealed before every update; an ordered writer and a budget charge

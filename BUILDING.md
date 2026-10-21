@@ -36,8 +36,9 @@ Run the unit suite with:
 
 `./bin/test` does not open a socket and does not start a transport. It drives the
 state machines and the in-memory network simulator. Tests run in parallel
-(at most eight, or `ROCKETNET_TEST_JOBS` when that is smaller). A test over
-120 seconds is killed and the suite fails. A passing run prints each test's
+(at most eight, or `ROCKETNET_TEST_JOBS` when that is smaller). In a Release
+build a test over 120 seconds is killed and the suite fails. Debug and
+sanitizer builds scale the limit by 5. A passing run prints each test's
 name and then `*** ALL TESTS PASSED ***`; `ROCKETNET_TEST_REPORT=1` adds the
 ten slowest cases and the ten largest peak resident sets after the results
 (test/README.md).
@@ -80,7 +81,7 @@ an xdp create the commit barrier refuses before any bind. Two
   a joined thread the kernel has not yet reaped is not counted as a leak, and
   a thread, descriptor or umem really left still fails the case.
 - `test_posix_server_create_destroy_1000` runs 250 cycles on the gso and io_uring
-  cells and 1000 on the others, so two suites at once stay under the 120
+  cells, 100 on the xdp cell and 1000 on the others, so two suites at once stay under the 120
   second case limit; the counts are compared after the first cycle and the
   last, so a leak per cycle still fails.
 - `test_posix_server_restart_same_port_100` reserves a port below the kernel's
@@ -136,14 +137,14 @@ named functional, never as a unit step.
 | `test_sodium` | unit | known-answer vectors | CI `Sodium known answers` |
 | `fuzz_replay_*` | unit | corpus replay, no init (the `fuzz_replay_${harness}` targets in CMakeLists.txt) | CI `Replay the fuzz corpora without libFuzzer` |
 | `functional` | functional | real sockets and transports | CI `Run functional suite` |
-| `test_serialize` | functional | sleep-wait loops (test_serialize.cpp:58) | `./bin/functional` (the `execs` tables in `main`, functional/main.cpp) |
-| `test_transport_control` | functional | creates a server transport on a loopback socket and reads `rocketnet_time()` (test_transport_control.cpp:172,217) | `./bin/functional` |
+| `test_serialize` | functional | sleep-wait loops (test_serialize.cpp) | `./bin/functional` (the `execs` tables in `main`, functional/main.cpp) |
+| `test_transport_control` | functional | creates a server transport on a loopback socket and reads `rocketnet_time()` (test_transport_control.cpp) | `./bin/functional` |
 | `test_xdp` | functional | the AF_XDP transport | `./bin/functional` on Linux |
 | `test_xdp_filter` | functional | loads the XDP program with BPF_PROG_TEST_RUN; root | by hand |
-| `test_msgx` | functional | a loopback socket and sleep-wait loops (test_msgx.cpp:31-44,59) | `./bin/functional` on macOS |
-| `test_iocp` | functional | loopback sockets, threads and sleep-wait loops (test_iocp.cpp:96,293,360) | `functional.exe` on Windows |
-| `test_lifecycle` | functional | threads, `time(NULL)` tokens, and real server and client transports (test_lifecycle.cpp:155,546,590,618) | CI `Functional: lifecycle binary` |
-| `test_transport` | functional | netlink route reads, and the portable transport on loopback sockets with sleep-wait loops (`test_driver.cpp`) | CI `Functional: native transport contract` |
+| `test_msgx` | functional | a loopback socket and sleep-wait loops (test_msgx.cpp) | `./bin/functional` on macOS |
+| `test_iocp` | functional | loopback sockets, threads and sleep-wait loops (test_iocp.cpp) | `functional.exe` on Windows |
+| `test_lifecycle` | functional | threads, `time(NULL)` tokens, and real server and client transports (test_lifecycle.cpp) | CI `Functional: lifecycle binary` |
+| `test_transport` | functional | netlink route reads, and the portable transport on loopback sockets with sleep-wait loops (`test_driver.cpp`) | CI `Functional: native driver contract and external backend` |
 
 The channel cases in `./bin/functional` (`functional/channel_*.cpp`) run on
 `rocketnet_channel_harness_t` (functional/channel_harness.h): the in-memory
@@ -152,14 +153,14 @@ simulator and the test clock, with no socket and no sleep.
 Dependencies, per platform, as CI installs them:
 
     # Linux -- the build links the XDP dataplane, liburing is the bench
-    # harness's io_uring rung; clang with the BPF target compiles the XDP
+    # io_uring server transport (without it that transport is absent); clang with the BPF target compiles the XDP
     # program at build time (the server host needs no compiler)
     sudo apt install cmake build-essential clang libbpf-dev libxdp-dev liburing-dev xxd
 
     # macOS
     brew install cmake
 
-The macOS default build is the host's native slice. `CMakeLists.txt:5-6` sets
+The macOS default build is the host's native slice. `CMakeLists.txt` sets
 `CMAKE_OSX_DEPLOYMENT_TARGET` to 12.0 when the caller does not: the Xcode 27
 build system refuses 11.0 (its supported range starts at 12.0) while the
 Command Line Tools accept it, so 12.0 is the lowest target both toolchains
@@ -172,7 +173,7 @@ To build a universal (arm64 and x86_64) library and the suites:
     lipo -info build-universal/librocketnet.a bin/librocketnet.dylib
 
 Both `lipo -info` lines name `x86_64 arm64`. The libraries and executables of
-every build tree land in the checkout's `bin/` (`CMakeLists.txt:59-64`), so `--clean-first` relinks
+every build tree land in the checkout's `bin/` (`CMakeLists.txt`), so `--clean-first` relinks
 them against the universal objects when a native build ran first; without it
 CMake sees the newer native files and skips the link. To read the deployment
 target on
@@ -187,15 +188,15 @@ architecture in its own clang pass, so the vendored sodium builds its x86 asm
 into the x86_64 slice and its ARM path into the arm64 slice; the XDP archive
 is embedded once with the host `xxd` and the generated header is
 architecture-neutral. The `-fcf-protection` hardening option is x86-only, so
-the compiler-flag check (`CMakeLists.txt:210`, `CMakeLists.txt:213`) drops it for a fat compile while the stack protector
+the compiler-flag check (`CMakeLists.txt`) drops it for a fat compile while the stack protector
 and the other Release flags stay on both slices.
 
 Against a universal build, `tools/check_package.py build-universal` passes the
-build's `CMAKE_OSX_ARCHITECTURES` to its consumers (`tools/check_package.py:125`)
+build's `CMAKE_OSX_ARCHITECTURES` to its consumers (`tools/check_package.py`)
 and `tools/check_dll_consumer.py --build build-universal` adds one `-arch` per
-library slice (`tools/check_dll_consumer.py:184`); each refuses a consumer
-executable whose `lipo -archs` lacks a slice (`tools/check_package.py:140`,
-`tools/check_dll_consumer.py:255`).
+library slice (`tools/check_dll_consumer.py`); each refuses a consumer
+executable whose `lipo -archs` lacks a slice (`tools/check_package.py`,
+`tools/check_dll_consumer.py`).
 
 The Xcode generator needs Xcode installed, and its license accepted once by an
 administrator (`sudo xcodebuild -license`); until then `xcodebuild` refuses and
@@ -208,14 +209,14 @@ for one command without changing `xcode-select`:
     cmake --build build-xcode --config Release --parallel 4
     ./bin/Release/test
 
-`CMakeLists.txt:59-64` sets the output directories to `bin/` with no
+`CMakeLists.txt` sets the output directories to `bin/` with no
 configuration in the path, and a multi-config generator such as Xcode appends
 the configuration to them, so its executables and libraries land in
 `bin/Release/`. The unit suite opens the development library by its absolute
-build path (`CMakeLists.txt:533-534`), and the release library by
+build path (`CMakeLists.txt`), and the release library by
 `bin/librocketnet.dylib`, then by the bare name
-(`sdk/rocketnet_tests.cpp:14700-14701`), which the executable's run path
-resolves in `bin/Release/` (`CMakeLists.txt:538`).
+(`sdk/rocketnet_tests.cpp`), which the executable's run path
+resolves in `bin/Release/` (`CMakeLists.txt`).
 
 Windows has no Makefile path; CMake is driven directly, and the binaries land
 under `bin\<config>\`. It needs, installed once:
@@ -284,10 +285,11 @@ example server), so on an interactive desktop the first run of `server.exe`,
 Loopback traffic works whatever is chosen there; allow access only on the
 networks remote clients connect from.
 
-The embedded XDP program (`server_xdp/`) is packed as a source tarball by the build and
-compiles later on the target kernel, which needs BTF; it is not compiled by `make` here.
-The generated header lives in each build tree, so concurrent configurations do
-not rewrite the checkout. Windows copies the committed header into its build tree.
+The build compiles `server_xdp/server_xdp.c` to `server_xdp.o` with a clang that
+has the BPF target. It embeds the bytes in the library. The server host needs no
+compiler. The generated header lives in each build tree, so concurrent
+configurations do not rewrite the checkout. macOS and Windows do not build the
+object.
 
 ## Pinned sodium
 
@@ -439,7 +441,7 @@ the client form. The detailed per-transport plan and the kernel-facing host memo
 estimate are internal to the transport layer (`sdk/rocketnet_layers.h`), not part
 of the public client and server API.
 
-The plan includes the transport, protocol tables and ACK history, reassembly and
+The internal transport plan, allocated at start, includes the transport, protocol tables and ACK history, reassembly and
 its delivered mirror, send arena, native transport queues and SDK worker allocations,
 plus the SDK allocator's ownership/alignment overhead. XDP UMEM is counted
 separately and included in the total. Worker startup shims are included even if
@@ -594,11 +596,11 @@ list in both directions against the SDK reads and the public header.
 
 ## Server transports
 
-Transport selection is runtime (#106): one build carries every transport its
-platform has — on Linux the AF_XDP transport (privileged), the GSO transport
-(SO_REUSEPORT + sendmmsg/recvmmsg + UDP GSO/GRO, non-root) and the portable UDP
-transport; on macOS
-the Darwin batch pump and portable — and the transport walks an ordered candidate
+Transport selection is runtime: one build carries every transport its
+platform has. Linux servers have xdp (privileged), gso (SO_REUSEPORT +
+sendmmsg/recvmmsg + UDP GSO/GRO, non-root), io_uring and portable. macOS has
+msgx and portable. Windows servers have portable, iocp and rio. loopback is on
+every platform and is selected only by name. The transport walks an ordered candidate
 list at create. The list rides the config's transport field or the
 per-endpoint `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
 environment variables (precedence: default < struct < env):
@@ -651,13 +653,13 @@ Workers dequeue completions from the one port and each publishes its own receive
 buffer, so more than one worker can reorder a client's datagrams, across workers
 and across ticks, and the reliable layer answers the reordering with resends; one
 worker is the default for that reason.
-There are 128 posted receives per worker, 1024 receive staging slots per worker
-per buffer, and 16384 send frames across all workers. These are resource bounds,
+There are 128 posted receives per worker, 4096 receive staging slots per worker
+buffer, and 2048 send frames across all workers. These are resource bounds,
 not timing or packet-rate requirements. A send frame still owned by the OS is
 unavailable to the next fill, even after an application flush.
 
-IOCP is currently an explicit selection; Windows `auto` keeps portable first
-while this new transport is reviewed. Windows CI runs both configurations, plus
+Windows `auto` tries portable, then iocp, then rio. iocp is granted by auto only
+when portable refuses. Windows CI runs both configurations, plus
 completion-lifetime, allocation-failure and shutdown tests with IOCP selected.
 Compilation and loopback correctness do not establish NIC
 line-rate performance; that requires measurements on suitable Windows hardware.
@@ -673,7 +675,7 @@ that the machine is provisioned and refuses by name — each unmet condition log
 the knob, the wanted value, and the script that sets it — and the library's own
 acts stay per-socket (its BPF program built, loaded and attached, AF_XDP binds,
 the memlock rlimit). Provisioning uses `scripts/rocketnet-provision`, an operator
-step that has been hand-run once; no application using XDP reconstructs it. The
+step; no application using XDP reconstructs it. The
 script's header carries the authoritative
 condition list; the pre-flight checks exactly those conditions.
 
@@ -713,7 +715,7 @@ Cold, on a fresh box, as root:
     #  functions end to end, both modes, against stubs replaying captured
     #  xdp-tools output (R3) and real-shaped ethtool output (R7) -- every
     #  fail site in both functions has a driving
-    #  case, paired in the fail-site enumeration receipt on PR #110, and
+    #  case, and
     #  the WHOLE SCRIPT is driven door-to-fail by a full-flow verify case
     #  (there is no level above the whole script). it
     #  needs no root and touches only a private temp dir it creates and
@@ -739,10 +741,10 @@ nothing-to-pin — and drivers that add a misc interrupt carrying the bare
 interface name (ixgbe-class) count one line beyond the queue count, so size the
 isolated range for queues plus one there.
 
-Honest labels: the committing xdp path (BPF program build/load/attach, AF_XDP
-binds) is exercised by no CI leg and no test — CI is unprivileged and the suite
-installs a commit barrier by design — so that tier's claims rest on a provisioned
-server, where this configuration was measured. The pre-flight
+Honest labels: CI runs the committing xdp path (BPF program build/load/attach,
+AF_XDP binds) only inside a virtme-ng guest, in the `xdp portable` cell of the
+transport matrix. No CI leg attaches XDP to a real NIC, so that tier's claims
+rest on a provisioned server. The pre-flight
 also sets the tree's libbpf floor at 1.0 — `bpf_xdp_query_id` plus the uniform
 negative-errno error convention the pre-flight's error reporting assumes
 (pre-1.0 libbpf returned -1 with errno set and would misreport there); Ubuntu
@@ -781,8 +783,7 @@ worker, new reservations return null and the transport's send-ring-full counter
 records the refusal. Once the worker retires a buffer, a later reservation can
 acquire it without requiring an extra update or flush. The ordinary fill path
 adds an acquire load of the producer-buffer index; only recovery after both
-buffers were queued takes the publication mutex. Hardware throughput and
-pressure measurements are required for this changed XDP path.
+buffers were queued takes the publication mutex.
 
 ## Fuzzing on macOS
 

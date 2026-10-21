@@ -11,6 +11,8 @@ the major version and adds exports to `tools/exports.txt`. A change it does not
 admit (a field moved, removed, resized or retyped) is an incompatible change
 and bumps the major version.
 
+The v1.0.0-preview-1 API is provisional. It may change after feedback.
+
 ## 1. The Rule
 
 1. **Each public config struct carries its own size.** The first field of
@@ -108,7 +110,7 @@ configs need no such list, because rules 3 and 4 accept every size of at least
 | `rocketnet_receipt_t` | out, in an array | no |
 | `rocketnet_message_batch_t` | out | no |
 
-The structs marked "no" carry no size, so their revision 1 layout is frozen: a
+The structs marked "no" carry no size, so a
 field added to one of them is an incompatible change and bumps the major
 version. `rocketnet_receipt_t` is also the element of an array
 the library hands out, so its stride is part of the ABI.
@@ -149,17 +151,15 @@ that published development key.
 ## 6. Public enums are int-sized, and zero is a named receipt status
 
 The library and its callers are built without `-fshort-enums`. Every public
-enum in `sdk/rocketnet.h` is the size of `int`. The header check
-`rocketnet_public_enums_are_int` fails a translation that shortens one.
+enum in `sdk/rocketnet.h` is the size of `int`. A static assert in
+`sdk/rocketnet.h` fails a translation that shortens one.
 
 `rocketnet_receipt_status_t` names zero. `ROCKETNET_RECEIPT_STATUS_NONE` is 0,
-`ROCKETNET_RECEIPT_STATUS_ACKED` is 1, and `ROCKETNET_RECEIPT_STATUS_LOSS` is 2.
+`ROCKETNET_RECEIPT_STATUS_ACKED` is 1, and `ROCKETNET_RECEIPT_STATUS_LOSS` is -1.
 A zero-filled receipt reads NONE. The library writes ACKED or LOSS.
 
-`rocketnet_disconnect_reason_t` keeps its values. Value 2 is reserved and is
-not a reason: the reliable-timeout error is byte 6 of the committed vector
-`m9.resend-trace` (`standard/MESSAGES.md`, `00 01 00 01 00 01 04 01 00 01`).
-`rocketnet_disconnect_reason_name` returns a name for every value in the enum
-and `"unknown"` for 2 and for every other value outside it. The same rule
+`rocketnet_disconnect_reason_t` keeps its values. NONE is 0 and each reason
+is negative, -1 to -5. `rocketnet_disconnect_reason_name` returns a name for
+every value in the enum. It returns `"UNKNOWN"` for any other value. The same rule
 holds for `rocketnet_status_name`, `rocketnet_log_level_name` and
 `rocketnet_client_state_name`.
