@@ -1210,6 +1210,13 @@ void rocketnet_test_posix_connect_disconnect_1000_##server_io##_##client_io()   
 {                                                                                  \
     posix_only_server_transport_io = #server_io;                                   \
     posix_only_client_transport_io = #client_io;                                   \
+    int selected = 0;                                                              \
+    for ( int i = 0; i < posix_cell_count; i++ )                                     \
+        selected += posix_cell_selected( &posix_cells[i] ) ? 1 : 0;                 \
+    if ( selected != 1 )                                                           \
+        printf( "macOS POSIX lifecycle filter excludes or duplicates %s/%s\n",   \
+                #server_io, #client_io );                                           \
+    posix_check( selected == 1 );                                                   \
     rocketnet_test_posix_connect_disconnect_1000();                                \
     posix_only_client_transport_io = NULL;                                         \
     posix_only_server_transport_io = NULL;                                         \
