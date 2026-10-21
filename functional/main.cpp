@@ -89,7 +89,7 @@ int main( int argc, char ** argv )
         { "test_msgx", "test_msgx" },
     };
     return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3, rocketnet_posix_hard_killed_peer_test_group );
-#elif defined(__linux__)
+#elif defined(__linux__) && ROCKETNET_XDP
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize" },
         { "test_transport_control", "test_transport_control" },

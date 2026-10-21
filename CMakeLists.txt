@@ -42,6 +42,7 @@ option(ROCKETNET_BUILD_TESTS "Build the native tests and ABI fixtures" ${ROCKETN
 option(ROCKETNET_BUILD_EXAMPLES "Build the client/server examples" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_BUILD_TOOLS "Build keygen and soak tools" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_IO_URING "Build the io_uring server transport against liburing when it is found (Linux)" ON)
+option(ROCKETNET_XDP "Build the Linux XDP server transport when a clang with the BPF target, libbpf and libxdp are found" ON)
 option(ROCKETNET_SANITIZE_ADDRESS "Build every target with AddressSanitizer" OFF)
 option(ROCKETNET_TEST_DEVELOPMENT "Build the unit test library with ROCKETNET_DEVELOPMENT=1, so ./bin/test runs the development paths" OFF)
 if(ROCKETNET_SANITIZE_ADDRESS)
@@ -168,13 +169,20 @@ endfunction()
 # server_xdp.o is compiled here, at build time, and embedded in the library as
 # bytes (cmake/EmbedXdp.cmake); the server host needs no compiler. Only the
 # Linux xdp server transport includes the generated header.
+#
+# The build is tolerant: XDP is built only on Linux, with ROCKETNET_XDP on, a
+# clang with the BPF target, and libbpf and libxdp found
+# (cmake/RocketNetDependencies.cmake). Short of any of them the whole XDP
+# transport is compiled out (ROCKETNET_XDP=0): no embedded program, no XDP
+# or netlink gateway code in the library and no libbpf or libxdp link, and a
+# transport list naming xdp refuses it at create with
+# ROCKETNET_STATUS_TRANSPORT_NOT_BUILT while auto starts at the next transport.
 include(cmake/XdpSources.cmake)
 set(ROCKETNET_XDP_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/rocketnet_server_xdp.h")
 set(ROCKETNET_XDP_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/generated/server_xdp.o")
-option(ROCKETNET_XDP "Compile and embed the Linux XDP program" ON)
 set(ROCKETNET_BPF_CLANG "")
+set(ROCKETNET_XDP_BUILT OFF)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    find_program(ROCKETNET_XXD xxd REQUIRED)
     find_program(ROCKETNET_CLANG clang)
     if(ROCKETNET_XDP AND ROCKETNET_CLANG)
         execute_process(COMMAND "${ROCKETNET_CLANG}" -print-targets
@@ -183,13 +191,20 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             set(ROCKETNET_BPF_CLANG "${ROCKETNET_CLANG}")
         endif()
     endif()
+    if(NOT ROCKETNET_XDP)
+        message(STATUS "XDP compiled out: ROCKETNET_XDP=OFF")
+    elseif(NOT ROCKETNET_BPF_CLANG)
+        message(STATUS "XDP compiled out: no clang with the BPF target was found")
+    elseif(NOT TARGET RocketNet::Bpf OR NOT TARGET RocketNet::Xdp)
+        message(STATUS "XDP compiled out: libbpf or libxdp was not found")
+    else()
+        set(ROCKETNET_XDP_BUILT ON)
+    endif()
+endif()
+if(ROCKETNET_XDP_BUILT)
+    find_program(ROCKETNET_XXD xxd REQUIRED)
     execute_process(COMMAND "${CMAKE_C_COMPILER}" -dumpmachine
         OUTPUT_VARIABLE ROCKETNET_MULTIARCH OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-    if(NOT ROCKETNET_XDP)
-        message(STATUS "XDP off: ROCKETNET_XDP=OFF; no server_xdp.o is embedded")
-    elseif(NOT ROCKETNET_BPF_CLANG)
-        message(STATUS "XDP off: no clang with the BPF target was found, so server_xdp.o is not built and the xdp server transport refuses at create")
-    endif()
     file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/xdp-build-settings.txt"
         CONTENT "${ROCKETNET_BPF_CLANG}\n${ROCKETNET_MULTIARCH}\n")
     add_custom_command(OUTPUT "${ROCKETNET_XDP_HEADER}"
@@ -207,6 +222,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_custom_target(rocketnet_xdp_header DEPENDS "${ROCKETNET_XDP_HEADER}")
 else()
     add_custom_target(rocketnet_xdp_header)
+endif()
+# One value for every target in the tree: the library, the unit suite, the
+# functional suite and the tools agree on whether the XDP transport exists.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    if(ROCKETNET_XDP_BUILT)
+        add_compile_definitions(ROCKETNET_XDP=1)
+    else()
+        add_compile_definitions(ROCKETNET_XDP=0)
+    endif()
 endif()
 
 set(ROCKETNET_SOURCE
@@ -261,6 +285,11 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet_token_tables.cpp
     ${ROCKETNET_TRANSPORT_SOURCES}
 )
+# The XDP transport and the netlink gateway discovery only it uses are not
+# compiled at all in a build without XDP.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ROCKETNET_XDP_BUILT)
+    list(REMOVE_ITEM ROCKETNET_SOURCE sdk/rocketnet_server_socket_linux.cpp sdk/rocketnet_gateway_netlink_linux.cpp)
+endif()
 
 if(ROCKETNET_HARDEN)
     foreach(language C CXX)
@@ -410,7 +439,9 @@ foreach(target rocketnet rocketnet_dev rocketnet_shared rocketnet_shared_dev ${r
     if(APPLE)
         target_link_libraries(${target} PRIVATE "-framework CoreFoundation" "-framework SystemConfiguration")
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        target_link_libraries(${target} PRIVATE RocketNet::Bpf RocketNet::Xdp)
+        if(ROCKETNET_XDP_BUILT)
+            target_link_libraries(${target} PRIVATE RocketNet::Bpf RocketNet::Xdp)
+        endif()
         if(TARGET RocketNet::Uring)
             target_link_libraries(${target} PRIVATE RocketNet::Uring)
             target_compile_definitions(${target} PRIVATE ROCKETNET_IO_URING=1)
@@ -553,7 +584,9 @@ if(ROCKETNET_BUILD_TESTS)
     if(APPLE)
         target_link_libraries(test_wide PRIVATE "-framework CoreFoundation" "-framework SystemConfiguration")
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        target_link_libraries(test_wide PRIVATE RocketNet::Bpf RocketNet::Xdp)
+        if(ROCKETNET_XDP_BUILT)
+            target_link_libraries(test_wide PRIVATE RocketNet::Bpf RocketNet::Xdp)
+        endif()
         if(TARGET RocketNet::Uring)
             target_link_libraries(test_wide PRIVATE RocketNet::Uring)
             target_compile_definitions(test_wide PRIVATE ROCKETNET_IO_URING=1)
@@ -651,7 +684,7 @@ if(ROCKETNET_BUILD_TESTS)
     target_link_libraries(test_transport_control PRIVATE rocketnet_dev)
     rocketnet_use_sodium(test_transport_control)
     rocketnet_warning_floor(test_transport_control)
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    if(ROCKETNET_XDP_BUILT)
         add_executable(test_xdp test_xdp.cpp sdk/rocketnet_server_socket_linux.cpp sdk/rocketnet_gateway_netlink_linux.cpp
             sdk/rocketnet.cpp sdk/rocketnet_platform.cpp sdk/rocketnet_address.cpp sdk/rocketnet_hash.cpp ${ROCKETNET_SODIUM_SOURCE})
         add_dependencies(test_xdp rocketnet_xdp_header)
@@ -666,23 +699,19 @@ if(ROCKETNET_BUILD_TESTS)
         # test_xdp_filter loads server_xdp.o, the object the library embeds
         # (cmake/EmbedXdp.cmake), and runs crafted frames through it with
         # BPF_PROG_TEST_RUN (root or CAP_BPF + CAP_NET_ADMIN to run).
-        if(ROCKETNET_BPF_CLANG)
-            set(ROCKETNET_XDP_FILTER_OBJECT "${ROCKETNET_XDP_OBJECT}")
-            add_executable(test_xdp_filter test_xdp_filter.cpp)
-            add_dependencies(test_xdp_filter rocketnet_xdp_header)
-            # xdp_on_link_reply_reaches_the_peer runs bin/server and bin/client
-            if(TARGET server AND TARGET client)
-                add_dependencies(test_xdp_filter server client)
-            endif()
-            target_compile_definitions(test_xdp_filter PRIVATE
-                "ROCKETNET_XDP_FILTER_OBJECT=\"${ROCKETNET_XDP_FILTER_OBJECT}\"")
-            target_include_directories(test_xdp_filter PRIVATE sdk)
-            target_compile_features(test_xdp_filter PRIVATE cxx_std_11)
-            target_link_libraries(test_xdp_filter PRIVATE RocketNet::Bpf)
-            rocketnet_warning_floor(test_xdp_filter)
-        else()
-            # The configure message above explains why the object is absent.
+        set(ROCKETNET_XDP_FILTER_OBJECT "${ROCKETNET_XDP_OBJECT}")
+        add_executable(test_xdp_filter test_xdp_filter.cpp)
+        add_dependencies(test_xdp_filter rocketnet_xdp_header)
+        # xdp_on_link_reply_reaches_the_peer runs bin/server and bin/client
+        if(TARGET server AND TARGET client)
+            add_dependencies(test_xdp_filter server client)
         endif()
+        target_compile_definitions(test_xdp_filter PRIVATE
+            "ROCKETNET_XDP_FILTER_OBJECT=\"${ROCKETNET_XDP_FILTER_OBJECT}\"")
+        target_include_directories(test_xdp_filter PRIVATE sdk)
+        target_compile_features(test_xdp_filter PRIVATE cxx_std_11)
+        target_link_libraries(test_xdp_filter PRIVATE RocketNet::Bpf)
+        rocketnet_warning_floor(test_xdp_filter)
     endif()
     if(APPLE)
         add_executable(test_msgx test_msgx.cpp)
@@ -726,7 +755,7 @@ if(ROCKETNET_BUILD_TESTS)
     rocketnet_warning_floor(functional)
     target_compile_definitions(functional PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
     target_compile_features(functional PRIVATE cxx_std_11)
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    if(ROCKETNET_XDP_BUILT)
         add_dependencies(functional test_xdp test_serialize test_transport_control)
     elseif(APPLE)
         add_dependencies(functional test_msgx test_serialize test_transport_control)
@@ -797,6 +826,7 @@ install(FILES sdk/rocketnet.h
 install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/rocketnet)
 install(FILES sodium/LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/rocketnet/sodium)
 set(ROCKETNET_PACKAGE_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/RocketNet")
+# ROCKETNET_XDP_BUILT is set where the XDP transport is decided, above.
 if(TARGET RocketNet::Uring)
     set(ROCKETNET_IO_URING_BUILT ON)
 else()

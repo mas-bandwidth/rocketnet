@@ -19,9 +19,17 @@
 #include "rocketnet_testing.h"
 #include "rocketnet_layers.h"
 
+// ROCKETNET_XDP is 1 where the XDP server transport is compiled in. The build
+// defines it for every target (CMakeLists.txt): 0 on a Linux build without a
+// clang with the BPF target, libbpf or libxdp, or with ROCKETNET_XDP=OFF.
+// Undefined, it follows the platform.
+#ifndef ROCKETNET_XDP
 #ifdef __linux__
 #define ROCKETNET_XDP 1
+#else // #ifdef __linux__
+#define ROCKETNET_XDP 0
 #endif // #ifdef __linux__
+#endif // #ifndef ROCKETNET_XDP
 
 // a compile-time assert that also builds in C compilers without C11 mode
 

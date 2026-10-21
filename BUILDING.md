@@ -287,7 +287,10 @@ networks remote clients connect from.
 
 The build compiles `server_xdp/server_xdp.c` to `server_xdp.o` with a clang that
 has the BPF target. It embeds the bytes in the library. The server host needs no
-compiler. The generated header lives in each build tree, so concurrent
+compiler. Without such a clang, without libbpf or libxdp, or with
+`-DROCKETNET_XDP=OFF`, the build still succeeds with the XDP transport compiled
+out: the library carries no XDP code and links neither library, and a
+transport list naming `xdp` refuses with `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT`. The generated header lives in each build tree, so concurrent
 configurations do not rewrite the checkout. macOS and Windows do not build the
 object.
 

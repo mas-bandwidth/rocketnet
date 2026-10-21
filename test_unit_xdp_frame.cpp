@@ -654,9 +654,11 @@ static void test_xdp_transport_ladder_keeps_xdp_for_ipv6()
 // refuses there, before any socket opens. No line says the transport serves
 // IPv4 only, and the status is not INVALID_TRANSPORT_LIST. The xdp row
 // exists only on Linux: elsewhere a pin of it falls to the auto order, whose
-// transports open a real socket, so the case is built on Linux only.
+// transports open a real socket, so the case is built on Linux only, and only
+// where XDP is compiled in (test_unit_xdp_compiled_out.cpp covers the pin in
+// a build without it).
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
 
 static int xdp_ipv6_family_refusals = 0;
 static int xdp_ipv6_barrier_lines = 0;
@@ -670,9 +672,9 @@ static void xdp_ipv6_capture( void *, enum rocketnet_log_level_t level, const ch
         xdp_ipv6_barrier_lines++;
 }
 
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
 static void test_xdp_transport_ipv6_pin_reaches_the_xdp_transport_at_create()
 {
     int num_available = 0;
@@ -736,7 +738,7 @@ REGISTER_UNIT_TEST( test_xdp_transport_receive_ipv6_extension_dropped_counted );
 REGISTER_UNIT_TEST( test_xdp_transport_frame_ipv4_unchanged );
 REGISTER_UNIT_TEST( test_xdp_transport_receive_dispatches_both_families_counted );
 REGISTER_UNIT_TEST( test_xdp_transport_ladder_keeps_xdp_for_ipv6 );
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
 REGISTER_UNIT_TEST( test_xdp_transport_ipv6_pin_reaches_the_xdp_transport_at_create );
 #endif
 

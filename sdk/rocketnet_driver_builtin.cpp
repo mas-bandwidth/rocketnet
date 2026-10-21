@@ -169,12 +169,16 @@ extern const rocketnet_transport_backend_t rocketnet_msgx_transport = { &portabl
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #include "rocketnet_server_gso.h"
+#if ROCKETNET_XDP
 #include "rocketnet_server_socket.h"
+#endif // #if ROCKETNET_XDP
 
 // the native transports' drop counts behind send_failures and receive_drops,
 // defined at sdk/rocketnet_server_gso_linux.cpp:869 and sdk/rocketnet_server_socket_linux.cpp:2598
 void rocketnet_server_gso_receive_drops( struct rocketnet_server_gso_t * gso, uint64_t * too_short, uint64_t * too_large );
+#if ROCKETNET_XDP
 uint64_t rocketnet_server_socket_send_failures( struct rocketnet_server_socket_t * server_socket );
+#endif // #if ROCKETNET_XDP
 
 static void * gso_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
@@ -239,6 +243,7 @@ static const rocketnet_server_transport_io_operations_t io_uring_operations =
 };
 extern const rocketnet_transport_backend_t rocketnet_io_uring_transport = { &io_uring_operations, NULL };
 
+#if ROCKETNET_XDP
 static void * xdp_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * )
 {
     const int queues = config->transport->num_xdp_queues > 0 ? config->transport->num_xdp_queues : ROCKETNET_XDP_DEFAULT_QUEUES;
@@ -298,6 +303,33 @@ static const rocketnet_server_transport_io_operations_t xdp_operations =
     xdp_replay_forget, xdp_replay_mark, xdp_replay_commit, xdp_peer_accepted, xdp_send_failures
 };
 extern const rocketnet_transport_backend_t rocketnet_xdp_transport = { &xdp_operations, NULL };
+#else // #if ROCKETNET_XDP
+// XDP is compiled out of this build (CMakeLists.txt: no clang with the BPF
+// target, no libbpf or libxdp, or ROCKETNET_XDP=OFF). The xdp row keeps its
+// place in the registry, so a transport list naming xdp refuses it with
+// TRANSPORT_NOT_BUILT instead of skipping it, and auto falls past it to the
+// next transport.
+static void * xdp_not_built_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * )
+{
+    (void) context;
+    if ( config->status )
+        *config->status = ROCKETNET_STATUS_TRANSPORT_NOT_BUILT;
+    rocketnet_warn( "server transport xdp refused: XDP is compiled out of this build (no clang with the BPF target, no libbpf or libxdp, or ROCKETNET_XDP=OFF at configure)" );
+    return NULL;
+}
+static void xdp_not_built_destroy( void * ) {}
+// never reached: create refuses, so the transport is never opened; the open
+// still requires a complete table, so the buffered path is filled
+static void xdp_not_built_send( void *, const rocketnet_platform_send_t *, int ) {}
+static int xdp_not_built_receive( void *, rocketnet_address_t *, uint8_t *, int, int *, int ) { return 0; }
+static const rocketnet_server_transport_io_operations_t xdp_operations =
+{
+    0, xdp_not_built_create, xdp_not_built_destroy, synchronous_stop,
+    NULL, NULL, NULL, NULL, NULL, xdp_not_built_send, xdp_not_built_receive,
+    NULL, NULL, NULL, NULL, NULL, NULL
+};
+extern const rocketnet_transport_backend_t rocketnet_xdp_transport = { &xdp_operations, NULL };
+#endif // #if ROCKETNET_XDP
 #endif
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
@@ -362,7 +394,7 @@ extern const rocketnet_transport_backend_t rocketnet_rio_transport = { &rio_oper
 // Existing public compatibility hook; the backend policy stays in this layer.
 void rocketnet_forbid_xdp_commit()
 {
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_XDP
     rocketnet_server_socket_forbid_commit();
 #endif
 }
@@ -396,6 +428,7 @@ bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_confi
         plan.transport_io_bytes = rocketnet_server_uring_allocation_bytes(queues);
         plan.worker_threads = 0; plan.sockets = queues;
     }
+#if ROCKETNET_XDP
     else if (strcmp(transport, "xdp") == 0)
     {
         const int queues = config->num_xdp_queues > 0 ? config->num_xdp_queues : ROCKETNET_XDP_DEFAULT_QUEUES;
@@ -403,6 +436,7 @@ bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_confi
         plan.umem_bytes = rocketnet_xdp_umem_bytes(queues);
         plan.worker_threads = queues; plan.sockets = queues;
     }
+#endif // #if ROCKETNET_XDP
 #endif
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     else if (strcmp(transport, "iocp") == 0)

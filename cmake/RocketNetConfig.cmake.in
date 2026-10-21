@@ -9,6 +9,10 @@ set(ROCKETNET_USE_SYSTEM_SODIUM @ROCKETNET_USE_SYSTEM_SODIUM@)
 # same link, and a package built with it requires it
 set(ROCKETNET_IO_URING @ROCKETNET_IO_URING_BUILT@)
 set(ROCKETNET_IO_URING_REQUIRED @ROCKETNET_IO_URING_BUILT@)
+# whether the package was built with the XDP server transport: a package
+# built with it links libbpf and libxdp, so a consumer requires both
+set(ROCKETNET_XDP @ROCKETNET_XDP_BUILT@)
+set(ROCKETNET_XDP_REQUIRED @ROCKETNET_XDP_BUILT@)
 include("${CMAKE_CURRENT_LIST_DIR}/RocketNetDependencies.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/RocketNetTargets.cmake")
 check_required_components(RocketNet)

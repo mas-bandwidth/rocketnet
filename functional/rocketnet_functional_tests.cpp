@@ -4924,7 +4924,13 @@ void rocketnet_test_server_transport_io_pin_xdp()
     char real_port_address[64];
     rocketnet_test_free_loopback_address( real_port_address, sizeof(real_port_address) );
 
+#if ROCKETNET_XDP
     const bool provisioned = rocketnet_server_socket_preflight( real_port_address, 7 );
+#else // #if ROCKETNET_XDP
+    // XDP compiled out: the xdp rung refuses with TRANSPORT_NOT_BUILT
+    (void) real_port_address;
+    const bool provisioned = false;
+#endif // #if ROCKETNET_XDP
 
     if ( !provisioned )
     {
@@ -4968,7 +4974,13 @@ void rocketnet_test_server_transport_io_ladder_fall()
     char real_port_address[64];
     rocketnet_test_free_loopback_address( real_port_address, sizeof(real_port_address) );
 
+#if ROCKETNET_XDP
     const bool provisioned = rocketnet_server_socket_preflight( real_port_address, 7 );
+#else // #if ROCKETNET_XDP
+    // XDP compiled out: the xdp rung refuses with TRANSPORT_NOT_BUILT
+    (void) real_port_address;
+    const bool provisioned = false;
+#endif // #if ROCKETNET_XDP
 
     if ( !provisioned )
     {
@@ -8461,9 +8473,11 @@ void rocketnet_test_linux_gso_sendmmsg_errors();
 void rocketnet_test_linux_gso_recvmmsg_errors();
 void rocketnet_test_linux_uring_receive_cqe_errors();
 void rocketnet_test_linux_uring_send_cqe_errors();
+#if ROCKETNET_XDP
 void rocketnet_test_linux_xdp_receive_weather_ipv4();
 void rocketnet_test_linux_xdp_receive_weather_ipv6();
 bool rocketnet_test_linux_xdp_weather_runs_here();
+#endif // #if ROCKETNET_XDP
 #endif
 #endif
 
@@ -8620,8 +8634,10 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_gso_transport_linux_recvmmsg_errors", rocketnet_test_linux_gso_recvmmsg_errors, NULL },
     { "test_io_uring_transport_linux_receive_cqe_errors", rocketnet_test_linux_uring_receive_cqe_errors, NULL },
     { "test_io_uring_transport_linux_send_cqe_errors", rocketnet_test_linux_uring_send_cqe_errors, NULL },
+#if ROCKETNET_XDP
     { "test_xdp_transport_linux_receive_weather_ipv4", rocketnet_test_linux_xdp_receive_weather_ipv4, rocketnet_test_linux_xdp_weather_runs_here },
     { "test_xdp_transport_linux_receive_weather_ipv6", rocketnet_test_linux_xdp_receive_weather_ipv6, rocketnet_test_linux_xdp_weather_runs_here },
+#endif // #if ROCKETNET_XDP
 #endif
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     { "test_platform_batch_pump_refused_destination", rocketnet_test_platform_batch_pump_refused_destination, NULL },

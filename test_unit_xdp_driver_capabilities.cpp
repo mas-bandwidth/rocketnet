@@ -30,7 +30,7 @@
 
 #define check rocketnet_unit_check
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_XDP
 
 #include "rocketnet_constants.h"
 #include "rocketnet_xdp_socket_config.h"
@@ -176,4 +176,4 @@ REGISTER_UNIT_TEST( test_xdp_transport_umem_config_sizes_fill_and_completion_rin
 REGISTER_UNIT_TEST( test_xdp_transport_send_slot_refuses_bad_offsets_before_dividing );
 REGISTER_UNIT_TEST( test_xdp_transport_send_queue_is_one_per_destination );
 
-#endif
+#endif // #if ROCKETNET_XDP

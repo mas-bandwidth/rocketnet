@@ -45,12 +45,12 @@
 
 // The interrupt matcher matches fixture lines. Transport creates live in functional/.
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_XDP
 #include "rocketnet_xdp_free_list.h"
 #include "rocketnet_server_socket.h"
 #include <xdp/xsk.h>
 #include <xdp/libxdp.h>
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#endif // #if ROCKETNET_XDP
 
 
 #include <sodium.h>
@@ -299,7 +299,7 @@ void rocketnet_test_update_time_clamp()
     rocketnet_assert_function( NULL );
 }
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_XDP
 void rocketnet_test_xdp_free_list_refuses_overflow()
 {
     static uint64_t send_frames[ROCKETNET_XDP_NUM_FRAMES / 2 + 1];
@@ -327,7 +327,7 @@ void rocketnet_test_xdp_free_list_refuses_overflow()
     rocketnet_check( !rocketnet_xdp_free_list_push( send_frames, &count, capacity, UINT64_MAX, region_begin, region_end ) );
     rocketnet_check( count == 0 );
 }
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#endif // #if ROCKETNET_XDP
 
 void rocketnet_test_endian()
 {
@@ -13538,7 +13538,7 @@ void rocketnet_test_server_port_zero_needs_a_discovering_transport()
 
 }
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_XDP
 
 
 // the R4 matcher against fixture strings of real /proc/interrupts lines:
@@ -13627,7 +13627,7 @@ void rocketnet_test_xdp_empty_map_drops()
     rocketnet_check( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED == 0 );
 }
 
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#endif // #if ROCKETNET_XDP
 
 
 
@@ -13793,7 +13793,7 @@ void rocketnet_test_log_level_refuses_out_of_range()
     rocketnet_log_level( saved_level );
 }
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_XDP
 // Verify XDP umem config frame_size matches the expected constant
 void rocketnet_test_umem_config_frame_size_explicit()
 {
@@ -13803,7 +13803,7 @@ void rocketnet_test_umem_config_frame_size_explicit()
     config.frame_headroom = 0;
     rocketnet_check( config.frame_size == ROCKETNET_XDP_FRAME_SIZE );
 }
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#endif // #if ROCKETNET_XDP
 
 
 
@@ -14762,7 +14762,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_token_timeout_clamped", rocketnet_test_token_timeout_clamped },
     { "test_suite_environment", rocketnet_test_suite_environment },
     { "test_update_time_clamp", rocketnet_test_update_time_clamp },
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_XDP
     { "test_xdp_transport_free_list_refuses_overflow", rocketnet_test_xdp_free_list_refuses_overflow },
 #endif
     { "test_endian", rocketnet_test_endian },
@@ -14947,15 +14947,17 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_config_validation", rocketnet_test_config_validation },
     { "test_transport_ladder_parse", rocketnet_test_transport_ladder_parse },
     { "test_server_port_zero_needs_a_discovering_transport", rocketnet_test_server_port_zero_needs_a_discovering_transport },
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_XDP
     { "test_xdp_transport_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
     { "test_xdp_transport_empty_map_drops", rocketnet_test_xdp_empty_map_drops },
 #endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
     { "test_server_host_memory_estimate_bounds_the_plan", rocketnet_test_server_host_memory_estimate_bounds_the_plan },
     { "test_log_level_refuses_out_of_range", rocketnet_test_log_level_refuses_out_of_range },
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_XDP
     { "test_umem_config_frame_size_explicit", rocketnet_test_umem_config_frame_size_explicit },
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_connection_type_probe_ends_on_receive_error", rocketnet_test_connection_type_probe_ends_on_receive_error },
 #endif
 };
