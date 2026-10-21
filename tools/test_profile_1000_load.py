@@ -100,6 +100,38 @@ class ReceiptTests(unittest.TestCase):
                 profile.parse_load(line, "portable", "portable", expected_profile="default",
                                    expected_rate=1.0)
 
+    def test_rate_echo_uses_six_significant_digits_without_tolerance_zeros(self):
+        rounded = (SUMMARY.replace("offered_rate_mode=per_update", "offered_rate_mode=per_client_due")
+                   .replace("target_messages_per_client_second=0",
+                            "target_messages_per_client_second=1.23457")
+                   .replace("application_offers_accepted=UNMEASURED",
+                            "application_offers_accepted=PASS"))
+        profile.parse_load(rounded, "portable", "portable", expected_rate=1.234567)
+        tiny_zero = (SUMMARY.replace("offered_rate_mode=per_update", "offered_rate_mode=per_client_due")
+                     .replace("target_messages_per_client_second=0",
+                              "target_messages_per_client_second=0")
+                     .replace("application_offers_accepted=UNMEASURED",
+                              "application_offers_accepted=PASS"))
+        with self.assertRaisesRegex(ValueError, "rate"):
+            profile.parse_load(tiny_zero, "portable", "portable", expected_rate=1e-15)
+
+    def test_exact_binary_plan_and_headroom_are_recorded(self):
+        plan = ("load_plan: clients=64 profile=default client_public_required_bytes=100 "
+                "server_public_required_bytes=1000 total_public_required_bytes=7400 "
+                "public_memory_scope=create_only transport_selection=unresolved_before_start "
+                "term_status_code=0 reason=none verdict=PASS\n")
+        result = profile.parse_memory_plan(plan, 64, "default")
+        self.assertEqual(result["total_public_required_bytes"], 7400)
+        self.assertEqual(result["headroom_bytes"], 2 * 1024**3)
+        self.assertIn("not a proven upper bound", result["headroom_policy"])
+        for invalid in (plan.replace("clients=64", "clients=63"),
+                        plan.replace("total_public_required_bytes=7400", "total_public_required_bytes=7401"),
+                        plan.replace("profile=default", "profile=light"),
+                        plan.replace("public_memory_scope=create_only", "public_memory_scope=all_runtime"),
+                        plan.replace("verdict=PASS", "verdict=FAIL")):
+            with self.subTest(plan=invalid), self.assertRaises(ValueError):
+                profile.parse_memory_plan(invalid, 64, "default")
+
     def test_explicit_phase_pairs_allow_runtime_resources_to_close_at_term(self):
         result = profile.parse_load(PHASE_SUMMARY, "portable", "portable")
         self.assertEqual(result["resource_baseline_schema"], "phase_pairs_v1")
@@ -175,7 +207,7 @@ class ReceiptTests(unittest.TestCase):
 
 class ProvenanceTests(unittest.TestCase):
     def run_fake(self, wrong_source=False, missing_binary=False, clients=None, rate=None,
-                 load_profile=None):
+                 load_profile=None, include_overhead=True):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             source = (root / "source").resolve()
@@ -208,9 +240,19 @@ class ProvenanceTests(unittest.TestCase):
                     return 0, "built", "", False
                 self.assertEqual(argv[:1], [str(output / "bin" / "load")])
                 connected = 1000 if clients is None else clients
+                if env.get("LOAD_PLAN_ONLY") == "1":
+                    client_bytes = 100
+                    server_bytes = 1000
+                    total_bytes = server_bytes + connected * client_bytes
+                    plan = (f"load_plan: clients={connected} profile={env['LOAD_PROFILE']} "
+                            f"client_public_required_bytes={client_bytes} "
+                            f"server_public_required_bytes={server_bytes} "
+                            f"total_public_required_bytes={total_bytes} "
+                            "public_memory_scope=create_only transport_selection=unresolved_before_start "
+                            "term_status_code=0 reason=none verdict=PASS\n")
+                    return 0, plan, "", False
                 summary = SUMMARY.replace("connected=1000", f"connected={connected}")
-                if load_profile is not None:
-                    summary = summary.replace("profile=light", f"profile={load_profile}")
+                summary = summary.replace("profile=light", f"profile={env['LOAD_PROFILE']}")
                 if rate is not None:
                     summary = (summary.replace("offered_rate_mode=per_update", "offered_rate_mode=per_client_due")
                                .replace("target_messages_per_client_second=0",
@@ -228,6 +270,11 @@ class ProvenanceTests(unittest.TestCase):
                 args += ["--messages-per-client-second", str(rate)]
             if load_profile is not None:
                 args += ["--profile", load_profile]
+            if include_overhead:
+                args += ["--transport-overhead-reserve-bytes", "4096",
+                         "--transport-overhead-evidence",
+                         f"synthetic {HEAD} {profile.platform.system()} portable "
+                         f"{1000 if clients is None else clients} clients measured receipt"]
             with mock.patch.object(sys, "argv", args), mock.patch.object(profile, "command", fake_command), \
                  mock.patch.object(profile, "run_capture", fake_run), \
                  mock.patch.object(profile, "preflight", lambda *_: {"failures": []}), \
@@ -270,15 +317,17 @@ class ProvenanceTests(unittest.TestCase):
         self.assertEqual(receipt["runs"][0]["load"]["expected_clients"], 64)
         self.assertEqual(receipt["runs"][0]["load"]["expected_rate"], 2.5)
         self.assertEqual(receipt["runs"][0]["command"][1:3], ["64", "60"])
-        self.assertEqual(seen[2][1]["LOAD_MESSAGES_PER_CLIENT_SECOND"], "2.5")
-        self.assertEqual(seen[2][1]["LOAD_PROFILE"], "light")
+        self.assertEqual(seen[3][1]["LOAD_MESSAGES_PER_CLIENT_SECOND"], "2.5")
+        self.assertEqual(seen[3][1]["LOAD_PROFILE"], "light")
+        self.assertEqual(receipt["memory_plan"]["minimum_available_memory_bytes"],
+                         receipt["memory_plan"]["public_plan_with_headroom_bytes"] + 4096)
 
     def test_default_profile_is_passed_and_recorded(self):
         code, receipt, seen = self.run_fake(clients=4, load_profile="default")
         self.assertEqual(code, 0)
         self.assertEqual(receipt["profile"], "default")
         self.assertEqual(receipt["runs"][0]["load"]["expected_profile"], "default")
-        self.assertEqual(seen[2][1]["LOAD_PROFILE"], "default")
+        self.assertEqual(seen[3][1]["LOAD_PROFILE"], "default")
 
     def test_default_rate_preserves_unset_environment(self):
         code, receipt, seen = self.run_fake()
@@ -287,7 +336,23 @@ class ProvenanceTests(unittest.TestCase):
         self.assertEqual(receipt["rate_environment"], {})
         self.assertEqual(receipt["messages_per_client_second_source"],
                          "harness default; environment unset")
-        self.assertNotIn("LOAD_MESSAGES_PER_CLIENT_SECOND", seen[2][1])
+        self.assertNotIn("LOAD_MESSAGES_PER_CLIENT_SECOND", seen[3][1])
+
+    def test_uncalibrated_transport_overhead_fails_closed_before_build(self):
+        code, receipt, seen = self.run_fake(include_overhead=False, load_profile="default")
+        self.assertEqual(code, 1)
+        self.assertIn("positive measured transport/native overhead reserve", receipt["error"])
+        self.assertNotIn("memory_plan", receipt)
+        self.assertNotIn("runs", receipt)
+        self.assertEqual(seen, [])
+
+    def test_legacy_light_profile_keeps_floor_and_labels_incomplete_memory_scope(self):
+        code, receipt, _ = self.run_fake(include_overhead=False)
+        self.assertEqual(code, 0)
+        plan = receipt["memory_plan"]
+        self.assertEqual(plan["capacity_status"],
+                         "PUBLIC_PLAN_LOWER_BOUND_ONLY_TRANSPORT_UNMEASURED")
+        self.assertIn("does not establish", plan["capacity_limitation"])
 
 
 class ArgumentTests(unittest.TestCase):
@@ -300,6 +365,46 @@ class ArgumentTests(unittest.TestCase):
                 profile.positive_finite_rate(value)
         self.assertEqual(profile.positive_integer("17"), 17)
         self.assertEqual(profile.positive_finite_rate("0.125"), 0.125)
+
+    def test_transport_overhead_reserve_requires_provenance_and_matching_scope(self):
+        head = "a" * 40
+        with self.assertRaisesRegex(ValueError, "positive measured"):
+            profile.validate_transport_overhead_reserve(None, None, "portable", 64, head, "Linux", "default")
+        with self.assertRaisesRegex(ValueError, "evidence provenance"):
+            profile.validate_transport_overhead_reserve(1024, None, "portable", 64, head, "Linux", "default")
+        with self.assertRaisesRegex(ValueError, "identify"):
+            profile.validate_transport_overhead_reserve(
+                1024, f"{head} Linux portable 1000 client run", "portable", 64, head, "Linux", "default")
+        result = profile.validate_transport_overhead_reserve(
+            1024, f"{head} Linux portable 64 clients measured receipt", "portable", 64,
+            head, "Linux", "default")
+        self.assertEqual(result["bytes"], 1024)
+        self.assertIsNone(profile.validate_transport_overhead_reserve(
+            None, None, "portable", 64, head, "Linux", "light"))
+
+    def test_preflight_uses_supplied_requirement_without_relaxing_baseline(self):
+        with tempfile.TemporaryDirectory() as temp, \
+             mock.patch.object(profile.platform, "system", return_value="Linux"), \
+             mock.patch.object(profile, "linux_memory", return_value=(64 * 1024**3, 24 * 1024**3)), \
+             mock.patch.object(profile.resource, "getrlimit", return_value=(4096, 4096)), \
+             mock.patch.object(profile.shutil, "disk_usage", return_value=type("D", (), {"free": 16 * 1024**3})()), \
+             mock.patch.object(profile.os, "cpu_count", return_value=16), \
+             mock.patch.object(profile.os, "getloadavg", return_value=(0.0, 0.0, 0.0)):
+            result = profile.preflight(Path(temp), clients=1000,
+                                       required_available_bytes=32 * 1024**3)
+        self.assertEqual(result["minimum_available_memory_bytes"], 32 * 1024**3)
+        self.assertTrue(any("available memory below required" in item for item in result["failures"]))
+
+    def test_preflight_never_relaxes_existing_available_memory_floor(self):
+        with tempfile.TemporaryDirectory() as temp, \
+             mock.patch.object(profile.platform, "system", return_value="Linux"), \
+             mock.patch.object(profile, "linux_memory", return_value=(64 * 1024**3, 16 * 1024**3)), \
+             mock.patch.object(profile.resource, "getrlimit", return_value=(4096, 4096)), \
+             mock.patch.object(profile.shutil, "disk_usage", return_value=type("D", (), {"free": 16 * 1024**3})()), \
+             mock.patch.object(profile.os, "cpu_count", return_value=16), \
+             mock.patch.object(profile.os, "getloadavg", return_value=(0.0, 0.0, 0.0)):
+            result = profile.preflight(Path(temp), clients=1, required_available_bytes=1)
+        self.assertEqual(result["minimum_available_memory_bytes"], profile.MIN_AVAILABLE_BYTES)
 
 
 if __name__ == "__main__":

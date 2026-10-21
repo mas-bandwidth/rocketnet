@@ -27,6 +27,8 @@ FD_MARGIN = 64
 MIN_TOTAL_BYTES = 14 * 1024**3
 MIN_AVAILABLE_BYTES = 12 * 1024**3
 MIN_DISK_BYTES = 8 * 1024**3
+PLAN_HEADROOM_FRACTION = 0.20
+PLAN_HEADROOM_MIN_BYTES = 2 * 1024**3
 CRITERIA = (
     "connect_within_10s", "no_unexpected_disconnect", "reliable_delivery",
     "unreliable_integrity", "counters_agree",
@@ -83,7 +85,7 @@ def mac_memory():
     return total, available
 
 
-def preflight(out_dir, clients=CLIENTS):
+def preflight(out_dir, clients=CLIENTS, required_available_bytes=None):
     system = platform.system()
     if system == "Linux":
         total, available = linux_memory()
@@ -95,14 +97,18 @@ def preflight(out_dir, clients=CLIENTS):
     disk = shutil.disk_usage(out_dir).free
     cores = os.cpu_count() or 1
     load1 = os.getloadavg()[0]
+    minimum_available = max(MIN_AVAILABLE_BYTES, required_available_bytes or 0)
     result = dict(system=system, host=platform.node(), total_memory_bytes=total,
                   available_memory_bytes=available, free_disk_bytes=disk,
+                  minimum_available_memory_bytes=minimum_available,
                   fd_soft=soft, fd_hard=hard, load1=load1, cores=cores)
     failures = []
     if total < MIN_TOTAL_BYTES:
         failures.append("physical memory below 14 GiB")
-    if available < MIN_AVAILABLE_BYTES:
-        failures.append("available memory below 12 GiB")
+    if total < minimum_available:
+        failures.append(f"physical memory below required {minimum_available} bytes")
+    if available < minimum_available:
+        failures.append(f"available memory below required {minimum_available} bytes")
     if disk < MIN_DISK_BYTES:
         failures.append("free output disk below 8 GiB")
     min_fd_hard = 2 * clients + FD_MARGIN
@@ -178,6 +184,58 @@ def validate_resource_baseline(fields):
     return schema
 
 
+def parse_memory_plan(stdout, expected_clients, expected_profile):
+    summaries = [line for line in stdout.splitlines()
+                 if line.startswith("load_plan:") and "verdict=" in line]
+    if len(summaries) != 1:
+        raise ValueError(f"expected one memory plan summary, found {len(summaries)}")
+    pairs = re.findall(r"\b([A-Za-z_][A-Za-z_0-9]*)=([^\s]+)", summaries[0])
+    fields = dict(pairs)
+    if len(fields) != len(pairs):
+        raise ValueError("duplicate fields in memory plan summary")
+    if (fields.get("verdict") != "PASS" or fields.get("profile") != expected_profile or
+            fields.get("public_memory_scope") != "create_only" or
+            fields.get("transport_selection") != "unresolved_before_start" or
+            fields.get("term_status_code") != "0" or fields.get("reason") != "none"):
+        raise ValueError("memory plan profile or verdict mismatch")
+    try:
+        clients = int(fields["clients"])
+        client_bytes = int(fields["client_public_required_bytes"])
+        server_bytes = int(fields["server_public_required_bytes"])
+        total_bytes = int(fields["total_public_required_bytes"])
+    except (KeyError, ValueError) as error:
+        raise ValueError("memory plan counts absent or invalid") from error
+    if (clients != expected_clients or client_bytes <= 0 or server_bytes <= 0 or
+            total_bytes != server_bytes + clients * client_bytes):
+        raise ValueError("memory plan population or byte accounting mismatch")
+    headroom = max(PLAN_HEADROOM_MIN_BYTES,
+                   math.ceil(total_bytes * PLAN_HEADROOM_FRACTION))
+    return dict(raw=summaries[0], fields=fields, clients=clients,
+                client_public_required_bytes=client_bytes,
+                server_public_required_bytes=server_bytes,
+                total_public_required_bytes=total_bytes,
+                headroom_bytes=headroom,
+                public_plan_with_headroom_bytes=total_bytes + headroom,
+                headroom_policy=("max(20% of exact SDK public plan, 2 GiB); "
+                                 "conservative operational reserve, not a proven upper bound"))
+
+
+def validate_transport_overhead_reserve(reserve_bytes, evidence, transport, clients,
+                                       source_head, system, profile):
+    if reserve_bytes is None and evidence is None and profile == "light":
+        return None
+    if reserve_bytes is None or reserve_bytes <= 0:
+        raise ValueError("a positive measured transport/native overhead reserve is required")
+    if evidence is None or not evidence.strip():
+        raise ValueError("transport overhead reserve requires evidence provenance")
+    normalized = evidence.casefold()
+    if (transport.casefold() not in normalized or str(clients) not in normalized or
+            source_head.casefold() not in normalized or system.casefold() not in normalized):
+        raise ValueError("transport overhead evidence must identify source head, OS, transport and population")
+    return dict(bytes=reserve_bytes, evidence=evidence,
+                scope="measured transport/native overhead outside exact create-only SDK plan")
+
+
 def parse_load(stdout, server_transport, client_transport, expected_clients=CLIENTS,
                expected_profile="light", expected_rate=None):
     summaries = [line for line in stdout.splitlines()
@@ -194,13 +252,16 @@ def parse_load(stdout, server_transport, client_transport, expected_clients=CLIE
         raise ValueError("load profile differs from requested profile")
     expected_rate_mode = "per_client_due" if expected_rate is not None else "per_update"
     expected_rate_value = expected_rate if expected_rate is not None else 0.0
+    expected_rate_text = format(expected_rate_value, ".6g")
+    actual_rate_text = fields.get("target_messages_per_client_second")
     try:
-        reported_rate = float(fields["target_messages_per_client_second"])
-    except (KeyError, ValueError) as error:
+        reported_rate = float(actual_rate_text)
+    except (TypeError, ValueError) as error:
         raise ValueError("target message rate absent or invalid") from error
     if (fields.get("offered_rate_mode") != expected_rate_mode or
             not math.isfinite(reported_rate) or reported_rate < 0 or
-            not math.isclose(reported_rate, expected_rate_value, rel_tol=5.1e-7, abs_tol=1e-12)):
+            actual_rate_text != expected_rate_text or
+            (expected_rate is not None and reported_rate == 0)):
         raise ValueError("offered rate differs from requested rate")
     expected_offer_status = "PASS" if expected_rate is not None else "UNMEASURED"
     if fields.get("application_offers_accepted") != expected_offer_status:
@@ -293,6 +354,10 @@ def main():
     p.add_argument("--clients", type=positive_integer, default=CLIENTS)
     p.add_argument("--profile", choices=("default", "light"), default="light")
     p.add_argument("--messages-per-client-second", type=positive_finite_rate)
+    p.add_argument("--transport-overhead-reserve-bytes", type=positive_integer,
+                   help="measured transport/native bytes beyond the create-only SDK plan; required for default profile")
+    p.add_argument("--transport-overhead-evidence",
+                   help="receipt/path naming this source HEAD, OS, transport and client population; required with reserve")
     args = p.parse_args()
     if args.seconds < 60:
         p.error("use at least 60 seconds of traffic")
@@ -313,6 +378,8 @@ def main():
                                                      "LOAD_MESSAGES_PER_CLIENT_SECOND"),
                   rate_environment=({} if args.messages_per_client_second is None else
                                     {"LOAD_MESSAGES_PER_CLIENT_SECOND": str(args.messages_per_client_second)}),
+                  transport_overhead_reserve_bytes=args.transport_overhead_reserve_bytes,
+                  transport_overhead_evidence=args.transport_overhead_evidence,
                   seconds=args.seconds, started_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
     try:
         head = command(["git", "rev-parse", "HEAD"], source)
@@ -320,6 +387,10 @@ def main():
         record["head"] = head
         if head != args.expected_head or status:
             raise ValueError("source is dirty or differs from expected head")
+        overhead = validate_transport_overhead_reserve(
+            args.transport_overhead_reserve_bytes, args.transport_overhead_evidence,
+            args.server_transport, args.clients, head, platform.system(), args.profile)
+        record["transport_overhead_reserve"] = overhead
         record["preflight"] = preflight(out, args.clients)
         if record["preflight"]["failures"]:
             raise ValueError("capacity guard: " + "; ".join(record["preflight"]["failures"]))
@@ -356,10 +427,42 @@ def main():
                    ROCKETNET_CLIENT_TRANSPORT=args.client_transport)
         if args.messages_per_client_second is not None:
             env["LOAD_MESSAGES_PER_CLIENT_SECOND"] = str(args.messages_per_client_second)
+        plan_env = env.copy()
+        plan_env["LOAD_PLAN_ONLY"] = "1"
+        plan_command = [str(binary), str(args.clients), str(args.seconds)]
+        record["memory_plan_command"] = plan_command
+        record["memory_plan_environment"] = {
+            "LOAD_PLAN_ONLY": "1", "LOAD_PROFILE": args.profile,
+            "ROCKETNET_SERVER_TRANSPORT": args.server_transport,
+            "ROCKETNET_CLIENT_TRANSPORT": args.client_transport,
+            **({} if args.messages_per_client_second is None else
+               {"LOAD_MESSAGES_PER_CLIENT_SECOND": str(args.messages_per_client_second)}),
+        }
+        plan_exit, plan_stdout, plan_stderr, plan_timeout = run_capture(
+            plan_command, source, plan_env, 300)
+        (out / "memory-plan.stdout.log").write_text(plan_stdout)
+        (out / "memory-plan.stderr.log").write_text(plan_stderr)
+        record["memory_plan_exit"] = plan_exit
+        if plan_timeout or plan_exit != 0:
+            raise ValueError(f"memory planning failed: exit={plan_exit} timeout={plan_timeout}")
+        record["memory_plan"] = parse_memory_plan(plan_stdout, args.clients, args.profile)
+        record["memory_plan"]["transport_overhead_reserve"] = overhead
+        required_available_bytes = record["memory_plan"]["public_plan_with_headroom_bytes"]
+        if overhead:
+            required_available_bytes += overhead["bytes"]
+            record["memory_plan"]["capacity_status"] = "PLAN_PLUS_MEASURED_TRANSPORT_RESERVE"
+        else:
+            record["memory_plan"]["capacity_status"] = "PUBLIC_PLAN_LOWER_BOUND_ONLY_TRANSPORT_UNMEASURED"
+            record["memory_plan"]["capacity_limitation"] = (
+                "The preflight floor does not establish total process/native transport memory safety")
+        record["memory_plan"]["minimum_available_memory_bytes"] = required_available_bytes
+        record["preflight_after_plan"] = preflight(out, args.clients, required_available_bytes)
+        if record["preflight_after_plan"]["failures"]:
+            raise ValueError("planned capacity guard: " + "; ".join(record["preflight_after_plan"]["failures"]))
         runs = 3 if args.mode == "timings" else 1
         record["runs"] = []
         for index in range(runs):
-            guard = preflight(out, args.clients)
+            guard = preflight(out, args.clients, required_available_bytes)
             if guard["failures"]:
                 raise ValueError(f"capacity guard before run {index + 1}: {guard['failures']}")
             run = dict(index=index + 1, preflight=guard)
