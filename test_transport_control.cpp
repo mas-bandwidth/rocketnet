@@ -31,6 +31,12 @@ static int controlled_seal(rocketnet_server_protocol_t * server, int client_inde
     return rocketnet_server_protocol_seal_payload_frame(server, client_index, sequence, packet_id, wire, bytes, time);
 }
 
+// The fake staged frame must satisfy the public packet lease's 16-byte
+// alignment contract. Its intentional struct padding triggers MSVC C4324.
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable:4324)
+#endif
 struct control_fixture_t
 {
     rocketnet_address_t request_address;
@@ -60,6 +66,9 @@ struct control_fixture_t
     int accepted[4];
     int num_accepted;
 };
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
 static void record(control_fixture_t * f, const rocketnet_address_t * to, const uint8_t * packet)
 {
