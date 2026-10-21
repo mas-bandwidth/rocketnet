@@ -46,6 +46,10 @@ static void test_bundled_rng_closes_and_reopens_on_mac()
         uint8_t public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
         uint8_t secret_key[sizeof(rocketnet_dev_server_secret_key)];
         check(rocketnet_generate_server_keypair(public_key, secret_key) == ROCKETNET_STATUS_OK);
+        // The old bug kept /dev/urandom open across term. If the first term
+        // failed to close it, baseline already includes that descriptor and
+        // this active-cycle assertion fails rather than masking the leak.
+        check(rng_lifecycle_fd_count() == baseline + 1);
 
         if (cycle == 1)
         {
