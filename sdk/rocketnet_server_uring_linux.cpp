@@ -28,8 +28,8 @@
 // The send side is the gso transport's staging: game threads reserve a frame
 // slot with one atomic add between flushes, and send_packets submits one
 // SENDMSG per slot with bytes, each slot carrying its own msghdr, iovec and
-// destination, then reaps within its completion budget and one bounded
-// wait. The reservation index goes back to zero only in a call that leaves
+// destination, then reaps ready completions within its completion budget
+// without waiting. The reservation index goes back to zero only in a call that leaves
 // no send without its CQE and no staged slot unsubmitted: until its CQE the
 // kernel owns a slot's frame and msghdr, so a call that returns first leaves
 // the index where it is and a later call retires the rest.
