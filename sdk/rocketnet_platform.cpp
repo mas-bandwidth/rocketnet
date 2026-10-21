@@ -548,7 +548,7 @@ static bool rocketnet_platform_send_failure_should_inject( rocketnet_platform_so
 #include <poll.h>
 #endif // #if defined(__linux__)
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
-#include <sys/event.h>
+#include <poll.h>
 #endif
 
 // the BSDs have no CLOCK_MONOTONIC_RAW; CLOCK_MONOTONIC is their
@@ -1234,13 +1234,24 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
 
-// BSD server workers need an event-only reusable wake. Keep socket-backed
-// wakes unsupported so BSD clients retain their existing synchronous path.
+// BSD server workers need an event-only reusable wake. A nonblocking pipe
+// works on FreeBSD, OpenBSD and NetBSD (OpenBSD lacks EVFILT_USER). Keep
+// socket-backed wakes unsupported so clients retain their synchronous path.
 struct rocketnet_platform_wake_t
 {
     void * context;
-    int kq;
+    int read_fd;
+    int write_fd;
 };
+
+static bool rocketnet_platform_bsd_wake_fd_flags( int fd )
+{
+    const int status = fcntl( fd, F_GETFL, 0 );
+    const int flags = fcntl( fd, F_GETFD, 0 );
+    return status >= 0 && flags >= 0 &&
+           fcntl( fd, F_SETFL, status | O_NONBLOCK ) == 0 &&
+           fcntl( fd, F_SETFD, flags | FD_CLOEXEC ) == 0;
+}
 
 rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket )
 {
@@ -1250,27 +1261,29 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
     if ( !wake )
         return NULL;
     wake->context = context;
-    wake->kq = kqueue();
-    if ( wake->kq < 0 )
+    int fds[2];
+    if ( pipe( fds ) != 0 )
     {
         rocketnet_free( context, wake );
         return NULL;
     }
-    struct kevent change;
-    EV_SET( &change, 1, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, NULL );
-    if ( kevent( wake->kq, &change, 1, NULL, 0, NULL ) < 0 )
+    if ( !rocketnet_platform_bsd_wake_fd_flags( fds[0] ) || !rocketnet_platform_bsd_wake_fd_flags( fds[1] ) )
     {
-        close( wake->kq );
+        close( fds[0] );
+        close( fds[1] );
         rocketnet_free( context, wake );
         return NULL;
     }
+    wake->read_fd = fds[0];
+    wake->write_fd = fds[1];
     return wake;
 }
 
 void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
 {
     rocketnet_assert( wake );
-    close( wake->kq );
+    close( wake->read_fd );
+    close( wake->write_fd );
     rocketnet_free( wake->context, wake );
 }
 
@@ -1279,25 +1292,20 @@ bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readab
     rocketnet_assert( wake );
     if ( readable )
         return false;
-    struct timespec timeout = {};
-    if ( timeout_seconds > 0.0 )
-    {
-        timeout.tv_sec = (time_t) timeout_seconds;
-        timeout.tv_nsec = (long) ( ( timeout_seconds - (double) timeout.tv_sec ) * 1000000000.0 );
-        if ( timeout.tv_nsec >= 1000000000L )
-            timeout.tv_nsec = 999999999L;
-    }
-    struct kevent event;
-    const int result = kevent( wake->kq, NULL, 0, &event, 1, &timeout );
-    return result == 1 && !( event.flags & EV_ERROR );
+    struct pollfd fd = { wake->read_fd, POLLIN, 0 };
+    const int timeout_ms = timeout_seconds > 0.0 ? (int) ceil( timeout_seconds * 1000.0 ) : 0;
+    if ( poll( &fd, 1, timeout_ms ) <= 0 || !( fd.revents & POLLIN ) )
+        return false;
+    uint8_t buffer[64];
+    return read( wake->read_fd, buffer, sizeof(buffer) ) > 0;
 }
 
 void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 {
     rocketnet_assert( wake );
-    struct kevent change;
-    EV_SET( &change, 1, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL );
-    kevent( wake->kq, &change, 1, NULL, 0, NULL );
+    const uint8_t one = 1;
+    ssize_t n = write( wake->write_fd, &one, sizeof(one) );
+    (void) n; // EAGAIN means the pipe already holds a pending wake.
 }
 
 #endif // ROCKETNET_PLATFORM_BSD

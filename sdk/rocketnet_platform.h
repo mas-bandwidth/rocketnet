@@ -596,7 +596,7 @@ int rocketnet_platform_socket_receive_packets_mmsg( struct rocketnet_platform_so
 // readiness is ignored, so a full receive buffer waits on the wake alone. set may run on any thread; a set made while no wait
 // runs makes the next wait return at once. Platforms that define
 // ROCKETNET_PLATFORM_HAS_WAKE implement socket-backed waits. BSD supports
-// event-only wakes without changing its socket-backed client path.
+// event-only pipe wakes without changing its socket-backed client path.
 // Linux builds the eventfd wake; macOS and iOS build the kqueue wake
 // (docs/CLIENT-IO.md "The wake"), so the msgx
 // client runs on the I/O thread there. Windows builds the event wake,
