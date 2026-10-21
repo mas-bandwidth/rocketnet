@@ -40,6 +40,9 @@ struct portable_server_t
 #if defined(ROCKETNET_PORTABLE_TX_TEST_HOOKS)
     bool stop_publish_saw_quit = false;
     bool force_publish_busy = false;
+    void (*after_worker_empty)( portable_server_t * ) = NULL;
+    bool skip_socket_send = false;
+    std::atomic<int> test_sent_banks{0};
 #endif
     int producer = 0; // main thread only
     int free_index[PORTABLE_TX_BANKS] = {1, 2, 0};
@@ -86,20 +89,33 @@ static void portable_tx_worker( void * arg )
     {
         rocketnet_platform_mutex_acquire( &server->mutex );
         int index = -1;
+        bool exit_empty = false;
         if ( server->ready_count > 0 )
         {
             index = server->ready_index[server->ready_head];
             server->ready_head = ( server->ready_head + 1 ) % PORTABLE_TX_BANKS;
             server->ready_count--;
         }
+        else
+            exit_empty = server->quit.load( std::memory_order_acquire );
         rocketnet_platform_mutex_release( &server->mutex );
         if ( index < 0 )
         {
-            if ( server->quit.load( std::memory_order_acquire ) ) break;
+#if defined(ROCKETNET_PORTABLE_TX_TEST_HOOKS)
+            if ( server->after_worker_empty ) server->after_worker_empty( server );
+#endif
+            // Empty and quit were observed together under the handoff lock.
+            // A stop publication after an earlier empty observation must win.
+            if ( exit_empty ) break;
             rocketnet_platform_wake_wait( server->wake, false, 0.1 );
             continue;
         }
         portable_tx_bank_t * bank = &server->bank[index];
+#if defined(ROCKETNET_PORTABLE_TX_TEST_HOOKS)
+        if ( server->skip_socket_send )
+            server->test_sent_banks.fetch_add( 1, std::memory_order_relaxed );
+        else
+#endif
         for ( int i = 0; i < bank->count; ++i )
             rocketnet_platform_socket_send_packet( server->socket, &bank->to[i], bank->data[i], bank->bytes[i] );
         bank->count = 0;
@@ -314,6 +330,43 @@ bool rocketnet_portable_tx_test_handoff()
         server->ready_count == 2 && server->bank[2].count == 0 &&
         server->dropped.load() == (uint64_t) PORTABLE_TX_CAPACITY + 1;
     portable_server_cleanup( server );
+
+    // Exact former race: worker observes empty, pauses after releasing the
+    // handoff mutex, stop publishes the last bank and sets quit, then worker
+    // resumes its exit decision. A post-unlock quit read would strand bank 0.
+    void * race_storage = rocketnet_malloc( NULL, sizeof( portable_server_t ) );
+    if ( !race_storage ) return false;
+    portable_server_t * race = new (race_storage) portable_server_t();
+    if ( !rocketnet_platform_mutex_create( &race->mutex ) )
+    {
+        portable_server_cleanup( race );
+        return false;
+    }
+    race->wake = rocketnet_platform_wake_create( NULL, NULL );
+    if ( !race->wake )
+    {
+        portable_server_cleanup( race );
+        return false;
+    }
+    race->bank[0].count = 1;
+    race->skip_socket_send = true;
+    race->after_worker_empty = []( portable_server_t * owner )
+    {
+        owner->after_worker_empty = NULL;
+        portable_stop( owner );
+    };
+    race->thread = rocketnet_platform_thread_create( NULL, portable_tx_worker, race );
+    if ( !race->thread )
+    {
+        portable_server_cleanup( race );
+        return false;
+    }
+    rocketnet_platform_thread_join( race->thread );
+    valid &= race->exited.load( std::memory_order_acquire ) && race->test_sent_banks.load() == 1 &&
+        !race->stop_publish_saw_quit && race->dropped.load() == 0;
+    rocketnet_platform_thread_destroy( race->thread );
+    race->thread = NULL;
+    portable_server_cleanup( race );
     return valid;
 #endif
 }
