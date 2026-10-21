@@ -5014,7 +5014,7 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
 
 // the client I/O wake's portable fallback: a platform that does not define
 // ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE and has no platform wake of its own
-// (BSD has the event-only kqueue above; macOS and iOS build the socket-capable
+// (BSD has the event-only pipe above; macOS and iOS build the socket-capable
 // kqueue wake above; Windows builds the event wake above) has no wake.
 // create returns NULL, destroy asserts its argument is NULL, wait returns
 // false and set does nothing.
