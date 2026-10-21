@@ -177,11 +177,13 @@ def validate_timing(text, receipt, run_id):
         raise ValueError("server timing has no samples")
     if integer(timing, "clock_pair_count") != 10000:
         raise ValueError("server timing lacks clock calibration")
-    p50 = finite(timing, "server_update_p50_upper_us")
-    p99 = finite(timing, "server_update_p99_upper_us")
-    finite(timing, "server_update_max_us")
-    send_p99 = finite(timing, "server_send_p99_upper_us")
-    if p50 > p99:
+    p50 = integer(timing, "server_update_p50_upper_us", 1)
+    p99 = integer(timing, "server_update_p99_upper_us", 1)
+    max_us = finite(timing, "server_update_max_us")
+    send_p99 = integer(timing, "server_send_p99_upper_us", 1)
+    # The histogram reports integer-microsecond upper bounds, while max_us
+    # prints to three decimals. Allow the half-nanosecond print rounding.
+    if p50 > p99 or p99 > math.ceil(max_us + 0.0005):
         raise ValueError("server timing quantiles contradict")
     timing_pass = p99 <= 100 and send_p99 <= 100
     if receipt.get("timing_verdict") != ("PASS" if timing_pass else "FAIL"):

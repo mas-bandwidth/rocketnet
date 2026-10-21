@@ -117,6 +117,7 @@ def fixture():
 def timing_failure_fixture():
     server, shards = fixture()
     server = server.replace("server_update_p99_upper_us=80", "server_update_p99_upper_us=101")
+    server = server.replace("server_update_max_us=89.3", "server_update_max_us=101.2")
     server = server.replace("timing_verdict=PASS", "timing_verdict=FAIL")
     server = server.replace(" verdict=PASS", " verdict=FAIL")
     return server, shards
@@ -367,10 +368,23 @@ class SplitReceiptTests(unittest.TestCase):
         server, shards = fixture()
         with self.assertRaisesRegex(ValueError, "contradicts measured p99"):
             self.check(server.replace("server_update_p99_upper_us=80",
-                                      "server_update_p99_upper_us=101"), shards)
+                                      "server_update_p99_upper_us=101")
+                       .replace("server_update_max_us=89.3", "server_update_max_us=101.2"), shards)
         server, shards = timing_failure_fixture()
         with self.assertRaisesRegex(ValueError, "verdict"):
             self.check(server.replace(" verdict=FAIL", " verdict=PASS"), shards)
+
+    def test_timing_quantile_cannot_exceed_reported_maximum(self):
+        server, shards = timing_failure_fixture()
+        with self.assertRaisesRegex(ValueError, "timing quantiles contradict"):
+            self.check(server.replace("server_update_max_us=101.2",
+                                      "server_update_max_us=89.3"), shards)
+
+    def test_timing_quantiles_require_integer_upper_bounds(self):
+        server, shards = timing_failure_fixture()
+        with self.assertRaisesRegex(ValueError, "malformed integer"):
+            self.check(server.replace("server_update_p99_upper_us=101",
+                                      "server_update_p99_upper_us=101.5"), shards)
 
     def test_timing_only_cli_is_nonzero_and_machine_readable(self):
         code, data, stderr = invoke_cli(*timing_failure_fixture())
