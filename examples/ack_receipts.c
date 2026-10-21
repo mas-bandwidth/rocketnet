@@ -15,6 +15,7 @@
 // the published development backend key, from rocketnet.h (development builds)
 static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
 #include <stdio.h>
+#include <time.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -76,7 +77,9 @@ int main( void )
 
     CHECK( rocketnet_server_ipv4_address( server, server_address, sizeof( server_address ) ) );
     rocketnet_server_public_key( server, server_public_key );
-    CHECK( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, 4102444800ull, NULL, connect_token ) == ROCKETNET_STATUS_OK );
+    const time_t token_time = time( NULL );
+    CHECK( token_time != (time_t) -1 );
+    CHECK( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, (uint64_t) token_time, NULL, connect_token ) == ROCKETNET_STATUS_OK );
 
     CHECK( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
     client_config.transport = "loopback";

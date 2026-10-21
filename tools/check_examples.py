@@ -18,6 +18,7 @@ ALLOWED_HEADERS = {
     "rocketnet.h",
     "dev_keys.h",
     "stdio.h",
+    "time.h",
     "stdlib.h",
     "string.h",
     "stdint.h",

@@ -20,6 +20,7 @@ static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] 
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <time.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -220,7 +221,9 @@ int main( int argc, char ** argv ) {
     rocketnet_server_public_key( server, server_public_key );
     for ( uint64_t c = 0; c < (uint64_t) num_clients; c++ ) {
         char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
-        CHECK( rocketnet_create_dev_connect_token( addr, NULL, server_public_key, 30, 10, c + 1, EXAMPLE_PROTOCOL_ID, 4102444800ULL, NULL, token ) == ROCKETNET_STATUS_OK );
+        const time_t token_time = time( NULL );
+        CHECK( token_time != (time_t) -1 );
+        CHECK( rocketnet_create_dev_connect_token( addr, NULL, server_public_key, 30, 10, c + 1, EXAMPLE_PROTOCOL_ID, (uint64_t) token_time, NULL, token ) == ROCKETNET_STATUS_OK );
         enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
         clients[c] = rocketnet_client_create( NULL, &c_cfg, &create_status_2 );
         if ( clients[c] )

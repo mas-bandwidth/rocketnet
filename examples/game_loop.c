@@ -23,6 +23,7 @@
 static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
 
 #include <stdio.h>
+#include <time.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
@@ -137,9 +138,11 @@ int main( int argc, char ** argv )
     client_config.transport = "loopback";
     for ( int i = 0; i < num_clients; i++ )
     {
-        char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];       // a development token stamped far ahead, as in hello
+        char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];       // a development token stamped with current Unix time
         enum rocketnet_status_t client_status = ROCKETNET_STATUS_OK;
-        if ( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, (uint64_t) i, EXAMPLE_PROTOCOL_ID, 4102444800ull, NULL, token ) != ROCKETNET_STATUS_OK ||
+        const time_t token_time = time( NULL );
+        if ( token_time == (time_t) -1 ) { printf( "FAIL: token clock\n" ); goto cleanup; }
+        if ( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, (uint64_t) i, EXAMPLE_PROTOCOL_ID, (uint64_t) token_time, NULL, token ) != ROCKETNET_STATUS_OK ||
              !( clients[i] = rocketnet_client_create( NULL, &client_config, &client_status ) ) ||
              rocketnet_client_connect( clients[i], token ) != ROCKETNET_STATUS_OK )
             { printf( "FAIL: client %d create: %s\n", i, rocketnet_status_name( client_status ) ); goto cleanup; }

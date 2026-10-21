@@ -19,6 +19,7 @@
 static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
 
 #include <stdio.h>
+#include <time.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -159,12 +160,12 @@ int main( void )
     for ( int round = 1; round <= 2; round++ )
     {
         // the token names the server and carries the keys; a production client
-        // gets one from a backend. This development token expires thirty
-        // seconds after its timestamp, so the example uses one far ahead
-        // instead of reading the wall clock. A real backend stamps the current
-        // time.
+        // gets one from a backend. Stamp the current Unix time, matching the
+        // default token-validation clock; this token expires thirty seconds later.
 
-        CHECK( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, (uint64_t) round, EXAMPLE_PROTOCOL_ID, 4102444800ull, NULL, connect_token ) == ROCKETNET_STATUS_OK );
+        const time_t token_time = time( NULL );
+        CHECK( token_time != (time_t) -1 );
+        CHECK( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, (uint64_t) round, EXAMPLE_PROTOCOL_ID, (uint64_t) token_time, NULL, connect_token ) == ROCKETNET_STATUS_OK );
 
         enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
         client = rocketnet_client_create( NULL, &client_config, &create_status_2 );

@@ -21,6 +21,7 @@
 #include "rocketnet.h"
 #include "dev_keys.h"
 #include <stdio.h>
+#include <time.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -144,12 +145,14 @@ int main( int argc, char ** argv )
 
     // the matchmaker stub: a real backend mints with its own secret key on
     // its own server and returns the token to the game client; this one
-    // mints a development token. The fixed timestamp keeps the example off
-    // the wall clock; a backend stamps now.
+    // mints a development token stamped with current Unix time, matching
+    // the default token-validation clock on both endpoints.
 
     const uint64_t protocol_id = EXAMPLE_PROTOCOL_ID + ( wrong_protocol ? 1 : 0 );
+    const time_t token_time = time( NULL );
+    CHECK( token_time != (time_t) -1 );
     CHECK( rocketnet_create_dev_connect_token( address, NULL, server_public_key, 30, 5, 0x0123456789abcdefull,
-                                               protocol_id, 4102444800ull, NULL, connect_token ) == ROCKETNET_STATUS_OK );
+                                               protocol_id, (uint64_t) token_time, NULL, connect_token ) == ROCKETNET_STATUS_OK );
     rocketnet_client_default_config( &config );
     config.transport = "portable";
     config.state_change_callback = state_changed;
