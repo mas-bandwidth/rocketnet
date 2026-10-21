@@ -54,6 +54,8 @@ int rocketnet_signature_verify_budget_allow( struct rocketnet_signature_verify_b
                                              uint64_t current_timestamp )
 {
     rocketnet_signature_verify_budget_decay( budget, current_timestamp );
+    struct rocketnet_address_t host = *source;
+    host.port = 0;
 
     // the global budget is not spent: everyone verifies.
     if ( budget->failure_count < ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET )
@@ -69,7 +71,7 @@ int rocketnet_signature_verify_budget_allow( struct rocketnet_signature_verify_b
     for ( int i = 0; i < ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS; i++ )
     {
         if ( budget->sources[i].fail_count > 0 &&
-             rocketnet_address_equal( &budget->sources[i].address, source ) )
+             rocketnet_address_equal( &budget->sources[i].address, &host ) )
             return 0;
     }
 
@@ -81,13 +83,15 @@ void rocketnet_signature_verify_budget_record_failure( struct rocketnet_signatur
                                                        uint64_t current_timestamp )
 {
     rocketnet_signature_verify_budget_decay( budget, current_timestamp );
+    struct rocketnet_address_t host = *source;
+    host.port = 0;
 
     budget->failure_count++;
 
     for ( int i = 0; i < ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS; i++ )
     {
         if ( budget->sources[i].fail_count > 0 &&
-             rocketnet_address_equal( &budget->sources[i].address, source ) )
+             rocketnet_address_equal( &budget->sources[i].address, &host ) )
         {
             budget->sources[i].fail_count++;
             return;
@@ -103,7 +107,7 @@ void rocketnet_signature_verify_budget_record_failure( struct rocketnet_signatur
     {
         if ( budget->sources[i].fail_count == 0 )
         {
-            budget->sources[i].address = *source;
+            budget->sources[i].address = host;
             budget->sources[i].fail_count = 1;
             return;
         }

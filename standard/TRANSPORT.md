@@ -3636,7 +3636,8 @@ an input ([t1.4 Conventions](#t1.4)).
     does, a request past the budget MUST be refused with no reply and counted
     as a refusal, and the budget MUST be reset at the start of each update.
 12. A server MUST apply the failed-signature budget before the signature
-    verification. A request from a source that has already
+    verification. This budget MUST identify a source by its host address,
+    excluding its port. A request from a source that has already
     failed in the current failed-signature window MUST be refused before the
     verification runs and counted as a refusal. The budget MUST NOT refuse a
     request from a source with no recorded failure in the window, even when
