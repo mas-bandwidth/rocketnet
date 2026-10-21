@@ -26,6 +26,7 @@
 // capacity, sdk/rocketnet_packet_lease.h:37). The server assigns the sequence
 // after lease insertion, so that refusal also leaves no gap.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "sdk/rocketnet_connect_token.h"
 #include "sdk/rocketnet_base64.h"
@@ -276,8 +277,8 @@ static bool sequence_burn_pair_setup( struct sequence_burn_pair_t * pair )
 
 static void sequence_burn_pair_teardown( struct sequence_burn_pair_t * pair )
 {
-    rocketnet_client_transport_destroy( pair->client );
-    rocketnet_server_transport_destroy( pair->server );
+    rn_test_client_transport_stop_and_destroy( pair->client );
+    rn_test_server_transport_stop_and_destroy( pair->server );
 }
 
 // the measures of one run, read on the burning side (the sender) and on its
@@ -808,8 +809,8 @@ static bool sequence_burn_message_pair_setup( struct sequence_burn_message_pair_
 
 static void sequence_burn_message_pair_teardown( struct sequence_burn_message_pair_t * pair )
 {
-    rocketnet_message_client_destroy( pair->client );
-    rocketnet_message_server_destroy( pair->server );
+    rn_test_message_client_stop_and_destroy( pair->client );
+    rn_test_message_server_stop_and_destroy( pair->server );
 }
 
 static uint32_t sequence_burn_message_send( struct sequence_burn_message_pair_t * pair, int side, const uint8_t * data, int bytes )

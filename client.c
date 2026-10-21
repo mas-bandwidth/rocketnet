@@ -14,6 +14,7 @@
     writes a sample result file without any socket, for the merge to read.
 */
 
+#include "test/native_shutdown.h"
 #include "rocketnet.h"
 #include "rocketnet_layers.h"
 #include "sdk/rocketnet_connect_token.h"
@@ -737,7 +738,7 @@ static void run_matrix( opts_t * o )
         if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
         if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
         {
-            rocketnet_client_destroy( client );
+            rn_cli_client_stop_and_destroy( client );
             client = NULL;
         }
         if ( !client )
@@ -798,7 +799,7 @@ static void run_matrix( opts_t * o )
                      rocketnet_client_state_name( state_at_fail ) );
             if ( state_at_fail < 0 ) st.denials++;
             st.fails++;
-            rocketnet_client_destroy( client );
+            rn_cli_client_stop_and_destroy( client );
             break;
         }
         if ( status )
@@ -966,7 +967,7 @@ static void run_matrix( opts_t * o )
             st.silent_count++;
         }
 
-        rocketnet_client_destroy( client );
+        rn_cli_client_stop_and_destroy( client );
 
         if ( !is_final )
             rocketnet_sleep( wait );
@@ -1063,7 +1064,7 @@ int main( int argc, char ** argv )
     uint8_t * received = (uint8_t*) malloc( rocketnet_client_transport_max_payload_bytes( client ) );
     if ( !received )
     {
-        rocketnet_client_transport_destroy( client );
+        rn_native_client_transport_stop_and_destroy( client );
         rocketnet_term();
         return 1;
     }
@@ -1105,7 +1106,7 @@ int main( int argc, char ** argv )
     rocketnet_sleep( 0.1 );
     free( received );
 
-    rocketnet_client_transport_destroy( client );
+    rn_native_client_transport_stop_and_destroy( client );
 
     rocketnet_term();
 

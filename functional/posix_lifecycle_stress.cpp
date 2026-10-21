@@ -58,6 +58,7 @@
     an IPv4 server binds an IPv4 socket (sdk/rocketnet_client_transport.cpp:796).
 */
 
+#include "../test/native_shutdown.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
@@ -818,7 +819,7 @@ void rocketnet_test_posix_server_create_destroy_1000()
 #endif
             }
 
-            rocketnet_server_transport_destroy( server );
+            rn_native_server_transport_stop_and_destroy( server );
 
             // a leak per cycle exhausts a kernel limit long before the last of
             // 1000 creates, so the counts are also compared after the first
@@ -856,7 +857,7 @@ void rocketnet_test_posix_client_create_destroy_1000()
         {
             posix_client_clock_t clock;
             rocketnet_client_transport_t * client = posix_client_create( cell, "127.0.0.1:40000", &clock );
-            rocketnet_client_transport_destroy( client );
+            rn_native_client_transport_stop_and_destroy( client );
         }
         const double seconds = posix_now_seconds() - start;
         const posix_resource_counts_t after = posix_settled_counts( &before );
@@ -957,7 +958,7 @@ void rocketnet_test_posix_server_restart_same_port_100()
         {
             rocketnet_server_transport_t * discovery = posix_server_create( cell, posix_bind_address( cell ), 4 );
             fixed_port = (unsigned) rocketnet_server_transport_port( discovery );
-            rocketnet_server_transport_destroy( discovery );
+            rn_native_server_transport_stop_and_destroy( discovery );
         }
         else
             fixed_port = posix_reserved_restart_port( cell_index );
@@ -977,8 +978,8 @@ void rocketnet_test_posix_server_restart_same_port_100()
             posix_client_clock_t clock;
             rocketnet_client_transport_t * client = posix_client_create( cell, server_address, &clock );
             posix_check( posix_wait_connected( server, client, &clock, 5.0 ) );
-            rocketnet_client_transport_destroy( client );
-            rocketnet_server_transport_destroy( server );
+            rn_native_client_transport_stop_and_destroy( client );
+            rn_native_server_transport_stop_and_destroy( server );
         }
         const double seconds = posix_now_seconds() - start;
         const posix_resource_counts_t after = posix_settled_counts( &before );
@@ -1021,12 +1022,12 @@ void rocketnet_test_posix_connect_disconnect_1000()
             posix_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
             rocketnet_client_transport_disconnect( client );
             posix_check( posix_wait_server_empty( server, client, &clock, 5.0 ) );
-            rocketnet_client_transport_destroy( client );
+            rn_native_client_transport_stop_and_destroy( client );
         }
         const double seconds = posix_now_seconds() - start;
 
         posix_release_ipv4_ports( held_ports, POSIX_HELD_IPV4_PORTS );
-        rocketnet_server_transport_destroy( server );
+        rn_native_server_transport_stop_and_destroy( server );
         const posix_resource_counts_t after = posix_settled_counts( &before );
 
         posix_cell_end( &server_guard, &client_guard );
@@ -1100,13 +1101,13 @@ void rocketnet_test_posix_destroy_under_traffic_100()
 
             // destroy the server while all eight clients are sending, then
             // stop the senders before the clients themselves are destroyed
-            rocketnet_server_transport_destroy( server );
+            rn_native_server_transport_stop_and_destroy( server );
 
             running.store( false, std::memory_order_release );
             for ( int i = 0; i < client_count; i++ )
                 threads[i].join();
             for ( int i = 0; i < client_count; i++ )
-                rocketnet_client_transport_destroy( clients[i] );
+                rn_native_client_transport_stop_and_destroy( clients[i] );
         }
 
         const double seconds = posix_now_seconds() - start;

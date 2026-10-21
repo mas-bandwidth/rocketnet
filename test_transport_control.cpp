@@ -1,6 +1,7 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Compile the actual transport here to seed protocol state and substitute a
 // deterministic transport. No test hook or additional export enters the SDK.
+#include "test/native_shutdown.h"
 #include "sdk/rocketnet_server_protocol.h"
 #include "sdk/rocketnet_replay.h"
 #include "sdk/rocketnet_fragment.h"
@@ -75,7 +76,8 @@ static void record(control_fixture_t * f, const rocketnet_address_t * to, const 
     else CHECK(false);
 }
 static void fixture_destroy(void *) {}
-static bool fixture_stop(void *) { return true; }
+static void fixture_stop( void * ) {}
+static bool fixture_stopped( void * ) { return true; }
 static void send_batch(void * p, const rocketnet_platform_send_t * sends, int count)
 {
     CHECK(count > 0 && count <= ROCKETNET_SERVER_MAX_SEND_PACKETS);
@@ -173,7 +175,7 @@ static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketn
     CHECK(server);
     rocketnet_server_transport_io_close(&server->io);
     *operations = {};
-    operations->destroy = fixture_destroy; operations->stop = fixture_stop;
+    operations->destroy = fixture_destroy; operations->stop = fixture_stop; operations->stopped = fixture_stopped;
     operations->send_batch = send_batch; operations->receive_batch = receive_batch;
     if (staged)
     {
@@ -235,7 +237,7 @@ static void test_buffered_control_pressure(int clients = 300)
     }
     const double elapsed_ms = (rocketnet_time() - begin) * 1000.0;
     for (int i = 0; i < clients; ++i) CHECK(server->protocol.acks->endpoints[i].rtt == 17.0f);
-    rocketnet_server_transport_destroy(server); delete f;
+    rn_native_server_transport_stop_and_destroy(server); delete f;
     (void) elapsed_ms;
     printf("test_buffered_control_pressure_%d_clients\n", clients);
 }
@@ -258,7 +260,7 @@ static void test_disconnect_burst_next_send(bool staged)
     CHECK(f->disconnects == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS);
     CHECK(server->stats_frames[stats_index].packets_sent == before + ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS);
 
-    rocketnet_server_transport_destroy(server); delete f;
+    rn_native_server_transport_stop_and_destroy(server); delete f;
     printf("test_disconnect_burst_next_send_%s\n", staged ? "staged" : "portable");
 }
 
@@ -274,7 +276,7 @@ static void test_staged_control_fairness()
         CHECK(f->keep_alives[i] == 1);
         CHECK(server->protocol.acks->endpoints[i].rtt == 17.0f);
     }
-    rocketnet_server_transport_destroy(server); delete f;
+    rn_native_server_transport_stop_and_destroy(server); delete f;
     printf("test_staged_control_fairness\n");
 }
 
@@ -310,7 +312,7 @@ static void test_single_frame_arena()
         }
         CHECK(checked_seals == 2);
         check_arena_copy = false; fail_seal = false;
-        rocketnet_server_transport_destroy(server); delete f;
+        rn_native_server_transport_stop_and_destroy(server); delete f;
     }
     printf("test_single_frame_arena_seal_and_abort\n");
 }
@@ -335,7 +337,7 @@ static void test_staged_lease_table_full()
     CHECK(!rocketnet_server_transport_start_packet(server, 0, 64, &refused));
     CHECK(server->protocol.counters->values[ROCKETNET_COUNTER_SEND_LEASE_FULL] == 1);
     CHECK(f->aborts == 1);
-    rocketnet_server_transport_destroy(server);
+    rn_native_server_transport_stop_and_destroy(server);
     rocketnet_free(NULL, f->lease_frames);
     delete f;
     printf("test_staged_lease_table_full\n");
@@ -482,7 +484,7 @@ static void test_entries_carry_connection_id(bool staged)
         CHECK(connection_id[0] == rocketnet_server_transport_client_connection_id(server, c));
     }
 
-    rocketnet_server_transport_destroy(server); delete f;
+    rn_native_server_transport_stop_and_destroy(server); delete f;
     printf("test_entries_carry_connection_id_%s\n", staged ? "staged" : "portable");
 }
 
@@ -538,7 +540,7 @@ static void test_staged_link_address_hooks()
     CHECK(protocol->counters->values[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full);
     CHECK(f->keep_alives[0] == keep_alives && f->acks[0] == acks && f->payloads == payloads);
 
-    rocketnet_server_transport_destroy(server); delete f;
+    rn_native_server_transport_stop_and_destroy(server); delete f;
     printf("test_staged_link_address_hooks\n");
 }
 

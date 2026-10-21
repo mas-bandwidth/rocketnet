@@ -13,6 +13,7 @@
     ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS override a budget at create.
 */
 
+#include "shutdown.h"
 #include "rocketnet.h"
 #include "dev_keys.h"
 
@@ -74,7 +75,7 @@ int main( void )
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
-        rocketnet_server_destroy( server );
+        rn_cli_server_stop_and_destroy( server );
         server = NULL;
     }
     CHECK( server != NULL );
@@ -95,7 +96,7 @@ int main( void )
     if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
-        rocketnet_client_destroy( client );
+        rn_cli_client_stop_and_destroy( client );
         client = NULL;
     }
     CHECK( client != NULL );
@@ -186,9 +187,9 @@ int main( void )
 cleanup:
     // destroy on NULL is a no-op, as free(NULL) is
     if ( client )
-        rocketnet_client_destroy( client );
+        rn_cli_client_stop_and_destroy( client );
     if ( server )
-        rocketnet_server_destroy( server );
+        rn_cli_server_stop_and_destroy( server );
     rocketnet_term();
     // destroy ends a live connection and logs it, so PASS is printed after
     // the cleanup to stay the last line

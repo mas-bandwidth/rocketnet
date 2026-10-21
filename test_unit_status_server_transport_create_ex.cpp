@@ -15,6 +15,7 @@
 //     refuses without opening one; the port-zero refusal (S12) is reachable
 //     because the ladder refuses the XDP rung before opening anything.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "test/portable_crt.h"
 
@@ -291,7 +292,7 @@ static void test_server_transport_create_ex_reports_every_status()
             if ( server )
             {
                 check( status == ROCKETNET_STATUS_OK );
-                rocketnet_server_transport_destroy( server );
+                rn_test_server_transport_stop_and_destroy( server );
                 check( state.live == 0 );
                 reached_success = 1;
             }

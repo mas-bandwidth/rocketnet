@@ -1,5 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Valid-call diagnostic. See lease_cost.md; this does not measure NIC throughput.
+#include "../test/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_packet_lease.h"
@@ -143,8 +144,8 @@ int main(int argc, char ** argv)
                     fprintf(stderr, "%s %s=%llu\n", side ? "server" : "client",
                             rocketnet_counter_name(counter), (unsigned long long)value);
             }
-        rocketnet_client_transport_destroy(client);
-        rocketnet_server_transport_destroy(server);
+        rn_native_client_transport_stop_and_destroy(client);
+        rn_native_server_transport_stop_and_destroy(server);
         rocketnet_term();
         CHECK(live_bytes.load() == 0);
         return 1;
@@ -221,8 +222,8 @@ int main(int argc, char ** argv)
     CHECK(committed.load() == (finish ? uint64_t(batches + 100) * batch_size : 0));
     CHECK(accessed.load() == (access ? uint64_t(batches + 100) * batch_size * 8 : 0));
     CHECK(!finish || received > 0);
-    rocketnet_client_transport_destroy(client);
-    rocketnet_server_transport_destroy(server);
+    rn_native_client_transport_stop_and_destroy(client);
+    rn_native_server_transport_stop_and_destroy(server);
     rocketnet_term();
     CHECK(live_bytes.load() == 0);
     printf("{\"endpoint\":\"%s\",\"operation\":\"%s\",\"payload_bytes\":%d,\"threads\":%d,\"packets\":%d,\"ns_per_packet\":%.3f,\"received\":%llu,\"server_allocation_bytes\":%zu,\"client_allocation_bytes\":%zu,\"server_lease_bytes\":%zu,\"client_lease_bytes\":%zu,\"plant\":%s}\n",

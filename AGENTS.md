@@ -22,9 +22,10 @@ RocketNet is a low-level, connection-oriented client/server UDP transport and me
 
 - **Frame-time target:** Main frame calls aim for less than 100 microseconds
   per call in Release builds. This target is not yet established under a
-  1000-client load. Create may take longer. Client
-  disconnect and destroy wait for the I/O thread to exit, with no promised
-  time bound. Long soak, load and profiling runs remain part of hardening.
+  1000-client load. Create may take longer. Client disconnect and server stop
+  request shutdown without waiting for workers. Poll client disconnected or
+  server stopped before synchronous destroy joins and frees resources. Long
+  soak, load and profiling runs remain part of hardening.
 
 - **One public header:** [sdk/rocketnet.h](sdk/rocketnet.h). Include it directly from C or C++ (`#include "rocketnet.h"`); the header provides its own `extern "C"` guards when compiled as C++.
 - **One link library:** `RocketNet::rocketnet` (or the `rocketnet` CMake target when embedded via `add_subdirectory`).
@@ -105,7 +106,7 @@ A RocketNet integration follows a strict lifecycle and per-frame call order:
    - **Step 3 — Simulate:** Run the game simulation for the frame.
    - **Step 4 — Queue outgoing messages:** Reserve space in place with `rocketnet_client_start_message` / `rocketnet_server_start_message`, write the message bytes directly into the returned pointer, and commit with `rocketnet_client_finish_message` / `rocketnet_server_finish_message` (or cancel with `rocketnet_client_abort_message` / `rocketnet_server_abort_message`). To send one message to every connected client, loop over the slots with `rocketnet_server_client_connected` and start and finish a message for each.
    - **Step 5 — Send packets last:** Call `rocketnet_client_send_packets(client)` and `rocketnet_server_send_packets(server)` **last** so every message queued during the frame goes out on the wire in the same frame instead of waiting until the next tick.
-4. **Disconnect, destroy, and terminate:** Call `rocketnet_client_disconnect` (or `rocketnet_server_disconnect_client`), destroy every client and server with `rocketnet_client_destroy` and `rocketnet_server_destroy`, and call `rocketnet_term()`.
+4. **Request shutdown, check completion, then destroy:** Call `rocketnet_client_disconnect` and `rocketnet_server_stop`. Keep your event loop running and poll `rocketnet_client_disconnected` and `rocketnet_server_stopped`. Only after the corresponding query returns true may `rocketnet_client_destroy` or `rocketnet_server_destroy` synchronously join and free the object. Destroy asserts this precondition. Keep allocator and callback contexts alive through destroy, then call `rocketnet_term()` after every object has been freed. Stop/disconnect and their queries do not wait for workers; a stuck worker leaves completion false. A newly created object that has never run is already complete.
 
 ### Compilable loopback integration example
 
@@ -217,8 +218,21 @@ int main( void )
     result = client_received_reply ? 0 : 1;
 
 cleanup:
-    rocketnet_client_destroy( client );
-    rocketnet_server_destroy( server );
+    /* Command-line exit cleanup; a game would poll once per frame instead. */
+    if ( client ) rocketnet_client_disconnect( client );
+    if ( server ) rocketnet_server_stop( server );
+    {
+        const double deadline = rocketnet_time() + 10.0;
+        while ( ( client && !rocketnet_client_disconnected( client ) ) ||
+                ( server && !rocketnet_server_stopped( server ) ) )
+        {
+            if ( rocketnet_time() >= deadline )
+                return 1; /* Fail without freeing storage still owned by I/O. */
+            rocketnet_sleep( 0.001 );
+        }
+    }
+    if ( client ) rocketnet_client_destroy( client );
+    if ( server ) rocketnet_server_destroy( server );
     if ( rocketnet_term() != ROCKETNET_STATUS_OK )
         return 1;
     return result;
@@ -363,7 +377,7 @@ RocketNet refuses invalid configuration rather than clamping it. Check returned 
 - **Update returns nothing:** `rocketnet_client_update` and `rocketnet_server_update` return `void`; what an update did is read from `rocketnet_client_state`, the server's per-client calls and the stats calls.
 - **Client states (`enum rocketnet_client_state_t`, `rocketnet_client_state`, `rocketnet_client_state_name`):**
   - Progress states: `ROCKETNET_CLIENT_STATE_DISCONNECTED` (`0`), `ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE` (`1`), `ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST` (`2`), `ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE` (`3`), `ROCKETNET_CLIENT_STATE_CONNECTED` (`4`).
-  - Negative states, one for each way an attempt or a connection ends, kept until `rocketnet_client_disconnect`: `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED` (`-12`): the connection's send descriptors (`send_queue_messages`) or send buffer (`send_message_buffer_bytes`) ran out of room for a send that could not be dropped; `ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH` (`-11`): wire-checked channel configuration fields (`num_channels`, `reliable_messages_in_flight`, `receive_message_buffer_bytes`, `max_message_bytes`) differed between client and server; `ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION` (`-10`): the server sent a malformed message record or violated window or ring bounds; `ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT` (`-9`): a reliable message went unacknowledged past `reliable_message_timeout_ms`; `ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED` (`-8`): the client accepted the server's disconnect packet (the server called `rocketnet_server_disconnect_client`, `rocketnet_server_stop` or `rocketnet_server_destroy`); `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED` (`-7`), `ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN` (`-6`), `ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT` (`-5`), `ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT` (`-4`), `ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT` (`-3`), `ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT` (`-2`), `ROCKETNET_CLIENT_STATE_CONNECTION_DENIED` (`-1`). `rocketnet_client_connect` is accepted from `ROCKETNET_CLIENT_STATE_DISCONNECTED` and from the connection-ended states `-8` to `-12`, which it ends first.
+  - Negative states, one for each way an attempt or a connection ends, kept until `rocketnet_client_disconnect`: `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED` (`-12`): the connection's send descriptors (`send_queue_messages`) or send buffer (`send_message_buffer_bytes`) ran out of room for a send that could not be dropped; `ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH` (`-11`): wire-checked channel configuration fields (`num_channels`, `reliable_messages_in_flight`, `receive_message_buffer_bytes`, `max_message_bytes`) differed between client and server; `ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION` (`-10`): the server sent a malformed message record or violated window or ring bounds; `ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT` (`-9`): a reliable message went unacknowledged past `reliable_message_timeout_ms`; `ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED` (`-8`): the client accepted the server's disconnect packet (the server called `rocketnet_server_disconnect_client`, `rocketnet_server_stop` or `rocketnet_server_destroy`); `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED` (`-7`), `ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN` (`-6`), `ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT` (`-5`), `ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT` (`-4`), `ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT` (`-3`), `ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT` (`-2`), `ROCKETNET_CLIENT_STATE_CONNECTION_DENIED` (`-1`). `rocketnet_client_connect` is accepted from `ROCKETNET_CLIENT_STATE_DISCONNECTED` and from the connection-ended states `-8` to `-12`, after its previous shutdown completes; pending shutdown returns `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`.
   - A NULL client reads as `ROCKETNET_CLIENT_STATE_DISCONNECTED`, and the call counts as misuse.
 - **Server disconnect reasons (`rocketnet_server_disconnect_reason`, `rocketnet_disconnect_reason_name`):** why a server's client slot's connection ended, kept until the slot's next connection.
   - `ROCKETNET_DISCONNECT_REASON_NONE` (`0`): no connection has ended, or the connection is up.

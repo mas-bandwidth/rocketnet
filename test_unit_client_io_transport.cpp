@@ -11,6 +11,7 @@
 // of the thread, and the clock is a test clock from 1000.0 (RNClientIo
 // HandOff, Defer, Reopen, Expose, Return, Stop, IoSend, IoExit).
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "test/fake_client_driver.h"
 
@@ -100,7 +101,7 @@ static void test_client_io_backend_without_wait_uses_base_path()
     check( fake->wait_calls == 0 );
     check( client_io_transport_counter( transport, ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED ) == 0 );
 
-    rocketnet_client_transport_destroy( transport );
+    rn_test_client_transport_stop_and_destroy( transport );
     check( fake->destroy_calls == 1 );
     delete fake;
 }
@@ -138,7 +139,7 @@ static void test_client_io_backend_with_wait_uses_io_thread()
     check( rocketnet_address_equal( &fake->sent[0].address, &server ) );
     check( io->rings.state[0].load() == ROCKETNET_CLIENT_RING_SENT );
 
-    rocketnet_client_transport_destroy( transport );
+    rn_test_client_transport_stop_and_destroy( transport );
     check( fake->destroy_calls == 1 );
     check( fake->num_sent == 1 );
     delete fake;
@@ -194,7 +195,7 @@ static void test_client_io_handoff_never_waits()
     rocketnet_client_transport_stats( transport, &stats );
     check( stats.packets_sent_per_second == 3 );
 
-    rocketnet_client_transport_destroy( transport );
+    rn_test_client_transport_stop_and_destroy( transport );
     check( fake->num_sent == 3 );
     delete fake;
 }
@@ -217,7 +218,7 @@ static void test_client_io_destroy_hands_off_deferred_slots()
     check( client_io_transport_counter( transport, ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED ) == 1 );
     check( fake->num_sent == 0 );
 
-    rocketnet_client_transport_destroy( transport );
+    rn_test_client_transport_stop_and_destroy( transport );
     check( fake->num_sent == 2 );
     check( fake->destroy_calls == 1 );
     delete fake;
@@ -260,7 +261,7 @@ static void test_client_io_update_exposes_published_batch()
     check( client_io_transport_counter( transport, ROCKETNET_COUNTER_PACKETS_RECEIVED ) == received_before + 1 );
     check( io->receive.state[0].load() == ROCKETNET_CLIENT_BUFFER_FREE );
 
-    rocketnet_client_transport_destroy( transport );
+    rn_test_client_transport_stop_and_destroy( transport );
     delete fake;
 }
 

@@ -13,6 +13,7 @@
     Run it from the repository root: ./bin/example_transports
 */
 
+#include "shutdown.h"
 #include "rocketnet.h"
 #include "dev_keys.h"
 
@@ -58,7 +59,7 @@ static int exchange( struct rocketnet_server_t * server, const char * server_add
     if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
-        rocketnet_client_destroy( client );
+        rn_cli_client_stop_and_destroy( client );
         client = NULL;
     }
     if ( !client )
@@ -103,7 +104,7 @@ static int exchange( struct rocketnet_server_t * server, const char * server_add
         rocketnet_sleep( 0.001 );
     }
     rocketnet_client_disconnect( client );
-    rocketnet_client_destroy( client );
+    rn_cli_client_stop_and_destroy( client );
     return ok;
 }
 
@@ -126,19 +127,19 @@ static int create_and_prove( const char * label, const char * transport )
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
-        rocketnet_server_destroy( server );
+        rn_cli_server_stop_and_destroy( server );
         server = NULL;
     }
     if ( !server )
         return 0;
     if ( !rocketnet_server_ipv4_address( server, server_address, sizeof( server_address ) ) )
     {
-        rocketnet_server_destroy( server );
+        rn_cli_server_stop_and_destroy( server );
         return 0;
     }
     printf( "%s chose %s\n", label, rocketnet_server_transport_name( server ) );
     ok = exchange( server, server_address );
-    rocketnet_server_destroy( server );
+    rn_cli_server_stop_and_destroy( server );
     return ok;
 }
 
@@ -173,7 +174,7 @@ int main( void )
         if ( !refused ) printf( "create refused: %s\n", rocketnet_status_name( create_status_3 ) );
         const int started = refused ? (int) rocketnet_server_start( refused ) : -1;
         if ( refused )
-            rocketnet_server_destroy( refused );
+            rn_cli_server_stop_and_destroy( refused );
         CHECK( started != ROCKETNET_STATUS_OK );
     }
     printf( "refused as promised: the pin named no transport\n" );

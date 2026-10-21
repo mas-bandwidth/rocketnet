@@ -16,6 +16,7 @@
     [--clients <1..1000>] [--seconds <1..3600>] [--wrong-order]
 */
 
+#include "shutdown.h"
 #include "rocketnet.h"
 #include "dev_keys.h"
 
@@ -123,7 +124,7 @@ int main( int argc, char ** argv )
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
-        rocketnet_server_destroy( server );
+        rn_cli_server_stop_and_destroy( server );
         server = NULL;
     }
     if ( !server ) { printf( "FAIL: server create\n" ); goto cleanup; }
@@ -231,8 +232,8 @@ int main( int argc, char ** argv )
     else result = 0;
 
 cleanup:
-    for ( int i = 0; i < num_clients; i++ ) rocketnet_client_destroy( clients[i] );
-    rocketnet_server_destroy( server );
+    for ( int i = 0; i < num_clients; i++ ) rn_cli_client_stop_and_destroy( clients[i] );
+    rn_cli_server_stop_and_destroy( server );
     rocketnet_term();
     free( clients );
     // destroy ends a live connection and logs it, so PASS is printed after

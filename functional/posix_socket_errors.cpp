@@ -14,6 +14,7 @@
     drops the senders counted.
 */
 
+#include "../test/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_platform.h"
@@ -402,8 +403,8 @@ static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char 
 
 static void posix_pair_destroy( struct posix_pair_t * pair )
 {
-    rocketnet_client_transport_destroy( pair->client );
-    rocketnet_server_transport_destroy( pair->server );
+    rn_native_client_transport_stop_and_destroy( pair->client );
+    rn_native_server_transport_stop_and_destroy( pair->server );
 }
 
 // ---------------------------------------------------
@@ -1673,12 +1674,12 @@ static void posix_xdp_teardown()
 {
     if ( posix_xdp_client )
     {
-        rocketnet_client_transport_destroy( posix_xdp_client );
+        rn_native_client_transport_stop_and_destroy( posix_xdp_client );
         posix_xdp_client = NULL;
     }
     if ( posix_xdp_server )
     {
-        rocketnet_server_transport_destroy( posix_xdp_server );
+        rn_native_server_transport_stop_and_destroy( posix_xdp_server );
         posix_xdp_server = NULL;
     }
     if ( posix_xdp_made )

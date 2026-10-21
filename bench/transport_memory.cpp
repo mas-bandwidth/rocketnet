@@ -1,5 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Pre-allocation plan and optional allocator-observed server footprint.
+#include "../test/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_memory.h"
 #include <errno.h>
@@ -106,7 +107,7 @@ int main(int argc, char ** argv)
     // other planned SDK heap storage stays live. The observer must agree.
     const bool matches = live.load() <= planned_allocator && peak.load() <= planned_allocator &&
         planned_allocator - live.load() <= (uint64_t)plan.worker_threads * rocketnet_platform_thread_allocation_bytes();
-    rocketnet_server_transport_destroy(server);
+    rn_native_server_transport_stop_and_destroy(server);
     rocketnet_term();
     if (!same_transport || !matches) { fprintf(stderr, "allocator observation differs from the plan; check ambient config overrides\n"); return 1; }
     if (live.load() || count.load()) { fprintf(stderr, "memory profile leaked allocations\n"); return 1; }

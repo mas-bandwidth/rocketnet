@@ -1,4 +1,5 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. AGPL-3.0. */
+#include "test/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "test/portable_crt.h"
 #include "rocketnet_connect_token.h"
@@ -610,7 +611,7 @@ static void check_server_memory_budget( allocator_state & state )
     setenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", budget, 1 );
     rocketnet_server_transport_t * server = rocketnet_server_transport_create( &state, "127.0.0.1:0", &config );
     check( server != NULL );
-    rocketnet_server_transport_destroy( server );
+    rn_native_server_transport_stop_and_destroy( server );
     unsetenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" );
 }
 
@@ -638,7 +639,7 @@ static void check_client_memory_budget( allocator_state & state )
     setenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES", budget, 1 );
     rocketnet_client_transport_t * client = rocketnet_client_transport_create( &state, token, &config, 0.0 );
     check( client != NULL );
-    rocketnet_client_transport_destroy( client );
+    rn_native_client_transport_stop_and_destroy( client );
     unsetenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES" );
 }
 

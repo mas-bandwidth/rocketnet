@@ -14,6 +14,7 @@
     Run the server first, then the client. See docs/examples/client_server.md.
 */
 
+#include "shutdown.h"
 #include "rocketnet.h"
 #include "dev_keys.h"
 
@@ -146,7 +147,7 @@ int main( int argc, char ** argv )
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
-        rocketnet_server_destroy( server );
+        rn_cli_server_stop_and_destroy( server );
         server = NULL;
     }
     CHECK( server != NULL );
@@ -226,7 +227,7 @@ int main( int argc, char ** argv )
 cleanup:
     // destroy on NULL is a no-op, as free(NULL) is
     if ( server )
-        rocketnet_server_destroy( server );
+        rn_cli_server_stop_and_destroy( server );
     rocketnet_term();
     // destroy ends a live connection and logs it, so PASS is printed after
     // the cleanup to stay the last line

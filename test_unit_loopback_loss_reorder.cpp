@@ -15,6 +15,7 @@
 // and with the link simulator on and off, against counters recorded at the base
 // (sprint/rocketnet-proof cac844d) before this change existed.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "test/portable_crt.h"
 
@@ -141,8 +142,8 @@ static bool loopback_transport_pair_connect( struct loopback_transport_pair_t * 
 
 static void loopback_transport_pair_teardown( struct loopback_transport_pair_t * pair )
 {
-    rocketnet_client_transport_destroy( pair->client );
-    rocketnet_server_transport_destroy( pair->server );
+    rn_test_client_transport_stop_and_destroy( pair->client );
+    rn_test_server_transport_stop_and_destroy( pair->server );
     rocketnet_public_link_simulator_test_development( 0 );
 }
 

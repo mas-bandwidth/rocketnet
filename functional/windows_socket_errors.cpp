@@ -13,6 +13,7 @@
     drop, turns these cases red.
 */
 
+#include "../test/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
@@ -280,8 +281,8 @@ static void windows_socket_errors_session_start( windows_socket_errors_session_t
 
 static void windows_socket_errors_session_finish( windows_socket_errors_session_t * session )
 {
-    rocketnet_client_transport_destroy( session->client );
-    rocketnet_server_transport_destroy( session->server );
+    rn_native_client_transport_stop_and_destroy( session->client );
+    rn_native_server_transport_stop_and_destroy( session->server );
 }
 
 // ---------------------------------------------------------------------------

@@ -27,6 +27,7 @@
     the pass bound is 10 s of wall time.
 */
 
+#include "../test/native_shutdown.h"
 #include "../test/time_scale.h"
 #include "rocketnet.h"
 #include "rocketnet_counters.h"
@@ -1152,7 +1153,7 @@ void live_message_matrix_loopback()
         }
         live_matrix_check( !rocketnet_message_server_client_connected( m->server, 0 ) );
     }
-    rocketnet_message_client_destroy( m->client );
+    rn_native_message_client_stop_and_destroy( m->client );
     m->client = NULL;
 
     const double elapsed = rocketnet_platform_time() - m->cpu_start;
@@ -1175,7 +1176,7 @@ void live_message_matrix_loopback()
         rocketnet_message_server_update( m->server, live_matrix_now( m ) );
     }
     live_matrix_check( rocketnet_server_transport_state( server_transport ) == ROCKETNET_SERVER_TRANSPORT_STOPPED );
-    rocketnet_message_server_destroy( m->server );
+    rn_native_message_server_stop_and_destroy( m->server );
 
     live_matrix_check( m->failures == 0 );
     live_matrix_check( m->edge_failures == 0 );

@@ -12,6 +12,7 @@
 //
 // Every case runs in memory, with no clock, sockets or network.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "test/fake_client_driver.h"
 
@@ -114,7 +115,7 @@ static void client_create_and_expect_warn( const uint8_t * server_key, int expec
     }
     stop_capture();
 
-    rocketnet_client_transport_destroy( transport );
+    rn_test_client_transport_stop_and_destroy( transport );
     check( fake->destroy_calls == 1 );
     delete fake;
 }
@@ -162,7 +163,7 @@ static void test_dev_keys_warn_on_every_start()
         check( status == ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE );
 #else
         if ( srv )
-            rocketnet_server_transport_destroy( (struct rocketnet_server_transport_t *) srv );
+            rn_test_server_transport_stop_and_destroy( (struct rocketnet_server_transport_t *) srv );
 #endif
     }
 

@@ -3,6 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "test/fake_client_driver.h"
 #include "test/portable_crt.h"
@@ -281,14 +282,14 @@ static uint64_t destroy_disconnect_drain( void * endpoint, uint64_t * dropped )
     return count;
 }
 
-// DONE-WHEN (2): destroying a connected client sends the same redundant
+// DONE-WHEN (2): disconnecting a connected client before destroy sends the same redundant
 // disconnect packets that rocketnet_client_disconnect sends (the same count
 // and encryption), before its sockets close, and the server frees that
 // client's slot on receipt, not on timeout: a loopback case with time as an
 // argument starting at 1000.0 asserts the server's slot is free within one
 // server update after the client's destroy, and the timed-out counter does not
 // move.
-static void test_destroy_connected_client_sends_disconnect()
+static void test_disconnect_then_destroy_connected_client_sends_disconnect()
 {
     destroy_disconnect_env_guard_t env_guard;
     rocketnet_quiet( 1 );
@@ -308,6 +309,7 @@ static void test_destroy_connected_client_sends_disconnect()
     const uint64_t explicit_timeout_before = sc_explicit[ROCKETNET_COUNTER_CLIENT_TIMED_OUT];
 
     rocketnet_client_disconnect( client_explicit );
+    rn_test_client_wait_disconnected( client_explicit );
     rocketnet_server_update( server_explicit, time_explicit );
     check( !rocketnet_server_client_connected( server_explicit, slot_explicit ) );
 
@@ -319,10 +321,10 @@ static void test_destroy_connected_client_sends_disconnect()
     check( explicit_disc_ok_delta == 1 );
     check( sc_explicit[ROCKETNET_COUNTER_CLIENT_TIMED_OUT] == explicit_timeout_before );
 
-    rocketnet_client_destroy( client_explicit );
-    rocketnet_server_destroy( server_explicit );
+    rn_test_client_stop_and_destroy( client_explicit );
+    rn_test_server_stop_and_destroy( server_explicit );
 
-    // Destroyed connected client: rocketnet_client_destroy without prior disconnect.
+    // Connected client: request disconnect, complete it, then destroy.
     double time = 1000.0;
     rocketnet_server_t * server = destroy_disconnect_server_create( &keys, time );
     rocketnet_client_t * client = destroy_disconnect_client_create( &keys, rocketnet_server_port( server ), 0xC102ULL );
@@ -336,7 +338,7 @@ static void test_destroy_connected_client_sends_disconnect()
     const uint64_t disc_open_fail_before = sc[ROCKETNET_COUNTER_DISCONNECT_DID_NOT_OPEN];
     const uint64_t timeout_before = sc[ROCKETNET_COUNTER_CLIENT_TIMED_OUT];
 
-    rocketnet_client_destroy( client );
+    rn_test_client_stop_and_destroy( client );
 
     // One server update after the client's destroy frees the slot on receipt
     // of the sealed disconnect burst, with zero open failures and no timeout.
@@ -354,17 +356,17 @@ static void test_destroy_connected_client_sends_disconnect()
     check( disc_rx_delta == explicit_disc_rx_delta );
     check( disc_ok_delta == explicit_disc_ok_delta );
 
-    rocketnet_server_destroy( server );
+    rn_test_server_stop_and_destroy( server );
 }
 
-REGISTER_UNIT_TEST( test_destroy_connected_client_sends_disconnect );
+REGISTER_UNIT_TEST( test_disconnect_then_destroy_connected_client_sends_disconnect );
 
 // DONE-WHEN (3): destroying a server with connected clients sends each
 // connected client the server's disconnect packets before the transport
 // closes, and each client reaches its disconnected state with the
 // server-disconnect reason within one client update: a loopback case asserts
 // it for at least two clients.
-static void test_destroy_server_sends_disconnect_to_every_connected_client()
+static void test_stop_then_destroy_server_sends_disconnect_to_every_connected_client()
 {
     destroy_disconnect_env_guard_t env_guard;
     rocketnet_quiet( 1 );
@@ -403,7 +405,7 @@ static void test_destroy_server_sends_disconnect_to_every_connected_client()
         client_disc_ok_before[i] = cc[ROCKETNET_COUNTER_CLIENT_DISCONNECT_ACCEPTED];
     }
 
-    rocketnet_server_destroy( server );
+    rn_test_server_stop_and_destroy( server );
 
     for ( int i = 0; i < NUM_CLIENTS; i++ )
     {
@@ -420,10 +422,10 @@ static void test_destroy_server_sends_disconnect_to_every_connected_client()
     }
 
     for ( int i = 0; i < NUM_CLIENTS; i++ )
-        rocketnet_client_destroy( clients[i] );
+        rn_test_client_stop_and_destroy( clients[i] );
 }
 
-REGISTER_UNIT_TEST( test_destroy_server_sends_disconnect_to_every_connected_client );
+REGISTER_UNIT_TEST( test_stop_then_destroy_server_sends_disconnect_to_every_connected_client );
 
 // Steps a public client against a loopback server until the client reaches
 // no handshake target: destroy at once, before any handshake state
@@ -464,16 +466,16 @@ static void destroy_disconnect_public_client_destroy_sends_nothing( const destro
     rocketnet_server_update( server, time );
     const uint64_t rx_before = rn_server_stats_of( server ).packets_received;
 
-    rocketnet_client_destroy( client );
+    rn_test_client_stop_and_destroy( client );
     rocketnet_server_update( server, time );
     check( rn_server_stats_of( server ).packets_received == rx_before );
 
-    rocketnet_server_destroy( server );
+    rn_test_server_stop_and_destroy( server );
 }
 
 // DONE-WHEN (4): destroying a client or server with no live connection sends
 // nothing (a case counts datagrams handed to the fake transport: zero).
-static void test_destroy_without_live_connection_sends_nothing()
+static void test_shutdown_without_live_connection_sends_nothing()
 {
     destroy_disconnect_env_guard_t env_guard;
     rocketnet_quiet( 1 );
@@ -498,7 +500,7 @@ static void test_destroy_without_live_connection_sends_nothing()
         check( transport != NULL );
         check( fake.num_sent == 0 );
 
-        rocketnet_client_transport_destroy( transport );
+        rn_test_client_transport_stop_and_destroy( transport );
         check( fake.destroy_calls == 1 );
         check( fake.num_sent == 0 );
         check( fake.send_calls == 0 );
@@ -518,14 +520,14 @@ static void test_destroy_without_live_connection_sends_nothing()
         check( transport != NULL );
         check( fake.num_sent == 0 );
 
-        rocketnet_client_transport_destroy( transport );
+        rn_test_client_transport_stop_and_destroy( transport );
         check( fake.destroy_calls == 1 );
         check( fake.num_sent == 0 );
         check( fake.send_calls == 0 );
         check( fake.send_batch_calls == 0 );
     }
 
-    // Public clients destroyed with rocketnet_client_destroy and no live
+    // Public clients destroyed with rocketnet_client_destroy after shutdown completion and no live
     // connection: right after create, while requesting a cookie, and while
     // sending the connection request. Before the session keys exist there is
     // nothing to seal, so the server receives nothing across the destroy.
@@ -552,9 +554,9 @@ static void test_destroy_without_live_connection_sends_nothing()
         check( rn_server_stats_of( server ).packets_sent == 0 );
         check( destroy_disconnect_drain( endpoint, &dropped ) == 0 );
 
-        rocketnet_server_destroy( server );
+        rn_test_server_stop_and_destroy( server );
         check( destroy_disconnect_drain( endpoint, &dropped ) == 0 );
-        rocketnet_client_destroy( bystander );
+        rn_test_client_stop_and_destroy( bystander );
     }
 
     // Server with zero connected clients and one client mid-handshake: the
@@ -586,9 +588,9 @@ static void test_destroy_without_live_connection_sends_nothing()
         check( rn_server_stats_of( server ).packets_sent > 0 );
         destroy_disconnect_drain( endpoint, &dropped );
 
-        rocketnet_server_destroy( server );
+        rn_test_server_stop_and_destroy( server );
         check( destroy_disconnect_drain( endpoint, &dropped ) == 0 );
-        rocketnet_client_destroy( client );
+        rn_test_client_stop_and_destroy( client );
     }
 
     // Server after all clients disconnected: one client disconnects itself
@@ -612,6 +614,7 @@ static void test_destroy_without_live_connection_sends_nothing()
         check( rocketnet_server_num_connected_clients( server ) == NUM_CLIENTS );
 
         rocketnet_client_disconnect( clients[0] );
+        rn_test_client_wait_disconnected( clients[0] );
         rocketnet_server_disconnect_client( server, slots[1] );
         rocketnet_server_send_packets( server );
         time += 0.01;
@@ -629,13 +632,13 @@ static void test_destroy_without_live_connection_sends_nothing()
         for ( int i = 0; i < NUM_CLIENTS; i++ )
             destroy_disconnect_drain( endpoints[i], &dropped[i] );
 
-        rocketnet_server_destroy( server );
+        rn_test_server_stop_and_destroy( server );
         for ( int i = 0; i < NUM_CLIENTS; i++ )
         {
             check( destroy_disconnect_drain( endpoints[i], &dropped[i] ) == 0 );
-            rocketnet_client_destroy( clients[i] );
+            rn_test_client_stop_and_destroy( clients[i] );
         }
     }
 }
 
-REGISTER_UNIT_TEST( test_destroy_without_live_connection_sends_nothing );
+REGISTER_UNIT_TEST( test_shutdown_without_live_connection_sends_nothing );

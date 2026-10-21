@@ -20,6 +20,7 @@
 //     state 2 or 3, the server stops answering, and the client's next update
 //     past the token's timeout ends the attempt in -(state + 1).
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "sdk/rocketnet_connect_token.h"
 #include "sdk/rocketnet_base64.h"
@@ -167,8 +168,8 @@ static void test_client_mutex_create_failed_reached()
 
     rocketnet_platform_set_priority_calls_for_testing( NULL );
 
-    rocketnet_client_destroy( client );
-    rocketnet_server_destroy( server );
+    rn_test_client_stop_and_destroy( client );
+    rn_test_server_stop_and_destroy( server );
 }
 REGISTER_UNIT_TEST( test_client_mutex_create_failed_reached );
 
@@ -249,8 +250,8 @@ static void test_client_connect_thread_create_failed_reached()
     check( thread_create_failed == 1 );
     check( thread_create_status == ROCKETNET_STATUS_THREAD_CREATE_FAILED );
 
-    rocketnet_client_destroy( client );
-    rocketnet_server_destroy( server );
+    rn_test_client_stop_and_destroy( client );
+    rn_test_server_stop_and_destroy( server );
 
     check( rocketnet_term() == ROCKETNET_STATUS_OK );
     check( state.live == 0 );
@@ -318,8 +319,8 @@ static enum rocketnet_client_state_t reached_handshake_stall( enum rocketnet_cli
     *ended_at = time;
 
     const enum rocketnet_client_state_t state = rocketnet_client_state( client );
-    rocketnet_client_destroy( client );
-    rocketnet_server_destroy( server );
+    rn_test_client_stop_and_destroy( client );
+    rn_test_server_stop_and_destroy( server );
     return state;
 }
 

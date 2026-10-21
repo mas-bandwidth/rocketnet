@@ -8,6 +8,7 @@
     through the state machines and the in-memory simulator.
 */
 
+#include "../test/native_shutdown.h"
 #include "rocketnet_internal.h"
 
 // The shared harness carries one call with the retired create-time argument.
@@ -49,7 +50,7 @@ do                                                                              
 {                                                                                                               \
     rocketnet_counters_assert_conserved( rocketnet_client_transport_counters( client ) );                       \
     rocketnet_counters_assert_clean( rocketnet_client_transport_counters( client ) );                           \
-    rocketnet_client_transport_destroy( client );                                                               \
+    rn_native_client_transport_stop_and_destroy( client );                                                               \
 } while(0)
 
 #define ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server )                                                           \
@@ -57,7 +58,7 @@ do                                                                              
 {                                                                                                               \
     rocketnet_counters_assert_conserved( rocketnet_server_transport_counters( server ) );                       \
     rocketnet_counters_assert_clean( rocketnet_server_transport_counters( server ) );                           \
-    rocketnet_server_transport_destroy( server );                                                               \
+    rn_native_server_transport_stop_and_destroy( server );                                                               \
 } while(0)
 
 #define ROCKETNET_FUNCTIONAL_DESTROY_CLIENT_EXCEPT( client, ... )                                               \
@@ -65,7 +66,7 @@ do                                                                              
 {                                                                                                               \
     rocketnet_counters_assert_conserved( rocketnet_client_transport_counters( client ) );                       \
     rocketnet_counters_assert_clean_except( rocketnet_client_transport_counters( client ), __VA_ARGS__ );       \
-    rocketnet_client_transport_destroy( client );                                                               \
+    rn_native_client_transport_stop_and_destroy( client );                                                               \
 } while(0)
 
 #define ROCKETNET_FUNCTIONAL_DESTROY_SERVER_EXCEPT( server, ... )                                               \
@@ -73,7 +74,7 @@ do                                                                              
 {                                                                                                               \
     rocketnet_counters_assert_conserved( rocketnet_server_transport_counters( server ) );                       \
     rocketnet_counters_assert_clean_except( rocketnet_server_transport_counters( server ), __VA_ARGS__ );       \
-    rocketnet_server_transport_destroy( server );                                                               \
+    rn_native_server_transport_stop_and_destroy( server );                                                               \
 } while(0)
 
 void rocketnet_test_server_refuses_keyless_config()
@@ -3614,7 +3615,7 @@ void rocketnet_test_public_client_server_queries()
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
-        rocketnet_server_destroy( server );
+        rn_cli_server_stop_and_destroy( server );
         server = NULL;
     }
     rocketnet_check( server );
@@ -3634,7 +3635,7 @@ void rocketnet_test_public_client_server_queries()
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
     if ( client && rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
     {
-        rocketnet_client_destroy( client );
+        rn_cli_client_stop_and_destroy( client );
         client = NULL;
     }
     rocketnet_check( client );
@@ -3766,8 +3767,8 @@ void rocketnet_test_public_client_server_queries()
     rocketnet_check( rn_server_client_stats_of( server, 3 ).packets_sent == 0 );
     rocketnet_check( rocketnet_server_client_id( server, 3 ) == 0 );
 
-    rocketnet_client_destroy( client );
-    rocketnet_server_destroy( server );
+    rn_cli_client_stop_and_destroy( client );
+    rn_cli_server_stop_and_destroy( server );
 }
 
 void rocketnet_test_config_precedence()
@@ -4196,7 +4197,7 @@ void rocketnet_test_server_rio_probe()
 
     // destroy with nothing but receives outstanding: closesocket completes
     // them, the drain accounts for every one, then the region is freed
-    rocketnet_server_rio_destroy( rio );
+    rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
 
     // each constructor stage refuses cleanly and unwinds what it built
     for ( int stage = 1; stage <= 6; stage++ )
@@ -4210,7 +4211,7 @@ void rocketnet_test_server_rio_probe()
     rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1:0" ) );
     rio = rocketnet_server_rio_create( NULL, &bind_address );
     rocketnet_check( rio );
-    rocketnet_server_rio_destroy( rio );
+    rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
 
     // every destroy, the refused stages' included, drained before it freed
     rocketnet_check( rocketnet_server_rio_leaked_regions() == leaked );
@@ -4366,7 +4367,7 @@ void rocketnet_test_server_rio_wire_ipv4()
 
     rocketnet_platform_socket_destroy( peer );
     const uint64_t leaked = rocketnet_server_rio_leaked_regions();
-    rocketnet_server_rio_destroy( rio );
+    rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
     rocketnet_check( rocketnet_server_rio_leaked_regions() == leaked );
 }
 
@@ -4459,7 +4460,7 @@ void rocketnet_test_server_rio_wire_ipv6()
 
     rocketnet_platform_socket_destroy( peer );
     const uint64_t leaked = rocketnet_server_rio_leaked_regions();
-    rocketnet_server_rio_destroy( rio );
+    rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
     rocketnet_check( rocketnet_server_rio_leaked_regions() == leaked );
 }
 
@@ -4486,7 +4487,7 @@ void rocketnet_test_server_rio_wire_dual_stack()
     rocketnet_platform_socket_destroy( peer );
 
     const uint64_t leaked = rocketnet_server_rio_leaked_regions();
-    rocketnet_server_rio_destroy( rio );
+    rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
     rocketnet_check( rocketnet_server_rio_leaked_regions() == leaked );
 }
 
@@ -4533,7 +4534,7 @@ void rocketnet_test_server_rio_send_full()
     rocketnet_check( rocketnet_server_rio_pending( rio ) == ROCKETNET_RIO_RECEIVES );
 
     const uint64_t leaked = rocketnet_server_rio_leaked_regions();
-    rocketnet_server_rio_destroy( rio );
+    rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
     rocketnet_check( rocketnet_server_rio_leaked_regions() == leaked );
 }
 
@@ -4674,7 +4675,7 @@ void rocketnet_test_server_iocp_uso_uro_probe()
     rocketnet_check( counters[ROCKETNET_IOCP_URO_BATCHES] == 0 );
     rocketnet_check( counters[ROCKETNET_IOCP_USO_FALLBACKS] == 0 );
     rocketnet_test_iocp_exchange( iocp, &bind_address );
-    rocketnet_server_iocp_destroy( iocp );
+    rn_native_backend_stop_and_destroy( iocp, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
 
     rocketnet_address_t plain_address;
     rocketnet_check( rocketnet_address_parse( &plain_address, "127.0.0.1:0" ) );
@@ -4687,7 +4688,7 @@ void rocketnet_test_server_iocp_uso_uro_probe()
     rocketnet_server_iocp_counters( plain, counters );
     rocketnet_check( counters[ROCKETNET_IOCP_USO_SENDS] == 0 );
     rocketnet_check( counters[ROCKETNET_IOCP_URO_BATCHES] == 0 );
-    rocketnet_server_iocp_destroy( plain );
+    rn_native_backend_stop_and_destroy( plain, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
 }
 
 void rocketnet_test_server_iocp_uso_wire()
@@ -4709,7 +4710,7 @@ void rocketnet_test_server_iocp_uso_wire()
                       (unsigned long long) counters[ROCKETNET_IOCP_URO_BATCHES] );
     if ( ( features & ROCKETNET_IOCP_FEATURE_USO ) && ( rocketnet_server_iocp_features( iocp ) & ROCKETNET_IOCP_FEATURE_USO ) )
         rocketnet_check( counters[ROCKETNET_IOCP_USO_SENDS] > 0 );
-    rocketnet_server_iocp_destroy( iocp );
+    rn_native_backend_stop_and_destroy( iocp, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
 }
 #endif
 
@@ -5291,7 +5292,7 @@ void rocketnet_test_server_gso_probe()
     rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT] == 0 );
     rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_RECEIVED] == 0 );
 
-    rocketnet_server_gso_destroy( gso );
+    rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
 
     // the disable flags force the degraded tiers, so the fallback paths are
     // testable on kernels where the probe would say yes
@@ -5303,7 +5304,7 @@ void rocketnet_test_server_gso_probe()
     rocketnet_check( plain );
     rocketnet_check( ( rocketnet_server_gso_features( plain ) & ROCKETNET_SERVER_GSO_FEATURE_SEGMENT ) == 0 );
     rocketnet_check( ( rocketnet_server_gso_features( plain ) & ROCKETNET_SERVER_GSO_FEATURE_GRO ) == 0 );
-    rocketnet_server_gso_destroy( plain );
+    rn_native_backend_stop_and_destroy( plain, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
 }
 
 // the wire exchange, shared by the tiers and the families: a plain UDP peer
@@ -5557,7 +5558,7 @@ static void rocketnet_test_server_gso_wire_exchange( const char * /* test_name *
     }
 
     rocketnet_platform_socket_destroy( peer );
-    rocketnet_server_gso_destroy( gso );
+    rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
 }
 
 void rocketnet_test_server_gso_wire_ipv4()
@@ -5658,7 +5659,7 @@ void rocketnet_test_server_gso_send_overflow()
     rocketnet_check( recovered );
 
     rocketnet_platform_socket_destroy( peer );
-    rocketnet_server_gso_destroy( gso );
+    rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
 }
 
 
@@ -5704,7 +5705,7 @@ void rocketnet_test_server_uring_probe()
     // same port afterwards, so the sockets are gone
 
     const uint16_t port = bind_address.port;
-    rocketnet_server_uring_destroy( uring );
+    rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
 
     rocketnet_address_t again_address;
     rocketnet_check( rocketnet_address_parse( &again_address, "127.0.0.1" ) );
@@ -5713,7 +5714,7 @@ void rocketnet_test_server_uring_probe()
     rocketnet_check( again );
     rocketnet_check( again_address.port == port );
     rocketnet_check( rocketnet_server_uring_num_queues( again ) == ROCKETNET_URING_DEFAULT_QUEUES );
-    rocketnet_server_uring_destroy( again );
+    rn_native_backend_stop_and_destroy( again, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
 
     // a queue count past the geometry refuses, never clamps
 
@@ -5931,7 +5932,7 @@ static void rocketnet_test_server_uring_wire_exchange( const char * bind_string,
     rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_RECEIVED] == ROCKETNET_URING_TEST_PACKETS );
 
     rocketnet_platform_socket_destroy( peer );
-    rocketnet_server_uring_destroy( uring );
+    rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
 }
 
 void rocketnet_test_server_uring_wire_ipv4()
@@ -6023,7 +6024,7 @@ void rocketnet_test_server_uring_send_overflow()
     rocketnet_check( recovered );
 
     rocketnet_platform_socket_destroy( peer );
-    rocketnet_server_uring_destroy( uring );
+    rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
 }
 
 void rocketnet_test_server_uring_receive_rearms_after_no_buffers()
@@ -6110,7 +6111,7 @@ void rocketnet_test_server_uring_receive_rearms_after_no_buffers()
     rocketnet_check( recovered );
 
     rocketnet_platform_socket_destroy( peer );
-    rocketnet_server_uring_destroy( uring );
+    rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
 }
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
@@ -6628,7 +6629,7 @@ void rocketnet_test_message_objects_loopback_from_t1000()
     }
     rocketnet_check( !rocketnet_message_server_client_connected( server, 0 ) );
 
-    rocketnet_message_client_destroy( client );
+    rn_native_message_client_stop_and_destroy( client );
 
     struct rocketnet_server_transport_t * server_transport = rocketnet_message_server_transport( server );
     rocketnet_server_transport_stop( server_transport );
@@ -6641,7 +6642,7 @@ void rocketnet_test_message_objects_loopback_from_t1000()
         rocketnet_message_server_update( server, now );
     }
     rocketnet_check( rocketnet_server_transport_state( server_transport ) == ROCKETNET_SERVER_TRANSPORT_STOPPED );
-    rocketnet_message_server_destroy( server );
+    rn_native_message_server_stop_and_destroy( server );
 }
 
 // The level-triggered wake beside a real socket on Linux: the eventfd is set
@@ -7193,7 +7194,7 @@ static void rocketnet_xdp_veth_teardown()
     }
     if ( rocketnet_xdp_veth_server )
     {
-        rocketnet_server_transport_destroy( rocketnet_xdp_veth_server );
+        rn_native_server_transport_stop_and_destroy( rocketnet_xdp_veth_server );
         rocketnet_xdp_veth_server = NULL;
     }
     if ( rocketnet_xdp_veth_made )
@@ -7533,7 +7534,7 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
     // every frame the program redirected has reached the transport before
     // the counters are read
 
-    rocketnet_client_transport_destroy( client );
+    rn_native_client_transport_stop_and_destroy( client );
     start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 0.5 )
     {
@@ -7641,7 +7642,7 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         rocketnet_platform_sleep( 0.001 );
     }
-    rocketnet_server_transport_destroy( server );
+    rn_native_server_transport_stop_and_destroy( server );
     rocketnet_xdp_veth_server = NULL;
 
     rocketnet_xdp_veth_teardown();
@@ -8274,7 +8275,7 @@ void rocketnet_test_client_receive_thread_quit_destroy_joins_1000_times()
         rocketnet_check( rocketnet_write_test_connect_token( "127.0.0.1:40000", 1, rocketnet_functional_token_timestamp( client_config.game_clock_epoch, game_time ), token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
         struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, &client_config, game_time );
         rocketnet_check( client != NULL );
-        rocketnet_client_transport_destroy( client );
+        rn_native_client_transport_stop_and_destroy( client );
     }
 }
 
@@ -8329,7 +8330,7 @@ static void rocketnet_test_public_client_reads_server_disconnected()
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
-        rocketnet_server_destroy( server );
+        rn_cli_server_stop_and_destroy( server );
         server = NULL;
     }
     rocketnet_check( server );
@@ -8347,7 +8348,7 @@ static void rocketnet_test_public_client_reads_server_disconnected()
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
     if ( client && rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
     {
-        rocketnet_client_destroy( client );
+        rn_cli_client_stop_and_destroy( client );
         client = NULL;
     }
     rocketnet_check( client );
@@ -8384,8 +8385,8 @@ static void rocketnet_test_public_client_reads_server_disconnected()
     rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED );
     rocketnet_check( !rocketnet_server_client_connected( server, index ) );
 
-    rocketnet_client_destroy( client );
-    rocketnet_server_destroy( server );
+    rn_cli_client_stop_and_destroy( client );
+    rn_cli_server_stop_and_destroy( server );
 }
 
 // A development connect token naming both families, 127.0.0.1 and [::1] at
@@ -8408,7 +8409,7 @@ static void rocketnet_test_two_address_token_connects_over_ipv4()
     rocketnet_check( server && create_status == ROCKETNET_STATUS_OK );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
-        rocketnet_server_destroy( server );
+        rn_cli_server_stop_and_destroy( server );
         server = NULL;
     }
     rocketnet_check( server );
@@ -8455,8 +8456,8 @@ static void rocketnet_test_two_address_token_connects_over_ipv4()
     rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
     rocketnet_check( rocketnet_server_client_connected( server, rocketnet_client_index( client ) ) );
 
-    rocketnet_client_destroy( client );
-    rocketnet_server_destroy( server );
+    rn_cli_client_stop_and_destroy( client );
+    rn_cli_server_stop_and_destroy( server );
 
     rocketnet_platform_set_ipv6_socket_available_for_testing( true );
 }

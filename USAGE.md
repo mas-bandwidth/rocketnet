@@ -6,8 +6,9 @@ fragments it when it is large, and reports whether it arrived. It does not
 serialize it.
 
 The main frame calls and create are designed to be unnoticeable in a game
-profiler. The client's disconnect and destroy stop its I/O thread and wait for
-it to exit. No time bound is promised. Soak, load and profiling work is planned
+profiler. Client disconnect and server stop request shutdown without waiting
+for workers. Their completion queries let a game keep its frame loop running;
+only after completion does synchronous destroy join and free. Soak, load and profiling work is planned
 hardening. This preview makes no claim from it.
 
 The authority for every name, field, default and environment variable is
@@ -242,11 +243,12 @@ a connection with a connect token: a client connects with a token, never an
 address, and the token names the server, carries the keys and is the
 credential. The attempt's clock starts at the next update.
 `rocketnet_client_disconnect` ends the connection from any state and returns
-the client to `DISCONNECTED`, ready to connect again with a new token. Connect
+the client state to `DISCONNECTED`. This state alone does not prove I/O has
+stopped: wait for `rocketnet_client_disconnected` before destroy or reconnect. Connect
 is accepted from `DISCONNECTED` and from a connection-ended state
 (`ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED` down to
-`ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED`), which it ends first; from
-any other state it is refused with `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`.
+`ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED`) after the previous worker
+has stopped. A pending shutdown or any other state is refused with `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`.
 A negative state says how the last attempt or connection ended and stays until
 disconnect.
 
@@ -256,8 +258,9 @@ out-parameter. Either address may be NULL, but not both. It returns a stopped se
 with `ROCKETNET_STATUS_OK`, or NULL with the specific refusal status, and binds
 nothing. `rocketnet_server_start` binds the
 transport and accepts clients; `rocketnet_server_stop` disconnects every
-client, resets every slot and releases the transport, and the server can
-start again. Clients are identified by an `int` index,
+client and requests transport shutdown. `rocketnet_server_stopped` reports
+completion without waiting. Until it is true, start is refused; afterward start
+can finalize the old run and activate a new transport. Clients are identified by an `int` index,
 `0 .. max_clients - 1`, the slot each connection takes.
 Each client and server is one block that create allocates through the
 allocator. `rocketnet_client_required_memory` and
@@ -337,16 +340,29 @@ struct rocketnet_server_t * start_server( const struct rocketnet_server_config_t
     return server;
 }
 
-void stop( struct rocketnet_client_t * client, struct rocketnet_server_t * server )
+void request_stop( struct rocketnet_client_t * client, struct rocketnet_server_t * server )
 {
+    rocketnet_client_disconnect( client );
+    rocketnet_server_stop( server );
+}
+
+/* Call once per frame after request_stop; keep the event loop running. */
+bool finish_stop( struct rocketnet_client_t * client, struct rocketnet_server_t * server )
+{
+    if ( !rocketnet_client_disconnected( client ) || !rocketnet_server_stopped( server ) )
+        return false;
     rocketnet_client_destroy( client );
     rocketnet_server_destroy( server );
+    return true; /* Both pointers are now invalid; do not call again. */
 }
 ```
 
 To check a config, create with it and read the status out-parameter, then
-destroy the result. Destroying a client ends its connection. Destroying a server
-disconnects every client and frees the server.
+destroy the result if it was never connected or started. For an active object,
+request shutdown and poll completion before destroy. Destroy asserts completion,
+then joins any remaining thread handle and wipes/frees resources synchronously.
+Keep allocator/callback contexts and all borrowed storage alive until destroy
+returns. A completion query does not free the object or promise peer receipt.
 
 ## Frame loop
 
@@ -626,14 +642,15 @@ void report_quality( const struct rocketnet_client_t * client, const struct rock
 A client moves from `ROCKETNET_CLIENT_STATE_DISCONNECTED` through the handshake
 states to `ROCKETNET_CLIENT_STATE_CONNECTED`. Every negative value is a state that ended the attempt or the connection, one per way it can end,
 and the client stays in it until `rocketnet_client_disconnect` returns it to
-`ROCKETNET_CLIENT_STATE_DISCONNECTED` (ready to connect again with a new token)
-or `rocketnet_client_destroy` releases it. Read the state with `rocketnet_client_state`, its name with
+`ROCKETNET_CLIENT_STATE_DISCONNECTED`; `rocketnet_client_disconnected` must
+also be true before reconnect or destroy. Read the state with `rocketnet_client_state`, its name with
 `rocketnet_client_state_name`; the state itself is how the connection ended.
 `rocketnet_client_index` reports the client's slot on the server, an `int`,
 while CONNECTED, and `-1` in any other state.
 
 `rocketnet_client_disconnect` ends the connection: the disconnect is sent and
-the state becomes DISCONNECTED. On the server,
+the state becomes DISCONNECTED. Worker completion is separate and is reported
+by `rocketnet_client_disconnected`. On the server,
 `rocketnet_server_client_connected` and `rocketnet_server_client_id` identify a
 slot and its client, `rocketnet_server_num_connected_clients` counts them, and
 `rocketnet_server_disconnect_client` ends one deliberately.
@@ -655,7 +672,15 @@ client reads as `ROCKETNET_CLIENT_STATE_DISCONNECTED`, counted as misuse.
 void end_client( struct rocketnet_client_t * client )
 {
     rocketnet_client_disconnect( client );
+}
+
+/* Poll once per frame after end_client. */
+bool finish_client( struct rocketnet_client_t * client )
+{
+    if ( !rocketnet_client_disconnected( client ) )
+        return false;
     rocketnet_client_destroy( client );
+    return true; /* The client pointer is now invalid. */
 }
 
 void end_server_client( struct rocketnet_server_t * server, int client_index )
@@ -664,6 +689,8 @@ void end_server_client( struct rocketnet_server_t * server, int client_index )
 }
 ```
 
-Destroy every client and server before `rocketnet_term`. A server destroy
-disconnects every client and frees the server; a client destroy ends its
-connection and frees the client.
+Destroy every client and server before `rocketnet_term`. Request shutdown first,
+wait by polling completion from the event loop, then destroy. A stalled worker
+keeps completion false, so its object and contexts must remain alive. Destroy
+is synchronous after completion; allocator hooks and thread-handle cleanup do
+not have a strict wall-time guarantee.

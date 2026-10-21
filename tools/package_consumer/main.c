@@ -319,6 +319,8 @@ int main( void )
     // else is refused
     CHECK( rocketnet_client_connect( client, "not a connect token" ) == ROCKETNET_STATUS_INVALID_CONNECT_TOKEN );
     CHECK( rocketnet_client_state( client ) <= ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    rocketnet_client_disconnect( client );
+    CHECK( rocketnet_client_disconnected( client ) );
 
 #if ROCKETNET_DEVELOPMENT
     CHECK( rocketnet_client_connect( client, connect_token ) == ROCKETNET_STATUS_OK );
@@ -474,6 +476,10 @@ int main( void )
     CHECK( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED );
     CHECK( rocketnet_client_index( client ) == -1 );
     CHECK( !rocketnet_server_client_connected( server, 0 ) );
+    rocketnet_client_disconnect( client );
+    while ( !rocketnet_client_disconnected( client ) && rocketnet_time() - wall_start < 20.0 )
+        rocketnet_sleep( 0.001 );
+    CHECK( rocketnet_client_disconnected( client ) );
 
     CHECK( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, CLIENT_ID, PROTOCOL_ID,
                                                (uint64_t) time( NULL ), NULL, connect_token ) == ROCKETNET_STATUS_OK );
@@ -501,9 +507,17 @@ int main( void )
     // ---- teardown
 
     rocketnet_client_disconnect( client );
+    const double disconnect_deadline = rocketnet_time() + 10.0;
+    while ( !rocketnet_client_disconnected( client ) && rocketnet_time() < disconnect_deadline )
+        rocketnet_sleep( 0.001 );
+    CHECK( rocketnet_client_disconnected( client ) );
     CHECK( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
     rocketnet_client_destroy( client );
     rocketnet_server_stop( server );
+    const double stop_deadline = rocketnet_time() + 10.0;
+    while ( !rocketnet_server_stopped( server ) && rocketnet_time() < stop_deadline )
+        rocketnet_sleep( 0.001 );
+    CHECK( rocketnet_server_stopped( server ) );
     CHECK( !rocketnet_server_running( server ) );
     rocketnet_server_destroy( server );
 

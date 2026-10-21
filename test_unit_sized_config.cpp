@@ -23,6 +23,7 @@
 // check full defaults and simulation fields, including a real in-memory
 // loopback create/connect.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "sdk/rocketnet_base64.h"
 
@@ -356,7 +357,7 @@ do                                                                              
     check( (accepted) ? made_status == ROCKETNET_STATUS_OK                                                      \
                       : ( made_status != ROCKETNET_STATUS_OK && made_status != ROCKETNET_TEST_STATUS_UNSET ) );      \
     if ( made )                                                                                                 \
-        rocketnet_client_destroy( made );                                                                       \
+        rn_test_client_stop_and_destroy( made );                                                                       \
 } while ( 0 )
 
 #define SIZED_CONFIG_SERVER_CREATE( mutation, accepted )                                                        \
@@ -372,7 +373,7 @@ do                                                                              
     check( (accepted) ? made_status == ROCKETNET_STATUS_OK                                                      \
                       : ( made_status != ROCKETNET_STATUS_OK && made_status != ROCKETNET_TEST_STATUS_UNSET ) );      \
     if ( made )                                                                                                 \
-        rocketnet_server_destroy( made );                                                                       \
+        rn_test_server_stop_and_destroy( made );                                                                       \
 } while ( 0 )
 
 static void test_sized_config_create_refuses_before_init()
@@ -411,10 +412,10 @@ static void test_sized_config_create_refuses_before_init()
     // after init the same calls create
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
     check( client != NULL );
-    rocketnet_client_destroy( client );
+    rn_test_client_stop_and_destroy( client );
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
     check( server != NULL );
-    rocketnet_server_destroy( server );
+    rn_test_server_stop_and_destroy( server );
 
     rocketnet_assert_function( saved_assert );
 }
@@ -519,7 +520,7 @@ static void test_public_config_bytes_zeroed_is_refused()
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
     check( client != NULL );
     check( status == ROCKETNET_STATUS_OK );
-    rocketnet_client_destroy( client );
+    rn_test_client_stop_and_destroy( client );
     struct rocketnet_client_config_t defaults;
     check( rocketnet_client_default_config( &defaults ) == ROCKETNET_STATUS_OK );
     check( rocketnet_client_required_memory( &client_config ) == rocketnet_client_required_memory( &defaults ) );
@@ -553,7 +554,7 @@ static void test_public_config_bytes_older_smaller_reads_the_prefix()
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
     check( client != NULL );
     check( status == ROCKETNET_STATUS_OK );
-    rocketnet_client_destroy( client );
+    rn_test_client_stop_and_destroy( client );
     client_defaults.transport = "loopback";
     check( rocketnet_client_required_memory( &client_config ) == rocketnet_client_required_memory( &client_defaults ) );
 
@@ -580,7 +581,7 @@ static void test_public_config_bytes_older_smaller_reads_the_prefix()
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
     check( server != NULL );
     check( status == ROCKETNET_STATUS_OK );
-    rocketnet_server_destroy( server );
+    rn_test_server_stop_and_destroy( server );
     struct rocketnet_server_config_t server_defaults;
     sized_config_dev_server_config( &server_defaults );
     server_defaults.max_clients = 4;
@@ -624,7 +625,7 @@ static void test_public_config_bytes_newer_larger_ignores_the_tail()
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &newer_client.config, &status );
     check( client != NULL );
     check( status == ROCKETNET_STATUS_OK );
-    rocketnet_client_destroy( client );
+    rn_test_client_stop_and_destroy( client );
     check( rocketnet_client_required_memory( &newer_client.config ) == rocketnet_client_required_memory( &client_defaults ) );
     for ( int i = 0; i < 4; i++ )
         check( newer_client.tail_field[i] == (int) 0xEEEEEEEE );
@@ -649,7 +650,7 @@ static void test_public_config_bytes_newer_larger_ignores_the_tail()
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &newer_server.config, &status );
     check( server != NULL );
     check( status == ROCKETNET_STATUS_OK );
-    rocketnet_server_destroy( server );
+    rn_test_server_stop_and_destroy( server );
     struct rocketnet_server_config_t server_defaults;
     sized_config_dev_server_config( &server_defaults );
     server_defaults.max_clients = 4;
@@ -761,8 +762,8 @@ static bool public_config_pair_connects( int server_loss_percent )
         time += 0.01;
     }
     const bool connected = rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED;
-    rocketnet_client_destroy( client );
-    rocketnet_server_destroy( server );
+    rn_test_client_stop_and_destroy( client );
+    rn_test_server_stop_and_destroy( server );
     return connected;
 }
 
@@ -819,7 +820,7 @@ static void test_public_config_default_fills_every_field()
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_a, &status );
     check( client != NULL );
     check( status == ROCKETNET_STATUS_OK );
-    rocketnet_client_destroy( client );
+    rn_test_client_stop_and_destroy( client );
 
     struct rocketnet_server_config_t server_a, server_b, server_sized, dev_a, dev_sized;
     memset( &server_a, 0xAB, sizeof( server_a ) );
@@ -842,7 +843,7 @@ static void test_public_config_default_fills_every_field()
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &dev_a, &status );
     check( server != NULL );
     check( status == ROCKETNET_STATUS_OK );
-    rocketnet_server_destroy( server );
+    rn_test_server_stop_and_destroy( server );
 }
 
 

@@ -3,6 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
+#include "../test/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_driver_loopback.h"
@@ -323,10 +324,10 @@ void rocketnet_test_server_receive_keeps_up_with_max_clients()
     fflush( stdout );
 
     for ( size_t i = 0; i < clients.size(); ++i )
-        rocketnet_client_transport_destroy( clients[i] );
+        rn_native_client_transport_stop_and_destroy( clients[i] );
     rocketnet_server_transport_stop( server );
     rocketnet_server_transport_update( server, time );
-    rocketnet_server_transport_destroy( server );
+    rn_native_server_transport_stop_and_destroy( server );
 
     server_receive_backlog_require( !failed );
 }

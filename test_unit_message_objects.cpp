@@ -14,6 +14,7 @@
 // connection ids and loss are the harness's to script. Time is only ever an
 // argument: nothing sleeps, nothing opens a socket.
 
+#include "test/unit_shutdown.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -3033,6 +3034,7 @@ static void test_same_client_id_reconnect_in_one_update_resets_the_slot()
     // response is due (its resend interval has passed) in that same pump.
     world.time += 0.25;
     rocketnet_client_disconnect( world.clients[0] );
+    rn_test_client_wait_disconnected( world.clients[0] );
     reconnect_pump( &world );
     check( rn_server_stats_of( world.server ).connections_accepted == 2 );
     check( rocketnet_server_client_connected( world.server, 0 ) != 0 );
@@ -3052,8 +3054,8 @@ static void test_same_client_id_reconnect_in_one_update_resets_the_slot()
     check( rocketnet_client_state( world.clients[1] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
 
     for ( int i = 0; i < 2; i++ )
-        rocketnet_client_destroy( world.clients[i] );
-    rocketnet_server_destroy( world.server );
+        rn_test_client_stop_and_destroy( world.clients[i] );
+    rn_test_server_stop_and_destroy( world.server );
 }
 
 

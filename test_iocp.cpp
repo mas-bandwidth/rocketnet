@@ -1,4 +1,5 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. */
+#include "test/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_server_iocp.h"
@@ -63,7 +64,7 @@ static void test_create_cleanup()
     CHECK(transport && bind.port != 0);
     const int count = allocations.load();
     wait_stopped(transport);
-    rocketnet_server_iocp_destroy(transport);
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
     CHECK(live_allocations.load() == baseline);
 
     DWORD handle_baseline;
@@ -176,7 +177,7 @@ static void test_completion_owns_frames()
     }
     rocketnet_server_iocp_send_packets(transport);
     wait_stopped(transport);
-    rocketnet_server_iocp_destroy(transport);
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
     rocketnet_platform_socket_destroy(peer);
     printf("test_iocp_transport_completion_owns_frames\n");
 }
@@ -189,7 +190,7 @@ static void test_uso_run_owns_frames()
     if ( !(rocketnet_server_iocp_features(transport) & ROCKETNET_IOCP_FEATURE_USO) )
     {
         wait_stopped(transport);
-        rocketnet_server_iocp_destroy(transport);
+        rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
         return;
     }
     rocketnet_address_t peer_address = address("127.0.0.1:0");
@@ -245,7 +246,7 @@ static void test_uso_run_owns_frames()
     CHECK(pending.empty());
     rocketnet_server_iocp_send_packets(transport);
     wait_stopped(transport);
-    rocketnet_server_iocp_destroy(transport);
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
     rocketnet_platform_socket_destroy(peer);
     printf("test_iocp_transport_uso_run_owns_frames\n");
 }
@@ -352,7 +353,7 @@ static void test_datagrams_and_producers()
     uint64_t stopped_id;
     CHECK(!rocketnet_server_iocp_start_packet(transport, &peer_address, &stopped_id));
     rocketnet_server_iocp_stop(transport);
-    rocketnet_server_iocp_destroy(transport);
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
     rocketnet_platform_socket_destroy(peer);
     printf("test_iocp_transport_datagrams_and_producers\n");
 }
@@ -392,7 +393,7 @@ static void test_receive_boundaries()
     CHECK(received == 1 && counters[ROCKETNET_IOCP_RECEIVE_DROPPED] == 2);
     CHECK(rocketnet_server_iocp_pending(transport) == ROCKETNET_IOCP_RECEIVES_PER_WORKER);
     wait_stopped(transport); // Cancellation with idle, outstanding receives too.
-    rocketnet_server_iocp_destroy(transport);
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
     closesocket(peer);
     printf("test_iocp_transport_receive_boundaries\n");
 }
@@ -563,7 +564,7 @@ static void iocp_exchange( rocketnet_server_iocp_t * transport, const rocketnet_
 static void iocp_finish( rocketnet_server_iocp_t * transport, rocketnet_platform_socket_t * peer )
 {
     wait_stopped(transport);
-    rocketnet_server_iocp_destroy(transport);
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
     rocketnet_platform_socket_destroy(peer);
 }
 
@@ -778,7 +779,7 @@ static void iocp_destroy_watched( rocketnet_server_iocp_t * transport, double * 
 {
     case_watchdog_t watchdog( "rocketnet_server_iocp_destroy", 10.0 );
     const double start = rocketnet_platform_time();
-    rocketnet_server_iocp_destroy(transport);
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
     const double elapsed = rocketnet_platform_time() - start;
     if ( elapsed > *slowest ) *slowest = elapsed;
 }
@@ -901,7 +902,7 @@ static rocketnet_server_rio_t * rio_open( rocketnet_address_t * bind )
 
 static void rio_finish( rocketnet_server_rio_t * rio, rocketnet_platform_socket_t * peer )
 {
-    rocketnet_server_rio_destroy(rio);
+    rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
     CHECK(rocketnet_server_rio_leaked_regions() == 0);
     rocketnet_platform_socket_destroy(peer);
 }
@@ -1102,7 +1103,7 @@ static void test_rio_destroy_commits_deferred_sends()
     CHECK(rocketnet_server_rio_pending(rio) == ROCKETNET_RIO_RECEIVES + 10);
 
     const double start = rocketnet_platform_time();
-    rocketnet_server_rio_destroy(rio);
+    rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
     const double elapsed = rocketnet_platform_time() - start;
     CHECK(rocketnet_server_rio_leaked_regions() == 0);
     CHECK(elapsed < 1.0);
@@ -1204,8 +1205,8 @@ static void test_windows_port_exclusive()
             (void) stolen;
             closesocket(thief);
             if ( portable ) rocketnet_platform_socket_destroy(portable);
-            if ( iocp ) { wait_stopped(iocp); rocketnet_server_iocp_destroy(iocp); }
-            if ( rio ) { rocketnet_server_rio_destroy(rio); CHECK(rocketnet_server_rio_leaked_regions() == 0); }
+            if ( iocp ) { wait_stopped(iocp); rn_native_backend_stop_and_destroy( iocp, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy ); }
+            if ( rio ) { rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy ); CHECK(rocketnet_server_rio_leaked_regions() == 0); }
             CHECK(!bound);
         }
     }
