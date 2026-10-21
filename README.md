@@ -58,6 +58,8 @@ See [BUILDING.md](BUILDING.md). Binaries land in `bin/`, and on Windows in
 
 ## Documentation
 
+- [v1.0.0-preview-1 release notes](docs/RELEASE-NOTES-v1.0.0-preview-1.md) — preview contents, platforms and known issues.
+
 - [AGENTS.md](AGENTS.md) — guide for AI coding agents integrating RocketNet into a game.
 - [USAGE.md](USAGE.md) — how to drive it: the frame, message sending and
   receiving, channels, configuration, and state transitions.

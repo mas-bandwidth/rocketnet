@@ -412,7 +412,7 @@ Correctness work that follows v1.0.0-preview-1.
 
 ## Known issues (addressed in the final deliverable)
 
-What v1.0.0-preview-1 does not yet meet, one row per issue: what it is today, and how the final deliverable addresses it. None of these stops a game from building on v1.0.0-preview-1. Each cell is ❌ until the final deliverable lands it there; — is a platform the issue does not apply to.
+What v1.0.0-preview-1 does not yet meet, one row per issue: what it is today, and how the final deliverable addresses it. Review these limits for your game before deployment. Each cell is ❌ until the final deliverable lands it there; — is a platform the issue does not apply to.
 
 | known issue | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
@@ -430,7 +430,7 @@ What v1.0.0-preview-1 does not yet meet, one row per issue: what it is today, an
 | The acknowledgement statistics sweep scans thousands of records per update. The final deliverable keeps those statistics up to date as acks arrive. | ❌ | ❌ | ❌ |
 | Every main call is meant to take under 0.1 ms in Release under load; this is not yet measured at 1000 clients. The final deliverable measures every main call at 1000 clients on each platform and holds the result in a gate. | ❌ | ❌ | ❌ |
 | Each unreliable message is sent as its own packet; small unreliable messages are not packed together. The final deliverable packs small messages into shared packets and keeps in-place writes for large ones. | ❌ | ❌ | ❌ |
-| Client disconnect and destroy stop the client's I/O thread and wait for it, for a bounded time, and that bound reads the receive-stamp clock callback on the caller's thread. The final deliverable starts the thread at create and parks it between connections, so neither call waits, and times shutdown on its own clock. | ❌ | ❌ | ❌ |
+| Client disconnect and destroy stop the client's I/O thread and wait for it. No shutdown time bound is promised, and shutdown reads the receive-stamp clock callback on the caller's thread. The final deliverable starts the thread at create and parks it between connections, so neither call waits, and times shutdown on its own clock. | ❌ | ❌ | ❌ |
 | On Linux, XDP gateway discovery runs external commands when the server starts. This is acceptable at start; the final deliverable reads the gateway through netlink instead. | ❌ | — | — |
 | Client connect and server start still allocate: the client's transport, socket and I/O thread at each connect, and the server's transport and its tables at each start. The final deliverable builds them at create, so nothing allocates after create. | ❌ | ❌ | ❌ |
 | A few allocations do not go through the caller's allocator: AF_XDP packet memory, io_uring rings, the RIO registered region, thread stacks, interface discovery and the C library's output buffer. The final deliverable routes them through the caller's allocator where the operating system allows, and reports the rest by size. | ❌ | ❌ | ❌ |

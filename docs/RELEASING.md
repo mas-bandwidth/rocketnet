@@ -17,23 +17,23 @@ The version lives in one file, `sdk/rocketnet.h`, in two branches selected by
   the `255.255.255` integer sentinel.
 
 The first release is **v1.0.0-preview-1**: `ROCKETNET_VERSION_FULL` is
-`"1.0.0-preview-1"`, `ROCKETNET_VERSION_PRERELEASE` is `"preview-1"`, and the
+`"v1.0.0-preview-1"`, `ROCKETNET_VERSION_PRERELEASE` is `"preview-1"`, and the
 integers are `1.0.0`. The integers, `ROCKETNET_VERSION`, the CMake project
 `VERSION` and the installed package's `RocketNetConfigVersion.cmake` stay
 numeric (`1.0.0`), because those are compared; the label rides beside them.
 `CMakeLists.txt` reads `ROCKETNET_VERSION_FULL` from the header into
 `ROCKETNET_VERSION_STRING`, refuses to configure when it is not the project
-`VERSION` with an optional `-prerelease`, and the installed `RocketNetConfig.cmake`
+`VERSION` prefixed with `v` and an optional `-prerelease`, and the installed `RocketNetConfig.cmake`
 sets `RocketNet_VERSION_STRING` and `RocketNet_VERSION_PRERELEASE` for consumers.
 
 These are the version sites that the `version-consistency` job in
 [.github/workflows/release-check.yml](.github/workflows/release-check.yml)
 reads. That job checks both branches, because the branch that is not compiled
 today is the one that drifts. In the shipping branch, `ROCKETNET_VERSION_FULL`
-must equal `MAJOR.MINOR.PATCH`, followed by `-PRERELEASE` when
+must equal `vMAJOR.MINOR.PATCH`, followed by `-PRERELEASE` when
 `ROCKETNET_VERSION_PRERELEASE` is not empty; in the development branch, the full
-version must be `dev`, the prerelease empty, and the integers `255.255.255`. On a `v*` tag push, the part of
-the tag after the `v` must equal the shipping `ROCKETNET_VERSION_FULL`.
+version must be `dev`, the prerelease empty, and the integers `255.255.255`. On a `v*` tag push, the complete
+tag must equal the shipping `ROCKETNET_VERSION_FULL`.
 
 The public C ABI revision is separate from the wire and release version. If a
 release changes the public C layout or calling contract, update
@@ -109,7 +109,7 @@ later merge.
    commit.
 6. On the merged `main` commit, create an annotated tag `vMAJOR.MINOR.PATCH`,
    or `vMAJOR.MINOR.PATCH-PRERELEASE` for a prerelease, for example
-   `v1.0.0-preview-1`, whose version after the `v` equals the shipping
+   `v1.0.0-preview-1`, whose complete label equals the shipping
    `ROCKETNET_VERSION_FULL`. Do not tag a different commit, and do not move or
    reuse a tag after pushing it. Push the tag and let Release Check's
    `version-consistency` job confirm it against the header.

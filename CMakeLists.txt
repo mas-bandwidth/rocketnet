@@ -10,13 +10,17 @@ endif()
 # read from sdk/rocketnet.h, and the installed package carries both.
 project(rocketnet VERSION 1.0.0 LANGUAGES C CXX)
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/sdk/rocketnet.h" ROCKETNET_VERSION_FULL_LINE
-    REGEX "^ *#define ROCKETNET_VERSION_FULL +\"[0-9]+\\.[0-9]+\\.[0-9]+[^\"]*\"$")
+    REGEX "^ *#define ROCKETNET_VERSION_FULL +\"v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?\"$")
+list(LENGTH ROCKETNET_VERSION_FULL_LINE ROCKETNET_VERSION_FULL_COUNT)
+if(NOT ROCKETNET_VERSION_FULL_COUNT EQUAL 1)
+    message(FATAL_ERROR "Expected one shipping ROCKETNET_VERSION_FULL label beginning with v")
+endif()
 string(REGEX REPLACE ".*\"([^\"]+)\"$" "\\1" ROCKETNET_VERSION_STRING "${ROCKETNET_VERSION_FULL_LINE}")
-string(REGEX REPLACE "^[0-9]+\\.[0-9]+\\.[0-9]+-?" "" ROCKETNET_VERSION_PRERELEASE "${ROCKETNET_VERSION_STRING}")
-if(NOT ROCKETNET_VERSION_STRING STREQUAL PROJECT_VERSION AND
-   NOT ROCKETNET_VERSION_STRING STREQUAL "${PROJECT_VERSION}-${ROCKETNET_VERSION_PRERELEASE}")
+string(REGEX REPLACE "^v([0-9]+\\.[0-9]+\\.[0-9]+).*" "\\1" ROCKETNET_VERSION_NUMERIC "${ROCKETNET_VERSION_STRING}")
+string(REGEX REPLACE "^v[0-9]+\\.[0-9]+\\.[0-9]+-?" "" ROCKETNET_VERSION_PRERELEASE "${ROCKETNET_VERSION_STRING}")
+if(NOT ROCKETNET_VERSION_NUMERIC STREQUAL PROJECT_VERSION)
     message(FATAL_ERROR "sdk/rocketnet.h ROCKETNET_VERSION_FULL \"${ROCKETNET_VERSION_STRING}\" "
-        "is not project VERSION ${PROJECT_VERSION} with an optional -prerelease")
+        "does not match project VERSION ${PROJECT_VERSION}")
 endif()
 if(MSVC)
     add_compile_options(/utf-8)

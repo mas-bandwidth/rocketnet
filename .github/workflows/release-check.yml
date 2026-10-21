@@ -86,9 +86,9 @@ jobs:
               fi
               return
             fi
-            # a release is MAJOR.MINOR.PATCH, or MAJOR.MINOR.PATCH-PRERELEASE
+            # a release is vMAJOR.MINOR.PATCH, or vMAJOR.MINOR.PATCH-PRERELEASE
             # (v1.0.0-preview-1): the prerelease rides beside the integers
-            expected="$major.$minor.$patch"
+            expected="v$major.$minor.$patch"
             if [ -n "$prerelease" ]; then
               expected="$expected-$prerelease"
             fi
@@ -116,7 +116,7 @@ jobs:
 
           case "${GITHUB_REF:-}" in
             refs/tags/*)
-              tag_version="${GITHUB_REF_NAME#v}"
+              tag_version="$GITHUB_REF_NAME"
               echo "release tag: $tag_version"
               if [ "$tag_version" != "$shipping_full" ]; then
                 echo "::error::Tag $GITHUB_REF_NAME does not match the shipping version $shipping_full in sdk/rocketnet.h — bump the header as part of the release."
@@ -191,10 +191,14 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-          version=$(sed -nE 's/.*ROCKETNET_VERSION_FULL[[:space:]]+"([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)".*/\1/p' sdk/rocketnet.h | head -n1)
-          tag_version="${newest_tag#v}"
+          version=$(sed -nE 's/.*ROCKETNET_VERSION_FULL[[:space:]]+"(v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)".*/\1/p' sdk/rocketnet.h | head -n1)
+          if [ -z "$version" ]; then
+            echo "::error::Could not extract the v-prefixed shipping version from sdk/rocketnet.h."
+            exit 1
+          fi
+          tag_version="$newest_tag"
           if [ "$version" = "$tag_version" ]; then
             echo "::error::main carries $count wire-affecting commit(s) past $newest_tag and the shipping version is still $version — nothing announces that a release is owed. Bump the version and tag a release (or revert the wire change). The commit list is in the job summary."
             exit 1
           fi
-          echo "::warning::main carries $count wire-affecting commit(s) past $newest_tag. The version is already bumped to $version — tag v$version when the release is ready. The commit list is in the job summary."
+          echo "::warning::main carries $count wire-affecting commit(s) past $newest_tag. The version is already bumped to $version — tag $version when the release is ready. The commit list is in the job summary."
