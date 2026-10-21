@@ -292,7 +292,7 @@ void rn_message_object_destroy( struct rn_message_object_t * object )
 {
     if ( !object )
         return;
-    if ( object->link.stopped )
+    if ( object->link.destroy && object->link.stopped )
     {
         const bool stopped = object->link.stopped( object->link.transport );
         rocketnet_assert( stopped );

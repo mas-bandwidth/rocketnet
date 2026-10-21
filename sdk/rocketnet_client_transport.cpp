@@ -161,6 +161,7 @@ struct alignas(64) rocketnet_client_stats_frame_t
     X( stopped, std::atomic<bool> stopped{false} ) \
     X( stop_burst, uint8_t stop_burst[ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET] ) \
     X( stop_burst_count, int stop_burst_count{0} ) \
+    X( stop_burst_pending, std::atomic<bool> stop_burst_pending{false} ) \
     X( stop_burst_bytes, int stop_burst_bytes{0} ) \
     X( stop_address, rocketnet_address_t stop_address ) \
     X( quit, std::atomic<bool> quit{0} )                                                                             \
@@ -1282,7 +1283,7 @@ void rocketnet_client_transport_stop( rocketnet_client_transport_t * client_tran
     else
     {
         client_transport->quit.store( true, std::memory_order_release );
-        if ( ( !client_transport->thread && !client_transport->stop_burst_count ) || rocketnet_client_memory_plan_seam_enabled )
+        if ( ( !client_transport->thread && !client_transport->stop_burst_pending.load( std::memory_order_acquire ) ) || rocketnet_client_memory_plan_seam_enabled )
             client_transport->stopped.store( true, std::memory_order_release );
     }
 }
@@ -1298,11 +1299,19 @@ bool rocketnet_client_transport_stopped( const rocketnet_client_transport_t * cl
         client_transport->stopped.load( std::memory_order_acquire );
 }
 
-static void rocketnet_client_transport_finish_stop( rocketnet_client_transport_t * client_transport )
+static void rocketnet_client_transport_flush_disconnect( rocketnet_client_transport_t * client_transport )
 {
+    if ( !client_transport->stop_burst_pending.load( std::memory_order_acquire ) )
+        return;
     for ( int i = 0; i < client_transport->stop_burst_count; ++i )
         client_transport->io.operations->send( client_transport->io.instance, &client_transport->stop_address,
             client_transport->stop_burst + i * ROCKETNET_SEND_BUDGET, client_transport->stop_burst_bytes );
+    client_transport->stop_burst_pending.store( false, std::memory_order_release );
+}
+
+static void rocketnet_client_transport_finish_stop( rocketnet_client_transport_t * client_transport )
+{
+    rocketnet_client_transport_flush_disconnect( client_transport );
     client_transport->stopped.store( true, std::memory_order_release );
 }
 
@@ -1600,6 +1609,9 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
         }
         return;
     }
+
+    if ( !client_transport->thread )
+        rocketnet_client_transport_flush_disconnect( client_transport );
 
     // the caller's clock is clamped once, before anything reads it: a NaN,
     // an infinity or a step backwards becomes the last good time, counted and
@@ -2241,6 +2253,11 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
         return;
     const int state_before = client_transport->protocol.state;
 
+    // This transport owns one connection attempt. A duplicate request must
+    // not overwrite ciphertext that its legacy worker may still be sending.
+    if ( state_before == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+        return;
+
     // The protocol reset erases the connection address. Like the server side,
     // retain the destination locally so the already-sealed disconnect burst is
     // the only connection data that outlives reset.
@@ -2275,12 +2292,24 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
     client_transport->stats_frames[client_transport->current_stats_index].bytes_sent += wire_bytes;
     client_transport->client_stats.packets_sent += (uint64_t) burst_count;
     client_transport->client_stats.bytes_sent += wire_bytes;
+    if ( client_transport->link_simulator )
+    {
+        // Simulator queues are owned by the caller. Preserve configured loss,
+        // latency and reorder; enqueue here, never bypass it on the worker.
+        for ( int i = 0; i < burst_count; ++i )
+            rocketnet_client_link_send( client_transport, &server_address,
+                burst + i * ROCKETNET_SEND_BUDGET, burst_bytes );
+        rocketnet_client_link_flush( client_transport );
+        return;
+    }
     client_transport->stop_address = server_address;
     client_transport->stop_burst_count = burst_count;
     client_transport->stop_burst_bytes = burst_bytes;
     for ( int i = 0; i < burst_count; ++i )
         memcpy( client_transport->stop_burst + i * ROCKETNET_SEND_BUDGET,
                 burst + i * ROCKETNET_SEND_BUDGET, (size_t) burst_bytes );
+    if ( burst_count )
+        client_transport->stop_burst_pending.store( true, std::memory_order_release );
 
 }
 
@@ -2450,6 +2479,7 @@ static void rocketnet_client_thread_function( void * data )
     // bounded at 1 ms and destroy's thread_wake ends it at once (POSIX)
     while ( !client_transport->quit.load( std::memory_order_acquire ) )
     {
+        rocketnet_client_transport_flush_disconnect( client_transport );
         rocketnet_client_receive_packets( client_transport );
 
         rocketnet_platform_thread_wait( 0.001 );
