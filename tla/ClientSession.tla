@@ -120,7 +120,7 @@ Destroy ==
     /\ kept' = [lifetime |-> 0, config |-> 0]
     /\ lastEnd' = "NONE" /\ connected' = 0
     /\ silentEnd' = (silentEnd \/ (st \in {"SENDING_CONNECTION_RESPONSE", "CONNECTED"} /\ Defect = "destroysilent"))
-    /\ badReuse' = badReuse \/ (owner \in {"running", "stopping"})
+    /\ badReuse' = (badReuse \/ (owner \in {"running", "stopping"}))
     /\ owner' = "none" /\ ownerGen' = 0 /\ pending' = FALSE
     /\ refusedPending' = FALSE
     /\ UNCHANGED <<link, nextSess, creates, observed, crossDelivered, connectFrom, queuedIn>>
@@ -159,7 +159,7 @@ Connect(tok) ==
     /\ st \in RestartStates \/ Defect = "connectanywhere"
     /\ (IF Defect = "completionrefused" THEN owner = "none"
         ELSE owner \in {"none", "stopped"}) \/ Defect \in {"connectanywhere", "reusepending"}
-    /\ badReuse' = badReuse \/ (owner \in {"running", "stopping"})
+    /\ badReuse' = (badReuse \/ (owner \in {"running", "stopping"}))
     /\ pending' = FALSE
     /\ refusedPending' = FALSE
     /\ IF tok = "valid"
@@ -221,7 +221,7 @@ DisconnectFromError ==
     /\ st \in Errors
     /\ st' = "DISCONNECTED" /\ cur' = 0 /\ conn' = Reset(conn)
     /\ owner' = IF owner = "running" THEN "stopping" ELSE owner
-    /\ pending' = owner # "none"
+    /\ pending' = (owner # "none")
     /\ UNCHANGED <<reason, kept, link, nextSess, creates, lastEnd, connected, ghosts,
                    ownerGen, refusedPending, badReuse>>
 
