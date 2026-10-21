@@ -9,11 +9,12 @@
 static rocketnet_sendmsg_x_fn real_send;
 static rocketnet_recvmsg_x_fn real_receive;
 static int send_calls, receive_calls;
-static bool refuse_send, refuse_receive;
+static bool refuse_send, refuse_receive, interrupt_send;
 
 static ssize_t controlled_send(int s, const rocketnet_msghdr_x_t * messages, u_int count, int flags)
 {
     ++send_calls;
+    if (interrupt_send) { errno = EINTR; return -1; }
     if (refuse_send) { errno = ENOTSUP; return -1; }
     return real_send(s, messages, count, flags);
 }
@@ -103,6 +104,16 @@ int main()
     CHECK(receive_calls > receive_before + 1 && socket->msgx_down_until == 0.0);
     CHECK(strcmp(rocketnet_platform_socket_pump(socket), "msgx") == 0);
     printf("test_msgx_transport_receive_pause_fallback_reprobe\n");
+
+    // A persistently interrupted batch must make one attempt and finish via
+    // the per-packet path; this assertion does not wait for packet delivery.
+    interrupt_send = true;
+    const int calls_before_interrupt = send_calls;
+    rocketnet_platform_socket_send_packets(socket, sends, 4);
+    CHECK(send_calls == calls_before_interrupt + 1);
+    CHECK(strcmp(rocketnet_platform_socket_pump(socket), "msgx") == 0);
+    interrupt_send = false;
+    printf("test_msgx_transport_send_eintr_bounded\n");
 
     rocketnet_sendmsg_x = real_send; rocketnet_recvmsg_x = real_receive;
     rocketnet_platform_socket_destroy(socket);

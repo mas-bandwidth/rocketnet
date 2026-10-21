@@ -2986,7 +2986,7 @@ static void rocketnet_msgx_pause( rocketnet_platform_socket_t * socket, const ch
 
 static bool rocketnet_msgx_send_weather( int error )
 {
-    return error == EAGAIN || error == EWOULDBLOCK || error == ENOBUFS || error == ECONNREFUSED ||
+    return error == EINTR || error == EAGAIN || error == EWOULDBLOCK || error == ENOBUFS || error == ECONNREFUSED ||
            error == EHOSTUNREACH || error == ENETUNREACH || error == EMSGSIZE || error == EADDRNOTAVAIL ||
            error == EPERM || error == EACCES || error == EHOSTDOWN || error == ENETDOWN;
 }
@@ -3131,11 +3131,10 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
                 continue;
             }
 
-            if ( errno == EINTR )
-                continue;
-
-            // any other -1: the delivered prefix of [offset..count) is
-            // INDETERMINATE. xnu can deliver part of a batch and still
+            // A refused batch, including EINTR, has an INDETERMINATE
+            // delivered prefix. Retrying EINTR here could keep a public
+            // server stop request in this loop indefinitely. xnu can deliver
+            // part of a batch and still
             // return -1 with no count -- measured on the test machine: 8 messages
             // with a refused destination at index 5 delivered 0-4 and
             // returned -1 -- so no retry that assumes "nothing was sent"
