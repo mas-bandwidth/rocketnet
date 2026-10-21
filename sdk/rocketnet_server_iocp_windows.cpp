@@ -213,8 +213,7 @@ static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketn
 {
     // The caller holds its worker mutex, or is the creating thread. A worker
     // observing stop reissues cancellation after its last potential repost:
-    // no repost can
-    // slip past cancellation. Stack addresses/flags must not back pending I/O.
+    // a late repost is cancelled by that worker's next pass. Stack addresses/flags must not back pending I/O.
     if ( iocp->stopping.load( std::memory_order_acquire ) )
         return false;
     memset( &op->overlapped, 0, sizeof(op->overlapped) );

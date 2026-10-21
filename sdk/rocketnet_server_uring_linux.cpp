@@ -76,8 +76,6 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_BANK_SIZE >= ROCKETNET_URING_SEND_BUDGE
 
 #define ROCKETNET_URING_CQE_BATCH                                          256
 
-// send_packets waits at most once per call, this long, for a completion
-
 // Only private synchronous create-failure cleanup waits for kernel ownership.
 #define ROCKETNET_URING_ABORT_CREATE_WAIT_SECONDS 0.001
 

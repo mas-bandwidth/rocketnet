@@ -197,7 +197,7 @@ void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, u
 // abort may run on any number of game threads strictly between one
 // send_packets call and the next; send_packets runs on the main thread,
 // submits the staged slots, reaps at most ROCKETNET_URING_SEND_BUDGET
-// completions after at most one wait of a millisecond, and returns. a send
+// currently available completions without waiting, and returns. a send
 // without its completion keeps its slot, and the reservation index, until a
 // later call reaps it (SEND_DEFERRED counts each call that returns so).
 // the frame handed back is a ROCKETNET_FRAME_STRIDE slot: wire
