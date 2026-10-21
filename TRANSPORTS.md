@@ -387,7 +387,10 @@ and an IPv6 reply carries the UDP checksum computed in software. Create and
 the pre-flight find the interface carrying each address over `AF_INET` or
 `AF_INET6` and refuse an IPv6 link-local address (fe80::/10) by name. Each
 family's gateway MAC comes from that family's default route and neighbour
-table; `ROCKETNET_GATEWAY_ETHERNET_ADDRESS` overrides both.
+table, read at create through rtnetlink (`sdk/rocketnet_gateway_netlink.h`: an
+`RTM_GETROUTE` dump for the default route's gateway on the interface, then an
+`RTM_GETNEIGH` dump for that gateway's link-layer address; no process is
+started). `ROCKETNET_GATEWAY_ETHERNET_ADDRESS` overrides both.
 
 A NULL `ipv4_address` or `ipv6_address` leaves that family unserved. An
 address not of its family, on another port, or that does not parse is one

@@ -231,6 +231,7 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet_encryption_map.cpp
     sdk/rocketnet_fragment.cpp
     sdk/rocketnet_frame_sync.cpp
+    sdk/rocketnet_gateway_netlink_linux.cpp
     sdk/rocketnet_hash.cpp
     sdk/rocketnet_keys.cpp
     sdk/rocketnet_message.cpp
@@ -651,7 +652,7 @@ if(ROCKETNET_BUILD_TESTS)
     rocketnet_use_sodium(test_transport_control)
     rocketnet_warning_floor(test_transport_control)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        add_executable(test_xdp test_xdp.cpp sdk/rocketnet_server_socket_linux.cpp
+        add_executable(test_xdp test_xdp.cpp sdk/rocketnet_server_socket_linux.cpp sdk/rocketnet_gateway_netlink_linux.cpp
             sdk/rocketnet.cpp sdk/rocketnet_platform.cpp sdk/rocketnet_address.cpp sdk/rocketnet_hash.cpp ${ROCKETNET_SODIUM_SOURCE})
         add_dependencies(test_xdp rocketnet_xdp_header)
         target_compile_definitions(test_xdp PRIVATE ROCKETNET_XDP_TESTS

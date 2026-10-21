@@ -62,6 +62,7 @@ void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consu
 #include "rocketnet_memory.h"
 #include "rocketnet_xdp_free_list.h"
 #include "rocketnet_xdp_socket_config.h"
+#include "rocketnet_gateway_netlink.h"
 
 #include <memory.h>
 #include <stdlib.h>
@@ -299,228 +300,64 @@ static bool get_interface_mac_address( const char * interface_name, uint8_t * ma
     return true;
 }
 
-// an interface name goes into an ip(8) command line below, so it is held to
-// the characters interface names use; anything else refuses
+// the gateway's link-layer address for one family on this interface, through
+// rtnetlink (sdk/rocketnet_gateway_netlink.h): the default route's next hop
+// on the interface, then that next hop's neighbour entry. No default route
+// on the interface returns true with *found_route false, the one case the
+// server starts without a gateway; a gateway with no usable neighbour entry
+// carrying a link-layer address refuses, and nothing resolves it.
 
-static bool rocketnet_server_socket_interface_name_is_plain( const char * interface_name )
-{
-    if ( !interface_name || interface_name[0] == '\0' || strlen( interface_name ) >= IFNAMSIZ )
-        return false;
-    for ( const char * c = interface_name; *c; c++ )
-    {
-        const bool plain = ( *c >= 'a' && *c <= 'z' ) || ( *c >= 'A' && *c <= 'Z' ) || ( *c >= '0' && *c <= '9' ) ||
-                           *c == '-' || *c == '_' || *c == '.' || *c == '@';
-        if ( !plain )
-            return false;
-    }
-    return true;
-}
-
-// the IPv6 gateway, the twin of the IPv4 discovery below: the default route's
-// next hop on this interface from `ip -6 route show default dev <if>`, then
-// its link-layer address from `ip -6 neigh show dev <if>`, matched on the
-// whole first token (one IPv6 address is a substring of others). No default
-// route on the interface returns true with *found_route false, as IPv4 does;
-// an unparseable next hop or no neighbor entry with an lladdr refuses.
-
-static bool get_gateway_mac_address_ipv6( const char * interface_name, char * mac_address_string, bool * found_route )
+static bool get_gateway_mac_address_netlink( const char * interface_name, int interface_index, int address_type, uint8_t * mac_address, bool * found_route )
 {
     *found_route = false;
 
-    if ( !rocketnet_server_socket_interface_name_is_plain( interface_name ) )
-    {
-        rocketnet_error( "ipv6 gateway discovery: interface name is not plain" );
-        return false;
-    }
+    const bool ipv6 = address_type == ROCKETNET_ADDRESS_IPV6;
+    const int family = ipv6 ? AF_INET6 : AF_INET;
+    const char * family_name = ipv6 ? "ipv6" : "ipv4";
 
-    char command[256];
-    snprintf( command, sizeof(command), "ip -6 route show default dev %s 2>/dev/null", interface_name );
-
-    char gateway_ip_string[INET6_ADDRSTRLEN + 1];
-    gateway_ip_string[0] = '\0';
-
-    FILE * file = popen( command, "r" );
-    if ( !file )
-        return false;
-    char route_buffer[1024];
-    while ( fgets( route_buffer, sizeof(route_buffer), file ) != NULL )
-    {
-        if ( strncmp( route_buffer, "default ", 8 ) != 0 )
-            continue;
-        const char * via = strstr( route_buffer, " via " );
-        if ( !via )
-            continue;
-        via += 5;
-        const size_t length = strcspn( via, " \t\r\n" );
-        if ( length == 0 || length > INET6_ADDRSTRLEN )
-            continue;
-        memcpy( gateway_ip_string, via, length );
-        gateway_ip_string[length] = '\0';
-        break;
-    }
-    pclose( file );
-
-    if ( gateway_ip_string[0] == '\0' )
+    uint8_t gateway[16];
+    memset( gateway, 0, sizeof(gateway) );
+    int error = 0;
+    const int route = rocketnet_gateway_netlink_route( family, interface_index, gateway, &error );
+    if ( route == ROCKETNET_GATEWAY_NETLINK_DONE )
         return true;
-
-    struct in6_addr gateway_address;
-    if ( inet_pton( AF_INET6, gateway_ip_string, &gateway_address ) != 1 )
+    if ( route != ROCKETNET_GATEWAY_NETLINK_FOUND )
     {
-        rocketnet_error( "ipv6 gateway discovery: next hop %s is not an ipv6 address", gateway_ip_string );
+        rocketnet_error( "%s gateway discovery: route query on %s failed: %s (%s)", family_name, interface_name,
+            rocketnet_gateway_netlink_result_name( route ), strerror( error ) );
         return false;
     }
 
     *found_route = true;
 
-    snprintf( command, sizeof(command), "ip -6 neigh show dev %s 2>/dev/null", interface_name );
+    char gateway_ip_string[INET6_ADDRSTRLEN];
+    if ( !inet_ntop( family, gateway, gateway_ip_string, sizeof(gateway_ip_string) ) )
+        strcpy( gateway_ip_string, "?" );
 
-    bool found_mac_address = false;
-
-    file = popen( command, "r" );
-    if ( !file )
-        return false;
-    char neigh_buffer[1024];
-    while ( fgets( neigh_buffer, sizeof(neigh_buffer), file ) != NULL )
+    const int neighbor = rocketnet_gateway_netlink_neighbor( family, interface_index, gateway, mac_address, &error );
+    if ( neighbor == ROCKETNET_GATEWAY_NETLINK_FOUND )
+        return true;
+    if ( neighbor == ROCKETNET_GATEWAY_NETLINK_DONE )
     {
-        const size_t length = strcspn( neigh_buffer, " \t\r\n" );
-        if ( length != strlen( gateway_ip_string ) || memcmp( neigh_buffer, gateway_ip_string, length ) != 0 )
-            continue;
-        const char * lladdr = strstr( neigh_buffer, " lladdr " );
-        if ( !lladdr )
-            continue;
-        lladdr += 8;
-        if ( strcspn( lladdr, " \t\r\n" ) != 17 )
-            continue;
-        memcpy( mac_address_string, lladdr, 17 );
-        mac_address_string[17] = 0;
-        found_mac_address = true;
-        break;
-    }
-    pclose( file );
-
-    if ( !found_mac_address )
-    {
-        rocketnet_error( "ipv6 gateway discovery: no neighbor entry with a link-layer address for %s on %s", gateway_ip_string, interface_name );
+        if ( ipv6 )
+            rocketnet_error( "ipv6 gateway discovery: no neighbor entry with a link-layer address for %s on %s", gateway_ip_string, interface_name );
         return false;
     }
-
-    return true;
-}
-
-// the next whitespace-separated token of a command's output line, copied
-// into token: false at the end of the line, or when the token does not fit
-// (no column the IPv4 gateway parsers read is that long)
-
-static bool rocketnet_server_socket_next_token( const char ** cursor, char * token, size_t token_size )
-{
-    const char * start = *cursor + strspn( *cursor, " \t\r\n" );
-    const size_t length = strcspn( start, " \t\r\n" );
-    *cursor = start + length;
-    if ( length == 0 || length >= token_size )
-        return false;
-    memcpy( token, start, length );
-    token[length] = '\0';
-    return true;
-}
-
-// the IPv4 gateway from one `netstat -rn` line, pure string logic over the
-// command's text (test_unit_xdp_gateway_parse.cpp drives it). The line is
-// accepted only when it is the default route on this interface, every column
-// compared as a whole token: Destination and Genmask are 0.0.0.0, Flags
-// holds U and G, and the last column (Iface) is the interface name. Its
-// Gateway column is copied out. A non-default UG route, a longer interface
-// name that contains this one (eth10 for eth1) and the header lines refuse.
-
-bool rocketnet_server_socket_ipv4_route_line_gateway( const char * line, const char * interface_name, char * gateway_ip_string, size_t gateway_ip_size )
-{
-    rocketnet_assert( line );
-    rocketnet_assert( interface_name );
-    rocketnet_assert( gateway_ip_string );
-
-    // Destination Gateway Genmask Flags MSS Window irtt Iface
-
-    char columns[8][IFNAMSIZ + INET_ADDRSTRLEN];
-    const char * cursor = line;
-    for ( int i = 0; i < 8; i++ )
-    {
-        if ( !rocketnet_server_socket_next_token( &cursor, columns[i], sizeof(columns[i]) ) )
-            return false;
-    }
-    if ( cursor[strspn( cursor, " \t\r\n" )] != '\0' )
-        return false;
-
-    if ( strcmp( columns[0], "0.0.0.0" ) != 0 || strcmp( columns[2], "0.0.0.0" ) != 0 )
-        return false;
-    if ( !strchr( columns[3], 'U' ) || !strchr( columns[3], 'G' ) )
-        return false;
-    if ( strcmp( columns[7], interface_name ) != 0 )
-        return false;
-    if ( strlen( columns[1] ) >= gateway_ip_size )
-        return false;
-
-    strcpy( gateway_ip_string, columns[1] );
-    return true;
-}
-
-// the gateway's link-layer address from one `ip neigh show` line, pure
-// string logic (test_unit_xdp_gateway_parse.cpp drives it), as the IPv6
-// discovery above matches its neighbor: the first token is the gateway
-// address as a whole token (10.0.0.12 never answers for 10.0.0.1), the token
-// after "dev" is the interface name as a whole token, and the token after
-// "lladdr" is 17 characters long, copied into mac_address_string (18 bytes).
-// A line with no lladdr (FAILED, INCOMPLETE) refuses.
-
-bool rocketnet_server_socket_ipv4_neigh_line_mac( const char * line, const char * gateway_ip_string, const char * interface_name, char * mac_address_string )
-{
-    rocketnet_assert( line );
-    rocketnet_assert( gateway_ip_string );
-    rocketnet_assert( interface_name );
-    rocketnet_assert( mac_address_string );
-
-    char token[INET6_ADDRSTRLEN + 1];
-    const char * cursor = line;
-    if ( !rocketnet_server_socket_next_token( &cursor, token, sizeof(token) ) || strcmp( token, gateway_ip_string ) != 0 )
-        return false;
-
-    bool interface_matches = false;
-    char mac[18];
-    mac[0] = '\0';
-    while ( rocketnet_server_socket_next_token( &cursor, token, sizeof(token) ) )
-    {
-        if ( strcmp( token, "dev" ) == 0 )
-        {
-            if ( !rocketnet_server_socket_next_token( &cursor, token, sizeof(token) ) )
-                return false;
-            interface_matches = strcmp( token, interface_name ) == 0;
-        }
-        else if ( strcmp( token, "lladdr" ) == 0 )
-        {
-            if ( !rocketnet_server_socket_next_token( &cursor, token, sizeof(token) ) || strlen( token ) != 17 )
-                return false;
-            memcpy( mac, token, 18 );
-        }
-    }
-
-    if ( !interface_matches || mac[0] == '\0' )
-        return false;
-
-    memcpy( mac_address_string, mac, 18 );
-    return true;
+    rocketnet_error( "%s gateway discovery: neighbor query for %s on %s failed: %s (%s)", family_name, gateway_ip_string, interface_name,
+        rocketnet_gateway_netlink_result_name( neighbor ), strerror( error ) );
+    return false;
 }
 
 // false refuses create (a malformed, zero or multicast MAC, or a discovery
 // that could not complete). true with *found false: this interface has no
 // default route for the server's family, the one case the server starts
-// without a gateway. address_type picks the discovery: the IPv4 routing
-// table and neighbors, or the IPv6 ones.
+// without a gateway. address_type picks the family discovery asks
+// rtnetlink about.
 
-static bool get_gateway_mac_address( const char * interface_name, int address_type, uint8_t * mac_address, bool * found )
+static bool get_gateway_mac_address( const char * interface_name, int interface_index, int address_type, uint8_t * mac_address, bool * found )
 {
     memset( mac_address, 0, 6 );
     *found = false;
-
-    char mac_address_string[18];
-    memset( mac_address_string, 0, sizeof(mac_address_string) );
 
     // a parameter override under the #106 loud-override law: not a config
     // table field (it overrides a discovered value, not a declared one),
@@ -552,94 +389,36 @@ static bool get_gateway_mac_address( const char * interface_name, int address_ty
 
         rocketnet_info( "server config override ROCKETNET_GATEWAY_ETHERNET_ADDRESS=%s (displaces gateway discovery)", gateway_ethernet_address_env );
 
-        strncpy( mac_address_string, gateway_ethernet_address_env, 17 );
+        char mac_address_string[18];
+        memcpy( mac_address_string, gateway_ethernet_address_env, 17 );
+        mac_address_string[2] = 0;
+        mac_address_string[5] = 0;
+        mac_address_string[8] = 0;
+        mac_address_string[11] = 0;
+        mac_address_string[14] = 0;
         mac_address_string[17] = 0;
+
+        mac_address[0] = (uint8_t) strtol( mac_address_string + 0, NULL, 16 );
+        mac_address[1] = (uint8_t) strtol( mac_address_string + 3, NULL, 16 );
+        mac_address[2] = (uint8_t) strtol( mac_address_string + 6, NULL, 16 );
+        mac_address[3] = (uint8_t) strtol( mac_address_string + 9, NULL, 16 );
+        mac_address[4] = (uint8_t) strtol( mac_address_string + 12, NULL, 16 );
+        mac_address[5] = (uint8_t) strtol( mac_address_string + 15, NULL, 16 );
     }
-    else if ( address_type == ROCKETNET_ADDRESS_IPV6 )
+    else
     {
         bool found_route = false;
-        if ( !get_gateway_mac_address_ipv6( interface_name, mac_address_string, &found_route ) )
+        if ( !get_gateway_mac_address_netlink( interface_name, interface_index, address_type, mac_address, &found_route ) )
             return false;
         if ( !found_route )
             return true;
     }
-    else
-    {
-        // the gateway address: the first `netstat -rn` line that is the
-        // default route on this interface, matched on whole columns by
-        // rocketnet_server_socket_ipv4_route_line_gateway
-
-        char gateway_ip_string[INET_ADDRSTRLEN + 1];
-        gateway_ip_string[0] = '\0';
-
-        FILE * file = popen( "netstat -rn", "r" );
-        if ( !file )
-            return false;
-        char netstat_buffer[1024];
-        while ( fgets( netstat_buffer, sizeof(netstat_buffer), file ) != NULL )
-        {
-            if ( rocketnet_server_socket_ipv4_route_line_gateway( netstat_buffer, interface_name, gateway_ip_string, sizeof(gateway_ip_string) ) )
-                break;
-        }
-        pclose( file );
-
-        if ( gateway_ip_string[0] == '\0' )
-        {
-            return true;
-        }
-
-        // parse the address and make sure it's a valid ipv4
-
-        rocketnet_address_t address;
-        if ( !rocketnet_address_parse( &address, gateway_ip_string ) || address.type != ROCKETNET_ADDRESS_IPV4 )
-        {
-            return false;
-        }
-
-        // its ethernet address: the first `ip neigh show` line whose address
-        // and dev are the gateway and this interface as whole tokens and that
-        // carries an lladdr, by rocketnet_server_socket_ipv4_neigh_line_mac
-
-        bool found_mac_address = false;
-
-        file = popen( "ip neigh show", "r" );
-        if ( !file )
-            return false;
-        char ip_buffer[1024];
-        while ( fgets( ip_buffer, sizeof(ip_buffer), file ) != NULL )
-        {
-            if ( rocketnet_server_socket_ipv4_neigh_line_mac( ip_buffer, gateway_ip_string, interface_name, mac_address_string ) )
-            {
-                found_mac_address = true;
-                break;
-            }
-        }
-        pclose( file );
-
-        if ( !found_mac_address )
-        {
-            return false;
-        }
-    }
-
-    mac_address_string[2] = 0;
-    mac_address_string[5] = 0;
-    mac_address_string[8] = 0;
-    mac_address_string[11] = 0;
-    mac_address_string[14] = 0;
-    mac_address_string[17] = 0;
-
-    mac_address[0] = (uint8_t) strtol( mac_address_string + 0, NULL, 16 );
-    mac_address[1] = (uint8_t) strtol( mac_address_string + 3, NULL, 16 );
-    mac_address[2] = (uint8_t) strtol( mac_address_string + 6, NULL, 16 );
-    mac_address[3] = (uint8_t) strtol( mac_address_string + 9, NULL, 16 );
-    mac_address[4] = (uint8_t) strtol( mac_address_string + 12, NULL, 16 );
-    mac_address[5] = (uint8_t) strtol( mac_address_string + 15, NULL, 16 );
 
     static const uint8_t zero_mac[6] = { 0, 0, 0, 0, 0, 0 };
     if ( ( mac_address[0] & 1 ) || memcmp( mac_address, zero_mac, 6 ) == 0 )
     {
-        rocketnet_error( "gateway mac address %s is zero or multicast", mac_address_string );
+        rocketnet_error( "gateway mac address %02x:%02x:%02x:%02x:%02x:%02x is zero or multicast",
+            mac_address[0], mac_address[1], mac_address[2], mac_address[3], mac_address[4], mac_address[5] );
         return false;
     }
 
@@ -1544,8 +1323,8 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         bool ipv6_known = false;
         uint8_t ipv4_mac[6];
         uint8_t ipv6_mac[6];
-        if ( !get_gateway_mac_address( interface_name, ROCKETNET_ADDRESS_IPV4, ipv4_mac, &ipv4_known ) ||
-             !get_gateway_mac_address( interface_name, ROCKETNET_ADDRESS_IPV6, ipv6_mac, &ipv6_known ) )
+        if ( !get_gateway_mac_address( interface_name, server_socket->interface_index, ROCKETNET_ADDRESS_IPV4, ipv4_mac, &ipv4_known ) ||
+             !get_gateway_mac_address( interface_name, server_socket->interface_index, ROCKETNET_ADDRESS_IPV6, ipv6_mac, &ipv6_known ) )
         {
             rocketnet_error( "server could not get gateway mac address" );
             rocketnet_server_socket_destroy( server_socket );
@@ -1568,7 +1347,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             server_socket->reply_macs.gateway_ipv6_known = true;
         }
     }
-    else if ( !get_gateway_mac_address( interface_name, public_address.type, server_socket->gateway_ethernet_address, &server_socket->gateway_known ) )
+    else if ( !get_gateway_mac_address( interface_name, server_socket->interface_index, public_address.type, server_socket->gateway_ethernet_address, &server_socket->gateway_known ) )
     {
         rocketnet_error( "server could not get gateway mac address" );
         rocketnet_server_socket_destroy( server_socket );
