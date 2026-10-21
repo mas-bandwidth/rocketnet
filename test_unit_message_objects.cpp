@@ -832,13 +832,13 @@ static void test_release_returns_room()
         int delivered_channel = -1;
         check( rocketnet_message_server_receive( pair.server, NULL, &delivered_channel, &data, &bytes ) == 1 );
         check( delivered_channel == 1 );
-        check( slot->held == 1 );
+        check( slot->hot->held == 1 );
         uint32_t live = 0;
         for ( uint32_t i = 0; i < region->window; i++ )
             live += region->receive_descriptors[i].live;
         check( live == 1 );
         rocketnet_message_server_release( pair.server, data );
-        check( slot->held == 0 );
+        check( slot->hot->held == 0 );
         pair.time += 0.01;
         check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
         live = 0;
@@ -881,7 +881,7 @@ static void test_release_returns_room()
         int delivered_channel = -1;
         check( rocketnet_message_server_receive( pair.server, NULL, &delivered_channel, &data, &bytes ) == 1 );    // held, never released
         check( delivered_channel == 1 );
-        check( slot->held == 1 );
+        check( slot->hot->held == 1 );
         uint32_t live = 0;
         for ( uint32_t i = 0; i < region->window; i++ )
             live += region->receive_descriptors[i].live;
@@ -1231,7 +1231,7 @@ static void test_slot_reuse_starts_clean()
     // the next update resets the region before the transport can reuse the slot
     pair.time += 0.01;
     check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
-    check( slot->state == RN_MESSAGE_CONNECTION_FREE );
+    check( slot->hot->state == RN_MESSAGE_CONNECTION_FREE );
     check( slot->region->carves == carves + 1 );
     check( !rn_region_exhausted( slot->region ) );
 
@@ -1244,15 +1244,15 @@ static void test_slot_reuse_starts_clean()
     mo_net_connect( pair.net, 0 );
     mo_step( &pair );
 
-    check( slot->state == RN_MESSAGE_CONNECTION_CONNECTED );
-    check( slot->connection_id == pair.net->slot_connection[0] );
+    check( slot->hot->state == RN_MESSAGE_CONNECTION_CONNECTED );
+    check( slot->hot->connection_id == pair.net->slot_connection[0] );
     check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
     check( slot->region->descriptors_free == slot->region->queue - 1 );          // the new connection's CONFIG, in flight (10.3)
     check( slot->region->channel_receive[0].ordered_read == 0 );
     check( slot->region->channel_send[0].ordered_write == 0 );
     check( slot->budget.kbps == 7000 );                                // not the setter's -1 nor the default
     check( slot->send_budget_enabled == 1 );
-    check( slot->held == 0 && slot->unreliable_count == 0 && slot->serial == 0 );
+    check( slot->hot->held == 0 && slot->unreliable_count == 0 && slot->serial == 0 );
     mo_step( &pair );
     mo_step( &pair );
     check( slot->region->descriptors_free == slot->region->queue );              // CONFIG acked: every descriptor is back (10.3)
@@ -1814,8 +1814,8 @@ static void test_rnslots_witness_replays()
         check( slot->region->channel_receive[0].ordered_read == 1 );
         mo_net_drop_slot( pair.net, 0 );
         mo_step( &pair );
-        check( slot->state == RN_MESSAGE_CONNECTION_FREE );
-        check( slot->connection_id == 0 );
+        check( slot->hot->state == RN_MESSAGE_CONNECTION_FREE );
+        check( slot->hot->connection_id == 0 );
         check( slot->region->channel_receive[0].ordered_read == 0 );
         uint32_t live = 0;
         for ( uint32_t i = 0; i < slot->region->window; i++ )
@@ -1854,7 +1854,7 @@ static void test_rnslots_witness_replays()
             started++;
         }
         check( started > 0 );
-        check( slot->state == RN_MESSAGE_CONNECTION_KICKED );
+        check( slot->hot->state == RN_MESSAGE_CONNECTION_KICKED );
         check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
         check( pair.net->slot_connection[0] == 0 );
         check( rocketnet_message_server_client_connected( pair.server, 0 ) == 0 );
@@ -1867,7 +1867,7 @@ static void test_rnslots_witness_replays()
         rocketnet_message_server_release( pair.server, second );
         pair.time += 0.01;
         check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
-        check( slot->state == RN_MESSAGE_CONNECTION_FREE );
+        check( slot->hot->state == RN_MESSAGE_CONNECTION_FREE );
         check( !rn_region_exhausted( slot->region ) );
         check( slot->region->descriptors_free == slot->region->queue );
         check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
@@ -1899,7 +1899,7 @@ static void test_rnslots_witness_replays()
             delivered++;
         }
         check( delivered == total );
-        check( slot->state == RN_MESSAGE_CONNECTION_CONNECTED );
+        check( slot->hot->state == RN_MESSAGE_CONNECTION_CONNECTED );
         check( !rn_region_exhausted( slot->region ) );
         check( !rn_region_exhausted( mo_client_connection( pair.clients[0] )->region ) );
         mo_pair_teardown( &pair );
@@ -2521,7 +2521,7 @@ static void test_pending_start_cancelled_by_slot_reset()
     pair.time += 0.01;
     check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
     check( slot->region->carves == carves + 1 );
-    check( slot->state == RN_MESSAGE_CONNECTION_CONNECTED );
+    check( slot->hot->state == RN_MESSAGE_CONNECTION_CONNECTED );
     check( pair.server->object.pending_connection == -1 );
     check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == refused + 1 );
 

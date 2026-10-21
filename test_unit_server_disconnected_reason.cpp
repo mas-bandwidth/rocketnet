@@ -330,14 +330,14 @@ static void server_disconnected_fake_case( int names_end_reason, int expected_re
     rocketnet_message_client_t * client = (rocketnet_message_client_t *) object;
     double time = 1000.0;
     check( rocketnet_message_client_update( client, time ) == ROCKETNET_UPDATE_OK );
-    check( object->connections[0].state == RN_MESSAGE_CONNECTION_CONNECTED );
+    check( object->hot_connections[0].state == RN_MESSAGE_CONNECTION_CONNECTED );
     check( object->connections[0].disconnect_reason == ROCKETNET_DISCONNECT_REASON_NONE );
 
     // the link's transport ends: the terminal check resets the connection
     fake.connected = 0;
     time += 0.01;
     check( rocketnet_message_client_update( client, time ) == ROCKETNET_UPDATE_OK );
-    check( object->connections[0].state != RN_MESSAGE_CONNECTION_CONNECTED );
+    check( object->hot_connections[0].state != RN_MESSAGE_CONNECTION_CONNECTED );
     check( object->connections[0].disconnect_reason == expected_reason );
 
     // further updates keep it

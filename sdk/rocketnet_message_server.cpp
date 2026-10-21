@@ -62,6 +62,7 @@ static inline uint64_t rn_message_align64( uint64_t bytes )
 
 struct rn_message_object_layout_t
 {
+    uint64_t hot_connections;       // compact slot records walked by update/send
     uint64_t connections;           // offset of the connection array
     uint64_t views;                 // offset of the first connection's views; each connection's next at + view_stride
     uint64_t view_stride;
@@ -88,6 +89,8 @@ static bool rn_message_object_layout( const rocketnet_message_config_t * config,
 
     memset( layout, 0, sizeof( *layout ) );
     uint64_t offset = rn_message_align64( sizeof( rn_message_object_t ) > sizeof( rocketnet_message_server_t ) ? sizeof( rn_message_object_t ) : sizeof( rocketnet_message_server_t ) );
+    layout->hot_connections = offset;
+    offset += rn_message_align64( sizeof( rn_message_connection_hot_t ) * n );
     layout->connections = offset;
     offset += rn_message_align64( sizeof( rn_message_connection_t ) * n );
     layout->views = offset;
@@ -239,6 +242,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     object->send_next_connection = 0;
     object->block = block;
     object->owns_block = owns_block ? 1 : 0;
+    object->hot_connections = (rn_message_connection_hot_t *) ( block + layout.hot_connections );
     object->connections = (rn_message_connection_t *) ( block + layout.connections );
     rn_slots_init( &object->slots, num_connections );
 
@@ -260,9 +264,10 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     for ( int i = 0; i < num_connections; i++ )
     {
         rn_message_connection_t * connection = &object->connections[i];
+        connection->hot = &object->hot_connections[i];
         rn_endpoint_init( connection, rn_arena_region( object->arena, i ), &endpoint_config );
-        connection->views = block + layout.views + layout.view_stride * (uint64_t) i;
-        connection->cursors = (uint32_t *) ( block + layout.cursors + layout.cursor_stride * (uint64_t) i );
+        connection->hot->views = block + layout.views + layout.view_stride * (uint64_t) i;
+        connection->hot->cursors = (uint32_t *) ( block + layout.cursors + layout.cursor_stride * (uint64_t) i );
         connection->disconnect_reason = ROCKETNET_DISCONNECT_REASON_NONE;
         if ( object->is_server )
             rocketnet_server_connection_reset( object, (int) ( connection - object->connections ) );
@@ -278,8 +283,8 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     // (rn_message_object_start).
     if ( !is_server )
     {
-        object->connections[0].state = RN_MESSAGE_CONNECTION_CONNECTED;
-        object->connections[0].connection_id = 1;
+        object->hot_connections[0].state = RN_MESSAGE_CONNECTION_CONNECTED;
+        object->hot_connections[0].connection_id = 1;
         object->slots.connection_id[0] = 1;
         rn_endpoint_announce_config( &object->connections[0], time );     // RNEndpoint Reset: the client's connect (10.3)
     }
@@ -368,10 +373,10 @@ void rn_message_object_kick( struct rn_message_object_t * object, int index, int
     if ( !object || index < 0 || index >= object->num_connections )
         return;
     rn_message_connection_t * connection = &object->connections[index];
-    if ( connection->state != RN_MESSAGE_CONNECTION_CONNECTED )
+    if ( connection->hot->state != RN_MESSAGE_CONNECTION_CONNECTED )
         return;
     rn_message_connection_cancel_pending( object, index );
-    connection->state = RN_MESSAGE_CONNECTION_KICKED;
+    connection->hot->state = RN_MESSAGE_CONNECTION_KICKED;
     connection->disconnect_reason = reason;
     if ( object->link.disconnect )
         object->link.disconnect( object->link.transport, index );
@@ -402,7 +407,7 @@ static rn_message_connection_t * rn_message_admit( rn_message_object_t * object,
     }
     rn_message_connection_t * connection = &object->connections[index];
     const uint64_t entry_connection_id = entry_connection ? entry_connection( object->link.transport, k )
-                                                          : ( object->slots.changed[index] ? 0 : connection->connection_id );
+                                                          : ( object->slots.changed[index] ? 0 : connection->hot->connection_id );
     if ( rn_slots_admit( &object->slots, index, entry_connection_id ) != RN_SLOTS_APPLY )
     {
         rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY );
@@ -425,7 +430,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
     rn_message_object_release_batch( object );            // a batch is released by the update that follows it
     uint32_t held = 0;
     for ( int i = 0; i < object->num_connections; i++ )
-        held += object->connections[i].held;
+        held += object->hot_connections[i].held;
     if ( held > 0 )
     {
         rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_NOT_RELEASED, held );
@@ -459,14 +464,14 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         // RNChannel EndUpdate: the last update's deliveries expire and their
         // receive descriptors return to the region (RNSlots Release's charge)
         const uint32_t delivered = rn_endpoint_begin_update( connection );
-        memset( connection->views, 0, delivered < connection->region->delivery_entries ? delivered : connection->region->delivery_entries );
-        memset( connection->cursors, 0, sizeof( uint32_t ) * connection->region->num_channels );
-        connection->held = 0;
+        memset( connection->hot->views, 0, delivered < connection->region->delivery_entries ? delivered : connection->region->delivery_entries );
+        memset( connection->hot->cursors, 0, sizeof( uint32_t ) * connection->region->num_channels );
+        connection->hot->held = 0;
 
         // RNSlots ResetFree: a kicked connection's region is reset before the
         // transport's update can give the slot to another client, and the
         // slots machine sees the slot free until Observe reads the transport
-        if ( connection->state == RN_MESSAGE_CONNECTION_KICKED )
+        if ( object->hot_connections[i].state == RN_MESSAGE_CONNECTION_KICKED )
         {
             rn_message_connection_cancel_at_reset( object, i );     // RNSlots ResetCancel (kick cancelled it already)
             if ( object->is_server )
@@ -487,7 +492,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
     // before any ack or payload from the ended connection can be admitted.
     // Explicit message kicks were reset at the start of this update.
     if ( !object->is_server && object->link.state &&
-         object->connections[0].state == RN_MESSAGE_CONNECTION_CONNECTED &&
+         object->hot_connections[0].state == RN_MESSAGE_CONNECTION_CONNECTED &&
          object->link.state( object->link.transport ) <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
     {
         // the transport's end reason (SERVER_DISCONNECTED once it accepted
@@ -517,8 +522,8 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
 
             if ( action == RN_SLOTS_RESET )
             {
-                connection->state = RN_MESSAGE_CONNECTION_CONNECTED;
-                connection->connection_id = id;
+                connection->hot->state = RN_MESSAGE_CONNECTION_CONNECTED;
+                connection->hot->connection_id = id;
                 connection->disconnect_reason = ROCKETNET_DISCONNECT_REASON_NONE;
                 rn_endpoint_announce_config( connection, time );   // RNEndpoint Reset: the server's connect (10.3)
             }
@@ -541,9 +546,9 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
 
     for ( int i = 0; i < object->num_connections; i++ )
     {
-        rn_message_connection_t * connection = &object->connections[i];
-        if ( connection->state != RN_MESSAGE_CONNECTION_CONNECTED )
+        if ( object->hot_connections[i].state != RN_MESSAGE_CONNECTION_CONNECTED )
             continue;
+        rn_message_connection_t * connection = &object->connections[i];
         rn_endpoint_tick( connection, time );          // RNEndpoint Tick: RNReceipts SweepLoss
     }
 
@@ -566,9 +571,9 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
     // violation, then a reliable message past its timeout (rn_endpoint_error)
     for ( int i = 0; i < object->num_connections; i++ )
     {
-        rn_message_connection_t * connection = &object->connections[i];
-        if ( connection->state != RN_MESSAGE_CONNECTION_CONNECTED )
+        if ( object->hot_connections[i].state != RN_MESSAGE_CONNECTION_CONNECTED )
             continue;
+        rn_message_connection_t * connection = &object->connections[i];
         // RNEndpoint Tick, the CONFIG half: the wait for the peer's CONFIG
         // starts at the first update the connection is connected at (the
         // server's from its Observe reset, the client's from the first update
@@ -614,7 +619,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
     // CONNECTED, or a slot with no connection, drops the start: NULL, counted
     // once, nothing queued for later. A link with no connection query (a bare
     // object with no transport) has no transport state to wait on.
-    const bool connected = connection->state == RN_MESSAGE_CONNECTION_CONNECTED &&
+    const bool connected = connection->hot->state == RN_MESSAGE_CONNECTION_CONNECTED &&
                            ( object->is_server || !object->link.connection || object->link.connection( object->link.transport, 0 ) != 0 );
     if ( !connected )
     {
@@ -859,9 +864,9 @@ void rn_message_object_send_packets( struct rn_message_object_t * object )
         for ( int offset = 0; offset < num_connections; offset++ )
         {
             const int i = ( start + offset ) % num_connections;
-            rn_message_connection_t * connection = &object->connections[i];
-            if ( connection->state != RN_MESSAGE_CONNECTION_CONNECTED )
+            if ( object->hot_connections[i].state != RN_MESSAGE_CONNECTION_CONNECTED )
                 continue;
+            rn_message_connection_t * connection = &object->connections[i];
             // The client's CONFIG waits unnumbered until the transport connects.
             if ( !object->is_server && object->link.connection( object->link.transport, 0 ) == 0 )
                 continue;
@@ -897,23 +902,23 @@ static const rn_delivery_t * rn_message_object_next( struct rn_message_object_t 
     for ( int i = object->receive_connection; i < object->num_connections; i++ )
     {
         rn_message_connection_t * connection = &object->connections[i];
-        if ( connection->state == RN_MESSAGE_CONNECTION_CONNECTED )
+        if ( connection->hot->state == RN_MESSAGE_CONNECTION_CONNECTED )
         {
             const uint32_t deliveries = connection->ordered.channels.deliveries;
             const rn_delivery_t * table = connection->region->deliveries;
-            for ( uint32_t k = connection->cursors[0]; k < deliveries; k++ )
+            for ( uint32_t k = connection->hot->cursors[0]; k < deliveries; k++ )
             {
-                if ( connection->views[k] != RN_MESSAGE_VIEW_WAITING )
+                if ( connection->hot->views[k] != RN_MESSAGE_VIEW_WAITING )
                     continue;
-                connection->views[k] = RN_MESSAGE_VIEW_HELD;
-                connection->held++;
-                connection->cursors[0] = k + 1;
+                connection->hot->views[k] = RN_MESSAGE_VIEW_HELD;
+                connection->hot->held++;
+                connection->hot->cursors[0] = k + 1;
                 object->receive_connection = i;
                 *out_index = i;
                 *out_entry = k;
                 return &table[k];
             }
-            connection->cursors[0] = deliveries;
+            connection->hot->cursors[0] = deliveries;
         }
         object->receive_connection = i + 1;
     }
@@ -957,38 +962,38 @@ int rn_message_object_receive_channel( struct rn_message_object_t * object, int 
         return 0;
 
     rn_message_connection_t * connection = &object->connections[index];
-    if ( connection->state != RN_MESSAGE_CONNECTION_CONNECTED )
+    if ( connection->hot->state != RN_MESSAGE_CONNECTION_CONNECTED )
         return 0;
 
     const uint32_t deliveries = connection->ordered.channels.deliveries;
     const rn_delivery_t * table = connection->region->deliveries;
-    for ( uint32_t k = connection->cursors[channel]; k < deliveries; k++ )
+    for ( uint32_t k = connection->hot->cursors[channel]; k < deliveries; k++ )
     {
-        if ( table[k].channel != (uint16_t) channel || connection->views[k] != RN_MESSAGE_VIEW_WAITING )
+        if ( table[k].channel != (uint16_t) channel || connection->hot->views[k] != RN_MESSAGE_VIEW_WAITING )
             continue;
-        connection->views[k] = RN_MESSAGE_VIEW_HELD;
-        connection->held++;
-        connection->cursors[channel] = k + 1;
+        connection->hot->views[k] = RN_MESSAGE_VIEW_HELD;
+        connection->hot->held++;
+        connection->hot->cursors[channel] = k + 1;
         *data = table[k].data;
         *bytes = table[k].bytes;
         return 1;
     }
-    connection->cursors[channel] = deliveries;
+    connection->hot->cursors[channel] = deliveries;
     return 0;
 }
 
 static bool rn_message_connection_release_view( rn_message_connection_t * connection, const uint8_t * data )
 {
-    if ( connection->held == 0 )
+    if ( connection->hot->held == 0 )
         return false;
     const uint32_t deliveries = connection->ordered.channels.deliveries;
     const rn_delivery_t * table = connection->region->deliveries;
     for ( uint32_t k = 0; k < deliveries; k++ )
     {
-        if ( table[k].data == data && connection->views[k] == RN_MESSAGE_VIEW_HELD )
+        if ( table[k].data == data && connection->hot->views[k] == RN_MESSAGE_VIEW_HELD )
         {
-            connection->views[k] = RN_MESSAGE_VIEW_RELEASED;
-            connection->held--;
+            connection->hot->views[k] = RN_MESSAGE_VIEW_RELEASED;
+            connection->hot->held--;
             return true;
         }
     }
@@ -1025,10 +1030,10 @@ static void rn_message_object_release_batch( struct rn_message_object_t * object
     {
         rn_message_connection_t * connection = &object->connections[object->batch_connection[n]];
         const uint32_t k = object->batch_entry[n];
-        if ( k < connection->region->delivery_entries && connection->views[k] == RN_MESSAGE_VIEW_HELD )
+        if ( k < connection->region->delivery_entries && connection->hot->views[k] == RN_MESSAGE_VIEW_HELD )
         {
-            connection->views[k] = RN_MESSAGE_VIEW_RELEASED;
-            connection->held--;
+            connection->hot->views[k] = RN_MESSAGE_VIEW_RELEASED;
+            connection->hot->held--;
         }
     }
     object->batch_count = 0;
@@ -1081,7 +1086,7 @@ int rn_message_object_connected( const struct rn_message_object_t * object, int 
 {
     if ( index < 0 || index >= object->num_connections )
         return 0;
-    return object->connections[index].state == RN_MESSAGE_CONNECTION_CONNECTED ? 1 : 0;
+    return object->hot_connections[index].state == RN_MESSAGE_CONNECTION_CONNECTED ? 1 : 0;
 }
 
 // ---------------------------------------------------------------
@@ -1409,7 +1414,7 @@ int rocketnet_message_server_receipts( struct rocketnet_message_server_t * serve
          ( capacity > 0 && !rocketnet_api_null_guard( out ) ) )
         return 0;
     rn_message_connection_t * connection = rn_message_object_connection( &server->object, client_index );
-    if ( !connection || connection->state != RN_MESSAGE_CONNECTION_CONNECTED )
+    if ( !connection || connection->hot->state != RN_MESSAGE_CONNECTION_CONNECTED )
         return 0;
     return rn_endpoint_take_receipts( connection, out, capacity );
 }

@@ -115,6 +115,13 @@ static const rocketnet_reset_member_t message_connection_fields[] =
 };
 #undef MESSAGE_FIELD
 
+#define HOT_FIELD( decision, field ) ROCKETNET_RESET_MEMBER( rn_message_connection_hot_t, field, #decision[0] == 'R' ),
+static const rocketnet_reset_member_t message_connection_hot_fields[] =
+{
+    ROCKETNET_MESSAGE_CONNECTION_HOT_FIELDS( HOT_FIELD )
+};
+#undef HOT_FIELD
+
 #define RESET_COUNT( array ) ( sizeof(array) / sizeof((array)[0]) )
 
 // one inventory field walk: a failure names <struct>.<member>
@@ -239,6 +246,14 @@ static void test_connection_reset_inventory_covers_every_field()
                                                              ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 1000.0 );
     check( object );
     rn_message_connection_t * connection = &object->connections[0];
+    check( connection->hot == object->hot_connections );
+#define HOT_MEMBER( field, declaration ) ROCKETNET_RESET_MEMBER( rn_message_connection_hot_t, field, -1 ),
+    const rocketnet_reset_member_t message_connection_hot_layout[] = { RN_MESSAGE_CONNECTION_HOT_LAYOUT_FIELDS( HOT_MEMBER ) };
+#undef HOT_MEMBER
+    reset_walk_passes( rocketnet_reset_inventory_matches( "rn_message_connection_hot_t",
+        message_connection_hot_layout, RESET_COUNT( message_connection_hot_layout ),
+        message_connection_hot_fields, RESET_COUNT( message_connection_hot_fields ), 0,
+        sizeof(rn_message_connection_hot_t), alignof(rn_message_connection_hot_t), failure, sizeof(failure) ), failure );
 #define MESSAGE_MEMBER( field, declaration ) { #field, (size_t) ( (const uint8_t *) &connection->field - (const uint8_t *) connection ), \
     sizeof( connection->field ), alignof( decltype( connection->field ) ), -1 },
     const rocketnet_reset_member_t message_connection_layout[] = { RN_MESSAGE_CONNECTION_LAYOUT_FIELDS( MESSAGE_MEMBER ) };
@@ -250,9 +265,10 @@ static void test_connection_reset_inventory_covers_every_field()
     rocketnet_client_connection_reset( object );
     const rn_endpoint_t fresh_endpoint = *connection;
     const rn_message_connection_t fresh_connection = *connection;
+    const rn_message_connection_hot_t fresh_hot = *connection->hot;
     connection->disconnect_reason = ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT;
-    memset( connection->views, 0xA5, connection->region->delivery_entries );
-    memset( connection->cursors, 0xA5,
+    memset( connection->hot->views, 0xA5, connection->region->delivery_entries );
+    memset( connection->hot->cursors, 0xA5,
             sizeof(uint32_t) * (size_t) connection->region->num_channels );
 #define POISON_ENDPOINT_RESET( field ) memset( &connection->field, 0xA5, sizeof(connection->field) );
 #define POISON_ENDPOINT_KEEP( field )
@@ -269,6 +285,14 @@ static void test_connection_reset_inventory_covers_every_field()
 #undef POISON_MESSAGE_KEEP
 #undef POISON_MESSAGE_RESET
     const rn_message_connection_t before_connection = *connection;
+#define POISON_HOT_RESET( field ) memset( &connection->hot->field, 0xA5, sizeof(connection->hot->field) );
+#define POISON_HOT_KEEP( field )
+#define POISON_HOT( decision, field ) POISON_HOT_##decision( field )
+    ROCKETNET_MESSAGE_CONNECTION_HOT_FIELDS( POISON_HOT )
+#undef POISON_HOT
+#undef POISON_HOT_KEEP
+#undef POISON_HOT_RESET
+    const rn_message_connection_hot_t before_hot = *connection->hot;
     rocketnet_client_connection_reset( object );
 #define CHECK_ENDPOINT_RESET( field ) reset_field_holds( "rn_endpoint_t", #field, "RESET", &connection->field, &fresh_endpoint.field, sizeof(connection->field) );
 #define CHECK_ENDPOINT_KEEP( field ) reset_field_holds( "rn_endpoint_t", #field, "KEEP", &connection->field, &before_connection.field, sizeof(connection->field) );
@@ -284,10 +308,17 @@ static void test_connection_reset_inventory_covers_every_field()
 #undef CHECK_MESSAGE
 #undef CHECK_MESSAGE_KEEP
 #undef CHECK_MESSAGE_RESET
+#define CHECK_HOT_RESET( field ) reset_field_holds( "rn_message_connection_hot_t", #field, "RESET", &connection->hot->field, &fresh_hot.field, sizeof(connection->hot->field) );
+#define CHECK_HOT_KEEP( field ) reset_field_holds( "rn_message_connection_hot_t", #field, "KEEP", &connection->hot->field, &before_hot.field, sizeof(connection->hot->field) );
+#define CHECK_HOT( decision, field ) CHECK_HOT_##decision( field )
+    ROCKETNET_MESSAGE_CONNECTION_HOT_FIELDS( CHECK_HOT )
+#undef CHECK_HOT
+#undef CHECK_HOT_KEEP
+#undef CHECK_HOT_RESET
     for ( uint32_t i = 0; i < connection->region->delivery_entries; i++ )
-        check( connection->views[i] == 0 );
+        check( connection->hot->views[i] == 0 );
     for ( uint32_t i = 0; i < connection->region->num_channels; i++ )
-        check( connection->cursors[i] == 0 );
+        check( connection->hot->cursors[i] == 0 );
     rn_message_object_destroy( object );
 }
 REGISTER_UNIT_TEST( test_connection_reset_inventory_covers_every_field );
@@ -884,10 +915,10 @@ static void reset_loopback_client_disconnect_state_scenario( int state, int mid_
     rocketnet_client_transport_t * transport = rocketnet_message_client_transport( f.clients[0] );
     rn_message_object_kick( &f.clients[0]->object, 0, ROCKETNET_DISCONNECT_REASON_NONE );
     check( rocketnet_client_transport_state( transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
-    check( f.clients[0]->object.connections[0].state == RN_MESSAGE_CONNECTION_KICKED );
+    check( f.clients[0]->object.hot_connections[0].state == RN_MESSAGE_CONNECTION_KICKED );
     f.now += 0.01;
     check( rocketnet_message_client_update( f.clients[0], f.now ) == ROCKETNET_UPDATE_OK );
-    check( f.clients[0]->object.connections[0].state == RN_MESSAGE_CONNECTION_FREE );
+    check( f.clients[0]->object.hot_connections[0].state == RN_MESSAGE_CONNECTION_FREE );
     check( rocketnet_client_transport_reset_witness_for_test( transport ) );
 
     // Before a session exists the server owns only half-open mapping state;
@@ -932,7 +963,7 @@ static void reset_loopback_server_disconnect_state_scenario( int mid_fragment )
         rocketnet_message_client_send_packets( f.clients[0] );
     }
     check( rocketnet_message_client_state( f.clients[0] ) <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
-    check( f.clients[0]->object.connections[0].state == RN_MESSAGE_CONNECTION_FREE );
+    check( f.clients[0]->object.hot_connections[0].state == RN_MESSAGE_CONNECTION_FREE );
     check( rocketnet_client_transport_reset_witness_for_test(
         rocketnet_message_client_transport( f.clients[0] ) ) );
     reset_loopback_destroy( &f );

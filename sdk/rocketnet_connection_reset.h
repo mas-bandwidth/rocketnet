@@ -90,8 +90,11 @@ struct rn_message_object_t;
     X( RESET, packet_records ) X( RESET, receipt_count ) X( RESET, receipt_serials )
 
 #define ROCKETNET_MESSAGE_CONNECTION_FIELDS( X ) \
-    X( RESET, connection_id ) X( RESET, state ) X( KEEP, disconnect_reason ) \
-    X( KEEP, views ) X( KEEP, cursors ) X( RESET, held )
+    X( KEEP, hot ) X( KEEP, disconnect_reason )
+
+#define ROCKETNET_MESSAGE_CONNECTION_HOT_FIELDS( X ) \
+    X( RESET, connection_id ) X( KEEP, views ) X( KEEP, cursors ) \
+    X( RESET, held ) X( RESET, state )
 
 /*
     Reset order is part of the contract:

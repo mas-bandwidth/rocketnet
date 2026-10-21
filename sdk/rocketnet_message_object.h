@@ -129,9 +129,27 @@ struct rn_message_link_t
 #define RN_MESSAGE_VIEW_HELD                1   // handed out by receive, not yet released
 #define RN_MESSAGE_VIEW_RELEASED            2   // released, or refused because the connection ended
 
-// A connection is its endpoint (CHANNELS.md 10.1, sdk/rocketnet_endpoint.h:
-// the region, layers 3 to 6, the budget, the queued sends and the write pass)
-// plus what the object keeps per slot: the slot binding and the receive views.
+// The small slot record is scanned on every server update and send pass. Keep
+// it contiguous, apart from the endpoint's channel/builder/receipt payload.
+#define RN_MESSAGE_CONNECTION_HOT_LAYOUT_FIELDS( X ) \
+    X( connection_id, uint64_t connection_id ) \
+    X( views, uint8_t * views ) \
+    X( cursors, uint32_t * cursors ) \
+    X( held, uint32_t held ) \
+    X( state, int state )
+
+struct rn_message_connection_hot_t
+{
+#define RN_MESSAGE_CONNECTION_HOT_DECLARE( name, declaration ) declaration;
+    RN_MESSAGE_CONNECTION_HOT_LAYOUT_FIELDS( RN_MESSAGE_CONNECTION_HOT_DECLARE )
+#undef RN_MESSAGE_CONNECTION_HOT_DECLARE
+};
+
+static_assert( sizeof( rn_message_connection_hot_t ) <= 32, "message hot slot must stay compact" );
+
+// The cold connection owns the endpoint (CHANNELS.md 10.1), its channels,
+// budget, queued sends and write pass. The pointer binds its hot slot for
+// receive/release helpers that only have a connection address.
 
 /*
     The declaration manifest: the struct is declared from this list, so a
@@ -140,14 +158,8 @@ struct rn_message_link_t
     no decision is named in test_connection_reset_inventory_covers_every_field.
 */
 #define RN_MESSAGE_CONNECTION_LAYOUT_FIELDS( X ) \
-    X( connection_id, uint64_t connection_id ) /* RNSlots: the connection this slot is bound to, 0 when free */          \
-    X( state, int state ) /* RN_MESSAGE_CONNECTION_* */                                                                  \
-    X( disconnect_reason, int disconnect_reason ) /* ROCKETNET_DISCONNECT_REASON_* of the last connection that ended here */ \
-    /* the receive bookkeeping (RNSlots Release): one state per delivery entry, */                                       \
-    /* the receive queue's cursor in cursors[0] (the rest unused), and the views held now */                             \
-    X( views, uint8_t * views ) /* region->delivery_entries */                                                           \
-    X( cursors, uint32_t * cursors ) /* region->num_channels; cursors[0] is the receive queue's next delivery */         \
-    X( held, uint32_t held )
+    X( hot, rn_message_connection_hot_t * hot ) /* stable parallel-array slot */                                         \
+    X( disconnect_reason, int disconnect_reason ) /* ROCKETNET_DISCONNECT_REASON_* of the last connection that ended here */
 
 struct rn_message_connection_t : rn_endpoint_t
 {
@@ -169,7 +181,8 @@ struct rn_message_object_t
     struct rocketnet_message_config_t config;
     rocketnet_counters_t counters;              // the message counters of every region of this object
     rn_arena_t * arena;
-    rn_message_connection_t * connections;
+    rn_message_connection_t * connections;      // cold endpoints, indexed like hot_connections
+    rn_message_connection_hot_t * hot_connections;
     struct rn_slots_t slots;                    // the slots machine (CHANNELS.md 10.2)
     int32_t default_kbps;                       // a new connection's send budget; 0 or lower uncapped
     uint32_t unreliable_limit;                  // the largest UNRELIABLE message: one record in one packet
