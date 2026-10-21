@@ -38,12 +38,12 @@ static int print_client_stats( const struct rocketnet_client_t * client )
     rocketnet_client_stats( client, &stats );
 
     printf( "client rtt %.2f ms, jitter %.2f ms, loss %.2f%%, bandwidth %.1f kbps sent %.1f kbps received\n",
-            stats.rtt, stats.jitter, stats.packet_loss, stats.bandwidth_sent_kbps, stats.bandwidth_received_kbps );
+            stats.rtt_ms, stats.jitter_ms, stats.packet_loss_percent, stats.bandwidth_sent_kbps, stats.bandwidth_received_kbps );
     printf( "client bytes sent %llu received %llu, messages resent %llu, api misuse %llu\n",
             (unsigned long long) stats.bytes_sent, (unsigned long long) stats.bytes_received,
             (unsigned long long) stats.messages_resent, (unsigned long long) stats.api_misuses );
 
-    if ( !( stats.rtt >= 0.0 && stats.jitter >= 0.0 && stats.packet_loss >= 0.0 &&
+    if ( !( stats.rtt_ms >= 0.0 && stats.jitter_ms >= 0.0 && stats.packet_loss_percent >= 0.0 &&
             stats.bandwidth_sent_kbps >= 0.0 && stats.bandwidth_received_kbps >= 0.0 ) )
         return 0;
     return stats.bytes_sent > 0;
@@ -56,11 +56,11 @@ static int print_server_client_stats( const struct rocketnet_server_t * server, 
     rocketnet_server_client_stats( server, client_index, &stats );
 
     printf( "server client %d rtt %.2f ms, jitter %.2f ms, loss %.2f%%, bandwidth %.1f kbps sent %.1f kbps received\n",
-            client_index, stats.rtt, stats.jitter, stats.packet_loss, stats.bandwidth_sent_kbps, stats.bandwidth_received_kbps );
+            client_index, stats.rtt_ms, stats.jitter_ms, stats.packet_loss_percent, stats.bandwidth_sent_kbps, stats.bandwidth_received_kbps );
     printf( "server client %d bytes sent %llu received %llu\n",
             client_index, (unsigned long long) stats.bytes_sent, (unsigned long long) stats.bytes_received );
 
-    return stats.rtt >= 0.0 && stats.bytes_sent > 0;
+    return stats.rtt_ms >= 0.0 && stats.bytes_sent > 0;
 }
 
 static int run_connect_and_traffic( struct rocketnet_server_t * server, struct rocketnet_client_t * client, double * time_base )

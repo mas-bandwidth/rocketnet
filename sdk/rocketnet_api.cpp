@@ -1053,9 +1053,9 @@ void rocketnet_client_stats( const struct rocketnet_client_t * client, struct ro
         rn_client_connection_counts( client->connection, connection, &transport_stats );
         for ( int i = 0; i < RN_CLIENT_COUNT; i++ )
             counts[i] += connection[i];
-        stats->rtt = transport_stats.rtt;
-        stats->jitter = transport_stats.jitter;
-        stats->packet_loss = transport_stats.packet_loss;
+        stats->rtt_ms = transport_stats.rtt;
+        stats->jitter_ms = transport_stats.jitter;
+        stats->packet_loss_percent = transport_stats.packet_loss;
         stats->packets_sent_per_second = transport_stats.packets_sent_per_second;
         stats->packets_received_per_second = transport_stats.packets_received_per_second;
         stats->bandwidth_sent_kbps = transport_stats.bandwidth_sent_kbps;
@@ -1923,9 +1923,9 @@ void rocketnet_server_client_stats( const struct rocketnet_server_t * server, in
     stats->packets_received = transport_stats.packets_received;
     stats->bytes_sent = transport_stats.bytes_sent;
     stats->bytes_received = transport_stats.bytes_received;
-    stats->rtt = transport_stats.rtt;
-    stats->jitter = transport_stats.jitter;
-    stats->packet_loss = transport_stats.packet_loss;
+    stats->rtt_ms = transport_stats.rtt;
+    stats->jitter_ms = transport_stats.jitter;
+    stats->packet_loss_percent = transport_stats.packet_loss;
     stats->bandwidth_sent_kbps = transport_stats.bandwidth_sent_kbps;
     stats->bandwidth_received_kbps = transport_stats.bandwidth_received_kbps;
     stats->bandwidth_acked_kbps = transport_stats.bandwidth_acked_kbps;

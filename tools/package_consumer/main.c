@@ -414,7 +414,7 @@ int main( void )
     CHECK( client_stats.payloads_received > 0 );
     CHECK( client_stats.receipts_acked >= 1 );
     CHECK( client_stats.receipts_dropped == 0 );
-    CHECK( client_stats.rtt >= 0.0 && client_stats.jitter >= 0.0 && client_stats.packet_loss >= 0.0 );
+    CHECK( client_stats.rtt_ms >= 0.0 && client_stats.jitter_ms >= 0.0 && client_stats.packet_loss_percent >= 0.0 );
     CHECK( client_stats.bandwidth_sent_kbps >= 0.0 && client_stats.bandwidth_received_kbps >= 0.0 );
 
     struct rocketnet_server_stats_t server_stats;
@@ -429,7 +429,7 @@ int main( void )
     struct rocketnet_server_client_stats_t slot_stats;
     rocketnet_server_client_stats( server, 0, &slot_stats );
     CHECK( slot_stats.packets_sent > 0 && slot_stats.bytes_received > 0 );
-    CHECK( slot_stats.rtt >= 0.0 && slot_stats.bandwidth_acked_kbps >= 0.0 );
+    CHECK( slot_stats.rtt_ms >= 0.0 && slot_stats.bandwidth_acked_kbps >= 0.0 );
     rocketnet_server_client_stats( server, 1, &slot_stats );
     CHECK( slot_stats.packets_sent == 0 && slot_stats.packets_received == 0 );
 

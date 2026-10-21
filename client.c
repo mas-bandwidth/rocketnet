@@ -919,11 +919,11 @@ static void run_matrix( opts_t * o )
                 last_stat = rocketnet_time();
                 if ( st.rtt_count < 200000 )
                 {
-                    st.rtt[st.rtt_count] = rn_client_stats_of( client ).rtt;
-                    st.loss[st.loss_count] = rn_client_stats_of( client ).packet_loss;
+                    st.rtt[st.rtt_count] = rn_client_stats_of( client ).rtt_ms;
+                    st.loss[st.loss_count] = rn_client_stats_of( client ).packet_loss_percent;
                     r_stat( res, o->label, window, rocketnet_time() - w0,
                             st.rtt[st.rtt_count],
-                            rn_client_stats_of( client ).jitter,
+                            rn_client_stats_of( client ).jitter_ms,
                             st.loss[st.loss_count] );
                     st.rtt_count++;
                     st.loss_count++;

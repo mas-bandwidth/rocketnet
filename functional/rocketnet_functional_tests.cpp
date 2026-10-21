@@ -3692,9 +3692,9 @@ void rocketnet_test_public_client_server_queries()
     rocketnet_check( rn_client_stats_of( client ).receipts_lost == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS ) );
     rocketnet_check( rn_client_stats_of( client ).messages_dropped_over_budget == rocketnet_test_block_sum( ct, cm, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET ) );
 
-    rocketnet_check( rn_client_stats_of( client ).rtt == (double) cs.rtt );
-    rocketnet_check( rn_client_stats_of( client ).jitter == (double) cs.jitter );
-    rocketnet_check( rn_client_stats_of( client ).packet_loss == (double) cs.packet_loss );
+    rocketnet_check( rn_client_stats_of( client ).rtt_ms == (double) cs.rtt );
+    rocketnet_check( rn_client_stats_of( client ).jitter_ms == (double) cs.jitter );
+    rocketnet_check( rn_client_stats_of( client ).packet_loss_percent == (double) cs.packet_loss );
     rocketnet_check( rn_client_stats_of( client ).packets_sent_per_second == (double) cs.packets_sent_per_second );
     rocketnet_check( rn_client_stats_of( client ).packets_received_per_second == (double) cs.packets_received_per_second );
     rocketnet_check( rn_client_stats_of( client ).bandwidth_sent_kbps == (double) cs.bandwidth_sent_kbps );
@@ -3737,9 +3737,9 @@ void rocketnet_test_public_client_server_queries()
     rocketnet_check( rn_server_client_stats_of( server, slot ).packets_received == cls.packets_received && cls.packets_received > 0 );
     rocketnet_check( rn_server_client_stats_of( server, slot ).bytes_sent == cls.bytes_sent && cls.bytes_sent > cls.packets_sent );
     rocketnet_check( rn_server_client_stats_of( server, slot ).bytes_received == cls.bytes_received && cls.bytes_received > cls.packets_received );
-    rocketnet_check( rn_server_client_stats_of( server, slot ).rtt == (double) cls.rtt );
-    rocketnet_check( rn_server_client_stats_of( server, slot ).jitter == (double) cls.jitter );
-    rocketnet_check( rn_server_client_stats_of( server, slot ).packet_loss == (double) cls.packet_loss );
+    rocketnet_check( rn_server_client_stats_of( server, slot ).rtt_ms == (double) cls.rtt );
+    rocketnet_check( rn_server_client_stats_of( server, slot ).jitter_ms == (double) cls.jitter );
+    rocketnet_check( rn_server_client_stats_of( server, slot ).packet_loss_percent == (double) cls.packet_loss );
     rocketnet_check( rn_server_client_stats_of( server, slot ).bandwidth_sent_kbps == (double) cls.bandwidth_sent_kbps );
     rocketnet_check( rn_server_client_stats_of( server, slot ).bandwidth_received_kbps == (double) cls.bandwidth_received_kbps );
     rocketnet_check( rn_server_client_stats_of( server, slot ).bandwidth_acked_kbps == (double) cls.bandwidth_acked_kbps );
@@ -3748,7 +3748,7 @@ void rocketnet_test_public_client_server_queries()
     const int free_slot = slot == 0 ? 1 : 0;
     rocketnet_check( !rocketnet_server_client_connected( server, free_slot ) );
     rocketnet_check( rn_server_client_stats_of( server, free_slot ).packets_sent == 0 );
-    rocketnet_check( rn_server_client_stats_of( server, free_slot ).rtt == 0.0 );
+    rocketnet_check( rn_server_client_stats_of( server, free_slot ).rtt_ms == 0.0 );
     rocketnet_check( rn_server_client_stats_of( server, 3 ).packets_sent == 0 );
     rocketnet_check( rocketnet_server_client_id( server, 3 ) == 0 );
 

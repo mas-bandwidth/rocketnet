@@ -579,7 +579,7 @@ Three calls each fill a caller struct with the current stats:
 for one slot. The counts (`packets_sent`, `bytes_received`, `messages_resent`,
 `receipts_lost`, `messages_dropped_over_budget`, `messages_dropped_not_connected` and the rest) are
 monotonic over the object's life and start at zero at create. The measured
-values are doubles: `rtt` and `jitter` in milliseconds, `packet_loss` as a
+values are doubles: `rtt_ms` and `jitter_ms` in milliseconds, `packet_loss_percent` as a
 percentage, and trailing rates (`bandwidth_sent_kbps` and the others). The
 per-client stats cover the slot's current connection and go back to zero when a
 new connection takes the slot. The client and server structs also carry two
@@ -599,8 +599,8 @@ void report_quality( const struct rocketnet_client_t * client, const struct rock
     rocketnet_client_stats( client, &client_stats );
     uint64_t packets_sent = client_stats.packets_sent;
     uint64_t receipts_lost = client_stats.receipts_lost;
-    double rtt_ms = client_stats.rtt;
-    double loss_percent = client_stats.packet_loss;
+    double rtt_ms = client_stats.rtt_ms;
+    double loss_percent = client_stats.packet_loss_percent;
 
     struct rocketnet_server_stats_t server_stats;
     rocketnet_server_stats( server, &server_stats );
@@ -608,7 +608,7 @@ void report_quality( const struct rocketnet_client_t * client, const struct rock
 
     struct rocketnet_server_client_stats_t slot_stats;
     rocketnet_server_client_stats( server, client_index, &slot_stats );
-    double client_rtt_ms = slot_stats.rtt;
+    double client_rtt_ms = slot_stats.rtt_ms;
 
     (void) packets_sent;
     (void) receipts_lost;
