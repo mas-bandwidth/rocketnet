@@ -173,7 +173,7 @@ static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketn
     snprintf(config.transport, sizeof(config.transport), "%s", "portable");
     auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
     CHECK(server);
-    rocketnet_server_transport_io_close(&server->io);
+    rn_native_server_io_stop_and_close(&server->io);
     *operations = {};
     operations->destroy = fixture_destroy; operations->stop = fixture_stop; operations->stopped = fixture_stopped;
     operations->send_batch = send_batch; operations->receive_batch = receive_batch;

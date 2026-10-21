@@ -11,6 +11,7 @@
 #include "sdk/rocketnet_internal.h"
 #include "sdk/rocketnet_client_io.h"
 #include "sdk/rocketnet_counters.h"
+#include "sdk/rocketnet_config.h"
 #include "sdk/rocketnet_driver.h"
 #include "sdk/rocketnet_driver_loopback.h"
 #include "sdk/rocketnet_layers.h"
@@ -150,18 +151,24 @@ static void destroy_disconnect_mint_token( const destroy_disconnect_keys_t * key
         1000, 1030, 10, NULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 }
 
-static rocketnet_client_t * destroy_disconnect_client_create( const destroy_disconnect_keys_t * keys, uint16_t port, uint64_t client_id )
+static double destroy_disconnect_fixed_clock( void * ) { return 1000.0; }
+
+static rocketnet_client_t * destroy_disconnect_client_create( const destroy_disconnect_keys_t * keys, uint16_t port, uint64_t client_id,
+                                                              bool io_core = true, bool simulator = false )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     destroy_disconnect_mint_token( keys, port, client_id, token );
 
     rocketnet_client_transport_config_t config;
-    rocketnet_client_transport_default_config( &config );
+    rocketnet_client_transport_default_config_current( &config );
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
-    config.step_driven = 1;
+    config.step_driven = io_core ? 1 : 0;
+    config.time_callback = destroy_disconnect_fixed_clock;
+    config.game_clock_epoch = 1000;
+    config.simulated_latency_ms = simulator ? 1 : 0;
 
-    rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_at_timestamp(
-        NULL, token, &config, 0.0, 1000, rocketnet_loopback_transport.client, NULL );
+    rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_current(
+        NULL, token, &config, 0.0, rocketnet_loopback_transport.client, NULL );
     check( transport != NULL );
 
     rn_message_link_t link;
@@ -642,3 +649,64 @@ static void test_shutdown_without_live_connection_sends_nothing()
 }
 
 REGISTER_UNIT_TEST( test_shutdown_without_live_connection_sends_nothing );
+
+// A repeated protocol disconnect must retain the first sealed burst even
+// before full transport stop. The legacy worker is stepped explicitly here.
+static void test_transport_disconnect_twice_delivers_original_burst()
+{
+    destroy_disconnect_env_guard_t env_guard;
+    destroy_disconnect_keys_t keys;
+    destroy_disconnect_make_keys( &keys );
+    double now = 1000.0;
+    rocketnet_server_t * server = destroy_disconnect_server_create( &keys, now );
+    rocketnet_client_t * client = destroy_disconnect_client_create( &keys, rocketnet_server_port( server ), 0xE401ULL, false );
+    const int slot = destroy_disconnect_connect_client( server, client, &now );
+    rocketnet_client_transport_t * transport = rocketnet_message_client_transport( rocketnet_client_message_client( client ) );
+    const uint64_t * counters = destroy_disconnect_server_counters( server );
+    const uint64_t received = counters[ROCKETNET_COUNTER_DISCONNECT_RECEIVED];
+    const uint64_t accepted = counters[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED];
+    const uint64_t timed_out = counters[ROCKETNET_COUNTER_CLIENT_TIMED_OUT];
+
+    rocketnet_client_transport_disconnect( transport );
+    rocketnet_client_transport_disconnect( transport );
+    check( !rocketnet_client_transport_stopped( transport ) );
+    rocketnet_client_update( client, now );
+    rocketnet_server_update( server, now );
+    check( counters[ROCKETNET_COUNTER_DISCONNECT_RECEIVED] - received == ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS );
+    check( counters[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED] - accepted == 1 );
+    check( counters[ROCKETNET_COUNTER_CLIENT_TIMED_OUT] == timed_out );
+    check( !rocketnet_server_client_connected( server, slot ) );
+    rn_test_client_stop_and_destroy( client );
+    rn_test_server_stop_and_destroy( server );
+}
+REGISTER_UNIT_TEST( test_transport_disconnect_twice_delivers_original_burst );
+
+// Disconnect is still outgoing traffic: an already allocated simulator's
+// 100-percent loss policy applies to the burst, including repeated requests.
+static void test_transport_disconnect_preserves_simulator_loss()
+{
+    destroy_disconnect_env_guard_t env_guard;
+    rocketnet_public_link_simulator_test_development( 1 );
+    destroy_disconnect_keys_t keys;
+    destroy_disconnect_make_keys( &keys );
+    double now = 1000.0;
+    rocketnet_server_t * server = destroy_disconnect_server_create( &keys, now );
+    rocketnet_client_t * client = destroy_disconnect_client_create( &keys, rocketnet_server_port( server ), 0xE402ULL, false, true );
+    const int slot = destroy_disconnect_connect_client( server, client, &now );
+    rocketnet_client_transport_t * transport = rocketnet_message_client_transport( rocketnet_client_message_client( client ) );
+    check( rocketnet_client_transport_network_simulator( transport, 0, 0, 100, 0 ) );
+    const uint64_t * counters = destroy_disconnect_server_counters( server );
+    const uint64_t received = counters[ROCKETNET_COUNTER_DISCONNECT_RECEIVED];
+    rocketnet_client_transport_disconnect( transport );
+    rocketnet_client_transport_disconnect( transport );
+    check( !rocketnet_client_transport_stopped( transport ) );
+    now += 0.01;
+    rocketnet_client_update( client, now );
+    rocketnet_server_update( server, now );
+    check( counters[ROCKETNET_COUNTER_DISCONNECT_RECEIVED] == received );
+    check( rocketnet_server_client_connected( server, slot ) );
+    rn_test_client_stop_and_destroy( client );
+    rn_test_server_stop_and_destroy( server );
+    rocketnet_public_link_simulator_test_development( 0 );
+}
+REGISTER_UNIT_TEST( test_transport_disconnect_preserves_simulator_loss );
