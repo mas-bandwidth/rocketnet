@@ -6667,6 +6667,46 @@ void rocketnet_test_message_objects_loopback_from_t1000()
     rn_native_message_server_stop_and_destroy( server );
 }
 
+// The same event-only wake contract on each native implementation: an unset
+// wake times out, set-before-wait is retained and consumed once, a second set
+// after consumption wakes again, and invalid socket-read waits neither block
+// nor consume the pending signal.
+
+#if defined(ROCKETNET_PLATFORM_HAS_WAKE)
+static void rocketnet_test_platform_wake_event_only_set_thread( void * arg )
+{
+    rocketnet_platform_sleep( 0.01 );
+    rocketnet_platform_wake_set( (rocketnet_platform_wake_t*) arg );
+}
+
+void rocketnet_test_platform_wake_event_only()
+{
+    rocketnet_platform_wake_t * wake = rocketnet_platform_wake_create( NULL, NULL );
+    rocketnet_check( wake );
+    rocketnet_check( rocketnet_platform_wake_allocation_bytes() > 0 );
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, false, 0.0 ) );
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, false, 0.01 ) );
+
+    rocketnet_platform_wake_set( wake );
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, true, 0.01 ) );
+    rocketnet_check( rocketnet_platform_wake_wait( wake, false, 0.0 ) );
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, false, 0.0 ) );
+
+    rocketnet_platform_wake_set( wake );
+    rocketnet_platform_wake_set( wake );
+    rocketnet_check( rocketnet_platform_wake_wait( wake, false, 0.0 ) );
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, false, 0.0 ) );
+
+    rocketnet_platform_thread_t * thread = rocketnet_platform_thread_create( NULL, rocketnet_test_platform_wake_event_only_set_thread, wake );
+    rocketnet_check( thread );
+    rocketnet_check( rocketnet_platform_wake_wait( wake, false, 2.0 ) );
+    rocketnet_platform_thread_join( thread );
+    rocketnet_platform_thread_destroy( thread );
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, false, 0.0 ) );
+    rocketnet_platform_wake_destroy( wake );
+}
+#endif
+
 // The level-triggered wake beside a real socket on Linux: the eventfd is set
 // and consumed, a socket's readiness is seen only when readable is true, and
 // with readable false a full receive buffer waits on the wake alone
@@ -6681,10 +6721,9 @@ void rocketnet_test_platform_wake_linux_wakes_and_reads()
     rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
     rocketnet_check( socket );
 
-    // create returns non-NULL; create with a NULL socket returns NULL
+    // socket-backed wake creation still succeeds
     rocketnet_platform_wake_t * wake = rocketnet_platform_wake_create( NULL, socket );
     rocketnet_check( wake );
-    rocketnet_check( rocketnet_platform_wake_create( NULL, NULL ) == NULL );
 
     // wait(true, 0) is false: no wake set and nothing readable
     rocketnet_check( !rocketnet_platform_wake_wait( wake, true, 0.0 ) );
@@ -6861,10 +6900,9 @@ void rocketnet_test_platform_wake_apple_wakes_and_reads()
     rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
     rocketnet_check( socket );
 
-    // create returns non-NULL; create with a NULL socket returns NULL
+    // socket-backed wake creation still succeeds
     rocketnet_platform_wake_t * wake = rocketnet_platform_wake_create( NULL, socket );
     rocketnet_check( wake );
-    rocketnet_check( rocketnet_platform_wake_create( NULL, NULL ) == NULL );
 
     // wait(true, 0) is false: no wake set and nothing readable
     rocketnet_check( !rocketnet_platform_wake_wait( wake, true, 0.0 ) );
@@ -6940,10 +6978,9 @@ void rocketnet_test_platform_wake_windows_wakes_and_reads()
     rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
     rocketnet_check( socket );
 
-    // create returns non-NULL; create with a NULL socket returns NULL
+    // socket-backed wake creation still succeeds
     rocketnet_platform_wake_t * wake = rocketnet_platform_wake_create( NULL, socket );
     rocketnet_check( wake );
-    rocketnet_check( rocketnet_platform_wake_create( NULL, NULL ) == NULL );
 
     // wait(true, 0) is false: no wake set and nothing readable
     rocketnet_check( !rocketnet_platform_wake_wait( wake, true, 0.0 ) );
@@ -8626,6 +8663,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_receive_drops_oversize_datagram", rocketnet_test_receive_drops_oversize_datagram, NULL },
     { "test_platform_batch_pump", rocketnet_test_platform_batch_pump, NULL },
     { "test_platform_batch_pump_degraded", rocketnet_test_platform_batch_pump_degraded, NULL },
+#if defined(ROCKETNET_PLATFORM_HAS_WAKE)
+    { "test_platform_wake_event_only", rocketnet_test_platform_wake_event_only, NULL },
+#endif
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_platform_wake_linux_wakes_and_reads", rocketnet_test_platform_wake_linux_wakes_and_reads, NULL },
 #endif

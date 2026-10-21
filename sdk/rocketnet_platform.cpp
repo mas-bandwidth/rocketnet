@@ -1158,13 +1158,11 @@ struct rocketnet_platform_wake_t
 
 rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket )
 {
-    if ( !socket )
-        return NULL;
     rocketnet_platform_wake_t * wake = (rocketnet_platform_wake_t*) rocketnet_malloc( context, sizeof( rocketnet_platform_wake_t ) );
     if ( !wake )
         return NULL;
     wake->context = context;
-    wake->socket_fd = socket->handle;
+    wake->socket_fd = socket ? socket->handle : -1;
     wake->event_fd = eventfd( 0, EFD_NONBLOCK | EFD_CLOEXEC );
     if ( wake->event_fd < 0 )
     {
@@ -1185,6 +1183,8 @@ void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
 bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readable, double timeout_seconds )
 {
     rocketnet_assert( wake );
+    if ( readable && wake->socket_fd < 0 )
+        return false;
     struct pollfd fds[2];
     int nfds = 0;
     fds[nfds].fd = wake->event_fd;
@@ -3514,14 +3514,12 @@ struct rocketnet_platform_wake_t
 
 rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket )
 {
-    if ( !socket )
-        return NULL;
     rocketnet_platform_wake_t * wake = (rocketnet_platform_wake_t*) rocketnet_malloc( context, sizeof( rocketnet_platform_wake_t ) );
     if ( !wake )
         return NULL;
     wake->context = context;
-    wake->socket_fd = socket->handle;
-    wake->read_enabled = true;
+    wake->socket_fd = socket ? socket->handle : -1;
+    wake->read_enabled = socket != NULL;
     wake->kq = kqueue();
     if ( wake->kq < 0 )
     {
@@ -3529,9 +3527,11 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
         return NULL;
     }
     struct kevent changes[2];
-    EV_SET( &changes[0], socket->handle, EVFILT_READ, EV_ADD, 0, 0, NULL );
-    EV_SET( &changes[1], ROCKETNET_PLATFORM_WAKE_KEVENT_IDENT, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, NULL );
-    if ( kevent( wake->kq, changes, 2, NULL, 0, NULL ) < 0 )
+    int num_changes = 0;
+    if ( socket )
+        EV_SET( &changes[num_changes++], socket->handle, EVFILT_READ, EV_ADD, 0, 0, NULL );
+    EV_SET( &changes[num_changes++], ROCKETNET_PLATFORM_WAKE_KEVENT_IDENT, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, NULL );
+    if ( kevent( wake->kq, changes, num_changes, NULL, 0, NULL ) < 0 )
     {
         close( wake->kq );
         rocketnet_free( context, wake );
@@ -3560,6 +3560,8 @@ void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
 bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readable, double timeout_seconds )
 {
     rocketnet_assert( wake );
+    if ( readable && wake->socket_fd < 0 )
+        return false;
     struct kevent change;
     int num_changes = 0;
     if ( readable != wake->read_enabled )
@@ -4680,30 +4682,35 @@ struct rocketnet_platform_wake_t
 // manual-reset wake event (tla/RNClientIo.tla's Init: wake = FALSE)
 rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket )
 {
-    if ( !socket )
-        return NULL;
     rocketnet_platform_wake_t * wake = (rocketnet_platform_wake_t*) rocketnet_malloc( context, sizeof( rocketnet_platform_wake_t ) );
     if ( !wake )
         return NULL;
     wake->context = context;
-    wake->socket_handle = socket->handle;
-    wake->read_event = WSACreateEvent();
-    if ( wake->read_event == WSA_INVALID_EVENT )
+    wake->socket_handle = socket ? socket->handle : INVALID_SOCKET;
+    wake->read_event = WSA_INVALID_EVENT;
+    if ( socket )
     {
-        rocketnet_free( context, wake );
-        return NULL;
-    }
-    if ( WSAEventSelect( (SOCKET) socket->handle, wake->read_event, FD_READ ) != 0 )
-    {
-        WSACloseEvent( wake->read_event );
-        rocketnet_free( context, wake );
-        return NULL;
+        wake->read_event = WSACreateEvent();
+        if ( wake->read_event == WSA_INVALID_EVENT )
+        {
+            rocketnet_free( context, wake );
+            return NULL;
+        }
+        if ( WSAEventSelect( (SOCKET) socket->handle, wake->read_event, FD_READ ) != 0 )
+        {
+            WSACloseEvent( wake->read_event );
+            rocketnet_free( context, wake );
+            return NULL;
+        }
     }
     wake->wake_event = CreateEvent( NULL, TRUE, FALSE, NULL );
     if ( wake->wake_event == NULL )
     {
-        WSAEventSelect( (SOCKET) socket->handle, NULL, 0 );
-        WSACloseEvent( wake->read_event );
+        if ( socket )
+        {
+            WSAEventSelect( (SOCKET) socket->handle, NULL, 0 );
+            WSACloseEvent( wake->read_event );
+        }
         rocketnet_free( context, wake );
         return NULL;
     }
@@ -4713,9 +4720,12 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
 void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
 {
     rocketnet_assert( wake );
-    WSAEventSelect( (SOCKET) wake->socket_handle, NULL, 0 );
+    if ( wake->read_event != WSA_INVALID_EVENT )
+    {
+        WSAEventSelect( (SOCKET) wake->socket_handle, NULL, 0 );
+        WSACloseEvent( wake->read_event );
+    }
     CloseHandle( wake->wake_event );
-    WSACloseEvent( wake->read_event );
     rocketnet_free( wake->context, wake );
 }
 
@@ -4728,6 +4738,8 @@ void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
 bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readable, double timeout_seconds )
 {
     rocketnet_assert( wake );
+    if ( readable && wake->read_event == WSA_INVALID_EVENT )
+        return false;
     DWORD timeout_ms = 0;
     if ( timeout_seconds > 0.0 )
     {
@@ -5015,4 +5027,13 @@ uint64_t rocketnet_platform_thread_allocation_bytes()
     // Includes the transient shim, freed when the worker begins. Counting
     // every shim gives a conservative constructor peak independent of scheduling.
     return rocketnet_memory_allocations({sizeof(rocketnet_platform_thread_t), sizeof(thread_shim_data_t)});
+}
+
+uint64_t rocketnet_platform_wake_allocation_bytes()
+{
+#if defined(ROCKETNET_PLATFORM_HAS_WAKE)
+    return rocketnet_memory_allocations({sizeof(rocketnet_platform_wake_t)});
+#else
+    return 0;
+#endif
 }

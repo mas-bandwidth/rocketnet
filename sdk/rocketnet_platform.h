@@ -606,25 +606,28 @@ int rocketnet_platform_socket_receive_packets_mmsg( struct rocketnet_platform_so
 #define ROCKETNET_PLATFORM_HAS_WAKE 1
 #endif
 /**
- * @brief Opaque level-triggered wake object associated with a socket.
+ * @brief Opaque reusable level-triggered wake object, optionally associated with a socket.
  *
  * Create it with wake_create and release it with wake_destroy. The socket must
- * outlive the wake object.
+ * outlive the wake object when provided.
  */
 struct rocketnet_platform_wake_t;
 /**
- * @brief Creates a wake object associated with a live socket.
+ * @brief Creates a wake object, optionally associated with a live socket.
  *
  * @param context Allocator context; NULL uses the default allocator.
- * @param socket Live socket that remains open until the wake is destroyed.
+ * @param socket Optional live socket that remains open until the wake is destroyed.
+ * Pass NULL for an event-only wake.
  * @return Owned wake object, or NULL if this platform does not implement wakes
  * or allocation/native wake creation fails.
  */
 struct rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, struct rocketnet_platform_socket_t * socket );
+/** @brief Allocator bytes reserved by one wake object; zero when wakes are unavailable. */
+uint64_t rocketnet_platform_wake_allocation_bytes();
 /**
  * @brief Destroys a wake object and releases its native wake handle.
  *
- * Destroy it before destroying its associated socket.
+ * Destroy it before destroying its associated socket, if any.
  * @param wake Caller-owned wake; must be non-NULL.
  * @return None.
  */
@@ -634,7 +637,8 @@ void rocketnet_platform_wake_destroy( struct rocketnet_platform_wake_t * wake );
  *
  * @param wake Live wake object; must be non-NULL.
  * @param readable When true, socket readability also releases the wait; when
- * false, only a wake signal or timeout does.
+ * false, only a wake signal or timeout does. With an event-only wake,
+ * readable=true returns false immediately without consuming a pending signal.
  * @param timeout_seconds Timeout in seconds. Non-positive values do not wait
  * on POSIX; Windows converts the value for its native wait API. Avoid values
  * outside the range supported by the target OS.
