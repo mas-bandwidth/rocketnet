@@ -765,7 +765,12 @@ void rocketnet_ack_endpoint_update_stats( struct rocketnet_ack_endpoint_t * endp
             if ( record->sequence != sequence )
                 continue;
 
-            num_sent++;
+            // A partial ring must exclude the newest half-window too.
+            // Sequence holes are not sends; only held records enter loss.
+            const bool loss_eligible = endpoint->highest_sequence > ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2 &&
+                sequence <= endpoint->highest_sequence - ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2;
+            if ( loss_eligible )
+                num_sent++;
             bytes_sent += record->wire_bytes;
             if ( !have_sent_time )
             {
@@ -800,7 +805,8 @@ void rocketnet_ack_endpoint_update_stats( struct rocketnet_ack_endpoint_t * endp
             }
             else
             {
-                num_dropped++;
+                if ( loss_eligible )
+                    num_dropped++;
             }
         }
 

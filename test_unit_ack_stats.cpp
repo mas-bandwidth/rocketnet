@@ -59,3 +59,51 @@ static void test_ack_stats_jitter_positive_samples()
 }
 
 REGISTER_UNIT_TEST( test_ack_stats_jitter_positive_samples );
+
+static void test_ack_stats_loss_excludes_newest_half()
+{
+    auto * endpoint = stats_endpoint();
+    const uint64_t half = ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2;
+    stats_sent( endpoint, 1 );
+    rocketnet_ack_endpoint_update_stats( endpoint );
+    rocketnet_unit_check( endpoint->packet_loss == 0 );
+    stats_sent( endpoint, half );
+    rocketnet_ack_endpoint_update_stats( endpoint );
+    rocketnet_unit_check( endpoint->packet_loss == 0 );
+    // Bandwidth keeps its existing cohort despite the new loss warmup rule.
+    stats_sent( endpoint, 2, 1000.1 );
+    rocketnet_ack_endpoint_update_stats( endpoint );
+    rocketnet_unit_check( endpoint->bandwidth_sent_kbps > 0 );
+    stats_sent( endpoint, half + 1, 1000.1 );
+    rocketnet_ack_endpoint_update_stats( endpoint );
+    rocketnet_unit_check( endpoint->packet_loss == 100 );
+    stats_ack( endpoint, 1, 1000.2 );
+    rocketnet_ack_endpoint_update_stats( endpoint );
+    rocketnet_unit_check( endpoint->packet_loss == 0 );
+    stats_sent( endpoint, half + 2, 1000.2 );
+    rocketnet_ack_endpoint_update_stats( endpoint );
+    rocketnet_unit_check( endpoint->packet_loss == 50 );
+    // Sequence 3 was never sent: it must not become a lost record.
+    stats_sent( endpoint, 4, 1000.2 );
+    stats_ack( endpoint, 4, 1000.3 );
+    stats_sent( endpoint, half + 4, 1000.3 );
+    rocketnet_ack_endpoint_update_stats( endpoint );
+    rocketnet_unit_check( fabsf( endpoint->packet_loss - 100.0f / 3.0f ) < 0.001f );
+    stats_ack( endpoint, 2, 1001.0 );
+    rocketnet_ack_endpoint_update_stats( endpoint );
+    rocketnet_unit_check( endpoint->packet_loss == 0 );
+    stats_ack( endpoint, 2, 1002.0 );
+    rocketnet_ack_endpoint_update_stats( endpoint );
+    rocketnet_unit_check( endpoint->packet_loss == 0 );
+    // Wrap the ring: an evicted unacked record is not the new held record.
+    rocketnet_ack_endpoint_reset( endpoint );
+    stats_sent( endpoint, 1 );
+    stats_sent( endpoint, 2 * half + 1, 1000.1 );
+    stats_ack( endpoint, 2 * half + 1, 1000.2 );
+    stats_sent( endpoint, 3 * half + 1, 1000.2 );
+    rocketnet_ack_endpoint_update_stats( endpoint );
+    rocketnet_unit_check( endpoint->packet_loss == 0 );
+    rocketnet_free( NULL, endpoint );
+}
+
+REGISTER_UNIT_TEST( test_ack_stats_loss_excludes_newest_half );
