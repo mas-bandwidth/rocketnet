@@ -53,7 +53,7 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double
 // Use the unlimited create-time reserve policy with this same runtime ceiling.
 // The matrix pays its working storage explicitly; it does not need two seconds
 // of payload reserve at the ceiling in every size class.
-#define LIVE_MATRIX_SEND_KBPS               ROCKETNET_SEND_KBPS_UNLIMITED   // no budget: the wire is the limit
+#define LIVE_MATRIX_SEND_KBPS               10000000        // ROCKETNET_SEND_BUDGET_MAX_KBPS: the wire, not the budget, is the limit
 // Each send_packets writes at most packets_per_update packets, reliable
 // first (sdk/rocketnet_endpoint.cpp rn_endpoint_next_packet_bytes): the
 // matrix queues about forty packets of reliable bytes and twenty-four of
