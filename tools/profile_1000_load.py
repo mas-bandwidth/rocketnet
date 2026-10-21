@@ -142,9 +142,11 @@ def validate_resource_baseline(fields):
     has_phase_field = any(f"{kind}_{phase}" in fields
                           for kind in ("fds", "threads") for phase in phase_names)
     schema = fields.get("resource_baseline_schema")
-    if schema is None and not has_phase_field:
+    has_new_marker = (has_phase_field or schema is not None or
+                      "resource_baseline" in fields or "term_status_code" in fields)
+    if not has_new_marker:
         # Historical receipts used start after init and end after term. Keep
-        # their old strict rule; only tagged receipts use the paired phases.
+        # their old strict rule only when no new resource marker is present.
         for kind in ("fds", "threads"):
             try:
                 start = int(fields[f"{kind}_start"])

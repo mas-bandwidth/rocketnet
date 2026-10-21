@@ -86,6 +86,13 @@ class ReceiptTests(unittest.TestCase):
             with self.subTest(line=line), self.assertRaises(ValueError):
                 profile.parse_load(line, "portable", "portable")
 
+    def test_partial_new_resource_markers_cannot_fall_back_to_legacy(self):
+        for marker in ("resource_baseline=PASS", "term_status_code=-1",
+                       "resource_baseline=PASS term_status_code=-1"):
+            line = SUMMARY.replace(" verdict=PASS", f" {marker} verdict=PASS")
+            with self.subTest(marker=marker), self.assertRaises(ValueError):
+                profile.parse_load(line, "portable", "portable")
+
     def test_valid_histogram_is_retained_without_budget_pass(self):
         result = profile.parse_load(SUMMARY, "portable", "portable")
         self.assertEqual(result["reported_frame_calls"]["frame_server_update"]["count"], 6000)
