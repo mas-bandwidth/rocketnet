@@ -37,7 +37,7 @@ void rocketnet_client_protocol_pick_server_address( const struct rocketnet_signe
 
 // counts the client's calls of rocketnet_ack_endpoint_update_stats, for the
 // functional test
-unsigned long long g_client_ack_stats_count = 0;
+std::atomic<unsigned long long> g_client_ack_stats_count{0};
 
 // The one clamp both transports share. A NaN or infinite time makes every
 // timeout comparison false and freezes a transport; a backwards step rewinds
@@ -2347,7 +2347,7 @@ void rocketnet_client_transport_stats( rocketnet_client_transport_t * client_tra
 
     memset( stats, 0, sizeof(struct rocketnet_client_transport_stats_t) );
 
-    g_client_ack_stats_count++;
+    g_client_ack_stats_count.fetch_add( 1, std::memory_order_relaxed );
     // the client's only reader of the ack statistics is this getter, so they are computed here (docs/CLIENT-IO-DECRYPT.md, The ack statistics)
     rocketnet_ack_endpoint_update_stats( &client_transport->protocol.ack );
 

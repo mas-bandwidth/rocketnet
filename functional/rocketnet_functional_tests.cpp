@@ -31,7 +31,7 @@
 #include <unordered_map>
 #include <atomic>
 
-extern unsigned long long g_client_ack_stats_count;
+extern std::atomic<unsigned long long> g_client_ack_stats_count;
 
 // every transport a test ends with is balanced before it is destroyed: the
 // server's counters and each client's, RECEIVED == the sum of its outcomes.
@@ -1799,19 +1799,19 @@ void rocketnet_test_client_ack_stats_computed_on_read()
 
     // (a) client-only updates must not recompute the ack statistics
 
-    const unsigned long long before = g_client_ack_stats_count;
+    const unsigned long long before = g_client_ack_stats_count.load( std::memory_order_relaxed );
     for ( int i = 0; i < 30; i++ )
     {
         game_time += 1.0 / 60.0;
         rocketnet_client_transport_update( client, game_time );
     }
-    rocketnet_check( g_client_ack_stats_count == before );
+    rocketnet_check( g_client_ack_stats_count.load( std::memory_order_relaxed ) == before );
 
     // (b) one stats read recomputes them exactly once
 
     struct rocketnet_client_transport_stats_t stats;
     rocketnet_client_transport_stats( client, &stats );
-    rocketnet_check( g_client_ack_stats_count == before + 1 );
+    rocketnet_check( g_client_ack_stats_count.load( std::memory_order_relaxed ) == before + 1 );
 
     // (c) sane rtt and zero loss on the clean loopback
 
