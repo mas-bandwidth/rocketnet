@@ -40,9 +40,18 @@ struct stats_env_pin_t
         set = rocketnet_test_getenv("ROCKETNET_SERVER_TRANSPORT", value, sizeof(value)) != 0;
         check(stats_unsetenv("ROCKETNET_SERVER_TRANSPORT") == 0);
     }
-    ~stats_env_pin_t()
+    bool restore()
     {
-        if ( set ) check(stats_setenv("ROCKETNET_SERVER_TRANSPORT", value) == 0);
+        if ( !set ) return true;
+        if ( stats_setenv("ROCKETNET_SERVER_TRANSPORT", value) != 0 ) return false;
+        set = false;
+        return true;
+    }
+    ~stats_env_pin_t() noexcept
+    {
+        // Failure unwinding must not throw a second exception. Successful
+        // paths call restore() and check its result explicitly below.
+        (void)restore();
     }
 };
 
@@ -213,6 +222,7 @@ static void test_server_stats_worker_publishes_only_on_next_update()
     stats_check_six(rn_server_client_stats_of(world.server, world.slots[0]), *expected);
     delete expected;
     stats_world_destroy(&world);
+    check(pin.restore());
 }
 
 REGISTER_UNIT_TEST(test_server_stats_worker_publishes_only_on_next_update);
@@ -265,6 +275,7 @@ static void test_server_stats_worker_late_batch_keeps_modulo_fairness()
     check(fabs(rn_server_client_stats_of(world.server, world.slots[0]).rtt_ms - 11.0) < 0.001);
     check(fabs(rn_server_client_stats_of(world.server, world.slots[1]).rtt_ms - 29.0) < 0.001);
     stats_world_destroy(&world);
+    check(pin.restore());
 }
 
 REGISTER_UNIT_TEST(test_server_stats_worker_late_batch_keeps_modulo_fairness);
@@ -313,6 +324,7 @@ static void test_server_stats_worker_reused_slot_rejects_old_publication()
     }
     check(fabs(rn_server_client_stats_of(world.server, world.slots[1]).rtt_ms - 13.0) < 0.001);
     stats_world_destroy(&world);
+    check(pin.restore());
 }
 
 REGISTER_UNIT_TEST(test_server_stats_worker_reused_slot_rejects_old_publication);
@@ -336,6 +348,7 @@ static void test_server_stats_worker_stop_discards_ready_batch()
     for ( int i = 0; i < world.count; ++i )
         rn_test_client_stop_and_destroy(world.clients[i]);
     rocketnet_server_destroy(world.server);
+    check(pin.restore());
 }
 
 REGISTER_UNIT_TEST(test_server_stats_worker_stop_discards_ready_batch);
@@ -432,6 +445,7 @@ static void test_server_stats_worker_start_failure_cleans_allocations()
     check(rocketnet_term_ex() == ROCKETNET_STATUS_OK);
     check(state.live == 0);
     check(rocketnet_allocator_ex(rocketnet_default_malloc_function, rocketnet_default_free_function) == ROCKETNET_STATUS_OK);
+    check(pin.restore());
 }
 
 REGISTER_UNIT_TEST(test_server_stats_worker_start_failure_cleans_allocations);
