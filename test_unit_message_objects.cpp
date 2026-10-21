@@ -493,7 +493,7 @@ static void mo_drain_server( mo_pair_t * pair, std::vector<mo_received_t> * out 
     // entry names its sender's slot and the channel it was delivered on
     for ( ;; )
     {
-        rocketnet_message_batch_t batch;
+        static rocketnet_message_batch_t batch;     // 1.5 MB: never on the stack (Windows gives 1 MB)
         const int count = rocketnet_message_server_receive_messages( pair->server, &batch );
         if ( count == 0 )
             break;
@@ -514,7 +514,7 @@ static void mo_drain_client( rocketnet_message_client_t * client, std::vector<mo
 {
     for ( ;; )
     {
-        rocketnet_message_batch_t batch;
+        static rocketnet_message_batch_t batch;     // 1.5 MB: never on the stack (Windows gives 1 MB)
         const int count = rocketnet_message_client_receive_messages( client, &batch );
         if ( count == 0 )
             break;

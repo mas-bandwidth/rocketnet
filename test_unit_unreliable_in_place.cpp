@@ -362,7 +362,7 @@ static void ip_step( ip_pair_t * pair, std::vector<ip_received_t> * server_got, 
     // it was delivered on
     for ( ;; )
     {
-        rocketnet_message_batch_t batch;
+        static rocketnet_message_batch_t batch;     // 1.5 MB: never on the stack (Windows gives 1 MB)
         const int count = rocketnet_message_server_receive_messages( pair->server, &batch );
         if ( count == 0 )
             break;
@@ -376,7 +376,7 @@ static void ip_step( ip_pair_t * pair, std::vector<ip_received_t> * server_got, 
     }
     for ( ;; )
     {
-        rocketnet_message_batch_t batch;
+        static rocketnet_message_batch_t batch;     // 1.5 MB: never on the stack (Windows gives 1 MB)
         const int count = rocketnet_message_client_receive_messages( pair->client, &batch );
         if ( count == 0 )
             break;

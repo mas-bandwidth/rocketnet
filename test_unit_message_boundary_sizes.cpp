@@ -163,7 +163,7 @@ static void boundary_teardown(boundary_pair_t * pair) {
 static void boundary_drain(boundary_pair_t * pair,std::vector<boundary_received_t> * got) {
     // the one receive queue, in batches: each entry names the channel it was delivered on
     for(;;) {
-        rocketnet_message_batch_t batch;
+        static rocketnet_message_batch_t batch;     // 1.5 MB: never on the stack (Windows gives 1 MB)
         const int count = rocketnet_message_server_receive_messages( pair->server, &batch );
         if( count == 0 ) break;
         for(int i=0;i<batch.num_messages;++i) {
