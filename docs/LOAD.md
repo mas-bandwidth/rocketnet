@@ -1,5 +1,9 @@
 # Many-client load harness
 
+For a dedicated server machine with remote client shards, see
+[`LOAD_SPLIT.md`](LOAD_SPLIT.md). This same-process harness remains the
+correctness gate and does not qualify dedicated-server performance.
+
 `bin/load` is the many-client load harness for up to
 `ROCKETNET_MAX_CLIENTS` clients. It uses the public client/server objects and
 the ordinary five-step frame order. Both profiles offer at most one packet
