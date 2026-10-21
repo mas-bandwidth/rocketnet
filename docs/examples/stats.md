@@ -73,13 +73,16 @@ Jitter is the mean excess of retained positive first-ACK round-trip samples over
 their minimum, in milliseconds. It includes peer ACK scheduling and caller
 update cadence. Zero-time samples are excluded from both the minimum and mean.
 These histories do not expire with elapsed time; reconnect resets them. Client
-stats recompute on read. Server updates snapshot at most 20 connected slots in
-a modulo phase and apply at most 20 results from one completed batch per
+stats recompute on read. Each server update first applies at most 20 results
+from one previously completed batch, then submits a batch that visits at most
+20 configured slots in one modulo phase and snapshots only connected slots.
+Results from a newly submitted batch can be published no earlier than a later
 update. A background worker computes the ACK-derived server-slot statistics
 from immutable snapshots; the caller's server-slot stats call only copies the
-most recently published values. If the worker is busy, update does not wait or
-submit a later phase; it retries the same submitted-job ordinal on a later
-update. The ordinal cycles through `ceil(max_clients / 20)` phases, so every
+most recently published values. If the worker is busy, update does not wait.
+It can still submit a batch when the other snapshot bank is free; when both
+banks are occupied it skips submission and retries that submitted-job ordinal
+on a later update. The ordinal cycles through `ceil(max_clients / 20)` phases, so every
 phase is revisited without starvation. At 1,000 configured slots, a full set
 of phases takes 50 successfully submitted batches, and worker lag can make
 published values older still. Results carry the connection ID and are applied

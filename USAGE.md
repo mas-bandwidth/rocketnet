@@ -619,12 +619,16 @@ is called. Server-wide totals are copied from the server's current counters.
 Server per-client stats combine current counters with the latest published
 ACK-derived quality values. The per-client API call copies those published
 values; it does not calculate them or wait for the stats worker. Server update
-copies immutable snapshots for at most 20 connected slots in one modulo phase,
-then applies results from at most one completed batch (also at most 20 slots).
-The worker computes ACK-derived RTT, jitter, loss and bandwidth from those
+first applies results from at most one previously completed batch (at most 20
+slots), then submits a batch that visits at most 20 configured slots in one
+modulo phase and snapshots only the connected slots among them. Results from a
+newly submitted batch can be published no earlier than a later update. The
+worker computes ACK-derived RTT, jitter, loss and bandwidth from those
 snapshots while the main thread continues its frame work. A busy worker does
-not block update: no new batch is submitted and the submitted-job ordinal does
-not advance, so a skipped phase is retried rather than starved. At 1,000
+not block update. A new batch can still be submitted if the other snapshot
+bank is free; if both banks are occupied, update submits no batch and the
+submitted-job ordinal does not advance, so that phase is retried rather than
+starved. At 1,000
 configured slots, a full set of phases spans 50 successfully submitted jobs;
 when the worker falls behind, published quality values can lag further. A
 connection ID accompanies each snapshot, so a result for a reset or reused slot
