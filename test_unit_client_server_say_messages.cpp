@@ -81,16 +81,22 @@ struct allowlist_row_t
 static const allowlist_row_t allowlist[] =
 {
     // TRANSPORT SIZE: the UDP payload of one datagram, a transport quantity.
-    { F_H, "The packet size", "TRANSPORT SIZE" },
-    { F_H, "_Packet", "TRANSPORT SIZE" },
     { F_H, "packet crosses a 1500", "TRANSPORT SIZE" },
     { F_H, "ROCKETNET_MAX_PACKET_BYTES", "TRANSPORT SIZE" },
-    { F_H, "ROCKETNET_RECEIVE_PACKET_BYTES", "TRANSPORT SIZE" },
+    { F_H, "The largest packet", "TRANSPORT SIZE" },
+    { F_H, "packet's own overhead", "TRANSPORT SIZE" },
+    { F_H, "split across packets", "TRANSPORT SIZE" },
+    { F_H, "Packets: UDP", "TRANSPORT SIZE" },
+    { F_H, "Payloads: packets", "TRANSPORT SIZE" },
+    { F_H, "packet sequence", "TRANSPORT SIZE" },
+    { F_H, "Packets per second", "TRANSPORT SIZE" },
+    { F_H, "packets sent to this client", "TRANSPORT SIZE" },
+    { F_H, "PACKETS_IN_FLIGHT", "TRANSPORT SIZE" },
+    { F_H, "PACKETS_PER_UPDATE", "TRANSPORT SIZE" },
+    { F_H, "serialize straight into the packet", "TRANSPORT SIZE" },
 
     // FRAGMENT PACKING: how messages are packed into packets.
-    { F_H, "message one packet carries", "FRAGMENT PACKING" },
     { F_H, "single-packet message", "FRAGMENT PACKING" },
-    { F_H, "one packet is promoted", "FRAGMENT PACKING" },
     { F_H, "A lost packet loses it", "FRAGMENT PACKING" },
     { F_H, "carrying packet is acknowledged", "FRAGMENT PACKING" },
     { F_O, "one record in one packet", "FRAGMENT PACKING" },
@@ -104,7 +110,6 @@ static const allowlist_row_t allowlist[] =
     // TRANSPORT COUNTERS AND STATS: datagrams on the wire.
     { F_H, "packets_sent", "TRANSPORT COUNTERS AND STATS" },
     { F_H, "packets_received", "TRANSPORT COUNTERS AND STATS" },
-    { F_H, "payloads_received", "TRANSPORT COUNTERS AND STATS" },
     { F_H, "packet_loss", "TRANSPORT COUNTERS AND STATS" },
     { F_H, "of sent packets", "TRANSPORT COUNTERS AND STATS" },
     { F_API, "PACKETS_SENT", "TRANSPORT COUNTERS AND STATS" },
