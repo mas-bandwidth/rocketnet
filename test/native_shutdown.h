@@ -3,8 +3,11 @@
 #define ROCKETNET_TEST_NATIVE_SHUTDOWN_H
 
 #include "../sdk/rocketnet_internal.h"
-#include "../sdk/rocketnet_driver.h"
 #include "../examples/shutdown.h"
+
+#ifdef __cplusplus
+#include "../sdk/rocketnet_driver.h"
+#endif
 
 // Native functional/benchmark cleanup. Explicitly bounded waiting belongs to
 // the harness, never to stop/stopped. Preserve the suite's outer watchdog.
@@ -60,6 +63,7 @@ static inline void rn_native_server_transport_stop_and_destroy( struct rocketnet
     }
     rocketnet_server_transport_destroy( server );
 }
+#ifdef __cplusplus
 static inline void rn_native_server_io_wait_stopped( rocketnet_server_transport_io_t * server )
 {
     const double deadline = rocketnet_time() + 10.0;
@@ -81,7 +85,6 @@ static inline void rn_native_server_io_stop_and_close( rocketnet_server_transpor
     rocketnet_server_transport_io_close( server );
 }
 
-#ifdef __cplusplus
 template <typename transport_t>
 static inline void rn_native_backend_stop_and_destroy( transport_t * transport,
     void (*stop)( transport_t * ), bool (*stopped)( transport_t * ), void (*destroy)( transport_t * ) )
