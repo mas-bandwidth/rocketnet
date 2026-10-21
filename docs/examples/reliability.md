@@ -15,11 +15,12 @@ needs.
 ## What it shows
 
 1. Start a server and a client over the in-memory `loopback` transport. Both
-   ends run the development network simulator with 25 percent loss, 20 ms
-   latency and 35 ms jitter.
+   ends run the development network simulator with 20 ms latency and 35 ms
+   jitter. The server deliberately drops the first numbered send of each mode
+   with 100 percent loss, then returns to zero loss for later sends and retries.
 2. Send a numbered run of eight messages (`1..8`) in each of the eight
-   reliability modes (one channel per mode), one message per frame so each send
-   faces independent simulated loss and jitter.
+   reliability modes (one channel per mode), one message per frame. This makes
+   loss certain: a random loss percentage need not drop any of eight messages.
 3. Receive messages across all channels, collect resolved receipts from
    `rocketnet_server_receipts`, print one summary line per mode, and check each
    mode's delivery, ordering, and receipt promise.
@@ -38,21 +39,26 @@ From the repository root, after the normal build:
 
 ## What the output means
 
+One run is shown below; jitter and transport scheduling can change arrival order
+and how many older sequenced messages are superseded. The deliberate first
+unreliable send is always lost.
+
 ```
-unreliable               sent=8 arrived=5 order=[1,3,6,7,8] gaps=3 duplicates=0 receipts=0/0
-unreliable_sequenced     sent=8 arrived=5 order=[1,3,6,7,8] gaps=3 duplicates=0 receipts=0/0
-reliable                 sent=8 arrived=8 order=[1,3,2,4,5,6,7,8] gaps=0 duplicates=0 receipts=0/0
+unreliable               sent=8 arrived=7 order=[3,4,2,5,6,8,7] gaps=1 duplicates=0 receipts=0/0
+unreliable_sequenced     sent=8 arrived=6 order=[2,4,5,6,7,8] gaps=2 duplicates=0 receipts=0/0
+reliable                 sent=8 arrived=8 order=[4,2,3,5,6,8,7,1] gaps=0 duplicates=0 receipts=0/0
 reliable_ordered         sent=8 arrived=8 order=[1,2,3,4,5,6,7,8] gaps=0 duplicates=0 receipts=0/0
-reliable_sequenced       sent=8 arrived=5 order=[1,2,4,7,8] gaps=3 duplicates=0 receipts=0/0
-unreliable_receipt       sent=8 arrived=6 order=[3,2,4,5,7,8] gaps=2 duplicates=0 receipts=6/2
-reliable_receipt         sent=8 arrived=8 order=[1,2,3,6,8,7,4,5] gaps=0 duplicates=0 receipts=8/0
+reliable_sequenced       sent=8 arrived=4 order=[3,4,5,8] gaps=4 duplicates=0 receipts=0/0
+unreliable_receipt       sent=8 arrived=7 order=[2,3,5,4,6,7,8] gaps=1 duplicates=0 receipts=7/1
+reliable_receipt         sent=8 arrived=8 order=[2,3,4,5,6,7,8,1] gaps=0 duplicates=0 receipts=8/0
 reliable_ordered_receipt sent=8 arrived=8 order=[1,2,3,4,5,6,7,8] gaps=0 duplicates=0 receipts=8/0
 PASS
 ```
 
-Unreliable modes drop lost packets; `unreliable_receipt` shows jitter delivering
-`3` before `2` and reports `6` acked / `2` lost receipts. Sequenced modes never
-step backwards, and `reliable_sequenced` guarantees the final message `8`.
+The unsequenced unreliable modes deliver exactly `2..8` in arrival order;
+`unreliable_receipt` reports `7` acked / `1` lost receipts. Sequenced modes never
+step backwards, and the example checks that `reliable_sequenced` reaches the
+final message `8`.
 `reliable` and `reliable_receipt` deliver all `8` messages without head-of-line
 stalls, while `reliable_ordered` and `reliable_ordered_receipt` deliver `1..8`
 in exact sequence.
