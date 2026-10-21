@@ -266,7 +266,6 @@ def validate(server_text, shard_texts, run_id, total, duration, limit,
         raise ValueError("server readiness lacks address or public key")
     server = one(server_text, "split_receipt")
     validate_receipt(server, "server", run_id, total, duration, limit)
-    timing_pass = validate_timing(server_text, server, run_id)
     wire_map(server_text, "server", run_id, 0, total, server)
     if server_transport is not None and server.get("transport") != server_transport:
         raise ValueError("server transport differs from requested transport")
@@ -346,6 +345,9 @@ def validate(server_text, shard_texts, run_id, total, duration, limit,
     aggregate_down = sum(integer(shard, "wire_down") for shard in shards) * 8 / (minimum_window * 1000)
     if aggregate_up >= limit or aggregate_down >= limit:
         raise ValueError("combined client shards exceed aggregate cap")
+    # A timing failure, or malformed timing evidence, must not bypass any of
+    # the population, delivery, bandwidth, resource or host checks above.
+    timing_pass = validate_timing(server_text, server, run_id)
     verdict = "PASS" if timing_pass else "FAIL"
     return {"schema": "split_merge_v2", "verdict": verdict,
             "overall_verdict": verdict, "non_timing_verdict": "PASS",
