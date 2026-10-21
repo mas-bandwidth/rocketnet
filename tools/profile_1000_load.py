@@ -137,6 +137,43 @@ def run_capture(argv, source, env, timeout):
         return proc.returncode, stdout, stderr, True
 
 
+def validate_resource_baseline(fields):
+    phase_names = ("pre_init", "post_init", "pre_term", "post_term")
+    has_phase_field = any(f"{kind}_{phase}" in fields
+                          for kind in ("fds", "threads") for phase in phase_names)
+    schema = fields.get("resource_baseline_schema")
+    if schema is None and not has_phase_field:
+        # Historical receipts used start after init and end after term. Keep
+        # their old strict rule; only tagged receipts use the paired phases.
+        for kind in ("fds", "threads"):
+            try:
+                start = int(fields[f"{kind}_start"])
+                end = int(fields[f"{kind}_end"])
+            except (KeyError, ValueError) as error:
+                raise ValueError(f"{kind} baseline counts missing or invalid") from error
+            if start < 0 or end < 0 or start != end:
+                raise ValueError(f"{kind} did not return to baseline")
+        return "legacy_start_end"
+    if schema != "phase_pairs_v1":
+        raise ValueError("resource phase fields require phase_pairs_v1 schema")
+    if fields.get("resource_baseline") != "PASS" or fields.get("term_status_code") != "0":
+        raise ValueError("resource baseline or term status failed")
+    for kind in ("fds", "threads"):
+        try:
+            values = {phase: int(fields[f"{kind}_{phase}"]) for phase in phase_names}
+            start = int(fields[f"{kind}_start"])
+            end = int(fields[f"{kind}_end"])
+        except (KeyError, ValueError) as error:
+            raise ValueError(f"{kind} phase counts missing or invalid") from error
+        if any(value < 0 for value in values.values()) or start < 0 or end < 0:
+            raise ValueError(f"{kind} phase counts must be nonnegative")
+        if start != values["post_init"] or end != values["post_term"]:
+            raise ValueError(f"{kind} legacy fields disagree with phase counts")
+        if values["post_init"] != values["pre_term"] or values["pre_init"] != values["post_term"]:
+            raise ValueError(f"{kind} did not return to both phase baselines")
+    return schema
+
+
 def parse_load(stdout, server_transport, client_transport):
     summaries = [line for line in stdout.splitlines()
                  if line.startswith("load: connected=") and "verdict=" in line]
@@ -152,16 +189,7 @@ def parse_load(stdout, server_transport, client_transport):
         raise ValueError("one or more load criteria failed")
     if fields.get("server_transport_io") != server_transport or fields.get("client_transport_io") != client_transport:
         raise ValueError("granted transport differs from requested transport")
-    for name in ("fds", "threads"):
-        try:
-            start = int(fields[f"{name}_start"])
-            end = int(fields[f"{name}_end"])
-        except (KeyError, ValueError) as error:
-            raise ValueError(f"{name} baseline counts missing or invalid") from error
-        if start < 0 or end < 0:
-            raise ValueError(f"{name} baseline counts must be nonnegative")
-        if start != end:
-            raise ValueError(f"{name} did not return to baseline")
+    resource_baseline_schema = validate_resource_baseline(fields)
     try:
         server_p99 = float(fields["server_update_p99_us"])
     except (KeyError, ValueError) as error:
@@ -198,7 +226,8 @@ def parse_load(stdout, server_transport, client_transport):
                                     p99_upper_us=p99, max_us=maximum,
                                     overbudget_count=overbudget,
                                     status="UNMEASURED" if count == 0 else "MEASURED")
-    return dict(raw=summaries[0], fields=fields, server_update_p99_us=server_p99,
+    return dict(raw=summaries[0], fields=fields, resource_baseline_schema=resource_baseline_schema,
+                server_update_p99_us=server_p99,
                 server_update_under_100us=server_p99 < 100.0,
                 reported_frame_calls=reported_calls,
                 missing_frame_calls=sorted("frame_" + name for name in EXPECTED_FRAME_CALLS

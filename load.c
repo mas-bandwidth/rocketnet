@@ -26,8 +26,9 @@
 
     Linux. ROCKETNET_SERVER_TRANSPORT pins the server transport and
     ROCKETNET_CLIENT_TRANSPORT=portable the clients; the summary line's
-    server_transport_io= names the transport granted, and fds_end and threads_end
-    equal fds_start and threads_start on a clean run. The server cells:
+    server_transport_io= names the transport granted. Resource baseline pairs
+    compare post-init to pre-term and pre-init to post-term; legacy start/end
+    fields keep their raw post-init/post-term meanings. The server cells:
       portable   ROCKETNET_SERVER_TRANSPORT=portable
       gso        ROCKETNET_SERVER_TRANSPORT=gso
       gso plain  ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_TEST_GSO_PLAIN=1: the
@@ -831,6 +832,8 @@ int main( int argc, char ** argv )
         load_timing_record( &timing, LOAD_TIMING_CLOCK_PAIR, start_ns );
     }
 
+    const long fds_pre_init = count_open_fds();
+    const long threads_pre_init = count_threads();
     if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
     {
         fprintf( stderr, "load: rocketnet_init failed\n" );
@@ -838,6 +841,8 @@ int main( int argc, char ** argv )
     }
     const long fds_start = count_open_fds();
     const long threads_start = count_threads();
+    const long fds_post_init = fds_start;
+    const long threads_post_init = threads_start;
     long fds_peak = fds_start;
     long threads_peak = threads_start;
     char log_level[256];
@@ -1501,7 +1506,7 @@ int main( int argc, char ** argv )
     else if ( !crit5_counters_agree )
         failed_criterion = "counters_agree";
 
-    const int pass = crit1_connect_within_10s &&
+    int pass = crit1_connect_within_10s &&
                      crit2_no_unexpected_disconnect &&
                      crit3_reliable_delivery &&
                      crit4_unreliable_integrity &&
@@ -1532,10 +1537,31 @@ int main( int argc, char ** argv )
     free( s2c_streams );
     free( client_last_update );
     free( client_max_update_gap );
-    rocketnet_term();
+    const long fds_pre_term = count_open_fds();
+    const long threads_pre_term = count_threads();
+    const enum rocketnet_status_t term_status = rocketnet_term();
 
     const long fds_end = count_open_fds();
     const long threads_end = count_threads();
+    const long fds_post_term = fds_end;
+    const long threads_post_term = threads_end;
+    const int resource_baseline =
+        fds_pre_init >= 0 && fds_post_init >= 0 && fds_pre_term >= 0 && fds_post_term >= 0 &&
+        threads_pre_init >= 0 && threads_post_init >= 0 && threads_pre_term >= 0 && threads_post_term >= 0 &&
+        fds_post_init == fds_pre_term && fds_pre_init == fds_post_term &&
+        threads_post_init == threads_pre_term && threads_pre_init == threads_post_term;
+    if ( term_status != ROCKETNET_STATUS_OK )
+    {
+        if ( strcmp( failed_criterion, "none" ) == 0 )
+            failed_criterion = "term_status";
+        pass = 0;
+    }
+    if ( !resource_baseline )
+    {
+        if ( strcmp( failed_criterion, "none" ) == 0 )
+            failed_criterion = "resource_baseline";
+        pass = 0;
+    }
 
     if ( pass )
     {
@@ -1548,6 +1574,9 @@ int main( int argc, char ** argv )
                 "server_transport_io=%s client_transport_io=%s "
                 "fd_limit_soft=%s fd_limit_hard=%s fds_start=%ld fds_peak=%ld fds_end=%ld "
                 "threads_start=%ld threads_peak=%ld threads_end=%ld "
+                "fds_pre_init=%ld fds_post_init=%ld fds_pre_term=%ld fds_post_term=%ld "
+                "threads_pre_init=%ld threads_post_init=%ld threads_pre_term=%ld threads_post_term=%ld "
+                "term_status_code=%d resource_baseline_schema=phase_pairs_v1 resource_baseline=PASS "
                 "timing_scope=traffic_and_drain drain_schedule=recent_first_cyclic "
                 "timing_baseline=fair_drain_v1 verdict=PASS",
                 connected_count, connect_elapsed, connect_p50_s, connect_max_s,
@@ -1557,7 +1586,10 @@ int main( int argc, char ** argv )
                 server_transport_io, client_transport_io,
                 fd_limit_soft_text, fd_limit_hard_text,
                 fds_start, fds_peak, fds_end,
-                threads_start, threads_peak, threads_end );
+                threads_start, threads_peak, threads_end,
+                fds_pre_init, fds_post_init, fds_pre_term, fds_post_term,
+                threads_pre_init, threads_post_init, threads_pre_term, threads_post_term,
+                (int) term_status );
         load_timing_print( &timing );
         putchar( '\n' );
     }
@@ -1572,6 +1604,9 @@ int main( int argc, char ** argv )
                 "server_transport_io=%s client_transport_io=%s "
                 "fd_limit_soft=%s fd_limit_hard=%s fds_start=%ld fds_peak=%ld fds_end=%ld "
                 "threads_start=%ld threads_peak=%ld threads_end=%ld "
+                "fds_pre_init=%ld fds_post_init=%ld fds_pre_term=%ld fds_post_term=%ld "
+                "threads_pre_init=%ld threads_post_init=%ld threads_pre_term=%ld threads_post_term=%ld "
+                "term_status_code=%d resource_baseline_schema=phase_pairs_v1 resource_baseline=%s "
                 "timing_scope=traffic_and_drain drain_schedule=recent_first_cyclic "
                 "timing_baseline=fair_drain_v1 "
                 "failed_criterion=%s verdict=FAIL",
@@ -1588,6 +1623,9 @@ int main( int argc, char ** argv )
                 fd_limit_soft_text, fd_limit_hard_text,
                 fds_start, fds_peak, fds_end,
                 threads_start, threads_peak, threads_end,
+                fds_pre_init, fds_post_init, fds_pre_term, fds_post_term,
+                threads_pre_init, threads_post_init, threads_pre_term, threads_post_term,
+                (int) term_status, resource_baseline ? "PASS" : "FAIL",
                 failed_criterion );
         load_timing_print( &timing );
         putchar( '\n' );

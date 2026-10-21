@@ -39,6 +39,12 @@ ZERO_CALL = (" frame_server_disconnect_reason_count=0"
              " frame_server_disconnect_reason_p99_upper_us=0"
              " frame_server_disconnect_reason_max_us=0.000"
              " frame_server_disconnect_reason_overbudget_count=0")
+PHASE_COUNTS = (" fds_pre_init=3 fds_post_init=4 fds_pre_term=4 fds_post_term=3"
+                " threads_pre_init=2 threads_post_init=3 threads_pre_term=3 threads_post_term=2"
+                " term_status_code=0 resource_baseline_schema=phase_pairs_v1 resource_baseline=PASS")
+PHASE_SUMMARY = (SUMMARY.replace("fds_start=4 fds_end=4 threads_start=1 threads_end=1",
+                                 "fds_start=4 fds_end=3 threads_start=3 threads_end=2")
+                 .replace(" verdict=PASS", PHASE_COUNTS + " verdict=PASS"))
 
 
 class MacMemoryTests(unittest.TestCase):
@@ -62,6 +68,24 @@ class MacMemoryTests(unittest.TestCase):
 
 
 class ReceiptTests(unittest.TestCase):
+    def test_explicit_phase_pairs_allow_runtime_resources_to_close_at_term(self):
+        result = profile.parse_load(PHASE_SUMMARY, "portable", "portable")
+        self.assertEqual(result["resource_baseline_schema"], "phase_pairs_v1")
+        self.assertEqual(result["fields"]["fds_start"], "4")
+        self.assertEqual(result["fields"]["fds_end"], "3")
+
+    def test_explicit_phase_pairs_fail_closed(self):
+        for line in (PHASE_SUMMARY.replace("fds_pre_term=4", "fds_pre_term=3"),
+                     PHASE_SUMMARY.replace("threads_post_term=2", "threads_post_term=3"),
+                     PHASE_SUMMARY.replace("fds_pre_init=3", "fds_pre_init=-1"),
+                     PHASE_SUMMARY.replace("fds_post_init=4 ", ""),
+                     PHASE_SUMMARY.replace("fds_end=3", "fds_end=4"),
+                     PHASE_SUMMARY.replace("term_status_code=0", "term_status_code=-1"),
+                     PHASE_SUMMARY.replace("resource_baseline=PASS", "resource_baseline=FAIL"),
+                     PHASE_SUMMARY.replace("resource_baseline_schema=phase_pairs_v1", "")):
+            with self.subTest(line=line), self.assertRaises(ValueError):
+                profile.parse_load(line, "portable", "portable")
+
     def test_valid_histogram_is_retained_without_budget_pass(self):
         result = profile.parse_load(SUMMARY, "portable", "portable")
         self.assertEqual(result["reported_frame_calls"]["frame_server_update"]["count"], 6000)
