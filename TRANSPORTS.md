@@ -561,8 +561,8 @@ but return each datagram's original length, up to 65535 bytes. A larger byte
 count does not grant access to bytes beyond that buffer. Client batch
 compaction copies only the stored prefix; the prefilter counts oversized
 reports without reading that prefix. The buffered server counts oversized
-reports before invoking an application admission callback, so that callback
-never sees a claimed length beyond its available storage. Negative lengths,
+reports before the protocol reads a packet, so the protocol never sees a
+claimed length beyond its available storage. Negative lengths,
 lengths beyond 65535, and returned packet counts outside the requested range
 remain transport faults. A zero byte count in a batch is a received empty
 datagram; zero from a single-packet receive means drained.

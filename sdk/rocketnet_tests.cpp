@@ -3787,76 +3787,6 @@ void rocketnet_test_handshake_work_budget_per_update()
     rocketnet_test_server_teardown( &test );
 }
 
-// the transport's admission gate, defined in rocketnet_server_transport.cpp:
-// consulted before process_packet for a source with no encryption mapping.
-
-int rocketnet_server_transport_admission( const struct rocketnet_server_protocol_t * protocol,
-                                          rocketnet_server_admission_callback_t callback,
-                                          void * context,
-                                          const struct rocketnet_address_t * from,
-                                          const uint8_t * packet_data,
-                                          int packet_bytes );
-
-static int rocketnet_test_admission_drop( void * context, const struct rocketnet_address_t * from, const uint8_t * packet_data, int packet_bytes )
-{
-    (void) context; (void) from; (void) packet_data; (void) packet_bytes;
-    return ROCKETNET_SERVER_ADMISSION_DROP;
-}
-
-void rocketnet_test_admission_hook_drops_before_verify()
-{
-    struct rocketnet_test_server_t test;
-    rocketnet_test_server_setup( &test );
-
-    // a cookie-valid request whose signature is corrupt: admitted, it reaches
-    // the signature verify and is refused there; dropped, it never does.
-    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
-    rocketnet_test_build_request( request, 0xAD111777ULL, rocketnet_test_salt );
-    rocketnet_test_pass_cookie_gate( &test, request );
-
-    const int signed_offset = ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES + ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES;
-    const int signature_offset = signed_offset + ROCKETNET_SIGNED_CONNECT_DATA_BYTES;
-    request[signature_offset] ^= 1;
-
-    uint8_t response[ROCKETNET_RECEIVE_CEILING];
-    int response_bytes = 0;
-
-    // a drop callback on an unmapped source returns DROP, and the transport
-    // skips process_packet on it -- the verify never runs, so the counter
-    // that would record a failed verify is unchanged
-    rocketnet_check( rocketnet_server_transport_admission( &test.server, rocketnet_test_admission_drop, NULL,
-                                                           &test.client_address, request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES ) == ROCKETNET_SERVER_ADMISSION_DROP );
-    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] == 0 );
-
-    // the same packet, admitted -- no callback -- reaches the verify, and the
-    // corrupt signature is refused and counted: the drop above genuinely
-    // prevented the verify rather than the request being refused earlier
-    rocketnet_check( rocketnet_server_transport_admission( &test.server, NULL, NULL,
-                                                           &test.client_address, request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES ) == ROCKETNET_SERVER_ADMISSION_ADMIT );
-    rocketnet_check( rocketnet_test_process( &test, request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] == 1 );
-
-    // the gate is "for unmapped sources" only: a source with a mapping has
-    // already cleared the connect ladder and bypasses even a drop callback
-    {
-        struct rocketnet_test_server_t mapped;
-        rocketnet_test_server_setup( &mapped );
-
-        uint8_t valid[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
-        rocketnet_test_build_request( valid, 0xAD222888ULL, rocketnet_test_salt );
-        rocketnet_test_pass_cookie_gate( &mapped, valid );
-        rocketnet_check( rocketnet_test_process( &mapped, valid, sizeof(valid), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
-        rocketnet_check( rocketnet_encryption_map_find( mapped.server.encryption_map, &mapped.client_address ) != -1 );
-
-        rocketnet_check( rocketnet_server_transport_admission( &mapped.server, rocketnet_test_admission_drop, NULL,
-                                                               &mapped.client_address, valid, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES ) == ROCKETNET_SERVER_ADMISSION_ADMIT );
-
-        rocketnet_test_server_teardown( &mapped );
-    }
-
-    rocketnet_test_server_teardown( &test );
-}
-
 void rocketnet_test_replay_protection()
 {
     struct rocketnet_replay_protection_t replay;
@@ -7753,7 +7683,6 @@ static const char * rocketnet_test_layer_exports[] =
     "rocketnet_server_transport_io_name",
     "rocketnet_forbid_xdp_commit",
     "rocketnet_server_transport_update",
-    "rocketnet_server_transport_set_admission_callback",
     "rocketnet_server_transport_num_payloads",
     "rocketnet_server_transport_payload",
     "rocketnet_server_transport_payloads",
@@ -7888,7 +7817,6 @@ static const char * rocketnet_test_layer_null_case_exports[] =
     "rocketnet_server_transport_port",
     "rocketnet_server_transport_io_name",
     "rocketnet_server_transport_update",
-    "rocketnet_server_transport_set_admission_callback",
     "rocketnet_server_transport_num_payloads",
     "rocketnet_server_transport_payload",
     "rocketnet_server_transport_payloads",
@@ -8398,10 +8326,6 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
 
     before = rocketnet_api_misuse_count();
     rocketnet_server_transport_client_stats( NULL, 0, NULL );
-    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
-
-    before = rocketnet_api_misuse_count();
-    rocketnet_server_transport_set_admission_callback( NULL, NULL, NULL );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();
@@ -14852,7 +14776,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_request_path_ordering", rocketnet_test_request_path_ordering },
     { "test_request_path_uncovered_rungs", rocketnet_test_request_path_uncovered_rungs },
     { "test_handshake_work_budget_per_update", rocketnet_test_handshake_work_budget_per_update },
-    { "test_admission_hook_drops_before_verify", rocketnet_test_admission_hook_drops_before_verify },
     { "test_request_path_config_branches", rocketnet_test_request_path_config_branches },
     { "test_replay_protection", rocketnet_test_replay_protection },
     { "test_replay_long_skip_clears_whole_window", rocketnet_test_replay_long_skip_clears_whole_window },

@@ -20,7 +20,7 @@ The secure connect of standard/TRANSPORT.md: netcode 1.02 rebuilt on public keys
 | Per-connection keys with forward secrecy, secrets wiped on every exit | ✅ | ✅ | ✅ |
 | Sealed packets with every refusal proven | ✅ | ✅ | ✅ |
 | Used-token history and one token, one live connection | ✅ | ✅ | ✅ |
-| Admission hook drops a packet before any verify | ✅ | ✅ | ✅ |
+| Admission hook: removed 2026-10-21, it was never in the public API | — | — | — |
 | Cheap refusals before crypto: a full server refuses before keypair work | ✅ | ✅ | ✅ |
 | Bounded handshake work per update | ✅ | ✅ | ✅ |
 | Configurable half-open handshake deadline | ✅ | ✅ | ✅ |

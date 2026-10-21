@@ -492,34 +492,21 @@ static void test_transport_results_server_receive_checks_counts()
 }
 REGISTER_UNIT_TEST( test_transport_results_server_receive_checks_counts );
 
-static int transport_results_admission_count( void * context, const rocketnet_address_t *, const uint8_t *, int )
-{
-    ( *(int*) context )++;
-    return ROCKETNET_SERVER_ADMISSION_ADMIT;
-}
-
-static void test_transport_results_server_truncated_datagram_skips_admission()
+static void test_transport_results_server_truncated_datagram_refused()
 {
     transport_results_server_lie_t lie = {};
     rocketnet_server_transport_io_operations_t operations;
     rocketnet_server_transport_t * server = transport_results_make_server( &lie, &operations );
-    int admission_calls = 0;
-    rocketnet_server_transport_set_admission_callback( server, transport_results_admission_count, &admission_calls );
     const uint64_t before = server->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE];
     const uint64_t received_before = server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED];
     lie.mode = 6;
     rocketnet_server_transport_update( server, 1000.0 );
     rocketnet_unit_check( server->transport_faults == 0 );
-    rocketnet_unit_check( admission_calls == 0 );
     rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == before + 1 );
     rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == received_before + 1 );
-    lie.mode = 5;
-    lie.calls = 0;
-    rocketnet_server_transport_update( server, 1000.0 );
-    rocketnet_unit_check( admission_calls == 1 );
     rocketnet_server_transport_destroy( server );
 }
-REGISTER_UNIT_TEST( test_transport_results_server_truncated_datagram_skips_admission );
+REGISTER_UNIT_TEST( test_transport_results_server_truncated_datagram_refused );
 
 
 static void transport_results_set_ipv4( rocketnet_address_t * address, int a, int b, int c, int d, uint16_t port )
