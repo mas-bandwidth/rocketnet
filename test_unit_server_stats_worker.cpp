@@ -329,6 +329,7 @@ static void test_server_stats_worker_reused_slot_rejects_old_publication()
     rocketnet_ack_endpoint_t * new_endpoint = rocketnet_server_transport_stats_endpoint_for_test(transport, world.slots[1]);
     check(new_endpoint);
     stats_add_sample(new_endpoint, world.time, 13.0);
+    rocketnet_ack_endpoint_t * expected = stats_reference(new_endpoint);
     // A READY bank names the old connection. It must not apply to B even
     // when it finishes after the slot is reused.
     for ( int n = 0; n < 2; ++n )
@@ -345,6 +346,10 @@ static void test_server_stats_worker_reused_slot_rejects_old_publication()
         rocketnet_server_update(world.server, world.time);
     }
     check(fabs(rn_server_client_stats_of(world.server, world.slots[1]).rtt_ms - 13.0) < 0.001);
+    // Several exchanges revisit both physical banks. Old-generation RTTs
+    // could leave the minimum unchanged while corrupting jitter or bandwidth.
+    stats_check_six(rn_server_client_stats_of(world.server, world.slots[1]), *expected);
+    delete expected;
     stats_world_destroy(&world);
     check(pin.restore());
 }
