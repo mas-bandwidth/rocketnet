@@ -3529,8 +3529,12 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
     struct kevent changes[2];
     int num_changes = 0;
     if ( socket )
-        EV_SET( &changes[num_changes++], socket->handle, EVFILT_READ, EV_ADD, 0, 0, NULL );
-    EV_SET( &changes[num_changes++], ROCKETNET_PLATFORM_WAKE_KEVENT_IDENT, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, NULL );
+    {
+        EV_SET( &changes[num_changes], socket->handle, EVFILT_READ, EV_ADD, 0, 0, NULL );
+        num_changes++;
+    }
+    EV_SET( &changes[num_changes], ROCKETNET_PLATFORM_WAKE_KEVENT_IDENT, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, NULL );
+    num_changes++;
     if ( kevent( wake->kq, changes, num_changes, NULL, 0, NULL ) < 0 )
     {
         close( wake->kq );
