@@ -17,7 +17,7 @@
    are outside this abstraction; callback affinity/count and retained context
    are represented. Backend-specific RIO/uring/IOCP algorithms need separate
    correspondence and native tests. *)
-EXTENDS Naturals, FiniteSets
+EXTENDS Integers, FiniteSets
 CONSTANTS Endpoint, NumWorkers, MaxGenerations, StuckWorker, Defect
 ASSUME Endpoint \in {"clientio", "receive", "client", "server"}
 ASSUME NumWorkers \in Nat \ {0} /\ MaxGenerations \in Nat \ {0}
