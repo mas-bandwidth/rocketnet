@@ -38,6 +38,9 @@
 
 #include "rocketnet_fuzz_pair.h"
 
+#include <filesystem>
+#include <string>
+
 static const uint8_t rocketnet_fuzz_c2s_types[] =
 {
     ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_CONNECTION_DISCONNECT_PACKET,
@@ -151,4 +154,139 @@ static uint64_t rocketnet_fuzz_server_run( const uint8_t * data, size_t size )
     return rocketnet_fuzz_pair_fingerprint( pair );
 }
 
-ROCKETNET_FUZZ_PAIR_TARGET( rocketnet_fuzz_server_run )
+// -----------------------------------------------------------------------
+//  the seed generator (ROCKETNET_FUZZ_SEED_DIR=<dir>, rocketnet_fuzz_pair.h)
+//
+// For every client -> server type the server reads (request, response,
+// keep-alive, payload, disconnect, ack, fragment): the real datagram, raw,
+// from the client's address, and -- every type but the request -- its real
+// plaintext sealed under the live keys. Each seed must raise its type's
+// counter when replayed: the received counter for the raw seed, the
+// accepted counter for the sealed one. With ROCKETNET_FUZZ_SEED_FROM=<the
+// committed fuzz/corpus> it also wraps every prefilter_* datagram there as a
+// stranger's and as the client's.
+// -----------------------------------------------------------------------
+
+struct rocketnet_fuzz_server_seed_type_t
+{
+    uint8_t type;
+    int received;
+    int accepted;           // -1: no sealed seed (the request is not sealed)
+};
+
+static const struct rocketnet_fuzz_server_seed_type_t rocketnet_fuzz_server_seed_types[] =
+{
+    { ROCKETNET_CONNECTION_REQUEST_PACKET,    ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED,  -1 },
+    { ROCKETNET_CONNECTION_RESPONSE_PACKET,   ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED, ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED },
+    { ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED,          ROCKETNET_COUNTER_KEEP_ALIVE_ACCEPTED },
+    { ROCKETNET_CONNECTION_PAYLOAD_PACKET,    ROCKETNET_COUNTER_PAYLOAD_RECEIVED,             ROCKETNET_COUNTER_PAYLOAD_DELIVERED },
+    { ROCKETNET_CONNECTION_DISCONNECT_PACKET, ROCKETNET_COUNTER_DISCONNECT_RECEIVED,          ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED },
+    { ROCKETNET_CONNECTION_ACK_PACKET,        ROCKETNET_COUNTER_ACK_RECEIVED,                 ROCKETNET_COUNTER_ACK_ACCEPTED },
+    { ROCKETNET_CONNECTION_FRAGMENT_PACKET,   ROCKETNET_COUNTER_FRAGMENT_RECEIVED,            ROCKETNET_COUNTER_FRAGMENT_ACCEPTED },
+};
+
+static int rocketnet_fuzz_server_type_index( uint8_t type )
+{
+    for ( int i = 0; i < (int) sizeof( rocketnet_fuzz_c2s_types ); i++ )
+        if ( rocketnet_fuzz_c2s_types[i] == type )
+            return i;
+    return -1;
+}
+
+static bool rocketnet_fuzz_server_generate( const char * dir )
+{
+    static struct rocketnet_fuzz_recording_t recording;
+    static uint8_t seed[4 + 3 * 300 + ROCKETNET_RECEIVE_CEILING + 8];
+    struct rocketnet_fuzz_pair_t * pair = &rocketnet_fuzz_server_pair;
+    rocketnet_fuzz_pair_record( pair, &recording );
+
+    bool complete = true;
+    char name[256];
+    for ( size_t k = 0; k < sizeof( rocketnet_fuzz_server_seed_types ) / sizeof( rocketnet_fuzz_server_seed_types[0] ); k++ )
+    {
+        const struct rocketnet_fuzz_server_seed_type_t * t = &rocketnet_fuzz_server_seed_types[k];
+        const struct rocketnet_fuzz_recorded_t * r = &recording.c2s[t->type];
+        const char * type_name = rocketnet_fuzz_packet_type_names[t->type];
+        if ( r->bytes == 0 )
+        {
+            fprintf( stderr, "seed generator: no real %s was recorded\n", type_name );
+            complete = false;
+            continue;
+        }
+        const uint8_t selector = r->handshake ? 0x10 : 0x00;
+        const int wait_from = r->handshake ? r->step - 3 : 0;
+        const int wait_to = r->handshake ? r->step + 3 : 2;
+
+        int bytes = rocketnet_fuzz_seed_place( seed, rocketnet_fuzz_server_run, rocketnet_fuzz_server_counters_of, t->received,
+                                               selector, wait_from, wait_to, 0, r->data, r->bytes, NULL, 0 );
+        if ( bytes > 0 )
+        {
+            snprintf( name, sizeof( name ), "raw_%s", type_name );
+            complete = rocketnet_fuzz_seed_write( dir, name, seed, bytes ) && complete;
+        }
+        else
+        {
+            fprintf( stderr, "seed generator: the raw %s seed reaches no %s\n", type_name, rocketnet_counter_name( t->received ) );
+            complete = false;
+        }
+
+        if ( t->accepted < 0 )
+            continue;
+        if ( r->plaintext_bytes < 0 )
+        {
+            fprintf( stderr, "seed generator: the recorded %s did not open\n", type_name );
+            complete = false;
+            continue;
+        }
+        const uint8_t head[2] = { (uint8_t) rocketnet_fuzz_server_type_index( t->type ), 0 };
+        bytes = rocketnet_fuzz_seed_place( seed, rocketnet_fuzz_server_run, rocketnet_fuzz_server_counters_of, t->accepted,
+                                           selector, wait_from, wait_to, 2, head, 2, r->plaintext, r->plaintext_bytes );
+        if ( bytes > 0 )
+        {
+            snprintf( name, sizeof( name ), "sealed_%s", type_name );
+            complete = rocketnet_fuzz_seed_write( dir, name, seed, bytes ) && complete;
+        }
+        else
+        {
+            fprintf( stderr, "seed generator: the sealed %s seed reaches no %s\n", type_name, rocketnet_counter_name( t->accepted ) );
+            complete = false;
+        }
+    }
+
+    // the committed wire corpus, each datagram from a stranger and from the client
+    char from[1024];
+    if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_FROM", from, sizeof( from ) ) )
+    {
+        int wrapped = 0;
+        for ( const auto & entry : std::filesystem::directory_iterator( from ) )
+        {
+            const std::string file = entry.path().filename().string();
+            if ( file.rfind( "prefilter_", 0 ) != 0 || !entry.is_regular_file() )
+                continue;
+            static uint8_t body[ROCKETNET_RECEIVE_CEILING + 2];
+            FILE * f = rocketnet_test_fopen( entry.path().string().c_str(), "rb" );
+            if ( !f )
+                continue;
+            const int got = (int) fread( body, 1, sizeof( body ), f );
+            fclose( f );
+            if ( got < 2 )
+                continue;
+            // the stateless target's selector byte comes first; the datagram is the rest
+            const int datagram = got - 1 > ROCKETNET_RECEIVE_CEILING ? ROCKETNET_RECEIVE_CEILING : got - 1;
+            for ( int source = 0; source < 2; source++ )
+            {
+                seed[0] = 0x00;
+                const int bytes = 1 + rocketnet_fuzz_record_write( seed + 1, (uint8_t) ( source == 0 ? 1 : 0 ), body + 1, datagram, NULL, 0 );
+                snprintf( name, sizeof( name ), "wire_%s_%s", source == 0 ? "stranger" : "client", file.c_str() + strlen( "prefilter_" ) );
+                complete = rocketnet_fuzz_seed_write( dir, name, seed, bytes ) && complete;
+                wrapped++;
+            }
+        }
+        printf( "seed generator: wrapped %d committed wire seeds\n", wrapped );
+    }
+
+    printf( "seed generator: %s\n", complete ? "every client -> server type has a seed that reaches its reader" : "INCOMPLETE" );
+    return complete;
+}
+
+ROCKETNET_FUZZ_PAIR_TARGET( rocketnet_fuzz_server_run, rocketnet_fuzz_server_generate )

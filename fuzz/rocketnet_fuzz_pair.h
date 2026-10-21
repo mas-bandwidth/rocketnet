@@ -58,6 +58,8 @@
 #include "rocketnet_connect_token.h"
 #include "rocketnet_test_vectors.h"
 #include "rocketnet_wire.h"
+#include "rocketnet_read_write.h"
+#include "../test/portable_crt.h"
 
 #if defined(ROCKETNET_USE_SYSTEM_SODIUM)
 #include <sodium.h>
@@ -474,9 +476,10 @@ static inline int rocketnet_fuzz_pair_seal_c2s( struct rocketnet_fuzz_pair_t * p
     return 0;
 }
 
-// Seal plaintext as a server -> client packet of the given type, at the
-// server's next send sequence plus skip; the server's own counter moves past
-// it, exactly as if the server had sent it.
+// Seal plaintext as a server -> client session packet of the given type, at
+// the server's next send sequence plus skip; the server's own counter moves
+// past it, exactly as if the server had sent it. The handshake types are not
+// sealed here (fuzz/README.md, "Exclusions").
 static inline int rocketnet_fuzz_pair_seal_s2c( struct rocketnet_fuzz_pair_t * pair, uint8_t type, int skip, const uint8_t * plaintext, int plaintext_bytes, uint8_t * packet )
 {
     struct rocketnet_encryption_mapping_t * m = rocketnet_fuzz_pair_mapping( pair );
@@ -490,15 +493,6 @@ static inline int rocketnet_fuzz_pair_seal_s2c( struct rocketnet_fuzz_pair_t * p
         m->send_sequence_session = sequence + 1;
         return rocketnet_write_sealed_packet( packet, type, filter, sequence, NULL, plaintext, plaintext_bytes,
                                               protocol_id, m->connection_salt, NULL, m->keys.session_server_to_client );
-    }
-    if ( type == ROCKETNET_CONNECTION_CHALLENGE_PACKET || type == ROCKETNET_CONNECTION_DENIED_PACKET )
-    {
-        const uint64_t sequence = m->send_sequence_handshake + (uint64_t) skip;
-        m->send_sequence_handshake = sequence + 1;
-        return rocketnet_write_sealed_packet( packet, type, filter, sequence, m->session_nonce, plaintext, plaintext_bytes,
-                                              protocol_id, m->connection_salt,
-                                              type == ROCKETNET_CONNECTION_CHALLENGE_PACKET ? m->client_ephemeral_public_key : NULL,
-                                              m->keys.handshake_server_to_client );
     }
     return 0;
 }
@@ -749,12 +743,18 @@ static inline uint64_t rocketnet_fuzz_fnv( uint64_t hash, const void * data, siz
     return hash;
 }
 
+static inline const struct rocketnet_counters_t * rocketnet_fuzz_pair_client_counters( struct rocketnet_fuzz_pair_t * pair )
+{
+    return rocketnet_client_transport_counters( rocketnet_message_client_transport( pair->client ) );
+}
+
 static inline uint64_t rocketnet_fuzz_pair_fingerprint( struct rocketnet_fuzz_pair_t * pair )
 {
     uint64_t hash = 0xcbf29ce484222325ULL;
     hash = rocketnet_fuzz_fnv( hash, pair->transport->counters.values, sizeof( pair->transport->counters.values ) );
     hash = rocketnet_fuzz_fnv( hash, rocketnet_message_server_counters( pair->server )->values, sizeof( pair->transport->counters.values ) );
     hash = rocketnet_fuzz_fnv( hash, rocketnet_message_client_counters( pair->client )->values, sizeof( pair->transport->counters.values ) );
+    hash = rocketnet_fuzz_fnv( hash, rocketnet_fuzz_pair_client_counters( pair )->values, sizeof( pair->transport->counters.values ) );
     hash = rocketnet_fuzz_fnv( hash, &pair->time, sizeof( pair->time ) );
     return hash;
 }
@@ -767,25 +767,267 @@ static bool rocketnet_fuzz_dump_counters = false;
 // sees which branch of the reading order an input reached
 static inline void rocketnet_fuzz_pair_dump( struct rocketnet_fuzz_pair_t * pair )
 {
-    const struct rocketnet_counters_t * blocks[3] = { &pair->transport->counters, rocketnet_message_server_counters( pair->server ),
-                                                      rocketnet_message_client_counters( pair->client ) };
-    const char * names[3] = { "server_transport", "message_server", "message_client" };
-    for ( int b = 0; b < 3; b++ )
+    const struct rocketnet_counters_t * blocks[4] = { &pair->transport->counters, rocketnet_message_server_counters( pair->server ),
+                                                      rocketnet_fuzz_pair_client_counters( pair ), rocketnet_message_client_counters( pair->client ) };
+    const char * names[4] = { "server_transport", "message_server", "client_transport", "message_client" };
+    for ( int b = 0; b < 4; b++ )
         for ( int i = 0; i < rocketnet_num_counters(); i++ )
             if ( rocketnet_counter_value( blocks[b], i ) != 0 )
                 printf( "%s %s %llu\n", names[b], rocketnet_counter_name( i ), (unsigned long long) rocketnet_counter_value( blocks[b], i ) );
 }
 
-#define ROCKETNET_FUZZ_PAIR_TARGET( run )                                                               \
+// -----------------------------------------------------------------------
+//  the seed generator: ROCKETNET_FUZZ_SEED_DIR=<dir>
+//
+// yojimbo's gen_seed_corpus, built into the harness so the seeds are made
+// by the same pair the harness replays them on. The generator runs the real
+// handshake from the created snapshot and a scripted session from the
+// connected one (messages both ways, a message large enough to fragment,
+// idle time for keep-alives and acks, a disconnect from each side), and
+// records the first real datagram of every packet type in each direction,
+// with its plaintext opened under the live keys. Because the pair is
+// deterministic, a recorded datagram opens again under the harness's pair.
+// Each target turns the recording into seeds, replays every seed through
+// itself, and refuses to finish unless every packet type its receive loop
+// reads has a seed that reaches that type's reader: random mutation cannot
+// make a valid AEAD tag, so a type with no seed is a parser the fuzzer
+// never enters.
+// -----------------------------------------------------------------------
+
+#define ROCKETNET_FUZZ_NUM_PACKET_TYPES 10
+
+struct rocketnet_fuzz_recorded_t
+{
+    int bytes;
+    bool handshake;
+    int step;                   // the step it was recorded at, from the snapshot
+    uint8_t data[ROCKETNET_RECEIVE_CEILING];
+    int plaintext_bytes;
+    uint8_t plaintext[ROCKETNET_RECEIVE_CEILING];
+};
+
+struct rocketnet_fuzz_recording_t
+{
+    struct rocketnet_fuzz_recorded_t c2s[ROCKETNET_FUZZ_NUM_PACKET_TYPES];
+    struct rocketnet_fuzz_recorded_t s2c[ROCKETNET_FUZZ_NUM_PACKET_TYPES];
+};
+
+// the mapping as it stood at the start of the recording step: a disconnect
+// frees the live mapping in the same call that sends the disconnect, so its
+// datagram is opened under this copy
+static struct rocketnet_encryption_mapping_t rocketnet_fuzz_recorded_mapping;
+static bool rocketnet_fuzz_recorded_mapping_valid = false;
+
+// open a recorded sealed datagram under the live mapping (or the step's
+// copy of it); -1 when it does not open
+static inline int rocketnet_fuzz_pair_open( struct rocketnet_fuzz_pair_t * pair, bool c2s, const uint8_t * packet, int bytes, uint8_t * out )
+{
+    const struct rocketnet_encryption_mapping_t * m = rocketnet_fuzz_pair_mapping( pair );
+    if ( !m && rocketnet_fuzz_recorded_mapping_valid )
+        m = &rocketnet_fuzz_recorded_mapping;
+    if ( !m || bytes < ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES )
+        return -1;
+    const uint8_t type = packet[0];
+    const uint8_t * p = packet + ROCKETNET_PREFILTER_BYTES;
+    const uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), 0 );
+    const uint8_t * key = NULL;
+    const uint8_t * ephemeral = NULL;
+    if ( rocketnet_fuzz_session_type( type ) )
+        key = c2s ? m->keys.session_client_to_server : m->keys.session_server_to_client;
+    else if ( c2s && type == ROCKETNET_CONNECTION_RESPONSE_PACKET )
+    {
+        key = m->keys.handshake_client_to_server;
+        ephemeral = m->client_ephemeral_public_key;
+    }
+    else if ( !c2s && ( type == ROCKETNET_CONNECTION_CHALLENGE_PACKET || type == ROCKETNET_CONNECTION_DENIED_PACKET ) )
+    {
+        key = m->keys.handshake_server_to_client;
+        ephemeral = type == ROCKETNET_CONNECTION_CHALLENGE_PACKET ? m->client_ephemeral_public_key : NULL;
+    }
+    if ( !key )
+        return -1;
+    uint8_t nonce[ROCKETNET_SESSION_NONCE_BYTES];
+    const bool has_nonce = type == ROCKETNET_CONNECTION_CHALLENGE_PACKET || type == ROCKETNET_CONNECTION_DENIED_PACKET;
+    return rocketnet_open_sealed_packet( out, has_nonce ? nonce : NULL, ROCKETNET_RECEIVE_CEILING, packet, bytes, type, sequence,
+                                         pair->transport->protocol.protocol_id, m->connection_salt, ephemeral, key );
+}
+
+static int rocketnet_fuzz_record_steps = 0;
+
+static inline void rocketnet_fuzz_pair_record_ring( struct rocketnet_fuzz_pair_t * pair, struct rocketnet_fuzz_ring_t * ring, bool c2s,
+                                                    struct rocketnet_fuzz_recorded_t * table, bool handshake )
+{
+    for ( int i = 0; i < ring->count; i++ )
+    {
+        const struct rocketnet_fuzz_datagram_t * d = &ring->packet[i];
+        const int type = d->data[0];
+        if ( type >= ROCKETNET_FUZZ_NUM_PACKET_TYPES || table[type].bytes > 0 )
+            continue;
+        struct rocketnet_fuzz_recorded_t * r = &table[type];
+        r->bytes = d->bytes;
+        r->handshake = handshake;
+        r->step = rocketnet_fuzz_record_steps;
+        memcpy( r->data, d->data, (size_t) d->bytes );
+        r->plaintext_bytes = rocketnet_fuzz_pair_open( pair, c2s, d->data, d->bytes, r->plaintext );
+    }
+}
+
+static inline void rocketnet_fuzz_pair_record_keep_mapping( struct rocketnet_fuzz_pair_t * pair )
+{
+    const struct rocketnet_encryption_mapping_t * m = rocketnet_fuzz_pair_mapping( pair );
+    if ( m )
+    {
+        rocketnet_fuzz_recorded_mapping = *m;
+        rocketnet_fuzz_recorded_mapping_valid = true;
+    }
+}
+
+static inline void rocketnet_fuzz_pair_record_step( struct rocketnet_fuzz_pair_t * pair, struct rocketnet_fuzz_recording_t * rec, bool handshake )
+{
+    rocketnet_fuzz_record_steps++;
+    rocketnet_fuzz_pair_record_keep_mapping( pair );
+    pair->time += ROCKETNET_FUZZ_DT;
+    rocketnet_fuzz_pair_server_update( pair );
+    rocketnet_fuzz_pair_client_update( pair );
+    rocketnet_fuzz_pair_drain_messages( pair );
+    rocketnet_fuzz_pair_send( pair );
+    rocketnet_fuzz_pair_record_ring( pair, &pair->c2s, true, rec->c2s, handshake );
+    rocketnet_fuzz_pair_record_ring( pair, &pair->s2c, false, rec->s2c, handshake );
+    rocketnet_fuzz_pair_deliver_all( pair );
+}
+
+static inline void rocketnet_fuzz_pair_record( struct rocketnet_fuzz_pair_t * pair, struct rocketnet_fuzz_recording_t * rec )
+{
+    memset( rec, 0, sizeof( *rec ) );
+
+    // the handshake: request, cookie, challenge, response
+    rocketnet_fuzz_pair_acquire( pair, false );
+    rocketnet_fuzz_record_steps = 0;
+    for ( int i = 0; i < ROCKETNET_FUZZ_CONNECT_STEPS && !rocketnet_fuzz_pair_connected( pair ); i++ )
+        rocketnet_fuzz_pair_record_step( pair, rec, true );
+
+    // the session: payloads, a large reliable message (message-layer
+    // blocks), acks and keep-alives both ways, then the client's disconnect
+    static uint8_t message[ROCKETNET_FUZZ_MAX_MESSAGE_BYTES];
+    for ( int i = 0; i < ROCKETNET_FUZZ_MAX_MESSAGE_BYTES; i++ )
+        message[i] = (uint8_t) i;
+    rocketnet_fuzz_pair_acquire( pair, true );
+    rocketnet_fuzz_record_steps = 0;
+    rocketnet_fuzz_recorded_mapping_valid = false;
+    rocketnet_message_client_send( pair->client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, 64 );
+    rocketnet_message_server_send( pair->server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, 64 );
+    rocketnet_fuzz_pair_record_step( pair, rec, false );
+    rocketnet_message_client_send( pair->client, 3, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, ROCKETNET_FUZZ_MAX_MESSAGE_BYTES );
+    rocketnet_message_server_send( pair->server, 0, 3, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, ROCKETNET_FUZZ_MAX_MESSAGE_BYTES );
+    for ( int i = 0; i < 300; i++ )
+        rocketnet_fuzz_pair_record_step( pair, rec, false );
+    rocketnet_client_transport_disconnect( rocketnet_message_client_transport( pair->client ) );
+    for ( int i = 0; i < 5; i++ )
+        rocketnet_fuzz_pair_record_step( pair, rec, false );
+
+    // the server's disconnect
+    rocketnet_fuzz_pair_acquire( pair, true );
+    rocketnet_fuzz_record_steps = 0;
+    rocketnet_fuzz_pair_record_keep_mapping( pair );
+    rocketnet_server_transport_disconnect_client( pair->transport, 0 );
+    for ( int i = 0; i < 5; i++ )
+        rocketnet_fuzz_pair_record_step( pair, rec, false );
+
+    // the message layer promotes a large unreliable message to a reliable
+    // block, so the transport's own fragmentation is reached through the
+    // transport's payload send: one payload past a packet's room, each way
+    rocketnet_fuzz_pair_acquire( pair, true );
+    rocketnet_fuzz_record_steps = 0;
+    rocketnet_client_transport_send_packet( rocketnet_message_client_transport( pair->client ), message, 3000 );
+    rocketnet_server_transport_send_packet( pair->transport, 0, message, 3000 );
+    for ( int i = 0; i < 5; i++ )
+        rocketnet_fuzz_pair_record_step( pair, rec, false );
+}
+
+// one record: [mode][u16 length][bytes], the record shape the server and
+// client targets read; a and b are concatenated
+static inline int rocketnet_fuzz_record_write( uint8_t * out, uint8_t mode, const uint8_t * a, int a_bytes, const uint8_t * b, int b_bytes )
+{
+    const int length = a_bytes + b_bytes;
+    out[0] = mode;
+    out[1] = (uint8_t) ( length & 0xFF );
+    out[2] = (uint8_t) ( length >> 8 );
+    if ( a_bytes > 0 )
+        memcpy( out + 3, a, (size_t) a_bytes );
+    if ( b_bytes > 0 )
+        memcpy( out + 3 + a_bytes, b, (size_t) b_bytes );
+    return 3 + length;
+}
+
+static inline bool rocketnet_fuzz_seed_write( const char * dir, const char * name, const uint8_t * data, int bytes )
+{
+    char path[1024];
+    snprintf( path, sizeof( path ), "%s/%s", dir, name );
+    FILE * file = rocketnet_test_fopen( path, "wb" );
+    if ( !file )
+    {
+        fprintf( stderr, "seed generator: cannot write %s\n", path );
+        return false;
+    }
+    const bool ok = fwrite( data, 1, (size_t) bytes, file ) == (size_t) bytes;
+    fclose( file );
+    return ok;
+}
+
+// A seed is [selector] then `wait` empty records (each one quiet step) then
+// one record. The generator searches the wait so the record lands where the
+// recording says its type is read -- the handshake types at their state --
+// and keeps the first wait whose replay raises `counter` past the replay of
+// the same seed without the record.
+typedef uint64_t ( * rocketnet_fuzz_run_t )( const uint8_t * data, size_t size );
+
+static inline int rocketnet_fuzz_seed_place( uint8_t * out, rocketnet_fuzz_run_t run, const struct rocketnet_counters_t * ( * counters )( struct rocketnet_fuzz_pair_t * ),
+                                             int counter, uint8_t selector, int wait_from, int wait_to,
+                                             uint8_t mode, const uint8_t * a, int a_bytes, const uint8_t * b, int b_bytes )
+{
+    for ( int wait = wait_from < 0 ? 0 : wait_from; wait <= wait_to && wait < 256; wait++ )
+    {
+        out[0] = selector;
+        int pos = 1;
+        for ( int i = 0; i <= wait; i++ )
+            pos += rocketnet_fuzz_record_write( out + pos, 0, NULL, 0, NULL, 0 );
+        // the baseline: the same steps, an empty record in the record's place
+        run( out, (size_t) pos );
+        const uint64_t before = rocketnet_counter_value( counters( rocketnet_fuzz_live_pair ), counter );
+        pos -= 3;
+        pos += rocketnet_fuzz_record_write( out + pos, mode, a, a_bytes, b, b_bytes );
+        run( out, (size_t) pos );
+        if ( rocketnet_counter_value( counters( rocketnet_fuzz_live_pair ), counter ) > before )
+            return pos;
+    }
+    return 0;
+}
+
+static inline const struct rocketnet_counters_t * rocketnet_fuzz_server_counters_of( struct rocketnet_fuzz_pair_t * pair )
+{
+    return &pair->transport->counters;
+}
+
+static const char * const rocketnet_fuzz_packet_type_names[ROCKETNET_FUZZ_NUM_PACKET_TYPES] =
+{
+    "request", "denied", "challenge", "response", "keep_alive", "payload", "disconnect", "cookie", "ack", "fragment"
+};
+
+#define ROCKETNET_FUZZ_PAIR_TARGET( run, generate )                                          \
     extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )                                    \
     {                                                                                                   \
         (void) argc;                                                                                    \
         (void) argv;                                                                                    \
-        const char * check = getenv( "ROCKETNET_FUZZ_CHECK_REPLAY" );                                   \
-        rocketnet_fuzz_check_replay = check != NULL && check[0] == '1';                                 \
-        const char * dump = getenv( "ROCKETNET_FUZZ_DUMP_COUNTERS" );                                   \
-        rocketnet_fuzz_dump_counters = dump != NULL && dump[0] == '1';                                  \
-        return rocketnet_fuzz_pair_initialize();                                                        \
+        char check[8];                                                                                  \
+        rocketnet_fuzz_check_replay = rocketnet_test_getenv( "ROCKETNET_FUZZ_CHECK_REPLAY", check, sizeof( check ) ) && check[0] == '1'; \
+        char dump[8];                                                                                   \
+        rocketnet_fuzz_dump_counters = rocketnet_test_getenv( "ROCKETNET_FUZZ_DUMP_COUNTERS", dump, sizeof( dump ) ) && dump[0] == '1'; \
+        if ( rocketnet_fuzz_pair_initialize() != 0 )                                                    \
+            return 1;                                                                                   \
+        char seed_dir[1024];                                                                            \
+        if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_DIR", seed_dir, sizeof( seed_dir ) ) )          \
+            exit( generate( seed_dir ) ? 0 : 1 );                                                       \
+        return 0;                                                                                       \
     }                                                                                                   \
     extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )                          \
     {                                                                                                   \
