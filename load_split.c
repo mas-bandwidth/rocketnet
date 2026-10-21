@@ -306,7 +306,13 @@ static void split_receive_c2s( struct split_result_t * result, struct split_serv
             result->identity_errors++;
             continue;
         }
-        if ( batch->channel[j] != (int) message.combo )
+        /* The SDK reports its canonical receive channel for these four
+         * modes, even though their send API channel argument is the combo. */
+        const int channel = (message.combo == ROCKETNET_RELIABILITY_UNRELIABLE ||
+                             message.combo == ROCKETNET_RELIABILITY_RELIABLE ||
+                             message.combo == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT ||
+                             message.combo == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT) ? 0 : (int) message.combo;
+        if ( batch->channel[j] != channel )
         {
             result->payload_errors++;
             continue;
@@ -316,7 +322,8 @@ static void split_receive_c2s( struct split_result_t * result, struct split_serv
         if ( duplicate != 0 ) result->duplicate_errors++;
         if ( combo_is_ordered(message.combo) && message.seq != stream->recv_count + 1 )
             result->order_errors++;
-        if ( message.combo == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED &&
+        if ( (message.combo == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
+              message.combo == ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED) &&
              message.seq <= stream->max_seq_seen )
             result->order_errors++;
         if ( message.seq > stream->max_seq_seen ) stream->max_seq_seen = message.seq;
