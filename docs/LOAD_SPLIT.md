@@ -146,8 +146,8 @@ python3 tools/check_split_load.py --server server.log \
   --client-transport portable --allocation-manifest allocation.json
 ```
 
-The merger requires exactly one successful readiness and final receipt per
-role, a complete nonoverlapping shard partition, matching run metadata,
+The merger requires exactly one readiness and final receipt per role, a
+complete nonoverlapping shard partition, matching run metadata,
 full monotonic windows, bounded completion, strict cleanup phase equality,
 the exact target offer count, finite complete timing, byte caps, auditable
 host allocations, and every per-client stream count to match across roles. It
@@ -156,3 +156,18 @@ an end-to-end PASS. The initial same-host smoke, if run later, proves only
 protocol and receipt correctness; it is not a dedicated-server performance
 result. Use paired uninstrumented releases for performance comparison and
 keep any diagnostic build as a separate attribution run.
+
+The merger always exits nonzero unless the entire run qualifies. It also
+prints one `split_merge_json:` line with `schema=split_merge_v2` as JSON. A
+fully validated run whose only failure is the unchanged server API p99
+100-microsecond budget reports `overall_verdict=FAIL`,
+`non_timing_verdict=PASS`, `timing_verdict=FAIL`, and
+`reason=server_api_p99_budget`; the CLI still exits 1. It reaches that result
+only after checking every stream, shard summary, raw wire cap, resource
+phase, and exact-log allocation record. Missing or contradictory timing
+evidence is invalid evidence, not a timing-only result. Malformed logs,
+delivery errors, underload, resource imbalance, bandwidth excess, or
+allocation gaps report `non_timing_verdict=FAIL` and never authorize a
+performance-ladder continuation. A runner may continue to the next rung
+only when `non_timing_verdict=PASS` and should retain the overall FAIL and
+timing evidence in its report.

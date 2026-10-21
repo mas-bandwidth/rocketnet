@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """Adversarial receipt fixtures; no SDK endpoint or host benchmark."""
 
-import unittest
 import hashlib
+import io
 import json
+import tempfile
+import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
+from unittest.mock import patch
 
-from tools.check_split_load import strict_object, validate
+from tools.check_split_load import main, strict_object, validate
 
 RUN = "0123456789abcdef"
 
@@ -107,6 +112,34 @@ def fixture():
                       *wire_lines("client-shard", [client]),
                       line("split_receipt", receipt("client-shard", client, 1))]))
     return server, shards
+
+
+def timing_failure_fixture():
+    server, shards = fixture()
+    server = server.replace("server_update_p99_upper_us=80", "server_update_p99_upper_us=101")
+    server = server.replace("timing_verdict=PASS", "timing_verdict=FAIL")
+    server = server.replace(" verdict=PASS", " verdict=FAIL")
+    return server, shards
+
+
+def invoke_cli(server, shards):
+    with tempfile.TemporaryDirectory() as directory:
+        folder = Path(directory)
+        (folder / "server.log").write_text(server)
+        for index, text in enumerate(shards):
+            (folder / f"shard{index}.log").write_text(text)
+        (folder / "allocation.json").write_text(json.dumps(allocation(server, shards)))
+        argv = ["check_split_load.py", "--server", str(folder / "server.log"),
+                "--shard", str(folder / "shard0.log"), "--shard", str(folder / "shard1.log"),
+                "--run-id", RUN, "--total", "2", "--duration", "60",
+                "--aggregate-limit-kbps", "1000", "--server-transport", "portable",
+                "--client-transport", "portable", "--allocation-manifest",
+                str(folder / "allocation.json")]
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch("sys.argv", argv), redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main()
+        data = json.loads(stdout.getvalue().split("split_merge_json: ", 1)[1].splitlines()[0])
+        return code, data, stderr.getvalue()
 
 
 class SplitReceiptTests(unittest.TestCase):
@@ -300,6 +333,69 @@ class SplitReceiptTests(unittest.TestCase):
     def test_duplicate_manifest_key_rejected(self):
         with self.assertRaisesRegex(ValueError, "duplicates"):
             json.loads('{"host_id":"a","host_id":"b"}', object_pairs_hook=strict_object)
+
+    def test_timing_only_failure_reports_non_timing_pass(self):
+        result = self.check(*timing_failure_fixture())
+        self.assertEqual(result["overall_verdict"], "FAIL")
+        self.assertEqual(result["non_timing_verdict"], "PASS")
+        self.assertEqual(result["timing_verdict"], "FAIL")
+        self.assertEqual(result["reason"], "server_api_p99_budget")
+
+    def test_timing_failure_still_checks_streams(self):
+        server, shards = timing_failure_fixture()
+        with self.assertRaisesRegex(ValueError, "per-client target rate"):
+            self.check(server.replace("client=0 direction=s2c combo=3 sent=60",
+                                      "client=0 direction=s2c combo=3 sent=59"), shards)
+
+    def test_timing_failure_still_checks_allocation(self):
+        server, shards = timing_failure_fixture()
+        manifest = allocation(server, shards)
+        manifest["shards"][0]["host_id"] = manifest["server"]["host_id"]
+        with self.assertRaisesRegex(ValueError, "not allocated away"):
+            validate(server, shards, RUN, 2, 60, 1000.0, allocation_manifest=manifest)
+
+    def test_timing_failure_still_checks_bandwidth(self):
+        server, shards = timing_failure_fixture()
+        server = server.replace("client=0 sent_bytes=10000", "client=0 sent_bytes=750000")
+        server = server.replace("wire_up=20000", "wire_up=760000")
+        server = server.replace("aggregate_up_kbps=2.666667", "aggregate_up_kbps=101.333333")
+        server = server.replace("max_peer_up_kbps=1.333333", "max_peer_up_kbps=99.999999")
+        with self.assertRaisesRegex(ValueError, "raw wire bytes exceed"):
+            self.check(server, shards)
+
+    def test_measured_timing_and_reported_verdict_must_agree(self):
+        server, shards = fixture()
+        with self.assertRaisesRegex(ValueError, "contradicts measured p99"):
+            self.check(server.replace("server_update_p99_upper_us=80",
+                                      "server_update_p99_upper_us=101"), shards)
+        server, shards = timing_failure_fixture()
+        with self.assertRaisesRegex(ValueError, "verdict"):
+            self.check(server.replace(" verdict=FAIL", " verdict=PASS"), shards)
+
+    def test_timing_only_cli_is_nonzero_and_machine_readable(self):
+        code, data, stderr = invoke_cli(*timing_failure_fixture())
+        self.assertEqual(code, 1)
+        self.assertEqual(data["non_timing_verdict"], "PASS")
+        self.assertEqual(data["timing_verdict"], "FAIL")
+        self.assertIn("verdict=FAIL", stderr)
+
+    def test_timing_failure_and_bad_stream_cli_is_not_qualified(self):
+        server, shards = timing_failure_fixture()
+        server = server.replace("client=0 direction=s2c combo=3 sent=60",
+                                "client=0 direction=s2c combo=3 sent=59")
+        code, data, stderr = invoke_cli(server, shards)
+        self.assertEqual(code, 1)
+        self.assertEqual(data["non_timing_verdict"], "FAIL")
+        self.assertEqual(data["timing_verdict"], "UNKNOWN")
+        self.assertIn("per-client target rate", stderr)
+
+    def test_full_pass_cli_remains_zero(self):
+        code, data, stderr = invoke_cli(*fixture())
+        self.assertEqual(code, 0)
+        self.assertEqual(data["overall_verdict"], "PASS")
+        self.assertEqual(data["non_timing_verdict"], "PASS")
+        self.assertEqual(data["timing_verdict"], "PASS")
+        self.assertEqual(stderr, "")
 
 
 if __name__ == "__main__":

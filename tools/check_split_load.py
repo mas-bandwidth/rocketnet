@@ -77,8 +77,13 @@ def validate_receipt(fields, role, run_id, total, duration, limit):
              traffic_complete=1, drain_complete=1, barrier_complete=1,
              load_complete=1, wire_valid=1, resource_baseline="PASS",
              delivery_verdict="PASS", load_verdict="PASS", bandwidth_verdict="PASS",
-             timing_budget_us=100, verdict="PASS")
-    expected(fields, timing_verdict="PASS" if role == "server" else "NA")
+             timing_budget_us=100)
+    if role == "server":
+        if fields.get("timing_verdict") not in ("PASS", "FAIL"):
+            raise ValueError("server timing verdict missing or invalid")
+        expected(fields, verdict=fields["timing_verdict"])
+    else:
+        expected(fields, timing_verdict="NA", verdict="PASS")
     if fields.get("transport") in (None, "none"):
         raise ValueError("missing granted transport")
     for name in ("identity_errors", "payload_errors", "order_errors", "duplicate_errors",
@@ -176,8 +181,12 @@ def validate_timing(text, receipt, run_id):
     p99 = finite(timing, "server_update_p99_upper_us")
     finite(timing, "server_update_max_us")
     send_p99 = finite(timing, "server_send_p99_upper_us")
-    if p50 > p99 or p99 > 100 or send_p99 > 100:
-        raise ValueError("server timing budget failed")
+    if p50 > p99:
+        raise ValueError("server timing quantiles contradict")
+    timing_pass = p99 <= 100 and send_p99 <= 100
+    if receipt.get("timing_verdict") != ("PASS" if timing_pass else "FAIL"):
+        raise ValueError("server timing receipt contradicts measured p99")
+    return timing_pass
 
 
 def validate_allocation(manifest, server_text, shard_texts, run_id, total, shards):
@@ -257,7 +266,7 @@ def validate(server_text, shard_texts, run_id, total, duration, limit,
         raise ValueError("server readiness lacks address or public key")
     server = one(server_text, "split_receipt")
     validate_receipt(server, "server", run_id, total, duration, limit)
-    validate_timing(server_text, server, run_id)
+    timing_pass = validate_timing(server_text, server, run_id)
     wire_map(server_text, "server", run_id, 0, total, server)
     if server_transport is not None and server.get("transport") != server_transport:
         raise ValueError("server transport differs from requested transport")
@@ -337,7 +346,12 @@ def validate(server_text, shard_texts, run_id, total, duration, limit,
     aggregate_down = sum(integer(shard, "wire_down") for shard in shards) * 8 / (minimum_window * 1000)
     if aggregate_up >= limit or aggregate_down >= limit:
         raise ValueError("combined client shards exceed aggregate cap")
-    return {"verdict": "PASS", "run_id": run_id, "total": total,
+    verdict = "PASS" if timing_pass else "FAIL"
+    return {"schema": "split_merge_v2", "verdict": verdict,
+            "overall_verdict": verdict, "non_timing_verdict": "PASS",
+            "timing_verdict": "PASS" if timing_pass else "FAIL",
+            "reason": "none" if timing_pass else "server_api_p99_budget",
+            "run_id": run_id, "total": total,
             "client_c2s": client_c2s, "client_s2c": client_s2c,
             "combined_client_up_kbps_upper": aggregate_up,
             "combined_client_down_kbps_upper": aggregate_down}
@@ -365,11 +379,16 @@ def main():
                           args.server_transport, args.client_transport,
                           json.loads(args.allocation_manifest.read_bytes().decode("utf-8"),
                                      object_pairs_hook=strict_object))
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, OverflowError) as error:
+        print("split_merge_json: " + json.dumps({"schema": "split_merge_v2", "verdict": "FAIL",
+              "overall_verdict": "FAIL", "non_timing_verdict": "FAIL",
+              "timing_verdict": "UNKNOWN", "reason": "invalid_evidence"}, sort_keys=True))
         print(f"split_merge: verdict=FAIL reason={error}", file=sys.stderr)
         return 1
-    print("split_merge: " + " ".join(f"{key}={value}" for key, value in result.items()))
-    return 0
+    print("split_merge_json: " + json.dumps(result, sort_keys=True))
+    print("split_merge: " + " ".join(f"{key}={value}" for key, value in result.items()),
+          file=sys.stdout if result["verdict"] == "PASS" else sys.stderr)
+    return 0 if result["verdict"] == "PASS" else 1
 
 
 if __name__ == "__main__":
