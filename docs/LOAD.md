@@ -16,6 +16,8 @@ for other applications.
 For a constant offered application rate across population sizes, set
 `LOAD_MESSAGES_PER_CLIENT_SECOND=1`. This offers one 32-byte message per client
 per second in each direction while keeping the same client update schedule.
+An explicitly present empty, oversized or invalid rate is rejected; only an
+unset variable selects the original workload.
 Client-to-server messages still rotate through all eight reliability modes;
 server-to-client messages remain reliable-ordered. A delayed client update
 offers at most one message pair and sets its next due time from that update,
@@ -34,7 +36,11 @@ slice overrun.
 `max_client_wire_up_kbps` and `max_client_wire_down_kbps` are the maximum over
 individual clients of their SDK byte-counter deltas divided by that window;
 they are not derived from an aggregate average. The client and server traffic
-byte totals and aggregate kbps are also reported separately. Fixed-rate runs
+byte totals and aggregate kbps are also reported separately. The drop-one
+negative fixture labels the traffic window `PARTIAL`; its destroyed client's
+maximum uses `dropped_client_wire_observed_seconds`, ending when that client
+is destroyed, while the aggregate rate still uses the full traffic window.
+Fixed-rate runs
 require both per-client maxima to stay strictly below 100 kbps; the summary
 reports `client_wire_under_100kbps`. `session_*_wire_bytes_*` covers
 handshake, traffic and drain before teardown, as labeled by

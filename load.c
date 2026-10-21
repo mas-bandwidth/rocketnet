@@ -833,9 +833,31 @@ int main( int argc, char ** argv )
         strcmp( handshake_diagnostics_env, "1" ) == 0;
 
     char message_rate_text[64] = { 0 };
-    const int rate_found = rocketnet_test_getenv( "LOAD_MESSAGES_PER_CLIENT_SECOND",
-                                                  message_rate_text, sizeof( message_rate_text ) );
-    const int fixed_message_rate = rate_found && message_rate_text[0] != 0;
+    int fixed_message_rate = 0;
+#if defined( _MSC_VER )
+    size_t message_rate_length = 0;
+    if ( getenv_s( &message_rate_length, message_rate_text, sizeof( message_rate_text ),
+                   "LOAD_MESSAGES_PER_CLIENT_SECOND" ) != 0 ||
+         message_rate_length > sizeof( message_rate_text ) )
+    {
+        fprintf( stderr, "load: LOAD_MESSAGES_PER_CLIENT_SECOND is too long\n" );
+        return 2;
+    }
+    fixed_message_rate = message_rate_length != 0;
+#else
+    const char * message_rate_env = getenv( "LOAD_MESSAGES_PER_CLIENT_SECOND" );
+    fixed_message_rate = message_rate_env != NULL;
+    if ( fixed_message_rate )
+    {
+        const size_t message_rate_length = strlen( message_rate_env );
+        if ( message_rate_length >= sizeof( message_rate_text ) )
+        {
+            fprintf( stderr, "load: LOAD_MESSAGES_PER_CLIENT_SECOND is too long\n" );
+            return 2;
+        }
+        memcpy( message_rate_text, message_rate_env, message_rate_length + 1 );
+    }
+#endif
     double messages_per_client_second = 0.0;
     double message_interval = 0.0;
     if ( fixed_message_rate )
@@ -1245,10 +1267,15 @@ int main( int argc, char ** argv )
     /* Step 2: Drive traffic for <seconds>, then 3.0s drain for in-flight delivery */
     struct load_wire_sample_t server_wire_start = { 0, 0 };
     struct load_wire_sample_t server_wire_end = { 0, 0 };
+    double dropped_client_wire_start_time = 0.0;
     if ( fixed_message_rate )
     {
         for ( int i = 0; i < num_clients; i++ )
+        {
+            if ( i == 0 )
+                dropped_client_wire_start_time = rocketnet_time();
             load_client_wire_sample( clients[i], &client_wire_start[i] );
+        }
         load_server_wire_sample( server, &server_wire_start );
     }
     const double traffic_start = rocketnet_time();
@@ -1256,6 +1283,7 @@ int main( int argc, char ** argv )
     int wire_window_recorded = 0;
     uint64_t destroyed_client_wire_bytes_sent = 0;
     uint64_t destroyed_client_wire_bytes_received = 0;
+    double dropped_client_wire_observed_seconds = 0.0;
     timing.enabled = 1;
     const double drain_seconds = 3.0;
     const double drop_at = duration_seconds * 0.25 < 1.0 ? duration_seconds * 0.25 : 1.0;
@@ -1303,7 +1331,10 @@ int main( int argc, char ** argv )
             destroyed_client_wire_bytes_sent = dropped_wire.sent;
             destroyed_client_wire_bytes_received = dropped_wire.received;
             if ( fixed_message_rate )
+            {
                 client_wire_end[0] = dropped_wire;
+                dropped_client_wire_observed_seconds = rocketnet_time() - dropped_client_wire_start_time;
+            }
             rn_cli_client_stop_and_destroy( clients[0] );
             clients[0] = NULL;
             drop_injected = 1;
@@ -1617,10 +1648,14 @@ int main( int argc, char ** argv )
         const uint64_t down_bytes = client_wire_end[i].received - client_wire_start[i].received;
         traffic_client_wire_bytes_sent += up_bytes;
         traffic_client_wire_bytes_received += down_bytes;
-        if ( wire_window_seconds > 0.0 )
+        const double observed_seconds = drop_injected && i == 0 ?
+            dropped_client_wire_observed_seconds : wire_window_seconds;
+        if ( observed_seconds <= 0.0 )
+            wire_metrics_valid = 0;
+        else
         {
-            const double up_kbps = (double) up_bytes * 8.0 / ( wire_window_seconds * 1000.0 );
-            const double down_kbps = (double) down_bytes * 8.0 / ( wire_window_seconds * 1000.0 );
+            const double up_kbps = (double) up_bytes * 8.0 / ( observed_seconds * 1000.0 );
+            const double down_kbps = (double) down_bytes * 8.0 / ( observed_seconds * 1000.0 );
             if ( up_kbps > max_client_wire_up_kbps )
                 max_client_wire_up_kbps = up_kbps;
             if ( down_kbps > max_client_wire_down_kbps )
@@ -1884,7 +1919,7 @@ int main( int argc, char ** argv )
             "offered_c2s_messages_per_client_second=%.6f offered_s2c_messages_per_client_second=%.6f "
             "accepted_c2s_messages_per_client_second=%.6f "
             "accepted_s2c_messages_per_client_second=%.6f wire_window=%s wire_window_complete=%s "
-            "wire_window_seconds=%.3f wire_metrics=%s "
+            "wire_window_seconds=%.3f dropped_client_wire_observed_seconds=%.3f wire_metrics=%s "
             "traffic_client_wire_bytes_sent=%" PRIu64 " traffic_client_wire_bytes_received=%" PRIu64 " "
             "traffic_server_wire_bytes_sent=%" PRIu64 " traffic_server_wire_bytes_received=%" PRIu64 " "
             "max_client_wire_up_kbps=%.3f max_client_wire_down_kbps=%.3f "
@@ -1905,6 +1940,7 @@ int main( int argc, char ** argv )
             fixed_message_rate ? "traffic" : "unmeasured",
             fixed_message_rate ? ( drop_injected ? "PARTIAL" : "COMPLETE" ) : "UNMEASURED",
             wire_window_seconds,
+            dropped_client_wire_observed_seconds,
             fixed_message_rate ? ( wire_metrics_valid ? "PASS" : "FAIL" ) : "UNMEASURED",
             traffic_client_wire_bytes_sent, traffic_client_wire_bytes_received,
             traffic_server_wire_bytes_sent, traffic_server_wire_bytes_received,
