@@ -52,20 +52,33 @@ def linux_memory():
     return fields["MemTotal"], fields["MemAvailable"]
 
 
-def mac_memory():
-    total = int(command(["sysctl", "-n", "hw.memsize"]))
-    output = command(["vm_stat"])
+def parse_mac_vm_stat(output):
+    """Count reclaimable pages from vm_stat, ignoring its textual header."""
     match = re.search(r"page size of (\d+) bytes", output)
     if not match:
         raise ValueError("vm_stat page size unavailable")
     page_size = int(match.group(1))
+    if page_size <= 0:
+        raise ValueError("vm_stat page size invalid")
+    wanted = ("Pages free", "Pages inactive", "Pages speculative")
     pages = {}
     for line in output.splitlines():
         name, _, value = line.partition(":")
-        if value:
-            pages[name.strip()] = int(value.strip().rstrip("."))
-    available = sum(pages.get(name, 0) for name in
-                    ("Pages free", "Pages inactive", "Pages speculative")) * page_size
+        name = name.strip()
+        if name not in wanted:
+            continue
+        value_match = re.fullmatch(r"\s*(\d+)\.?\s*", value)
+        if not value_match or name in pages:
+            raise ValueError(f"vm_stat {name} missing, duplicated, or invalid")
+        pages[name] = int(value_match.group(1))
+    if any(name not in pages for name in wanted):
+        raise ValueError("vm_stat reclaimable page counts unavailable")
+    return sum(pages.values()) * page_size
+
+
+def mac_memory():
+    total = int(command(["sysctl", "-n", "hw.memsize"]))
+    available = parse_mac_vm_stat(command(["vm_stat"]))
     return total, available
 
 

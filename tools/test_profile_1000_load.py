@@ -28,6 +28,32 @@ SUMMARY = ("load: connected=1000 connect_within_10s=PASS "
            "frame_server_update_overbudget_count=6000 "
            "fds_start=4 fds_end=4 threads_start=1 threads_end=1 "
            "server_transport_io=portable client_transport_io=portable verdict=PASS\n")
+VM_STAT = ("Mach Virtual Memory Statistics: (page size of 16384 bytes)\n"
+           "Pages free:                               100000.\n"
+           "Pages active:                             200000.\n"
+           "Pages inactive:                           300000.\n"
+           "Pages speculative:                        50000.\n"
+           "Pages wired down:                         100000.\n")
+
+
+class MacMemoryTests(unittest.TestCase):
+    def test_vm_stat_header_and_reclaimable_pages(self):
+        def fake_command(argv, cwd=None):
+            return "34359738368" if argv[0] == "sysctl" else VM_STAT
+
+        with mock.patch.object(profile, "command", fake_command):
+            total, available = profile.mac_memory()
+        self.assertEqual(total, 34359738368)
+        self.assertEqual(available, (100000 + 300000 + 50000) * 16384)
+
+    def test_missing_or_malformed_memory_count_is_unknown(self):
+        for output in (VM_STAT.replace("Pages speculative:                        50000.\n", ""),
+                       VM_STAT.replace("Pages free:                               100000.",
+                                       "Pages free:                               unknown."),
+                       VM_STAT.replace("Pages inactive:                           300000.",
+                                       "Pages inactive:                           300000.\nPages inactive: 300000.")):
+            with self.subTest(output=output), self.assertRaises(ValueError):
+                profile.parse_mac_vm_stat(output)
 
 
 class ReceiptTests(unittest.TestCase):
