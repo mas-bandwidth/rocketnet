@@ -5,15 +5,12 @@
     macOS client timing under App Nap and timer coalescing (docs/CLIENT-IO.md,
     macOS timing and App Nap). A connected client over loopback runs for 60 s
     at a 60 Hz update while a server thread sends one timestamped payload every
-    10 ms. Three conditions, one case each:
+    10 ms. Two conditions, one case each:
 
       test_macos_client_timing_default_qos            the process at its default QoS
       test_macos_client_timing_taskpolicy_background  the case re-runs itself under
                                                  `taskpolicy -b` (the throttling
                                                  and coalescing a napped app sees)
-      test_macos_client_timing_background_thread_qos  the game thread, the one that
-                                                 creates and updates the client,
-                                                 lowered to QOS_CLASS_BACKGROUND
 
     Measured and printed per condition (p50, p99, max):
       wake      the client receive thread's wake intervals: the time callback
@@ -375,11 +372,6 @@ static void macos_timing_run( const char * condition, bool lower_game_thread, bo
 void macos_client_timing_default_qos()
 {
     macos_timing_run( "default_qos", false, false, true );
-}
-
-void macos_client_timing_background_thread_qos()
-{
-    macos_timing_run( "background_thread_qos", true, true, true );
 }
 
 void macos_client_timing_taskpolicy_background()

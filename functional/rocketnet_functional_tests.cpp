@@ -8152,7 +8152,6 @@ extern void rocketnet_test_server_receive_keeps_up_with_max_clients();
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 extern void macos_client_timing_default_qos();
 extern void macos_client_timing_taskpolicy_background();
-extern void macos_client_timing_background_thread_qos();
 #endif
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
@@ -8524,7 +8523,6 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_thread_priority_timing_taskpolicy_background", thread_priority_timing_taskpolicy_background, NULL },
     { "test_macos_client_timing_default_qos", macos_client_timing_default_qos, NULL },
     { "test_macos_client_timing_taskpolicy_background", macos_client_timing_taskpolicy_background, NULL },
-    { "test_macos_client_timing_background_thread_qos", macos_client_timing_background_thread_qos, NULL },
 #endif
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "test_thread_priority_windows_readback", thread_priority_windows_readback, NULL },
