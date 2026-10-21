@@ -325,9 +325,9 @@ static void test_datagrams_and_producers()
         ++count;
     }
     CHECK(count == 256);
-    // Force stop to join the same mutex used by completion/repost. The stop
-    // thread sets stopping while the publication locks are held here; only
-    // releasing them can let cancellation proceed. No scheduler warm-up sleep.
+    // Hold the publication locks used by completion/repost. The stop request
+    // must return while these locks remain held, but completion must stay false
+    // until releasing them lets cancellation and worker exit proceed.
     rocketnet_server_iocp_test_hold_completions(transport, true);
     std::atomic<bool> sending{true};
     std::thread incoming([&]() {
@@ -340,10 +340,11 @@ static void test_datagrams_and_producers()
         stop_returned.store(true);
     });
     const double stop_deadline = rocketnet_platform_time() + 5.0;
-    while (!rocketnet_server_iocp_test_stopping(transport) && rocketnet_platform_time() < stop_deadline)
+    while (!stop_returned.load() && rocketnet_platform_time() < stop_deadline)
         rocketnet_platform_sleep(0.001);
+    CHECK(stop_returned.load());
     CHECK(rocketnet_server_iocp_test_stopping(transport));
-    CHECK(!stop_returned.load());
+    CHECK(!rocketnet_server_iocp_stopped(transport));
     rocketnet_server_iocp_test_hold_completions(transport, false);
     stopping.join();
     CHECK(stop_returned.load());
