@@ -680,14 +680,14 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
     struct split_client_t * clients = NULL;
     char transport[32] = "none";
     int api_started = 0, traffic_sampled = 0, pass = 0;
-#if !defined(_WIN32)
-    struct load_fd_limit_t fd_limit;
-    if ( !ensure_fd_limit(count, &fd_limit) ) return 1;
-#endif
     const long fds_pre_init = count_open_fds(), threads_pre_init = count_threads();
     long fds_post_init = -1, threads_post_init = -1, fds_pre_term = -1, threads_pre_term = -1;
     long fds_post_term = -1, threads_post_term = -1;
     enum rocketnet_status_t term_status = (enum rocketnet_status_t) -1;
+#if !defined(_WIN32)
+    struct load_fd_limit_t fd_limit;
+    if ( !ensure_fd_limit(count, &fd_limit) ) goto cleanup;
+#endif
     if ( rocketnet_init(NULL, NULL, NULL) != ROCKETNET_STATUS_OK ) goto cleanup;
     api_started = 1;
     fds_post_init = count_open_fds();
