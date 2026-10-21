@@ -39,6 +39,8 @@ static inline void rn_native_server_transport_wait_stopped( struct rocketnet_ser
 
 static inline void rn_native_client_transport_stop_and_destroy( struct rocketnet_client_transport_t * client )
 {
+    if ( !client )
+        return;
     if ( client )
     {
         rocketnet_client_transport_stop( client );
@@ -49,6 +51,8 @@ static inline void rn_native_client_transport_stop_and_destroy( struct rocketnet
 
 static inline void rn_native_server_transport_stop_and_destroy( struct rocketnet_server_transport_t * server )
 {
+    if ( !server )
+        return;
     if ( server )
     {
         rocketnet_server_transport_stop( server );
@@ -102,6 +106,8 @@ static inline void rn_native_backend_stop_and_destroy( transport_t * transport,
 
 static inline void rn_native_message_client_stop_and_destroy( struct rocketnet_message_client_t * message )
 {
+    if ( !message )
+        return;
     if ( message )
     {
         struct rocketnet_client_transport_t * transport = rocketnet_message_client_transport( message );
@@ -113,6 +119,8 @@ static inline void rn_native_message_client_stop_and_destroy( struct rocketnet_m
 
 static inline void rn_native_message_server_stop_and_destroy( struct rocketnet_message_server_t * message )
 {
+    if ( !message )
+        return;
     if ( message )
     {
         struct rocketnet_server_transport_t * transport = rocketnet_message_server_transport( message );

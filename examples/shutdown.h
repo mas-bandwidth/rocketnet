@@ -42,6 +42,8 @@ static inline void rn_cli_server_wait_stopped( struct rocketnet_server_t * serve
 
 static inline void rn_cli_client_stop_and_destroy( struct rocketnet_client_t * client )
 {
+    if ( !client )
+        return;
     if ( client )
     {
         rocketnet_client_disconnect( client );
@@ -52,6 +54,8 @@ static inline void rn_cli_client_stop_and_destroy( struct rocketnet_client_t * c
 
 static inline void rn_cli_server_stop_and_destroy( struct rocketnet_server_t * server )
 {
+    if ( !server )
+        return;
     if ( server )
     {
         rocketnet_server_stop( server );
