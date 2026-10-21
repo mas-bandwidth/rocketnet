@@ -89,8 +89,10 @@ overall PASS requires all of them. The timing budget is specifically the p99
 upper bound of server update and send-packets calls; each must be at most 100
 microseconds. Maxima are reported separately and do not define this p99
 budget.
-Traffic wire counters are sampled just before RUN and at the role's traffic
-boundary. They conservatively include RUN/startup bytes and divide by the
+The server wire baseline is sampled before RUN; each client's baseline is
+sampled before connect, because RUN can arrive during another client's
+startup loop. Counters end at the role's traffic boundary. They conservatively
+include RUN/startup bytes and divide by the
 requested traffic duration, even if boundary sampling is late, so a scheduler
 pause cannot dilute the reported rate. The actual monotonic interval is
 reported separately. Per-client upload and download must each stay
@@ -101,6 +103,8 @@ counts stop at each role's fixed three-second drain boundary; they are
 separate from the traffic wire interval. Application packets observed during
 the later completion barrier increment `late_application_deliveries` and fail
 delivery qualification rather than repairing a missed drain deadline. The
+receiver checks the monotonic deadline for each application message, including
+batches returned by an update that crossed the boundary. The
 merger recomputes aggregate and per-peer rates from the raw per-peer byte
 records and conservative requested-duration denominator, accounting for
 six-decimal receipt rounding.

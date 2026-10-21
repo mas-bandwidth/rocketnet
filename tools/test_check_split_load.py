@@ -3,8 +3,9 @@
 
 import unittest
 import hashlib
+import json
 
-from tools.check_split_load import validate
+from tools.check_split_load import strict_object, validate
 
 RUN = "0123456789abcdef"
 
@@ -53,10 +54,11 @@ def stream_lines(role, clients):
     lines = []
     for client in clients:
         for combo in range(8):
+            due = 60 // 8 + int((combo - client % 8) % 8 < 60 % 8)
             lines.append(line("split_stream", dict(role=role, run_id=RUN, client=client,
                         direction="c2s", combo=combo,
-                        sent=(8 if combo < 4 else 7) if role == "client-shard" else 0,
-                        received=(8 if combo < 4 else 7) if role == "server" else 0)))
+                        sent=due if role == "client-shard" else 0,
+                        received=due if role == "server" else 0)))
         lines.append(line("split_stream", dict(role=role, run_id=RUN, client=client,
                     direction="s2c", combo=3, sent=60 if role == "server" else 0,
                     received=60 if role == "client-shard" else 0)))
@@ -170,7 +172,7 @@ class SplitReceiptTests(unittest.TestCase):
 
     def test_delivery_mismatch(self):
         server, shards = fixture()
-        with self.assertRaisesRegex(ValueError, "delivery mismatch"):
+        with self.assertRaisesRegex(ValueError, "per-client target rate"):
             self.check(server.replace("direction=c2s combo=0 sent=0 received=8",
                                       "direction=c2s combo=0 sent=0 received=0", 1), shards)
 
@@ -249,6 +251,55 @@ class SplitReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "wire rate denominator"):
             self.check(server.replace("wire_rate_denominator_s=60",
                                       "wire_rate_denominator_s=70"), shards)
+
+    def test_per_client_s2c_underload_cannot_hide_in_aggregate(self):
+        server, shards = fixture()
+        server = server.replace("client=0 direction=s2c combo=3 sent=60",
+                                "client=0 direction=s2c combo=3 sent=120")
+        server = server.replace("client=1 direction=s2c combo=3 sent=60",
+                                "client=1 direction=s2c combo=3 sent=0")
+        shards[0] = shards[0].replace("client=0 direction=s2c combo=3 sent=0 received=60",
+                                      "client=0 direction=s2c combo=3 sent=0 received=120")
+        shards[1] = shards[1].replace("client=1 direction=s2c combo=3 sent=0 received=60",
+                                      "client=1 direction=s2c combo=3 sent=0 received=0")
+        with self.assertRaisesRegex(ValueError, "shard summary|per-client target rate"):
+            self.check(server, shards)
+
+    def test_per_shard_summary_cannot_cancel_across_shards(self):
+        server, shards = fixture()
+        for client in range(2):
+            for combo in range(8):
+                due = 60 // 8 + int((combo - client % 8) % 8 < 60 % 8)
+                server = server.replace(
+                    f"client={client} direction=c2s combo={combo} sent=0 received={due}",
+                    f"client={client} direction=c2s combo={combo} sent=0 received={due * 2 if client == 0 else 0}")
+                shards[client] = shards[client].replace(
+                    f"client={client} direction=c2s combo={combo} sent={due} received=0",
+                    f"client={client} direction=c2s combo={combo} sent={due * 2 if client == 0 else 0} received=0")
+        with self.assertRaisesRegex(ValueError, "shard summary and local streams"):
+            self.check(server, shards)
+
+    def test_raw_wire_strict_cap_not_rounded_label(self):
+        server, shards = fixture()
+        # 750000 bytes / 60 s is exactly 100 kbps, while a six-decimal
+        # receipt can claim an infinitesimally lower maximum.
+        server = server.replace("client=0 sent_bytes=10000", "client=0 sent_bytes=750000")
+        server = server.replace("wire_up=20000", "wire_up=760000")
+        server = server.replace("aggregate_up_kbps=2.666667", "aggregate_up_kbps=101.333333")
+        server = server.replace("max_peer_up_kbps=1.333333", "max_peer_up_kbps=99.999999")
+        with self.assertRaisesRegex(ValueError, "raw wire bytes exceed"):
+            self.check(server, shards)
+
+    def test_crlf_log_hash_binds_exact_bytes(self):
+        server, shards = fixture()
+        crlf_server = server.replace("\n", "\r\n")
+        manifest = allocation(crlf_server, shards)
+        self.assertEqual(validate(crlf_server, shards, RUN, 2, 60, 1000.0,
+                                  allocation_manifest=manifest)["verdict"], "PASS")
+
+    def test_duplicate_manifest_key_rejected(self):
+        with self.assertRaisesRegex(ValueError, "duplicates"):
+            json.loads('{"host_id":"a","host_id":"b"}', object_pairs_hook=strict_object)
 
 
 if __name__ == "__main__":

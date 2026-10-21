@@ -14,6 +14,15 @@ PAIR = re.compile(r"\b([A-Za-z_][A-Za-z_0-9]*)=([^\s]+)")
 RUN_ID = re.compile(r"[0-9a-fA-F]{16}\Z")
 
 
+def strict_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"allocation manifest duplicates {key}")
+        result[key] = value
+    return result
+
+
 def records(text, prefix):
     found = []
     for line in text.splitlines():
@@ -147,6 +156,8 @@ def wire_map(text, role, run_id, first, count, receipt):
             raise ValueError(f"{label}: per-client wire sum mismatch")
         aggregate = total_bytes * 8 / (window * 1000)
         maximum = max(pair[index] * 8 / (window * 1000) for pair in found.values())
+        if maximum >= 100.0 or aggregate >= finite(receipt, "aggregate_limit_kbps", 0.000001):
+            raise ValueError(f"{label}: raw wire bytes exceed strict bandwidth cap")
         if not math.isclose(aggregate, finite(receipt, f"aggregate_{label}_kbps"), abs_tol=0.000002):
             raise ValueError(f"{label}: reported aggregate rate mismatch")
         if not math.isclose(maximum, finite(receipt, f"max_peer_{label}_kbps"), abs_tol=0.000002):
@@ -229,6 +240,11 @@ def validate_streams(streams, first, count):
         raise ValueError(f"stream coverage mismatch missing={len(missing)} extra={len(extra)}")
 
 
+def expected_combo_offers(client, combo, duration):
+    offset = (combo - client % 8) % 8
+    return duration // 8 + int(offset < duration % 8)
+
+
 def validate(server_text, shard_texts, run_id, total, duration, limit,
              server_transport=None, client_transport=None, allocation_manifest=None):
     if not RUN_ID.fullmatch(run_id):
@@ -275,6 +291,12 @@ def validate(server_text, shard_texts, run_id, total, duration, limit,
         covered |= current
         streams = stream_map(text, "client-shard", run_id)
         validate_streams(streams, first, count)
+        own_c2s = sum(pair[0] for key, pair in streams.items() if key[1] == "c2s")
+        own_s2c = sum(pair[1] for key, pair in streams.items() if key[1] == "s2c")
+        if (own_c2s != integer(shard, "c2s_offered") or
+                own_c2s != integer(shard, "c2s_accepted") or
+                own_s2c != integer(shard, "s2c_received")):
+            raise ValueError("shard summary and local streams disagree")
         wire_map(text, "client-shard", run_id, first, count, shard)
         client_streams.update(streams)
         shards.append(shard)
@@ -284,10 +306,16 @@ def validate(server_text, shard_texts, run_id, total, duration, limit,
     for key, server_pair in server_streams.items():
         client_pair = client_streams[key]
         if key[1] == "c2s":
+            target = expected_combo_offers(key[0], key[2], duration)
+            if server_pair[1] != target or client_pair[0] != target:
+                raise ValueError(f"c2s per-client target rate or rotation failed {key}")
             if server_pair[0] != 0 or client_pair[1] != 0 or client_pair[0] != server_pair[1]:
                 raise ValueError(f"c2s delivery mismatch {key}")
-        elif server_pair[1] != 0 or client_pair[0] != 0 or server_pair[0] != client_pair[1]:
-            raise ValueError(f"s2c delivery mismatch {key}")
+        else:
+            if server_pair[0] != duration or client_pair[1] != duration:
+                raise ValueError(f"s2c per-client target rate failed {key}")
+            if server_pair[1] != 0 or client_pair[0] != 0 or server_pair[0] != client_pair[1]:
+                raise ValueError(f"s2c delivery mismatch {key}")
     server_c2s = sum(pair[1] for key, pair in server_streams.items() if key[1] == "c2s")
     server_s2c = sum(pair[0] for key, pair in server_streams.items() if key[1] == "s2c")
     client_c2s = sum(pair[0] for key, pair in client_streams.items() if key[1] == "c2s")
@@ -331,10 +359,12 @@ def main():
         if not (1 <= args.total <= 1000 and 1 <= args.duration <= 3600 and
                 math.isfinite(args.aggregate_limit_kbps) and args.aggregate_limit_kbps > 0):
             raise ValueError("invalid expected population, duration, or aggregate cap")
-        result = validate(args.server.read_text(), [path.read_text() for path in args.shard],
+        result = validate(args.server.read_bytes().decode("utf-8"),
+                          [path.read_bytes().decode("utf-8") for path in args.shard],
                           args.run_id, args.total, args.duration, args.aggregate_limit_kbps,
                           args.server_transport, args.client_transport,
-                          json.loads(args.allocation_manifest.read_text()))
+                          json.loads(args.allocation_manifest.read_bytes().decode("utf-8"),
+                                     object_pairs_hook=strict_object))
     except (OSError, ValueError) as error:
         print(f"split_merge: verdict=FAIL reason={error}", file=sys.stderr)
         return 1
