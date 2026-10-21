@@ -1674,6 +1674,12 @@ void rocketnet_platform_mutex_acquire( rocketnet_platform_mutex_t * mutex )
     pthread_mutex_lock( &mutex->handle );
 }
 
+bool rocketnet_platform_mutex_try_acquire( rocketnet_platform_mutex_t * mutex )
+{
+    rocketnet_assert( mutex && mutex->ok );
+    return pthread_mutex_trylock( &mutex->handle ) == 0;
+}
+
 void rocketnet_platform_mutex_release( rocketnet_platform_mutex_t * mutex )
 {
     rocketnet_assert( mutex );
@@ -3462,6 +3468,12 @@ void rocketnet_platform_mutex_acquire( rocketnet_platform_mutex_t * mutex )
     pthread_mutex_lock( &mutex->handle );
 }
 
+bool rocketnet_platform_mutex_try_acquire( rocketnet_platform_mutex_t * mutex )
+{
+    rocketnet_assert( mutex && mutex->ok );
+    return pthread_mutex_trylock( &mutex->handle ) == 0;
+}
+
 void rocketnet_platform_mutex_release( rocketnet_platform_mutex_t * mutex )
 {
     rocketnet_assert( mutex );
@@ -3911,6 +3923,12 @@ void rocketnet_platform_mutex_acquire( rocketnet_platform_mutex_t * mutex )
     rocketnet_assert( mutex );
     rocketnet_assert( mutex->ok );
     EnterCriticalSection( (LPCRITICAL_SECTION)&mutex->handle );
+}
+
+bool rocketnet_platform_mutex_try_acquire( rocketnet_platform_mutex_t * mutex )
+{
+    rocketnet_assert( mutex && mutex->ok );
+    return TryEnterCriticalSection( &mutex->handle ) != 0;
 }
 
 void rocketnet_platform_mutex_release( rocketnet_platform_mutex_t * mutex )

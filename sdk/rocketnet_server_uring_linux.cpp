@@ -156,7 +156,7 @@ struct rocketnet_server_uring_t
     bool ipv6;
     bool ring_ready;
     bool destroying;
-    bool test_stall_destroy;                    // a test's completion that never arrives: destroy counts rounds, never waits
+    bool test_stall_destroy;                    // test completion remains pending until explicitly released
     rocketnet_address_t bind_address;
 
     struct io_uring ring;
@@ -861,6 +861,14 @@ uint64_t rocketnet_server_uring_leaked_transports()
     return rocketnet_server_uring_leaked_transports_total.load();
 }
 
+static void rocketnet_server_uring_abort_create( rocketnet_server_uring_t * uring )
+{
+    rocketnet_server_uring_stop( uring );
+    while ( !rocketnet_server_uring_stopped( uring ) )
+        rocketnet_server_uring_wait( uring, ROCKETNET_URING_DESTROY_WAIT_SECONDS );
+    rocketnet_server_uring_destroy( uring );
+}
+
 #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 
 void rocketnet_server_uring_test_fail_receive( struct rocketnet_server_uring_t * uring, int queue_index, int error )
@@ -890,6 +898,12 @@ void rocketnet_server_uring_test_stall_destroy( struct rocketnet_server_uring_t 
 {
     rocketnet_assert( uring );
     uring->test_stall_destroy = true;
+}
+
+void rocketnet_server_uring_test_resume_stop( struct rocketnet_server_uring_t * uring )
+{
+    rocketnet_assert( uring );
+    uring->test_stall_destroy = false;
 }
 
 #if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
@@ -1020,7 +1034,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void * con
         queue->buf_ring = (struct io_uring_buf_ring*) rocketnet_malloc( context, ROCKETNET_URING_RECV_BUFFERS * sizeof(struct io_uring_buf) );
         if ( !queue->buf_ring )
         {
-            rocketnet_server_uring_destroy( uring );
+            rocketnet_server_uring_abort_create( uring );
             return NULL;
         }
         io_uring_buf_ring_init( queue->buf_ring );
@@ -1042,7 +1056,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void * con
 
         if ( !rocketnet_server_uring_arm( uring, i ) )
         {
-            rocketnet_server_uring_destroy( uring );
+            rocketnet_server_uring_abort_create( uring );
             return NULL;
         }
     }
@@ -1112,7 +1126,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
         uring->queues[i].fd = rocketnet_server_uring_open_socket( bind_address, i, &bound_port );
         if ( uring->queues[i].fd < 0 )
         {
-            rocketnet_server_uring_destroy( uring );
+            rocketnet_server_uring_abort_create( uring );
             return NULL;
         }
     }
@@ -1132,7 +1146,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
     if ( init_result < 0 )
     {
         rocketnet_error( "io_uring transport: io_uring_queue_init_params failed: %s", strerror( -init_result ) );
-        rocketnet_server_uring_destroy( uring );
+        rocketnet_server_uring_abort_create( uring );
         return NULL;
     }
     uring->ring_ready = true;
@@ -1140,7 +1154,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
     if ( ( params.features & IORING_FEAT_NODROP ) == 0 )
     {
         rocketnet_error( "io_uring transport: this kernel drops completions on overflow (no IORING_FEAT_NODROP)" );
-        rocketnet_server_uring_destroy( uring );
+        rocketnet_server_uring_abort_create( uring );
         return NULL;
     }
 
@@ -1156,7 +1170,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
         if ( !queue->buf_ring )
         {
             rocketnet_error( "io_uring transport: io_uring_setup_buf_ring failed for queue %d: %s", i, strerror( -error ) );
-            rocketnet_server_uring_destroy( uring );
+            rocketnet_server_uring_abort_create( uring );
             return NULL;
         }
 
@@ -1171,7 +1185,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
 
         if ( !rocketnet_server_uring_arm( uring, i ) )
         {
-            rocketnet_server_uring_destroy( uring );
+            rocketnet_server_uring_abort_create( uring );
             return NULL;
         }
     }
@@ -1184,106 +1198,47 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
     return uring;
 }
 
-// RNUringDriver Destroy, then Free: cancel every multishot receive, wait for
-// every outstanding CQE (each cancel's own and each multishot's last), and
-// only then free the buffer rings, the ring, the sockets and the memory.
-// sends may be outstanding here (a send_packets that returned within its
-// budget leaves them to a later call), so the drain waits for them too.
-//
-// the wait is bounded. a destroy that gives up has not reached Free: a
-// multishot or a cancel may still be outstanding, and io_uring_queue_exit
-// only closes the ring fd while the kernel's exit work drains later. so it
-// exits the ring and closes the sockets, and leaks the buffer rings, the
-// queues (receive buffers and msghdrs, which the kernel writes) and the
-// transport allocation (send slots), counted in rocketnet_server_uring_leaked_bytes.
-// that keeps RNUringDriver FreedOnlyWhenDrained: nothing the kernel can touch
-// is freed while cq may be nonempty or a receive armed.
+// Stop retains every buffer the kernel may own. A check does one bounded
+// cancellation/reap pass; a stalled completion keeps the object pending.
+void rocketnet_server_uring_stop( rocketnet_server_uring_t * uring )
+{
+    rocketnet_assert( uring );
+    uring->destroying = true;
+}
+
+bool rocketnet_server_uring_stopped( rocketnet_server_uring_t * uring )
+{
+    if ( !uring || !uring->destroying ) return false;
+    if ( !uring->ring_ready ) return true;
+    for ( int i = 0; i < uring->num_queues; ++i )
+    {
+        rocketnet_server_uring_queue_t * queue = &uring->queues[i];
+        if ( queue->armed && !queue->cancel_pending )
+        {
+            io_uring_sqe * sqe = rocketnet_server_uring_ring_get_sqe( uring );
+            if ( !sqe ) break;
+            io_uring_prep_cancel64( sqe, rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, i, 0 ), 0 );
+            io_uring_sqe_set_data64( sqe, rocketnet_uring_tag( ROCKETNET_URING_TAG_CANCEL, i, 0 ) );
+            queue->cancel_pending = true;
+        }
+    }
+    rocketnet_server_uring_submit( uring );
+    rocketnet_server_uring_reap_available( uring, ROCKETNET_URING_RECEIVE_BUDGET );
+    if ( uring->test_stall_destroy || uring->sends_pending ||
+         rocketnet_server_uring_ring_sq_ready( uring ) || rocketnet_server_uring_ring_cq_ready( uring ) ) return false;
+    for ( int i = 0; i < uring->num_queues; ++i )
+        if ( uring->queues[i].armed || uring->queues[i].cancel_pending ) return false;
+    return true;
+}
 
 void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring )
 {
     rocketnet_assert( uring );
-
+    const bool stopped = rocketnet_server_uring_stopped( uring );
+    rocketnet_assert( stopped );
+    if ( !stopped ) return;
     if ( uring->ring_ready )
     {
-        uring->destroying = true;
-
-        int empty_rounds = 0;
-        int rounds = 0;
-        bool drained = false;
-
-        while ( !rocketnet_server_uring_destroy_wait_over( empty_rounds, rounds ) )
-        {
-            rounds++;
-
-            bool outstanding = uring->sends_pending > 0;
-
-            for ( int i = 0; i < uring->num_queues; i++ )
-            {
-                struct rocketnet_server_uring_queue_t * queue = &uring->queues[i];
-
-                if ( queue->armed && !queue->cancel_pending )
-                {
-                    struct io_uring_sqe * sqe = rocketnet_server_uring_get_sqe( uring );
-                    if ( sqe )
-                    {
-                        io_uring_prep_cancel64( sqe, rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, i, 0 ), 0 );
-                        io_uring_sqe_set_data64( sqe, rocketnet_uring_tag( ROCKETNET_URING_TAG_CANCEL, i, 0 ) );
-                        queue->cancel_pending = true;
-                    }
-                }
-
-                if ( queue->armed || queue->cancel_pending )
-                    outstanding = true;
-            }
-
-            if ( uring->test_stall_destroy )
-                outstanding = true;
-
-            if ( !outstanding )
-            {
-                drained = true;
-                break;
-            }
-
-            rocketnet_server_uring_submit( uring );
-
-            if ( rocketnet_server_uring_reap_available( uring, ROCKETNET_URING_RECEIVE_BUDGET ) == 0 )
-            {
-                if ( !uring->test_stall_destroy )
-                    rocketnet_server_uring_wait( uring, ROCKETNET_URING_DESTROY_WAIT_SECONDS );
-                if ( rocketnet_server_uring_reap_available( uring, ROCKETNET_URING_RECEIVE_BUDGET ) == 0 )
-                    empty_rounds++;
-            }
-        }
-
-        if ( !drained )
-        {
-            // gave up: not drained, so never Free. exit the ring and close the
-            // sockets; leak every byte the kernel may still write
-
-            if ( !ROCKETNET_URING_FAKE( uring ) )
-                io_uring_queue_exit( &uring->ring );
-            uring->ring_ready = false;
-
-            uint64_t leaked = sizeof(rocketnet_server_uring_t) + (uint64_t) uring->num_queues * sizeof(rocketnet_server_uring_queue_t);
-            for ( int i = 0; i < uring->num_queues; i++ )
-            {
-                if ( uring->queues[i].buf_ring )
-                    leaked += (uint64_t) ROCKETNET_URING_RECV_BUFFERS * sizeof(struct io_uring_buf);
-                if ( uring->queues[i].fd >= 0 )
-                {
-                    close( uring->queues[i].fd );
-                    uring->queues[i].fd = -1;
-                }
-            }
-
-            rocketnet_server_uring_leaked_bytes_total += leaked;
-            rocketnet_server_uring_leaked_transports_total++;
-
-            rocketnet_warn( "io_uring transport: destroy gave up waiting for the receive cancels and the sends; %" PRIu64 " bytes the kernel may still write are leaked, not freed", leaked );
-            return;
-        }
-
         for ( int i = 0; i < uring->num_queues; i++ )
         {
             if ( uring->queues[i].buf_ring )
@@ -1685,6 +1640,9 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
     return NULL;
 }
 
+void rocketnet_server_uring_stop( struct rocketnet_server_uring_t * ) {}
+bool rocketnet_server_uring_stopped( struct rocketnet_server_uring_t * ) { return true; }
+
 void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring )
 {
     (void) uring;
@@ -1699,6 +1657,8 @@ uint64_t rocketnet_server_uring_leaked_transports()
 {
     return 0;
 }
+
+void rocketnet_server_uring_test_resume_stop( struct rocketnet_server_uring_t * ) {}
 
 void rocketnet_server_uring_test_stall_destroy( struct rocketnet_server_uring_t * uring )
 {

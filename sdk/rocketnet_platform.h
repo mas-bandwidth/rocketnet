@@ -869,6 +869,9 @@ void rocketnet_platform_mutex_destroy( struct rocketnet_platform_mutex_t * mutex
  */
 void rocketnet_platform_mutex_acquire( struct rocketnet_platform_mutex_t * mutex );
 
+// Acquires only when immediately available; never waits for the owner.
+bool rocketnet_platform_mutex_try_acquire( struct rocketnet_platform_mutex_t * mutex );
+
 /**
  * @brief Unlocks a mutex held by the calling thread.
  *

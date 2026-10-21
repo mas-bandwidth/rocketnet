@@ -211,8 +211,9 @@ static bool rocketnet_iocp_address_read( const sockaddr_storage * storage, int b
 
 static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketnet_iocp_operation_t * op )
 {
-    // The caller holds its worker mutex, or is the creating thread. stop sets
-    // stopping then joins all worker mutexes before CancelIoEx: no repost can
+    // The caller holds its worker mutex, or is the creating thread. A worker
+    // observing stop reissues cancellation after its last potential repost:
+    // no repost can
     // slip past cancellation. Stack addresses/flags must not back pending I/O.
     if ( iocp->stopping.load( std::memory_order_acquire ) )
         return false;
@@ -353,8 +354,16 @@ static void rocketnet_iocp_worker( void * argument )
     rocketnet_server_iocp_t * iocp = worker->owner;
     for ( ;; )
     {
-        if ( iocp->stopping.load( std::memory_order_acquire ) && iocp->pending.load( std::memory_order_acquire ) == 0 )
-            break;
+        if ( iocp->stopping.load( std::memory_order_acquire ) )
+        {
+            // Every worker cancels after its last potential repost. A peer
+            // may have read stopping=false before another worker's cancel;
+            // its next pass cancels that late post as well.
+            if ( iocp->socket != INVALID_SOCKET &&
+                 !CancelIoEx( (HANDLE) iocp->socket, NULL ) && GetLastError() != ERROR_NOT_FOUND )
+                rocketnet_error( "IOCP cancellation failed: %lu", GetLastError() );
+            if ( iocp->pending.load( std::memory_order_acquire ) == 0 ) break;
+        }
 
         OVERLAPPED_ENTRY entries[64];
         ULONG count = 0;
@@ -447,22 +456,9 @@ static void rocketnet_iocp_worker( void * argument )
 
 void rocketnet_server_iocp_stop( rocketnet_server_iocp_t * iocp )
 {
-    if ( !iocp || iocp->stopping.exchange( true, std::memory_order_acq_rel ) )
-        return;
-    if ( iocp->workers )
-        for ( int i = 0; i < iocp->num_workers; ++i )
-            if ( iocp->workers[i].mutex.ok )
-            {
-                rocketnet_platform_mutex_acquire( &iocp->workers[i].mutex );
-                rocketnet_platform_mutex_release( &iocp->workers[i].mutex );
-            }
-    if ( iocp->socket != INVALID_SOCKET )
-    {
-        // Cancellation is only a request. The workers drain every completion;
-        // the socket, OVERLAPPEDs and data remain alive until the joins below.
-        if ( !CancelIoEx( (HANDLE) iocp->socket, NULL ) && GetLastError() != ERROR_NOT_FOUND )
-            rocketnet_error( "IOCP cancellation failed: %lu", GetLastError() );
-    }
+    if ( !iocp || iocp->stopping.exchange( true, std::memory_order_acq_rel ) ) return;
+    // Cancellation runs on the workers after their current pass. This request
+    // never acquires a worker mutex or waits for an overlapped operation.
     if ( iocp->port )
         for ( int i = 0; i < iocp->num_workers; ++i )
             PostQueuedCompletionStatus( iocp->port, 0, 0, NULL );
@@ -478,7 +474,9 @@ bool rocketnet_server_iocp_stopped( rocketnet_server_iocp_t * iocp )
 void rocketnet_server_iocp_destroy( rocketnet_server_iocp_t * iocp )
 {
     if ( !iocp ) return;
-    rocketnet_server_iocp_stop( iocp );
+    const bool stopped = rocketnet_server_iocp_stopped( iocp );
+    rocketnet_assert( stopped );
+    if ( !stopped ) return;
     if ( iocp->workers )
         for ( int i = 0; i < iocp->num_workers; ++i )
         {
@@ -647,6 +645,8 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
 
 failed:
     rocketnet_warn( "iocp transport create failed (Winsock %d, Win32 %lu, test stage %d)", WSAGetLastError(), GetLastError(), fail_stage );
+    rocketnet_server_iocp_stop( iocp );
+    while ( !rocketnet_server_iocp_stopped( iocp ) ) rocketnet_platform_sleep( 0.001 );
     rocketnet_server_iocp_destroy( iocp );
     return NULL;
 }

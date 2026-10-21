@@ -27,7 +27,8 @@ static void * portable_create( void * context, const rocketnet_server_transport_
     return portable_socket_create( context, config->name, bind );
 }
 static void portable_destroy( void * transport ) { rocketnet_platform_socket_destroy( (rocketnet_platform_socket_t*) transport ); }
-static bool synchronous_stop( void * ) { return true; }
+static void synchronous_stop( void * ) {}
+static bool synchronous_stopped( void * ) { return true; }
 static void portable_send( void * transport, const rocketnet_platform_send_t * packets, int count )
 {
     rocketnet_platform_socket_send_packets( (rocketnet_platform_socket_t*) transport, packets, count );
@@ -40,7 +41,7 @@ static uint64_t portable_send_failures( void * transport )
 { return rocketnet_platform_socket_send_failures( (rocketnet_platform_socket_t*) transport ); }
 static const rocketnet_server_transport_io_operations_t portable_server_operations =
 {
-    ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE, portable_create, portable_destroy, synchronous_stop,
+    ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE, portable_create, portable_destroy, synchronous_stop, synchronous_stopped,
     NULL, NULL, NULL, NULL, NULL, portable_send, portable_receive,
     NULL, NULL, NULL, NULL, NULL, portable_send_failures
 };
@@ -187,6 +188,8 @@ static void * gso_create( void * context, const rocketnet_server_transport_io_co
     return rocketnet_server_gso_create( context, bind, config->transport->num_xdp_queues, 0 );
 }
 static void gso_destroy( void * transport ) { rocketnet_server_gso_destroy( (rocketnet_server_gso_t*) transport ); }
+static void gso_stop( void * transport ) { rocketnet_server_gso_stop( (rocketnet_server_gso_t*) transport ); }
+static bool gso_stopped( void * transport ) { return rocketnet_server_gso_stopped( (rocketnet_server_gso_t*) transport ); }
 ROCKETNET_STAGED_ADAPTER(gso, rocketnet_server_gso_t, rocketnet_server_gso)
 // SEND_DROPPED: the datagrams a refused sendmmsg dropped
 static uint64_t gso_send_failures( void * transport )
@@ -200,7 +203,7 @@ static void gso_receive_drops( void * transport, uint64_t * too_short, uint64_t 
 static const rocketnet_server_transport_io_operations_t gso_operations =
 {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE,
-    gso_create, gso_destroy, synchronous_stop,
+    gso_create, gso_destroy, gso_stop, gso_stopped,
     gso_start, gso_finish, gso_abort, gso_flush, gso_receive, NULL, NULL,
     NULL, NULL, NULL, NULL, NULL, gso_send_failures
 };
@@ -219,6 +222,8 @@ static void * io_uring_create( void * context, const rocketnet_server_transport_
     return rocketnet_server_uring_create( context, bind, config->transport->num_xdp_queues );
 }
 static void io_uring_destroy( void * transport ) { rocketnet_server_uring_destroy( (rocketnet_server_uring_t*) transport ); }
+static void io_uring_stop( void * transport ) { rocketnet_server_uring_stop( (rocketnet_server_uring_t*) transport ); }
+static bool io_uring_stopped( void * transport ) { return rocketnet_server_uring_stopped( (rocketnet_server_uring_t*) transport ); }
 ROCKETNET_STAGED_ADAPTER(io_uring, rocketnet_server_uring_t, rocketnet_server_uring)
 // SEND_DROPPED: send CQEs with a negative result, and destinations the
 // socket family cannot carry
@@ -233,7 +238,7 @@ static void io_uring_receive_drops( void * transport, uint64_t * too_short, uint
 static const rocketnet_server_transport_io_operations_t io_uring_operations =
 {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE,
-    io_uring_create, io_uring_destroy, synchronous_stop,
+    io_uring_create, io_uring_destroy, io_uring_stop, io_uring_stopped,
     io_uring_start, io_uring_finish, io_uring_abort, io_uring_flush, io_uring_receive, NULL, NULL,
     NULL, NULL, NULL, NULL, NULL, io_uring_send_failures
 };
@@ -251,19 +256,16 @@ static void * xdp_create( void * context, const rocketnet_server_transport_io_co
         second = config->transport->second_public_address;
     return rocketnet_server_socket_create( context, config->public_address, config->transport->packet_filter, queues, cpus, second, config->status );
 }
-static bool xdp_stop( void * transport )
+static void xdp_stop( void * transport )
 {
-    rocketnet_server_socket_t * socket = (rocketnet_server_socket_t*) transport;
-    if ( rocketnet_server_socket_state( socket ) != ROCKETNET_SERVER_SOCKET_STOPPED )
-    {
-        rocketnet_server_socket_stop( socket );
-        rocketnet_server_socket_update( socket );
-    }
-    return rocketnet_server_socket_state( socket ) == ROCKETNET_SERVER_SOCKET_STOPPED;
+    rocketnet_server_socket_stop( (rocketnet_server_socket_t*) transport );
+}
+static bool xdp_stopped( void * transport )
+{
+    return rocketnet_server_socket_stopped( (rocketnet_server_socket_t*) transport );
 }
 static void xdp_destroy( void * transport )
 {
-    xdp_stop( transport );
     rocketnet_server_socket_destroy( (rocketnet_server_socket_t*) transport );
 }
 ROCKETNET_STAGED_ADAPTER(xdp, rocketnet_server_socket_t, rocketnet_server_socket)
@@ -294,7 +296,7 @@ static uint64_t xdp_send_failures( void * transport )
 static const rocketnet_server_transport_io_operations_t xdp_operations =
 {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FINISH_FINAL | ROCKETNET_TRANSPORT_BINDS_PUBLIC_ADDRESS,
-    xdp_create, xdp_destroy, xdp_stop,
+    xdp_create, xdp_destroy, xdp_stop, xdp_stopped,
     xdp_start, xdp_finish, xdp_abort, xdp_flush, xdp_receive, NULL, NULL, xdp_prefilter_counters,
     xdp_replay_forget, xdp_replay_mark, xdp_replay_commit, xdp_peer_accepted, xdp_send_failures
 };
@@ -311,7 +313,7 @@ static void xdp_disabled_send( void *, const rocketnet_platform_send_t *, int ) 
 static int xdp_disabled_receive( void *, rocketnet_address_t *, uint8_t *, int, int *, int ) { return 0; }
 static const rocketnet_server_transport_io_operations_t xdp_operations =
 {
-    0, xdp_disabled_create, xdp_disabled_destroy, synchronous_stop,
+    0, xdp_disabled_create, xdp_disabled_destroy, synchronous_stop, synchronous_stopped,
     NULL, NULL, NULL, NULL, NULL, xdp_disabled_send, xdp_disabled_receive,
     NULL, NULL, NULL, NULL, NULL, NULL
 };
@@ -326,9 +328,12 @@ static void * iocp_create( void * context, const rocketnet_server_transport_io_c
     return rocketnet_server_iocp_create( context, bind, config->transport->num_xdp_queues );
 }
 static void iocp_destroy( void * transport ) { rocketnet_server_iocp_destroy( (rocketnet_server_iocp_t*) transport ); }
-static bool iocp_stop( void * transport )
+static void iocp_stop( void * transport )
 {
     rocketnet_server_iocp_stop( (rocketnet_server_iocp_t*) transport );
+}
+static bool iocp_stopped( void * transport )
+{
     return rocketnet_server_iocp_stopped( (rocketnet_server_iocp_t*) transport );
 }
 ROCKETNET_STAGED_ADAPTER(iocp, rocketnet_server_iocp_t, rocketnet_server_iocp)
@@ -343,7 +348,7 @@ static uint64_t iocp_send_failures( void * transport )
 static const rocketnet_server_transport_io_operations_t iocp_operations =
 {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE,
-    iocp_create, iocp_destroy, iocp_stop,
+    iocp_create, iocp_destroy, iocp_stop, iocp_stopped,
     iocp_start, iocp_finish, iocp_abort, iocp_flush, iocp_receive, NULL, NULL,
     NULL, NULL, NULL, NULL, NULL, iocp_send_failures
 };
@@ -353,9 +358,12 @@ extern const rocketnet_transport_backend_t rocketnet_iocp_transport = { &iocp_op
 static void * rio_create( void * context, const rocketnet_server_transport_io_config_t *, rocketnet_address_t * bind )
 { return rocketnet_server_rio_create( context, bind, 0 ); }
 static void rio_destroy( void * transport ) { rocketnet_server_rio_destroy( (rocketnet_server_rio_t*) transport ); }
-static bool rio_stop( void * transport )
+static void rio_stop( void * transport )
 {
     rocketnet_server_rio_stop( (rocketnet_server_rio_t*) transport );
+}
+static bool rio_stopped( void * transport )
+{
     return rocketnet_server_rio_stopped( (rocketnet_server_rio_t*) transport );
 }
 ROCKETNET_STAGED_ADAPTER(rio, rocketnet_server_rio_t, rocketnet_server_rio)
@@ -370,7 +378,7 @@ static uint64_t rio_send_failures( void * transport )
 static const rocketnet_server_transport_io_operations_t rio_operations =
 {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE,
-    rio_create, rio_destroy, rio_stop,
+    rio_create, rio_destroy, rio_stop, rio_stopped,
     rio_start, rio_finish, rio_abort, rio_flush, rio_receive, NULL, NULL,
     NULL, NULL, NULL, NULL, NULL, rio_send_failures
 };

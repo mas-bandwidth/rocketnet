@@ -151,6 +151,7 @@ struct rocketnet_server_xdp_socket_t
     uint8_t padding_2[4096];
 
     std::atomic<bool> quit{0};
+    std::atomic<bool> stopped{false};
 
     uint8_t padding_4[4096];
 
@@ -255,6 +256,12 @@ struct rocketnet_server_socket_t
 };
 
 void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server );
+static void rocketnet_server_socket_abort_create( rocketnet_server_socket_t * server )
+{
+    rocketnet_server_socket_stop( server );
+    while ( !rocketnet_server_socket_stopped( server ) ) rocketnet_platform_sleep( 0.001 );
+    rocketnet_server_socket_destroy( server );
+}
 
 static bool get_interface_mac_address( const char * interface_name, uint8_t * mac_address ) 
 {
@@ -1462,7 +1469,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     if ( !server_socket->replay_marks )
     {
         rocketnet_error( "server could not allocate the replay marks buffer" );
-        rocketnet_server_socket_destroy( server_socket );
+        rocketnet_server_socket_abort_create( server_socket );
         return NULL;
     }
     rocketnet_xdp_replay_marks_reset( server_socket->replay_marks );
@@ -1475,7 +1482,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     if ( !rocketnet_server_socket_find_interface( &public_address, interface_name, sizeof(interface_name), &interface_index ) )
     {
         rocketnet_error( "server could not find any network interface matching public address" );
-        rocketnet_server_socket_destroy( server_socket );
+        rocketnet_server_socket_abort_create( server_socket );
         return NULL;
     }
 
@@ -1488,7 +1495,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         if ( !rocketnet_server_socket_find_interface( &second_address, second_interface_name, sizeof( second_interface_name ), &second_interface_index ) )
         {
             rocketnet_error( "server could not find any network interface matching public address" );
-            rocketnet_server_socket_destroy( server_socket );
+            rocketnet_server_socket_abort_create( server_socket );
             return NULL;
         }
         if ( second_interface_index != interface_index )
@@ -1496,7 +1503,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             rocketnet_error( "server xdp cannot serve both families: the addresses are on different interfaces" );
             if ( create_status )
                 *create_status = ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED;
-            rocketnet_server_socket_destroy( server_socket );
+            rocketnet_server_socket_abort_create( server_socket );
             return NULL;
         }
         server_socket->serves_both = 1;
@@ -1521,7 +1528,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     if ( !get_interface_mac_address( interface_name, server_socket->server_ethernet_address ) )
     {
         rocketnet_error( "server could not get mac address of network interface" );
-        rocketnet_server_socket_destroy( server_socket );
+        rocketnet_server_socket_abort_create( server_socket );
         return NULL;
     }
 
@@ -1548,7 +1555,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
              !get_gateway_mac_address( interface_name, ROCKETNET_ADDRESS_IPV6, ipv6_mac, &ipv6_known ) )
         {
             rocketnet_error( "server could not get gateway mac address" );
-            rocketnet_server_socket_destroy( server_socket );
+            rocketnet_server_socket_abort_create( server_socket );
             return NULL;
         }
         if ( ipv4_known )
@@ -1571,7 +1578,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     else if ( !get_gateway_mac_address( interface_name, public_address.type, server_socket->gateway_ethernet_address, &server_socket->gateway_known ) )
     {
         rocketnet_error( "server could not get gateway mac address" );
-        rocketnet_server_socket_destroy( server_socket );
+        rocketnet_server_socket_abort_create( server_socket );
         return NULL;
     }
 
@@ -1670,7 +1677,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             rocketnet_error( "could not create pin root %s (%s)", server_socket->pin_root, strerror( errno ) );
 
         server_socket->pin_root[0] = '\0';
-        rocketnet_server_socket_destroy( server_socket );
+        rocketnet_server_socket_abort_create( server_socket );
         return NULL;
     }
 
@@ -1697,7 +1704,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     if ( rocketnet_server_xdp_o_len == 0 )
     {
         rocketnet_error( "could not load server_xdp program: this build has no server_xdp.o (XDP disabled or no clang with the BPF target at configure time)" );
-        rocketnet_server_socket_destroy( server_socket );
+        rocketnet_server_socket_abort_create( server_socket );
         return NULL;
     }
 
@@ -1715,7 +1722,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         if ( libbpf_get_error( object ) )
         {
             rocketnet_error( "could not load server_xdp program" );
-            rocketnet_server_socket_destroy( server_socket );
+            rocketnet_server_socket_abort_create( server_socket );
             return NULL;
         }
         server_socket->program_object = object;
@@ -1724,7 +1731,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         if ( libxdp_get_error( program ) )
         {
             rocketnet_error( "could not load server_xdp program" );
-            rocketnet_server_socket_destroy( server_socket );
+            rocketnet_server_socket_abort_create( server_socket );
             return NULL;
         }
         server_socket->program = program;
@@ -1750,7 +1757,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         else
         {
             rocketnet_error( "failed to attach server_xdp program to interface %s", interface_name );
-            rocketnet_server_socket_destroy( server_socket );
+            rocketnet_server_socket_abort_create( server_socket );
             return NULL;
         }
     }
@@ -1762,7 +1769,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     if ( setrlimit( RLIMIT_MEMLOCK, &rlim ) ) 
     {
         rocketnet_error( "server could not setrlimit" );
-        rocketnet_server_socket_destroy( server_socket );
+        rocketnet_server_socket_abort_create( server_socket );
         return NULL;
     }
 
@@ -1776,7 +1783,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     if ( server_socket->config_map_fd < 0 )
     {
         rocketnet_error( "server could not get config map: %s", strerror(errno) );
-        rocketnet_server_socket_destroy( server_socket );
+        rocketnet_server_socket_abort_create( server_socket );
         return NULL;
     }
 
@@ -1784,7 +1791,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     if ( server_socket->socket_map_fd < 0 )
     {
         rocketnet_error( "server could not get socket map: %s", strerror(errno) );
-        rocketnet_server_socket_destroy( server_socket );
+        rocketnet_server_socket_abort_create( server_socket );
         return NULL;
     }
 
@@ -1792,7 +1799,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     if ( server_socket->stats_map_fd < 0 )
     {
         rocketnet_error( "server could not get stats map: %s", strerror(errno) );
-        rocketnet_server_socket_destroy( server_socket );
+        rocketnet_server_socket_abort_create( server_socket );
         return NULL;
     }
 
@@ -1800,7 +1807,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     if ( server_socket->replay_map_fd < 0 )
     {
         rocketnet_error( "server could not get replay map: %s", strerror(errno) );
-        rocketnet_server_socket_destroy( server_socket );
+        rocketnet_server_socket_abort_create( server_socket );
         return NULL;
     }
 
@@ -1843,7 +1850,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         if ( bpf_map_update_elem( server_socket->config_map_fd, &key, &config, BPF_ANY ) != 0 )
         {
             rocketnet_error( "server could not write config map: %s", strerror(errno) );
-            rocketnet_server_socket_destroy( server_socket );
+            rocketnet_server_socket_abort_create( server_socket );
             return NULL;
         }
     }
@@ -1854,7 +1861,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     if ( server_socket->socket == NULL )
     {
         rocketnet_error( "server could not allocate sockets" );
-        rocketnet_server_socket_destroy( server_socket );
+        rocketnet_server_socket_abort_create( server_socket );
         return NULL;
     }
 
@@ -1881,7 +1888,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             if ( rocketnet_platform_getenv( "ROCKETNET_TEST_XDP_FAIL_AT_QUEUE", fail_at_queue, sizeof( fail_at_queue ) ) > 0 && atoi( fail_at_queue ) == queue )
             {
                 rocketnet_error( "server xdp create failed at queue %d (injected by ROCKETNET_TEST_XDP_FAIL_AT_QUEUE)", queue );
-                rocketnet_server_socket_destroy( server_socket );
+                rocketnet_server_socket_abort_create( server_socket );
                 return NULL;
             }
         }
@@ -1895,7 +1902,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         {
             rocketnet_allocation_refused();
             rocketnet_error( "server could not allocate buffer" );
-            rocketnet_server_socket_destroy( server_socket );
+            rocketnet_server_socket_abort_create( server_socket );
             return NULL;
         }
 
@@ -1915,7 +1922,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             if ( result )
             {
                 rocketnet_error( "server could not create umem: %s (errno %d)", strerror( -result ), -result );
-                rocketnet_server_socket_destroy( server_socket );
+                rocketnet_server_socket_abort_create( server_socket );
                 return NULL;
             }
 
@@ -1931,7 +1938,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             if ( !zero_copy )
             {
                 rocketnet_error( "server could not create xsk socket for queue %d: %s (errno %d)", queue, strerror( -result ), -result );
-                rocketnet_server_socket_destroy( server_socket );
+                rocketnet_server_socket_abort_create( server_socket );
                 return NULL;
             }
 
@@ -1949,7 +1956,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         if ( getsockopt( xsk_socket__fd( socket->xsk ), SOL_XDP, XDP_OPTIONS, &xdp_options, &xdp_options_length ) != 0 )
         {
             rocketnet_error( "server could not read the xdp options for queue %d", queue );
-            rocketnet_server_socket_destroy( server_socket );
+            rocketnet_server_socket_abort_create( server_socket );
             return NULL;
         }
 
@@ -1963,7 +1970,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         if ( bpf_map_update_elem( server_socket->socket_map_fd, &key, &value, BPF_ANY ) < 0 ) 
         {
             rocketnet_error( "server failed to add xdp socket for queue %d to map", queue );
-            rocketnet_server_socket_destroy( server_socket );
+            rocketnet_server_socket_abort_create( server_socket );
             return NULL;
         }
 
@@ -2013,7 +2020,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             if ( result != ROCKETNET_XDP_FILL_QUEUE_SIZE )
             {
                 rocketnet_error( "server failed to populate fill queue: %d", result );
-                rocketnet_server_socket_destroy( server_socket );
+                rocketnet_server_socket_abort_create( server_socket );
                 return NULL;
             }
 
@@ -2024,7 +2031,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
                 if ( frames[i] == INVALID_FRAME )
                 {
                     rocketnet_error( "server could not allocate receive frame for fill queue" );
-                    rocketnet_server_socket_destroy( server_socket );
+                    rocketnet_server_socket_abort_create( server_socket );
                     return NULL;
                 }
             }
@@ -2044,7 +2051,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         if ( !rocketnet_platform_mutex_create( &socket->send_mutex ) )
         {
             rocketnet_error( "failed to create send mutex for queue %d", queue );
-            rocketnet_server_socket_destroy( server_socket );
+            rocketnet_server_socket_abort_create( server_socket );
             return NULL;
         }
 
@@ -2053,7 +2060,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         if ( !rocketnet_platform_mutex_create( &socket->receive_mutex ) )
         {
             rocketnet_error( "failed to create receive mutex for queue %d", queue );
-            rocketnet_server_socket_destroy( server_socket );
+            rocketnet_server_socket_abort_create( server_socket );
             return NULL;
         }
 
@@ -2065,7 +2072,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         if ( !socket->xdp_thread )
         {
             rocketnet_error( "server could not create xdp thread %d", queue );
-            rocketnet_server_socket_destroy( server_socket );
+            rocketnet_server_socket_abort_create( server_socket );
             return NULL;
         }
     }
@@ -2105,7 +2112,9 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket )
 {
     rocketnet_assert( server_socket );
-    rocketnet_assert( server_socket->state == ROCKETNET_SERVER_SOCKET_STOPPED );        // IMPORTANT: Please stop the server and wait until state is ROCKETNET_SERVER_SOCKET_STOPPED before destroying it
+    const bool stopped = rocketnet_server_socket_stopped( server_socket );
+    rocketnet_assert( stopped );
+    if ( !stopped ) return;
 
     if ( server_socket->program != NULL )
     {
@@ -2159,7 +2168,6 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
 
         if ( socket->xdp_thread )
         {
-            socket->quit = true;
             rocketnet_platform_thread_join( socket->xdp_thread );
             rocketnet_platform_thread_destroy( socket->xdp_thread );
         }
@@ -2199,17 +2207,26 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
 void rocketnet_server_socket_update( rocketnet_server_socket_t * server_socket )
 {
     rocketnet_assert( server_socket );
-
     if ( server_socket->state == ROCKETNET_SERVER_SOCKET_STOPPING )
-    {
-        server_socket->state = ROCKETNET_SERVER_SOCKET_STOPPED;
-    }
+        (void) rocketnet_server_socket_stopped( server_socket );
 }
 
 void rocketnet_server_socket_stop( rocketnet_server_socket_t * server_socket )
 {
     rocketnet_assert( server_socket );
     server_socket->state = ROCKETNET_SERVER_SOCKET_STOPPING;
+    for ( int i = 0; server_socket->socket && i < server_socket->num_queues; ++i )
+        server_socket->socket[i].quit.store( true, std::memory_order_release );
+}
+
+bool rocketnet_server_socket_stopped( rocketnet_server_socket_t * server_socket )
+{
+    if ( !server_socket || server_socket->state == ROCKETNET_SERVER_SOCKET_RUNNING ) return false;
+    for ( int i = 0; server_socket->socket && i < server_socket->num_queues; ++i )
+        if ( server_socket->socket[i].xdp_thread &&
+             !server_socket->socket[i].stopped.load( std::memory_order_acquire ) ) return false;
+    server_socket->state = ROCKETNET_SERVER_SOCKET_STOPPED;
+    return true;
 }
 
 int rocketnet_server_socket_state( rocketnet_server_socket_t * server_socket )
@@ -2272,7 +2289,7 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
         // rocketnet_send_handoff_t::publish retaining the producer buffer,
         // normal flushes do not reach it; rocketnet_server_socket_test_inactive_generation
         // builds this state. Recovery needs no extra update.
-        rocketnet_platform_mutex_acquire( &socket->send_mutex );
+        if ( !rocketnet_platform_mutex_try_acquire( &socket->send_mutex ) ) return NULL;
         rocketnet_server_socket_acquire_send_buffer( socket );
         flow_index = socket->send_flow_index.load( std::memory_order_relaxed );
         rocketnet_platform_mutex_release( &socket->send_mutex );
@@ -2440,7 +2457,7 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
     for ( int queue = 0; queue < server_socket->num_queues; queue++ )
     {
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
-        rocketnet_platform_mutex_acquire( &socket->send_mutex );
+        if ( !rocketnet_platform_mutex_try_acquire( &socket->send_mutex ) ) continue;
         const int index = socket->send_flow_index.load( std::memory_order_relaxed );
         if ( index >= 0 && socket->send_buffer[index].num_packets > 0 )
         {
@@ -2913,8 +2930,10 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
     };
     bool reported_frame_pressure = false;
 
-    while ( !socket->quit )
+    for ( ;; )
     {
+        const bool stopping = socket->quit.load( std::memory_order_acquire );
+        // Complete one final nonwaiting I/O pass after stop was requested.
         // busy poll the transport
 
         poll( fds, 1, 0 );
@@ -3187,8 +3206,11 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
         // IMPORTANT: Sleep so the transport gets all the time it wants. Otherwise, it can hitch us
 
+        if ( stopping ) break;
         rocketnet_platform_sleep( 0.0 );
     }
+    // Last access to queue storage, acquired by stopped before destruction.
+    socket->stopped.store( true, std::memory_order_release );
 }
 
 #else // #if ROCKETNET_XDP

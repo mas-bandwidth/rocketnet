@@ -31,7 +31,6 @@
 
 #define ROCKETNET_RIO_SEND_FRAMES ( 2 * ROCKETNET_RIO_SEND_QUEUE_SIZE )
 #define ROCKETNET_RIO_DEQUEUE_BATCH 256
-#define ROCKETNET_RIO_DRAIN_SECONDS 5.0
 
 // regions destroy could not drain and so leaked rather than freed
 static std::atomic<uint64_t> rocketnet_rio_leaked_regions{0};
@@ -347,89 +346,55 @@ static int rocketnet_rio_dequeue_send( rocketnet_server_rio_t * rio )
 
 void rocketnet_server_rio_stop( rocketnet_server_rio_t * rio )
 {
-    if ( rio )
-        rio->stopping.store( true, std::memory_order_release );
+    if ( !rio || rio->stopping.exchange( true, std::memory_order_acq_rel ) ) return;
+    // Closing a UDP socket cancels pending RIO requests. Keep its registered
+    // region and queues until their completions have all been observed.
+    if ( rio->request_queue != RIO_INVALID_RQ ) rocketnet_rio_commit( rio );
+    if ( rio->socket != INVALID_SOCKET && closesocket( rio->socket ) == 0 )
+        rio->socket = INVALID_SOCKET;
 }
 
 bool rocketnet_server_rio_stopped( rocketnet_server_rio_t * rio )
 {
-    return rio && rio->stopping.load( std::memory_order_acquire );
+    if ( !rio || !rio->stopping.load( std::memory_order_acquire ) ) return false;
+    if ( rio->socket != INVALID_SOCKET )
+    {
+        if ( closesocket( rio->socket ) != 0 ) return false;
+        rio->socket = INVALID_SOCKET;
+    }
+    // Exactly one available batch per queue, never wait for new completions.
+    if ( rio->have_table && rio->send_cq != RIO_INVALID_CQ )
+    {
+        RIORESULT results[ROCKETNET_RIO_DEQUEUE_BATCH];
+        const ULONG count = rio->rio.RIODequeueCompletion( rio->send_cq, results, ROCKETNET_RIO_DEQUEUE_BATCH );
+        if ( count == RIO_CORRUPT_CQ ) return false;
+        for ( ULONG i = 0; i < count; ++i ) rocketnet_rio_retire_send( rio, &results[i] );
+    }
+    if ( rio->have_table && rio->receive_cq != RIO_INVALID_CQ )
+    {
+        RIORESULT results[ROCKETNET_RIO_DEQUEUE_BATCH];
+        const ULONG count = rio->rio.RIODequeueCompletion( rio->receive_cq, results, ROCKETNET_RIO_DEQUEUE_BATCH );
+        if ( count == RIO_CORRUPT_CQ ) return false;
+        rio->posted_receives -= (int) count;
+    }
+    return rio->outstanding[0] == 0 && rio->outstanding[1] == 0 && rio->posted_receives == 0;
 }
 
-// RNRioDriver Close, Drain and Free: closesocket completes every outstanding
-// request with an error; both queues are dequeued until every posted send
-// and receive is accounted for; only then are the queues closed, the buffer
-// deregistered and the region freed. A region the kernel has not given back
-// by the drain deadline is leaked, never freed under it.
 void rocketnet_server_rio_destroy( rocketnet_server_rio_t * rio )
 {
     if ( !rio ) return;
-    rio->stopping.store( true, std::memory_order_release );
-
-    // Commit: sends a refused RIO_MSG_COMMIT_ONLY left deferred are committed
-    // before the close, so they complete with every other posted request and
-    // the drain below accounts for them.
-    if ( rio->request_queue != RIO_INVALID_RQ )
-        rocketnet_rio_commit( rio );
-
-    // Close
-    if ( rio->socket != INVALID_SOCKET )
-    {
-        closesocket( rio->socket );
-        rio->socket = INVALID_SOCKET;
-    }
-
-    // Drain: nothing is re-posted and nothing is copied
-    bool drained = true;
-    if ( rio->have_table )
-    {
-        const double deadline = rocketnet_platform_time() + ROCKETNET_RIO_DRAIN_SECONDS;
-        while ( rio->outstanding[0] + rio->outstanding[1] > 0 || rio->posted_receives > 0 )
-        {
-            int progress = 0;
-            if ( rio->send_cq != RIO_INVALID_CQ )
-                progress += rocketnet_rio_dequeue_send( rio );
-            if ( rio->receive_cq != RIO_INVALID_CQ )
-            {
-                RIORESULT results[ROCKETNET_RIO_DEQUEUE_BATCH];
-                const ULONG count = rio->rio.RIODequeueCompletion( rio->receive_cq, results, ROCKETNET_RIO_DEQUEUE_BATCH );
-                if ( count != RIO_CORRUPT_CQ )
-                {
-                    rio->posted_receives -= (int) count;
-                    progress += (int) count;
-                }
-            }
-            if ( progress == 0 )
-            {
-                if ( rocketnet_platform_time() > deadline )
-                {
-                    drained = false;
-                    break;
-                }
-                rocketnet_platform_sleep( 0.0001 );
-            }
-        }
-    }
-
+    const bool stopped = rocketnet_server_rio_stopped( rio );
+    rocketnet_assert( stopped );
+    if ( !stopped ) return;
     void * context = rio->context;
-    if ( drained )
-    {
-        // Free
-        if ( rio->send_cq != RIO_INVALID_CQ ) rio->rio.RIOCloseCompletionQueue( rio->send_cq );
-        if ( rio->receive_cq != RIO_INVALID_CQ ) rio->rio.RIOCloseCompletionQueue( rio->receive_cq );
-        if ( rio->buffer_id != RIO_INVALID_BUFFERID ) rio->rio.RIODeregisterBuffer( rio->buffer_id );
-        if ( rio->region ) VirtualFree( rio->region, 0, MEM_RELEASE );
-        rocketnet_free( context, rio->slot_bytes );
-        rocketnet_free( context, rio->banks );
-        rio->~rocketnet_server_rio_t();
-        rocketnet_free( context, rio );
-    }
-    else
-    {
-        rocketnet_rio_leaked_regions.fetch_add( 1, std::memory_order_relaxed );
-        rocketnet_error( "rio transport: %d sends and %d receives still posted after close; the registered region is leaked, not freed under the kernel",
-                         rio->outstanding[0] + rio->outstanding[1], rio->posted_receives );
-    }
+    if ( rio->send_cq != RIO_INVALID_CQ ) rio->rio.RIOCloseCompletionQueue( rio->send_cq );
+    if ( rio->receive_cq != RIO_INVALID_CQ ) rio->rio.RIOCloseCompletionQueue( rio->receive_cq );
+    if ( rio->buffer_id != RIO_INVALID_BUFFERID ) rio->rio.RIODeregisterBuffer( rio->buffer_id );
+    if ( rio->region ) VirtualFree( rio->region, 0, MEM_RELEASE );
+    rocketnet_free( context, rio->slot_bytes );
+    rocketnet_free( context, rio->banks );
+    rio->~rocketnet_server_rio_t();
+    rocketnet_free( context, rio );
 }
 
 uint64_t rocketnet_server_rio_leaked_regions()
@@ -557,6 +522,9 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
 
 failed:
     rocketnet_warn( "rio transport create failed (Winsock %d, Win32 %lu, test stage %d)", WSAGetLastError(), GetLastError(), fail_stage );
+    // Partial construction remains private to this synchronous create call.
+    rocketnet_server_rio_stop( rio );
+    while ( !rocketnet_server_rio_stopped( rio ) ) rocketnet_platform_sleep( 0.001 );
     rocketnet_server_rio_destroy( rio );
     return NULL;
 }

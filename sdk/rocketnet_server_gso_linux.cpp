@@ -133,6 +133,7 @@ struct rocketnet_server_gso_queue_t
     uint8_t padding_1[4096];
 
     std::atomic<bool> quit{0};
+    std::atomic<bool> stopped{false};
 
     uint8_t padding_2[4096];
 
@@ -162,6 +163,7 @@ struct rocketnet_server_gso_t
     void * context;
 
     int num_queues;
+    bool stopping = false;
     int features;
     bool ipv6;
     rocketnet_address_t bind_address;
@@ -654,6 +656,8 @@ static void rocketnet_server_gso_worker( void * data )
 
         rocketnet_platform_mutex_release( &queue->receive_mutex );
     }
+    // Last access to queue-owned storage; destroy acquires this before join.
+    queue->stopped.store( true, std::memory_order_release );
 }
 
 // ---------------------------------------------------------------------------
@@ -665,6 +669,14 @@ uint64_t rocketnet_server_gso_allocation_bytes(int queues)
         (uint64_t)queues * sizeof(rocketnet_server_gso_queue_t)});
     if (!bytes || !rocketnet_memory_add(bytes, (uint64_t)queues, rocketnet_platform_thread_allocation_bytes())) return 0;
     return bytes <= SIZE_MAX ? bytes : 0;
+}
+
+static void rocketnet_server_gso_abort_create( rocketnet_server_gso_t * gso )
+{
+    // Create is synchronous and never exposes a partially constructed object.
+    rocketnet_server_gso_stop( gso );
+    while ( !rocketnet_server_gso_stopped( gso ) ) rocketnet_platform_sleep( 0.001 );
+    rocketnet_server_gso_destroy( gso );
 }
 
 struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags )
@@ -739,7 +751,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
         queue->fd = rocketnet_server_gso_open_socket( bind_address, i, &bound_port );
         if ( queue->fd < 0 )
         {
-            rocketnet_server_gso_destroy( gso );
+            rocketnet_server_gso_abort_create( gso );
             return NULL;
         }
     }
@@ -814,7 +826,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
 
         if ( !rocketnet_platform_mutex_create( &queue->receive_mutex ) )
         {
-            rocketnet_server_gso_destroy( gso );
+            rocketnet_server_gso_abort_create( gso );
             return NULL;
         }
 
@@ -822,7 +834,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
         if ( !queue->thread )
         {
             rocketnet_platform_mutex_destroy( &queue->receive_mutex );
-            rocketnet_server_gso_destroy( gso );
+            rocketnet_server_gso_abort_create( gso );
             return NULL;
         }
 
@@ -832,20 +844,32 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     return gso;
 }
 
+void rocketnet_server_gso_stop( rocketnet_server_gso_t * gso )
+{
+    rocketnet_assert( gso );
+    gso->stopping = true;
+    for ( int i = 0; gso->queues && i < gso->num_queues; ++i )
+        gso->queues[i].quit.store( true, std::memory_order_release );
+}
+
+bool rocketnet_server_gso_stopped( rocketnet_server_gso_t * gso )
+{
+    if ( !gso || !gso->stopping ) return false;
+    for ( int i = 0; gso->queues && i < gso->num_queues; ++i )
+        if ( gso->queues[i].thread && !gso->queues[i].stopped.load( std::memory_order_acquire ) )
+            return false;
+    return true;
+}
+
 void rocketnet_server_gso_destroy( struct rocketnet_server_gso_t * gso )
 {
     rocketnet_assert( gso );
+    const bool stopped = rocketnet_server_gso_stopped( gso );
+    rocketnet_assert( stopped );
+    if ( !stopped ) return;
 
     if ( gso->queues )
     {
-        // stop the workers first: a worker holds only its own queue's
-        // mutex and fd, so quit + join per queue tears down cleanly in
-        // any partial-create state
-
-        for ( int i = 0; i < gso->num_queues; i++ )
-        {
-            gso->queues[i].quit.store( true, std::memory_order_relaxed );
-        }
 
         for ( int i = 0; i < gso->num_queues; i++ )
         {

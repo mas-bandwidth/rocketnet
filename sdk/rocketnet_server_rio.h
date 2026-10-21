@@ -83,9 +83,8 @@ void rocketnet_server_rio_counters( rocketnet_server_rio_t * rio, uint64_t * cou
 // not yet dequeued
 int rocketnet_server_rio_pending( rocketnet_server_rio_t * rio );
 uint64_t rocketnet_server_rio_allocation_bytes();
-// regions destroy has leaked, process wide: a destroy whose drain did not
-// account for every posted request by its deadline leaks the registered
-// region rather than free it under the kernel. Zero when every destroy drained.
+// Historical diagnostic retained for internal consumers. Pending shutdowns
+// now retain their caller-owned handle until completion rather than leaking.
 uint64_t rocketnet_server_rio_leaked_regions();
 
 #if defined(ROCKETNET_RIO_TESTS)
