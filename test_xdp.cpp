@@ -5,7 +5,7 @@
 #include "rocketnet_wire.h"
 #include <stdio.h>
 
-bool rocketnet_server_socket_test_inactive_generation();
+bool rocketnet_server_socket_test_buffer_exchange();
 bool rocketnet_server_socket_test_replay_marks();
 bool rocketnet_server_socket_test_send_failures_without_mutex();
 
@@ -14,16 +14,16 @@ int main()
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
     if (rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK) return 1;
     rocketnet_server_socket_forbid_commit();
-    const bool passed = rocketnet_server_socket_test_inactive_generation();
+    const bool passed = rocketnet_server_socket_test_buffer_exchange();
     const bool replay_passed = rocketnet_server_socket_test_replay_marks();
     const bool send_failures_passed = rocketnet_server_socket_test_send_failures_without_mutex();
     rocketnet_term();
     if (!passed)
     {
-        fprintf(stderr, "native XDP inactive-generation check failed\n");
+        fprintf(stderr, "native XDP buffer-exchange check failed\n");
         return 1;
     }
-    printf("test_xdp_transport_inactive_generation\n");
+    printf("test_xdp_transport_buffer_exchange\n");
 
     if (!replay_passed)
     {

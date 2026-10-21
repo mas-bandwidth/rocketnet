@@ -56,7 +56,6 @@ void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consu
 
 #include <rocketnet_server_xdp.h>
 #include "rocketnet_pending_frames.h"
-#include "rocketnet_send_handoff.h"
 #include "rocketnet_xdp_limits.h"
 #include "rocketnet_xdp_replay_marks.h"
 #include "rocketnet_memory.h"
@@ -117,17 +116,64 @@ struct rocketnet_server_socket_receive_buffer_t
 {
     uint8_t padding_0[4096];
 
-    std::atomic<bool> ready{0};
-
     uint8_t padding_1[4096];
 
-    uint32_t num_packets;
+    uint32_t num_packets = 0;
     uint8_t eth[ROCKETNET_XDP_RECV_QUEUE_SIZE][ETH_ALEN];
     rocketnet_address_t from[ROCKETNET_XDP_RECV_QUEUE_SIZE];
     size_t packet_bytes[ROCKETNET_XDP_RECV_QUEUE_SIZE];
     uint8_t packet_data[ROCKETNET_XDP_RECV_QUEUE_SIZE][ROCKETNET_XDP_FRAME_SIZE];
 
     uint8_t padding_2[4096];
+};
+
+// Preallocated staging ownership. All methods are called with the matching
+// handoff mutex held; they exchange indices only, never packet bytes. The
+// producer is exclusive, ready buffers wait in FIFO order, and a claimed
+// buffer remains owned by its consumer until recycle().
+template<int N> struct rocketnet_xdp_buffer_exchange_t
+{
+    static_assert( N >= 3, "producer, consumer and spare XDP buffers" );
+    int producer = 0;
+    int free_index[N] = {};
+    int free_head = 0;
+    int free_count = N - 1;
+    int ready_index[N] = {};
+    int ready_head = 0;
+    int ready_count = 0;
+
+    rocketnet_xdp_buffer_exchange_t()
+    {
+        for ( int i = 1; i < N; ++i ) free_index[i - 1] = i;
+    }
+
+    bool publish()
+    {
+        if ( free_count == 0 ) return false;
+        const int old = producer;
+        producer = free_index[free_head];
+        free_head = ( free_head + 1 ) % N;
+        --free_count;
+        ready_index[( ready_head + ready_count ) % N] = old;
+        ++ready_count;
+        return true;
+    }
+
+    int claim()
+    {
+        if ( ready_count == 0 ) return -1;
+        const int index = ready_index[ready_head];
+        ready_head = ( ready_head + 1 ) % N;
+        --ready_count;
+        return index;
+    }
+
+    void recycle( int index )
+    {
+        rocketnet_assert( index >= 0 && index < N && free_count < N );
+        free_index[( free_head + free_count ) % N] = index;
+        ++free_count;
+    }
 };
 
 struct rocketnet_server_xdp_socket_t
@@ -155,25 +201,26 @@ struct rocketnet_server_xdp_socket_t
 
     uint8_t padding_4[4096];
 
-    uint64_t receive_counter;
-
     // frames the receive loop dropped, by reason (rocketnet_xdp_frame_receive);
-    // written by this queue's xdp thread under receive_mutex
+    // written only by this queue's xdp thread
     struct rocketnet_xdp_receive_drops_t receive_drops;
 
     // frames the flush did not send because the codec refused to build them
     // (a destination of the family this server does not serve); written by
-    // this queue's xdp thread under send_mutex
+    // this queue's xdp thread outside the handoff lock
     std::atomic<uint64_t> send_refused_build{0};
 
     // staged packets the flush did not copy because their length is 0 or
     // past ROCKETNET_RECEIVE_CEILING (rocketnet_xdp_send_copy); written by
-    // this queue's xdp thread under send_mutex
+    // this queue's xdp thread outside the handoff lock
     std::atomic<uint64_t> send_refused_length{0};
 
     uint8_t padding_5[4096];
 
-    rocketnet_send_handoff_t<ROCKETNET_XDP_NUM_BUFFERS> send_handoff;
+    rocketnet_xdp_buffer_exchange_t<ROCKETNET_XDP_NUM_BUFFERS> send_handoff;
+    rocketnet_xdp_buffer_exchange_t<ROCKETNET_XDP_NUM_BUFFERS> receive_handoff;
+    int receive_held_index = -1; // game view; returned at the next receive call
+    uint32_t receive_read_index = 0;
 
     uint8_t padding_6[4096];
 
@@ -952,6 +999,7 @@ uint64_t rocketnet_server_xdp_allocation_bytes(int queues)
 {
     if (queues < 1 || queues > ROCKETNET_XDP_MAX_QUEUES) return 0;
     uint64_t bytes = rocketnet_memory_allocations({sizeof(rocketnet_server_socket_t),
+        sizeof(rocketnet_xdp_replay_marks_t),
         (uint64_t)queues * sizeof(rocketnet_server_xdp_socket_t)});
     if (!bytes || !rocketnet_memory_add(bytes, (uint64_t)queues, rocketnet_platform_thread_allocation_bytes())) return 0;
     return bytes <= SIZE_MAX ? bytes : 0;
@@ -963,6 +1011,7 @@ uint64_t rocketnet_server_socket_memory_required(int num_queues)
     const uint64_t umem = rocketnet_xdp_umem_bytes(num_queues);
     uint64_t bytes = sizeof(rocketnet_server_socket_t);
     if (!umem ||
+        !rocketnet_memory_add(bytes, 1, sizeof(rocketnet_xdp_replay_marks_t)) ||
         !rocketnet_memory_add(bytes, (uint64_t)num_queues, sizeof(rocketnet_server_xdp_socket_t)) ||
         !rocketnet_memory_add(bytes, 1, umem) || bytes > SIZE_MAX)
         return 0;
@@ -2000,7 +2049,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
         // make sure we start off with the correct send buffer index
 
-        socket->send_flow_index.store( socket->send_handoff.acquire(), std::memory_order_relaxed );
+        socket->send_flow_index.store( socket->send_handoff.producer, std::memory_order_relaxed );
 
         // initialize receive frame allocator
 
@@ -2282,19 +2331,8 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
 {
     rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
 
-    int flow_index = socket->send_flow_index.load( std::memory_order_acquire );
-    if ( flow_index < 0 )
-    {
-        // Defensive slow path: no producer generation is published. With
-        // rocketnet_send_handoff_t::publish retaining the producer buffer,
-        // normal flushes do not reach it; rocketnet_server_socket_test_inactive_generation
-        // builds this state. Recovery needs no extra update.
-        if ( !rocketnet_platform_mutex_try_acquire( &socket->send_mutex ) ) return NULL;
-        rocketnet_server_socket_acquire_send_buffer( socket );
-        flow_index = socket->send_flow_index.load( std::memory_order_relaxed );
-        rocketnet_platform_mutex_release( &socket->send_mutex );
-        if ( flow_index < 0 ) return NULL;
-    }
+    const int flow_index = socket->send_flow_index.load( std::memory_order_acquire );
+    if ( flow_index < 0 ) return NULL;
     rocketnet_server_socket_send_buffer_t * send_buffer = &socket->send_buffer[flow_index];
 
     int packet_index = send_buffer->num_packets.fetch_add(1);
@@ -2422,52 +2460,29 @@ void rocketnet_server_socket_abort_packet( struct rocketnet_server_socket_t * se
     send_buffer->packet_info[packet_index].packet_bytes = 0;
 }
 
-// With send_mutex held. Only an unowned producer generation can acquire;
-// publish its index after resetting the retired buffer for concurrent fills.
-static void rocketnet_server_socket_acquire_send_buffer( rocketnet_server_xdp_socket_t * socket )
-{
-    if ( socket->send_flow_index.load( std::memory_order_relaxed ) >= 0 ) return;
-    const int acquired = socket->send_handoff.acquire();
-    if ( acquired >= 0 )
-    {
-        // A fresh generation resumes from an empty buffer: nothing is published
-        // yet, so no finish is below base.
-        auto * buffer = &socket->send_buffer[acquired];
-        buffer->num_packets = 0;
-        buffer->packet_start_index = 0;
-        buffer->base = 0;
-        socket->send_flow_index.store( acquired, std::memory_order_release );
-        return;
-    }
-    // Slow path: every generation is queued. reopen hands back the newest
-    // queued generation, never the front, and the producer stages after the
-    // packets that generation already published. finish_base marks that count,
-    // so a finish through a pointer from before the reopen is refused.
-    const int reopened = socket->send_handoff.reopen();
-    if ( reopened >= 0 )
-    {
-        auto * buffer = &socket->send_buffer[reopened];
-        buffer->base = buffer->num_packets.load( std::memory_order_relaxed );
-        socket->send_flow_index.store( reopened, std::memory_order_release );
-    }
-}
-
 void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * server_socket )
 {
     for ( int queue = 0; queue < server_socket->num_queues; queue++ )
     {
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
-        if ( !rocketnet_platform_mutex_try_acquire( &socket->send_mutex ) ) continue;
         const int index = socket->send_flow_index.load( std::memory_order_relaxed );
-        if ( index >= 0 && socket->send_buffer[index].num_packets > 0 )
+        if ( index < 0 || socket->send_buffer[index].num_packets.load( std::memory_order_relaxed ) <= 0 )
+            continue;
+        if ( !rocketnet_platform_mutex_try_acquire( &socket->send_mutex ) ) continue;
+        // With no free replacement, keep the producer and its complete
+        // packets staged. The next call retries after worker recycle.
+        if ( socket->send_handoff.publish() )
         {
-            // tla/RNDriverSendStaging.tla Publish: retain the last producer buffer.
-            // A busy worker leaves this generation staged for the next
-            // transport send_packets call (Publish retry rule).
-            if ( socket->send_handoff.publish() )
-                socket->send_flow_index.store( -1, std::memory_order_relaxed );
+            const int replacement = socket->send_handoff.producer;
+            rocketnet_platform_mutex_release( &socket->send_mutex );
+            // This newly acquired buffer has no other owner. Reset work
+            // stays outside the handoff lock, before publication to fills.
+            socket->send_buffer[replacement].num_packets.store( 0, std::memory_order_relaxed );
+            socket->send_buffer[replacement].packet_start_index = 0;
+            socket->send_buffer[replacement].base = 0;
+            socket->send_flow_index.store( replacement, std::memory_order_release );
+            continue;
         }
-        rocketnet_server_socket_acquire_send_buffer( socket );
         rocketnet_platform_mutex_release( &socket->send_mutex );
     }
 }
@@ -2584,94 +2599,87 @@ uint64_t rocketnet_server_socket_replay_commit_failures( struct rocketnet_server
 
 #if defined(ROCKETNET_XDP_TESTS)
 // Exercise the native staging entry points without creating kernel resources.
-bool rocketnet_server_socket_test_inactive_generation()
+bool rocketnet_server_socket_test_buffer_exchange()
 {
-    void * server_storage = rocketnet_malloc(NULL, sizeof(rocketnet_server_socket_t));
-    void * socket_storage = rocketnet_malloc(NULL, sizeof(rocketnet_server_xdp_socket_t));
-    if (!server_storage || !socket_storage)
+    const uint64_t planned_bytes = sizeof(rocketnet_server_socket_t) +
+        sizeof(rocketnet_xdp_replay_marks_t) + sizeof(rocketnet_server_xdp_socket_t) +
+        (uint64_t)ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
+    bool valid = rocketnet_server_socket_memory_required( 1 ) == planned_bytes;
+    rocketnet_xdp_buffer_exchange_t<3> exchange;
+    valid &= exchange.producer == 0;
+    valid &= exchange.publish() && exchange.producer == 1;
+    valid &= exchange.publish() && exchange.producer == 2;
+    valid &= !exchange.publish() && exchange.producer == 2;
+    valid &= exchange.claim() == 0;
+    valid &= exchange.claim() == 1;
+    exchange.recycle( 0 );
+    valid &= exchange.publish() && exchange.producer == 0;
+    valid &= exchange.claim() == 2;
+
+    void * server_storage = rocketnet_malloc( NULL, sizeof(rocketnet_server_socket_t) );
+    void * socket_storage = rocketnet_malloc( NULL, sizeof(rocketnet_server_xdp_socket_t) );
+    if ( !server_storage || !socket_storage )
     {
-        rocketnet_free(NULL, socket_storage);
-        rocketnet_free(NULL, server_storage);
+        rocketnet_free( NULL, socket_storage );
+        rocketnet_free( NULL, server_storage );
         return false;
     }
     auto * server = new (server_storage) rocketnet_server_socket_t();
     auto * socket = new (socket_storage) rocketnet_server_xdp_socket_t();
     server->num_queues = 1;
     server->socket = socket;
-    static const uint8_t test_gateway_mac[ETH_ALEN] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x02 };
-    rocketnet_xdp_reply_macs_reset(&server->reply_macs, test_gateway_mac);
-    rocketnet_platform_mutex_create(&socket->send_mutex);
-    rocketnet_server_socket_acquire_send_buffer(socket);
+    const bool send_mutex_ok = rocketnet_platform_mutex_create( &socket->send_mutex );
+    const bool receive_mutex_ok = rocketnet_platform_mutex_create( &socket->receive_mutex );
+    if ( !send_mutex_ok || !receive_mutex_ok )
+    {
+        if ( send_mutex_ok ) rocketnet_platform_mutex_destroy( &socket->send_mutex );
+        if ( receive_mutex_ok ) rocketnet_platform_mutex_destroy( &socket->receive_mutex );
+        socket->~rocketnet_server_xdp_socket_t();
+        server->~rocketnet_server_socket_t();
+        rocketnet_free( NULL, socket_storage );
+        rocketnet_free( NULL, server_storage );
+        return false;
+    }
+    socket->send_flow_index.store( socket->send_handoff.producer );
+    static const uint8_t gateway_mac[ETH_ALEN] = { 0x02, 0, 0, 0, 0, 2 };
+    rocketnet_xdp_reply_macs_reset( &server->reply_macs, gateway_mac );
     rocketnet_address_t to = {};
     to.type = ROCKETNET_ADDRESS_IPV4;
-    uint8_t * packets[ROCKETNET_XDP_NUM_BUFFERS] = {};
-    uint64_t ids[ROCKETNET_XDP_NUM_BUFFERS] = {};
-    bool valid = true;
-    for (int generation = 0; generation < ROCKETNET_XDP_NUM_BUFFERS; ++generation)
+    uint64_t packet_id = 0;
+    uint8_t * packet = rocketnet_server_socket_start_packet( server, &to, &packet_id );
+    valid &= packet == socket->send_buffer[0].packet_data[0];
+    if ( packet )
     {
-        packets[generation] = rocketnet_server_socket_start_packet(server, &to, &ids[generation]);
-        if (!packets[generation]) { valid = false; break; }
-        rocketnet_server_socket_finish_packet(server, ids[generation], packets[generation], 64 + generation);
-        valid &= socket->send_buffer[generation].packet_info[0].packet_bytes == size_t(64 + generation);
-        uint64_t aborted_id;
-        uint8_t * aborted = rocketnet_server_socket_start_packet(server, &to, &aborted_id);
-        if (!aborted) { valid = false; break; }
-        rocketnet_server_socket_finish_packet(server, aborted_id, aborted, 32);
-        rocketnet_server_socket_abort_packet(server, aborted_id, aborted);
-        valid &= socket->send_buffer[generation].packet_info[1].packet_bytes == 0;
-        // Construct the legacy inactive state for the defensive entry-point
-        // checks below; normal publish retains the final producer buffer.
-        rocketnet_send_handoff_t<ROCKETNET_XDP_NUM_BUFFERS> & handoff = socket->send_handoff;
-        handoff.queued[(handoff.head + handoff.count) % ROCKETNET_XDP_NUM_BUFFERS] = handoff.filling;
-        handoff.count++;
-        socket->send_handoff.filling = -1;
-        socket->send_flow_index.store(-1);
-        rocketnet_server_socket_acquire_send_buffer(socket);
-    }
-    // After both flushes the producer is already staging the newest reopened
-    // generation (never the front); finish_base refuses a pointer from before
-    // the reopen so it cannot rewrite a published packet.
-    const int newest = socket->send_flow_index.load();
-    valid &= newest == 1; // the slow path reopened the newest generation, never the front
-    if (newest == 1)
-    {
-        valid &= socket->send_buffer[1].base == 2;
-        // A finish or abort through a pointer from before the reopen sits below
-        // base and is refused, leaving published packet_bytes intact.
-        rocketnet_server_socket_finish_packet(server, ids[1], packets[1], 17);
-        rocketnet_server_socket_abort_packet(server, ids[1], packets[1]);
-        valid &= socket->send_buffer[1].packet_info[0].packet_bytes == size_t(65);
-        // The front generation was never reopened; a cross-buffer pointer is
-        // safely out of range and changes nothing either.
-        rocketnet_server_socket_finish_packet(server, ids[0], packets[0], 17);
-        valid &= socket->send_buffer[0].packet_info[0].packet_bytes == size_t(64);
-        // A fresh packet stages past the reopened generation's published count.
-        uint64_t id;
-        uint8_t * packet = rocketnet_server_socket_start_packet(server, &to, &id);
-        valid &= packet == socket->send_buffer[1].packet_data[2];
-        if (packet)
-            rocketnet_server_socket_finish_packet(server, id, packet, 90);
-        valid &= socket->send_buffer[1].packet_info[2].packet_bytes == size_t(90);
-        // Flush again: the reopened generation publishes and reopens as the
-        // newest; then retiring the front frees it for the next acquire.
-        rocketnet_server_socket_send_packets(server);
+        rocketnet_server_socket_finish_packet( server, packet_id, packet, 64 );
+        rocketnet_server_socket_send_packets( server );
         valid &= socket->send_flow_index.load() == 1;
-        socket->send_handoff.retire(); // No worker exists; retire one copied generation.
-        rocketnet_server_socket_send_packets(server);
-        valid &= socket->send_flow_index.load() == 0; // the retired front, acquired fresh
-        uint8_t * fresh = rocketnet_server_socket_start_packet(server, &to, &id);
-        valid &= fresh == packets[0];
-        if (fresh)
-        {
-            rocketnet_server_socket_finish_packet(server, id, fresh, 100);
-            valid &= socket->send_buffer[0].packet_info[0].packet_bytes == 100;
-        }
+        rocketnet_platform_mutex_acquire( &socket->send_mutex );
+        const int worker_index = socket->send_handoff.claim();
+        rocketnet_platform_mutex_release( &socket->send_mutex );
+        valid &= worker_index == 0;
+        valid &= socket->send_buffer[0].packet_info[0].packet_bytes == 64;
     }
-    rocketnet_platform_mutex_destroy(&socket->send_mutex);
+
+    socket->receive_buffer[0].num_packets = 1;
+    socket->receive_buffer[0].packet_bytes[0] = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES;
+    socket->receive_buffer[0].from[0] = to;
+    rocketnet_platform_mutex_acquire( &socket->receive_mutex );
+    valid &= socket->receive_handoff.publish();
+    rocketnet_platform_mutex_release( &socket->receive_mutex );
+    rocketnet_server_socket_receive_packets( server );
+    valid &= socket->receive_held_index == 0;
+    valid &= server->process_packets.num_packets == 1;
+    valid &= server->process_packets.packet_data[0] == socket->receive_buffer[0].packet_data[0];
+    rocketnet_server_socket_receive_packets( server );
+    valid &= socket->receive_held_index == -1;
+    valid &= socket->receive_buffer[0].num_packets == 0;
+
+    if ( socket->send_mutex.ok ) rocketnet_platform_mutex_destroy( &socket->send_mutex );
+    if ( socket->receive_mutex.ok ) rocketnet_platform_mutex_destroy( &socket->receive_mutex );
     socket->~rocketnet_server_xdp_socket_t();
     server->~rocketnet_server_socket_t();
-    rocketnet_free(NULL, socket_storage);
-    rocketnet_free(NULL, server_storage);
+    rocketnet_free( NULL, socket_storage );
+    rocketnet_free( NULL, server_storage );
     return valid;
 }
 
@@ -2882,38 +2890,43 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
     {
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
 
-        // The worker can hold this mutex across a whole receive batch. Leave
-        // this queue staged for the next call instead of waiting on the game
-        // thread; its counter and buffers stay unchanged on a failed try.
-        if ( !rocketnet_platform_mutex_try_acquire( &socket->receive_mutex ) )
-            continue;
+        // Last call's view has expired. A partly consumed buffer remains
+        // owned here with its cursor; a finished one may be reset outside
+        // the lock and returned before the next FIFO buffer is claimed.
+        if ( socket->receive_held_index >= 0 &&
+             socket->receive_read_index == socket->receive_buffer[socket->receive_held_index].num_packets )
         {
-            socket->receive_counter++;
-        }
-        rocketnet_platform_mutex_release( &socket->receive_mutex );
-
-        const int on_buffer = ( socket->receive_counter ) % ROCKETNET_XDP_NUM_BUFFERS;
-
-        for ( int j = 0; j < ROCKETNET_XDP_NUM_BUFFERS; j++ )
-        {
-            if ( j == on_buffer )
+            socket->receive_buffer[socket->receive_held_index].num_packets = 0;
+            if ( !rocketnet_platform_mutex_try_acquire( &socket->receive_mutex ) )
                 continue;
+            socket->receive_handoff.recycle( socket->receive_held_index );
+            socket->receive_held_index = socket->receive_handoff.claim();
+            socket->receive_read_index = 0;
+            rocketnet_platform_mutex_release( &socket->receive_mutex );
+        }
+        else if ( socket->receive_held_index < 0 )
+        {
+            if ( !rocketnet_platform_mutex_try_acquire( &socket->receive_mutex ) )
+                continue;
+            socket->receive_held_index = socket->receive_handoff.claim();
+            socket->receive_read_index = 0;
+            rocketnet_platform_mutex_release( &socket->receive_mutex );
+        }
 
-            rocketnet_server_socket_receive_buffer_t * receive_buffer = &socket->receive_buffer[j];
+        if ( socket->receive_held_index < 0 ) continue;
+        rocketnet_server_socket_receive_buffer_t * receive_buffer = &socket->receive_buffer[socket->receive_held_index];
+        for ( uint32_t i = socket->receive_read_index; i < receive_buffer->num_packets; i++ )
+        {
+            if ( server_socket->process_packets.num_packets >= ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS )
+                break;
+            uint8_t * eth = receive_buffer->eth[i];
+            rocketnet_address_t from = receive_buffer->from[i];
+            uint8_t * packet_data = receive_buffer->packet_data[i];
+            const int packet_bytes = receive_buffer->packet_bytes[i];
 
-            for ( int i = 0; i < (int) receive_buffer->num_packets; i++ )
-            {
-                uint8_t * eth = receive_buffer->eth[i];
-                rocketnet_address_t from = receive_buffer->from[i];
-                uint8_t * packet_data = receive_buffer->packet_data[i];
-                const int packet_bytes = receive_buffer->packet_bytes[i];
-
-                rocketnet_assert( packet_bytes >= ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
-
-                rocketnet_server_socket_process_staged_packet( server_socket, eth, &from, packet_data, packet_bytes );
-            }
-
-            receive_buffer->num_packets = 0;
+            rocketnet_assert( packet_bytes >= ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
+            rocketnet_server_socket_process_staged_packet( server_socket, eth, &from, packet_data, packet_bytes );
+            socket->receive_read_index = i + 1;
         }
     }        
 }
@@ -2949,6 +2962,7 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
     fds[0].events = POLLIN;
 
     int num_batch_packets = 0;
+    int send_worker_index = -1;
     uint64_t batch_frames[ROCKETNET_XDP_SEND_BATCH_SIZE];
     int batch_packet_bytes[ROCKETNET_XDP_SEND_BATCH_SIZE];
 
@@ -2980,16 +2994,15 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
         uint32_t receive_index;
         
-        uint32_t num_packets = xsk_ring_cons__peek( &socket->receive_queue, (uint32_t)pending_return.available(), &receive_index );
+        rocketnet_server_socket_receive_buffer_t * receive_buffer =
+            &socket->receive_buffer[socket->receive_handoff.producer];
+        const uint32_t receive_capacity = ROCKETNET_XDP_RECV_QUEUE_SIZE - receive_buffer->num_packets;
+        const uint32_t receive_limit = (uint32_t)pending_return.available() < receive_capacity ?
+            (uint32_t)pending_return.available() : receive_capacity;
+        uint32_t num_packets = receive_limit ? xsk_ring_cons__peek( &socket->receive_queue, receive_limit, &receive_index ) : 0;
 
         if ( num_packets > 0 )
         {
-            rocketnet_platform_mutex_acquire( &socket->receive_mutex );
-
-            const int on_index = socket->receive_counter % ROCKETNET_XDP_NUM_BUFFERS;
-
-            rocketnet_server_socket_receive_buffer_t * __restrict__ receive_buffer = &socket->receive_buffer[on_index];
-
             // receive packets
 
             // How many descriptors this pass actually took. The loop below can
@@ -3064,8 +3077,6 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
                 }
             }
 
-            rocketnet_platform_mutex_release( &socket->receive_mutex );
-
             rocketnet_xdp_receive_ring_finish( num_packets, num_consumed,
                 []( void * r, uint32_t n ) { xsk_ring_cons__cancel( (struct xsk_ring_cons *) r, n ); },
                 []( void * r, uint32_t n ) { xsk_ring_cons__release( (struct xsk_ring_cons *) r, n ); },
@@ -3082,6 +3093,16 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
                 break;
             }
             return_pending_frames();
+        }
+
+        // The worker finished every write before publishing this buffer.
+        // If no spare exists it retains the producer and stops peeking once
+        // full; the kernel RX ring supplies backpressure without overwrites.
+        if ( receive_buffer->num_packets > 0 )
+        {
+            rocketnet_platform_mutex_acquire( &socket->receive_mutex );
+            socket->receive_handoff.publish();
+            rocketnet_platform_mutex_release( &socket->receive_mutex );
         }
 
         // mark any completed send packet frames as free to be reused
@@ -3105,9 +3126,13 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
         if ( num_batch_packets == 0 )
         {
-            rocketnet_platform_mutex_acquire( &socket->send_mutex );
-
-            const int on_index = socket->send_handoff.front();
+            if ( send_worker_index < 0 )
+            {
+                rocketnet_platform_mutex_acquire( &socket->send_mutex );
+                send_worker_index = socket->send_handoff.claim();
+                rocketnet_platform_mutex_release( &socket->send_mutex );
+            }
+            const int on_index = send_worker_index;
             if ( on_index >= 0 )
             {
 
@@ -3194,13 +3219,19 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
                     send_buffer->packet_start_index++;
                 }
 
-                // UMEM now owns every copied packet. Only now may the producer
-                // reset/reuse this staging generation, even across repeated flushes.
+                // UMEM now owns every copied packet. Only after the final copy
+                // may this worker reset and return staging to the free ring.
                 if ( send_buffer->packet_start_index == num_packets )
-                    socket->send_handoff.retire();
+                {
+                    send_buffer->num_packets.store( 0, std::memory_order_relaxed );
+                    send_buffer->packet_start_index = 0;
+                    send_buffer->base = 0;
+                    rocketnet_platform_mutex_acquire( &socket->send_mutex );
+                    socket->send_handoff.recycle( on_index );
+                    rocketnet_platform_mutex_release( &socket->send_mutex );
+                    send_worker_index = -1;
+                }
             }
-
-            rocketnet_platform_mutex_release( &socket->send_mutex );
         }
 
         // actually send the packets
