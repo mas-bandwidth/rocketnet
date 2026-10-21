@@ -347,8 +347,8 @@ families. The IPv6 destination is `public_address_ipv6` in
 RocketNet assumes a 1500-byte MTU path and never sends a datagram the network
 must fragment, so an IP fragment addressed to the server is hostile or
 misconfigured. The first fragment of a datagram to the server's port (the one
-that carries the UDP header: IPv4 with more-fragments set and offset 0, ihl 5,
-protocol UDP; IPv6 whose next header is the fragment header (44) at offset 0
+that carries the UDP header: IPv4 with more-fragments set and offset 0,
+protocol UDP, the UDP header after any options; IPv6 whose next header is the fragment header (44) at offset 0
 with more-fragments set and UDP behind it), whose UDP header is in the frame
 and names the configured port and address, is dropped and increments
 `ROCKETNET_SERVER_XDP_COUNTER_DROPPED_FIRST_FRAGMENT` (surfaced as
@@ -362,14 +362,30 @@ fragment the kernel can never reassemble the datagram, so the rest wait in
 the reassembly queue and are dropped cheaply at its reassembly timeout, and
 other services' fragmented traffic is untouched. Both checks run before the
 size, epoch, filter and replay checks for both families, so a fragment is never
-counted as any other drop. An IPv6 frame
-whose next header is any other extension header (hop-by-hop 0, routing 43,
-destination options 60, AH 51 or ESP 50) passes to the kernel stack through
-one named branch and increments
-`ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION`. The program never walks
-an extension chain and never drops one. Every other non-UDP next header,
-ICMPv6 (neighbor discovery) above all, passes uncounted, as non-UDP IPv4
-does.
+counted as any other drop. A non-first fragment carries no UDP header, so
+nothing in it names a port, and the program cannot tell one for the server
+from one for another service.
+
+RocketNet never sends IPv4 options or IPv6 extension headers, and in XDP mode
+no kernel socket listens on the server's port, so a datagram for the server
+behind either has nowhere to go but the kernel's error path. An IPv4 datagram
+with options (ihl 6 to 15) whose UDP header, after the options, names the
+configured port and address is dropped and increments
+`ROCKETNET_SERVER_XDP_COUNTER_DROPPED_IP_OPTIONS_OR_EXTENSION` (surfaced as
+`XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION`); with options to any other port
+or address it passes uncounted. An IPv6 frame whose next header is another
+extension header (hop-by-hop 0, routing 43, destination options 60, AH 51 or
+ESP 50) has its chain walked for at most four headers (hop-by-hop, routing,
+destination options and AH by their length fields, a first fragment header
+by its 8 bytes). When the walk reaches a UDP header in the frame that names
+the configured port and address, the frame is dropped and increments the
+same counter, before the size, epoch, filter and replay checks. Every other
+extension-header frame passes to the kernel stack and increments
+`ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION`: to another port or
+address, behind ESP (never opened), behind a non-first fragment header, a
+chain longer than the walk, or cut by the frame end. Every other non-UDP next
+header, ICMPv6 (neighbor discovery) above all, passes uncounted, as non-UDP
+IPv4 does.
 
 The AF_XDP transport serves IPv4 and IPv6 end to end. A server serves one
 family, or both when `rocketnet_server_create` is given an IPv4 and an IPv6

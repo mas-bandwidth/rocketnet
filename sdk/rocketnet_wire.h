@@ -230,15 +230,15 @@ _Static_assert( sizeof(struct rocketnet_server_xdp_replay_value_t) == 8, "the XD
 // and read back by userspace -- the same counter discipline as the rest of
 // the library, running through the kernel. The map is per-CPU; userspace
 // sums across CPUs. For packets on the server's port,
-// received == redirected + the eight drop reasons. DROPPED_REPLAYED counts
+// received == redirected + the nine drop reasons. DROPPED_REPLAYED counts
 // the session packets dropped because their sequence is
 // ROCKETNET_XDP_REPLAY_WINDOW or more behind the replay map's high-water for
 // their source address and port. PASSED_IPV6_EXTENSION
 // counts the IPv6 frames the program hands to the kernel stack because their
-// next header is an extension header (hop-by-hop, routing, fragment,
-// destination options, AH, ESP): the program never walks that chain, so it
-// cannot say whether such a frame was for this server, and it counts them on
-// any port. RocketNet assumes a 1500-byte MTU path, so an IP fragment for
+// next header is an extension header (hop-by-hop, routing, destination
+// options, AH, ESP) and the walk of the chain did not reach UDP to this
+// server (another port, ESP, a non-first fragment, a chain past the walk's
+// bound, or the frame end), on any port. RocketNet assumes a 1500-byte MTU path, so an IP fragment for
 // the server is hostile or misconfigured. DROPPED_FIRST_FRAGMENT counts the
 // first fragments the program drops: IPv4 with more-fragments set and
 // offset 0 (ihl 5, protocol UDP), or IPv6 whose next header is a fragment
@@ -254,6 +254,13 @@ _Static_assert( sizeof(struct rocketnet_server_xdp_replay_value_t) == 8, "the XD
 // DROPPED_NO_SOCKET counts the packets that passed every check but whose
 // receive queue has no AF_XDP socket in the XSKMAP (bpf_redirect_map
 // refuses the empty slot and the program drops the packet).
+// DROPPED_IP_OPTIONS_OR_EXTENSION counts the datagrams to the configured
+// address and port that the program drops because IPv4 options (ihl 6 to
+// 15) or IPv6 extension headers sit between the IP header and UDP: RocketNet
+// never sends either, and in XDP mode no kernel socket listens on the port.
+// The program walks an IPv6 extension chain a bounded number of headers to
+// find the UDP header; an extension-header frame it does not drop is counted
+// in PASSED_IPV6_EXTENSION as before, on any port.
 
 #define ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED                 0
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL          1
@@ -266,7 +273,8 @@ _Static_assert( sizeof(struct rocketnet_server_xdp_replay_value_t) == 8, "the XD
 #define ROCKETNET_SERVER_XDP_COUNTER_PASSED_FRAGMENT            8
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_FIRST_FRAGMENT     9
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_NO_SOCKET          10
-#define ROCKETNET_SERVER_XDP_NUM_COUNTERS                       11
+#define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_IP_OPTIONS_OR_EXTENSION 11
+#define ROCKETNET_SERVER_XDP_NUM_COUNTERS                       12
 
 struct rocketnet_server_xdp_stats_t
 {
