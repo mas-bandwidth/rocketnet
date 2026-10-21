@@ -2276,8 +2276,6 @@ int rocketnet_server_socket_state( rocketnet_server_socket_t * server_socket )
     return server_socket->state;
 }
 
-static void rocketnet_server_socket_acquire_send_buffer( rocketnet_server_xdp_socket_t * socket );
-
 // the staging slot a finish or abort names, from the byte offset of its
 // packet pointer past the staging buffer's first slot: a negative, unaligned
 // or past-the-end offset is refused (-1) BEFORE it is divided, since C
