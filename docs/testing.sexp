@@ -27,11 +27,12 @@
 ; A transport that builds on more than one platform (portable, loopback) is y
 ; only when it is green on every platform it builds on.
 ;
-; Recorded 2026-10-20 for v1.0.0-preview-1 at 330e951e. CI run 39514217665 at
-; 330e951e: the Linux ASan and UBSan unit job passes; the Linux Debug and
-; Release legs stop before their suites, at the floating-point floor check;
-; the Windows build is red (two Windows functional files call a name the
-; transport rename removed); the macOS legs had not run when this was recorded.
+; Recorded 2026-10-20 for v1.0.0-preview-1 at 330e951e; rechecked at b12fb5a1.
+; CI run 39514217665 at 330e951e: the Linux ASan and UBSan unit job passes;
+; the Linux Debug and Release legs stop before their suites, at the
+; floating-point floor check; the Windows build was red. 4529ca2d landed the
+; unit and functional suites green on Linux, macOS and Windows; the ci.yml run
+; at b12fb5a1 had not finished when this was rechecked.
 (:title "RocketNet v1.0.0-preview-1 testing"
  :all-cells-apply t
  :tables-only t
@@ -45,8 +46,8 @@
    :label "test"
    :columns ("Windows" "macOS" "Linux")
    :rows
-   ((:feature "Unit suite (./bin/test)" :cells (n n y) :source "test.cpp and test_unit_*.cpp (./bin/test)" :evidence "Linux: ./bin/test exits 0 at 330e951e in a Release build on Linux x86_64, and the ASan and UBSan unit job of CI run 39514217665 at 330e951e passes" :pending ((Windows "the Windows build is red at 330e951e in CI run 39514217665: functional/windows_socket_errors.cpp and functional/windows_connreset.cpp call a name the transport rename removed; being made green for v1.0.0-preview-1") (macOS "the macOS legs of CI run 39514217665 at 330e951e had not run when this was recorded; being made green for v1.0.0-preview-1")))
-    (:feature "Functional suite (./bin/functional)" :cells (n n n) :source "functional/ (./bin/functional)" :pending ((Windows "the Windows build is red at 330e951e in CI run 39514217665: functional/windows_socket_errors.cpp and functional/windows_connreset.cpp call a name the transport rename removed; being made green for v1.0.0-preview-1") (macOS "the macOS legs of CI run 39514217665 at 330e951e had not run when this was recorded; being made green for v1.0.0-preview-1") (Linux "./bin/functional exits 1 at 330e951e in a Release build on Linux x86_64, at test_transport_control.cpp:428 (num_acked == 6), and the ASan and UBSan functional job of CI run 39514217665 fails; being made green for v1.0.0-preview-1")))
+   ((:feature "Unit suite (./bin/test)" :cells (y y y) :source "test.cpp and test_unit_*.cpp (./bin/test)" :evidence "Windows: the unit and functional suites green on Windows, landed 4529ca2d; macOS: ./bin/test exits 0 at b12fb5a1 in a Release build on macOS arm64; Linux: ./bin/test exits 0 at 330e951e in a Release build on Linux x86_64, the ASan and UBSan unit job of CI run 39514217665 at 330e951e passes, and the suites green on Linux, landed 4529ca2d")
+    (:feature "Functional suite (./bin/functional)" :cells (y n y) :source "functional/ (./bin/functional)" :evidence "Windows: functional.exe green on Windows, landed 4529ca2d (the Windows build fixed by ab931336 and f86850f0); Linux: ./bin/functional green on Linux, landed 4529ca2d (test_transport_control.cpp fixed by f86850f0)" :pending ((macOS "green in parts, landed 4529ca2d; the whole suite run as one command exceeds the 120 second limit, and the portable dual-stack IPv4 connect can fail; both are known issues")))
     (:feature "Functional suite repeated, zero flakes" :cells (o o o) :source "functional/ (./bin/functional, repeated)" :pending ((Windows "planned for the final deliverable: 20 of 20 runs") (macOS "planned for the final deliverable") (Linux "planned for the final deliverable")))
     (:feature "Transport matrix, every cell fifty times" :cells (o o o) :source "tools/check_transport_matrix.py" :pending ((Windows "planned for the final deliverable") (macOS "planned for the final deliverable") (Linux "planned for the final deliverable")))
     (:feature "Sanitizers (ASan, UBSan, TSan; MSVC ASan on Windows)" :cells (y p o) :source "ci.yml sanitizer jobs" :evidence ((Windows "MSVC ASan, test.exe, test_lifecycle.exe, test_iocp.exe and functional.exe on the default transport, iocp and rio, zero reports, landed 20e2a9a4")) :pending ((macOS "planned for the final deliverable") (Linux "planned for the final deliverable: the full functional ASan/UBSan and TSan matrices; ASan/UBSan unit and focused fragment tests are green, 1452058c")))
@@ -64,7 +65,7 @@
     (:feature "Soak (30 minutes per transport under impairment)" :cells (o y o) :source "soak.c, soak_sim.cpp" :evidence "macOS: six cells pass with flat fds and threads, df775cf1" :pending ((Windows "planned for the final deliverable") (Linux "planned for the final deliverable")))
     (:feature "Main API calls under 0.1 ms each, Release, under load" :cells (p p p) :source "nightly-frame-budget.yml, tools/check_frame_budget.py (the client frame budget)" :pending ((Windows "planned for the final deliverable: every main API call timed in Release at 1000 clients") (macOS "planned for the final deliverable: every main API call timed in Release at 1000 clients") (Linux "planned for the final deliverable: every main API call timed in Release at 1000 clients")))
     (:feature "Nightlies (every nightly job's steps green on this branch)" :cells (p o o) :source ".github/workflows/nightly*.yml, fuzz-nightly.yml" :pending ((Windows "planned for the final deliverable") (macOS "planned for the final deliverable: for nightly-soak; fuzz, examples and frame budget ran by hand in landed e7fba514") (Linux "planned for the final deliverable: for nightly-soak; fuzz, frame budget, channel seeds and leaks green, 381203ba")))
-    (:feature "CI (ci.yml, every step green on this branch)" :cells (n n n) :source ".github/workflows/ci.yml" :pending ((Windows "the Windows build is red at 330e951e in CI run 39514217665: functional/windows_socket_errors.cpp and functional/windows_connreset.cpp call a name the transport rename removed; being made green for v1.0.0-preview-1") (macOS "the macOS legs of CI run 39514217665 at 330e951e had not run when this was recorded; being made green for v1.0.0-preview-1") (Linux "in CI run 39514217665 at 330e951e the Debug and Release legs stop at the floating-point floor check, and the functional sanitizer, tsan lifecycle, conformance, platform selftest and big-endian jobs are red")))))
+    (:feature "CI (ci.yml, every step green on this branch)" :cells (n n n) :source ".github/workflows/ci.yml" :pending ((Windows "no ci.yml run has finished at b12fb5a1; the last finished run, 39514217665 at 330e951e, was red on Windows") (macOS "no ci.yml run has finished at b12fb5a1") (Linux "no ci.yml run has finished at b12fb5a1; in CI run 39514217665 at 330e951e the Debug and Release legs stop at the floating-point floor check, and the functional sanitizer, tsan lifecycle, conformance, platform selftest and big-endian jobs are red")))))
   (:id "platform-specific"
    :title "Platform-specific tests"
    :text "The tests that apply to only some platforms: one row per platform a test applies to."
@@ -72,9 +73,9 @@
    :specific t
    :columns ("Windows" "macOS" "Linux")
    :rows
-   ((:feature "UDP connection reset (SIO_UDP_CONNRESET) never stalls receive" :on Windows :cell n :source "test_iocp.cpp" :pending "landed as 561142df; the Windows build is red at 330e951e in CI run 39514217665: functional/windows_socket_errors.cpp and functional/windows_connreset.cpp call a name the transport rename removed; being made green for v1.0.0-preview-1")
+   ((:feature "UDP connection reset (SIO_UDP_CONNRESET) never stalls receive" :on Windows :cell y :source "functional/windows_connreset.cpp, test_iocp.cpp" :evidence "Windows: landed as 561142df; the test_*_transport_windows_connreset_* cases in functional.exe, green on Windows in landed 4529ca2d")
     (:feature "Application Verifier" :on Windows :cell y :source "the CI workflows" :evidence "Windows: 0 verifier stops, 7457d35b")
-    (:feature "App Nap and timer coalescing keep client timing" :on macOS :cell y :source "functional/macos_client_timing.cpp" :evidence "macOS: functional/macos_client_timing.cpp, a2c4ac1f")
+    (:feature "App Nap and timer coalescing keep client timing" :on macOS :cell y :source "functional/macos_client_timing.cpp" :evidence "macOS: functional/macos_client_timing.cpp, a2c4ac1f; test_macos_client_timing_background_thread_qos removed in f679cf20; the remaining cases measure macOS scheduling and are a known issue, to be removed or rewritten")
     (:feature "MemorySanitizer (msan.yml)" :on Linux :cell y :source ".github/workflows/msan.yml, tools/msan_known.txt" :evidence "Linux: msan.yml run 39514217624 at 330e951e passes")
     (:feature "Big-endian system build and suites" :on Linux :cell p :source ".github/workflows/nightly-bigendian-system.yml, tools/bigendian/" :pending "planned for the final deliverable")
     (:feature "Live XDP test (an XDP server, a client on every test machine)" :on Linux :cell p :source "docs/LIVE-XDP.md, tla/MCRNLiveFleetRun.cfg" :pending "planned for the final deliverable: after v1.0.0-preview-1")))
