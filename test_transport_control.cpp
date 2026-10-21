@@ -1,10 +1,12 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Compile the actual transport here to seed protocol state and substitute a
-// deterministic transport. No test hook or additional export enters the SDK.
+// deterministic transport. The local stats hook keeps worker progress explicit.
 #include "test/native_shutdown.h"
 #include "sdk/rocketnet_server_protocol.h"
 #include "sdk/rocketnet_replay.h"
 #include "sdk/rocketnet_fragment.h"
+// This target compiles the transport into its own deterministic fixture.
+#define ROCKETNET_XDP_STAGING_TEST_HOOKS 1
 static bool fail_seal;
 static int checked_seals;
 static bool check_arena_copy;
@@ -14,6 +16,7 @@ static int controlled_seal(rocketnet_server_protocol_t * server, int client_inde
 #define rocketnet_server_protocol_seal_payload_frame controlled_seal
 #include "sdk/rocketnet_server_transport.cpp"
 #undef rocketnet_server_protocol_seal_payload_frame
+#undef ROCKETNET_XDP_STAGING_TEST_HOOKS
 
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "control check failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); exit(1); } } while (0)
 
@@ -223,11 +226,21 @@ static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketn
     return server;
 }
 
+static void seed_stats_connection_ids(rocketnet_server_transport_t * server, int clients)
+{
+    // The fixture assigns slots directly. Production assigns these generation
+    // ids at connect; async stats only publishes a still-matching generation.
+    for (int i = 0; i < clients; ++i)
+        server->protocol.connection_ids[i] = ++server->protocol.next_connection_id;
+}
+
 static void test_buffered_control_pressure(int clients = 300)
 {
     auto * f = new control_fixture_t();
     rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_set_stats_worker_manual_for_test(true);
     auto * server = make_server(f, &operations, clients, false);
+    seed_stats_connection_ids(server, clients);
     f->requests = ROCKETNET_SERVER_MAX_RECEIVE_PACKETS;
     // Publication still follows the transport's modulo phases. Exercise
     // every configured slot before checking the high slots' RTT; keep the
@@ -235,7 +248,7 @@ static void test_buffered_control_pressure(int clients = 300)
     const int stats_phases = ( clients + ROCKETNET_CLIENT_STATS_SLOTS_PER_UPDATE - 1 ) /
                              ROCKETNET_CLIENT_STATS_SLOTS_PER_UPDATE;
     const double begin = rocketnet_time();
-    for (int step = 0; step < stats_phases; ++step)
+    for (int step = 0; step <= stats_phases; ++step)
     {
         double now = 1.0 + step;
         // Half the clients owe standalone ACKs while their keep-alive clock
@@ -252,7 +265,17 @@ static void test_buffered_control_pressure(int clients = 300)
         CHECK(f->responses == (step + 1) * f->requests);
         for (int i = 0; i < clients; ++i)
             CHECK((i % 2 ? f->acks[i] : f->keep_alives[i]) == step + 1);
+        // Snapshot N is computed after update N and published by update N+1.
+        // The last update above publishes the final modulo phase while still
+        // exercising the same response and control assertions as every frame.
+        if (step < stats_phases)
+            CHECK(rocketnet_server_transport_stats_worker_step_for_test(server));
     }
+    uint64_t submitted = 0, completed = 0, published = 0, busy_skips = 0;
+    CHECK(rocketnet_server_transport_stats_worker_status_for_test(server,
+        &submitted, &completed, &published, &busy_skips));
+    CHECK(submitted == (uint64_t) stats_phases + 1 && completed == (uint64_t) stats_phases);
+    CHECK(published == (uint64_t) clients && busy_skips == 0);
     const double elapsed_ms = (rocketnet_time() - begin) * 1000.0;
     for (int i = 0; i < clients; ++i) CHECK(server->protocol.acks->endpoints[i].rtt == 17.0f);
     rn_native_server_transport_stop_and_destroy(server); delete f;
@@ -286,9 +309,15 @@ static void test_staged_control_fairness()
 {
     auto * f = new control_fixture_t(); f->capacity = 2;
     rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_set_stats_worker_manual_for_test(true);
     auto * server = make_server(f, &operations, 12, true);
+    seed_stats_connection_ids(server, 12);
     // Every slot remains due, but only two frames are available per update.
-    for (int step = 0; step < 6; ++step) rocketnet_server_transport_update(server, 1.0 + step);
+    for (int step = 0; step < 6; ++step)
+    {
+        rocketnet_server_transport_update(server, 1.0 + step);
+        CHECK(rocketnet_server_transport_stats_worker_step_for_test(server));
+    }
     for (int i = 0; i < 12; ++i)
     {
         CHECK(f->keep_alives[i] == 1);
