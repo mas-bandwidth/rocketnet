@@ -363,6 +363,26 @@ static void test_receive_publication_never_waits()
     rocketnet_address_t bind = address("127.0.0.1:0");
     rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create(NULL, &bind, 1);
     CHECK(transport);
+    rocketnet_address_t peer_address = address("127.0.0.1:0");
+    rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create(NULL, &peer_address,
+        ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 4 * 1024 * 1024, 4 * 1024 * 1024);
+    CHECK(peer);
+    const uint8_t marker = 0x5a;
+    rocketnet_platform_socket_send_packet(peer, &bind, &marker, 1);
+    uint8_t * view = NULL;
+    const double view_deadline = rocketnet_platform_time() + 5.0;
+    while (!view && rocketnet_platform_time() < view_deadline)
+    {
+        rocketnet_server_iocp_receive_packets(transport);
+        rocketnet_server_socket_process_packets_t * batch = rocketnet_server_iocp_process_packets(transport);
+        if (batch->num_packets == 1)
+        {
+            CHECK(batch->packet_bytes[0] == 1 && batch->packet_data[0][0] == marker);
+            view = batch->packet_data[0];
+        }
+        rocketnet_platform_sleep(0.001);
+    }
+    CHECK(view);
     std::atomic<bool> held{false};
     std::atomic<bool> release_lock{false};
     std::atomic<bool> receive_returned{false};
@@ -389,8 +409,11 @@ static void test_receive_publication_never_waits()
     holder.join();
     CHECK(returned_before_release);
     CHECK(rocketnet_server_iocp_process_packets(transport)->num_packets == 0);
+    CHECK(view[0] == marker);
+    CHECK(rocketnet_server_iocp_test_receive_view_published(transport, view));
     wait_stopped(transport);
     rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+    rocketnet_platform_socket_destroy(peer);
     printf("test_iocp_transport_receive_publication_never_waits\n");
 }
 
