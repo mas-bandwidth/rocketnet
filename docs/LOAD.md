@@ -13,6 +13,37 @@ for this harness's 32-byte payloads, eight reliability cases and one-fragment
 messages. It does not change public defaults or make a general memory promise
 for other applications.
 
+For a constant offered application rate across population sizes, set
+`LOAD_MESSAGES_PER_CLIENT_SECOND=1`. This offers one 32-byte message per client
+per second in each direction while keeping the same client update schedule.
+Client-to-server messages still rotate through all eight reliability modes;
+server-to-client messages remain reliable-ordered. A delayed client update
+offers at most one message pair and sets its next due time from that update,
+so the harness never catches up with a burst. Without this variable, the
+original one-pair-per-update workload is unchanged. The summary prints the
+target, offered and accepted-message rates per client per second; the offered
+rate can fall below target when updates are slow, and the accepted rate can
+fall further when sends are refused. Fixed-rate runs report
+`application_offers_accepted=FAIL` and fail the verdict if either direction
+refuses an offered message.
+
+The `wire_window=traffic` counters are snapshots before the traffic clock
+starts and at the first drain transition. `wire_window_seconds` measures from
+the traffic clock through the transition snapshot, including any last traffic
+slice overrun.
+`max_client_wire_up_kbps` and `max_client_wire_down_kbps` are the maximum over
+individual clients of their SDK byte-counter deltas divided by that window;
+they are not derived from an aggregate average. The client and server traffic
+byte totals and aggregate kbps are also reported separately. Fixed-rate runs
+require both per-client maxima to stay strictly below 100 kbps; the summary
+reports `client_wire_under_100kbps`. `session_*_wire_bytes_*` covers
+handshake, traffic and drain before teardown, as labeled by
+`wire_session_scope`. These SDK counters do not establish the physical NIC's
+line rate, so a scaling ladder must compare its aggregate measured traffic
+with the actual host link capacity separately. The fixed-rate workload has
+`timing_baseline=fixed_rate_v1`; compare its frame timings only with runs that
+share rate, population, transport and measurement scope.
+
 The light profile sets eight channels, a 64-message in-flight reliability
 window, 4096-byte receive buffers, a 1415-byte maximum message, 12288-byte send
 buffers, 16-message send queues, 16 packets in flight, and one 1416-byte

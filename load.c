@@ -6,10 +6,12 @@
     Stands up one public server (rocketnet_server_t) and N public clients
     (rocketnet_client_t, N up to ROCKETNET_MAX_CLIENTS = 1000) in one process
     on loopback, connects every client within 10 seconds, drives the selected
-    profile (10 Hz updates, one message per client per update in each
+    profile (the existing one message per client per update in each
     direction: the client-to-server message rotates through all eight
     reliability modes via client_next_combo, and the server-to-client
-    message is reliable-ordered) for a configured duration, and verifies
+    message is reliable-ordered). LOAD_MESSAGES_PER_CLIENT_SECOND optionally
+    caps offers to one message pair per client due time independent of update
+    cadence, without catch-up bursts. The harness verifies
     five pass criteria:
       1. connect_within_10s
       2. no_unexpected_disconnect
@@ -63,6 +65,7 @@
 #include "rocketnet.h"
 #include "test/portable_crt.h"
 #include <errno.h>
+#include <float.h>
 #include <inttypes.h>
 #include <signal.h>
 #include <stdint.h>
@@ -743,6 +746,28 @@ static void client_counter_values( const struct rocketnet_client_t * client, uin
     LOAD_CLIENT_COUNTER_FIELDS( LOAD_VALUE_ONE )
 }
 
+struct load_wire_sample_t
+{
+    uint64_t sent;
+    uint64_t received;
+};
+
+static void load_client_wire_sample( const struct rocketnet_client_t * client, struct load_wire_sample_t * sample )
+{
+    struct rocketnet_client_stats_t stats;
+    rocketnet_client_stats( client, &stats );
+    sample->sent = stats.bytes_sent;
+    sample->received = stats.bytes_received;
+}
+
+static void load_server_wire_sample( const struct rocketnet_server_t * server, struct load_wire_sample_t * sample )
+{
+    struct rocketnet_server_stats_t stats;
+    rocketnet_server_stats( server, &stats );
+    sample->sent = stats.bytes_sent;
+    sample->received = stats.bytes_received;
+}
+
 int main( int argc, char ** argv )
 {
     if ( argc < 3 || argc > 4 )
@@ -806,6 +831,31 @@ int main( int argc, char ** argv )
         rocketnet_test_getenv( "LOAD_HANDSHAKE_DIAGNOSTICS", handshake_diagnostics_env,
                                sizeof( handshake_diagnostics_env ) ) &&
         strcmp( handshake_diagnostics_env, "1" ) == 0;
+
+    char message_rate_text[64] = { 0 };
+    const int rate_found = rocketnet_test_getenv( "LOAD_MESSAGES_PER_CLIENT_SECOND",
+                                                  message_rate_text, sizeof( message_rate_text ) );
+    const int fixed_message_rate = rate_found && message_rate_text[0] != 0;
+    double messages_per_client_second = 0.0;
+    double message_interval = 0.0;
+    if ( fixed_message_rate )
+    {
+        char * end = NULL;
+        errno = 0;
+        messages_per_client_second = strtod( message_rate_text, &end );
+        if ( errno != 0 || end == message_rate_text || *end != 0 ||
+             !( messages_per_client_second > 0.0 && messages_per_client_second <= DBL_MAX ) )
+        {
+            fprintf( stderr, "load: LOAD_MESSAGES_PER_CLIENT_SECOND must be a positive finite number\n" );
+            return 2;
+        }
+        message_interval = 1.0 / messages_per_client_second;
+        if ( !( message_interval > 0.0 && message_interval <= DBL_MAX ) )
+        {
+            fprintf( stderr, "load: LOAD_MESSAGES_PER_CLIENT_SECOND is outside the supported range\n" );
+            return 2;
+        }
+    }
 
 #if !defined(_WIN32)
     struct load_fd_limit_t fd_limit;
@@ -948,6 +998,12 @@ int main( int argc, char ** argv )
     int * client_slot = (int *) calloc( (size_t) num_clients, sizeof( int ) );
     double * client_connect_seconds = (double *) malloc( (size_t) num_clients * sizeof( double ) );
     uint32_t * client_next_combo = (uint32_t *) calloc( (size_t) num_clients, sizeof( uint32_t ) );
+    double * client_next_message_due = fixed_message_rate ?
+        (double *) calloc( (size_t) num_clients, sizeof( double ) ) : NULL;
+    struct load_wire_sample_t * client_wire_start = fixed_message_rate ?
+        (struct load_wire_sample_t *) calloc( (size_t) num_clients, sizeof( struct load_wire_sample_t ) ) : NULL;
+    struct load_wire_sample_t * client_wire_end = fixed_message_rate ?
+        (struct load_wire_sample_t *) calloc( (size_t) num_clients, sizeof( struct load_wire_sample_t ) ) : NULL;
     struct load_stream_state_t * c2s_streams = (struct load_stream_state_t *) calloc(
         (size_t) num_clients * LOAD_NUM_COMBOS, sizeof( struct load_stream_state_t ) );
     struct load_stream_state_t * s2c_streams = (struct load_stream_state_t *) calloc(
@@ -957,6 +1013,8 @@ int main( int argc, char ** argv )
     double * client_max_update_gap = (double *) calloc( (size_t) num_clients, sizeof( double ) );
 
     if ( !clients || !client_ever_connected || !client_connect_seconds || !client_next_combo ||
+         ( fixed_message_rate && !client_next_message_due ) ||
+         ( fixed_message_rate && ( !client_wire_start || !client_wire_end ) ) ||
          !c2s_streams || !s2c_streams || !client_last_update || !client_max_update_gap )
     {
         fprintf( stderr, "load: allocation failed\n" );
@@ -1049,6 +1107,8 @@ int main( int argc, char ** argv )
 
     uint64_t c2s_sent_total = 0;
     uint64_t c2s_received_total = 0;
+    uint64_t c2s_offered_total = 0;
+    uint64_t s2c_offered_total = 0;
     double next_resource_sample = rocketnet_time();
 
     /* Step 1: Connect all clients within 10s */
@@ -1183,7 +1243,19 @@ int main( int argc, char ** argv )
     }
 
     /* Step 2: Drive traffic for <seconds>, then 3.0s drain for in-flight delivery */
+    struct load_wire_sample_t server_wire_start = { 0, 0 };
+    struct load_wire_sample_t server_wire_end = { 0, 0 };
+    if ( fixed_message_rate )
+    {
+        for ( int i = 0; i < num_clients; i++ )
+            load_client_wire_sample( clients[i], &client_wire_start[i] );
+        load_server_wire_sample( server, &server_wire_start );
+    }
     const double traffic_start = rocketnet_time();
+    double wire_window_seconds = 0.0;
+    int wire_window_recorded = 0;
+    uint64_t destroyed_client_wire_bytes_sent = 0;
+    uint64_t destroyed_client_wire_bytes_received = 0;
     timing.enabled = 1;
     const double drain_seconds = 3.0;
     const double drop_at = duration_seconds * 0.25 < 1.0 ? duration_seconds * 0.25 : 1.0;
@@ -1209,6 +1281,15 @@ int main( int argc, char ** argv )
         if ( !in_traffic_window && !draining )
         {
             draining = 1;
+            if ( fixed_message_rate )
+            {
+                wire_window_seconds = now - traffic_start;
+                for ( int i = 0; i < num_clients; i++ )
+                    if ( clients[i] )
+                        load_client_wire_sample( clients[i], &client_wire_end[i] );
+                load_server_wire_sample( server, &server_wire_end );
+                wire_window_recorded = 1;
+            }
             // Revisit the most recent send cohort first. It has had the least
             // time to make progress; then visit every client in cyclic order.
             const int traffic_slice = num_clients < 100 ? num_clients : 100;
@@ -1217,6 +1298,12 @@ int main( int argc, char ** argv )
 
         if ( drop_one && !drop_injected && ( elapsed >= drop_at ) )
         {
+            struct load_wire_sample_t dropped_wire;
+            load_client_wire_sample( clients[0], &dropped_wire );
+            destroyed_client_wire_bytes_sent = dropped_wire.sent;
+            destroyed_client_wire_bytes_received = dropped_wire.received;
+            if ( fixed_message_rate )
+                client_wire_end[0] = dropped_wire;
             rn_cli_client_stop_and_destroy( clients[0] );
             clients[0] = NULL;
             drop_injected = 1;
@@ -1271,11 +1358,15 @@ int main( int argc, char ** argv )
                 struct rocketnet_receipt_t receipts[16];
                 (void) timed_client_receipts( &timing, clients[i], receipts, 16 );
 
-                /* On each update, send one message rotating through all eight
-                   reliability modes, and server queues one reliable-ordered to client */
+                /* The default offers one pair per update. The opt-in fixed
+                   rate offers at most one pair when this client's due time
+                   arrives, without catch-up bursts after delayed updates. */
                 if ( in_traffic_window &&
-                     timed_client_state( &timing, clients[i] ) == ROCKETNET_CLIENT_STATE_CONNECTED )
+                     timed_client_state( &timing, clients[i] ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
+                     ( !fixed_message_rate || update_time >= client_next_message_due[i] ) )
                 {
+                    if ( fixed_message_rate )
+                        client_next_message_due[i] = update_time + message_interval;
                     const uint32_t combo = client_next_combo[i] % LOAD_NUM_COMBOS;
                     client_next_combo[i]++;
                     struct load_stream_state_t * cst = &c2s_streams[(size_t) i * LOAD_NUM_COMBOS + combo];
@@ -1284,6 +1375,7 @@ int main( int argc, char ** argv )
                     {
                         const uint32_t next_seq = cst->sent_count + 1;
                         build_message( payload, LOAD_MAGIC_CLIENT_TO_SV, (uint32_t) i, combo, next_seq );
+                        c2s_offered_total++;
                         uint8_t * out = timed_client_start_message( &timing, clients[i], (int) combo, (enum rocketnet_reliability_t) combo, LOAD_PAYLOAD_BYTES );
                         if ( out )
                         {
@@ -1303,6 +1395,7 @@ int main( int argc, char ** argv )
                     {
                         const uint32_t next_seq = sv_st->sent_count + 1;
                         build_message( payload, LOAD_MAGIC_SV_TO_CLIENT, (uint32_t) i, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, next_seq );
+                        s2c_offered_total++;
                         uint8_t * out = timed_server_start_message( &timing, server, (uint64_t) sv_slot, (int) ROCKETNET_RELIABILITY_RELIABLE_ORDERED, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, LOAD_PAYLOAD_BYTES );
                         if ( out )
                         {
@@ -1424,6 +1517,15 @@ int main( int argc, char ** argv )
             rocketnet_sleep( left );
     }
 
+    if ( fixed_message_rate && !wire_window_recorded )
+    {
+        wire_window_seconds = rocketnet_time() - traffic_start;
+        for ( int i = 0; i < num_clients; i++ )
+            if ( clients[i] )
+                load_client_wire_sample( clients[i], &client_wire_end[i] );
+        load_server_wire_sample( server, &server_wire_end );
+    }
+
     timing.enabled = 0;
 
     /* Final verification of all 5 criteria */
@@ -1449,6 +1551,8 @@ int main( int argc, char ** argv )
     }
 
     uint64_t client_counted_drops = 0;
+    uint64_t client_wire_bytes_sent = destroyed_client_wire_bytes_sent;
+    uint64_t client_wire_bytes_received = destroyed_client_wire_bytes_received;
     for ( int i = 0; i < num_clients; i++ )
     {
         if ( clients[i] )
@@ -1457,16 +1561,84 @@ int main( int argc, char ** argv )
             rocketnet_client_stats( clients[i], &stats );
             client_counted_drops += stats.messages_dropped_over_budget;
             client_counted_drops += stats.messages_dropped_not_connected;
+            client_wire_bytes_sent += stats.bytes_sent;
+            client_wire_bytes_received += stats.bytes_received;
         }
     }
 
     uint64_t server_counted_drops = 0;
+    uint64_t server_wire_bytes_sent = 0;
+    uint64_t server_wire_bytes_received = 0;
     {
         struct rocketnet_server_stats_t stats;
         rocketnet_server_stats( server, &stats );
         server_counted_drops += stats.messages_dropped_over_budget;
         server_counted_drops += stats.messages_dropped_not_connected;
+        server_wire_bytes_sent = stats.bytes_sent;
+        server_wire_bytes_received = stats.bytes_received;
     }
+
+    uint64_t s2c_sent_total = 0;
+    for ( int i = 0; i < num_clients; i++ )
+        s2c_sent_total += s2c_streams[i].sent_count;
+    const double application_rate_window_seconds = fixed_message_rate && wire_window_seconds > 0.0 ?
+        wire_window_seconds : duration_seconds;
+    const double actual_c2s_messages_per_client_second =
+        (double) c2s_sent_total / ( (double) num_clients * application_rate_window_seconds );
+    const double actual_s2c_messages_per_client_second =
+        (double) s2c_sent_total / ( (double) num_clients * application_rate_window_seconds );
+    const double offered_c2s_messages_per_client_second =
+        (double) c2s_offered_total / ( (double) num_clients * application_rate_window_seconds );
+    const double offered_s2c_messages_per_client_second =
+        (double) s2c_offered_total / ( (double) num_clients * application_rate_window_seconds );
+    uint64_t traffic_client_wire_bytes_sent = 0;
+    uint64_t traffic_client_wire_bytes_received = 0;
+    uint64_t traffic_server_wire_bytes_sent = 0;
+    uint64_t traffic_server_wire_bytes_received = 0;
+    double max_client_wire_up_kbps = 0.0;
+    double max_client_wire_down_kbps = 0.0;
+    int wire_metrics_valid = !fixed_message_rate || ( wire_window_seconds > 0.0 &&
+        server_wire_end.sent >= server_wire_start.sent &&
+        server_wire_end.received >= server_wire_start.received );
+    if ( fixed_message_rate && wire_metrics_valid )
+    {
+        traffic_server_wire_bytes_sent = server_wire_end.sent - server_wire_start.sent;
+        traffic_server_wire_bytes_received = server_wire_end.received - server_wire_start.received;
+    }
+    for ( int i = 0; fixed_message_rate && i < num_clients; i++ )
+    {
+        if ( client_wire_end[i].sent < client_wire_start[i].sent ||
+             client_wire_end[i].received < client_wire_start[i].received )
+        {
+            wire_metrics_valid = 0;
+            continue;
+        }
+        const uint64_t up_bytes = client_wire_end[i].sent - client_wire_start[i].sent;
+        const uint64_t down_bytes = client_wire_end[i].received - client_wire_start[i].received;
+        traffic_client_wire_bytes_sent += up_bytes;
+        traffic_client_wire_bytes_received += down_bytes;
+        if ( wire_window_seconds > 0.0 )
+        {
+            const double up_kbps = (double) up_bytes * 8.0 / ( wire_window_seconds * 1000.0 );
+            const double down_kbps = (double) down_bytes * 8.0 / ( wire_window_seconds * 1000.0 );
+            if ( up_kbps > max_client_wire_up_kbps )
+                max_client_wire_up_kbps = up_kbps;
+            if ( down_kbps > max_client_wire_down_kbps )
+                max_client_wire_down_kbps = down_kbps;
+        }
+    }
+    const double aggregate_client_wire_up_kbps = wire_window_seconds > 0.0 ?
+        (double) traffic_client_wire_bytes_sent * 8.0 / ( wire_window_seconds * 1000.0 ) : 0.0;
+    const double aggregate_client_wire_down_kbps = wire_window_seconds > 0.0 ?
+        (double) traffic_client_wire_bytes_received * 8.0 / ( wire_window_seconds * 1000.0 ) : 0.0;
+    const double aggregate_server_wire_up_kbps = wire_window_seconds > 0.0 ?
+        (double) traffic_server_wire_bytes_sent * 8.0 / ( wire_window_seconds * 1000.0 ) : 0.0;
+    const double aggregate_server_wire_down_kbps = wire_window_seconds > 0.0 ?
+        (double) traffic_server_wire_bytes_received * 8.0 / ( wire_window_seconds * 1000.0 ) : 0.0;
+    const int client_wire_under_100kbps = !fixed_message_rate ||
+        ( wire_metrics_valid && max_client_wire_up_kbps < 100.0 && max_client_wire_down_kbps < 100.0 );
+    const int application_offers_accepted = !fixed_message_rate ||
+        ( c2s_offered_total == c2s_sent_total && s2c_offered_total == s2c_sent_total );
 
     const uint64_t total_counted_drops = client_counted_drops + server_counted_drops;
     const int crit1_connect_within_10s = ( all_connected && connect_elapsed <= LOAD_CONNECT_DEADLINE_S ) ? 1 : 0;
@@ -1569,12 +1741,21 @@ int main( int argc, char ** argv )
         failed_criterion = "unreliable_integrity";
     else if ( !crit5_counters_agree )
         failed_criterion = "counters_agree";
+    else if ( !wire_metrics_valid )
+        failed_criterion = "wire_metrics";
+    else if ( !client_wire_under_100kbps )
+        failed_criterion = "client_wire_bandwidth";
+    else if ( !application_offers_accepted )
+        failed_criterion = "application_offers_accepted";
 
     int pass = crit1_connect_within_10s &&
                      crit2_no_unexpected_disconnect &&
                      crit3_reliable_delivery &&
                      crit4_unreliable_integrity &&
                      crit5_counters_agree &&
+                     wire_metrics_valid &&
+                     client_wire_under_100kbps &&
+                     application_offers_accepted &&
                      !quit;
 
     char server_transport_io[32];
@@ -1597,6 +1778,9 @@ int main( int argc, char ** argv )
     free( client_slot );
     free( client_connect_seconds );
     free( client_next_combo );
+    free( client_next_message_due );
+    free( client_wire_start );
+    free( client_wire_end );
     free( c2s_streams );
     free( s2c_streams );
     free( client_last_update );
@@ -1626,6 +1810,7 @@ int main( int argc, char ** argv )
             failed_criterion = "resource_baseline";
         pass = 0;
     }
+    const char * timing_baseline = fixed_message_rate ? "fixed_rate_v1" : "fair_drain_v1";
 
     if ( pass )
     {
@@ -1642,7 +1827,7 @@ int main( int argc, char ** argv )
                 "threads_pre_init=%ld threads_post_init=%ld threads_pre_term=%ld threads_post_term=%ld "
                 "term_status_code=%d resource_baseline_schema=phase_pairs_v1 resource_baseline=PASS "
                 "timing_scope=traffic_and_drain drain_schedule=recent_first_cyclic "
-                "timing_baseline=fair_drain_v1 verdict=PASS",
+                "timing_baseline=%s",
                 connected_count, connect_elapsed, connect_p50_s, connect_max_s,
                 profile_name, client_public_required_bytes, server_public_required_bytes,
                 c2s_sent_total, c2s_received_total, total_counted_drops,
@@ -1653,9 +1838,7 @@ int main( int argc, char ** argv )
                 threads_start, threads_peak, threads_end,
                 fds_pre_init, fds_post_init, fds_pre_term, fds_post_term,
                 threads_pre_init, threads_post_init, threads_pre_term, threads_post_term,
-                (int) term_status );
-        load_timing_print( &timing );
-        putchar( '\n' );
+                (int) term_status, timing_baseline );
     }
     else
     {
@@ -1672,8 +1855,8 @@ int main( int argc, char ** argv )
                 "threads_pre_init=%ld threads_post_init=%ld threads_pre_term=%ld threads_post_term=%ld "
                 "term_status_code=%d resource_baseline_schema=phase_pairs_v1 resource_baseline=%s "
                 "timing_scope=traffic_and_drain drain_schedule=recent_first_cyclic "
-                "timing_baseline=fair_drain_v1 "
-                "failed_criterion=%s verdict=FAIL",
+                "timing_baseline=%s "
+                "failed_criterion=%s",
                 connected_count, connect_elapsed, connect_p50_s, connect_max_s,
                 profile_name, client_public_required_bytes, server_public_required_bytes,
                 crit1_connect_within_10s ? "PASS" : "FAIL",
@@ -1689,11 +1872,51 @@ int main( int argc, char ** argv )
                 threads_start, threads_peak, threads_end,
                 fds_pre_init, fds_post_init, fds_pre_term, fds_post_term,
                 threads_pre_init, threads_post_init, threads_pre_term, threads_post_term,
-                (int) term_status, resource_baseline ? "PASS" : "FAIL",
+                (int) term_status, resource_baseline ? "PASS" : "FAIL", timing_baseline,
                 failed_criterion );
-        load_timing_print( &timing );
-        putchar( '\n' );
     }
+
+    printf( " offered_rate_mode=%s target_messages_per_client_second=%.6g "
+            "application_payload_bytes=%d application_rate_window_seconds=%.3f "
+            "offered_c2s_messages=%" PRIu64 " offered_s2c_messages=%" PRIu64 " "
+            "accepted_c2s_messages=%" PRIu64 " accepted_s2c_messages=%" PRIu64 " "
+            "application_offers_accepted=%s "
+            "offered_c2s_messages_per_client_second=%.6f offered_s2c_messages_per_client_second=%.6f "
+            "accepted_c2s_messages_per_client_second=%.6f "
+            "accepted_s2c_messages_per_client_second=%.6f wire_window=%s wire_window_complete=%s "
+            "wire_window_seconds=%.3f wire_metrics=%s "
+            "traffic_client_wire_bytes_sent=%" PRIu64 " traffic_client_wire_bytes_received=%" PRIu64 " "
+            "traffic_server_wire_bytes_sent=%" PRIu64 " traffic_server_wire_bytes_received=%" PRIu64 " "
+            "max_client_wire_up_kbps=%.3f max_client_wire_down_kbps=%.3f "
+            "client_wire_under_100kbps=%s "
+            "aggregate_client_wire_up_kbps=%.3f aggregate_client_wire_down_kbps=%.3f "
+            "aggregate_server_wire_up_kbps=%.3f aggregate_server_wire_down_kbps=%.3f "
+            "wire_session_scope=handshake_traffic_drain_before_teardown "
+            "session_client_wire_bytes_sent=%" PRIu64 " session_client_wire_bytes_received=%" PRIu64 " "
+            "session_server_wire_bytes_sent=%" PRIu64 " session_server_wire_bytes_received=%" PRIu64,
+            fixed_message_rate ? "per_client_due" : "per_update", messages_per_client_second,
+            LOAD_PAYLOAD_BYTES, application_rate_window_seconds,
+            c2s_offered_total, s2c_offered_total,
+            c2s_sent_total, s2c_sent_total,
+            fixed_message_rate ? ( application_offers_accepted ? "PASS" : "FAIL" ) : "UNMEASURED",
+            offered_c2s_messages_per_client_second, offered_s2c_messages_per_client_second,
+            actual_c2s_messages_per_client_second,
+            actual_s2c_messages_per_client_second,
+            fixed_message_rate ? "traffic" : "unmeasured",
+            fixed_message_rate ? ( drop_injected ? "PARTIAL" : "COMPLETE" ) : "UNMEASURED",
+            wire_window_seconds,
+            fixed_message_rate ? ( wire_metrics_valid ? "PASS" : "FAIL" ) : "UNMEASURED",
+            traffic_client_wire_bytes_sent, traffic_client_wire_bytes_received,
+            traffic_server_wire_bytes_sent, traffic_server_wire_bytes_received,
+            max_client_wire_up_kbps, max_client_wire_down_kbps,
+            fixed_message_rate ? ( client_wire_under_100kbps ? "PASS" : "FAIL" ) : "UNMEASURED",
+            aggregate_client_wire_up_kbps, aggregate_client_wire_down_kbps,
+            aggregate_server_wire_up_kbps, aggregate_server_wire_down_kbps,
+            client_wire_bytes_sent, client_wire_bytes_received,
+            server_wire_bytes_sent, server_wire_bytes_received );
+    load_timing_print( &timing );
+    printf( " verdict=%s", pass ? "PASS" : "FAIL" );
+    putchar( '\n' );
 
     free( timing.buckets );
     return pass ? 0 : 1;
