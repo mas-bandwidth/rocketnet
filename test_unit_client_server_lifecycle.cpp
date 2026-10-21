@@ -40,6 +40,20 @@ static void lifecycle_identity( lifecycle_identity_t * identity )
     check( rocketnet_generate_backend_keypair_from_seed( seed, identity->backend_public, identity->backend_secret ) == ROCKETNET_STATUS_OK );
 }
 
+// set nonzero by a test that queues more messages per connection than the
+// defaults hold: the window, the send queue and the send buffer then fit
+// that many messages, on the server and every client the world creates
+static int lifecycle_queue_messages = 0;
+
+static void lifecycle_queue_config( int * window_messages, int * send_queue_messages, int * send_buffer_bytes )
+{
+    if ( lifecycle_queue_messages == 0 )
+        return;
+    *window_messages = lifecycle_queue_messages;
+    *send_queue_messages = lifecycle_queue_messages;
+    *send_buffer_bytes = lifecycle_queue_messages * 256;      // a send-store chunk per message, with room
+}
+
 static void lifecycle_server_config( rocketnet_server_config_t * config, const lifecycle_identity_t * identity, int max_clients )
 {
     rocketnet_server_default_config( config );
@@ -47,6 +61,7 @@ static void lifecycle_server_config( rocketnet_server_config_t * config, const l
     config->max_clients = max_clients;
     memcpy( config->backend_public_key, identity->backend_public, sizeof( config->backend_public_key ) );
     config->transport = "loopback";
+    lifecycle_queue_config( &config->window_messages, &config->send_queue_messages, &config->send_buffer_bytes );
 }
 
 static void lifecycle_client_config( rocketnet_client_config_t * config )
@@ -55,6 +70,7 @@ static void lifecycle_client_config( rocketnet_client_config_t * config )
     config->transport = "loopback";
     config->step_driven = true;
     config->time_callback = lifecycle_clock;
+    lifecycle_queue_config( &config->window_messages, &config->send_queue_messages, &config->send_buffer_bytes );
 }
 
 // the token string sealed to the server's own key, naming 127.0.0.1:port
@@ -1358,24 +1374,40 @@ REGISTER_UNIT_TEST( test_message_receive_one_queue_every_type_every_channel );
 // finds nothing pending returns false with num_messages 0.
 static void test_message_receive_pumped_past_one_batch_in_order()
 {
+    // each client sends more than one batch; together the clients' deliveries
+    // in one update are more than one batch of the server's one queue, so
+    // the window, the send queue and the send buffer hold every message
+    enum { NUM_SENDERS = 3 };
+    const int per_client = ROCKETNET_RECEIVE_BATCH_MESSAGES + 17;
+    lifecycle_queue_messages = 1;
+    while ( lifecycle_queue_messages < per_client )
+        lifecycle_queue_messages *= 2;
     lifecycle_world_t world;
-    lifecycle_world_create( &world, 2, 1 );
-    rocketnet_client_t * client = world.clients[0];
-    lifecycle_connect( &world, 0, 0x1B01 );
-    const int index = (int) rocketnet_client_index( client );
-    check( rocketnet_client_set_send_kbps( client, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );
-
-    const int total = 3 * ROCKETNET_RECEIVE_BATCH_MESSAGES + 17;
-    for ( int i = 0; i < total; i++ )
+    lifecycle_world_create( &world, NUM_SENDERS, NUM_SENDERS );
+    lifecycle_queue_messages = 0;
+    int index_of[NUM_SENDERS];
+    for ( int c = 0; c < NUM_SENDERS; c++ )
     {
-        uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
-        check( out != NULL );
-        if ( !out )
-            break;
-        memcpy( out, &i, 4 );
-        check( rocketnet_client_finish_message( client, 4 ) != 0 );
+        lifecycle_connect( &world, c, 0x1B01 + (uint64_t) c );
+        index_of[c] = (int) rocketnet_client_index( world.clients[c] );
+        check( rocketnet_client_set_send_kbps( world.clients[c], ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );
+    }
+    for ( int c = 0; c < NUM_SENDERS; c++ )
+    {
+        check( index_of[c] >= 0 && index_of[c] < NUM_SENDERS );
+        for ( int i = 0; i < per_client; i++ )
+        {
+            uint8_t * out = rocketnet_client_start_message( world.clients[c], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
+            check( out != NULL );
+            if ( !out )
+                break;
+            memcpy( out, &i, 4 );
+            check( rocketnet_client_finish_message( world.clients[c], 4 ) != 0 );
+        }
     }
 
+    const int total = NUM_SENDERS * per_client;
+    int received_from[NUM_SENDERS] = { 0 };
     static struct rocketnet_message_batch_t batch;
     int received = 0;
     int most_calls_in_an_update = 0;
@@ -1390,9 +1422,13 @@ static void test_message_receive_pumped_past_one_batch_in_order()
             for ( int i = 0; i < batch.num_messages; i++ )
             {
                 int value = -1;
-                check( batch.bytes[i] == 4 && batch.client_index[i] == index && batch.channel[i] == 0 );
+                const int sender = batch.client_index[i];
+                check( batch.bytes[i] == 4 && batch.channel[i] == 0 && sender >= 0 && sender < NUM_SENDERS );
+                if ( sender < 0 || sender >= NUM_SENDERS )
+                    continue;
                 memcpy( &value, batch.data[i], 4 );
-                check( value == received );                // once each, in send order
+                check( value == received_from[sender] );   // once each, in send order per client
+                received_from[sender]++;
                 received++;
             }
         }
@@ -1403,12 +1439,15 @@ static void test_message_receive_pumped_past_one_batch_in_order()
             most_calls_in_an_update = calls;
     }
     check( received == total );
+    for ( int c = 0; c < NUM_SENDERS; c++ )
+        check( received_from[index_of[c]] == per_client );
     check( most_calls_in_an_update > 1 );                  // one update held more than one batch
 
     // an update with nothing delivered: the first call returns false
     lifecycle_pump( &world );
     check( !rocketnet_server_receive_messages( world.server, &batch ) && batch.num_messages == 0 );
-    check( !rocketnet_client_receive_messages( client, &batch ) && batch.num_messages == 0 );
+    for ( int c = 0; c < NUM_SENDERS; c++ )
+        check( !rocketnet_client_receive_messages( world.clients[c], &batch ) && batch.num_messages == 0 );
     lifecycle_world_destroy( &world );
 }
 REGISTER_UNIT_TEST( test_message_receive_pumped_past_one_batch_in_order );
