@@ -1046,7 +1046,7 @@ struct rocketnet_client_config_t
 
     /// ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES sets the largest payload this
     /// client fragments and reassembles. Losing one fragment loses the whole
-    /// payload. Range is ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. 305408. Zero
+    /// payload. Range is ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. 361728. Zero
     /// selects the default, 16384.
 
     int max_payload_bytes;
@@ -1084,7 +1084,7 @@ struct rocketnet_client_config_t
 
     /// ROCKETNET_CLIENT_MAX_MESSAGE_BYTES sets the largest message. Both ends
     /// must match. It cannot exceed receive_message_buffer_bytes. Range is
-    /// ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES .. 1048576. Default is 262144.
+    /// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 .. 1048576. Default is 262144.
 
     int max_message_bytes;
 
@@ -1201,7 +1201,7 @@ struct rocketnet_server_config_t
 
     /// ROCKETNET_SERVER_MAX_PAYLOAD_BYTES sets the largest payload this
     /// server fragments and reassembles. Losing one fragment loses the whole
-    /// payload. Range is ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. 305408. Zero
+    /// payload. Range is ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. 361728. Zero
     /// selects the default, 16384.
 
     int max_payload_bytes;
@@ -1254,7 +1254,7 @@ struct rocketnet_server_config_t
 
     /// ROCKETNET_SERVER_MAX_MESSAGE_BYTES sets the largest message. Both ends
     /// must match. It cannot exceed receive_message_buffer_bytes. Range is
-    /// ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES .. 1048576. Default is 262144.
+    /// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 .. 1048576. Default is 262144.
 
     int max_message_bytes;
 

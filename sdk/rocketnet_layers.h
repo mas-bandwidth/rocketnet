@@ -316,7 +316,7 @@ struct rocketnet_client_transport_config_t
 {
     /** @brief Per-title 4-byte packet filter; peers with a different value cannot connect. */
     uint8_t packet_filter[4];
-    /** @brief Largest sent and reassembled payload in bytes; zero selects the default, otherwise ROCKETNET_MAX_PACKET_PAYLOAD_BYTES through 305408. */
+    /** @brief Largest sent and reassembled payload in bytes; zero selects the default, otherwise ROCKETNET_MAX_PACKET_PAYLOAD_BYTES through 361728. */
     int max_payload_bytes;                          // ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. 305,408; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
     /** @brief Concurrent fragmented payloads per connection; zero selects the default, otherwise 1 through 256. */
     int max_fragmented_messages;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
@@ -764,7 +764,7 @@ struct rocketnet_server_transport_config_t
     int num_xdp_queues;                             // 1 .. 1024; 0 is the transport default
     /** @brief Cores reserved for the operating system by XDP; zero selects the transport default, otherwise 1 through 256. */
     int num_os_cpus;                                // 1 .. 256; 0 is the transport default
-    /** @brief Largest sent and reassembled payload in bytes; zero selects the default, otherwise ROCKETNET_MAX_PACKET_PAYLOAD_BYTES through 305408. */
+    /** @brief Largest sent and reassembled payload in bytes; zero selects the default, otherwise ROCKETNET_MAX_PACKET_PAYLOAD_BYTES through 361728. */
     int max_payload_bytes;                          // ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. 305,408; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
     /** @brief Concurrent fragmented payloads per client; zero selects the default, otherwise 1 through 256. */
     int max_fragmented_messages;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
