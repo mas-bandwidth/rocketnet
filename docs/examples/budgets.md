@@ -13,9 +13,9 @@ what a budget does when it is exceeded.
 2. Set the client's send budget lower in its config at create, then change it
    again at run time with `rocketnet_client_set_send_kbps`.
 3. Queue a burst of unreliable messages far above the budget. Unreliable
-   messages over budget are dropped and counted, and the example prints the
-   over-budget drop counter
-   (`ROCKETNET_CLIENT_COUNTER_BUDGET_DROPS`).
+   messages over budget are dropped and counted. The example calls
+   `rocketnet_client_stats` and prints
+   `rocketnet_client_stats_t.budget_drops`.
 4. Queue a burst of reliable messages of the same size. Reliable messages wait
    for budget and are never dropped, and the example prints how many arrived.
 
@@ -41,20 +41,12 @@ inside sixty seconds and prints `PASS` as its last line; any failure prints one
 
 ## What the output means
 
-```
-client send budget default: 1000 kbps
-server per-client send budget default: 10000 kbps
-client send budget from config at create: 10 kbps
-runtime set-send-kbps returned 1
-unreliable over-budget drops: 120
-reliable messages arrived: 40/40
-PASS
-```
-
-The first two lines are the defaults. The next two show the client's budget
-changed by config at create and by the runtime call. A nonzero `unreliable over-budget drops` line and `40/40` reliable arrivals mean the burst of
-unreliable messages was dropped and counted while every reliable message
-arrived. `PASS` means all that held.
+The program prints the two header defaults, the configured client rate, the
+numeric status from `rocketnet_client_set_send_kbps`, the final
+`budget_drops` value, and the reliable arrival count. A successful runtime
+change prints status `0`, the numeric value of `ROCKETNET_STATUS_OK`. The drop
+count is run-dependent but must be nonzero, while the reliable arrival line
+must report every queued reliable message.
 
 ## Public calls it uses
 
@@ -62,7 +54,8 @@ arrived. `PASS` means all that held.
 - `rocketnet_server_default_config`, `rocketnet_server_create`,
   `rocketnet_server_start`, `rocketnet_server_destroy`,
   `rocketnet_server_update`, `rocketnet_server_send_packets`,
-  `rocketnet_server_port`, `rocketnet_server_receive_messages`
+  `rocketnet_server_port`, `rocketnet_server_ipv4_address`,
+  `rocketnet_server_public_key`, `rocketnet_server_receive_messages`
 - `rocketnet_client_default_config`, `rocketnet_client_create`,
   `rocketnet_client_connect`, `rocketnet_client_destroy`,
   `rocketnet_client_update`, `rocketnet_client_send_packets`,
@@ -70,5 +63,6 @@ arrived. `PASS` means all that held.
   `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
   `rocketnet_client_receive_messages`, `rocketnet_client_set_send_kbps`,
   `rocketnet_client_stats`
-- `rocketnet_write_dev_connect_token` (development library only)
+- `rocketnet_create_dev_connect_token` and
+  `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` (development library only)
 - `rocketnet_status_name`, `rocketnet_time`, `rocketnet_sleep`

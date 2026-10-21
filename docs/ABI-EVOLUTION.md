@@ -85,8 +85,11 @@ bytes used are the smaller of the caller's `config_bytes` and the library's
 `sizeof`. A default copies that many bytes of the library's defaults into the
 caller's struct, after `config_bytes`, which it keeps; a create or
 required-memory call fills a full struct with the defaults and copies the
-caller's bytes over them, then runs on the full struct. A server config holds
-the secret key, so its stack copy is wiped on every path.
+caller's bytes over them, then runs on the full struct. The server config
+contains the backend's public key and protocol id; it never contains a secret
+key. Each server object generates its own X25519 keypair during create,
+exposes its public key through `rocketnet_server_public_key`, and wipes its
+secret key when destroyed.
 
 The internal transport and message configs keep oldest-first known-size lists
 in the internal layer header, checked in `sdk/rocketnet_abi.cpp`; the public
@@ -135,6 +138,13 @@ priority switch are installed through `rocketnet_allocator`,
 `rocketnet_quiet` and `rocketnet_thread_priority`. Public enum values and
 exported symbols follow the append-only rules: a new status code goes
 immediately before `ROCKETNET_STATUS_COUNT`, and no published value changes.
+
+The backend signing keypair is separate from the server's X25519 keypair.
+Only the backend public key is supplied in `rocketnet_server_config_t`; the
+backend keeps its signing secret and mints tokens for the server public key.
+Development builds expose `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` and
+`rocketnet_create_dev_connect_token` for local use. A release server refuses
+that published development key.
 
 ## 6. Public enums are int-sized, and zero is a named receipt status
 

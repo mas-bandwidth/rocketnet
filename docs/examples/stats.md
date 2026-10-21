@@ -9,9 +9,11 @@ struct the caller owns, and the program reads the fields from that struct.
 ## What it shows
 
 1. Initialize the library and create a server on the `loopback` transport,
-   with the published development keys from `examples/dev_keys.h` set by hand
-   after `rocketnet_server_default_config`.
-2. Mint a development connect token and connect a client.
+   with `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` copied into the config. Create
+   generates the server's ephemeral sealing keypair.
+2. After start, read the server public key and bound address, create an opaque
+   base64 development token with `rocketnet_create_dev_connect_token`, and
+   connect a client with that string.
 3. Run frames until the client reports `ROCKETNET_CLIENT_STATE_CONNECTED`.
 4. Exchange traffic for about one and a half seconds: the client sends a
    reliable-ordered message each frame and the server echoes one back, so both
@@ -62,7 +64,8 @@ library and are not part of the check.
 - `rocketnet_server_default_config`, `rocketnet_server_create`,
   `rocketnet_server_start`, `rocketnet_server_destroy`,
   `rocketnet_server_update`, `rocketnet_server_send_packets`,
-  `rocketnet_server_port`, `rocketnet_server_client_connected`,
+  `rocketnet_server_port`, `rocketnet_server_ipv4_address`,
+  `rocketnet_server_public_key`, `rocketnet_server_client_connected`,
   `rocketnet_server_disconnect_reason`, `rocketnet_server_start_message`,
   `rocketnet_server_finish_message`, `rocketnet_server_receive_messages`,
   `rocketnet_server_stats`, `rocketnet_server_client_stats`
@@ -73,6 +76,7 @@ library and are not part of the check.
   `rocketnet_client_state_name`, `rocketnet_client_index`,
   `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
   `rocketnet_client_receive_messages`, `rocketnet_client_stats`
-- `rocketnet_write_dev_connect_token` (development library only)
+- `rocketnet_create_dev_connect_token` and
+  `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` (development library only)
 - `rocketnet_status_name`, `rocketnet_time`, `rocketnet_sleep`,
   `rocketnet_disconnect_reason_name`

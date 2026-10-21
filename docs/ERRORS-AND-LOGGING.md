@@ -18,14 +18,14 @@ the version contract.
 
 The public header is `sdk/rocketnet.h`. A game initializes the library, fills a
 client or server config, creates one client or server, and checks the result.
-Every entry point that can refuse returns a value a caller can test, logs one
-line at `ERROR` when it refuses, and counts an API misuse (the list under
-Lifecycle and logging in `sdk/rocketnet.h`) in the process-wide `api_misuse`
-field of the client and server stats structs. A message send on a connection
-that is not CONNECTED is no refusal of this kind: it is a normal drop that logs
-nothing, returns `NULL` from start message and `0` from finish message, and
-counts in the `not_connected_drops` field of the client or server stats, never
-in the misuse count.
+Refusals have the return behavior documented by each declaration in
+`sdk/rocketnet.h`; only the specific caller errors listed under “API misuse”
+there increment the process-wide `api_misuse` field. A refusal is not
+automatically a misuse, and not every refusal logs an error. For example,
+invalid send arguments return `NULL` or `0` and log, but do not increment
+`api_misuse`. A message send on a connection that is not CONNECTED is a normal
+drop that logs nothing, returns `NULL` from start message and `0` from finish
+message, and increments `not_connected_drops`, never the misuse count.
 
 | Public Entry Point | Return on Refusal |
 | :--- | :--- |
@@ -41,17 +41,23 @@ in the misuse count.
 | `rocketnet_server_create( context, address, config, status )` | `NULL` with one error line; `status` holds the refusal's code (the client's codes, plus `INVALID_ADDRESS` for an over-long address), or `OK` with the handle |
 | `rocketnet_server_start( server )` | the status code: `SERVER_NOT_STOPPED`, or the transport's code (`TRANSPORT_LADDER_EXHAUSTED`, `MISSING_KEYS`, ...) |
 | `rocketnet_client_update( client, time )` / `rocketnet_server_update( server, time )` | nothing (`void`); a refused time is counted as API misuse and logged |
-| key and token writers, `*_set_send_kbps` | the status code; see each declaration in `sdk/rocketnet.h` |
+| `rocketnet_create_dev_connect_token`, `*_set_send_kbps` | the status code; see each declaration in `sdk/rocketnet.h` |
 
 The client and server create paths read `config_bytes`, validate the config,
 apply the environment overrides (`ROCKETNET_CLIENT_*`, `ROCKETNET_SERVER_*`,
 with precedence DEFAULT < CONFIG STRUCT < ENVIRONMENT), and make the one
 allocation through the allocator; client connect and server start start the
 selected transport. Create is the one check of a config: there is no separate
-validate call. The detailed transport
-create failure branches belong to the internal transport layer
-(`sdk/rocketnet_layers.h`); a game sees only the public create result, the log
-line and the misuse count.
+validate call. The detailed transport create failure branches belong to the
+internal transport layer (`sdk/rocketnet_layers.h`); a game sees the public
+create result, status and any documented log line. Only failures named in the
+public API-misuse list increment the misuse count.
+
+For client `send_kbps` and server `per_client_send_kbps`, zero selects the
+documented default. `ROCKETNET_SEND_BUDGET_MAX_KBPS` means no send budget, with
+the transport's 10 Gbit/s ceiling; it does not request a finite 10 Gbit/s
+rate. Negative values and values above the ceiling are refused as described by
+the config fields and `*_set_send_kbps` declarations in `sdk/rocketnet.h`.
 
 The helper names used later in this document (`rocketnet_error`,
 `rocketnet_assert`, `rocketnet_log_v`, `rocketnet_config_apply_env`,
@@ -158,14 +164,14 @@ default_config call, is refused with it before any other check
 
 ### 2.2 Reporting
 
-Init, term and the allocator return the section-2.1 code directly (the
-SDK's internal `_ex` forms write the same code to an `int *`). The client and server create
-calls return a handle or `NULL` and write the refusal's code through the final
-status out-parameter (sdk/rocketnet.h, the create declarations); the reason is
-also one `ERROR` log line, and a create before init is counted in the
-process-wide `api_misuse` stat. `rocketnet_status_name`
-names any code, and `rocketnet_num_status_codes` gives the count. The internal
-transport layer keeps `_ex` create forms for the SDK's own tests.
+Init, term and the allocator return the section-2.1 code directly (the SDK's
+internal `_ex` forms write the same code to an `int *`). The client and server
+create calls return a handle or `NULL` and write the refusal's code through the
+final status out-parameter; their refusals are logged. A create before init is
+counted in the process-wide `api_misuse` stat; other create refusals are not
+automatically counted as misuse. `rocketnet_status_name` names any code, and
+`rocketnet_num_status_codes` gives the count. The internal transport layer
+keeps `_ex` create forms for the SDK's own tests.
 
 ## 3. LOGGING
 
@@ -269,3 +275,19 @@ a NULL client or server fills only the process-wide fields and zeroes the rest.
 The generic counter introspection functions (`rocketnet_num_counters`,
 `rocketnet_counter_value` and `rocketnet_counter_name`) are internal to the
 SDK (`sdk/rocketnet_layers.h`).
+
+Client counts are lifetime totals across connections; server aggregate counts
+are lifetime totals across starts and stops. Both begin at zero at object
+creation. Process-wide `api_misuse` and `thread_priority_refusals` do not reset
+with an object. Client measurements cover the current connection, and client
+and server rates cover the trailing second; these read as zero without an
+active connection or while the server is stopped. Per-slot statistics
+describe the current connection and reset when a slot is reused.
+
+`rocketnet_client_receipts` and `rocketnet_server_receipts` copy outcomes from
+the most recent update. Re-reading does not consume them; the copied entries
+remain stable until the next update. If the ring fills, it drops the oldest
+outcomes and increments `receipts_dropped`. A smaller output capacity copies
+only the first entries that fit. A zero-filled receipt is NONE; ACKED and LOSS
+are reported outcomes. See the function declarations in `sdk/rocketnet.h` for
+NULL, free-slot and stopped-server behavior.

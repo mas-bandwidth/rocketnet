@@ -364,11 +364,18 @@ Examples, tests and tools default off when embedded, and the parent's
 `ROCKETNET_BUILD_*` options override those defaults.
 
 The installed SDK is the production library, and it has no development token
-minting by design: a client that calls `rocketnet_write_dev_connect_token`
-against it fails to link (on MSVC, `unresolved external symbol rocketnet_write_dev_connect_token`). For a first loopback try, embed the
+minting by design. `rocketnet_create_dev_connect_token` and
+`ROCKETNET_DEV_BACKEND_PUBLIC_KEY` are declared only with
+`ROCKETNET_DEVELOPMENT=1`; defining that macro while linking a production
+library does not provide the development function. For a first loopback try, embed the
 checkout and link both the server and the client to the development library,
-`rocketnet_dev`, which mints development tokens and accepts the published
-development keys. It is a build-tree aid, never installed and never shipped:
+`rocketnet_dev`, which supplies `ROCKETNET_DEVELOPMENT=1`, creates development
+token strings, and accepts the published development backend public key.
+Initialize a server config with `rocketnet_server_default_config`, set a
+nonzero protocol ID and the key from `ROCKETNET_DEV_BACKEND_PUBLIC_KEY`, and
+start the server. Its own keypair is generated at create. Read its public key
+and served addresses to create a development token; pass the resulting
+opaque string directly to `rocketnet_client_connect`. It is a build-tree aid, never installed and never shipped:
 
 ```cmake
 add_subdirectory(path/to/rocketnet rocketnet)
@@ -545,8 +552,6 @@ list in both directions against the SDK reads and the public header.
 * Environment: ROCKETNET_SERVER_MAX_CLIENTS
 * Environment: ROCKETNET_SERVER_FILTER_VALUE
 * Environment: ROCKETNET_SERVER_BACKEND_PUBLIC_KEY
-* Environment: ROCKETNET_SERVER_SERVER_PUBLIC_KEY
-* Environment: ROCKETNET_SERVER_SERVER_SECRET_KEY
 * Environment: ROCKETNET_SERVER_NUM_XDP_QUEUES
 * Environment: ROCKETNET_SERVER_NUM_OS_CPUS
 * Environment: ROCKETNET_SERVER_MAX_PAYLOAD_BYTES

@@ -2,9 +2,9 @@
 
 Low-level client/server UDP transport library.
 
-RocketNet's public calls do bounded work, and the frame-loop calls, including
-create, are designed to disappear into an ordinary game profiler. The client's
-disconnect and destroy stop its I/O thread and wait for it, bounded.
+Main frame calls target less than 100 microseconds under load in Release
+builds. Create may take longer. Client disconnect and destroy wait for the
+I/O thread to exit, with no promised time bound.
 
 ## Quick start
 
@@ -56,6 +56,8 @@ See [BUILDING.md](BUILDING.md). Binaries land in `bin/`, and on Windows in
 `bin\Release\test.exe` on Windows (PowerShell or cmd.exe).
 
 ## Documentation
+
+- [Release notes for v1.0.0-preview-1](docs/RELEASE-NOTES-v1.0.0-preview-1.md).
 
 - [AGENTS.md](AGENTS.md) — guide for AI coding agents integrating RocketNet into a game.
 - [USAGE.md](USAGE.md) — how to drive it: the frame, message sending and

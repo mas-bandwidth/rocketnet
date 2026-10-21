@@ -1,16 +1,16 @@
-# Environment variables the config structs do not name
+# Environment variables
 
-Every field of `rocketnet_client_config_t` and `rocketnet_server_config_t`
-except the callbacks and `config_bytes` has an environment variable, named next
-to the field in `sdk/rocketnet.h`. These variables tune what the structs do not
-expose. They follow the same rules: read at create (the transport ones at
-client connect and server start), logged when they override, refused loudly
-when they do not parse or are out of range, and ignored with a log line when
-set to the empty string.
+The client and server config fields that have environment forms list their
+variable names beside each field in `sdk/rocketnet.h`. Their values override
+the config at the documented lifecycle point, and invalid or out-of-range
+values are refused rather than clamped. `docs/ABI-EVOLUTION.md` describes the
+config-size rules.
+
+The transport also reads these variables at client connect or server start.
+They are not fields of the public config structs:
 
 | Variable | Meaning |
 | --- | --- |
-| `ROCKETNET_LOG_LEVEL` | The maximum emitted log level before `rocketnet_init` logs: 0 .. 5 (`ROCKETNET_LOG_LEVEL_NONE` .. `ROCKETNET_LOG_LEVEL_SPAM`); a value outside that range is ignored with a warning. |
 | `ROCKETNET_CLIENT_GAME_CLOCK_EPOCH` | Unix seconds at the client's game clock zero, for the connect token's time check; 0 reads the wall clock. |
 | `ROCKETNET_SERVER_GAME_CLOCK_EPOCH` | Unix seconds at the server's game clock zero, for the connect token's time check; 0 reads the wall clock. |
 | `ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH` | Development only: drop every Nth outgoing client datagram, 2 .. 1000000; 0 is off. |
@@ -19,4 +19,15 @@ set to the empty string.
 | `ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW` | Development only: reverse each window of W outgoing server datagrams, 2 .. 64; 0 is off. |
 | `ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES` | The operator memory budget: allocator bytes the client's pre-allocation plan must fit; 0 is no budget. |
 | `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES` | The operator memory budget: allocator bytes a server transport candidate's pre-allocation plan must fit; 0 is no budget. |
-| `ROCKETNET_GATEWAY_ETHERNET_ADDRESS` | Linux XDP: overrides gateway MAC discovery, `xx:xx:xx:xx:xx:xx`; a malformed value refuses the socket. Process-wide, not a config field. |
+
+Process-wide and platform-specific controls:
+
+| Variable | Meaning |
+| --- | --- |
+| `ROCKETNET_LOG_LEVEL` | Maximum emitted log level before initialization logs: 0 .. 5 (`ROCKETNET_LOG_LEVEL_NONE` .. `ROCKETNET_LOG_LEVEL_SPAM`). A value outside that range is ignored with a warning. |
+| `ROCKETNET_GATEWAY_ETHERNET_ADDRESS` | Linux XDP only: overrides gateway MAC discovery in `xx:xx:xx:xx:xx:xx` form. A malformed value refuses socket creation. |
+
+Development token support is an API helper, not an environment variable.
+Development builds expose `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` and
+`rocketnet_create_dev_connect_token`; see `sdk/rocketnet.h`. The public
+development key must not be used for production.
