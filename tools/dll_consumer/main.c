@@ -247,7 +247,9 @@ int main( void )
     CHECK( server_config.config_bytes == sizeof( server_config ) );
     server_config.protocol_id = PROTOCOL_ID;
     server_config.max_clients = 2;
-    server_config.transport = "portable";
+    // the platform's production ladder (NULL): a production library refuses a
+    // portable server, the development fallback (c7c638e7)
+    server_config.transport = NULL;
     memcpy( server_config.backend_public_key, backend_public_key, sizeof( server_config.backend_public_key ) );
     CHECK( rocketnet_server_required_memory( &server_config ) > 0 );
 
@@ -258,7 +260,8 @@ int main( void )
     CHECK( !rocketnet_server_running( server ) );
     CHECK( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
     CHECK( rocketnet_server_running( server ) );
-    CHECK( strcmp( rocketnet_server_transport_name( server ), "portable" ) == 0 );
+    CHECK( rocketnet_server_transport_name( server ) != NULL );
+    CHECK( strcmp( rocketnet_server_transport_name( server ), "portable" ) != 0 );
     CHECK( rocketnet_server_max_clients( server ) == 2 );
     CHECK( rocketnet_server_port( server ) != 0 );
 

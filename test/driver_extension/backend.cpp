@@ -64,5 +64,11 @@ static const rocketnet_server_transport_io_operations_t server_operations =
     NULL, NULL, NULL, NULL, NULL, send_batch, receive_batch,
     NULL, replay_forget, replay_mark, replay_commit, NULL, NULL, NULL
 };
-static const rocketnet_client_transport_io_operations_t client_operations = { client_create, destroy, send, receive };
+// the optional batch, wait/wake and send-failure members are named NULL: the
+// strict build refuses an initializer that leaves members out
+static const rocketnet_client_transport_io_operations_t client_operations =
+{
+    client_create, destroy, send, receive,
+    NULL, NULL, NULL, NULL, NULL
+};
 extern const rocketnet_transport_backend_t external_test_transport = { &server_operations, &client_operations };
