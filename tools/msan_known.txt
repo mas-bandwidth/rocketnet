@@ -29,9 +29,9 @@ memcmp (bin/test)
 # origin: Uninitialized value was created by an allocation of 'buffer' in the stack frame
 # origin: rocketnet_test_random_bytes() sdk/rocketnet_tests.cpp:889:5
 
-rocketnet_random_float sdk/rocketnet.cpp:542:5
+rocketnet_random_float sdk/rocketnet.cpp:576:5
 # origin: Uninitialized value was stored to memory at
-# origin: rocketnet_random_float sdk/rocketnet.cpp:509:12
+# origin: rocketnet_random_float sdk/rocketnet.cpp:575:12
 # origin: rocketnet_test_random_float() sdk/rocketnet_tests.cpp:1047:23
 # origin: rocketnet_unit_run_named(char const*) sdk/rocketnet_tests.cpp:12956:9
 # origin: rocketnet_unit_worker(char const*) test.cpp:86:18
@@ -49,9 +49,9 @@ load64_be sodium/sodium.h:1464:5
 # origin: rocketnet_sodium_crypto_hash_sha512 sodium/sodium.c:22090:5
 # origin: rocketnet_sodium_crypto_sign_ed25519_seed_keypair sodium/sodium.c:28863:5
 
-rocketnet_random_uint32 sdk/rocketnet.cpp:563:5
+rocketnet_random_uint32 sdk/rocketnet.cpp:590:5
 # origin: Uninitialized value was created by an allocation of 'value' in the stack frame
-# origin: rocketnet_random_uint32 sdk/rocketnet.cpp:529:5
+# origin: rocketnet_random_uint32 sdk/rocketnet.cpp:588:5
 
 std::_Rb_tree_node_base* std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_M_copy<false, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node>(std::_Rb_tree_node<unsigned long>*, std::_Rb_tree_node_base*, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node&) include/c++/bits/stl_tree.h:2552:10
 # origin: Uninitialized value was created by a heap allocation
@@ -92,3 +92,47 @@ std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::
 std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>>, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>>>::_S_left(std::_Rb_tree_node_base*) include/c++/bits/stl_tree.h:1425:9
 std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, int>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, int>>, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, int>>>::_S_left(std::_Rb_tree_node_base*) include/c++/bits/stl_tree.h:1425:9
 std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>>, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>>>::_S_right(std::_Rb_tree_node_base*) include/c++/bits/stl_tree.h:1437:9
+
+# Recorded with clang 18.1.8 (the fleet runner's clang) and clang 21.1.8 on
+# vision at the tree that first built and ran this gate end to end
+# (rowan/fix-asan-msan). Each is one of the blind spots above, traced to its
+# origin with origin_history_size=0:
+#
+# getrandom by raw syscall. The vendored sodium fills random bytes with
+# syscall(SYS_getrandom) (sodium/sodium.c, randombytes_linux_getrandom), which
+# MSan cannot see, so every value derived from a random fill stays poisoned.
+# The clang 18 lines of the two sodium entries recorded above with clang 21,
+# and the handshake key schedule hashing the server's random session nonce
+# (rocketnet_server_process_opened_request -> rocketnet_derive_handshake_keys
+# -> crypto_generichash; reached by
+# test_claim_released_after_small_order_refusal).
+rocketnet_sodium_ge25519_scalarmult_base sodium/sodium.c:14954:9
+# origin: rocketnet_sodium_crypto_box_keypair sodium/sodium.c:7086:12
+# origin: rocketnet_test_dev_keys_refused_in_release() sdk/rocketnet_tests.cpp:6744:5
+load64_be sodium/sodium.h:1457:5
+# origin: rocketnet_sodium_crypto_sign_ed25519_seed_keypair sodium/sodium.c:28840:5
+rocketnet_sodium_blake2b_final sodium/sodium.c:21104:5
+# origin: rocketnet_derive_key sdk/rocketnet_keys.cpp:35:5 <- rocketnet_derive_handshake_keys <- rocketnet_server_process_opened_request (session_nonce from randombytes_buf)
+
+# explicit_bzero. The sodium build defines HAVE_EXPLICIT_BZERO
+# (CMakeLists.txt), so sodium_memzero calls libc explicit_bzero, which MSan
+# does not intercept (checked on both compilers: a buffer read after
+# explicit_bzero is reported). The config decode staging is wiped that way
+# and then copied by the secret-wipe hook; bytes the base64 decode never
+# wrote stay poisoned although they are zero.
+secrets_wiped_all_zero(unsigned char const*, int) test_unit_secrets_wiped.cpp:66:14
+secrets_wiped_all_zero(unsigned char const*, int) test_unit_secrets_wiped.cpp:66:23
+# origin: secrets_wiped_staging_seen test_unit_secrets_wiped.cpp:489:5 <- rocketnet_config_apply_env_value sdk/rocketnet_config.cpp:583:13
+
+# A whole-block scan. test_secrets_wiped_arena_destroy_in_block counts the
+# planted message across every byte of the caller block it handed the arena,
+# including bytes the arena never wrote (origin: the test's own malloc).
+secrets_wiped_pattern_count(unsigned char const*, unsigned long) test_unit_secrets_wiped.cpp:200:37
+# origin: malloc <- test_secrets_wiped_arena_destroy_in_block() test_unit_secrets_wiped.cpp:454:33
+
+# Uninstrumented libstdc++ tree navigation (the class above): the counting
+# allocator's std::map<void*, size_t> (test_unit_secrets_wiped.cpp) and a
+# std::map<std::string, int> in the suite; origin: operator new (bin/test)
+# -> std::allocator_traits -> _M_get_node.
+std::_Rb_tree<void*, std::pair<void* const, unsigned long>, std::_Select1st<std::pair<void* const, unsigned long>>, std::less<void*>, std::allocator<std::pair<void* const, unsigned long>>>::_S_left(std::_Rb_tree_node_base*) include/c++/bits/stl_tree.h:1425:9
+std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, int>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, int>>, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, int>>>::_S_right(std::_Rb_tree_node_base*) include/c++/bits/stl_tree.h:1437:9
