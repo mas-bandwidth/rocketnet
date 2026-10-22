@@ -658,7 +658,7 @@ static void live_matrix_connect( struct live_matrix_t * m )
     {
         printf( "fail connect %u client_state=%d server_connected=%d\n", m->cycle, rocketnet_message_client_state( m->client ),
                 rocketnet_message_server_client_connected( m->server, 0 ) );
-        live_matrix_check( !"connect failed" );
+        live_matrix_check_failed( "connect failed", (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ );
     }
 }
 
@@ -962,7 +962,7 @@ static void live_matrix_window( struct live_matrix_t * m, double deadline )
                         (unsigned long long) live_matrix_counter( c, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK ),
                         (unsigned long long) live_matrix_counter( c, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION ) );
             }
-            live_matrix_check( !"unplanned disconnect" );
+            live_matrix_check_failed( "unplanned disconnect", (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ );
         }
         if ( m->failures > 0 )
             break;

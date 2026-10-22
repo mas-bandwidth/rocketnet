@@ -453,7 +453,7 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
     }
 
     std::vector<posix_hk_live_t> live( 3 );
-    for ( int i = 0; i < 3; i++ )
+    for ( size_t i = 0; i < 3; i++ )
         posix_hk_live_init( live[i], posix_hk_client_create( server_address, 0x6C000ULL + (uint64_t) i ) );
     posix_hk_connect_all( server, live, POSIX_HK_HANDSHAKE_SECONDS );
     posix_hard_killed_require( rocketnet_server_transport_num_connected_clients( server ) == 4 );
@@ -492,7 +492,7 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
 
     const double timeout_seen = freed_at - killed_at;
     double worst_gap = 0.0;
-    for ( int i = 0; i < 3; i++ )
+    for ( size_t i = 0; i < 3; i++ )
     {
         if ( live[i].max_gap_up > worst_gap ) worst_gap = live[i].max_gap_up;
         if ( live[i].max_gap_down > worst_gap ) worst_gap = live[i].max_gap_down;
@@ -500,13 +500,13 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
     printf( "posix_hard_killed_client server=%s family=%s client=%s: %llu sends to the dead slot, slot freed %.2fs after the kill, worst live receive gap %.1f ms (bound %.1f ms), pump %s\n",
             cell.server, cell.ipv6 ? "ipv6" : "ipv4", cell.client, (unsigned long long) sent_to_slot[dead_slot], timeout_seen,
             worst_gap * 1000.0, POSIX_HK_GAP_BOUND * 1000.0, rocketnet_platform_socket_pump( server_socket ) );
-    for ( int i = 0; i < 3; i++ )
-        printf( "  live client %d slot %d: up gap %.1f ms down gap %.1f ms\n", i, live[i].slot, live[i].max_gap_up * 1000.0, live[i].max_gap_down * 1000.0 );
+    for ( size_t i = 0; i < 3; i++ )
+        printf( "  live client %d slot %d: up gap %.1f ms down gap %.1f ms\n", (int) i, live[i].slot, live[i].max_gap_up * 1000.0, live[i].max_gap_down * 1000.0 );
 
     posix_hard_killed_require( sent_to_slot[dead_slot] > 0 );
     posix_hard_killed_require( timeout_seen >= POSIX_HK_CLIENT_TIMEOUT - 1.0 );
     posix_hard_killed_require( timeout_seen <= POSIX_HK_CLIENT_TIMEOUT + 2.0 );
-    for ( int i = 0; i < 3; i++ )
+    for ( size_t i = 0; i < 3; i++ )
     {
         posix_hard_killed_require( rocketnet_client_transport_state( live[i].client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
         posix_hard_killed_require( live[i].max_gap_up <= POSIX_HK_GAP_BOUND );
@@ -525,7 +525,7 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
     posix_hard_killed_require( rocketnet_server_transport_num_connected_clients( server ) == 4 );
 
     posix_hk_client_disconnect_and_destroy( fifth[0].client );
-    for ( int i = 0; i < 3; i++ )
+    for ( size_t i = 0; i < 3; i++ )
         posix_hk_client_disconnect_and_destroy( live[i].client );
     posix_hk_server_stop_and_destroy( server );
 }
@@ -564,14 +564,14 @@ static void posix_send_to_closed_port( const posix_hk_cell_t & cell )
     posix_hk_server_address( cell, rocketnet_server_transport_port( server ), server_address, sizeof(server_address) );
 
     std::vector<posix_hk_live_t> live( 3 );
-    for ( int i = 0; i < 3; i++ )
+    for ( size_t i = 0; i < 3; i++ )
         posix_hk_live_init( live[i], posix_hk_client_create( server_address, 0x6E000ULL + (uint64_t) i ) );
     posix_hk_connect_all( server, live, POSIX_HK_HANDSHAKE_SECONDS );
 
     // let the handshake's own traffic settle, then count from zero
 
     posix_hk_quiesce( server, live );
-    for ( int i = 0; i < 3; i++ )
+    for ( size_t i = 0; i < 3; i++ )
     {
         live[i].sent_up = live[i].received_up = live[i].sent_down = live[i].received_down = 0;
         live[i].last_up = live[i].last_down = 0.0;
@@ -604,7 +604,7 @@ static void posix_send_to_closed_port( const posix_hk_cell_t & cell )
     posix_hk_quiesce( server, live );
 
     double worst_gap = 0.0;
-    for ( int i = 0; i < 3; i++ )
+    for ( size_t i = 0; i < 3; i++ )
     {
         if ( live[i].max_gap_up > worst_gap ) worst_gap = live[i].max_gap_up;
         if ( live[i].max_gap_down > worst_gap ) worst_gap = live[i].max_gap_down;
@@ -612,12 +612,12 @@ static void posix_send_to_closed_port( const posix_hk_cell_t & cell )
     printf( "posix_send_to_closed_port server=%s family=%s client=%s: %d datagrams to closed port %d, worst live receive gap %.1f ms (bound %.1f ms), pump %s\n",
             cell.server, cell.ipv6 ? "ipv6" : "ipv4", cell.client, sent_closed, closed.port, worst_gap * 1000.0, POSIX_HK_GAP_BOUND * 1000.0,
             rocketnet_platform_socket_pump( server_socket ) );
-    for ( int i = 0; i < 3; i++ )
-        printf( "  live client %d slot %d: up %llu/%llu down %llu/%llu\n", i, live[i].slot,
+    for ( size_t i = 0; i < 3; i++ )
+        printf( "  live client %d slot %d: up %llu/%llu down %llu/%llu\n", (int) i, live[i].slot,
                 (unsigned long long) live[i].received_up, (unsigned long long) live[i].sent_up,
                 (unsigned long long) live[i].received_down, (unsigned long long) live[i].sent_down );
 
-    for ( int i = 0; i < 3; i++ )
+    for ( size_t i = 0; i < 3; i++ )
     {
         posix_hard_killed_require( rocketnet_client_transport_state( live[i].client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
         posix_hard_killed_require( live[i].sent_up > 0 && live[i].received_up == live[i].sent_up );
@@ -628,7 +628,7 @@ static void posix_send_to_closed_port( const posix_hk_cell_t & cell )
     posix_hard_killed_require( rocketnet_server_transport_num_connected_clients( server ) == 3 );
     posix_hard_killed_require( strcmp( rocketnet_platform_socket_pump( server_socket ), posix_hk_expected_server_pump( cell ) ) == 0 );
 
-    for ( int i = 0; i < 3; i++ )
+    for ( size_t i = 0; i < 3; i++ )
         posix_hk_client_disconnect_and_destroy( live[i].client );
     posix_hk_server_stop_and_destroy( server );
 }
@@ -884,7 +884,7 @@ const char * rocketnet_posix_hard_killed_peer_test_name( int index )
 
 int rocketnet_posix_hard_killed_peer_test_group( const char * name )
 {
-    for ( int i = 0; i < 3; i++ )
+    for ( size_t i = 0; i < 3; i++ )
         if ( strncmp( name, posix_hk_kinds[i], strlen( posix_hk_kinds[i] ) ) == 0 )
             return 1;
     return 0;
