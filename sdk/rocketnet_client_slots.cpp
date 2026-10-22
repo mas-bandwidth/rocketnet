@@ -126,7 +126,7 @@ void rocketnet_client_slots_destroy( struct rocketnet_client_slots_t * slots )
     rocketnet_free( slots->context, slots->confirmed );
     rocketnet_free( slots->context, slots->free_stack );
     // the connect tokens' user data can carry the game's secrets: wiped
-    // whole, which touches no new page (create zeroed it)
+    // whole, which touches no new page (create zeroed it); tla/RNDestroyWipe.tla Destroy
     if ( slots->user_data )
         sodium_memzero( slots->user_data, (size_t) ROCKETNET_USER_DATA_BYTES * (size_t) slots->max_clients );
     rocketnet_free( slots->context, slots->user_data );

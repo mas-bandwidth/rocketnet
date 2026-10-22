@@ -1684,7 +1684,7 @@ void rocketnet_server_destroy( struct rocketnet_server_t * server )
     // freed or given back as they are. The session keys went with the
     // transport. Wiping the block would touch every page of a plan that can
     // reach gigabytes, most of it never used; the OS zero-fills a page
-    // before another process gets it.
+    // before another process gets it (tla/RNDestroyWipe.tla Destroy).
     sodium_memzero( server->transport.server_secret_key, sizeof( server->transport.server_secret_key ) );
     if ( server->owns_block )
         rocketnet_free( server->context, server );

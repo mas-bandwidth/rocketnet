@@ -97,6 +97,7 @@ struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * cont
 // the mapping's secrets, and only those: the session keys, the session
 // nonce they were derived with, and the connect token's user data, which
 // came out of the token's private part and can carry the game's secrets
+// (tla/RNDestroyWipe.tla: Remove, and Destroy for a live mapping)
 static void rocketnet_encryption_mapping_wipe_secrets( struct rocketnet_encryption_mapping_t * mapping )
 {
     sodium_memzero( &mapping->keys, sizeof(mapping->keys) );
