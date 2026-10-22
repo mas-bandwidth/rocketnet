@@ -12,14 +12,14 @@ The version lives in `sdk/rocketnet.h`, in two branches selected by
 The shipping branch carries `ROCKETNET_VERSION_FULL` and the integer macros
 `ROCKETNET_VERSION_MAJOR`, `ROCKETNET_VERSION_MINOR` and
 `ROCKETNET_VERSION_PATCH`. For this preview, the full label is
-`"v1.0.0-preview-1"` and the integers are `1.0.0`. The development branch uses
+`"v1.0.0-preview-2"` and the integers are `1.0.0`. The development branch uses
 `"dev"` and the integer sentinel `255.255.255`.
 
 The numeric `ROCKETNET_VERSION`, CMake project `VERSION` and installed
 `RocketNetConfigVersion.cmake` remain numeric. CMake reads the full label
 from the header and checks that its numeric portion matches the project
-version. It exports `RocketNet_VERSION_STRING` as `v1.0.0-preview-1` and
-derives `RocketNet_VERSION_PRERELEASE` as `preview-1`. A final release has
+version. It exports `RocketNet_VERSION_STRING` as `v1.0.0-preview-2` and
+derives `RocketNet_VERSION_PRERELEASE` as `preview-2`. A final release has
 an empty prerelease string. There is no separate public prerelease macro.
 
 The `version-consistency` job in
@@ -103,7 +103,7 @@ also be the commit the tag points at, not a later merge.
    commit.
 6. On the merged `main` commit, create an annotated tag `vMAJOR.MINOR.PATCH`,
    or `vMAJOR.MINOR.PATCH-PRERELEASE` for a prerelease, for example
-   `v1.0.0-preview-1`, whose complete label equals the shipping
+   `v1.0.0-preview-2`, whose complete label equals the shipping
    `ROCKETNET_VERSION_FULL`. Do not tag a different commit, and do not move or
    reuse a tag after pushing it. Push the tag and let Release Check's
    `version-consistency` job confirm it against the header.

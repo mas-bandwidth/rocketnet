@@ -1,8 +1,6 @@
 # RocketNet v1.0.0-preview-2
 
-Draft for the next preview. Source changes below are present at
-`eaf420df45614fe1b0d8f1152b76b815d33cfdd2`, compared with the
-`v1.0.0-preview-1` tag. Final release testing and the release commit are pending;
+Release candidate changes compared with the `v1.0.0-preview-1` tag. Final release testing and the release commit are pending;
 this document does not announce a published release. See [TESTING.md](../TESTING.md)
 for qualification and [the release procedure](RELEASING.md) for the cut.
 
@@ -139,8 +137,7 @@ See [BUILDING.md](../BUILDING.md), [TRANSPORTS.md](../TRANSPORTS.md) and
   commit and scope; none is a blanket preview-2 pass.
 
 The [testing tables](../TESTING.md) and [roadmap](../ROADMAP.md) retain work
-still owed. Fixes under review and future merges are not included in this
-pinned source summary.
+still owed. The final qualification record will identify the tested release candidate.
 
 ## Deferred to preview-3
 
