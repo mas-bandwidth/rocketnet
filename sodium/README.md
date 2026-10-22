@@ -57,11 +57,34 @@ fails loudly and the edit is reviewed again:
 | baseline `sodium.h` (`sodium_private_common.h`) | none: it turned C4127, C4244, C4668 and C4456 off for every file including `sodium.h` | the four `#pragma warning(disable:...)` lines removed; the warnings they hid are fixed at their sites |
 | `fe_25_5/fe.h` `fe25519_tobytes`; `ed25519_ref10.c` `sc25519_mul`, `sc25519_muladd`, `sc25519_reduce`, `slide_vartime`; `salsa20_ref.c` `stream_ref`, `stream_ref_xor_ic` | C4244 (a 64- or 32-bit limb stored into a byte) | each such store spelled with the cast the implicit conversion performs, `(unsigned char) (expr)` (`NARROWING_STORES`): the same value |
 
+The strict set (`ROCKETNET_STRICT_WARNINGS`: `-Wconversion`,
+`-Wsign-conversion`, `-Wcast-qual`, `-Wundef`, `-Wshadow`) is clean too. Its
+edits are pattern rules (`UPSTREAM_CONVERSIONS`, `BASELINE_CONVERSIONS`),
+each applied inside one named function (or the whole input) and required to
+match exactly its recorded number of times. Each spells the conversion the
+language already performs at the site, so every value is unchanged:
+
+| Input | Warning | Edit |
+| --- | --- | --- |
+| `ed25519_ref10.c` `sc25519_mul`, `sc25519_muladd`, `sc25519_reduce`; `fe_25_5/fe.h` `fe25519_frombytes`, `fe25519_reduce`; `ed25519_ref10_fe_25_5.h` `fe25519_mul`, `fe25519_sq`, `fe25519_sq2` | `-Wsign-conversion` (signed carry step `h -= carry * ((uint64_t) 1L << k)`: the usual arithmetic conversions make it unsigned, the store makes it signed again) | `h = (int64_t) ((uint64_t) h - (uint64_t) carry * ((uint64_t) 1L << k))` (`int32_t`/`uint32_t` in `fe25519_reduce`), the same modular step |
+| the same scalar and field loaders | `-Wsign-conversion` (`int64_t` limb initialised from `load_3`/`load_4`'s `uint64_t`, below 2^32) | `(int64_t) (expr)` |
+| `ed25519_ref10.c` `sc25519_*`; `fe_25_5/fe.h` `fe25519_tobytes` | `-Wsign-conversion` (signed limbs in `(lo >> j) \| (hi * ((U) 1 << i))`) | both limbs written `(U) (lo >> j)`, `(U) hi`, as the expression already converts them |
+| `fe_25_5` `fe25519_reduce` (`q = (19 * h9 + ((uint32_t) 1L << 24)) >> 25`) | `-Wsign-conversion` | `q = (int32_t) (((uint32_t) (19 * h9) + ((uint32_t) 1L << 24)) >> 25)`: upstream's unsigned shift kept exactly as it computes |
+| `ed25519_ref10_fe_25_5.h` `fe25519_cmov`, `fe25519_cswap` | `-Wsign-conversion` (`int32_t x &= uint32_t mask`) | `x = (int32_t) ((uint32_t) x & mask)` |
+| `ed25519_ref10_fe_51.h` `fe25519_mul32`; `fe_51/fe.h` `fe25519_reduce` | `-Wconversion` (`uint128_t` into a `uint64_t` limb) | `(uint64_t)` on the stored value |
+| `ed25519_ref10.c` (`fe25519_cmov`/`fe25519_cneg` flags, `equal(babs, k)`, `babs`, `negative`'s asm result, `e[i] -= carry * 16`, the canonical checks' `c`, `d_`, `n`, `s[31] ^= sign << 7`, `curve25519_A[0]` into `fe25519_mul32`) | `-Wconversion`, `-Wsign-conversion` (0/1 flags, -8..8 digits and small constants between int, unsigned int, signed and unsigned char) | the cast the assignment or argument already performs; compound assignments spelled `x = (T) (x op e)` |
+| `blake2b-compress-ssse3.c`; `blake2b-compress-avx2.c` | `-Wsign-conversion` (`uint64_t` message words and counters into `_mm_set_epi64x`'s `long long`) | the message words are `const int64_t m0 = (int64_t) ...` (used only as those arguments); the counters are passed `(int64_t) S->t[0]` |
+| `blake2b-compress-ref.c` | `-Wsign-conversion` (`int i` times `sizeof`) | `(size_t) i` |
+| `blake2b-compress-avx2.c` | `-Wshadow` (amalgamation: the macro local `d` hides ed25519's file-scope `d`) | `d` added to the file's `renames` |
+| `stream_salsa20.c` (`#if HAVE_AMD64_ASM`); baseline `sodium.c` (`HAVE_WEAK_SYMBOLS`, `HAVE_ALLOCA`, `NETCODE_CRYPTO_LOGS`); baseline `sodium.h` (`NETCODE_X64`, `NETCODE_AVX`, `NETCODE_AVX2`) | `-Wundef` | `defined(X) && X`, which `#if` already evaluates for an unset `X` |
+| baseline `sodium_compare`, `sodium_add`, `sodium_sub` | `-Wconversion` (0/1 flags in `unsigned char`; `uint_fast16_t` may be 16 bits wide) | compound assignments spelled `x = (T) (x op e)` |
+| baseline `crypto_verify_n` (SSE2) | `-Wcast-qual` (each load cast the `volatile` off the pointed-to data for `_mm_loadu_si128`) | the pointers stay `volatile` and point to non-`volatile` data, which every load already treated it as |
+| baseline ChaCha20 (SSSE3, AVX2) and Poly1305 (SSE2) | `-Wsign-conversion`, `-Wconversion` (`uint32_t`/`uint64_t` words into and out of the intrinsics' `int`/`long long`; `~mask` into the length's type) | `(int)`, `(int64_t)`, `(uint32_t)` and `(unsigned long long) ~mask` at each site |
+| baseline `_cpuid` (MSVC only), `_randombytes_linux_getrandom` | `-Wsign-conversion`, `-Wshorten-64-to-32` | `(int) cpu_info_type`; `(int) getrandom(...)` (at most 256 bytes are requested, asserted) |
+
 None changes cryptographic arithmetic; `test_sodium` and the oracle check
 below cover the result. Upstream's own `#pragma GCC diagnostic ignored
-"-Wlong-long"` lines in its public headers are kept as written. The strict
-set (`ROCKETNET_STRICT_WARNINGS`: `-Wconversion`, `-Wsign-conversion` and
-the rest) is not yet clean here; that is a known issue in ROADMAP.md.
+"-Wlong-long"` lines in its public headers are kept as written.
 
 ## Reproduce
 
