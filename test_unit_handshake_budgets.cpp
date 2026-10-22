@@ -116,7 +116,7 @@ static void budgets_build_request( uint8_t * request, int index,
     struct rocketnet_signed_connect_data_t signed_fields;
     struct rocketnet_connect_token_private_t private_fields;
     budgets_fill_vector_fields( &signed_fields, &private_fields );
-    signed_fields.create_timestamp = ROCKETNET_TEST_CREATE_TS - 1 - (uint64_t) index;
+    signed_fields.create_timestamp = (uint64_t) ROCKETNET_TEST_CREATE_TS - 1 - (uint64_t) index;
     private_fields.client_id = (uint64_t) index;
 
     uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];

@@ -459,7 +459,7 @@ static void test_handshake_budget_reopens_after_update()
     for ( int i = 0; i < budget; ++i )
     {
         rocketnet_rotation_set_client_address( &test, i );
-        rocketnet_rotation_build_request_with_key( &test, request, 0x10000ULL + (uint64_t) i, test.server.cookie_key );
+        rocketnet_rotation_build_request_with_key( &test, request, UINT64_C( 0x10000 ) + (uint64_t) i, test.server.cookie_key );
         int result = rocketnet_rotation_process_from_client_address( &test, request );
         rocketnet_unit_check( result != ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED );
     }
@@ -495,7 +495,7 @@ static void test_cookie_requests_spend_no_handshake_budget()
     for ( int i = 0; i < budget; ++i )
     {
         rocketnet_rotation_set_client_address( &test, i );
-        rocketnet_rotation_build_request_with_key( &test, request, 0x10000ULL + (uint64_t) i, test.server.cookie_key );
+        rocketnet_rotation_build_request_with_key( &test, request, UINT64_C( 0x10000 ) + (uint64_t) i, test.server.cookie_key );
         int result = rocketnet_rotation_process_from_client_address( &test, request );
         rocketnet_unit_check( result != ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED );
     }

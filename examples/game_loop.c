@@ -38,8 +38,8 @@ static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] 
 #define BINS 10000                                          // 0.1 us bins up to 1 ms, then one overflow bin
 
 #define MESSAGE_BYTES 12   // the frame it was queued in (uint32), and a position (two floats)
-typedef struct { uint32_t bins[BINS + 1]; uint64_t count; double max, tick_sum, tick_max; } costs_t;
-typedef struct { double sum; uint64_t count; uint32_t min, max; } latency_t;
+typedef struct { uint32_t bins[BINS + 1]; uint32_t count; double max, tick_sum, tick_max; } costs_t;
+typedef struct { double sum; uint32_t count; uint32_t min, max; } latency_t;
 
 static costs_t costs[2];                                    // [0] this second, [1] the whole run
 static latency_t to_server, to_client;
@@ -57,7 +57,7 @@ static void add_cost( double us, bool tick )
 
 static double percentile( const costs_t * c, double p )
 {
-    uint64_t seen = 0;
+    uint32_t seen = 0;
     for ( int bin = 0; bin < BINS; bin++ )
         if ( ( seen += c->bins[bin] ) > 0 && seen >= p * c->count )
             return bin / 10.0;
@@ -183,7 +183,7 @@ int main( int argc, char ** argv )
             // (3) simulate: nothing moves in this example
             if ( measuring && ( buffer = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, MESSAGE_BYTES ) ) )
                 rocketnet_client_finish_message( client, write_message( buffer, frame ) );      // (4) queue
-            if ( measuring && ( frame + i ) % 30 == 0 && frame + 60 < measure_from + frames )
+            if ( measuring && ( frame + (uint32_t) i ) % 30 == 0 && frame + 60 < measure_from + frames )
             {
                 buffer = rocketnet_client_start_message( client, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, MESSAGE_BYTES );
                 if ( !buffer || !rocketnet_client_finish_message( client, write_message( buffer, frame ) ) ) { printf( "FAIL: client %d event refused\n", i ); goto cleanup; }
@@ -204,7 +204,7 @@ int main( int argc, char ** argv )
                 { read_message( &to_server, frame, batch->data[m], batch->bytes[m] ); events_received += batch->channel[m] == 1; }
         // (3) simulate: nothing moves in this example
         for ( int i = 0; measuring && i < num_clients; i++ )                            // (4) queue each client's snapshot
-            if ( ( buffer = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, MESSAGE_BYTES ) ) )
+            if ( ( buffer = rocketnet_server_start_message( server, (uint64_t) i, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, MESSAGE_BYTES ) ) )
                 rocketnet_server_finish_message( server, write_message( buffer, frame ) );
         if ( !wrong_order ) rocketnet_server_send_packets( server );                    // (5) last, so this frame's messages leave this frame
 

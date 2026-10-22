@@ -162,7 +162,7 @@ int main( int argc, char ** argv )
             {
                 if ( next_mode != skip_mode )
                 {
-                    uint8_t * payload = rocketnet_client_start_message( client, 0, next_mode, payload_bytes );
+                    uint8_t * payload = rocketnet_client_start_message( client, 0, (enum rocketnet_reliability_t) next_mode, payload_bytes );
                     if ( !payload )
                     {
                         printf( "error: client could not start mode %d\n", next_mode );
