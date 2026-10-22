@@ -1412,29 +1412,19 @@ static bool posix_linux_send_idle( struct posix_pair_t * pair )
     return true;
 }
 
-// bring the server's send path to quiescence. The transport's send_packets
-// calls the native flush only for a new commit
-// (sdk/rocketnet_server_transport.cpp:3280-3284), so it cannot retire a gso
-// bank retained on a contended or full handoff, or an io_uring send still
-// owed its CQE. The native flush itself does both: gso send_packets retries
-// the publish, io_uring send_packets reaps and resets its index. It runs here
-// on the main thread, as the transport would run it, and nothing new is
-// staged while the path settles.
-
-static void posix_linux_retire_sends( struct posix_pair_t * pair )
-{
-    if ( pair->native == POSIX_NATIVE_GSO )
-        rocketnet_server_gso_send_packets( (struct rocketnet_server_gso_t*) pair->transport );
-    if ( pair->native == POSIX_NATIVE_URING )
-        rocketnet_server_uring_send_packets( (struct rocketnet_server_uring_t*) pair->transport );
-}
+// bring the server's send path to quiescence through the ordinary send
+// boundary: the transport's send_packets re-runs the gso and io_uring flush
+// even with no new commit (sdk/rocketnet_server_transport.cpp), so a gso bank
+// retained on a contended or full handoff is published, and io_uring sends
+// owed their CQEs are reaped and the index reset. Nothing new is staged while
+// the path settles.
 
 static void posix_linux_wait_send_idle( struct posix_pair_t * pair, const char * what )
 {
     const double deadline = rocketnet_platform_time() + 5.0;
     while ( !posix_linux_send_idle( pair ) && rocketnet_platform_time() < deadline )
     {
-        posix_linux_retire_sends( pair );
+        rocketnet_server_transport_send_packets( pair->server );
         rocketnet_platform_sleep( 0.001 );
     }
     if ( !posix_linux_send_idle( pair ) )
