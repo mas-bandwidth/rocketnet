@@ -9,20 +9,17 @@ server design. Its implementation path is
 completion queue, with no notification and no worker thread: everything
 runs on the main thread in this model.
 
-## Scope after the worker handoff redesign
+## Scope after the I/O worker
 
-The runtime implementation now assigns RIO queue and socket operations to one
-background worker and uses bounded TX/RX banks exchanged with the caller.
-`RNRioDriver.tla` still has the earlier two send phases, two receive banks and
-caller-driven queue progression. Its existing invariants and recorded runs
-remain evidence for that abstract design; they do not prove the new ready/free
-queues, mutex ownership exchanges, worker wake/progress, or stop/join ordering.
-
-The packet-view stability, no-reuse-before-completion and drain-before-free
-properties still guide the implementation. New runtime ownership and fault
-tests cover the added worker paths; an updated formal refinement and fresh TLC
-runs would be needed to extend the model's claim to those paths. The action
-mapping and runs below retain their historical scope.
+The runtime transport now gives every RIO call to one background I/O worker
+and exchanges bank indices and send-phase states with the caller under a
+short mutex. `RNRioWorker.tla` (`README-RNRioWorker.md`) models that design:
+the worker, the receive banks and their backpressure, the phase handoff and
+stop. This module's runs remain evidence for the slot, slice and phase rules
+the worker keeps (no reserve into a posted phase, free only when drained, a
+refused re-post never shrinks the depth). Its caller-driven bank swap and
+per-call receive bound describe the earlier design and no longer map to the
+code. The action mapping and runs below retain their historical scope.
 
 ## The abstraction
 
