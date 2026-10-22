@@ -2670,6 +2670,58 @@ bool rocketnet_server_socket_test_buffer_exchange()
     return valid;
 }
 
+// A queue whose send flow index is -1 (constructed, before create publishes
+// the producer) has no staging buffer. finish and abort through any pointer
+// must return without forming send_buffer[-1]: tools/check_xdp_guard_control.py
+// removes both guards and expects this check to trip the sanitizer.
+bool rocketnet_server_socket_test_inactive_flow()
+{
+    void * server_storage = rocketnet_malloc( NULL, sizeof(rocketnet_server_socket_t) );
+    void * socket_storage = rocketnet_malloc( NULL, sizeof(rocketnet_server_xdp_socket_t) );
+    if ( !server_storage || !socket_storage )
+    {
+        rocketnet_free( NULL, socket_storage );
+        rocketnet_free( NULL, server_storage );
+        return false;
+    }
+    auto * server = new (server_storage) rocketnet_server_socket_t();
+    auto * socket = new (socket_storage) rocketnet_server_xdp_socket_t();
+    server->num_queues = 1;
+    server->socket = socket;
+    static const uint8_t gateway_mac[ETH_ALEN] = { 0x02, 0, 0, 0, 0, 2 };
+    rocketnet_xdp_reply_macs_reset( &server->reply_macs, gateway_mac );
+    rocketnet_address_t to = {};
+    to.type = ROCKETNET_ADDRESS_IPV4;
+
+    bool valid = socket->send_flow_index.load() == -1;
+    for ( int i = 0; i < ROCKETNET_XDP_NUM_BUFFERS; i++ )
+        socket->send_buffer[i].packet_info[0].packet_bytes = size_t( 40 + i );
+
+    uint64_t packet_id = 0;
+    valid &= rocketnet_server_socket_start_packet( server, &to, &packet_id ) == NULL;
+
+    for ( int i = 0; i < ROCKETNET_XDP_NUM_BUFFERS; i++ )
+    {
+        uint8_t * packet = socket->send_buffer[i].packet_data[0];
+        rocketnet_server_socket_finish_packet( server, packet_id, packet, 64 );
+        rocketnet_server_socket_abort_packet( server, packet_id, packet );
+    }
+    rocketnet_server_socket_send_packets( server );
+
+    valid &= socket->send_flow_index.load() == -1;
+    for ( int i = 0; i < ROCKETNET_XDP_NUM_BUFFERS; i++ )
+    {
+        valid &= socket->send_buffer[i].packet_info[0].packet_bytes == size_t( 40 + i );
+        valid &= socket->send_buffer[i].num_packets.load() == 0;
+    }
+
+    socket->~rocketnet_server_xdp_socket_t();
+    server->~rocketnet_server_socket_t();
+    rocketnet_free( NULL, socket_storage );
+    rocketnet_free( NULL, server_storage );
+    return valid;
+}
+
 // Exercise the replay writer's pending buffer and its commit failure path
 // without a map or a kernel resource: replay_map_fd -1 refuses every syscall.
 bool rocketnet_server_socket_test_replay_marks()
