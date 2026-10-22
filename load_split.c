@@ -915,6 +915,20 @@ cleanup:
             split_print_streams("server", run_id, 0, total, clients, NULL);
             split_print_wire("server", run_id, 0, total, clients, NULL);
         }
+        {
+            uint64_t sum_sent = 0, sum_received = 0;
+            for ( int i = 0; i < total; ++i )
+            {
+                if ( clients[i].slot < 0 ) continue;
+                struct rocketnet_server_client_stats_t diag;
+                rocketnet_server_client_stats(server, clients[i].slot, &diag);
+                sum_sent += diag.packets_sent; sum_received += diag.packets_received;
+                printf("split_packets: role=server client=%d sent=%" PRIu64 " received=%" PRIu64 "\n",
+                       i, diag.packets_sent, diag.packets_received);
+            }
+            printf("split_diag: role=server run_id=%016" PRIx64 " packets_sent=%" PRIu64 " packets_received=%" PRIu64 "\n",
+                   run_id, sum_sent, sum_received);
+        }
         rn_cli_server_stop_and_destroy(server);
     }
     free(clients);
@@ -1248,6 +1262,20 @@ cleanup:
     {
         split_print_streams("client-shard", run_id, first, count, NULL, clients);
         split_print_wire("client-shard", run_id, first, count, NULL, clients);
+        {
+            uint64_t sum_sent = 0, sum_received = 0;
+            for ( int i = 0; i < count; ++i )
+            {
+                if ( !clients[i].api ) continue;
+                struct rocketnet_client_stats_t diag;
+                rocketnet_client_stats(clients[i].api, &diag);
+                sum_sent += diag.packets_sent; sum_received += diag.packets_received;
+                printf("split_packets: role=client-shard client=%d sent=%" PRIu64 " received=%" PRIu64 "\n",
+                       first + i, diag.packets_sent, diag.packets_received);
+            }
+            printf("split_diag: role=client-shard run_id=%016" PRIx64 " first=%d packets_sent=%" PRIu64 " packets_received=%" PRIu64 "\n",
+                   run_id, first, sum_sent, sum_received);
+        }
         for ( int i = 0; i < count; ++i )
             if ( clients[i].api ) rn_cli_client_stop_and_destroy(clients[i].api);
         free(clients);
