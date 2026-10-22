@@ -4,11 +4,13 @@
 */
 
 // The I/O step (sdk/rocketnet_client_io.h) against the fake client transport
-// (test/fake_client_driver.h) and the RNClientIo actions of
-// tla/RNClientIo.tla. Single-threaded: no sockets, no real time.
+// (test/fake_client_driver.h), the RNClientIo actions of tla/RNClientIo.tla
+// and the exchanges of tla/RNBufferHandoff.tla. Single-threaded: no sockets,
+// no real time.
 
 #include "test_unit_registry.h"
 #include "test/fake_client_driver.h"
+#include "test/client_io_rig.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_client_io.h"
@@ -33,67 +35,52 @@ static void client_io_step_test_open( rocketnet_fake_client_transport_io_t * fak
 
 // Three slots, the middle aborted: one step sends the two live slots byte
 // exact to the handed-off destination, per packet with the io table, and the
-// next step is idle. RNClientIo HandOff, IoSend, IoFinishRing.
+// next step only gives the ring back. RNClientIo HandOff, IoSend.
 static void test_client_io_step_sends_handed_off_ring()
 {
     rocketnet_fake_client_transport_io_t fake = {};
     rocketnet_client_transport_io_t transport = {};
     client_io_step_test_open( &fake, &rocketnet_fake_client_operations_io, &transport );
 
-    uint8_t ring0[3 * ROCKETNET_FRAME_STRIDE] = {};
-    uint8_t ring1[3 * ROCKETNET_FRAME_STRIDE] = {};
-    int counts0[3] = { 11, 0, 7 };
-    int counts1[3] = { 0, 0, 0 };
+    rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
+    rig->counts[0][0] = 11;
+    rig->counts[0][1] = 0;
+    rig->counts[0][2] = 7;
     for ( int i = 0; i < 11; i++ )
-        ring0[ROCKETNET_FRAME_WIRE_OFFSET + i] = (uint8_t) ( i + 1 );
+        rocketnet_client_io_rig_slot( rig, 0, 0 )[i] = (uint8_t) ( i + 1 );
     for ( int i = 0; i < 7; i++ )
-        ring0[2 * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET + i] = (uint8_t) ( 0x80 + i );
+        rocketnet_client_io_rig_slot( rig, 0, 2 )[i] = (uint8_t) ( 0x80 + i );
 
-    rocketnet_client_io_ring_view_t view0 = {};
-    view0.data = ring0;
-    view0.frame_stride = ROCKETNET_FRAME_STRIDE;
-    view0.wire_offset = ROCKETNET_FRAME_WIRE_OFFSET;
-    view0.wire_bytes = (const uint8_t *) counts0;
-    view0.wire_bytes_stride = sizeof( int );
-
-    rocketnet_client_io_ring_view_t view1 = {};
-    view1.data = ring1;
-    view1.frame_stride = ROCKETNET_FRAME_STRIDE;
-    view1.wire_offset = ROCKETNET_FRAME_WIRE_OFFSET;
-    view1.wire_bytes = (const uint8_t *) counts1;
-    view1.wire_bytes_stride = sizeof( int );
-
-    rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] =
-    {
-        new rocketnet_client_receive_buffer_t, new rocketnet_client_receive_buffer_t
-    };
     client_io_step_test_clock_t clock = { 1000.0 };
     rocketnet_client_io_t io = {};
-    rocketnet_client_io_init( &io, &transport, &view0, &view1, buffers, client_io_step_test_time, &clock );
+    rocketnet_client_io_rig_init( rig, &io, &transport, client_io_step_test_time, &clock );
 
     rocketnet_address_t to = {};
     rocketnet_address_load_ipv4( &to, 0x7f000001, 9000 );
 
     rocketnet_unit_check( rocketnet_client_io_hand_off( &io, 3, &to ) == ROCKETNET_CLIENT_RINGS_HANDED_OFF );
     rocketnet_unit_check( fake.wake_calls == 1 );
+    rocketnet_unit_check( io.send_fill == 1 );
 
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    rocketnet_unit_check( io.send_ring == 0 );
     rocketnet_unit_check( fake.send_calls == 2 );
     rocketnet_unit_check( fake.send_batch_calls == 0 );
     rocketnet_unit_check( fake.num_sent == 2 );
     rocketnet_unit_check( fake.sent[0].bytes == 11 );
-    rocketnet_unit_check( memcmp( fake.sent[0].data, ring0 + ROCKETNET_FRAME_WIRE_OFFSET, 11 ) == 0 );
+    rocketnet_unit_check( memcmp( fake.sent[0].data, rocketnet_client_io_rig_slot( rig, 0, 0 ), 11 ) == 0 );
     rocketnet_unit_check( rocketnet_address_equal( &fake.sent[0].address, &to ) );
     rocketnet_unit_check( fake.sent[1].bytes == 7 );
-    rocketnet_unit_check( memcmp( fake.sent[1].data,
-        ring0 + 2 * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET, 7 ) == 0 );
+    rocketnet_unit_check( memcmp( fake.sent[1].data, rocketnet_client_io_rig_slot( rig, 0, 2 ), 7 ) == 0 );
     rocketnet_unit_check( rocketnet_address_equal( &fake.sent[1].address, &to ) );
 
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_IDLE );
+    rocketnet_unit_check( io.send_ring == -1 );
+    rocketnet_unit_check( io.send.free_count == 2 );
+    rocketnet_unit_check( fake.num_sent == 2 );
 
     rocketnet_client_transport_io_close( &transport );
-    delete buffers[0];
-    delete buffers[1];
+    rocketnet_client_io_rig_destroy( rig );
 }
 REGISTER_UNIT_TEST( test_client_io_step_sends_handed_off_ring );
 
@@ -105,36 +92,17 @@ static void test_client_io_step_uses_send_batch_when_set()
     rocketnet_client_transport_io_t transport = {};
     client_io_step_test_open( &fake, &rocketnet_fake_client_operations_batch, &transport );
 
-    uint8_t ring0[2 * ROCKETNET_FRAME_STRIDE] = {};
-    uint8_t ring1[2 * ROCKETNET_FRAME_STRIDE] = {};
-    int counts0[2] = { 9, 13 };
-    int counts1[2] = { 0, 0 };
+    rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
+    rig->counts[0][0] = 9;
+    rig->counts[0][1] = 13;
     for ( int i = 0; i < 9; i++ )
-        ring0[ROCKETNET_FRAME_WIRE_OFFSET + i] = (uint8_t) ( 0x10 + i );
+        rocketnet_client_io_rig_slot( rig, 0, 0 )[i] = (uint8_t) ( 0x10 + i );
     for ( int i = 0; i < 13; i++ )
-        ring0[ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET + i] = (uint8_t) ( 0x20 + i );
+        rocketnet_client_io_rig_slot( rig, 0, 1 )[i] = (uint8_t) ( 0x20 + i );
 
-    rocketnet_client_io_ring_view_t view0 = {};
-    view0.data = ring0;
-    view0.frame_stride = ROCKETNET_FRAME_STRIDE;
-    view0.wire_offset = ROCKETNET_FRAME_WIRE_OFFSET;
-    view0.wire_bytes = (const uint8_t *) counts0;
-    view0.wire_bytes_stride = sizeof( int );
-
-    rocketnet_client_io_ring_view_t view1 = {};
-    view1.data = ring1;
-    view1.frame_stride = ROCKETNET_FRAME_STRIDE;
-    view1.wire_offset = ROCKETNET_FRAME_WIRE_OFFSET;
-    view1.wire_bytes = (const uint8_t *) counts1;
-    view1.wire_bytes_stride = sizeof( int );
-
-    rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] =
-    {
-        new rocketnet_client_receive_buffer_t, new rocketnet_client_receive_buffer_t
-    };
     client_io_step_test_clock_t clock = { 1000.0 };
     rocketnet_client_io_t io = {};
-    rocketnet_client_io_init( &io, &transport, &view0, &view1, buffers, client_io_step_test_time, &clock );
+    rocketnet_client_io_rig_init( rig, &io, &transport, client_io_step_test_time, &clock );
 
     rocketnet_address_t to = {};
     rocketnet_address_load_ipv4( &to, 0x7f000001, 9001 );
@@ -146,14 +114,109 @@ static void test_client_io_step_uses_send_batch_when_set()
     rocketnet_unit_check( fake.num_sent == 2 );
     rocketnet_unit_check( fake.sent[0].bytes == 9 );
     rocketnet_unit_check( fake.sent[1].bytes == 13 );
-    rocketnet_unit_check( memcmp( fake.sent[1].data,
-        ring0 + ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET, 13 ) == 0 );
+    rocketnet_unit_check( memcmp( fake.sent[1].data, rocketnet_client_io_rig_slot( rig, 0, 1 ), 13 ) == 0 );
 
     rocketnet_client_transport_io_close( &transport );
-    delete buffers[0];
-    delete buffers[1];
+    rocketnet_client_io_rig_destroy( rig );
 }
 REGISTER_UNIT_TEST( test_client_io_step_uses_send_batch_when_set );
+
+// Three hand-offs with no step between: two rings queue (MaxReady 2) and the
+// third is deferred, its slots still in the Filling ring with the destination
+// they were committed for. The steps send the queued rings oldest first, then
+// the deferred one leaves with the next hand-off. RNBufferHandoff InOrder,
+// MainNeverWaits; RNClientIo Defer, SentToCommitted.
+static void test_client_io_step_sends_rings_in_order_and_defers()
+{
+    rocketnet_fake_client_transport_io_t fake = {};
+    rocketnet_client_transport_io_t transport = {};
+    client_io_step_test_open( &fake, &rocketnet_fake_client_operations_io, &transport );
+
+    rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
+    for ( int ring = 0; ring < ROCKETNET_CLIENT_IO_NUM_RINGS; ring++ )
+    {
+        rig->counts[ring][0] = 4;
+        rocketnet_client_io_rig_slot( rig, ring, 0 )[0] = (uint8_t) ( 0xA0 + ring );
+    }
+
+    client_io_step_test_clock_t clock = { 1000.0 };
+    rocketnet_client_io_t io = {};
+    rocketnet_client_io_rig_init( rig, &io, &transport, client_io_step_test_time, &clock );
+
+    rocketnet_address_t first = {};
+    rocketnet_address_t second = {};
+    rocketnet_address_load_ipv4( &first, 0x7f000001, 9010 );
+    rocketnet_address_load_ipv4( &second, 0x7f000001, 9011 );
+
+    rocketnet_unit_check( rocketnet_client_io_hand_off( &io, 1, &first ) == ROCKETNET_CLIENT_RINGS_HANDED_OFF );
+    rocketnet_unit_check( rocketnet_client_io_hand_off( &io, 1, &first ) == ROCKETNET_CLIENT_RINGS_HANDED_OFF );
+    rocketnet_unit_check( io.send_fill == 2 );
+    rocketnet_unit_check( rocketnet_client_io_hand_off( &io, 1, &first ) == ROCKETNET_CLIENT_RINGS_LATE );
+    rocketnet_unit_check( io.send.owed );
+    rocketnet_unit_check( fake.wake_calls == 2 );
+
+    // a later attempt for the deferred ring keeps the destination it was
+    // committed with
+    rocketnet_unit_check( rocketnet_client_io_hand_off( &io, 1, &second ) == ROCKETNET_CLIENT_RINGS_LATE );
+
+    rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    rocketnet_unit_check( fake.num_sent == 2 );
+    rocketnet_unit_check( fake.sent[0].data[0] == 0xA0 );
+    rocketnet_unit_check( fake.sent[1].data[0] == 0xA1 );
+
+    rocketnet_unit_check( rocketnet_client_io_hand_off( &io, 1, &second ) == ROCKETNET_CLIENT_RINGS_HANDED_OFF );
+    rocketnet_unit_check( io.send_fill == 0 );
+    rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    rocketnet_unit_check( fake.num_sent == 3 );
+    rocketnet_unit_check( fake.sent[2].data[0] == 0xA2 );
+    rocketnet_unit_check( rocketnet_address_equal( &fake.sent[2].address, &first ) );
+
+    rocketnet_client_transport_io_close( &transport );
+    rocketnet_client_io_rig_destroy( rig );
+}
+REGISTER_UNIT_TEST( test_client_io_step_sends_rings_in_order_and_defers );
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+// A hand-off while the I/O thread holds the mutex is deferred at once: the
+// game thread never waits for the lock. RNBufferHandoff MainNeverWaits. The
+// test holds the mutex on its own thread, so it runs where the platform mutex
+// is not recursive (a Windows critical section is).
+static void test_client_io_hand_off_never_waits_for_the_mutex()
+{
+    rocketnet_fake_client_transport_io_t fake = {};
+    rocketnet_client_transport_io_t transport = {};
+    client_io_step_test_open( &fake, &rocketnet_fake_client_operations_io, &transport );
+
+    rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
+    rig->counts[0][0] = 4;
+
+    client_io_step_test_clock_t clock = { 1000.0 };
+    rocketnet_client_io_t io = {};
+    rocketnet_client_io_rig_init( rig, &io, &transport, client_io_step_test_time, &clock );
+
+    rocketnet_address_t to = {};
+    rocketnet_address_load_ipv4( &to, 0x7f000001, 9020 );
+
+    // try-acquire fails while held; no other thread is needed to show it
+    rocketnet_platform_mutex_acquire( &rig->mutex );
+    rocketnet_unit_check( rocketnet_client_io_hand_off( &io, 1, &to ) == ROCKETNET_CLIENT_RINGS_LATE );
+    rocketnet_unit_check( io.send_fill == 0 && io.send.ready_count == 0 );
+    rocketnet_unit_check( rocketnet_client_io_expose( &io ) == NULL );
+    rocketnet_unit_check( fake.wake_calls == 0 );
+    rocketnet_platform_mutex_release( &rig->mutex );
+
+    rocketnet_unit_check( rocketnet_client_io_hand_off( &io, 1, &to ) == ROCKETNET_CLIENT_RINGS_HANDED_OFF );
+    rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    rocketnet_unit_check( fake.num_sent == 1 );
+
+    rocketnet_client_transport_io_close( &transport );
+    rocketnet_client_io_rig_destroy( rig );
+}
+REGISTER_UNIT_TEST( test_client_io_hand_off_never_waits_for_the_mutex );
+
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 // The clock callback stamps receive_time: one datagram read with now = 1000.25
 // is exposed with receive_time 1000.25. docs/CLIENT-IO.md _The clock_.
@@ -163,32 +226,10 @@ static void test_client_io_receive_time_from_callback()
     rocketnet_client_transport_io_t transport = {};
     client_io_step_test_open( &fake, &rocketnet_fake_client_operations_io, &transport );
 
-    uint8_t ring0[ROCKETNET_FRAME_STRIDE] = {};
-    uint8_t ring1[ROCKETNET_FRAME_STRIDE] = {};
-    int counts0[1] = { 0 };
-    int counts1[1] = { 0 };
-
-    rocketnet_client_io_ring_view_t view0 = {};
-    view0.data = ring0;
-    view0.frame_stride = ROCKETNET_FRAME_STRIDE;
-    view0.wire_offset = ROCKETNET_FRAME_WIRE_OFFSET;
-    view0.wire_bytes = (const uint8_t *) counts0;
-    view0.wire_bytes_stride = sizeof( int );
-
-    rocketnet_client_io_ring_view_t view1 = {};
-    view1.data = ring1;
-    view1.frame_stride = ROCKETNET_FRAME_STRIDE;
-    view1.wire_offset = ROCKETNET_FRAME_WIRE_OFFSET;
-    view1.wire_bytes = (const uint8_t *) counts1;
-    view1.wire_bytes_stride = sizeof( int );
-
-    rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] =
-    {
-        new rocketnet_client_receive_buffer_t, new rocketnet_client_receive_buffer_t
-    };
+    rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
     client_io_step_test_clock_t clock = { 1000.0 };
     rocketnet_client_io_t io = {};
-    rocketnet_client_io_init( &io, &transport, &view0, &view1, buffers, client_io_step_test_time, &clock );
+    rocketnet_client_io_rig_init( rig, &io, &transport, client_io_step_test_time, &clock );
 
     uint8_t datagram[32];
     for ( int i = 0; i < 32; i++ )
@@ -210,8 +251,7 @@ static void test_client_io_receive_time_from_callback()
     rocketnet_client_io_return( &io );
 
     rocketnet_client_transport_io_close( &transport );
-    delete buffers[0];
-    delete buffers[1];
+    rocketnet_client_io_rig_destroy( rig );
 }
 REGISTER_UNIT_TEST( test_client_io_receive_time_from_callback );
 
@@ -225,32 +265,10 @@ static void test_client_io_step_publishes_received()
     rocketnet_client_transport_io_t transport = {};
     client_io_step_test_open( &fake, &rocketnet_fake_client_operations_io, &transport );
 
-    uint8_t ring0[ROCKETNET_FRAME_STRIDE] = {};
-    uint8_t ring1[ROCKETNET_FRAME_STRIDE] = {};
-    int counts0[1] = { 0 };
-    int counts1[1] = { 0 };
-
-    rocketnet_client_io_ring_view_t view0 = {};
-    view0.data = ring0;
-    view0.frame_stride = ROCKETNET_FRAME_STRIDE;
-    view0.wire_offset = ROCKETNET_FRAME_WIRE_OFFSET;
-    view0.wire_bytes = (const uint8_t *) counts0;
-    view0.wire_bytes_stride = sizeof( int );
-
-    rocketnet_client_io_ring_view_t view1 = {};
-    view1.data = ring1;
-    view1.frame_stride = ROCKETNET_FRAME_STRIDE;
-    view1.wire_offset = ROCKETNET_FRAME_WIRE_OFFSET;
-    view1.wire_bytes = (const uint8_t *) counts1;
-    view1.wire_bytes_stride = sizeof( int );
-
-    rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] =
-    {
-        new rocketnet_client_receive_buffer_t, new rocketnet_client_receive_buffer_t
-    };
+    rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
     client_io_step_test_clock_t clock = { 1000.0 };
     rocketnet_client_io_t io = {};
-    rocketnet_client_io_init( &io, &transport, &view0, &view1, buffers, client_io_step_test_time, &clock );
+    rocketnet_client_io_rig_init( rig, &io, &transport, client_io_step_test_time, &clock );
 
     uint8_t datagram[16];
     for ( int i = 0; i < 16; i++ )
@@ -284,10 +302,54 @@ static void test_client_io_step_publishes_received()
     rocketnet_client_io_return( &io );
 
     rocketnet_client_transport_io_close( &transport );
-    delete buffers[0];
-    delete buffers[1];
+    rocketnet_client_io_rig_destroy( rig );
 }
 REGISTER_UNIT_TEST( test_client_io_step_publishes_received );
+
+// With a buffer already waiting ready, later datagrams join the I/O thread's
+// own buffer instead of queueing a second one, so update's next expose takes
+// everything published in one buffer and the rest in the next. RNBufferHandoff
+// receive triple buffer (MaxReady 1), InOrder.
+static void test_client_io_step_receive_triple_buffer()
+{
+    rocketnet_fake_client_transport_io_t fake = {};
+    rocketnet_client_transport_io_t transport = {};
+    client_io_step_test_open( &fake, &rocketnet_fake_client_operations_io, &transport );
+
+    rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
+    client_io_step_test_clock_t clock = { 1000.0 };
+    rocketnet_client_io_t io = {};
+    rocketnet_client_io_rig_init( rig, &io, &transport, client_io_step_test_time, &clock );
+
+    rocketnet_address_t from = {};
+    rocketnet_address_load_ipv4( &from, 0x7f000001, 9250 );
+    uint8_t datagram[8] = {};
+    for ( int i = 0; i < 3; i++ )
+    {
+        datagram[0] = (uint8_t) ( 0x10 + i );
+        rocketnet_fake_client_push( &fake, &from, datagram, 8 );
+        rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    }
+    rocketnet_unit_check( io.receive.ready_count == 1 );
+    rocketnet_unit_check( io.receive.owed );
+
+    // the exchange that takes the ready buffer reports the owed publish
+    const int wakes = fake.wake_calls;
+    rocketnet_client_receive_buffer_t * received = rocketnet_client_io_expose( &io );
+    rocketnet_unit_check( fake.wake_calls == wakes + 1 );
+    rocketnet_unit_check( received != NULL && received->num_packets == 1 && received->packet_data[0][0] == 0x10 );
+    rocketnet_client_io_return( &io );
+
+    rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    received = rocketnet_client_io_expose( &io );
+    rocketnet_unit_check( received != NULL && received->num_packets == 2 );
+    rocketnet_unit_check( received->packet_data[0][0] == 0x11 && received->packet_data[1][0] == 0x12 );
+    rocketnet_client_io_return( &io );
+
+    rocketnet_client_transport_io_close( &transport );
+    rocketnet_client_io_rig_destroy( rig );
+}
+REGISTER_UNIT_TEST( test_client_io_step_receive_triple_buffer );
 
 // A blocked idle step waits once with the guard timeout and readable true; a
 // step with a handed-off ring is worked and does not wait. RNClientIo IoWait.
@@ -297,34 +359,14 @@ static void test_client_io_step_waits_only_when_idle()
     rocketnet_client_transport_io_t transport = {};
     client_io_step_test_open( &fake, &rocketnet_fake_client_operations_io, &transport );
 
-    uint8_t ring0[ROCKETNET_FRAME_STRIDE] = {};
-    uint8_t ring1[ROCKETNET_FRAME_STRIDE] = {};
-    int counts0[1] = { 5 };
-    int counts1[1] = { 0 };
+    rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
+    rig->counts[0][0] = 5;
     rocketnet_address_t to = {};
     rocketnet_address_load_ipv4( &to, 0x7f000001, 9300 );
 
-    rocketnet_client_io_ring_view_t view0 = {};
-    view0.data = ring0;
-    view0.frame_stride = ROCKETNET_FRAME_STRIDE;
-    view0.wire_offset = ROCKETNET_FRAME_WIRE_OFFSET;
-    view0.wire_bytes = (const uint8_t *) counts0;
-    view0.wire_bytes_stride = sizeof( int );
-
-    rocketnet_client_io_ring_view_t view1 = {};
-    view1.data = ring1;
-    view1.frame_stride = ROCKETNET_FRAME_STRIDE;
-    view1.wire_offset = ROCKETNET_FRAME_WIRE_OFFSET;
-    view1.wire_bytes = (const uint8_t *) counts1;
-    view1.wire_bytes_stride = sizeof( int );
-
-    rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] =
-    {
-        new rocketnet_client_receive_buffer_t, new rocketnet_client_receive_buffer_t
-    };
     client_io_step_test_clock_t clock = { 1000.0 };
     rocketnet_client_io_t io = {};
-    rocketnet_client_io_init( &io, &transport, &view0, &view1, buffers, client_io_step_test_time, &clock );
+    rocketnet_client_io_rig_init( rig, &io, &transport, client_io_step_test_time, &clock );
 
     rocketnet_unit_check( rocketnet_client_io_step( &io, true ) == ROCKETNET_CLIENT_IO_IDLE );
     rocketnet_unit_check( fake.wait_calls == 1 );
@@ -337,48 +379,25 @@ static void test_client_io_step_waits_only_when_idle()
     rocketnet_unit_check( fake.num_sent == 1 );
 
     rocketnet_client_transport_io_close( &transport );
-    delete buffers[0];
-    delete buffers[1];
+    rocketnet_client_io_rig_destroy( rig );
 }
 REGISTER_UNIT_TEST( test_client_io_step_waits_only_when_idle );
 
-// A full I/O buffer with update holding the other: the next step leaves the
-// datagram in the fake, waits with readable false, and does not wake; the
-// return at the end of the next update wakes the I/O thread exactly once, and
-// the step after that publishes. MCRNClientIoBrokenFullWaitReadable.cfg,
-// FullWaitsOnWake.
+// A full I/O buffer with one buffer ready and update holding the third: the
+// next step leaves the datagram in the fake, waits with readable false, and
+// does not wake; update's next exchange wakes the I/O thread exactly once,
+// and the step after that publishes. RNClientIo FullWaitsOnWake,
+// RNBufferHandoff ArrivedDelivered (the owed wake).
 static void test_client_io_step_full_buffer_waits_on_wake_only()
 {
     rocketnet_fake_client_transport_io_t fake = {};
     rocketnet_client_transport_io_t transport = {};
     client_io_step_test_open( &fake, &rocketnet_fake_client_operations_io, &transport );
 
-    uint8_t ring0[ROCKETNET_FRAME_STRIDE] = {};
-    uint8_t ring1[ROCKETNET_FRAME_STRIDE] = {};
-    int counts0[1] = { 0 };
-    int counts1[1] = { 0 };
-
-    rocketnet_client_io_ring_view_t view0 = {};
-    view0.data = ring0;
-    view0.frame_stride = ROCKETNET_FRAME_STRIDE;
-    view0.wire_offset = ROCKETNET_FRAME_WIRE_OFFSET;
-    view0.wire_bytes = (const uint8_t *) counts0;
-    view0.wire_bytes_stride = sizeof( int );
-
-    rocketnet_client_io_ring_view_t view1 = {};
-    view1.data = ring1;
-    view1.frame_stride = ROCKETNET_FRAME_STRIDE;
-    view1.wire_offset = ROCKETNET_FRAME_WIRE_OFFSET;
-    view1.wire_bytes = (const uint8_t *) counts1;
-    view1.wire_bytes_stride = sizeof( int );
-
-    rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] =
-    {
-        new rocketnet_client_receive_buffer_t, new rocketnet_client_receive_buffer_t
-    };
+    rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
     client_io_step_test_clock_t clock = { 1000.0 };
     rocketnet_client_io_t io = {};
-    rocketnet_client_io_init( &io, &transport, &view0, &view1, buffers, client_io_step_test_time, &clock );
+    rocketnet_client_io_rig_init( rig, &io, &transport, client_io_step_test_time, &clock );
 
     uint8_t datagram[16];
     for ( int i = 0; i < 16; i++ )
@@ -386,13 +405,19 @@ static void test_client_io_step_full_buffer_waits_on_wake_only()
     rocketnet_address_t from = {};
     rocketnet_address_load_ipv4( &from, 0x7f000001, 9400 );
 
+    // update holds one buffer
     rocketnet_fake_client_push( &fake, &from, datagram, 16 );
     rocketnet_unit_check( rocketnet_client_io_step( &io, true ) == ROCKETNET_CLIENT_IO_WORKED );
-
     rocketnet_client_receive_buffer_t * held = rocketnet_client_io_expose( &io );
     rocketnet_unit_check( held != NULL );
     rocketnet_unit_check( held->num_packets == 1 );
 
+    // one buffer published and waiting ready
+    rocketnet_fake_client_push( &fake, &from, datagram, 16 );
+    rocketnet_unit_check( rocketnet_client_io_step( &io, true ) == ROCKETNET_CLIENT_IO_WORKED );
+    rocketnet_unit_check( io.receive.ready_count == 1 );
+
+    // the I/O thread's own buffer fills to the brim
     for ( int batch = 0; batch < ROCKETNET_NUM_CLIENT_PACKETS / ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS; batch++ )
     {
         for ( int i = 0; i < ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS; i++ )
@@ -401,7 +426,7 @@ static void test_client_io_step_full_buffer_waits_on_wake_only()
     }
 
     rocketnet_unit_check( io.fill_slots == ROCKETNET_NUM_CLIENT_PACKETS );
-    rocketnet_unit_check( io.buffer[io.receive.fill]->num_packets == ROCKETNET_NUM_CLIENT_PACKETS );
+    rocketnet_unit_check( io.buffer[io.receive_fill]->num_packets == ROCKETNET_NUM_CLIENT_PACKETS );
 
     const int wait_calls = fake.wait_calls;
     const int wake_calls = fake.wake_calls;
@@ -414,10 +439,15 @@ static void test_client_io_step_full_buffer_waits_on_wake_only()
     rocketnet_unit_check( !fake.last_wait_readable );
     rocketnet_unit_check( fake.wake_calls == wake_calls );
 
+    // update's next frame: it gives back the held buffer and takes the ready
+    // one, reads the owed publish and wakes the I/O thread once
     rocketnet_client_io_return( &io );
     rocketnet_unit_check( fake.wake_calls == wake_calls + 1 );
+    rocketnet_client_receive_buffer_t * ready = rocketnet_client_io_expose( &io );
+    rocketnet_unit_check( ready != NULL && ready->num_packets == 1 );
 
     rocketnet_unit_check( rocketnet_client_io_step( &io, true ) == ROCKETNET_CLIENT_IO_WORKED );
+    rocketnet_client_io_return( &io );
 
     rocketnet_client_receive_buffer_t * published = rocketnet_client_io_expose( &io );
     rocketnet_unit_check( published != NULL );
@@ -425,7 +455,6 @@ static void test_client_io_step_full_buffer_waits_on_wake_only()
 
     rocketnet_client_io_return( &io );
     rocketnet_client_transport_io_close( &transport );
-    delete buffers[0];
-    delete buffers[1];
+    rocketnet_client_io_rig_destroy( rig );
 }
 REGISTER_UNIT_TEST( test_client_io_step_full_buffer_waits_on_wake_only );

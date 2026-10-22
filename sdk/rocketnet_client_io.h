@@ -17,8 +17,7 @@
 #include "rocketnet_constants.h"
 #include "rocketnet_driver.h"
 #include "rocketnet_platform.h"
-#include "rocketnet_client_send_rings.h"
-#include "rocketnet_client_receive_handshake.h"
+#include "rocketnet_buffer_handoff.h"
 #include "rocketnet_protocol.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_replay.h"
@@ -38,9 +37,24 @@ void rocketnet_client_io_wipe( void * data, size_t bytes );
 
 #define ROCKETNET_CLIENT_IO_BATCH 64
 #define ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS 0.001   // a guard, never a cadence
-#define ROCKETNET_CLIENT_IO_NUM_BUFFERS 2      // two receive buffers, no third (the design's receive path)
+
+// The receive buffers: the I/O thread fills one, one waits ready, update
+// holds one (the triple buffer of tla/RNBufferHandoff.tla, MaxReady 1).
+
+#define ROCKETNET_CLIENT_IO_NUM_BUFFERS 3
+
+// The send rings: game threads fill one, and up to two wait for or are sent
+// by the I/O thread (tla/RNBufferHandoff.tla, MaxReady 2).
+
+#define ROCKETNET_CLIENT_IO_NUM_RINGS 3
 
 enum { ROCKETNET_CLIENT_IO_IDLE = 0, ROCKETNET_CLIENT_IO_WORKED = 1, ROCKETNET_CLIENT_IO_EXITED = 2 };
+
+// rocketnet_client_io_hand_off results: the ring went to the I/O thread, there
+// was nothing to hand off, or the exchange was deferred (no ring free, or the
+// mutex busy) and the committed slots stay in the Filling ring.
+
+enum { ROCKETNET_CLIENT_RINGS_HANDED_OFF = 0, ROCKETNET_CLIENT_RINGS_EMPTY = 1, ROCKETNET_CLIENT_RINGS_LATE = 2 };
 
 struct rocketnet_client_io_ring_view_t
 {
@@ -48,8 +62,7 @@ struct rocketnet_client_io_ring_view_t
     const uint8_t * wire_bytes; size_t wire_bytes_stride;       // slot i's int byte count; 0 is aborted
 };
 
-// the receive thread fills one buffer while update processes the other --
-// the IO, carried over whole
+// the I/O thread fills one buffer while update processes another
 
 // Each record carries the I/O thread's verdict (ROCKETNET_CLIENT_IO_VERDICT_*,
 // sdk/rocketnet_client_protocol.h) and, when opened, the reconstructed 64-bit
@@ -93,15 +106,35 @@ struct rocketnet_client_io_open_t
     uint32_t loaded_epoch;          // the epoch the I/O thread last took; I/O thread only
 };
 
+// Both handoffs are rocketnet_buffer_handoff_t (tla/RNBufferHandoff.tla):
+// each ring and each receive buffer has one owner at a time, and only their
+// indices cross threads, under the transport's mutex, which covers nothing
+// else. The main thread only try-acquires it; the I/O thread acquires it.
+
 struct rocketnet_client_io_t
 {
     const rocketnet_client_transport_io_t * transport;
-    rocketnet_client_io_ring_view_t ring_view[2];
-    rocketnet_address_t to[2];                  // each ring's destination, bound at its first hand-off attempt
-    bool to_held[2];                            // main thread only: the Filling ring's destination is bound (a deferred hand-off)
-    rocketnet_client_send_rings_t rings;
-    rocketnet_client_receive_handshake_t receive;
-    rocketnet_client_receive_buffer_t * buffer[ROCKETNET_CLIENT_IO_NUM_BUFFERS];   // as many as the fixed design's receive handoff uses
+    rocketnet_platform_mutex_t * mutex;         // the handoff mutex: index exchanges only
+    rocketnet_client_io_ring_view_t ring_view[ROCKETNET_CLIENT_IO_NUM_RINGS];
+
+    // send: game threads fill send_fill; a published ring's committed count
+    // and destination are written by the main thread before the exchange
+    // that publishes it and read by the I/O thread after the one that takes it
+
+    rocketnet_buffer_handoff_t<ROCKETNET_CLIENT_IO_NUM_RINGS> send;
+    int send_fill;                              // main thread only: the ring game threads fill
+    int send_ring;                              // I/O thread only: the ring it holds (sent), or -1
+    int send_final;                             // the ring stop hands the I/O thread with quit, or -1
+    uint64_t committed[ROCKETNET_CLIENT_IO_NUM_RINGS];
+    rocketnet_address_t to[ROCKETNET_CLIENT_IO_NUM_RINGS];   // each ring's destination, bound at its first hand-off attempt
+    bool to_held[ROCKETNET_CLIENT_IO_NUM_RINGS];             // main thread only: the Filling ring's destination is bound (a deferred hand-off)
+
+    // receive: the I/O thread fills receive_fill; update holds receive_held
+
+    rocketnet_buffer_handoff_t<ROCKETNET_CLIENT_IO_NUM_BUFFERS> receive;
+    int receive_fill;                           // I/O thread only
+    int receive_held;                           // main thread only, or -1
+    rocketnet_client_receive_buffer_t * buffer[ROCKETNET_CLIENT_IO_NUM_BUFFERS];
     int fill_slots;                             // data slots used in the I/O thread's buffer
     double (*time)( void * context ); void * time_context;
     double guard_timeout_seconds;               // ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS
@@ -112,21 +145,30 @@ struct rocketnet_client_io_t
     uint64_t * prefilter_too_large;             // optional: counts PREFILTER_TOO_LARGE for a datagram rejected by the byte-count check
 };
 
-// RNClientIo initial; main thread. Takes the two ring views and the two
-// receive buffers the transport owns.
+// RNBufferHandoff Init; main thread. Takes the ring views and the receive
+// buffers the transport owns, and the transport's handoff mutex. Ring 0 is
+// the first Filling ring and buffer 0 the I/O thread's first buffer.
 inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketnet_client_transport_io_t * transport,
-    const rocketnet_client_io_ring_view_t * view0, const rocketnet_client_io_ring_view_t * view1,
+    rocketnet_platform_mutex_t * mutex, const rocketnet_client_io_ring_view_t * views,
     rocketnet_client_receive_buffer_t * const * buffers,
     double (*time)( void * context ), void * time_context )
 {
     io->transport = transport;
-    io->ring_view[0] = *view0;
-    io->ring_view[1] = *view1;
+    io->mutex = mutex;
+    for ( int i = 0; i < ROCKETNET_CLIENT_IO_NUM_RINGS; i++ )
+    {
+        io->ring_view[i] = views[i];
+        io->committed[i] = 0;
+        io->to_held[i] = false;
+    }
     memset( io->to, 0, sizeof( io->to ) );
-    io->to_held[0] = false;
-    io->to_held[1] = false;
-    rocketnet_client_send_rings_init( &io->rings );
-    rocketnet_client_receive_handshake_init( &io->receive );
+    rocketnet_buffer_handoff_init( &io->send, 0 );
+    io->send_fill = 0;
+    io->send_ring = -1;
+    io->send_final = -1;
+    rocketnet_buffer_handoff_init( &io->receive, 0 );
+    io->receive_fill = 0;
+    io->receive_held = -1;
     for ( int i = 0; i < ROCKETNET_CLIENT_IO_NUM_BUFFERS; i++ )
     {
         io->buffer[i] = buffers[i];
@@ -287,141 +329,205 @@ inline void rocketnet_client_io_decrypt_datagram( rocketnet_client_io_t * io, co
     *out_sequence = sequence;
 }
 
-// RNClientIo Stop; main thread. Stores quit, then wakes the I/O thread
-// (docs/CLIENT-IO.md _Stop and destroy order_). The I/O thread finishes the
-// ring in flight and exits; the main thread joins, closes the transport, then
-// frees.
-inline void rocketnet_client_io_stop( rocketnet_client_io_t * io )
+// RNClientIo Stop and RNBufferHandoff MainStop; main thread. A Filling ring
+// with committed slots passes to the I/O thread with the quit store, so stop
+// takes no mutex and never waits: no producer touches it afterwards, and the
+// I/O thread sends it after every ready ring, then exits. Then the wake
+// (docs/CLIENT-IO.md _Stop and destroy order_); the main thread joins, closes
+// the transport, then frees.
+inline void rocketnet_client_io_stop( rocketnet_client_io_t * io, uint64_t committed, const rocketnet_address_t * to )
 {
+    const int ring = io->send_fill;
+    if ( committed > 0 )
+    {
+        if ( !io->to_held[ring] )
+            io->to[ring] = *to;
+        io->committed[ring] = committed;
+        io->send_final = ring;
+    }
     io->quit.store( true, std::memory_order_release );
     if ( io->transport->operations->wake )
         io->transport->operations->wake( io->transport->instance );
 }
 
-// RNClientIo HandOff and Defer; main thread. A LATE result is the deferred
-// hand-off of docs/CLIENT-IO.md _Reuse only after sent_: the committed slots
-// stay in the Filling ring and leave with the next hand-off. This function
-// never waits, spins or retries, and wakes the I/O thread only on HANDED_OFF.
-// The first attempt that finds committed slots binds the Filling ring's
-// destination to `to`; a later attempt for the same ring (after a LATE)
-// leaves it bound, so the slots leave for the address they were committed
-// with even when `to` has changed since, as the server address has when
-// disconnect has reset the protocol (RNClientIo SentToCommitted). A
-// HANDED_OFF result unbinds the ring for its next fill.
+// RNClientIo HandOff and Defer, RNBufferHandoff ProducerExchange; main thread.
+// A LATE result is the deferred hand-off of docs/CLIENT-IO.md _Reuse only
+// after sent_: no ring is free, or the I/O thread holds the mutex this
+// instant, so the committed slots stay in the Filling ring and leave with the
+// next hand-off. This function never waits, spins or retries: it try-acquires
+// the mutex for one index exchange, and wakes the I/O thread after releasing
+// it, only on HANDED_OFF. The first attempt that finds committed slots binds
+// the Filling ring's destination to `to`; a later attempt for the same ring
+// (after a LATE) leaves it bound, so the slots leave for the address they were
+// committed with even when `to` has changed since, as the server address has
+// when disconnect has reset the protocol (RNClientIo SentToCommitted). On
+// HANDED_OFF send_fill names the next Filling ring; the caller empties it.
 inline int rocketnet_client_io_hand_off( rocketnet_client_io_t * io, uint64_t committed, const rocketnet_address_t * to )
 {
     const bool quitting = io->quit.load( std::memory_order_acquire );
     rocketnet_assert( !quitting );
-    if ( quitting )
+    if ( quitting || committed == 0 )
         return ROCKETNET_CLIENT_RINGS_EMPTY;
-    const int ring = io->rings.fill;
-    if ( committed > 0 && !io->to_held[ring] )
+    const int ring = io->send_fill;
+    if ( !io->to_held[ring] )
     {
         io->to[ring] = *to;
         io->to_held[ring] = true;
     }
-    const int result = rocketnet_client_send_rings_hand_off( &io->rings, committed );
-    if ( result == ROCKETNET_CLIENT_RINGS_HANDED_OFF )
-        io->to_held[ring] = false;
-    if ( result == ROCKETNET_CLIENT_RINGS_HANDED_OFF && io->transport->operations->wake )
+    io->committed[ring] = committed;
+    if ( !rocketnet_platform_mutex_try_acquire( io->mutex ) )
+        return ROCKETNET_CLIENT_RINGS_LATE;
+    const int next = rocketnet_buffer_handoff_publish( &io->send, ring, ROCKETNET_CLIENT_IO_NUM_RINGS - 1 );
+    rocketnet_platform_mutex_release( io->mutex );
+    if ( next < 0 )
+        return ROCKETNET_CLIENT_RINGS_LATE;
+    io->to_held[ring] = false;
+    io->send_fill = next;
+    io->committed[next] = 0;
+    if ( io->transport->operations->wake )
         io->transport->operations->wake( io->transport->instance );
-    return result;
+    return ROCKETNET_CLIENT_RINGS_HANDED_OFF;
 }
 
-// RNClientIo Expose; main thread, at update's start. Returns the Ready buffer
-// and holds it Exposed, or NULL when none is Ready.
+// RNBufferHandoff ConsumerExchange; main thread. Gives back a buffer update
+// still holds and takes the ready one, in one try-acquired index exchange;
+// wakes the I/O thread after releasing the mutex when it owed a publish.
+// False when the mutex was busy: nothing moved, and the next call retries.
+inline bool rocketnet_client_io_receive_exchange( rocketnet_client_io_t * io, bool take )
+{
+    if ( !rocketnet_platform_mutex_try_acquire( io->mutex ) )
+        return false;
+    if ( io->receive_held >= 0 )
+        rocketnet_buffer_handoff_release( &io->receive, io->receive_held );
+    io->receive_held = take ? rocketnet_buffer_handoff_take( &io->receive ) : -1;
+    const bool owed = rocketnet_buffer_handoff_owed( &io->receive );
+    rocketnet_platform_mutex_release( io->mutex );
+    if ( owed && io->transport->operations->wake )
+        io->transport->operations->wake( io->transport->instance );
+    return true;
+}
+
+// RNClientIo Expose; main thread, at update's start. Returns the ready
+// buffer and holds it, or NULL when none is ready or the mutex was busy (the
+// datagrams wait for the next update; none is lost).
 inline rocketnet_client_receive_buffer_t * rocketnet_client_io_expose( rocketnet_client_io_t * io )
 {
-    const int index = rocketnet_client_receive_handshake_update_expose( &io->receive );
-    return index >= 0 ? io->buffer[index] : NULL;
+    if ( io->receive_held >= 0 )
+        io->buffer[io->receive_held]->num_packets = 0;
+    if ( !rocketnet_client_io_receive_exchange( io, true ) )
+        return NULL;
+    return io->receive_held >= 0 ? io->buffer[io->receive_held] : NULL;
 }
 
-// RNClientIo Return; main thread, at update's end. Returns the exposed buffer
-// Free and wakes the I/O thread when it has an owed batch.
+// RNClientIo Return; main thread, at update's end. Gives the held buffer back
+// so the I/O thread can publish into it during the frame; a busy mutex keeps
+// it held until the next expose returns it.
 inline void rocketnet_client_io_return( rocketnet_client_io_t * io )
 {
-    if ( rocketnet_client_receive_handshake_update_return( &io->receive ) && io->transport->operations->wake )
-        io->transport->operations->wake( io->transport->instance );
+    if ( io->receive_held < 0 )
+        return;
+    io->buffer[io->receive_held]->num_packets = 0;
+    (void) rocketnet_client_io_receive_exchange( io, false );
 }
 
-// The I/O thread's loop body (RNClientIo IoSend, IoFinishRing, IoReceive,
-// IoPublish, IoOwe, IoWait; docs/CLIENT-IO.md _The I/O step_ and _The wake_).
+// Send one ring's committed slots. Slot i is at data + i * frame_stride +
+// wire_offset; a zero int byte count is an aborted slot and stays unsent.
+inline void rocketnet_client_io_send_ring( rocketnet_client_io_t * io, int ring )
+{
+    const rocketnet_client_io_ring_view_t * view = &io->ring_view[ring];
+    const uint64_t committed = io->committed[ring];
+    if ( io->transport->operations->send_batch )
+    {
+        rocketnet_platform_send_t sends[ROCKETNET_CLIENT_IO_BATCH];
+        int num_sends = 0;
+        for ( uint64_t slot = 0; slot < committed; slot++ )
+        {
+            int bytes = 0;
+            memcpy( &bytes, view->wire_bytes + (size_t) slot * view->wire_bytes_stride, sizeof( bytes ) );
+            if ( bytes == 0 )
+                continue;
+            sends[num_sends].to = &io->to[ring];
+            sends[num_sends].packet_data = view->data + (size_t) slot * view->frame_stride + view->wire_offset;
+            sends[num_sends].packet_bytes = bytes;
+            num_sends++;
+            if ( num_sends == ROCKETNET_CLIENT_IO_BATCH )
+            {
+                io->transport->operations->send_batch( io->transport->instance, sends, num_sends );
+                num_sends = 0;
+            }
+        }
+        if ( num_sends > 0 )
+            io->transport->operations->send_batch( io->transport->instance, sends, num_sends );
+    }
+    else
+    {
+        for ( uint64_t slot = 0; slot < committed; slot++ )
+        {
+            int bytes = 0;
+            memcpy( &bytes, view->wire_bytes + (size_t) slot * view->wire_bytes_stride, sizeof( bytes ) );
+            if ( bytes == 0 )
+                continue;
+            const uint8_t * packet_data = view->data + (size_t) slot * view->frame_stride + view->wire_offset;
+            io->transport->operations->send( io->transport->instance, &io->to[ring], packet_data, bytes );
+        }
+    }
+}
+
+// The I/O thread's loop body (RNClientIo IoSend, IoReceive, IoPublish, IoWait,
+// IoExit; RNBufferHandoff on both handoffs; docs/CLIENT-IO.md _The I/O step_
+// and _The wake_).
 inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
 {
     rocketnet_assert( io );
 
-    // RNClientIo Stop: the main thread stores quit and wakes. Read it first;
-    // a step that sees it stops once the ring in flight is finished.
+    // a step after the exit does nothing: the final ring went once
+    if ( io->stopped.load( std::memory_order_acquire ) )
+        return ROCKETNET_CLIENT_IO_EXITED;
+
+    // RNClientIo Stop: the main thread stores quit and wakes. Read it first:
+    // every ring the main thread published, and the final ring stop handed
+    // over, happened before the store this load sees.
     const bool quitting = io->quit.load( std::memory_order_acquire );
 
     bool worked = false;
 
-    // 1. RNClientIo IoSend / IoFinishRing: send a handed-off ring. Slot i is
-    // at data + i * frame_stride + wire_offset; a zero int byte count is an
-    // aborted slot and stays unsent.
-    const int ring = rocketnet_client_send_rings_take( &io->rings );
-    if ( ring >= 0 )
+    // 1. RNBufferHandoff ConsumerExchange (send): give back the ring sent last
+    // step and take the oldest ready ring, then send it outside the mutex.
+    // Once quit is stored this repeats until no ring is ready.
+    do
     {
-        const rocketnet_client_io_ring_view_t * view = &io->ring_view[ring];
-        const uint64_t committed = io->rings.committed[ring];
-        if ( io->transport->operations->send_batch )
-        {
-            rocketnet_platform_send_t sends[ROCKETNET_CLIENT_IO_BATCH];
-            int num_sends = 0;
-            for ( uint64_t slot = 0; slot < committed; slot++ )
-            {
-                int bytes = 0;
-                memcpy( &bytes, view->wire_bytes + (size_t) slot * view->wire_bytes_stride, sizeof( bytes ) );
-                if ( bytes == 0 )
-                    continue;
-                sends[num_sends].to = &io->to[ring];
-                sends[num_sends].packet_data = view->data + (size_t) slot * view->frame_stride + view->wire_offset;
-                sends[num_sends].packet_bytes = bytes;
-                num_sends++;
-                if ( num_sends == ROCKETNET_CLIENT_IO_BATCH )
-                {
-                    io->transport->operations->send_batch( io->transport->instance, sends, num_sends );
-                    num_sends = 0;
-                }
-            }
-            if ( num_sends > 0 )
-                io->transport->operations->send_batch( io->transport->instance, sends, num_sends );
-        }
-        else
-        {
-            for ( uint64_t slot = 0; slot < committed; slot++ )
-            {
-                int bytes = 0;
-                memcpy( &bytes, view->wire_bytes + (size_t) slot * view->wire_bytes_stride, sizeof( bytes ) );
-                if ( bytes == 0 )
-                    continue;
-                const uint8_t * packet_data = view->data + (size_t) slot * view->frame_stride + view->wire_offset;
-                io->transport->operations->send( io->transport->instance, &io->to[ring], packet_data, bytes );
-            }
-        }
-        rocketnet_client_send_rings_finish( &io->rings, ring );
-        worked = true;
-    }
+        rocketnet_platform_mutex_acquire( io->mutex );
+        if ( io->send_ring >= 0 )
+            rocketnet_buffer_handoff_release( &io->send, io->send_ring );
+        io->send_ring = rocketnet_buffer_handoff_take( &io->send );
+        rocketnet_platform_mutex_release( io->mutex );
 
-    // RNClientIo IoExit: once quit is stored, the ring handed off before stop
-    // is sent first (the send phase above); when nothing is in flight the
-    // thread exits at once: no receive, no publish, no wait.
-    if ( quitting && !rocketnet_client_send_rings_in_flight( &io->rings ) )
+        if ( io->send_ring >= 0 )
+        {
+            rocketnet_client_io_send_ring( io, io->send_ring );
+            worked = true;
+        }
+    }
+    while ( quitting && io->send_ring >= 0 );
+
+    if ( quitting )
     {
+        // RNBufferHandoff WorkerExit: no ready ring is left, so the ring stop
+        // handed over goes last; then no receive, no publish, no wait.
+        if ( io->send_final >= 0 )
+            rocketnet_client_io_send_ring( io, io->send_final );
         rocketnet_client_io_drop_keys( io );
         io->stopped.store( true, std::memory_order_release );
         return ROCKETNET_CLIENT_IO_EXITED;
     }
 
-    // 2. RNClientIo IoReceive: drain into the buffer the handshake gives the
-    // I/O thread. Every received datagram becomes a record, a runt or an
-    // oversize one too: the main thread's prefilter
-    // (sdk/rocketnet_client_protocol.cpp:1248, sizes checked at
-    // sdk/rocketnet_protocol.cpp:176-180) refuses it and counts
-    // PREFILTER_TOO_SHORT or PREFILTER_TOO_LARGE. One clock read per transport
-    // call.
-    rocketnet_client_receive_handshake_t * handshake = &io->receive;
-    rocketnet_client_receive_buffer_t * buffer = io->buffer[handshake->fill];
+    // 2. RNClientIo IoReceive: drain into the buffer the I/O thread holds.
+    // Every received datagram becomes a record, a runt or an oversize one
+    // too: the main thread's prefilter (sdk/rocketnet_client_protocol.cpp,
+    // sizes checked in sdk/rocketnet_protocol.cpp) refuses it and counts
+    // PREFILTER_TOO_SHORT or PREFILTER_TOO_LARGE. One clock read per
+    // transport call.
+    rocketnet_client_receive_buffer_t * buffer = io->buffer[io->receive_fill];
 
     // tla/RNClientIoDecrypt.tla IoTakeKeys, IoDropKeys, IoKeepKeys: the epoch
     // is read once at the top of the drain. The keys are published before the
@@ -471,7 +577,6 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                     memmove( packet_data + (size_t) accepted * ROCKETNET_FRAME_SIZE,
                         packet_data + (size_t) i * ROCKETNET_FRAME_SIZE,
                         (size_t) ( packet_bytes[i] < ROCKETNET_FRAME_SIZE ? packet_bytes[i] : ROCKETNET_FRAME_SIZE ) );
-                (void) rocketnet_client_receive_handshake_io_receive( handshake );
                 const int index = buffer->num_packets;
                 buffer->from[index] = from[i];
                 buffer->receive_time[index] = now;
@@ -503,7 +608,6 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                     (*io->prefilter_too_large)++;
                 break;
             }
-            (void) rocketnet_client_receive_handshake_io_receive( handshake );
             const int index = buffer->num_packets;
             buffer->from[index] = from;
             buffer->receive_time[index] = now;
@@ -517,20 +621,20 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
         }
     }
 
-    // 3. RNClientIo IoPublish / IoOwe: publish the filled buffer when a Free
-    // one is there to fill next; otherwise store the publish as owed and keep
-    // the batch while the buffer has room. A publish is worked.
-    if ( rocketnet_client_receive_handshake_io_publish( handshake ) )
+    // 3. RNBufferHandoff ProducerExchange (receive): publish the filled buffer
+    // when no buffer is waiting ready and one is free, taking the free one in
+    // the same exchange. Otherwise the publish is owed: update's next exchange
+    // reads it under the same mutex and wakes this thread, and the buffer keeps
+    // filling while it has room. A publish is worked.
+    if ( buffer->num_packets > 0 )
     {
-        io->buffer[handshake->fill]->num_packets = 0;
-        io->fill_slots = 0;
-        worked = true;
-    }
-    else if ( !rocketnet_client_receive_handshake_io_owe( handshake ) )
-    {
-        if ( rocketnet_client_receive_handshake_io_publish( handshake ) )
+        rocketnet_platform_mutex_acquire( io->mutex );
+        const int next = rocketnet_buffer_handoff_publish( &io->receive, io->receive_fill, 1 );
+        rocketnet_platform_mutex_release( io->mutex );
+        if ( next >= 0 )
         {
-            io->buffer[handshake->fill]->num_packets = 0;
+            io->receive_fill = next;
+            io->buffer[next]->num_packets = 0;
             io->fill_slots = 0;
             worked = true;
         }
@@ -540,12 +644,11 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     // readable is true only while the I/O thread's buffer has room. With a
     // full buffer this waits on the wake alone: a wait that also returned on
     // readable would return at once every time and the I/O thread would spin
-    // (MCRNClientIoBrokenFullWaitReadable.cfg, FullWaitsOnWake). The owed flag
-    // was stored above before this wait, so the return at the end of the next
-    // update wakes it.
+    // (FullWaitsOnWake). An owed publish was recorded under the mutex above,
+    // before this wait, so update's next exchange wakes it.
     if ( block && !worked && !quitting && io->transport->operations->wait )
     {
-        const bool readable = rocketnet_client_receive_handshake_io_wait( handshake );
+        const bool readable = io->fill_slots < ROCKETNET_NUM_CLIENT_PACKETS;
         io->transport->operations->wait( io->transport->instance, readable, io->guard_timeout_seconds );
     }
 
