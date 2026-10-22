@@ -259,9 +259,11 @@ static void test_uso_run_owns_frames()
     CHECK(!rocketnet_server_iocp_start_packet(transport, &peer_address, &id));
     rocketnet_server_iocp_test_hold_completions(transport, false);
     const double deadline = rocketnet_platform_time() + 5.0;
+    // The run is already published. Do not publish here: the aborted frames
+    // staged above stay unpublished, so the pool holds only what the run's
+    // completion returns, whichever of TX and the completion runs first.
     do
     {
-        rocketnet_server_iocp_send_packets(transport); // retry a contended publication
         rocketnet_server_iocp_counters(transport, counters);
         if ( counters[ROCKETNET_IOCP_SEND_COMPLETED] == (uint64_t) run ) break;
         rocketnet_platform_sleep(0.001);
