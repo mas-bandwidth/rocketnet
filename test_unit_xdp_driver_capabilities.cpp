@@ -30,7 +30,7 @@
 
 #define check rocketnet_unit_check
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_XDP
 
 #include "rocketnet_constants.h"
 #include "rocketnet_xdp_socket_config.h"

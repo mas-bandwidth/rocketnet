@@ -99,6 +99,7 @@ void reliable_receipts_over_lossy_link()
 
         rocketnet_message_receipt_t events[256];
         int count = rocketnet_message_client_receipts( h.message_client, events, 256 );
+        check_receipt( count >= 0 && count <= 256 );
         for ( int j = 0; j < count; j++ )
         {
             int matched = -1;
@@ -109,6 +110,7 @@ void reliable_receipts_over_lossy_link()
             client_receipt[matched] = 1;
         }
         count = rocketnet_message_server_receipts( h.message_server, h.client_slot, events, 256 );
+        check_receipt( count >= 0 && count <= 256 );
         for ( int j = 0; j < count; j++ )
         {
             int matched = -1;

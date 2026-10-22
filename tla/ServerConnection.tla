@@ -510,12 +510,15 @@ ServerRecvRequest(p) ==
 \* then an already-connected address or client id is ignored; no slot is
 \* denied; otherwise the lowest free slot is assigned and a keep-alive goes
 \* out (rocketnet_server_process_connection_response).
+\* Reversed witness only: the implementation keeps this FALSE.
+RefreshConnectedOnResponse == FALSE
+
 ServerRecvResponse(p) ==
     /\ p.type = "response"
     /\ C2S!Deliver(p)
     /\ LET a  == MapAddr(p)
            m  == smap[a]
-           m1 == [m EXCEPT !.sinceRecv = 0]
+           m1 == IF m.slot = 0 \/ RefreshConnectedOnResponse THEN [m EXCEPT !.sinceRecv = 0] ELSE m
            bound1 == IF History = "kept" /\ m.tok \notin ExpiredTokens
                         THEN [bound EXCEPT ![m.tok] = IF @ = 0 THEN a ELSE @]
                         ELSE bound
@@ -793,6 +796,11 @@ PacketsReachOwnSlotOnly ==
 SessionNeverAnswered ==
     [][(\E p \in ClientPackets : p.type \in {"keepalive", "disconnect"} /\ C2S!Deliver(p))
          => s2cSent' = s2cSent]_vars
+
+\* A response retransmission cannot provide fresh activity for a live slot.
+ResponseNeverRefreshesConnected ==
+    [][(\E p \in ClientPackets : p.type = "response" /\ C2S!Deliver(p))
+         => \A i \in UsedSlots : smap'[slot[i].addr].sinceRecv = smap[slot[i].addr].sinceRecv]_vars
 
 (***************************************************************************)
 (* Liveness.                                                               *)

@@ -15,6 +15,7 @@
 #define ROCKETNET_DEVELOPMENT 1
 #endif
 
+#include "../../examples/shutdown.h"
 #include "rocketnet.h"
 #include "../../examples/dev_keys.h"
 #include "../../test/portable_crt.h"
@@ -61,7 +62,7 @@ int main( int argc, char ** argv )
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, address, NULL, &config, &create_status );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
-        rocketnet_server_destroy( server );
+        rn_cli_server_stop_and_destroy( server );
         server = NULL;
     }
     if ( !server )
@@ -148,7 +149,7 @@ int main( int argc, char ** argv )
         if ( rocketnet_time() - wall_start > 30.0 )
         {
             printf( "error: server timed out\n" );
-            rocketnet_server_destroy( server );
+            rn_cli_server_stop_and_destroy( server );
             rocketnet_term();
             return 1;
         }
@@ -159,7 +160,7 @@ int main( int argc, char ** argv )
     printf( "server stopped\n" );
     fflush( stdout );
 
-    rocketnet_server_destroy( server );
+    rn_cli_server_stop_and_destroy( server );
     rocketnet_term();
 
     return bad ? 1 : 0;

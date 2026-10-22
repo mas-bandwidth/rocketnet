@@ -784,7 +784,9 @@ static void test_in_place_unreliable_keeps_acks_and_order()
     for ( int i = 0; i < 6; i++ )
     {
         ip_step( &pair, &server_got, &client_got );
-        receipt_count += rocketnet_message_client_receipts( pair.client, receipts + receipt_count, 8 - receipt_count );
+        const int available = rocketnet_message_client_receipts( pair.client, receipts + receipt_count, 8 - receipt_count );
+        check( available >= 0 && available <= 8 - receipt_count );
+        receipt_count += available;
     }
 
     // the server took the acks: every reliable packet it sent is acked

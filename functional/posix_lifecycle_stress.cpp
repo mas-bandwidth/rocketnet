@@ -36,7 +36,8 @@
     1000-count loops run 100 times, since every create attaches to the pair.
     ROCKETNET_POSIX_LIFECYCLE_CELLS, a comma list of server transport names, runs
     only those cells. On Linux every case is registered once per server cell
-    (posix_<case>_<cell>), so each run covers one cell.
+    (posix_<case>_<cell>), so each run covers one cell. On macOS the 1000-cycle
+    connect/disconnect case is registered once per exact server/client pair.
 
     A connect waits on the client's send rate: the client sends at most once
     per 1/send_rate, 10 per second (sdk/rocketnet_client_protocol.cpp:88 and
@@ -58,6 +59,7 @@
     an IPv4 server binds an IPv4 socket (sdk/rocketnet_client_transport.cpp:796).
 */
 
+#include "../test/native_shutdown.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
@@ -199,12 +201,47 @@ static posix_resource_counts_t posix_read_counts()
     return counts;
 }
 
+// ThreadSanitizer starts one background thread of its own (__tsan::BackgroundThread,
+// libsanitizer tsan_rtl.cpp) at the process's first pthread_create and never
+// stops it. When the first thread a case creates is a transport's worker (the
+// portable server's TX worker), that runtime thread appears inside the cycle
+// and reads as a leak (threads 1 -> 2, the TSan CI leg only; the same case
+// passes in a plain build). Create and join one thread before the first
+// baseline in a TSan build, so the runtime's thread is in every before count.
+// A transport thread that is really left behind still moves the count.
+#if defined(__SANITIZE_THREAD__)
+#define POSIX_THREAD_SANITIZER 1
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define POSIX_THREAD_SANITIZER 1
+#endif
+#endif
+
+static void posix_sanitizer_threads_start()
+{
+#if defined(POSIX_THREAD_SANITIZER)
+    static bool started = false;
+    if ( started )
+        return;
+    const int threads_before = posix_threads();
+    std::thread thread( [] {} );
+    thread.join();
+    started = true;
+    // the joined thread leaves the task list only when the kernel reaps it
+    // (see posix_settled_counts): wait until the list holds the threads from
+    // before plus at most the runtime's one, so no baseline counts it
+    for ( int attempt = 0; attempt < 10000 && posix_threads() > threads_before + 1; attempt++ )
+        rocketnet_platform_sleep( 0.001 );
+#endif
+}
+
 // The receive and I/O threads are joined inside destroy, so the count settles
 // as soon as the last destroy returns. Give the kernel a short window to reap
 // a thread it has already been told to join, then compare two equal reads: a
 // real leak is stable at the higher count and still fails.
 static posix_resource_counts_t posix_stable_counts()
 {
+    posix_sanitizer_threads_start();
     posix_resource_counts_t previous = posix_read_counts();
     for ( int attempt = 0; attempt < 200; attempt++ )
     {
@@ -411,9 +448,18 @@ static bool posix_io_uring_offered()
 // ROCKETNET_POSIX_LIFECYCLE_CELLS, when set, names the server transports whose
 // cells run
 static const char * posix_only_server_transport_io = NULL;
+#if defined(__APPLE__)
+// A macOS connect/disconnect case selects one exact server/client pair. The
+// server-only selector would run both client transports under one watchdog.
+static const char * posix_only_client_transport_io = NULL;
+#endif
 
 static bool posix_cell_selected( const posix_cell_t * cell )
 {
+#if defined(__APPLE__)
+    if ( posix_only_client_transport_io && strcmp( posix_only_client_transport_io, cell->client_transport_io ) != 0 )
+        return false;
+#endif
     if ( posix_only_server_transport_io && strcmp( posix_only_server_transport_io, cell->server_transport_io ) != 0 )
         return false;
     const char * list = getenv( "ROCKETNET_POSIX_LIFECYCLE_CELLS" );
@@ -765,6 +811,12 @@ void rocketnet_test_posix_init_term_1000()
         posix_env_guard_t server_guard, client_guard;
         posix_cell_begin( cell, &server_guard, &client_guard );
 
+        // term closes the bundled sodium random source on macOS (dfd1a54b) and
+        // sodium reopens it at its next draw, not at init: one cycle first, so
+        // the baseline is the state every cycle below ends in (inited, nothing
+        // drawn yet), and a descriptor that is really left open still shows
+        posix_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+        posix_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
         const posix_resource_counts_t before = posix_stable_counts();
         const double start = posix_now_seconds();
         const int count = posix_count( cell, 1000 );
@@ -818,7 +870,7 @@ void rocketnet_test_posix_server_create_destroy_1000()
 #endif
             }
 
-            rocketnet_server_transport_destroy( server );
+            rn_native_server_transport_stop_and_destroy( server );
 
             // a leak per cycle exhausts a kernel limit long before the last of
             // 1000 creates, so the counts are also compared after the first
@@ -856,7 +908,7 @@ void rocketnet_test_posix_client_create_destroy_1000()
         {
             posix_client_clock_t clock;
             rocketnet_client_transport_t * client = posix_client_create( cell, "127.0.0.1:40000", &clock );
-            rocketnet_client_transport_destroy( client );
+            rn_native_client_transport_stop_and_destroy( client );
         }
         const double seconds = posix_now_seconds() - start;
         const posix_resource_counts_t after = posix_settled_counts( &before );
@@ -957,7 +1009,7 @@ void rocketnet_test_posix_server_restart_same_port_100()
         {
             rocketnet_server_transport_t * discovery = posix_server_create( cell, posix_bind_address( cell ), 4 );
             fixed_port = (unsigned) rocketnet_server_transport_port( discovery );
-            rocketnet_server_transport_destroy( discovery );
+            rn_native_server_transport_stop_and_destroy( discovery );
         }
         else
             fixed_port = posix_reserved_restart_port( cell_index );
@@ -977,8 +1029,8 @@ void rocketnet_test_posix_server_restart_same_port_100()
             posix_client_clock_t clock;
             rocketnet_client_transport_t * client = posix_client_create( cell, server_address, &clock );
             posix_check( posix_wait_connected( server, client, &clock, 5.0 ) );
-            rocketnet_client_transport_destroy( client );
-            rocketnet_server_transport_destroy( server );
+            rn_native_client_transport_stop_and_destroy( client );
+            rn_native_server_transport_stop_and_destroy( server );
         }
         const double seconds = posix_now_seconds() - start;
         const posix_resource_counts_t after = posix_settled_counts( &before );
@@ -1021,12 +1073,12 @@ void rocketnet_test_posix_connect_disconnect_1000()
             posix_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
             rocketnet_client_transport_disconnect( client );
             posix_check( posix_wait_server_empty( server, client, &clock, 5.0 ) );
-            rocketnet_client_transport_destroy( client );
+            rn_native_client_transport_stop_and_destroy( client );
         }
         const double seconds = posix_now_seconds() - start;
 
         posix_release_ipv4_ports( held_ports, POSIX_HELD_IPV4_PORTS );
-        rocketnet_server_transport_destroy( server );
+        rn_native_server_transport_stop_and_destroy( server );
         const posix_resource_counts_t after = posix_settled_counts( &before );
 
         posix_cell_end( &server_guard, &client_guard );
@@ -1100,13 +1152,13 @@ void rocketnet_test_posix_destroy_under_traffic_100()
 
             // destroy the server while all eight clients are sending, then
             // stop the senders before the clients themselves are destroyed
-            rocketnet_server_transport_destroy( server );
+            rn_native_server_transport_stop_and_destroy( server );
 
             running.store( false, std::memory_order_release );
             for ( int i = 0; i < client_count; i++ )
                 threads[i].join();
             for ( int i = 0; i < client_count; i++ )
-                rocketnet_client_transport_destroy( clients[i] );
+                rn_native_client_transport_stop_and_destroy( clients[i] );
         }
 
         const double seconds = posix_now_seconds() - start;
@@ -1190,6 +1242,33 @@ POSIX_LINUX_CELL_CASES( posix_connect_disconnect_1000 )
 POSIX_LINUX_CELL_CASES( posix_destroy_under_traffic_100 )
 
 #endif // #if defined(__linux__)
+
+#if defined(__APPLE__)
+// Keep all four 1000-cycle pairs, with the same resource assertions and the
+// same per-test watchdog. Each registered case runs exactly one pair.
+#define POSIX_MAC_CONNECT_CASE( server_io, client_io )                             \
+void rocketnet_test_posix_connect_disconnect_1000_##server_io##_##client_io()      \
+{                                                                                  \
+    posix_only_server_transport_io = #server_io;                                   \
+    posix_only_client_transport_io = #client_io;                                   \
+    int selected = 0;                                                              \
+    for ( int i = 0; i < posix_cell_count; i++ )                                     \
+        selected += posix_cell_selected( &posix_cells[i] ) ? 1 : 0;                 \
+    if ( selected != 1 )                                                           \
+        printf( "macOS POSIX lifecycle filter excludes or duplicates %s/%s\n",   \
+                #server_io, #client_io );                                           \
+    posix_check( selected == 1 );                                                   \
+    rocketnet_test_posix_connect_disconnect_1000();                                \
+    posix_only_client_transport_io = NULL;                                         \
+    posix_only_server_transport_io = NULL;                                         \
+}
+
+POSIX_MAC_CONNECT_CASE( portable, portable )
+POSIX_MAC_CONNECT_CASE( portable, msgx )
+POSIX_MAC_CONNECT_CASE( msgx, portable )
+POSIX_MAC_CONNECT_CASE( msgx, msgx )
+#undef POSIX_MAC_CONNECT_CASE
+#endif
 
 #endif // #if !defined(_WIN32)
 

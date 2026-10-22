@@ -6,6 +6,7 @@
 // Client memory plan accounts for transport socket, wake, I/O client block and
 // worker thread allocations across non-step-driven and step-driven modes.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 
 #include "rocketnet_internal.h"
@@ -109,7 +110,7 @@ static void test_client_memory_plan_non_step_driven()
     check( status == ROCKETNET_STATUS_OK );
 
     const uint64_t allocated = state.total_bytes;
-    rocketnet_client_transport_destroy( client );
+    rn_test_client_transport_stop_and_destroy( client );
 
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     check( state.live == 0 );
@@ -153,7 +154,7 @@ static void test_client_memory_plan_step_driven()
     check( status == ROCKETNET_STATUS_OK );
 
     const uint64_t allocated = state.total_bytes;
-    rocketnet_client_transport_destroy( client );
+    rn_test_client_transport_stop_and_destroy( client );
 
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     check( state.live == 0 );

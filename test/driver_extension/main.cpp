@@ -1,4 +1,5 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
+#include "../native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_address.h"
 #include "rocketnet_connect_token.h"
@@ -79,7 +80,7 @@ int main()
     }
     CHECK(external_test_replay_has_forgotten);
     CHECK(rocketnet_address_equal(&external_test_replay_forgotten_address, &external_test_replay_last_address));
-    rocketnet_client_transport_destroy(client);
+    rn_native_client_transport_stop_and_destroy(client);
     rocketnet_server_transport_stop(server);
     deadline = rocketnet_time() + 5.0;
     while (rocketnet_server_transport_state(server) != ROCKETNET_SERVER_TRANSPORT_STOPPED && rocketnet_time() < deadline)
@@ -88,7 +89,7 @@ int main()
         rocketnet_sleep(0.001);
     }
     CHECK(rocketnet_server_transport_state(server) == ROCKETNET_SERVER_TRANSPORT_STOPPED);
-    rocketnet_server_transport_destroy(server);
+    rn_native_server_transport_stop_and_destroy(server);
     CHECK(external_test_creates == 2 && external_test_destroys == 2);
     rocketnet_term();
     puts("test_external_transport_transport_exchange");

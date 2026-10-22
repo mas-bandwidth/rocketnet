@@ -40,6 +40,24 @@ struct rocketnet_replay_protection_t
     uint64_t window[ROCKETNET_HISTORY_PACKETS / 64];
 };
 
+// Read on every server update for expiry. Keep this small and at the same
+// index as the mapping's crypto/replay payload; the latter is never needed
+// for the common non-expiring timeout check.
+#define ROCKETNET_ENCRYPTION_MAPPING_CONTROL_LAYOUT_FIELDS( X ) \
+    X( handshake_deadline, double handshake_deadline ) \
+    X( last_receive_time, double last_receive_time ) \
+    X( timeout_seconds, int32_t timeout_seconds ) \
+    X( client_index, int client_index ) \
+    X( established, int established )
+
+struct rocketnet_encryption_mapping_control_t
+{
+#define ROCKETNET_ENCRYPTION_MAPPING_CONTROL_DECLARE( name, declaration ) declaration;
+    ROCKETNET_ENCRYPTION_MAPPING_CONTROL_LAYOUT_FIELDS( ROCKETNET_ENCRYPTION_MAPPING_CONTROL_DECLARE )
+#undef ROCKETNET_ENCRYPTION_MAPPING_CONTROL_DECLARE
+};
+static_assert( sizeof(struct rocketnet_encryption_mapping_control_t) == 32, "timeout control stays compact" );
+
 /*
     The declaration manifest: the struct is declared from this list, so a
     member exists only as an entry here. The RESET/KEEP inventory in
@@ -47,6 +65,7 @@ struct rocketnet_replay_protection_t
     no decision is named in test_connection_reset_inventory_covers_every_field.
 */
 #define ROCKETNET_ENCRYPTION_MAPPING_LAYOUT_FIELDS( X ) \
+    X( control, struct rocketnet_encryption_mapping_control_t * control ) \
     X( keys, struct rocketnet_connection_keys_t keys )                                                                                                             \
     X( connection_salt, uint8_t connection_salt[ROCKETNET_CONNECTION_SALT_BYTES] )                                                                                 \
     X( session_nonce, uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES] )                                                                                       \
@@ -57,11 +76,6 @@ struct rocketnet_replay_protection_t
     X( user_data, uint8_t user_data[ROCKETNET_USER_DATA_BYTES] )                                                                                                   \
     X( token_identifier, uint8_t token_identifier[ROCKETNET_TOKEN_IDENTIFIER_BYTES] )                                                                              \
     X( token_expire_timestamp, uint64_t token_expire_timestamp )                                                                                                   \
-    X( timeout_seconds, int32_t timeout_seconds )                                                                                                                  \
-    X( established, int established )                                                                                                                              \
-    X( client_index, int client_index ) /* -1 until a slot is assigned */                                                                                          \
-    X( handshake_deadline, double handshake_deadline ) /* absolute, never refreshed */                                                                             \
-    X( last_receive_time, double last_receive_time ) /* refreshed by every opened packet */                                                                        \
     X( last_send_time, double last_send_time ) /* refreshed by every send; suppresses keep-alives once one has been acknowledged */                                \
     X( last_keep_alive_send_time, double last_keep_alive_send_time ) /* refreshed by keep-alives alone; paces them until one has been acknowledged */              \
     X( send_sequence_handshake, uint64_t send_sequence_handshake ) /* next handshake-phase sequence to send */                                                     \
@@ -106,6 +120,7 @@ int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,
 // the cold payload for an index returned by find or add
 
 struct rocketnet_encryption_mapping_t * rocketnet_encryption_map_entry( struct rocketnet_encryption_map_t * map, int index );
+struct rocketnet_encryption_mapping_control_t * rocketnet_encryption_map_control( struct rocketnet_encryption_map_t * map, int index );
 
 // the address a live mapping is keyed on -- what the server's sends target
 

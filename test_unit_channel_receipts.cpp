@@ -52,6 +52,33 @@ static int receipt_list( receipt_fixture_t * f, rocketnet_message_receipt_t * ou
     return rn_window_ack_receipts( &f->ack, out, capacity );
 }
 
+static void test_receipts_report_available_without_overwriting_capacity()
+{
+    receipt_fixture_t f;
+    receipt_fixture_init( &f );
+    rn_window_ack_receipt_begin_update( &f.ack );
+    const uint32_t serials[3] = { 11, 12, 13 };
+    rn_window_ack_commit_receipt_packet( &f.ack, 101, serials, 3, 1000.0 );
+    rocketnet_unit_check( rn_window_ack_on_ack( &f.ack, 101, 1000.01 ) == 1 );
+    rocketnet_message_receipt_t out[3];
+    memset( out, 0, sizeof( out ) );
+    rocketnet_unit_check( receipt_list( &f, out, 1 ) == 3 );
+    rocketnet_unit_check( out[0].serial == 11 && out[0].status == ROCKETNET_RECEIPT_STATUS_ACKED );
+    rocketnet_unit_check( out[1].serial == 0 && out[2].serial == 0 );
+    rocketnet_unit_check( receipt_list( &f, NULL, 0 ) == 3 );
+    rocketnet_unit_check( receipt_list( &f, out, 0 ) == 3 );
+    rocketnet_unit_check( receipt_list( &f, out, -1 ) == 0 );
+    rocketnet_unit_check( receipt_list( &f, NULL, 1 ) == 0 );
+    rocketnet_unit_check( out[1].serial == 0 && out[2].serial == 0 );
+    rocketnet_unit_check( receipt_list( &f, out, 3 ) == 3 );
+    for ( int i = 0; i < 3; i++ )
+        rocketnet_unit_check( out[i].serial == serials[i] && out[i].status == ROCKETNET_RECEIPT_STATUS_ACKED );
+    rn_window_ack_receipt_begin_update( &f.ack );
+    rocketnet_unit_check( receipt_list( &f, NULL, 0 ) == 0 );
+    receipt_fixture_destroy( &f );
+}
+REGISTER_UNIT_TEST( test_receipts_report_available_without_overwriting_capacity );
+
 static void test_unreliable_receipt_acked_or_loss_exactly_once()
 {
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, NULL );
@@ -135,6 +162,8 @@ static void test_receipt_ring_full_drops_oldest_and_counts()
     }
     rocketnet_message_receipt_t out[16];
     rocketnet_unit_check( receipt_list( &f, out, 16 ) == 16 );
+    rocketnet_unit_check( receipt_list( &f, NULL, 0 ) == 16 );
+    rocketnet_unit_check( receipt_list( &f, out, 1 ) == 16 );
     rocketnet_unit_check( out[0].serial == 2 && out[15].serial == 17 );
     rocketnet_unit_check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_RING_FULL] == 1 );
     rocketnet_unit_check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED] == 17 );

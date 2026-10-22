@@ -8,6 +8,7 @@
     disconnect. The checks mirror test_loopback_transport_udp.
 */
 
+#include "../test/native_shutdown.h"
 #include "rocketnet.h"
 #include "rocketnet_layers.h"
 #include "rocketnet_connect_token.h"
@@ -152,7 +153,7 @@ void rocketnet_test_cpp_transports_connect_over_loopback()
 
     rocketnet_counters_assert_conserved( rocketnet_client_transport_counters( client ) );
     rocketnet_counters_assert_clean( rocketnet_client_transport_counters( client ) );
-    rocketnet_client_transport_destroy( client );
+    rn_native_client_transport_stop_and_destroy( client );
 
     rocketnet_server_transport_stop( server );
     // Stop may need to drain asynchronous I/O. The public contract requires
@@ -168,5 +169,5 @@ void rocketnet_test_cpp_transports_connect_over_loopback()
 
     rocketnet_counters_assert_conserved( rocketnet_server_transport_counters( server ) );
     rocketnet_counters_assert_clean( rocketnet_server_transport_counters( server ) );
-    rocketnet_server_transport_destroy( server );
+    rn_native_server_transport_stop_and_destroy( server );
 }
