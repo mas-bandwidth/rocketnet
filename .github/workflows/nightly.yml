@@ -33,6 +33,11 @@
 #                           build-and-test rows build both suites with the
 #                           default compiler (gcc); this job builds and runs
 #                           them with clang in Debug.
+#
+#   tsan (threaded          the unit and functional suites under tsan,
+#   transport)              halt_on_error=1 and no suppressions, lifted from
+#                           ci.yml's tsan job on 2026-10-22 step for step:
+#                           345-454s on the fleet's 16-core runner hosts.
 
 name: nightly
 
@@ -89,6 +94,71 @@ jobs:
       - name: Functional suite (clang)
         timeout-minutes: 20
         run: ./bin/functional
+
+  # THE THREADED TRANSPORTS UNDER TSAN, lifted from ci.yml's tsan job on
+  # 2026-10-22 step for step (its comment there is the doctrine: a real race
+  # stops the world, halt_on_error=1, no suppressions file; setarch -R for gcc
+  # 13's tsan runtime). On the fleet's 16-core runner hosts the leg took
+  # 345-454s, past ci.yml's 3-minute law, so it runs here with a real budget.
+  # The live message matrix case runs alone in the functional suite (its own
+  # suite group, functional/main.cpp): its 50s tsan wall-clock bound measures
+  # the case, about 35s alone on amd-1, and not the rest of the suite.
+
+  tsan-threaded:
+    name: tsan (threaded transport)
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 45
+    strategy:
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-tsan-threaded-${{ matrix.ref }}
+      cancel-in-progress: true
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Check the fleet's build dependencies are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Configure
+        run: >
+          cmake -B build
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+          -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
+
+      - name: Build the suite
+        run: cmake --build build --target test functional --parallel
+
+      - name: Run the unit suite under tsan
+        env:
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+        run: setarch "$(uname -m)" -R ./bin/test
+
+      - name: Run the functional suite under tsan
+        env:
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+        run: setarch "$(uname -m)" -R ./bin/functional
 
   # The windows Debug row, lifted from ci.yml's build-and-test-windows on
   # 2026-09-13, step for step. The doctrine it carries (#81's baseline): the
