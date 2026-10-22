@@ -30,7 +30,7 @@ if [ ! -f build/librocketnet_dev.a ]; then
 fi
 
 CXX="${CXX:-c++}"
-CXXFLAGS="-O2 -ffp-contract=off -std=c++11"
+CXXFLAGS="-O2 -ffp-contract=off -std=c++11 -Wall -Wextra -Wpedantic -Werror"
 INCLUDES="-I sdk -I build/generated -I sodium"
 
 # Platform libraries. Linux links the XDP dataplane; darwin links the
@@ -54,7 +54,7 @@ if [ -n "$NETCODE_DIR" ]; then
     # librocketnet_dev.a. NDEBUG selects the library's release asserts.
     # The build fetches nothing.
     CC="${CC:-cc}"
-    NETCODE_OBJ="$(mktemp "${TMPDIR:-/tmp}/netcode.XXXXXX.o")"
+    NETCODE_OBJ="$(mktemp "${TMPDIR:-/tmp}/netcode.XXXXXX")"
     "$CC" -O2 -DNDEBUG -ffp-contract=off -c "$NETCODE_DIR/netcode.c" -o "$NETCODE_OBJ" \
         -I "$NETCODE_DIR" -I "$REPO_DIR/sodium"
     echo "run.sh: netcode reference live from $NETCODE_DIR"
@@ -62,7 +62,7 @@ else
     echo "run.sh: no NETCODE_DIR; diffing against the cases.tsv reference column"
 fi
 
-BIN="$(mktemp "${TMPDIR:-/tmp}/netcode_decisions.XXXXXX.bin")"
+BIN="$(mktemp "${TMPDIR:-/tmp}/netcode_decisions.XXXXXX")"
 if [ -n "$NETCODE_DIR" ]; then
     # netcode.o before the archive: the linker pulls the vendored sodium
     # members for netcode's calls only if the object is seen first.
@@ -74,6 +74,6 @@ else
     "$CXX" $CXXFLAGS $INCLUDES tools/differential/netcode_decisions.cpp -o "$BIN" $LIBS
 fi
 
-"$BIN" tools/differential/cases.tsv
+"$BIN" tools/differential/cases.tsv --corpus tools/differential/corpus_cases.tsv fuzz/corpus_connect_token/*
 
 rm -f "$BIN" ${NETCODE_OBJ:-}

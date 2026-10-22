@@ -1,0 +1,13 @@
+# The netcode 1.02 decision for each fuzz/corpus_connect_token file the
+# differential maps to netcode (tools/differential/README.md, the fuzz
+# corpus mode), recorded from the live run against tag v1.2.1. Columns:
+#
+#   corpus file <TAB> mapped fields <TAB> netcode reference decision
+raw_empty	raw,clock+0m	refuse:version
+raw_version_prefix	raw,clock+0m	refuse:version
+structured_before_create	untouched,clock-127m	accept
+structured_expired	untouched,clock+127m	refuse:expired
+structured_flip_clear_key	clear,clock+0m	accept
+structured_flip_protocol_id	protocol,clock+0m	refuse:protocol
+structured_flip_signature	signature,clock+0m	refuse:signature
+structured_untouched	untouched,clock+0m	accept

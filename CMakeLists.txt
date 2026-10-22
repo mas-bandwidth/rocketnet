@@ -471,6 +471,16 @@ if(ROCKETNET_BUILD_TESTS)
     set_target_properties(test_internal_c PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
     target_link_libraries(test_internal_c PRIVATE rocketnet_dev)
     rocketnet_warning_floor(test_internal_c)
+    # oss-fuzz/build.sh is the one build path that does not go through this
+    # file, so the -ffp-contract=off floor has to be pinned there separately:
+    # this holds every $CC/$CXX compile line in it to the flag. A build target,
+    # not a ctest: the unit binary's target name "test" is reserved once CTest
+    # is enabled. ci.yml runs the same script beside tools/check_fp_contract.sh.
+    add_custom_target(oss_fuzz_fp_contract
+        COMMAND ${CMAKE_COMMAND}
+            -DROCKETNET_OSS_FUZZ_BUILD_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/oss-fuzz/build.sh
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_oss_fuzz_fp_contract.cmake
+        VERBATIM)
     add_executable(test_sodium test_sodium.c)
     target_link_libraries(test_sodium PRIVATE rocketnet)
     rocketnet_use_sodium(test_sodium)
@@ -799,8 +809,21 @@ if(ROCKETNET_BUILD_TOOLS)
     # corpora replay on platforms with no libFuzzer runtime. Built against
     # the development library with the same includes as the NDEBUG fuzz
     # build in ci.yml.
-    foreach(harness rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured)
-        add_executable(fuzz_replay_${harness} fuzz/replay_main.cpp fuzz/${harness}.cpp)
+    #
+    # The pair harnesses (fuzz/rocketnet_fuzz_pair.h: the server and client
+    # transports' real receive loops and the scripted session over the
+    # loopback transport) compile sdk/rocketnet_server_transport.cpp and
+    # sdk/rocketnet_driver_loopback.cpp into the harness, as the unit suite's
+    # loopback case does, so the harness object goes first on the link line:
+    # lld-link loads an archive member as soon as an earlier object
+    # references one of its symbols (see ROCKETNET_UNIT_TRANSPORT_SOURCE).
+    set(ROCKETNET_FUZZ_PAIR_HARNESSES rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session)
+    foreach(harness rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config ${ROCKETNET_FUZZ_PAIR_HARNESSES})
+        if(harness IN_LIST ROCKETNET_FUZZ_PAIR_HARNESSES)
+            add_executable(fuzz_replay_${harness} fuzz/${harness}.cpp fuzz/replay_main.cpp)
+        else()
+            add_executable(fuzz_replay_${harness} fuzz/replay_main.cpp fuzz/${harness}.cpp)
+        endif()
         target_compile_definitions(fuzz_replay_${harness} PRIVATE ROCKETNET_DEVELOPMENT=1)
         target_compile_features(fuzz_replay_${harness} PRIVATE cxx_std_17)
         target_include_directories(fuzz_replay_${harness} PRIVATE
