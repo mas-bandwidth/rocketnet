@@ -1710,9 +1710,9 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
     for ( int i = 0; receive_buffer && i < receive_buffer->num_packets; i++ )
     {
         client_transport->stats_frames[stats_index].packets_received++;
-        client_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( receive_buffer->packet_bytes[i] + rocketnet_wire_header_bytes( receive_buffer->from[i].type ) );
+        client_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( receive_buffer->packet_bytes[i] + (size_t) rocketnet_wire_header_bytes( receive_buffer->from[i].type ) );
         client_transport->client_stats.packets_received++;
-        client_transport->client_stats.bytes_received += (uint64_t) ( receive_buffer->packet_bytes[i] + rocketnet_wire_header_bytes( receive_buffer->from[i].type ) );
+        client_transport->client_stats.bytes_received += (uint64_t) ( receive_buffer->packet_bytes[i] + (size_t) rocketnet_wire_header_bytes( receive_buffer->from[i].type ) );
 
         // only the I/O thread writes verdicts; the BASE receive thread's
         // records are raw
@@ -1786,7 +1786,7 @@ void rocketnet_client_transport_send_packet( rocketnet_client_transport_t * clie
     if ( !frame )
         return;
 
-    memcpy( frame + context.payload_index, packet_data, packet_bytes );
+    memcpy( frame + context.payload_index, packet_data, (size_t) packet_bytes );
 
     rocketnet_client_transport_finish_packet( client_transport, &context, packet_bytes );
     rocketnet_client_transport_send_packets( client_transport );
