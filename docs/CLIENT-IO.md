@@ -5,10 +5,16 @@ The caller owns its frame loop and calls `rocketnet_client_update`, drains
 `rocketnet_client_receive_messages`, runs simulation, queues messages, and
 calls `rocketnet_client_send_packets` last.
 
-By default the client transport owns a background I/O thread.
-Datagrams cross bounded handoff queues between that thread and the caller
-thread. `update` and `send_packets` do bounded handoff work. They can briefly
-wait for a lock held by the I/O thread. With `ROCKETNET_CLIENT_STEP_DRIVEN=1`,
+By default the client transport owns a background I/O thread that does every
+socket send and receive. Datagrams cross between that thread and the caller
+thread in preallocated buffers: three send rings and three receive buffers,
+each owned by one side at a time (`sdk/rocketnet_buffer_handoff.h`,
+`tla/RNBufferHandoff.tla`). Only buffer indices move, under a mutex held for
+that exchange alone. `update` and `send_packets` only try that mutex: when the
+I/O thread holds it, the exchange waits for the next call, so they never wait
+on the I/O thread. Sends then leave with the next hand-off
+(`CLIENT_SEND_DEFERRED`) and received datagrams with the next update. With
+`ROCKETNET_CLIENT_STEP_DRIVEN=1`,
 the caller performs transport
 receive and send work inside those calls and no client I/O thread starts.
 
@@ -35,9 +41,9 @@ valid through destroy, and make it safe for its calling threads. The game
 clock supplied to time-taking API calls must be finite, nondecreasing, and
 consistent across calls.
 
-The executable invariants live in `tla/RNClientIo.tla`,
-`tla/RNClientIoDecrypt.tla`, the unit suite, and the functional transport
-matrix. Performance profiling and longer saturation campaigns are planned
+The executable invariants live in `tla/RNBufferHandoff.tla`,
+`tla/RNClientIo.tla`, `tla/RNClientIoDecrypt.tla`, the unit suite, and the
+functional transport matrix. Performance profiling and longer saturation campaigns are planned
 hardening work.
 
 A step-driven test advances shutdown explicitly with update (or its I/O-step
