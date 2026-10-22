@@ -5,6 +5,7 @@
 #include "load.c"
 #undef main
 #include "tools/load_split_schedule.h"
+#include "tools/load_split_startup.h"
 
 #define SPLIT_ARM_MAGIC 0x524E414Du
 #define SPLIT_ACK_MAGIC 0x524E414Bu
@@ -35,7 +36,8 @@ struct split_client_t
     struct load_wire_sample_t wire_start, wire_end;
     double next_due;
     uint32_t next_combo;
-    int connected, armed, go, running, finish, confirmed;
+    struct split_startup_t startup;
+    int connected, finish, confirmed;
 };
 
 struct split_server_client_t
@@ -417,7 +419,7 @@ static void split_client_startup_batch( struct split_result_t * result, struct s
     {
         struct split_message_t message;
         const uint32_t magic = batch->data[j] && batch->bytes[j] >= 4 ? read_u32_le(batch->data[j]) : 0;
-        if ( magic == LOAD_MAGIC_SV_TO_CLIENT && peer->running )
+        if ( magic == LOAD_MAGIC_SV_TO_CLIENT && peer->startup.running )
         {
             split_receive_s2c(result, peer, global, run_id, split_batch_entry(batch, j));
             continue;
@@ -427,23 +429,26 @@ static void split_client_startup_batch( struct split_result_t * result, struct s
              batch->client_index[j] != 0 ||
              batch->channel[j] != (magic == SPLIT_RUN_MAGIC ? ROCKETNET_RELIABILITY_RELIABLE_ORDERED : SPLIT_CONTROL_CHANNEL) )
         { result->protocol_errors++; continue; }
-        if ( magic == SPLIT_ARM_MAGIC && !peer->armed )
-        {
-            peer->armed = 1;
-            if ( !split_client_send(peer->api, SPLIT_ACK_MAGIC, global, 0, 1, run_id,
-                                    ROCKETNET_RELIABILITY_RELIABLE_ORDERED, SPLIT_CONTROL_CHANNEL) )
-                result->offer_refusals++;
-        }
-        else if ( magic == SPLIT_GO_MAGIC && peer->armed && !peer->go )
-        {
-            peer->go = 1;
-            if ( !split_client_send(peer->api, SPLIT_GO_ACK_MAGIC, global, 0, 1, run_id,
-                                    ROCKETNET_RELIABILITY_RELIABLE_ORDERED, SPLIT_CONTROL_CHANNEL) )
-                result->offer_refusals++;
-        }
-        else if ( magic == SPLIT_RUN_MAGIC && peer->go && !peer->running ) peer->running = 1;
-        else result->protocol_errors++;
+        const int kind = magic == SPLIT_ARM_MAGIC ? SPLIT_STARTUP_ARM :
+                         magic == SPLIT_GO_MAGIC ? SPLIT_STARTUP_GO :
+                         magic == SPLIT_RUN_MAGIC ? SPLIT_STARTUP_RUN : 0;
+        if ( !split_startup_receive(&peer->startup, kind) ) result->protocol_errors++;
     }
+}
+
+/* ARM and GO are answered once the client is connected: its transport hands
+ * payloads from before it reports CONNECTED, and a send before then is
+ * dropped (tools/load_split_startup.h). */
+static void split_client_startup_answer( struct split_result_t * result, struct split_client_t * peer,
+                                         uint32_t global, uint64_t run_id )
+{
+    const int connected = rocketnet_client_state(peer->api) == ROCKETNET_CLIENT_STATE_CONNECTED;
+    const int send = split_startup_due(&peer->startup, connected);
+    if ( send == SPLIT_STARTUP_SEND_NONE ) return;
+    if ( !split_client_send(peer->api, send == SPLIT_STARTUP_SEND_ACK ? SPLIT_ACK_MAGIC : SPLIT_GO_ACK_MAGIC,
+                            global, 0, 1, run_id, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, SPLIT_CONTROL_CHANNEL) )
+        result->offer_refusals++;
+    split_startup_sent(&peer->startup, send);
 }
 
 static void split_client_runtime_batch( struct split_result_t * result, struct split_client_t * peer,
@@ -1021,6 +1026,7 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
             const struct rocketnet_message_batch_t * batch = NULL;
             while ( (batch = rocketnet_client_receive_messages(clients[i].api)) != NULL )
                 split_client_startup_batch(&result, &clients[i], (uint32_t) (first + i), run_id, batch);
+            split_client_startup_answer(&result, &clients[i], (uint32_t) (first + i), run_id);
             rocketnet_client_send_packets(clients[i].api);
             const enum rocketnet_client_state_t state = rocketnet_client_state(clients[i].api);
             if ( state == ROCKETNET_CLIENT_STATE_CONNECTED )
@@ -1050,7 +1056,8 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
             const struct rocketnet_message_batch_t * batch = NULL;
             while ( (batch = rocketnet_client_receive_messages(clients[i].api)) != NULL )
                 split_client_startup_batch(&result, &clients[i], (uint32_t) (first + i), run_id, batch);
-            armed += clients[i].armed;
+            split_client_startup_answer(&result, &clients[i], (uint32_t) (first + i), run_id);
+            armed += clients[i].startup.armed;
             rocketnet_client_send_packets(clients[i].api);
         }
         rocketnet_sleep(0.001);
@@ -1067,7 +1074,8 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
             const struct rocketnet_message_batch_t * batch = NULL;
             while ( (batch = rocketnet_client_receive_messages(clients[i].api)) != NULL )
                 split_client_startup_batch(&result, &clients[i], (uint32_t) (first + i), run_id, batch);
-            gone += clients[i].go;
+            split_client_startup_answer(&result, &clients[i], (uint32_t) (first + i), run_id);
+            gone += clients[i].startup.go;
             rocketnet_client_send_packets(clients[i].api);
         }
         rocketnet_sleep(0.001);
@@ -1084,7 +1092,8 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
             const struct rocketnet_message_batch_t * batch = NULL;
             while ( (batch = rocketnet_client_receive_messages(clients[i].api)) != NULL )
                 split_client_startup_batch(&result, &clients[i], (uint32_t) (first + i), run_id, batch);
-            running += clients[i].running;
+            split_client_startup_answer(&result, &clients[i], (uint32_t) (first + i), run_id);
+            running += clients[i].startup.running;
             rocketnet_client_send_packets(clients[i].api);
         }
         rocketnet_sleep(0.001);
