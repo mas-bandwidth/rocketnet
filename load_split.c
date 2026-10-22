@@ -697,6 +697,7 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
         rocketnet_server_send_packets(server);
         rocketnet_sleep(0.001);
     }
+    fprintf(stderr, "startup_diag: server arm acked=%d/%d elapsed=%.3f\n", acked, total, rocketnet_time() - arm_start);
     if ( acked != total || result.protocol_errors || quit ) goto cleanup;
     for ( int i = 0; i < total; ++i )
         if ( !split_server_send(server, clients[i].slot, SPLIT_GO_MAGIC,
@@ -728,6 +729,7 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
         rocketnet_server_send_packets(server);
         rocketnet_sleep(0.001);
     }
+    fprintf(stderr, "startup_diag: server go acked=%d/%d elapsed=%.3f\n", go_acked, total, rocketnet_time() - go_start);
     if ( go_acked != total || result.protocol_errors || quit ) goto cleanup;
     for ( int i = 0; i < total; ++i )
     {
@@ -1079,6 +1081,7 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
         }
         rocketnet_sleep(0.001);
     }
+    fprintf(stderr, "startup_diag: shard arm armed=%d/%d elapsed=%.3f since_connect_start=%.3f\n", armed, count, rocketnet_time() - arm_start, rocketnet_time() - connect_start);
     if ( armed != count || result.protocol_errors || result.offer_refusals || quit ) goto cleanup;
     const double go_start = rocketnet_time();
     int gone = 0;
@@ -1096,6 +1099,7 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
         }
         rocketnet_sleep(0.001);
     }
+    fprintf(stderr, "startup_diag: shard go gone=%d/%d elapsed=%.3f\n", gone, count, rocketnet_time() - go_start);
     if ( gone != count || result.protocol_errors || result.offer_refusals || quit ) goto cleanup;
     const double run_wait_start = rocketnet_time();
     int running = 0;
