@@ -411,10 +411,11 @@ nothing has been pumped yet, so the messages that arrived wait a frame.
 Buffered background I/O adds an ownership handoff around those packets. A send
 worker may take a packet bank after the caller's `send_packets`, and a receive
 worker may publish a packet bank after the caller's `update` has already taken
-the available bank. An extra server-to-client update from that handoff is
-expected. Client-to-server traffic also crosses a bounded handoff, without a
-fixed public update-count guarantee. Keep the five-step order unchanged; neither
-direction promises same-update message delivery.
+the available banks. Extra frames under load are an accepted cost of moving
+bulk I/O off the frame thread; unnecessary delay of available data remains a
+regression. Both directions have bounded work and no fixed public update-count
+guarantee. Keep the five-step order unchanged; neither direction promises
+same-update message delivery.
 
 ```c
 #include "rocketnet.h"

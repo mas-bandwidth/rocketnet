@@ -92,13 +92,16 @@ receive and handshake acceptance in preview-2:
 
 - Portable and Windows RIO server receive paths use bounded worker handoffs;
   portable server sends also use a worker. Receive-bank capacity follows the
-  configured client count. An extra server-to-client update from the background
-  handoff is expected. Moving bulk send and receive work into the background
+  configured client count. Moving bulk send and receive work into the background
   trades added latency under load for scale; unnecessary extra delay remains
   a regression. Client-to-server traffic also uses a bounded handoff;
   there is no fixed public update-count guarantee in either direction.
   This does not change the application's frame order.
   These changes do not establish the frame-time target.
+- The legacy client receive handoff processes available batches in arrival
+  order up to the existing per-update packet budget, removing a persistent
+  extra-frame backlog during quiet operation. Batches beyond the budget stay
+  queued for later updates.
 - The client I/O idle wait is a guard that can be interrupted by work, rather
   than a fixed send cadence.
 - Server pre-authentication processing checks packet shape and cheap rejection

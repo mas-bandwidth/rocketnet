@@ -54,7 +54,10 @@ def check_exported_settings(installed, root, command, config, native_build_optio
         probe_command.append("-DCMAKE_EXPORT_COMPILE_COMMANDS=ON")
         result = subprocess.run([str(arg) for arg in probe_command], capture_output=True, text=True)
         if result.returncode != 0:
-            failures.append(f"find_package(RocketNet {request}) refuses the installed {version}")
+            print(result.stdout, end="")
+            print(result.stderr, end="")
+            failures.append(f"settings probe for RocketNet {request} failed to configure "
+                            f"(exit {result.returncode}, installed {version})")
             continue
         if request != version:
             continue
