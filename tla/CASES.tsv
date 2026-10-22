@@ -188,6 +188,7 @@ MCRNXdpReplayBrokenKernelAdvances.cfg	MCRNXdpReplay.tla	invariant	FreshGenuineNe
 MCRNXdpReplayBrokenNoForget.cfg	MCRNXdpReplay.tla	invariant	NewSessionNeverDroppedByOldMark	check	rnxdpreplay	required	-
 MCRNXdpReceiveRing.cfg	MCRNXdpReceiveRing.tla	pass	-	check	rnxdpreceivering	required	-
 MCRNXdpReceiveRingBrokenNoCancel.cfg	MCRNXdpReceiveRing.tla	invariant	FrameConservation	check	rnxdpreceivering	required	-
+MCRNXdpReceiveRingBrokenFillOfTheFrames.cfg	MCRNXdpReceiveRing.tla	invariant	FillNeverEmptyWhileFramesFree	check	rnxdpreceivering	required	-
 MCRNRioDriver.cfg	MCRNRioDriver.tla	pass	-	check	rnriodriver	required	-
 MCRNRioDriverBrokenSwitchWithoutDrain.cfg	MCRNRioDriver.tla	invariant	NoReserveIntoPostedPhase	check	rnriodriver	required	-
 MCRNRioDriverBrokenFreeBeforeDrain.cfg	MCRNRioDriver.tla	invariant	FreedOnlyWhenDrained	check	rnriodriver	required	-
