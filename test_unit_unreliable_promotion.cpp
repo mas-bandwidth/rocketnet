@@ -198,7 +198,7 @@ static void boundary_step(boundary_pair_t * pair,std::vector<boundary_received_t
     rocketnet_message_server_send_packets(pair->server); rocketnet_message_client_send_packets(pair->client);
 }
 static std::vector<uint8_t> boundary_data(uint32_t sequence,int bytes) {
-    std::vector<uint8_t> data((size_t)bytes); for(int i=0;i<bytes;++i) data[(size_t)i]=(uint8_t)(i+sequence); return data;
+    std::vector<uint8_t> data((size_t)bytes); for(int i=0;i<bytes;++i) data[(size_t)i]=(uint8_t)((uint32_t)i+sequence); return data;
 }
 // ---------------------------------------------------------------------------
 // Oversize unreliable sends are promoted to their reliable twin
