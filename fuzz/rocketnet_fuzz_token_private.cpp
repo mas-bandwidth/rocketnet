@@ -415,7 +415,7 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     char verbose[64];
     fuzz_verbose = rocketnet_test_getenv( "ROCKETNET_FUZZ_VERBOSE", verbose, sizeof( verbose ) ) && verbose[0] == '1';
-    char seed_dir[1024];
+    char seed_dir[512];
     if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_DIR", seed_dir, sizeof( seed_dir ) ) && seed_dir[0] != '\0' )
         fuzz_write_seeds( seed_dir );
     return 0;
