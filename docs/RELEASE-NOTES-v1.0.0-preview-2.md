@@ -31,6 +31,27 @@ failure can return `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED` while the old
 attempt shuts down; poll completion and retry with the token. See
 [USAGE.md](../USAGE.md) and the [public header](../sdk/rocketnet.h).
 
+### Bound receipt iteration by the output capacity
+
+`rocketnet_client_receipts()` and `rocketnet_server_receipts()` now return
+the number of available outcomes, which can exceed the number copied into
+your output buffer. Iterate over at most `min(returned_count, capacity)`
+entries. Passing a NULL output with zero capacity queries the available count.
+If the count exceeds capacity, read again into a larger buffer before the
+next update; reads do not consume outcomes. The signatures and receipt layout
+are unchanged, but preview-1 callers must adopt this return-value contract.
+See [receipt reads after preview-1](ABI-EVOLUTION.md#receipt-reads-after-preview-1).
+
+### Recheck client quality thresholds
+
+Client `jitter_ms` now uses retained first-ACK RTT samples: the mean excess
+over their minimum. Client `packet_loss_percent` now estimates outbound
+unacknowledged session packets from the eligible retained send window, excluding
+the newest half-window. Delayed ACKs affect that estimate, and the window advances
+with sent sequences rather than elapsed time. These replace the previous client
+receive-jitter and receive-loss measures. Recalibrate dashboards and thresholds
+that used those fields; see [the statistics example](examples/stats.md).
+
 ### Select a production build explicitly
 
 `ROCKETNET_DEVELOPMENT` is replaced by `ROCKETNET_DEV`, which defaults to 1.
@@ -48,6 +69,26 @@ The portable server transport is development-only; production servers require
 an available native transport. Portable clients remain available. Explicit
 transport pins refuse unavailable configurations rather than silently falling
 back. Follow [Before production](../AGENTS.md#before-production).
+
+## Wire compatibility
+
+Packet and connect-token encodings and the protocol version are unchanged.
+Preview-1 and preview-2 SDK peers remain encoding-compatible, with tighter
+receive and handshake acceptance in preview-2:
+
+- RocketNet packets larger than 1452 bytes are dropped. Preview-1 SDK senders
+  already stayed within 1452 bytes, but custom peers relying on its wider
+  receive acceptance must conform to the narrower ceiling. See
+  [transport constants](../standard/TRANSPORT.md#t3) and
+  [receive processing](../standard/TRANSPORT.md#t10).
+- Tokens with zero or negative timeouts are refused. Clients ignore payloads
+  and fragments received before the first keep-alive establishes the connection.
+  Early unreliable data reordered ahead of that keep-alive can be lost;
+  reliable data is resent after connection. See the
+  [client handshake](../standard/TRANSPORT.md#t11).
+- Servers refuse tokens created more than five seconds ahead of their clock,
+  regardless of token lifetime. See the
+  [server handshake](../standard/TRANSPORT.md#t12).
 
 ## Other changes since preview-1
 
