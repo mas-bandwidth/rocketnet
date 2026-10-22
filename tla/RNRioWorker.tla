@@ -17,8 +17,9 @@
 (* banks it exposed last call to the free FIFO and exposes the ready banks *)
 (* that fit the process view; the views stay valid until its next call.   *)
 (* Main (rocketnet_server_rio_send_packets) try-locks, hands the fill      *)
-(* phase to the worker and switches the fill threads to the other phase    *)
-(* only when the worker has returned that phase idle.  Only bank indices   *)
+(* phase to the worker, opening the next of three phases to the fill       *)
+(* threads, only when the worker has returned that phase idle; otherwise   *)
+(* the fill phase stays open for a later flush.  Only bank indices         *)
 (* and phase states change under the mutex; main never waits: every main   *)
 (* try may fail, and a failed try retains everything main owns.            *)
 (*                                                                         *)
@@ -35,7 +36,7 @@
 (* region only after stopped.                                              *)
 (*                                                                         *)
 (* Rule switches, each FALSE in one reversed witness:                      *)
-(*   SwitchOnIdle   main opens the other phase only when it is idle        *)
+(*   SwitchOnIdle   main opens the next phase only when it is idle         *)
 (*   BoundedDequeue the worker dequeues at most the fill bank's free room  *)
 (*   DrainBeforeExit the worker exits only when nothing is kernel owned    *)
 (*   WakeOnReturn   main wakes the worker when it frees a bank             *)
@@ -57,8 +58,9 @@ ASSUME {SwitchOnIdle, BoundedDequeue, DrainBeforeExit, WakeOnReturn} \subseteq B
 Banks == 1..NumBanks
 Ids == 1..MaxDatagrams
 SendIds == 1..MaxSends
-Phases == {0, 1}
-NoPhase == 2    \* inhand of -1: no phase in hand
+Phases == {0, 1, 2}    \* ROCKETNET_RIO_SEND_PHASES
+NoPhase == 3           \* inhand of -1: no phase in hand
+After(p) == (p + 1) % 3   \* the phase opened after p
 
 VARIABLES
     \* receive
@@ -79,7 +81,6 @@ VARIABLES
     staged,      \* per phase, the packets staged into it
     state,       \* per phase: "fill", "ready", "posted", "idle"
     phase,       \* main's fill phase
-    owed,        \* switch_owed: the fill phase is handed, the other not idle
     sready,      \* phases handed to the worker, oldest first
     inhand,      \* the phase the worker is posting, -1 none
     pend,        \* per phase, posted and uncommitted sends
@@ -95,7 +96,7 @@ VARIABLES
     wpc, progress
 
 rvars == <<arrived, accepted, posted, retry, rcq, data, fill, free, ready, exposed, view, consumed>>
-svars == <<sent, staged, state, phase, owed, sready, inhand, pend, infl, scq, done, dropped>>
+svars == <<sent, staged, state, phase, sready, inhand, pend, infl, scq, done, dropped>>
 cvars == <<wake, evt, armed, stopping, closed, exited, freed, wpc, progress>>
 vars == <<rvars, svars, cvars>>
 
@@ -117,7 +118,7 @@ Init ==
     /\ exposed = <<>> /\ view = <<>> /\ consumed = <<>>
     /\ sent = 0 /\ staged = [p \in Phases |-> <<>>]
     /\ state = [p \in Phases |-> IF p = 0 THEN "fill" ELSE "idle"]
-    /\ phase = 0 /\ owed = FALSE /\ sready = <<>> /\ inhand = NoPhase
+    /\ phase = 0 /\ sready = <<>> /\ inhand = NoPhase
     /\ pend = [p \in Phases |-> <<>>] /\ infl = [p \in Phases |-> <<>>]
     /\ scq = <<>> /\ done = <<>> /\ dropped = {}
     /\ wake = FALSE /\ evt = FALSE /\ armed = FALSE
@@ -157,7 +158,7 @@ SendComplete(p) ==
     /\ scq' = Append(scq, <<p, Head(infl[p])>>)
     /\ infl' = [infl EXCEPT ![p] = Tail(infl[p])]
     /\ UNCHANGED rvars
-    /\ UNCHANGED <<sent, staged, state, phase, owed, sready, inhand, pend, done, dropped>>
+    /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, pend, done, dropped>>
     /\ UNCHANGED cvars
 
 \* ------------------------------------------------------------------------
@@ -167,35 +168,27 @@ SendComplete(p) ==
 Stage ==
     /\ ~stopping
     /\ sent < MaxSends
-    /\ ~owed
     /\ state[phase] = "fill"
     /\ sent' = sent + 1
     /\ staged' = [staged EXCEPT ![phase] = Append(staged[phase], sent + 1)]
     /\ UNCHANGED rvars
-    /\ UNCHANGED <<state, phase, owed, sready, inhand, pend, infl, scq, done, dropped>>
+    /\ UNCHANGED <<state, phase, sready, inhand, pend, infl, scq, done, dropped>>
     /\ UNCHANGED cvars
 
 CanOpen(p) == IF SwitchOnIdle THEN state[p] = "idle" ELSE state[p] \in {"idle", "posted"}
 
-\* send_packets, a successful try: hand a non-empty fill phase, then switch
-\* when the other phase is idle
+\* send_packets, a successful try: hand a non-empty fill phase only when the
+\* next phase can be opened, and open it.  Otherwise the fill phase stays
+\* open and keeps its packets for a later flush.
 SendPackets ==
     /\ ~stopping
-    /\ LET hand == state[phase] = "fill" /\ staged[phase] # <<>>
-           st1 == IF hand THEN [state EXCEPT ![phase] = "ready"] ELSE state
-           other == 1 - phase
-       IN /\ \/ hand \/ owed
-             \* nothing staged and nothing owed: no exchange
-          /\ sready' = IF hand THEN Append(sready, phase) ELSE sready
-          /\ IF st1[phase] # "fill" /\ CanOpen(other)
-             THEN /\ state' = [st1 EXCEPT ![other] = "fill"]
-                  /\ staged' = [staged EXCEPT ![other] = <<>>]
-                  /\ phase' = other
-                  /\ owed' = FALSE
-             ELSE /\ state' = st1
-                  /\ owed' = (st1[phase] # "fill")
-                  /\ UNCHANGED <<staged, phase>>
-          /\ wake' = (wake \/ hand)
+    /\ staged[phase] # <<>>
+    /\ CanOpen(After(phase))
+    /\ state' = [state EXCEPT ![phase] = "ready", ![After(phase)] = "fill"]
+    /\ sready' = Append(sready, phase)
+    /\ staged' = [staged EXCEPT ![After(phase)] = <<>>]
+    /\ phase' = After(phase)
+    /\ wake' = TRUE
     /\ UNCHANGED rvars
     /\ UNCHANGED <<sent, inhand, pend, infl, scq, done, dropped>>
     /\ UNCHANGED <<evt, armed, stopping, closed, exited, freed, wpc, progress>>
@@ -269,7 +262,7 @@ WTake ==
        ELSE /\ UNCHANGED <<inhand, sready, state>>
             /\ wpc' = "retire"
     /\ UNCHANGED rvars
-    /\ UNCHANGED <<sent, staged, phase, owed, pend, infl, scq, done, dropped>>
+    /\ UNCHANGED <<sent, staged, phase, pend, infl, scq, done, dropped>>
     /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress>>
 
 \* RIOSendEx with RIO_MSG_DEFER for each finished slot: the kernel owns them
@@ -280,7 +273,7 @@ WPost ==
     /\ wpc' = "commit"
     /\ progress' = TRUE
     /\ UNCHANGED rvars
-    /\ UNCHANGED <<sent, staged, state, phase, owed, sready, infl, scq, done, dropped>>
+    /\ UNCHANGED <<sent, staged, state, phase, sready, infl, scq, done, dropped>>
     /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed>>
 
 \* RIO_MSG_COMMIT_ONLY: success moves every deferred send to the kernel's
@@ -296,7 +289,7 @@ WCommit ==
           /\ UNCHANGED <<pend, infl>>
     /\ wpc' = "retire"
     /\ UNCHANGED rvars
-    /\ UNCHANGED <<sent, staged, state, phase, owed, sready, inhand, scq, done, dropped>>
+    /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, scq, done, dropped>>
     /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress>>
 
 \* dequeue every send completion; a refused commit is retried here
@@ -309,7 +302,7 @@ WRetire ==
     /\ progress' = (progress \/ scq # <<>>)
     /\ wpc' = "dequeue"
     /\ UNCHANGED rvars
-    /\ UNCHANGED <<sent, staged, state, phase, owed, sready, inhand, dropped>>
+    /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, dropped>>
     /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed>>
 
 \* retry refused re-posts, then dequeue receive completions into the fill
@@ -348,7 +341,7 @@ WPublish ==
     /\ state' = [p \in Phases |-> IF state[p] = "posted" /\ ~Outstanding(p) THEN "idle" ELSE state[p]]
     /\ wpc' = IF progress THEN "top" ELSE "arm"
     /\ UNCHANGED <<arrived, accepted, posted, retry, rcq, exposed, view, consumed>>
-    /\ UNCHANGED <<sent, staged, phase, owed, sready, inhand, pend, infl, scq, done, dropped>>
+    /\ UNCHANGED <<sent, staged, phase, sready, inhand, pend, infl, scq, done, dropped>>
     /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress>>
 
 \* nothing progressed: arm RIONotify on the receive queue when the fill bank
@@ -394,7 +387,7 @@ WStop ==
           /\ UNCHANGED <<pend, infl>>
     /\ wpc' = "close"
     /\ UNCHANGED rvars
-    /\ UNCHANGED <<sent, staged, state, phase, owed, scq, done>>
+    /\ UNCHANGED <<sent, staged, state, phase, scq, done>>
     /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress>>
 
 WClose ==
@@ -422,7 +415,7 @@ WDrain ==
        THEN /\ exited' = TRUE /\ wpc' = "exited"
        ELSE /\ UNCHANGED exited /\ wpc' = "drain"
     /\ UNCHANGED <<arrived, accepted, posted, retry, data, fill, free, ready, exposed, view, consumed>>
-    /\ UNCHANGED <<sent, staged, state, phase, owed, sready, inhand, pend, infl, dropped>>
+    /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, pend, infl, dropped>>
     /\ UNCHANGED <<wake, evt, armed, stopping, closed, freed, progress>>
 
 Next ==
@@ -482,7 +475,7 @@ ExactDelivery ==
 \* The fill threads never write a frame the kernel owns or a phase the
 \* worker holds: the open fill phase has no send outstanding.
 FillPhaseOwnedByMain ==
-    ~owed /\ ~stopping =>
+    ~stopping =>
         /\ state[phase] = "fill"
         /\ ~Outstanding(phase)
         /\ inhand # phase

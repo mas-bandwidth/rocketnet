@@ -26,10 +26,14 @@ every RIO call after create.
   worker dequeues nothing: completions wait in the queue and their slices
   stay unposted. That is backpressure; nothing is dropped.
 - **Send.**
-  - The fill threads stage into the open phase, as before.
-  - `rocketnet_server_rio_send_packets` hands a finished phase to the
-    worker. It opens the other phase only when the worker has returned that
-    phase idle, meaning every send of it has been retired.
+  - There are three send phases, as every other transport's send handoff
+    has three banks. The fill threads stage into the open phase, as before.
+  - `rocketnet_server_rio_send_packets` hands the fill phase to the worker
+    and opens the next phase, only when the worker has returned that phase
+    idle, meaning every send of it has been retired. Otherwise the fill
+    phase stays open, the fill threads keep appending, and a later flush
+    hands it. A busy worker delays sends by a flush; it never makes the fill
+    threads refuse, except when the open phase is full.
   - The worker posts with `RIO_MSG_DEFER`, commits, retires send
     completions and returns a drained phase idle.
 - **Idle wait.** When idle, the worker arms `RIONotify`:
@@ -62,10 +66,9 @@ every RIO call after create.
   - The code's free list is a stack. Which free bank the worker takes does
     not matter to any property.
 - **Send.**
-  - `staged[p]` holds the packets staged into phase `p`.
+  - `staged[p]` holds the packets staged into phase `p`, for three phases.
   - `state[p]` is one of `fill`, `ready`, `posted` or `idle`.
-  - `owed` is `switch_owed`.
-  - `sready` is the queue of handed phases.
+  - `sready` is the queue of handed phases, oldest first.
   - `pend` is posted but uncommitted.
   - `infl` is committed and kernel owned.
   - `scq` is the send completion queue, and `done` the retired sends.
@@ -93,9 +96,8 @@ every RIO call after create.
 - `ExposedStable`: the exposed banks hold exactly what main was shown.
 - `ExactDelivery`: until stop, `consumed`, then the ready banks, then the
   fill bank, then the queued completions are exactly `accepted`.
-- `FillPhaseOwnedByMain`: with the switch not owed, the fill phase is
-  `fill`. No send of it is outstanding, the worker does not hold it, and it
-  is not handed.
+- `FillPhaseOwnedByMain`: until stop, the fill phase is `fill`. No send of
+  it is outstanding, the worker does not hold it, and it is not handed.
 - `SlicesAccounted`: until close, every slice is posted, queued or waiting
   for a re-post.
 - `NoSendDuplicated`.
@@ -111,7 +113,7 @@ every RIO call after create.
 
 | Config | Expected | What it shows |
 |---|---|---|
-| `MCRNRioWorker.cfg` | pass | Safety, both directions: three datagrams and two staged sends, every invariant. |
+| `MCRNRioWorker.cfg` | pass | Safety, both directions: three datagrams and two staged sends over three phases, every invariant. |
 | `MCRNRioWorkerReceiveLive.cfg` | pass | No sends, three datagrams: invariants, `EveryDatagramConsumed`, `StopCompletes`. |
 | `MCRNRioWorkerSendLive.cfg` | pass | No datagrams, two sends: invariants, `EveryStagedSent`, `StopCompletes`. |
 | `MCRNRioWorkerTwoBanks.cfg` | pass | Two banks, three datagrams: the fill bank fills while main holds the other bank (backpressure); invariants and receive liveness. |
@@ -125,13 +127,15 @@ budget at two TLC workers.
 
 Each reversed witness was read against the code by hand (2026-10-22):
 
-- **SwitchBeforeIdle.**
-  - In the trace, phase 0 is handed and the worker takes it (`posted`).
-    Phase 1 is staged and handed. The flush then reopens phase 0 to the fill
-    threads while the worker is about to post its frames.
-  - In the code, `rocketnet_server_rio_send_packets` opens `other` only if
-    `phase_state[other] == ROCKETNET_RIO_PHASE_IDLE`. That state is set only
-    in `rocketnet_rio_worker_pass`, under the mutex, once
+- **SwitchBeforeIdle** (three staged sends, so the rotation returns to
+  phase 0).
+  - In the trace, phases 0 and 1 are handed and phase 2 is staged. The
+    worker takes phase 0 (`posted`). The flush then hands phase 2 and
+    reopens phase 0 to the fill threads while the worker is about to post
+    its frames.
+  - In the code, `rocketnet_server_rio_send_packets` hands and opens `next`
+    only if `phase_state[next] == ROCKETNET_RIO_PHASE_IDLE`. That state is
+    set only in `rocketnet_rio_worker_pass`, under the mutex, once
     `outstanding[p] == 0`.
 - **UnboundedDequeue.**
   - In the trace, there are two banks. Main holds none yet, bank 1 is
@@ -168,4 +172,5 @@ thread and no clock. It covers these cases:
 - backpressure with every bank full;
 - a failed main try that retains its exposed banks;
 - the wake on a return to an empty free list;
-- the send-phase handoff that reopens a phase only when it is idle.
+- the send-phase handoff that hands and opens the next phase only when it
+  is idle, and otherwise keeps the fill phase open with nothing refused.

@@ -995,11 +995,20 @@ static void rio_settle( rocketnet_server_rio_t * rio )
     CHECK(rocketnet_server_rio_test_send_idle(rio));
 }
 
-// every slot of both phases reserves: no phase is held by a send that never
+// flushes until everything staged is handed, posted and retired
+static void rio_flush( rocketnet_server_rio_t * rio )
+{
+    wait_until( "RIO sends handed and retired", [&]() {
+        rocketnet_server_rio_send_packets(rio);
+        return rocketnet_server_rio_test_send_idle(rio);
+    } );
+}
+
+// every slot of every phase reserves: no phase is held by a send that never
 // retires
 static void rio_all_slots_free( rocketnet_server_rio_t * rio, const rocketnet_address_t * to )
 {
-    for ( int cycle = 0; cycle < 2; ++cycle )
+    for ( int cycle = 0; cycle < 3; ++cycle )
     {
         uint64_t id;
         for ( int i = 0; i < ROCKETNET_RIO_SEND_QUEUE_SIZE; ++i )
@@ -1018,7 +1027,7 @@ static void rio_exchange( rocketnet_server_rio_t * rio, const rocketnet_address_
 {
     const int round = ++fault_round & 0xFF;
     rio_stage(rio, peer_address, round, n);
-    rocketnet_server_rio_send_packets(rio);
+    rio_flush(rio);
     CHECK(fault_peer_receive(peer, round, n) == n);
     fault_peer_send(peer, bind, round, n);
     std::vector<bool> seen( (size_t) n, false );
@@ -1097,6 +1106,7 @@ static void test_rio_send_post_fails()
     rocketnet_server_rio_send_packets(rio);
     // the worker retries a refused commit on its own short wait
     wait_until( "RIO refused commits retried", [&]() {
+        rocketnet_server_rio_send_packets(rio);
         return rocketnet_server_rio_test_faults_left(rio, ROCKETNET_RIO_TEST_FAULT_COMMIT) == 0;
     } );
     CHECK(fault_peer_receive(peer, round, 10) == 10);
@@ -1240,6 +1250,7 @@ static void test_rio_destroy_commits_deferred_sends()
     rio_stage(rio, &peer_address, round, 10);
     rocketnet_server_rio_send_packets(rio);
     wait_until( "RIO commit refused once", [&]() {
+        rocketnet_server_rio_send_packets(rio);
         return rocketnet_server_rio_test_faults_left(rio, ROCKETNET_RIO_TEST_FAULT_COMMIT) == 0;
     } );
 
@@ -1269,6 +1280,7 @@ static void test_rio_stop_retries_refused_deferred_commit()
     rio_stage(rio, &peer_address, ++fault_round & 0xFF, 10);
     rocketnet_server_rio_send_packets(rio);
     wait_until( "RIO deferred sends posted", [&]() {
+        rocketnet_server_rio_send_packets(rio);
         return rocketnet_server_rio_test_faults_left(rio, ROCKETNET_RIO_TEST_FAULT_COMMIT) < 50;
     } );
     rocketnet_server_rio_stop(rio);
