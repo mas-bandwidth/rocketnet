@@ -9,6 +9,7 @@ static development library. Each page lives in `docs/examples/`.
 | [hello](hello.c) | init, a server and a client over `loopback`, one reliable-ordered message, disconnect, reconnect with a second token | [hello.md](../docs/examples/hello.md) |
 | [ack_receipts](ack_receipts.c) | message delivery receipts and notifications for unreliable and reliable message sends | [ack_receipts.md](../docs/examples/ack_receipts.md) |
 | [big_messages](big_messages.c) | sending payloads larger than a single packet via multi-fragment message reassembly | [big_messages.md](../docs/examples/big_messages.md) |
+| [backend_server](backend_server.c) / [backend_client](backend_client.c) | a game backend sending a client to a server with a connect token: backends in [Go and C#](backend/) mint it over HTTP, the client connects with it | [backend/README.md](backend/README.md) |
 | [budgets](budgets.c) | client and server send bandwidth budgets, configured rates, and over-budget packet drops | [budgets.md](../docs/examples/budgets.md) |
 | [channels](channels.c) | multi-channel message multiplexing and independent channel stream delivery | [channels.md](../docs/examples/channels.md) |
 | [client_server_server](client_server_server.c) / [client_server_client](client_server_client.c) | two-process client and server architecture communicating over UDP sockets | [client_server.md](../docs/examples/client_server.md) |
@@ -24,7 +25,9 @@ An example that needs two processes is split into `<name>_server.c` and
 `example_<name>_client` and run server first. The server of such a pair takes
 its port from `--port <n>`, else the environment variable
 `ROCKETNET_EXAMPLE_PORT`, else the default `40000`. The client reads the
-server's address from the key file the server writes. Every other example is one program, binds `127.0.0.1:0` so
+server's address from the key file the server writes. The backend pair runs with a backend between the
+two, which mints the client's token; see [backend/README.md](backend/README.md).
+Every other example is one program, binds `127.0.0.1:0` so
 the operating system picks a free port, and runs alone.
 
 Build everything as usual; `examples/CMakeLists.txt` builds each
@@ -44,4 +47,9 @@ own temporary working directory on a free UDP port it picks and passes through
 `ROCKETNET_EXAMPLE_PORT`, retrying on a new port at most three times when the
 server cannot bind, so two runs at once on one machine do not collide. Examples are the
 functional tier: they use the real transport and the wall clock, so they are
-not part of `./bin/test`.
+not part of `./bin/test`. The backend pair runs under its own script, once per
+backend:
+
+```sh
+python3 tools/run_backend_examples.py --build build
+```

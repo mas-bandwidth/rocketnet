@@ -1,5 +1,11 @@
 # ServerSession: the server object's life, its slots across clients, and the per-slot reset
 
+**Shutdown scope:** This model retains its earlier synchronous shutdown
+abstraction and exact historical evidence. The approved request/completion API
+is separately modeled in [RNClientIoShutdown](README-RNClientIoShutdown.md).
+That additive ownership model is not a proved refinement of this one; existing
+data-path/session checks do not establish the new shutdown implementation.
+
 > STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
 
 `tla/ServerSession.tla` models the server object over its life: create (STOPPED, no transport

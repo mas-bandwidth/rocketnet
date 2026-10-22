@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- the backend: an ASP.NET minimal API, one endpoint that mints connect tokens -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <AssemblyName>rocketnet-backend</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <!-- .NET has no Ed25519, X25519, XSalsa20-Poly1305 or BLAKE2b, so this one
+       package brings libsodium, the library sodium/ in the C SDK vendors: the
+       token is sealed and signed by the same code that opens and verifies it -->
+
+  <ItemGroup>
+    <PackageReference Include="Sodium.Core" Version="1.4.1" />
+  </ItemGroup>
+
+</Project>

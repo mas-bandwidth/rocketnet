@@ -8,6 +8,8 @@
 */
 
 #include "rocketnet_internal.h"
+#include "rocketnet_memory.h"
+#include "rocketnet_driver_loopback.h"
 #include "../test/suite_runner.h"
 #include "../test/portable_crt.h"
 
@@ -44,13 +46,6 @@ static int rocketnet_functional_worker( const char * name )
 
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
-    // the off run of a timing comparison: the library's network-thread
-    // priority calls off before init, so the timer period is skipped too
-    // (functional/thread_priority_timing.cpp)
-    char thread_priority[256];
-    if ( rocketnet_test_getenv( "ROCKETNET_FUNCTIONAL_THREAD_PRIORITY", thread_priority, sizeof( thread_priority ) ) && strcmp( thread_priority, "off" ) == 0 )
-        rocketnet_thread_priority( false );
-
     if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
@@ -66,6 +61,49 @@ static int rocketnet_functional_worker( const char * name )
 
 int rocketnet_posix_hard_killed_child_main( int argc, char ** argv );
 int rocketnet_posix_hard_killed_peer_test_group( const char * name );
+
+// test_transport_control (a sibling binary, test_transport_control.cpp) runs
+// test_buffered_control_pressure at 300 and then at ROCKETNET_MAX_CLIENTS
+// clients, one process: each builds a loopback server from the development
+// config with the default packet payload limit and one reassembly slot, and
+// seeds a real ACK observation into every slot, so the stats worker's
+// per-slot delta buffers and history become resident by design. Its
+// footprint is those servers' memory plans, not the suite-wide bound. The
+// 300-client server is destroyed before the full-capacity one is created,
+// but an allocator may keep its freed pages resident: macOS does (a 994 MiB
+// peak with both runs, 782 MiB with the full-capacity run alone, while Linux
+// measures 772 MiB either way), so both plans count. Loopback has no plan
+// row: the portable plan stands in for its common storage and each server's
+// loopback queue is added, as the other loopback full-capacity cases do,
+// plus 32 MiB for the process. The servers it builds after these have at
+// most 12 clients and reuse that memory.
+
+static long rocketnet_transport_control_rss_bound_mb()
+{
+    uint64_t planned = 0;
+    for ( int clients : { 300, ROCKETNET_MAX_CLIENTS } )
+    {
+        struct rocketnet_server_transport_config_t config;
+        rocketnet_server_transport_dev_config( &config );
+        config.max_clients = clients;
+        config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+        config.max_fragmented_messages = 1;
+        rocketnet_server_memory_plan_t plan;
+        if ( !rocketnet_server_transport_memory_plan( &config, "portable", plan ) )
+            return 0; // a refused plan keeps the strict suite-wide bound
+        const uint64_t queue = rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) + rocketnet_allocation_overhead();
+        if ( !rocketnet_memory_add( planned, 1, plan.total_bytes ) || !rocketnet_memory_add( planned, 1, queue ) )
+            return 0;
+    }
+    const long bound = suite_rss_bound_mb( planned, 32 );
+    char verbose[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_TEST_VERBOSE", verbose, sizeof( verbose ) ) )
+        printf( "test_transport_control rss_budget planned_bytes=%llu margin_mb=32 bound_mb=%ld\n",
+                (unsigned long long) planned, bound );
+    return bound;
+}
+
+SUITE_CASE_RSS_BOUND( test_transport_control, rocketnet_transport_control_rss_bound_mb );
 
 int main( int argc, char ** argv )
 {
@@ -93,9 +131,11 @@ int main( int argc, char ** argv )
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize" },
         { "test_transport_control", "test_transport_control" },
+#if ROCKETNET_XDP
         { "test_xdp", "test_xdp" },
+#endif
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3 );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof(execs) / sizeof(execs[0]) );
 #else
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize" },

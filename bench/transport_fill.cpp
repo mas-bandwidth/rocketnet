@@ -1,5 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Public-API packet-fill microbenchmark. See transport_fill.md for its limits.
+#include "../test/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include <chrono>
@@ -109,7 +110,7 @@ int main(int argc, char ** argv)
         printf("drain transport=%s bytes=%d drained=%llu drain_ns=%.3f\n",
             transport, payload_bytes, (unsigned long long)drained_packets,
             drained_packets ? drain_ns / (double)drained_packets : 0.0);
-    rocketnet_client_transport_destroy(client);
-    rocketnet_server_transport_destroy(server);
+    rn_native_client_transport_stop_and_destroy(client);
+    rn_native_server_transport_stop_and_destroy(server);
     rocketnet_term();
 }

@@ -31,7 +31,8 @@ static void destroy( void * socket )
     rocketnet_platform_socket_destroy((rocketnet_platform_socket_t*)socket);
     ++external_test_destroys;
 }
-static bool stop( void * ) { return true; }
+static void stop( void * ) {}
+static bool stopped( void * ) { return true; }
 static void send_batch( void * socket, const rocketnet_platform_send_t * packets, int count )
 { rocketnet_platform_socket_send_packets((rocketnet_platform_socket_t*)socket, packets, count); }
 static int receive_batch( void * socket, rocketnet_address_t * from, uint8_t * data, int stride, int * bytes, int count )
@@ -59,9 +60,9 @@ static void replay_commit( void * ) {}
 
 static const rocketnet_server_transport_io_operations_t server_operations =
 {
-    ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE, server_create, destroy, stop,
+    ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE, server_create, destroy, stop, stopped,
     NULL, NULL, NULL, NULL, NULL, send_batch, receive_batch,
-    NULL, replay_forget, replay_mark, replay_commit
+    NULL, replay_forget, replay_mark, replay_commit, NULL, NULL, NULL
 };
 static const rocketnet_client_transport_io_operations_t client_operations = { client_create, destroy, send, receive };
 extern const rocketnet_transport_backend_t external_test_transport = { &server_operations, &client_operations };

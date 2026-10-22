@@ -17,7 +17,7 @@ void dispatch_fixture_finish(void * instance, uint64_t id, uint8_t * frame, int 
 void dispatch_fixture_init(dispatch_fixture * f)
 {
     static const rocketnet_server_transport_io_operations_t ops = {
-        ROCKETNET_TRANSPORT_STAGED, NULL, NULL, NULL,
+        ROCKETNET_TRANSPORT_STAGED, NULL, NULL, NULL, NULL,
         dispatch_fixture_start, dispatch_fixture_finish, NULL, NULL, NULL, NULL, NULL
     };
     memset(f, 0, sizeof(*f));

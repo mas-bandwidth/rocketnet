@@ -1,5 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Public-API per-frame main-thread cost microbenchmark. See client_main_thread_cost.md.
+#include "../test/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include <algorithm>
@@ -166,7 +167,7 @@ int main(int argc, char ** argv)
            percentile(total_us, 50.0), percentile(total_us, 99.0), *std::max_element(total_us.begin(), total_us.end()),
            (unsigned long long)received);
     (void)plant_state;
-    rocketnet_client_transport_destroy(client);
-    rocketnet_server_transport_destroy(server);
+    rn_native_client_transport_stop_and_destroy(client);
+    rn_native_server_transport_stop_and_destroy(server);
     rocketnet_term();
 }

@@ -17,6 +17,7 @@
     Run it from the repository root: ./bin/example_config_env
 */
 
+#include "shutdown.h"
 #include "rocketnet.h"
 #include "dev_keys.h"
 
@@ -71,13 +72,13 @@ static int run_show_default_and_struct( void )
     CHECK( server != NULL );
     printf( "struct max_clients: %d\n", rocketnet_server_max_clients( server ) );
 
-    rocketnet_server_destroy( server );
+    rn_cli_server_stop_and_destroy( server );
     server = NULL;
     result = 0;
 cleanup:
     // destroy on NULL is a no-op, as free(NULL) is
     if ( server )
-        rocketnet_server_destroy( server );
+        rn_cli_server_stop_and_destroy( server );
     return result;
 }
 
@@ -103,13 +104,13 @@ static int run_show_env_wins( void )
     printf( "environment max_clients: %d\n", rocketnet_server_max_clients( server ) );
     CHECK( rocketnet_server_max_clients( server ) == 5 );
 
-    rocketnet_server_destroy( server );
+    rn_cli_server_stop_and_destroy( server );
     server = NULL;
     result = 0;
 cleanup:
     // destroy on NULL is a no-op, as free(NULL) is
     if ( server )
-        rocketnet_server_destroy( server );
+        rn_cli_server_stop_and_destroy( server );
     return result;
 }
 
@@ -137,7 +138,7 @@ static int run_show_bad_refused( void )
 cleanup:
     // destroy on NULL is a no-op, as free(NULL) is
     if ( server )
-        rocketnet_server_destroy( server );
+        rn_cli_server_stop_and_destroy( server );
     return result;
 }
 
