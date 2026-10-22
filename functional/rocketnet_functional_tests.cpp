@@ -5022,6 +5022,52 @@ void rocketnet_test_server_transport_io_pin_msgx()
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
+#include "rocketnet_driver.h"
+#include "../test/suite_runner.h"
+
+// test_transport_all_skipped_uses_auto, and on Linux
+// test_server_transport_io_ladder_fall, create the development config's
+// full-capacity server (ROCKETNET_MAX_CLIENTS slots) on "127.0.0.1:0" and
+// accept whichever rung the ladder grants, so their footprint is the server
+// memory plan, not the suite-wide bound: the stats worker's two delta buffers
+// and history per slot and the transport's owned receive buffers are
+// allocated up front by design. The rungs that can grant a port-zero address
+// are the auto-order transports that are not pin-only and that discover
+// their bound port (the #109 rule refuses the rest before create); the
+// ladder fall's "xdp,gso,portable" is a subset of them. The bound is the
+// largest of their plans plus 32 MiB for the process, as the other
+// full-capacity cases state.
+
+static long rocketnet_test_port_zero_ladder_rss_bound_mb()
+{
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
+    int num_available = 0;
+    const int * available = rocketnet_server_transport_io_availability( &num_available );
+    uint64_t planned = 0;
+    for ( int i = 0; i < num_available; i++ )
+    {
+        if ( rocketnet_transport_pin_only( available[i] ) || !rocketnet_transport_discovers_bound_port( available[i] ) )
+            continue;
+        const uint64_t bytes = rocketnet_server_transport_required_memory( &config, rocketnet_transport_name( available[i] ) );
+        if ( !bytes )
+            return 0; // a grantable rung with no plan keeps the strict suite-wide bound
+        if ( bytes > planned )
+            planned = bytes;
+    }
+    const long bound = suite_rss_bound_mb( planned, 32 );
+    char verbose[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_TEST_VERBOSE", verbose, sizeof( verbose ) ) )
+        printf( "port_zero_ladder rss_budget planned_bytes=%llu margin_mb=32 bound_mb=%ld\n",
+                (unsigned long long) planned, bound );
+    return bound;
+}
+
+SUITE_CASE_RSS_BOUND( test_transport_all_skipped_uses_auto, rocketnet_test_port_zero_ladder_rss_bound_mb );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+SUITE_CASE_RSS_BOUND( test_server_transport_io_ladder_fall, rocketnet_test_port_zero_ladder_rss_bound_mb );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
 void rocketnet_test_transport_all_skipped_uses_auto()
 {
     // a list whose every name is a platform- or endpoint-skip names no
