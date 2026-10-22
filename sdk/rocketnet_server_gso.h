@@ -166,6 +166,8 @@ void rocketnet_server_gso_test_fail_receives( struct rocketnet_server_gso_t * gs
 void rocketnet_server_gso_test_fail_sends( struct rocketnet_server_gso_t * gso, int count, int error );
 // Observe publication without consuming it; returns false on lock contention.
 bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gso, int queue_index );
+// Main thread: no staged packet, no ready bank, no bank held by the TX worker.
+bool rocketnet_server_gso_test_send_idle( struct rocketnet_server_gso_t * gso );
 // Deterministic ownership/full/contended/stop and retained-RX-tail regression.
 bool rocketnet_server_gso_test_worker_handoff();
 #endif
