@@ -48,6 +48,15 @@
 #ifndef ROCKETNET_FUZZ_PAIR_H
 #define ROCKETNET_FUZZ_PAIR_H
 
+// NO THREAD. The server transport's stats worker is a native thread in a
+// production build. The pair restores its snapshot by copying every live block
+// back, which would race a running worker (the worker read a bank the restore
+// had just rewritten: a null job input, 2026-10-21). The manual build of the
+// worker has no thread; rocketnet_fuzz_pair_server_update steps it inline
+// after each update, so the stats path still runs on every input.
+#ifndef ROCKETNET_STATS_MANUAL_TEST_HOOKS
+#define ROCKETNET_STATS_MANUAL_TEST_HOOKS 1
+#endif
 #include "../sdk/rocketnet_server_transport.cpp"
 #include "../sdk/rocketnet_driver_loopback.cpp"
 
@@ -528,6 +537,8 @@ static inline bool rocketnet_fuzz_pair_create( struct rocketnet_fuzz_pair_t * pa
     if ( !pair->server )
         return false;
     pair->transport = rocketnet_message_server_transport( pair->server );
+    rocketnet_fuzz_pair_require( pair->transport->stats_worker && !pair->transport->stats_worker->thread,
+                                 "the pair runs no thread (its snapshot restore would race one)" );
 
     // the wire seam
     pair->real = pair->transport->io.operations;
@@ -574,6 +585,14 @@ static inline void rocketnet_fuzz_pair_check_no_allocation( const struct rocketn
 static inline void rocketnet_fuzz_pair_server_update( struct rocketnet_fuzz_pair_t * pair )
 {
     rocketnet_message_server_update( pair->server, pair->time );
+    // the stats worker's thread, run inline: it finishes every bank the
+    // update submitted, as a worker that is never behind would
+    struct rocketnet_server_stats_worker_t * worker = pair->transport->stats_worker;
+    while ( pair->transport->state == ROCKETNET_SERVER_TRANSPORT_RUNNING &&
+            !worker->quit.load( std::memory_order_acquire ) &&
+            rocketnet_server_stats_worker_step( worker ) )
+    {
+    }
 }
 
 static inline void rocketnet_fuzz_pair_client_update( struct rocketnet_fuzz_pair_t * pair )
