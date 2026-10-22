@@ -19,7 +19,10 @@
 
 using System;
 using System.Globalization;
+using System.IO;
 using System.Security.Cryptography;
+using System.Text.Json;
+using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -40,7 +43,7 @@ if ( args.Length != 0 && !( args.Length == 2 && args[0] == "--mint" ) )
 BackendConfig config;
 try
 {
-    config = BackendConfig.Read( Environment.GetEnvironmentVariable );
+    config = BackendConfig.Read( Environment.GetEnvironmentVariable, requireServer: args.Length == 2 );
 }
 catch ( ArgumentException e )
 {
@@ -50,10 +53,10 @@ catch ( ArgumentException e )
 if ( config.DevelopmentKey )
     Console.Error.WriteLine( "rocketnet-backend: WARNING: using the published development backend key. DEVELOPMENT ONLY: anyone can mint tokens for a server that accepts it. Set ROCKETNET_BACKEND_PRIVATE_KEY to deploy." );
 
-string MintToken( ulong clientId )
+string MintToken( BackendConfig selected, ulong clientId )
 {
     ulong now = (ulong) DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-    return Convert.ToBase64String( ConnectToken.Generate( config, clientId, now, buffer => RandomNumberGenerator.Fill( buffer ), ConnectToken.SealAnonymous ) );
+    return Convert.ToBase64String( ConnectToken.Generate( selected, clientId, now, buffer => RandomNumberGenerator.Fill( buffer ), ConnectToken.SealAnonymous ) );
 }
 
 // --mint <client id> prints one connect token and exits, instead of serving
@@ -64,7 +67,7 @@ if ( args.Length == 2 && args[0] == "--mint" )
         Console.Error.WriteLine( $"rocketnet-backend: error: --mint takes a decimal client id, not \"{args[1]}\"" );
         return 1;
     }
-    Console.WriteLine( MintToken( clientId ) );
+    Console.WriteLine( MintToken( config, clientId ) );
     return 0;
 }
 if ( args.Length != 0 )
@@ -77,17 +80,61 @@ WebApplicationBuilder builder = WebApplication.CreateSlimBuilder();
 builder.WebHost.UseUrls( $"http://*:{config.Port}" );
 WebApplication app = builder.Build();
 
+ServerRegistry registry = new ServerRegistry( RandomNumberGenerator.GetInt32 );
+if ( config.ServerConfigured )
+    registry.Register( "environment", config.ServerAddresses, Convert.ToBase64String( config.ServerPublicKey ) );
+
+const int RegistrationBodyBytes = 4096;
+async Task<(byte[] Data, bool TooLarge)> ReadRegistrationBody( Stream body )
+{
+    byte[] data = new byte[RegistrationBodyBytes + 1];
+    int used = 0;
+    while ( used < data.Length )
+    {
+        int count = await body.ReadAsync( data.AsMemory( used, data.Length - used ) );
+        if ( count == 0 )
+            return ( data.AsSpan( 0, used ).ToArray(), false );
+        used += count;
+    }
+    return ( Array.Empty<byte>(), true );
+}
+
+app.MapPut( "/servers/{serverId}", async ( string serverId, HttpRequest request ) =>
+{
+    ( byte[] data, bool tooLarge ) = await ReadRegistrationBody( request.Body );
+    if ( tooLarge )
+        return Results.StatusCode( StatusCodes.Status413PayloadTooLarge );
+    try
+    {
+        ServerRegistrationRequest registration = JsonSerializer.Deserialize<ServerRegistrationRequest>( data )
+            ?? throw new ArgumentException( "empty server registration" );
+        registry.Register( serverId, registration.Addresses, registration.PublicKey );
+        return Results.NoContent();
+    }
+    catch ( JsonException e )
+    {
+        return Results.BadRequest( $"invalid server registration: {e.Message}" );
+    }
+    catch ( ArgumentException e )
+    {
+        return Results.BadRequest( e.Message );
+    }
+} );
+
 app.MapGet( "/match/{clientId}", ( string clientId, HttpResponse response ) =>
 {
     if ( !ulong.TryParse( clientId, NumberStyles.None, CultureInfo.InvariantCulture, out ulong id ) )
         return Results.BadRequest( "the client id is not a decimal 64 bit number" );
-    string token = MintToken( id );
+    RegisteredServer? server = registry.Random();
+    if ( server == null )
+        return Results.StatusCode( StatusCodes.Status503ServiceUnavailable );
+    string token = MintToken( config.ForServer( server ), id );
     // a token is for one client, once: never cached
     response.Headers.CacheControl = "no-store";
-    Console.Error.WriteLine( $"rocketnet-backend: matched client {id:x16} to {string.Join( ',', config.ServerAddresses )}" );
+    Console.Error.WriteLine( $"rocketnet-backend: matched client {id:x16} to {string.Join( ',', server.Addresses )}" );
     return Results.Text( token, "text/plain; charset=utf-8" );
 } );
 
-Console.Error.WriteLine( $"rocketnet-backend: started backend on port {config.Port}, minting tokens for {string.Join( ',', config.ServerAddresses )}" );
+Console.Error.WriteLine( $"rocketnet-backend: started backend on port {config.Port}" );
 app.Run();
 return 0;

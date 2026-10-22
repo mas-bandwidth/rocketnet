@@ -242,11 +242,45 @@ static class Tests
         Check( lines[1] == "ROCKETNET_BACKEND_PRIVATE_KEY=" + Convert.ToBase64String( expected.PrivateKey ), "keygen expanded 64-byte private key" );
     }
 
+    static void test_server_registry()
+    {
+        ServerRegistry registry = new ServerRegistry( count => count - 1 );
+        Check( registry.Random() == null, "empty registry" );
+        byte[] keyA = Enumerable.Repeat( (byte) 0x11, ConnectToken.KeyBytes ).ToArray();
+        byte[] keyB = Enumerable.Repeat( (byte) 0x22, ConnectToken.KeyBytes ).ToArray();
+        string[] addressA = { "127.0.0.1:40000" };
+        string[] addressB = { "127.0.0.1:40001" };
+        string[] addressC = { "[::1]:40002" };
+        registry.Register( "one", addressA, Convert.ToBase64String( keyA ) );
+        registry.Register( "one", addressB, Convert.ToBase64String( keyB ) );
+        RegisteredServer? server = registry.Random();
+        Check( server != null && server.Addresses.SequenceEqual( addressB ) && server.PublicKey.SequenceEqual( keyB ), "re-registration replaces" );
+        registry.Register( "two", addressC, Convert.ToBase64String( keyA ) );
+        server = registry.Random();
+        Check( server != null &&
+               ( server.Addresses.SequenceEqual( addressB ) && server.PublicKey.SequenceEqual( keyB ) ||
+                 server.Addresses.SequenceEqual( addressC ) && server.PublicKey.SequenceEqual( keyA ) ),
+               "random selection stays in the registered set" );
+        bool refused = false;
+        string[] invalidAddress = { "127.0.0.1:0" };
+        try { registry.Register( "bad", invalidAddress, Convert.ToBase64String( keyA ) ); }
+        catch ( ArgumentException ) { refused = true; }
+        Check( refused, "invalid address refused" );
+        refused = false;
+        try { registry.Register( "bad", addressA, "AAAA" ); }
+        catch ( ArgumentException ) { refused = true; }
+        Check( refused, "invalid public key refused" );
+
+        BackendConfig config = BackendConfig.Read( Environment( new Dictionary<string, string>() ), requireServer: false );
+        Check( !config.ServerConfigured && config.ServerAddresses.Length == 0, "service starts with an empty registry" );
+    }
+
     static int Main()
     {
         (string, Action)[] tests =
         {
             ( nameof( test_keygen_matches_signing_vector ), test_keygen_matches_signing_vector ),
+            ( nameof( test_server_registry ), test_server_registry ),
             ( nameof( test_connect_token_vectors ), test_connect_token_vectors ),
             ( nameof( test_server_addresses_match_vectors ), test_server_addresses_match_vectors ),
             ( nameof( test_server_addresses_refused ), test_server_addresses_refused ),

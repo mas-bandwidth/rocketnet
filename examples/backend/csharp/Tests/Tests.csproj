@@ -17,6 +17,7 @@
   <ItemGroup>
     <Compile Include="../Backend/ConnectToken.cs" />
     <Compile Include="../Backend/BackendKeys.cs" />
+    <Compile Include="../Backend/ServerRegistry.cs" />
     <PackageReference Include="Sodium.Core" Version="1.4.1" />
   </ItemGroup>
 

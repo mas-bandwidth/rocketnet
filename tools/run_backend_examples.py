@@ -14,8 +14,9 @@ For each backend in examples/backend/:
 
 3. End to end, over loopback. example_backend_server starts on a free UDP
    port and writes backend.env (its address and public key); the backend
-   starts on a free TCP port with that environment; the token comes from
-   GET /match/<client id>; example_backend_client connects with it, sends a
+   starts on a free TCP port with an empty registry; the harness registers the
+   live server over HTTP; the token then comes from GET /match/<client id>;
+   example_backend_client connects with it, sends a
    message and receives the echo. Server and client must both exit 0 with
    PASS as their last line.
 
@@ -30,6 +31,7 @@ Every process gets a 60-second timeout; the whole run takes seconds.
 
 import argparse
 import base64
+import json
 import os
 import shutil
 import socket
@@ -37,6 +39,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -180,6 +183,29 @@ def fetch_token(url):
         return None
 
 
+def http_status(url):
+    try:
+        with urllib.request.urlopen(url, timeout=2) as response:
+            return response.status
+    except urllib.error.HTTPError as error:
+        return error.code
+    except OSError:
+        return None
+
+
+def register_server(url, values):
+    body = json.dumps({
+        "addresses": values["ROCKETNET_BACKEND_SERVER_ADDRESSES"].split(","),
+        "public_key": values["ROCKETNET_BACKEND_SERVER_PUBLIC_KEY"],
+    }).encode()
+    request = urllib.request.Request(url, data=body, method="PUT", headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=2) as response:
+            return response.status == 204
+    except OSError:
+        return False
+
+
 def end_to_end(name, command, server_binary, client_binary, keys, production):
     label = f"backend_{name}_end_to_end"
     workdir = Path(tempfile.mkdtemp(prefix=f"rocketnet_backend_{name}_"))
@@ -195,10 +221,19 @@ def end_to_end(name, command, server_binary, client_binary, keys, production):
             return fail(label, f"server wrote no backend.env\n{out}")
 
         port = free_port(socket.SOCK_STREAM)
-        backend = subprocess.Popen(command, cwd=workdir, env=backend_environment({**values, "ROCKETNET_BACKEND_PORT": str(port),
+        backend = subprocess.Popen(command, cwd=workdir, env=backend_environment({"ROCKETNET_BACKEND_PORT": str(port),
                                        "ROCKETNET_BACKEND_PRIVATE_KEY": keys["ROCKETNET_BACKEND_PRIVATE_KEY"]}),
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        token = wait_for(lambda: fetch_token(f"http://127.0.0.1:{port}/match/{CLIENT_ID}"), backend, READY_SECONDS)
+        match_url = f"http://127.0.0.1:{port}/match/{CLIENT_ID}"
+        empty = wait_for(lambda: http_status(match_url) == 503, backend, READY_SECONDS)
+        if not empty:
+            out, _ = stop(backend)
+            return fail(label, f"backend did not report an empty server registry\n{out}")
+        registered = wait_for(lambda: register_server(f"http://127.0.0.1:{port}/servers/example", values), backend, READY_SECONDS)
+        if not registered:
+            out, _ = stop(backend)
+            return fail(label, f"backend did not register the live server\n{out}")
+        token = wait_for(lambda: fetch_token(match_url), backend, READY_SECONDS)
         if not token:
             out, _ = stop(backend)
             return fail(label, f"backend served no token\n{out}")
@@ -216,7 +251,7 @@ def end_to_end(name, command, server_binary, client_binary, keys, production):
             for role, output in (("client", client.stdout), ("server", server_out)):
                 if f"backend_{role}: mode=production transport=portable" not in output.splitlines():
                     return fail(label, f"{role} did not confirm production portable mode")
-        print(f"backend_{name}: fresh_keys=true token_from_http=true "
+        print(f"backend_{name}: fresh_keys=true server_registered_http=true token_from_http=true "
               f"production_required={str(production).lower()} portable_echo=true")
         return True
     finally:
