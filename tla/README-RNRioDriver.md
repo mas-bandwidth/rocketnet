@@ -1,12 +1,28 @@
 # RNRioDriver
 
-The Windows Registered I/O (RIO) server driver. The driver is
+This model covers the earlier caller-driven Windows Registered I/O (RIO)
+server design. Its implementation path is
 `sdk/rocketnet_server_rio_windows.cpp`; its region layout and request contexts are
 `sdk/rocketnet_rio_layout.h`. The driver opens one UDP socket with
 `WSA_FLAG_REGISTERED_IO`, registers one region with one
 `RIORegisterBuffer`, and polls one send completion queue and one receive
 completion queue, with no notification and no worker thread: everything
-runs on the main thread.
+runs on the main thread in this model.
+
+## Scope after the worker handoff redesign
+
+The runtime implementation now assigns RIO queue and socket operations to one
+background worker and uses bounded TX/RX banks exchanged with the caller.
+`RNRioDriver.tla` still has the earlier two send phases, two receive banks and
+caller-driven queue progression. Its existing invariants and recorded runs
+remain evidence for that abstract design; they do not prove the new ready/free
+queues, mutex ownership exchanges, worker wake/progress, or stop/join ordering.
+
+The packet-view stability, no-reuse-before-completion and drain-before-free
+properties still guide the implementation. New runtime ownership and fault
+tests cover the added worker paths; an updated formal refinement and fresh TLC
+runs would be needed to extend the model's claim to those paths. The action
+mapping and runs below retain their historical scope.
 
 ## The abstraction
 
