@@ -530,7 +530,7 @@ static void test_loopback_transport_reliable_ordered_survives_loss_and_reorder()
 
 REGISTER_UNIT_TEST( test_loopback_transport_reliable_ordered_survives_loss_and_reorder );
 
-#if !ROCKETNET_DEVELOPMENT
+#if !ROCKETNET_DEV
 // ---- the production refusal, the ranges and the env overlay ------------------
 
 static int loopback_error_lines = 0;
@@ -752,4 +752,4 @@ static void test_loopback_transport_loss_reorder_production_refusal()
 }
 
 REGISTER_UNIT_TEST( test_loopback_transport_loss_reorder_production_refusal );
-#endif // !ROCKETNET_DEVELOPMENT: a development build accepts what this checks is refused
+#endif // !ROCKETNET_DEV: a development build accepts what this checks is refused

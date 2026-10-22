@@ -3,7 +3,7 @@
 Developer notes for the libFuzzer targets in this directory: how to build
 and run each one, where its corpus and dictionary live, how seeds are made,
 how coverage is measured, and how a crash is replayed. Every target links
-the development library (`ROCKETNET_DEVELOPMENT=1`). The targets that mint
+the development library (`ROCKETNET_DEV=1`). The targets that mint
 connect tokens use only the published development keys from
 `sdk/rocketnet_test_vectors.h`. No target reads a key from the environment.
 
@@ -51,7 +51,7 @@ hand or as the nightly job (`.github/workflows/fuzz-nightly.yml`) does:
 
 ```sh
 cd fuzz
-clang++ -g -O1 -std=c++17 -ffp-contract=off -DROCKETNET_DEVELOPMENT=1 -I../sodium -I../sdk -I../test \
+clang++ -g -O1 -std=c++17 -ffp-contract=off -DROCKETNET_DEV=1 -I../sodium -I../sdk -I../test \
     -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
     rocketnet_fuzz_session.cpp ../build/librocketnet_dev.a -lbpf -lxdp -luring -lpthread \
     -o rocketnet_fuzz_session

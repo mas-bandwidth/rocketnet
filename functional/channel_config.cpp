@@ -57,11 +57,11 @@ static void rocketnet_config_fill( uint8_t * data, int index )
     }
 }
 
-static void rocketnet_config_print_failure( const char * name, const rocketnet_channel_harness_t * h,
+static void rocketnet_config_print_failure( const char * name, rocketnet_channel_harness_t * h,
                                             double elapsed, int client_reason, int server_reason,
                                             int delivered_client, int delivered_server )
 {
-    rocketnet_channel_harness_read_counters( (rocketnet_channel_harness_t *) h );
+    rocketnet_channel_harness_read_counters( h );
     printf( "%s: seed=0x%016llx elapsed_s=%.3f resends=%llu client_reason=%d server_reason=%d delivered_client=%d delivered_server=%d\n",
             name, (unsigned long long) h->seed, elapsed, (unsigned long long) h->resends,
             client_reason, server_reason, delivered_client, delivered_server );

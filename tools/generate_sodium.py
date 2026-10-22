@@ -124,6 +124,189 @@ def cast_narrowing_stores(text, stores, where):
     return text
 
 
+# The strict set (-Wconversion, -Wsign-conversion, -Wcast-qual, -Wundef,
+# -Wshadow; sodium/README.md, "Warning adaptations"). Each rule spells, at
+# the site, the conversion the language already performs there implicitly:
+# `x op= e` on a narrower or differently signed x is `x = (T) (x op e)`, and
+# a signed operand that the usual arithmetic conversions make unsigned is
+# written `(U) operand`. The value is the same by definition of those
+# conversions; no arithmetic changes. A rule is a pattern applied inside one
+# function body (or the whole input when the scope is None) and must match
+# exactly the recorded number of times, so a re-vendor that changes the text
+# fails loudly. (scope, pattern, replacement, count)
+def carry_rule(signed, unsigned):
+    """`h -= carry * ((U) 1L << k);` on signed h and carry: both operands become U, the result is stored as S."""
+    return (r'^(\s+)(\w+) -= (\w+) \* \(\(' + unsigned + r'\) 1L << (\d+)\);$',
+            rf'\1\2 = ({signed}) (({unsigned}) \2 - ({unsigned}) \3 * (({unsigned}) 1L << \4));')
+
+
+def parenthesised(expr):
+    """True when the whole expression is one parenthesised group."""
+    if not expr.startswith('(') or not expr.endswith(')'):
+        return False
+    depth = 0
+    for i, ch in enumerate(expr):
+        depth += (ch == '(') - (ch == ')')
+        if depth == 0 and i != len(expr) - 1:
+            return False
+    return True
+
+
+def cast_rule(prefix, value, element):
+    """`<prefix><value>;` with the value cast to element: `(element) (value)`."""
+    def cast(m):
+        expr = m[2]
+        return f'{m[1]}({element}) {expr if parenthesised(expr) else "(" + expr + ")"};'
+    return (r'^(' + prefix + r')(' + value + r');$', cast)
+
+
+# `int64_t h = <uint64_t loaded from bytes>;`: the loaded value is below 2^32.
+LOADED_LIMB = cast_rule(r'\s+int64_t\s+\w+\s*=\s*', r'.*\bload_[34]\(.*', 'int64_t')
+# `out[k] = (unsigned char) ((lo >> j) | (hi * ((U) 1 << i)));` on signed limbs:
+# the usual arithmetic conversions make both limbs U.
+SPLIT_LIMB = (r'\((\w+(?:\[\d+\])?) >> (\d+)\) \| \((\w+(?:\[\d+\])?) \* \(\((uint\d+_t)\) 1 << (\d+)\)\)',
+              r'(\4) (\1 >> \2) | ((\4) \3 * ((\4) 1 << \5))')
+UPSTREAM_CONVERSIONS = {
+    'crypto_core/ed25519/ref10/ed25519_ref10.c': [
+        ('sc25519_mul(', *LOADED_LIMB, 24), ('sc25519_mul(', *carry_rule('int64_t', 'uint64_t'), 69),
+        ('sc25519_mul(', SPLIT_LIMB[0], SPLIT_LIMB[1], 10),
+        ('sc25519_muladd(', *LOADED_LIMB, 36), ('sc25519_muladd(', *carry_rule('int64_t', 'uint64_t'), 69),
+        ('sc25519_muladd(', SPLIT_LIMB[0], SPLIT_LIMB[1], 10),
+        ('sc25519_reduce(', *LOADED_LIMB, 24), ('sc25519_reduce(', *carry_rule('int64_t', 'uint64_t'), 46),
+        ('sc25519_reduce(', SPLIT_LIMB[0], SPLIT_LIMB[1], 10),
+        # An int 0/1 flag into fe25519_cmov/fe25519_cneg's unsigned int.
+        ('fe25519_abs(', r'fe25519_cneg\(h, f, fe25519_isnegative\(f\)\)',
+         'fe25519_cneg(h, f, (unsigned int) fe25519_isnegative(f))', 1),
+        ('ge25519_frombytes(', r'fe25519_cmov\(h->X, x_sqrtm1, 1 - has_m_root\)',
+         'fe25519_cmov(h->X, x_sqrtm1, (unsigned int) (1 - has_m_root))', 1),
+        ('ge25519_frombytes(', r'fe25519_cmov\(h->X, negx, (fe25519_isnegative\(h->X\) \^ \(\(\(s\[31\] >> 5\) \^ optblocker_u8\) >> 2\))\)',
+         r'fe25519_cmov(h->X, negx, (unsigned int) (\1))', 1),
+        ('ristretto255_sqrt_ratio_m1(', r'fe25519_cmov\(x, x_sqrtm1, has_p_root \| has_f_root\)',
+         'fe25519_cmov(x, x_sqrtm1, (unsigned int) (has_p_root | has_f_root))', 1),
+        ('ristretto255_p3_tobytes(', r'fe25519_cmov\((\w+), (\w+), rotate\)', r'fe25519_cmov(\1, \2, (unsigned int) rotate)', 3),
+        ('ristretto255_p3_tobytes(', r'fe25519_cneg\(y_, y_, fe25519_isnegative\(x_z_inv\)\)',
+         'fe25519_cneg(y_, y_, (unsigned int) fe25519_isnegative(x_z_inv))', 1),
+        ('ristretto255_elligator(', r'fe25519_cmov\((\w+), (\w+), wasnt_square\)', r'fe25519_cmov(\1, \2, (unsigned int) wasnt_square)', 2),
+        # The x86-64 asm leaves 0 or 1 in the signed char it returns as unsigned char.
+        ('negative(', r'^    return b;$', '    return (unsigned char) b;', 1),
+        # The portable equal() and negative() (no inline asm: s390x, for one)
+        # return a 0/1 computed in uint32_t or int as unsigned char.
+        ('equal(', r'^    return (\(\(y >> 29\) \^ optblocker_u8\) >> 2);', r'    return (unsigned char) (\1);', 1),
+        ('negative(', r'^    return (\(\(x >> 5\) \^ optblocker_u8\) >> 2);', r'    return (unsigned char) (\1);', 1),
+        # babs = |b| for b in -8..8, and equal() takes signed char.
+        (None, r'(const unsigned char babs      = )(b - \(\(\(-bnegative\) & b\) \* \(\(signed char\) 1 << 1\)\));',
+         r'\1(unsigned char) (\2);', 2),
+        (None, r'^(\s+)s\[31\] \^= (fe25519_isnegative\(x\) << 7);$', r'\1s[31] = (unsigned char) (s[31] ^ (\2));', 2),
+        (None, r'equal\(babs, (\d)\)', r'equal((signed char) babs, \1)', 16),
+        (None, r'^(\s+)e\[i\] -= (carry \* \(\(signed char\) 1 << 4\));$', r'\1e[i] = (signed char) (e[i] - \2);', 2),
+        # The canonical checks keep 0/1 flags in unsigned char.
+        (None, r'^(\s+)c = (\(\(\(unsigned int\) c\) - 1U\) >> 8);$', r'\1c = (unsigned char) (\2);', 2),
+        (None, r'^(\s+)d_ = (\(0xed - 1U - \(unsigned int\) s\[0\]\) >> 8);$', r'\1d_ = (unsigned char) (\2);', 2),
+        ('sc25519_is_canonical(', r'^(\s+)c \|= (\(\(s\[i\] - L\[i\]\) >> 8\) & n);$', r'\1c = (unsigned char) (c | (\2));', 1),
+        ('sc25519_is_canonical(', r'^(\s+)n &= (\(\(s\[i\] \^ L\[i\]\) - 1\) >> 8);$', r'\1n = (unsigned char) (n & (\2));', 1),
+        # A = 486662 into fe25519_mul32's uint32_t.
+        ('ge25519_elligator2(', r'fe25519_mul32\((\w+), (\w+), curve25519_A\[0\]\)',
+         r'fe25519_mul32(\1, \2, (uint32_t) curve25519_A[0])', 2),
+    ],
+    'crypto_core/ed25519/ref10/fe_25_5/fe.h': [
+        ('fe25519_frombytes(', *LOADED_LIMB, 10), ('fe25519_frombytes(', *carry_rule('int64_t', 'uint64_t'), 10),
+        ('fe25519_reduce(', r'^(\s+)q = \(19 \* h9 \+ (\(\(uint32_t\) 1L << 24\))\) >> 25;$',
+         r'\1q = (int32_t) (((uint32_t) (19 * h9) + \2) >> 25);', 1),
+        ('fe25519_reduce(', *carry_rule('int32_t', 'uint32_t'), 10),
+        ('fe25519_tobytes(', SPLIT_LIMB[0], SPLIT_LIMB[1], 8),
+    ],
+    'crypto_core/ed25519/ref10/fe_51/fe.h': [
+        # Each limb is below 2^51 here.
+        ('fe25519_reduce(', r'^(\s+)h\[(\d)\] = t\[\2\];$', r'\1h[\2] = (uint64_t) t[\2];', 5),
+    ],
+    'include/sodium/private/ed25519_ref10_fe_25_5.h': [
+        ('fe25519_cmov(', r'^(\s+)(x\d) &= mask;$', r'\1\2 = (int32_t) ((uint32_t) \2 & mask);', 10),
+        ('fe25519_cswap(', r'^(\s+)(x\d) &= mask;$', r'\1\2 = (int32_t) ((uint32_t) \2 & mask);', 10),
+        ('fe25519_mul(', *carry_rule('int64_t', 'uint64_t'), 12),
+        ('fe25519_sq(', *carry_rule('int64_t', 'uint64_t'), 12),
+        ('fe25519_sq2(', *carry_rule('int64_t', 'uint64_t'), 12),
+    ],
+    'include/sodium/private/ed25519_ref10_fe_51.h': [
+        ('fe25519_mul32(', r'^(\s+)h0 \+= (\(a >> 51\) \* 19ULL);$', r'\1h0 = (uint64_t) (h0 + \2);', 1),
+    ],
+    'crypto_generichash/blake2b/ref/blake2b-compress-ref.c': [
+        (None, r'LOAD64_LE\(block \+ i \* sizeof m\[i\]\)', 'LOAD64_LE(block + (size_t) i * sizeof m[i])', 1),
+    ],
+    'crypto_generichash/blake2b/ref/blake2b-compress-ssse3.c': [
+        # The message words feed only _mm_set_epi64x, whose arguments are long long.
+        ('blake2b_compress_ssse3(', r'^(\s+)const uint64_t (m\d+)(\s*)= (\(\(const uint64_t \*\) block\)\[\d+\]);$',
+         r'\1const int64_t \2\3= (int64_t) \4;', 16),
+    ],
+    'crypto_generichash/blake2b/ref/blake2b-compress-avx2.c': [
+        (None, r'BLAKE2B_COMPRESS_V1\(a, b, block, S->t\[0\], S->t\[1\], S->f\[0\], S->f\[1\]\)',
+         'BLAKE2B_COMPRESS_V1(a, b, block, (int64_t) S->t[0], (int64_t) S->t[1], (int64_t) S->f[0], (int64_t) S->f[1])', 1),
+    ],
+    'crypto_stream/salsa20/stream_salsa20.c': [
+        (None, r'^#if HAVE_AMD64_ASM$', '#if defined(HAVE_AMD64_ASM) && HAVE_AMD64_ASM', 1),
+    ],
+}
+
+
+BASELINE_CONVERSIONS = {
+    'sodium.h': [
+        # -Wundef: an unset override macro reads as 0, as #if already evaluates it.
+        (None, r'^(     )NETCODE_X64 \|\| NETCODE_AVX \|\| NETCODE_AVX2$',
+         r'\1(defined(NETCODE_X64) && NETCODE_X64) || (defined(NETCODE_AVX) && NETCODE_AVX) || \\\n'
+         r'\1(defined(NETCODE_AVX2) && NETCODE_AVX2)', 1),
+        (None, r'^# if defined\(__AVX__\) \|\| NETCODE_AVX \|\| NETCODE_AVX2$',
+         '# if defined(__AVX__) || (defined(NETCODE_AVX) && NETCODE_AVX) || (defined(NETCODE_AVX2) && NETCODE_AVX2)', 1),
+        (None, r'^# if \(defined\(__AVX2__\) \|\| NETCODE_AVX2\) ',
+         '# if (defined(__AVX2__) || (defined(NETCODE_AVX2) && NETCODE_AVX2)) ', 1),
+    ],
+    'sodium.c': [
+        (None, r'^(\s*)#(if|elif) (HAVE_WEAK_SYMBOLS|HAVE_ALLOCA|NETCODE_CRYPTO_LOGS)$', r'\1#\2 defined(\3) && \3', 11),
+        # The 0/1 flags of the constant-time comparison are unsigned char.
+        ('sodium_compare(', r'^(\s+)gt \|= (\(\(x2 - x1\) >> 8\) & eq);$', r'\1gt = (unsigned char) (gt | (\2));', 1),
+        ('sodium_compare(', r'^(\s+)eq &= (\(\(x2 \^ x1\) - 1\) >> 8);$', r'\1eq = (unsigned char) (eq & (\2));', 1),
+        # uint_fast16_t may be 16 bits wide, where the sum is an int.
+        ('sodium_add(', r'^(\s+)c \+= (\(uint_fast16_t\) a\[i\] \+ \(uint_fast16_t\) b\[i\]);$',
+         r'\1c = (uint_fast16_t) (c + \2);', 1),
+        ('sodium_sub(', r'^(\s+)c = (\(uint_fast16_t\) a\[i\] - \(uint_fast16_t\) b\[i\] - c);$',
+         r'\1c = (uint_fast16_t) (\2);', 1),
+        # -Wcast-qual: the loads go through _mm_loadu_si128's plain pointer, so
+        # the volatile on the pointed-to data was cast away at every use; the
+        # pointers themselves stay volatile.
+        (None, r'const volatile __m128i \*volatile (\w) =\n(\s+)\(const volatile __m128i \*volatile\) ',
+         r'const __m128i *volatile \1 =\n\2(const __m128i *volatile) ', 2),
+        # MSVC's __cpuid takes the leaf as int.
+        ('_cpuid(', r'__cpuid\(\(int \*\) cpu_info, cpu_info_type\)', '__cpuid((int *) cpu_info, (int) cpu_info_type)', 1),
+        # At most 256 bytes are requested (asserted), so the count fits an int.
+        ('_randombytes_linux_getrandom(', r'readnb = getrandom\(buf, size, 0\);', 'readnb = (int) getrandom(buf, size, 0);', 1),
+        # ChaCha20 state words and the 64-bit counter into the intrinsics' signed arguments.
+        (None, r'(_mm(?:256)?_set1_epi32)\(x\[(\d+)\]\)', r'\1((int) x[\2])', 42),
+        (None, r'_mm_set1_epi64x\(in1213\)', '_mm_set1_epi64x((int64_t) in1213)', 4),
+        (None, r'_mm_cvtsi64_si128\(in1213\)', '_mm_cvtsi64_si128((int64_t) in1213)', 1),
+        (None, r'^(\s+)x\[13\] = (\(in1213 >> 32\) & 0xFFFFFFFF);$', r'\1x[13] = (uint32_t) (\2);', 3),
+        # Poly1305: the block mask is the int ~(16 - 1) converted to the length's type.
+        (None, r'\(bytes & ~\(poly1305_block_size - 1\)\)', '(bytes & (unsigned long long) ~(poly1305_block_size - 1))', 2),
+        (None, r'blocks = inlen & ~31;', 'blocks = inlen & (unsigned long long) ~31;', 1),
+        (None, r'_mm_cvtsi32_si128\((st->R\d?\[4\])\)', r'_mm_cvtsi32_si128((int) \1)', 5),
+        (None, r'^(\s+)(t\d) = _mm_cvtsi128_si32\((T\d)\)', r'\1\2 = (uint32_t) _mm_cvtsi128_si32(\3)', 5),
+    ],
+}
+
+
+def convert(text, rules, where):
+    """Applies each rule inside its scope; the number of matches must be the recorded count."""
+    for scope, pattern, replacement, expected in rules:
+        start, end = 0, len(text)
+        if scope is not None:
+            if text.count('\n' + scope) != 1:
+                raise SystemExit(f"conversion scope does not match once in {where}: {scope}")
+            start = text.index('\n' + scope)
+            end = text.index('\n}\n', start)
+        body, count = re.subn(pattern, replacement, text[start:end], flags=re.M)
+        if count != expected:
+            raise SystemExit(f"conversion matched {count} times, not {expected}, in {where}: {scope} {pattern[:60]!r}")
+        text = text[:start] + body + text[end:]
+    return text
+
+
 def adapt(text, replacements, where):
     for old, new in replacements:
         if text.count(old) != 1:
@@ -175,8 +358,12 @@ def main():
         files[path] = adapt(files[path], replacements, path)
     for path, stores in NARROWING_STORES.items():
         files[path] = cast_narrowing_stores(files[path], stores, path)
+    for path, rules in UPSTREAM_CONVERSIONS.items():
+        files[path] = convert(files[path], rules, path)
     for name, replacements in BASELINE_ADAPTATIONS.items():
         baseline[name] = adapt(baseline[name], replacements, name)
+    for name, rules in BASELINE_CONVERSIONS.items():
+        baseline[name] = convert(baseline[name], rules, name)
     baseline_guards = set(re.findall(r'^#ifndef (\w+)', baseline['sodium.h'], re.M))
     public_root = 'include/sodium/'
     used = set()

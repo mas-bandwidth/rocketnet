@@ -297,7 +297,7 @@
 // suite can prove the emulation agrees with native operator by operator and produces byte
 // identical wire.
 
-#if !defined( SERIALIZE_UINT128_DEFINED ) && ( !defined( __SIZEOF_INT128__ ) || SERIALIZE_ENABLE_TESTS )
+#if !defined( SERIALIZE_UINT128_DEFINED ) && ( !defined( __SIZEOF_INT128__ ) || ( defined( SERIALIZE_ENABLE_TESTS ) && SERIALIZE_ENABLE_TESTS ) )
 
 #ifdef __cplusplus
 struct serialize_int128_t;      // forward declaration for the bit preserving converting constructor below
@@ -806,7 +806,7 @@ inline serialize_uint128_t::serialize_uint128_t( serialize_int128_t value ) : lo
 
 #define SERIALIZE_UINT128_DEFINED 1
 
-#endif // #if !defined( SERIALIZE_UINT128_DEFINED ) && ( !defined( __SIZEOF_INT128__ ) || SERIALIZE_ENABLE_TESTS )
+#endif // #if !defined( SERIALIZE_UINT128_DEFINED ) && ( !defined( __SIZEOF_INT128__ ) || ( defined( SERIALIZE_ENABLE_TESTS ) && SERIALIZE_ENABLE_TESTS ) )
 
 namespace serialize
 {
@@ -952,7 +952,7 @@ namespace serialize
     inline uint32_t popcount( uint32_t x )
     {
 #ifdef __GNUC__
-        return __builtin_popcount( x );
+        return (uint32_t) __builtin_popcount( x );
 #else // #ifdef __GNUC__
         const uint32_t a = x - ( ( x >> 1 )       & 0x55555555 );
         const uint32_t b =   ( ( ( a >> 2 )       & 0x33333333 ) + ( a & 0x33333333 ) );
@@ -993,7 +993,7 @@ namespace serialize
 #ifdef __GNUC__
         return ( min == max ) ? 0 : 32 - __builtin_clz( max - min );
 #else // #ifdef __GNUC__
-        return ( min == max ) ? 0 : log2( max - min ) + 1;
+        return ( min == max ) ? 0 : (int) log2( max - min ) + 1;
 #endif // #ifdef __GNUC__
     }
 
@@ -1084,7 +1084,7 @@ namespace serialize
 
     inline uint16_t bswap( uint16_t value )
     {
-        return ( value & 0x00ff ) << 8 | ( value & 0xff00 ) >> 8;
+        return (uint16_t) ( ( value & 0x00ff ) << 8 | ( value & 0xff00 ) >> 8 );
     }
 
     /**
@@ -1253,7 +1253,7 @@ namespace serialize
 
         SERIALIZE_ALWAYS_INLINE void WriteAlign()
         {
-            const int remainderBits = m_bitsWritten % 8;
+            const int remainderBits = (int) ( m_bitsWritten % 8 );
 
             if ( remainderBits != 0 )
             {
@@ -1345,7 +1345,7 @@ namespace serialize
 
         int GetAlignBits() const
         {
-            return ( 8 - ( m_bitsWritten % 8 ) ) % 8;
+            return (int) ( ( 8 - ( m_bitsWritten % 8 ) ) % 8 );
         }
 
         /**
@@ -1498,7 +1498,7 @@ namespace serialize
 
         SERIALIZE_ALWAYS_INLINE bool ReadAlign()
         {
-            const int remainderBits = m_bitsRead % 8;
+            const int remainderBits = (int) ( m_bitsRead % 8 );
             if ( remainderBits != 0 )
             {
                 uint32_t value = ReadBits( 8 - remainderBits );
@@ -1533,7 +1533,7 @@ namespace serialize
 
         int GetAlignBits() const
         {
-            return ( 8 - m_bitsRead % 8 ) % 8;
+            return (int) ( ( 8 - m_bitsRead % 8 ) % 8 );
         }
 
         /**
@@ -1672,7 +1672,7 @@ namespace serialize
             serialize_assert( min <= max );
             serialize_assert( value >= min );
             serialize_assert( value <= max );
-            const int bits = bits_required( min, max );
+            const int bits = bits_required( uint32_t(min), uint32_t(max) );
             if ( bits == 0 )
             {
                 return true;                // degenerate range: the value IS the range, nothing to send
@@ -1906,7 +1906,7 @@ namespace serialize
         SERIALIZE_ALWAYS_INLINE bool SerializeInteger( int32_t & value, int32_t min, int32_t max )
         {
             serialize_assert( min <= max );
-            const int bits = bits_required( min, max );
+            const int bits = bits_required( uint32_t(min), uint32_t(max) );
             if ( bits == 0 )
             {
                 value = min;                // degenerate range: the value IS the range
@@ -2132,7 +2132,7 @@ namespace serialize
             serialize_assert( min <= max );
             serialize_assert( value >= min );
             serialize_assert( value <= max );
-            const int bits = bits_required( min, max );
+            const int bits = bits_required( uint32_t(min), uint32_t(max) );
             m_bitsWritten += bits;
             return true;
         }
@@ -2256,6 +2256,32 @@ namespace serialize
     };
 
     /**
+        Store a value read by serialize_int in the caller's variable, whatever its integer type.
+        The macro's range check that follows refuses a value outside [min,max]; the assert holds that the variable can represent what was read.
+        @param value The variable being read into.
+        @param int32_value The value read from the stream.
+     */
+
+    template <typename T> SERIALIZE_ALWAYS_INLINE void serialize_store_int( T & value, int32_t int32_value )
+    {
+        value = T( int32_value );
+        serialize_assert( int64_t( value ) == int64_t( int32_value ) );
+    }
+
+    /**
+        Store a value read by serialize_bits wider than 32 bits in the caller's variable.
+        The wide path only runs for bits in [33,64], so the variable must be a 64 bit integer; the assert holds that it represents what was read.
+        @param value The variable being read into.
+        @param uint64_value The value read from the stream.
+     */
+
+    template <typename T> SERIALIZE_ALWAYS_INLINE void serialize_store_bits( T & value, uint64_t uint64_value )
+    {
+        value = T( uint64_value );
+        serialize_assert( uint64_t( value ) == uint64_value );
+    }
+
+    /**
         Serialize integer value (read/write/measure).
         This is a helper macro to make writing unified serialize functions easier.
         Serialize macros returns false on error so we don't need to use exceptions for error handling on read. This is an important safety measure because packet data comes from the network and may be malicious.
@@ -2283,7 +2309,7 @@ namespace serialize
             }                                                           \
             if ( Stream::IsReading )                                    \
             {                                                           \
-                value = int32_value;                                    \
+                serialize::serialize_store_int( value, int32_value );   \
                 if ( int64_t(value) < int64_t(min) ||                   \
                      int64_t(value) > int64_t(max) )                    \
                 {                                                       \
@@ -2419,7 +2445,7 @@ namespace serialize
                 }                                                       \
                 if ( Stream::IsReading )                                \
                 {                                                       \
-                    value = ( uint64_t(hi) << 32 ) | lo;                \
+                    serialize::serialize_store_bits( value, ( uint64_t(hi) << 32 ) | lo ); \
                 }                                                       \
             }                                                           \
         } while (0)
@@ -2520,7 +2546,7 @@ namespace serialize
             values = 4294967040.0f;
         }
 
-        max_integer_value = (uint32_t) ceil(values);
+        max_integer_value = (uint32_t) ceilf(values);
 
         bits = bits_required( 0, max_integer_value );
     }
@@ -2584,7 +2610,7 @@ namespace serialize
             // do not remove the barrier -- the -ffp-contract=fast test build
             // and the write-side negative control both go red if either
             // rounding is ever lost.
-            float scaled = normalizedValue * max_integer_value;
+            float scaled = normalizedValue * float(max_integer_value);
             SERIALIZE_FLOAT_FORCE_ROUND( scaled );
             integerValue = (uint32_t) floor( scaled + 0.5f );
             // STANDARD.md: the integer clamp is normative (2026-08-23). Once
@@ -2610,7 +2636,7 @@ namespace serialize
             {
                 return false;
             }
-            const float normalizedValue = integerValue / float(max_integer_value);
+            const float normalizedValue = float(integerValue) / float(max_integer_value);
             // The reader rounds twice for the same reason the writer above does:
             // the product must round to float32 BEFORE min is added, and the
             // local plus the barrier are what force that. Written as one
@@ -4364,7 +4390,7 @@ inline void serialize_copy_wstring( wchar_t * dest, const wchar_t * source, size
 }
 
 
-#if SERIALIZE_ENABLE_TESTS
+#if defined( SERIALIZE_ENABLE_TESTS ) && SERIALIZE_ENABLE_TESTS
 
 #include <stdio.h>      // printf
 #include <stdlib.h>     // exit, getenv
@@ -9803,7 +9829,7 @@ inline void serialize_test()
     }
 }
 
-#endif // #if SERIALIZE_ENABLE_TESTS
+#endif // #if defined( SERIALIZE_ENABLE_TESTS ) && SERIALIZE_ENABLE_TESTS
 
 
 #endif // #ifndef SERIALIZE_H

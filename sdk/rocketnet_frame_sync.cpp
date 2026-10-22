@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet_frame_sync.h"
+#include "rocketnet_test_seams.h"
 
 #include <string.h>
 #include <errno.h>
@@ -81,11 +82,13 @@ static const mach_timebase_info_data_t & rocketnet_frame_sync_timebase()
 
 // This metadata-only probe verifies the scale is available before frame-sync
 // creation, without reading the live clock.
+#if ROCKETNET_TEST_SEAMS
 int rocketnet_frame_sync_timebase_ready_for_testing()
 {
     const mach_timebase_info_data_t & timebase = rocketnet_frame_sync_timebase();
     return timebase.numer != 0 && timebase.denom != 0;
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
 static void rocketnet_frame_sync_platform_init()
 {
@@ -280,6 +283,7 @@ static void rocketnet_frame_sync_restore_priority( struct rocketnet_frame_sync_t
 // priority step rocketnet_frame_sync_wait takes on its first wait, run on a
 // frame sync that is never created (no timer, no thread), then given back
 // through rocketnet_frame_sync_restore_priority. Returns priority_held.
+#if ROCKETNET_TEST_SEAMS
 int rocketnet_frame_sync_elevate_priority_for_testing( uint64_t period_ns )
 {
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_LINUX && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_BSD
@@ -292,6 +296,7 @@ int rocketnet_frame_sync_elevate_priority_for_testing( uint64_t period_ns )
     rocketnet_frame_sync_restore_priority( &frame_sync );
     return frame_sync.priority_held;
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
 // -------------------------------------------------------------------
 // the pure parts
@@ -494,7 +499,7 @@ void rocketnet_frame_sync_wait( struct rocketnet_frame_sync_t * frame_sync )
     if ( drops > 0 )
     {
         frame_sync->dropped_frames += (uint64_t) drops;
-        rocketnet_debug( "frame sync: dropped %d frame%s (%.2fms late)", drops, drops == 1 ? "" : "s", frame_sync->wakeup_error_ns / 1000000.0 );
+        rocketnet_debug( "frame sync: dropped %d frame%s (%.2fms late)", drops, drops == 1 ? "" : "s", (double) frame_sync->wakeup_error_ns / 1000000.0 );
     }
 
     frame_sync->frame++;
@@ -512,6 +517,6 @@ void rocketnet_frame_sync_stats( struct rocketnet_frame_sync_t * frame_sync, str
     stats->dropped_frames = frame_sync->dropped_frames;
     stats->priority_held = frame_sync->priority_held;
     stats->spinning = frame_sync->spinning;
-    stats->guard_seconds = rocketnet_frame_sync_guard_ns( frame_sync->guard_ewma_ns, frame_sync->guard_cap_ns ) / 1000000000.0;
-    stats->wakeup_error_seconds = frame_sync->wakeup_error_ns / 1000000000.0;
+    stats->guard_seconds = (double) rocketnet_frame_sync_guard_ns( frame_sync->guard_ewma_ns, frame_sync->guard_cap_ns ) / 1000000000.0;
+    stats->wakeup_error_seconds = (double) frame_sync->wakeup_error_ns / 1000000000.0;
 }

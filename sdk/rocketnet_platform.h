@@ -553,7 +553,7 @@ void rocketnet_platform_socket_set_receive_hook( struct rocketnet_platform_socke
  */
 const char * rocketnet_platform_socket_pump( struct rocketnet_platform_socket_t * socket );
 
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
 // Test seams, compiled only into the development library (TRANSPORTS.md, ICMP
 // errors). inject_receive_errno makes the next recvmsg or recvmsg_x on any
 // socket return -1 with that errno instead of reading, leaving the queue
@@ -563,7 +563,7 @@ const char * rocketnet_platform_socket_pump( struct rocketnet_platform_socket_t 
 void rocketnet_platform_inject_receive_errno_for_testing( int error );
 struct rocketnet_server_transport_t;
 struct rocketnet_platform_socket_t * rocketnet_server_transport_platform_socket_for_testing( struct rocketnet_server_transport_t * server_transport );
-#endif // #if ROCKETNET_DEVELOPMENT
+#endif // #if ROCKETNET_DEV
 
 #ifdef __cplusplus
 }
@@ -924,9 +924,9 @@ struct rocketnet_platform_mutex_helper_t
     const char * file;
     int line;
     double start_time;
-    rocketnet_platform_mutex_helper_t( rocketnet_platform_mutex_t * mutex, const char * file, int line );
+    rocketnet_platform_mutex_helper_t( rocketnet_platform_mutex_t * held_mutex, const char * file, int line );
 #else // #if ROCKETNET_SPIKE_TRACKING
-    rocketnet_platform_mutex_helper_t( rocketnet_platform_mutex_t * mutex );
+    rocketnet_platform_mutex_helper_t( rocketnet_platform_mutex_t * held_mutex );
 #endif // #if ROCKETNET_SPIKE_TRACKING
     ~rocketnet_platform_mutex_helper_t();
 };
@@ -938,9 +938,9 @@ struct rocketnet_platform_mutex_helper_t
 #endif // #if ROCKETNET_SPIKE_TRACKING
 
 #if ROCKETNET_SPIKE_TRACKING
-inline rocketnet_platform_mutex_helper_t::rocketnet_platform_mutex_helper_t( rocketnet_platform_mutex_t * mutex, const char * file, int line ) : mutex(mutex), file(file), line(line), start_time(rocketnet_platform_time())
+inline rocketnet_platform_mutex_helper_t::rocketnet_platform_mutex_helper_t( rocketnet_platform_mutex_t * held_mutex, const char * file, int line ) : mutex(held_mutex), file(file), line(line), start_time(rocketnet_platform_time())
 #else // #if ROCKETNET_SPIKE_TRACKING
-inline rocketnet_platform_mutex_helper_t::rocketnet_platform_mutex_helper_t( rocketnet_platform_mutex_t * mutex ) : mutex(mutex)
+inline rocketnet_platform_mutex_helper_t::rocketnet_platform_mutex_helper_t( rocketnet_platform_mutex_t * held_mutex ) : mutex(held_mutex)
 #endif // #if ROCKETNET_SPIKE_TRACKING
 {
     rocketnet_assert( mutex );

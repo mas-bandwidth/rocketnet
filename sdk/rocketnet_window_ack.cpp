@@ -227,7 +227,7 @@ static void rn_sent_index_insert( rn_region_t * region, uint64_t packet_id, uint
         }
         slot = ( slot + 1 ) % cap;
     }
-    rocketnet_assert( !"sent_index 2P table exhausted" );
+    rocketnet_assert( false && "sent_index 2P table exhausted" );
 }
 
 static void rn_sent_index_remove_at( rn_region_t * region, uint32_t slot )
@@ -390,7 +390,7 @@ void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_regi
     ack->oldest_number = send->U;
     ack->oldest_first_send = 0.0;
 
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
     for ( int c = 0; c < 2; c++ )
     {
         ack->gaps.gap_min[c] = 1.0e30;
@@ -398,10 +398,10 @@ void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_regi
         ack->gaps.early_min[c] = 1.0e30;
         ack->gaps.late_max[c] = -1.0e30;
     }
-#endif // #if ROCKETNET_DEVELOPMENT
+#endif // #if ROCKETNET_DEV
 }
 
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
 
 void rn_window_ack_gaps_update( rn_window_ack_t * ack, double now )
 {
@@ -436,7 +436,7 @@ static void rn_window_ack_gaps_measure( rn_window_ack_t * ack, uint32_t slot_ind
     if ( late > gaps->late_max[c] ) gaps->late_max[c] = late;
 }
 
-#endif // #if ROCKETNET_DEVELOPMENT
+#endif // #if ROCKETNET_DEV
 
 // Commits a sent packet and its referenced reliable message numbers into the
 // P-entry sent-packet ring, 16P reference ring, 2P open-addressed sent_index,
@@ -509,10 +509,10 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
         rocketnet_assert( slot->number == n );
         if ( rn_send_number_never_sent( slot->last_send ) )
             rn_window_ack_record_first_send( ack, slot, now );
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
         if ( slot->last_send >= 0.0 )                       // a resend: not a first send, not a failed send's retry
             rn_window_ack_gaps_measure( ack, slot_index, slot->last_send, now );
-#endif // #if ROCKETNET_DEVELOPMENT
+#endif // #if ROCKETNET_DEV
         slot->last_send = now;
         if ( !slot->acked )
             rn_resend_fifo_push_tail( ack, slot_index );

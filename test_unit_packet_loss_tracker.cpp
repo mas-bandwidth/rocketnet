@@ -159,7 +159,7 @@ static void test_ack_record_sent_refuses_stale_and_nonfinite()
         struct rocketnet_sent_packet_record_t before;
         memcpy( &before, &fresh->sent[( 2 * N + 1 ) % N], sizeof( before ) );
         rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified(
-            fresh, 2 * N + 1, 100, 0, 0, 0, NAN ) == ROCKETNET_ACK_SENT_REFUSED_STALE );
+            fresh, 2 * N + 1, 100, 0, 0, 0, (double) NAN ) == ROCKETNET_ACK_SENT_REFUSED_STALE );
         rocketnet_unit_check( fresh->highest_sequence == highest_before );
         rocketnet_unit_check( memcmp( &before, &fresh->sent[( 2 * N + 1 ) % N], sizeof( before ) ) == 0 );
     }
@@ -168,7 +168,7 @@ static void test_ack_record_sent_refuses_stale_and_nonfinite()
         struct rocketnet_sent_packet_record_t before;
         memcpy( &before, &fresh->sent[( 2 * N + 2 ) % N], sizeof( before ) );
         rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified(
-            fresh, 2 * N + 2, 100, 0, 0, 0, INFINITY ) == ROCKETNET_ACK_SENT_REFUSED_STALE );
+            fresh, 2 * N + 2, 100, 0, 0, 0, (double) INFINITY ) == ROCKETNET_ACK_SENT_REFUSED_STALE );
         rocketnet_unit_check( fresh->highest_sequence == highest_before );
         rocketnet_unit_check( memcmp( &before, &fresh->sent[( 2 * N + 2 ) % N], sizeof( before ) ) == 0 );
     }

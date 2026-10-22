@@ -190,7 +190,7 @@ static void reply_pass_cookie_gate( struct reply_server_t * test, const struct r
             response + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES,
             ROCKETNET_COOKIE_FIELD_BYTES );
     if ( cookie )
-        memcpy( cookie, response, response_bytes );
+        memcpy( cookie, response, (size_t) response_bytes );
     if ( cookie_bytes )
         *cookie_bytes = response_bytes;
 }
@@ -230,7 +230,7 @@ static int reply_client_to_response( struct reply_server_t * test,
              packet_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES )
         {
             rocketnet_unit_check( challenge_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
-            memcpy( response_out, packet, packet_bytes );
+            memcpy( response_out, packet, (size_t) packet_bytes );
             return packet_bytes;
         }
 

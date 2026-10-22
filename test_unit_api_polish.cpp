@@ -149,9 +149,9 @@ REGISTER_UNIT_TEST( test_api_polish_status_returns );
 // names every refusal.
 typedef rocketnet_status_t ( *api_polish_dev_minter_t )( const char *, const char *, const uint8_t *, int, int, uint64_t, uint64_t, uint64_t, const uint8_t *, char * );
 
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
 static_assert( rn_same<decltype( &rocketnet_create_dev_connect_token ), api_polish_dev_minter_t>::value, "dev token minter signature" );
-#endif // #if ROCKETNET_DEVELOPMENT
+#endif // #if ROCKETNET_DEV
 
 // the development library keeps its own log state, apart from the sink the
 // suite installs in the archive it links, so the test captures the refusal
@@ -280,6 +280,15 @@ static void api_polish_log_capture( void * context, rocketnet_log_level_t level,
     g_polish_message[n] = '\0';
 }
 
+// a level a C caller could pass that is outside the enum; copied in, since a
+// C++ cast of a value outside the enum's range is unspecified
+static rocketnet_log_level_t api_polish_raw_log_level( int raw )
+{
+    rocketnet_log_level_t level;
+    memcpy( &level, &raw, sizeof( level ) );
+    return level;
+}
+
 static void test_api_polish_log_callback_receives_a_message()
 {
     const rocketnet_log_level_t saved = rocketnet_log_level_current();
@@ -295,7 +304,7 @@ static void test_api_polish_log_callback_receives_a_message()
     check( strcmp( g_polish_message, "polish 9" ) == 0 );
 
     // a level outside the enum is ignored; the one in force stays
-    rocketnet_log_level( (rocketnet_log_level_t) 9 );
+    rocketnet_log_level( api_polish_raw_log_level( 9 ) );
     check( rocketnet_log_level_current() == ROCKETNET_LOG_LEVEL_INFO );
     rocketnet_log_level( saved );
 }
@@ -313,13 +322,13 @@ static void test_api_polish_lookups_say_unknown()
 {
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_OK ), "OK" ) == 0 );
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_FLOW_ID_RESERVED ), "FLOW_ID_RESERVED" ) == 0 );
-    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -29 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -31 ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_status_name( (rocketnet_status_t) 1 ), "UNKNOWN" ) == 0 );
 
     check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_NONE ), "NONE" ) == 0 );
     check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_WARN ), "WARN" ) == 0 );
     check( strcmp( rocketnet_log_level_name( (rocketnet_log_level_t) 6 ), "UNKNOWN" ) == 0 );
-    check( strcmp( rocketnet_log_level_name( (rocketnet_log_level_t) -1 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_log_level_name( api_polish_raw_log_level( -1 ) ), "UNKNOWN" ) == 0 );
 
     check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_CONNECTED ), "CONNECTED" ) == 0 );
     check( strcmp( rocketnet_client_state_name( (rocketnet_client_state_t) 5 ), "UNKNOWN" ) == 0 );
@@ -364,7 +373,7 @@ static void test_api_polish_zero_receipt_and_dense_reasons()
     check( strcmp( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) 2 ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) 7 ), "UNKNOWN" ) == 0 );
 
-    for ( int status = (int) ROCKETNET_STATUS_OK; status >= (int) ROCKETNET_STATUS_TRANSPORT_NOT_BUILT; status-- )
+    for ( int status = (int) ROCKETNET_STATUS_OK; status >= (int) ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION; status-- )
     {
         const char * name = rocketnet_status_name( (enum rocketnet_status_t) status );
         check( name != NULL && strcmp( name, "UNKNOWN" ) != 0 );

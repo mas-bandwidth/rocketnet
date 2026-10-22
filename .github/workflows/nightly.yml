@@ -136,7 +136,7 @@ jobs:
         run: python tools/check_xdp_archive.py --committed-only
 
       - name: Configure
-        run: cmake -B build -A x64
+        run: cmake -B build -A x64 -DROCKETNET_DEV=OFF
 
       - name: Build
         run: cmake --build build --config Debug --parallel
@@ -222,7 +222,7 @@ jobs:
     name: external transport backend / windows-2025
     # DISABLED: no Windows fleet runner registered for this repository; owed: the Windows fleet machine
     if: false
-    runs-on: windows-2025
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     strategy:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
@@ -236,7 +236,7 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Configure
-        run: cmake -B build -A x64
+        run: cmake -B build -A x64 -DROCKETNET_DEV=OFF
 
       - name: Build
         run: cmake --build build --config Release --parallel
@@ -347,7 +347,7 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Configure clang-cl x64
-        run: cmake -B build-clang -T ClangCL -A x64 "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/build-clang/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/build-clang/bin"
+        run: cmake -B build-clang -T ClangCL -A x64 -DROCKETNET_DEV=OFF "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/build-clang/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/build-clang/bin"
 
       - name: Build clang-cl x64
         run: cmake --build build-clang --config Release --parallel 4
@@ -369,7 +369,7 @@ jobs:
         run: python tools/check_exports.py build-clang/bin/Release/rocketnet.dll build-clang/Release/rocketnet.lib
 
       - name: Configure MSVC ARM64 cross build
-        run: cmake -B build-arm64 -A ARM64 "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/build-arm64/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/build-arm64/bin"
+        run: cmake -B build-arm64 -A ARM64 -DROCKETNET_DEV=OFF "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/build-arm64/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/build-arm64/bin"
 
       - name: Build the ARM64 static and shared libraries
         run: cmake --build build-arm64 --config Release --parallel 4 --target rocketnet rocketnet_shared rocketnet_dev rocketnet_shared_dev

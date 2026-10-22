@@ -214,7 +214,7 @@ const char * rocketnet_status_name( enum rocketnet_status_t status )
         case ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED:          return "MEMORY_BUDGET_EXCEEDED";
         case ROCKETNET_STATUS_MISSING_KEYS:                    return "MISSING_KEYS";
         case ROCKETNET_STATUS_INVALID_PROTOCOL_ID:             return "INVALID_PROTOCOL_ID";
-        case ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE:             return "DEV_KEYS_IN_RELEASE";
+        case ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION:          return "DEV_KEYS_IN_PRODUCTION";
         case ROCKETNET_STATUS_INVALID_ADDRESS:                 return "INVALID_ADDRESS";
         case ROCKETNET_STATUS_INVALID_TRANSPORT_LIST:          return "INVALID_TRANSPORT_LIST";
         case ROCKETNET_STATUS_INVALID_CONNECT_TOKEN:           return "INVALID_CONNECT_TOKEN";
@@ -231,6 +231,8 @@ const char * rocketnet_status_name( enum rocketnet_status_t status )
         case ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED:  return "TRANSPORT_FAMILIES_UNSUPPORTED";
         case ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED:          return "CONFIG_NOT_INITIALIZED";
         case ROCKETNET_STATUS_TRANSPORT_NOT_BUILT:             return "TRANSPORT_NOT_BUILT";
+        case ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION: return "TEST_PACKET_FILTER_IN_PRODUCTION";
+        case ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION: return "DEV_CONNECT_TOKEN_IN_PRODUCTION";
         default:
             break;
     }
@@ -273,7 +275,7 @@ void rocketnet_log_function( rocketnet_log_function_t callback, void * context )
 // relaxed atomics read before vsnprintf), format once into the 1024-byte
 // buffer, clamp length to 1023 (message[length] == '\0' is guaranteed by
 // vsnprintf), then dispatch to the installed callback or the default sink.
-static void rocketnet_log_v( int level, const char * format, va_list args )
+ROCKETNET_PRINTF_FORMAT( 2, 0 ) static void rocketnet_log_v( int level, const char * format, va_list args )
 {
     if ( log_quiet.load( std::memory_order_relaxed ) )
         return;

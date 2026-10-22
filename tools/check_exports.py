@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the shared C ABI, static crypto namespace and absence of test code."""
+"""Check the shared C ABI, static crypto namespace and absence of test and development code."""
 
 import argparse
 import os
@@ -33,7 +33,7 @@ def header_declared_names(header_path):
     names, seen, buffer, depth, in_dev = [], set(), None, 0, False
     for raw in Path(header_path).read_text().splitlines():
         line = raw.strip()
-        if line == "#if ROCKETNET_DEVELOPMENT":
+        if line == "#if ROCKETNET_DEV":
             in_dev = True
         if in_dev:
             if line.startswith("#endif"):
@@ -75,11 +75,44 @@ def source_check(header_path, tests_path):
     return 0
 
 
+# What a production build (ROCKETNET_DEV=0) compiles out (sdk/rocketnet_test_seams.h):
+# a defined symbol naming any of these in the production archive or shared
+# library is development or test code that reached production.
+DEVELOPMENT_SYMBOL_PARTS = (
+    "_for_test", "network_simulator", "dev_server_secret_key", "dev_backend_secret_key",
+    "server_transport_dev_config", "set_test_timestamp", "client_create_testing",
+    "test_stall_destroy", "test_bound_port", "create_step_driven_at_timestamp",
+    "create_dev_connect_token", "write_test_connect_token",
+)
+
+
+def development_symbols(defined):
+    return sorted(symbol for symbol in defined if any(part in symbol for part in DEVELOPMENT_SYMBOL_PARTS))
+
+
+def dev_server_secret_key(source_path):
+    """The published development server secret key's 32 bytes, read from its definition."""
+    text = Path(source_path).read_text()
+    match = re.search(r"rocketnet_dev_server_secret_key\[32\]\s*=\s*\{(.*?)\};", text, flags=re.S)
+    if not match:
+        raise RuntimeError(f"no rocketnet_dev_server_secret_key in {source_path}")
+    key = bytes(int(value, 16) for value in re.findall(r"0x([0-9a-fA-F]{2})", match.group(1)))
+    if len(key) != 32:
+        raise RuntimeError(f"rocketnet_dev_server_secret_key in {source_path} is {len(key)} bytes")
+    return key
+
+
+def files_holding(needle, paths):
+    return [str(path) for path in paths if needle in Path(path).read_bytes()]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sources-only", action="store_true", help="stop after the source check")
     parser.add_argument("--header", type=Path, default=Path(__file__).parent.parent / "sdk" / "rocketnet.h")
     parser.add_argument("--tests", type=Path, default=Path(__file__).parent.parent / "sdk" / "rocketnet_tests.cpp")
+    parser.add_argument("--connect-token-source", type=Path,
+                        default=Path(__file__).parent.parent / "sdk" / "rocketnet_connect_token.cpp")
     parser.add_argument("shared", nargs="?", type=Path)
     parser.add_argument("archive", nargs="?", type=Path)
     args = parser.parse_args()
@@ -118,7 +151,14 @@ def main():
                         r"fe25519_|ge25519_|sc25519_|ristretto255_|chacha20_dolbeau_|poly1305_sse2_)")
     unprefixed = {symbol for symbol in defined if crypto.match(symbol.lstrip("_"))}
     missing, extra = expected - actual, actual - expected
-    if missing or extra or unprefixed or "rocketnet_tests" in members:
+    development = development_symbols(defined | actual)
+    key_holders = files_holding(dev_server_secret_key(args.connect_token_source), [args.shared, args.archive])
+    if missing or extra or unprefixed or "rocketnet_tests" in members or development or key_holders:
+        if development:
+            print("Development or test code in the production library (build with -DROCKETNET_DEV=OFF):",
+                  ", ".join(development), file=sys.stderr)
+        if key_holders:
+            print("The development server secret key bytes are in:", ", ".join(key_holders), file=sys.stderr)
         if missing:
             print("Missing exports:", ", ".join(sorted(missing)), file=sys.stderr)
         if extra:
@@ -129,7 +169,8 @@ def main():
         if "rocketnet_tests" in members:
             print("Test suite is present in the production archive", file=sys.stderr)
         return 1
-    print(f"C ABI: {len(actual)} exports match; static crypto namespace is private; production archive contains no test suite")
+    print(f"C ABI: {len(actual)} exports match; static crypto namespace is private; production archive contains no test suite, "
+          "no development or test code and no development secret key")
     return 0
 
 

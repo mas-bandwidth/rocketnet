@@ -27,6 +27,11 @@
 #                          summary lines.
 #   4  verify fault     -- ROCKETNET_SOAK_FAULT_VERIFY=1 plants one verify
 #                          failure and proves soak goes red (exits nonzero).
+#   5  soak 100         -- the bound falls during the first handshake: soak
+#                          finishes the handshake before its teardown, so the
+#                          server refuses nothing (no DISCONNECT_NOT_CONNECTED)
+#                          and the connect counts. Too short to verify
+#                          payloads, so its only failure is the coverage line.
 
 set -u
 
@@ -173,6 +178,20 @@ elif ! grep -q '^soak summary: verified ' "$WORK/fault.txt"; then
     fail "ROCKETNET_SOAK_FAULT_VERIFY=1 exited $status without printing the soak summary"
 else
     echo "leg 4  verify-failure negative control (ROCKETNET_SOAK_FAULT_VERIFY=1): red, exit $status, $( grep -m1 'PAYLOAD VERIFY FAILED' "$WORK/fault.txt" )"
+fi
+
+# ---------------------------------------------------------------------------
+# 5. a bound inside the first handshake: finished before teardown, no refusal
+
+"$SOAK" 100 > "$WORK/handshake.txt" 2>&1
+status=$?
+if grep -q 'REFUSAL on a clean run' "$WORK/handshake.txt"; then
+    fail "soak 100 counted a refusal: $( grep -m1 'REFUSAL on a clean run' "$WORK/handshake.txt" )"
+elif ! grep -q '^soak finished: 100 iterations, 1 connects, .* 1 failures$' "$WORK/handshake.txt" ||
+     ! grep -q '^soak: insufficient coverage' "$WORK/handshake.txt"; then
+    fail "soak 100 did not finish its first handshake with coverage its only failure: $( grep -m1 '^soak finished' "$WORK/handshake.txt" )"
+else
+    echo "leg 5  soak 100: the handshake at the bound completed before teardown, no refusal, exit $status (coverage only)"
 fi
 
 # ---------------------------------------------------------------------------

@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet_memory.h"
+#include "rocketnet_test_seams.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_route.h"
 #include <atomic>
@@ -173,10 +174,12 @@ static bool rocketnet_platform_ipv6_socket_available_for_testing = true;
 // connection-type lookup and IPv6 probe; a unit test's table replaces both.
 static std::atomic<const rocketnet_platform_network_lookups_t *> rocketnet_platform_network_lookups_override{ NULL };
 
+#if ROCKETNET_TEST_SEAMS
 void rocketnet_platform_set_network_lookups_for_testing( const rocketnet_platform_network_lookups_t * lookups )
 {
     rocketnet_platform_network_lookups_override.store( lookups, std::memory_order_release );
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
 // Network-thread priority (docs/CLIENT-IO.md, TRANSPORTS.md). The calls and their
 // values are the flow library's (flow_platform.cpp), unchanged; each platform
@@ -195,21 +198,25 @@ static const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_c
     return calls ? calls : rocketnet_platform_priority_calls_real();
 }
 
+#if ROCKETNET_TEST_SEAMS
 void rocketnet_platform_set_priority_calls_for_testing( const rocketnet_platform_priority_calls_t * calls )
 {
     rocketnet_platform_priority_calls_override.store( calls, std::memory_order_release );
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
 const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls_current()
 {
     return rocketnet_platform_priority_calls();
 }
 
+#if ROCKETNET_TEST_SEAMS
 void rocketnet_platform_thread_priority_reset_logged_for_testing()
 {
     for ( int i = 0; i < ROCKETNET_PLATFORM_PRIORITY_CALL_COUNT; ++i )
         rocketnet_platform_thread_priority_logged[i].store( false, std::memory_order_relaxed );
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
 void rocketnet_platform_set_thread_priority_enabled( bool enabled )
 {
@@ -569,7 +576,7 @@ bool rocketnet_platform_init()
         return false;
     timespec ts;
     clock_gettime( CLOCK_MONOTONIC_RAW, &ts );
-    time_start = ts.tv_sec + ( (double) ( ts.tv_nsec ) ) / 1000000000.0;
+    time_start = (double) ts.tv_sec + ( (double) ( ts.tv_nsec ) ) / 1000000000.0;
     const rocketnet_platform_network_lookups_t * lookups = rocketnet_platform_network_lookups_override.load( std::memory_order_acquire );
     connection_type = lookups ? lookups->connection_type() : get_connection_type();
     return true;
@@ -647,7 +654,7 @@ bool rocketnet_platform_inet_pton6( const char * address_string, uint16_t * addr
 
 bool rocketnet_platform_inet_ntop6( const uint16_t * address, char * address_string, size_t address_string_size )
 {
-    return inet_ntop( AF_INET6, (void*)address, address_string, socklen_t( address_string_size ) ) != NULL;
+    return inet_ntop( AF_INET6, (const void*)address, address_string, socklen_t( address_string_size ) ) != NULL;
 }
 
 bool rocketnet_platform_hostname_resolve( const char * hostname, const char * port, rocketnet_address_t * address )
@@ -711,7 +718,7 @@ double rocketnet_platform_time()
 {
     timespec ts;
     clock_gettime( CLOCK_MONOTONIC_RAW, &ts );
-    double current = ts.tv_sec + ( (double) ( ts.tv_nsec ) ) / 1000000000.0;
+    double current = (double) ts.tv_sec + ( (double) ( ts.tv_nsec ) ) / 1000000000.0;
     return current - time_start;
 }
 
@@ -1156,7 +1163,7 @@ receive_again:
         }
 #endif // #if defined(ROCKETNET_RECEIVE_TEST_HOOKS)
 
-        result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, flags, (sockaddr*) &sockaddr_from, &from_length ) );
+        result = int( recvfrom( socket->handle, (char*) packet_data, (size_t) max_packet_size, flags, (sockaddr*) &sockaddr_from, &from_length ) );
 
         if ( result < 0 )
         {
@@ -1279,7 +1286,7 @@ bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readab
         nfds++;
     }
     const int timeout_ms = timeout_seconds > 0.0 ? (int) ceil( timeout_seconds * 1000.0 ) : 0;
-    const int poll_result = poll( fds, nfds, timeout_ms );
+    const int poll_result = poll( fds, (nfds_t) nfds, timeout_ms );
     if ( poll_result <= 0 )
         return false;
     for ( int i = 0; i < nfds; i++ )
@@ -1506,7 +1513,7 @@ void rocketnet_platform_socket_send_packets_mmsg( rocketnet_platform_socket_t * 
             if ( sockaddr_bytes != 0 )
             {
                 memset( &msg[count], 0, sizeof(msg[count]) );
-                iov[count].iov_base = (void*) send->packet_data;
+                iov[count].iov_base = const_cast<uint8_t*>( send->packet_data ); // the send only reads it
                 iov[count].iov_len = (size_t) send->packet_bytes;
                 // a connected socket names no destination (rocketnet_platform_sendto)
                 msg[count].msg_hdr.msg_name = socket->connected ? NULL : &addresses[count];
@@ -2160,7 +2167,7 @@ static int get_connection_type()
                 continue;
             }
 
-            uint32_t if_index = req.ifr_ifindex;
+            uint32_t if_index = (uint32_t) req.ifr_ifindex;
 
             // check for duplicates
             bool duplicate = false;
@@ -2245,7 +2252,7 @@ static int get_connection_type()
         req.hdr.nlmsg_type = RTM_GETROUTE;
         req.hdr.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP; 
         req.hdr.nlmsg_seq = 1;
-        req.hdr.nlmsg_pid = pid;
+        req.hdr.nlmsg_pid = (__u32) pid;
         req.gen.rtgen_family = AF_INET; 
 
         struct iovec io;
@@ -2509,7 +2516,7 @@ bool rocketnet_platform_inet_pton6( const char * address_string, uint16_t * addr
 
 bool rocketnet_platform_inet_ntop6( const uint16_t * address, char * address_string, size_t address_string_size )
 {
-    return inet_ntop( AF_INET6, (void*)address, address_string, socklen_t( address_string_size ) ) != NULL;
+    return inet_ntop( AF_INET6, (const void*)address, address_string, socklen_t( address_string_size ) ) != NULL;
 }
 
 // ---------------------------------------------------
@@ -2986,7 +2993,7 @@ static bool rocketnet_platform_receive_weather( int error )
            error == EHOSTDOWN || error == ENETDOWN || error == ENOBUFS || error == EINTR;
 }
 
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
 
 // the test seam (development builds only, never the production library):
 // the next recvmsg or recvmsg_x on any socket returns -1 with this errno
@@ -3004,18 +3011,18 @@ static int rocketnet_platform_take_receive_errno_for_testing()
     return rocketnet_platform_receive_errno_for_testing.exchange( 0 );
 }
 
-#endif // #if ROCKETNET_DEVELOPMENT
+#endif // #if ROCKETNET_DEV
 
 static ssize_t rocketnet_platform_recvmsg( int handle, struct msghdr * msg )
 {
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
     const int injected = rocketnet_platform_take_receive_errno_for_testing();
     if ( injected != 0 )
     {
         errno = injected;
         return -1;
     }
-#endif // #if ROCKETNET_DEVELOPMENT
+#endif // #if ROCKETNET_DEV
     return recvmsg( handle, msg, 0 );
 }
 
@@ -3181,20 +3188,51 @@ const char * rocketnet_platform_socket_pump( rocketnet_platform_socket_t * socke
 // thread, so msgx_down_until is only loaded and stored atomically (relaxed:
 // it orders nothing else).
 
+#if defined(ROCKETNET_MSGX_TEST_HOOKS)
+static thread_local void (*rocketnet_msgx_before_expiry_clear)( rocketnet_platform_socket_t * ) = NULL;
+#endif
+
 static bool rocketnet_msgx_active( rocketnet_platform_socket_t * socket )
 {
     if ( !socket->msgx )
         return false;
-    const double down_until = rocketnet_msgx_down_until( socket );
-    if ( down_until > 0.0 )
+    double down_until = rocketnet_msgx_down_until( socket );
+    while ( down_until > 0.0 )
     {
         if ( rocketnet_platform_time() < down_until )
             return false;
-        rocketnet_msgx_set_down_until( socket, 0.0 );
-        rocketnet_debug( "msgx pump pause expired. next batch call is the re-probe" );
+#if defined(ROCKETNET_MSGX_TEST_HOOKS)
+        if ( rocketnet_msgx_before_expiry_clear ) rocketnet_msgx_before_expiry_clear( socket );
+#endif
+        // TX and RX may re-probe concurrently. Clear only the expired value
+        // observed here: a fresh pause published by the other worker wins.
+        double cleared = 0.0;
+        if ( __atomic_compare_exchange( &socket->msgx_down_until, &down_until, &cleared,
+                                        false, __ATOMIC_RELAXED, __ATOMIC_RELAXED ) )
+        {
+            rocketnet_debug( "msgx pump pause expired. next batch call is the re-probe" );
+            break;
+        }
     }
     return true;
 }
+
+#if defined(ROCKETNET_MSGX_TEST_HOOKS)
+bool rocketnet_msgx_test_pause_expiry_race()
+{
+    rocketnet_platform_socket_t socket = {};
+    socket.msgx = true;
+    rocketnet_msgx_set_down_until( &socket, rocketnet_platform_time() );
+    rocketnet_msgx_before_expiry_clear = []( rocketnet_platform_socket_t * raced )
+    {
+        rocketnet_msgx_before_expiry_clear = NULL;
+        rocketnet_msgx_set_down_until( raced, rocketnet_platform_time() + ROCKETNET_MSGX_RETRY_SECONDS );
+    };
+    const bool active = rocketnet_msgx_active( &socket );
+    rocketnet_msgx_before_expiry_clear = NULL;
+    return !active && rocketnet_msgx_down_until( &socket ) > rocketnet_platform_time();
+}
+#endif
 
 static void rocketnet_msgx_pause( rocketnet_platform_socket_t * socket, const char * which, int error )
 {
@@ -3318,7 +3356,7 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
             socklen_t sockaddr_bytes = rocketnet_msgx_fill_sockaddr( socket, send->to, &addresses[count] );
             if ( sockaddr_bytes != 0 )
             {
-                iov[count].iov_base = (void*) send->packet_data;
+                iov[count].iov_base = const_cast<uint8_t*>( send->packet_data ); // the send only reads it
                 iov[count].iov_len = (size_t) send->packet_bytes;
                 // a connected socket names no destination (rocketnet_platform_sendto)
                 msg[count].msg_name = socket->connected ? NULL : &addresses[count];
@@ -3461,7 +3499,7 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
 
         errno = 0;
         ssize_t result;
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
         const int injected = rocketnet_platform_take_receive_errno_for_testing();
         if ( injected != 0 )
         {
@@ -3469,7 +3507,7 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
             result = -1;
         }
         else
-#endif // #if ROCKETNET_DEVELOPMENT
+#endif // #if ROCKETNET_DEV
         result = rocketnet_recvmsg_x( socket->handle, msg, (u_int) want, 0 );
         if ( result < 0 )
         {
@@ -4594,7 +4632,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
     if ( socket_type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING )
     {
         DWORD nonBlocking = 1;
-        if ( ioctlsocket( s->handle, FIONBIO, &nonBlocking ) != 0 )
+        if ( ioctlsocket( s->handle, (long) FIONBIO, &nonBlocking ) != 0 )
         {
             rocketnet_platform_socket_destroy( s );
             return NULL;
@@ -4778,8 +4816,6 @@ static int rocketnet_platform_socket_receive_datagram( rocketnet_platform_socket
     rocketnet_assert( from );
     rocketnet_assert( packet_data );
     rocketnet_assert( max_packet_size > 0 );
-
-    typedef int socklen_t;
 
     sockaddr_storage sockaddr_from;
     socklen_t from_length;
@@ -5077,10 +5113,12 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 
 // ----------------------------------------------------------------
 
+#if ROCKETNET_TEST_SEAMS
 void rocketnet_platform_set_ipv6_socket_available_for_testing( bool available )
 {
     rocketnet_platform_ipv6_socket_available_for_testing = available;
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
 bool rocketnet_platform_client_ipv6_available()
 {

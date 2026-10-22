@@ -172,6 +172,14 @@ struct rocketnet_frame_sync_t;
 struct rocketnet_counters_t;            // read through rocketnet_counter_value
 struct rocketnet_packet_context_t;      // defined below, with the send surface
 
+// printf format checking for the log functions below: every call's format
+// and arguments are checked by GCC and Clang at the call site.
+#if defined( __GNUC__ ) || defined( __clang__ )
+#define ROCKETNET_PRINTF_FORMAT( format_index, first_argument ) __attribute__(( format( printf, format_index, first_argument ) ))
+#else
+#define ROCKETNET_PRINTF_FORMAT( format_index, first_argument )
+#endif
+
 /**
  * @brief Formats and emits a message at the supplied log level.
  *
@@ -182,22 +190,22 @@ struct rocketnet_packet_context_t;      // defined below, with the send surface
  * @param format NUL-terminated printf format; NULL is a counted no-op.
  * The remaining arguments must match the conversion specifiers in format.
  */
-void rocketnet_printf( int level, const char * format, ... );
+ROCKETNET_PRINTF_FORMAT( 2, 3 ) void rocketnet_printf( int level, const char * format, ... );
 
 /** @brief Emits a message at ROCKETNET_LOG_LEVEL_INFO. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
-void rocketnet_info( const char * format, ... );
+ROCKETNET_PRINTF_FORMAT( 1, 2 ) void rocketnet_info( const char * format, ... );
 
 /** @brief Emits a message at ROCKETNET_LOG_LEVEL_WARN. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
-void rocketnet_warn( const char * format, ... );
+ROCKETNET_PRINTF_FORMAT( 1, 2 ) void rocketnet_warn( const char * format, ... );
 
 /** @brief Emits a message at ROCKETNET_LOG_LEVEL_ERROR. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
-void rocketnet_error( const char * format, ... );
+ROCKETNET_PRINTF_FORMAT( 1, 2 ) void rocketnet_error( const char * format, ... );
 
 /** @brief Emits a message at ROCKETNET_LOG_LEVEL_DEBUG. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
-void rocketnet_debug( const char * format, ... );
+ROCKETNET_PRINTF_FORMAT( 1, 2 ) void rocketnet_debug( const char * format, ... );
 
 /** @brief Emits a message at ROCKETNET_LOG_LEVEL_SPAM. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
-void rocketnet_spam( const char * format, ... );
+ROCKETNET_PRINTF_FORMAT( 1, 2 ) void rocketnet_spam( const char * format, ... );
 
 /** @brief Formats a user identifier as lowercase hexadecimal. @param user_id Identifier to format. @param buffer Caller-owned output buffer; NULL is a counted no-op returning NULL. @param buffer_size Buffer capacity in bytes; zero writes no bytes. @return buffer, or NULL when buffer is NULL. A nonempty buffer is NUL-terminated and may contain a truncated string. */
 const char * rocketnet_user_id_string( uint64_t user_id, char * buffer, size_t buffer_size );
@@ -892,7 +900,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
  * @param config [in] Optional full server configuration; NULL selects defaults, which require application keys.
  * @param time [in] Finite monotonic initial time in seconds.
  * @param status [out] Optional status destination; receives OK or the specific refusal code.
- * @return A caller-owned server transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, MISSING_KEYS, INVALID_PROTOCOL_ID, DEV_KEYS_IN_RELEASE, INVALID_TRANSPORT_LIST, INVALID_ADDRESS, TRANSPORT_PORT_ZERO_UNSUPPORTED, TRANSPORT_FAMILIES_UNSUPPORTED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, MUTEX_CREATE_FAILED, or THREAD_CREATE_FAILED. The ACK stats worker is created before success is returned; its allocation or thread refusal has no synchronous update fallback. TRANSPORT_FAMILIES_UNSUPPORTED is the status when every candidate that opened refused because it cannot serve both named families. A transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate; nothing the create allocated stays live. Correct the reported cause before retrying. Every failure logs an error line except two: when a simulated loss, latency, jitter, or duplicate setting is non-zero, a failed link-simulator allocation (OUT_OF_MEMORY) or a failed link-simulator mutex creation (MUTEX_CREATE_FAILED) returns without logging.
+ * @return A caller-owned server transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, MISSING_KEYS, INVALID_PROTOCOL_ID, DEV_KEYS_IN_PRODUCTION, TEST_PACKET_FILTER_IN_PRODUCTION, INVALID_TRANSPORT_LIST, INVALID_ADDRESS, TRANSPORT_PORT_ZERO_UNSUPPORTED, TRANSPORT_FAMILIES_UNSUPPORTED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, MUTEX_CREATE_FAILED, or THREAD_CREATE_FAILED. The ACK stats worker is created before success is returned; its allocation or thread refusal has no synchronous update fallback. TRANSPORT_FAMILIES_UNSUPPORTED is the status when every candidate that opened refused because it cannot serve both named families. A transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate; nothing the create allocated stays live. Correct the reported cause before retrying. Every failure logs an error line except two: when a simulated loss, latency, jitter, or duplicate setting is non-zero, a failed link-simulator allocation (OUT_OF_MEMORY) or a failed link-simulator mutex creation (MUTEX_CREATE_FAILED) returns without logging.
  * @code
  * // context, address, config, status, time, and dt are supplied by the game.
  * rocketnet_init( NULL, NULL, NULL );

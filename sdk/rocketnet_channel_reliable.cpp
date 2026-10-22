@@ -99,7 +99,7 @@ static int rn_channels_dispatch_reliable_chunk( rn_channels_t * channels, const 
     delivery->code = ROCKETNET_CHANNEL_TYPE_RELIABLE;
     delivery->pad = 0;
     delivery->serial = 0;
-    delivery->descriptor = first_number & ( region->window - 1 );
+    delivery->descriptor = (uint32_t) ( first_number & ( region->window - 1 ) );
     *out = *delivery;
     return ROCKETNET_CHANNEL_DISPATCH_DELIVERED;
 }

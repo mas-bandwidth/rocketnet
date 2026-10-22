@@ -30,7 +30,9 @@ static_assert( sizeof(rn_send_descriptor_t) == 64, "a send descriptor is 64 byte
 static_assert( sizeof(rn_sent_packet_t) == 32, "a sent-packet entry is 32 bytes (14)" );
 static_assert( sizeof(rn_sent_index_t) == 16, "a sent-packet index entry is 16 bytes (14)" );
 static_assert( sizeof(rn_delivery_t) == 24, "a delivery is 24 bytes (14)" );
-static_assert( sizeof(rn_sequenced_hold_t) == 16 + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, "a sequenced hold is 16 bytes and one payload capacity, 1432 bytes (14)" );
+static_assert( sizeof(rn_sequenced_hold_t) == 16, "sequenced hold metadata is 16 hot bytes (14)" );
+static_assert( sizeof(rn_sequenced_payload_t) == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, "a sequenced payload has one cold payload capacity (14)" );
+static_assert( sizeof(rn_sequenced_hold_t) + sizeof(rn_sequenced_payload_t) == 1432, "separate hot and cold arrays retain the 1432Ru region term (14)" );
 static_assert( sizeof(rn_receipt_t) == 16, "a receipt is 16 bytes (14)" );
 static_assert( sizeof(rn_resend_link_t) == 8, "a resend FIFO link is 8 bytes (14)" );
 static_assert( sizeof(((rn_send_descriptor_t*)0)->reserved) >= 9, "layer 3 keeps its first_send and its flag byte in reserved (6.4)" );
@@ -119,7 +121,7 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
     for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
     {
         const uint64_t payload_bytes = typical_payload[c];
-        const uint64_t count = rn_send_store_chunks_for( config->send_message_buffer_bytes, c ) + ( reserve + payload_bytes - 1 ) / payload_bytes;
+        const uint64_t count = rn_send_store_chunks_for( (uint64_t) config->send_message_buffer_bytes, c ) + ( reserve + payload_bytes - 1 ) / payload_bytes;
         if ( count >= 0x3FFFFFFFu )
             return false;
         chunks[c] = (uint32_t) count;
@@ -127,7 +129,7 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
     }
     // Keep all original store headroom, including its alignment slack.
     if ( S < (uint64_t) config->send_message_buffer_bytes )
-        S = config->send_message_buffer_bytes;
+        S = (uint64_t) config->send_message_buffer_bytes;
     if ( Q >= UINT32_MAX || SR > UINT32_MAX )
         return false;
     const uint64_t P = (uint64_t) config->packets_in_flight;
@@ -149,7 +151,7 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
     layout->bytes[RN_PART_SENT_INDEX] = sizeof(rn_sent_index_t) * 2 * P;
     layout->bytes[RN_PART_SENT_REFS] = sizeof(uint32_t) * 16 * P;
     layout->bytes[RN_PART_DELIVERIES] = sizeof(rn_delivery_t) * ( W + Du );
-    layout->bytes[RN_PART_SEQUENCED_HOLDS] = sizeof(rn_sequenced_hold_t) * Ru;
+    layout->bytes[RN_PART_SEQUENCED_HOLDS] = ( sizeof(rn_sequenced_hold_t) + sizeof(rn_sequenced_payload_t) ) * Ru;
     layout->bytes[RN_PART_RECEIPTS] = sizeof(rn_receipt_t) * Rq;
     layout->bytes[RN_PART_RESEND_FIFO] = sizeof(rn_resend_link_t) * W;
     layout->bytes[RN_PART_SEND_SPANS] = SR;                                         // local send reserve; receive-ring wire size stays B
@@ -423,6 +425,9 @@ static void rn_region_point( rn_region_t * region, uint8_t * base, const rn_regi
     region->sent_refs = (uint32_t*) ( base + layout->offset[RN_PART_SENT_REFS] );
     region->deliveries = (rn_delivery_t*) ( base + layout->offset[RN_PART_DELIVERIES] );
     region->sequenced_messages_held = (rn_sequenced_hold_t*) ( base + layout->offset[RN_PART_SEQUENCED_HOLDS] );
+    // Both arrays remain in the existing, exactly planned hold part. Metadata
+    // is densely packed; payloads are not touched by allocation/expiry scans.
+    region->sequenced_message_payloads = (rn_sequenced_payload_t*) ( region->sequenced_messages_held + region->holds );
     region->receipts = (rn_receipt_t*) ( base + layout->offset[RN_PART_RECEIPTS] );
     region->resend_fifo = (rn_resend_link_t*) ( base + layout->offset[RN_PART_RESEND_FIFO] );
     region->send_spans = base + layout->offset[RN_PART_SEND_SPANS];
@@ -1275,6 +1280,9 @@ struct rn_text_t
     int length;
 };
 
+#if defined( __GNUC__ ) || defined( __clang__ )
+__attribute__(( format( printf, 2, 3 ) ))
+#endif
 static void rn_text_append( rn_text_t * text, const char * format, ... )
 {
     // snprintf's contract over many appends: write what fits, always

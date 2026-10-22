@@ -173,7 +173,7 @@ struct rn_delivery_t                    // 24 bytes: one delivered message, vali
     uint32_t descriptor;                // the receive descriptor slot to release when the update ends, or RN_DESCRIPTOR_NONE (7.2, 8)
 };
 
-struct rn_sequenced_hold_t              // 16 + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES = 1432 bytes: the newest unreliable sequenced message held ahead of its epoch (7.3)
+struct rn_sequenced_hold_t              // 16 hot bytes: metadata for the newest unreliable sequenced hold (7.3)
 {
     uint32_t bytes;
     uint32_t ordering;
@@ -181,6 +181,12 @@ struct rn_sequenced_hold_t              // 16 + ROCKETNET_MAX_PACKET_PAYLOAD_BYT
     uint16_t channel;
     uint8_t used;
     uint8_t code;
+};
+
+// Cold bytes live in a separate array, indexed by the same hold slot. Scans
+// and view expiry touch only the compact metadata array above.
+struct rn_sequenced_payload_t
+{
     uint8_t data[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
 };
 
@@ -352,6 +358,7 @@ struct rn_region_t
     uint32_t * sent_refs;
     rn_delivery_t * deliveries;
     rn_sequenced_hold_t * sequenced_messages_held;
+    rn_sequenced_payload_t * sequenced_message_payloads;
     rn_receipt_t * receipts;
     rn_resend_link_t * resend_fifo;
 

@@ -4,6 +4,8 @@
 */
 
 #include "rocketnet_network_simulator.h"
+
+#if ROCKETNET_TEST_SEAMS
 #include "rocketnet_protocol.h"
 #include "rocketnet_internal.h"
 
@@ -876,3 +878,5 @@ int rocketnet_network_simulator_receive( struct rocketnet_network_simulator_t * 
 
     return packet_bytes;
 }
+
+#endif // #if ROCKETNET_TEST_SEAMS

@@ -17,7 +17,7 @@ concurrency:
 jobs:
   examples:
     name: ${{ matrix.os }}
-    runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
+    runs-on: ${{ fromJSON(matrix.runner) }}
     strategy:
       fail-fast: false
       matrix:
@@ -125,7 +125,7 @@ jobs:
           set -euo pipefail
           cmake -S . -B build-universal \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=OFF
           cmake --build build-universal --config Release --clean-first --parallel 4
           lipo -info build-universal/librocketnet.a bin/librocketnet.dylib
           for arch in arm64 x86_64; do
@@ -157,7 +157,7 @@ jobs:
     name: windows-2025
     # DISABLED: no Windows fleet runner registered for this repository; owed: the Windows fleet machine
     if: false
-    runs-on: windows-2025
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     steps:
       - uses: actions/checkout@v4
 

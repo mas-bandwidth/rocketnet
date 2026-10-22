@@ -170,7 +170,7 @@ static void test_large_future_state_drops_without_violation()
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
     rocketnet_unit_check( sequenced_counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL] == before + 2 );
     rocketnet_unit_check( sequenced_counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED] == superseded );
-    rocketnet_unit_check( region->sequenced_messages_held[region->channel_receive[0].held_sequenced].data[0] == small );
+    rocketnet_unit_check( region->sequenced_message_payloads[region->channel_receive[0].held_sequenced].data[0] == small );
     rn_region_reset( region );
 }
 

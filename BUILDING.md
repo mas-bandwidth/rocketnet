@@ -334,11 +334,42 @@ A Windows caller must select a library for its configuration and CRT. Packages
 built in this mode retain that external dependency. The default vendor is built
 with the same compiler and Debug/Release runtime as RocketNet.
 
+## Production builds
+
+`ROCKETNET_DEV` (in `sdk/rocketnet.h`) is 1 by default: every build is a
+development build unless it says otherwise. A development library accepts the
+published development keys and test packet filter, mints development connect
+tokens, and carries the network simulator and the unit test seams. A
+production build sets `ROCKETNET_DEV` to 0, one setting:
+
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=OFF
+    make ROCKETNET_DEV=OFF                      # the Makefile front door
+
+or `#define ROCKETNET_DEV 0` (`-DROCKETNET_DEV=0`) when compiling the sources
+into your own build. The CMake option sets the value on `rocketnet`,
+`rocketnet_shared` and the unit suite's hook library, and the targets hand it
+to every consumer, so the header a game compiles matches its library.
+`rocketnet_dev` and `rocketnet_shared_dev` are `ROCKETNET_DEV=1` in every
+build, for the examples, the functional suite and the tools.
+
+A production library contains no network simulator, no test seam, no
+`rocketnet_server_transport_dev_config`, no development token minting and no
+development server secret key (`tools/check_exports.py` checks the archive and
+the shared library). It refuses the development values: the published test
+packet filter at client and server create
+(`ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION`), the published
+development keys at server start (`ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION`),
+and a connect token sealed to the development server key at client connect
+(`ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION`). Keys, the packet filter
+and every other security setting still come from the config and its
+environment variables (`ROCKETNET_SERVER_PACKET_FILTER`,
+`ROCKETNET_CLIENT_PACKET_FILTER` and the rest), set at deploy time.
+
 ## Installing and embedding the SDK
 
-Build and install both libraries without examples, tests or tools:
+Build and install both production libraries without examples, tests or tools:
 
-    cmake -S . -B build-sdk -DCMAKE_BUILD_TYPE=Release \
+    cmake -S . -B build-sdk -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=OFF \
       -DROCKETNET_BUILD_TESTS=OFF -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF
     cmake --build build-sdk --parallel
     cmake --install build-sdk --prefix /your/sdk/prefix
@@ -349,7 +380,7 @@ build and the install. The Visual Studio generator is multi-config: it ignores
 fails with `file INSTALL cannot find ".../build-sdk/Release/rocketnet.lib"`. In
 PowerShell or cmd.exe:
 
-    cmake -S . -B build-sdk -A x64 -DROCKETNET_BUILD_TESTS=OFF -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF
+    cmake -S . -B build-sdk -A x64 -DROCKETNET_DEV=OFF -DROCKETNET_BUILD_TESTS=OFF -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF
     cmake --build build-sdk --config Release --parallel 4
     cmake --install build-sdk --config Release --prefix C:\your\sdk\prefix
 
@@ -376,8 +407,8 @@ The package accepts a request for any earlier or equal version of the same major
 version (`COMPATIBILITY SameMajorVersion`), so `find_package(RocketNet 1.0)`
 finds every later 1.x patch. The imported targets
 hand a consumer no floating-point option and no memory-budget definition: the
-only compile definition they carry is `ROCKETNET_SHARED` on
-`RocketNet::rocketnet_shared`. `tools/check_package.py` checks both.
+only compile definitions they carry are `ROCKETNET_DEV`, the value the library
+was built with, and `ROCKETNET_SHARED` on `RocketNet::rocketnet_shared`. `tools/check_package.py` checks both.
 The Unix shared-library soname follows the major version.
 Use a separate install prefix for each build configuration. With Visual Studio
 or another multi-config generator, pass `--config Debug` or `--config Release`
@@ -392,13 +423,13 @@ Examples, tests and tools default off when embedded, and the parent's
 `BUILD_SHARED_LIBS` does not change the static target. Explicit
 `ROCKETNET_BUILD_*` options override those defaults.
 
-The installed SDK is the production library, and it has no development token
-minting by design. `rocketnet_create_dev_connect_token` and
+An SDK installed from a production build (`-DROCKETNET_DEV=OFF`) has no
+development token minting by design. `rocketnet_create_dev_connect_token` and
 `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` are declared only with
-`ROCKETNET_DEVELOPMENT=1`; defining that macro while linking a production
+`ROCKETNET_DEV=1`; defining that macro while linking a production
 library does not provide the development function. For a first loopback try, embed the
 checkout and link both the server and the client to the development library,
-`rocketnet_dev`, which supplies `ROCKETNET_DEVELOPMENT=1`, creates development
+`rocketnet_dev`, which supplies `ROCKETNET_DEV=1`, creates development
 token strings, and accepts the published development backend public key.
 Initialize a server config with `rocketnet_server_default_config`, set a
 nonzero protocol ID and the key from `ROCKETNET_DEV_BACKEND_PUBLIC_KEY`, and

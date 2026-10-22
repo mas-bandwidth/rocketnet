@@ -48,15 +48,15 @@ static void fill_string( char * out, size_t len )
 
 static void test_log_callback_preformatted_contract()
 {
-    const char * ctx = "the-context";
+    static char ctx[] = "the-context";
     enum rocketnet_log_level_t saved = rocketnet_log_level_current();
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );
-    rocketnet_log_function( capture_callback, (void*) ctx );
+    rocketnet_log_function( capture_callback, ctx );
 
     char empty[1];
     empty[0] = '\0';
     rocketnet_error( "%s", empty );
-    check( g_ctx == (void*) ctx );
+    check( g_ctx == ctx );
     check( g_level == ROCKETNET_LOG_LEVEL_ERROR );
     check( g_len == 0 );
     check( g_buf[0] == '\0' );
@@ -64,7 +64,7 @@ static void test_log_callback_preformatted_contract()
     char str1023[1024];
     fill_string( str1023, 1023 );
     rocketnet_error( "%s", str1023 );
-    check( g_ctx == (void*) ctx );
+    check( g_ctx == ctx );
     check( g_len == 1023 );
     check( g_buf[1023] == '\0' );
     check( memcmp( g_buf, str1023, 1023 ) == 0 );
