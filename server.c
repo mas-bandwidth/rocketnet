@@ -101,6 +101,9 @@ static void set_status( const char * path, const char * line )
 // six kinds cell, bench, counters, rss, event and fail, appended to --results.
 static FILE * g_results = NULL;
 
+#if defined( __GNUC__ ) || defined( __clang__ )
+__attribute__(( format( printf, 2, 3 ) ))
+#endif
 static void results_line( const char * kind, const char * fmt, ... )
 {
     if ( !g_results )
@@ -114,6 +117,9 @@ static void results_line( const char * kind, const char * fmt, ... )
     fflush( g_results );
 }
 
+#if defined( __GNUC__ ) || defined( __clang__ )
+__attribute__(( format( printf, 1, 2 ) ))
+#endif
 static void results_event( const char * fmt, ... )
 {
     if ( !g_results )

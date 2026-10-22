@@ -25,30 +25,30 @@ inline void rocketnet_write_uint8( uint8_t ** p, uint8_t value )
 
 inline void rocketnet_write_uint16( uint8_t ** p, uint16_t value )
 {
-    (*p)[0] = value & 0xFF;
-    (*p)[1] = ( value >> 8 ) & 0xFF;
+    (*p)[0] = (uint8_t) ( value & 0xFF );
+    (*p)[1] = (uint8_t) ( ( value >> 8 ) & 0xFF );
     *p += 2;
 }
 
 inline void rocketnet_write_uint32( uint8_t ** p, uint32_t value )
 {
-    (*p)[0] = value & 0xFF;
-    (*p)[1] = ( value >> 8  ) & 0xFF;
-    (*p)[2] = ( value >> 16 ) & 0xFF;
-    (*p)[3] = ( value >> 24 ) & 0xFF;
+    (*p)[0] = (uint8_t) ( value & 0xFF );
+    (*p)[1] = (uint8_t) ( ( value >> 8  ) & 0xFF );
+    (*p)[2] = (uint8_t) ( ( value >> 16 ) & 0xFF );
+    (*p)[3] = (uint8_t) ( ( value >> 24 ) & 0xFF );
     *p += 4;
 }
 
 inline void rocketnet_write_uint64( uint8_t ** p, uint64_t value )
 {
-    (*p)[0] = value & 0xFF;
-    (*p)[1] = ( value >> 8  ) & 0xFF;
-    (*p)[2] = ( value >> 16 ) & 0xFF;
-    (*p)[3] = ( value >> 24 ) & 0xFF;
-    (*p)[4] = ( value >> 32 ) & 0xFF;
-    (*p)[5] = ( value >> 40 ) & 0xFF;
-    (*p)[6] = ( value >> 48 ) & 0xFF;
-    (*p)[7] = ( value >> 56 ) & 0xFF;
+    (*p)[0] = (uint8_t) ( value & 0xFF );
+    (*p)[1] = (uint8_t) ( ( value >> 8  ) & 0xFF );
+    (*p)[2] = (uint8_t) ( ( value >> 16 ) & 0xFF );
+    (*p)[3] = (uint8_t) ( ( value >> 24 ) & 0xFF );
+    (*p)[4] = (uint8_t) ( ( value >> 32 ) & 0xFF );
+    (*p)[5] = (uint8_t) ( ( value >> 40 ) & 0xFF );
+    (*p)[6] = (uint8_t) ( ( value >> 48 ) & 0xFF );
+    (*p)[7] = (uint8_t) ( ( value >> 56 ) & 0xFF );
     *p += 8;
 }
 

@@ -491,7 +491,7 @@ int rocketnet_generate_cookie_mac( uint8_t * mac,
     if ( input_bytes == 0 )
         return 0;
 
-    crypto_generichash( mac, ROCKETNET_COOKIE_MAC_BYTES, input, (size_t) input_bytes, cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
+    crypto_generichash( mac, ROCKETNET_COOKIE_MAC_BYTES, input, (unsigned long long) input_bytes, cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
 
     return 1;
 }
