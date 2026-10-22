@@ -59,7 +59,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../test/portable_crt.h"
+#include "../tests/portable_crt.h"
 
 // under AddressSanitizer the harness can read the live heap, so it checks
 // that an input leaves the heap as it found it (fuzz_overlay below)

@@ -8,7 +8,7 @@
     disconnect. The checks mirror test_loopback_transport_udp.
 */
 
-#include "../test/native_shutdown.h"
+#include "../tests/native_shutdown.h"
 #include "rocketnet.h"
 #include "rocketnet_layers.h"
 #include "rocketnet_connect_token.h"
@@ -40,7 +40,7 @@ do                                                                              
 } while(0)
 
 #define ROCKETNET_COUNTERS_CHECK rocketnet_check
-#include "../test/counters_expect.h"
+#include "../tests/counters_expect.h"
 
 void rocketnet_test_cpp_transports_connect_over_loopback()
 {

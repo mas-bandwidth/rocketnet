@@ -13,7 +13,7 @@
     drop, turns these cases red.
 */
 
-#include "../test/native_shutdown.h"
+#include "../tests/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"

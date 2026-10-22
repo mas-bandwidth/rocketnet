@@ -3,7 +3,7 @@
    Licensed under the GNU Affero General Public License v3.0
 
    Unit tests: no sockets, no real time. The known answers are the C
-   library's own, test/connect_token_vectors.json, minted by
+   library's own, tests/connect_token_vectors.json, minted by
    rocketnet_write_connect_token_deterministic; this backend must write
    every one of them byte for byte.
 */
@@ -46,7 +46,7 @@ type vector struct {
 }
 
 func loadVectors(t *testing.T) []vector {
-	data, err := os.ReadFile("../../../test/connect_token_vectors.json")
+	data, err := os.ReadFile("../../../tests/connect_token_vectors.json")
 	if err != nil {
 		t.Fatal(err)
 	}

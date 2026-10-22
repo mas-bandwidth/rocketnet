@@ -63,7 +63,7 @@
 
 #include "examples/shutdown.h"
 #include "rocketnet.h"
-#include "test/portable_crt.h"
+#include "tests/portable_crt.h"
 #include <errno.h>
 #include <float.h>
 #include <inttypes.h>

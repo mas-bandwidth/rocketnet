@@ -39,14 +39,14 @@
 #include "rocketnet_client_protocol.h"
 #include "rocketnet_test_vectors.h"
 #include "rocketnet_wire.h"
-#include "../test/portable_crt.h"
+#include "../tests/portable_crt.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet_client_slots.h"
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_token_tables.h"
 #include "rocketnet_ack.h"
 #include "rocketnet_read_write.h"
-#include "../test/pcapng.h"
+#include "../tests/pcapng.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -76,7 +76,7 @@ enum
 
 static uint64_t rocketnet_channel_allocator_calls;
 
-// The pcapng capture tee (test/pcapng/README.md). Active only when
+// The pcapng capture tee (tests/pcapng/README.md). Active only when
 // ROCKETNET_PCAPNG_CAPTURE_DIR is set at create: every datagram handed to the
 // simulator goes to interface 0 as a synthetic IPv4 + UDP frame, and every
 // session packet a receiving end will open is opened a second time here, on a

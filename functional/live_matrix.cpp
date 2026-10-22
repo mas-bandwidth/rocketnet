@@ -7,7 +7,7 @@
     loopback, every mode at once on every channel the config allows, both
     directions, across the full size schedule of section 4 including each
     mode's exact maximum. Every delivered message is verified by
-    test/live_verify.h; the reliable modes are checked for completeness and
+    tests/live_verify.h; the reliable modes are checked for completeness and
     order, the sequenced modes for strictly increasing sequences, the receipt
     modes for exactly one receipt per serial, and the over-maximum start is
     refused with its named counter. Codes 0 and 1 one past their
@@ -27,15 +27,15 @@
     the pass bound is 10 s of wall time.
 */
 
-#include "../test/native_shutdown.h"
-#include "../test/time_scale.h"
+#include "../tests/native_shutdown.h"
+#include "../tests/time_scale.h"
 #include "rocketnet.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_platform.h"
 
-#include "../test/live_verify.h"
-#include "../test/portable_crt.h"
+#include "../tests/live_verify.h"
+#include "../tests/portable_crt.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -63,7 +63,7 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double
 #define LIVE_MATRIX_RELIABLE_RATE           ( 40 * 1400 )
 #define LIVE_MATRIX_UNRELIABLE_RATE         ( 24 * 1400 )
 #define LIVE_MATRIX_RECEIPT_TABLE           ( 1 << 15 )
-// Release bounds as written; a Debug or sanitizer build scales them (test/time_scale.h)
+// Release bounds as written; a Debug or sanitizer build scales them (tests/time_scale.h)
 #define LIVE_MATRIX_WALL_BOUND              ( 30.0 * ROCKETNET_FUNCTIONAL_TIME_SCALE )
 #define LIVE_MATRIX_PASS_SECONDS            ( 10.0 * ROCKETNET_FUNCTIONAL_TIME_SCALE )
 #define LIVE_MATRIX_MAX_FAIL_LINES          24

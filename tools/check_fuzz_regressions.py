@@ -5,7 +5,7 @@
 #
 # Every minimized fuzz regression has both halves: a seed under
 # fuzz/corpus/regress_<name> or fuzz/corpus_message/regress_<name>, and one
-# test/pcapng/regress/<name>.pcapng whose packet carries exactly the seed's
+# tests/pcapng/regress/<name>.pcapng whose packet carries exactly the seed's
 # bytes after its selector byte. A seed without a capture, a capture without
 # a seed, and a capture whose bytes differ are each one line; any of them
 # makes the check exit 1. With no regression files the check exits 0 and
@@ -20,7 +20,7 @@ import sys
 import pcapng
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-REGESS = os.path.join("test", "pcapng", "regress")
+REGESS = os.path.join("tests", "pcapng", "regress")
 SEED_CORPORA = (("fuzz/corpus", pcapng.INTERFACE_WIRE),
                 ("fuzz/corpus_message", pcapng.INTERFACE_OPENED))
 
@@ -107,7 +107,7 @@ def selftest():
 
     with tempfile.TemporaryDirectory() as directory:
         root = directory
-        for part in ("fuzz/corpus", "fuzz/corpus_message", "test/pcapng/regress"):
+        for part in ("fuzz/corpus", "fuzz/corpus_message", "tests/pcapng/regress"):
             os.makedirs(os.path.join(root, *part.split("/")), exist_ok=True)
 
         prefilter = os.path.join(root, "prefilter.finding")

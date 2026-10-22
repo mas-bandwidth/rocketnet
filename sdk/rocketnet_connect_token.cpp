@@ -163,7 +163,7 @@ int rocketnet_write_connect_token( const struct rocketnet_signed_connect_data_t 
     return rocketnet_write_connect_token_sealed( signed_fields, private_fields, backend_secret_key, NULL, token );
 }
 
-// TEST-ONLY: exists for test/connect_token_vectors.json; see the header
+// TEST-ONLY: exists for tests/connect_token_vectors.json; see the header
 int rocketnet_write_connect_token_deterministic( const struct rocketnet_signed_connect_data_t * signed_fields,
                                                  const struct rocketnet_connect_token_private_t * private_fields,
                                                  const uint8_t * backend_secret_key,

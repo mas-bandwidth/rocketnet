@@ -13,13 +13,13 @@
     TerminateProcess, with sends to a closed port, and for the client.
 */
 
-#include "../test/native_shutdown.h"
+#include "../tests/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
 #include "rocketnet_connect_token.h"
-#include "../test/portable_crt.h"
-#include "../test/time_scale.h"
+#include "../tests/portable_crt.h"
+#include "../tests/time_scale.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,7 +38,7 @@
 #define WINDOWS_CONNRESET_TICK ( 1.0 / 60.0 )
 // the 50 ms allowance over one tick is the historical Release reference; a
 // Debug or sanitizer build scales it by the suites' one time scale
-// (test/time_scale.h). Measured
+// (tests/time_scale.h). Measured
 // 2026-10-22 on captain, Debug, exclusive, 10 runs of the 16 cases: max gap
 // 183.5 ms, 20 of 160 over the unscaled 66.7 ms. Release keeps 66.7 ms as the
 // reference; the closed-port case, which has no killed process, retains it as

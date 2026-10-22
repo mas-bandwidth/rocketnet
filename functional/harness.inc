@@ -37,7 +37,7 @@
 #include <string>
 #include <vector>
 
-#include "../test/portable_crt.h"
+#include "../tests/portable_crt.h"
 
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 #include <sys/socket.h>

@@ -132,7 +132,7 @@ def _register_names(path):
 def registered_unit_names():
     all_names = set()
     always = set()
-    for rel in (("sdk", "rocketnet_tests.cpp"), ("test_channels.cpp",)):
+    for rel in (("sdk", "rocketnet_tests.cpp"), ("tests", "test_channels.cpp")):
         a, p = _table_names(REPO.joinpath(*rel))
         all_names |= a
         always |= p
@@ -144,7 +144,7 @@ def registered_unit_names():
     table_names = set(all_names)
     seen = {}
     duplicates = []
-    for path in sorted(REPO.glob("test_unit_*.cpp")):
+    for path in sorted(REPO.glob("tests/test_unit_*.cpp")):
         for name, unconditional in _register_names(path):
             if name in seen or name in table_names:
                 duplicates.append("%s (%s, %s)" % (name, seen.get(name, "registry table"), path.name))
@@ -170,13 +170,13 @@ def exec_functional_names():
     # patterns, plus each exec case's own name.
     patterns = []
     for rel in (
-        "test_serialize.cpp",
-        "test_transport_control.cpp",
-        "test_msgx.cpp",
-        "test_xdp.cpp",
-        "test_iocp.cpp",
+        "tests/test_serialize.cpp",
+        "tests/test_transport_control.cpp",
+        "tests/test_msgx.cpp",
+        "tests/test_xdp.cpp",
+        "tests/test_iocp.cpp",
     ):
-        patterns.append(re.escape(rel[:-4]))
+        patterns.append(re.escape(Path(rel).stem))
         try:
             text = (REPO / rel).read_text()
         except OSError:
