@@ -440,8 +440,9 @@ How to read them:
 - `./bin/functional` opens real sockets on loopback. With no pin set
   `test_transport_env_pin_is_honoured` is not in the suite; under the portable pin
   it prints `test_transport_env_pin_is_honoured`, which is what CI greps for
-  (`.github/workflows/ci.yml`, "Run functional suite (portable rung pinned by
-  env)").
+  (`.github/workflows/nightly.yml`, `functional (full)`, "Run functional suite
+  (portable rung pinned by env)"; per commit, ci.yml's transport matrix runs
+  that case under each pin).
 - The loop is CI's macOS transport matrix, case by case; it prints nothing
   when every cell passes.
 - `./bin/functional` under a pin other than `portable` runs cases CI does not
