@@ -101,7 +101,7 @@ valid_signature	accept	accept	agree
 ...
 ```
 
-`verdict` is one of:
+Then one line per fuzz corpus file (below). `verdict` is one of:
 
 * `agree` — both libraries reach the same decision.
 * `rocketnet-weaker` — netcode refuses, rocketnet admits. A finding.
@@ -120,9 +120,76 @@ server's log lines are the decision (`challenge` is accept; expired, wrong
 protocol id, decrypt failure, whitelist, already used, and server full are
 the refusal classes).
 
+## The fuzz corpus mode
+
+`run.sh` also runs every file of `fuzz/corpus_connect_token/` through both
+libraries, after the case table. Each file is read the way
+`fuzz/rocketnet_fuzz_connect_token.cpp` reads it: byte 0 bit 0 picks the raw
+half (the rest of the input is the token, zero-padded to 768 bytes) or the
+structured half (`(u16 offset, xor)` records over a valid baseline token,
+the harness's own field values, minted to the differential server's test
+keys); byte 1, as signed minutes, moves the server's clock against the
+token's window (created at `ROCKETNET_TEST_CREATE_TS`, expiring 300 seconds
+later). Only the committed corpus files are used; the mode adds no input.
+
+A structured mutation is mapped by the token field each changed byte lands
+in (measured against the baseline, so cancelling flips change nothing) to
+the same relative byte of the equivalent netcode 1.02 field, with the same
+xor:
+
+| rocketnet field | bytes | netcode 1.02 equivalent |
+| --- | --- | --- |
+| version | 0-3 | the request's version info, byte for byte |
+| protocol id | 4-11 | the request's protocol id |
+| create | 12-19 | none: not comparable |
+| expire | 20-27 | the request's expire timestamp |
+| timeout | 28-31 | none (sealed inside netcode's private token): not comparable |
+| address flags, IPv4, IPv6 | 32-56 | none (sealed inside the private token): not comparable |
+| server key | 57-88 | none (netcode has no server public key): not comparable |
+| sealed private block | 89-520 | the request's encrypted private token, same offset |
+| signed pad | 521-575 | none: not comparable |
+| signature | 576-639 | the private token's MAC, offset mod 16 |
+| clear keys and pad | 640-767 | the public token's client keys and pad, before the client writes its request |
+
+A case touching any not-comparable field prints `not-comparable` and is not
+judged. The clock maps to netcode's `expire_seconds` (300 minus the offset,
+zero when that is not positive): netcode stamps and checks expiry on its own
+wall clock and keeps no create time, so a token "not yet created" is a valid
+token there. The raw half maps to a netcode request whose bytes after the
+packet type are the same input bytes, zero-padded.
+
+The netcode column comes from the live library when `NETCODE_DIR` is given
+and from `corpus_cases.tsv` otherwise, which records the live run against
+tag v1.2.1; a corpus file with no row there prints `needs-NETCODE_DIR` and
+`not-run`. The live run reports on stderr where it disagrees with that file,
+and prints a `FINDING` line on stderr for any `rocketnet-weaker` case.
+
+Measured against tag v1.2.1:
+
+```
+# corpus	fields	netcode	rocketnet	verdict
+raw_empty	raw,clock+0m	refuse:version	refuse:version	agree
+raw_version_prefix	raw,clock+0m	refuse:version	refuse:protocol	agree
+structured_before_create	untouched,clock-127m	accept	refuse:future	rocketnet-stricter
+structured_expired	untouched,clock+127m	refuse:expired	refuse:expired	agree
+structured_flip_clear_key	clear,clock+0m	accept	accept	agree
+structured_flip_protocol_id	protocol,clock+0m	refuse:protocol	refuse:protocol	agree
+structured_flip_signature	signature,clock+0m	refuse:signature	refuse:signature	agree
+structured_untouched	untouched,clock+0m	accept	accept	agree
+```
+
+No case is `rocketnet-weaker`. The one `rocketnet-stricter` case is a token
+presented before its create time: netcode 1.02 carries no create time to the
+server and admits it; rocketnet refuses it (`TOKEN_CREATED_IN_FUTURE`), which
+`REQUIREMENTS.md` permits. The verdict compares the decision only; the
+reason classes may differ when both refuse (`raw_version_prefix`: netcode
+stops at its version string, rocketnet at the protocol id).
+
 ## Files
 
 * `cases.tsv` — the case table and the netcode reference decisions.
+* `corpus_cases.tsv` — the netcode 1.02 reference decision for each mapped
+  fuzz corpus file, recorded from the live run.
 * `netcode_decisions.cpp` — the harness: drives rocketnet live and compares.
 * `run.sh` — builds both libraries (netcode only when `NETCODE_DIR` is given)
   and runs the harness.
