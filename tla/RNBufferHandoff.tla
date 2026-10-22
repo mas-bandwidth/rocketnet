@@ -296,7 +296,7 @@ SpecFair ==
     /\ Spec
     /\ \A t \in Threads : WF_vars( Consume(t) ) /\ WF_vars( ProducerExchange(t) ) /\ WF_vars( ConsumerExchange(t) ) /\ WF_vars( Unlock(t) )
     /\ WF_vars( Produce("worker") )
-    /\ WF_vars( WorkerLock ) /\ WF_vars( WorkerWait ) /\ WF_vars( WorkerWakes ) /\ WF_vars( WorkerExit )
+    /\ WF_vars( WorkerLock ) /\ WF_vars( WorkerWait ) /\ WF_vars( WorkerWakes ) /\ SF_vars( WorkerExit )
     /\ SF_vars( MainTryLock ) /\ WF_vars( MainLockWait )
 
 ----------------------------------------------------------------------------
