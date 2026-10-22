@@ -185,7 +185,7 @@ sodium_memzero(void *const pnt, const size_t len)
     explicit_bzero(pnt, len);
 #elif defined(HAVE_EXPLICIT_MEMSET)
     explicit_memset(pnt, 0, len);
-#elif HAVE_WEAK_SYMBOLS
+#elif defined(HAVE_WEAK_SYMBOLS) && HAVE_WEAK_SYMBOLS
     memset(pnt, 0, len);
     _sodium_dummy_symbol_to_prevent_memzero_lto(pnt, len);
 # ifdef HAVE_INLINE_ASM
@@ -209,7 +209,7 @@ sodium_stackzero(const size_t len)
 #ifdef HAVE_C_VARARRAYS
     unsigned char fodder[len];
     sodium_memzero(fodder, len);
-#elif HAVE_ALLOCA
+#elif defined(HAVE_ALLOCA) && HAVE_ALLOCA
     sodium_memzero(alloca(len), len);
 #endif
 }
@@ -245,7 +245,7 @@ sodium_memcmp(const void *const b1_, const void *const b2_, size_t len)
     size_t                 i;
     volatile unsigned char d = 0U;
 
-#if HAVE_WEAK_SYMBOLS
+#if defined(HAVE_WEAK_SYMBOLS) && HAVE_WEAK_SYMBOLS
     _sodium_dummy_symbol_to_prevent_memcmp_lto(b1, b2, len);
 #endif
     for (i = 0U; i < len; i++) {
@@ -287,7 +287,7 @@ sodium_compare(const unsigned char *b1_, const unsigned char *b2_, size_t len)
     volatile unsigned char eq = 1U;
     uint16_t               x1, x2;
 
-#if HAVE_WEAK_SYMBOLS
+#if defined(HAVE_WEAK_SYMBOLS) && HAVE_WEAK_SYMBOLS
     _sodium_dummy_symbol_to_prevent_compare_lto(b1, b2, len);
 #endif
     i = len;
@@ -295,8 +295,8 @@ sodium_compare(const unsigned char *b1_, const unsigned char *b2_, size_t len)
         i--;
         x1 = b1[i];
         x2 = b2[i];
-        gt |= ((x2 - x1) >> 8) & eq;
-        eq &= ((x2 ^ x1) - 1) >> 8;
+        gt = (unsigned char) (gt | (((x2 - x1) >> 8) & eq));
+        eq = (unsigned char) (eq & (((x2 ^ x1) - 1) >> 8));
     }
     return (int) (gt + gt + eq) - 1;
 }
@@ -403,7 +403,7 @@ sodium_add(unsigned char *a, const unsigned char *b, const size_t len)
     }
 #endif
     for (i = 0U; i < len; i++) {
-        c += (uint_fast16_t) a[i] + (uint_fast16_t) b[i];
+        c = (uint_fast16_t) (c + (uint_fast16_t) a[i] + (uint_fast16_t) b[i]);
         a[i] = (unsigned char) c;
         c >>= 8;
     }
@@ -446,7 +446,7 @@ sodium_sub(unsigned char *a, const unsigned char *b, const size_t len)
     }
 #endif
     for (i = 0U; i < len; i++) {
-        c = (uint_fast16_t) a[i] - (uint_fast16_t) b[i] - c;
+        c = (uint_fast16_t) ((uint_fast16_t) a[i] - (uint_fast16_t) b[i] - c);
         a[i] = (unsigned char) c;
         c = (c >> 8) & 1U;
     }
@@ -919,10 +919,10 @@ crypto_verify_n(const unsigned char *x_, const unsigned char *y_,
     volatile int     m;
     int              i;
 
-    const volatile __m128i *volatile x =
-        (const volatile __m128i *volatile) (const void *) x_;
-    const volatile __m128i *volatile y =
-        (const volatile __m128i *volatile) (const void *) y_;
+    const __m128i *volatile x =
+        (const __m128i *volatile) (const void *) x_;
+    const __m128i *volatile y =
+        (const __m128i *volatile) (const void *) y_;
     v1 = _mm_loadu_si128((const __m128i *) &x[0]);
     v2 = _mm_loadu_si128((const __m128i *) &y[0]);
     z = _mm_xor_si128(v1, v2);
@@ -1067,7 +1067,7 @@ _cpuid(unsigned int cpu_info[4U], const unsigned int cpu_info_type)
 {
 #if defined(_MSC_VER) && \
     (defined(_M_X64) || defined(_M_AMD64) || defined(_M_IX86))
-    __cpuid((int *) cpu_info, cpu_info_type);
+    __cpuid((int *) cpu_info, (int) cpu_info_type);
 #elif defined(HAVE_CPUID)
     cpu_info[0] = cpu_info[1] = cpu_info[2] = cpu_info[3] = 0;
 # ifdef __i386__
@@ -1230,7 +1230,7 @@ _sodium_runtime_get_cpu_features(void)
     ret &= _sodium_runtime_intel_cpu_features(&_cpu_features);
     _cpu_features.initialized = 1;
 
-    #if NETCODE_CRYPTO_LOGS
+    #if defined(NETCODE_CRYPTO_LOGS) && NETCODE_CRYPTO_LOGS
     printf( "\nCPU features: " );
     if ( _cpu_features.has_sse2 ) printf( "sse2 " );
     if ( _cpu_features.has_ssse3 ) printf( "ssse3 " );
@@ -1585,7 +1585,7 @@ _randombytes_linux_getrandom(void * const buf, const size_t size)
 
     assert(size <= 256U);
     do {
-        readnb = getrandom(buf, size, 0);
+        readnb = (int) getrandom(buf, size, 0);
     } while (readnb < 0 && (errno == EINTR || errno == EAGAIN));
 
     return (readnb == (int) size) - 1;
@@ -2021,7 +2021,7 @@ sodium_init(void)
     if (sodium_crit_leave() != 0) {
         return -1; /* LCOV_EXCL_LINE */
     }
-    #if NETCODE_CRYPTO_LOGS
+    #if defined(NETCODE_CRYPTO_LOGS) && NETCODE_CRYPTO_LOGS
     printf( "\n" );
     #endif // #if NETCODE_CRYPTO_LOGS
     return 0;
@@ -2625,22 +2625,22 @@ if (bytes >= 256) {
     __m128i rot8 =
         _mm_set_epi8(14, 13, 12, 15, 10, 9, 8, 11, 6, 5, 4, 7, 2, 1, 0, 3);
 
-    __m128i x_0  = _mm_set1_epi32(x[0]);
-    __m128i x_1  = _mm_set1_epi32(x[1]);
-    __m128i x_2  = _mm_set1_epi32(x[2]);
-    __m128i x_3  = _mm_set1_epi32(x[3]);
-    __m128i x_4  = _mm_set1_epi32(x[4]);
-    __m128i x_5  = _mm_set1_epi32(x[5]);
-    __m128i x_6  = _mm_set1_epi32(x[6]);
-    __m128i x_7  = _mm_set1_epi32(x[7]);
-    __m128i x_8  = _mm_set1_epi32(x[8]);
-    __m128i x_9  = _mm_set1_epi32(x[9]);
-    __m128i x_10 = _mm_set1_epi32(x[10]);
-    __m128i x_11 = _mm_set1_epi32(x[11]);
+    __m128i x_0  = _mm_set1_epi32((int) x[0]);
+    __m128i x_1  = _mm_set1_epi32((int) x[1]);
+    __m128i x_2  = _mm_set1_epi32((int) x[2]);
+    __m128i x_3  = _mm_set1_epi32((int) x[3]);
+    __m128i x_4  = _mm_set1_epi32((int) x[4]);
+    __m128i x_5  = _mm_set1_epi32((int) x[5]);
+    __m128i x_6  = _mm_set1_epi32((int) x[6]);
+    __m128i x_7  = _mm_set1_epi32((int) x[7]);
+    __m128i x_8  = _mm_set1_epi32((int) x[8]);
+    __m128i x_9  = _mm_set1_epi32((int) x[9]);
+    __m128i x_10 = _mm_set1_epi32((int) x[10]);
+    __m128i x_11 = _mm_set1_epi32((int) x[11]);
     __m128i x_12;
     __m128i x_13;
-    __m128i x_14   = _mm_set1_epi32(x[14]);
-    __m128i x_15   = _mm_set1_epi32(x[15]);
+    __m128i x_14   = _mm_set1_epi32((int) x[14]);
+    __m128i x_15   = _mm_set1_epi32((int) x[15]);
     __m128i orig0  = x_0;
     __m128i orig1  = x_1;
     __m128i orig2  = x_2;
@@ -2687,8 +2687,8 @@ if (bytes >= 256) {
         in12   = x[12];
         in13   = x[13];
         in1213 = ((uint64_t) in12) | (((uint64_t) in13) << 32);
-        t12    = _mm_set1_epi64x(in1213);
-        t13    = _mm_set1_epi64x(in1213);
+        t12    = _mm_set1_epi64x((int64_t) in1213);
+        t13    = _mm_set1_epi64x((int64_t) in1213);
 
         x_12 = _mm_add_epi64(addv12, t12);
         x_13 = _mm_add_epi64(addv13, t13);
@@ -2705,7 +2705,7 @@ if (bytes >= 256) {
         in1213 += 4;
 
         x[12] = in1213 & 0xFFFFFFFF;
-        x[13] = (in1213 >> 32) & 0xFFFFFFFF;
+        x[13] = (uint32_t) ((in1213 >> 32) & 0xFFFFFFFF);
 
         for (i = 0; i < ROUNDS; i += 2) {
             VEC4_QUARTERROUND(0, 4, 8, 12);
@@ -3303,22 +3303,22 @@ if (bytes >= 512) {
     uint32_t in12, in13;
 
     /* the naive way seems as fast (if not a bit faster) than the vector way */
-    __m256i x_0  = _mm256_set1_epi32(x[0]);
-    __m256i x_1  = _mm256_set1_epi32(x[1]);
-    __m256i x_2  = _mm256_set1_epi32(x[2]);
-    __m256i x_3  = _mm256_set1_epi32(x[3]);
-    __m256i x_4  = _mm256_set1_epi32(x[4]);
-    __m256i x_5  = _mm256_set1_epi32(x[5]);
-    __m256i x_6  = _mm256_set1_epi32(x[6]);
-    __m256i x_7  = _mm256_set1_epi32(x[7]);
-    __m256i x_8  = _mm256_set1_epi32(x[8]);
-    __m256i x_9  = _mm256_set1_epi32(x[9]);
-    __m256i x_10 = _mm256_set1_epi32(x[10]);
-    __m256i x_11 = _mm256_set1_epi32(x[11]);
+    __m256i x_0  = _mm256_set1_epi32((int) x[0]);
+    __m256i x_1  = _mm256_set1_epi32((int) x[1]);
+    __m256i x_2  = _mm256_set1_epi32((int) x[2]);
+    __m256i x_3  = _mm256_set1_epi32((int) x[3]);
+    __m256i x_4  = _mm256_set1_epi32((int) x[4]);
+    __m256i x_5  = _mm256_set1_epi32((int) x[5]);
+    __m256i x_6  = _mm256_set1_epi32((int) x[6]);
+    __m256i x_7  = _mm256_set1_epi32((int) x[7]);
+    __m256i x_8  = _mm256_set1_epi32((int) x[8]);
+    __m256i x_9  = _mm256_set1_epi32((int) x[9]);
+    __m256i x_10 = _mm256_set1_epi32((int) x[10]);
+    __m256i x_11 = _mm256_set1_epi32((int) x[11]);
     __m256i x_12;
     __m256i x_13;
-    __m256i x_14 = _mm256_set1_epi32(x[14]);
-    __m256i x_15 = _mm256_set1_epi32(x[15]);
+    __m256i x_14 = _mm256_set1_epi32((int) x[14]);
+    __m256i x_15 = _mm256_set1_epi32((int) x[15]);
 
     __m256i orig0  = x_0;
     __m256i orig1  = x_1;
@@ -3366,7 +3366,7 @@ if (bytes >= 512) {
         in12   = x[12];
         in13   = x[13];
         in1213 = ((uint64_t) in12) | (((uint64_t) in13) << 32);
-        x_12 = x_13 = _mm256_broadcastq_epi64(_mm_cvtsi64_si128(in1213));
+        x_12 = x_13 = _mm256_broadcastq_epi64(_mm_cvtsi64_si128((int64_t) in1213));
 
         t12 = _mm256_add_epi64(addv12, x_12);
         t13 = _mm256_add_epi64(addv13, x_13);
@@ -3387,7 +3387,7 @@ if (bytes >= 512) {
         in1213 += 8;
 
         x[12] = in1213 & 0xFFFFFFFF;
-        x[13] = (in1213 >> 32) & 0xFFFFFFFF;
+        x[13] = (uint32_t) ((in1213 >> 32) & 0xFFFFFFFF);
 
         for (i = 0; i < ROUNDS; i += 2) {
             VEC8_ROUND(0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15);
@@ -3551,22 +3551,22 @@ if (bytes >= 256) {
     __m128i rot8 =
         _mm_set_epi8(14, 13, 12, 15, 10, 9, 8, 11, 6, 5, 4, 7, 2, 1, 0, 3);
 
-    __m128i x_0  = _mm_set1_epi32(x[0]);
-    __m128i x_1  = _mm_set1_epi32(x[1]);
-    __m128i x_2  = _mm_set1_epi32(x[2]);
-    __m128i x_3  = _mm_set1_epi32(x[3]);
-    __m128i x_4  = _mm_set1_epi32(x[4]);
-    __m128i x_5  = _mm_set1_epi32(x[5]);
-    __m128i x_6  = _mm_set1_epi32(x[6]);
-    __m128i x_7  = _mm_set1_epi32(x[7]);
-    __m128i x_8  = _mm_set1_epi32(x[8]);
-    __m128i x_9  = _mm_set1_epi32(x[9]);
-    __m128i x_10 = _mm_set1_epi32(x[10]);
-    __m128i x_11 = _mm_set1_epi32(x[11]);
+    __m128i x_0  = _mm_set1_epi32((int) x[0]);
+    __m128i x_1  = _mm_set1_epi32((int) x[1]);
+    __m128i x_2  = _mm_set1_epi32((int) x[2]);
+    __m128i x_3  = _mm_set1_epi32((int) x[3]);
+    __m128i x_4  = _mm_set1_epi32((int) x[4]);
+    __m128i x_5  = _mm_set1_epi32((int) x[5]);
+    __m128i x_6  = _mm_set1_epi32((int) x[6]);
+    __m128i x_7  = _mm_set1_epi32((int) x[7]);
+    __m128i x_8  = _mm_set1_epi32((int) x[8]);
+    __m128i x_9  = _mm_set1_epi32((int) x[9]);
+    __m128i x_10 = _mm_set1_epi32((int) x[10]);
+    __m128i x_11 = _mm_set1_epi32((int) x[11]);
     __m128i x_12;
     __m128i x_13;
-    __m128i x_14   = _mm_set1_epi32(x[14]);
-    __m128i x_15   = _mm_set1_epi32(x[15]);
+    __m128i x_14   = _mm_set1_epi32((int) x[14]);
+    __m128i x_15   = _mm_set1_epi32((int) x[15]);
     __m128i orig0  = x_0;
     __m128i orig1  = x_1;
     __m128i orig2  = x_2;
@@ -3613,8 +3613,8 @@ if (bytes >= 256) {
         in12   = x[12];
         in13   = x[13];
         in1213 = ((uint64_t) in12) | (((uint64_t) in13) << 32);
-        t12    = _mm_set1_epi64x(in1213);
-        t13    = _mm_set1_epi64x(in1213);
+        t12    = _mm_set1_epi64x((int64_t) in1213);
+        t13    = _mm_set1_epi64x((int64_t) in1213);
 
         x_12 = _mm_add_epi64(addv12, t12);
         x_13 = _mm_add_epi64(addv13, t13);
@@ -3631,7 +3631,7 @@ if (bytes >= 256) {
         in1213 += 4;
 
         x[12] = in1213 & 0xFFFFFFFF;
-        x[13] = (in1213 >> 32) & 0xFFFFFFFF;
+        x[13] = (uint32_t) ((in1213 >> 32) & 0xFFFFFFFF);
 
         for (i = 0; i < ROUNDS; i += 2) {
             VEC4_QUARTERROUND(0, 4, 8, 12);
@@ -4187,7 +4187,7 @@ _crypto_stream_chacha20_pick_best_implementation(void)
 #if defined(HAVE_AVX2INTRIN_H) && defined(HAVE_EMMINTRIN_H) && \
     defined(HAVE_TMMINTRIN_H) && defined(HAVE_SMMINTRIN_H)
     if (sodium_runtime_has_avx2()) {
-        #if NETCODE_CRYPTO_LOGS
+        #if defined(NETCODE_CRYPTO_LOGS) && NETCODE_CRYPTO_LOGS
         printf( "chacha20 -> avx2\n" );
         #endif // #if NETCODE_CRYPTO_LOGS
         implementation = &crypto_stream_chacha20_dolbeau_avx2_implementation;
@@ -4196,14 +4196,14 @@ _crypto_stream_chacha20_pick_best_implementation(void)
 #endif
 #if defined(HAVE_EMMINTRIN_H) && defined(HAVE_TMMINTRIN_H)
     if (sodium_runtime_has_ssse3()) {
-        #if NETCODE_CRYPTO_LOGS
+        #if defined(NETCODE_CRYPTO_LOGS) && NETCODE_CRYPTO_LOGS
         printf( "chacha20 -> ssse3\n" );
         #endif // #if NETCODE_CRYPTO_LOGS
         implementation = &crypto_stream_chacha20_dolbeau_ssse3_implementation;
         return 0;
     }
 #endif
-    #if NETCODE_CRYPTO_LOGS
+    #if defined(NETCODE_CRYPTO_LOGS) && NETCODE_CRYPTO_LOGS
     printf( "chacha20 -> ref\n" );
     #endif // #if NETCODE_CRYPTO_LOGS
     return 0;
@@ -4808,7 +4808,7 @@ poly1305_update(poly1305_state_internal_t *st, const unsigned char *m,
 
     /* process full blocks */
     if (bytes >= poly1305_block_size) {
-        unsigned long long want = (bytes & ~(poly1305_block_size - 1));
+        unsigned long long want = (bytes & (unsigned long long) ~(poly1305_block_size - 1));
 
         poly1305_blocks(st, m, want);
         m += want;
@@ -5163,16 +5163,16 @@ poly1305_blocks(poly1305_state_internal_t *st, const unsigned char *m,
         if (st->flags & poly1305_final_r2_r) {
             /* use [r^2, r] */
             T2  = _mm_loadu_si128((const xmmi *) (const void *) &st->R[0]);
-            T3  = _mm_cvtsi32_si128(st->R[4]);
+            T3  = _mm_cvtsi32_si128((int) st->R[4]);
             T0  = _mm_loadu_si128((const xmmi *) (const void *) &st->R2[0]);
-            T1  = _mm_cvtsi32_si128(st->R2[4]);
+            T1  = _mm_cvtsi32_si128((int) st->R2[4]);
             T4  = _mm_unpacklo_epi32(T0, T2);
             T5  = _mm_unpackhi_epi32(T0, T2);
             R24 = _mm_unpacklo_epi64(T1, T3);
         } else {
             /* use [r^1, 1] */
             T0  = _mm_loadu_si128((const xmmi *) (const void *) &st->R[0]);
-            T1  = _mm_cvtsi32_si128(st->R[4]);
+            T1  = _mm_cvtsi32_si128((int) st->R[4]);
             T2  = _mm_cvtsi32_si128(1);
             T4  = _mm_unpacklo_epi32(T0, T2);
             T5  = _mm_unpackhi_epi32(T0, T2);
@@ -5185,7 +5185,7 @@ poly1305_blocks(poly1305_state_internal_t *st, const unsigned char *m,
     } else {
         /* use [r^2, r^2] */
         T0  = _mm_loadu_si128((const xmmi *) (const void *) &st->R2[0]);
-        T1  = _mm_cvtsi32_si128(st->R2[4]);
+        T1  = _mm_cvtsi32_si128((int) st->R2[4]);
         R20 = _mm_shuffle_epi32(T0, _MM_SHUFFLE(0, 0, 0, 0));
         R21 = _mm_shuffle_epi32(T0, _MM_SHUFFLE(1, 1, 1, 1));
         R22 = _mm_shuffle_epi32(T0, _MM_SHUFFLE(2, 2, 2, 2));
@@ -5199,7 +5199,7 @@ poly1305_blocks(poly1305_state_internal_t *st, const unsigned char *m,
 
     if (bytes >= 64) {
         T0  = _mm_loadu_si128((const xmmi *) (const void *) &st->R4[0]);
-        T1  = _mm_cvtsi32_si128(st->R4[4]);
+        T1  = _mm_cvtsi32_si128((int) st->R4[4]);
         R40 = _mm_shuffle_epi32(T0, _MM_SHUFFLE(0, 0, 0, 0));
         R41 = _mm_shuffle_epi32(T0, _MM_SHUFFLE(1, 1, 1, 1));
         R42 = _mm_shuffle_epi32(T0, _MM_SHUFFLE(2, 2, 2, 2));
@@ -5612,19 +5612,19 @@ poly1305_blocks(poly1305_state_internal_t *st, const unsigned char *m,
         T3 = _mm_add_epi64(T3, _mm_srli_si128(T3, 8));
         T4 = _mm_add_epi64(T4, _mm_srli_si128(T4, 8));
 
-        t0 = _mm_cvtsi128_si32(T0);
+        t0 = (uint32_t) _mm_cvtsi128_si32(T0);
         b  = (t0 >> 26);
         t0 &= 0x3ffffff;
-        t1 = _mm_cvtsi128_si32(T1) + b;
+        t1 = (uint32_t) _mm_cvtsi128_si32(T1) + b;
         b  = (t1 >> 26);
         t1 &= 0x3ffffff;
-        t2 = _mm_cvtsi128_si32(T2) + b;
+        t2 = (uint32_t) _mm_cvtsi128_si32(T2) + b;
         b  = (t2 >> 26);
         t2 &= 0x3ffffff;
-        t3 = _mm_cvtsi128_si32(T3) + b;
+        t3 = (uint32_t) _mm_cvtsi128_si32(T3) + b;
         b  = (t3 >> 26);
         t3 &= 0x3ffffff;
-        t4 = _mm_cvtsi128_si32(T4) + b;
+        t4 = (uint32_t) _mm_cvtsi128_si32(T4) + b;
 
         /* everything except t4 is in range, so this is all safe */
         h0 = (((uint64_t) t0) | ((uint64_t) t1 << 26)) & 0xfffffffffffull;
@@ -5697,7 +5697,7 @@ poly1305_update(poly1305_state_internal_t *st, const unsigned char *m,
 
     /* process full blocks */
     if (bytes >= poly1305_block_size) {
-        unsigned long long want = (bytes & ~(poly1305_block_size - 1));
+        unsigned long long want = (bytes & (unsigned long long) ~(poly1305_block_size - 1));
 
         poly1305_blocks(st, m, want);
         m += want;
@@ -5825,7 +5825,7 @@ crypto_onetimeauth_poly1305_sse2(unsigned char *out, const unsigned char *m,
     unsigned long long                         blocks;
 
     poly1305_init_ext(&st, key, inlen);
-    blocks = inlen & ~31;
+    blocks = inlen & (unsigned long long) ~31;
     if (blocks > 0) {
         poly1305_blocks(&st, m, blocks);
         m += blocks;
@@ -5964,14 +5964,14 @@ _crypto_onetimeauth_poly1305_pick_best_implementation(void)
     implementation = &crypto_onetimeauth_poly1305_donna_implementation;
 #if defined(HAVE_TI_MODE) && defined(HAVE_EMMINTRIN_H)
     if (sodium_runtime_has_sse2()) {
-        #if NETCODE_CRYPTO_LOGS
+        #if defined(NETCODE_CRYPTO_LOGS) && NETCODE_CRYPTO_LOGS
         printf( "poly1305 -> sse3\n" );
         #endif // #if NETCODE_CRYPTO_LOGS
         implementation = &crypto_onetimeauth_poly1305_sse2_implementation;
         return 0;
     }
 #endif
-    #if NETCODE_CRYPTO_LOGS
+    #if defined(NETCODE_CRYPTO_LOGS) && NETCODE_CRYPTO_LOGS
     printf( "poly1305 -> ref\n" );
     #endif // #if NETCODE_CRYPTO_LOGS
     return 0;
@@ -9669,7 +9669,7 @@ fe25519_mul32(fe25519 h, const fe25519 f, uint32_t n)
     a  = f[4] * sn + ((uint64_t) (a >> 51));
     h4 = ((uint64_t) a) & mask;
 
-    h0 += (a >> 51) * 19ULL;
+    h0 = (uint64_t) (h0 + (a >> 51) * 19ULL);
 
     h[0] = h0;
     h[1] = h1;
@@ -9855,16 +9855,16 @@ fe25519_cmov(fe25519 f, const fe25519 g, unsigned int b)
     int32_t x8 = f8 ^ g[8];
     int32_t x9 = f9 ^ g[9];
 
-    x0 &= mask;
-    x1 &= mask;
-    x2 &= mask;
-    x3 &= mask;
-    x4 &= mask;
-    x5 &= mask;
-    x6 &= mask;
-    x7 &= mask;
-    x8 &= mask;
-    x9 &= mask;
+    x0 = (int32_t) ((uint32_t) x0 & mask);
+    x1 = (int32_t) ((uint32_t) x1 & mask);
+    x2 = (int32_t) ((uint32_t) x2 & mask);
+    x3 = (int32_t) ((uint32_t) x3 & mask);
+    x4 = (int32_t) ((uint32_t) x4 & mask);
+    x5 = (int32_t) ((uint32_t) x5 & mask);
+    x6 = (int32_t) ((uint32_t) x6 & mask);
+    x7 = (int32_t) ((uint32_t) x7 & mask);
+    x8 = (int32_t) ((uint32_t) x8 & mask);
+    x9 = (int32_t) ((uint32_t) x9 & mask);
 
     f[0] = f0 ^ x0;
     f[1] = f1 ^ x1;
@@ -9916,16 +9916,16 @@ fe25519_cswap(fe25519 f, fe25519 g, unsigned int b)
     int32_t x8 = f8 ^ g8;
     int32_t x9 = f9 ^ g9;
 
-    x0 &= mask;
-    x1 &= mask;
-    x2 &= mask;
-    x3 &= mask;
-    x4 &= mask;
-    x5 &= mask;
-    x6 &= mask;
-    x7 &= mask;
-    x8 &= mask;
-    x9 &= mask;
+    x0 = (int32_t) ((uint32_t) x0 & mask);
+    x1 = (int32_t) ((uint32_t) x1 & mask);
+    x2 = (int32_t) ((uint32_t) x2 & mask);
+    x3 = (int32_t) ((uint32_t) x3 & mask);
+    x4 = (int32_t) ((uint32_t) x4 & mask);
+    x5 = (int32_t) ((uint32_t) x5 & mask);
+    x6 = (int32_t) ((uint32_t) x6 & mask);
+    x7 = (int32_t) ((uint32_t) x7 & mask);
+    x8 = (int32_t) ((uint32_t) x8 & mask);
+    x9 = (int32_t) ((uint32_t) x9 & mask);
 
     f[0] = f0 ^ x0;
     f[1] = f1 ^ x1;
@@ -10210,10 +10210,10 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
     /* |h0| <= 2^25 */
     /* |h4| <= 2^25 */
     /* |h1| <= 1.71*2^59 */
@@ -10221,10 +10221,10 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry1 = (h1 + (int64_t)(1L << 24)) >> 25;
     h2 += carry1;
-    h1 -= carry1 * ((uint64_t) 1L << 25);
+    h1 = (int64_t) ((uint64_t) h1 - (uint64_t) carry1 * ((uint64_t) 1L << 25));
     carry5 = (h5 + (int64_t)(1L << 24)) >> 25;
     h6 += carry5;
-    h5 -= carry5 * ((uint64_t) 1L << 25);
+    h5 = (int64_t) ((uint64_t) h5 - (uint64_t) carry5 * ((uint64_t) 1L << 25));
     /* |h1| <= 2^24; from now on fits into int32 */
     /* |h5| <= 2^24; from now on fits into int32 */
     /* |h2| <= 1.41*2^60 */
@@ -10232,10 +10232,10 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry2 = (h2 + (int64_t)(1L << 25)) >> 26;
     h3 += carry2;
-    h2 -= carry2 * ((uint64_t) 1L << 26);
+    h2 = (int64_t) ((uint64_t) h2 - (uint64_t) carry2 * ((uint64_t) 1L << 26));
     carry6 = (h6 + (int64_t)(1L << 25)) >> 26;
     h7 += carry6;
-    h6 -= carry6 * ((uint64_t) 1L << 26);
+    h6 = (int64_t) ((uint64_t) h6 - (uint64_t) carry6 * ((uint64_t) 1L << 26));
     /* |h2| <= 2^25; from now on fits into int32 unchanged */
     /* |h6| <= 2^25; from now on fits into int32 unchanged */
     /* |h3| <= 1.71*2^59 */
@@ -10243,10 +10243,10 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry3 = (h3 + (int64_t)(1L << 24)) >> 25;
     h4 += carry3;
-    h3 -= carry3 * ((uint64_t) 1L << 25);
+    h3 = (int64_t) ((uint64_t) h3 - (uint64_t) carry3 * ((uint64_t) 1L << 25));
     carry7 = (h7 + (int64_t)(1L << 24)) >> 25;
     h8 += carry7;
-    h7 -= carry7 * ((uint64_t) 1L << 25);
+    h7 = (int64_t) ((uint64_t) h7 - (uint64_t) carry7 * ((uint64_t) 1L << 25));
     /* |h3| <= 2^24; from now on fits into int32 unchanged */
     /* |h7| <= 2^24; from now on fits into int32 unchanged */
     /* |h4| <= 1.72*2^34 */
@@ -10254,10 +10254,10 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
     carry8 = (h8 + (int64_t)(1L << 25)) >> 26;
     h9 += carry8;
-    h8 -= carry8 * ((uint64_t) 1L << 26);
+    h8 = (int64_t) ((uint64_t) h8 - (uint64_t) carry8 * ((uint64_t) 1L << 26));
     /* |h4| <= 2^25; from now on fits into int32 unchanged */
     /* |h8| <= 2^25; from now on fits into int32 unchanged */
     /* |h5| <= 1.01*2^24 */
@@ -10265,13 +10265,13 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry9 = (h9 + (int64_t)(1L << 24)) >> 25;
     h0 += carry9 * 19;
-    h9 -= carry9 * ((uint64_t) 1L << 25);
+    h9 = (int64_t) ((uint64_t) h9 - (uint64_t) carry9 * ((uint64_t) 1L << 25));
     /* |h9| <= 2^24; from now on fits into int32 unchanged */
     /* |h0| <= 1.1*2^39 */
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
     /* |h0| <= 2^25; from now on fits into int32 unchanged */
     /* |h1| <= 1.01*2^24 */
 
@@ -10406,46 +10406,46 @@ fe25519_sq(fe25519 h, const fe25519 f)
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
 
     carry1 = (h1 + (int64_t)(1L << 24)) >> 25;
     h2 += carry1;
-    h1 -= carry1 * ((uint64_t) 1L << 25);
+    h1 = (int64_t) ((uint64_t) h1 - (uint64_t) carry1 * ((uint64_t) 1L << 25));
     carry5 = (h5 + (int64_t)(1L << 24)) >> 25;
     h6 += carry5;
-    h5 -= carry5 * ((uint64_t) 1L << 25);
+    h5 = (int64_t) ((uint64_t) h5 - (uint64_t) carry5 * ((uint64_t) 1L << 25));
 
     carry2 = (h2 + (int64_t)(1L << 25)) >> 26;
     h3 += carry2;
-    h2 -= carry2 * ((uint64_t) 1L << 26);
+    h2 = (int64_t) ((uint64_t) h2 - (uint64_t) carry2 * ((uint64_t) 1L << 26));
     carry6 = (h6 + (int64_t)(1L << 25)) >> 26;
     h7 += carry6;
-    h6 -= carry6 * ((uint64_t) 1L << 26);
+    h6 = (int64_t) ((uint64_t) h6 - (uint64_t) carry6 * ((uint64_t) 1L << 26));
 
     carry3 = (h3 + (int64_t)(1L << 24)) >> 25;
     h4 += carry3;
-    h3 -= carry3 * ((uint64_t) 1L << 25);
+    h3 = (int64_t) ((uint64_t) h3 - (uint64_t) carry3 * ((uint64_t) 1L << 25));
     carry7 = (h7 + (int64_t)(1L << 24)) >> 25;
     h8 += carry7;
-    h7 -= carry7 * ((uint64_t) 1L << 25);
+    h7 = (int64_t) ((uint64_t) h7 - (uint64_t) carry7 * ((uint64_t) 1L << 25));
 
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
     carry8 = (h8 + (int64_t)(1L << 25)) >> 26;
     h9 += carry8;
-    h8 -= carry8 * ((uint64_t) 1L << 26);
+    h8 = (int64_t) ((uint64_t) h8 - (uint64_t) carry8 * ((uint64_t) 1L << 26));
 
     carry9 = (h9 + (int64_t)(1L << 24)) >> 25;
     h0 += carry9 * 19;
-    h9 -= carry9 * ((uint64_t) 1L << 25);
+    h9 = (int64_t) ((uint64_t) h9 - (uint64_t) carry9 * ((uint64_t) 1L << 25));
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
 
     h[0] = (int32_t) h0;
     h[1] = (int32_t) h1;
@@ -10589,46 +10589,46 @@ fe25519_sq2(fe25519 h, const fe25519 f)
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
 
     carry1 = (h1 + (int64_t)(1L << 24)) >> 25;
     h2 += carry1;
-    h1 -= carry1 * ((uint64_t) 1L << 25);
+    h1 = (int64_t) ((uint64_t) h1 - (uint64_t) carry1 * ((uint64_t) 1L << 25));
     carry5 = (h5 + (int64_t)(1L << 24)) >> 25;
     h6 += carry5;
-    h5 -= carry5 * ((uint64_t) 1L << 25);
+    h5 = (int64_t) ((uint64_t) h5 - (uint64_t) carry5 * ((uint64_t) 1L << 25));
 
     carry2 = (h2 + (int64_t)(1L << 25)) >> 26;
     h3 += carry2;
-    h2 -= carry2 * ((uint64_t) 1L << 26);
+    h2 = (int64_t) ((uint64_t) h2 - (uint64_t) carry2 * ((uint64_t) 1L << 26));
     carry6 = (h6 + (int64_t)(1L << 25)) >> 26;
     h7 += carry6;
-    h6 -= carry6 * ((uint64_t) 1L << 26);
+    h6 = (int64_t) ((uint64_t) h6 - (uint64_t) carry6 * ((uint64_t) 1L << 26));
 
     carry3 = (h3 + (int64_t)(1L << 24)) >> 25;
     h4 += carry3;
-    h3 -= carry3 * ((uint64_t) 1L << 25);
+    h3 = (int64_t) ((uint64_t) h3 - (uint64_t) carry3 * ((uint64_t) 1L << 25));
     carry7 = (h7 + (int64_t)(1L << 24)) >> 25;
     h8 += carry7;
-    h7 -= carry7 * ((uint64_t) 1L << 25);
+    h7 = (int64_t) ((uint64_t) h7 - (uint64_t) carry7 * ((uint64_t) 1L << 25));
 
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
     carry8 = (h8 + (int64_t)(1L << 25)) >> 26;
     h9 += carry8;
-    h8 -= carry8 * ((uint64_t) 1L << 26);
+    h8 = (int64_t) ((uint64_t) h8 - (uint64_t) carry8 * ((uint64_t) 1L << 26));
 
     carry9 = (h9 + (int64_t)(1L << 24)) >> 25;
     h0 += carry9 * 19;
-    h9 -= carry9 * ((uint64_t) 1L << 25);
+    h9 = (int64_t) ((uint64_t) h9 - (uint64_t) carry9 * ((uint64_t) 1L << 25));
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
 
     h[0] = (int32_t) h0;
     h[1] = (int32_t) h1;
@@ -11008,11 +11008,11 @@ fe25519_reduce(fe25519 h, const fe25519 f)
     t[3] &= mask;
     t[4] &= mask;
 
-    h[0] = t[0];
-    h[1] = t[1];
-    h[2] = t[2];
-    h[3] = t[3];
-    h[4] = t[4];
+    h[0] = (uint64_t) t[0];
+    h[1] = (uint64_t) t[1];
+    h[2] = (uint64_t) t[2];
+    h[3] = (uint64_t) t[3];
+    h[4] = (uint64_t) t[4];
 }
 
 void
@@ -11085,16 +11085,16 @@ static const fe25519 sqdmone = {
 void
 fe25519_frombytes(fe25519 h, const unsigned char *s)
 {
-    int64_t h0 = load_4(s);
-    int64_t h1 = load_3(s + 4) << 6;
-    int64_t h2 = load_3(s + 7) << 5;
-    int64_t h3 = load_3(s + 10) << 3;
-    int64_t h4 = load_3(s + 13) << 2;
-    int64_t h5 = load_4(s + 16);
-    int64_t h6 = load_3(s + 20) << 7;
-    int64_t h7 = load_3(s + 23) << 5;
-    int64_t h8 = load_3(s + 26) << 4;
-    int64_t h9 = (load_3(s + 29) & 8388607) << 2;
+    int64_t h0 = (int64_t) (load_4(s));
+    int64_t h1 = (int64_t) (load_3(s + 4) << 6);
+    int64_t h2 = (int64_t) (load_3(s + 7) << 5);
+    int64_t h3 = (int64_t) (load_3(s + 10) << 3);
+    int64_t h4 = (int64_t) (load_3(s + 13) << 2);
+    int64_t h5 = (int64_t) (load_4(s + 16));
+    int64_t h6 = (int64_t) (load_3(s + 20) << 7);
+    int64_t h7 = (int64_t) (load_3(s + 23) << 5);
+    int64_t h8 = (int64_t) (load_3(s + 26) << 4);
+    int64_t h9 = (int64_t) ((load_3(s + 29) & 8388607) << 2);
 
     int64_t carry0;
     int64_t carry1;
@@ -11109,35 +11109,35 @@ fe25519_frombytes(fe25519 h, const unsigned char *s)
 
     carry9 = (h9 + (int64_t)(1L << 24)) >> 25;
     h0 += carry9 * 19;
-    h9 -= carry9 * ((uint64_t) 1L << 25);
+    h9 = (int64_t) ((uint64_t) h9 - (uint64_t) carry9 * ((uint64_t) 1L << 25));
     carry1 = (h1 + (int64_t)(1L << 24)) >> 25;
     h2 += carry1;
-    h1 -= carry1 * ((uint64_t) 1L << 25);
+    h1 = (int64_t) ((uint64_t) h1 - (uint64_t) carry1 * ((uint64_t) 1L << 25));
     carry3 = (h3 + (int64_t)(1L << 24)) >> 25;
     h4 += carry3;
-    h3 -= carry3 * ((uint64_t) 1L << 25);
+    h3 = (int64_t) ((uint64_t) h3 - (uint64_t) carry3 * ((uint64_t) 1L << 25));
     carry5 = (h5 + (int64_t)(1L << 24)) >> 25;
     h6 += carry5;
-    h5 -= carry5 * ((uint64_t) 1L << 25);
+    h5 = (int64_t) ((uint64_t) h5 - (uint64_t) carry5 * ((uint64_t) 1L << 25));
     carry7 = (h7 + (int64_t)(1L << 24)) >> 25;
     h8 += carry7;
-    h7 -= carry7 * ((uint64_t) 1L << 25);
+    h7 = (int64_t) ((uint64_t) h7 - (uint64_t) carry7 * ((uint64_t) 1L << 25));
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
     carry2 = (h2 + (int64_t)(1L << 25)) >> 26;
     h3 += carry2;
-    h2 -= carry2 * ((uint64_t) 1L << 26);
+    h2 = (int64_t) ((uint64_t) h2 - (uint64_t) carry2 * ((uint64_t) 1L << 26));
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
     carry6 = (h6 + (int64_t)(1L << 25)) >> 26;
     h7 += carry6;
-    h6 -= carry6 * ((uint64_t) 1L << 26);
+    h6 = (int64_t) ((uint64_t) h6 - (uint64_t) carry6 * ((uint64_t) 1L << 26));
     carry8 = (h8 + (int64_t)(1L << 25)) >> 26;
     h9 += carry8;
-    h8 -= carry8 * ((uint64_t) 1L << 26);
+    h8 = (int64_t) ((uint64_t) h8 - (uint64_t) carry8 * ((uint64_t) 1L << 26));
 
     h[0] = (int32_t) h0;
     h[1] = (int32_t) h1;
@@ -11193,7 +11193,7 @@ fe25519_reduce(fe25519 h, const fe25519 f)
     int32_t q;
     int32_t carry0, carry1, carry2, carry3, carry4, carry5, carry6, carry7, carry8, carry9;
 
-    q = (19 * h9 + ((uint32_t) 1L << 24)) >> 25;
+    q = (int32_t) (((uint32_t) (19 * h9) + ((uint32_t) 1L << 24)) >> 25);
     q = (h0 + q) >> 26;
     q = (h1 + q) >> 25;
     q = (h2 + q) >> 26;
@@ -11211,33 +11211,33 @@ fe25519_reduce(fe25519 h, const fe25519 f)
 
     carry0 = h0 >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint32_t) 1L << 26);
+    h0 = (int32_t) ((uint32_t) h0 - (uint32_t) carry0 * ((uint32_t) 1L << 26));
     carry1 = h1 >> 25;
     h2 += carry1;
-    h1 -= carry1 * ((uint32_t) 1L << 25);
+    h1 = (int32_t) ((uint32_t) h1 - (uint32_t) carry1 * ((uint32_t) 1L << 25));
     carry2 = h2 >> 26;
     h3 += carry2;
-    h2 -= carry2 * ((uint32_t) 1L << 26);
+    h2 = (int32_t) ((uint32_t) h2 - (uint32_t) carry2 * ((uint32_t) 1L << 26));
     carry3 = h3 >> 25;
     h4 += carry3;
-    h3 -= carry3 * ((uint32_t) 1L << 25);
+    h3 = (int32_t) ((uint32_t) h3 - (uint32_t) carry3 * ((uint32_t) 1L << 25));
     carry4 = h4 >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint32_t) 1L << 26);
+    h4 = (int32_t) ((uint32_t) h4 - (uint32_t) carry4 * ((uint32_t) 1L << 26));
     carry5 = h5 >> 25;
     h6 += carry5;
-    h5 -= carry5 * ((uint32_t) 1L << 25);
+    h5 = (int32_t) ((uint32_t) h5 - (uint32_t) carry5 * ((uint32_t) 1L << 25));
     carry6 = h6 >> 26;
     h7 += carry6;
-    h6 -= carry6 * ((uint32_t) 1L << 26);
+    h6 = (int32_t) ((uint32_t) h6 - (uint32_t) carry6 * ((uint32_t) 1L << 26));
     carry7 = h7 >> 25;
     h8 += carry7;
-    h7 -= carry7 * ((uint32_t) 1L << 25);
+    h7 = (int32_t) ((uint32_t) h7 - (uint32_t) carry7 * ((uint32_t) 1L << 25));
     carry8 = h8 >> 26;
     h9 += carry8;
-    h8 -= carry8 * ((uint32_t) 1L << 26);
+    h8 = (int32_t) ((uint32_t) h8 - (uint32_t) carry8 * ((uint32_t) 1L << 26));
     carry9 = h9 >> 25;
-    h9 -= carry9 * ((uint32_t) 1L << 25);
+    h9 = (int32_t) ((uint32_t) h9 - (uint32_t) carry9 * ((uint32_t) 1L << 25));
 
     h[0] = h0;
     h[1] = h1;
@@ -11268,32 +11268,32 @@ fe25519_tobytes(unsigned char *s, const fe25519 h)
     s[0]  = (unsigned char) (t[0] >> 0);
     s[1]  = (unsigned char) (t[0] >> 8);
     s[2]  = (unsigned char) (t[0] >> 16);
-    s[3]  = (unsigned char) ((t[0] >> 24) | (t[1] * ((uint32_t) 1 << 2)));
+    s[3]  = (unsigned char) ((uint32_t) (t[0] >> 24) | ((uint32_t) t[1] * ((uint32_t) 1 << 2)));
     s[4]  = (unsigned char) (t[1] >> 6);
     s[5]  = (unsigned char) (t[1] >> 14);
-    s[6]  = (unsigned char) ((t[1] >> 22) | (t[2] * ((uint32_t) 1 << 3)));
+    s[6]  = (unsigned char) ((uint32_t) (t[1] >> 22) | ((uint32_t) t[2] * ((uint32_t) 1 << 3)));
     s[7]  = (unsigned char) (t[2] >> 5);
     s[8]  = (unsigned char) (t[2] >> 13);
-    s[9]  = (unsigned char) ((t[2] >> 21) | (t[3] * ((uint32_t) 1 << 5)));
+    s[9]  = (unsigned char) ((uint32_t) (t[2] >> 21) | ((uint32_t) t[3] * ((uint32_t) 1 << 5)));
     s[10] = (unsigned char) (t[3] >> 3);
     s[11] = (unsigned char) (t[3] >> 11);
-    s[12] = (unsigned char) ((t[3] >> 19) | (t[4] * ((uint32_t) 1 << 6)));
+    s[12] = (unsigned char) ((uint32_t) (t[3] >> 19) | ((uint32_t) t[4] * ((uint32_t) 1 << 6)));
     s[13] = (unsigned char) (t[4] >> 2);
     s[14] = (unsigned char) (t[4] >> 10);
     s[15] = (unsigned char) (t[4] >> 18);
     s[16] = (unsigned char) (t[5] >> 0);
     s[17] = (unsigned char) (t[5] >> 8);
     s[18] = (unsigned char) (t[5] >> 16);
-    s[19] = (unsigned char) ((t[5] >> 24) | (t[6] * ((uint32_t) 1 << 1)));
+    s[19] = (unsigned char) ((uint32_t) (t[5] >> 24) | ((uint32_t) t[6] * ((uint32_t) 1 << 1)));
     s[20] = (unsigned char) (t[6] >> 7);
     s[21] = (unsigned char) (t[6] >> 15);
-    s[22] = (unsigned char) ((t[6] >> 23) | (t[7] * ((uint32_t) 1 << 3)));
+    s[22] = (unsigned char) ((uint32_t) (t[6] >> 23) | ((uint32_t) t[7] * ((uint32_t) 1 << 3)));
     s[23] = (unsigned char) (t[7] >> 5);
     s[24] = (unsigned char) (t[7] >> 13);
-    s[25] = (unsigned char) ((t[7] >> 21) | (t[8] * ((uint32_t) 1 << 4)));
+    s[25] = (unsigned char) ((uint32_t) (t[7] >> 21) | ((uint32_t) t[8] * ((uint32_t) 1 << 4)));
     s[26] = (unsigned char) (t[8] >> 4);
     s[27] = (unsigned char) (t[8] >> 12);
-    s[28] = (unsigned char) ((t[8] >> 20) | (t[9] * ((uint32_t) 1 << 6)));
+    s[28] = (unsigned char) ((uint32_t) (t[8] >> 20) | ((uint32_t) t[9] * ((uint32_t) 1 << 6)));
     s[29] = (unsigned char) (t[9] >> 2);
     s[30] = (unsigned char) (t[9] >> 10);
     s[31] = (unsigned char) (t[9] >> 18);
@@ -11422,7 +11422,7 @@ fe25519_cneg(fe25519 h, const fe25519 f, unsigned int b)
 static inline void
 fe25519_abs(fe25519 h, const fe25519 f)
 {
-    fe25519_cneg(h, f, fe25519_isnegative(f));
+    fe25519_cneg(h, f, (unsigned int) fe25519_isnegative(f));
 }
 
 static inline void
@@ -11570,10 +11570,10 @@ ge25519_frombytes(ge25519_p3 *h, const unsigned char *s)
     has_m_root = fe25519_iszero(m_root_check);
     has_p_root = fe25519_iszero(p_root_check);
     fe25519_mul(x_sqrtm1, h->X, sqrtm1); /* x*sqrt(-1) */
-    fe25519_cmov(h->X, x_sqrtm1, 1 - has_m_root);
+    fe25519_cmov(h->X, x_sqrtm1, (unsigned int) (1 - has_m_root));
 
     fe25519_neg(negx, h->X);
-    fe25519_cmov(h->X, negx, fe25519_isnegative(h->X) ^ (((s[31] >> 5) ^ optblocker_u8) >> 2));
+    fe25519_cmov(h->X, negx, (unsigned int) (fe25519_isnegative(h->X) ^ (((s[31] >> 5) ^ optblocker_u8) >> 2)));
     fe25519_mul(h->T, h->X, h->Y);
 
     return (has_m_root | has_p_root) - 1;
@@ -11773,7 +11773,7 @@ ge25519_p3_tobytes(unsigned char *s, const ge25519_p3 *h)
     fe25519_mul(x, h->X, recip);
     fe25519_mul(y, h->Y, recip);
     fe25519_tobytes(s, y);
-    s[31] ^= fe25519_isnegative(x) << 7;
+    s[31] = (unsigned char) (s[31] ^ (fe25519_isnegative(x) << 7));
 }
 
 /*
@@ -11823,7 +11823,7 @@ negative(signed char b)
 {
 #if defined(HAVE_INLINE_ASM) && defined(__x86_64__)
     __asm__ ("shrb $7,%0" : "+r"(b) : : "cc");
-    return b;
+    return (unsigned char) b;
 #elif defined(HAVE_INLINE_ASM) && defined(__aarch64__)
     uint8_t x;
     __asm__ ("ubfx %w0,%w1,7,1" : "=r"(x) : "r"(b) : );
@@ -11856,17 +11856,17 @@ ge25519_cmov8(ge25519_precomp *t, const ge25519_precomp precomp[8], const signed
 {
     ge25519_precomp     minust;
     const unsigned char bnegative = negative(b);
-    const unsigned char babs      = b - (((-bnegative) & b) * ((signed char) 1 << 1));
+    const unsigned char babs      = (unsigned char) (b - (((-bnegative) & b) * ((signed char) 1 << 1)));
 
     ge25519_precomp_0(t);
-    ge25519_cmov(t, &precomp[0], equal(babs, 1));
-    ge25519_cmov(t, &precomp[1], equal(babs, 2));
-    ge25519_cmov(t, &precomp[2], equal(babs, 3));
-    ge25519_cmov(t, &precomp[3], equal(babs, 4));
-    ge25519_cmov(t, &precomp[4], equal(babs, 5));
-    ge25519_cmov(t, &precomp[5], equal(babs, 6));
-    ge25519_cmov(t, &precomp[6], equal(babs, 7));
-    ge25519_cmov(t, &precomp[7], equal(babs, 8));
+    ge25519_cmov(t, &precomp[0], equal((signed char) babs, 1));
+    ge25519_cmov(t, &precomp[1], equal((signed char) babs, 2));
+    ge25519_cmov(t, &precomp[2], equal((signed char) babs, 3));
+    ge25519_cmov(t, &precomp[3], equal((signed char) babs, 4));
+    ge25519_cmov(t, &precomp[4], equal((signed char) babs, 5));
+    ge25519_cmov(t, &precomp[5], equal((signed char) babs, 6));
+    ge25519_cmov(t, &precomp[6], equal((signed char) babs, 7));
+    ge25519_cmov(t, &precomp[7], equal((signed char) babs, 8));
     fe25519_copy(minust.yplusx, t->yminusx);
     fe25519_copy(minust.yminusx, t->yplusx);
     fe25519_neg(minust.xy2d, t->xy2d);
@@ -14583,17 +14583,17 @@ ge25519_cmov8_cached(ge25519_cached *t, const ge25519_cached cached[8], const si
 {
     ge25519_cached      minust;
     const unsigned char bnegative = negative(b);
-    const unsigned char babs      = b - (((-bnegative) & b) * ((signed char) 1 << 1));
+    const unsigned char babs      = (unsigned char) (b - (((-bnegative) & b) * ((signed char) 1 << 1)));
 
     ge25519_cached_0(t);
-    ge25519_cmov_cached(t, &cached[0], equal(babs, 1));
-    ge25519_cmov_cached(t, &cached[1], equal(babs, 2));
-    ge25519_cmov_cached(t, &cached[2], equal(babs, 3));
-    ge25519_cmov_cached(t, &cached[3], equal(babs, 4));
-    ge25519_cmov_cached(t, &cached[4], equal(babs, 5));
-    ge25519_cmov_cached(t, &cached[5], equal(babs, 6));
-    ge25519_cmov_cached(t, &cached[6], equal(babs, 7));
-    ge25519_cmov_cached(t, &cached[7], equal(babs, 8));
+    ge25519_cmov_cached(t, &cached[0], equal((signed char) babs, 1));
+    ge25519_cmov_cached(t, &cached[1], equal((signed char) babs, 2));
+    ge25519_cmov_cached(t, &cached[2], equal((signed char) babs, 3));
+    ge25519_cmov_cached(t, &cached[3], equal((signed char) babs, 4));
+    ge25519_cmov_cached(t, &cached[4], equal((signed char) babs, 5));
+    ge25519_cmov_cached(t, &cached[5], equal((signed char) babs, 6));
+    ge25519_cmov_cached(t, &cached[6], equal((signed char) babs, 7));
+    ge25519_cmov_cached(t, &cached[7], equal((signed char) babs, 8));
     fe25519_copy(minust.YplusX, t->YminusX);
     fe25519_copy(minust.YminusX, t->YplusX);
     fe25519_copy(minust.Z, t->Z);
@@ -14635,7 +14635,7 @@ ge25519_tobytes(unsigned char *s, const ge25519_p2 *h)
     fe25519_mul(x, h->X, recip);
     fe25519_mul(y, h->Y, recip);
     fe25519_tobytes(s, y);
-    s[31] ^= fe25519_isnegative(x) << 7;
+    s[31] = (unsigned char) (s[31] ^ (fe25519_isnegative(x) << 7));
 }
 /* LCOV_EXCL_STOP */
 
@@ -14883,7 +14883,7 @@ ge25519_scalarmult(ge25519_p3 *h, const unsigned char *a, const ge25519_p3 *p)
         e[i] += carry;
         carry = e[i] + 8;
         carry >>= 4;
-        e[i] -= carry * ((signed char) 1 << 4);
+        e[i] = (signed char) (e[i] - carry * ((signed char) 1 << 4));
     }
     e[63] += carry;
     /* each e[i] is between -8 and 8 */
@@ -14943,7 +14943,7 @@ ge25519_scalarmult_base(ge25519_p3 *h, const unsigned char *a)
         e[i] += carry;
         carry = e[i] + 8;
         carry >>= 4;
-        e[i] -= carry * ((signed char) 1 << 4);
+        e[i] = (signed char) (e[i] - carry * ((signed char) 1 << 4));
     }
     e[63] += carry;
     /* each e[i] is between -8 and 8 */
@@ -15076,8 +15076,8 @@ ge25519_is_canonical(const unsigned char *s)
     for (i = 30; i > 0; i--) {
         c |= s[i] ^ 0xff;
     }
-    c = (((unsigned int) c) - 1U) >> 8;
-    d_ = (0xed - 1U - (unsigned int) s[0]) >> 8;
+    c = (unsigned char) ((((unsigned int) c) - 1U) >> 8);
+    d_ = (unsigned char) ((0xed - 1U - (unsigned int) s[0]) >> 8);
 
     return 1 - (c & d_ & 1);
 }
@@ -15151,31 +15151,31 @@ ge25519_has_small_order(const unsigned char s[32])
 void
 sc25519_mul(unsigned char s[32], const unsigned char a[32], const unsigned char b[32])
 {
-    int64_t a0  = 2097151 & load_3(a);
-    int64_t a1  = 2097151 & (load_4(a + 2) >> 5);
-    int64_t a2  = 2097151 & (load_3(a + 5) >> 2);
-    int64_t a3  = 2097151 & (load_4(a + 7) >> 7);
-    int64_t a4  = 2097151 & (load_4(a + 10) >> 4);
-    int64_t a5  = 2097151 & (load_3(a + 13) >> 1);
-    int64_t a6  = 2097151 & (load_4(a + 15) >> 6);
-    int64_t a7  = 2097151 & (load_3(a + 18) >> 3);
-    int64_t a8  = 2097151 & load_3(a + 21);
-    int64_t a9  = 2097151 & (load_4(a + 23) >> 5);
-    int64_t a10 = 2097151 & (load_3(a + 26) >> 2);
-    int64_t a11 = (load_4(a + 28) >> 7);
+    int64_t a0  = (int64_t) (2097151 & load_3(a));
+    int64_t a1  = (int64_t) (2097151 & (load_4(a + 2) >> 5));
+    int64_t a2  = (int64_t) (2097151 & (load_3(a + 5) >> 2));
+    int64_t a3  = (int64_t) (2097151 & (load_4(a + 7) >> 7));
+    int64_t a4  = (int64_t) (2097151 & (load_4(a + 10) >> 4));
+    int64_t a5  = (int64_t) (2097151 & (load_3(a + 13) >> 1));
+    int64_t a6  = (int64_t) (2097151 & (load_4(a + 15) >> 6));
+    int64_t a7  = (int64_t) (2097151 & (load_3(a + 18) >> 3));
+    int64_t a8  = (int64_t) (2097151 & load_3(a + 21));
+    int64_t a9  = (int64_t) (2097151 & (load_4(a + 23) >> 5));
+    int64_t a10 = (int64_t) (2097151 & (load_3(a + 26) >> 2));
+    int64_t a11 = (int64_t) (load_4(a + 28) >> 7);
 
-    int64_t b0  = 2097151 & load_3(b);
-    int64_t b1  = 2097151 & (load_4(b + 2) >> 5);
-    int64_t b2  = 2097151 & (load_3(b + 5) >> 2);
-    int64_t b3  = 2097151 & (load_4(b + 7) >> 7);
-    int64_t b4  = 2097151 & (load_4(b + 10) >> 4);
-    int64_t b5  = 2097151 & (load_3(b + 13) >> 1);
-    int64_t b6  = 2097151 & (load_4(b + 15) >> 6);
-    int64_t b7  = 2097151 & (load_3(b + 18) >> 3);
-    int64_t b8  = 2097151 & load_3(b + 21);
-    int64_t b9  = 2097151 & (load_4(b + 23) >> 5);
-    int64_t b10 = 2097151 & (load_3(b + 26) >> 2);
-    int64_t b11 = (load_4(b + 28) >> 7);
+    int64_t b0  = (int64_t) (2097151 & load_3(b));
+    int64_t b1  = (int64_t) (2097151 & (load_4(b + 2) >> 5));
+    int64_t b2  = (int64_t) (2097151 & (load_3(b + 5) >> 2));
+    int64_t b3  = (int64_t) (2097151 & (load_4(b + 7) >> 7));
+    int64_t b4  = (int64_t) (2097151 & (load_4(b + 10) >> 4));
+    int64_t b5  = (int64_t) (2097151 & (load_3(b + 13) >> 1));
+    int64_t b6  = (int64_t) (2097151 & (load_4(b + 15) >> 6));
+    int64_t b7  = (int64_t) (2097151 & (load_3(b + 18) >> 3));
+    int64_t b8  = (int64_t) (2097151 & load_3(b + 21));
+    int64_t b9  = (int64_t) (2097151 & (load_4(b + 23) >> 5));
+    int64_t b10 = (int64_t) (2097151 & (load_3(b + 26) >> 2));
+    int64_t b11 = (int64_t) (load_4(b + 28) >> 7);
 
     int64_t s0;
     int64_t s1;
@@ -15263,74 +15263,74 @@ sc25519_mul(unsigned char s[32], const unsigned char a[32], const unsigned char 
 
     carry0 = (s0 + (int64_t) (1L << 20)) >> 21;
     s1 += carry0;
-    s0 -= carry0 * ((uint64_t) 1L << 21);
+    s0 = (int64_t) ((uint64_t) s0 - (uint64_t) carry0 * ((uint64_t) 1L << 21));
     carry2 = (s2 + (int64_t) (1L << 20)) >> 21;
     s3 += carry2;
-    s2 -= carry2 * ((uint64_t) 1L << 21);
+    s2 = (int64_t) ((uint64_t) s2 - (uint64_t) carry2 * ((uint64_t) 1L << 21));
     carry4 = (s4 + (int64_t) (1L << 20)) >> 21;
     s5 += carry4;
-    s4 -= carry4 * ((uint64_t) 1L << 21);
+    s4 = (int64_t) ((uint64_t) s4 - (uint64_t) carry4 * ((uint64_t) 1L << 21));
     carry6 = (s6 + (int64_t) (1L << 20)) >> 21;
     s7 += carry6;
-    s6 -= carry6 * ((uint64_t) 1L << 21);
+    s6 = (int64_t) ((uint64_t) s6 - (uint64_t) carry6 * ((uint64_t) 1L << 21));
     carry8 = (s8 + (int64_t) (1L << 20)) >> 21;
     s9 += carry8;
-    s8 -= carry8 * ((uint64_t) 1L << 21);
+    s8 = (int64_t) ((uint64_t) s8 - (uint64_t) carry8 * ((uint64_t) 1L << 21));
     carry10 = (s10 + (int64_t) (1L << 20)) >> 21;
     s11 += carry10;
-    s10 -= carry10 * ((uint64_t) 1L << 21);
+    s10 = (int64_t) ((uint64_t) s10 - (uint64_t) carry10 * ((uint64_t) 1L << 21));
     carry12 = (s12 + (int64_t) (1L << 20)) >> 21;
     s13 += carry12;
-    s12 -= carry12 * ((uint64_t) 1L << 21);
+    s12 = (int64_t) ((uint64_t) s12 - (uint64_t) carry12 * ((uint64_t) 1L << 21));
     carry14 = (s14 + (int64_t) (1L << 20)) >> 21;
     s15 += carry14;
-    s14 -= carry14 * ((uint64_t) 1L << 21);
+    s14 = (int64_t) ((uint64_t) s14 - (uint64_t) carry14 * ((uint64_t) 1L << 21));
     carry16 = (s16 + (int64_t) (1L << 20)) >> 21;
     s17 += carry16;
-    s16 -= carry16 * ((uint64_t) 1L << 21);
+    s16 = (int64_t) ((uint64_t) s16 - (uint64_t) carry16 * ((uint64_t) 1L << 21));
     carry18 = (s18 + (int64_t) (1L << 20)) >> 21;
     s19 += carry18;
-    s18 -= carry18 * ((uint64_t) 1L << 21);
+    s18 = (int64_t) ((uint64_t) s18 - (uint64_t) carry18 * ((uint64_t) 1L << 21));
     carry20 = (s20 + (int64_t) (1L << 20)) >> 21;
     s21 += carry20;
-    s20 -= carry20 * ((uint64_t) 1L << 21);
+    s20 = (int64_t) ((uint64_t) s20 - (uint64_t) carry20 * ((uint64_t) 1L << 21));
     carry22 = (s22 + (int64_t) (1L << 20)) >> 21;
     s23 += carry22;
-    s22 -= carry22 * ((uint64_t) 1L << 21);
+    s22 = (int64_t) ((uint64_t) s22 - (uint64_t) carry22 * ((uint64_t) 1L << 21));
 
     carry1 = (s1 + (int64_t) (1L << 20)) >> 21;
     s2 += carry1;
-    s1 -= carry1 * ((uint64_t) 1L << 21);
+    s1 = (int64_t) ((uint64_t) s1 - (uint64_t) carry1 * ((uint64_t) 1L << 21));
     carry3 = (s3 + (int64_t) (1L << 20)) >> 21;
     s4 += carry3;
-    s3 -= carry3 * ((uint64_t) 1L << 21);
+    s3 = (int64_t) ((uint64_t) s3 - (uint64_t) carry3 * ((uint64_t) 1L << 21));
     carry5 = (s5 + (int64_t) (1L << 20)) >> 21;
     s6 += carry5;
-    s5 -= carry5 * ((uint64_t) 1L << 21);
+    s5 = (int64_t) ((uint64_t) s5 - (uint64_t) carry5 * ((uint64_t) 1L << 21));
     carry7 = (s7 + (int64_t) (1L << 20)) >> 21;
     s8 += carry7;
-    s7 -= carry7 * ((uint64_t) 1L << 21);
+    s7 = (int64_t) ((uint64_t) s7 - (uint64_t) carry7 * ((uint64_t) 1L << 21));
     carry9 = (s9 + (int64_t) (1L << 20)) >> 21;
     s10 += carry9;
-    s9 -= carry9 * ((uint64_t) 1L << 21);
+    s9 = (int64_t) ((uint64_t) s9 - (uint64_t) carry9 * ((uint64_t) 1L << 21));
     carry11 = (s11 + (int64_t) (1L << 20)) >> 21;
     s12 += carry11;
-    s11 -= carry11 * ((uint64_t) 1L << 21);
+    s11 = (int64_t) ((uint64_t) s11 - (uint64_t) carry11 * ((uint64_t) 1L << 21));
     carry13 = (s13 + (int64_t) (1L << 20)) >> 21;
     s14 += carry13;
-    s13 -= carry13 * ((uint64_t) 1L << 21);
+    s13 = (int64_t) ((uint64_t) s13 - (uint64_t) carry13 * ((uint64_t) 1L << 21));
     carry15 = (s15 + (int64_t) (1L << 20)) >> 21;
     s16 += carry15;
-    s15 -= carry15 * ((uint64_t) 1L << 21);
+    s15 = (int64_t) ((uint64_t) s15 - (uint64_t) carry15 * ((uint64_t) 1L << 21));
     carry17 = (s17 + (int64_t) (1L << 20)) >> 21;
     s18 += carry17;
-    s17 -= carry17 * ((uint64_t) 1L << 21);
+    s17 = (int64_t) ((uint64_t) s17 - (uint64_t) carry17 * ((uint64_t) 1L << 21));
     carry19 = (s19 + (int64_t) (1L << 20)) >> 21;
     s20 += carry19;
-    s19 -= carry19 * ((uint64_t) 1L << 21);
+    s19 = (int64_t) ((uint64_t) s19 - (uint64_t) carry19 * ((uint64_t) 1L << 21));
     carry21 = (s21 + (int64_t) (1L << 20)) >> 21;
     s22 += carry21;
-    s21 -= carry21 * ((uint64_t) 1L << 21);
+    s21 = (int64_t) ((uint64_t) s21 - (uint64_t) carry21 * ((uint64_t) 1L << 21));
 
     s11 += s23 * 666643;
     s12 += s23 * 470296;
@@ -15376,38 +15376,38 @@ sc25519_mul(unsigned char s[32], const unsigned char a[32], const unsigned char 
 
     carry6 = (s6 + (int64_t) (1L << 20)) >> 21;
     s7 += carry6;
-    s6 -= carry6 * ((uint64_t) 1L << 21);
+    s6 = (int64_t) ((uint64_t) s6 - (uint64_t) carry6 * ((uint64_t) 1L << 21));
     carry8 = (s8 + (int64_t) (1L << 20)) >> 21;
     s9 += carry8;
-    s8 -= carry8 * ((uint64_t) 1L << 21);
+    s8 = (int64_t) ((uint64_t) s8 - (uint64_t) carry8 * ((uint64_t) 1L << 21));
     carry10 = (s10 + (int64_t) (1L << 20)) >> 21;
     s11 += carry10;
-    s10 -= carry10 * ((uint64_t) 1L << 21);
+    s10 = (int64_t) ((uint64_t) s10 - (uint64_t) carry10 * ((uint64_t) 1L << 21));
     carry12 = (s12 + (int64_t) (1L << 20)) >> 21;
     s13 += carry12;
-    s12 -= carry12 * ((uint64_t) 1L << 21);
+    s12 = (int64_t) ((uint64_t) s12 - (uint64_t) carry12 * ((uint64_t) 1L << 21));
     carry14 = (s14 + (int64_t) (1L << 20)) >> 21;
     s15 += carry14;
-    s14 -= carry14 * ((uint64_t) 1L << 21);
+    s14 = (int64_t) ((uint64_t) s14 - (uint64_t) carry14 * ((uint64_t) 1L << 21));
     carry16 = (s16 + (int64_t) (1L << 20)) >> 21;
     s17 += carry16;
-    s16 -= carry16 * ((uint64_t) 1L << 21);
+    s16 = (int64_t) ((uint64_t) s16 - (uint64_t) carry16 * ((uint64_t) 1L << 21));
 
     carry7 = (s7 + (int64_t) (1L << 20)) >> 21;
     s8 += carry7;
-    s7 -= carry7 * ((uint64_t) 1L << 21);
+    s7 = (int64_t) ((uint64_t) s7 - (uint64_t) carry7 * ((uint64_t) 1L << 21));
     carry9 = (s9 + (int64_t) (1L << 20)) >> 21;
     s10 += carry9;
-    s9 -= carry9 * ((uint64_t) 1L << 21);
+    s9 = (int64_t) ((uint64_t) s9 - (uint64_t) carry9 * ((uint64_t) 1L << 21));
     carry11 = (s11 + (int64_t) (1L << 20)) >> 21;
     s12 += carry11;
-    s11 -= carry11 * ((uint64_t) 1L << 21);
+    s11 = (int64_t) ((uint64_t) s11 - (uint64_t) carry11 * ((uint64_t) 1L << 21));
     carry13 = (s13 + (int64_t) (1L << 20)) >> 21;
     s14 += carry13;
-    s13 -= carry13 * ((uint64_t) 1L << 21);
+    s13 = (int64_t) ((uint64_t) s13 - (uint64_t) carry13 * ((uint64_t) 1L << 21));
     carry15 = (s15 + (int64_t) (1L << 20)) >> 21;
     s16 += carry15;
-    s15 -= carry15 * ((uint64_t) 1L << 21);
+    s15 = (int64_t) ((uint64_t) s15 - (uint64_t) carry15 * ((uint64_t) 1L << 21));
 
     s5 += s17 * 666643;
     s6 += s17 * 470296;
@@ -15454,41 +15454,41 @@ sc25519_mul(unsigned char s[32], const unsigned char a[32], const unsigned char 
 
     carry0 = (s0 + (int64_t) (1L << 20)) >> 21;
     s1 += carry0;
-    s0 -= carry0 * ((uint64_t) 1L << 21);
+    s0 = (int64_t) ((uint64_t) s0 - (uint64_t) carry0 * ((uint64_t) 1L << 21));
     carry2 = (s2 + (int64_t) (1L << 20)) >> 21;
     s3 += carry2;
-    s2 -= carry2 * ((uint64_t) 1L << 21);
+    s2 = (int64_t) ((uint64_t) s2 - (uint64_t) carry2 * ((uint64_t) 1L << 21));
     carry4 = (s4 + (int64_t) (1L << 20)) >> 21;
     s5 += carry4;
-    s4 -= carry4 * ((uint64_t) 1L << 21);
+    s4 = (int64_t) ((uint64_t) s4 - (uint64_t) carry4 * ((uint64_t) 1L << 21));
     carry6 = (s6 + (int64_t) (1L << 20)) >> 21;
     s7 += carry6;
-    s6 -= carry6 * ((uint64_t) 1L << 21);
+    s6 = (int64_t) ((uint64_t) s6 - (uint64_t) carry6 * ((uint64_t) 1L << 21));
     carry8 = (s8 + (int64_t) (1L << 20)) >> 21;
     s9 += carry8;
-    s8 -= carry8 * ((uint64_t) 1L << 21);
+    s8 = (int64_t) ((uint64_t) s8 - (uint64_t) carry8 * ((uint64_t) 1L << 21));
     carry10 = (s10 + (int64_t) (1L << 20)) >> 21;
     s11 += carry10;
-    s10 -= carry10 * ((uint64_t) 1L << 21);
+    s10 = (int64_t) ((uint64_t) s10 - (uint64_t) carry10 * ((uint64_t) 1L << 21));
 
     carry1 = (s1 + (int64_t) (1L << 20)) >> 21;
     s2 += carry1;
-    s1 -= carry1 * ((uint64_t) 1L << 21);
+    s1 = (int64_t) ((uint64_t) s1 - (uint64_t) carry1 * ((uint64_t) 1L << 21));
     carry3 = (s3 + (int64_t) (1L << 20)) >> 21;
     s4 += carry3;
-    s3 -= carry3 * ((uint64_t) 1L << 21);
+    s3 = (int64_t) ((uint64_t) s3 - (uint64_t) carry3 * ((uint64_t) 1L << 21));
     carry5 = (s5 + (int64_t) (1L << 20)) >> 21;
     s6 += carry5;
-    s5 -= carry5 * ((uint64_t) 1L << 21);
+    s5 = (int64_t) ((uint64_t) s5 - (uint64_t) carry5 * ((uint64_t) 1L << 21));
     carry7 = (s7 + (int64_t) (1L << 20)) >> 21;
     s8 += carry7;
-    s7 -= carry7 * ((uint64_t) 1L << 21);
+    s7 = (int64_t) ((uint64_t) s7 - (uint64_t) carry7 * ((uint64_t) 1L << 21));
     carry9 = (s9 + (int64_t) (1L << 20)) >> 21;
     s10 += carry9;
-    s9 -= carry9 * ((uint64_t) 1L << 21);
+    s9 = (int64_t) ((uint64_t) s9 - (uint64_t) carry9 * ((uint64_t) 1L << 21));
     carry11 = (s11 + (int64_t) (1L << 20)) >> 21;
     s12 += carry11;
-    s11 -= carry11 * ((uint64_t) 1L << 21);
+    s11 = (int64_t) ((uint64_t) s11 - (uint64_t) carry11 * ((uint64_t) 1L << 21));
 
     s0 += s12 * 666643;
     s1 += s12 * 470296;
@@ -15500,40 +15500,40 @@ sc25519_mul(unsigned char s[32], const unsigned char a[32], const unsigned char 
 
     carry0 = s0 >> 21;
     s1 += carry0;
-    s0 -= carry0 * ((uint64_t) 1L << 21);
+    s0 = (int64_t) ((uint64_t) s0 - (uint64_t) carry0 * ((uint64_t) 1L << 21));
     carry1 = s1 >> 21;
     s2 += carry1;
-    s1 -= carry1 * ((uint64_t) 1L << 21);
+    s1 = (int64_t) ((uint64_t) s1 - (uint64_t) carry1 * ((uint64_t) 1L << 21));
     carry2 = s2 >> 21;
     s3 += carry2;
-    s2 -= carry2 * ((uint64_t) 1L << 21);
+    s2 = (int64_t) ((uint64_t) s2 - (uint64_t) carry2 * ((uint64_t) 1L << 21));
     carry3 = s3 >> 21;
     s4 += carry3;
-    s3 -= carry3 * ((uint64_t) 1L << 21);
+    s3 = (int64_t) ((uint64_t) s3 - (uint64_t) carry3 * ((uint64_t) 1L << 21));
     carry4 = s4 >> 21;
     s5 += carry4;
-    s4 -= carry4 * ((uint64_t) 1L << 21);
+    s4 = (int64_t) ((uint64_t) s4 - (uint64_t) carry4 * ((uint64_t) 1L << 21));
     carry5 = s5 >> 21;
     s6 += carry5;
-    s5 -= carry5 * ((uint64_t) 1L << 21);
+    s5 = (int64_t) ((uint64_t) s5 - (uint64_t) carry5 * ((uint64_t) 1L << 21));
     carry6 = s6 >> 21;
     s7 += carry6;
-    s6 -= carry6 * ((uint64_t) 1L << 21);
+    s6 = (int64_t) ((uint64_t) s6 - (uint64_t) carry6 * ((uint64_t) 1L << 21));
     carry7 = s7 >> 21;
     s8 += carry7;
-    s7 -= carry7 * ((uint64_t) 1L << 21);
+    s7 = (int64_t) ((uint64_t) s7 - (uint64_t) carry7 * ((uint64_t) 1L << 21));
     carry8 = s8 >> 21;
     s9 += carry8;
-    s8 -= carry8 * ((uint64_t) 1L << 21);
+    s8 = (int64_t) ((uint64_t) s8 - (uint64_t) carry8 * ((uint64_t) 1L << 21));
     carry9 = s9 >> 21;
     s10 += carry9;
-    s9 -= carry9 * ((uint64_t) 1L << 21);
+    s9 = (int64_t) ((uint64_t) s9 - (uint64_t) carry9 * ((uint64_t) 1L << 21));
     carry10 = s10 >> 21;
     s11 += carry10;
-    s10 -= carry10 * ((uint64_t) 1L << 21);
+    s10 = (int64_t) ((uint64_t) s10 - (uint64_t) carry10 * ((uint64_t) 1L << 21));
     carry11 = s11 >> 21;
     s12 += carry11;
-    s11 -= carry11 * ((uint64_t) 1L << 21);
+    s11 = (int64_t) ((uint64_t) s11 - (uint64_t) carry11 * ((uint64_t) 1L << 21));
 
     s0 += s12 * 666643;
     s1 += s12 * 470296;
@@ -15544,67 +15544,67 @@ sc25519_mul(unsigned char s[32], const unsigned char a[32], const unsigned char 
 
     carry0 = s0 >> 21;
     s1 += carry0;
-    s0 -= carry0 * ((uint64_t) 1L << 21);
+    s0 = (int64_t) ((uint64_t) s0 - (uint64_t) carry0 * ((uint64_t) 1L << 21));
     carry1 = s1 >> 21;
     s2 += carry1;
-    s1 -= carry1 * ((uint64_t) 1L << 21);
+    s1 = (int64_t) ((uint64_t) s1 - (uint64_t) carry1 * ((uint64_t) 1L << 21));
     carry2 = s2 >> 21;
     s3 += carry2;
-    s2 -= carry2 * ((uint64_t) 1L << 21);
+    s2 = (int64_t) ((uint64_t) s2 - (uint64_t) carry2 * ((uint64_t) 1L << 21));
     carry3 = s3 >> 21;
     s4 += carry3;
-    s3 -= carry3 * ((uint64_t) 1L << 21);
+    s3 = (int64_t) ((uint64_t) s3 - (uint64_t) carry3 * ((uint64_t) 1L << 21));
     carry4 = s4 >> 21;
     s5 += carry4;
-    s4 -= carry4 * ((uint64_t) 1L << 21);
+    s4 = (int64_t) ((uint64_t) s4 - (uint64_t) carry4 * ((uint64_t) 1L << 21));
     carry5 = s5 >> 21;
     s6 += carry5;
-    s5 -= carry5 * ((uint64_t) 1L << 21);
+    s5 = (int64_t) ((uint64_t) s5 - (uint64_t) carry5 * ((uint64_t) 1L << 21));
     carry6 = s6 >> 21;
     s7 += carry6;
-    s6 -= carry6 * ((uint64_t) 1L << 21);
+    s6 = (int64_t) ((uint64_t) s6 - (uint64_t) carry6 * ((uint64_t) 1L << 21));
     carry7 = s7 >> 21;
     s8 += carry7;
-    s7 -= carry7 * ((uint64_t) 1L << 21);
+    s7 = (int64_t) ((uint64_t) s7 - (uint64_t) carry7 * ((uint64_t) 1L << 21));
     carry8 = s8 >> 21;
     s9 += carry8;
-    s8 -= carry8 * ((uint64_t) 1L << 21);
+    s8 = (int64_t) ((uint64_t) s8 - (uint64_t) carry8 * ((uint64_t) 1L << 21));
     carry9 = s9 >> 21;
     s10 += carry9;
-    s9 -= carry9 * ((uint64_t) 1L << 21);
+    s9 = (int64_t) ((uint64_t) s9 - (uint64_t) carry9 * ((uint64_t) 1L << 21));
     carry10 = s10 >> 21;
     s11 += carry10;
-    s10 -= carry10 * ((uint64_t) 1L << 21);
+    s10 = (int64_t) ((uint64_t) s10 - (uint64_t) carry10 * ((uint64_t) 1L << 21));
 
     s[0]  = (unsigned char) (s0 >> 0);
     s[1]  = (unsigned char) (s0 >> 8);
-    s[2]  = (unsigned char) ((s0 >> 16) | (s1 * ((uint64_t) 1 << 5)));
+    s[2]  = (unsigned char) ((uint64_t) (s0 >> 16) | ((uint64_t) s1 * ((uint64_t) 1 << 5)));
     s[3]  = (unsigned char) (s1 >> 3);
     s[4]  = (unsigned char) (s1 >> 11);
-    s[5]  = (unsigned char) ((s1 >> 19) | (s2 * ((uint64_t) 1 << 2)));
+    s[5]  = (unsigned char) ((uint64_t) (s1 >> 19) | ((uint64_t) s2 * ((uint64_t) 1 << 2)));
     s[6]  = (unsigned char) (s2 >> 6);
-    s[7]  = (unsigned char) ((s2 >> 14) | (s3 * ((uint64_t) 1 << 7)));
+    s[7]  = (unsigned char) ((uint64_t) (s2 >> 14) | ((uint64_t) s3 * ((uint64_t) 1 << 7)));
     s[8]  = (unsigned char) (s3 >> 1);
     s[9]  = (unsigned char) (s3 >> 9);
-    s[10] = (unsigned char) ((s3 >> 17) | (s4 * ((uint64_t) 1 << 4)));
+    s[10] = (unsigned char) ((uint64_t) (s3 >> 17) | ((uint64_t) s4 * ((uint64_t) 1 << 4)));
     s[11] = (unsigned char) (s4 >> 4);
     s[12] = (unsigned char) (s4 >> 12);
-    s[13] = (unsigned char) ((s4 >> 20) | (s5 * ((uint64_t) 1 << 1)));
+    s[13] = (unsigned char) ((uint64_t) (s4 >> 20) | ((uint64_t) s5 * ((uint64_t) 1 << 1)));
     s[14] = (unsigned char) (s5 >> 7);
-    s[15] = (unsigned char) ((s5 >> 15) | (s6 * ((uint64_t) 1 << 6)));
+    s[15] = (unsigned char) ((uint64_t) (s5 >> 15) | ((uint64_t) s6 * ((uint64_t) 1 << 6)));
     s[16] = (unsigned char) (s6 >> 2);
     s[17] = (unsigned char) (s6 >> 10);
-    s[18] = (unsigned char) ((s6 >> 18) | (s7 * ((uint64_t) 1 << 3)));
+    s[18] = (unsigned char) ((uint64_t) (s6 >> 18) | ((uint64_t) s7 * ((uint64_t) 1 << 3)));
     s[19] = (unsigned char) (s7 >> 5);
     s[20] = (unsigned char) (s7 >> 13);
     s[21] = (unsigned char) (s8 >> 0);
     s[22] = (unsigned char) (s8 >> 8);
-    s[23] = (unsigned char) ((s8 >> 16) | (s9 * ((uint64_t) 1 << 5)));
+    s[23] = (unsigned char) ((uint64_t) (s8 >> 16) | ((uint64_t) s9 * ((uint64_t) 1 << 5)));
     s[24] = (unsigned char) (s9 >> 3);
     s[25] = (unsigned char) (s9 >> 11);
-    s[26] = (unsigned char) ((s9 >> 19) | (s10 * ((uint64_t) 1 << 2)));
+    s[26] = (unsigned char) ((uint64_t) (s9 >> 19) | ((uint64_t) s10 * ((uint64_t) 1 << 2)));
     s[27] = (unsigned char) (s10 >> 6);
-    s[28] = (unsigned char) ((s10 >> 14) | (s11 * ((uint64_t) 1 << 7)));
+    s[28] = (unsigned char) ((uint64_t) (s10 >> 14) | ((uint64_t) s11 * ((uint64_t) 1 << 7)));
     s[29] = (unsigned char) (s11 >> 1);
     s[30] = (unsigned char) (s11 >> 9);
     s[31] = (unsigned char) (s11 >> 17);
@@ -15625,44 +15625,44 @@ void
 sc25519_muladd(unsigned char s[32], const unsigned char a[32],
                const unsigned char b[32], const unsigned char c[32])
 {
-    int64_t a0  = 2097151 & load_3(a);
-    int64_t a1  = 2097151 & (load_4(a + 2) >> 5);
-    int64_t a2  = 2097151 & (load_3(a + 5) >> 2);
-    int64_t a3  = 2097151 & (load_4(a + 7) >> 7);
-    int64_t a4  = 2097151 & (load_4(a + 10) >> 4);
-    int64_t a5  = 2097151 & (load_3(a + 13) >> 1);
-    int64_t a6  = 2097151 & (load_4(a + 15) >> 6);
-    int64_t a7  = 2097151 & (load_3(a + 18) >> 3);
-    int64_t a8  = 2097151 & load_3(a + 21);
-    int64_t a9  = 2097151 & (load_4(a + 23) >> 5);
-    int64_t a10 = 2097151 & (load_3(a + 26) >> 2);
-    int64_t a11 = (load_4(a + 28) >> 7);
+    int64_t a0  = (int64_t) (2097151 & load_3(a));
+    int64_t a1  = (int64_t) (2097151 & (load_4(a + 2) >> 5));
+    int64_t a2  = (int64_t) (2097151 & (load_3(a + 5) >> 2));
+    int64_t a3  = (int64_t) (2097151 & (load_4(a + 7) >> 7));
+    int64_t a4  = (int64_t) (2097151 & (load_4(a + 10) >> 4));
+    int64_t a5  = (int64_t) (2097151 & (load_3(a + 13) >> 1));
+    int64_t a6  = (int64_t) (2097151 & (load_4(a + 15) >> 6));
+    int64_t a7  = (int64_t) (2097151 & (load_3(a + 18) >> 3));
+    int64_t a8  = (int64_t) (2097151 & load_3(a + 21));
+    int64_t a9  = (int64_t) (2097151 & (load_4(a + 23) >> 5));
+    int64_t a10 = (int64_t) (2097151 & (load_3(a + 26) >> 2));
+    int64_t a11 = (int64_t) (load_4(a + 28) >> 7);
 
-    int64_t b0  = 2097151 & load_3(b);
-    int64_t b1  = 2097151 & (load_4(b + 2) >> 5);
-    int64_t b2  = 2097151 & (load_3(b + 5) >> 2);
-    int64_t b3  = 2097151 & (load_4(b + 7) >> 7);
-    int64_t b4  = 2097151 & (load_4(b + 10) >> 4);
-    int64_t b5  = 2097151 & (load_3(b + 13) >> 1);
-    int64_t b6  = 2097151 & (load_4(b + 15) >> 6);
-    int64_t b7  = 2097151 & (load_3(b + 18) >> 3);
-    int64_t b8  = 2097151 & load_3(b + 21);
-    int64_t b9  = 2097151 & (load_4(b + 23) >> 5);
-    int64_t b10 = 2097151 & (load_3(b + 26) >> 2);
-    int64_t b11 = (load_4(b + 28) >> 7);
+    int64_t b0  = (int64_t) (2097151 & load_3(b));
+    int64_t b1  = (int64_t) (2097151 & (load_4(b + 2) >> 5));
+    int64_t b2  = (int64_t) (2097151 & (load_3(b + 5) >> 2));
+    int64_t b3  = (int64_t) (2097151 & (load_4(b + 7) >> 7));
+    int64_t b4  = (int64_t) (2097151 & (load_4(b + 10) >> 4));
+    int64_t b5  = (int64_t) (2097151 & (load_3(b + 13) >> 1));
+    int64_t b6  = (int64_t) (2097151 & (load_4(b + 15) >> 6));
+    int64_t b7  = (int64_t) (2097151 & (load_3(b + 18) >> 3));
+    int64_t b8  = (int64_t) (2097151 & load_3(b + 21));
+    int64_t b9  = (int64_t) (2097151 & (load_4(b + 23) >> 5));
+    int64_t b10 = (int64_t) (2097151 & (load_3(b + 26) >> 2));
+    int64_t b11 = (int64_t) (load_4(b + 28) >> 7);
 
-    int64_t c0  = 2097151 & load_3(c);
-    int64_t c1  = 2097151 & (load_4(c + 2) >> 5);
-    int64_t c2  = 2097151 & (load_3(c + 5) >> 2);
-    int64_t c3  = 2097151 & (load_4(c + 7) >> 7);
-    int64_t c4  = 2097151 & (load_4(c + 10) >> 4);
-    int64_t c5  = 2097151 & (load_3(c + 13) >> 1);
-    int64_t c6  = 2097151 & (load_4(c + 15) >> 6);
-    int64_t c7  = 2097151 & (load_3(c + 18) >> 3);
-    int64_t c8  = 2097151 & load_3(c + 21);
-    int64_t c9  = 2097151 & (load_4(c + 23) >> 5);
-    int64_t c10 = 2097151 & (load_3(c + 26) >> 2);
-    int64_t c11 = (load_4(c + 28) >> 7);
+    int64_t c0  = (int64_t) (2097151 & load_3(c));
+    int64_t c1  = (int64_t) (2097151 & (load_4(c + 2) >> 5));
+    int64_t c2  = (int64_t) (2097151 & (load_3(c + 5) >> 2));
+    int64_t c3  = (int64_t) (2097151 & (load_4(c + 7) >> 7));
+    int64_t c4  = (int64_t) (2097151 & (load_4(c + 10) >> 4));
+    int64_t c5  = (int64_t) (2097151 & (load_3(c + 13) >> 1));
+    int64_t c6  = (int64_t) (2097151 & (load_4(c + 15) >> 6));
+    int64_t c7  = (int64_t) (2097151 & (load_3(c + 18) >> 3));
+    int64_t c8  = (int64_t) (2097151 & load_3(c + 21));
+    int64_t c9  = (int64_t) (2097151 & (load_4(c + 23) >> 5));
+    int64_t c10 = (int64_t) (2097151 & (load_3(c + 26) >> 2));
+    int64_t c11 = (int64_t) (load_4(c + 28) >> 7);
 
     int64_t s0;
     int64_t s1;
@@ -15751,74 +15751,74 @@ sc25519_muladd(unsigned char s[32], const unsigned char a[32],
 
     carry0 = (s0 + (int64_t) (1L << 20)) >> 21;
     s1 += carry0;
-    s0 -= carry0 * ((uint64_t) 1L << 21);
+    s0 = (int64_t) ((uint64_t) s0 - (uint64_t) carry0 * ((uint64_t) 1L << 21));
     carry2 = (s2 + (int64_t) (1L << 20)) >> 21;
     s3 += carry2;
-    s2 -= carry2 * ((uint64_t) 1L << 21);
+    s2 = (int64_t) ((uint64_t) s2 - (uint64_t) carry2 * ((uint64_t) 1L << 21));
     carry4 = (s4 + (int64_t) (1L << 20)) >> 21;
     s5 += carry4;
-    s4 -= carry4 * ((uint64_t) 1L << 21);
+    s4 = (int64_t) ((uint64_t) s4 - (uint64_t) carry4 * ((uint64_t) 1L << 21));
     carry6 = (s6 + (int64_t) (1L << 20)) >> 21;
     s7 += carry6;
-    s6 -= carry6 * ((uint64_t) 1L << 21);
+    s6 = (int64_t) ((uint64_t) s6 - (uint64_t) carry6 * ((uint64_t) 1L << 21));
     carry8 = (s8 + (int64_t) (1L << 20)) >> 21;
     s9 += carry8;
-    s8 -= carry8 * ((uint64_t) 1L << 21);
+    s8 = (int64_t) ((uint64_t) s8 - (uint64_t) carry8 * ((uint64_t) 1L << 21));
     carry10 = (s10 + (int64_t) (1L << 20)) >> 21;
     s11 += carry10;
-    s10 -= carry10 * ((uint64_t) 1L << 21);
+    s10 = (int64_t) ((uint64_t) s10 - (uint64_t) carry10 * ((uint64_t) 1L << 21));
     carry12 = (s12 + (int64_t) (1L << 20)) >> 21;
     s13 += carry12;
-    s12 -= carry12 * ((uint64_t) 1L << 21);
+    s12 = (int64_t) ((uint64_t) s12 - (uint64_t) carry12 * ((uint64_t) 1L << 21));
     carry14 = (s14 + (int64_t) (1L << 20)) >> 21;
     s15 += carry14;
-    s14 -= carry14 * ((uint64_t) 1L << 21);
+    s14 = (int64_t) ((uint64_t) s14 - (uint64_t) carry14 * ((uint64_t) 1L << 21));
     carry16 = (s16 + (int64_t) (1L << 20)) >> 21;
     s17 += carry16;
-    s16 -= carry16 * ((uint64_t) 1L << 21);
+    s16 = (int64_t) ((uint64_t) s16 - (uint64_t) carry16 * ((uint64_t) 1L << 21));
     carry18 = (s18 + (int64_t) (1L << 20)) >> 21;
     s19 += carry18;
-    s18 -= carry18 * ((uint64_t) 1L << 21);
+    s18 = (int64_t) ((uint64_t) s18 - (uint64_t) carry18 * ((uint64_t) 1L << 21));
     carry20 = (s20 + (int64_t) (1L << 20)) >> 21;
     s21 += carry20;
-    s20 -= carry20 * ((uint64_t) 1L << 21);
+    s20 = (int64_t) ((uint64_t) s20 - (uint64_t) carry20 * ((uint64_t) 1L << 21));
     carry22 = (s22 + (int64_t) (1L << 20)) >> 21;
     s23 += carry22;
-    s22 -= carry22 * ((uint64_t) 1L << 21);
+    s22 = (int64_t) ((uint64_t) s22 - (uint64_t) carry22 * ((uint64_t) 1L << 21));
 
     carry1 = (s1 + (int64_t) (1L << 20)) >> 21;
     s2 += carry1;
-    s1 -= carry1 * ((uint64_t) 1L << 21);
+    s1 = (int64_t) ((uint64_t) s1 - (uint64_t) carry1 * ((uint64_t) 1L << 21));
     carry3 = (s3 + (int64_t) (1L << 20)) >> 21;
     s4 += carry3;
-    s3 -= carry3 * ((uint64_t) 1L << 21);
+    s3 = (int64_t) ((uint64_t) s3 - (uint64_t) carry3 * ((uint64_t) 1L << 21));
     carry5 = (s5 + (int64_t) (1L << 20)) >> 21;
     s6 += carry5;
-    s5 -= carry5 * ((uint64_t) 1L << 21);
+    s5 = (int64_t) ((uint64_t) s5 - (uint64_t) carry5 * ((uint64_t) 1L << 21));
     carry7 = (s7 + (int64_t) (1L << 20)) >> 21;
     s8 += carry7;
-    s7 -= carry7 * ((uint64_t) 1L << 21);
+    s7 = (int64_t) ((uint64_t) s7 - (uint64_t) carry7 * ((uint64_t) 1L << 21));
     carry9 = (s9 + (int64_t) (1L << 20)) >> 21;
     s10 += carry9;
-    s9 -= carry9 * ((uint64_t) 1L << 21);
+    s9 = (int64_t) ((uint64_t) s9 - (uint64_t) carry9 * ((uint64_t) 1L << 21));
     carry11 = (s11 + (int64_t) (1L << 20)) >> 21;
     s12 += carry11;
-    s11 -= carry11 * ((uint64_t) 1L << 21);
+    s11 = (int64_t) ((uint64_t) s11 - (uint64_t) carry11 * ((uint64_t) 1L << 21));
     carry13 = (s13 + (int64_t) (1L << 20)) >> 21;
     s14 += carry13;
-    s13 -= carry13 * ((uint64_t) 1L << 21);
+    s13 = (int64_t) ((uint64_t) s13 - (uint64_t) carry13 * ((uint64_t) 1L << 21));
     carry15 = (s15 + (int64_t) (1L << 20)) >> 21;
     s16 += carry15;
-    s15 -= carry15 * ((uint64_t) 1L << 21);
+    s15 = (int64_t) ((uint64_t) s15 - (uint64_t) carry15 * ((uint64_t) 1L << 21));
     carry17 = (s17 + (int64_t) (1L << 20)) >> 21;
     s18 += carry17;
-    s17 -= carry17 * ((uint64_t) 1L << 21);
+    s17 = (int64_t) ((uint64_t) s17 - (uint64_t) carry17 * ((uint64_t) 1L << 21));
     carry19 = (s19 + (int64_t) (1L << 20)) >> 21;
     s20 += carry19;
-    s19 -= carry19 * ((uint64_t) 1L << 21);
+    s19 = (int64_t) ((uint64_t) s19 - (uint64_t) carry19 * ((uint64_t) 1L << 21));
     carry21 = (s21 + (int64_t) (1L << 20)) >> 21;
     s22 += carry21;
-    s21 -= carry21 * ((uint64_t) 1L << 21);
+    s21 = (int64_t) ((uint64_t) s21 - (uint64_t) carry21 * ((uint64_t) 1L << 21));
 
     s11 += s23 * 666643;
     s12 += s23 * 470296;
@@ -15864,38 +15864,38 @@ sc25519_muladd(unsigned char s[32], const unsigned char a[32],
 
     carry6 = (s6 + (int64_t) (1L << 20)) >> 21;
     s7 += carry6;
-    s6 -= carry6 * ((uint64_t) 1L << 21);
+    s6 = (int64_t) ((uint64_t) s6 - (uint64_t) carry6 * ((uint64_t) 1L << 21));
     carry8 = (s8 + (int64_t) (1L << 20)) >> 21;
     s9 += carry8;
-    s8 -= carry8 * ((uint64_t) 1L << 21);
+    s8 = (int64_t) ((uint64_t) s8 - (uint64_t) carry8 * ((uint64_t) 1L << 21));
     carry10 = (s10 + (int64_t) (1L << 20)) >> 21;
     s11 += carry10;
-    s10 -= carry10 * ((uint64_t) 1L << 21);
+    s10 = (int64_t) ((uint64_t) s10 - (uint64_t) carry10 * ((uint64_t) 1L << 21));
     carry12 = (s12 + (int64_t) (1L << 20)) >> 21;
     s13 += carry12;
-    s12 -= carry12 * ((uint64_t) 1L << 21);
+    s12 = (int64_t) ((uint64_t) s12 - (uint64_t) carry12 * ((uint64_t) 1L << 21));
     carry14 = (s14 + (int64_t) (1L << 20)) >> 21;
     s15 += carry14;
-    s14 -= carry14 * ((uint64_t) 1L << 21);
+    s14 = (int64_t) ((uint64_t) s14 - (uint64_t) carry14 * ((uint64_t) 1L << 21));
     carry16 = (s16 + (int64_t) (1L << 20)) >> 21;
     s17 += carry16;
-    s16 -= carry16 * ((uint64_t) 1L << 21);
+    s16 = (int64_t) ((uint64_t) s16 - (uint64_t) carry16 * ((uint64_t) 1L << 21));
 
     carry7 = (s7 + (int64_t) (1L << 20)) >> 21;
     s8 += carry7;
-    s7 -= carry7 * ((uint64_t) 1L << 21);
+    s7 = (int64_t) ((uint64_t) s7 - (uint64_t) carry7 * ((uint64_t) 1L << 21));
     carry9 = (s9 + (int64_t) (1L << 20)) >> 21;
     s10 += carry9;
-    s9 -= carry9 * ((uint64_t) 1L << 21);
+    s9 = (int64_t) ((uint64_t) s9 - (uint64_t) carry9 * ((uint64_t) 1L << 21));
     carry11 = (s11 + (int64_t) (1L << 20)) >> 21;
     s12 += carry11;
-    s11 -= carry11 * ((uint64_t) 1L << 21);
+    s11 = (int64_t) ((uint64_t) s11 - (uint64_t) carry11 * ((uint64_t) 1L << 21));
     carry13 = (s13 + (int64_t) (1L << 20)) >> 21;
     s14 += carry13;
-    s13 -= carry13 * ((uint64_t) 1L << 21);
+    s13 = (int64_t) ((uint64_t) s13 - (uint64_t) carry13 * ((uint64_t) 1L << 21));
     carry15 = (s15 + (int64_t) (1L << 20)) >> 21;
     s16 += carry15;
-    s15 -= carry15 * ((uint64_t) 1L << 21);
+    s15 = (int64_t) ((uint64_t) s15 - (uint64_t) carry15 * ((uint64_t) 1L << 21));
 
     s5 += s17 * 666643;
     s6 += s17 * 470296;
@@ -15942,41 +15942,41 @@ sc25519_muladd(unsigned char s[32], const unsigned char a[32],
 
     carry0 = (s0 + (int64_t) (1L << 20)) >> 21;
     s1 += carry0;
-    s0 -= carry0 * ((uint64_t) 1L << 21);
+    s0 = (int64_t) ((uint64_t) s0 - (uint64_t) carry0 * ((uint64_t) 1L << 21));
     carry2 = (s2 + (int64_t) (1L << 20)) >> 21;
     s3 += carry2;
-    s2 -= carry2 * ((uint64_t) 1L << 21);
+    s2 = (int64_t) ((uint64_t) s2 - (uint64_t) carry2 * ((uint64_t) 1L << 21));
     carry4 = (s4 + (int64_t) (1L << 20)) >> 21;
     s5 += carry4;
-    s4 -= carry4 * ((uint64_t) 1L << 21);
+    s4 = (int64_t) ((uint64_t) s4 - (uint64_t) carry4 * ((uint64_t) 1L << 21));
     carry6 = (s6 + (int64_t) (1L << 20)) >> 21;
     s7 += carry6;
-    s6 -= carry6 * ((uint64_t) 1L << 21);
+    s6 = (int64_t) ((uint64_t) s6 - (uint64_t) carry6 * ((uint64_t) 1L << 21));
     carry8 = (s8 + (int64_t) (1L << 20)) >> 21;
     s9 += carry8;
-    s8 -= carry8 * ((uint64_t) 1L << 21);
+    s8 = (int64_t) ((uint64_t) s8 - (uint64_t) carry8 * ((uint64_t) 1L << 21));
     carry10 = (s10 + (int64_t) (1L << 20)) >> 21;
     s11 += carry10;
-    s10 -= carry10 * ((uint64_t) 1L << 21);
+    s10 = (int64_t) ((uint64_t) s10 - (uint64_t) carry10 * ((uint64_t) 1L << 21));
 
     carry1 = (s1 + (int64_t) (1L << 20)) >> 21;
     s2 += carry1;
-    s1 -= carry1 * ((uint64_t) 1L << 21);
+    s1 = (int64_t) ((uint64_t) s1 - (uint64_t) carry1 * ((uint64_t) 1L << 21));
     carry3 = (s3 + (int64_t) (1L << 20)) >> 21;
     s4 += carry3;
-    s3 -= carry3 * ((uint64_t) 1L << 21);
+    s3 = (int64_t) ((uint64_t) s3 - (uint64_t) carry3 * ((uint64_t) 1L << 21));
     carry5 = (s5 + (int64_t) (1L << 20)) >> 21;
     s6 += carry5;
-    s5 -= carry5 * ((uint64_t) 1L << 21);
+    s5 = (int64_t) ((uint64_t) s5 - (uint64_t) carry5 * ((uint64_t) 1L << 21));
     carry7 = (s7 + (int64_t) (1L << 20)) >> 21;
     s8 += carry7;
-    s7 -= carry7 * ((uint64_t) 1L << 21);
+    s7 = (int64_t) ((uint64_t) s7 - (uint64_t) carry7 * ((uint64_t) 1L << 21));
     carry9 = (s9 + (int64_t) (1L << 20)) >> 21;
     s10 += carry9;
-    s9 -= carry9 * ((uint64_t) 1L << 21);
+    s9 = (int64_t) ((uint64_t) s9 - (uint64_t) carry9 * ((uint64_t) 1L << 21));
     carry11 = (s11 + (int64_t) (1L << 20)) >> 21;
     s12 += carry11;
-    s11 -= carry11 * ((uint64_t) 1L << 21);
+    s11 = (int64_t) ((uint64_t) s11 - (uint64_t) carry11 * ((uint64_t) 1L << 21));
 
     s0 += s12 * 666643;
     s1 += s12 * 470296;
@@ -15988,40 +15988,40 @@ sc25519_muladd(unsigned char s[32], const unsigned char a[32],
 
     carry0 = s0 >> 21;
     s1 += carry0;
-    s0 -= carry0 * ((uint64_t) 1L << 21);
+    s0 = (int64_t) ((uint64_t) s0 - (uint64_t) carry0 * ((uint64_t) 1L << 21));
     carry1 = s1 >> 21;
     s2 += carry1;
-    s1 -= carry1 * ((uint64_t) 1L << 21);
+    s1 = (int64_t) ((uint64_t) s1 - (uint64_t) carry1 * ((uint64_t) 1L << 21));
     carry2 = s2 >> 21;
     s3 += carry2;
-    s2 -= carry2 * ((uint64_t) 1L << 21);
+    s2 = (int64_t) ((uint64_t) s2 - (uint64_t) carry2 * ((uint64_t) 1L << 21));
     carry3 = s3 >> 21;
     s4 += carry3;
-    s3 -= carry3 * ((uint64_t) 1L << 21);
+    s3 = (int64_t) ((uint64_t) s3 - (uint64_t) carry3 * ((uint64_t) 1L << 21));
     carry4 = s4 >> 21;
     s5 += carry4;
-    s4 -= carry4 * ((uint64_t) 1L << 21);
+    s4 = (int64_t) ((uint64_t) s4 - (uint64_t) carry4 * ((uint64_t) 1L << 21));
     carry5 = s5 >> 21;
     s6 += carry5;
-    s5 -= carry5 * ((uint64_t) 1L << 21);
+    s5 = (int64_t) ((uint64_t) s5 - (uint64_t) carry5 * ((uint64_t) 1L << 21));
     carry6 = s6 >> 21;
     s7 += carry6;
-    s6 -= carry6 * ((uint64_t) 1L << 21);
+    s6 = (int64_t) ((uint64_t) s6 - (uint64_t) carry6 * ((uint64_t) 1L << 21));
     carry7 = s7 >> 21;
     s8 += carry7;
-    s7 -= carry7 * ((uint64_t) 1L << 21);
+    s7 = (int64_t) ((uint64_t) s7 - (uint64_t) carry7 * ((uint64_t) 1L << 21));
     carry8 = s8 >> 21;
     s9 += carry8;
-    s8 -= carry8 * ((uint64_t) 1L << 21);
+    s8 = (int64_t) ((uint64_t) s8 - (uint64_t) carry8 * ((uint64_t) 1L << 21));
     carry9 = s9 >> 21;
     s10 += carry9;
-    s9 -= carry9 * ((uint64_t) 1L << 21);
+    s9 = (int64_t) ((uint64_t) s9 - (uint64_t) carry9 * ((uint64_t) 1L << 21));
     carry10 = s10 >> 21;
     s11 += carry10;
-    s10 -= carry10 * ((uint64_t) 1L << 21);
+    s10 = (int64_t) ((uint64_t) s10 - (uint64_t) carry10 * ((uint64_t) 1L << 21));
     carry11 = s11 >> 21;
     s12 += carry11;
-    s11 -= carry11 * ((uint64_t) 1L << 21);
+    s11 = (int64_t) ((uint64_t) s11 - (uint64_t) carry11 * ((uint64_t) 1L << 21));
 
     s0 += s12 * 666643;
     s1 += s12 * 470296;
@@ -16032,67 +16032,67 @@ sc25519_muladd(unsigned char s[32], const unsigned char a[32],
 
     carry0 = s0 >> 21;
     s1 += carry0;
-    s0 -= carry0 * ((uint64_t) 1L << 21);
+    s0 = (int64_t) ((uint64_t) s0 - (uint64_t) carry0 * ((uint64_t) 1L << 21));
     carry1 = s1 >> 21;
     s2 += carry1;
-    s1 -= carry1 * ((uint64_t) 1L << 21);
+    s1 = (int64_t) ((uint64_t) s1 - (uint64_t) carry1 * ((uint64_t) 1L << 21));
     carry2 = s2 >> 21;
     s3 += carry2;
-    s2 -= carry2 * ((uint64_t) 1L << 21);
+    s2 = (int64_t) ((uint64_t) s2 - (uint64_t) carry2 * ((uint64_t) 1L << 21));
     carry3 = s3 >> 21;
     s4 += carry3;
-    s3 -= carry3 * ((uint64_t) 1L << 21);
+    s3 = (int64_t) ((uint64_t) s3 - (uint64_t) carry3 * ((uint64_t) 1L << 21));
     carry4 = s4 >> 21;
     s5 += carry4;
-    s4 -= carry4 * ((uint64_t) 1L << 21);
+    s4 = (int64_t) ((uint64_t) s4 - (uint64_t) carry4 * ((uint64_t) 1L << 21));
     carry5 = s5 >> 21;
     s6 += carry5;
-    s5 -= carry5 * ((uint64_t) 1L << 21);
+    s5 = (int64_t) ((uint64_t) s5 - (uint64_t) carry5 * ((uint64_t) 1L << 21));
     carry6 = s6 >> 21;
     s7 += carry6;
-    s6 -= carry6 * ((uint64_t) 1L << 21);
+    s6 = (int64_t) ((uint64_t) s6 - (uint64_t) carry6 * ((uint64_t) 1L << 21));
     carry7 = s7 >> 21;
     s8 += carry7;
-    s7 -= carry7 * ((uint64_t) 1L << 21);
+    s7 = (int64_t) ((uint64_t) s7 - (uint64_t) carry7 * ((uint64_t) 1L << 21));
     carry8 = s8 >> 21;
     s9 += carry8;
-    s8 -= carry8 * ((uint64_t) 1L << 21);
+    s8 = (int64_t) ((uint64_t) s8 - (uint64_t) carry8 * ((uint64_t) 1L << 21));
     carry9 = s9 >> 21;
     s10 += carry9;
-    s9 -= carry9 * ((uint64_t) 1L << 21);
+    s9 = (int64_t) ((uint64_t) s9 - (uint64_t) carry9 * ((uint64_t) 1L << 21));
     carry10 = s10 >> 21;
     s11 += carry10;
-    s10 -= carry10 * ((uint64_t) 1L << 21);
+    s10 = (int64_t) ((uint64_t) s10 - (uint64_t) carry10 * ((uint64_t) 1L << 21));
 
     s[0]  = (unsigned char) (s0 >> 0);
     s[1]  = (unsigned char) (s0 >> 8);
-    s[2]  = (unsigned char) ((s0 >> 16) | (s1 * ((uint64_t) 1 << 5)));
+    s[2]  = (unsigned char) ((uint64_t) (s0 >> 16) | ((uint64_t) s1 * ((uint64_t) 1 << 5)));
     s[3]  = (unsigned char) (s1 >> 3);
     s[4]  = (unsigned char) (s1 >> 11);
-    s[5]  = (unsigned char) ((s1 >> 19) | (s2 * ((uint64_t) 1 << 2)));
+    s[5]  = (unsigned char) ((uint64_t) (s1 >> 19) | ((uint64_t) s2 * ((uint64_t) 1 << 2)));
     s[6]  = (unsigned char) (s2 >> 6);
-    s[7]  = (unsigned char) ((s2 >> 14) | (s3 * ((uint64_t) 1 << 7)));
+    s[7]  = (unsigned char) ((uint64_t) (s2 >> 14) | ((uint64_t) s3 * ((uint64_t) 1 << 7)));
     s[8]  = (unsigned char) (s3 >> 1);
     s[9]  = (unsigned char) (s3 >> 9);
-    s[10] = (unsigned char) ((s3 >> 17) | (s4 * ((uint64_t) 1 << 4)));
+    s[10] = (unsigned char) ((uint64_t) (s3 >> 17) | ((uint64_t) s4 * ((uint64_t) 1 << 4)));
     s[11] = (unsigned char) (s4 >> 4);
     s[12] = (unsigned char) (s4 >> 12);
-    s[13] = (unsigned char) ((s4 >> 20) | (s5 * ((uint64_t) 1 << 1)));
+    s[13] = (unsigned char) ((uint64_t) (s4 >> 20) | ((uint64_t) s5 * ((uint64_t) 1 << 1)));
     s[14] = (unsigned char) (s5 >> 7);
-    s[15] = (unsigned char) ((s5 >> 15) | (s6 * ((uint64_t) 1 << 6)));
+    s[15] = (unsigned char) ((uint64_t) (s5 >> 15) | ((uint64_t) s6 * ((uint64_t) 1 << 6)));
     s[16] = (unsigned char) (s6 >> 2);
     s[17] = (unsigned char) (s6 >> 10);
-    s[18] = (unsigned char) ((s6 >> 18) | (s7 * ((uint64_t) 1 << 3)));
+    s[18] = (unsigned char) ((uint64_t) (s6 >> 18) | ((uint64_t) s7 * ((uint64_t) 1 << 3)));
     s[19] = (unsigned char) (s7 >> 5);
     s[20] = (unsigned char) (s7 >> 13);
     s[21] = (unsigned char) (s8 >> 0);
     s[22] = (unsigned char) (s8 >> 8);
-    s[23] = (unsigned char) ((s8 >> 16) | (s9 * ((uint64_t) 1 << 5)));
+    s[23] = (unsigned char) ((uint64_t) (s8 >> 16) | ((uint64_t) s9 * ((uint64_t) 1 << 5)));
     s[24] = (unsigned char) (s9 >> 3);
     s[25] = (unsigned char) (s9 >> 11);
-    s[26] = (unsigned char) ((s9 >> 19) | (s10 * ((uint64_t) 1 << 2)));
+    s[26] = (unsigned char) ((uint64_t) (s9 >> 19) | ((uint64_t) s10 * ((uint64_t) 1 << 2)));
     s[27] = (unsigned char) (s10 >> 6);
-    s[28] = (unsigned char) ((s10 >> 14) | (s11 * ((uint64_t) 1 << 7)));
+    s[28] = (unsigned char) ((uint64_t) (s10 >> 14) | ((uint64_t) s11 * ((uint64_t) 1 << 7)));
     s[29] = (unsigned char) (s11 >> 1);
     s[30] = (unsigned char) (s11 >> 9);
     s[31] = (unsigned char) (s11 >> 17);
@@ -16199,30 +16199,30 @@ sc25519_invert(unsigned char recip[32], const unsigned char s[32])
 void
 sc25519_reduce(unsigned char s[64])
 {
-    int64_t s0  = 2097151 & load_3(s);
-    int64_t s1  = 2097151 & (load_4(s + 2) >> 5);
-    int64_t s2  = 2097151 & (load_3(s + 5) >> 2);
-    int64_t s3  = 2097151 & (load_4(s + 7) >> 7);
-    int64_t s4  = 2097151 & (load_4(s + 10) >> 4);
-    int64_t s5  = 2097151 & (load_3(s + 13) >> 1);
-    int64_t s6  = 2097151 & (load_4(s + 15) >> 6);
-    int64_t s7  = 2097151 & (load_3(s + 18) >> 3);
-    int64_t s8  = 2097151 & load_3(s + 21);
-    int64_t s9  = 2097151 & (load_4(s + 23) >> 5);
-    int64_t s10 = 2097151 & (load_3(s + 26) >> 2);
-    int64_t s11 = 2097151 & (load_4(s + 28) >> 7);
-    int64_t s12 = 2097151 & (load_4(s + 31) >> 4);
-    int64_t s13 = 2097151 & (load_3(s + 34) >> 1);
-    int64_t s14 = 2097151 & (load_4(s + 36) >> 6);
-    int64_t s15 = 2097151 & (load_3(s + 39) >> 3);
-    int64_t s16 = 2097151 & load_3(s + 42);
-    int64_t s17 = 2097151 & (load_4(s + 44) >> 5);
-    int64_t s18 = 2097151 & (load_3(s + 47) >> 2);
-    int64_t s19 = 2097151 & (load_4(s + 49) >> 7);
-    int64_t s20 = 2097151 & (load_4(s + 52) >> 4);
-    int64_t s21 = 2097151 & (load_3(s + 55) >> 1);
-    int64_t s22 = 2097151 & (load_4(s + 57) >> 6);
-    int64_t s23 = (load_4(s + 60) >> 3);
+    int64_t s0  = (int64_t) (2097151 & load_3(s));
+    int64_t s1  = (int64_t) (2097151 & (load_4(s + 2) >> 5));
+    int64_t s2  = (int64_t) (2097151 & (load_3(s + 5) >> 2));
+    int64_t s3  = (int64_t) (2097151 & (load_4(s + 7) >> 7));
+    int64_t s4  = (int64_t) (2097151 & (load_4(s + 10) >> 4));
+    int64_t s5  = (int64_t) (2097151 & (load_3(s + 13) >> 1));
+    int64_t s6  = (int64_t) (2097151 & (load_4(s + 15) >> 6));
+    int64_t s7  = (int64_t) (2097151 & (load_3(s + 18) >> 3));
+    int64_t s8  = (int64_t) (2097151 & load_3(s + 21));
+    int64_t s9  = (int64_t) (2097151 & (load_4(s + 23) >> 5));
+    int64_t s10 = (int64_t) (2097151 & (load_3(s + 26) >> 2));
+    int64_t s11 = (int64_t) (2097151 & (load_4(s + 28) >> 7));
+    int64_t s12 = (int64_t) (2097151 & (load_4(s + 31) >> 4));
+    int64_t s13 = (int64_t) (2097151 & (load_3(s + 34) >> 1));
+    int64_t s14 = (int64_t) (2097151 & (load_4(s + 36) >> 6));
+    int64_t s15 = (int64_t) (2097151 & (load_3(s + 39) >> 3));
+    int64_t s16 = (int64_t) (2097151 & load_3(s + 42));
+    int64_t s17 = (int64_t) (2097151 & (load_4(s + 44) >> 5));
+    int64_t s18 = (int64_t) (2097151 & (load_3(s + 47) >> 2));
+    int64_t s19 = (int64_t) (2097151 & (load_4(s + 49) >> 7));
+    int64_t s20 = (int64_t) (2097151 & (load_4(s + 52) >> 4));
+    int64_t s21 = (int64_t) (2097151 & (load_3(s + 55) >> 1));
+    int64_t s22 = (int64_t) (2097151 & (load_4(s + 57) >> 6));
+    int64_t s23 = (int64_t) (load_4(s + 60) >> 3);
 
     int64_t carry0;
     int64_t carry1;
@@ -16286,38 +16286,38 @@ sc25519_reduce(unsigned char s[64])
 
     carry6 = (s6 + (int64_t) (1L << 20)) >> 21;
     s7 += carry6;
-    s6 -= carry6 * ((uint64_t) 1L << 21);
+    s6 = (int64_t) ((uint64_t) s6 - (uint64_t) carry6 * ((uint64_t) 1L << 21));
     carry8 = (s8 + (int64_t) (1L << 20)) >> 21;
     s9 += carry8;
-    s8 -= carry8 * ((uint64_t) 1L << 21);
+    s8 = (int64_t) ((uint64_t) s8 - (uint64_t) carry8 * ((uint64_t) 1L << 21));
     carry10 = (s10 + (int64_t) (1L << 20)) >> 21;
     s11 += carry10;
-    s10 -= carry10 * ((uint64_t) 1L << 21);
+    s10 = (int64_t) ((uint64_t) s10 - (uint64_t) carry10 * ((uint64_t) 1L << 21));
     carry12 = (s12 + (int64_t) (1L << 20)) >> 21;
     s13 += carry12;
-    s12 -= carry12 * ((uint64_t) 1L << 21);
+    s12 = (int64_t) ((uint64_t) s12 - (uint64_t) carry12 * ((uint64_t) 1L << 21));
     carry14 = (s14 + (int64_t) (1L << 20)) >> 21;
     s15 += carry14;
-    s14 -= carry14 * ((uint64_t) 1L << 21);
+    s14 = (int64_t) ((uint64_t) s14 - (uint64_t) carry14 * ((uint64_t) 1L << 21));
     carry16 = (s16 + (int64_t) (1L << 20)) >> 21;
     s17 += carry16;
-    s16 -= carry16 * ((uint64_t) 1L << 21);
+    s16 = (int64_t) ((uint64_t) s16 - (uint64_t) carry16 * ((uint64_t) 1L << 21));
 
     carry7 = (s7 + (int64_t) (1L << 20)) >> 21;
     s8 += carry7;
-    s7 -= carry7 * ((uint64_t) 1L << 21);
+    s7 = (int64_t) ((uint64_t) s7 - (uint64_t) carry7 * ((uint64_t) 1L << 21));
     carry9 = (s9 + (int64_t) (1L << 20)) >> 21;
     s10 += carry9;
-    s9 -= carry9 * ((uint64_t) 1L << 21);
+    s9 = (int64_t) ((uint64_t) s9 - (uint64_t) carry9 * ((uint64_t) 1L << 21));
     carry11 = (s11 + (int64_t) (1L << 20)) >> 21;
     s12 += carry11;
-    s11 -= carry11 * ((uint64_t) 1L << 21);
+    s11 = (int64_t) ((uint64_t) s11 - (uint64_t) carry11 * ((uint64_t) 1L << 21));
     carry13 = (s13 + (int64_t) (1L << 20)) >> 21;
     s14 += carry13;
-    s13 -= carry13 * ((uint64_t) 1L << 21);
+    s13 = (int64_t) ((uint64_t) s13 - (uint64_t) carry13 * ((uint64_t) 1L << 21));
     carry15 = (s15 + (int64_t) (1L << 20)) >> 21;
     s16 += carry15;
-    s15 -= carry15 * ((uint64_t) 1L << 21);
+    s15 = (int64_t) ((uint64_t) s15 - (uint64_t) carry15 * ((uint64_t) 1L << 21));
 
     s5 += s17 * 666643;
     s6 += s17 * 470296;
@@ -16364,41 +16364,41 @@ sc25519_reduce(unsigned char s[64])
 
     carry0 = (s0 + (int64_t) (1L << 20)) >> 21;
     s1 += carry0;
-    s0 -= carry0 * ((uint64_t) 1L << 21);
+    s0 = (int64_t) ((uint64_t) s0 - (uint64_t) carry0 * ((uint64_t) 1L << 21));
     carry2 = (s2 + (int64_t) (1L << 20)) >> 21;
     s3 += carry2;
-    s2 -= carry2 * ((uint64_t) 1L << 21);
+    s2 = (int64_t) ((uint64_t) s2 - (uint64_t) carry2 * ((uint64_t) 1L << 21));
     carry4 = (s4 + (int64_t) (1L << 20)) >> 21;
     s5 += carry4;
-    s4 -= carry4 * ((uint64_t) 1L << 21);
+    s4 = (int64_t) ((uint64_t) s4 - (uint64_t) carry4 * ((uint64_t) 1L << 21));
     carry6 = (s6 + (int64_t) (1L << 20)) >> 21;
     s7 += carry6;
-    s6 -= carry6 * ((uint64_t) 1L << 21);
+    s6 = (int64_t) ((uint64_t) s6 - (uint64_t) carry6 * ((uint64_t) 1L << 21));
     carry8 = (s8 + (int64_t) (1L << 20)) >> 21;
     s9 += carry8;
-    s8 -= carry8 * ((uint64_t) 1L << 21);
+    s8 = (int64_t) ((uint64_t) s8 - (uint64_t) carry8 * ((uint64_t) 1L << 21));
     carry10 = (s10 + (int64_t) (1L << 20)) >> 21;
     s11 += carry10;
-    s10 -= carry10 * ((uint64_t) 1L << 21);
+    s10 = (int64_t) ((uint64_t) s10 - (uint64_t) carry10 * ((uint64_t) 1L << 21));
 
     carry1 = (s1 + (int64_t) (1L << 20)) >> 21;
     s2 += carry1;
-    s1 -= carry1 * ((uint64_t) 1L << 21);
+    s1 = (int64_t) ((uint64_t) s1 - (uint64_t) carry1 * ((uint64_t) 1L << 21));
     carry3 = (s3 + (int64_t) (1L << 20)) >> 21;
     s4 += carry3;
-    s3 -= carry3 * ((uint64_t) 1L << 21);
+    s3 = (int64_t) ((uint64_t) s3 - (uint64_t) carry3 * ((uint64_t) 1L << 21));
     carry5 = (s5 + (int64_t) (1L << 20)) >> 21;
     s6 += carry5;
-    s5 -= carry5 * ((uint64_t) 1L << 21);
+    s5 = (int64_t) ((uint64_t) s5 - (uint64_t) carry5 * ((uint64_t) 1L << 21));
     carry7 = (s7 + (int64_t) (1L << 20)) >> 21;
     s8 += carry7;
-    s7 -= carry7 * ((uint64_t) 1L << 21);
+    s7 = (int64_t) ((uint64_t) s7 - (uint64_t) carry7 * ((uint64_t) 1L << 21));
     carry9 = (s9 + (int64_t) (1L << 20)) >> 21;
     s10 += carry9;
-    s9 -= carry9 * ((uint64_t) 1L << 21);
+    s9 = (int64_t) ((uint64_t) s9 - (uint64_t) carry9 * ((uint64_t) 1L << 21));
     carry11 = (s11 + (int64_t) (1L << 20)) >> 21;
     s12 += carry11;
-    s11 -= carry11 * ((uint64_t) 1L << 21);
+    s11 = (int64_t) ((uint64_t) s11 - (uint64_t) carry11 * ((uint64_t) 1L << 21));
 
     s0 += s12 * 666643;
     s1 += s12 * 470296;
@@ -16410,40 +16410,40 @@ sc25519_reduce(unsigned char s[64])
 
     carry0 = s0 >> 21;
     s1 += carry0;
-    s0 -= carry0 * ((uint64_t) 1L << 21);
+    s0 = (int64_t) ((uint64_t) s0 - (uint64_t) carry0 * ((uint64_t) 1L << 21));
     carry1 = s1 >> 21;
     s2 += carry1;
-    s1 -= carry1 * ((uint64_t) 1L << 21);
+    s1 = (int64_t) ((uint64_t) s1 - (uint64_t) carry1 * ((uint64_t) 1L << 21));
     carry2 = s2 >> 21;
     s3 += carry2;
-    s2 -= carry2 * ((uint64_t) 1L << 21);
+    s2 = (int64_t) ((uint64_t) s2 - (uint64_t) carry2 * ((uint64_t) 1L << 21));
     carry3 = s3 >> 21;
     s4 += carry3;
-    s3 -= carry3 * ((uint64_t) 1L << 21);
+    s3 = (int64_t) ((uint64_t) s3 - (uint64_t) carry3 * ((uint64_t) 1L << 21));
     carry4 = s4 >> 21;
     s5 += carry4;
-    s4 -= carry4 * ((uint64_t) 1L << 21);
+    s4 = (int64_t) ((uint64_t) s4 - (uint64_t) carry4 * ((uint64_t) 1L << 21));
     carry5 = s5 >> 21;
     s6 += carry5;
-    s5 -= carry5 * ((uint64_t) 1L << 21);
+    s5 = (int64_t) ((uint64_t) s5 - (uint64_t) carry5 * ((uint64_t) 1L << 21));
     carry6 = s6 >> 21;
     s7 += carry6;
-    s6 -= carry6 * ((uint64_t) 1L << 21);
+    s6 = (int64_t) ((uint64_t) s6 - (uint64_t) carry6 * ((uint64_t) 1L << 21));
     carry7 = s7 >> 21;
     s8 += carry7;
-    s7 -= carry7 * ((uint64_t) 1L << 21);
+    s7 = (int64_t) ((uint64_t) s7 - (uint64_t) carry7 * ((uint64_t) 1L << 21));
     carry8 = s8 >> 21;
     s9 += carry8;
-    s8 -= carry8 * ((uint64_t) 1L << 21);
+    s8 = (int64_t) ((uint64_t) s8 - (uint64_t) carry8 * ((uint64_t) 1L << 21));
     carry9 = s9 >> 21;
     s10 += carry9;
-    s9 -= carry9 * ((uint64_t) 1L << 21);
+    s9 = (int64_t) ((uint64_t) s9 - (uint64_t) carry9 * ((uint64_t) 1L << 21));
     carry10 = s10 >> 21;
     s11 += carry10;
-    s10 -= carry10 * ((uint64_t) 1L << 21);
+    s10 = (int64_t) ((uint64_t) s10 - (uint64_t) carry10 * ((uint64_t) 1L << 21));
     carry11 = s11 >> 21;
     s12 += carry11;
-    s11 -= carry11 * ((uint64_t) 1L << 21);
+    s11 = (int64_t) ((uint64_t) s11 - (uint64_t) carry11 * ((uint64_t) 1L << 21));
 
     s0 += s12 * 666643;
     s1 += s12 * 470296;
@@ -16454,67 +16454,67 @@ sc25519_reduce(unsigned char s[64])
 
     carry0 = s0 >> 21;
     s1 += carry0;
-    s0 -= carry0 * ((uint64_t) 1L << 21);
+    s0 = (int64_t) ((uint64_t) s0 - (uint64_t) carry0 * ((uint64_t) 1L << 21));
     carry1 = s1 >> 21;
     s2 += carry1;
-    s1 -= carry1 * ((uint64_t) 1L << 21);
+    s1 = (int64_t) ((uint64_t) s1 - (uint64_t) carry1 * ((uint64_t) 1L << 21));
     carry2 = s2 >> 21;
     s3 += carry2;
-    s2 -= carry2 * ((uint64_t) 1L << 21);
+    s2 = (int64_t) ((uint64_t) s2 - (uint64_t) carry2 * ((uint64_t) 1L << 21));
     carry3 = s3 >> 21;
     s4 += carry3;
-    s3 -= carry3 * ((uint64_t) 1L << 21);
+    s3 = (int64_t) ((uint64_t) s3 - (uint64_t) carry3 * ((uint64_t) 1L << 21));
     carry4 = s4 >> 21;
     s5 += carry4;
-    s4 -= carry4 * ((uint64_t) 1L << 21);
+    s4 = (int64_t) ((uint64_t) s4 - (uint64_t) carry4 * ((uint64_t) 1L << 21));
     carry5 = s5 >> 21;
     s6 += carry5;
-    s5 -= carry5 * ((uint64_t) 1L << 21);
+    s5 = (int64_t) ((uint64_t) s5 - (uint64_t) carry5 * ((uint64_t) 1L << 21));
     carry6 = s6 >> 21;
     s7 += carry6;
-    s6 -= carry6 * ((uint64_t) 1L << 21);
+    s6 = (int64_t) ((uint64_t) s6 - (uint64_t) carry6 * ((uint64_t) 1L << 21));
     carry7 = s7 >> 21;
     s8 += carry7;
-    s7 -= carry7 * ((uint64_t) 1L << 21);
+    s7 = (int64_t) ((uint64_t) s7 - (uint64_t) carry7 * ((uint64_t) 1L << 21));
     carry8 = s8 >> 21;
     s9 += carry8;
-    s8 -= carry8 * ((uint64_t) 1L << 21);
+    s8 = (int64_t) ((uint64_t) s8 - (uint64_t) carry8 * ((uint64_t) 1L << 21));
     carry9 = s9 >> 21;
     s10 += carry9;
-    s9 -= carry9 * ((uint64_t) 1L << 21);
+    s9 = (int64_t) ((uint64_t) s9 - (uint64_t) carry9 * ((uint64_t) 1L << 21));
     carry10 = s10 >> 21;
     s11 += carry10;
-    s10 -= carry10 * ((uint64_t) 1L << 21);
+    s10 = (int64_t) ((uint64_t) s10 - (uint64_t) carry10 * ((uint64_t) 1L << 21));
 
     s[0]  = (unsigned char) (s0 >> 0);
     s[1]  = (unsigned char) (s0 >> 8);
-    s[2]  = (unsigned char) ((s0 >> 16) | (s1 * ((uint64_t) 1 << 5)));
+    s[2]  = (unsigned char) ((uint64_t) (s0 >> 16) | ((uint64_t) s1 * ((uint64_t) 1 << 5)));
     s[3]  = (unsigned char) (s1 >> 3);
     s[4]  = (unsigned char) (s1 >> 11);
-    s[5]  = (unsigned char) ((s1 >> 19) | (s2 * ((uint64_t) 1 << 2)));
+    s[5]  = (unsigned char) ((uint64_t) (s1 >> 19) | ((uint64_t) s2 * ((uint64_t) 1 << 2)));
     s[6]  = (unsigned char) (s2 >> 6);
-    s[7]  = (unsigned char) ((s2 >> 14) | (s3 * ((uint64_t) 1 << 7)));
+    s[7]  = (unsigned char) ((uint64_t) (s2 >> 14) | ((uint64_t) s3 * ((uint64_t) 1 << 7)));
     s[8]  = (unsigned char) (s3 >> 1);
     s[9]  = (unsigned char) (s3 >> 9);
-    s[10] = (unsigned char) ((s3 >> 17) | (s4 * ((uint64_t) 1 << 4)));
+    s[10] = (unsigned char) ((uint64_t) (s3 >> 17) | ((uint64_t) s4 * ((uint64_t) 1 << 4)));
     s[11] = (unsigned char) (s4 >> 4);
     s[12] = (unsigned char) (s4 >> 12);
-    s[13] = (unsigned char) ((s4 >> 20) | (s5 * ((uint64_t) 1 << 1)));
+    s[13] = (unsigned char) ((uint64_t) (s4 >> 20) | ((uint64_t) s5 * ((uint64_t) 1 << 1)));
     s[14] = (unsigned char) (s5 >> 7);
-    s[15] = (unsigned char) ((s5 >> 15) | (s6 * ((uint64_t) 1 << 6)));
+    s[15] = (unsigned char) ((uint64_t) (s5 >> 15) | ((uint64_t) s6 * ((uint64_t) 1 << 6)));
     s[16] = (unsigned char) (s6 >> 2);
     s[17] = (unsigned char) (s6 >> 10);
-    s[18] = (unsigned char) ((s6 >> 18) | (s7 * ((uint64_t) 1 << 3)));
+    s[18] = (unsigned char) ((uint64_t) (s6 >> 18) | ((uint64_t) s7 * ((uint64_t) 1 << 3)));
     s[19] = (unsigned char) (s7 >> 5);
     s[20] = (unsigned char) (s7 >> 13);
     s[21] = (unsigned char) (s8 >> 0);
     s[22] = (unsigned char) (s8 >> 8);
-    s[23] = (unsigned char) ((s8 >> 16) | (s9 * ((uint64_t) 1 << 5)));
+    s[23] = (unsigned char) ((uint64_t) (s8 >> 16) | ((uint64_t) s9 * ((uint64_t) 1 << 5)));
     s[24] = (unsigned char) (s9 >> 3);
     s[25] = (unsigned char) (s9 >> 11);
-    s[26] = (unsigned char) ((s9 >> 19) | (s10 * ((uint64_t) 1 << 2)));
+    s[26] = (unsigned char) ((uint64_t) (s9 >> 19) | ((uint64_t) s10 * ((uint64_t) 1 << 2)));
     s[27] = (unsigned char) (s10 >> 6);
-    s[28] = (unsigned char) ((s10 >> 14) | (s11 * ((uint64_t) 1 << 7)));
+    s[28] = (unsigned char) ((uint64_t) (s10 >> 14) | ((uint64_t) s11 * ((uint64_t) 1 << 7)));
     s[29] = (unsigned char) (s11 >> 1);
     s[30] = (unsigned char) (s11 >> 9);
     s[31] = (unsigned char) (s11 >> 17);
@@ -16535,8 +16535,8 @@ sc25519_is_canonical(const unsigned char s[32])
 
     do {
         i--;
-        c |= ((s[i] - L[i]) >> 8) & n;
-        n &= ((s[i] ^ L[i]) - 1) >> 8;
+        c = (unsigned char) (c | (((s[i] - L[i]) >> 8) & n));
+        n = (unsigned char) (n & (((s[i] ^ L[i]) - 1) >> 8));
     } while (i != 0);
 
     return (c != 0);
@@ -16570,13 +16570,13 @@ ge25519_elligator2(unsigned char s[32], const fe25519 r, const unsigned char x_s
     fe25519_sq2(rr2, r);
     rr2[0]++;
     fe25519_invert(rr2, rr2);
-    fe25519_mul32(x, rr2, curve25519_A[0]);
+    fe25519_mul32(x, rr2, (uint32_t) curve25519_A[0]);
     fe25519_neg(x, x);
 
     fe25519_sq(x2, x);
     fe25519_mul(x3, x, x2);
     fe25519_add(gx, x3, x);
-    fe25519_mul32(x2, x2, curve25519_A[0]);
+    fe25519_mul32(x2, x2, (uint32_t) curve25519_A[0]);
     fe25519_add(gx, x2, gx);
 
     notsquare = fe25519_notsquare(gx);
@@ -16686,7 +16686,7 @@ ristretto255_sqrt_ratio_m1(fe25519 x, const fe25519 u, const fe25519 v)
     has_f_root = fe25519_iszero(f_root_check);
     fe25519_mul(x_sqrtm1, x, sqrtm1); /* x*sqrt(-1) */
 
-    fe25519_cmov(x, x_sqrtm1, has_p_root | has_f_root);
+    fe25519_cmov(x, x_sqrtm1, (unsigned int) (has_p_root | has_f_root));
     fe25519_abs(x, x);
 
     return has_m_root | has_p_root;
@@ -16704,8 +16704,8 @@ ristretto255_is_canonical(const unsigned char *s)
     for (i = 30; i > 0; i--) {
         c |= s[i] ^ 0xff;
     }
-    c = (((unsigned int) c) - 1U) >> 8;
-    d_ = (0xed - 1U - (unsigned int) s[0]) >> 8;
+    c = (unsigned char) ((((unsigned int) c) - 1U) >> 8);
+    d_ = (unsigned char) ((0xed - 1U - (unsigned int) s[0]) >> 8);
     e = ((s[31] >> 5) ^ optblocker_u8) >> 2;
 
     return 1 - (((c & d_) | e | s[0]) & 1);
@@ -16806,12 +16806,12 @@ ristretto255_p3_tobytes(unsigned char *s, const ge25519_p3 *h)
     fe25519_copy(y_, h->Y);
     fe25519_copy(den_inv, den2);
 
-    fe25519_cmov(x_, iy, rotate);
-    fe25519_cmov(y_, ix, rotate);
-    fe25519_cmov(den_inv, eden, rotate);
+    fe25519_cmov(x_, iy, (unsigned int) rotate);
+    fe25519_cmov(y_, ix, (unsigned int) rotate);
+    fe25519_cmov(den_inv, eden, (unsigned int) rotate);
 
     fe25519_mul(x_z_inv, x_, z_inv);
-    fe25519_cneg(y_, y_, fe25519_isnegative(x_z_inv));
+    fe25519_cneg(y_, y_, (unsigned int) fe25519_isnegative(x_z_inv));
 
     fe25519_sub(s_, h->Z, y_);
     fe25519_mul(s_, den_inv, s_);
@@ -16849,8 +16849,8 @@ ristretto255_elligator(ge25519_p3 *p, const fe25519 t)
     fe25519_mul(s_prime, s, t);
     fe25519_abs(s_prime, s_prime);
     fe25519_neg(s_prime, s_prime);     /* s_prime = -|s*t| */
-    fe25519_cmov(s, s_prime, wasnt_square);
-    fe25519_cmov(c, r, wasnt_square);
+    fe25519_cmov(s, s_prime, (unsigned int) wasnt_square);
+    fe25519_cmov(c, r, (unsigned int) wasnt_square);
 
     fe25519_sub(n, r, one);            /* n = r-1 */
     fe25519_mul(n, n, c);              /* n = c*(r-1) */
@@ -18145,7 +18145,7 @@ blake2b_compress_ref(blake2b_state *S, const uint8_t block[BLAKE2B_BLOCKBYTES])
     int      i;
 
     for (i = 0; i < 16; ++i) {
-        m[i] = LOAD64_LE(block + i * sizeof m[i]);
+        m[i] = LOAD64_LE(block + (size_t) i * sizeof m[i]);
     }
     for (i = 0; i < 8; ++i) {
         v[i] = S->h[i];
@@ -18762,22 +18762,22 @@ blake2b_compress_ssse3(blake2b_state *S,
         _mm_setr_epi8(2, 3, 4, 5, 6, 7, 0, 1, 10, 11, 12, 13, 14, 15, 8, 9);
     const __m128i r24 =
         _mm_setr_epi8(3, 4, 5, 6, 7, 0, 1, 2, 11, 12, 13, 14, 15, 8, 9, 10);
-    const uint64_t m0  = ((const uint64_t *) block)[0];
-    const uint64_t m1  = ((const uint64_t *) block)[1];
-    const uint64_t m2  = ((const uint64_t *) block)[2];
-    const uint64_t m3  = ((const uint64_t *) block)[3];
-    const uint64_t m4  = ((const uint64_t *) block)[4];
-    const uint64_t m5  = ((const uint64_t *) block)[5];
-    const uint64_t m6  = ((const uint64_t *) block)[6];
-    const uint64_t m7  = ((const uint64_t *) block)[7];
-    const uint64_t m8  = ((const uint64_t *) block)[8];
-    const uint64_t m9  = ((const uint64_t *) block)[9];
-    const uint64_t m10 = ((const uint64_t *) block)[10];
-    const uint64_t m11 = ((const uint64_t *) block)[11];
-    const uint64_t m12 = ((const uint64_t *) block)[12];
-    const uint64_t m13 = ((const uint64_t *) block)[13];
-    const uint64_t m14 = ((const uint64_t *) block)[14];
-    const uint64_t m15 = ((const uint64_t *) block)[15];
+    const int64_t m0  = (int64_t) ((const uint64_t *) block)[0];
+    const int64_t m1  = (int64_t) ((const uint64_t *) block)[1];
+    const int64_t m2  = (int64_t) ((const uint64_t *) block)[2];
+    const int64_t m3  = (int64_t) ((const uint64_t *) block)[3];
+    const int64_t m4  = (int64_t) ((const uint64_t *) block)[4];
+    const int64_t m5  = (int64_t) ((const uint64_t *) block)[5];
+    const int64_t m6  = (int64_t) ((const uint64_t *) block)[6];
+    const int64_t m7  = (int64_t) ((const uint64_t *) block)[7];
+    const int64_t m8  = (int64_t) ((const uint64_t *) block)[8];
+    const int64_t m9  = (int64_t) ((const uint64_t *) block)[9];
+    const int64_t m10 = (int64_t) ((const uint64_t *) block)[10];
+    const int64_t m11 = (int64_t) ((const uint64_t *) block)[11];
+    const int64_t m12 = (int64_t) ((const uint64_t *) block)[12];
+    const int64_t m13 = (int64_t) ((const uint64_t *) block)[13];
+    const int64_t m14 = (int64_t) ((const uint64_t *) block)[14];
+    const int64_t m15 = (int64_t) ((const uint64_t *) block)[15];
 
     row1l = LOADU(&S->h[0]);
     row1h = LOADU(&S->h[2]);
@@ -19693,6 +19693,7 @@ blake2b_compress_sse41(blake2b_state *S,
 #undef blake2b_load_sse41_H
 
 #define blake2b_IV rn_crypto_generichash_blake2b_ref_blake2b_compress_avx2_c_blake2b_IV
+#define d rn_crypto_generichash_blake2b_ref_blake2b_compress_avx2_c_d
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC push_options
 #endif
@@ -20447,7 +20448,7 @@ blake2b_compress_avx2(blake2b_state *S, const uint8_t block[BLAKE2B_BLOCKBYTES])
 {
     __m256i a = LOADU(&S->h[0]);
     __m256i b = LOADU(&S->h[4]);
-    BLAKE2B_COMPRESS_V1(a, b, block, S->t[0], S->t[1], S->f[0], S->f[1]);
+    BLAKE2B_COMPRESS_V1(a, b, block, (int64_t) S->t[0], (int64_t) S->t[1], (int64_t) S->f[0], (int64_t) S->f[1]);
     STOREU(&S->h[0], a);
     STOREU(&S->h[4], b);
 
@@ -20543,6 +20544,7 @@ blake2b_compress_avx2(blake2b_state *S, const uint8_t block[BLAKE2B_BLOCKBYTES])
 #undef blake2b_IV
 #undef blake2b_compress_avx2_H
 #undef blake2b_load_avx2_H
+#undef d
 
 #define blake2b_IV rn_crypto_generichash_blake2b_ref_blake2b_ref_c_blake2b_IV
 #if defined(__GNUC__) && !defined(__clang__)
@@ -22855,7 +22857,7 @@ fe25519_mul32(fe25519 h, const fe25519 f, uint32_t n)
     a  = f[4] * sn + ((uint64_t) (a >> 51));
     h4 = ((uint64_t) a) & mask;
 
-    h0 += (a >> 51) * 19ULL;
+    h0 = (uint64_t) (h0 + (a >> 51) * 19ULL);
 
     h[0] = h0;
     h[1] = h1;
@@ -23041,16 +23043,16 @@ fe25519_cmov(fe25519 f, const fe25519 g, unsigned int b)
     int32_t x8 = f8 ^ g[8];
     int32_t x9 = f9 ^ g[9];
 
-    x0 &= mask;
-    x1 &= mask;
-    x2 &= mask;
-    x3 &= mask;
-    x4 &= mask;
-    x5 &= mask;
-    x6 &= mask;
-    x7 &= mask;
-    x8 &= mask;
-    x9 &= mask;
+    x0 = (int32_t) ((uint32_t) x0 & mask);
+    x1 = (int32_t) ((uint32_t) x1 & mask);
+    x2 = (int32_t) ((uint32_t) x2 & mask);
+    x3 = (int32_t) ((uint32_t) x3 & mask);
+    x4 = (int32_t) ((uint32_t) x4 & mask);
+    x5 = (int32_t) ((uint32_t) x5 & mask);
+    x6 = (int32_t) ((uint32_t) x6 & mask);
+    x7 = (int32_t) ((uint32_t) x7 & mask);
+    x8 = (int32_t) ((uint32_t) x8 & mask);
+    x9 = (int32_t) ((uint32_t) x9 & mask);
 
     f[0] = f0 ^ x0;
     f[1] = f1 ^ x1;
@@ -23102,16 +23104,16 @@ fe25519_cswap(fe25519 f, fe25519 g, unsigned int b)
     int32_t x8 = f8 ^ g8;
     int32_t x9 = f9 ^ g9;
 
-    x0 &= mask;
-    x1 &= mask;
-    x2 &= mask;
-    x3 &= mask;
-    x4 &= mask;
-    x5 &= mask;
-    x6 &= mask;
-    x7 &= mask;
-    x8 &= mask;
-    x9 &= mask;
+    x0 = (int32_t) ((uint32_t) x0 & mask);
+    x1 = (int32_t) ((uint32_t) x1 & mask);
+    x2 = (int32_t) ((uint32_t) x2 & mask);
+    x3 = (int32_t) ((uint32_t) x3 & mask);
+    x4 = (int32_t) ((uint32_t) x4 & mask);
+    x5 = (int32_t) ((uint32_t) x5 & mask);
+    x6 = (int32_t) ((uint32_t) x6 & mask);
+    x7 = (int32_t) ((uint32_t) x7 & mask);
+    x8 = (int32_t) ((uint32_t) x8 & mask);
+    x9 = (int32_t) ((uint32_t) x9 & mask);
 
     f[0] = f0 ^ x0;
     f[1] = f1 ^ x1;
@@ -23396,10 +23398,10 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
     /* |h0| <= 2^25 */
     /* |h4| <= 2^25 */
     /* |h1| <= 1.71*2^59 */
@@ -23407,10 +23409,10 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry1 = (h1 + (int64_t)(1L << 24)) >> 25;
     h2 += carry1;
-    h1 -= carry1 * ((uint64_t) 1L << 25);
+    h1 = (int64_t) ((uint64_t) h1 - (uint64_t) carry1 * ((uint64_t) 1L << 25));
     carry5 = (h5 + (int64_t)(1L << 24)) >> 25;
     h6 += carry5;
-    h5 -= carry5 * ((uint64_t) 1L << 25);
+    h5 = (int64_t) ((uint64_t) h5 - (uint64_t) carry5 * ((uint64_t) 1L << 25));
     /* |h1| <= 2^24; from now on fits into int32 */
     /* |h5| <= 2^24; from now on fits into int32 */
     /* |h2| <= 1.41*2^60 */
@@ -23418,10 +23420,10 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry2 = (h2 + (int64_t)(1L << 25)) >> 26;
     h3 += carry2;
-    h2 -= carry2 * ((uint64_t) 1L << 26);
+    h2 = (int64_t) ((uint64_t) h2 - (uint64_t) carry2 * ((uint64_t) 1L << 26));
     carry6 = (h6 + (int64_t)(1L << 25)) >> 26;
     h7 += carry6;
-    h6 -= carry6 * ((uint64_t) 1L << 26);
+    h6 = (int64_t) ((uint64_t) h6 - (uint64_t) carry6 * ((uint64_t) 1L << 26));
     /* |h2| <= 2^25; from now on fits into int32 unchanged */
     /* |h6| <= 2^25; from now on fits into int32 unchanged */
     /* |h3| <= 1.71*2^59 */
@@ -23429,10 +23431,10 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry3 = (h3 + (int64_t)(1L << 24)) >> 25;
     h4 += carry3;
-    h3 -= carry3 * ((uint64_t) 1L << 25);
+    h3 = (int64_t) ((uint64_t) h3 - (uint64_t) carry3 * ((uint64_t) 1L << 25));
     carry7 = (h7 + (int64_t)(1L << 24)) >> 25;
     h8 += carry7;
-    h7 -= carry7 * ((uint64_t) 1L << 25);
+    h7 = (int64_t) ((uint64_t) h7 - (uint64_t) carry7 * ((uint64_t) 1L << 25));
     /* |h3| <= 2^24; from now on fits into int32 unchanged */
     /* |h7| <= 2^24; from now on fits into int32 unchanged */
     /* |h4| <= 1.72*2^34 */
@@ -23440,10 +23442,10 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
     carry8 = (h8 + (int64_t)(1L << 25)) >> 26;
     h9 += carry8;
-    h8 -= carry8 * ((uint64_t) 1L << 26);
+    h8 = (int64_t) ((uint64_t) h8 - (uint64_t) carry8 * ((uint64_t) 1L << 26));
     /* |h4| <= 2^25; from now on fits into int32 unchanged */
     /* |h8| <= 2^25; from now on fits into int32 unchanged */
     /* |h5| <= 1.01*2^24 */
@@ -23451,13 +23453,13 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry9 = (h9 + (int64_t)(1L << 24)) >> 25;
     h0 += carry9 * 19;
-    h9 -= carry9 * ((uint64_t) 1L << 25);
+    h9 = (int64_t) ((uint64_t) h9 - (uint64_t) carry9 * ((uint64_t) 1L << 25));
     /* |h9| <= 2^24; from now on fits into int32 unchanged */
     /* |h0| <= 1.1*2^39 */
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
     /* |h0| <= 2^25; from now on fits into int32 unchanged */
     /* |h1| <= 1.01*2^24 */
 
@@ -23592,46 +23594,46 @@ fe25519_sq(fe25519 h, const fe25519 f)
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
 
     carry1 = (h1 + (int64_t)(1L << 24)) >> 25;
     h2 += carry1;
-    h1 -= carry1 * ((uint64_t) 1L << 25);
+    h1 = (int64_t) ((uint64_t) h1 - (uint64_t) carry1 * ((uint64_t) 1L << 25));
     carry5 = (h5 + (int64_t)(1L << 24)) >> 25;
     h6 += carry5;
-    h5 -= carry5 * ((uint64_t) 1L << 25);
+    h5 = (int64_t) ((uint64_t) h5 - (uint64_t) carry5 * ((uint64_t) 1L << 25));
 
     carry2 = (h2 + (int64_t)(1L << 25)) >> 26;
     h3 += carry2;
-    h2 -= carry2 * ((uint64_t) 1L << 26);
+    h2 = (int64_t) ((uint64_t) h2 - (uint64_t) carry2 * ((uint64_t) 1L << 26));
     carry6 = (h6 + (int64_t)(1L << 25)) >> 26;
     h7 += carry6;
-    h6 -= carry6 * ((uint64_t) 1L << 26);
+    h6 = (int64_t) ((uint64_t) h6 - (uint64_t) carry6 * ((uint64_t) 1L << 26));
 
     carry3 = (h3 + (int64_t)(1L << 24)) >> 25;
     h4 += carry3;
-    h3 -= carry3 * ((uint64_t) 1L << 25);
+    h3 = (int64_t) ((uint64_t) h3 - (uint64_t) carry3 * ((uint64_t) 1L << 25));
     carry7 = (h7 + (int64_t)(1L << 24)) >> 25;
     h8 += carry7;
-    h7 -= carry7 * ((uint64_t) 1L << 25);
+    h7 = (int64_t) ((uint64_t) h7 - (uint64_t) carry7 * ((uint64_t) 1L << 25));
 
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
     carry8 = (h8 + (int64_t)(1L << 25)) >> 26;
     h9 += carry8;
-    h8 -= carry8 * ((uint64_t) 1L << 26);
+    h8 = (int64_t) ((uint64_t) h8 - (uint64_t) carry8 * ((uint64_t) 1L << 26));
 
     carry9 = (h9 + (int64_t)(1L << 24)) >> 25;
     h0 += carry9 * 19;
-    h9 -= carry9 * ((uint64_t) 1L << 25);
+    h9 = (int64_t) ((uint64_t) h9 - (uint64_t) carry9 * ((uint64_t) 1L << 25));
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
 
     h[0] = (int32_t) h0;
     h[1] = (int32_t) h1;
@@ -23775,46 +23777,46 @@ fe25519_sq2(fe25519 h, const fe25519 f)
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
 
     carry1 = (h1 + (int64_t)(1L << 24)) >> 25;
     h2 += carry1;
-    h1 -= carry1 * ((uint64_t) 1L << 25);
+    h1 = (int64_t) ((uint64_t) h1 - (uint64_t) carry1 * ((uint64_t) 1L << 25));
     carry5 = (h5 + (int64_t)(1L << 24)) >> 25;
     h6 += carry5;
-    h5 -= carry5 * ((uint64_t) 1L << 25);
+    h5 = (int64_t) ((uint64_t) h5 - (uint64_t) carry5 * ((uint64_t) 1L << 25));
 
     carry2 = (h2 + (int64_t)(1L << 25)) >> 26;
     h3 += carry2;
-    h2 -= carry2 * ((uint64_t) 1L << 26);
+    h2 = (int64_t) ((uint64_t) h2 - (uint64_t) carry2 * ((uint64_t) 1L << 26));
     carry6 = (h6 + (int64_t)(1L << 25)) >> 26;
     h7 += carry6;
-    h6 -= carry6 * ((uint64_t) 1L << 26);
+    h6 = (int64_t) ((uint64_t) h6 - (uint64_t) carry6 * ((uint64_t) 1L << 26));
 
     carry3 = (h3 + (int64_t)(1L << 24)) >> 25;
     h4 += carry3;
-    h3 -= carry3 * ((uint64_t) 1L << 25);
+    h3 = (int64_t) ((uint64_t) h3 - (uint64_t) carry3 * ((uint64_t) 1L << 25));
     carry7 = (h7 + (int64_t)(1L << 24)) >> 25;
     h8 += carry7;
-    h7 -= carry7 * ((uint64_t) 1L << 25);
+    h7 = (int64_t) ((uint64_t) h7 - (uint64_t) carry7 * ((uint64_t) 1L << 25));
 
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
     carry8 = (h8 + (int64_t)(1L << 25)) >> 26;
     h9 += carry8;
-    h8 -= carry8 * ((uint64_t) 1L << 26);
+    h8 = (int64_t) ((uint64_t) h8 - (uint64_t) carry8 * ((uint64_t) 1L << 26));
 
     carry9 = (h9 + (int64_t)(1L << 24)) >> 25;
     h0 += carry9 * 19;
-    h9 -= carry9 * ((uint64_t) 1L << 25);
+    h9 = (int64_t) ((uint64_t) h9 - (uint64_t) carry9 * ((uint64_t) 1L << 25));
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
 
     h[0] = (int32_t) h0;
     h[1] = (int32_t) h1;
@@ -27664,7 +27666,7 @@ fe25519_mul32(fe25519 h, const fe25519 f, uint32_t n)
     a  = f[4] * sn + ((uint64_t) (a >> 51));
     h4 = ((uint64_t) a) & mask;
 
-    h0 += (a >> 51) * 19ULL;
+    h0 = (uint64_t) (h0 + (a >> 51) * 19ULL);
 
     h[0] = h0;
     h[1] = h1;
@@ -27850,16 +27852,16 @@ fe25519_cmov(fe25519 f, const fe25519 g, unsigned int b)
     int32_t x8 = f8 ^ g[8];
     int32_t x9 = f9 ^ g[9];
 
-    x0 &= mask;
-    x1 &= mask;
-    x2 &= mask;
-    x3 &= mask;
-    x4 &= mask;
-    x5 &= mask;
-    x6 &= mask;
-    x7 &= mask;
-    x8 &= mask;
-    x9 &= mask;
+    x0 = (int32_t) ((uint32_t) x0 & mask);
+    x1 = (int32_t) ((uint32_t) x1 & mask);
+    x2 = (int32_t) ((uint32_t) x2 & mask);
+    x3 = (int32_t) ((uint32_t) x3 & mask);
+    x4 = (int32_t) ((uint32_t) x4 & mask);
+    x5 = (int32_t) ((uint32_t) x5 & mask);
+    x6 = (int32_t) ((uint32_t) x6 & mask);
+    x7 = (int32_t) ((uint32_t) x7 & mask);
+    x8 = (int32_t) ((uint32_t) x8 & mask);
+    x9 = (int32_t) ((uint32_t) x9 & mask);
 
     f[0] = f0 ^ x0;
     f[1] = f1 ^ x1;
@@ -27911,16 +27913,16 @@ fe25519_cswap(fe25519 f, fe25519 g, unsigned int b)
     int32_t x8 = f8 ^ g8;
     int32_t x9 = f9 ^ g9;
 
-    x0 &= mask;
-    x1 &= mask;
-    x2 &= mask;
-    x3 &= mask;
-    x4 &= mask;
-    x5 &= mask;
-    x6 &= mask;
-    x7 &= mask;
-    x8 &= mask;
-    x9 &= mask;
+    x0 = (int32_t) ((uint32_t) x0 & mask);
+    x1 = (int32_t) ((uint32_t) x1 & mask);
+    x2 = (int32_t) ((uint32_t) x2 & mask);
+    x3 = (int32_t) ((uint32_t) x3 & mask);
+    x4 = (int32_t) ((uint32_t) x4 & mask);
+    x5 = (int32_t) ((uint32_t) x5 & mask);
+    x6 = (int32_t) ((uint32_t) x6 & mask);
+    x7 = (int32_t) ((uint32_t) x7 & mask);
+    x8 = (int32_t) ((uint32_t) x8 & mask);
+    x9 = (int32_t) ((uint32_t) x9 & mask);
 
     f[0] = f0 ^ x0;
     f[1] = f1 ^ x1;
@@ -28205,10 +28207,10 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
     /* |h0| <= 2^25 */
     /* |h4| <= 2^25 */
     /* |h1| <= 1.71*2^59 */
@@ -28216,10 +28218,10 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry1 = (h1 + (int64_t)(1L << 24)) >> 25;
     h2 += carry1;
-    h1 -= carry1 * ((uint64_t) 1L << 25);
+    h1 = (int64_t) ((uint64_t) h1 - (uint64_t) carry1 * ((uint64_t) 1L << 25));
     carry5 = (h5 + (int64_t)(1L << 24)) >> 25;
     h6 += carry5;
-    h5 -= carry5 * ((uint64_t) 1L << 25);
+    h5 = (int64_t) ((uint64_t) h5 - (uint64_t) carry5 * ((uint64_t) 1L << 25));
     /* |h1| <= 2^24; from now on fits into int32 */
     /* |h5| <= 2^24; from now on fits into int32 */
     /* |h2| <= 1.41*2^60 */
@@ -28227,10 +28229,10 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry2 = (h2 + (int64_t)(1L << 25)) >> 26;
     h3 += carry2;
-    h2 -= carry2 * ((uint64_t) 1L << 26);
+    h2 = (int64_t) ((uint64_t) h2 - (uint64_t) carry2 * ((uint64_t) 1L << 26));
     carry6 = (h6 + (int64_t)(1L << 25)) >> 26;
     h7 += carry6;
-    h6 -= carry6 * ((uint64_t) 1L << 26);
+    h6 = (int64_t) ((uint64_t) h6 - (uint64_t) carry6 * ((uint64_t) 1L << 26));
     /* |h2| <= 2^25; from now on fits into int32 unchanged */
     /* |h6| <= 2^25; from now on fits into int32 unchanged */
     /* |h3| <= 1.71*2^59 */
@@ -28238,10 +28240,10 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry3 = (h3 + (int64_t)(1L << 24)) >> 25;
     h4 += carry3;
-    h3 -= carry3 * ((uint64_t) 1L << 25);
+    h3 = (int64_t) ((uint64_t) h3 - (uint64_t) carry3 * ((uint64_t) 1L << 25));
     carry7 = (h7 + (int64_t)(1L << 24)) >> 25;
     h8 += carry7;
-    h7 -= carry7 * ((uint64_t) 1L << 25);
+    h7 = (int64_t) ((uint64_t) h7 - (uint64_t) carry7 * ((uint64_t) 1L << 25));
     /* |h3| <= 2^24; from now on fits into int32 unchanged */
     /* |h7| <= 2^24; from now on fits into int32 unchanged */
     /* |h4| <= 1.72*2^34 */
@@ -28249,10 +28251,10 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
     carry8 = (h8 + (int64_t)(1L << 25)) >> 26;
     h9 += carry8;
-    h8 -= carry8 * ((uint64_t) 1L << 26);
+    h8 = (int64_t) ((uint64_t) h8 - (uint64_t) carry8 * ((uint64_t) 1L << 26));
     /* |h4| <= 2^25; from now on fits into int32 unchanged */
     /* |h8| <= 2^25; from now on fits into int32 unchanged */
     /* |h5| <= 1.01*2^24 */
@@ -28260,13 +28262,13 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry9 = (h9 + (int64_t)(1L << 24)) >> 25;
     h0 += carry9 * 19;
-    h9 -= carry9 * ((uint64_t) 1L << 25);
+    h9 = (int64_t) ((uint64_t) h9 - (uint64_t) carry9 * ((uint64_t) 1L << 25));
     /* |h9| <= 2^24; from now on fits into int32 unchanged */
     /* |h0| <= 1.1*2^39 */
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
     /* |h0| <= 2^25; from now on fits into int32 unchanged */
     /* |h1| <= 1.01*2^24 */
 
@@ -28401,46 +28403,46 @@ fe25519_sq(fe25519 h, const fe25519 f)
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
 
     carry1 = (h1 + (int64_t)(1L << 24)) >> 25;
     h2 += carry1;
-    h1 -= carry1 * ((uint64_t) 1L << 25);
+    h1 = (int64_t) ((uint64_t) h1 - (uint64_t) carry1 * ((uint64_t) 1L << 25));
     carry5 = (h5 + (int64_t)(1L << 24)) >> 25;
     h6 += carry5;
-    h5 -= carry5 * ((uint64_t) 1L << 25);
+    h5 = (int64_t) ((uint64_t) h5 - (uint64_t) carry5 * ((uint64_t) 1L << 25));
 
     carry2 = (h2 + (int64_t)(1L << 25)) >> 26;
     h3 += carry2;
-    h2 -= carry2 * ((uint64_t) 1L << 26);
+    h2 = (int64_t) ((uint64_t) h2 - (uint64_t) carry2 * ((uint64_t) 1L << 26));
     carry6 = (h6 + (int64_t)(1L << 25)) >> 26;
     h7 += carry6;
-    h6 -= carry6 * ((uint64_t) 1L << 26);
+    h6 = (int64_t) ((uint64_t) h6 - (uint64_t) carry6 * ((uint64_t) 1L << 26));
 
     carry3 = (h3 + (int64_t)(1L << 24)) >> 25;
     h4 += carry3;
-    h3 -= carry3 * ((uint64_t) 1L << 25);
+    h3 = (int64_t) ((uint64_t) h3 - (uint64_t) carry3 * ((uint64_t) 1L << 25));
     carry7 = (h7 + (int64_t)(1L << 24)) >> 25;
     h8 += carry7;
-    h7 -= carry7 * ((uint64_t) 1L << 25);
+    h7 = (int64_t) ((uint64_t) h7 - (uint64_t) carry7 * ((uint64_t) 1L << 25));
 
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
     carry8 = (h8 + (int64_t)(1L << 25)) >> 26;
     h9 += carry8;
-    h8 -= carry8 * ((uint64_t) 1L << 26);
+    h8 = (int64_t) ((uint64_t) h8 - (uint64_t) carry8 * ((uint64_t) 1L << 26));
 
     carry9 = (h9 + (int64_t)(1L << 24)) >> 25;
     h0 += carry9 * 19;
-    h9 -= carry9 * ((uint64_t) 1L << 25);
+    h9 = (int64_t) ((uint64_t) h9 - (uint64_t) carry9 * ((uint64_t) 1L << 25));
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
 
     h[0] = (int32_t) h0;
     h[1] = (int32_t) h1;
@@ -28584,46 +28586,46 @@ fe25519_sq2(fe25519 h, const fe25519 f)
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
 
     carry1 = (h1 + (int64_t)(1L << 24)) >> 25;
     h2 += carry1;
-    h1 -= carry1 * ((uint64_t) 1L << 25);
+    h1 = (int64_t) ((uint64_t) h1 - (uint64_t) carry1 * ((uint64_t) 1L << 25));
     carry5 = (h5 + (int64_t)(1L << 24)) >> 25;
     h6 += carry5;
-    h5 -= carry5 * ((uint64_t) 1L << 25);
+    h5 = (int64_t) ((uint64_t) h5 - (uint64_t) carry5 * ((uint64_t) 1L << 25));
 
     carry2 = (h2 + (int64_t)(1L << 25)) >> 26;
     h3 += carry2;
-    h2 -= carry2 * ((uint64_t) 1L << 26);
+    h2 = (int64_t) ((uint64_t) h2 - (uint64_t) carry2 * ((uint64_t) 1L << 26));
     carry6 = (h6 + (int64_t)(1L << 25)) >> 26;
     h7 += carry6;
-    h6 -= carry6 * ((uint64_t) 1L << 26);
+    h6 = (int64_t) ((uint64_t) h6 - (uint64_t) carry6 * ((uint64_t) 1L << 26));
 
     carry3 = (h3 + (int64_t)(1L << 24)) >> 25;
     h4 += carry3;
-    h3 -= carry3 * ((uint64_t) 1L << 25);
+    h3 = (int64_t) ((uint64_t) h3 - (uint64_t) carry3 * ((uint64_t) 1L << 25));
     carry7 = (h7 + (int64_t)(1L << 24)) >> 25;
     h8 += carry7;
-    h7 -= carry7 * ((uint64_t) 1L << 25);
+    h7 = (int64_t) ((uint64_t) h7 - (uint64_t) carry7 * ((uint64_t) 1L << 25));
 
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
     carry8 = (h8 + (int64_t)(1L << 25)) >> 26;
     h9 += carry8;
-    h8 -= carry8 * ((uint64_t) 1L << 26);
+    h8 = (int64_t) ((uint64_t) h8 - (uint64_t) carry8 * ((uint64_t) 1L << 26));
 
     carry9 = (h9 + (int64_t)(1L << 24)) >> 25;
     h0 += carry9 * 19;
-    h9 -= carry9 * ((uint64_t) 1L << 25);
+    h9 = (int64_t) ((uint64_t) h9 - (uint64_t) carry9 * ((uint64_t) 1L << 25));
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
 
     h[0] = (int32_t) h0;
     h[1] = (int32_t) h1;
@@ -29718,7 +29720,7 @@ fe25519_mul32(fe25519 h, const fe25519 f, uint32_t n)
     a  = f[4] * sn + ((uint64_t) (a >> 51));
     h4 = ((uint64_t) a) & mask;
 
-    h0 += (a >> 51) * 19ULL;
+    h0 = (uint64_t) (h0 + (a >> 51) * 19ULL);
 
     h[0] = h0;
     h[1] = h1;
@@ -29904,16 +29906,16 @@ fe25519_cmov(fe25519 f, const fe25519 g, unsigned int b)
     int32_t x8 = f8 ^ g[8];
     int32_t x9 = f9 ^ g[9];
 
-    x0 &= mask;
-    x1 &= mask;
-    x2 &= mask;
-    x3 &= mask;
-    x4 &= mask;
-    x5 &= mask;
-    x6 &= mask;
-    x7 &= mask;
-    x8 &= mask;
-    x9 &= mask;
+    x0 = (int32_t) ((uint32_t) x0 & mask);
+    x1 = (int32_t) ((uint32_t) x1 & mask);
+    x2 = (int32_t) ((uint32_t) x2 & mask);
+    x3 = (int32_t) ((uint32_t) x3 & mask);
+    x4 = (int32_t) ((uint32_t) x4 & mask);
+    x5 = (int32_t) ((uint32_t) x5 & mask);
+    x6 = (int32_t) ((uint32_t) x6 & mask);
+    x7 = (int32_t) ((uint32_t) x7 & mask);
+    x8 = (int32_t) ((uint32_t) x8 & mask);
+    x9 = (int32_t) ((uint32_t) x9 & mask);
 
     f[0] = f0 ^ x0;
     f[1] = f1 ^ x1;
@@ -29965,16 +29967,16 @@ fe25519_cswap(fe25519 f, fe25519 g, unsigned int b)
     int32_t x8 = f8 ^ g8;
     int32_t x9 = f9 ^ g9;
 
-    x0 &= mask;
-    x1 &= mask;
-    x2 &= mask;
-    x3 &= mask;
-    x4 &= mask;
-    x5 &= mask;
-    x6 &= mask;
-    x7 &= mask;
-    x8 &= mask;
-    x9 &= mask;
+    x0 = (int32_t) ((uint32_t) x0 & mask);
+    x1 = (int32_t) ((uint32_t) x1 & mask);
+    x2 = (int32_t) ((uint32_t) x2 & mask);
+    x3 = (int32_t) ((uint32_t) x3 & mask);
+    x4 = (int32_t) ((uint32_t) x4 & mask);
+    x5 = (int32_t) ((uint32_t) x5 & mask);
+    x6 = (int32_t) ((uint32_t) x6 & mask);
+    x7 = (int32_t) ((uint32_t) x7 & mask);
+    x8 = (int32_t) ((uint32_t) x8 & mask);
+    x9 = (int32_t) ((uint32_t) x9 & mask);
 
     f[0] = f0 ^ x0;
     f[1] = f1 ^ x1;
@@ -30259,10 +30261,10 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
     /* |h0| <= 2^25 */
     /* |h4| <= 2^25 */
     /* |h1| <= 1.71*2^59 */
@@ -30270,10 +30272,10 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry1 = (h1 + (int64_t)(1L << 24)) >> 25;
     h2 += carry1;
-    h1 -= carry1 * ((uint64_t) 1L << 25);
+    h1 = (int64_t) ((uint64_t) h1 - (uint64_t) carry1 * ((uint64_t) 1L << 25));
     carry5 = (h5 + (int64_t)(1L << 24)) >> 25;
     h6 += carry5;
-    h5 -= carry5 * ((uint64_t) 1L << 25);
+    h5 = (int64_t) ((uint64_t) h5 - (uint64_t) carry5 * ((uint64_t) 1L << 25));
     /* |h1| <= 2^24; from now on fits into int32 */
     /* |h5| <= 2^24; from now on fits into int32 */
     /* |h2| <= 1.41*2^60 */
@@ -30281,10 +30283,10 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry2 = (h2 + (int64_t)(1L << 25)) >> 26;
     h3 += carry2;
-    h2 -= carry2 * ((uint64_t) 1L << 26);
+    h2 = (int64_t) ((uint64_t) h2 - (uint64_t) carry2 * ((uint64_t) 1L << 26));
     carry6 = (h6 + (int64_t)(1L << 25)) >> 26;
     h7 += carry6;
-    h6 -= carry6 * ((uint64_t) 1L << 26);
+    h6 = (int64_t) ((uint64_t) h6 - (uint64_t) carry6 * ((uint64_t) 1L << 26));
     /* |h2| <= 2^25; from now on fits into int32 unchanged */
     /* |h6| <= 2^25; from now on fits into int32 unchanged */
     /* |h3| <= 1.71*2^59 */
@@ -30292,10 +30294,10 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry3 = (h3 + (int64_t)(1L << 24)) >> 25;
     h4 += carry3;
-    h3 -= carry3 * ((uint64_t) 1L << 25);
+    h3 = (int64_t) ((uint64_t) h3 - (uint64_t) carry3 * ((uint64_t) 1L << 25));
     carry7 = (h7 + (int64_t)(1L << 24)) >> 25;
     h8 += carry7;
-    h7 -= carry7 * ((uint64_t) 1L << 25);
+    h7 = (int64_t) ((uint64_t) h7 - (uint64_t) carry7 * ((uint64_t) 1L << 25));
     /* |h3| <= 2^24; from now on fits into int32 unchanged */
     /* |h7| <= 2^24; from now on fits into int32 unchanged */
     /* |h4| <= 1.72*2^34 */
@@ -30303,10 +30305,10 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
     carry8 = (h8 + (int64_t)(1L << 25)) >> 26;
     h9 += carry8;
-    h8 -= carry8 * ((uint64_t) 1L << 26);
+    h8 = (int64_t) ((uint64_t) h8 - (uint64_t) carry8 * ((uint64_t) 1L << 26));
     /* |h4| <= 2^25; from now on fits into int32 unchanged */
     /* |h8| <= 2^25; from now on fits into int32 unchanged */
     /* |h5| <= 1.01*2^24 */
@@ -30314,13 +30316,13 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry9 = (h9 + (int64_t)(1L << 24)) >> 25;
     h0 += carry9 * 19;
-    h9 -= carry9 * ((uint64_t) 1L << 25);
+    h9 = (int64_t) ((uint64_t) h9 - (uint64_t) carry9 * ((uint64_t) 1L << 25));
     /* |h9| <= 2^24; from now on fits into int32 unchanged */
     /* |h0| <= 1.1*2^39 */
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
     /* |h0| <= 2^25; from now on fits into int32 unchanged */
     /* |h1| <= 1.01*2^24 */
 
@@ -30455,46 +30457,46 @@ fe25519_sq(fe25519 h, const fe25519 f)
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
 
     carry1 = (h1 + (int64_t)(1L << 24)) >> 25;
     h2 += carry1;
-    h1 -= carry1 * ((uint64_t) 1L << 25);
+    h1 = (int64_t) ((uint64_t) h1 - (uint64_t) carry1 * ((uint64_t) 1L << 25));
     carry5 = (h5 + (int64_t)(1L << 24)) >> 25;
     h6 += carry5;
-    h5 -= carry5 * ((uint64_t) 1L << 25);
+    h5 = (int64_t) ((uint64_t) h5 - (uint64_t) carry5 * ((uint64_t) 1L << 25));
 
     carry2 = (h2 + (int64_t)(1L << 25)) >> 26;
     h3 += carry2;
-    h2 -= carry2 * ((uint64_t) 1L << 26);
+    h2 = (int64_t) ((uint64_t) h2 - (uint64_t) carry2 * ((uint64_t) 1L << 26));
     carry6 = (h6 + (int64_t)(1L << 25)) >> 26;
     h7 += carry6;
-    h6 -= carry6 * ((uint64_t) 1L << 26);
+    h6 = (int64_t) ((uint64_t) h6 - (uint64_t) carry6 * ((uint64_t) 1L << 26));
 
     carry3 = (h3 + (int64_t)(1L << 24)) >> 25;
     h4 += carry3;
-    h3 -= carry3 * ((uint64_t) 1L << 25);
+    h3 = (int64_t) ((uint64_t) h3 - (uint64_t) carry3 * ((uint64_t) 1L << 25));
     carry7 = (h7 + (int64_t)(1L << 24)) >> 25;
     h8 += carry7;
-    h7 -= carry7 * ((uint64_t) 1L << 25);
+    h7 = (int64_t) ((uint64_t) h7 - (uint64_t) carry7 * ((uint64_t) 1L << 25));
 
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
     carry8 = (h8 + (int64_t)(1L << 25)) >> 26;
     h9 += carry8;
-    h8 -= carry8 * ((uint64_t) 1L << 26);
+    h8 = (int64_t) ((uint64_t) h8 - (uint64_t) carry8 * ((uint64_t) 1L << 26));
 
     carry9 = (h9 + (int64_t)(1L << 24)) >> 25;
     h0 += carry9 * 19;
-    h9 -= carry9 * ((uint64_t) 1L << 25);
+    h9 = (int64_t) ((uint64_t) h9 - (uint64_t) carry9 * ((uint64_t) 1L << 25));
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
 
     h[0] = (int32_t) h0;
     h[1] = (int32_t) h1;
@@ -30638,46 +30640,46 @@ fe25519_sq2(fe25519 h, const fe25519 f)
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
 
     carry1 = (h1 + (int64_t)(1L << 24)) >> 25;
     h2 += carry1;
-    h1 -= carry1 * ((uint64_t) 1L << 25);
+    h1 = (int64_t) ((uint64_t) h1 - (uint64_t) carry1 * ((uint64_t) 1L << 25));
     carry5 = (h5 + (int64_t)(1L << 24)) >> 25;
     h6 += carry5;
-    h5 -= carry5 * ((uint64_t) 1L << 25);
+    h5 = (int64_t) ((uint64_t) h5 - (uint64_t) carry5 * ((uint64_t) 1L << 25));
 
     carry2 = (h2 + (int64_t)(1L << 25)) >> 26;
     h3 += carry2;
-    h2 -= carry2 * ((uint64_t) 1L << 26);
+    h2 = (int64_t) ((uint64_t) h2 - (uint64_t) carry2 * ((uint64_t) 1L << 26));
     carry6 = (h6 + (int64_t)(1L << 25)) >> 26;
     h7 += carry6;
-    h6 -= carry6 * ((uint64_t) 1L << 26);
+    h6 = (int64_t) ((uint64_t) h6 - (uint64_t) carry6 * ((uint64_t) 1L << 26));
 
     carry3 = (h3 + (int64_t)(1L << 24)) >> 25;
     h4 += carry3;
-    h3 -= carry3 * ((uint64_t) 1L << 25);
+    h3 = (int64_t) ((uint64_t) h3 - (uint64_t) carry3 * ((uint64_t) 1L << 25));
     carry7 = (h7 + (int64_t)(1L << 24)) >> 25;
     h8 += carry7;
-    h7 -= carry7 * ((uint64_t) 1L << 25);
+    h7 = (int64_t) ((uint64_t) h7 - (uint64_t) carry7 * ((uint64_t) 1L << 25));
 
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
     carry8 = (h8 + (int64_t)(1L << 25)) >> 26;
     h9 += carry8;
-    h8 -= carry8 * ((uint64_t) 1L << 26);
+    h8 = (int64_t) ((uint64_t) h8 - (uint64_t) carry8 * ((uint64_t) 1L << 26));
 
     carry9 = (h9 + (int64_t)(1L << 24)) >> 25;
     h0 += carry9 * 19;
-    h9 -= carry9 * ((uint64_t) 1L << 25);
+    h9 = (int64_t) ((uint64_t) h9 - (uint64_t) carry9 * ((uint64_t) 1L << 25));
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
 
     h[0] = (int32_t) h0;
     h[1] = (int32_t) h1;
@@ -31823,7 +31825,7 @@ fe25519_mul32(fe25519 h, const fe25519 f, uint32_t n)
     a  = f[4] * sn + ((uint64_t) (a >> 51));
     h4 = ((uint64_t) a) & mask;
 
-    h0 += (a >> 51) * 19ULL;
+    h0 = (uint64_t) (h0 + (a >> 51) * 19ULL);
 
     h[0] = h0;
     h[1] = h1;
@@ -32009,16 +32011,16 @@ fe25519_cmov(fe25519 f, const fe25519 g, unsigned int b)
     int32_t x8 = f8 ^ g[8];
     int32_t x9 = f9 ^ g[9];
 
-    x0 &= mask;
-    x1 &= mask;
-    x2 &= mask;
-    x3 &= mask;
-    x4 &= mask;
-    x5 &= mask;
-    x6 &= mask;
-    x7 &= mask;
-    x8 &= mask;
-    x9 &= mask;
+    x0 = (int32_t) ((uint32_t) x0 & mask);
+    x1 = (int32_t) ((uint32_t) x1 & mask);
+    x2 = (int32_t) ((uint32_t) x2 & mask);
+    x3 = (int32_t) ((uint32_t) x3 & mask);
+    x4 = (int32_t) ((uint32_t) x4 & mask);
+    x5 = (int32_t) ((uint32_t) x5 & mask);
+    x6 = (int32_t) ((uint32_t) x6 & mask);
+    x7 = (int32_t) ((uint32_t) x7 & mask);
+    x8 = (int32_t) ((uint32_t) x8 & mask);
+    x9 = (int32_t) ((uint32_t) x9 & mask);
 
     f[0] = f0 ^ x0;
     f[1] = f1 ^ x1;
@@ -32070,16 +32072,16 @@ fe25519_cswap(fe25519 f, fe25519 g, unsigned int b)
     int32_t x8 = f8 ^ g8;
     int32_t x9 = f9 ^ g9;
 
-    x0 &= mask;
-    x1 &= mask;
-    x2 &= mask;
-    x3 &= mask;
-    x4 &= mask;
-    x5 &= mask;
-    x6 &= mask;
-    x7 &= mask;
-    x8 &= mask;
-    x9 &= mask;
+    x0 = (int32_t) ((uint32_t) x0 & mask);
+    x1 = (int32_t) ((uint32_t) x1 & mask);
+    x2 = (int32_t) ((uint32_t) x2 & mask);
+    x3 = (int32_t) ((uint32_t) x3 & mask);
+    x4 = (int32_t) ((uint32_t) x4 & mask);
+    x5 = (int32_t) ((uint32_t) x5 & mask);
+    x6 = (int32_t) ((uint32_t) x6 & mask);
+    x7 = (int32_t) ((uint32_t) x7 & mask);
+    x8 = (int32_t) ((uint32_t) x8 & mask);
+    x9 = (int32_t) ((uint32_t) x9 & mask);
 
     f[0] = f0 ^ x0;
     f[1] = f1 ^ x1;
@@ -32364,10 +32366,10 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
     /* |h0| <= 2^25 */
     /* |h4| <= 2^25 */
     /* |h1| <= 1.71*2^59 */
@@ -32375,10 +32377,10 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry1 = (h1 + (int64_t)(1L << 24)) >> 25;
     h2 += carry1;
-    h1 -= carry1 * ((uint64_t) 1L << 25);
+    h1 = (int64_t) ((uint64_t) h1 - (uint64_t) carry1 * ((uint64_t) 1L << 25));
     carry5 = (h5 + (int64_t)(1L << 24)) >> 25;
     h6 += carry5;
-    h5 -= carry5 * ((uint64_t) 1L << 25);
+    h5 = (int64_t) ((uint64_t) h5 - (uint64_t) carry5 * ((uint64_t) 1L << 25));
     /* |h1| <= 2^24; from now on fits into int32 */
     /* |h5| <= 2^24; from now on fits into int32 */
     /* |h2| <= 1.41*2^60 */
@@ -32386,10 +32388,10 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry2 = (h2 + (int64_t)(1L << 25)) >> 26;
     h3 += carry2;
-    h2 -= carry2 * ((uint64_t) 1L << 26);
+    h2 = (int64_t) ((uint64_t) h2 - (uint64_t) carry2 * ((uint64_t) 1L << 26));
     carry6 = (h6 + (int64_t)(1L << 25)) >> 26;
     h7 += carry6;
-    h6 -= carry6 * ((uint64_t) 1L << 26);
+    h6 = (int64_t) ((uint64_t) h6 - (uint64_t) carry6 * ((uint64_t) 1L << 26));
     /* |h2| <= 2^25; from now on fits into int32 unchanged */
     /* |h6| <= 2^25; from now on fits into int32 unchanged */
     /* |h3| <= 1.71*2^59 */
@@ -32397,10 +32399,10 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry3 = (h3 + (int64_t)(1L << 24)) >> 25;
     h4 += carry3;
-    h3 -= carry3 * ((uint64_t) 1L << 25);
+    h3 = (int64_t) ((uint64_t) h3 - (uint64_t) carry3 * ((uint64_t) 1L << 25));
     carry7 = (h7 + (int64_t)(1L << 24)) >> 25;
     h8 += carry7;
-    h7 -= carry7 * ((uint64_t) 1L << 25);
+    h7 = (int64_t) ((uint64_t) h7 - (uint64_t) carry7 * ((uint64_t) 1L << 25));
     /* |h3| <= 2^24; from now on fits into int32 unchanged */
     /* |h7| <= 2^24; from now on fits into int32 unchanged */
     /* |h4| <= 1.72*2^34 */
@@ -32408,10 +32410,10 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
     carry8 = (h8 + (int64_t)(1L << 25)) >> 26;
     h9 += carry8;
-    h8 -= carry8 * ((uint64_t) 1L << 26);
+    h8 = (int64_t) ((uint64_t) h8 - (uint64_t) carry8 * ((uint64_t) 1L << 26));
     /* |h4| <= 2^25; from now on fits into int32 unchanged */
     /* |h8| <= 2^25; from now on fits into int32 unchanged */
     /* |h5| <= 1.01*2^24 */
@@ -32419,13 +32421,13 @@ fe25519_mul(fe25519 h, const fe25519 f, const fe25519 g)
 
     carry9 = (h9 + (int64_t)(1L << 24)) >> 25;
     h0 += carry9 * 19;
-    h9 -= carry9 * ((uint64_t) 1L << 25);
+    h9 = (int64_t) ((uint64_t) h9 - (uint64_t) carry9 * ((uint64_t) 1L << 25));
     /* |h9| <= 2^24; from now on fits into int32 unchanged */
     /* |h0| <= 1.1*2^39 */
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
     /* |h0| <= 2^25; from now on fits into int32 unchanged */
     /* |h1| <= 1.01*2^24 */
 
@@ -32560,46 +32562,46 @@ fe25519_sq(fe25519 h, const fe25519 f)
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
 
     carry1 = (h1 + (int64_t)(1L << 24)) >> 25;
     h2 += carry1;
-    h1 -= carry1 * ((uint64_t) 1L << 25);
+    h1 = (int64_t) ((uint64_t) h1 - (uint64_t) carry1 * ((uint64_t) 1L << 25));
     carry5 = (h5 + (int64_t)(1L << 24)) >> 25;
     h6 += carry5;
-    h5 -= carry5 * ((uint64_t) 1L << 25);
+    h5 = (int64_t) ((uint64_t) h5 - (uint64_t) carry5 * ((uint64_t) 1L << 25));
 
     carry2 = (h2 + (int64_t)(1L << 25)) >> 26;
     h3 += carry2;
-    h2 -= carry2 * ((uint64_t) 1L << 26);
+    h2 = (int64_t) ((uint64_t) h2 - (uint64_t) carry2 * ((uint64_t) 1L << 26));
     carry6 = (h6 + (int64_t)(1L << 25)) >> 26;
     h7 += carry6;
-    h6 -= carry6 * ((uint64_t) 1L << 26);
+    h6 = (int64_t) ((uint64_t) h6 - (uint64_t) carry6 * ((uint64_t) 1L << 26));
 
     carry3 = (h3 + (int64_t)(1L << 24)) >> 25;
     h4 += carry3;
-    h3 -= carry3 * ((uint64_t) 1L << 25);
+    h3 = (int64_t) ((uint64_t) h3 - (uint64_t) carry3 * ((uint64_t) 1L << 25));
     carry7 = (h7 + (int64_t)(1L << 24)) >> 25;
     h8 += carry7;
-    h7 -= carry7 * ((uint64_t) 1L << 25);
+    h7 = (int64_t) ((uint64_t) h7 - (uint64_t) carry7 * ((uint64_t) 1L << 25));
 
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
     carry8 = (h8 + (int64_t)(1L << 25)) >> 26;
     h9 += carry8;
-    h8 -= carry8 * ((uint64_t) 1L << 26);
+    h8 = (int64_t) ((uint64_t) h8 - (uint64_t) carry8 * ((uint64_t) 1L << 26));
 
     carry9 = (h9 + (int64_t)(1L << 24)) >> 25;
     h0 += carry9 * 19;
-    h9 -= carry9 * ((uint64_t) 1L << 25);
+    h9 = (int64_t) ((uint64_t) h9 - (uint64_t) carry9 * ((uint64_t) 1L << 25));
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
 
     h[0] = (int32_t) h0;
     h[1] = (int32_t) h1;
@@ -32743,46 +32745,46 @@ fe25519_sq2(fe25519 h, const fe25519 f)
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
 
     carry1 = (h1 + (int64_t)(1L << 24)) >> 25;
     h2 += carry1;
-    h1 -= carry1 * ((uint64_t) 1L << 25);
+    h1 = (int64_t) ((uint64_t) h1 - (uint64_t) carry1 * ((uint64_t) 1L << 25));
     carry5 = (h5 + (int64_t)(1L << 24)) >> 25;
     h6 += carry5;
-    h5 -= carry5 * ((uint64_t) 1L << 25);
+    h5 = (int64_t) ((uint64_t) h5 - (uint64_t) carry5 * ((uint64_t) 1L << 25));
 
     carry2 = (h2 + (int64_t)(1L << 25)) >> 26;
     h3 += carry2;
-    h2 -= carry2 * ((uint64_t) 1L << 26);
+    h2 = (int64_t) ((uint64_t) h2 - (uint64_t) carry2 * ((uint64_t) 1L << 26));
     carry6 = (h6 + (int64_t)(1L << 25)) >> 26;
     h7 += carry6;
-    h6 -= carry6 * ((uint64_t) 1L << 26);
+    h6 = (int64_t) ((uint64_t) h6 - (uint64_t) carry6 * ((uint64_t) 1L << 26));
 
     carry3 = (h3 + (int64_t)(1L << 24)) >> 25;
     h4 += carry3;
-    h3 -= carry3 * ((uint64_t) 1L << 25);
+    h3 = (int64_t) ((uint64_t) h3 - (uint64_t) carry3 * ((uint64_t) 1L << 25));
     carry7 = (h7 + (int64_t)(1L << 24)) >> 25;
     h8 += carry7;
-    h7 -= carry7 * ((uint64_t) 1L << 25);
+    h7 = (int64_t) ((uint64_t) h7 - (uint64_t) carry7 * ((uint64_t) 1L << 25));
 
     carry4 = (h4 + (int64_t)(1L << 25)) >> 26;
     h5 += carry4;
-    h4 -= carry4 * ((uint64_t) 1L << 26);
+    h4 = (int64_t) ((uint64_t) h4 - (uint64_t) carry4 * ((uint64_t) 1L << 26));
     carry8 = (h8 + (int64_t)(1L << 25)) >> 26;
     h9 += carry8;
-    h8 -= carry8 * ((uint64_t) 1L << 26);
+    h8 = (int64_t) ((uint64_t) h8 - (uint64_t) carry8 * ((uint64_t) 1L << 26));
 
     carry9 = (h9 + (int64_t)(1L << 24)) >> 25;
     h0 += carry9 * 19;
-    h9 -= carry9 * ((uint64_t) 1L << 25);
+    h9 = (int64_t) ((uint64_t) h9 - (uint64_t) carry9 * ((uint64_t) 1L << 25));
 
     carry0 = (h0 + (int64_t)(1L << 25)) >> 26;
     h1 += carry0;
-    h0 -= carry0 * ((uint64_t) 1L << 26);
+    h0 = (int64_t) ((uint64_t) h0 - (uint64_t) carry0 * ((uint64_t) 1L << 26));
 
     h[0] = (int32_t) h0;
     h[1] = (int32_t) h1;
@@ -33907,7 +33909,7 @@ extern struct crypto_stream_salsa20_implementation
 
 #endif
 
-#if HAVE_AMD64_ASM
+#if defined(HAVE_AMD64_ASM) && HAVE_AMD64_ASM
 static const crypto_stream_salsa20_implementation *implementation =
     &crypto_stream_salsa20_xmm6_implementation;
 #else
