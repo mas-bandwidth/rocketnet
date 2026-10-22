@@ -1989,6 +1989,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     return server_transport;
 }
 
+#if ROCKETNET_TEST_SEAMS
 int rocketnet_server_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max )
 {
     const size_t protocol = offsetof( rocketnet_server_transport_t, protocol );
@@ -2006,6 +2007,7 @@ int rocketnet_server_transport_secret_spans_for_test( size_t * offsets, size_t *
     }
     return count;
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
 void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * server_transport )
 {

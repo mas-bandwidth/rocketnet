@@ -1674,6 +1674,7 @@ bool rocketnet_server_running( const struct rocketnet_server_t * server )
     return server->running != NULL;
 }
 
+#if ROCKETNET_TEST_SEAMS
 int rocketnet_server_secret_spans_for_test( size_t * offsets, size_t * bytes, int max )
 {
     if ( max < 1 )
@@ -1682,6 +1683,7 @@ int rocketnet_server_secret_spans_for_test( size_t * offsets, size_t * bytes, in
     bytes[0] = sizeof( ( (struct rocketnet_server_transport_config_t *) 0 )->server_secret_key );
     return 1;
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
 void rocketnet_server_destroy( struct rocketnet_server_t * server )
 {

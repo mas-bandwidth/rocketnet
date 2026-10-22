@@ -1423,6 +1423,7 @@ static void rocketnet_client_transport_finish_stop( rocketnet_client_transport_t
     client_transport->stopped.store( true, std::memory_order_release );
 }
 
+#if ROCKETNET_TEST_SEAMS
 int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max )
 {
     const size_t protocol = offsetof( rocketnet_client_transport_t, protocol );
@@ -1443,6 +1444,7 @@ int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t *
     }
     return count;
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
 void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_transport )
 {
