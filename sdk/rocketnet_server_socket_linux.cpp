@@ -2052,39 +2052,33 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
         socket->num_free_receive_frames = ROCKETNET_XDP_NUM_FRAMES / 2;
 
-        // populate fill ring for packets to be received in
-        {
-            rocketnet_assert( ROCKETNET_XDP_FILL_QUEUE_SIZE <= ROCKETNET_XDP_RECV_QUEUE_SIZE );
+        // populate fill ring for packets to be received in. The ring has room
+        // for twice these frames (ROCKETNET_XDP_FILL_RING_SIZE), so the worker
+        // always has a slot to hand a frame back in
 
+        {
             uint32_t index;
-            int result = xsk_ring_prod__reserve( &socket->fill_queue, ROCKETNET_XDP_FILL_QUEUE_SIZE, &index );
-            if ( result != ROCKETNET_XDP_FILL_QUEUE_SIZE )
+            int result = xsk_ring_prod__reserve( &socket->fill_queue, ROCKETNET_XDP_FILL_FRAMES, &index );
+            if ( result != ROCKETNET_XDP_FILL_FRAMES )
             {
                 rocketnet_error( "server failed to populate fill queue: %d", result );
                 rocketnet_server_socket_abort_create( server_socket );
                 return NULL;
             }
 
-            uint64_t frames[ROCKETNET_XDP_FILL_QUEUE_SIZE];
-            for ( int i = 0; i < ROCKETNET_XDP_FILL_QUEUE_SIZE; i++ ) 
+            for ( int i = 0; i < ROCKETNET_XDP_FILL_FRAMES; i++ )
             {
-                frames[i] = alloc_receive_frame( socket );
-                if ( frames[i] == INVALID_FRAME )
+                const uint64_t frame = alloc_receive_frame( socket );
+                if ( frame == INVALID_FRAME )
                 {
                     rocketnet_error( "server could not allocate receive frame for fill queue" );
                     rocketnet_server_socket_abort_create( server_socket );
                     return NULL;
                 }
+                *xsk_ring_prod__fill_addr( &socket->fill_queue, index + (uint32_t) i ) = frame;
             }
 
-            for ( int i = 0; i < ROCKETNET_XDP_FILL_QUEUE_SIZE; i++ ) 
-            {
-                uint64_t * frame = (uint64_t*) xsk_ring_prod__fill_addr( &socket->fill_queue, index + i );
-                rocketnet_assert( frame );
-                *frame = frames[i];
-            }
-
-            xsk_ring_prod__submit( &socket->fill_queue, ROCKETNET_XDP_FILL_QUEUE_SIZE );
+            xsk_ring_prod__submit( &socket->fill_queue, ROCKETNET_XDP_FILL_FRAMES );
         }
 
         // create send mutex
@@ -2973,7 +2967,10 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
         // return pending frames to the fill queue
 
         // libxdp reserves the entire requested count or zero. A failed
-        // reservation retains the entire batch for a later iteration.
+        // reservation retains the entire batch for a later iteration. The
+        // fill ring has a slot for every frame beyond the kernel's unpublished
+        // batch (ROCKETNET_XDP_FILL_RING_SIZE), so a flush never waits on the
+        // kernel ending its batch (tla/RNXdpReceiveRing.tla).
         return_pending_frames();
 
         // see if there are any packets to receive
