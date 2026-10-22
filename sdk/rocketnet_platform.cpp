@@ -2688,6 +2688,56 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
         return NULL;
     }
 
+    // Darwin chooses an ephemeral port for an IPv6 wildcard without checking
+    // whether an IPv4 socket already owns that port. Both binds then coexist,
+    // and IPv4 traffic goes to the IPv4 socket instead of this dual-stack
+    // socket. Reserve the requested port in the IPv4 namespace first. Binding
+    // the IPv6 wildcard to that explicit port while the reservation is held
+    // makes it own both namespaces after the reservation closes.
+
+    uint16_t bind_port = address->port;
+    int ipv4_port_reservation = -1;
+    if ( address->type == ROCKETNET_ADDRESS_IPV6 )
+    {
+        bool wildcard = true;
+        for ( int i = 0; i < 8; i++ )
+            wildcard &= address->data.ipv6[i] == 0;
+        if ( wildcard )
+        {
+            ipv4_port_reservation = ::socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+            if ( ipv4_port_reservation < 0 )
+            {
+                rocketnet_error( "failed to create ipv4 port reservation for dual stack socket" );
+                rocketnet_platform_socket_destroy( socket );
+                return NULL;
+            }
+            sockaddr_in reservation_address;
+            memset( &reservation_address, 0, sizeof(reservation_address) );
+            reservation_address.sin_family = AF_INET;
+            reservation_address.sin_addr.s_addr = INADDR_ANY;
+            reservation_address.sin_port = rocketnet_platform_htons( bind_port );
+            if ( bind( ipv4_port_reservation, (sockaddr*) &reservation_address, sizeof(reservation_address) ) < 0 )
+            {
+                rocketnet_error( "failed to reserve ipv4 port for dual stack socket" );
+                close( ipv4_port_reservation );
+                rocketnet_platform_socket_destroy( socket );
+                return NULL;
+            }
+            if ( bind_port == 0 )
+            {
+                socklen_t reservation_length = sizeof(reservation_address);
+                if ( getsockname( ipv4_port_reservation, (sockaddr*) &reservation_address, &reservation_length ) < 0 )
+                {
+                    rocketnet_error( "failed to get reserved ipv4 port for dual stack socket" );
+                    close( ipv4_port_reservation );
+                    rocketnet_platform_socket_destroy( socket );
+                    return NULL;
+                }
+                bind_port = rocketnet_platform_ntohs( reservation_address.sin_port );
+            }
+        }
+    }
+
     // bind to port
 
     if ( address->type == ROCKETNET_ADDRESS_IPV6 )
@@ -2699,13 +2749,20 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
         {
             ( (uint16_t*) &socket_address.sin6_addr ) [i] = rocketnet_platform_htons( address->data.ipv6[i] );
         }
-        socket_address.sin6_port = rocketnet_platform_htons( address->port );
+        socket_address.sin6_port = rocketnet_platform_htons( bind_port );
 
         if ( bind( socket->handle, (sockaddr*) &socket_address, sizeof( socket_address ) ) < 0 )
         {
             rocketnet_error( "failed to bind socket (ipv6)" );
+            if ( ipv4_port_reservation >= 0 )
+                close( ipv4_port_reservation );
             rocketnet_platform_socket_destroy( socket );
             return NULL;
+        }
+        if ( ipv4_port_reservation >= 0 )
+        {
+            close( ipv4_port_reservation );
+            address->port = bind_port;
         }
     }
     else

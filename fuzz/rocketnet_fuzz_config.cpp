@@ -75,7 +75,12 @@
 #undef ROCKETNET_FUZZ_HEAP_CHECK  // the check is for the POSIX environ; MSVC's ASan headers differ
 #endif
 #if defined(ROCKETNET_FUZZ_HEAP_CHECK)
+#if defined(__GNUC__) && !defined(__clang__)
+// GCC's ASan runtime exports this interface but does not install its header.
+extern "C" size_t __sanitizer_get_current_allocated_bytes( void );
+#else
 #include <sanitizer/allocator_interface.h>
+#endif
 #endif
 
 static void rocketnet_fuzz_require( bool condition, const char * property )

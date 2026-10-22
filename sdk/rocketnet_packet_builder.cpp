@@ -239,11 +239,11 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
 
         // the scheduler's state at the packet's start: a packet the budget
         // refuses is not written, so its takes are undone
-        uint64_t clock_snapshot[ROCKETNET_PACKET_BUILDER_LEVELS];
+        uint64_t saved_level_clock[ROCKETNET_PACKET_BUILDER_LEVELS];
         for ( int l = 0; l < ROCKETNET_PACKET_BUILDER_LEVELS; l++ )
-            clock_snapshot[l] = builder->level_clock[l];
-        const uint64_t base_snapshot = builder->clock_base;
-        const uint32_t round_robin_snapshot = builder->round_robin;
+            saved_level_clock[l] = builder->level_clock[l];
+        const uint64_t saved_clock_base = builder->clock_base;
+        const uint32_t saved_round_robin = builder->round_robin;
 
         uint64_t numbers[ROCKETNET_PACKET_BUILDER_MAX_NUMBERS];
         uint32_t count = 0;
@@ -332,9 +332,9 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
                 items[taken[r]].taken = 0;
 
             for ( int l = 0; l < ROCKETNET_PACKET_BUILDER_LEVELS; l++ )
-                builder->level_clock[l] = clock_snapshot[l];
-            builder->clock_base = base_snapshot;
-            builder->round_robin = round_robin_snapshot;
+                builder->level_clock[l] = saved_level_clock[l];
+            builder->clock_base = saved_clock_base;
+            builder->round_robin = saved_round_robin;
 
             if ( packet_class == ROCKETNET_SEND_CLASS_UNRELIABLE )
             {

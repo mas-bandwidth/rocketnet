@@ -351,7 +351,7 @@ typedef struct rocketnet_channel_harness_t
     uint64_t resends;
     int64_t wire_bytes_to_server;
     int64_t wire_bytes_to_client;
-    uint64_t allocation_snapshot;
+    uint64_t allocations_after_create;
     uint64_t next_packet_id;
     int counting_allocator_installed;
     uint64_t seed; // the simulator seed this run used
@@ -824,7 +824,7 @@ static inline int rocketnet_channel_harness_create_with_config( rocketnet_channe
 
     // Each functional case is a process. Install a counting allocator before
     // the SDK is initialized so object, protocol and simulator creates share
-    // one count; the harness snapshots it after create and restores the SDK's
+    // one count; the harness records it after create and restores the SDK's
     // default allocator when it is destroyed.
     rocketnet_channel_capture_begin();
     rocketnet_term();
@@ -838,7 +838,7 @@ static inline int rocketnet_channel_harness_create_with_config( rocketnet_channe
 
     // Keep the large fixture payload slots off the caller's stack. Both
     // endpoint buffers belong to this harness and are allocated before the
-    // no-allocation snapshot used by the functional cases.
+    // no-allocation check used by the functional cases.
     h->client_endpoint.payload = (uint8_t (*)[ROCKETNET_RECEIVE_PAYLOAD_BYTES])
         rocketnet_malloc( NULL, sizeof( *h->client_endpoint.payload ) * ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS );
     h->server_endpoint.payload = (uint8_t (*)[ROCKETNET_RECEIVE_PAYLOAD_BYTES])
@@ -918,7 +918,7 @@ static inline int rocketnet_channel_harness_create_with_config( rocketnet_channe
     if ( !h->message_client || !h->message_server )
         goto failed;
 
-    h->allocation_snapshot = rocketnet_channel_allocator_calls;
+    h->allocations_after_create = rocketnet_channel_allocator_calls;
 
     return 1;
 

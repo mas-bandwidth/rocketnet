@@ -37,4 +37,15 @@
 #define ROCKETNET_FUNCTIONAL_TIME_SCALE ROCKETNET_FUNCTIONAL_DEBUG_TIME_SCALE
 #endif
 
+// Full-system emulation runs a Release build, but one case receives only a
+// fraction of a native CPU. Scale case completion bounds without lengthening
+// workload durations such as the live matrix's measurement window. The
+// full-system workflow opts in explicitly; native Release remains 1.
+
+#if defined(ROCKETNET_TEST_EMULATED)
+#define ROCKETNET_TEST_CASE_TIME_SCALE ROCKETNET_FUNCTIONAL_DEBUG_TIME_SCALE
+#else
+#define ROCKETNET_TEST_CASE_TIME_SCALE ROCKETNET_FUNCTIONAL_TIME_SCALE
+#endif
+
 #endif // ROCKETNET_TEST_TIME_SCALE_H

@@ -115,9 +115,9 @@ uses `--clients 1000 --profile default`; that profile also requires a
 positive `--transport-overhead-reserve-bytes` and matching
 `--transport-overhead-evidence` metadata.
 
-The `wire_window=traffic` counters are snapshots before the traffic clock
+The `wire_window=traffic` counters are read before the traffic clock
 starts and at the first drain transition. `wire_window_seconds` measures from
-the traffic clock through the transition snapshot, including any last traffic
+the traffic clock through the transition read, including any last traffic
 slice overrun.
 `max_client_wire_up_kbps` and `max_client_wire_down_kbps` are the maximum over
 individual clients of their SDK byte-counter deltas divided by that window;

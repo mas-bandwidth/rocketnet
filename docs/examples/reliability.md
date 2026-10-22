@@ -6,11 +6,11 @@ needs.
 
 | Mode | Delivered | Order | When to use it |
 |---|---|---|---|
-| `UNRELIABLE` (`_WITH_ACK_RECEIPT`) | At most once (may drop) | Arrival order | Ephemeral effects or delta-baseline snapshots that never retransmit |
+| `UNRELIABLE` (`_WITH_ACK_RECEIPT`) | At most once (may drop) | Arrival order | Ephemeral effects or delta-encoded state that never retransmits |
 | `UNRELIABLE_SEQUENCED` | At most once (latest only) | Strictly increasing (drops older) | High-rate position or aim updates where stale packets are useless |
 | `RELIABLE` (`_WITH_ACK_RECEIPT`) | Every message, once | Arrival order (no head-of-line wait) | Independent events that must arrive but do not depend on each other |
 | `RELIABLE_ORDERED` (`_WITH_ACK_RECEIPT`) | Every message, once | Exact send order per channel | Chat, RPCs, inventory, and state transitions that require strict order |
-| `RELIABLE_SEQUENCED` | Latest message guaranteed | Strictly increasing (supersedes older) | Infrequent state snapshots where only the newest state matters |
+| `RELIABLE_SEQUENCED` | Latest message guaranteed | Strictly increasing (supersedes older) | Infrequent state updates where only the newest state matters |
 
 ## What it shows
 

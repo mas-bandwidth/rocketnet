@@ -2075,13 +2075,16 @@ const char * rocketnet_server_transport_io_name( struct rocketnet_server_transpo
 
 // the development seam the ICMP-error functional cases read the live pump
 // and the socket through (TRANSPORTS.md, ICMP errors): the portable and msgx
-// transports' instance is the platform socket itself
+// transports' instance is the portable_server_t, which owns the socket; read
+// as the socket itself, the pump was whatever bytes the owner held there
+
+struct rocketnet_platform_socket_t * rocketnet_portable_server_test_socket( void * transport );
 
 struct rocketnet_platform_socket_t * rocketnet_server_transport_platform_socket_for_testing( struct rocketnet_server_transport_t * server_transport )
 {
     rocketnet_assert( server_transport );
     if ( server_transport->transport == ROCKETNET_TRANSPORT_PORTABLE || server_transport->transport == ROCKETNET_TRANSPORT_MSGX )
-        return (struct rocketnet_platform_socket_t*) server_transport->io.instance;
+        return rocketnet_portable_server_test_socket( server_transport->io.instance );
     return NULL;
 }
 
@@ -2269,7 +2272,7 @@ static void rocketnet_server_stats_publish_and_submit( rocketnet_server_transpor
 
 #if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS)
 // Historical pure fixture only; the production path below submits immutable
-// snapshots to the worker and applies them on a later update.
+// copies of the stats to the worker and applies them on a later update.
 int rocketnet_server_transport_test_update_client_stats( const rocketnet_client_slots_t * slots,
                                                         rocketnet_server_acks_t * acks )
 {

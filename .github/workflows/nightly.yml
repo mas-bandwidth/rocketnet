@@ -18,7 +18,7 @@
 # has a commit range and a bisect, and whoever is on the estate that morning
 # owns walking it back.
 #
-# What is here, and why it is not on the gate:
+# What is here, and why it is not on the per-commit gate:
 #
 #   windows-2025 / Debug    136s on run 34780374187, on a runner whose
 #                           configure-and-build floor is 46s before a single

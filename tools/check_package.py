@@ -42,19 +42,25 @@ def check_exported_settings(installed, root, command, config, native_build_optio
     version = re.search(r'set\(PACKAGE_VERSION "([0-9.]+)"\)', version_file).group(1)
     line = ".".join(version.split(".")[:2])
     failures = []
-    for request in (version, line):
-        probe = root / f"settings probe {request}"
+    for index, request in enumerate((version, line)):
+        # Keep the nested CMake try-compile path below Windows/MSBuild's path
+        # limit. The ordinary relocated consumer retains spaces in its path and
+        # covers relocation; these probes exercise only package settings.
+        probe = root / f"p{index}"
         probe.mkdir()
         (probe / "CMakeLists.txt").write_text(SETTINGS_PROBE.format(request=request))
         (probe / "probe.c").write_text(PROBE_SOURCE)
-        build = probe / "build"
+        build = root / f"b{index}"
         probe_command = list(command)
         probe_command[probe_command.index("-S") + 1] = probe
         probe_command[probe_command.index("-B") + 1] = build
         probe_command.append("-DCMAKE_EXPORT_COMPILE_COMMANDS=ON")
         result = subprocess.run([str(arg) for arg in probe_command], capture_output=True, text=True)
         if result.returncode != 0:
-            failures.append(f"find_package(RocketNet {request}) refuses the installed {version}")
+            print(result.stdout, end="")
+            print(result.stderr, end="")
+            failures.append(f"settings probe for RocketNet {request} failed to configure "
+                            f"(exit {result.returncode}, installed {version})")
             continue
         if request != version:
             continue

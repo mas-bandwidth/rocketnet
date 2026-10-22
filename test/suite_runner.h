@@ -6,7 +6,8 @@
     shape: one line per test, its name, in suite order, then
     "*** ALL TESTS PASSED ***". A failing test prints its own output (its
     check line) and the suite exits 1 at once. A test over 120s is killed and
-    fails (a Debug or sanitizer build scales the 120s: test/time_scale.h). A
+    fails (a Debug, sanitizer or explicitly emulated build scales the 120s:
+    test/time_scale.h). A
     test whose peak resident set (wait4 ru_maxrss on POSIX,
     PeakWorkingSetSize on Windows) is over its bound fails
     (ROCKETNET_TEST_MAX_CASE_RSS_MB, overridable by that environment variable;
@@ -161,20 +162,26 @@ inline long suite_rss_bound_mb( uint64_t planned_bytes, long margin_mb )
     return (long) ( ( planned_bytes + mib - 1 ) / mib ) + margin_mb;
 }
 
-// The bound for one case: the environment override when set, else none in a
-// sanitizer build, else the bound the case declares, else the suite-wide one.
-// A declared bound of 0 (a refused plan) keeps the suite-wide bound.
+// The bound for one case: none in a sanitizer build without the environment
+// override, else the bound the case declares, else the suite-wide one. The
+// environment override replaces the suite-wide bound for every case, and a
+// declared bound under it: it lifts a case's plan, never lowers it. A
+// declared bound of 0 (a refused plan) keeps the suite-wide bound.
 inline long suite_case_rss_mb( const std::string & name )
 {
     const long bound = suite_max_case_rss_mb();
-    if ( bound <= 0 || suite_env_is_set( "ROCKETNET_TEST_MAX_CASE_RSS_MB" ) )
+    if ( bound <= 0 )
         return bound;
     for ( suite_case_rss_bound_t * entry = *suite_case_rss_bound_head(); entry != NULL; entry = entry->next )
     {
         if ( name == entry->name )
         {
             const long declared = entry->bound_mb();
-            return declared > 0 ? declared : bound;
+            if ( declared <= 0 )
+                return bound;
+            if ( suite_env_is_set( "ROCKETNET_TEST_MAX_CASE_RSS_MB" ) )
+                return declared > bound ? declared : bound;
+            return declared;
         }
     }
     return bound;
@@ -607,7 +614,7 @@ inline int suite_main( int argc, char ** argv,
         return 1;
 
     const int jobs = suite_job_count();
-    const double limit_s = 120.0 * ROCKETNET_FUNCTIONAL_TIME_SCALE; // Release as written; Debug/sanitizer scaled (test/time_scale.h)
+    const double limit_s = 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE; // Native Release as written; Debug/sanitizer/emulation scaled (test/time_scale.h)
     struct running_t
     {
         size_t index;
@@ -840,7 +847,7 @@ inline int suite_main( int argc, char ** argv,
         return 1;
 
     const int jobs = suite_job_count();
-    const double limit_s = 120.0 * ROCKETNET_FUNCTIONAL_TIME_SCALE; // Release as written; Debug/sanitizer scaled (test/time_scale.h)
+    const double limit_s = 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE; // Native Release as written; Debug/sanitizer/emulation scaled (test/time_scale.h)
     struct running_t
     {
         size_t index;

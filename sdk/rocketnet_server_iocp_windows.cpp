@@ -60,13 +60,22 @@ static_assert( offsetof( rocketnet_iocp_operation_t, control ) == offsetof( rock
 static_assert( offsetof( rocketnet_iocp_operation_t, frame ) == offsetof( rocketnet_iocp_operation_t, control ) + 64, "frame follows control with no implicit padding" );
 static_assert( ROCKETNET_RECEIVE_CEILING + 1 <= ROCKETNET_FRAME_STRIDE, "receive detects oversize datagrams" );
 
-// data leads, so its 16-alignment needs no padding before it
+// the bytes of a receive buffer's members after data, which pack with no
+// padding between them
+#define ROCKETNET_IOCP_RECEIVE_BUFFER_TAIL_BYTES ( sizeof( int ) + ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE * ( sizeof( rocketnet_address_t ) + sizeof( int ) ) )
+
+static_assert( ROCKETNET_IOCP_RECEIVE_BUFFER_TAIL_BYTES % 16 != 0, "a receive buffer's tail padding is a nonzero array" );
+
+// data leads, so its 16-alignment needs no padding before it, and the rest of
+// the last 16 bytes is written out, so the compiler adds no tail padding
+// (MSVC C4324)
 struct rocketnet_iocp_receive_buffer_t
 {
     alignas(16) uint8_t data[ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE][ROCKETNET_FRAME_STRIDE];
     int num_packets;
     rocketnet_address_t from[ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE];
     int packet_bytes[ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE];
+    uint8_t padding[16 - ROCKETNET_IOCP_RECEIVE_BUFFER_TAIL_BYTES % 16];
 };
 
 // the bytes of a worker's members, which pack with no padding between them

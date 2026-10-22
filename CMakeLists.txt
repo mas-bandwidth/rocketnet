@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.20)
 if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum supported macOS version" FORCE)
 endif()
-# CMake's VERSION holds numbers only, so it is the 1.0.0 of v1.0.0-preview-1;
+# CMake's VERSION holds numbers only, so it is the 1.0.0 of v1.0.0-preview-2;
 # the release label, prerelease included, is ROCKETNET_VERSION_STRING below,
 # read from sdk/rocketnet.h, and the installed package carries both.
 project(rocketnet VERSION 1.0.0 LANGUAGES C CXX)
@@ -913,7 +913,7 @@ configure_package_config_file(cmake/RocketNetConfig.cmake.in
     "${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfig.cmake"
     INSTALL_DESTINATION ${ROCKETNET_PACKAGE_DIR})
 # find_package compares numbers, so the package version is 1.0.0; the label
-# v1.0.0-preview-1 rides beside it as RocketNet_VERSION_STRING and
+# v1.0.0-preview-2 rides beside it as RocketNet_VERSION_STRING and
 # RocketNet_VERSION_PRERELEASE (cmake/RocketNetConfig.cmake.in).
 write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfigVersion.cmake"
     VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)

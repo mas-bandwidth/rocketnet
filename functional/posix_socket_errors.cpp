@@ -145,7 +145,7 @@ static uint64_t posix_native_dropped_size( int kind, void * transport )
 
 #define POSIX_MAX_SOCKETS 256
 
-static int posix_snapshot( rocketnet_platform_socket_t ** sockets )
+static int posix_list_sockets( rocketnet_platform_socket_t ** sockets )
 {
     return rocketnet_platform_sockets_for_testing( sockets, POSIX_MAX_SOCKETS );
 }
@@ -153,7 +153,7 @@ static int posix_snapshot( rocketnet_platform_socket_t ** sockets )
 static rocketnet_platform_socket_t * posix_new_socket( rocketnet_platform_socket_t ** before, int num_before )
 {
     rocketnet_platform_socket_t * after[POSIX_MAX_SOCKETS];
-    const int num_after = posix_snapshot( after );
+    const int num_after = posix_list_sockets( after );
     rocketnet_platform_socket_t * found = NULL;
     for ( int i = 0; i < num_after; i++ )
     {
@@ -323,7 +323,7 @@ static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char 
     server_config.max_clients = 1;
     snprintf( server_config.transport, sizeof(server_config.transport), "%s", server_transport_io );
 
-    int num_before = posix_snapshot( before );
+    int num_before = posix_list_sockets( before );
     pair->server = rocketnet_server_transport_create( NULL, ipv6 ? "[::1]" : "127.0.0.1", &server_config );
     posix_check( pair->server != NULL );
     if ( strcmp( server_transport_io, "auto" ) != 0 )
@@ -351,7 +351,7 @@ static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char 
     rocketnet_client_transport_default_config( &client_config );
     snprintf( client_config.transport, sizeof(client_config.transport), "%s", client_transport_io );
 
-    num_before = posix_snapshot( before );
+    num_before = posix_list_sockets( before );
     pair->client = rocketnet_client_transport_create( NULL, token, &client_config, rocketnet_platform_time() );
     posix_check( pair->client != NULL );
     pair->client_socket = posix_new_socket( before, num_before );
@@ -1426,11 +1426,16 @@ static void posix_linux_dropped_flush( struct posix_pair_t * pair, void (*fail)(
     fail( pair, 1000 );
     posix_linux_bounded_flush( pair, gso_dropped, uring_dropped );
     // the GSO transport sends on its transmit worker: hold the injected
-    // failure until the worker has taken and dropped the flushed bank
+    // failure until the worker has taken and dropped the flushed bank. A
+    // try-publish can retain the producer while the previous bank is still in
+    // flight, so retry the ordinary send boundary while waiting for its drop.
     const double drop_deadline = rocketnet_platform_time() + 5.0;
     while ( posix_native_counter( pair->native, pair->transport, gso_dropped, uring_dropped ) - dropped_before < 8 &&
             rocketnet_platform_time() < drop_deadline )
+    {
+        rocketnet_server_transport_send_packets( pair->server );
         rocketnet_platform_sleep( 0.001 );
+    }
     fail( pair, 0 );
 
     const uint64_t sent = posix_native_counter( pair->native, pair->transport, gso_sent, uring_sent ) - sent_before;

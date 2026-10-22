@@ -44,14 +44,22 @@ static std::atomic<uint64_t> rocketnet_rio_leaked_regions{0};
 static_assert( ROCKETNET_RIO_RECEIVE_SLICE_BYTES >= ROCKETNET_RECEIVE_CEILING + 1, "receive detects oversize datagrams" );
 static_assert( ROCKETNET_RIO_RECEIVES <= ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS, "a whole bank fits the process view" );
 
+// the bytes of a bank's members after data, which pack with no padding
+// between them
+#define ROCKETNET_RIO_BANK_TAIL_BYTES ( sizeof( int ) + ROCKETNET_RIO_RECEIVES * ( sizeof( rocketnet_address_t ) + sizeof( int ) ) )
+
+static_assert( ROCKETNET_RIO_BANK_TAIL_BYTES % 16 != 0, "a bank's tail padding is a nonzero array" );
+
 // a receive bank. Its capacity is the number of slices. data leads, so its
-// 16-alignment needs no padding before it.
+// 16-alignment needs no padding before it, and the rest of the last 16 bytes
+// is written out, so the compiler adds no tail padding (MSVC C4324).
 struct rocketnet_rio_bank_t
 {
     alignas(16) uint8_t data[ROCKETNET_RIO_RECEIVES][ROCKETNET_FRAME_STRIDE];
     int num_packets;
     rocketnet_address_t from[ROCKETNET_RIO_RECEIVES];
     int packet_bytes[ROCKETNET_RIO_RECEIVES];
+    uint8_t padding[16 - ROCKETNET_RIO_BANK_TAIL_BYTES % 16];
 };
 
 // Receive banks: the worker's fill bank, the ready FIFO, the banks main

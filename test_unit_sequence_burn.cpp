@@ -427,7 +427,7 @@ static void sequence_burn_run( int side, int kind, bool burn, const int * contro
     }
     rocketnet_unit_check( connected );
 
-    // One final no-payload frame publishes the snapshot completed after the
+    // One final no-payload frame publishes the stats batch completed after the
     // last settling frame. Every intermediate stats batch is stepped below.
     for ( int round = 0; round <= BURN_ROUNDS + BURN_SETTLE_ROUNDS; round++ )
         sequence_burn_round( &pair, side, kind, burn, round, control_counts, m );

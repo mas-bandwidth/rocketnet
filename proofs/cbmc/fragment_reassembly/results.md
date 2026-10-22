@@ -86,9 +86,11 @@ header harness. The whole target took 70 s, with a peak resident set of
 
 Until c613a6a8 the process and sizing harnesses ran on Bitwuzla 0.9.0 (31 s
 and 6 s). That commit set `ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES` to 1413
-(it was 1433) and changed no code under proof, no unwind and no harness
-bound; from it on, Bitwuzla runs out of the 16 GB limit on both (the
-sizing harness grew past 100 GB with no limit), and Boolector proves both.
+(it was 1433). It changed no proof logic or unwind, but the harness sizes
+track that macro, so its effective fragment and arena bound decreased with
+the constant. From that commit on, Bitwuzla runs out of the 16 GB limit on
+both (the sizing harness grew past 100 GB with no limit), and Boolector
+proves both.
 The reversed witness below (the arena one byte short) still fails under
 Boolector.
 
@@ -117,11 +119,11 @@ object.
 One connection and one slot. Inputs:
 
 - The fragment is an object of exactly `type_data_bytes` symbolic bytes,
-  with `type_data_bytes` symbolic in 0..1440: from empty to one byte past
-  the largest the reader accepts (6 + 1433). Every payload id, index byte
+  with `type_data_bytes` symbolic in 0..1420: from empty to one byte past
+  the largest the reader accepts (6 + 1413). Every payload id, index byte
   and count byte is symbolic.
 - `max_payload_bytes` is symbolic in 1..40.
-- The slot's arena is `max_payload_bytes + 1433` bytes, as create sizes
+- The slot's arena is `max_payload_bytes + 1413` bytes, as create sizes
   it.
 - The delivered mirror is a symbolic size, from one payload up to its
   ceiling, with a symbolic part already used and up to 64 completions
@@ -209,14 +211,14 @@ bounds are the largest that finished inside a 16 GB address-space limit.
   Payload bytes are copied opaquely: no branch or index depends on a payload
   byte, so bytes beyond a small window add no new case to the region, index
   and refusal arithmetic the harness checks. The fragment itself is proved at
-  its full size (1433 bytes). Full-size payload bounds exhaust the solver's
+  its full size (1413 bytes). Full-size payload bounds exhaust the solver's
   memory (below), so the largest bound that finishes is the one proved.
 - **harness_process_fragment at `max_payload_bytes` up to
   `ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES` (361,728).** Not proved. The
   deployed range starts at `ROCKETNET_MAX_PACKET_PAYLOAD_BYTES` (1416), so no
   deployed payload maximum is inside the proved bound. What limits the run
   is the payload maximum, not the fragment size: fragments at the full
-  1433 bytes prove in under a minute at `max_payload_bytes` up to 24.
+  1413 bytes prove in under a minute at `max_payload_bytes` up to 24.
   Measured on a 64-core bench:
   - Bitwuzla, no memory limit: grew to 76 GB, killed after 415 s.
   - Bitwuzla, 14-16 GB limit: out of memory at every bound from 48 up. At

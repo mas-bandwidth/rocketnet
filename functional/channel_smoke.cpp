@@ -77,7 +77,7 @@ void harness_one_message_each_way_lossless()
     rocketnet_check( server_got == 1 );
     rocketnet_check( client_got == 1 );
     rocketnet_check( rocketnet_channel_harness_overflows( &h ) == 0 );
-    rocketnet_check( rocketnet_channel_allocator_calls == h.allocation_snapshot );
+    rocketnet_check( rocketnet_channel_allocator_calls == h.allocations_after_create );
 
     rocketnet_channel_harness_destroy( &h );
 }
@@ -185,7 +185,7 @@ void harness_one_message_each_way_lossy()
     rocketnet_check( duplicate_deliveries == 0 );
     rocketnet_check( unsent_deliveries == 0 );
     rocketnet_check( rocketnet_channel_harness_overflows( &h ) == 0 );
-    rocketnet_check( rocketnet_channel_allocator_calls == h.allocation_snapshot );
+    rocketnet_check( rocketnet_channel_allocator_calls == h.allocations_after_create );
 
     rocketnet_channel_harness_destroy( &h );
 }
@@ -238,7 +238,7 @@ void harness_lossy_100_percent_negative_control()
     rocketnet_check( server_got == 0 );
     rocketnet_check( client_got == 0 );
     rocketnet_check( rocketnet_channel_harness_overflows( &h ) == 0 );
-    rocketnet_check( rocketnet_channel_allocator_calls == h.allocation_snapshot );
+    rocketnet_check( rocketnet_channel_allocator_calls == h.allocations_after_create );
 
     rocketnet_channel_harness_destroy( &h );
 }
@@ -272,10 +272,11 @@ void harness_no_allocation_after_create()
     }
     rocketnet_check( got == 1 );
     rocketnet_check( rocketnet_channel_harness_overflows( &h ) == 0 );
-    rocketnet_check( rocketnet_channel_allocator_calls == h.allocation_snapshot );
+    rocketnet_check( rocketnet_channel_allocator_calls == h.allocations_after_create );
 
-    // The counting allocator records every SDK allocation. The snapshot
-    // assertion proves the exchange touched only storage carved at create.
+    // The counting allocator records every SDK allocation. The
+    // allocations_after_create assertion proves the exchange touched only
+    // storage carved at create.
     rocketnet_channel_harness_destroy( &h );
 }
 
@@ -316,6 +317,6 @@ void harness_collect_preserves_other_channels()
         rocketnet_check( rocketnet_channel_delivery_ring_push( &h, &h.to_server, 3, channel_zero, sizeof(channel_zero) ) );
     rocketnet_check( !rocketnet_channel_delivery_ring_push( &h, &h.to_server, 3, channel_zero, sizeof(channel_zero) ) );
     rocketnet_check( rocketnet_channel_harness_overflows( &h ) == 1 );
-    rocketnet_check( rocketnet_channel_allocator_calls == h.allocation_snapshot );
+    rocketnet_check( rocketnet_channel_allocator_calls == h.allocations_after_create );
     rocketnet_channel_harness_destroy( &h );
 }
