@@ -47,7 +47,14 @@ while [ $# -gt 0 ]; do
 done
 
 if [ "$all" = 1 ]; then
-    cases=$( grep -h -o -E '^void [A-Za-z0-9_]+\(\)' "$root"/functional/channel_*.cpp | sed -e 's/^void //' -e 's/()$//' | paste -sd, - )
+    # each function by the name the functional registry gives it (most are
+    # test_<function>; config_mismatch_over_loopback is
+    # test_loopback_transport_config_mismatch). An unregistered function keeps
+    # test_<function>, which the binary refuses, so it fails visibly.
+    cases=$( for function in $( grep -h -o -E '^void [A-Za-z0-9_]+\(\)' "$root"/functional/channel_*.cpp | sed -e 's/^void //' -e 's/()$//' ); do
+                 name=$( grep -h -o -E "\{ \"test_[A-Za-z0-9_]+\", $function," "$root"/functional/rocketnet_functional_tests.cpp | head -n 1 | sed -E 's/^\{ "([^"]+)".*/\1/' )
+                 echo "${name:-test_$function}"
+             done | paste -sd, - )
 fi
 [ -n "$cases" ] || usage
 [ -n "$seeds" ] || usage
