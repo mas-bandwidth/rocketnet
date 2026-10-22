@@ -308,7 +308,7 @@ vng --run "$HOME/vm-kernels/vmlinuz-$(uname -r)" --memory 1536M --cpus 3 --appen
 `test_xdp_filter` judges the BPF program with the kernel's verifier and
 `BPF_PROG_TEST_RUN` (`TRANSPORTS.md:256-261`), on the same `server_xdp.o` the
 library embeds. In a 1536M guest with two isolated CPUs and no clang on
-`PATH`, all 17 cases print `ok`, including `xdp_on_link_reply_reaches_the_peer`
+`PATH`, all 18 cases print `ok`, including `xdp_on_link_reply_reaches_the_peer`
 and `xdp_create_fails_part_way_tears_down`.
 
 ## 7. Socket errors and ICMP
