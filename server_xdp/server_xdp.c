@@ -294,7 +294,7 @@ static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * 
         return XDP_DROP;
     }
 
-    const __u32 frame_udp_bytes = data_end - (__u8*)udp;
+    const __u32 frame_udp_bytes = (__u32) ( data_end - (__u8*)udp );
     const __u32 udp_len = __builtin_bswap16( udp->len );
     if ( udp_len < sizeof(struct udphdr) || udp_len > ip_udp_bytes || udp_len > frame_udp_bytes )
     {
@@ -303,7 +303,7 @@ static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * 
         return XDP_DROP;
     }
 
-    int packet_bytes = udp_len - sizeof(struct udphdr);
+    int packet_bytes = (int) ( udp_len - sizeof(struct udphdr) );
 
     if ( packet_bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
     {
@@ -474,11 +474,11 @@ SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
                     // it is malformed, and zero bytes make server_xdp_udp
                     // drop it as too small once the port and address match
 
-                    const __u32 frame_udp_bytes = data_end - (__u8*)udp;
+                    const __u32 frame_udp_bytes = (__u32) ( data_end - (__u8*)udp );
                     const __u32 ip_tot_len = __builtin_bswap16( ip->tot_len );
                     __u32 ip_udp_bytes = 0;
                     if ( ip_tot_len >= sizeof(struct iphdr) + sizeof(struct udphdr) && ip_tot_len - sizeof(struct iphdr) <= frame_udp_bytes )
-                        ip_udp_bytes = ip_tot_len - sizeof(struct iphdr);
+                        ip_udp_bytes = (__u32) ( ip_tot_len - sizeof(struct iphdr) );
 
                     return server_xdp_udp( ctx, udp, ip_udp_bytes, data_end, config, server_xdp_ipv4_address_match( config, ip ), 4, &ip->saddr );
                 }
@@ -525,7 +525,7 @@ SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
                     // server_xdp_udp drop it as too small once the port and
                     // address match
 
-                    const __u32 frame_udp_bytes = data_end - (__u8*)udp;
+                    const __u32 frame_udp_bytes = (__u32) ( data_end - (__u8*)udp );
                     const __u32 ip6_payload_len = __builtin_bswap16( ip6->payload_len );
                     __u32 ip_udp_bytes = 0;
                     if ( ip6_payload_len >= sizeof(struct udphdr) && ip6_payload_len <= frame_udp_bytes )
