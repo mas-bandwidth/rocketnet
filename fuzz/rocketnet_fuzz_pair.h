@@ -528,6 +528,8 @@ static inline bool rocketnet_fuzz_pair_create( struct rocketnet_fuzz_pair_t * pa
     if ( !pair->server )
         return false;
     pair->transport = rocketnet_message_server_transport( pair->server );
+    rocketnet_fuzz_pair_require( pair->transport->stats_worker && !pair->transport->stats_worker->thread,
+                                 "the pair runs no thread (its snapshot restore would race one)" );
 
     // the wire seam
     pair->real = pair->transport->io.operations;
