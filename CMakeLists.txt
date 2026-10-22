@@ -787,7 +787,7 @@ if(ROCKETNET_BUILD_TESTS)
             set(ROCKETNET_XDP_FILTER_OBJECT "${ROCKETNET_XDP_OBJECT}")
             add_executable(test_xdp_filter tests/test_xdp_filter.cpp)
             add_dependencies(test_xdp_filter rocketnet_xdp_header)
-            # xdp_on_link_reply_reaches_the_peer runs bin/server and bin/client
+            # xdp_on_link_reply_reaches_the_client runs bin/server and bin/client
             if(TARGET server AND TARGET client)
                 add_dependencies(test_xdp_filter server client)
             endif()
@@ -833,7 +833,7 @@ if(ROCKETNET_BUILD_TESTS)
         functional/live_matrix.cpp
         functional/windows_socket_errors.cpp
         functional/windows_connreset.cpp
-        functional/posix_hard_killed_peer.cpp
+        functional/posix_hard_killed_client.cpp
         functional/posix_lifecycle_stress.cpp
         functional/posix_socket_errors.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})

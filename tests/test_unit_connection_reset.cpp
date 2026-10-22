@@ -1168,7 +1168,7 @@ static void test_connection_reset_each_state_leaves_a_clean_slot()
         reset_loopback_client_disconnect_state_scenario( handshake_and_connected[i], 0 );
 
     // Mid-fragment is a connected state with fragments already flushed into
-    // the loopback wire but not yet consumed by the peer.
+    // the loopback wire but not yet consumed by the server.
     reset_loopback_client_disconnect_state_scenario( ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED, 1 );
     reset_loopback_server_disconnect_state_scenario( 0 );
     reset_loopback_server_disconnect_state_scenario( 1 );

@@ -688,7 +688,7 @@ Next ==
 (* link (Reordering = FALSE, MaxDelay = 0, Duplication = FALSE; with       *)
 (* reordering or latency on, Link's Reorder or Delay can hold a copy from  *)
 (* the head forever, and with duplication on the path can keep a wire at   *)
-(* Capacity exactly when the peer must send, where Link blocks the send    *)
+(* Capacity exactly when the sender must send, where Link blocks the send  *)
 (* rather than losing it; TLC produced both, README-ClientConnection.md):  *)
 (*                                                                         *)
 (*   DeliveryFairHead: the head of each wire is delivered (strong          *)
@@ -916,7 +916,7 @@ SilentServerTimesOut == (cstate = 1) ~> (cstate = -2)
 CrashedServerTimesOut ==
     (cstate = 4 /\ ~sMap.live /\ sDiscPending = 0) ~> (cstate \in {-5, 0})
 
-\* neither peer is left waiting for a packet nobody will send again: the
+\* neither side is left waiting for a packet nobody will send again: the
 \* server's half-open mapping is answered or dies, and an unacknowledged
 \* slot is acknowledged or released
 ServerNotStranded ==

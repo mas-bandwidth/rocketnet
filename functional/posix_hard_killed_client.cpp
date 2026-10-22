@@ -2,8 +2,8 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    A hard-killed peer or an ICMP error never stalls or degrades a receive
-    (TRANSPORTS.md, ICMP errors). A UDP send to a vanished peer comes back as
+    A hard-killed client or an ICMP error never stalls or degrades a receive
+    (TRANSPORTS.md, ICMP errors). A UDP send to a vanished client comes back as
     ICMP port unreachable; a BSD stack reports it to the next receive on a
     connected socket as ECONNREFUSED. These cases run per server transport
     cell (macOS: portable and msgx; Linux: portable, gso and io_uring),
@@ -1018,12 +1018,12 @@ static void posix_hk_cell_of( int index, int * kind, posix_hk_cell_t * cell )
     cell->client = posix_hk_client_names[client];
 }
 
-int rocketnet_posix_hard_killed_peer_test_count()
+int rocketnet_posix_hard_killed_client_test_count()
 {
     return posix_hk_num_cell_cases() + POSIX_HK_NUM_SEAM_CASES;
 }
 
-const char * rocketnet_posix_hard_killed_peer_test_name( int index )
+const char * rocketnet_posix_hard_killed_client_test_name( int index )
 {
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     if ( index >= posix_hk_num_cell_cases() )
@@ -1049,7 +1049,7 @@ const char * rocketnet_posix_hard_killed_peer_test_name( int index )
 // test_transport_dual_stack_ipv4_client and test_server_serves_both_families
 // failed to connect. On macOS they run as group 2, alone, after group 1.
 
-int rocketnet_posix_hard_killed_peer_test_group( const char * name )
+int rocketnet_posix_hard_killed_client_test_group( const char * name )
 {
     for ( size_t i = 0; i < 3; i++ )
         if ( strncmp( name, posix_hk_kinds[i], strlen( posix_hk_kinds[i] ) ) == 0 )
@@ -1061,7 +1061,7 @@ int rocketnet_posix_hard_killed_peer_test_group( const char * name )
     return 0;
 }
 
-void rocketnet_posix_hard_killed_peer_test_run( int index )
+void rocketnet_posix_hard_killed_client_test_run( int index )
 {
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     if ( index >= posix_hk_num_cell_cases() )
@@ -1092,21 +1092,21 @@ int rocketnet_posix_hard_killed_child_main( int, char ** )
     return 2;
 }
 
-int rocketnet_posix_hard_killed_peer_test_count()
+int rocketnet_posix_hard_killed_client_test_count()
 {
     return 0;
 }
 
-const char * rocketnet_posix_hard_killed_peer_test_name( int )
+const char * rocketnet_posix_hard_killed_client_test_name( int )
 {
     return "";
 }
 
-void rocketnet_posix_hard_killed_peer_test_run( int )
+void rocketnet_posix_hard_killed_client_test_run( int )
 {
 }
 
-int rocketnet_posix_hard_killed_peer_test_group( const char * )
+int rocketnet_posix_hard_killed_client_test_group( const char * )
 {
     return 0;
 }

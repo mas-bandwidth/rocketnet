@@ -79,7 +79,7 @@ struct alignas(64) rocketnet_server_socket_send_packet_info_t
     rocketnet_address_t to;
     size_t packet_bytes;
     uint8_t destination_mac[ETH_ALEN];  // chosen at start by the reply-MAC rule
-    bool mac_learned;                   // destination_mac is the peer's learned MAC
+    bool mac_learned;                   // destination_mac is the client's learned MAC
 };
 
 // IMPORTANT: The 4096 byte padding walls in these structs are load-bearing. Each field
@@ -260,7 +260,7 @@ struct rocketnet_server_socket_t
     bool gateway_known;
 
     // the reply-MAC rule (rocketnet_xdp_frame.h): learned from the source MAC
-    // of each packet the transport accepts for a connection (peer_accepted),
+    // of each packet the transport accepts for a connection (client_accepted),
     // written on the main thread while the transport processes a receive
     // view, read by start_packet; fill threads only read it, and they are
     // joined before each receive
@@ -1417,10 +1417,10 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     }
     else
     {
-        rocketnet_warn( "server found no gateway on %s: replies go only to peers learned on link, and a reply to an unlearned address is refused", interface_name );
+        rocketnet_warn( "server found no gateway on %s: replies go only to clients learned on link, and a reply to an unlearned address is refused", interface_name );
     }
 
-    // replies go to the source MAC learned from each answered peer, else
+    // replies go to the source MAC learned from each answered client, else
     // to the gateway
 
     if ( !serves_both )
@@ -2184,7 +2184,7 @@ void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * s
     if ( packet_index < 0 || packet_index >= ROCKETNET_XDP_SEND_QUEUE_SIZE )
         return;
 
-    // a packet started before its peer's MAC was learned took the gateway
+    // a packet started before its client's MAC was learned took the gateway
     // (or the answered frame's MAC). The reply to a client's first
     // authenticated packet is that case: the transport reserves it before
     // the packet opens, and the open learns the MAC before this commit.
@@ -2282,7 +2282,7 @@ void rocketnet_server_socket_replay_forget( struct rocketnet_server_socket_t * s
     rocketnet_xdp_reply_macs_forget( &server_socket->reply_macs, address );
 }
 
-void rocketnet_server_socket_peer_accepted( struct rocketnet_server_socket_t * server_socket, int view_index )
+void rocketnet_server_socket_client_accepted( struct rocketnet_server_socket_t * server_socket, int view_index )
 {
     rocketnet_assert( server_socket );
     if ( view_index < 0 || view_index >= server_socket->process_packets.num_packets )

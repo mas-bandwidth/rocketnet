@@ -220,7 +220,7 @@ int rocketnet_server_protocol_write_ack_if_due( struct rocketnet_server_protocol
 //   suppresses it and keep-alives appear only on an otherwise idle
 //   connection.
 //
-// The acknowledgment is the peer's unverifiable claim, not proof; see
+// The acknowledgment is the client's unverifiable claim, not proof; see
 // _Keep-alive generation_ in STANDARD.md and the fuller reasoning at the
 // definition. The caller loops the client indices each frame. Returns 0 when
 // not connected or not due.

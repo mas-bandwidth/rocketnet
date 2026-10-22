@@ -85,8 +85,8 @@ void harness_one_message_each_way_lossless()
 // unreliable messages each way over the lossy knobs the 256 KiB card will use.
 // An unreliable message is allowed to be lost (10% per packet here), so one
 // message each way fails on about one seed in five. The case holds on every
-// seed by sending a fresh unreliable message each update, each side until its
-// peer has one, for at most 600 updates (ten seconds; the chance that all 600
+// seed by sending a fresh unreliable message each update, each side until the
+// other side has one, for at most 600 updates (ten seconds; the chance that all 600
 // are lost is 0.1^600), then draining the link and asserting that no message
 // is delivered twice and that nothing arrives that was not sent. Loss, jitter
 // and duplicate packets stay on: the case still pins that the knobs drop some

@@ -70,7 +70,7 @@ startup, and ignores sequence positions never recorded as sent. With the default
 4096-position history, no sends are eligible until the highest sent sequence
 exceeds 2048. Zero therefore also means that there are no eligible samples.
 Jitter is the mean excess of retained positive first-ACK round-trip samples over
-their minimum, in milliseconds. It includes peer ACK scheduling and caller
+their minimum, in milliseconds. It includes the remote endpoint's ACK scheduling and caller
 update cadence. Zero-time samples are excluded from both the minimum and mean.
 These histories do not expire with elapsed time; reconnect resets them. Client
 stats recompute on read. Server-slot stats are always current: each slot keeps

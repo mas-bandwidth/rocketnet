@@ -394,7 +394,7 @@ times without sleeping. Once complete it joins any remaining thread handle and
 wipes/frees resources synchronously; if the worker has not exited it logs a
 second error and keeps the object rather than free memory the worker owns. Keep
 allocator/callback contexts and all borrowed storage alive until destroy
-returns. A completion query does not free the object or promise peer receipt.
+returns. A completion query does not free the object or promise receipt by the other side of the connection.
 
 ## Frame loop
 

@@ -291,7 +291,7 @@ TLC: `Invariant WireNumberReconstructs is violated`, 8 states.
 
 A duplicate after a resend is the normal case (6.5), so an unsigned reading misreads one
 on every lossless resend. With `W` at most `2^20` and `2^24` on the wire, the unsigned
-reading puts the duplicate about `2^24` ahead, outside the window: a correct peer would be
+reading puts the duplicate about `2^24` ahead, outside the window: a correct sender would be
 disconnected for `MESSAGE_NUMBER_OUTSIDE_WINDOW`.
 
 ### Witness 4: ordered numbers delivered on arrival (`MCRNWindowBrokenHoldOrdered.cfg`)

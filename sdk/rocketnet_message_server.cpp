@@ -697,7 +697,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         if ( object->hot_connections[i].state != RN_MESSAGE_CONNECTION_CONNECTED )
             continue;
         rn_message_connection_t * connection = &object->connections[i];
-        // RNEndpoint Tick, the CONFIG half: the wait for the peer's CONFIG
+        // RNEndpoint Tick, the CONFIG half: the wait for the remote endpoint's CONFIG
         // starts at the first update the connection is connected at (the
         // server's from its Observe reset, the client's from the first update
         // its transport reports CONNECTED, 11.3)

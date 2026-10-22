@@ -785,7 +785,7 @@ enum rocketnet_ack_sent_result_t rocketnet_ack_endpoint_record_sent_classified( 
     }
 
     // the record this write replaces: empty or acknowledged is a clean
-    // write; unacknowledged is an eviction, and the peer having
+    // write; unacknowledged is an eviction, and the receiver having
     // acknowledged a sequence ROCKETNET_LOSS_PACKET_THRESHOLD above it is
     // what makes the eviction a known path loss (RFC 9002 6.1.1) rather than
     // an unknown fate. largest_acked_sequence is written by the update
@@ -1132,14 +1132,14 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
             uint32_t s = sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE;
             endpoint->sent_unacked[s >> 6] &= ~( 1ull << ( s & 63 ) );
 
-            // the loss rule's evidence: the highest sequence the peer has
+            // the loss rule's evidence: the highest sequence the receiver has
             // acknowledged. update thread only, per the threading comment on
             // the endpoint.
 
             if ( sequence > endpoint->largest_acked_sequence )
                 endpoint->largest_acked_sequence = sequence;
 
-            // the claim _Keep-alive generation_ turns on: this peer says it
+            // the claim _Keep-alive generation_ turns on: this client says it
             // received a keep-alive, so it says it holds its client index.
             // unverifiable here, and by design
 
