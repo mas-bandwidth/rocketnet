@@ -23,7 +23,7 @@ def main():
             cache[key.split(":", 1)[0]] = value
     source = Path(cache["rocketnet_SOURCE_DIR"])
     with tempfile.TemporaryDirectory(prefix="transport extension ", dir=build) as directory:
-        command = ["cmake", "-S", source / "test/driver_extension", "-B", directory,
+        command = ["cmake", "-S", source / "tests/driver_extension", "-B", directory,
                    f"-DROCKETNET_SOURCE_PATH={source}", f"-DCMAKE_BUILD_TYPE={args.config}",
                    f"-DCMAKE_CONFIGURATION_TYPES={args.config}", "-G", cache["CMAKE_GENERATOR"]]
         for key in ("CMAKE_TOOLCHAIN_FILE", "CMAKE_GENERATOR_PLATFORM", "CMAKE_GENERATOR_TOOLSET"):

@@ -68,7 +68,7 @@
 #include "rocketnet_test_vectors.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_read_write.h"
-#include "../test/portable_crt.h"
+#include "../tests/portable_crt.h"
 
 #if defined(ROCKETNET_USE_SYSTEM_SODIUM)
 #include <sodium.h>

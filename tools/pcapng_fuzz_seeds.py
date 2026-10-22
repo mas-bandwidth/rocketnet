@@ -6,7 +6,7 @@
 # Seed the fuzz harnesses from the pcapng corpus: every captured wire
 # datagram becomes a prefilter seed and every captured kind-3 message
 # payload becomes a message seed, and the committed seed set is checked.
-# The repository root comes from this file's own path; only test/pcapng/
+# The repository root comes from this file's own path; only tests/pcapng/
 # is read and only the two corpus directories are written.
 #
 #   --write       regenerate the seeds under fuzz/corpus and fuzz/corpus_message
@@ -78,7 +78,7 @@ def _truncate(seeds):
 
 
 def write_seeds(root):
-    prefilter, message = compute_seeds(root / "test" / "pcapng")
+    prefilter, message = compute_seeds(root / "tests" / "pcapng")
     pre_items, pre_cut = _truncate(prefilter)
     msg_items, msg_cut = _truncate(message)
 
@@ -98,7 +98,7 @@ def write_seeds(root):
 
 
 def check_seeds(root):
-    prefilter, message = compute_seeds(root / "test" / "pcapng")
+    prefilter, message = compute_seeds(root / "tests" / "pcapng")
     expected = {}
     for name, data in _truncate(prefilter)[0] + _truncate(message)[0]:
         expected[name] = data
@@ -128,7 +128,7 @@ def check_seeds(root):
 def selftest():
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)
-        pcapng_dir = root / "test" / "pcapng"
+        pcapng_dir = root / "tests" / "pcapng"
         pcapng_dir.mkdir(parents=True)
 
         frame1 = pcapng.ipv4_udp_frame(

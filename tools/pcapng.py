@@ -3,8 +3,8 @@
 #   RocketNet. Copyright 2026 Más Bandwidth LLC.
 #   Licensed under the GNU Affero General Public License v3.0
 #
-# The python side of the pcapng corpus (test/pcapng/README.md is the design):
-# the same subset test/pcapng.h reads and writes, standard library only.
+# The python side of the pcapng corpus (tests/pcapng/README.md is the design):
+# the same subset tests/pcapng.h reads and writes, standard library only.
 #
 #   read_packets(path)            -> [ { interface, linktype, timestamp_us, data }, ... ]
 #   write_packets(path, packets)  takes the same dicts (an optional "comment"
@@ -53,7 +53,7 @@ CLOCK_START_US = 1000 * 1000 * 1000
 
 
 class PcapngError(Exception):
-    """A refusal, by name (the same names test/pcapng.h returns)."""
+    """A refusal, by name (the same names tests/pcapng.h returns)."""
 
     def __init__(self, name):
         Exception.__init__(self, name)
@@ -187,7 +187,7 @@ def _ipv4_checksum(header):
 
 
 def ipv4_udp_frame(source, source_port, destination, destination_port, datagram):
-    """The synthetic interface-0 frame around a datagram (test/pcapng.h does the same)."""
+    """The synthetic interface-0 frame around a datagram (tests/pcapng.h does the same)."""
     total = 28 + len(datagram)
     header = bytearray(struct.pack(">BBHHHBBH4B4B", 0x45, 0, total, 0, 0, 64, 17, 0, *(tuple(source) + tuple(destination))))
     checksum = (~_ipv4_checksum(header)) & 0xFFFF

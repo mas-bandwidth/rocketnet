@@ -14,7 +14,7 @@
     drops the senders counted.
 */
 
-#include "../test/native_shutdown.h"
+#include "../tests/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_platform.h"

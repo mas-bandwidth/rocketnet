@@ -40,7 +40,7 @@ def tla_modules():
 
 
 def dst_check_names():
-    path = ROOT / "dst_checks.h"
+    path = ROOT / "tests" / "dst_checks.h"
     if not path.is_file():
         return set()
     return set(DST_CHECK_RE.findall(path.read_text(errors="replace")))

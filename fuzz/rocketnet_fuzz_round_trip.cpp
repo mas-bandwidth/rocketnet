@@ -48,7 +48,7 @@
 #include <string.h>
 #include <sodium.h>
 
-#include "../test/portable_crt.h"
+#include "../tests/portable_crt.h"
 
 static void rocketnet_fuzz_require( bool condition, const char * property )
 {

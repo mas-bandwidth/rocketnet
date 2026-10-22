@@ -1,6 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Public-API packet-fill microbenchmark. See transport_fill.md for its limits.
-#include "../test/native_shutdown.h"
+#include "../tests/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include <chrono>

@@ -182,8 +182,8 @@ jobs:
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     # Debug only, by the owner's ruling of 2026-10-20: a Windows Debug run over the
     # per-case peak-RSS bound runs with that bound lifted, and the bound in code
-    # stays. test/suite_runner.h:58 sets the bound to 698 MiB, measured on a Linux
-    # Release build; test/suite_runner.h:89 reads this variable in its place. In
+    # stays. tests/suite_runner.h:58 sets the bound to 698 MiB, measured on a Linux
+    # Release build; tests/suite_runner.h:89 reads this variable in its place. In
     # Debug on the fleet Windows runner test_swarm peaks near 750 MiB,
     # transport_loopback_* near 1480 MiB and functional cases up to about 940 MiB,
     # so 2048 covers each. Release jobs keep the 698 bound.

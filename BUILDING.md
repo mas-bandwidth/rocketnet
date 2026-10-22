@@ -54,7 +54,7 @@ build a test over 120 seconds is killed and the suite fails. Debug and
 sanitizer builds scale the limit by 5. A passing run prints each test's
 name and then `*** ALL TESTS PASSED ***`; `ROCKETNET_TEST_REPORT=1` adds the
 ten slowest cases and the ten largest peak resident sets after the results
-(test/README.md).
+(tests/README.md).
 
 A test that calls `socket`, `bind`, `sendto`, `recvfrom`, `select`, `epoll`,
 IOCP, or AF_XDP, or that starts a real transport (`rocketnet_server_create`,

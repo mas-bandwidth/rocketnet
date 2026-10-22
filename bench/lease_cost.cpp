@@ -1,6 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Valid-call diagnostic. See lease_cost.md; this does not measure NIC throughput.
-#include "../test/native_shutdown.h"
+#include "../tests/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_packet_lease.h"

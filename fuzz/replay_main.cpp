@@ -28,7 +28,7 @@
 
 #include <vector>
 
-#include "../test/portable_crt.h"
+#include "../tests/portable_crt.h"
 
 extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv );
 extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size );

@@ -10,7 +10,7 @@
 */
 
 #include "channel_harness.h"
-#include "../test/portable_crt.h"
+#include "../tests/portable_crt.h"
 
 #include <stdio.h>
 #include <stdlib.h>
