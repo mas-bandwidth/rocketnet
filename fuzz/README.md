@@ -164,8 +164,11 @@ The comment at the top of the script lists its variables (`FUZZ_COV_ITERS`,
 inputs reach, not their one-time create and connect. To get a comparable
 before and after number for a change, run it the same way on both commits.
 On Linux the script adds `-mllvm -runtime-counter-relocation`, which
-continuous-mode profiles need there; without it every area reads 0%. Delete
-an old `build-fuzz-cov/` made without that flag before rerunning.
+continuous-mode profiles need there; without it every area reads 0%. It
+also defines `ROCKETNET_FUZZ_COVERAGE_BUILD`, the only build in which the pair
+harnesses call the profile runtime (so the replay drivers link on macOS
+without it). The script refuses a `build-fuzz-cov/` configured without the
+current flags; delete it and rerun.
 
 ## Replaying a crash
 

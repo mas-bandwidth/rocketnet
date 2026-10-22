@@ -48,6 +48,8 @@
 #include <string.h>
 #include <sodium.h>
 
+#include "../test/portable_crt.h"
+
 static void rocketnet_fuzz_require( bool condition, const char * property )
 {
     if ( condition ) return;
@@ -451,8 +453,9 @@ static void fuzz_address( struct fuzz_reader_t * r )
 static void fuzz_write_seed( const char * dir, const char * name, uint8_t selector, const uint8_t * body, size_t bytes )
 {
     char path[1024];
-    snprintf( path, sizeof( path ), "%s/%s", dir, name );
-    FILE * f = fopen( path, "wb" );
+    if ( snprintf( path, sizeof( path ), "%s/%s", dir, name ) >= (int) sizeof( path ) )
+        abort(); // a truncated path would write some other file
+    FILE * f = rocketnet_test_fopen( path, "wb" );
     if ( !f )
         abort();
     fwrite( &selector, 1, 1, f );
@@ -544,8 +547,8 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
     if ( sodium_init() < 0 )
         abort();
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
-    const char * seed_dir = getenv( "ROCKETNET_FUZZ_SEED_DIR" );
-    if ( seed_dir != NULL && seed_dir[0] != '\0' )
+    char seed_dir[1024];
+    if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_DIR", seed_dir, sizeof( seed_dir ) ) && seed_dir[0] != '\0' )
         fuzz_write_seeds( seed_dir );
     return 0;
 }

@@ -278,8 +278,20 @@ clientRecvUnchanged == <<cAttempt, cSinceSend, cAge, cDiscPending, cDiscKeys, cL
                          serverVars, c2sVars>>
 
 \* rocketnet_client_process_cookie: states 1 and 2, salt must match; store,
-\* 1 -> 2
+\* 1 -> 2. The client trusts only the server: the salt is in the clear, so
+\* the cookie never restarts the receive clock (TRANSPORT.md t11.1)
 ClientRecvCookie(p) ==
+    /\ p.type = "cookie"
+    /\ S2C!Deliver(p)
+    /\ IF cstate \in {1, 2} /\ p.att = cAttempt
+         THEN cHasCookie' = TRUE /\ cstate' = 2
+         ELSE UNCHANGED <<cHasCookie, cstate>>
+    /\ UNCHANGED <<cKeys, cEph, cIndex, cSinceRecv, cSeen, cReasm>>
+    /\ UNCHANGED clientRecvUnchanged
+
+\* the pre-fix cookie, only in SpecCookieRefreshes: an accepted cookie also
+\* restarts the receive clock. Not a disjunct of Next.
+ClientRecvCookieRefreshes(p) ==
     /\ p.type = "cookie"
     /\ S2C!Deliver(p)
     /\ IF cstate \in {1, 2} /\ p.att = cAttempt
@@ -666,6 +678,11 @@ SpecEarlyFragment == Init /\ [][Next \/ ClientFragmentReceiveEarly]_vars /\ Fair
 SpecDeniedKeepsKeys ==
     Init /\ [][Next \/ (\E p \in ServerPackets : ClientRecvDeniedKeepsKeys(p))]_vars /\ Fairness
 
+\* the reversed witness's spec: Next plus the pre-fix cookie that restarts
+\* the receive clock
+SpecCookieRefreshes ==
+    Init /\ [][Next \/ (\E p \in ServerPackets : ClientRecvCookieRefreshes(p))]_vars /\ Fairness
+
 (***************************************************************************)
 (* Safety.                                                                 *)
 (***************************************************************************)
@@ -719,6 +736,14 @@ TerminalAbsorbing ==
 \* a timeout from waiting state N lands in -(N+1) (S:2074-2077)
 TimeoutPairing ==
     [][(cstate \in 1..4 /\ cstate' \in {-2, -3, -4, -5}) => cstate' = -(cstate + 1)]_vars
+
+\* the client trusts only the server: within an attempt, before the
+\* challenge commits keys (states 1 and 2), nothing restarts the receive
+\* clock, so no packet anyone can forge keeps an attempt alive. Only the
+\* challenge, which opens under the attempt's keys, and session packets
+\* after it reset it (TRANSPORT.md t11 rule 8, t11.1)
+OnlyAuthenticatedRefreshes ==
+    [][(cstate \in {1, 2} /\ cstate' \in {1, 2} /\ cAttempt' = cAttempt) => cSinceRecv' >= cSinceRecv]_vars
 
 \* the idle timeout and the total deadline fire when they are due
 TimeoutHonoured  == (Timeout > 0 /\ cstate \in 1..4) => cSinceRecv < Timeout

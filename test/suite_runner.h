@@ -414,23 +414,30 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
     int ( *count )(), const char * ( *name_at )( int ), const suite_exec * execs, int nexecs,
     int ( *group_of )( const char * name ), const std::string & dir, const char * exe_suffix )
 {
-    for ( int i = 0; i < count(); i++ )
+    // Each case is built in place from its name's characters, never copied
+    // or moved as a whole string: under MemorySanitizer the prebuilt
+    // libstdc++ copies a short (SSO) string without telling the shadow, so a
+    // copied name reads as uninitialised (tools/run_msan.sh).
+    const size_t first = pending.size();
+    const int num_registered = count();
+    pending.resize( first + (size_t) num_registered + (size_t) nexecs );
+    for ( int i = 0; i < num_registered; i++ )
     {
-        suite_case item;
+        suite_case & item = pending[first + (size_t) i];
         item.name = name_at( i );
-        pending.push_back( item );
+        item.group = 0;
     }
     for ( int i = 0; i < nexecs; i++ )
     {
-        suite_case item;
+        suite_case & item = pending[first + (size_t) num_registered + (size_t) i];
         item.name = execs[i].name;
         item.exec_path = dir + "/" + execs[i].file + exe_suffix;
+        item.group = 0;
         if ( !suite_file_exists( item.exec_path ) )
         {
             printf( "check failed: %s missing at %s\n", execs[i].name, item.exec_path.c_str() );
             return false;
         }
-        pending.push_back( item );
     }
     for ( size_t i = 0; i < pending.size(); i++ )
     {

@@ -776,6 +776,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
 
     socket->ipv6 = address->type == ROCKETNET_ADDRESS_IPV6;
     socket->send_failures = 0;
+    socket->connected = false;
 
     if ( address->type == ROCKETNET_ADDRESS_IPV6 && !rocketnet_platform_ipv6_socket_available_for_testing )
     {
@@ -980,6 +981,65 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket )
     rocketnet_free( socket->context, socket );
 }
 
+// A connected socket (rocketnet_platform_socket_connect) has one peer: every
+// send goes to it with no destination named, since a BSD stack refuses a
+// sendto that names one on a connected socket (EISCONN). An unconnected
+// socket names each datagram's destination.
+
+static inline ssize_t rocketnet_platform_sendto( rocketnet_platform_socket_t * socket, const void * packet_data, int packet_bytes, const sockaddr * to, socklen_t to_bytes )
+{
+    if ( socket->connected )
+        return send( socket->handle, packet_data, (size_t) packet_bytes, 0 );
+    return sendto( socket->handle, packet_data, (size_t) packet_bytes, 0, to, to_bytes );
+}
+
+// Connects the socket to its one peer, so the kernel drops every datagram
+// from any other source (the client trusts only the server: STANDARD t11).
+// The destination is converted as send_packet converts it.
+
+bool rocketnet_platform_socket_connect( rocketnet_platform_socket_t * socket, const rocketnet_address_t * input_to )
+{
+    rocketnet_assert( socket );
+    rocketnet_assert( input_to );
+
+    rocketnet_address_t to = *input_to;
+    sockaddr_storage storage;
+    memset( &storage, 0, sizeof(storage) );
+    socklen_t storage_bytes = 0;
+
+    if ( socket->ipv6 )
+    {
+        if ( to.type == ROCKETNET_ADDRESS_IPV4 )
+            rocketnet_address_convert_ipv4_to_ipv6( &to );
+        if ( to.type != ROCKETNET_ADDRESS_IPV6 )
+            return false;
+        sockaddr_in6 * socket_address = (sockaddr_in6*) &storage;
+        socket_address->sin6_family = AF_INET6;
+        for ( int i = 0; i < 8; ++i )
+            ( (uint16_t*) &socket_address->sin6_addr ) [i] = rocketnet_platform_htons( to.data.ipv6[i] );
+        socket_address->sin6_port = rocketnet_platform_htons( to.port );
+        storage_bytes = sizeof(sockaddr_in6);
+    }
+    else
+    {
+        if ( to.type != ROCKETNET_ADDRESS_IPV4 )
+            return false;
+        rocketnet_platform_address_to_sockaddr_in( &to, (sockaddr_in*) &storage );
+        storage_bytes = sizeof(sockaddr_in);
+    }
+
+    if ( connect( socket->handle, (const sockaddr*) &storage, storage_bytes ) != 0 )
+    {
+        char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+        rocketnet_address_to_string( input_to, address_string );
+        rocketnet_error( "connect (%s) failed: %s", address_string, strerror( errno ) );
+        return false;
+    }
+
+    socket->connected = true;
+    return true;
+}
+
 void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket, const rocketnet_address_t * to_input, const void * packet_data, int packet_bytes )
 {
     rocketnet_assert( socket );
@@ -1020,7 +1080,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
             ( (uint16_t*) &socket_address.sin6_addr ) [i] = rocketnet_platform_htons( to.data.ipv6[i] );
         }
         socket_address.sin6_port = rocketnet_platform_htons( to.port );
-        int result = int( sendto( socket->handle, (char*)( packet_data ), packet_bytes, 0, (sockaddr*)( &socket_address ), sizeof(sockaddr_in6) ) );
+        int result = int( rocketnet_platform_sendto( socket, packet_data, packet_bytes, (sockaddr*)( &socket_address ), sizeof(sockaddr_in6) ) );
         if ( result < 0 )
         {
             char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
@@ -1035,7 +1095,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
         {
             sockaddr_in socket_address;
             rocketnet_platform_address_to_sockaddr_in( &to, &socket_address );
-            int result = int( sendto( socket->handle, (const char*)( packet_data ), packet_bytes, 0, (sockaddr*)( &socket_address ), sizeof(sockaddr_in) ) );
+            int result = int( rocketnet_platform_sendto( socket, packet_data, packet_bytes, (sockaddr*)( &socket_address ), sizeof(sockaddr_in) ) );
             if ( result < 0 )
             {
                 char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
@@ -1049,6 +1109,18 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
             rocketnet_error( "invalid address. could not send packet" );
         }
     }
+}
+
+// UDP's ordinary weather on the receive path (TRANSPORTS.md, ICMP errors):
+// a client socket is connected to its server, so the kernel reports an ICMP
+// error (port or host unreachable) to its next receive, and a full buffer
+// pool reports ENOBUFS. each is a one-shot report, so a drain that skips it
+// always reaches a datagram or EAGAIN.
+
+static bool rocketnet_platform_receive_weather( int error )
+{
+    return error == ECONNREFUSED || error == EHOSTUNREACH || error == ENETUNREACH ||
+           error == EHOSTDOWN || error == ENETDOWN || error == ENOBUFS || error == EINTR;
 }
 
 int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * socket, rocketnet_address_t * from, void * packet_data, int max_packet_size )
@@ -1095,7 +1167,12 @@ receive_again:
 
         if ( result < 0 )
         {
-            if ( errno != EAGAIN && errno != EINTR )
+            // an ICMP report to a connected client socket, or buffer
+            // weather: one-shot, says nothing about the datagrams queued
+            // behind it, so skip it and keep draining
+            if ( rocketnet_platform_receive_weather( errno ) )
+                continue;
+            if ( errno != EAGAIN )
             {
                 rocketnet_debug( "recvfrom failed with error %d", errno );
             }
@@ -1438,8 +1515,9 @@ void rocketnet_platform_socket_send_packets_mmsg( rocketnet_platform_socket_t * 
                 memset( &msg[count], 0, sizeof(msg[count]) );
                 iov[count].iov_base = (void*) send->packet_data;
                 iov[count].iov_len = (size_t) send->packet_bytes;
-                msg[count].msg_hdr.msg_name = &addresses[count];
-                msg[count].msg_hdr.msg_namelen = sockaddr_bytes;
+                // a connected socket names no destination (rocketnet_platform_sendto)
+                msg[count].msg_hdr.msg_name = socket->connected ? NULL : &addresses[count];
+                msg[count].msg_hdr.msg_namelen = socket->connected ? 0 : sockaddr_bytes;
                 msg[count].msg_hdr.msg_iov = &iov[count];
                 msg[count].msg_hdr.msg_iovlen = 1;
                 map[count] = base + scanned;
@@ -1533,7 +1611,9 @@ int rocketnet_platform_socket_receive_packets_mmsg( rocketnet_platform_socket_t 
         int result = recvmmsg( socket->handle, msg, (unsigned int) want, MSG_DONTWAIT | MSG_TRUNC, NULL );
         if ( result < 0 )
         {
-            if ( errno == EINTR )
+            // EINTR, an ICMP report to a connected client socket, or buffer
+            // weather: skip it and keep draining, as the per-packet receive does
+            if ( rocketnet_platform_receive_weather( errno ) )
                 continue;
             if ( errno == EAGAIN || errno == EWOULDBLOCK )
                 return total;
@@ -2555,6 +2635,7 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
 
     socket->ipv6 = address->type == ROCKETNET_ADDRESS_IPV6;
     socket->send_failures = 0;
+    socket->connected = false;
 
     socket->msgx = false;
 
@@ -2760,6 +2841,65 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket )
     rocketnet_free( socket->context, socket );
 }
 
+// A connected socket (rocketnet_platform_socket_connect) has one peer: every
+// send goes to it with no destination named, since a BSD stack refuses a
+// sendto that names one on a connected socket (EISCONN). An unconnected
+// socket names each datagram's destination.
+
+static inline ssize_t rocketnet_platform_sendto( rocketnet_platform_socket_t * socket, const void * packet_data, int packet_bytes, const sockaddr * to, socklen_t to_bytes )
+{
+    if ( socket->connected )
+        return send( socket->handle, packet_data, (size_t) packet_bytes, 0 );
+    return sendto( socket->handle, packet_data, (size_t) packet_bytes, 0, to, to_bytes );
+}
+
+// Connects the socket to its one peer, so the kernel drops every datagram
+// from any other source (the client trusts only the server: STANDARD t11).
+// The destination is converted as send_packet converts it.
+
+bool rocketnet_platform_socket_connect( rocketnet_platform_socket_t * socket, const rocketnet_address_t * input_to )
+{
+    rocketnet_assert( socket );
+    rocketnet_assert( input_to );
+
+    rocketnet_address_t to = *input_to;
+    sockaddr_storage storage;
+    memset( &storage, 0, sizeof(storage) );
+    socklen_t storage_bytes = 0;
+
+    if ( socket->ipv6 )
+    {
+        if ( to.type == ROCKETNET_ADDRESS_IPV4 )
+            rocketnet_address_convert_ipv4_to_ipv6( &to );
+        if ( to.type != ROCKETNET_ADDRESS_IPV6 )
+            return false;
+        sockaddr_in6 * socket_address = (sockaddr_in6*) &storage;
+        socket_address->sin6_family = AF_INET6;
+        for ( int i = 0; i < 8; ++i )
+            ( (uint16_t*) &socket_address->sin6_addr ) [i] = rocketnet_platform_htons( to.data.ipv6[i] );
+        socket_address->sin6_port = rocketnet_platform_htons( to.port );
+        storage_bytes = sizeof(sockaddr_in6);
+    }
+    else
+    {
+        if ( to.type != ROCKETNET_ADDRESS_IPV4 )
+            return false;
+        rocketnet_platform_address_to_sockaddr_in( &to, (sockaddr_in*) &storage );
+        storage_bytes = sizeof(sockaddr_in);
+    }
+
+    if ( connect( socket->handle, (const sockaddr*) &storage, storage_bytes ) != 0 )
+    {
+        char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+        rocketnet_address_to_string( input_to, address_string );
+        rocketnet_error( "connect (%s) failed: %s", address_string, strerror( errno ) );
+        return false;
+    }
+
+    socket->connected = true;
+    return true;
+}
+
 void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket, const rocketnet_address_t * input_to, const void * packet_data, int packet_bytes )
 {
     rocketnet_assert( socket );
@@ -2800,7 +2940,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
             ( (uint16_t*) &socket_address.sin6_addr ) [i] = rocketnet_platform_htons( to.data.ipv6[i] );
         }
         socket_address.sin6_port = rocketnet_platform_htons( to.port );
-        int result = int( sendto( socket->handle, (char*)( packet_data ), packet_bytes, 0, (sockaddr*)( &socket_address ), sizeof(sockaddr_in6) ) );
+        int result = int( rocketnet_platform_sendto( socket, packet_data, packet_bytes, (sockaddr*)( &socket_address ), sizeof(sockaddr_in6) ) );
         if ( result < 0 )
         {
             char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
@@ -2817,7 +2957,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
         {
             sockaddr_in socket_address;
             rocketnet_platform_address_to_sockaddr_in( &to, &socket_address );
-            int result = int( sendto( socket->handle, (const char*)( packet_data ), packet_bytes, 0, (sockaddr*)( &socket_address ), sizeof(sockaddr_in) ) );
+            int result = int( rocketnet_platform_sendto( socket, packet_data, packet_bytes, (sockaddr*)( &socket_address ), sizeof(sockaddr_in) ) );
             if ( result < 0 )
             {
                 char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
@@ -2838,10 +2978,11 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
 // died hard) to the next receive on a CONNECTED socket, and a full mbuf
 // pool reports ENOBUFS; neither says anything about the datagrams still
 // queued behind it. every receive arm skips these and keeps draining:
-// never fatal, never the end of a drain, never an msgx pause. the sockets
-// are unconnected (no connect() anywhere in this file), so the kernel does
-// not route ICMP errors to them at all; this is the contract that keeps an
-// error harmless if one ever arrives. EAGAIN/EWOULDBLOCK stays the drain's
+// never fatal, never the end of a drain, never an msgx pause. a client
+// socket is connected to its server (rocketnet_platform_socket_connect), so
+// the kernel does route ICMP errors to it, and this is the contract that
+// keeps each one harmless; server sockets stay unconnected and see none.
+// EAGAIN/EWOULDBLOCK stays the drain's
 // end: it means the queue is empty. each weather return is a one-shot
 // report (a pending socket error is cleared as it is returned), so a drain
 // always reaches a datagram or EAGAIN.
@@ -3186,8 +3327,9 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
             {
                 iov[count].iov_base = (void*) send->packet_data;
                 iov[count].iov_len = (size_t) send->packet_bytes;
-                msg[count].msg_name = &addresses[count];
-                msg[count].msg_namelen = sockaddr_bytes;
+                // a connected socket names no destination (rocketnet_platform_sendto)
+                msg[count].msg_name = socket->connected ? NULL : &addresses[count];
+                msg[count].msg_namelen = socket->connected ? 0 : sockaddr_bytes;
                 msg[count].msg_iov = &iov[count];
                 msg[count].msg_iovlen = 1;
                 map[count] = base + scanned;
@@ -4319,6 +4461,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
 
     s->context = context;
     s->send_failures = 0;
+    s->connected = false;
 
     rocketnet_assert( address );
     rocketnet_assert( address->type != ROCKETNET_ADDRESS_NONE );
@@ -4525,6 +4668,63 @@ static void rocketnet_platform_windows_send_failed( rocketnet_platform_socket_t 
     rocketnet_debug( "sendto (%s) failed: WSA error %d: %s", address_string, error, error_string );
 }
 
+// A connected socket (rocketnet_platform_socket_connect) has one peer: every
+// send goes to it with no destination named, as on the other platforms.
+
+static int rocketnet_platform_sendto( rocketnet_platform_socket_t * socket, const void * packet_data, int packet_bytes, const sockaddr * to, int to_bytes )
+{
+    if ( socket->connected )
+        return send( socket->handle, (const char*) packet_data, packet_bytes, 0 );
+    return sendto( socket->handle, (const char*) packet_data, packet_bytes, 0, to, to_bytes );
+}
+
+// Connects the socket to its one peer, so the stack drops every datagram
+// from any other source (the client trusts only the server: STANDARD t11).
+// The destination is converted as send_packet converts it.
+
+bool rocketnet_platform_socket_connect( rocketnet_platform_socket_t * socket, const rocketnet_address_t * input_to )
+{
+    rocketnet_assert( socket );
+    rocketnet_assert( input_to );
+
+    rocketnet_address_t to = *input_to;
+    sockaddr_storage storage;
+    memset( &storage, 0, sizeof(storage) );
+    int storage_bytes = 0;
+
+    if ( socket->ipv6 )
+    {
+        if ( to.type == ROCKETNET_ADDRESS_IPV4 )
+            rocketnet_address_convert_ipv4_to_ipv6( &to );
+        if ( to.type != ROCKETNET_ADDRESS_IPV6 )
+            return false;
+        sockaddr_in6 * socket_address = (sockaddr_in6*) &storage;
+        socket_address->sin6_family = AF_INET6;
+        for ( int i = 0; i < 8; i++ )
+            ( (uint16_t*) &socket_address->sin6_addr )[i] = rocketnet_platform_htons( to.data.ipv6[i] );
+        socket_address->sin6_port = rocketnet_platform_htons( to.port );
+        storage_bytes = (int) sizeof(sockaddr_in6);
+    }
+    else
+    {
+        if ( to.type != ROCKETNET_ADDRESS_IPV4 )
+            return false;
+        rocketnet_platform_address_to_sockaddr_in( &to, (sockaddr_in*) &storage );
+        storage_bytes = (int) sizeof(sockaddr_in);
+    }
+
+    if ( connect( socket->handle, (const sockaddr*) &storage, storage_bytes ) == SOCKET_ERROR )
+    {
+        char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+        rocketnet_address_to_string( input_to, address_string );
+        rocketnet_error( "connect (%s) failed: WSA error %d", address_string, WSAGetLastError() );
+        return false;
+    }
+
+    socket->connected = true;
+    return true;
+}
+
 void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket, const rocketnet_address_t * input_to, const void * packet_data, int packet_bytes )
 {
     rocketnet_assert( socket );
@@ -4552,7 +4752,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
             ( (uint16_t*) &socket_address.sin6_addr)[i] = rocketnet_platform_htons( to.data.ipv6[i] );
         }
         socket_address.sin6_port = rocketnet_platform_htons( to.port );
-        int result = sendto( socket->handle, (char*)(packet_data), packet_bytes, 0, (sockaddr*)(&socket_address), sizeof(sockaddr_in6) );
+        int result = rocketnet_platform_sendto( socket, packet_data, packet_bytes, (sockaddr*)(&socket_address), (int) sizeof(sockaddr_in6) );
         if ( result == SOCKET_ERROR )
             rocketnet_platform_windows_send_failed( socket, &to, WSAGetLastError() );
     }
@@ -4562,7 +4762,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
         {
             sockaddr_in socket_address;
             rocketnet_platform_address_to_sockaddr_in( &to, &socket_address );
-            int result = sendto( socket->handle, (const char*)(packet_data), packet_bytes, 0, (sockaddr*)(&socket_address), sizeof(sockaddr_in) );
+            int result = rocketnet_platform_sendto( socket, packet_data, packet_bytes, (sockaddr*)(&socket_address), (int) sizeof(sockaddr_in) );
             if ( result == SOCKET_ERROR )
                 rocketnet_platform_windows_send_failed( socket, &to, WSAGetLastError() );
         }
