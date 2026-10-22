@@ -137,18 +137,15 @@ struct alignas(64) rocketnet_client_stats_frame_t
 };
 
 // The BASE receive worker owns fill, update owns held, and only indices cross
-// the mutex. READY buffers are immutable; FREE buffers may be claimed by the
-// worker. Packet data is never copied or cleared while holding the mutex.
+// the mutex, through the same handoff as the I/O core's receive
+// (sdk/rocketnet_buffer_handoff.h, tla/RNBufferHandoff.tla). Packet data is
+// never copied or cleared while holding the mutex, and update only
+// try-acquires it.
 struct rocketnet_client_legacy_receive_state_t
 {
-    int fill = -1;
-    int held = -1;
-    int ready[3] = {};
-    int ready_head = 0;
-    int ready_count = 0;
-    int free[3] = { 0, 1, 2 };
-    int free_head = 0;
-    int free_count = 3;
+    rocketnet_buffer_handoff_t<ROCKETNET_CLIENT_IO_NUM_BUFFERS> handoff;
+    int fill;
+    int held;
 };
 
 /*
@@ -161,10 +158,10 @@ struct rocketnet_client_legacy_receive_state_t
     /* the cache-line-aligned members lead, each a whole number of cache */                                          \
     /* lines, so the compiler inserts no alignment padding before any of them */                                     \
     X( packet_leases, rocketnet_packet_leases_t<1024> packet_leases )                                                \
-    /* two rings of one layout (docs/CLIENT-IO.md _The hand-off and the two */                                       \
-    /* rings_): game threads fill payload_ring[client_io.rings.fill]. The BASE */                                    \
-    /* path never hands off, so it fills ring 0 only. */                                                             \
-    X( payload_ring, struct rocketnet_client_payload_ring_t payload_ring[2] )                                        \
+    /* three rings of one layout (tla/RNBufferHandoff.tla): game threads */                                          \
+    /* fill payload_ring[client_io.send_fill]. The BASE path never hands */                                          \
+    /* off, so it fills ring 0 only. */                                                                              \
+    X( payload_ring, struct rocketnet_client_payload_ring_t payload_ring[ROCKETNET_CLIENT_IO_NUM_RINGS] )            \
     X( stats_frames, struct rocketnet_client_stats_frame_t stats_frames[ROCKETNET_NUM_CLIENT_STATS_FRAMES] )         \
     X( context, void * context )                                                                                     \
     X( bound_port, uint16_t bound_port )                                                                             \
@@ -182,7 +179,7 @@ struct rocketnet_client_legacy_receive_state_t
     X( quit, std::atomic<bool> quit{0} )                                                                             \
     X( receive_buffer_index, rocketnet_client_legacy_receive_state_t receive_buffer_index )                          \
     X( received_packets, rocketnet_client_received_packets_t received_packets )                                      \
-    X( receive_buffer, rocketnet_client_receive_buffer_t receive_buffer[3] )                                         \
+    X( receive_buffer, rocketnet_client_receive_buffer_t receive_buffer[ROCKETNET_CLIENT_IO_NUM_BUFFERS] )           \
     X( time, double time ) /* the game's clock, last seen */                                                         \
     X( frame, uint64_t frame ) /* advanced once per update; identifies initialized stats buckets */                  \
     X( last_state, int last_state )                                                                                  \
@@ -308,9 +305,9 @@ bool rocketnet_client_transport_connection_state_clean_for_test( struct rocketne
     memset( &fresh_jitter, 0, sizeof(fresh_jitter) );
     rocketnet_packet_loss_tracker_reset( &fresh_loss );
     rocketnet_jitter_tracker_reset( &fresh_jitter );
-    for ( int ring = 0; ring < 2 && !member; ring++ )
+    for ( int ring = 0; ring < ROCKETNET_CLIENT_IO_NUM_RINGS && !member; ring++ )
     {
-        if ( client->io_thread && ring != client->client_io.rings.fill )
+        if ( client->io_thread && ring != client->client_io.send_fill )
             continue;
         if ( client->payload_ring[ring].num_packets != 0 ||
              !rocketnet_all_zero( client->payload_ring[ring].info, sizeof(client->payload_ring[ring].info) ) ||
@@ -354,16 +351,13 @@ void rocketnet_client_connection_reset( struct rocketnet_client_transport_t * cl
 {
     rocketnet_assert( client );
     client->packet_leases.reset();
-    struct rocketnet_client_payload_ring_t * fill = &client->payload_ring[client->client_io.rings.fill];
-    fill->num_packets = 0;
-    memset( fill->info, 0, sizeof(fill->info) );
-    memset( fill->data, 0, sizeof(fill->data) );
-    if ( !client->io_thread )
+    for ( int ring = 0; ring < ROCKETNET_CLIENT_IO_NUM_RINGS; ring++ )
     {
-        const int other = 1 - client->client_io.rings.fill;
-        client->payload_ring[other].num_packets = 0;
-        memset( client->payload_ring[other].info, 0, sizeof(client->payload_ring[other].info) );
-        memset( client->payload_ring[other].data, 0, sizeof(client->payload_ring[other].data) );
+        if ( client->io_thread && ring != client->client_io.send_fill )
+            continue;
+        client->payload_ring[ring].num_packets = 0;
+        memset( client->payload_ring[ring].info, 0, sizeof(client->payload_ring[ring].info) );
+        memset( client->payload_ring[ring].data, 0, sizeof(client->payload_ring[ring].data) );
     }
     rocketnet_send_arena_reset( client->send_arena );
     memset( &client->received_packets, 0, sizeof(client->received_packets) );
@@ -423,19 +417,22 @@ static void rocketnet_client_link_drain( rocketnet_client_transport_t * transpor
         transport->io.operations->send( transport->io.instance, &to, packet, packet_bytes );
 }
 
-// the ring game threads fill: the one rings.fill names (always ring 0 on the
+// the ring game threads fill: the one send_fill names (always ring 0 on the
 // BASE path, which never hands off)
 static inline struct rocketnet_client_payload_ring_t * rocketnet_client_fill_ring( rocketnet_client_transport_t * client_transport )
 {
-    return &client_transport->payload_ring[client_transport->client_io.rings.fill];
+    return &client_transport->payload_ring[client_transport->client_io.send_fill];
 }
 
-// the ring a frame of either ring lives in
+// the ring a frame of any ring lives in
 static inline struct rocketnet_client_payload_ring_t * rocketnet_client_frame_ring( rocketnet_client_transport_t * client_transport, const uint8_t * frame )
 {
-    struct rocketnet_client_payload_ring_t * other = &client_transport->payload_ring[1];
-    if ( frame >= other->data && frame < other->data + sizeof( other->data ) )
-        return other;
+    for ( int i = 1; i < ROCKETNET_CLIENT_IO_NUM_RINGS; i++ )
+    {
+        struct rocketnet_client_payload_ring_t * ring = &client_transport->payload_ring[i];
+        if ( frame >= ring->data && frame < ring->data + sizeof( ring->data ) )
+            return ring;
+    }
     return &client_transport->payload_ring[0];
 }
 
@@ -1141,6 +1138,10 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         }
     }
 
+    rocketnet_buffer_handoff_init( &client_transport->receive_buffer_index.handoff, 0 );
+    client_transport->receive_buffer_index.fill = 0;
+    client_transport->receive_buffer_index.held = -1;
+
     if ( !rocketnet_platform_mutex_create( &client_transport->mutex ) )
     {
         rocketnet_error( "client could not create mutex" );
@@ -1188,8 +1189,8 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
     if ( client_transport->io_thread || client_transport->step_in_update )
     {
-        rocketnet_client_io_ring_view_t views[2];
-        for ( int i = 0; i < 2; i++ )
+        rocketnet_client_io_ring_view_t views[ROCKETNET_CLIENT_IO_NUM_RINGS];
+        for ( int i = 0; i < ROCKETNET_CLIENT_IO_NUM_RINGS; i++ )
         {
             views[i].data = client_transport->payload_ring[i].data;
             views[i].frame_stride = ROCKETNET_FRAME_STRIDE;
@@ -1197,9 +1198,10 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
             views[i].wire_bytes = (const uint8_t *) &client_transport->payload_ring[i].info[0].wire_bytes;
             views[i].wire_bytes_stride = sizeof( struct rocketnet_client_payload_slot_info_t );
         }
-        rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] =
-            { &client_transport->receive_buffer[0], &client_transport->receive_buffer[1] };
-        rocketnet_client_io_init( &client_transport->client_io, &client_transport->io, &views[0], &views[1], buffers,
+        rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS];
+        for ( int i = 0; i < ROCKETNET_CLIENT_IO_NUM_BUFFERS; i++ )
+            buffers[i] = &client_transport->receive_buffer[i];
+        rocketnet_client_io_init( &client_transport->client_io, &client_transport->io, &client_transport->mutex, views, buffers,
                                   client_transport->time_callback, client_transport->context );
         client_transport->client_io.prefilter_too_large =
             &client_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE];
@@ -1264,7 +1266,7 @@ static const rocketnet_address_t * rocketnet_client_transport_fill_destination( 
 {
     if ( client_transport->protocol.server_address.type != ROCKETNET_ADDRESS_NONE )
         return &client_transport->protocol.server_address;
-    return &client_transport->client_io.to[client_transport->client_io.rings.fill];
+    return &client_transport->client_io.to[client_transport->client_io.send_fill];
 }
 
 // tla/RNClientIoShutdown.tla abstracts this request/completion ownership;
@@ -1281,19 +1283,11 @@ void rocketnet_client_transport_stop( rocketnet_client_transport_t * client_tran
     if ( rocketnet_client_io_core( client_transport ) )
     {
         rocketnet_client_io_t * io = &client_transport->client_io;
-        const int ring = io->rings.fill;
         uint64_t committed = rocketnet_client_fill_ring( client_transport )->num_packets;
         if ( committed > ROCKETNET_CLIENT_PAYLOAD_RING_SIZE )
             committed = ROCKETNET_CLIENT_PAYLOAD_RING_SIZE;
-        if ( committed )
-        {
-            if ( !io->to_held[ring] )
-                io->to[ring] = *rocketnet_client_transport_fill_destination( client_transport );
-            io->rings.committed[ring] = committed;
-            io->rings.state[ring].store( ROCKETNET_CLIENT_RING_HANDED_OFF, std::memory_order_release );
-        }
         rocketnet_client_io_retire_keys( io );
-        rocketnet_client_io_stop( io );
+        rocketnet_client_io_stop( io, committed, rocketnet_client_transport_fill_destination( client_transport ) );
         if ( rocketnet_client_memory_plan_seam_enabled )
             io->stopped.store( true, std::memory_order_release );
     }
@@ -1534,40 +1528,29 @@ static void rocketnet_client_transport_io_commit_packet( rocketnet_client_transp
     ring->info[slot].wire_bytes = packet_bytes;
 }
 
-static int rocketnet_client_legacy_pop( const int * queue, int * head, int * count )
-{
-    rocketnet_assert( *count > 0 );
-    const int index = queue[*head];
-    *head = ( *head + 1 ) % 3;
-    --*count;
-    return index;
-}
-
-static void rocketnet_client_legacy_push( int * queue, int head, int * count, int index )
-{
-    rocketnet_assert( *count < 3 );
-    queue[( head + *count ) % 3] = index;
-    ++*count;
-}
+// RNBufferHandoff ConsumerExchange on the BASE path: as the I/O core's
+// expose. The previous public receive view expires at the start of this
+// update; it is still main-owned here, so clearing it needs no mutex. The
+// mutex is only try-acquired: when the receive worker holds it this instant,
+// update keeps the cleared buffer and exposes nothing, and the next update
+// retries. The worker polls, so no wake is owed.
 
 static rocketnet_client_receive_buffer_t * rocketnet_client_update_expose_legacy_receive( rocketnet_client_transport_t * client_transport )
 {
     rocketnet_client_legacy_receive_state_t * state = &client_transport->receive_buffer_index;
 
-    // The previous public receive view expires at the start of this update.
-    // It is still main-owned here, so clearing it requires no mutex.
-    const int old_held = state->held;
-    if ( old_held >= 0 )
-        client_transport->receive_buffer[old_held].num_packets = 0;
+    if ( state->held >= 0 )
+        client_transport->receive_buffer[state->held].num_packets = 0;
 
-    rocketnet_platform_mutex_acquire( &client_transport->mutex );
-    if ( old_held >= 0 )
-        rocketnet_client_legacy_push( state->free, state->free_head, &state->free_count, old_held );
-    state->held = state->ready_count ? rocketnet_client_legacy_pop( state->ready, &state->ready_head, &state->ready_count ) : -1;
-    const int held = state->held;
+    if ( !rocketnet_platform_mutex_try_acquire( &client_transport->mutex ) )
+        return NULL;
+    if ( state->held >= 0 )
+        rocketnet_buffer_handoff_release( &state->handoff, state->held );
+    state->held = rocketnet_buffer_handoff_take( &state->handoff );
+    (void) rocketnet_buffer_handoff_owed( &state->handoff );
     rocketnet_platform_mutex_release( &client_transport->mutex );
 
-    return held >= 0 ? &client_transport->receive_buffer[held] : NULL;
+    return state->held >= 0 ? &client_transport->receive_buffer[state->held] : NULL;
 }
 
 // process the previous stats frames into published per-second numbers, then
@@ -2437,6 +2420,27 @@ void rocketnet_client_transport_ack_stats_for_test( const rocketnet_ack_endpoint
 }
 #endif
 
+// RNBufferHandoff ProducerExchange on the BASE path: the receive worker
+// always holds one buffer (fill), reads datagrams into it outside the mutex,
+// and publishes it when the socket is drained or the buffer is full, if no
+// buffer is waiting ready and one is free (the triple buffer, MaxReady 1).
+// Otherwise it keeps the batch and adds to it while it has room; a full
+// buffer that cannot publish leaves datagrams in the transport until a later
+// update frees one. No buffer another side owns is ever written.
+
+static void rocketnet_client_legacy_publish( rocketnet_client_transport_t * client_transport )
+{
+    rocketnet_client_legacy_receive_state_t * state = &client_transport->receive_buffer_index;
+    rocketnet_platform_mutex_acquire( &client_transport->mutex );
+    const int next = rocketnet_buffer_handoff_publish( &state->handoff, state->fill, 1 );
+    rocketnet_platform_mutex_release( &client_transport->mutex );
+    if ( next >= 0 )
+    {
+        state->fill = next;
+        client_transport->receive_buffer[next].num_packets = 0;
+    }
+}
+
 static void rocketnet_client_receive_packets( rocketnet_client_transport_t * client_transport, const double * synthetic_time )
 {
     rocketnet_assert( client_transport );
@@ -2445,27 +2449,13 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
 
     while ( 1 )
     {
-        // Claim one FREE buffer for the worker. It remains exclusively FILL
-        // across receive, copy and metadata writes, even if update runs.
-        rocketnet_platform_mutex_acquire( &client_transport->mutex );
-        if ( state->fill < 0 && state->free_count )
-            state->fill = rocketnet_client_legacy_pop( state->free, &state->free_head, &state->free_count );
-        const int fill = state->fill;
-        rocketnet_platform_mutex_release( &client_transport->mutex );
-
-        // All three buffers can be occupied by FILL, READY and main-held.
-        // Leave unread datagrams in the transport until a later update frees
-        // one; never overwrite a buffer that another phase still owns.
-        if ( fill < 0 )
-            break;
-
-        rocketnet_client_receive_buffer_t * receive_buffer = &client_transport->receive_buffer[fill];
+        rocketnet_client_receive_buffer_t * receive_buffer = &client_transport->receive_buffer[state->fill];
         if ( receive_buffer->num_packets >= ROCKETNET_NUM_CLIENT_PACKETS )
         {
-            rocketnet_platform_mutex_acquire( &client_transport->mutex );
-            rocketnet_client_legacy_push( state->ready, state->ready_head, &state->ready_count, fill );
-            state->fill = -1;
-            rocketnet_platform_mutex_release( &client_transport->mutex );
+            const int full = state->fill;
+            rocketnet_client_legacy_publish( client_transport );
+            if ( state->fill == full )
+                break;
             continue;
         }
 
@@ -2475,24 +2465,19 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
             client_transport->client_io.transport_faults++;
         if ( packet_bytes <= 0 || packet_bytes > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
         {
-            // Publish a partial batch on drain or fault. An empty FILL stays
-            // worker-owned and can be reused without a handoff.
+            // publish a partial batch on drain or fault; an empty buffer
+            // stays the worker's
             if ( receive_buffer->num_packets )
-            {
-                rocketnet_platform_mutex_acquire( &client_transport->mutex );
-                rocketnet_client_legacy_push( state->ready, state->ready_head, &state->ready_count, fill );
-                state->fill = -1;
-                rocketnet_platform_mutex_release( &client_transport->mutex );
-            }
+                rocketnet_client_legacy_publish( client_transport );
             break;
         }
 
         // every datagram is kept with its true size, a runt or an oversize
-        // one too, as the I/O core keeps it (sdk/rocketnet_client_io.h:390-396):
-        // the update thread's prefilter refuses it and counts
-        // PREFILTER_TOO_SHORT or PREFILTER_TOO_LARGE
-        // (sdk/rocketnet_protocol.cpp:176-180). An oversize datagram's bytes
-        // past scratch were never written, so only scratch's prefix is copied.
+        // one too, as the I/O core keeps it (sdk/rocketnet_client_io.h): the
+        // update thread's prefilter refuses it and counts PREFILTER_TOO_SHORT
+        // or PREFILTER_TOO_LARGE (sdk/rocketnet_protocol.cpp). An oversize
+        // datagram's bytes past scratch were never written, so only scratch's
+        // prefix is copied.
 
         const int copy_bytes = packet_bytes < ROCKETNET_RECEIVE_PACKET_BYTES ? packet_bytes : ROCKETNET_RECEIVE_PACKET_BYTES;
 
@@ -2504,7 +2489,7 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
         receive_buffer->from[index] = from;
         receive_buffer->receive_time[index] = receive_time;
         receive_buffer->packet_data[index] = receive_buffer->data + index * ROCKETNET_FRAME_SIZE;
-        receive_buffer->packet_bytes[index] = packet_bytes;
+        receive_buffer->packet_bytes[index] = (size_t) packet_bytes;
         receive_buffer->num_packets++;
     }
 }
@@ -2536,8 +2521,8 @@ const rocketnet_client_receive_buffer_t * rocketnet_client_transport_legacy_rece
                       !rocketnet_client_io_core( client_transport ) );
     const rocketnet_client_legacy_receive_state_t * state = &client_transport->receive_buffer_index;
     if ( fill ) *fill = state->fill;
-    if ( ready_count ) *ready_count = state->ready_count;
-    if ( free_count ) *free_count = state->free_count;
+    if ( ready_count ) *ready_count = state->handoff.ready_count;
+    if ( free_count ) *free_count = state->handoff.free_count;
     return state->held >= 0 ? &client_transport->receive_buffer[state->held] : NULL;
 }
 

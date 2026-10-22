@@ -299,16 +299,19 @@ static void test_fake_client_disconnect_burst_keeps_server_address()
         rocketnet_client_io_step( io, false );
     }
     rocketnet_unit_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
-    while ( rocketnet_client_send_rings_in_flight( &io->rings ) )
+    while ( io->send.ready_count > 0 || io->send_ring >= 0 )
         rocketnet_client_io_step( io, false );
 
-    // send_packets hands ring A off; the I/O side does not step, so the next
-    // send_packets is deferred (ring B holds a committed packet) and the
-    // disconnect burst joins ring B, deferred again
+    // send_packet hands rings A and B off; the I/O side does not step, so the
+    // third is deferred (ring C holds a committed packet) and the disconnect
+    // burst joins ring C, deferred again
     const uint8_t payload[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
     rocketnet_client_transport_send_packet( client, payload, (int) sizeof( payload ) );
     rocketnet_client_transport_send_packets( client );
-    rocketnet_unit_check( rocketnet_client_send_rings_in_flight( &io->rings ) );
+    rocketnet_unit_check( io->send.ready_count == 1 );
+    rocketnet_client_transport_send_packet( client, payload, (int) sizeof( payload ) );
+    rocketnet_client_transport_send_packets( client );
+    rocketnet_unit_check( io->send.ready_count == 2 );
     rocketnet_client_transport_send_packet( client, payload, (int) sizeof( payload ) );
     rocketnet_client_transport_send_packets( client );
     const uint64_t deferred_before = rocketnet_client_transport_counters( client )->values[ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED];
@@ -319,11 +322,14 @@ static void test_fake_client_disconnect_burst_keeps_server_address()
     rocketnet_unit_check( rocketnet_client_transport_counters( client )->values[ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED] == deferred_before + 1 );
     rocketnet_unit_check( fake_disconnect_record.count == sent_before_disconnect );
 
-    // destroy without stepping: it waits ring A out, hands ring B off and
-    // the core sends both before it exits
+    // stop without stepping: stop hands ring C to the core with quit, and the
+    // core sends rings A and B, then C, before it exits. The deferred third
+    // payload was sealed under the session disconnect ended, and the
+    // connection reset emptied the Filling ring before the burst went in, so
+    // ring C carries the burst alone.
     rn_test_client_transport_stop_and_destroy( client );
     const int sent = fake_disconnect_record.count - sent_before_disconnect;
-    rocketnet_unit_check( sent == 1 + ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS );
+    rocketnet_unit_check( sent == 2 + ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS );
     for ( int i = sent_before_disconnect; i < fake_disconnect_record.count; i++ )
         rocketnet_unit_check( rocketnet_address_equal( &fake_disconnect_record.to[i], &server_address ) );
 
