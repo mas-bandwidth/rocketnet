@@ -7718,7 +7718,7 @@ static struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6
     }
     {
         char command[256];
-        snprintf( command, sizeof(command), "ip link add " ROCKETNET_XDP_VETH_NEAR " mtu 1500 numtxqueues %d numrxqueues %d type veth client_socket name " ROCKETNET_XDP_VETH_FAR " mtu 1500 numtxqueues %d numrxqueues %d", veth_queues, veth_queues, veth_queues, veth_queues );
+        snprintf( command, sizeof(command), "ip link add " ROCKETNET_XDP_VETH_NEAR " mtu 1500 numtxqueues %d numrxqueues %d type veth peer name " ROCKETNET_XDP_VETH_FAR " mtu 1500 numtxqueues %d numrxqueues %d", veth_queues, veth_queues, veth_queues, veth_queues );
         rocketnet_xdp_veth_run( command );
     }
     rocketnet_xdp_veth_run( "ip link set " ROCKETNET_XDP_VETH_FAR " netns " ROCKETNET_XDP_VETH_NETNS );
