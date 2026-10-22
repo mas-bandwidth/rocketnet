@@ -7,6 +7,12 @@ GitHub CI is not a deliverable or publication gate for this preview.
 
 ## Source provenance
 
+The published tag `v1.0.0-preview-2` points to main commit
+`c1a63ac978c0389f97e2d37e9ab61c8139191e34`, whose complete source tree
+is identical to candidate `a76d641ad64768e239528cd1c6bfdf37a0caaa41`.
+This qualification index was finalized after publication; it records the
+existing results and does not change the released source or tag.
+
 The runtime candidate was `ba09993ba30e1c93c55d8d2f0bdf42baedd9ee0a`.
 Commit `a76d641ad64768e239528cd1c6bfdf37a0caaa41` restores the earlier CI
 configuration and records the manual qualification policy; it changes no SDK

@@ -1,6 +1,6 @@
 # RocketNet v1.0.0-preview-2
 
-Changes compared with the `v1.0.0-preview-1` tag. Preview-2 uses the recorded manual qualification in [the qualification index](QUALIFICATION-v1.0.0-preview-2.md). See [TESTING.md](../TESTING.md) for the detailed evidence tables.
+Changes compared with the `v1.0.0-preview-1` tag. Published tag `v1.0.0-preview-2` names main commit `c1a63ac978c0389f97e2d37e9ab61c8139191e34`, whose source tree matches candidate `a76d641a`. Preview-2 uses the recorded manual qualification in [the qualification index](QUALIFICATION-v1.0.0-preview-2.md). See [TESTING.md](../TESTING.md) for the detailed evidence tables.
 
 RocketNet provides encrypted client/server UDP connections and eight message
 delivery modes through a C API. Your application supplies message bytes and
