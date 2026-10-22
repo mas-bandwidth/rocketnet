@@ -26,6 +26,19 @@ the front door:
 
     make
 
+The CMake build treats warnings as errors by default. GCC and clang use
+`-Wall -Wextra -Wpedantic` plus the default-on strict set (`-Wshadow`,
+`-Wconversion`, `-Wsign-conversion`, `-Wcast-qual`, `-Wformat=2`, `-Wundef` and
+`-Wdouble-promotion`); clang-cl uses that strict set beside `/W4`, and MSVC uses
+`/W4`. `ROCKETNET_WARNINGS_AS_ERRORS` defaults to `ON` (`-Werror` or `/WX`). If
+a newer compiler introduces a warning the current checked toolchains do not
+emit, configure with `-DROCKETNET_WARNINGS_AS_ERRORS=OFF` to keep every warning
+enabled while temporarily dropping only the error policy. Set
+`-DROCKETNET_STRICT_WARNINGS=OFF` only when the embedding build cannot accept
+the strict set itself. These directory-scoped options apply to RocketNet's own
+targets and do not propagate through the installed package or namespaced
+targets into a consuming project.
+
 Binaries and libraries land in `bin/`. On macOS, [docs/MACOS.md](docs/MACOS.md)
 is the guide: the build, the two transports and how to pin them, the client's
 threads and App Nap, socket errors, the file-descriptor limit, the application
@@ -41,7 +54,7 @@ build a test over 120 seconds is killed and the suite fails. Debug and
 sanitizer builds scale the limit by 5. A passing run prints each test's
 name and then `*** ALL TESTS PASSED ***`; `ROCKETNET_TEST_REPORT=1` adds the
 ten slowest cases and the ten largest peak resident sets after the results
-(test/README.md).
+(tests/README.md).
 
 A test that calls `socket`, `bind`, `sendto`, `recvfrom`, `select`, `epoll`,
 IOCP, or AF_XDP, or that starts a real transport (`rocketnet_server_create`,
@@ -499,6 +512,15 @@ the client form. The detailed per-transport plan and the kernel-facing host memo
 estimate are internal to the transport layer (`sdk/rocketnet_layers.h`), not part
 of the public client and server API.
 
+The client's corresponding transport plan is applied at connect, after the
+token selects an address and the transport ladder. For portable and msgx it
+includes the client transport block, reassembly storage, send arena, socket,
+wake object and one SDK thread allocation. The normal client runs one background
+network thread; its operating-system stack reserve, kernel socket queues and
+application memory are outside that allocator plan. The
+`ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES` operator limit compares candidates with
+this allocator plan before opening them.
+
 The internal transport plan, allocated at start, includes the transport, protocol tables and ACK history, reassembly and
 its delivered mirror, send arena, native transport queues and SDK worker allocations,
 including two background stats job banks, per-slot delta buffers and worker-owned
@@ -537,10 +559,18 @@ socket-buffer reservation. The current default Linux worker topology is:
 
 | transport | sockets | I/O workers | stats workers | total stacks |
 | --- | --- | --- | --- | --- |
-| portable (development server) | 1 | 1 | 1 | 2 |
-| gso | 4 | 4 | 1 | 5 |
+| portable (development server) | 1 | 2 | 1 | 3 |
+| gso | 4 | 5 | 1 | 6 |
 | io_uring | 4 | 0 | 1 | 1 |
 | xdp | 7 | 7 | 1 | 8 |
+
+The default Windows server topology is one socket and two I/O workers plus the
+stats worker for IOCP (one completion worker and one transmit worker), or one
+socket and one I/O worker plus the stats worker for RIO. A development portable
+server has the same two I/O workers as the Linux row. On macOS, msgx and the
+development portable server also have one receive worker, one transmit worker
+and the stats worker. These server counts do not include client objects; each
+normal client adds its own one background network thread.
 
 Multiply the total stacks by the host's default stack reserve. Use the probe
 below for byte totals from the exact build and configured geometry; allocator

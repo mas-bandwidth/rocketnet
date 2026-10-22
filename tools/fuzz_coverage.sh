@@ -19,7 +19,7 @@
 #   FUZZ_COV_OUT     where profiles and reports go (default a fresh temp dir)
 #   FUZZ_COV_JOBS    build parallelism (default 8)
 #   FUZZ_COV_SETUP   1 counts the pair targets' one-time create, connect and
-#                    snapshot as covered (default 0: the pair harnesses zero
+#                    save as covered (default 0: the pair harnesses zero
 #                    their counters once setup is done, so their numbers are
 #                    what inputs reach; ROCKETNET_FUZZ_COVERAGE_INPUTS_ONLY)
 #   SLOT             a command prefix for the heavy steps, e.g. the studio's

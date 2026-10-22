@@ -2145,13 +2145,16 @@ const char * rocketnet_server_transport_io_name( struct rocketnet_server_transpo
 
 // the development seam the ICMP-error functional cases read the live pump
 // and the socket through (TRANSPORTS.md, ICMP errors): the portable and msgx
-// transports' instance is the platform socket itself
+// transports' instance is the portable_server_t, which owns the socket; read
+// as the socket itself, the pump was whatever bytes the owner held there
+
+struct rocketnet_platform_socket_t * rocketnet_portable_server_test_socket( void * transport );
 
 struct rocketnet_platform_socket_t * rocketnet_server_transport_platform_socket_for_testing( struct rocketnet_server_transport_t * server_transport )
 {
     rocketnet_assert( server_transport );
     if ( server_transport->transport == ROCKETNET_TRANSPORT_PORTABLE || server_transport->transport == ROCKETNET_TRANSPORT_MSGX )
-        return (struct rocketnet_platform_socket_t*) server_transport->io.instance;
+        return rocketnet_portable_server_test_socket( server_transport->io.instance );
     return NULL;
 }
 
@@ -2339,7 +2342,7 @@ static void rocketnet_server_stats_publish_and_submit( rocketnet_server_transpor
 
 #if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS)
 // Historical pure fixture only; the production path below submits immutable
-// snapshots to the worker and applies them on a later update.
+// copies of the stats to the worker and applies them on a later update.
 int rocketnet_server_transport_test_update_client_stats( const rocketnet_client_slots_t * slots,
                                                         rocketnet_server_acks_t * acks )
 {
@@ -3318,6 +3321,12 @@ int rocketnet_server_transport_finish_packet( rocketnet_server_transport_t * ser
 }
 
 // tla/RNDriverSendStaging.tla SendPackets
+// the staged transports whose flush can leave work behind for a later call
+static bool rocketnet_server_transport_reflushes( int transport )
+{
+    return transport == ROCKETNET_TRANSPORT_XDP || transport == ROCKETNET_TRANSPORT_GSO || transport == ROCKETNET_TRANSPORT_IO_URING;
+}
+
 static void rocketnet_server_transport_send_packets_impl( struct rocketnet_server_transport_t * server_transport, bool shutdown )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )
@@ -3341,10 +3350,14 @@ static void rocketnet_server_transport_send_packets_impl( struct rocketnet_serve
         server_transport->stats_pending_bytes_sent = 0;
 
         // RNDriverSendStaging.Publish: XDP may retain the producer
-        // generation while its worker owns the other buffer. Re-flush even
-        // without a new commit so worker retirement cannot strand that work.
+        // generation while its worker owns the other buffer, gso retains its
+        // producer when the try-publish meets the TX worker on the handoff
+        // lock or a full FIFO, and io_uring keeps its index while sends wait
+        // for their CQEs. Re-flush even without a new commit, so the next
+        // send boundary retries that work rather than the next update. Each
+        // native flush is non-blocking: a try-publish or a bounded reap.
 
-        if ( server_transport->transport == ROCKETNET_TRANSPORT_XDP ||
+        if ( rocketnet_server_transport_reflushes( server_transport->transport ) ||
              server_transport->send_staged != server_transport->send_flushed )
         {
             server_transport->send_flushed = server_transport->send_staged;
@@ -3678,7 +3691,7 @@ static void rocketnet_server_transport_test_count_flush( void * context )
     ++*(int*)context;
 }
 
-int rocketnet_server_transport_test_xdp_reflush()
+int rocketnet_server_transport_test_reflush( int transport_kind )
 {
     void * storage = rocketnet_malloc( NULL, sizeof(rocketnet_server_transport_t) );
     if ( !storage ) return -1;
@@ -3696,7 +3709,7 @@ int rocketnet_server_transport_test_xdp_reflush()
     operations.flush = rocketnet_server_transport_test_count_flush;
     transport->io.operations = &operations;
     transport->io.instance = &flushes;
-    transport->transport = ROCKETNET_TRANSPORT_XDP;
+    transport->transport = transport_kind;
     transport->send_staged = 1;
     rocketnet_server_transport_send_packets( transport );
     rocketnet_server_transport_send_packets( transport );
@@ -3704,6 +3717,11 @@ int rocketnet_server_transport_test_xdp_reflush()
     transport->~rocketnet_server_transport_t();
     rocketnet_free( NULL, storage );
     return flushes;
+}
+
+int rocketnet_server_transport_test_xdp_reflush()
+{
+    return rocketnet_server_transport_test_reflush( ROCKETNET_TRANSPORT_XDP );
 }
 
 // A staged send must close the simulator's partial reverse window at the

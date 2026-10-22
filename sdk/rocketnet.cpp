@@ -83,10 +83,14 @@ void rocketnet_log_level( enum rocketnet_log_level_t level )
     // the defined levels are NONE (0) through SPAM (5): a value outside that
     // range is refused, leaving the level already in force. a caller that
     // hands over a typo or a parsed-out-of-range number must not silence the
-    // library by accident.
-    if ( level < ROCKETNET_LOG_LEVEL_NONE || level > ROCKETNET_LOG_LEVEL_SPAM )
+    // library by accident. the level arrives from C, where any int is a
+    // valid enum value, so it is read as the int it is: in C++ a load of the
+    // enum outside its range of values is undefined (ubsan names it).
+    int value;
+    memcpy( &value, &level, sizeof( value ) );
+    if ( value < ROCKETNET_LOG_LEVEL_NONE || value > ROCKETNET_LOG_LEVEL_SPAM )
         return;
-    log_level.store( level, std::memory_order_relaxed );
+    log_level.store( value, std::memory_order_relaxed );
 }
 
 // test_xdp and test_iocp compile this file without rocketnet_config.cpp, so
@@ -170,7 +174,10 @@ enum rocketnet_log_level_t rocketnet_log_level_current( void )
 // the enum suffix, upper case, or "UNKNOWN" for a value that is not a level
 const char * rocketnet_log_level_name( enum rocketnet_log_level_t level )
 {
-    switch ( (int) level )
+    // read as the int a C caller passed, as rocketnet_log_level does
+    int value;
+    memcpy( &value, &level, sizeof( value ) );
+    switch ( value )
     {
         case ROCKETNET_LOG_LEVEL_NONE:  return "NONE";
         case ROCKETNET_LOG_LEVEL_ERROR: return "ERROR";

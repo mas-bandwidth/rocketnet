@@ -36,11 +36,14 @@ FRAG_REASSEMBLY_SIZING_BOUND =
 # harness's loops over the 32-byte received bitmap; the library memset loop
 # gets 64, past the 56-byte slot record the reader clears. The memory
 # sizing harness adds the unsigned overflow check: its claim is that no
-# sizing sum or product wraps.
+# sizing sum or product wraps. The process and sizing harnesses run on
+# Boolector: since ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES became 1413
+# (c613a6a8), Bitwuzla 0.9.0 runs out of the 16 GB limit on both within a
+# minute, with the code and the harness unchanged (results.md).
 FRAG_REASSEMBLY_HARNESSES = \
     harness_header_and_plan:16:--z3 \
-    harness_process_fragment:33:--unwindsetname,__memset_impl:0:64$(FRAG_REASSEMBLY_PROCESS_BOUND) \
-    harness_memory_sizing:16:--unsigned-overflow-check$(FRAG_REASSEMBLY_SIZING_BOUND)
+    harness_process_fragment:33:--boolector,--unwindsetname,__memset_impl:0:64$(FRAG_REASSEMBLY_PROCESS_BOUND) \
+    harness_memory_sizing:16:--boolector,--unsigned-overflow-check$(FRAG_REASSEMBLY_SIZING_BOUND)
 
 .PHONY: proofs-fragment_reassembly proofs-fragment_reassembly-full
 

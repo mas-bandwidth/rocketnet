@@ -73,8 +73,7 @@ inline uint8_t rocketnet_read_uint8( const uint8_t ** p )
 
 inline uint16_t rocketnet_read_uint16( const uint8_t ** p )
 {
-    uint16_t value = (uint16_t) (*p)[0];
-    value |= (uint16_t) ( (*p)[1] ) << 8;
+    const uint16_t value = (uint16_t) ( (*p)[0] | ( (*p)[1] << 8 ) );
     *p += 2;
     return value;
 }
@@ -128,8 +127,7 @@ inline int rocketnet_read_uint16_bounded( const uint8_t ** p, const uint8_t * en
 {
     if ( *p + 2 > end )
         return 0;
-    *value = (uint16_t) (*p)[0];
-    *value |= (uint16_t) ( (*p)[1] ) << 8;
+    *value = (uint16_t) ( (*p)[0] | ( (*p)[1] << 8 ) );
     *p += 2;
     return 1;
 }

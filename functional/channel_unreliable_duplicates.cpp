@@ -124,7 +124,7 @@ static void dup_leg( float loss_percent, const char * label )
 
     rocketnet_channel_harness_read_counters( &h );
     dup_check( rocketnet_channel_harness_overflows( &h ) == 0, "delivery ring overflow" );
-    dup_check( rocketnet_channel_allocator_calls == h.allocation_snapshot, "allocation after create" );
+    dup_check( rocketnet_channel_allocator_calls == h.allocations_after_create, "allocation after create" );
 
     // the hazard was present: duplicated payload packets reached each receiver
     // and the replay window refused them

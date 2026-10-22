@@ -54,7 +54,7 @@ for transport in transports:
             session['create_callback_request_bytes'] + session['active_transport_sdk_callback_bytes'] +
             session['active_xdp_umem_bytes'] + session['active_rio_registered_region_bytes'])
         assert session['native_retained_on_failed_cancel_bytes'] is None
-        assert session['config_snapshot_frozen_for_future_start'] is False
+        assert session['config_copy_frozen_for_future_start'] is False
         assert session['one_block_sufficient'] is False
 # This legal field combination is deliberately too large for the default
 # reassembly budget. The plan-only path must not try to create it.

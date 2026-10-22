@@ -3,14 +3,14 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-#include "../test/native_shutdown.h"
+#include "../tests/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_driver_loopback.h"
 #include "rocketnet_platform.h"
-#include "../test/time_scale.h"
-#include "../test/suite_runner.h"
-#include "../test/portable_crt.h"
+#include "../tests/time_scale.h"
+#include "../tests/suite_runner.h"
+#include "../tests/portable_crt.h"
 
 #include <climits>
 #include <stdio.h>

@@ -10,7 +10,7 @@
 */
 
 #include "channel_harness.h"
-#include "../test/portable_crt.h"
+#include "../tests/portable_crt.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -280,7 +280,7 @@ void config_equal_over_lossy_loopback()
     rocketnet_config_check( delivered_client == rocketnet_config_message_count );
     rocketnet_config_check( !order_error );
     rocketnet_config_check( rocketnet_channel_harness_overflows( &h ) == 0 );
-    rocketnet_config_check( rocketnet_channel_allocator_calls == h.allocation_snapshot );
+    rocketnet_config_check( rocketnet_channel_allocator_calls == h.allocations_after_create );
 
     rocketnet_channel_harness_destroy( &h );
 }

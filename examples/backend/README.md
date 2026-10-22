@@ -112,7 +112,7 @@ server the public key, and keep the private key out of source control.
 
 The unit tests use no sockets and no real time; the token's create time is an
 argument. They mint every token in the C library's own known answers,
-[test/connect_token_vectors.json](../../test/connect_token_vectors.json), from
+[tests/connect_token_vectors.json](../../tests/connect_token_vectors.json), from
 the vectors' fixed inputs, and check each one byte for byte; they also check the
 address encoding against the vectors, open a freshly minted token the way a
 server does, and check every configuration refusal:

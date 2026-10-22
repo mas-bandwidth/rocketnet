@@ -426,7 +426,7 @@ int main( void )
     CHECK( client_acked && server_acked );
 
     // ---- the queries and the three stats structs, each one call into a
-    // snapshot the caller owns
+    // copy the caller owns
 
     CHECK( rocketnet_server_num_connected_clients( server ) == 1 );
     CHECK( rocketnet_server_client_connected( server, 0 ) );

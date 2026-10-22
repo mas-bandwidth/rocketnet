@@ -45,7 +45,7 @@ The secure connect of standard/TRANSPORT.md: netcode 1.02 rebuilt on public keys
 | Attack-surface reduction: the pending-wire table is deleted, so an unauthenticated sender holds no state | ❌ | ❌ | ❌ |
 | Attack-surface reduction: a stateless shape check (prefilter, wire type and size) runs before any per-datagram work | ❌ | ❌ | ❌ |
 | Attack-surface reduction: the token claim is written only after the signature verifies | ❌ | ❌ | ❌ |
-| Attack-surface reduction: a token created in the future is always refused, and the lifetime cap that has no setting is deleted | ❌ | ❌ | ❌ |
+| Attack-surface reduction: a token created beyond the five-second clock-skew allowance is refused, and the lifetime cap that has no setting is deleted | ❌ | ❌ | ❌ |
 | ROCKETNET_DEVELOPMENT is renamed ROCKETNET_DEV, default 1; a production build sets ROCKETNET_DEV=0 | ❌ | ❌ | ❌ |
 | With ROCKETNET_DEV=0, test and development code is compiled out: the network simulator, the test seams, the development config and the development server secret key | ❌ | ❌ | ❌ |
 | With ROCKETNET_DEV=0, both sides refuse the published test packet filter, and the client refuses tokens sealed with the development keys | ❌ | ❌ | ❌ |
@@ -175,11 +175,12 @@ The AF_XDP server transport, the xdp column; every other column is —. Further 
 | AF_XDP on AWS GameLift fleets: the research | ✅ | — | — | — | — | — | — | — |
 | The live stress runner: the client stress mode and the merge | ✅ | — | — | — | — | — | — | — |
 | The live stress runner: the server stress mode | ✅ | — | — | — | — | — | — | — |
+| Preview-2 live AF_XDP copy-mode correctness at 1, 10, 100, 500 and 1000 clients | ✅ | — | — | — | — | — | — | — |
 | Packet blaster and simulated-client harnesses at line rate | ❌ | — | — | — | — | — | — | — |
 | Ownership and retry paths regression-validated against the 10 Gbps baseline | ❌ | — | — | — | — | — | — | — |
 | Privileged syscall-failure coverage in its own lab | ❌ | — | — | — | — | — | — | — |
 | The live stress run: the XDP server against one client from every test machine (later) | ❌ | — | — | — | — | — | — | — |
-| complete | 73% | — | — | — | — | — | — | — |
+| complete | 75% | — | — | — | — | — | — | — |
 
 [Source data](docs/roadmap.sexp)
 
@@ -451,9 +452,27 @@ Correctness work that follows v1.0.0-preview-1.
 
 [Source data](docs/roadmap.sexp)
 
-## Known issues (addressed in the final deliverable)
+## Preview-2 known issues (deferred to preview-3)
 
-What v1.0.0-preview-1 does not yet meet, one row per issue: what it is today, and how the final deliverable addresses it. Review these limits for your game before deployment. Each cell is ❌ until the final deliverable lands it there; — is a platform the issue does not apply to.
+Current limits accepted for the preview-2 cut. These rows describe preview-2; the historical preview-1 table below is retained only as history.
+
+| known issue | Linux | macOS | Windows |
+|---|:---:|:---:|:---:|
+| AF_XDP copy mode with one Windows portable client passed through 500 clients, but the 1000-client start failed after eight server connections hit reliable timeouts. The same Windows client passed 1000 clients against the portable Linux server. | ❌ | — | ❌ |
+| The macOS Debug socket case reproduced a short receive while system-wide packet-drop counters surged under competing traffic. Quiet and focused repeats passed, so the correlation does not attribute the drops to RocketNet; a fix is not qualified. | — | ❌ | — |
+| The big-endian full-system fixture has an endian mismatch, and emulated completion runs retain timeouts. | ❌ | — | — |
+| The full soak completed the portable, GSO, GSO-plain and io_uring 1000-client cells with non-timing PASS, then was killed during the AF_XDP cell. The AF_XDP cell and full soak are incomplete; no OOM cause is claimed. | ❌ | — | — |
+| Mac fuzz, Windows manual Debug/toolchain/examples/soak/frame-budget coverage, and some macOS and Windows LAN rows were not completed before the release cut. | ❌ | ❌ | ❌ |
+| The 100-microsecond server-update p99 target is missed at larger client counts. Correctness passes are reported separately from timing failures. | ❌ | ❌ | ❌ |
+| Windows native-server LAN qualification awaits the replacement test NIC; existing Windows client evidence does not qualify the server path. | — | — | ❌ |
+| Live AF_XDP qualification used copy mode only. Zero-copy and line-rate performance are unqualified. io_uring suite-concurrency and runner memlock provisioning work is deferred. | ❌ | — | — |
+| complete | 0% | 0% | 0% |
+
+[Source data](docs/roadmap.sexp)
+
+## Historical preview-1 known issues and plans
+
+Historical preview-1 planning retained for context. Some fixes listed here landed before preview-2, so this table does not state current preview-2 status; use the preview-2 known-issues table above.
 
 | known issue | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
@@ -461,19 +480,19 @@ What v1.0.0-preview-1 does not yet meet, one row per issue: what it is today, an
 | An idle server's update walks every client slot: about 0.5 ms per update at 1000 slots with no client connected. The final deliverable splits per-slot state into hot and cold parts and walks only the hot part each frame. | ❌ | ❌ | ❌ |
 | Client connect zeroes the client's 7.6 MB transport (about 3 ms) and disconnect wipes and frees it (about 1.6 ms). The final deliverable allocates the transport once at create, resets it in place on connect, and wipes only the secrets, by their size, on disconnect. | ❌ | ❌ | ❌ |
 | Claiming and releasing a server slot re-initialises its 1.48 MB region inside the update (0.11 to 0.36 ms each), and disconnecting all of 1000 clients takes about 20 ms, plus about 130 ms in the next update. The final deliverable resets only the state a slot used. | ❌ | ❌ | ❌ |
-| Server stop wipes the whole memory arena (about 8 s at 1000 clients) and destroy wipes the block again; creating a Linux kernel transport zeroes its whole state (about 40 ms for gso, 34 ms for io_uring, 170 MB per queue for XDP). The final deliverable wipes only the secrets and resets the rest in place, so start, stop and destroy take milliseconds. | ❌ | ❌ | ❌ |
+| Large configurations still incur bulk memory wipes during shutdown. The 1000-client example soak can spike in memory and run out of memory on Linux. Secrets-only destroy is held for preview-3, not included in preview-2; completion polling does not remove the final synchronous cleanup cost. | ❌ | ❌ | ❌ |
 | The default configuration needs about 13.3 GB for a 1000-slot server, because each client's send reserve is sized for 10 Gbps for 2 seconds. The final deliverable adds a light-client profile sized for 1000 players at 10 Hz. | ❌ | ❌ | ❌ |
 | The server's send loop walks every slot on each round, so its cost grows with rounds times max clients. The final deliverable walks only the connections that have packets due. | ❌ | ❌ | ❌ |
 | The server decrypts and seals packets on the game thread; the client already decrypts on its I/O thread. The final deliverable moves server decrypt and seal off the game thread. | ❌ | ❌ | ❌ |
-| On Linux, the io_uring transport's send can wait up to 1 ms in the kernel on the game thread, the gso transport's update takes a lock its worker holds across a whole receive drain, and the XDP worker holds locks across frame copies. The final deliverable makes each of these hand-offs wait-free for the game thread. | ❌ | — | — |
-| On Linux, the portable server transport makes one system call per packet. The final deliverable batches the server's sends and receives with sendmmsg and recvmmsg. | ❌ | — | — |
+| Native Linux server I/O uses bounded handoffs so the game thread does not wait on worker I/O or bulk copies. Messages and packets become visible after the worker completes the handoff, including on the following update. Exact-head p99 qualification remains pending. | ❌ | — | — |
+| The portable server send and receive paths use bounded TX and RX workers instead of doing one game-thread system call per packet. Exact-head p99 qualification remains pending. | ❌ | ❌ | ❌ |
 | One server update may process up to 16,000 received packets, each with its own decrypt, through three copies and extra keyed hashes per packet. The final deliverable bounds receive work per update by time as well as count, and removes the extra copies and hashes. | ❌ | ❌ | ❌ |
 | The acknowledgement statistics sweep scans thousands of records per update. The final deliverable keeps those statistics up to date as acks arrive. | ❌ | ❌ | ❌ |
-| Every main call is meant to take under 0.1 ms in Release under load; this is not yet measured at 1000 clients. The final deliverable measures every main call at 1000 clients on each platform and holds the result in a gate. | ❌ | ❌ | ❌ |
+| Every main call is meant to take under 0.1 ms in Release under load; the server API p99 does not yet meet that budget at 1000 clients. The final deliverable measures every main call at 1000 clients on each platform and holds the result in a gate. | ❌ | ❌ | ❌ |
 | Each unreliable message is sent as its own packet; small unreliable messages are not packed together. The final deliverable packs small messages into shared packets and keeps in-place writes for large ones. | ❌ | ❌ | ❌ |
-| Client disconnect and server stop request shutdown without waiting for workers; client disconnected and server stopped check completion without joining or freeing. Both client and server transports follow stop, stopped, destroy. Destroy asserts completion and synchronously joins and frees; a stalled worker leaves completion false and storage alive. This request/completion contract is the final-deliverable decision approved on 2026-10-21; implementation and qualification remain pending. | ❌ | ❌ | ❌ |
+| Client disconnect and server stop request shutdown without waiting for workers; client disconnected and server stopped check completion without joining or freeing. Both client and server transports follow stop, stopped, destroy. Destroy asserts completion and synchronously joins and frees; a stalled worker leaves completion false and storage alive. The implementation has landed; exact-head platform qualification remains pending. | ❌ | ❌ | ❌ |
 | On macOS, a portable-transport client connecting over IPv4 to a server that serves both IPv4 and IPv6 on one port failed to connect once, intermittently: observed once in a sharded functional run, not reproduced on rerun, and test_transport_dual_stack_ipv4_client passed in the full run at b0a8a2e3. The final deliverable finds the cause and proves every family combination on macOS by repeated functional runs. | — | ❌ | — |
-| On macOS, the full functional suite runs past CI's 120-second limit; it passes when run outside CI (all 142 cases at b0a8a2e3, about 6 m 38 s). The final deliverable runs the whole suite on macOS inside the limit. | — | ❌ | — |
+| On macOS, the historical full functional suite ran past CI's 120-second limit; it passed outside CI (all 142 cases at b0a8a2e3, about 6 m 38 s). The macOS CI restructuring is held for preview-3; preview-2 qualification depends on its own exact-head receipts. | — | ❌ | — |
 | Some functional tests measure operating-system behaviour rather than RocketNet: test_macos_client_timing_default_qos, test_macos_client_timing_taskpolicy_background, the test_thread_priority_timing cases and test_thread_priority_windows_readback. The final deliverable removes them or rewrites them to test only RocketNet's own code. | ❌ | ❌ | ❌ |
 | The macOS client timing functional test carries a branch that lowers the game thread's priority, which no case uses since its last caller was removed. The final deliverable removes the branch with the cases above. | — | ❌ | — |
 | The Windows Debug, AddressSanitizer and Application Verifier runs passed before the last v1.0.0-preview-1 API changes and have not been repeated on the released API. The final deliverable repeats all three on the released API, on every Windows transport. | — | — | ❌ |
@@ -482,7 +501,7 @@ What v1.0.0-preview-1 does not yet meet, one row per issue: what it is today, an
 | The memory plan reports what create needs, but not yet what connect, reconnect, start and stop need. The final deliverable extends the plan to the whole session, so one block sized from the plan alone never runs out. | ❌ | ❌ | ❌ |
 | The handshake's signature-failure budget is kept per address and port, so one host rotating its ports can force up to 1024 signature checks per update. The final deliverable keys the budget by host address and caps signature checks per update. | ❌ | ❌ | ❌ |
 | Connect-token claims are first come, first served, so an observer on the network path can copy a client's first request and hold its token until the handshake deadline. The final deliverable's security pass closes this window or bounds it and documents it. | ❌ | ❌ | ❌ |
-| A replayed connection response refreshes a slot's receive time, a token claim is not released on three refusal paths, the created-in-the-future token check runs only when a maximum token lifetime is set, and a forged cookie can rewind a client's handshake (bounded). The final deliverable fixes each one, with a test for each. | ❌ | ❌ | ❌ |
+| A replayed connection response refreshes a slot's receive time, a token claim is not released on three refusal paths, and a forged cookie can rewind a client's handshake (bounded). The final deliverable fixes each one, with a test for each. | ❌ | ❌ | ❌ |
 | At very low send rates, time spent waiting for send budget counts toward the reliable-message timeout. The final deliverable counts only the time a message has been on the wire. | ❌ | ❌ | ❌ |
 | Sequenced blocks and small records treat an in-turn record differently. The final deliverable gives both one rule, modelled and tested. | ❌ | ❌ | ❌ |
 | Ack processing costs O(k²) per block, and the packet builder O(items²) per class pass. The final deliverable makes both linear. | ❌ | ❌ | ❌ |
@@ -529,14 +548,14 @@ Soaks, load, stress, transport matrices, fuzzing, sanitizers, nightlies and the 
 | The fuzz targets build and run under libFuzzer on Windows | — | — | ❌ |
 | Create, destroy, connect, restart: a thousand times on Windows with nothing left behind | — | — | ❌ |
 | Windows nightlies: all jobs run, warnings gated, verifier script safe | — | — | ❌ |
-| TLA ledger: every case finishes or says why; docs current | ❌ | ❌ | ❌ |
+| TLA ledger: every case finishes or says why; docs current | ✅ | — | — |
 | Server send capacity is sized from the config, never a fixed 256 | ❌ | ❌ | ❌ |
 | macOS: 1000 light clients on msgx and portable | — | ❌ | — |
 | Windows: 1000 light clients on portable, iocp and rio | — | — | ❌ |
 | macOS: the nightly soak job green at the branch | — | ❌ | — |
 | Ack receipts: LOSS only after the receipt deadline | ❌ | ❌ | ❌ |
 | The whole tree formatted with clang-format in the netcode style, the format checked in CI | ❌ | ❌ | ❌ |
-| complete | 0% | 0% | 0% |
+| complete | 10% | 0% | 0% |
 
 [Source data](docs/roadmap.sexp)
 

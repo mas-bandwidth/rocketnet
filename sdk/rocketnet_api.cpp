@@ -1051,7 +1051,7 @@ static uint64_t rn_counter_sum( const struct rocketnet_counters_t * a, const str
 }
 
 // One read of the connection's transport stats and counter blocks: every
-// count of one snapshot comes from the same moment.
+// count of one read comes from the same moment.
 static void rn_client_connection_counts( struct rocketnet_message_client_t * message_client, uint64_t counts[RN_CLIENT_COUNT], struct rocketnet_client_transport_stats_t * transport_stats )
 {
     struct rocketnet_client_transport_t * transport = rocketnet_message_client_transport( message_client );

@@ -14,7 +14,7 @@
 #endif
 
 #include "load_census.h"
-#include "test/portable_crt.h"
+#include "tests/portable_crt.h"
 
 #include <assert.h>
 #include <stdio.h>

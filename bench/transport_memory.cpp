@@ -1,6 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Pre-allocation plan and optional allocator-observed server footprint.
-#include "../test/native_shutdown.h"
+#include "../tests/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_memory.h"
 #include <errno.h>
@@ -141,7 +141,7 @@ int main(int argc, char ** argv)
             "\"active_thread_stack_reserve_bytes\":%llu,\"known_active_or_stopping_requests_bytes\":%llu,"
             "\"concurrent_sdk_generations\":1,\"native_retained_on_failed_cancel_bytes\":null,"
             "\"io_uring_mapping_bytes\":null,\"libc_and_kernel_accounting_bytes\":null,"
-            "\"config_snapshot_frozen_for_future_start\":false,\"one_block_sufficient\":false}\n",
+            "\"config_copy_frozen_for_future_start\":false,\"one_block_sufficient\":false}\n",
             transport, (unsigned long long) endpoint_payload, (unsigned long long) endpoint_callback_bytes,
             (unsigned long long) host.allocator_bytes, (unsigned long long) host.umem_bytes,
             (unsigned long long) host.registered_region_bytes,

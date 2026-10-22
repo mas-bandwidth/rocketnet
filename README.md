@@ -2,8 +2,11 @@
 
 Low-level client/server UDP transport library.
 
-Main frame calls aim for less than 100 microseconds in Release builds. This
-target is not yet established under a 1000-client load. Create may take longer. Client disconnect and server stop request shutdown
+Main frame calls aim for less than 100 microseconds in Release builds. Measured
+server calls exceed this budget at larger client counts; 1000-client performance
+is not qualified. Large configurations can also spike in memory during shutdown;
+the 1000-client example soak can run out of memory on Linux. Create may take longer.
+Client disconnect and server stop request shutdown
 without waiting for I/O workers. Poll `rocketnet_client_disconnected` or
 `rocketnet_server_stopped`, then call synchronous destroy to join and free.
 Keep each object and its callback/allocator context alive until destroy returns.
@@ -59,9 +62,25 @@ See [BUILDING.md](BUILDING.md). Binaries land in `bin/`, and on Windows in
 `bin\Release\`; run the test suite with `./bin/test`, or with
 `bin\Release\test.exe` on Windows (PowerShell or cmd.exe).
 
+A default build is for development. Before deployment, configure CMake with
+`-DROCKETNET_DEV=OFF`, link the resulting production library, and supply your
+own backend keys and packet filter. Production builds refuse development
+credentials, the test packet filter and a portable **server** transport;
+portable clients remain available. Follow [Before production](AGENTS.md#before-production).
+
+## Preview status
+
+The [preview-2 notes](docs/RELEASE-NOTES-v1.0.0-preview-2.md) describe changes
+from preview-1 and the required migration steps. Preview-2 release testing is
+pending; [TESTING.md](TESTING.md) records qualification separately from
+historical results. The API remains provisional. Large-server frame time,
+memory use and transport qualification still need attention; see the
+[roadmap](ROADMAP.md).
+
 ## Documentation
 
-- [v1.0.0-preview-1 release notes](docs/RELEASE-NOTES-v1.0.0-preview-1.md) — preview contents, platforms and known issues.
+- [v1.0.0-preview-2 release notes](docs/RELEASE-NOTES-v1.0.0-preview-2.md) — migration from preview-1, changes and remaining limits.
+- [v1.0.0-preview-1 release notes](docs/RELEASE-NOTES-v1.0.0-preview-1.md) — the previous preview.
 
 - [AGENTS.md](AGENTS.md) — guide for AI coding agents integrating RocketNet into a game.
 - [USAGE.md](USAGE.md) — how to drive it: the frame, message sending and
@@ -81,6 +100,7 @@ See [BUILDING.md](BUILDING.md). Binaries land in `bin/`, and on Windows in
 - [standard/MESSAGES.md](standard/MESSAGES.md) — the message standard.
 - [standard/RATIONALE.md](standard/RATIONALE.md) — the rationale for both.
 - [ROADMAP.md](ROADMAP.md) — the releases and the work planned.
+- [TESTING.md](TESTING.md) — test scope and recorded release qualification.
 - [CLAUDE.md](CLAUDE.md) — contributor guide.
 
 Private repository. License: [AGPL-3.0](LICENSE).

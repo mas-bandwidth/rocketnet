@@ -260,6 +260,22 @@ void rocketnet_server_gso_test_fail_sends( struct rocketnet_server_gso_t * gso, 
     gso->test_fail_sends.store( count > 0 ? count : 0, std::memory_order_release );
 }
 
+// main thread only: true when the TX path holds no work -- the producer is
+// empty, no bank waits in the ready FIFO, and the worker has returned every
+// bank it took. The worker counts a bank's sends and drops before it returns
+// the bank under send_mutex, so once this answers true the send counters are
+// final for every bank published so far.
+bool rocketnet_server_gso_test_send_idle( struct rocketnet_server_gso_t * gso )
+{
+    rocketnet_assert( gso );
+    if ( gso->send_producer < 0 ) return true;
+    if ( gso->send_banks[gso->send_producer].num_packets.load( std::memory_order_relaxed ) != 0 ) return false;
+    rocketnet_platform_mutex_acquire( &gso->send_mutex );
+    const bool idle = gso->send_ready_count == 0 && gso->send_free_count == ROCKETNET_GSO_TX_BANKS - 1;
+    rocketnet_platform_mutex_release( &gso->send_mutex );
+    return idle;
+}
+
 bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gso, int queue_index )
 {
     rocketnet_assert( gso );
@@ -450,8 +466,19 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
         return -1;
     }
 
+    // the queue that discovers an ephemeral port binds before it joins a
+    // reuseport group: bound with SO_REUSEPORT, an ephemeral bind may be
+    // given a port another reuseport group of the same user already holds,
+    // and the kernel then shares that port's datagrams between the two
+    // servers (measured on amd-1: 4 shared ports in 50 x 64 reuseport
+    // ephemeral binds, none when the first socket binds without it). Bound
+    // first, it takes a port no socket holds, and SO_REUSEPORT set after the
+    // bind lets this server's other queues join it.
+
+    const bool discovers_port = *bound_port == 0 && bind_address->port == 0;
+
     int one = 1;
-    if ( setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one) ) != 0 )
+    if ( !discovers_port && setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one) ) != 0 )
     {
         rocketnet_error( "gso transport: failed to set SO_REUSEPORT: %s", strerror( errno ) );
         close( fd );
@@ -527,6 +554,13 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
     if ( socklen == 0 || bind( fd, (struct sockaddr*) &sockaddr, socklen ) < 0 )
     {
         rocketnet_error( "gso transport: failed to bind socket (%s): %s", ipv6 ? "ipv6" : "ipv4", strerror( errno ) );
+        close( fd );
+        return -1;
+    }
+
+    if ( discovers_port && setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one) ) != 0 )
+    {
+        rocketnet_error( "gso transport: failed to set SO_REUSEPORT: %s", strerror( errno ) );
         close( fd );
         return -1;
     }
