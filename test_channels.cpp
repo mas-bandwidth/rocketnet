@@ -1958,15 +1958,17 @@ static void rn_soak_write_and_receive( rn_soak_side_t * side, uint64_t tick )
 
             if ( receiver->holds > 0 )
             {
-                rn_sequenced_hold_t * hold = &receiver->sequenced_messages_held[descriptor->serial % receiver->holds];
-                const uint32_t bytes = descriptor->bytes < (uint32_t) sizeof(hold->data) ? descriptor->bytes : (uint32_t) sizeof(hold->data);
-                memcpy( hold->data, delivery->data, bytes );
+                const uint32_t hold_slot = descriptor->serial % receiver->holds;
+                rn_sequenced_hold_t * hold = &receiver->sequenced_messages_held[hold_slot];
+                uint8_t * hold_data = receiver->sequenced_message_payloads[hold_slot].data;
+                const uint32_t bytes = descriptor->bytes < (uint32_t) ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? descriptor->bytes : (uint32_t) ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+                memcpy( hold_data, delivery->data, bytes );
                 hold->bytes = bytes;
                 hold->channel = (uint16_t) c;
                 hold->ordering = descriptor->ordering;
                 hold->sequencing = 0;
                 hold->used = 1;
-                check( hold->data[0] == rn_pattern( descriptor->serial, 0 ) );
+                check( hold_data[0] == rn_pattern( descriptor->serial, 0 ) );
             }
         }
     }

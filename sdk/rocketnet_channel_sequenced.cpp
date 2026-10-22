@@ -354,7 +354,7 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
     hold->channel = (uint16_t) record->channel;
     hold->code = ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED;
     hold->used = 1;
-    memcpy( hold->data, record->data, (size_t) record->bytes );
+    memcpy( region->sequenced_message_payloads[slot].data, record->data, (size_t) record->bytes );
     return ROCKETNET_CHANNEL_DISPATCH_HELD;
 }
 
@@ -403,7 +403,7 @@ bool rn_channels_drain_sequenced( struct rn_channels_t * channels, uint32_t chan
     }
     else
     {
-        rn_sequenced_delivery( channels, channel, hold->data, (int) hold->bytes,
+        rn_sequenced_delivery( channels, channel, channels->region->sequenced_message_payloads[slot].data, (int) hold->bytes,
                                ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED, RN_DESCRIPTOR_NONE );
         hold->used = 2; // delivered view stays live until RNChannel!EndUpdate
     }
@@ -415,6 +415,7 @@ void rn_channels_end_update_sequenced( struct rn_channels_t * channels )
     if ( !channels )
         return;
     // RNChannel!EndUpdate: only slots whose views expired return to the pool.
+    // The scan walks compact metadata without pulling payload cache lines in.
     for ( uint32_t i = 0; i < channels->region->holds; i++ )
         if ( channels->region->sequenced_messages_held[i].used == 2 )
             channels->region->sequenced_messages_held[i].used = 0;

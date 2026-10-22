@@ -3188,20 +3188,51 @@ const char * rocketnet_platform_socket_pump( rocketnet_platform_socket_t * socke
 // thread, so msgx_down_until is only loaded and stored atomically (relaxed:
 // it orders nothing else).
 
+#if defined(ROCKETNET_MSGX_TEST_HOOKS)
+static thread_local void (*rocketnet_msgx_before_expiry_clear)( rocketnet_platform_socket_t * ) = NULL;
+#endif
+
 static bool rocketnet_msgx_active( rocketnet_platform_socket_t * socket )
 {
     if ( !socket->msgx )
         return false;
-    const double down_until = rocketnet_msgx_down_until( socket );
-    if ( down_until > 0.0 )
+    double down_until = rocketnet_msgx_down_until( socket );
+    while ( down_until > 0.0 )
     {
         if ( rocketnet_platform_time() < down_until )
             return false;
-        rocketnet_msgx_set_down_until( socket, 0.0 );
-        rocketnet_debug( "msgx pump pause expired. next batch call is the re-probe" );
+#if defined(ROCKETNET_MSGX_TEST_HOOKS)
+        if ( rocketnet_msgx_before_expiry_clear ) rocketnet_msgx_before_expiry_clear( socket );
+#endif
+        // TX and RX may re-probe concurrently. Clear only the expired value
+        // observed here: a fresh pause published by the other worker wins.
+        double cleared = 0.0;
+        if ( __atomic_compare_exchange( &socket->msgx_down_until, &down_until, &cleared,
+                                        false, __ATOMIC_RELAXED, __ATOMIC_RELAXED ) )
+        {
+            rocketnet_debug( "msgx pump pause expired. next batch call is the re-probe" );
+            break;
+        }
     }
     return true;
 }
+
+#if defined(ROCKETNET_MSGX_TEST_HOOKS)
+bool rocketnet_msgx_test_pause_expiry_race()
+{
+    rocketnet_platform_socket_t socket = {};
+    socket.msgx = true;
+    rocketnet_msgx_set_down_until( &socket, rocketnet_platform_time() );
+    rocketnet_msgx_before_expiry_clear = []( rocketnet_platform_socket_t * raced )
+    {
+        rocketnet_msgx_before_expiry_clear = NULL;
+        rocketnet_msgx_set_down_until( raced, rocketnet_platform_time() + ROCKETNET_MSGX_RETRY_SECONDS );
+    };
+    const bool active = rocketnet_msgx_active( &socket );
+    rocketnet_msgx_before_expiry_clear = NULL;
+    return !active && rocketnet_msgx_down_until( &socket ) > rocketnet_platform_time();
+}
+#endif
 
 static void rocketnet_msgx_pause( rocketnet_platform_socket_t * socket, const char * which, int error )
 {

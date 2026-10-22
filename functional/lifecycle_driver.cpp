@@ -109,7 +109,7 @@ void rocketnet_test_lifecycle_transport()
     rocketnet_client_transport_default_config( &client_config );
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "portable" );
     int client_success = 0;
-    for ( int failure = 1; failure <= 64; ++failure )
+    for ( int failure = 1; failure <= 128; ++failure )
     {
         state.fail_at = state.calls + failure;
         auto * client = rocketnet_client_transport_create( &state, token, &client_config, 0.0 );
@@ -131,7 +131,7 @@ void rocketnet_test_lifecycle_transport()
     server_config.max_clients = 4;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "portable" );
     int server_success = 0;
-    for ( int failure = 1; failure <= 64; ++failure )
+    for ( int failure = 1; failure <= 128; ++failure )
     {
         state.fail_at = state.calls + failure;
         auto * server = rocketnet_server_transport_create( &state, "127.0.0.1", &server_config);
