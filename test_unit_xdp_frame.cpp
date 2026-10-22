@@ -95,11 +95,11 @@ static uint32_t sum_words( const uint8_t * data, size_t bytes )
     size_t i = 0;
     while ( i + 1 < bytes )
     {
-        sum += ( (uint16_t) data[i] << 8 ) | data[i + 1];
+        sum += (uint32_t) ( ( (uint16_t) data[i] << 8 ) | data[i + 1] );
         i += 2;
     }
     if ( i < bytes )
-        sum += ( (uint16_t) data[i] << 8 );
+        sum += (uint32_t) ( (uint16_t) data[i] << 8 );
     return sum;
 }
 

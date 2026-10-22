@@ -3331,7 +3331,7 @@ void rocketnet_server_transport_send_packet( struct rocketnet_server_transport_t
     if ( !frame )
         return;
 
-    memcpy( frame + context.payload_index, payload_data, payload_bytes );
+    memcpy( frame + context.payload_index, payload_data, (size_t) payload_bytes );
 
     rocketnet_server_transport_finish_packet( server_transport, &context, payload_bytes );
 }
@@ -3559,7 +3559,7 @@ void rocketnet_server_transport_client_stats( struct rocketnet_server_transport_
     stats->bandwidth_acked_kbps = endpoint->bandwidth_acked_kbps;
     if ( client_index < server_transport->client_wire_totals_capacity )
     {
-        const struct rocketnet_server_wire_totals_t * totals = &server_transport->client_wire_totals[client_index];
+        struct rocketnet_server_wire_totals_t * totals = &server_transport->client_wire_totals[client_index];
         stats->packets_sent = rocketnet_platform_atomic_load_u64( (volatile uint64_t *) &totals->packets_sent );
         stats->packets_received = totals->packets_received;
         stats->bytes_sent = rocketnet_platform_atomic_load_u64( (volatile uint64_t *) &totals->bytes_sent );
