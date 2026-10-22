@@ -275,6 +275,13 @@ bool rocketnet_portable_tx_test_drained( void * transport )
     rocketnet_platform_mutex_release( &server->mutex );
     return drained;
 }
+// development library only: the portable server's platform socket, for a
+// functional case that sends raw datagrams from the server's own address. The
+// transport instance is the portable_server_t, never the socket itself.
+rocketnet_platform_socket_t * rocketnet_portable_server_test_socket( void * transport )
+{
+    return ( (portable_server_t*) transport )->socket;
+}
 #endif
 #if defined(ROCKETNET_PORTABLE_TX_TEST_HOOKS)
 // No socket or worker: each path is forced at an exact ownership transition.
