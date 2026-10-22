@@ -1226,14 +1226,12 @@ void rn_arena_destroy( rn_arena_t * arena )
 {
     if ( !arena )
         return;
-    // the regions hold message bytes: the whole arena, header to the last
-    // region, is wiped before it is freed or handed back. a caller's block
-    // stays the caller's
-    void * context = arena->context;
-    const int owns_memory = arena->owns_memory;
-    sodium_memzero( arena, (size_t) arena->bytes );
-    if ( owns_memory )
-        rocketnet_free( context, arena );
+    // the regions hold message bytes, never keys: nothing is wiped. The OS
+    // zero-fills a page before another process gets it, and wiping would
+    // touch every page of a plan that can reach gigabytes, most of them never
+    // used. A caller's block stays the caller's, as it is.
+    if ( arena->owns_memory )
+        rocketnet_free( arena->context, arena );
 }
 
 int rn_arena_num_regions( const rn_arena_t * arena )

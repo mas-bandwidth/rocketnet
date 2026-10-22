@@ -141,7 +141,7 @@ static void portable_server_cleanup( portable_server_t * server )
     if ( server->socket ) rocketnet_platform_socket_destroy( server->socket );
     void * context = server->context;
     server->~portable_server_t();
-    rocketnet_clear_and_free( context, server, sizeof( portable_server_t ) );
+    rocketnet_free( context, server );
 }
 
 static void * portable_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )

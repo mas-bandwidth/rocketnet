@@ -16,6 +16,15 @@
 #include <stdio.h>
 #include <string.h>
 
+void rocketnet_client_protocol_wipe_secrets( struct rocketnet_client_protocol_t * client )
+{
+    rocketnet_assert( client );
+    sodium_memzero( &client->keys, sizeof(client->keys) );
+    sodium_memzero( &client->token, sizeof(client->token) );
+    sodium_memzero( client->client_ephemeral_secret_key, sizeof(client->client_ephemeral_secret_key) );
+    sodium_memzero( client->session_nonce, sizeof(client->session_nonce) );
+}
+
 void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * client )
 {
     rocketnet_assert( client );
@@ -35,10 +44,7 @@ void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * cli
 
     // Key and token erasure must not be optimized away. The following memset
     // establishes the fresh non-secret fields after these secure wipes.
-    sodium_memzero( &client->keys, sizeof(client->keys) );
-    sodium_memzero( &client->token, sizeof(client->token) );
-    sodium_memzero( client->client_ephemeral_secret_key, sizeof(client->client_ephemeral_secret_key) );
-    sodium_memzero( client->session_nonce, sizeof(client->session_nonce) );
+    rocketnet_client_protocol_wipe_secrets( client );
     memset( client, 0, sizeof(*client) );
 
     memcpy( client->packet_filter, packet_filter, sizeof(packet_filter) );

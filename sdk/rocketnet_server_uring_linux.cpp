@@ -1242,7 +1242,7 @@ void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring )
 
     void * allocation_context = uring->context;
     uring->~rocketnet_server_uring_t();
-    rocketnet_clear_and_free( allocation_context, uring, sizeof(rocketnet_server_uring_t) );
+    rocketnet_free( allocation_context, uring );
 }
 
 int rocketnet_server_uring_num_queues( struct rocketnet_server_uring_t * uring )

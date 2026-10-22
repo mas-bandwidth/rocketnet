@@ -1366,6 +1366,27 @@ static void rocketnet_client_transport_finish_stop( rocketnet_client_transport_t
     client_transport->stopped.store( true, std::memory_order_release );
 }
 
+int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max )
+{
+    const size_t protocol = offsetof( rocketnet_client_transport_t, protocol );
+    const size_t open = offsetof( rocketnet_client_transport_t, client_io ) + offsetof( rocketnet_client_io_t, open );
+    const size_t spans[5][2] =
+    {
+        { protocol + offsetof( rocketnet_client_protocol_t, keys ), sizeof( rocketnet_connection_keys_t ) },
+        { protocol + offsetof( rocketnet_client_protocol_t, token ), sizeof( rocketnet_connect_token_t ) },
+        { protocol + offsetof( rocketnet_client_protocol_t, client_ephemeral_secret_key ), ROCKETNET_KEY_BYTES },
+        { protocol + offsetof( rocketnet_client_protocol_t, session_nonce ), ROCKETNET_SESSION_NONCE_BYTES },
+        { open + offsetof( rocketnet_client_io_open_t, session_server_to_client ), ROCKETNET_KEY_BYTES },
+    };
+    int count = 0;
+    for ( ; count < 5 && count < max; count++ )
+    {
+        offsets[count] = spans[count][0];
+        bytes[count] = spans[count][1];
+    }
+    return count;
+}
+
 void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_transport )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
@@ -1396,9 +1417,15 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
     if ( client_transport->reassembly )
         rocketnet_reassembly_set_destroy( client_transport->reassembly );
 
+    // the keys, and only the keys: the protocol's and the I/O thread's open
+    // copy (joined above). Every other byte goes back as it is; the OS
+    // zero-fills a page before another process gets it.
+    rocketnet_client_protocol_wipe_secrets( &client_transport->protocol );
+    sodium_memzero( client_transport->client_io.open.session_server_to_client, sizeof(client_transport->client_io.open.session_server_to_client) );
+
     void * allocation_context = client_transport->context;
     client_transport->~rocketnet_client_transport_t();
-    rocketnet_clear_and_free( allocation_context, client_transport, sizeof(rocketnet_client_transport_t) );
+    rocketnet_free( allocation_context, client_transport );
 }
 
 static void rocketnet_client_process_packet( rocketnet_client_transport_t * client_transport, rocketnet_address_t * from, uint8_t * packet_data, int packet_bytes, double current_time, double receive_time,

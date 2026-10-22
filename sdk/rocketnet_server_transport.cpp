@@ -500,16 +500,16 @@ static void rocketnet_server_stats_worker_destroy( void * context, rocketnet_ser
         if ( worker->banks[i] )
         {
             worker->banks[i]->~rocketnet_server_stats_bank_t();
-            rocketnet_clear_and_free(context, worker->banks[i], sizeof(*worker->banks[i]));
+            rocketnet_free(context, worker->banks[i]);
         }
     if ( worker->slots )
-        rocketnet_clear_and_free(context, worker->slots, (size_t)worker->max_clients * sizeof(*worker->slots));
+        rocketnet_free(context, worker->slots);
     if ( worker->spares )
-        rocketnet_clear_and_free(context, worker->spares, (size_t)worker->max_clients * sizeof(*worker->spares));
+        rocketnet_free(context, worker->spares);
     if ( worker->mutex_created )
         rocketnet_platform_mutex_destroy(&worker->exchange_mutex);
     worker->~rocketnet_server_stats_worker_t();
-    rocketnet_clear_and_free(context, worker, sizeof(*worker));
+    rocketnet_free(context, worker);
 }
 
 static int rocketnet_server_stats_worker_create( void * context, rocketnet_server_stats_worker_t ** out,
@@ -1922,6 +1922,24 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     return server_transport;
 }
 
+int rocketnet_server_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max )
+{
+    const size_t protocol = offsetof( rocketnet_server_transport_t, protocol );
+    const size_t spans[3][2] =
+    {
+        { protocol + offsetof( rocketnet_server_protocol_t, server_secret_key ), ROCKETNET_KEY_BYTES },
+        { protocol + offsetof( rocketnet_server_protocol_t, cookie_key ), ROCKETNET_COOKIE_KEY_BYTES },
+        { protocol + offsetof( rocketnet_server_protocol_t, previous_cookie_key ), ROCKETNET_COOKIE_KEY_BYTES },
+    };
+    int count = 0;
+    for ( ; count < 3 && count < max; count++ )
+    {
+        offsets[count] = spans[count][0];
+        bytes[count] = spans[count][1];
+    }
+    return count;
+}
+
 void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * server_transport )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )
@@ -1934,6 +1952,13 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
 
     rocketnet_server_stats_worker_destroy(server_transport->context, server_transport->stats_worker);
     server_transport->stats_worker = NULL;
+
+    // the server's keys: its secret key and both cookie keys. The session
+    // keys are wiped with the encryption map below; nothing else here is a
+    // secret, and the OS zero-fills every page before another process gets it
+    sodium_memzero( server_transport->protocol.server_secret_key, sizeof(server_transport->protocol.server_secret_key) );
+    sodium_memzero( server_transport->protocol.cookie_key, sizeof(server_transport->protocol.cookie_key) );
+    sodium_memzero( server_transport->protocol.previous_cookie_key, sizeof(server_transport->protocol.previous_cookie_key) );
 
     if ( server_transport->protocol.encryption_map )
         rocketnet_encryption_map_destroy( server_transport->protocol.encryption_map );
@@ -1968,7 +1993,7 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
 
     void * allocation_context = server_transport->context;
     server_transport->~rocketnet_server_transport_t();
-    rocketnet_clear_and_free( allocation_context, server_transport, sizeof(rocketnet_server_transport_t) );
+    rocketnet_free( allocation_context, server_transport );
 }
 
 void rocketnet_server_transport_stop( struct rocketnet_server_transport_t * server_transport )

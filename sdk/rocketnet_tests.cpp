@@ -7632,7 +7632,6 @@ static const char * rocketnet_test_layer_exports[] =
     "rocketnet_get_thread_priority_refusals",
     "rocketnet_malloc",
     "rocketnet_free",
-    "rocketnet_clear_and_free",
     "rocketnet_user_id_string",
     "rocketnet_random_float",
     "rocketnet_random_uint8",
@@ -7908,7 +7907,6 @@ static const char * rocketnet_test_layer_null_exempt_exports[] =
     "rocketnet_get_thread_priority_refusals",
     "rocketnet_malloc",
     "rocketnet_free",
-    "rocketnet_clear_and_free",
     "rocketnet_random_float",
     "rocketnet_random_uint8",
     "rocketnet_random_uint32",
@@ -8473,11 +8471,10 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     rocketnet_check( rocketnet_allocator_ex( NULL, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
-    // rocketnet_free and rocketnet_clear_and_free already treat NULL p as a
-    // no-op; it is not a misuse, so the count must not move.
+    // rocketnet_free already treats NULL p as a no-op; it is not a misuse,
+    // so the count must not move.
     before = rocketnet_api_misuse_count();
     rocketnet_free( NULL, NULL );
-    rocketnet_clear_and_free( NULL, NULL, 0 );
     rocketnet_check( rocketnet_api_misuse_count() == before );
 
     // message sizing and validation document NULL config as defaults, not a

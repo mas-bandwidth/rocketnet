@@ -96,8 +96,11 @@ struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * cont
 void rocketnet_encryption_map_destroy( struct rocketnet_encryption_map_t * map )
 {
     rocketnet_assert( map );
-    sodium_memzero( map->mapping, sizeof(struct rocketnet_encryption_mapping_t) * (size_t) map->capacity );
-    sodium_memzero( map->control, sizeof(struct rocketnet_encryption_mapping_control_t) * (size_t) map->capacity );
+    // a removed mapping was wiped by its remove; a live one still holds its
+    // session keys, and those are the only secrets here
+    for ( int i = 0; i < map->capacity; i++ )
+        if ( map->live[i] )
+            sodium_memzero( &map->mapping[i].keys, sizeof(map->mapping[i].keys) );
     rocketnet_free( map->context, map->bucket_head );
     rocketnet_free( map->context, map->next );
     rocketnet_free( map->context, map->address );

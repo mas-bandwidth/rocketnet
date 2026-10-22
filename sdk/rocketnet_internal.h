@@ -100,6 +100,14 @@ bool rocketnet_server_served_address( const struct rocketnet_server_t * server, 
 struct rocketnet_client_t * rocketnet_client_adopt( void * context, struct rocketnet_message_client_t * connection );
 struct rocketnet_server_t * rocketnet_server_adopt( void * context, struct rocketnet_message_server_t * running );
 
+// The secret bytes of an object, as spans of its allocation (offset, bytes):
+// what destroy must leave zero when it frees the allocation, and the only
+// bytes it may write. Each returns the span count, at most max. For the
+// destroy tests, which see the allocation only in the allocator's free.
+int rocketnet_server_secret_spans_for_test( size_t * offsets, size_t * bytes, int max );
+int rocketnet_server_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max );
+int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max );
+
 #ifdef __cplusplus
 }
 #endif

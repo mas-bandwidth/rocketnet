@@ -542,14 +542,6 @@ void rocketnet_sleep( double seconds )
         rocketnet_platform_sleep( clamped );
 }
 
-void rocketnet_clear_and_free( void * context, void * p, size_t p_size )
-{
-    if ( !p )
-        return;
-    sodium_memzero( p, p_size );
-    rocketnet_free( context, p );
-}
-
 // -------------------------------------------------------------
 
 const char * rocketnet_user_id_string( uint64_t user_id, char * buffer, size_t buffer_size )
