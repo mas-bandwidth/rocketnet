@@ -1,10 +1,14 @@
-; RocketNet v1.0.0-preview-1 testing plan. TESTING.md is rendered from this
+; RocketNet v1.0.0-preview-1 testing record and v1.0.0-preview-2 qualification
+; status. TESTING.md is rendered from this
 ; file by tools/roadmap/render.py (make testing); make testing-check fails when
 ; the committed page is not what this renders. This file is the whole plan:
-; every test RocketNet runs for v1.0.0-preview-1, and the long runs that come
-; with the final deliverable, so none of them is lost.
+; the exact-head preview-2 release gates, the preview-1 baseline, and the long
+; runs that remain, so none of them is lost. A preview-1 green cell is
+; historical evidence only; it is never promoted to preview-2 green without a
+; receipt that names the exact tested head, platform and test tier.
 ;
-; Five tables. "Tests per platform" holds the tests that apply to every
+; Six tables. "Preview-2 exact-head qualification" holds the current release
+; gates. "Tests per platform" holds the tests that apply to every
 ; platform, and "Platform-specific tests" each test that applies to only some,
 ; one row per platform it applies to. "Tests per transport" holds the tests
 ; that apply to every transport, and "Transport-specific tests" each test that
@@ -33,16 +37,33 @@
 ; floating-point floor check; the Windows build was red. 4529ca2d landed the
 ; unit and functional suites green on Linux, macOS and Windows; the ci.yml run
 ; at b12fb5a1 had not finished when this was rechecked.
-(:title "RocketNet v1.0.0-preview-1 testing"
+; Preview-2 source was pinned at eaf420df45614fe1b0d8f1152b76b815d33cfdd2
+; on 2026-10-22. Rowan's exact-head RESULTS.md receipt is still pending, so
+; no preview-2 qualification row is green below.
+(:title "RocketNet v1.0.0-preview-2 testing"
  :all-cells-apply t
  :tables-only t
  :rows-name-source t
  :owed "a long run (soak, load, repeat, 1000 clients) that comes with the final deliverable."
- :text ("Every test RocketNet runs for v1.0.0-preview-1, and the long runs that come with the final deliverable, by platform, by transport and release-wide. ✅ is green at this release; ❌ is red, or not yet green, at this release; planned for the final deliverable is a run that comes with the final deliverable. Each table's complete row is the share of ✅ among that table's own cells.")
+ :text ("Preview-2 qualification is recorded first. The remaining tables preserve the preview-1 baseline and do not qualify preview-2. ✅ in a historical table means green for preview-1; ❌ in the preview-2 table means no exact-head receipt yet. Each preview-2 green must name the exact tested head, platform and tier.")
  :areas
- ((:id "platforms"
-   :title "Tests per platform"
-   :text "The tests that apply to every platform: one row per test, one column per platform."
+ ((:id "preview-2-qualification"
+   :title "Preview-2 exact-head qualification"
+   :text "The release receipt must name the exact tested head, platform and tier. The source pin alone is not a test result."
+   :label "release gate"
+   :columns release
+   :rows
+   ((:feature "Source pin eaf420df45614fe1b0d8f1152b76b815d33cfdd2 is not an exact-head test receipt" :cells (n) :source "Rowan preview-2 RESULTS.md" :pending ((status "The final receipt is absent")))
+    (:feature "Unit tier at the exact preview-2 head and named platform" :cells (n) :source "Rowan preview-2 RESULTS.md" :pending ((status "No exact-head unit-tier receipt is available")))
+    (:feature "Functional tier at the exact preview-2 head and named platform" :cells (n) :source "Rowan preview-2 RESULTS.md" :pending ((status "No exact-head functional-tier receipt is available")))
+    (:feature "Sanitizer, soak and model tiers at the exact preview-2 head and named execution platform" :cells (n) :source "Rowan preview-2 RESULTS.md" :pending ((status "No exact-head sanitizer, soak or model-tier receipt is available")))
+    (:feature "Dedicated-server load qualification at the exact preview-2 head, named platform and allocated-host tier" :cells (n) :source "Rowan preview-2 RESULTS.md and docs/LOAD_SPLIT.md" :pending ((status "No final receipt is available. Historical preview-1 matrix evidence is context only, not preview-2 qualification")))
+    (:feature "Server update and send p99 at or below 100 microseconds at 1000 clients" :cells (n) :source "Rowan preview-2 RESULTS.md and tools/check_split_load.py" :pending ((status "Not qualified. A reported approximately 2 ms server p99 at 1000 clients is not independently evidenced in this checkout")))
+    (:feature "Windows native-server LAN qualification on a provisioned 10 GbE NIC" :cells (n) :source "Rowan preview-2 RESULTS.md" :pending ((status "Server LAN qualification is pending a provisioned 10 GbE NIC after raw UDP drops on the current Windows 1 GbE path. Same-host and client coverage do not qualify the Windows server LAN path")))
+    (:feature "AF_XDP live qualification identifies copy or zero-copy mode" :cells (n) :source "Rowan preview-2 RESULTS.md and BUILDING.md" :pending ((status "Current preview-2 XDP evidence is copy mode. The bind request test does not prove live zero-copy operation")))))
+  (:id "platforms"
+   :title "Historical preview-1 baseline: tests per platform"
+   :text "Preview-1 tests that apply to every platform: one row per test, one column per platform. These green cells are not preview-2 qualification."
    :label "test"
    :columns ("Windows" "macOS" "Linux")
    :rows
@@ -67,8 +88,8 @@
     (:feature "Nightlies (every nightly job's steps green on this branch)" :cells (p o o) :source ".github/workflows/nightly*.yml, fuzz-nightly.yml" :pending ((Windows "planned for the final deliverable") (macOS "planned for the final deliverable: for nightly-soak; fuzz, examples and frame budget ran by hand in landed e7fba514") (Linux "planned for the final deliverable: for nightly-soak; fuzz, frame budget, channel seeds and leaks green, 381203ba")))
     (:feature "CI (ci.yml, every step green on this branch)" :cells (n n n) :source ".github/workflows/ci.yml" :pending ((Windows "no ci.yml run has finished at b12fb5a1; the last finished run, 39514217665 at 330e951e, was red on Windows") (macOS "no ci.yml run has finished at b12fb5a1") (Linux "no ci.yml run has finished at b12fb5a1; in CI run 39514217665 at 330e951e the Debug and Release legs stop at the floating-point floor check, and the functional sanitizer, tsan lifecycle, conformance, platform selftest and big-endian jobs are red")))))
   (:id "platform-specific"
-   :title "Platform-specific tests"
-   :text "The tests that apply to only some platforms: one row per platform a test applies to."
+   :title "Historical preview-1 baseline: platform-specific tests"
+   :text "Preview-1 tests that apply to only some platforms: one row per platform a test applies to. These green cells are not preview-2 qualification."
    :label "test"
    :specific t
    :columns ("Windows" "macOS" "Linux")
@@ -80,16 +101,16 @@
     (:feature "Big-endian system build and suites" :on Linux :cell p :source ".github/workflows/nightly-bigendian-system.yml, tools/bigendian/" :pending "planned for the final deliverable")
     (:feature "Live XDP test (an XDP server, a client on every test machine)" :on Linux :cell p :source "docs/LIVE-XDP.md, tla/MCRNLiveFleetRun.cfg" :pending "planned for the final deliverable: after v1.0.0-preview-1")))
   (:id "transports"
-   :title "Tests per transport"
-   :text ("The tests that apply to every transport: one row per test, one column per transport, in the order the automatic ladder ranks them." "xdp, gso and io_uring build on Linux, msgx on macOS, iocp and rio on Windows, and portable and loopback on all three; a portable or loopback cell is ✅ only when it is green on all three.")
+   :title "Historical preview-1 baseline: tests per transport"
+   :text ("Preview-1 tests that apply to every transport: one row per test, one column per transport, in the order the automatic ladder ranks them. These green cells are not preview-2 qualification." "xdp, gso and io_uring build on Linux, msgx on macOS, iocp and rio on Windows, and portable and loopback on all three; a portable or loopback cell is ✅ only when it is green on all three.")
    :label "test"
    :columns transports
    :rows
    ((:feature "Transport family matrix (IPv4, IPv6 and dual stack, each transport pinned)" :cells (y p y y p p p p) :source "functional/live_matrix.cpp, tools/check_transport_matrix.py, ci.yml matrix step" :evidence "xdp: xdp_max_size_both_ways_ipv4 and _ipv6 in a guest, cce78fab; gso and io_uring: the matrix step's gso and io_uring cells green, 32c4ff08" :pending ((msgx "planned for the final deliverable") (portable "planned for the final deliverable: Linux is green, e73c2177") (iocp "planned for the final deliverable") (rio "planned for the final deliverable") (loopback "planned for the final deliverable: Linux: no landed change names the loopback cell")))
     (:feature "Every matrix cell fifty times, zero flakes" :cells (o o o o o o o o) :source "tools/check_transport_matrix.py" :pending ((xdp "planned for the final deliverable") (msgx "planned for the final deliverable") (gso "planned for the final deliverable") (io_uring "planned for the final deliverable") (portable "planned for the final deliverable") (iocp "planned for the final deliverable") (rio "planned for the final deliverable") (loopback "planned for the final deliverable")))))
   (:id "transport-specific"
-   :title "Transport-specific tests"
-   :text "The tests that apply to only some transports: one row per transport a test applies to. None of these runs on loopback, the in-process transport; Application Verifier runs only on Windows."
+   :title "Historical preview-1 baseline: transport-specific tests"
+   :text "Preview-1 tests that apply to only some transports: one row per transport a test applies to. These green cells are not preview-2 qualification. None of these runs on loopback, the in-process transport; Application Verifier runs only on Windows."
    :label "test"
    :specific t
    :columns transports
@@ -161,8 +182,8 @@
     (:feature "Application Verifier" :on iocp :cell y :source "the CI workflows" :evidence "iocp: 0 verifier stops, 7457d35b")
     (:feature "Application Verifier" :on rio :cell y :source "the CI workflows" :evidence "rio: 0 verifier stops, 7457d35b")))
   (:id "release"
-   :title "Release-wide tests"
-   :text "The tests that are neither per platform nor per transport: model checks, proofs, reviews and checks of the code as a whole."
+   :title "Release-wide test inventory and historical preview-1 results"
+   :text "Tests that are neither per platform nor per transport: model checks, proofs, reviews and checks of the code as a whole. New planned rows inventory post-preview-1 work; old green rows are preview-1 history. Neither qualifies preview-2 without the exact-head receipt in the first table."
    :label "test"
    :columns release
    :rows
@@ -200,6 +221,11 @@
     (:feature "TLA+ model check: rnxdpreplay (3 required)" :cells (p) :source "tla/CASES.tsv group rnxdpreplay; tla/MCRNXdpReplay.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
     (:feature "TLA+ model check: rnxdpreceivering (3 required)" :cells (p) :source "tla/CASES.tsv group rnxdpreceivering; tla/MCRNXdpReceiveRing.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
     (:feature "TLA+ model check: rnriodriver (4 required)" :cells (p) :source "tla/CASES.tsv group rnriodriver; tla/MCRNRioDriver.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnrioworker (8 required)" :cells (p) :source "tla/CASES.tsv group rnrioworker; tla/MCRNRioWorker.tla; tla/RUNS.tsv; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: all eight cases have current PASS witness records in tla/RUNS.tsv, but no exact-head preview-2 release receipt, so this is not a preview-2 green cell")))
+    (:feature "TLA+ model check: rnclientlinkstop (3 required)" :cells (p) :source "tla/CASES.tsv group rnclientlinkstop; tla/MCRNClientLinkStop.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: no exact-head preview-2 receipt yet")))
+    (:feature "TLA+ model check: rnportablerx (6 required)" :cells (p) :source "tla/CASES.tsv group rnportablerx; tla/MCRNPortableRx.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: no exact-head preview-2 receipt yet")))
+    (:feature "TLA+ model check: shutdownownership (14 required)" :cells (p) :source "tla/CASES.tsv group shutdownownership; tla/MCRNClientIoShutdown.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: no exact-head preview-2 receipt yet")))
+    (:feature "TLA+ model check: splitstart (4 required)" :cells (p) :source "tla/CASES.tsv group splitstart; tla/MCSplitStart.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: no exact-head preview-2 receipt yet")))
     (:feature "TLA+ model check: rnflows (2 required)" :cells (p) :source "tla/CASES.tsv group rnflows; tla/MCRNFlows.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
     (:feature "TLA+ model check: rnclientiodecrypt (5 required)" :cells (p) :source "tla/CASES.tsv group rnclientiodecrypt; tla/MCRNClientIoDecrypt.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
     (:feature "TLA+ model check: rnlivefleetrun (3 required)" :cells (p) :source "tla/CASES.tsv group rnlivefleetrun; tla/MCRNLiveFleetRun.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))

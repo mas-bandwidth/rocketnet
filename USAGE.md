@@ -19,6 +19,13 @@ the configuration system decides what happens at create.
 Build and platform instructions live in [BUILDING.md](BUILDING.md); the wire
 format lives in [STANDARD.md](STANDARD.md).
 
+A default build is a development build (`ROCKETNET_DEV=1`). Before deployment,
+build with `ROCKETNET_DEV=0` (`-DROCKETNET_DEV=OFF` in CMake). A production
+library omits the simulator, test seams and development token minting, and
+refuses the published test packet filter, development keys and development
+connect tokens. [BUILDING.md, "Production builds"](BUILDING.md#production-builds)
+lists the production build and install commands.
+
 ## Start and stop
 
 Call `rocketnet_init` once before creating a client or a server, and check its
@@ -245,10 +252,11 @@ credential. The attempt's clock starts at the next update.
 `rocketnet_client_disconnect` ends the connection from any state and returns
 the client state to `DISCONNECTED`. This state alone does not prove I/O has
 stopped: wait for `rocketnet_client_disconnected` before destroy or reconnect. Connect
-is accepted from `DISCONNECTED` and from a connection-ended state
-(`ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED` down to
-`ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED`) after the previous worker
-has stopped. A pending shutdown or any other state is refused with `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`.
+accepts `DISCONNECTED` and every negative terminal state. From a terminal state
+whose old worker still owns the attempt, it returns
+`ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED` and retains that state; poll
+`rocketnet_client_disconnected` and retry. Positive handshake states and
+`CONNECTED` are refused with `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`.
 A negative state says how the last attempt or connection ended and stays until
 disconnect.
 
@@ -267,7 +275,13 @@ allocator. `rocketnet_client_required_memory` and
 `rocketnet_server_required_memory` report that block's size, so a program that
 wants every byte up front can pass `rocketnet_init` an allocator
 over a block of its own, aligned to `ROCKETNET_ALLOCATION_ALIGNMENT`. Connect
-and start may also allocate transport memory. Starting a server also prepares
+and start may also allocate transport memory. A normal client connect starts
+one background network thread. A transport with wait/wake support uses that
+thread for bounded batched I/O and hands buffers to the frame thread; the
+fallback path uses it as a polling receive worker while sends stay on the frame
+thread. The client transport memory plan includes the SDK allocations for that
+thread, its socket and wake object, but excludes the operating system's thread
+stack reserve and kernel socket queues. Starting a server also prepares
 the background stats worker and its delta-buffer storage. If that storage cannot
 be allocated, `rocketnet_server_start` returns
 `ROCKETNET_STATUS_OUT_OF_MEMORY`; if the worker thread cannot be created, it
@@ -393,6 +407,13 @@ queuing (here that is `rocketnet_client_send_packets` or
 frame, adding a frame of latency. Receiving before update does the same:
 nothing has been pumped yet, so the messages that arrived wait a frame.
 `send_packets` sends the packets this frame's messages are included in.
+
+Buffered background I/O adds an ownership handoff around those packets. A send
+worker may take a packet bank after the caller's `send_packets`, and a receive
+worker may publish a packet bank after the caller's `update` has already taken
+the available bank. In either direction, the affected message may therefore
+advance on the next update. That extra-update latency is an expected consequence
+of the bounded handoff design; keep the five-step order unchanged.
 
 ```c
 #include "rocketnet.h"

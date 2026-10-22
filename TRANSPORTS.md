@@ -42,7 +42,10 @@ Two I/O shapes preserve the existing implementations:
 
 - **Buffered:** the transport supplies its common control, payload and receive
   buffers. `send_batch` and `receive_batch` borrow that storage only for the call.
-  This is the portable/msgx shape. It does not require a backend-owned pool.
+  This is the portable/msgx shape. The current server backend copies sends into
+  bounded TX banks for its transmit worker and receives into bounded RX banks
+  on its receive worker; the borrowed interface does not transfer the caller's
+  buffers to either worker.
 - **Staged:** the transport supplies frame storage and a complete receive batch.
   XDP, GSO and IOCP use this shape, with their own pools and worker arrangements.
   The transport does not allocate, recycle or schedule those backend frames.
@@ -169,11 +172,13 @@ same stop/stopped/destroy order. Keep backend and callback contexts alive throug
 destroy. A stuck operation leaves completion false; timeout is never permission
 to reclaim or detach memory that an operation still owns.
 
-Clients use create/destroy/send/receive callbacks. The existing transport
-receive thread and buffers remain shared infrastructure. Receive can run
-concurrently with sends; both calls borrow their buffers synchronously. Destroy
-runs after that thread has joined and must release any additional backend-owned
-work. Client fast-path I/O is not required by this interface.
+Clients use create/destroy/send/receive callbacks. A transport that supplies
+wait and wake callbacks uses the bounded client I/O core: one background thread
+receives and sends batched datagrams through owned handoff rings while the frame
+thread advances protocol state. A backend without those callbacks uses the base
+path: one polling receive worker exchanges receive buffers under a short mutex,
+and sends run synchronously on the frame thread. Destroy runs only after stop
+completion, joins that one client thread, and releases backend-owned work.
 
 ## ICMP errors
 
@@ -208,10 +213,12 @@ and `:3573`):
 
 | Transport | Network threads it creates | What the library sets |
 |---|---|---|
-| GSO (Linux) | one worker per queue (`sdk/rocketnet_server_gso_linux.cpp:769`) | `SCHED_RR`, minimum priority, after each create |
+| GSO (Linux) | one receive worker per queue plus one transmit worker | `SCHED_RR`, minimum priority, after each create |
 | XDP (Linux) | one thread per queue (`sdk/rocketnet_server_socket_linux.cpp:2568-2577`) | on itself at thread start: pinned to cpu `num_os_cpus + queue` with `pthread_setaffinity_np`, then `SCHED_RR` at the minimum priority on `pthread_self()` |
-| IOCP (Windows) | one worker per completion thread (`sdk/rocketnet_server_iocp_windows.cpp:568`) | `THREAD_PRIORITY_TIME_CRITICAL`, after each create |
-| io_uring, RIO, portable socket | none | nothing |
+| IOCP (Windows) | one worker per completion thread plus one transmit worker | `THREAD_PRIORITY_TIME_CRITICAL`, after each create |
+| RIO (Windows) | one I/O worker | `THREAD_PRIORITY_TIME_CRITICAL`, after create |
+| portable/msgx socket | one receive worker and one transmit worker | nothing |
+| io_uring | none | nothing |
 
 Every server also runs one background stats worker. It uses a socket-free wake
 and does not receive the network-thread priority override described above.
@@ -258,14 +265,19 @@ Dispatch measurements and their limits are recorded in
 ## The RIO server transport
 
 `rio` (`sdk/rocketnet_server_rio_windows.cpp`, `sdk/rocketnet_server_rio.h`)
-is a Windows staged server transport with one registered memory region, polled
-send and receive completion queues, deferred sends committed once per flush,
-and two send phases so a phase stays owned until its sends complete. It uses no
-worker threads. Its server rank is 45, after IOCP's 40, so automatic selection
+is a Windows staged server transport with one registered memory region and one
+I/O worker that polls the send and receive completion queues. The frame thread
+hands deferred sends to one of three phases; a phase stays worker-owned until
+its sends complete, and four receive banks cross the same bounded ownership seam.
+Its server rank is 45, after IOCP's 40, so automatic selection
 never chooses it ahead of IOCP; pin `rio` to select it directly. Its
 `ROCKETNET_RIO_COUNTER_*` counters report sent and received packets, full send
 slots, failed sends, waits for a send phase, failed receives, dropped-size and
-dropped-overflow receives, failed receive reposts, and RIO commit calls. Its send phase swap and one-bank receive limit are implemented in `rocketnet_server_rio_send_packets` and `rocketnet_server_rio_receive_packets` in `sdk/rocketnet_server_rio_windows.cpp`; its receive banks are modelled in `tla/RNRioDriver.tla`.
+dropped-overflow receives, failed receive reposts, and RIO commit calls. Its
+three send phases and four receive banks are implemented in
+`rocketnet_rio_worker_pass` and `rocketnet_server_rio_receive_packets` in
+`sdk/rocketnet_server_rio_windows.cpp`; their ownership is modelled in
+`tla/RNRioWorker.tla`.
 
 ## Windows connection reset
 

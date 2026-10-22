@@ -157,8 +157,14 @@ class RenderTest( unittest.TestCase ):
         rows = []
         for path in sorted( glob.glob( os.path.join( ROOT, "sdk", "rocketnet_*.inc" ) ) ):
             with open( path, encoding="utf-8" ) as f:
-                for m in re.finditer( r'^ROCKETNET_[A-Z]+\(\s*\w+,\s*"([a-z_]+)",[^,]*,[^,]*,[^,]*,\s*(\w+),', f.read(), re.M ):
-                    rows.append( ( m.group( 1 ), m.group( 2 ) ) )
+                for m in re.finditer( r'^ROCKETNET_[A-Z]+\(\s*\w+,\s*"([a-z_]+)",[^,]*,[^,]*,[^,]*,\s*([^,]+),', f.read(), re.M ):
+                    server = m.group( 2 ).strip()
+                    development_rank = re.fullmatch( r'\(\s*ROCKETNET_DEV\s*\?\s*(\d+)\s*:\s*0\s*\)', server )
+                    if development_rank:
+                        server = development_rank.group( 1 )
+                    elif not re.fullmatch( r'\d+|ROCKETNET_TRANSPORT_PIN_ONLY', server ):
+                        self.fail( "unexpected server transport rank %r for %s" % ( server, m.group( 1 ) ) )
+                    rows.append( ( m.group( 1 ), server ) )
         self.assertTrue( rows, "no transport registry under sdk/" )
         def rank( item ):
             index, ( name, server ) = item
@@ -348,7 +354,12 @@ class RenderTest( unittest.TestCase ):
                 sections[current] = []
             elif current and l:
                 sections[current].append( l )
-        self.assertEqual( list( sections ), [ "Tests per platform", "Platform-specific tests", "Tests per transport", "Transport-specific tests", "Release-wide tests" ] )
+        self.assertEqual( list( sections ), [ "Preview-2 exact-head qualification",
+                                             "Historical preview-1 baseline: tests per platform",
+                                             "Historical preview-1 baseline: platform-specific tests",
+                                             "Historical preview-1 baseline: tests per transport",
+                                             "Historical preview-1 baseline: transport-specific tests",
+                                             "Release-wide test inventory and historical preview-1 results" ] )
         for name, body in sections.items():
             self.assertTrue( body[0].startswith( "Source: [docs/testing.sexp](docs/testing.sexp)" ), name )
             self.assertEqual( [ l for l in body[1:] if not l.startswith( "|" ) ], [], name )
@@ -363,14 +374,16 @@ class RenderTest( unittest.TestCase ):
             elif current and l.startswith( "| " ):
                 sections[current].append( [ c.strip() for c in l.strip( "|" ).split( "|" ) ] )
         transport_headings = [ h for h in sections if "transport" in h.lower() ]
-        self.assertEqual( transport_headings, [ "## Tests per transport", "## Transport-specific tests" ] )
+        self.assertEqual( transport_headings,
+                          [ "## Historical preview-1 baseline: tests per transport",
+                            "## Historical preview-1 baseline: transport-specific tests" ] )
         for heading in transport_headings:
             for platform in render.PLATFORMS:
                 self.assertNotIn( platform, heading )
                 self.assertNotIn( platform, sections[heading][0] )
             column_values = { row[1] for row in sections[heading][1:] if row[0] != "complete" }
             self.assertFalse( column_values & set( render.PLATFORMS ), heading )
-        self.assertEqual( sections["## Tests per transport"][0][1:], render.TRANSPORTS )
+        self.assertEqual( sections["## Historical preview-1 baseline: tests per transport"][0][1:], render.TRANSPORTS )
 
     # PLANNED cells, the release-wide table and the source of every row.
 
