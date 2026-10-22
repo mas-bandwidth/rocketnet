@@ -237,13 +237,19 @@ int main( int argc, char ** argv ) {
         }
         CHECK( clients[c] != NULL );
     }
+    // the handshake crosses the client and server worker threads, which need
+    // real time to run: frames with no real time between them can finish
+    // before a reply arrives. The connect is bounded by real time, like the
+    // shutdown below, and the game clock follows it.
     double sim_time = 1000.0;
-    for ( int step = 0; step < 300; step++ ) {
+    const double connect_started = rocketnet_time();
+    const double connect_sim_start = sim_time;
+    while ( rocketnet_time() - connect_started < 10.0 ) {
         int all_conn = ( rocketnet_server_num_connected_clients( server ) == num_clients );
         for ( int c = 0; all_conn && c < num_clients; c++ )
             if ( rocketnet_client_state( clients[c] ) != ROCKETNET_CLIENT_STATE_CONNECTED ) all_conn = 0;
         if ( all_conn ) break;
-        sim_time += 1.0 / 60.0;
+        sim_time = connect_sim_start + ( rocketnet_time() - connect_started );
         for ( int base = 0; base < num_clients; base += BATCH_CLIENTS ) {
             int end = base + BATCH_CLIENTS < num_clients ? base + BATCH_CLIENTS : num_clients;
             for ( int c = base; c < end; c++ ) {
@@ -253,6 +259,7 @@ int main( int argc, char ** argv ) {
             rocketnet_server_update( server, sim_time );
             rocketnet_server_send_packets( server ); // send last so this frame's messages leave this frame
         }
+        rocketnet_sleep( 0.001 );
     }
     for ( int c = 0; c < num_clients; c++ )
         CHECK( rocketnet_client_state( clients[c] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
@@ -355,6 +362,10 @@ int main( int argc, char ** argv ) {
             tick_srv_us += ( rocketnet_time() - s0 ) * 1e6;
         }
         if ( tick < soak_ticks ) { cli_us[tick] = tick_cli_us; srv_us[tick] = tick_srv_us; }
+        // the drain frames let real time pass, so what the worker threads
+        // still hold arrives (a few clients run the soak frames in well
+        // under a millisecond)
+        else rocketnet_sleep( 0.001 );
     }
     g_alloc.steady = false;
     uint64_t acked_total = 0;
