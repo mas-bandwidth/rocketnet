@@ -1385,6 +1385,15 @@ int rocketnet_server_rio_test_faults_left( rocketnet_server_rio_t * rio, int fau
     return rio->test_faults[fault].load( std::memory_order_acquire );
 }
 
+bool rocketnet_server_rio_test_send_idle( rocketnet_server_rio_t * rio )
+{
+    rocketnet_platform_mutex_acquire( &rio->mutex );
+    const bool idle = rio->send_ready_count == 0 &&
+                      rio->phase_state[0] != ROCKETNET_RIO_PHASE_POSTED && rio->phase_state[1] != ROCKETNET_RIO_PHASE_POSTED;
+    rocketnet_platform_mutex_release( &rio->mutex );
+    return idle;
+}
+
 int rocketnet_server_rio_test_retry_receives( rocketnet_server_rio_t * rio )
 {
     return rio->num_retry.load( std::memory_order_relaxed );
