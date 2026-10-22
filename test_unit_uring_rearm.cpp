@@ -16,7 +16,7 @@
 #include "sdk/rocketnet_uring_codec.h"
 #endif
 
-#if defined(__linux__) && defined(IORING_RECV_MULTISHOT) && defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+#if defined(__linux__) && defined(IORING_RECV_MULTISHOT) && defined(ROCKETNET_URING_REAP_TEST_HOOKS) && defined(ROCKETNET_IO_URING)
 #define ROCKETNET_URING_REARM_TEST 1
 #else
 #define ROCKETNET_URING_REARM_TEST 0
