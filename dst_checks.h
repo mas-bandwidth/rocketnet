@@ -975,7 +975,8 @@ static inline void rocketnet_dst_check_conservation( struct rocketnet_dst_check_
 static inline void rocketnet_dst_check_unexplained_refusal( struct rocketnet_dst_check_state_t * st,
                                                             const struct rocketnet_counters_t * counters,
                                                             const char * end,
-                                                            int duplicate_ack_faults_enabled )
+                                                            int duplicate_ack_faults_enabled,
+                                                            int duplicate_faults_enabled )
 {
     for ( int i = 0; i < rocketnet_num_counters(); i++ )
     {
@@ -987,6 +988,10 @@ static inline void rocketnet_dst_check_unexplained_refusal( struct rocketnet_dst
             // A replayed standalone ACK is a benign refusal when seeded
             // duplicate/reorder/delay faults can replay next-update ACKs.
             ( duplicate_ack_faults_enabled && i == ROCKETNET_COUNTER_ACK_ALREADY_RECEIVED ) ||
+            // The server's standalone ACK replayed at the client: only the
+            // duplicate fault moves it (seeds 1-200, one fault at a time),
+            // as soak_sim's table explains the same row.
+            ( duplicate_faults_enabled && i == ROCKETNET_COUNTER_CLIENT_ACK_ALREADY_RECEIVED ) ||
             i == ROCKETNET_COUNTER_KEEP_ALIVE_ALREADY_RECEIVED ||
             i == ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED ||
             i == ROCKETNET_COUNTER_CLIENT_PAYLOAD_ALREADY_RECEIVED ||
