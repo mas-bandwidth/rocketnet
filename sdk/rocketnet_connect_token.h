@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include "rocketnet_internal.h"
 #include "rocketnet_wire.h"
+#include "rocketnet_test_seams.h"
 
 // The SDK's C tools use these internal token helpers as well as its C++ code.
 #ifdef __cplusplus
@@ -269,14 +270,16 @@ void rocketnet_connect_token_identifier( uint8_t * identifier, const uint8_t * s
  * @details Development keys are public test credentials; deployments using them have no token authenticity or session confidentiality.
  */
 extern const uint8_t rocketnet_dev_backend_public_key[32];
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
 /** @brief Development signing secret, available only in development builds. Never use it for production credentials. */
 extern const uint8_t rocketnet_dev_backend_secret_key[64];
-#endif // #if ROCKETNET_DEVELOPMENT
+#endif // #if ROCKETNET_DEV
 /** @brief Public server key used by development tokens. */
 extern const uint8_t rocketnet_dev_server_public_key[32];
-/** @brief Secret server key used by development tokens. Never use it for production sessions. */
+#if ROCKETNET_TEST_SEAMS
+/** @brief Secret server key used by development tokens. Never use it for production sessions. Absent from a production build (ROCKETNET_DEV=0). */
 extern const uint8_t rocketnet_dev_server_secret_key[32];
+#endif // #if ROCKETNET_TEST_SEAMS
 
 /** @brief Protocol identifier used by development tokens. */
 #define ROCKETNET_DEV_PROTOCOL_ID 0x1122334455667788ULL
@@ -324,12 +327,12 @@ enum rocketnet_status_t rocketnet_write_production_connect_token( const uint8_t 
                                                                   uint8_t * connect_token,
                                                                   size_t connect_token_bytes );
 
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
 // The layer tests' binary token for one address, sealed to the fixed test
 // server key (rocketnet_dev_server_public_key) that the internal transport
 // dev config carries. Public programs use rocketnet_create_dev_connect_token.
 enum rocketnet_status_t rocketnet_write_test_connect_token( const char * server_address_string, uint64_t client_id, uint64_t current_timestamp, uint8_t * connect_token, size_t connect_token_bytes );
-#endif // #if ROCKETNET_DEVELOPMENT
+#endif // #if ROCKETNET_DEV
 
 #ifdef __cplusplus
 }

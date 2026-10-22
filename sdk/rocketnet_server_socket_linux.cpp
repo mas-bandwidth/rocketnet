@@ -1690,7 +1690,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         socket->queue = queue;
         socket->num_os_cpus = num_os_cpus;
 
-#if defined(ROCKETNET_DEVELOPMENT) && ROCKETNET_DEVELOPMENT
+#if defined(ROCKETNET_DEV) && ROCKETNET_DEV
         // development-only failure seam: ROCKETNET_TEST_XDP_FAIL_AT_QUEUE=<n>
         // fails create at the top of queue n, after the earlier queues are
         // fully built (their mutexes created, their xdp threads running) and

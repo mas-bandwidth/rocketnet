@@ -11814,7 +11814,7 @@ equal(signed char b, signed char c)
     uint32_t            y  = (uint32_t) x; /* 0: yes; 1..255: no */
 
     y--;
-    return ((y >> 29) ^ optblocker_u8) >> 2; /* 1: yes; 0: no */
+    return (unsigned char) (((y >> 29) ^ optblocker_u8) >> 2); /* 1: yes; 0: no */
 #endif
 }
 
@@ -11830,7 +11830,7 @@ negative(signed char b)
     return x;
 #else
     const uint8_t x = (uint8_t) b; /* 0..127: no 128..255: yes */
-    return ((x >> 5) ^ optblocker_u8) >> 2; /* 1: yes; 0: no */
+    return (unsigned char) (((x >> 5) ^ optblocker_u8) >> 2); /* 1: yes; 0: no */
 #endif
 }
 

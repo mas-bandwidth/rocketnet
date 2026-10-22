@@ -4,7 +4,7 @@
    Add a backend by defining its operations and adding one row here. */
 // The portable server is a development transport. Its client socket I/O
 // remains available in release builds so clients can reach native servers.
-ROCKETNET_TRANSPORT(PORTABLE, "portable", true,  rocketnet_portable_transport, ROCKETNET_TRANSPORT_ALL_PLATFORMS, (ROCKETNET_DEVELOPMENT ? 30 : 0), 30)
+ROCKETNET_TRANSPORT(PORTABLE, "portable", true,  rocketnet_portable_transport, ROCKETNET_TRANSPORT_ALL_PLATFORMS, (ROCKETNET_DEV ? 30 : 0), 30)
 ROCKETNET_TRANSPORT(GSO,      "gso",      true,  rocketnet_gso_transport,      ROCKETNET_TRANSPORT_LINUX,         20,  0)
 ROCKETNET_TRANSPORT(XDP,      "xdp",      false, rocketnet_xdp_transport,      ROCKETNET_TRANSPORT_LINUX,         10,  0)
 ROCKETNET_TRANSPORT(MSGX,     "msgx",     true,  rocketnet_msgx_transport,     ROCKETNET_TRANSPORT_MAC,           10, 10)

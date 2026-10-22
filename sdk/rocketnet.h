@@ -27,15 +27,19 @@
 #endif
 
 
-/// ROCKETNET_DEVELOPMENT is 1 when linking a development library, which
-/// provides rocketnet_create_dev_connect_token and ROCKETNET_DEV_BACKEND_PUBLIC_KEY
-/// and accepts the published development backend key.
+/// ROCKETNET_DEV is 1 by default: a development build. Development builds
+/// provide rocketnet_create_dev_connect_token and
+/// ROCKETNET_DEV_BACKEND_PUBLIC_KEY, and accept the published development
+/// keys, the test packet filter and a portable server pin. Production builds
+/// define ROCKETNET_DEV 0 (CMake: -DROCKETNET_DEV=OFF), which compiles all of
+/// that out and refuses at create the development keys and tokens, the
+/// test packet filter and a portable server pin.
 
-#if !defined( ROCKETNET_DEVELOPMENT )
-#define ROCKETNET_DEVELOPMENT 0
-#endif // !defined( ROCKETNET_DEVELOPMENT )
+#if !defined( ROCKETNET_DEV )
+#define ROCKETNET_DEV 1
+#endif // !defined( ROCKETNET_DEV )
 
-#if !ROCKETNET_DEVELOPMENT
+#if !ROCKETNET_DEV
 
     /// The SDK version as text. The release version string, or "dev" in a
     /// development build.
@@ -54,14 +58,14 @@
 
     #define ROCKETNET_VERSION_PATCH                                    0
 
-#else // !ROCKETNET_DEVELOPMENT
+#else // !ROCKETNET_DEV
 
     #define ROCKETNET_VERSION_FULL                                 "dev"
     #define ROCKETNET_VERSION_MAJOR                                  255
     #define ROCKETNET_VERSION_MINOR                                  255
     #define ROCKETNET_VERSION_PATCH                                  255
 
-#endif // !ROCKETNET_DEVELOPMENT
+#endif // !ROCKETNET_DEV
 
 /// Comparable version: major * 10000 + minor * 100 + patch (1.0.0 is 10000).
 /// Prerelease labels are omitted; ROCKETNET_VERSION_FULL distinguishes them.
@@ -236,10 +240,10 @@ enum rocketnet_status_t
 
     ROCKETNET_STATUS_INVALID_PROTOCOL_ID                = -11,
 
-    /// Start refused. A release build was given the published development
-    /// backend key.
+    /// Start refused. A production build (ROCKETNET_DEV=0) was given the
+    /// published development backend or server key.
 
-    ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE                = -12,
+    ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION             = -12,
 
     /// An address string did not parse or cannot be used.
 
@@ -313,7 +317,17 @@ enum rocketnet_status_t
     /// ROCKETNET_XDP=OFF, or without a clang that has the BPF target, libbpf
     /// or libxdp.
 
-    ROCKETNET_STATUS_TRANSPORT_NOT_BUILT                = -28
+    ROCKETNET_STATUS_TRANSPORT_NOT_BUILT                = -28,
+
+    /// Create refused. A production build (ROCKETNET_DEV=0) was given the
+    /// published test packet filter. Set your own packet_filter.
+
+    ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION   = -29,
+
+    /// Connect refused. A production build (ROCKETNET_DEV=0) was given a
+    /// connect token sealed to the published development server key.
+
+    ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION    = -30
 };
 
 
@@ -1384,7 +1398,7 @@ static inline enum rocketnet_status_t rocketnet_client_default_config( struct ro
 
 ROCKETNET_EXPORT size_t rocketnet_client_required_memory( const struct rocketnet_client_config_t * config );
 
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
 
 /// The public development backend key. Use it to initialize backend_public_key.
 ///
@@ -1393,7 +1407,7 @@ ROCKETNET_EXPORT size_t rocketnet_client_required_memory( const struct rocketnet
 ///     memcpy( config.backend_public_key, dev_key, sizeof( dev_key ) );
 ///
 /// A server using this key accepts development tokens.
-/// A production server refuses it with ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE.
+/// A production server refuses it with ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION.
 
 #define ROCKETNET_DEV_BACKEND_PUBLIC_KEY { 0xb0, 0xab, 0x03, 0xb3, 0xe2, 0x6e, 0xf1, 0x7c, 0x72, 0xe3, 0xbd, 0x99, 0x29, 0xa5, 0xb4, 0xbf, \
                                            0x48, 0xbd, 0xba, 0x50, 0x57, 0x3f, 0x1b, 0x8d, 0x08, 0x4a, 0x08, 0xd8, 0x58, 0xbd, 0x24, 0x2c }
@@ -1456,7 +1470,7 @@ ROCKETNET_EXPORT void rocketnet_client_network_simulator( struct rocketnet_clien
 ROCKETNET_EXPORT void rocketnet_server_network_simulator( struct rocketnet_server_t * server, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
 
 
-#endif // ROCKETNET_DEVELOPMENT
+#endif // ROCKETNET_DEV
 
 /// Creates a DISCONNECTED client without opening a socket.
 /// Validates the config and logs any failure. NULL config selects defaults.
@@ -1634,7 +1648,8 @@ static inline enum rocketnet_status_t rocketnet_server_default_config( struct ro
 /// Returns the memory needed by create for this config and max_clients.
 /// Applies the same environment overrides as create.
 /// NULL config selects defaults. Invalid config returns 0, including a
-/// production server pin of portable. A named transport memory estimate is
+/// production server pin of portable and, in a production build, the
+/// defaults' test filter. A named transport memory estimate is
 /// diagnostic and does not grant that transport at create or start.
 
 ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet_server_config_t * config );

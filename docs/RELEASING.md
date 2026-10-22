@@ -6,7 +6,8 @@ is never moved: if a tag is wrong, cut the next version.
 ## Version sites
 
 The version lives in `sdk/rocketnet.h`, in two branches selected by
-`ROCKETNET_DEVELOPMENT`.
+`ROCKETNET_DEV` (1 by default; release artifacts are built with
+`-DROCKETNET_DEV=OFF`, BUILDING.md "Production builds").
 
 The shipping branch carries `ROCKETNET_VERSION_FULL` and the integer macros
 `ROCKETNET_VERSION_MAJOR`, `ROCKETNET_VERSION_MINOR` and

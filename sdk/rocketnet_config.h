@@ -10,6 +10,7 @@
 
 #include "rocketnet_internal.h"
 #include "rocketnet_driver.h"
+#include "rocketnet_test_seams.h"
 
 // The config engine (#106): the machinery behind the per-transport config
 // tables declared in rocketnet.h. Each table declares every field once;
@@ -134,7 +135,7 @@ bool rocketnet_config_validate( const char * transport_name, const void * config
 // value at create with CONFIG_OUT_OF_RANGE and one error line naming the
 // field; the same walk is exposed here so a unit suite that links only the
 // development library can pin the refusal. development is the caller's build
-// posture, normally ROCKETNET_DEVELOPMENT.
+// posture, normally ROCKETNET_DEV.
 
 bool rocketnet_config_validate_public_link_simulator( const char * transport_name, const void * config, const struct rocketnet_config_field_t * fields, int num_fields, bool development );
 
@@ -148,6 +149,28 @@ bool rocketnet_public_link_simulator_development( void );
 #if defined(ROCKETNET_LINK_SIMULATOR_TEST_HOOKS)
 void rocketnet_public_link_simulator_test_development( int enabled );
 #endif
+
+// The development values: the published test packet filter
+// (ROCKETNET_TEST_FILTER_VALUE) and a connect token sealed to the published
+// development server key. A production library (ROCKETNET_DEV=0) refuses them:
+// the server and the client refuse the test filter at create with
+// ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION, and the client refuses
+// a development token at connect with
+// ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION. True when this library
+// refuses them: a production library always, a development library never,
+// and the unit suite's production-posture hook library only once the suite
+// has enabled it, so its other cases keep the default test filter.
+
+bool rocketnet_development_values_refused( void );
+
+#if ROCKETNET_TEST_SEAMS && !ROCKETNET_DEV
+void rocketnet_development_values_refused_test_enable( int enabled );
+#endif
+
+// True (and one error line naming side) when the library refuses the
+// development values and filter is the published test filter.
+
+bool rocketnet_config_packet_filter_refused( const char * side, const uint8_t * filter );
 
 // ----------------------------------------------------------------
 //                        the transport ladder
