@@ -222,8 +222,13 @@ stay in the completion queue for a later call and are counted
   will not grant the memory. Measured with
   `bash -c 'ulimit -l <KiB> && ./bin/transport_memory 1000 1416 16 io_uring 0'`:
   on kernel 7.0 the default 4 queues refuse at 512 KiB and create at 768 KiB;
-  on kernel 6.8 they create at 64 KiB. The usual default soft limit of
-  8192 KiB covers 32 queues on 7.0 (section 10).
+  on kernel 6.8 they create at 64 KiB. The charge is per user, not per
+  process: the kernel adds every io_uring ring of the same uid together and
+  checks the sum against the creating process's limit (Linux
+  `io_uring/rsrc.c`, `__io_account_mem`: the uid's `user->locked_vm` against
+  `RLIMIT_MEMLOCK`). Budget about 0.7 MiB
+  per server at the default 4 queues and about 2.4 MiB at 32 queues, times the
+  servers that uid runs at once (section 8).
 
 The create line is
 `io_uring transport: <n> queue reuseport group on port <p>, 4096 entry ring, 4096 receive buffers per queue`
@@ -394,8 +399,19 @@ under `ulimit -n 64`. A client opens one UDP socket and, on Linux, one eventfd
 
 **Locked memory.** `portable` and `gso` need no memlock headroom: the section
 10 commands create 1000-client servers of each under `ulimit -l 64`.
-`io_uring` needs some, kernel-dependent (section 5); keep `ulimit -l` at
-8192 KiB or more. `xdp` raises its own `RLIMIT_MEMLOCK` to unlimited at create and refuses with
+`io_uring` needs some, kernel-dependent (section 5). On kernel 7.0 one server
+takes about 0.7 MiB at 4 queues and 2.4 MiB at 32. The kernel counts it against
+the uid, summed over every process of that user. So size the limit for every
+io_uring server the account runs at once, plus margin, and not for one server.
+Check the limit on your own hosts rather than assuming a default. The Ubuntu
+26.04 benches (systemd 259) measured 8 MiB for a user manager and its units,
+which is about ten default servers per uid. The 24.04 benches (systemd 255)
+measured RAM/8. Never lower a limit that already works. For a systemd service, set `LimitMEMLOCK=` on the
+service (for example `LimitMEMLOCK=256M` in a drop-in, then restart it). For a
+user unit, set it on `user@<uid>.service` instead, since a user unit cannot
+raise its limit past the manager's. For a login shell, set `memlock` in
+`/etc/security/limits.d/`. Check the running value with
+`grep 'locked memory' /proc/<pid>/limits`. `xdp` raises its own `RLIMIT_MEMLOCK` to unlimited at create and refuses with
 `server could not setrlimit` if it cannot (`BUILDING.md:407-408`,
 `sdk/rocketnet_server_socket_linux.cpp:1605-1614`); as root on a host that
 succeeds.
