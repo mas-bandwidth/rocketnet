@@ -187,10 +187,9 @@ fi
 status=$?
 if grep -q 'REFUSAL on a clean run' "$WORK/handshake.txt"; then
     fail "soak 100 counted a refusal: $( grep -m1 'REFUSAL on a clean run' "$WORK/handshake.txt" )"
-elif ! grep -q '^soak finished: 100 iterations, 1 connects,' "$WORK/handshake.txt"; then
-    fail "soak 100 did not finish its first handshake before teardown: $( grep -m1 '^soak finished' "$WORK/handshake.txt" )"
-elif [ "$( grep -c '^soak: ' "$WORK/handshake.txt" )" -ne 1 ] || ! grep -q '^soak: insufficient coverage' "$WORK/handshake.txt"; then
-    fail "soak 100 failed for a reason other than its expected short coverage: $( grep '^soak: ' "$WORK/handshake.txt" | tr '\n' ' ' )"
+elif ! grep -q '^soak finished: 100 iterations, 1 connects, .* 1 failures$' "$WORK/handshake.txt" ||
+     ! grep -q '^soak: insufficient coverage' "$WORK/handshake.txt"; then
+    fail "soak 100 did not finish its first handshake with coverage its only failure: $( grep -m1 '^soak finished' "$WORK/handshake.txt" )"
 else
     echo "leg 5  soak 100: the handshake at the bound completed before teardown, no refusal, exit $status (coverage only)"
 fi
