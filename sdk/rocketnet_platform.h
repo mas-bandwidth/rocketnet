@@ -628,7 +628,7 @@ struct rocketnet_platform_wake_t;
  */
 struct rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, struct rocketnet_platform_socket_t * socket );
 /** @brief Allocator bytes reserved by one wake object; zero when wakes are unavailable. */
-uint64_t rocketnet_platform_wake_allocation_bytes();
+uint64_t rocketnet_platform_wake_allocation_bytes( void );
 /**
  * @brief Destroys a wake object and releases its native wake handle.
  *
