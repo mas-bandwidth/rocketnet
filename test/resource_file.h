@@ -20,9 +20,9 @@ inline std::wstring rocketnet_test_utf8_to_wide( const std::string & text )
     if ( text.empty() )
         return L"";
     const int length = MultiByteToWideChar( CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), (int) text.size(), NULL, 0 );
-    if ( length == 0 )
+    if ( length <= 0 )
         return L"";
-    std::wstring wide( length, L'\0' );
+    std::wstring wide( (size_t) length, L'\0' );
     if ( MultiByteToWideChar( CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), (int) text.size(), &wide[0], length ) != length )
         return L"";
     return wide;
@@ -31,9 +31,9 @@ inline std::wstring rocketnet_test_utf8_to_wide( const std::string & text )
 inline std::string rocketnet_test_wide_to_utf8( const wchar_t * text, int length )
 {
     const int bytes = WideCharToMultiByte( CP_UTF8, WC_ERR_INVALID_CHARS, text, length, NULL, 0, NULL, NULL );
-    if ( bytes == 0 )
+    if ( bytes <= 0 )
         return "";
-    std::string utf8( bytes, '\0' );
+    std::string utf8( (size_t) bytes, '\0' );
     if ( WideCharToMultiByte( CP_UTF8, WC_ERR_INVALID_CHARS, text, length, &utf8[0], bytes, NULL, NULL ) != bytes )
         return "";
     return utf8;

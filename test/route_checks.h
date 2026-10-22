@@ -35,7 +35,7 @@ struct route_fixture_t
     nlmsghdr header;
     rtmsg route;
     uint8_t attributes[128];
-    route_fixture_t(unsigned prefix = 0)
+    route_fixture_t(uint8_t prefix = 0)
     {
         memset(this, 0, sizeof(*this));
         header.nlmsg_len = NLMSG_LENGTH(sizeof(rtmsg));
@@ -45,10 +45,11 @@ struct route_fixture_t
         route.rtm_type = RTN_UNICAST;
         route.rtm_dst_len = prefix;
     }
-    void add(unsigned type, const void * value, unsigned bytes)
+    void add(unsigned short type, const void * value, unsigned bytes)
     {
+        CHECK(bytes <= sizeof(attributes));
         rtattr * attr = (rtattr*)((uint8_t*)this + NLMSG_ALIGN(header.nlmsg_len));
-        attr->rta_type = type; attr->rta_len = RTA_LENGTH(bytes);
+        attr->rta_type = type; attr->rta_len = (unsigned short) RTA_LENGTH(bytes);
         memcpy(RTA_DATA(attr), value, bytes);
         header.nlmsg_len = NLMSG_ALIGN(header.nlmsg_len) + RTA_ALIGN(attr->rta_len);
     }
