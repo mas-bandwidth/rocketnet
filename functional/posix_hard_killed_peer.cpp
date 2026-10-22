@@ -881,12 +881,21 @@ const char * rocketnet_posix_hard_killed_peer_test_name( int index )
 // they run as group 1, after every other case and the sibling executables
 // (group 0) have finished, never beside the loopback load those make; they
 // run in parallel with each other. the seam cases measure no time.
+//
+// the 1000-cycle connect/disconnect cases (functional/posix_lifecycle_stress.cpp)
+// hold 1024 IPv4 loopback ports while they cycle, and Darwin gives a
+// dual-stack IPv6 socket in another process a port one of them holds: that
+// socket then never hears IPv4 datagrams to it. Beside them,
+// test_transport_dual_stack_ipv4_client and test_server_serves_both_families
+// failed to connect. They run as group 2, alone, after group 1.
 
 int rocketnet_posix_hard_killed_peer_test_group( const char * name )
 {
     for ( size_t i = 0; i < 3; i++ )
         if ( strncmp( name, posix_hk_kinds[i], strlen( posix_hk_kinds[i] ) ) == 0 )
             return 1;
+    if ( strncmp( name, "test_posix_connect_disconnect_1000", strlen( "test_posix_connect_disconnect_1000" ) ) == 0 )
+        return 2;
     return 0;
 }
 

@@ -577,6 +577,10 @@ static void make_valid_token( uint8_t * token )
     signed_fields.ipv4_address[1] = 0;
     signed_fields.ipv4_address[2] = 0;
     signed_fields.ipv4_address[3] = 1;
+    // a real port, little-endian 40000: the client connects its socket to the
+    // server the token names, and darwin refuses a connect to port 0
+    signed_fields.ipv4_address[4] = 0x40;
+    signed_fields.ipv4_address[5] = 0x9c;
     // not the published development server key, which a production build
     // (ROCKETNET_DEV=0) refuses at connect
     memset( signed_fields.server_public_key, 0x43, 32 );
