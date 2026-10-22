@@ -1,6 +1,8 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Exercise the actual Darwin pump with controlled syscall refusal. Function
 // pointer substitution is confined to this executable; SDK sources are unchanged.
+// The msgx seam (the pause-expiry race hook) compiles only into this copy.
+#define ROCKETNET_MSGX_TEST_HOOKS 1
 #include "sdk/rocketnet_platform.cpp"
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,6 +54,9 @@ int main()
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
     CHECK(rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK);
     rocketnet_forbid_xdp_commit();
+    // The TX and RX workers share one msgx socket: a re-probe clears only the
+    // expired pause it read, so a fresh pause set by the other worker wins.
+    CHECK(rocketnet_msgx_test_pause_expiry_race());
     real_send = rocketnet_sendmsg_x; real_receive = rocketnet_recvmsg_x;
     CHECK(real_send && real_receive);
     rocketnet_address_t address;

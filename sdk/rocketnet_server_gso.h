@@ -18,10 +18,10 @@
 // per socket, the kernel's 4-tuple flow hash sharding RECEIVES across them
 // with zero shared state between queues, recvmmsg/sendmmsg batching on both
 // sides, UDP_SEGMENT (GSO) on send and UDP_GRO on receive so a batch
-// traverses the kernel's UDP path once instead of per packet. Transmit is
-// main-thread by the transport's phase contract, rotated across the group's
-// sockets for send-buffer headroom -- the xdp transport's per-queue sender
-// threads are deliberately not reproduced here.
+// traverses the kernel's UDP path once instead of per packet. A dedicated
+// transmit worker consumes owned packet banks and rotates batches across the
+// group's sockets. Caller/worker handoffs exchange only bank ownership under
+// short mutexes; batching, copying and socket calls stay outside the locks.
 //
 // Every kernel feature is probed at create and degrades gracefully: no
 // UDP_SEGMENT means plain sendmmsg batching, no UDP_GRO means plain recvmmsg,
@@ -131,10 +131,12 @@ void rocketnet_server_gso_counters( struct rocketnet_server_gso_t * gso, uint64_
 
 // send packets. the phase contract is the transport's: start, finish and
 // abort may run on any number of game threads strictly between one
-// send_packets call and the next; send_packets runs on the main thread and
-// flushes everything staged through sendmmsg, coalescing adjacent
-// same-destination equal-size runs into GSO super-datagrams where the probe
-// said yes. the frame handed back is a ROCKETNET_FRAME_STRIDE slot: wire
+// send_packets call and the next; send_packets try-publishes the main-owned
+// bank to a dedicated transmit worker. The worker coalesces same-destination
+// equal-size runs and sends outside the handoff lock. A full/contended FIFO
+// retains the producer for a later send/receive call; stop transfers the final
+// producer after earlier ready banks and completion waits for the worker.
+// The frame handed back is a ROCKETNET_FRAME_STRIDE slot: wire
 // bytes begin at ROCKETNET_FRAME_WIRE_OFFSET, exactly as the other transports.
 
 uint8_t * rocketnet_server_gso_start_packet( struct rocketnet_server_gso_t * gso, const struct rocketnet_address_t * to, uint64_t * packet_id );
@@ -145,10 +147,10 @@ void rocketnet_server_gso_abort_packet( struct rocketnet_server_gso_t * gso, uin
 
 void rocketnet_server_gso_send_packets( struct rocketnet_server_gso_t * gso );
 
-// receive packets: the workers stage into per-queue double buffers off the
-// main thread; receive_packets flips the buffers and gathers everything
-// staged since the last call; process_packets exposes the gathered batch,
-// valid until the next receive_packets call.
+// Receive workers stage into per-queue producer/ready/main banks off main.
+// receive_packets try-swaps ownership and gathers within the caller budget;
+// unconsumed tails stay main-owned until a later receive call. process_packets
+// exposes stable views valid until the next receive_packets call.
 
 void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso );
 
@@ -164,6 +166,8 @@ void rocketnet_server_gso_test_fail_receives( struct rocketnet_server_gso_t * gs
 void rocketnet_server_gso_test_fail_sends( struct rocketnet_server_gso_t * gso, int count, int error );
 // Observe publication without consuming it; returns false on lock contention.
 bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gso, int queue_index );
+// Deterministic ownership/full/contended/stop and retained-RX-tail regression.
+bool rocketnet_server_gso_test_worker_handoff();
 #endif
 
 #endif // #ifndef ROCKETNET_SERVER_GSO_H

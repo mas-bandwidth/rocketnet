@@ -17,6 +17,7 @@
 // Implemented only by the isolated test-instrumented RIO transport copy.
 bool rocketnet_server_rio_test_receive_overflow( uint64_t * counters, int * packet_counts,
                                                   int * repost_calls, int * pending_receives, int * guard_hit );
+bool rocketnet_server_rio_test_worker_handoff();
 
 static void test_rio_transport_overflow_seam()
 {
@@ -49,5 +50,14 @@ static void test_rio_transport_overflow_seam()
 }
 
 REGISTER_UNIT_TEST( test_rio_transport_overflow_seam );
+
+// The I/O worker's handoffs (tla/RNRioWorker.tla), stepped on this thread
+// with a fake kernel: no socket, no worker thread, no clock.
+static void test_rio_transport_worker_handoff()
+{
+    check( rocketnet_server_rio_test_worker_handoff() );
+}
+
+REGISTER_UNIT_TEST( test_rio_transport_worker_handoff );
 
 #endif
