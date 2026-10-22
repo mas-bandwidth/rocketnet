@@ -894,6 +894,15 @@ void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t * u
     uring->test_fail_sends = count > 0 ? count : 0;
 }
 
+// main thread only: true when no staged slot waits and no send is without
+// its CQE (RNUringDriver ResetIndex has run), so the send counters are final
+bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * uring )
+{
+    rocketnet_assert( uring );
+    return uring->sends_pending == 0 && uring->send_submitted == 0 &&
+           uring->send.num_packets.load( std::memory_order_relaxed ) == 0;
+}
+
 #endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 
 #if ROCKETNET_TEST_SEAMS
@@ -1704,6 +1713,7 @@ struct rocketnet_server_socket_process_packets_t * rocketnet_server_uring_proces
 #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 void rocketnet_server_uring_test_fail_receive( struct rocketnet_server_uring_t *, int, int ) {}
 void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t *, int ) {}
+bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * ) { return true; }
 #endif
 
 #if defined(ROCKETNET_URING_REAP_TEST_HOOKS)

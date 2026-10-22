@@ -1,5 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #include "../sdk/rocketnet_send_handoff.h"
+#include "../sdk/rocketnet_driver.h"
 #include "test_unit_registry.h"
 
 // the AF_XDP code is Linux only, so its tests are built there only
@@ -43,6 +44,29 @@ static void test_xdp_transport_send_staging_reflushes_without_commit()
     rocketnet_unit_check(rocketnet_server_transport_test_xdp_reflush() == 2);
 }
 REGISTER_UNIT_TEST(test_xdp_transport_send_staging_reflushes_without_commit);
+
+// gso retains its producer on a contended or full handoff and io_uring keeps
+// its index while sends wait for CQEs: the next send boundary retries both,
+// with no new commit, as it does for XDP. A synchronous staged transport
+// (iocp here) flushes only for a new commit.
+int rocketnet_server_transport_test_reflush( int transport_kind );
+static void test_gso_transport_send_packets_reflushes_without_commit()
+{
+    rocketnet_unit_check(rocketnet_server_transport_test_reflush(ROCKETNET_TRANSPORT_GSO) == 2);
+}
+REGISTER_UNIT_TEST(test_gso_transport_send_packets_reflushes_without_commit);
+
+static void test_io_uring_transport_send_packets_reflushes_without_commit()
+{
+    rocketnet_unit_check(rocketnet_server_transport_test_reflush(ROCKETNET_TRANSPORT_IO_URING) == 2);
+}
+REGISTER_UNIT_TEST(test_io_uring_transport_send_packets_reflushes_without_commit);
+
+static void test_staged_transport_send_packets_flushes_once_per_commit()
+{
+    rocketnet_unit_check(rocketnet_server_transport_test_reflush(ROCKETNET_TRANSPORT_IOCP) == 1);
+}
+REGISTER_UNIT_TEST(test_staged_transport_send_packets_flushes_once_per_commit);
 
 int rocketnet_server_transport_test_staged_simulator_flush();
 static void test_xdp_transport_send_packets_flushes_simulator_window()
