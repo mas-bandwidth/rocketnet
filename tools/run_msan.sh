@@ -27,14 +27,18 @@ cd "$(dirname "$0")/.."
 build_dir=build-msan
 msan_exitcode=86
 flags="-fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer"
-link_flags="-Wl,--allow-multiple-definition"
+link_flags="-fno-sanitize-link-c++-runtime"
 
 # The unit suite defines its own global operator new/delete (test_channels.cpp)
 # to arm the allocation-failure trap; the MSan C++ runtime ships replacements
-# too. Allow the duplicate so the instrumented in-tree operator wins; malloc is
-# still intercepted and poisoned by the MSan runtime, so shadow tracking holds.
-# The flag is a linker input, so it goes on the executable link line only: on a
-# compile line clang reports it unused, and the tree's -Werror fails the build.
+# too. Leave the MSan C++ runtime off the link so the instrumented in-tree
+# operator is the only one; it calls malloc, which the MSan runtime still
+# intercepts and poisons, so shadow tracking holds. Allowing the duplicate
+# instead is not enough: the driver puts the sanitizer runtime ahead of the
+# suite's objects, so its operator new wins and the trap never fires
+# (test_channels_allocator_trap_witness fails). The flag belongs to the link
+# step, so it goes on the executable link line only: on a compile line clang
+# reports it unused, and the tree's -Werror fails the build.
 abs_build="$PWD/$build_dir"
 if [ -n "${RUN_MSAN_TEST_BIN:-}" ]; then
     test_bin=$RUN_MSAN_TEST_BIN
