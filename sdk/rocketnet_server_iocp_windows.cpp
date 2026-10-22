@@ -594,7 +594,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     BOOL enabled = TRUE;
     DWORD v6_only = FALSE;
 
-    iocp->workers = (rocketnet_iocp_worker_t*) rocketnet_malloc( context, sizeof(rocketnet_iocp_worker_t) * num_workers );
+    iocp->workers = (rocketnet_iocp_worker_t*) rocketnet_malloc( context, sizeof(rocketnet_iocp_worker_t) * (size_t) num_workers );
     if ( !iocp->workers ) goto failed;
     for ( int i = 0; i < num_workers; ++i )
     {
@@ -612,7 +612,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
         op->send = true;
         InterlockedPushEntrySList( &iocp->free_sends, &op->free_entry );
     }
-    iocp->receives = (rocketnet_iocp_operation_t*) rocketnet_malloc( context, sizeof(rocketnet_iocp_operation_t) * num_workers * ROCKETNET_IOCP_RECEIVES_PER_WORKER );
+    iocp->receives = (rocketnet_iocp_operation_t*) rocketnet_malloc( context, sizeof(rocketnet_iocp_operation_t) * (size_t) num_workers * ROCKETNET_IOCP_RECEIVES_PER_WORKER );
     if ( !iocp->receives ) goto failed;
     for ( int i = 0; i < num_workers * ROCKETNET_IOCP_RECEIVES_PER_WORKER; ++i ) new (&iocp->receives[i]) rocketnet_iocp_operation_t();
 
