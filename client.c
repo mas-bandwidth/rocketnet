@@ -940,7 +940,7 @@ static void run_matrix( opts_t * o )
         sample_counters( &st, client, rocketnet_time() - st.run_start );
 
         /* Every in-process cycle uses orderly request/completion shutdown.
-           Silent server loss needs a separate process-kill experiment. */
+           Silent client loss needs a separate process-kill experiment. */
         const int ended = !aborted ? rocketnet_client_state( client ) : ROCKETNET_CLIENT_STATE_CONNECTED;
         if ( !aborted && ended < 0 )
         {
