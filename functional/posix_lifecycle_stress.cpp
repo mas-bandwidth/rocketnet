@@ -201,12 +201,47 @@ static posix_resource_counts_t posix_read_counts()
     return counts;
 }
 
+// ThreadSanitizer starts one background thread of its own (__tsan::BackgroundThread,
+// libsanitizer tsan_rtl.cpp) at the process's first pthread_create and never
+// stops it. When the first thread a case creates is a transport's worker (the
+// portable server's TX worker), that runtime thread appears inside the cycle
+// and reads as a leak (threads 1 -> 2, the TSan CI leg only; the same case
+// passes in a plain build). Create and join one thread before the first
+// baseline in a TSan build, so the runtime's thread is in every before count.
+// A transport thread that is really left behind still moves the count.
+#if defined(__SANITIZE_THREAD__)
+#define POSIX_THREAD_SANITIZER 1
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define POSIX_THREAD_SANITIZER 1
+#endif
+#endif
+
+static void posix_sanitizer_threads_start()
+{
+#if defined(POSIX_THREAD_SANITIZER)
+    static bool started = false;
+    if ( started )
+        return;
+    const int threads_before = posix_threads();
+    std::thread thread( [] {} );
+    thread.join();
+    started = true;
+    // the joined thread leaves the task list only when the kernel reaps it
+    // (see posix_settled_counts): wait until the list holds the threads from
+    // before plus at most the runtime's one, so no baseline counts it
+    for ( int attempt = 0; attempt < 10000 && posix_threads() > threads_before + 1; attempt++ )
+        rocketnet_platform_sleep( 0.001 );
+#endif
+}
+
 // The receive and I/O threads are joined inside destroy, so the count settles
 // as soon as the last destroy returns. Give the kernel a short window to reap
 // a thread it has already been told to join, then compare two equal reads: a
 // real leak is stable at the higher count and still fails.
 static posix_resource_counts_t posix_stable_counts()
 {
+    posix_sanitizer_threads_start();
     posix_resource_counts_t previous = posix_read_counts();
     for ( int attempt = 0; attempt < 200; attempt++ )
     {
