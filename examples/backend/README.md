@@ -36,8 +36,48 @@ C# client API.
 
 ## Running the server, a backend and a client
 
-Build as usual from the repository root, then run three programs in three
-terminals: the server, a backend, the client.
+Generate a backend signing keypair with either backend. From the repository
+root, choose Go:
+
+```sh
+umask 077
+(cd examples/backend/go && go run . --keygen) > backend-keys.env
+```
+
+or C#:
+
+```sh
+(cd examples/backend/csharp && dotnet build Backend)
+umask 077
+(cd examples/backend/csharp && dotnet run --no-build --project Backend -- --keygen) > backend-keys.env
+```
+
+Both commands print the same two environment assignments:
+`ROCKETNET_SERVER_BACKEND_PUBLIC_KEY` (32-byte Ed25519 public key) and
+`ROCKETNET_BACKEND_PRIVATE_KEY` (64-byte Ed25519 secret key), encoded as base64.
+They need no server configuration and do not start the backend. Keep the
+private key with the backend; give servers only the public key. The generated
+file contains the private key and must stay out of source control.
+
+For the local walkthrough, load the assignments in each terminal:
+
+```sh
+set -a
+. ./backend-keys.env
+set +a
+```
+
+Build the portable backend examples against the production library:
+
+```sh
+cmake -S . -B build-production -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=OFF
+cmake --build build-production --target example_backend_server example_backend_client backend_check_token
+```
+
+Then run three programs in three terminals: the server, a backend, the client.
+The backend examples link the selected `rocketnet` build, so `ROCKETNET_DEV=OFF`
+uses the production library. Other examples that mint development tokens
+continue to use the development library.
 
 1. The server. It makes its own keypair when it starts, and prints the address
    and public key the backend needs, also writing them to `backend.env`:
@@ -78,7 +118,7 @@ server prints the message with the client id the token carried (`2a`), and
 exits once its client has gone. A token lives 30 seconds, so fetch it just
 before connecting.
 
-To hit the backend with a test request:
+To make a request to the backend:
 
 ```sh
 CLIENT_ID=42 && curl http://localhost:8080/match/${CLIENT_ID}
@@ -93,7 +133,7 @@ repository.
 
 | Variable | Meaning | Default |
 | --- | --- | --- |
-| `ROCKETNET_BACKEND_PRIVATE_KEY` | The backend's 64-byte Ed25519 secret key, base64, as `keygen` prints it. Give each server the matching public key (`ROCKETNET_SERVER_BACKEND_PUBLIC_KEY`). | the published development key, **development only** |
+| `ROCKETNET_BACKEND_PRIVATE_KEY` | The backend's 64-byte Ed25519 secret key, base64, as either backend's `--keygen` command prints it. Give each server the matching public key (`ROCKETNET_SERVER_BACKEND_PUBLIC_KEY`). | the published development key, **development only** |
 | `ROCKETNET_BACKEND_SERVER_PUBLIC_KEY` | The server's 32-byte public key, base64 (`rocketnet_server_public_key`). | none: required |
 | `ROCKETNET_BACKEND_SERVER_ADDRESSES` | The server's address, `a.b.c.d:port`, `[ipv6]:port`, or one of each separated by a comma. | `127.0.0.1:40000` |
 | `ROCKETNET_BACKEND_PROTOCOL_ID` | The game's protocol id, `0x` hex or decimal; the server's must match. | `0x52434b544e455431`, the examples' id |
@@ -105,10 +145,11 @@ With no `ROCKETNET_BACKEND_PRIVATE_KEY` the backend uses the published
 development backend key and says so when it starts. Both halves of that key are
 printed in the standard, so ANYONE can mint tokens a server using it accepts.
 It is for local runs only, and a release library refuses it at server start.
-To deploy, run `./bin/keygen`, give the backend the private key and every
-server the public key, and keep the private key out of source control.
+To deploy, use either backend's `--keygen` command (or `./bin/keygen`), give
+the backend the private key and every server the public key, and keep the
+private key out of source control.
 
-## Tests
+## Unit and functional tests
 
 The unit tests use no sockets and no real time; the token's create time is an
 argument. They mint every token in the C library's own known answers,
@@ -122,11 +163,17 @@ cd examples/backend/go && go test ./...
 cd examples/backend/csharp && dotnet run --project Tests
 ```
 
-The functional run builds both backends and, for each, has the C library check
-a minted token (`backend_check_token`: the signature, the sealed block, the
-inner fields, and the client's pre-send checks), then runs server, backend and
-client end to end over loopback:
+The functional test builds both backends and runs them in turn. Each backend's
+own `--keygen` command generates fresh keys. The harness passes the public key
+to the server and the private key to that backend through the environment.
+The C library first checks a minted token (`backend_check_token`: signature,
+sealed block, inner fields and client pre-send checks). Then the backend
+serves a token over HTTP and a portable client connects to the portable
+server, sends a message, receives its echo and disconnects. `--production`
+requires both endpoints to report production mode and portable transport;
+a development build cannot pass that functional test. Private keys are not
+written to the functional-test receipt.
 
 ```sh
-python3 tools/run_backend_examples.py --build build
+python3 tools/run_backend_examples.py --build build-production --production
 ```

@@ -68,6 +68,7 @@ int main( int argc, char ** argv )
     client = rocketnet_client_create( NULL, &config, &create_status );
     if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     CHECK( client != NULL );
+    printf( "backend_client: mode=%s transport=%s\n", ROCKETNET_DEV ? "development" : "production", rocketnet_client_transport_name( client ) );
 
     // connect checks the token before the first packet: a string that does
     // not parse, or one already expired, is refused here

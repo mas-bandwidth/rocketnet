@@ -229,10 +229,24 @@ static class Tests
         }
     }
 
+    static void test_keygen_matches_signing_vector()
+    {
+        JsonElement vector = LoadVectors()[0];
+        byte[] seed = Unhex( vector, "backend_signing_seed", 32 );
+        var expected = PublicKeyAuth.GenerateKeyPair( seed );
+        using StringWriter output = new StringWriter();
+        BackendKeys.Write( output, buffer => seed.CopyTo( buffer, 0 ) );
+        string[] lines = output.ToString().Split( '\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries );
+        Check( lines.Length == 2, "keygen emits two environment assignments" );
+        Check( lines[0] == "ROCKETNET_SERVER_BACKEND_PUBLIC_KEY=" + Convert.ToBase64String( expected.PublicKey ), "keygen public key" );
+        Check( lines[1] == "ROCKETNET_BACKEND_PRIVATE_KEY=" + Convert.ToBase64String( expected.PrivateKey ), "keygen expanded 64-byte private key" );
+    }
+
     static int Main()
     {
         (string, Action)[] tests =
         {
+            ( nameof( test_keygen_matches_signing_vector ), test_keygen_matches_signing_vector ),
             ( nameof( test_connect_token_vectors ), test_connect_token_vectors ),
             ( nameof( test_server_addresses_match_vectors ), test_server_addresses_match_vectors ),
             ( nameof( test_server_addresses_refused ), test_server_addresses_refused ),

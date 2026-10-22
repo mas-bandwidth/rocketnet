@@ -25,6 +25,18 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using RocketNet.Backend;
 
+// Key generation needs no server configuration and starts no HTTP listener.
+if ( args.Length == 1 && args[0] == "--keygen" )
+{
+    BackendKeys.Write( Console.Out, buffer => RandomNumberGenerator.Fill( buffer ) );
+    return 0;
+}
+if ( args.Length != 0 && !( args.Length == 2 && args[0] == "--mint" ) )
+{
+    Console.Error.WriteLine( "usage: rocketnet-backend [--keygen | --mint <client id>]" );
+    return 1;
+}
+
 BackendConfig config;
 try
 {
@@ -57,7 +69,7 @@ if ( args.Length == 2 && args[0] == "--mint" )
 }
 if ( args.Length != 0 )
 {
-    Console.Error.WriteLine( "usage: rocketnet-backend [--mint <client id>]" );
+    Console.Error.WriteLine( "usage: rocketnet-backend [--keygen | --mint <client id>]" );
     return 1;
 }
 

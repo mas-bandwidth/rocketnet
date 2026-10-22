@@ -323,9 +323,38 @@ func matchHandler(config *config) http.HandlerFunc {
 	}
 }
 
+// writeBackendKeys emits the environment used by the backend and its servers.
+// The caller supplies entropy so the unit fixture can use a known signing seed.
+func writeBackendKeys(output io.Writer, random io.Reader) error {
+	publicKey, privateKey, err := ed25519.GenerateKey(random)
+	if err != nil {
+		return err
+	}
+	defer clear(privateKey)
+	_, err = fmt.Fprintf(output, "ROCKETNET_SERVER_BACKEND_PUBLIC_KEY=%s\nROCKETNET_BACKEND_PRIVATE_KEY=%s\n",
+		base64.StdEncoding.EncodeToString(publicKey), base64.StdEncoding.EncodeToString(privateKey))
+	return err
+}
+
 func main() {
 	mint := flag.String("mint", "", "print one connect token for this client id and exit, instead of serving")
+	keygen := flag.Bool("keygen", false, "print a fresh backend signing keypair as environment assignments and exit")
 	flag.Parse()
+	mintSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "mint" {
+			mintSet = true
+		}
+	})
+	if flag.NArg() != 0 || (*keygen && mintSet) {
+		stderrLogger.Fatal("usage: rocketnet-backend [--keygen | --mint <client id>]")
+	}
+	if *keygen {
+		if err := writeBackendKeys(os.Stdout, rand.Reader); err != nil {
+			stderrLogger.Fatalf("key generation failed: %v", err)
+		}
+		return
+	}
 
 	config, err := readConfig(os.Getenv)
 	if err != nil {
