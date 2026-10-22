@@ -750,7 +750,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     gso->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
     gso->packet_id = 1;
 
-    gso->queues = (struct rocketnet_server_gso_queue_t*) rocketnet_malloc( context, sizeof(struct rocketnet_server_gso_queue_t) * num_queues );
+    gso->queues = (struct rocketnet_server_gso_queue_t*) rocketnet_malloc( context, sizeof(struct rocketnet_server_gso_queue_t) * (size_t) num_queues );
     if ( !gso->queues )
     {
         gso->~rocketnet_server_gso_t();

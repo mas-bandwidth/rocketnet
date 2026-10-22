@@ -172,6 +172,14 @@ struct rocketnet_frame_sync_t;
 struct rocketnet_counters_t;            // read through rocketnet_counter_value
 struct rocketnet_packet_context_t;      // defined below, with the send surface
 
+// printf format checking for the log functions below: every call's format
+// and arguments are checked by GCC and Clang at the call site.
+#if defined( __GNUC__ ) || defined( __clang__ )
+#define ROCKETNET_PRINTF_FORMAT( format_index, first_argument ) __attribute__(( format( printf, format_index, first_argument ) ))
+#else
+#define ROCKETNET_PRINTF_FORMAT( format_index, first_argument )
+#endif
+
 /**
  * @brief Formats and emits a message at the supplied log level.
  *
@@ -182,22 +190,22 @@ struct rocketnet_packet_context_t;      // defined below, with the send surface
  * @param format NUL-terminated printf format; NULL is a counted no-op.
  * The remaining arguments must match the conversion specifiers in format.
  */
-void rocketnet_printf( int level, const char * format, ... );
+ROCKETNET_PRINTF_FORMAT( 2, 3 ) void rocketnet_printf( int level, const char * format, ... );
 
 /** @brief Emits a message at ROCKETNET_LOG_LEVEL_INFO. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
-void rocketnet_info( const char * format, ... );
+ROCKETNET_PRINTF_FORMAT( 1, 2 ) void rocketnet_info( const char * format, ... );
 
 /** @brief Emits a message at ROCKETNET_LOG_LEVEL_WARN. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
-void rocketnet_warn( const char * format, ... );
+ROCKETNET_PRINTF_FORMAT( 1, 2 ) void rocketnet_warn( const char * format, ... );
 
 /** @brief Emits a message at ROCKETNET_LOG_LEVEL_ERROR. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
-void rocketnet_error( const char * format, ... );
+ROCKETNET_PRINTF_FORMAT( 1, 2 ) void rocketnet_error( const char * format, ... );
 
 /** @brief Emits a message at ROCKETNET_LOG_LEVEL_DEBUG. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
-void rocketnet_debug( const char * format, ... );
+ROCKETNET_PRINTF_FORMAT( 1, 2 ) void rocketnet_debug( const char * format, ... );
 
 /** @brief Emits a message at ROCKETNET_LOG_LEVEL_SPAM. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
-void rocketnet_spam( const char * format, ... );
+ROCKETNET_PRINTF_FORMAT( 1, 2 ) void rocketnet_spam( const char * format, ... );
 
 /** @brief Formats a user identifier as lowercase hexadecimal. @param user_id Identifier to format. @param buffer Caller-owned output buffer; NULL is a counted no-op returning NULL. @param buffer_size Buffer capacity in bytes; zero writes no bytes. @return buffer, or NULL when buffer is NULL. A nonempty buffer is NUL-terminated and may contain a truncated string. */
 const char * rocketnet_user_id_string( uint64_t user_id, char * buffer, size_t buffer_size );

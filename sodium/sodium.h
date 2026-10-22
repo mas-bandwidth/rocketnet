@@ -1554,7 +1554,8 @@ xor_buf(unsigned char *out, const unsigned char *in, size_t n)
 
 #if defined(__clang__) || defined(__GNUC__)
 # if defined(__x86_64__) || defined(__amd64__) || defined(__i386__) || \
-     NETCODE_X64 || NETCODE_AVX || NETCODE_AVX2
+     (defined(NETCODE_X64) && NETCODE_X64) || (defined(NETCODE_AVX) && NETCODE_AVX) || \
+     (defined(NETCODE_AVX2) && NETCODE_AVX2)
 #  define HAVE_MMINTRIN_H   1
 #  define HAVE_EMMINTRIN_H  1   /* SSE2   */
 #  define HAVE_PMMINTRIN_H  1   /* SSE3   */
@@ -1585,10 +1586,10 @@ xor_buf(unsigned char *out, const unsigned char *in, size_t n)
 /* MSVC has no per-function target pragma, so AVX/AVX2 codegen requires the
    matching /arch: switch (which predefines __AVX__ / __AVX2__). Honor that, and
    still allow an explicit NETCODE_AVX/NETCODE_AVX2 override. */
-# if defined(__AVX__) || NETCODE_AVX || NETCODE_AVX2
+# if defined(__AVX__) || (defined(NETCODE_AVX) && NETCODE_AVX) || (defined(NETCODE_AVX2) && NETCODE_AVX2)
 #  define HAVE_AVXINTRIN_H 1
 # endif
-# if (defined(__AVX2__) || NETCODE_AVX2) && _MSC_VER >= 1700 && defined(_M_X64)
+# if (defined(__AVX2__) || (defined(NETCODE_AVX2) && NETCODE_AVX2)) && _MSC_VER >= 1700 && defined(_M_X64)
 #  define HAVE_AVX2INTRIN_H 1
 # endif
 

@@ -189,7 +189,7 @@ static void test_ack_record_sent_refuses_stale_and_nonfinite()
         const uint64_t highest_before = fresh->highest_sequence;
         const sent_snapshot_t before = sent_snapshot( fresh, ( 2 * N + 1 ) % N );
         rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified(
-            fresh, 2 * N + 1, 100, 0, 0, 0, NAN ) == ROCKETNET_ACK_SENT_REFUSED_STALE );
+            fresh, 2 * N + 1, 100, 0, 0, 0, (double) NAN ) == ROCKETNET_ACK_SENT_REFUSED_STALE );
         rocketnet_unit_check( fresh->highest_sequence == highest_before );
         rocketnet_unit_check( sent_snapshot_equal( before, sent_snapshot( fresh, ( 2 * N + 1 ) % N ) ) );
     }
@@ -197,7 +197,7 @@ static void test_ack_record_sent_refuses_stale_and_nonfinite()
         const uint64_t highest_before = fresh->highest_sequence;
         const sent_snapshot_t before = sent_snapshot( fresh, ( 2 * N + 2 ) % N );
         rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified(
-            fresh, 2 * N + 2, 100, 0, 0, 0, INFINITY ) == ROCKETNET_ACK_SENT_REFUSED_STALE );
+            fresh, 2 * N + 2, 100, 0, 0, 0, (double) INFINITY ) == ROCKETNET_ACK_SENT_REFUSED_STALE );
         rocketnet_unit_check( fresh->highest_sequence == highest_before );
         rocketnet_unit_check( sent_snapshot_equal( before, sent_snapshot( fresh, ( 2 * N + 2 ) % N ) ) );
     }

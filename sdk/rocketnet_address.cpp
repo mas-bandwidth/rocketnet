@@ -283,8 +283,8 @@ void rocketnet_address_convert_ipv4_to_ipv6( struct rocketnet_address_t * addres
     address->data.ipv6[3] = 0x0000;
     address->data.ipv6[4] = 0x0000;
     address->data.ipv6[5] = 0xFFFF;
-    address->data.ipv6[6] = ( uint16_t(a) << 8 ) | uint16_t(b);
-    address->data.ipv6[7] = ( uint16_t(c) << 8 ) | uint16_t(d);
+    address->data.ipv6[6] = (uint16_t) ( ( uint16_t(a) << 8 ) | uint16_t(b) );
+    address->data.ipv6[7] = (uint16_t) ( ( uint16_t(c) << 8 ) | uint16_t(d) );
 }
 
 void rocketnet_address_convert_ipv6_to_ipv4( struct rocketnet_address_t * address )
@@ -292,10 +292,10 @@ void rocketnet_address_convert_ipv6_to_ipv4( struct rocketnet_address_t * addres
     // IMPORTANT: this function is *only* for converting ipv4 mapped addresses in ipv6 back to native ipv4
     rocketnet_assert( address );
     rocketnet_assert( rocketnet_address_is_ipv4_in_ipv6( address ) );
-    const uint8_t a = ( address->data.ipv6[6] & 0xFF00 ) >> 8;
-    const uint8_t b = ( address->data.ipv6[6] & 0x00FF );
-    const uint8_t c = ( address->data.ipv6[7] & 0xFF00 ) >> 8;
-    const uint8_t d = ( address->data.ipv6[7] & 0x00FF );
+    const uint8_t a = (uint8_t) ( ( address->data.ipv6[6] & 0xFF00 ) >> 8 );
+    const uint8_t b = (uint8_t) ( address->data.ipv6[6] & 0x00FF );
+    const uint8_t c = (uint8_t) ( ( address->data.ipv6[7] & 0xFF00 ) >> 8 );
+    const uint8_t d = (uint8_t) ( address->data.ipv6[7] & 0x00FF );
     address->type = ROCKETNET_ADDRESS_IPV4;
     address->data.ipv4[0] = a;
     address->data.ipv4[1] = b;

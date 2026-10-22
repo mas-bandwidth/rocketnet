@@ -481,7 +481,7 @@ static void sequence_burn_print( const char * name, const struct sequence_burn_m
             (unsigned long long) m->ack_batch_full, (unsigned long long) m->history_lost,
             (unsigned long long) m->receiver_already, (unsigned long long) m->receiver_did_not_open,
             (unsigned long long) m->receiver_delivered,
-            m->client_rtt, m->server_rtt, m->client_loss, m->server_loss );
+            (double) m->client_rtt, (double) m->server_rtt, (double) m->client_loss, (double) m->server_loss );
 }
 
 static void sequence_burn_compare( int side, int kind, const char * name )
@@ -575,7 +575,7 @@ static void test_sequence_burn_server_finish_populates_sequence()
         uint8_t * frame = rocketnet_server_transport_start_packet( pair.server, 0, requests[i], &context );
         rocketnet_unit_check( frame != NULL );
         rocketnet_unit_check( context.sequence == 0 );
-        memset( frame + context.payload_index, 0xB0, sizes[i] );
+        memset( frame + context.payload_index, 0xB0, (size_t) sizes[i] );
         rocketnet_unit_check( rocketnet_server_transport_finish_packet( pair.server, &context, sizes[i] ) > 0 );
         rocketnet_unit_check( context.sequence > previous_sequence );
         previous_sequence = context.sequence;

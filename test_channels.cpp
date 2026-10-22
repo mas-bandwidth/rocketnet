@@ -150,7 +150,7 @@ static void channels_check_vector( const uint8_t * expected, int expected_bytes,
     channels_check( channels_parse_all( exact.data(), expected_bytes, limits, parsed ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
     channels_check( (int) parsed.size() == num_records );
     for ( int i = 0; i < num_records; i++ )
-        channels_check( channels_record_equal( parsed[i], records[i] ) );
+        channels_check( channels_record_equal( parsed[(size_t) i], records[i] ) );
 }
 
 static void channels_test_vectors()
@@ -716,8 +716,8 @@ static void channels_test_round_trip_and_never_overreads()
         for ( int m = 0; m < mutations; m++ )
         {
             const int position = length <= 48 ? m : channels_random_range( &random, 0, length - 1 );
-            const uint8_t original = mutated[position];
-            mutated[position] = (uint8_t) ( original ^ (uint8_t) channels_random_range( &random, 1, 255 ) );
+            const uint8_t original = mutated[(size_t) position];
+            mutated[(size_t) position] = (uint8_t) ( original ^ (uint8_t) channels_random_range( &random, 1, 255 ) );
             std::vector<rocketnet_message_record_t> result;
             const int violation = channels_parse_with_tails( mutated.data(), length, &limits, result );
             channels_check( violation >= ROCKETNET_MESSAGE_VIOLATION_NONE && violation < ROCKETNET_MESSAGE_NUM_VIOLATIONS );
@@ -732,10 +732,10 @@ static void channels_test_round_trip_and_never_overreads()
             if ( violation == ROCKETNET_MESSAGE_VIOLATION_NONE )
             {
                 channels_check_records_inside( mutated.data(), length, result );
-                channels_check_repack( mutated.data(), length, result, mutated[length - 1] );
+                channels_check_repack( mutated.data(), length, result, mutated[(size_t) ( length - 1 )] );
                 mutations_parsed++;
             }
-            mutated[position] = original;
+            mutated[(size_t) position] = original;
         }
     }
 
@@ -1255,7 +1255,7 @@ static void test_channels_allocator_send_store()
             uint8_t * data = rn_send_store_chunk_data( &store, handles[c][i] );
             check( data >= memory && data + class_bytes[c] <= memory + layout.bytes[RN_PART_SEND_STORE] );
             check( ( (uintptr_t) data & 15 ) == 0 );
-            memset( data, (int) ( c * 64 + ( i & 63 ) ), (size_t) class_bytes[c] );
+            memset( data, (int) ( (uint32_t) c * 64 + ( i & 63 ) ), (size_t) class_bytes[c] );
         }
         check( rn_send_store_free_chunks( &store, c ) == 0 );
         check( rn_send_store_alloc( &store, class_bytes[c] ) == RN_CHUNK_NONE );
@@ -1272,7 +1272,7 @@ static void test_channels_allocator_send_store()
         {
             const uint8_t * data = rn_send_store_chunk_data( &store, handles[c][i] );
             for ( int b = 0; b < class_bytes[c]; b++ )
-                check( data[b] == (uint8_t) ( c * 64 + ( i & 63 ) ) );
+                check( data[b] == (uint8_t) ( (uint32_t) c * 64 + ( i & 63 ) ) );
         }
 
     // free in random order, refill, and the counts hold at every step
@@ -3764,7 +3764,7 @@ static void test_channels_window_lossy_soak_leg( float loss_percent )
         {
             // Piggyback an unknown transport sequence (keep-alive) on every 5th ACK frame.
             if ( ( tick % 5 == 0 ) && ack_out_count < 64 )
-                ack_out[ack_out_count++] = 0x10000000ULL + (uint64_t) tick;
+                ack_out[ack_out_count++] = 0x10000000 + (uint64_t) tick;
 
             uint8_t ack_frame[4 + 64 * 8];
             uint8_t * p = ack_frame;

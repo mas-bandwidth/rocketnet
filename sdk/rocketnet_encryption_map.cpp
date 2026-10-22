@@ -128,7 +128,7 @@ static int rocketnet_encryption_map_bucket( const struct rocketnet_encryption_ma
     rocketnet_assert( address_bytes_length > 0 );
 
     uint8_t hash[crypto_shorthash_BYTES];
-    crypto_shorthash( hash, address_bytes, (size_t) address_bytes_length, map->hash_key );
+    crypto_shorthash( hash, address_bytes, (unsigned long long) address_bytes_length, map->hash_key );
     uint64_t value;
     memcpy( &value, hash, 8 );
     return (int) ( value % (uint64_t) map->num_buckets );

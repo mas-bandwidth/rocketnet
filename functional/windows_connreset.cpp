@@ -33,6 +33,7 @@
 #include <windows.h>
 
 #define WINDOWS_CONNRESET_CHILD_ENV "ROCKETNET_CONNRESET_CHILD_SERVER"
+#define WINDOWS_CONNRESET_PARENT_ENV "ROCKETNET_CONNRESET_PARENT_SERVER"
 #define WINDOWS_CONNRESET_TICK ( 1.0 / 60.0 )
 #define WINDOWS_CONNRESET_GAP_BOUND ( WINDOWS_CONNRESET_TICK + 0.050 )
 #define WINDOWS_CONNRESET_LIVE_CLIENTS 3
@@ -138,7 +139,9 @@ struct windows_connreset_child_t
     HANDLE process;
 };
 
-static void windows_connreset_child_start( windows_connreset_child_t * child, const char * server_address )
+// after_create, when set, runs the moment CreateProcessW returns: the
+// child-dies-with-its-parent case ends the parent there
+static void windows_connreset_child_start( windows_connreset_child_t * child, const char * server_address, void ( *after_create )( DWORD child_id ) = NULL )
 {
     child->job = CreateJobObjectW( NULL, NULL );
     windows_connreset_require( child->job != NULL );
@@ -153,17 +156,30 @@ static void windows_connreset_child_start( windows_connreset_child_t * child, co
     wchar_t command[MAX_PATH + 64];
     _snwprintf_s( command, MAX_PATH + 64, _TRUNCATE, L"\"%s\" --run test_windows_connreset_child_client", path );
 
+    // the child is created inside the job (PROC_THREAD_ATTRIBUTE_JOB_LIST), so
+    // there is no moment it exists outside it: created suspended and assigned
+    // afterwards, a parent ended in between left it suspended forever
+    SIZE_T attribute_bytes = 0;
+    InitializeProcThreadAttributeList( NULL, 1, 0, &attribute_bytes );
+    windows_connreset_require( attribute_bytes > 0 && attribute_bytes <= 256 );
+    alignas( 16 ) uint8_t attribute_storage[256];
+    LPPROC_THREAD_ATTRIBUTE_LIST attributes = (LPPROC_THREAD_ATTRIBUTE_LIST) attribute_storage;
+    windows_connreset_require( InitializeProcThreadAttributeList( attributes, 1, 0, &attribute_bytes ) );
+    windows_connreset_require( UpdateProcThreadAttribute( attributes, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST, &child->job, sizeof( child->job ), NULL, NULL ) );
+
     windows_connreset_require( _putenv_s( WINDOWS_CONNRESET_CHILD_ENV, server_address ) == 0 );
-    STARTUPINFOW startup;
+    STARTUPINFOEXW startup;
     memset( &startup, 0, sizeof( startup ) );
-    startup.cb = sizeof( startup );
+    startup.StartupInfo.cb = sizeof( startup );
+    startup.lpAttributeList = attributes;
     PROCESS_INFORMATION info;
     memset( &info, 0, sizeof( info ) );
-    const BOOL created = CreateProcessW( path, command, NULL, NULL, FALSE, CREATE_NO_WINDOW | CREATE_SUSPENDED, NULL, NULL, &startup, &info );
+    const BOOL created = CreateProcessW( path, command, NULL, NULL, FALSE, CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT, NULL, NULL, &startup.StartupInfo, &info );
     _putenv_s( WINDOWS_CONNRESET_CHILD_ENV, "" );
+    DeleteProcThreadAttributeList( attributes );
     windows_connreset_require( created );
-    windows_connreset_require( AssignProcessToJobObject( child->job, info.hProcess ) );
-    ResumeThread( info.hThread );
+    if ( after_create )
+        after_create( info.dwProcessId );
     CloseHandle( info.hThread );
     child->process = info.hProcess;
 }
@@ -196,6 +212,105 @@ void windows_connreset_child_client()
         rocketnet_platform_sleep( WINDOWS_CONNRESET_TICK );
     }
     rn_native_client_transport_stop_and_destroy( client );
+}
+
+// the parent in the child-dies-with-its-parent case: starts a child client,
+// prints its process id and ends itself the moment the child exists, as the
+// suite runner ends a case it stops. Without the case's environment it
+// returns at once.
+static void windows_connreset_parent_ends( DWORD child_id )
+{
+    printf( "windows_connreset_child_id %lu\n", (unsigned long) child_id );
+    fflush( stdout );
+    TerminateProcess( GetCurrentProcess(), 0 );
+}
+
+void windows_connreset_child_parent()
+{
+    char server_address[256];
+    if ( !rocketnet_test_getenv( WINDOWS_CONNRESET_PARENT_ENV, server_address, sizeof( server_address ) ) || server_address[0] == '\0' )
+        return;
+    windows_connreset_child_t child;
+    windows_connreset_child_start( &child, server_address, windows_connreset_parent_ends );
+}
+
+// opens process id only while it is still this executable: an id is reused
+// once its process is gone, so the image is named before acting on it
+static HANDLE windows_connreset_open_own_image( DWORD id, const wchar_t * path )
+{
+    HANDLE process = OpenProcess( SYNCHRONIZE | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, id );
+    if ( process == NULL )
+        return NULL;
+    wchar_t image[MAX_PATH];
+    DWORD length = MAX_PATH;
+    if ( !QueryFullProcessImageNameW( process, 0, image, &length ) || _wcsicmp( image, path ) != 0 )
+    {
+        CloseHandle( process );
+        return NULL;
+    }
+    return process;
+}
+
+// a parent ended before it can clean up takes its child client with it: the
+// child is in the parent's kill-on-close job from the moment it exists
+void windows_connreset_child_dies_with_its_parent()
+{
+    wchar_t path[MAX_PATH];
+    const DWORD length = GetModuleFileNameW( NULL, path, MAX_PATH );
+    windows_connreset_require( length > 0 && length < MAX_PATH );
+    wchar_t command[MAX_PATH + 64];
+    _snwprintf_s( command, MAX_PATH + 64, _TRUNCATE, L"\"%s\" --run test_windows_connreset_child_parent", path );
+
+    SECURITY_ATTRIBUTES inherit;
+    memset( &inherit, 0, sizeof( inherit ) );
+    inherit.nLength = sizeof( inherit );
+    inherit.bInheritHandle = TRUE;
+    HANDLE read_end = NULL;
+    HANDLE write_end = NULL;
+    windows_connreset_require( CreatePipe( &read_end, &write_end, &inherit, 0 ) );
+    windows_connreset_require( SetHandleInformation( read_end, HANDLE_FLAG_INHERIT, 0 ) );
+
+    // a closed port on loopback: the child client never connects, it only
+    // has to exist
+    windows_connreset_require( _putenv_s( WINDOWS_CONNRESET_PARENT_ENV, "127.0.0.1:9" ) == 0 );
+    STARTUPINFOW startup;
+    memset( &startup, 0, sizeof( startup ) );
+    startup.cb = sizeof( startup );
+    startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdInput = GetStdHandle( STD_INPUT_HANDLE );
+    startup.hStdOutput = write_end;
+    startup.hStdError = write_end;
+    PROCESS_INFORMATION info;
+    memset( &info, 0, sizeof( info ) );
+    const BOOL created = CreateProcessW( path, command, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &startup, &info );
+    _putenv_s( WINDOWS_CONNRESET_PARENT_ENV, "" );
+    CloseHandle( write_end );
+    windows_connreset_require( created );
+    CloseHandle( info.hThread );
+
+    char output[4096];
+    size_t used = 0;
+    DWORD read = 0;
+    while ( used < sizeof( output ) - 1 && ReadFile( read_end, output + used, (DWORD) ( sizeof( output ) - 1 - used ), &read, NULL ) && read > 0 )
+        used += read;
+    output[used] = '\0';
+    CloseHandle( read_end );
+    windows_connreset_require( WaitForSingleObject( info.hProcess, 10000 ) == WAIT_OBJECT_0 );
+    CloseHandle( info.hProcess );
+
+    const char * line = strstr( output, "windows_connreset_child_id " );
+    windows_connreset_require( line != NULL );
+    const DWORD child_id = (DWORD) strtoul( line + strlen( "windows_connreset_child_id " ), NULL, 10 );
+    windows_connreset_require( child_id != 0 );
+
+    HANDLE child = windows_connreset_open_own_image( child_id, path );
+    if ( child == NULL )
+        return;
+    const DWORD waited = WaitForSingleObject( child, 5000 );
+    if ( waited != WAIT_OBJECT_0 )
+        TerminateProcess( child, 1 );
+    CloseHandle( child );
+    windows_connreset_require( waited == WAIT_OBJECT_0 );
 }
 
 // one server, three live clients in this process and one client in a child

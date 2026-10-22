@@ -178,7 +178,7 @@ static void boundary_step(boundary_pair_t * pair,std::vector<boundary_received_t
     rocketnet_message_server_send_packets(pair->server); rocketnet_message_client_send_packets(pair->client);
 }
 static std::vector<uint8_t> boundary_data(uint32_t sequence,int bytes) {
-    std::vector<uint8_t> data((size_t)bytes); for(int i=0;i<bytes;++i) data[(size_t)i]=(uint8_t)(i+sequence); return data;
+    std::vector<uint8_t> data((size_t)bytes); for(int i=0;i<bytes;++i) data[(size_t)i]=(uint8_t)((uint32_t)i+sequence); return data;
 }
 static void boundary_check_counter(const rocketnet_counters_t * counters,int index) { check(rocketnet_counter_value(counters,index)==0); }
 static void test_message_boundary_sizes_every_mode_every_channel() {
@@ -205,7 +205,7 @@ static void test_message_boundary_sizes_every_mode_every_channel() {
         if(got.size()!=expected.size()) {
             fprintf(stderr, "boundary count mode=%d channel=%d got=%zu expected=%zu\n", reliability, channel, got.size(), expected.size());
             for(int j=0;j<6;++j) {
-                bool seen=false; for(size_t k=0;k<got.size();++k) if(got[k].data==expected[j]) seen=true;
+                bool seen=false; for(size_t k=0;k<got.size();++k) if(got[k].data==expected[(size_t)j]) seen=true;
                 if(!seen) fprintf(stderr, "boundary missing mode=%d channel=%d bytes=%d\n", reliability, channel, sizes[j]);
             }
         }
@@ -216,7 +216,7 @@ static void test_message_boundary_sizes_every_mode_every_channel() {
         for(size_t i=0;i<got.size();++i) {
             if(got[i].channel!=channel) fprintf(stderr, "boundary channel mode=%d expected=%d got=%d bytes=%zu first=%d\n", reliability, channel, got[i].channel, got[i].data.size(), got[i].data.empty() ? -1 : got[i].data[0]);
             check(got[i].channel==channel); int found=-1;
-            for(int j=0;j<6;++j) if(!matched[j] && got[i].data==expected[j]) { found=j; break; }
+            for(int j=0;j<6;++j) if(!matched[j] && got[i].data==expected[(size_t)j]) { found=j; break; }
             if(found<0) fprintf(stderr, "boundary data mode=%d channel=%d received=%zu\n", reliability, channel, got[i].data.size());
             check(found>=0); matched[found]=true; if(ordered && found>=0) check((int)i==found);
         }

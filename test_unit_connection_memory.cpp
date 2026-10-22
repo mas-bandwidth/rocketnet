@@ -371,7 +371,7 @@ static void test_user_block_is_used_and_nothing_else()
         std::vector<uint32_t> taken( region->queue );
         const int n = cm_fill( region, 200 + 300 * s, taken.data(), (int) taken.size() );
         check( n > 0 && (size_t) n <= taken.size() );
-        for ( int i = 0; i < n; i++ )
+        for ( size_t i = 0; i < (size_t) n; i++ )
         {
             const rn_send_descriptor_t * d = &region->send_descriptors[taken[i]];
             check( cm_inside( block, required, d, sizeof(*d) ) );

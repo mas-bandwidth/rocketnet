@@ -273,7 +273,7 @@ void rocketnet_log_function( rocketnet_log_function_t callback, void * context )
 // relaxed atomics read before vsnprintf), format once into the 1024-byte
 // buffer, clamp length to 1023 (message[length] == '\0' is guaranteed by
 // vsnprintf), then dispatch to the installed callback or the default sink.
-static void rocketnet_log_v( int level, const char * format, va_list args )
+ROCKETNET_PRINTF_FORMAT( 2, 0 ) static void rocketnet_log_v( int level, const char * format, va_list args )
 {
     if ( log_quiet.load( std::memory_order_relaxed ) )
         return;

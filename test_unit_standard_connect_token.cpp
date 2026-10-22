@@ -150,7 +150,7 @@ static int standard_connect_token_generate( const char * id, uint8_t * out, int 
         memcpy( p, signature, ROCKETNET_SIGNATURE_BYTES ); p += ROCKETNET_SIGNATURE_BYTES;
         memcpy( p, pf.client_to_server_key, ROCKETNET_KEY_BYTES ); p += ROCKETNET_KEY_BYTES;
         memcpy( p, pf.server_to_client_key, ROCKETNET_KEY_BYTES ); p += ROCKETNET_KEY_BYTES;
-        memset( p, 0, ROCKETNET_CONNECT_TOKEN_BYTES - (int) ( p - out ) );
+        memset( p, 0, (size_t) ( ROCKETNET_CONNECT_TOKEN_BYTES - ( p - out ) ) );
         return ROCKETNET_CONNECT_TOKEN_BYTES;
     }
 
