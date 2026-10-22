@@ -39,22 +39,6 @@
 #       where it costs 15s. What waits until morning is only "does the
 #       out-of-tree backend still build under MSVC".
 #
-# AND ON 2026-10-22, THE FULL FUNCTIONAL RUNS, in the shape of the tsan
-# threaded move (#507): every step lifted to nightly.yml unchanged, nothing
-# shortened, no case changed. Measured on run 39822087423 against the 3-minute
-# job law: ubuntu Debug's auto-ladder run 93s and its pinned-portable run cut
-# at 32s (job cancelled at 196s), ubuntu Release (b) 84s and cut at 30s
-# (197s), macos Debug's auto-ladder run cut at 130s (196s; its server
-# create/destroy x1000 case alone is about 150s), asan + ubsan's functional
-# run 103s (130s job). Windows Release (a)'s two full functional runs went
-# with them. What stays on every commit, per OS and per transport, is the
-# transport family matrix (each transport pinned, four representative cases
-# via --run), the lifecycle binary, the driver contract, the happy path and
-# every check of legs (a) and (b); the full suite on every row runs nightly
-# in `functional (full)`, `windows / Release functional` and `asan + ubsan
-# (functional suite, full)`, and RELEASING.md requires those green on the
-# exact release commit.
-#
 # Everything else that was over the line was SPLIT, not moved: tsan into two
 # parallel legs, windows Release into (a) and (b), ubuntu Release into (a) and
 # (b), and the two platform selftests out of four duplicate matrix rows into
@@ -177,11 +161,7 @@ jobs:
           - { os: ubuntu-24.04, build_type: Release, leg: a,  dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: ubuntu-24.04, build_type: Release, leg: b,  dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
           # macOS Apple silicon on the fleet's darwin runner (mini-m5-1-rocketnet-1, label rocketnet-macos; rowan-tools fleet/runners.tsv)
-          # macOS Debug runs as two legs like ubuntu Release (2026-10-22): run 39822087423 measured
-          # 62s of build and unit work before its functional run, and the leg (a) checks and the
-          # transport matrix on top put the single row at an estimated 110-130s, over two minutes
-          - { os: macos-15, build_type: Debug,   leg: a,  dev: 'ON',  runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
-          - { os: macos-15, build_type: Debug,   leg: b,  dev: 'ON',  runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
+          - { os: macos-15, build_type: Debug,   leg: ab, dev: 'ON',  runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
           - { os: macos-15, build_type: Release, leg: ab, dev: 'OFF', runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
     steps:
 
@@ -305,11 +285,19 @@ jobs:
         if: contains(matrix.leg, 'b')
         run: python3 tools/check_test_environment.py ./bin/test
 
-      # The full functional suite, on the auto ladder and on the pinned
-      # portable rung, runs nightly (nightly.yml `functional (full)`, the same
-      # two steps on the same four rows) since 2026-10-22: 84-130s each
-      # against the 3-minute law. Per commit, the transport family matrix
-      # below runs representative functional cases on every transport.
+      - name: Run functional suite (auto ladder — the fall, on Linux)
+        if: contains(matrix.leg, 'b')
+        run: ./bin/functional
+
+      - name: Run functional suite (portable rung pinned by env)
+        if: contains(matrix.leg, 'b')
+        env:
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
+        run: |
+          set -o pipefail
+          ./bin/functional | tee functional-pinned.log
+          grep -qx 'test_transport_env_pin_is_honoured' functional-pinned.log
 
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
@@ -717,29 +705,8 @@ jobs:
       - name: Configure
         run: cmake -B build -A x64 -DROCKETNET_DEV=${{ matrix.leg == 'b' && 'OFF' || 'ON' }}
 
-      # Each leg builds only the targets its steps run (2026-10-22). Measured on
-      # the fleet Windows runner (Tables, Windows R3, exclusive): configure 43s
-      # and the build of every target 318s, so the full build cannot fit any
-      # per-commit job. The time to build only these targets has NOT been
-      # measured; until a run measures each leg at or under 120s of
-      # execution, these legs are not shown to meet the per-commit rule. The every-target Release
-      # build of both configurations runs nightly (nightly.yml `windows /
-      # Release functional`).
-      #   (a) rocketnet_dev for the public-header check; the unit suite, sodium
-      #       known answers, the lifecycle binary and transport_memory.
-      #   (b) the production and development libraries, static and shared,
-      #       for the boundary, consumer and package checks; the unit suite
-      #       for the ambient-config check; test_transport for the driver
-      #       contract; functional for the transport family matrix's cases.
       - name: Build
-        shell: bash
-        run: |
-          if [ "${{ matrix.leg }}" = a ]; then
-            targets="rocketnet_dev test test_sodium test_lifecycle transport_memory"
-          else
-            targets="rocketnet rocketnet_shared rocketnet_dev rocketnet_shared_dev test test_transport functional"
-          fi
-          cmake --build build --config Release --parallel --target $targets
+        run: cmake --build build --config Release --parallel
 
       # rocketnet.h alone under MSVC cl, and a C and a C++ client and server
       # built from only the header and the prebuilt static library (seconds)
@@ -767,11 +734,20 @@ jobs:
           ./bin/Release/test.exe
           ./bin/Release/test_sodium.exe
 
-      # The full functional suite, default and with IOCP selected, runs
-      # nightly (nightly.yml `windows / Release functional`, same build, same
-      # two steps) since 2026-10-22. Per commit, leg (b)'s transport family
-      # matrix runs representative functional cases on portable, iocp, rio
-      # and loopback.
+      - name: Run functional suite
+        if: matrix.leg == 'a'
+        shell: bash
+        run: ./bin/Release/functional.exe
+
+      - name: Functional suite with IOCP selected
+        if: matrix.leg == 'a'
+        shell: bash
+        env:
+          ROCKETNET_SERVER_TRANSPORT: iocp
+        run: |
+          set -o pipefail
+          ./bin/Release/functional.exe | tr -d '\r' | tee functional-iocp.log
+          grep -qx 'test_transport_env_pin_is_honoured' functional-iocp.log
 
       - name: "Functional: lifecycle binary"
         if: matrix.leg == 'a'
@@ -978,11 +954,9 @@ jobs:
         if: runner.os == 'Windows'
         run: cmake -B build -A x64
 
-      # only the two programs the happy path runs (2026-10-22): the
-      # every-target MSVC build is nightly (see build-and-test-windows)
       - name: Build (Windows)
         if: runner.os == 'Windows'
-        run: cmake --build build --config Release --parallel --target happy_server happy_client
+        run: cmake --build build --config Release --parallel
 
       # the two C programs share this directory with the Go tool, so name the
       # tool's .go file rather than the directory
@@ -1138,12 +1112,12 @@ jobs:
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/test
 
-      # The whole functional suite under asan + ubsan runs nightly
-      # (nightly.yml `asan + ubsan (functional suite, full)`, same configure,
-      # same options) since 2026-10-22: 103s of a 130s leg. Per commit this
-      # leg keeps the lifecycle and driver contract binaries, sodium known
-      # answers and the XDP negative control under the sanitizers; its name
-      # is kept so the required check does not change.
+      - name: Run functional suite under sanitizers
+        if: matrix.leg == 'functional suite'
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: ./bin/functional
 
       - name: "Functional binaries under sanitizers: lifecycle and driver contract"
         if: matrix.leg == 'functional suite'

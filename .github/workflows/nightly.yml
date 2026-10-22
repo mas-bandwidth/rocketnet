@@ -38,24 +38,6 @@
 #   transport)              halt_on_error=1 and no suppressions, lifted from
 #                           ci.yml's tsan job on 2026-10-22 step for step:
 #                           345-454s on the fleet's 16-core runner hosts.
-#
-#   functional (full)       the whole functional suite on the auto ladder and
-#                           on the pinned portable rung, on ubuntu Debug,
-#                           ubuntu Release, macos Debug and macos Release,
-#                           lifted from ci.yml's build-and-test on 2026-10-22
-#                           step for step: 84-130s per run against the
-#                           3-minute law (run 39822087423).
-#
-#   windows / Release       the whole functional suite under MSVC Release,
-#   functional              default and with IOCP selected, lifted from
-#                           ci.yml's windows Release (a) on 2026-10-22.
-#
-#   asan + ubsan            the whole functional suite under asan + ubsan,
-#   (functional suite,      lifted from ci.yml's sanitizers job on 2026-10-22:
-#   full)                   103s of a 130s leg.
-#
-# These jobs carry no timeout-minutes of their own: a nightly has no time
-# limit (Glenn, 2026-10-21/22), so each takes the runner platform's ceiling.
 
 name: nightly
 
@@ -63,10 +45,6 @@ on:
   schedule:
     - cron: "40 8 * * *"
   workflow_dispatch:
-    inputs:
-      sha:
-        description: "The exact commit to test (full 40-hex sha). Every job checks out this commit; the release-required jobs fail at once unless HEAD is it."
-        required: true
 
 permissions:
   contents: read
@@ -97,7 +75,7 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.sha || matrix.ref }}
+          ref: ${{ matrix.ref }}
 
       - name: Print compiler versions
         run: |
@@ -140,20 +118,7 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.sha || matrix.ref }}
-
-      - name: The checkout is the commit under test
-        shell: bash
-        env:
-          EXPECTED_SHA: ${{ inputs.sha }}
-          EVENT: ${{ github.event_name }}
-        run: |
-          head=$(git rev-parse HEAD)
-          echo "commit under test: $head"
-          if [ "$EVENT" = workflow_dispatch ] && [ "$head" != "$EXPECTED_SHA" ]; then
-            echo "EXACT-SHA HEAD is $head, the dispatch named $EXPECTED_SHA (give the full 40-hex sha)"
-            exit 1
-          fi
+          ref: ${{ matrix.ref }}
 
       - name: Check the fleet's build dependencies are present
         shell: bash
@@ -195,182 +160,6 @@ jobs:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
         run: setarch "$(uname -m)" -R ./bin/functional
 
-  # THE FULL FUNCTIONAL SUITE, lifted from ci.yml's build-and-test on
-  # 2026-10-22 step for step: the same build per row (the Makefile for Release
-  # with ROCKETNET_DEV=OFF, a direct Debug configure with ROCKETNET_DEV=ON),
-  # the same auto-ladder run and the same pinned-portable run with its pin
-  # proof. Per commit, ci.yml keeps the transport family matrix's
-  # representative cases on every transport; the whole suite runs here.
-
-  functional-full:
-    name: functional (full) / ${{ matrix.os }} / ${{ matrix.build_type }}
-    runs-on: ${{ fromJSON(matrix.runner) }}
-    strategy:
-      fail-fast: false
-      matrix:
-        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
-        cell: [ubuntu-debug, ubuntu-release, macos-debug, macos-release]
-        # the rows of ci.yml's build-and-test, keyed by cell so each include
-        # extends its own cell for every ref
-        include:
-          - { cell: ubuntu-debug,   os: ubuntu-24.04, build_type: Debug,   dev: 'ON',  runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { cell: ubuntu-release, os: ubuntu-24.04, build_type: Release, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { cell: macos-debug,    os: macos-15,     build_type: Debug,   dev: 'ON',  runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
-          - { cell: macos-release,  os: macos-15,     build_type: Release, dev: 'OFF', runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
-    concurrency:
-      group: nightly-functional-full-${{ matrix.os }}-${{ matrix.build_type }}-${{ matrix.ref }}
-      cancel-in-progress: true
-    steps:
-
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.sha || matrix.ref }}
-
-      - name: The checkout is the commit under test
-        shell: bash
-        env:
-          EXPECTED_SHA: ${{ inputs.sha }}
-          EVENT: ${{ github.event_name }}
-        run: |
-          head=$(git rev-parse HEAD)
-          echo "commit under test: $head"
-          if [ "$EVENT" = workflow_dispatch ] && [ "$head" != "$EXPECTED_SHA" ]; then
-            echo "EXACT-SHA HEAD is $head, the dispatch named $EXPECTED_SHA (give the full 40-hex sha)"
-            exit 1
-          fi
-
-      - name: Build (Release, through the Makefile)
-        if: matrix.build_type == 'Release'
-        run: make ROCKETNET_DEV=${{ matrix.dev }}
-
-      - name: Build (Debug)
-        if: matrix.build_type == 'Debug'
-        run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Debug -DROCKETNET_DEV=${{ matrix.dev }}
-          cmake --build build --parallel
-
-      - name: Run functional suite (auto ladder — the fall, on Linux)
-        run: ./bin/functional
-
-      - name: Run functional suite (portable rung pinned by env)
-        env:
-          ROCKETNET_SERVER_TRANSPORT: portable
-          ROCKETNET_CLIENT_TRANSPORT: portable
-        run: |
-          set -o pipefail
-          ./bin/functional | tee functional-pinned.log
-          grep -qx 'test_transport_env_pin_is_honoured' functional-pinned.log
-
-  # THE WINDOWS RELEASE FUNCTIONAL SUITE AND FULL BUILD, lifted from ci.yml's
-  # windows / Release (a) on 2026-10-22 step for step: the development library
-  # (ROCKETNET_DEV=ON) built Release with EVERY target (the examples, tools and
-  # bench programs included, which ci.yml's Windows legs no longer build), the
-  # whole functional suite, then again with IOCP selected and the pin proved;
-  # then the production library (ROCKETNET_DEV=OFF, ci.yml's leg (b)
-  # configuration) built Release with every target, in its own build tree.
-
-  windows-release-functional:
-    name: windows / Release functional
-    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
-    strategy:
-      matrix:
-        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
-    concurrency:
-      group: nightly-windows-release-functional-${{ matrix.ref }}
-      cancel-in-progress: true
-    steps:
-
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.sha || matrix.ref }}
-
-      - name: The checkout is the commit under test
-        shell: bash
-        env:
-          EXPECTED_SHA: ${{ inputs.sha }}
-          EVENT: ${{ github.event_name }}
-        run: |
-          head=$(git rev-parse HEAD)
-          echo "commit under test: $head"
-          if [ "$EVENT" = workflow_dispatch ] && [ "$head" != "$EXPECTED_SHA" ]; then
-            echo "EXACT-SHA HEAD is $head, the dispatch named $EXPECTED_SHA (give the full 40-hex sha)"
-            exit 1
-          fi
-
-      - name: Configure
-        run: cmake -B build -A x64 -DROCKETNET_DEV=ON
-
-      - name: Build (every target)
-        run: cmake --build build --config Release --parallel
-
-      - name: Run functional suite
-        shell: bash
-        run: ./bin/Release/functional.exe
-
-      - name: Functional suite with IOCP selected
-        shell: bash
-        env:
-          ROCKETNET_SERVER_TRANSPORT: iocp
-        run: |
-          set -o pipefail
-          ./bin/Release/functional.exe | tr -d '\r' | tee functional-iocp.log
-          grep -qx 'test_transport_env_pin_is_honoured' functional-iocp.log
-
-      - name: Configure the production library (ROCKETNET_DEV=OFF)
-        shell: bash
-        run: cmake -B build-production -A x64 -DROCKETNET_DEV=OFF "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/build-production/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/build-production/bin"
-
-      - name: Build the production library (every target)
-        run: cmake --build build-production --config Release --parallel
-
-  # THE FUNCTIONAL SUITE UNDER ASAN + UBSAN, lifted from ci.yml's sanitizers
-  # job on 2026-10-22 step for step: the same Debug configure, the same
-  # options (detect_leaks=0, as the per-commit step ran it).
-
-  asan-functional:
-    name: asan + ubsan (functional suite, full)
-    runs-on: [self-hosted, Linux, X64, fleet]
-    strategy:
-      matrix:
-        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
-    concurrency:
-      group: nightly-asan-functional-${{ matrix.ref }}
-      cancel-in-progress: true
-    steps:
-
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.sha || matrix.ref }}
-
-      - name: The checkout is the commit under test
-        shell: bash
-        env:
-          EXPECTED_SHA: ${{ inputs.sha }}
-          EVENT: ${{ github.event_name }}
-        run: |
-          head=$(git rev-parse HEAD)
-          echo "commit under test: $head"
-          if [ "$EVENT" = workflow_dispatch ] && [ "$head" != "$EXPECTED_SHA" ]; then
-            echo "EXACT-SHA HEAD is $head, the dispatch named $EXPECTED_SHA (give the full 40-hex sha)"
-            exit 1
-          fi
-
-      - name: Configure
-        run: >
-          cmake -B build
-          -DCMAKE_BUILD_TYPE=Debug
-          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
-          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
-
-      - name: Build the sanitized functional suite
-        run: cmake --build build --target functional --parallel
-
-      - name: Run functional suite under sanitizers
-        env:
-          ASAN_OPTIONS: detect_leaks=0
-          UBSAN_OPTIONS: print_stacktrace=1
-        run: ./bin/functional
-
   # The windows Debug row, lifted from ci.yml's build-and-test-windows on
   # 2026-09-13, step for step. The doctrine it carries (#81's baseline): the
   # portable transport built with MSVC and the full test suite run on the runner.
@@ -410,7 +199,7 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.sha || matrix.ref }}
+          ref: ${{ matrix.ref }}
 
       - name: Check committed XDP fallback source on Windows
         # Uses the Python and CMake on the fleet Windows runner's job PATH.
@@ -514,7 +303,7 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.sha || matrix.ref }}
+          ref: ${{ matrix.ref }}
 
       - name: Configure
         run: cmake -B build -A x64 -DROCKETNET_DEV=OFF
@@ -547,7 +336,7 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.sha || matrix.ref }}
+          ref: ${{ matrix.ref }}
 
       - name: Configure with AddressSanitizer
         run: cmake -B build -A x64 -DROCKETNET_SANITIZE_ADDRESS=ON
@@ -625,7 +414,7 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.sha || matrix.ref }}
+          ref: ${{ matrix.ref }}
 
       - name: Configure clang-cl x64
         run: cmake -B build-clang -T ClangCL -A x64 -DROCKETNET_DEV=OFF "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/build-clang/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/build-clang/bin"
