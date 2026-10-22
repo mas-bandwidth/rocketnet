@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <math.h>
+#include <float.h>
 #include <atomic>
 #include <sodium.h>
 
@@ -420,6 +421,25 @@ static void rocketnet_client_link_drain( rocketnet_client_transport_t * transpor
     int packet_bytes;
     while ( ( packet_bytes = rocketnet_network_simulator_receive_any( transport->link_simulator,
                                                                        transport->time, &from, &to, packet ) ) > 0 )
+        transport->io.operations->send( transport->io.instance, &to, packet, packet_bytes );
+}
+
+// Stop sends everything the link simulator still holds, the disconnect burst
+// included. The caller's thread owns the simulator and only a running update
+// drains it; once stop is requested no update drains it again, and shutdown
+// updates hold the clock fixed, so a held packet would never come due. The
+// loss and duplicate policy already ran at send; what remains leaves now,
+// ahead of its latency (tla/RNClientLinkStop.tla StopDrains).
+static void rocketnet_client_link_drain_at_stop( rocketnet_client_transport_t * transport )
+{
+    if ( !transport->link_simulator )
+        return;
+    rocketnet_network_simulator_flush_window( transport->link_simulator );
+    rocketnet_address_t from, to;
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int packet_bytes;
+    while ( ( packet_bytes = rocketnet_network_simulator_receive_any( transport->link_simulator,
+                                                                       DBL_MAX, &from, &to, packet ) ) > 0 )
         transport->io.operations->send( transport->io.instance, &to, packet, packet_bytes );
 }
 
@@ -1299,6 +1319,7 @@ void rocketnet_client_transport_stop( rocketnet_client_transport_t * client_tran
     }
     else
     {
+        rocketnet_client_link_drain_at_stop( client_transport );
         client_transport->quit.store( true, std::memory_order_release );
         if ( ( !client_transport->thread && !client_transport->stop_burst_pending.load( std::memory_order_acquire ) ) || rocketnet_client_memory_plan_seam_enabled )
             client_transport->stopped.store( true, std::memory_order_release );
