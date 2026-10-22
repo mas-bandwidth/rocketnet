@@ -11,22 +11,30 @@
 // The Windows Registered I/O (RIO) server transport. One UDP socket opened with
 // WSA_FLAG_REGISTERED_IO, one registered region carved by
 // sdk/rocketnet_rio_layout.h into send frames, send address slots, receive
-// slices and receive address slots, one polled send completion queue, one
-// polled receive completion queue and one request queue. Everything runs on
-// the main thread; there is no worker thread.
+// slices and receive address slots, one send completion queue, one receive
+// completion queue and one request queue.
+//
+// RIO queues are unsynchronized and sends and receives share the request
+// queue, so after create one background I/O worker makes every RIO call:
+// receive dequeue and re-post, send post and commit, send retirement. It
+// waits on RIONotify for both completion queues and on a wake from main. The
+// main thread makes no RIO call and never waits: it exchanges bank indices
+// and phase states with the worker under one try of a short mutex.
 //
 // Send: two staging phases of ROCKETNET_RIO_SEND_QUEUE_SIZE frame slots.
 // start_packet reserves the next slot of the fill phase with one atomic
-// fetch_add; send_packets (fill threads joined) retires completed sends,
-// posts every finished slot of the fill phase with RIO_MSG_DEFER and one
-// commit, and switches the fill phase to the other phase once that phase has
-// no outstanding send. Receive: every slice is posted at create;
-// receive_packets copies each completion into the fill bank of two receive
-// banks, re-posts the slice, then swaps the banks. Stop commits deferred sends
-// and closes the socket; stopped drains both completion queues before destroy
-// frees the registered region.
-// tla/RNRioDriver.tla models the design; the functions that implement a
-// model action cite it.
+// fetch_add; send_packets (fill threads joined) hands a finished fill phase to
+// the worker and opens the other phase once the worker has returned it idle
+// (every send of it retired); until then start_packet refuses. Receive: every
+// slice is posted at create; the worker copies each completion into its fill
+// bank, re-posts the slice and publishes the bank onto a FIFO of ready banks;
+// receive_packets exposes the ready banks that fit the process view, valid
+// until the next call. With every bank full the worker stops dequeuing, so
+// completions wait in the queue rather than being dropped. Stop requests,
+// the worker commits deferred sends, closes the socket and drains both
+// queues; stopped reports that drain before destroy frees the region.
+// tla/RNRioWorker.tla models the design (tla/RNRioDriver.tla the earlier
+// caller-driven one); the functions that implement a model action cite it.
 //
 // The transport is built only on Windows (Windows 10 1709 or later for
 // RIOSendEx and RIOReceiveEx). Elsewhere the module is not compiled: only
@@ -70,10 +78,10 @@ enum rocketnet_server_rio_counter_t
     ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED,         // datagrams copied into a receive bank
     ROCKETNET_RIO_COUNTER_SEND_FULL,                // start_packet found the fill phase full
     ROCKETNET_RIO_COUNTER_SEND_FAILED,              // a refused post or a failed send completion
-    ROCKETNET_RIO_COUNTER_SEND_WAITS,               // empty polls waiting for the other phase to drain
+    ROCKETNET_RIO_COUNTER_SEND_WAITS,               // flushes that left the switch owed: the other phase not yet idle
     ROCKETNET_RIO_COUNTER_RECEIVE_FAILED,           // receive completions with a failed status
     ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE,     // datagrams outside the wire's size bounds
-    ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW, // datagrams past the fill bank's capacity
+    ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW, // datagrams past the fill bank's capacity (the bounded dequeue keeps it zero)
     ROCKETNET_RIO_COUNTER_RECEIVE_REPOST_FAILED,    // slices retired by a refused re-post
     ROCKETNET_RIO_COUNTER_COMMITS,                  // RIO_MSG_COMMIT_ONLY calls
     ROCKETNET_RIO_NUM_COUNTERS
@@ -93,7 +101,8 @@ uint64_t rocketnet_server_rio_leaked_regions();
 // events at a fault point fail with status, as the host fails them: a send or
 // receive completion reports status as its completion status; a send or
 // receive post is refused before the RIO call, with status as its error, and
-// starts no I/O; a commit is refused the same way. Main thread only.
+// starts no I/O; a commit is refused the same way. Set from the test thread,
+// consumed by the I/O worker.
 enum rocketnet_server_rio_test_fault_t
 {
     ROCKETNET_RIO_TEST_FAULT_SEND_COMPLETION,
@@ -105,8 +114,8 @@ enum rocketnet_server_rio_test_fault_t
 };
 void rocketnet_server_rio_test_fail_next( rocketnet_server_rio_t * rio, int fault, int count, int status );
 int rocketnet_server_rio_test_faults_left( rocketnet_server_rio_t * rio, int fault );
-// receive slices whose re-post was refused and that wait for the next
-// receive_packets to re-post them
+// receive slices whose re-post was refused and that wait for the worker's
+// next pass to re-post them
 int rocketnet_server_rio_test_retry_receives( rocketnet_server_rio_t * rio );
 #endif
 
