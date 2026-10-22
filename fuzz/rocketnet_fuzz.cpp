@@ -158,8 +158,8 @@ static void rocketnet_fuzz_fragment( const uint8_t * data, size_t bytes )
 
         if ( record_bytes >= ROCKETNET_FRAGMENT_HEADER_BYTES + 1 )
         {
-            std::unique_ptr<uint8_t[]> fragment( new uint8_t[record_bytes] );
-            memcpy( fragment.get(), data + offset, record_bytes );
+            std::unique_ptr<uint8_t[]> fragment( new uint8_t[(size_t) record_bytes] );
+            memcpy( fragment.get(), data + offset, (size_t) record_bytes );
             rocketnet_reassembly_process_fragment( rocketnet_fuzz_reassembly,
                                                    connection,
                                                    fragment.get(),
@@ -245,7 +245,7 @@ static void rocketnet_fuzz_base64( const uint8_t * data, size_t bytes )
     if ( wide_bytes > (int) sizeof( key_field ) )
         rocketnet_fuzz_require( key_bytes == 0, "base64 overlong field must refuse" );
     if ( wide_bytes > 0 && wide_bytes <= (int) sizeof( key_field ) )
-        rocketnet_fuzz_require( key_bytes == wide_bytes && memcmp( key_field, decoded, wide_bytes ) == 0,
+        rocketnet_fuzz_require( key_bytes == wide_bytes && memcmp( key_field, decoded, (size_t) wide_bytes ) == 0,
                                "base64 fitting field must preserve all bytes" );
 
     char small_string[8];
@@ -253,7 +253,7 @@ static void rocketnet_fuzz_base64( const uint8_t * data, size_t bytes )
     if ( wide_bytes >= (int) sizeof( small_string ) )
         rocketnet_fuzz_require( small_string_bytes == 0, "base64 string must reserve its terminator" );
     if ( wide_bytes > 0 && wide_bytes < (int) sizeof( small_string ) )
-        rocketnet_fuzz_require( small_string_bytes == wide_bytes && memcmp( small_string, decoded, wide_bytes ) == 0 && small_string[wide_bytes] == '\0',
+        rocketnet_fuzz_require( small_string_bytes == wide_bytes && memcmp( small_string, decoded, (size_t) wide_bytes ) == 0 && small_string[wide_bytes] == '\0',
                                "base64 fitting string must preserve bytes and terminator" );
 
     // ONE SPELLING PER KEY, as an oracle rather than a table of examples:
@@ -268,7 +268,7 @@ static void rocketnet_fuzz_base64( const uint8_t * data, size_t bytes )
     if ( encoded_length >= (int) sizeof( small_encoded ) )
         rocketnet_fuzz_require( small_encoded_length == -1, "base64 encode must refuse insufficient capacity" );
     if ( encoded_length > 0 && encoded_length < (int) sizeof( small_encoded ) )
-        rocketnet_fuzz_require( small_encoded_length == encoded_length && memcmp( small_encoded, encoded, encoded_length + 1 ) == 0,
+        rocketnet_fuzz_require( small_encoded_length == encoded_length && memcmp( small_encoded, encoded, (size_t) encoded_length + 1 ) == 0,
                                "base64 fitting encode must preserve bytes and terminator" );
     if ( encoded_length > 0 )
     {

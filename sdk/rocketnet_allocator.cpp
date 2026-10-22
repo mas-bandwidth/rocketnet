@@ -119,7 +119,7 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
     for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
     {
         const uint64_t payload_bytes = typical_payload[c];
-        const uint64_t count = rn_send_store_chunks_for( config->send_message_buffer_bytes, c ) + ( reserve + payload_bytes - 1 ) / payload_bytes;
+        const uint64_t count = rn_send_store_chunks_for( (uint64_t) config->send_message_buffer_bytes, c ) + ( reserve + payload_bytes - 1 ) / payload_bytes;
         if ( count >= 0x3FFFFFFFu )
             return false;
         chunks[c] = (uint32_t) count;
@@ -127,7 +127,7 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
     }
     // Keep all original store headroom, including its alignment slack.
     if ( S < (uint64_t) config->send_message_buffer_bytes )
-        S = config->send_message_buffer_bytes;
+        S = (uint64_t) config->send_message_buffer_bytes;
     if ( Q >= UINT32_MAX || SR > UINT32_MAX )
         return false;
     const uint64_t P = (uint64_t) config->packets_in_flight;
@@ -1275,6 +1275,9 @@ struct rn_text_t
     int length;
 };
 
+#if defined( __GNUC__ ) || defined( __clang__ )
+__attribute__(( format( printf, 2, 3 ) ))
+#endif
 static void rn_text_append( rn_text_t * text, const char * format, ... )
 {
     // snprintf's contract over many appends: write what fits, always

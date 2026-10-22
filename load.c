@@ -363,9 +363,9 @@ static uint8_t * timed_client_start_message( struct load_timing_t * timing, stru
     return result;
 }
 
-static int timed_client_finish_message( struct load_timing_t * timing, struct rocketnet_client_t * client, int bytes )
+static uint32_t timed_client_finish_message( struct load_timing_t * timing, struct rocketnet_client_t * client, int bytes )
 {
-    int result;
+    uint32_t result;
     LOAD_TIMED_VALUE( timing, LOAD_TIMING_CLIENT_FINISH_MESSAGE, result, rocketnet_client_finish_message( client, bytes ) );
     return result;
 }
@@ -377,9 +377,9 @@ static uint8_t * timed_server_start_message( struct load_timing_t * timing, stru
     return result;
 }
 
-static int timed_server_finish_message( struct load_timing_t * timing, struct rocketnet_server_t * server, int bytes )
+static uint32_t timed_server_finish_message( struct load_timing_t * timing, struct rocketnet_server_t * server, int bytes )
 {
-    int result;
+    uint32_t result;
     LOAD_TIMED_VALUE( timing, LOAD_TIMING_SERVER_FINISH_MESSAGE, result, rocketnet_server_finish_message( server, bytes ) );
     return result;
 }
@@ -725,7 +725,7 @@ static uint32_t read_u32_le( const uint8_t * src )
 
 static uint8_t pattern_byte( uint32_t magic, uint32_t client_idx, uint32_t combo_idx, uint32_t seq, int offset )
 {
-    uint32_t h = magic ^ ( client_idx * 2654435761u ) ^ ( combo_idx * 2246822519u ) ^ ( seq * 3266489917u ) ^ (uint32_t) ( offset * 374761393u );
+    uint32_t h = magic ^ ( client_idx * 2654435761u ) ^ ( combo_idx * 2246822519u ) ^ ( seq * 3266489917u ) ^ ( (uint32_t) offset * 374761393u );
     h ^= h >> 16;
     h *= 0x85ebca6bu;
     h ^= h >> 13;
