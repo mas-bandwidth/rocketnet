@@ -367,9 +367,8 @@ static void fuzz_write_seeds( const char * dir, const char * from )
         const char * transport = rocketnet_transport_name( available[i] );
         if ( !transport )
             continue;
-        if ( ladder[0] != '\0' )
-            strncat( ladder, ",", sizeof( ladder ) - strlen( ladder ) - 1 );
-        strncat( ladder, transport, sizeof( ladder ) - strlen( ladder ) - 1 );
+        const size_t used = strlen( ladder );
+        snprintf( ladder + used, sizeof( ladder ) - used, "%s%s", used > 0 ? "," : "", transport );
     }
     fuzz_write_seed( dir, "server_transport_ladder_available", 1, transport_field, 2, ladder );
 
@@ -433,9 +432,10 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
                                 "the defaults validate" );
     }
 
-    const char * seed_dir = getenv( "ROCKETNET_FUZZ_SEED_DIR" );
-    if ( seed_dir != NULL && seed_dir[0] != '\0' )
-        fuzz_write_seeds( seed_dir, getenv( "ROCKETNET_FUZZ_SEED_FROM" ) );
+    char seed_dir[1024];
+    char seed_from[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_DIR", seed_dir, sizeof( seed_dir ) ) && seed_dir[0] != '\0' )
+        fuzz_write_seeds( seed_dir, rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_FROM", seed_from, sizeof( seed_from ) ) ? seed_from : NULL );
     return 0;
 }
 
