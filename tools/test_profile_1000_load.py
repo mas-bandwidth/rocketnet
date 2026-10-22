@@ -50,6 +50,20 @@ PHASE_SUMMARY = (SUMMARY.replace("fds_start=4 fds_end=4 threads_start=1 threads_
                  .replace(" verdict=PASS", PHASE_COUNTS + " verdict=PASS"))
 
 
+# captain 2026-10-22: after the warm cycle the counts still move with the
+# operating system's thread pool (97/101/103/99 handles, 4/4/6/6 threads);
+# the census found no survivor, so the receipt passes
+CENSUS_COUNTS = (" fds_pre_init=97 fds_post_init=101 fds_pre_term=103 fds_post_term=99"
+                 " threads_pre_init=4 threads_post_init=4 threads_pre_term=6 threads_post_term=6"
+                 " term_status_code=0 resource_baseline_schema=census_v1 warm_cycle=1"
+                 " survivor_threads_operational=0 survivor_handles_operational=0"
+                 " survivor_threads_total=0 survivor_handles_total=0 os_pool_threads=2"
+                 " resource_baseline=PASS")
+CENSUS_SUMMARY = (SUMMARY.replace("fds_start=4 fds_end=4 threads_start=1 threads_end=1",
+                                  "fds_start=101 fds_end=99 threads_start=4 threads_end=6")
+                  .replace(" verdict=PASS", CENSUS_COUNTS + " verdict=PASS"))
+
+
 class MacMemoryTests(unittest.TestCase):
     def test_vm_stat_header_and_reclaimable_pages(self):
         def fake_command(argv, cwd=None):
@@ -150,6 +164,28 @@ class ReceiptTests(unittest.TestCase):
                      PHASE_SUMMARY.replace("resource_baseline_schema=phase_pairs_v1", "")):
             with self.subTest(line=line), self.assertRaises(ValueError):
                 profile.parse_load(line, "portable", "portable")
+
+    def test_census_accepts_operating_system_count_churn(self):
+        result = profile.parse_load(CENSUS_SUMMARY, "portable", "portable")
+        self.assertEqual(result["resource_baseline_schema"], "census_v1")
+
+    def test_census_fails_closed(self):
+        for line in (CENSUS_SUMMARY.replace("survivor_handles_total=0", "survivor_handles_total=1"),
+                     CENSUS_SUMMARY.replace("survivor_threads_operational=0", "survivor_threads_operational=1"),
+                     CENSUS_SUMMARY.replace("survivor_threads_total=0 ", ""),
+                     CENSUS_SUMMARY.replace("warm_cycle=1", "warm_cycle=0"),
+                     CENSUS_SUMMARY.replace("fds_end=99", "fds_end=97"),
+                     CENSUS_SUMMARY.replace("resource_baseline=PASS", "resource_baseline=FAIL")):
+            with self.subTest(line=line), self.assertRaises(ValueError):
+                profile.parse_load(line, "portable", "portable")
+
+    def test_phase_counts_without_census_stay_strict(self):
+        counts = PHASE_SUMMARY.replace("resource_baseline_schema=phase_pairs_v1",
+                                       "resource_baseline_schema=phase_counts_v1")
+        self.assertEqual(profile.parse_load(counts, "portable", "portable")["resource_baseline_schema"],
+                         "phase_counts_v1")
+        with self.assertRaises(ValueError):
+            profile.parse_load(counts.replace("fds_pre_term=4", "fds_pre_term=3"), "portable", "portable")
 
     def test_partial_new_resource_markers_cannot_fall_back_to_legacy(self):
         for marker in ("resource_baseline=PASS", "term_status_code=-1",
