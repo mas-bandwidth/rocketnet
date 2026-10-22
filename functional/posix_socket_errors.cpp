@@ -1106,10 +1106,10 @@ void rocketnet_test_posix_transport_send_seam()
 struct posix_burst_drain_t
 {
     rocketnet_platform_socket_t * socket;
-    volatile bool stop;
-    volatile bool running;
-    volatile uint64_t received;
-    volatile uint64_t duplicates;
+    std::atomic<bool> stop;
+    std::atomic<bool> running;
+    std::atomic<uint64_t> received;
+    uint64_t duplicates;
     bool seen[POSIX_BURST_SENDERS][POSIX_BURST_PACKETS];
 };
 
@@ -1200,8 +1200,12 @@ void rocketnet_test_posix_send_burst()
     }
 
     static struct posix_burst_drain_t drain;
-    memset( (void*) &drain, 0, sizeof(drain) );
     drain.socket = server;
+    drain.stop = false;
+    drain.running = false;
+    drain.received = 0;
+    drain.duplicates = 0;
+    memset( drain.seen, 0, sizeof(drain.seen) );
 
     rocketnet_platform_thread_t * thread = rocketnet_platform_thread_create( NULL, posix_burst_drain_thread, &drain );
     posix_check( thread != NULL );
@@ -1266,7 +1270,7 @@ void rocketnet_test_posix_send_burst()
 
     const uint64_t sent = (uint64_t) POSIX_BURST_SENDERS * POSIX_BURST_PACKETS;
     printf( "  burst: pump %s send_buffer %d sent %llu received %llu counted_drops %llu duplicates %llu: %s\n",
-            pump, send_buffer, (unsigned long long) sent, (unsigned long long) drain.received,
+            pump, send_buffer, (unsigned long long) sent, (unsigned long long) drain.received.load(),
             (unsigned long long) drops, (unsigned long long) drain.duplicates,
             drops > 0 ? "the kernel refused sends (ENOBUFS or EAGAIN)" : "no send was refused at this load" );
     fflush( stdout );
