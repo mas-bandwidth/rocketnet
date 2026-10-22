@@ -415,7 +415,7 @@ static void test_receipts_no_allocation_after_create()
     rocketnet_unit_check( rocketnet_init( NULL, receipt_malloc, receipt_free ) == ROCKETNET_STATUS_OK );
     receipt_fixture_t f;
     receipt_fixture_init( &f );
-    const uint64_t snapshot = receipt_allocations;
+    const uint64_t allocations_before = receipt_allocations;
     rn_window_ack_receipt_begin_update( &f.ack );
     for ( uint32_t i = 1; i <= 32; i++ )
     {
@@ -426,7 +426,7 @@ static void test_receipts_no_allocation_after_create()
     rn_window_ack_receipt_sweep( &f.ack, 10.0 );
     rocketnet_message_receipt_t out[16];
     receipt_list( &f, out, 16 );
-    rocketnet_unit_check( receipt_allocations == snapshot );
+    rocketnet_unit_check( receipt_allocations == allocations_before );
     receipt_fixture_destroy( &f );
     rocketnet_term();
     rocketnet_unit_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );

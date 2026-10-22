@@ -468,22 +468,22 @@ static long count_threads( void )
     }
     return -1;
 #elif defined(_WIN32)
-    HANDLE snapshot = CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 );
-    if ( snapshot == INVALID_HANDLE_VALUE )
+    HANDLE thread_list = CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 );
+    if ( thread_list == INVALID_HANDLE_VALUE )
         return -1;
     THREADENTRY32 entry;
     entry.dwSize = sizeof( entry );
     const DWORD self_pid = GetCurrentProcessId();
     long count = 0;
-    if ( Thread32First( snapshot, &entry ) )
+    if ( Thread32First( thread_list, &entry ) )
     {
         do
         {
             if ( entry.th32OwnerProcessID == self_pid )
                 count++;
-        } while ( Thread32Next( snapshot, &entry ) );
+        } while ( Thread32Next( thread_list, &entry ) );
     }
-    CloseHandle( snapshot );
+    CloseHandle( thread_list );
     return count;
 #else
     return -1;
@@ -586,7 +586,7 @@ static void sample_resources( long * peak_fds, long * peak_threads )
     if ( fds > *peak_fds )
         *peak_fds = fds;
 #if defined(_WIN32)
-    /* The global Toolhelp thread snapshot is expensive at large populations.
+    /* The global Toolhelp thread enumeration is expensive at large populations.
        Windows thread counts are sampled at named phase boundaries instead. */
     (void) peak_threads;
 #else

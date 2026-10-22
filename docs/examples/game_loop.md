@@ -14,7 +14,7 @@ budget, the server's tick, and message latency in frames.
    `*_send_packets` last, so this frame's messages leave this frame.
 3. Each client sends its position every frame (`ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED`,
    channel 0) and an event twice a second (`ROCKETNET_RELIABILITY_RELIABLE_ORDERED`, channel
-   1); the server sends each client a snapshot every frame. Each message
+   1); the server sends each client its state every frame. Each message
    carries the frame it was queued in, and the receiver counts frames since.
 
 Every run is in memory over the `loopback` transport: the in-memory transport
@@ -55,7 +55,7 @@ the run, because a shared machine's noise is not the library's cost. `server tic
 
 The two `latency ... frames` lines give each direction's min, mean and max.
 Clients run their frames before the server's, so the server reads a message in
-the frame it was sent (0) and a client reads its snapshot in the next frame
+the frame it was sent (0) and a client reads its state in the next frame
 (1): that is the delay of running in one process, and `extra frame(s)` is what
 the frame order adds on top. With `--wrong-order`, `send_packets` runs before
 this frame's messages are queued, so they wait a frame: the lines read 1 and 2

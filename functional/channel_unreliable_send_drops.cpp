@@ -138,7 +138,7 @@ void unreliable_dropped_while_reliable_waits_never_arrives()
     drops_check( reliable_arrived == 2, "both reliable messages arrive, in order" );
     drops_check( drops_over_budget( &h ) >= before + 4, "counter does not fall" );
     drops_check( rocketnet_channel_harness_overflows( &h ) == 0, "delivery ring overflow" );
-    drops_check( rocketnet_channel_allocator_calls == h.allocation_snapshot, "allocation after create" );
+    drops_check( rocketnet_channel_allocator_calls == h.allocations_after_create, "allocation after create" );
     if ( drops_verbose() )
         printf( "test_unreliable_dropped_while_reliable_waits_never_arrives: over_budget=%llu reliable_arrived=%d elapsed=%.2f\n",
                 (unsigned long long) ( drops_over_budget( &h ) - before ), reliable_arrived, elapsed );
@@ -192,7 +192,7 @@ void unreliable_dropped_when_builder_out_of_budget_never_arrives()
     drops_check( elapsed >= 2.0, "simulated two seconds" );
     drops_check( drops_over_budget( &h ) == before + (uint64_t) ( sent - arrived ), "no further drops once idle" );
     drops_check( rocketnet_channel_harness_overflows( &h ) == 0, "delivery ring overflow" );
-    drops_check( rocketnet_channel_allocator_calls == h.allocation_snapshot, "allocation after create" );
+    drops_check( rocketnet_channel_allocator_calls == h.allocations_after_create, "allocation after create" );
     if ( drops_verbose() )
         printf( "test_unreliable_dropped_when_builder_out_of_budget_never_arrives: sent=%d arrived=%d over_budget=%llu elapsed=%.2f\n",
                 sent, arrived, (unsigned long long) ( drops_over_budget( &h ) - before ), elapsed );

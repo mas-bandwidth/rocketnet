@@ -5,7 +5,7 @@
     Game loop: a 60 Hz fixed-step loop driving one server and N clients in one
     process, each frame in the order a game runs it: update, receive, simulate,
     queue, then send last. Each client sends its position every frame and an
-    event twice a second; the server sends each client a snapshot every frame.
+    event twice a second; the server sends each client its state every frame.
     Messages carry the frame they were queued in, so receivers measure latency
     in frames. Each client's network calls per frame are timed against a 100
     microsecond budget, and the server's tick too; the budget is printed, never
@@ -176,7 +176,7 @@ int main( int argc, char ** argv )
             const double start = rocketnet_time();
             rocketnet_client_update( client, time );                                    // (1) update
             if ( wrong_order ) rocketnet_client_send_packets( client );                 // the mistake: sends last frame's queue
-            const struct rocketnet_message_batch_t * incoming = NULL;                      // (2) receive the snapshots,
+            const struct rocketnet_message_batch_t * incoming = NULL;                      // (2) receive the state,
             while ( ( incoming = rocketnet_client_receive_messages( client ) ) != NULL )   // a batch per call
                 for ( int m = 0; m < incoming->num_messages; m++ )
                     read_message( &to_client, frame, incoming->data[m], incoming->bytes[m] );
@@ -203,7 +203,7 @@ int main( int argc, char ** argv )
             for ( int m = 0; m < batch->num_messages; m++ )                             // in batches, no call per message
                 { read_message( &to_server, frame, batch->data[m], batch->bytes[m] ); events_received += batch->channel[m] == 1; }
         // (3) simulate: nothing moves in this example
-        for ( int i = 0; measuring && i < num_clients; i++ )                            // (4) queue each client's snapshot
+        for ( int i = 0; measuring && i < num_clients; i++ )                            // (4) queue each client's state
             if ( ( buffer = rocketnet_server_start_message( server, (uint64_t) i, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, MESSAGE_BYTES ) ) )
                 rocketnet_server_finish_message( server, write_message( buffer, frame ) );
         if ( !wrong_order ) rocketnet_server_send_packets( server );                    // (5) last, so this frame's messages leave this frame
@@ -217,13 +217,13 @@ int main( int argc, char ** argv )
 
     // clients run their frames before the server's, so the server reads a
     // client's message the frame it was sent (0) and a client reads its
-    // snapshot the next frame (1): the extra latency is what the order adds
+    // state the next frame (1): the extra latency is what the order adds
     if ( to_server.count == 0 || to_client.count == 0 ) { printf( "FAIL: no messages measured\n" ); goto cleanup; }
     print_costs( "[end]", &costs[1], frames );
     printf( "client frame budget %s at p99 (informational, never a failure)\n", percentile( &costs[1], 0.99 ) <= BUDGET_US ? "held" : "exceeded" );
     printf( "latency client->server frames: min %u mean %.2f max %u\n", to_server.min, to_server.sum / to_server.count, to_server.max );
     printf( "latency server->client frames: min %u mean %.2f max %u\n", to_client.min, to_client.sum / to_client.count, to_client.max );
-    const double up = to_server.sum / to_server.count, down = to_client.sum / to_client.count - 1.0;   // less the snapshot's one frame
+    const double up = to_server.sum / to_server.count, down = to_client.sum / to_client.count - 1.0;   // less the state's one frame
     const int extra = (int) ( ( up > down ? up : down ) + 0.5 );
     printf( "latency: %d extra frame(s) (%s order)\n", extra, wrong_order ? "wrong" : "correct" );
 

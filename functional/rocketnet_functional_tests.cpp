@@ -672,7 +672,7 @@ void rocketnet_test_transport_ring_exhaustion()
 
     // Synchronous transports are measured at their first refusal. IOCP's pool
     // has a known size, but even handshake sends may still be retiring at
-    // the first fill. Wait for that whole pool, not an incidental snapshot.
+    // the first fill. Wait for that whole pool, not an incidental count.
     int completion_capacity = 0;
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( strcmp( rocketnet_server_transport_io_name( server ), "iocp" ) == 0 )

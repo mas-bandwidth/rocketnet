@@ -6,7 +6,7 @@
     ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, record the serial
     rocketnet_client_finish_message returns, and read rocketnet_client_receipts each
     frame for ROCKETNET_RECEIPT_STATUS_ACKED or ROCKETNET_RECEIPT_STATUS_LOSS so the sender
-    knows which snapshot the receiver actually got. Run: ./bin/example_ack_receipts.
+    knows which update the receiver actually got. Run: ./bin/example_ack_receipts.
 */
 
 #include "shutdown.h"
@@ -165,10 +165,10 @@ int main( void )
         {
             if ( sent < NUM_UPDATES )
             {
-                uint32_t snapshot_id = (uint32_t) sent;
-                uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, (int) sizeof( snapshot_id ) );
+                uint32_t update_id = (uint32_t) sent;
+                uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, (int) sizeof( update_id ) );
                 CHECK( out != NULL );
-                serials[sent] = rocketnet_client_finish_message( client, write_u32( out, snapshot_id ) );
+                serials[sent] = rocketnet_client_finish_message( client, write_u32( out, update_id ) );
                 CHECK( serials[sent] != 0 );
                 sent++;
             }

@@ -167,13 +167,13 @@ static int load_census_take( struct load_census_t * census )
     census->valid = 0;
     census->threads = 0;
     census->handles = 0;
-    HANDLE snapshot = CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 );
-    if ( snapshot == INVALID_HANDLE_VALUE )
+    HANDLE thread_list = CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 );
+    if ( thread_list == INVALID_HANDLE_VALUE )
         return 0;
     THREADENTRY32 entry;
     entry.dwSize = sizeof( entry );
     const DWORD self = GetCurrentProcessId();
-    if ( Thread32First( snapshot, &entry ) )
+    if ( Thread32First( thread_list, &entry ) )
     {
         do
         {
@@ -181,7 +181,7 @@ static int load_census_take( struct load_census_t * census )
                 continue;
             if ( census->threads == LOAD_CENSUS_MAX )
             {
-                CloseHandle( snapshot );
+                CloseHandle( thread_list );
                 return 0;
             }
             struct load_census_entry_t * thread = &census->thread[census->threads++];
@@ -189,9 +189,9 @@ static int load_census_take( struct load_census_t * census )
             thread->kind = 0;
             thread->os_pool = load_census_thread_is_os_pool( entry.th32ThreadID );
             thread->rng = 0;
-        } while ( Thread32Next( snapshot, &entry ) );
+        } while ( Thread32Next( thread_list, &entry ) );
     }
-    CloseHandle( snapshot );
+    CloseHandle( thread_list );
 
     load_census_query_system_t query = (load_census_query_system_t) (void (*)( void )) load_census_ntdll( "NtQuerySystemInformation" );
     if ( !query )

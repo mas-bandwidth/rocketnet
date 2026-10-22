@@ -28,7 +28,7 @@ its source file. The last three are the pair targets. They share
 the loopback transport, with the harness standing on the wire between them.
 They run with no sockets, no threads and no clock, and their randomness is
 deterministic. The pair is created and connected once per process and then
-restored from a snapshot for each input, so an input replays the same way
+restored from a saved state for each input, so an input replays the same way
 whether it runs alone or after other inputs.
 
 ## Building

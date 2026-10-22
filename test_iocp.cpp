@@ -182,7 +182,7 @@ static void test_completion_owns_frames()
     } while ( rocketnet_platform_time() < deadline );
     CHECK(counters[ROCKETNET_IOCP_SEND_COMPLETED] == 32);
     CHECK(counters[ROCKETNET_IOCP_SEND_FAILED] == 0);
-    // Counters are diagnostic snapshots, not completion fences. Join the
+    // Counters are diagnostic reads, not completion fences. Join the
     // retirement batch before checking that every frame is back in the pool.
     rocketnet_server_iocp_test_hold_completions(transport, true);
     rocketnet_server_iocp_test_hold_completions(transport, false);

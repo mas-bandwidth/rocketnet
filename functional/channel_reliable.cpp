@@ -72,7 +72,7 @@ void reliable_mixed_sizes_over_lossy_link()
             (long long) h.wire_bytes_to_server, (long long) h.wire_bytes_to_client );
     reliable_check( server_seen == 15 && client_seen == 15 );
     reliable_check( rocketnet_channel_harness_overflows( &h ) == 0 );
-    reliable_check( rocketnet_channel_allocator_calls == h.allocation_snapshot );
+    reliable_check( rocketnet_channel_allocator_calls == h.allocations_after_create );
     rocketnet_channel_harness_destroy( &h );
 }
 
@@ -185,6 +185,6 @@ void reliable_duplicate_after_gap_delivered_once()
     reliable_check( a_seen == 1 && b_seen == 1 );
     reliable_check( h.held_overflow == 0 );
     reliable_check( rocketnet_channel_harness_overflows( &h ) == 0 );
-    reliable_check( rocketnet_channel_allocator_calls == h.allocation_snapshot );
+    reliable_check( rocketnet_channel_allocator_calls == h.allocations_after_create );
     rocketnet_channel_harness_destroy( &h );
 }

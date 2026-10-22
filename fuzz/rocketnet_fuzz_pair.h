@@ -49,8 +49,8 @@
 #define ROCKETNET_FUZZ_PAIR_H
 
 // NO THREAD. The server transport's stats worker is a native thread in a
-// production build. The pair restores its snapshot by copying every live block
-// back, which would race a running worker (the worker read a bank the restore
+// production build. The pair restores its saved state by copying every live
+// block back, which would race a running worker (the worker read a bank the restore
 // had just rewritten: a null job input, 2026-10-21). The manual build of the
 // worker has no thread; rocketnet_fuzz_pair_server_update steps it inline
 // after each update, so the stats path still runs on every input.
@@ -163,7 +163,7 @@ static randombytes_implementation rocketnet_fuzz_random_implementation =
 static uint64_t rocketnet_fuzz_allocations = 0;
 static uint64_t rocketnet_fuzz_frees = 0;
 
-// every live block the library holds, so a created pair can be snapshotted
+// every live block the library holds, so a created pair can be saved
 // and restored byte for byte
 #define ROCKETNET_FUZZ_MAX_BLOCKS 4096
 
@@ -175,7 +175,7 @@ struct rocketnet_fuzz_block_t
 
 static struct rocketnet_fuzz_block_t rocketnet_fuzz_blocks[ROCKETNET_FUZZ_MAX_BLOCKS];
 static int rocketnet_fuzz_num_blocks = 0;
-static bool rocketnet_fuzz_snapshots_taken = false;
+static bool rocketnet_fuzz_states_saved = false;
 
 static inline void * rocketnet_fuzz_malloc( void *, size_t bytes )
 {
@@ -200,7 +200,7 @@ static inline void rocketnet_fuzz_free( void *, void * p )
     {
         if ( rocketnet_fuzz_blocks[i].p != p )
             continue;
-        rocketnet_fuzz_pair_require( !rocketnet_fuzz_snapshots_taken, "nothing frees a block the snapshots hold" );
+        rocketnet_fuzz_pair_require( !rocketnet_fuzz_states_saved, "nothing frees a block the saved states hold" );
         rocketnet_fuzz_blocks[i] = rocketnet_fuzz_blocks[--rocketnet_fuzz_num_blocks];
         break;
     }
@@ -538,7 +538,7 @@ static inline bool rocketnet_fuzz_pair_create( struct rocketnet_fuzz_pair_t * pa
         return false;
     pair->transport = rocketnet_message_server_transport( pair->server );
     rocketnet_fuzz_pair_require( pair->transport->stats_worker && !pair->transport->stats_worker->thread,
-                                 "the pair runs no thread (its snapshot restore would race one)" );
+                                 "the pair runs no thread (its state restore would race one)" );
 
     // the wire seam
     pair->real = pair->transport->io.operations;
@@ -659,21 +659,21 @@ static inline void rocketnet_fuzz_pair_destroy( struct rocketnet_fuzz_pair_t * p
 }
 
 // -----------------------------------------------------------------------
-//  snapshot and restore
+//  save and restore
 //
 // A created pair holds over 100 MB (the transports allocate their full
 // compile-time plans up front, and create zeroes them) and destroy wipes
 // every byte with sodium_memzero, so a create and destroy per input runs a
 // few inputs a second. Instead the pair is created once per process and its
-// state is snapshotted twice: just after create (the handshake not yet
-// started) and just after connect. A snapshot is every block the library
+// state is saved twice: just after create (the handshake not yet
+// started) and just after connect. A saved state is every block the library
 // allocated, the harness's own pair state, the random stream and the
 // loopback endpoint table. Each input restores one of the two, so input N
 // starts from the same bytes whether it runs alone or after N-1, and nothing
 // allocates or frees on the way.
 // -----------------------------------------------------------------------
 
-struct rocketnet_fuzz_snapshot_t
+struct rocketnet_fuzz_saved_state_t
 {
     struct rocketnet_fuzz_pair_t pair;
     uint64_t random_state;
@@ -682,45 +682,45 @@ struct rocketnet_fuzz_snapshot_t
     uint16_t next_port;
 };
 
-#define ROCKETNET_FUZZ_SNAPSHOT_CREATED   0
-#define ROCKETNET_FUZZ_SNAPSHOT_CONNECTED 1
+#define ROCKETNET_FUZZ_STATE_CREATED   0
+#define ROCKETNET_FUZZ_STATE_CONNECTED 1
 
-static struct rocketnet_fuzz_snapshot_t rocketnet_fuzz_snapshots[2];
+static struct rocketnet_fuzz_saved_state_t rocketnet_fuzz_saved_states[2];
 static void * rocketnet_fuzz_block_copies[2][ROCKETNET_FUZZ_MAX_BLOCKS];
-static int rocketnet_fuzz_snapshot_blocks = 0;
+static int rocketnet_fuzz_saved_blocks = 0;
 
-static inline void rocketnet_fuzz_snapshot_take( struct rocketnet_fuzz_pair_t * pair, int which )
+static inline void rocketnet_fuzz_state_save( struct rocketnet_fuzz_pair_t * pair, int which )
 {
-    struct rocketnet_fuzz_snapshot_t * snap = &rocketnet_fuzz_snapshots[which];
-    rocketnet_fuzz_snapshot_blocks = rocketnet_fuzz_num_blocks;
+    struct rocketnet_fuzz_saved_state_t * saved = &rocketnet_fuzz_saved_states[which];
+    rocketnet_fuzz_saved_blocks = rocketnet_fuzz_num_blocks;
     for ( int i = 0; i < rocketnet_fuzz_num_blocks; i++ )
     {
         struct rocketnet_fuzz_block_t * b = &rocketnet_fuzz_blocks[i];
         void * copy = malloc( b->bytes > 0 ? b->bytes : 1 );
-        rocketnet_fuzz_pair_require( copy != NULL, "the snapshot copy allocates" );
+        rocketnet_fuzz_pair_require( copy != NULL, "the saved copy allocates" );
         memcpy( copy, b->p, b->bytes );
         rocketnet_fuzz_block_copies[which][i] = copy;
     }
-    snap->pair = *pair;
-    snap->random_state = rocketnet_fuzz_random_state;
-    snap->client_clock_time = rocketnet_fuzz_client_clock_time;
+    saved->pair = *pair;
+    saved->random_state = rocketnet_fuzz_random_state;
+    saved->client_clock_time = rocketnet_fuzz_client_clock_time;
     rocketnet_loopback_state_t & state = loopback_state();
-    memcpy( snap->endpoints, state.endpoints, sizeof( snap->endpoints ) );
-    snap->next_port = state.next_port;
+    memcpy( saved->endpoints, state.endpoints, sizeof( saved->endpoints ) );
+    saved->next_port = state.next_port;
 }
 
-static inline void rocketnet_fuzz_snapshot_restore( struct rocketnet_fuzz_pair_t * pair, int which )
+static inline void rocketnet_fuzz_state_restore( struct rocketnet_fuzz_pair_t * pair, int which )
 {
-    const struct rocketnet_fuzz_snapshot_t * snap = &rocketnet_fuzz_snapshots[which];
-    rocketnet_fuzz_pair_require( rocketnet_fuzz_num_blocks == rocketnet_fuzz_snapshot_blocks, "the live blocks are the snapshot's blocks" );
+    const struct rocketnet_fuzz_saved_state_t * saved = &rocketnet_fuzz_saved_states[which];
+    rocketnet_fuzz_pair_require( rocketnet_fuzz_num_blocks == rocketnet_fuzz_saved_blocks, "the live blocks are the saved blocks" );
     for ( int i = 0; i < rocketnet_fuzz_num_blocks; i++ )
         memcpy( rocketnet_fuzz_blocks[i].p, rocketnet_fuzz_block_copies[which][i], rocketnet_fuzz_blocks[i].bytes );
-    *pair = snap->pair;
-    rocketnet_fuzz_random_state = snap->random_state;
-    rocketnet_fuzz_client_clock_time = snap->client_clock_time;
+    *pair = saved->pair;
+    rocketnet_fuzz_random_state = saved->random_state;
+    rocketnet_fuzz_client_clock_time = saved->client_clock_time;
     rocketnet_loopback_state_t & state = loopback_state();
-    memcpy( state.endpoints, snap->endpoints, sizeof( snap->endpoints ) );
-    state.next_port = snap->next_port;
+    memcpy( state.endpoints, saved->endpoints, sizeof( saved->endpoints ) );
+    state.next_port = saved->next_port;
     // the transport points at the pair's own shim table
     pair->transport->io.operations = &pair->shim;
     rocketnet_fuzz_live_pair = pair;
@@ -728,9 +728,9 @@ static inline void rocketnet_fuzz_snapshot_restore( struct rocketnet_fuzz_pair_t
 }
 
 // ROCKETNET_FUZZ_COVERAGE_INPUTS_ONLY=1, in a build with source-based
-// coverage: the one-time create, connect and snapshot run before any input
+// coverage: the one-time create, connect and save run before any input
 // and would count as covered code no input drove, so the profile counters
-// are zeroed once the snapshots are taken (tools/fuzz_coverage.sh sets it).
+// are zeroed once the states are saved (tools/fuzz_coverage.sh sets it).
 // Only the coverage build (tools/fuzz_coverage.sh, which defines
 // ROCKETNET_FUZZ_COVERAGE_BUILD) links the profile runtime. Every other build
 // names no profile symbol: a weak undefined reference links on Linux but not
@@ -750,21 +750,21 @@ static inline void rocketnet_fuzz_coverage_reset_after_setup()
 
 // The pair for one input, freshly created (connected false: the handshake
 // has not started) or carried through the handshake. The first call creates,
-// connects and snapshots; it aborts if the deterministic pair does not create
+// connects and saves; it aborts if the deterministic pair does not create
 // or connect -- both are properties of the fixed setup, not of the input.
 static inline void rocketnet_fuzz_pair_acquire( struct rocketnet_fuzz_pair_t * pair, bool connected )
 {
-    if ( !rocketnet_fuzz_snapshots_taken )
+    if ( !rocketnet_fuzz_states_saved )
     {
         rocketnet_fuzz_pair_require( rocketnet_fuzz_pair_create( pair ), "the fuzz pair creates" );
-        rocketnet_fuzz_snapshot_take( pair, ROCKETNET_FUZZ_SNAPSHOT_CREATED );
+        rocketnet_fuzz_state_save( pair, ROCKETNET_FUZZ_STATE_CREATED );
         rocketnet_fuzz_pair_require( rocketnet_fuzz_pair_connect( pair ), "the deterministic pair connects" );
-        rocketnet_fuzz_pair_require( rocketnet_fuzz_num_blocks == rocketnet_fuzz_snapshot_blocks, "connect allocates nothing" );
-        rocketnet_fuzz_snapshot_take( pair, ROCKETNET_FUZZ_SNAPSHOT_CONNECTED );
-        rocketnet_fuzz_snapshots_taken = true;
+        rocketnet_fuzz_pair_require( rocketnet_fuzz_num_blocks == rocketnet_fuzz_saved_blocks, "connect allocates nothing" );
+        rocketnet_fuzz_state_save( pair, ROCKETNET_FUZZ_STATE_CONNECTED );
+        rocketnet_fuzz_states_saved = true;
         rocketnet_fuzz_coverage_reset_after_setup();
     }
-    rocketnet_fuzz_snapshot_restore( pair, connected ? ROCKETNET_FUZZ_SNAPSHOT_CONNECTED : ROCKETNET_FUZZ_SNAPSHOT_CREATED );
+    rocketnet_fuzz_state_restore( pair, connected ? ROCKETNET_FUZZ_STATE_CONNECTED : ROCKETNET_FUZZ_STATE_CREATED );
 }
 
 // -----------------------------------------------------------------------
@@ -822,7 +822,7 @@ static inline void rocketnet_fuzz_pair_dump( struct rocketnet_fuzz_pair_t * pair
 //
 // yojimbo's gen_seed_corpus, built into the harness so the seeds are made
 // by the same pair the harness replays them on. The generator runs the real
-// handshake from the created snapshot and a scripted session from the
+// handshake from the created state and a scripted session from the
 // connected one (messages both ways, a message large enough to fragment,
 // idle time for keep-alives and acks, a disconnect from each side), and
 // records the first real datagram of every packet type in each direction,
@@ -841,7 +841,7 @@ struct rocketnet_fuzz_recorded_t
 {
     int bytes;
     bool handshake;
-    int step;                   // the step it was recorded at, from the snapshot
+    int step;                   // the step it was recorded at, from the saved state
     uint8_t data[ROCKETNET_RECEIVE_CEILING];
     int plaintext_bytes;
     uint8_t plaintext[ROCKETNET_RECEIVE_CEILING];

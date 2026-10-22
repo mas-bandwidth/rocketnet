@@ -80,7 +80,7 @@ static uint64_t client_io_transport_counter( rocketnet_client_transport_t * tran
     return rocketnet_client_transport_counters( transport )->values[counter];
 }
 
-extern const rocketnet_client_receive_buffer_t * rocketnet_client_transport_legacy_receive_snapshot_for_test(
+extern const rocketnet_client_receive_buffer_t * rocketnet_client_transport_legacy_receive_state_for_test(
     const rocketnet_client_transport_t * transport, int * fill, int * ready_count, int * free_count );
 
 // Step-driven BASE receive uses the same handoff as its worker, without a
@@ -100,12 +100,12 @@ static void test_client_legacy_receive_handoff_and_backpressure()
     datagram[0] = 0xA1;
     rocketnet_fake_client_push( fake, &server, datagram, sizeof(datagram) );
     rocketnet_client_transport_step_legacy_for_test( transport, 1000.0 );
-    check( rocketnet_client_transport_legacy_receive_snapshot_for_test( transport, &fill, &ready, &free_count ) == NULL );
+    check( rocketnet_client_transport_legacy_receive_state_for_test( transport, &fill, &ready, &free_count ) == NULL );
     check( fill == -1 && ready == 1 && free_count == 2 );
 
     rocketnet_client_transport_update( transport, 1000.0 );
     const rocketnet_client_receive_buffer_t * first =
-        rocketnet_client_transport_legacy_receive_snapshot_for_test( transport, &fill, &ready, &free_count );
+        rocketnet_client_transport_legacy_receive_state_for_test( transport, &fill, &ready, &free_count );
     check( first && first->num_packets == 1 && first->packet_data[0][0] == 0xA1 );
     check( ready == 0 && free_count == 2 );
 
@@ -115,7 +115,7 @@ static void test_client_legacy_receive_handoff_and_backpressure()
     datagram[0] = 0xC3;
     rocketnet_fake_client_push( fake, &server, datagram, sizeof(datagram) );
     rocketnet_client_transport_step_legacy_for_test( transport, 1000.2 );
-    check( rocketnet_client_transport_legacy_receive_snapshot_for_test( transport, &fill, &ready, &free_count ) == first );
+    check( rocketnet_client_transport_legacy_receive_state_for_test( transport, &fill, &ready, &free_count ) == first );
     check( first->num_packets == 1 && first->packet_data[0][0] == 0xA1 );
     check( fill == -1 && ready == 2 && free_count == 0 );
 
@@ -127,7 +127,7 @@ static void test_client_legacy_receive_handoff_and_backpressure()
 
     rocketnet_client_transport_update( transport, 1000.3 );
     const rocketnet_client_receive_buffer_t * second =
-        rocketnet_client_transport_legacy_receive_snapshot_for_test( transport, &fill, &ready, &free_count );
+        rocketnet_client_transport_legacy_receive_state_for_test( transport, &fill, &ready, &free_count );
     check( second && second != first && second->num_packets == 1 && second->packet_data[0][0] == 0xB2 );
     rocketnet_client_transport_step_legacy_for_test( transport, 1000.4 );
     check( fake->inbound_count == 0 );
@@ -135,11 +135,11 @@ static void test_client_legacy_receive_handoff_and_backpressure()
 
     rocketnet_client_transport_update( transport, 1000.4 );
     const rocketnet_client_receive_buffer_t * third =
-        rocketnet_client_transport_legacy_receive_snapshot_for_test( transport, &fill, &ready, &free_count );
+        rocketnet_client_transport_legacy_receive_state_for_test( transport, &fill, &ready, &free_count );
     check( third && third != second && third->num_packets == 1 && third->packet_data[0][0] == 0xC3 );
     rocketnet_client_transport_update( transport, 1000.5 );
     const rocketnet_client_receive_buffer_t * fourth =
-        rocketnet_client_transport_legacy_receive_snapshot_for_test( transport, &fill, &ready, &free_count );
+        rocketnet_client_transport_legacy_receive_state_for_test( transport, &fill, &ready, &free_count );
     check( fourth == first && fourth->num_packets == 1 && fourth->packet_data[0][0] == 0xD4 );
 
     rn_test_client_transport_stop_and_destroy( transport );
