@@ -698,6 +698,32 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
         rocketnet_sleep(0.001);
     }
     fprintf(stderr, "startup_diag: server arm acked=%d/%d elapsed=%.3f\n", acked, total, rocketnet_time() - arm_start);
+    if ( acked != total )
+    {
+        int shown = 0, bucket[8] = {0};
+        for ( int i = 0; i < total; ++i )
+        {
+            if ( clients[i].arm_acked ) continue;
+            bucket[(i * 8) / total]++;
+            if ( shown++ >= 12 ) continue;
+            struct rocketnet_server_client_stats_t ds;
+            rocketnet_server_client_stats(server, clients[i].slot, &ds);
+            fprintf(stderr, "startup_diag: unacked client=%d slot=%d connected=%d sent=%llu rx=%llu rtt=%.1f loss=%.1f\n", i, clients[i].slot,
+                rocketnet_server_client_connected(server, clients[i].slot), (unsigned long long) ds.packets_sent, (unsigned long long) ds.packets_received, ds.rtt_ms, ds.packet_loss_percent);
+        }
+        fprintf(stderr, "startup_diag: unacked by client-id eighth: %d %d %d %d %d %d %d %d\n", bucket[0], bucket[1], bucket[2], bucket[3], bucket[4], bucket[5], bucket[6], bucket[7]);
+        {
+            int acked_shown = 0;
+            for ( int i = 0; i < total && acked_shown < 3; ++i )
+            {
+                if ( !clients[i].arm_acked ) continue;
+                acked_shown++;
+                struct rocketnet_server_client_stats_t ds;
+                rocketnet_server_client_stats(server, clients[i].slot, &ds);
+                fprintf(stderr, "startup_diag: acked client=%d slot=%d sent=%llu rx=%llu rtt=%.1f\n", i, clients[i].slot, (unsigned long long) ds.packets_sent, (unsigned long long) ds.packets_received, ds.rtt_ms);
+            }
+        }
+    }
     if ( acked != total || result.protocol_errors || quit ) goto cleanup;
     for ( int i = 0; i < total; ++i )
         if ( !split_server_send(server, clients[i].slot, SPLIT_GO_MAGIC,
