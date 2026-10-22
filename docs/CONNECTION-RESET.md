@@ -57,10 +57,13 @@ other session state.
 |---|---|---|---|---|
 | `rocketnet_encryption_mapping_t` | keys, salt, nonce and ephemeral public keys | session cryptography | RESET | mapping removal zeroes the mapping |
 | | challenge packet and token record | challenge/cookie/token state | RESET | one handshake |
-| | client id, user data, client index, established | slot identity | RESET | identity cannot leak to reuse |
-| | timeouts, deadlines and send/receive times | clocks and pacing | RESET | one mapping |
+| | client id, user data | slot identity | RESET | identity cannot leak to reuse |
+| | control pointer | parallel timeout-control allocation | KEEP | map owner retains the indexed allocation |
+| | send times | clocks and pacing | RESET | one mapping |
 | | handshake/session sequences and fragment id | packet sequence spaces | RESET | new mapping starts fresh |
 | | replay windows and integrity failures | receive security history | RESET | old ciphertext cannot affect a new mapping |
+| `rocketnet_encryption_mapping_control_t` | client index, established | slot identity | RESET | identity cannot leak to reuse |
+| | timeout, handshake deadline and receive time | expiry clocks | RESET | one mapping |
 | `rocketnet_client_slots_t` | per-index identity, mapping, confirmation, user data and hash link | slot record | RESET | slot release clears the index |
 | | hash key, buckets and free-stack geometry | table owner | KEEP | server-lifetime allocation |
 | `rocketnet_server_acks_t` | `endpoints[client_index]` | ack rings, bitfields and quality estimates | RESET | packet history is per connection |

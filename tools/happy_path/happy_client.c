@@ -21,6 +21,7 @@
 #define ROCKETNET_DEVELOPMENT 1
 #endif
 
+#include "../../examples/shutdown.h"
 #include "rocketnet.h"
 #include "../../examples/dev_keys.h"
 #include "../../test/portable_crt.h"
@@ -96,7 +97,7 @@ int main( int argc, char ** argv )
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &create_status );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
-        rocketnet_client_destroy( client );
+        rn_cli_client_stop_and_destroy( client );
         client = NULL;
     }
     if ( !client )
@@ -190,7 +191,7 @@ int main( int argc, char ** argv )
 
             struct rocketnet_receipt_t receipts[64];
             const int num_receipts = rocketnet_client_receipts( client, receipts, 64 );
-            for ( int i = 0; i < num_receipts; i++ )
+            for ( int i = 0; i < num_receipts && i < 64; i++ )
             {
                 for ( int mode = 5; mode <= 7; mode++ )
                 {
@@ -227,11 +228,12 @@ int main( int argc, char ** argv )
     if ( exit_code == 0 && connected )
     {
         rocketnet_client_disconnect( client );
+        rn_cli_client_wait_disconnected( client );
         printf( "disconnected\n" );
         fflush( stdout );
     }
 
-    rocketnet_client_destroy( client );
+    rn_cli_client_stop_and_destroy( client );
     rocketnet_term();
 
     return exit_code;

@@ -234,3 +234,16 @@ REGISTER_UNIT_TEST( test_token_time_refusals_are_distinct );
 REGISTER_UNIT_TEST( test_token_expiring_one_second_ahead_is_accepted );
 REGISTER_UNIT_TEST( test_token_created_at_the_skew_limit_is_accepted );
 REGISTER_UNIT_TEST( test_token_lifetime_at_the_maximum_is_accepted );
+
+static void test_token_future_creation_without_lifetime_limit()
+{
+    struct token_time_server_t t;
+    token_time_setup( &t );
+    t.server.max_token_lifetime_seconds = 0;
+    token_time_refuse( &t, TOKEN_TIME_NOW + 6, TOKEN_TIME_NOW + 10,
+                       ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE );
+    token_time_accept( &t, TOKEN_TIME_NOW + 5, TOKEN_TIME_NOW + 10000 );
+    token_time_teardown( &t );
+}
+
+REGISTER_UNIT_TEST( test_token_future_creation_without_lifetime_limit );

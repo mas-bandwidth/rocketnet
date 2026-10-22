@@ -654,11 +654,9 @@ static void test_xdp_transport_ladder_keeps_xdp_for_ipv6()
 // refuses there, before any socket opens. No line says the transport serves
 // IPv4 only, and the status is not INVALID_TRANSPORT_LIST. The xdp row
 // exists only on Linux: elsewhere a pin of it falls to the auto order, whose
-// transports open a real socket, so the case is built on Linux only, and only
-// where XDP is compiled in (test_unit_xdp_compiled_out.cpp covers the pin in
-// a build without it).
+// transports open a real socket, so the case is built on Linux only.
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+#if ROCKETNET_XDP
 
 static int xdp_ipv6_family_refusals = 0;
 static int xdp_ipv6_barrier_lines = 0;
@@ -672,9 +670,9 @@ static void xdp_ipv6_capture( void *, enum rocketnet_log_level_t level, const ch
         xdp_ipv6_barrier_lines++;
 }
 
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+#endif // #if ROCKETNET_XDP
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+#if ROCKETNET_XDP
 static void test_xdp_transport_ipv6_pin_reaches_the_xdp_transport_at_create()
 {
     int num_available = 0;
@@ -722,6 +720,31 @@ static void test_xdp_transport_ipv6_pin_reaches_the_xdp_transport_at_create()
 }
 #endif
 
+#if !ROCKETNET_XDP
+static void test_xdp_disabled_pin_refuses_and_auto_keeps_fallbacks()
+{
+    int count = 0;
+    const int * available = rocketnet_server_transport_io_availability( &count );
+    rocketnet_unit_check( count > 0 );
+    struct rocketnet_transport_ladder_t ladder;
+    rocketnet_unit_check( rocketnet_transport_ladder_parse( "xdp", available, count, &ladder ) );
+    rocketnet_unit_check( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_XDP );
+    rocketnet_unit_check( ladder.num_skipped == 0 );
+    rocketnet_server_transport_io_t io = {};
+    rocketnet_server_transport_io_config_t config = {};
+    rocketnet_address_t bind = {};
+    const rocketnet_transport_definition_t * xdp = rocketnet_transport_definition( ROCKETNET_TRANSPORT_XDP );
+    rocketnet_unit_check( xdp->backend && xdp->backend->server );
+    rocketnet_unit_check( !rocketnet_server_transport_io_open( xdp->backend->server, NULL, &config, &bind, &io ) );
+    rocketnet_unit_check( io.instance == NULL );
+    rocketnet_unit_check( rocketnet_transport_ladder_parse( "auto", available, count, &ladder ) );
+    rocketnet_unit_check( ladder.num_candidates >= 2 );
+    rocketnet_unit_check( ladder.candidates[0] == ROCKETNET_TRANSPORT_XDP );
+    rocketnet_unit_check( ladder.candidates[1] == ROCKETNET_TRANSPORT_GSO );
+}
+REGISTER_UNIT_TEST( test_xdp_disabled_pin_refuses_and_auto_keeps_fallbacks );
+#endif
+
 REGISTER_UNIT_TEST( test_ipv4_frame_matches_golden );
 REGISTER_UNIT_TEST( test_ipv6_frame_matches_golden );
 REGISTER_UNIT_TEST( test_ipv6_udp_checksum_verifies );
@@ -738,7 +761,7 @@ REGISTER_UNIT_TEST( test_xdp_transport_receive_ipv6_extension_dropped_counted );
 REGISTER_UNIT_TEST( test_xdp_transport_frame_ipv4_unchanged );
 REGISTER_UNIT_TEST( test_xdp_transport_receive_dispatches_both_families_counted );
 REGISTER_UNIT_TEST( test_xdp_transport_ladder_keeps_xdp_for_ipv6 );
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+#if ROCKETNET_XDP
 REGISTER_UNIT_TEST( test_xdp_transport_ipv6_pin_reaches_the_xdp_transport_at_create );
 #endif
 

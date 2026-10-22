@@ -9,7 +9,7 @@ target, no libbpf or libxdp, or ROCKETNET_XDP=OFF): the archive defines no XDP
 transport, netlink gateway or embedded program symbol, references no libbpf or
 libxdp function, and the shared library does not link libbpf or libxdp. The
 only xdp names left are the registry row's refusal (rocketnet_xdp_transport,
-its operations table and its xdp_not_built_ functions) and the public
+its operations table and its xdp_disabled_ functions) and the public
 rocketnet_forbid_xdp_commit, a no-op there.
 
 --present is the build with XDP, the reversed witness: the transport, the
@@ -26,7 +26,7 @@ import sys
 XDP_DEFINED = re.compile(r"(xdp|gateway_netlink|rocketnet_server_socket_)", re.I)
 
 # what a build without XDP keeps: the registry row's refusal and the public no-op
-ALLOWED_DEFINED = re.compile(r"^(rocketnet_xdp_transport|xdp_operations|xdp_not_built_\w+|rocketnet_forbid_xdp_commit)\b")
+ALLOWED_DEFINED = re.compile(r"^(rocketnet_xdp_transport|xdp_operations|xdp_disabled_\w+|rocketnet_forbid_xdp_commit)\b")
 
 # a reference into libbpf or libxdp
 XDP_IMPORT = re.compile(r"^(bpf_|libbpf_|btf_|xsk_|libxdp_|xdp_program__)")

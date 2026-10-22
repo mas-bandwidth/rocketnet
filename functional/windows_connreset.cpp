@@ -13,6 +13,7 @@
     TerminateProcess, with sends to a closed port, and for the client.
 */
 
+#include "../test/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
@@ -194,7 +195,7 @@ void windows_connreset_child_client()
         windows_connreset_client_tick( client, rocketnet_platform_time(), sequence++, true, NULL, NULL );
         rocketnet_platform_sleep( WINDOWS_CONNRESET_TICK );
     }
-    rocketnet_client_transport_destroy( client );
+    rn_native_client_transport_stop_and_destroy( client );
 }
 
 // one server, three live clients in this process and one client in a child
@@ -339,8 +340,8 @@ static void windows_connreset_session_start( windows_connreset_session_t * sessi
 static void windows_connreset_session_finish( windows_connreset_session_t * session )
 {
     for ( int i = 0; i < WINDOWS_CONNRESET_LIVE_CLIENTS; i++ )
-        rocketnet_client_transport_destroy( session->live[i] );
-    rocketnet_server_transport_destroy( session->server );
+        rn_native_client_transport_stop_and_destroy( session->live[i] );
+    rn_native_server_transport_stop_and_destroy( session->server );
     windows_connreset_child_close( &session->child );
 }
 
@@ -413,7 +414,7 @@ static void windows_connreset_hard_killed_client( const windows_connreset_transp
     // the reports are off on every socket: the stack delivered none
     windows_connreset_require( resets == 0 );
 
-    rocketnet_client_transport_destroy( fifth );
+    rn_native_client_transport_stop_and_destroy( fifth );
     windows_connreset_session_finish( &session );
 }
 
@@ -568,8 +569,8 @@ static void windows_client_connreset_server_gone( bool ipv6 )
     windows_connreset_require( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     windows_connreset_require( resets == 0 );
 
-    rocketnet_client_transport_destroy( client );
-    rocketnet_server_transport_destroy( server );
+    rn_native_client_transport_stop_and_destroy( client );
+    rn_native_server_transport_stop_and_destroy( server );
 }
 
 #define WINDOWS_CONNRESET_CASES( name, function )                                                        \

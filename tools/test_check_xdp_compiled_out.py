@@ -11,7 +11,7 @@ import check_xdp_compiled_out as check
 COMPILED_OUT = [
     "rocketnet_driver_builtin.cpp.o:",
     "0000000000000440 T rocketnet_forbid_xdp_commit",
-    "00000000000002a0 t xdp_not_built_create(void*, rocketnet_server_transport_io_config_t const*, rocketnet_address_t*)",
+    "00000000000002a0 t xdp_disabled_create(void*, rocketnet_server_transport_io_config_t const*, rocketnet_address_t*)",
     "0000000000000020 d xdp_operations",
     "0000000000000000 D rocketnet_xdp_transport",
     "                 U rocketnet_xdp_transport",

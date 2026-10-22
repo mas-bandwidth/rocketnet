@@ -651,6 +651,10 @@ uint32_t rn_endpoint_begin_update( struct rn_endpoint_t * endpoint )
 {
     // RNChannel EndUpdate: the last update's deliveries expire and their
     // receive descriptors return to the region (RNSlots Release's charge)
+    // A transport may exhaust its frame capacity before next_packet_bytes
+    // reaches the end of the write pass. The next update must offer reliable
+    // work first and begin a fresh budget phase while keeping queued records.
+    endpoint->write_phase = RN_ENDPOINT_WRITE_IDLE;
     endpoint->written = 0;
     const uint32_t delivered = endpoint->ordered.channels.deliveries;
     rn_ordered_end_update( &endpoint->ordered );

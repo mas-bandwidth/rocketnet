@@ -109,12 +109,12 @@ static void rocketnet_message_connection_reset( struct rn_message_object_t * obj
         (sdk/rocketnet_message_server.cpp, rn_message_connection_cancel_at_reset).
     */
     rn_endpoint_reset( connection, object->time );
-    memset( connection->views, 0, connection->region->delivery_entries );
-    memset( connection->cursors, 0,
+    memset( connection->hot->views, 0, connection->region->delivery_entries );
+    memset( connection->hot->cursors, 0,
             sizeof(uint32_t) * (size_t) connection->region->num_channels );
-    connection->held = 0;
-    connection->connection_id = 0;
-    connection->state = RN_MESSAGE_CONNECTION_FREE;
+    connection->hot->held = 0;
+    connection->hot->connection_id = 0;
+    connection->hot->state = RN_MESSAGE_CONNECTION_FREE;
     connection->disconnect_reason = disconnect_reason;
 }
 

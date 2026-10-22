@@ -814,6 +814,8 @@ int main( int argc, char ** argv )
         { ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED,           "duplication: the wire delivers a payload twice, the second is a replay" },
         { ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED,          "duplication: the wire delivers a fragment twice, the second is a replay" },
         { ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ALREADY_RECEIVED, "duplication: the wire delivers a keep-alive twice, the second is a replay" },
+        { ROCKETNET_COUNTER_ACK_ALREADY_RECEIVED,               "duplication: the wire delivers a standalone ack twice, the second is a replay" },
+        { ROCKETNET_COUNTER_CLIENT_ACK_ALREADY_RECEIVED,        "duplication: the wire delivers a standalone ack twice, the second is a replay" },
         { -1, NULL }
     };
 

@@ -13,6 +13,7 @@
 // in-memory loopback transport with step-driven clients: no socket, no
 // thread, no sleep, and time is an argument starting at 1000.0.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "sdk/rocketnet_connect_token.h"
 #include "sdk/rocketnet_base64.h"
@@ -111,7 +112,7 @@ static int server_disconnected_connect( const server_disconnected_identity_t * i
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     server_disconnected_token( identity, rocketnet_server_port( server ), client_id, timeout_seconds, token );
     check( rocketnet_client_state( client ) == state_before );
-    check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
+    check( rn_test_client_connect_after_completion( client, token ) == ROCKETNET_STATUS_OK );
     check( rocketnet_client_state( client ) > ROCKETNET_CLIENT_STATE_DISCONNECTED );
     check( rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED );
     for ( int i = 0; i < 400 && rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
@@ -136,7 +137,7 @@ enum server_disconnected_how_t
 {
     SERVER_DISCONNECTED_BY_DISCONNECT_CLIENT,
     SERVER_DISCONNECTED_BY_STOP,
-    SERVER_DISCONNECTED_BY_DESTROY
+    SERVER_DISCONNECTED_BY_STOP_THEN_DESTROY
 };
 
 // DONE-WHEN (3): for each way the server ends the connection, one client
@@ -148,7 +149,7 @@ static void test_server_disconnect_sets_server_disconnected_reason()
     server_disconnected_identity_t identity;
     server_disconnected_identity( &identity );
 
-    const server_disconnected_how_t hows[] = { SERVER_DISCONNECTED_BY_DISCONNECT_CLIENT, SERVER_DISCONNECTED_BY_STOP, SERVER_DISCONNECTED_BY_DESTROY };
+    const server_disconnected_how_t hows[] = { SERVER_DISCONNECTED_BY_DISCONNECT_CLIENT, SERVER_DISCONNECTED_BY_STOP, SERVER_DISCONNECTED_BY_STOP_THEN_DESTROY };
     for ( int h = 0; h < 3; h++ )
     {
         const server_disconnected_how_t how = hows[h];
@@ -167,10 +168,11 @@ static void test_server_disconnect_sets_server_disconnected_reason()
         else if ( how == SERVER_DISCONNECTED_BY_STOP )
         {
             rocketnet_server_stop( server );
+            rn_test_server_wait_stopped( server );
         }
         else
         {
-            rocketnet_server_destroy( server );
+            rn_test_server_stop_and_destroy( server );
             server = NULL;
         }
 
@@ -186,13 +188,13 @@ static void test_server_disconnect_sets_server_disconnected_reason()
         // kept until the next connect, which ends it and starts a handshake
         if ( how == SERVER_DISCONNECTED_BY_STOP )
             check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
-        else if ( how == SERVER_DISCONNECTED_BY_DESTROY )
+        else if ( how == SERVER_DISCONNECTED_BY_STOP_THEN_DESTROY )
             server = server_disconnected_server_create( &identity );
         server_disconnected_connect( &identity, server, client, 0x5D10ULL + (uint64_t) h, 300,
                                      ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED, &time );
 
-        rocketnet_client_destroy( client );
-        rocketnet_server_destroy( server );
+        rn_test_client_stop_and_destroy( client );
+        rn_test_server_stop_and_destroy( server );
     }
 }
 
@@ -215,13 +217,14 @@ static void test_client_disconnect_and_timeout_read_none()
         const int index = server_disconnected_connect( &identity, server, client, 0x5E01ULL, 300,
                                                        ROCKETNET_CLIENT_STATE_DISCONNECTED, &time );
         rocketnet_client_disconnect( client );
+        rn_test_client_wait_disconnected( client );
         check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
         for ( int i = 0; i < 10; i++ )
             server_disconnected_pump( server, client, &time );
         check( !rocketnet_server_client_connected( server, index ) );
         check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
-        rocketnet_client_destroy( client );
-        rocketnet_server_destroy( server );
+        rn_test_client_stop_and_destroy( client );
+        rn_test_server_stop_and_destroy( server );
     }
 
     // connection timeout: the server stops being updated, so it sends
@@ -241,8 +244,8 @@ static void test_client_disconnect_and_timeout_read_none()
             rocketnet_client_send_packets( client );
         }
         check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT );
-        rocketnet_client_destroy( client );
-        rocketnet_server_destroy( server );
+        rn_test_client_stop_and_destroy( client );
+        rn_test_server_stop_and_destroy( server );
     }
 }
 
@@ -327,14 +330,14 @@ static void server_disconnected_fake_case( int names_end_reason, int expected_re
     rocketnet_message_client_t * client = (rocketnet_message_client_t *) object;
     double time = 1000.0;
     check( rocketnet_message_client_update( client, time ) == ROCKETNET_UPDATE_OK );
-    check( object->connections[0].state == RN_MESSAGE_CONNECTION_CONNECTED );
+    check( object->hot_connections[0].state == RN_MESSAGE_CONNECTION_CONNECTED );
     check( object->connections[0].disconnect_reason == ROCKETNET_DISCONNECT_REASON_NONE );
 
     // the link's transport ends: the terminal check resets the connection
     fake.connected = 0;
     time += 0.01;
     check( rocketnet_message_client_update( client, time ) == ROCKETNET_UPDATE_OK );
-    check( object->connections[0].state != RN_MESSAGE_CONNECTION_CONNECTED );
+    check( object->hot_connections[0].state != RN_MESSAGE_CONNECTION_CONNECTED );
     check( object->connections[0].disconnect_reason == expected_reason );
 
     // further updates keep it
@@ -435,9 +438,9 @@ static void server_disconnect_now_case( bool all )
     check( rocketnet_server_disconnect_reason( server, other_index ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
     if ( other )
-        rocketnet_client_destroy( other );
-    rocketnet_client_destroy( client );
-    rocketnet_server_destroy( server );
+        rn_test_client_stop_and_destroy( other );
+    rn_test_client_stop_and_destroy( client );
+    rn_test_server_stop_and_destroy( server );
 }
 
 static void test_server_disconnect_client_ends_slot_at_once()

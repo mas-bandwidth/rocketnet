@@ -254,7 +254,8 @@ int main( void )
     CHECK( server_config.config_bytes == sizeof( server_config ) );
     server_config.protocol_id = PROTOCOL_ID;
     server_config.max_clients = 2;
-    server_config.transport = "portable";
+    // no server transport pin: a production library refuses the portable
+    // server, so the default auto order grants a native transport
     memcpy( server_config.backend_public_key, backend_public_key, sizeof( server_config.backend_public_key ) );
     CHECK( rocketnet_server_required_memory( &server_config ) > 0 );
 
@@ -265,7 +266,8 @@ int main( void )
     CHECK( !rocketnet_server_running( server ) );
     CHECK( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
     CHECK( rocketnet_server_running( server ) );
-    CHECK( strcmp( rocketnet_server_transport_name( server ), "portable" ) == 0 );
+    CHECK( rocketnet_server_transport_name( server ) != NULL );
+    CHECK( strcmp( rocketnet_server_transport_name( server ), "portable" ) != 0 );
     CHECK( rocketnet_server_max_clients( server ) == 2 );
     CHECK( rocketnet_server_port( server ) != 0 );
 
@@ -319,6 +321,8 @@ int main( void )
     // else is refused
     CHECK( rocketnet_client_connect( client, "not a connect token" ) == ROCKETNET_STATUS_INVALID_CONNECT_TOKEN );
     CHECK( rocketnet_client_state( client ) <= ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    rocketnet_client_disconnect( client );
+    CHECK( rocketnet_client_disconnected( client ) );
 
 #if ROCKETNET_DEVELOPMENT
     CHECK( rocketnet_client_connect( client, connect_token ) == ROCKETNET_STATUS_OK );
@@ -382,11 +386,11 @@ int main( void )
 
         struct rocketnet_receipt_t receipts[16];
         const int client_receipts = rocketnet_client_receipts( client, receipts, 16 );
-        for ( int i = 0; i < client_receipts; i++ )
+        for ( int i = 0; i < client_receipts && i < 16; i++ )
             if ( receipts[i].serial == client_serial && receipts[i].status == ROCKETNET_RECEIPT_STATUS_ACKED )
                 client_acked = 1;
         const int server_receipts = rocketnet_server_receipts( server, 0, receipts, 16 );
-        for ( int i = 0; i < server_receipts; i++ )
+        for ( int i = 0; i < server_receipts && i < 16; i++ )
             if ( receipts[i].serial == server_serial && receipts[i].status == ROCKETNET_RECEIPT_STATUS_ACKED )
                 server_acked = 1;
 
@@ -474,6 +478,10 @@ int main( void )
     CHECK( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED );
     CHECK( rocketnet_client_index( client ) == -1 );
     CHECK( !rocketnet_server_client_connected( server, 0 ) );
+    rocketnet_client_disconnect( client );
+    while ( !rocketnet_client_disconnected( client ) && rocketnet_time() - wall_start < 20.0 )
+        rocketnet_sleep( 0.001 );
+    CHECK( rocketnet_client_disconnected( client ) );
 
     CHECK( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, CLIENT_ID, PROTOCOL_ID,
                                                (uint64_t) time( NULL ), NULL, connect_token ) == ROCKETNET_STATUS_OK );
@@ -501,9 +509,17 @@ int main( void )
     // ---- teardown
 
     rocketnet_client_disconnect( client );
+    const double disconnect_deadline = rocketnet_time() + 10.0;
+    while ( !rocketnet_client_disconnected( client ) && rocketnet_time() < disconnect_deadline )
+        rocketnet_sleep( 0.001 );
+    CHECK( rocketnet_client_disconnected( client ) );
     CHECK( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
     rocketnet_client_destroy( client );
     rocketnet_server_stop( server );
+    const double stop_deadline = rocketnet_time() + 10.0;
+    while ( !rocketnet_server_stopped( server ) && rocketnet_time() < stop_deadline )
+        rocketnet_sleep( 0.001 );
+    CHECK( rocketnet_server_stopped( server ) );
     CHECK( !rocketnet_server_running( server ) );
     rocketnet_server_destroy( server );
 

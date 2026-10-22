@@ -40,4 +40,6 @@ MCHostSplit(c) == IF c = 1 THEN {"ipv4"} ELSE {"ipv6"}
 MCConfiguredBoth == {"ipv4", "ipv6"}
 MCServeFirstOnly == TRUE
 
+MCRefreshConnectedOnResponse == TRUE
+
 =============================================================================

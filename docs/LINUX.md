@@ -29,8 +29,9 @@ with a clang that has the BPF target, against the kernel UAPI headers
 `rocketnet_server_socket_create` opens them with `bpf_object__open_mem`. The
 build is tolerant, for a deployment that never runs XDP (a host without root,
 such as AWS GameLift): a configure that finds no such clang, or no libbpf or
-libxdp, prints `XDP compiled out: no clang with the BPF target was found` (or
-`XDP compiled out: libbpf or libxdp was not found`) and compiles the whole XDP
+libxdp, prints `XDP off: no clang with the BPF target was found, so XDP is
+compiled out of this build` (or `XDP off: libbpf or libxdp was not found, so
+XDP is compiled out of this build`) and compiles the whole XDP
 transport out, with no embedded object, no XDP or netlink gateway code in the
 library and no libbpf or libxdp link. `-DROCKETNET_XDP=OFF` compiles it out on
 purpose. In that build a transport list naming `xdp` refuses it at create with
@@ -71,13 +72,12 @@ comes first in `auto`, zero means the endpoint does not have that transport
 | `xdp` | 10 | 0 | `sdk/rocketnet_drivers.inc:7` |
 | `gso` | 20 | 0 | `sdk/rocketnet_drivers.inc:6` |
 | `io_uring` | 25 | 0 | `sdk/rocketnet_drivers.inc:11` |
-| `portable` | 30 | 30 | `sdk/rocketnet_drivers.inc:5` |
+| `portable` | development: 30; production: unavailable | 30 | `sdk/rocketnet_drivers.inc:5` |
 | `loopback` | pin only | pin only | `sdk/rocketnet_drivers.inc:10` |
 
-So the Linux server `auto` order is **xdp → gso → io_uring → portable**
-(`TRANSPORTS.md:188-189`), and `./bin/test_transport` fails if it is anything else
-(`test_driver.cpp`). A build without liburing has no `io_uring` in the
-list: xdp → gso → portable (`test_driver.cpp`, `TRANSPORTS.md:183-186`).
+The production Linux server `auto` order is **xdp → gso → io_uring**;
+development builds add **portable** last. A build without liburing omits
+`io_uring` from the list. The portable client side remains available.
 `loopback` is in-process, never chosen by `auto`, and selected only by name
 (`TRANSPORTS.md:18-23`, `sdk/rocketnet_driver.h:13`). The Linux client has one
 transport in `auto`, `portable` (`test_driver.cpp`); on Linux it
@@ -121,6 +121,8 @@ endpoint: `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
 `sdk/rocketnet_config.cpp:313-319`). The rules (`sdk/rocketnet_config.h:165-176`):
 
 - A one-element list is a pin: that transport or a loud failure, never a fall.
+- A production server pin of `portable` returns `INVALID_TRANSPORT_LIST` at
+  public create or low-level start, before the all-skipped auto rule.
 - A longer list is tried in exactly that order; nothing is appended.
 - A known name this platform or endpoint does not have (`gso` for a client) is
   skipped with `transport <name> is not available here. skipped`
@@ -135,7 +137,7 @@ Every other server config field has the overlay `ROCKETNET_SERVER_<FIELD>`
 `ROCKETNET_SERVER_NUM_XDP_QUEUES` and `ROCKETNET_SERVER_NUM_OS_CPUS`
 (`sdk/rocketnet.h:805`, `sdk/rocketnet_internal.h:480-481`).
 
-CI's transport matrix pins each Linux server transport against the portable
+CI's development-build transport matrix pins each Linux server transport against the portable
 client on four cases, `test_transport_env_pin_is_honoured` among them, which proves
 the pinned transport is the one granted (`.github/workflows/ci.yml:280-305`,
 `:321`, `:358`). The same matrix, `xdp` aside (section 6):
@@ -170,8 +172,9 @@ The degradation is inside the transport, below the ladder (`BUILDING.md:350-353`
 ## 5. io_uring
 
 `io_uring` (`sdk/rocketnet_server_uring.h`, `sdk/rocketnet_server_uring_linux.cpp`)
-uses one ring per server, touched only by the main thread, and no worker
-threads (`sdk/rocketnet_server_uring_linux.cpp:19-20`). It binds the same
+uses one ring per server, touched only by the main thread, and no I/O worker
+threads (`sdk/rocketnet_server_uring_linux.cpp:19-20`). The server separately
+runs one background stats worker. It binds the same
 `SO_REUSEPORT` group as `gso`: `num_xdp_queues` sockets, default 4, at most
 32 (`sdk/rocketnet_server_uring.h:33-37`,
 `sdk/rocketnet_server_uring_linux.cpp:667-668`,
@@ -397,7 +400,11 @@ loopback server and checks the allocator against the plan
 (`bench/transport_memory.cpp:65-113`, `BUILDING.md:294-303`). At 1000 clients,
 1416-byte payloads and 16 reassembly slots the plans are 483,668,499 bytes
 (`portable`), 625,876,730 (`gso`), 594,710,098 (`io_uring`) and 4,269,352,940
-(`xdp`, 7 queues, of which 1,879,048,192 UMEM). The plan excludes OS stacks,
+(`xdp`, 7 queues, of which 1,879,048,192 UMEM). This entire numeric set is
+historical: it predates the ACK-stats delta/history allocations, and the
+portable figure also predates the portable TX worker and its banks. Preserve
+these values as historical measurements only; use the exact-build probe below
+for current capacity planning. The plan excludes OS stacks,
 kernel queues, loader and application memory
 (`sdk/rocketnet_server_transport.cpp:1117`, `BUILDING.md:247-255`).
 
@@ -438,14 +445,13 @@ dpkg-query -W cmake build-essential clang libbpf-dev libxdp-dev liburing-dev xxd
 make JOBS=4
 ./bin/test
 ./bin/test_transport
-ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/test_lifecycle
+./bin/test_lifecycle
 ./bin/functional
 python3 tools/check_memory.py ./bin/transport_memory
 ./bin/transport_memory 1000 1416 16 portable 0 --plan-only
 ./bin/transport_memory 1000 1416 16 gso 0 --plan-only
 ./bin/transport_memory 1000 1416 16 io_uring 0 --plan-only
 ./bin/transport_memory 1000 1416 16 xdp 7 --plan-only
-bash -c 'ulimit -n 64 && ulimit -l 64 && ./bin/transport_memory 1000 1416 16 portable 0'
 bash -c 'ulimit -n 64 && ulimit -l 64 && ./bin/transport_memory 1000 1416 16 gso 0'
 bash -c 'ulimit -n 64 && ./bin/transport_memory 1000 1416 16 io_uring 32'
 ```

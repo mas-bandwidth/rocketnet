@@ -32,7 +32,7 @@ if(ROCKETNET_USE_SYSTEM_SODIUM AND NOT TARGET RocketNet::Sodium)
     endif()
 endif()
 # libbpf and libxdp for the XDP server transport: optional when building
-# (absent, XDP is compiled out of the library), required when the installed
+# (absent, CMakeLists.txt compiles XDP out), required when the installed
 # package was built with XDP (ROCKETNET_XDP_REQUIRED, set by the config).
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_XDP)
     foreach(dependency Bpf Xdp)

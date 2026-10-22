@@ -152,8 +152,9 @@ default_config call, is refused with it before any other check
 (`rocketnet_status_name` in `sdk/rocketnet.cpp`).
 `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT` is -28, the last code: start returns it
 when every candidate that opened refused because it is compiled out of this
-build, the `xdp` server transport in a Linux build without a clang that has
-the BPF target, libbpf or libxdp (`docs/LINUX.md`). Its string is
+build, the `xdp` server transport in a Linux build configured with
+`ROCKETNET_XDP=OFF` or without a clang that has the BPF target, libbpf or
+libxdp (`docs/LINUX.md`). Its string is
 `TRANSPORT_NOT_BUILT`.
 
 ### 2.2 Reporting
