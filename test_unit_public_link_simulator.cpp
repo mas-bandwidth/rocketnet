@@ -9,6 +9,7 @@
 // exercises the walk over the real transport config tables, so the four
 // fields' presence, their ranges and their refusal are pinned together.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 
 #include "rocketnet_internal.h"
@@ -181,7 +182,7 @@ static void test_public_link_simulator_drops_at_loss()
     rocketnet_client_transport_update( transport, 1000.0 );
     rocketnet_client_transport_update( transport, 1001.0 );
     check( dropped->num_sent == 0 );
-    rocketnet_client_transport_destroy( transport );
+    rn_test_client_transport_stop_and_destroy( transport );
     delete dropped;
 
     config.simulated_loss_percent = 0;
@@ -190,7 +191,7 @@ static void test_public_link_simulator_drops_at_loss()
     check( transport != NULL );
     rocketnet_client_transport_update( transport, 1000.0 );
     check( direct->num_sent == 1 );
-    rocketnet_client_transport_destroy( transport );
+    rn_test_client_transport_stop_and_destroy( transport );
     delete direct;
 }
 
@@ -209,7 +210,7 @@ static void test_public_link_simulator_latency()
     check( transport_io->num_sent == 0 );
     rocketnet_client_transport_update( transport, 1000.025 );
     check( transport_io->num_sent == 1 );
-    rocketnet_client_transport_destroy( transport );
+    rn_test_client_transport_stop_and_destroy( transport );
     delete transport_io;
 }
 
@@ -256,7 +257,7 @@ static void test_public_link_simulator_duplicate()
     check( transport_io->num_sent == 0 );
     rocketnet_client_transport_update( transport, 1000.001 );
     check( transport_io->num_sent == 2 );
-    rocketnet_client_transport_destroy( transport );
+    rn_test_client_transport_stop_and_destroy( transport );
     delete transport_io;
 }
 
@@ -325,7 +326,7 @@ static void test_public_link_simulator_revision_1_prefixes()
         NULL, token, (const rocketnet_client_transport_config_t *) client.bytes,
         sizeof(client.bytes), 1000.0 );
     check( client_transport != NULL );
-    rocketnet_client_transport_destroy( client_transport );
+    rn_test_client_transport_stop_and_destroy( client_transport );
     for ( size_t i = 0; i < sizeof(client.guard); i++ )
         check( client.guard[i] == 0xa5 );
 
@@ -352,7 +353,7 @@ static void test_public_link_simulator_revision_1_prefixes()
         NULL, "127.0.0.1:0", (const rocketnet_server_transport_config_t *) server.bytes,
         sizeof(server.bytes) );
     check( server_transport != NULL );
-    rocketnet_server_transport_destroy( server_transport );
+    rn_test_server_transport_stop_and_destroy( server_transport );
     for ( size_t i = 0; i < sizeof(server.guard); i++ )
         check( server.guard[i] == 0x5a );
 }

@@ -59,6 +59,15 @@ jobs:
         if: runner.os != 'Windows'
         run: python3 tools/run_examples.py --build build
 
+      # the backend pair: example_backend_server, a backend from
+      # examples/backend/ (Go, then C#) minting the token, example_backend_client
+      - name: Run the backend examples
+        if: runner.os != 'Windows'
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: 1
+          DOTNET_NOLOGO: 1
+        run: python3 tools/run_backend_examples.py --build build
+
   examples-macos:
     name: macos-15
     runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]

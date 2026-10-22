@@ -12,8 +12,15 @@
 // randomness, so the count is all this transport reports. Each harness's
 // LLVMFuzzerInitialize is called first, as libFuzzer calls it.
 //
-// Exit 2 with a usage line when no paths are named; exit 1 when a file
-// cannot be read; exit 0 after printing "replayed <n> inputs".
+// THE STANDALONE MODE, yojimbo's FUZZ_STANDALONE driver: with no paths named,
+// it feeds FUZZ_ITERS pseudo-random inputs (default 200000) of up to 4096
+// bytes from a fixed linear congruential stream (FUZZ_SEED, default
+// 0x1234567), so a sanitized build shakes out crashes where no libFuzzer
+// runtime exists. The stream is fixed, so a crash in this mode reproduces
+// with the same two variables.
+//
+// Exit 1 when a file cannot be read; exit 0 after printing "replayed <n>
+// inputs" (or "random <n> inputs").
 
 #include <stdint.h>
 #include <stdio.h>
@@ -75,16 +82,36 @@ static bool replay_file( const char * path )
 
 int main( int argc, char ** argv )
 {
-    if ( argc < 2 )
-    {
-        fprintf( stderr, "usage: %s <corpus file> [corpus file ...]\n", argv[0] );
-        return 2;
-    }
-
     if ( LLVMFuzzerInitialize( &argc, &argv ) != 0 )
     {
         fprintf( stderr, "fuzz replay: harness initialization failed\n" );
         return 1;
+    }
+
+    if ( argc < 2 )
+    {
+        long iterations = 200000;
+        unsigned int seed = 0x1234567u;
+        const char * iterations_text = getenv( "FUZZ_ITERS" );
+        const char * seed_text = getenv( "FUZZ_SEED" );
+        if ( iterations_text )
+            iterations = atol( iterations_text );
+        if ( seed_text )
+            seed = (unsigned int) strtoul( seed_text, NULL, 0 );
+        static uint8_t buffer[4096];
+        for ( long i = 0; i < iterations; ++i )
+        {
+            seed = seed * 1103515245u + 12345u;
+            const size_t length = ( seed >> 8 ) % ( sizeof( buffer ) + 1 );
+            for ( size_t j = 0; j < length; ++j )
+            {
+                seed = seed * 1103515245u + 12345u;
+                buffer[j] = (uint8_t) ( seed >> 16 );
+            }
+            LLVMFuzzerTestOneInput( buffer, length );
+        }
+        printf( "random %ld inputs\n", iterations );
+        return 0;
     }
 
     for ( int i = 1; i < argc; ++i )

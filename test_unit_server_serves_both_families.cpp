@@ -8,6 +8,7 @@
 // rule runs on the protocol object, with time passed in. No test sleeps,
 // opens a socket, or reads a clock. The clock starts at 1000.0.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "sdk/rocketnet_connect_token.h"
 #include "sdk/rocketnet_base64.h"
@@ -119,7 +120,8 @@ static void both_families_stop( struct rocketnet_server_t * server )
     if ( !server )
         return;
     rocketnet_server_stop( server );
-    rocketnet_server_destroy( server );
+    rn_test_server_wait_stopped( server );
+    rn_test_server_stop_and_destroy( server );
 }
 
 static void test_server_refuses_second_address_of_the_same_family()
@@ -193,8 +195,8 @@ static void test_server_address_environment_applies_to_every_server()
     struct rocketnet_server_t * second = both_families_create( &identity, NULL, "[::1]:0" );
     both_families_check_served( first, "10.1.2.3:50123", "[2001:db8::7]:50123" );
     both_families_check_served( second, "10.1.2.3:50123", "[2001:db8::7]:50123" );
-    rocketnet_server_destroy( first );
-    rocketnet_server_destroy( second );
+    rn_test_server_stop_and_destroy( first );
+    rn_test_server_stop_and_destroy( second );
 
     check( both_families_unsetenv( "ROCKETNET_SERVER_IPV4_ADDRESS" ) == 0 );
     check( both_families_unsetenv( "ROCKETNET_SERVER_IPV6_ADDRESS" ) == 0 );
@@ -202,7 +204,7 @@ static void test_server_address_environment_applies_to_every_server()
     // unset, each server serves its create arguments again
     struct rocketnet_server_t * third = both_families_create( &identity, "127.0.0.1:0", NULL );
     both_families_check_served( third, "127.0.0.1:0", NULL );
-    rocketnet_server_destroy( third );
+    rn_test_server_stop_and_destroy( third );
 }
 REGISTER_UNIT_TEST( test_server_address_environment_applies_to_every_server );
 
@@ -343,8 +345,8 @@ static void test_server_serves_ipv4_and_ipv6_clients_on_one_port()
     }
     check( got_from_ipv4 == 1 && got_from_ipv6 == 1 && got_ipv4 == 1 && got_ipv6 == 1 );
 
-    rocketnet_client_destroy( ipv6 );
-    rocketnet_client_destroy( ipv4 );
+    rn_test_client_stop_and_destroy( ipv6 );
+    rn_test_client_stop_and_destroy( ipv4 );
     both_families_stop( server );
 }
 REGISTER_UNIT_TEST( test_server_serves_ipv4_and_ipv6_clients_on_one_port );
@@ -375,8 +377,8 @@ static void test_one_family_server_is_unchanged()
     check( rocketnet_client_state( ipv6 ) != ROCKETNET_CLIENT_STATE_CONNECTED );
     check( rocketnet_server_client_connected( server, 1 ) == 0 );
 
-    rocketnet_client_destroy( ipv6 );
-    rocketnet_client_destroy( ipv4 );
+    rn_test_client_stop_and_destroy( ipv6 );
+    rn_test_client_stop_and_destroy( ipv4 );
     both_families_stop( server );
 }
 REGISTER_UNIT_TEST( test_one_family_server_is_unchanged );

@@ -13,6 +13,7 @@
 // threaded: no thread, no socket, no sleep and no wall clock; the game clock
 // starts at 1000.0 and the token's unix time is supplied.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "test/fake_client_driver.h"
 
@@ -72,7 +73,7 @@ static void test_client_receive_thread_quit_step_driven_destroy_returns()
         struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_step_driven_at_timestamp(
             NULL, token, &client_config, time, unix_timestamp, &rocketnet_fake_client_operations_io, &fake );
         check( client != NULL );
-        rocketnet_client_transport_destroy( client );
+        rn_test_client_transport_stop_and_destroy( client );
         check( fake.destroy_calls == i + 1 );
     }
     printf( "test_client_receive_thread_quit_step_driven_destroy_returns\n" );

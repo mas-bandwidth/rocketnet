@@ -84,22 +84,6 @@ struct case_row_t
     const char * netcode_reference;      // accept, or refuse:<class>
 };
 
-static const char * case_id_name( int id )
-{
-    switch ( id )
-    {
-        case CASE_VALID_SIGNATURE:    return "valid_signature";
-        case CASE_EXPIRED_TOKEN:      return "expired_token";
-        case CASE_BAD_SIGNATURE:      return "bad_signature";
-        case CASE_WRONG_SERVER_ADDRESS: return "wrong_server_address";
-        case CASE_REPLAYED_TOKEN:     return "replayed_token";
-        case CASE_FULL_SERVER:        return "full_server";
-        case CASE_WRONG_PROTOCOL_ID:  return "wrong_protocol_id";
-        case CASE_TIMEOUT_OUT_OF_RANGE: return "timeout_out_of_range";
-        default: return "unknown";
-    }
-}
-
 static struct case_row_t g_cases[CASE_COUNT];
 
 // --- small helpers ------------------------------------------------------
@@ -235,39 +219,131 @@ static void rocketnet_decide_replay( struct rocketnet_server_protocol_t * server
         strcpy( d->reason, "refused" );
 }
 
+// A server, exactly as the unit suite's request-ladder test builds one, with
+// its clock at now.
+static void rocketnet_server_setup( struct rocketnet_server_protocol_t * server, struct rocketnet_counters_t * counters, uint64_t now )
+{
+    memset( server, 0, sizeof(*server) );
+    memset( counters, 0, sizeof(*counters) );
+
+    server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+    memcpy( server->packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( server->backend_public_key, rocketnet_test_backend_public_key, ROCKETNET_KEY_BYTES );
+    memcpy( server->server_public_key, rocketnet_test_server_public_key, ROCKETNET_KEY_BYTES );
+    memcpy( server->server_secret_key, rocketnet_test_server_secret_key, ROCKETNET_KEY_BYTES );
+    rocketnet_address_parse( &server->advertised_ipv4, "203.0.113.10:40000" );
+    memcpy( server->cookie_key, rocketnet_test_backend_secret_key, 32 );   // any 32-byte cookie key
+    server->cookie_lifetime_seconds = 3;
+    server->max_token_lifetime_seconds = 600;
+    server->handshake_deadline_seconds = 5.0;
+    server->max_timeout_seconds = 0;
+    server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
+    server->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
+    server->client_slots = rocketnet_client_slots_create( NULL, 4 );
+    server->acks = rocketnet_server_acks_create( NULL, 4 );
+    server->reassembly = rocketnet_reassembly_set_create( NULL, 4, 4, 16384, 16 );
+    server->counters = counters;
+    rocketnet_reassembly_set_begin_update( server->reassembly );
+    rocketnet_server_protocol_update( server, (double) now );
+}
+
+static void rocketnet_server_teardown( struct rocketnet_server_protocol_t * server )
+{
+    rocketnet_encryption_map_destroy( server->encryption_map );
+    rocketnet_used_token_history_destroy( server->used_token_history );
+    rocketnet_client_slots_destroy( server->client_slots );
+    rocketnet_server_acks_destroy( server->acks );
+    rocketnet_reassembly_set_destroy( server->reassembly );
+}
+
+// The reason the request ladder actually took, read from its counters in the
+// standard's order.
+static void rocketnet_classify( const struct rocketnet_counters_t * counters, struct decision_t * d )
+{
+    if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] )
+        strcpy( d->reason, "expired" );
+    else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE] )
+        strcpy( d->reason, "future" );
+    else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG] )
+        strcpy( d->reason, "lifetime" );
+    else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TIMEOUT_INVALID] )
+        strcpy( d->reason, "timeout" );
+    else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED] )
+        strcpy( d->reason, "address" );
+    else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_BAD_ADDRESS_FLAGS] )
+        strcpy( d->reason, "address" );
+    else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_PROTOCOL_ID] )
+        strcpy( d->reason, "protocol" );
+    else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_VERSION] )
+        strcpy( d->reason, "version" );
+    else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] )
+        strcpy( d->reason, "signature" );
+    else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK] )
+        strcpy( d->reason, "open" );
+    else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SEALED_MISMATCH] )
+        strcpy( d->reason, "mismatch" );
+    else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] ||
+              counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED] )
+        strcpy( d->reason, "replay" );
+    else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS] )
+        strcpy( d->reason, "full" );
+    else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SERVER_KEY] )
+        strcpy( d->reason, "server-key" );
+    else
+        strcpy( d->reason, "refused" );
+}
+
+// One connection request carrying the token's signed data and signature,
+// through the cookie gate, to a challenge (accept) or a counted refusal.
+static void rocketnet_admit_request( struct rocketnet_server_protocol_t * server, const struct rocketnet_counters_t * counters,
+                                     const uint8_t * signed_connect_data, const uint8_t * signature, uint64_t now,
+                                     struct decision_t * d )
+{
+    struct rocketnet_address_t client_address;
+    rocketnet_address_parse( &client_address, "198.51.100.7:56789" );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    rocketnet_write_connection_request_packet( request, rocketnet_test_filter_value, NULL,
+                                               rocketnet_test_salt, rocketnet_test_client_eph_public,
+                                               signed_connect_data, signature );
+
+    uint8_t response[256];
+    int response_bytes = 0;
+
+    int result = rocketnet_server_protocol_process_connection_request(
+                    server, &client_address, request, sizeof(request), now, (double) now,
+                    response, &response_bytes );
+
+    if ( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE )
+    {
+        memcpy( request + ROCKETNET_PREFILTER_BYTES,
+                response + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES,
+                ROCKETNET_COOKIE_FIELD_BYTES );
+        result = rocketnet_server_protocol_process_connection_request(
+                    server, &client_address, request, sizeof(request), now, (double) now,
+                    response, &response_bytes );
+    }
+
+    if ( result == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE )
+    {
+        d->accept = 1;
+        strcpy( d->reason, "accept" );
+    }
+    else
+    {
+        d->accept = 0;
+        rocketnet_classify( counters, d );
+    }
+}
+
 static struct decision_t rocketnet_decide( int case_id, uint64_t now )
 {
     struct decision_t d;
     memset( &d, 0, sizeof(d) );
 
-    // a server, exactly as the unit suite's request-ladder test builds one
     struct rocketnet_server_protocol_t server;
-    memset( &server, 0, sizeof(server) );
     struct rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
-
-    server.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
-    memcpy( server.packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
-    memcpy( server.backend_public_key, rocketnet_test_backend_public_key, ROCKETNET_KEY_BYTES );
-    memcpy( server.server_public_key, rocketnet_test_server_public_key, ROCKETNET_KEY_BYTES );
-    memcpy( server.server_secret_key, rocketnet_test_server_secret_key, ROCKETNET_KEY_BYTES );
-    rocketnet_address_parse( &server.advertised_ipv4, "203.0.113.10:40000" );
-    memcpy( server.cookie_key, rocketnet_test_backend_secret_key, 32 );   // any 32-byte cookie key
-    server.cookie_lifetime_seconds = 3;
-    server.max_token_lifetime_seconds = 600;
-    server.handshake_deadline_seconds = 5.0;
-    server.max_timeout_seconds = 0;
-    server.encryption_map = rocketnet_encryption_map_create( NULL, 8 );
-    server.used_token_history = rocketnet_used_token_history_create( NULL, 64 );
-    server.client_slots = rocketnet_client_slots_create( NULL, 4 );
-    server.acks = rocketnet_server_acks_create( NULL, 4 );
-    server.reassembly = rocketnet_reassembly_set_create( NULL, 4, 4, 16384, 16 );
-    server.counters = &counters;
-    rocketnet_reassembly_set_begin_update( server.reassembly );
-    rocketnet_server_protocol_update( &server, (double) now );
-
-    struct rocketnet_address_t client_address;
-    rocketnet_address_parse( &client_address, "198.51.100.7:56789" );
+    rocketnet_server_setup( &server, &counters, now );
 
     // the signed and private token fields, then the case mutation
     struct rocketnet_signed_connect_data_t sf;
@@ -327,11 +403,6 @@ static struct decision_t rocketnet_decide( int case_id, uint64_t now )
         if ( case_id == CASE_BAD_SIGNATURE )
             ct.signature[0] ^= 0xff;
 
-        uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
-        rocketnet_write_connection_request_packet( request, rocketnet_test_filter_value, NULL,
-                                                   rocketnet_test_salt, rocketnet_test_client_eph_public,
-                                                   ct.signed_connect_data, ct.signature );
-
         if ( case_id == CASE_FULL_SERVER )
         {
             uint8_t dummy[ROCKETNET_USER_DATA_BYTES];
@@ -340,68 +411,11 @@ static struct decision_t rocketnet_decide( int case_id, uint64_t now )
                 rocketnet_client_slots_assign( server.client_slots, 0xD000 + (uint64_t) i, -1, dummy );
         }
 
-        uint8_t response[256];
-        int response_bytes = 0;
-
-        int result = rocketnet_server_protocol_process_connection_request(
-                        &server, &client_address, request, sizeof(request), now, (double) now,
-                        response, &response_bytes );
-
-        if ( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE )
-        {
-            memcpy( request + ROCKETNET_PREFILTER_BYTES,
-                    response + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES,
-                    ROCKETNET_COOKIE_FIELD_BYTES );
-            result = rocketnet_server_protocol_process_connection_request(
-                        &server, &client_address, request, sizeof(request), now, (double) now,
-                        response, &response_bytes );
-        }
-
-        if ( result == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE )
-        {
-            d.accept = 1;
-            strcpy( d.reason, "accept" );
-        }
-        else
-        {
-            d.accept = 0;
-            // read the reason the ladder actually took, in the standard's order
-            if ( counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] )
-                strcpy( d.reason, "expired" );
-            else if ( counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TIMEOUT_INVALID] )
-                strcpy( d.reason, "timeout" );
-            else if ( counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED] )
-                strcpy( d.reason, "address" );
-            else if ( counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_BAD_ADDRESS_FLAGS] )
-                strcpy( d.reason, "address" );
-            else if ( counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_PROTOCOL_ID] )
-                strcpy( d.reason, "protocol" );
-            else if ( counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_VERSION] )
-                strcpy( d.reason, "version" );
-            else if ( counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] )
-                strcpy( d.reason, "signature" );
-            else if ( counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK] )
-                strcpy( d.reason, "open" );
-            else if ( counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SEALED_MISMATCH] )
-                strcpy( d.reason, "mismatch" );
-            else if ( counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] ||
-                      counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED] )
-                strcpy( d.reason, "replay" );
-            else if ( counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS] )
-                strcpy( d.reason, "full" );
-            else if ( counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SERVER_KEY] )
-                strcpy( d.reason, "server-key" );
-            else
-                strcpy( d.reason, "refused" );
-        }
+        rocketnet_admit_request( &server, &counters, ct.signed_connect_data, ct.signature, now, &d );
     }
 
 out:
-    rocketnet_encryption_map_destroy( server.encryption_map );
-    rocketnet_used_token_history_destroy( server.used_token_history );
-    rocketnet_client_slots_destroy( server.client_slots );
-    rocketnet_server_acks_destroy( server.acks );
-    rocketnet_reassembly_set_destroy( server.reassembly );
+    rocketnet_server_teardown( &server );
     return d;
 }
 
@@ -586,6 +600,8 @@ static void nc_classify( char * reason, size_t reason_size )
         decision = "accept";
     else if ( strstr( g_netcode_log, "connect token expired" ) )
         decision = "refuse:expired";
+    else if ( strstr( g_netcode_log, "bad version info" ) )
+        decision = "refuse:version";
     else if ( strstr( g_netcode_log, "wrong protocol id" ) )
         decision = "refuse:protocol";
     else if ( strstr( g_netcode_log, "failed to decrypt" ) )
@@ -756,6 +772,415 @@ static int netcode_decide_live( int case_id, uint64_t now, char * reason, size_t
 }
 #endif
 
+static const char * verdict( const struct decision_t * rocketnet, const char * netcode )
+{
+    int netcode_accept = strncmp( netcode, "accept", 6 ) == 0;
+    if ( rocketnet->accept == netcode_accept )
+        return "agree";
+    if ( !netcode_accept && rocketnet->accept )
+        return "rocketnet-weaker";
+    return "rocketnet-stricter";
+}
+
+// --- the fuzz corpus mode -----------------------------------------------------
+//
+// Each fuzz/corpus_connect_token file is read the way
+// fuzz/rocketnet_fuzz_connect_token.cpp reads it: byte 0 bit 0 picks the raw
+// half (the rest of the input is the token, zero-padded to 768 bytes) or the
+// structured half (the rest is (u16 offset, xor) records over a valid
+// baseline token); byte 1, as a signed count of minutes, moves the clock
+// against the token's fixed validity window (created at
+// ROCKETNET_TEST_CREATE_TS, expiring 300 seconds later). Here the clock is the
+// server's.
+//
+// A structured mutation is mapped by the token FIELD each changed byte lands
+// in (measured against the baseline, so flips that cancel change nothing) to
+// the same relative byte of the equivalent netcode 1.02 field, with the same
+// xor. Fields netcode 1.02 does not carry where the server reads them are
+// not comparable, and a case that touches one is reported as such rather
+// than guessed:
+//
+//   rocketnet field                 netcode 1.02 equivalent
+//   version         [0,4)           request version info, byte for byte
+//   protocol id     [4,12)          request protocol id
+//   create          [12,20)         -- (the request carries no create time)
+//   expire          [20,28)         request expire timestamp
+//   timeout         [28,32)         -- (sealed inside the private token)
+//   address         [32,57)         -- (sealed inside the private token)
+//   server key      [57,89)         -- (netcode has no server public key)
+//   sealed block    [89,521)        request encrypted private token, same offset
+//   signed pad      [521,576)       --
+//   signature       [576,640)       the private token's MAC, offset mod 16
+//   clear keys/pad  [640,768)       the public token's client keys and pad,
+//                                   before the client writes its request
+//
+// The clock maps to netcode's expire_seconds (300 minus the offset, zero when
+// that is not positive): netcode stamps and checks expiry on its own wall
+// clock and keeps no create time, so a token "not yet created" is simply a
+// valid one there. The raw half maps to a netcode request whose bytes after
+// the packet type are the same input bytes, zero-padded.
+
+enum
+{
+    FIELD_VERSION = 0,
+    FIELD_PROTOCOL,
+    FIELD_CREATE,
+    FIELD_EXPIRE,
+    FIELD_TIMEOUT,
+    FIELD_ADDRESS,
+    FIELD_SERVER_KEY,
+    FIELD_SEALED,
+    FIELD_SIGNED_PAD,
+    FIELD_SIGNATURE,
+    FIELD_CLEAR,
+    FIELD_COUNT
+};
+
+static const char * const g_field_names[FIELD_COUNT] =
+    { "version", "protocol", "create", "expire", "timeout", "address", "server-key", "sealed", "signed-pad", "signature", "clear" };
+static const int g_field_comparable[FIELD_COUNT] = { 1, 1, 0, 1, 0, 0, 0, 1, 0, 1, 1 };
+
+static int token_field( int offset )
+{
+    if ( offset < ROCKETNET_SIGNED_OFFSET_PROTOCOL_ID ) return FIELD_VERSION;
+    if ( offset < ROCKETNET_SIGNED_OFFSET_CREATE ) return FIELD_PROTOCOL;
+    if ( offset < ROCKETNET_SIGNED_OFFSET_EXPIRE ) return FIELD_CREATE;
+    if ( offset < ROCKETNET_SIGNED_OFFSET_TIMEOUT ) return FIELD_EXPIRE;
+    if ( offset < ROCKETNET_SIGNED_OFFSET_ADDRESS_FLAGS ) return FIELD_TIMEOUT;
+    if ( offset < ROCKETNET_SIGNED_OFFSET_SERVER_KEY ) return FIELD_ADDRESS;
+    if ( offset < ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK ) return FIELD_SERVER_KEY;
+    if ( offset < ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES ) return FIELD_SEALED;
+    if ( offset < ROCKETNET_SIGNED_CONNECT_DATA_BYTES ) return FIELD_SIGNED_PAD;
+    if ( offset < ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES ) return FIELD_SIGNATURE;
+    return FIELD_CLEAR;
+}
+
+#define CORPUS_BASE_WINDOW_SECONDS 300
+
+struct corpus_case_t
+{
+    char name[128];
+    int raw;
+    int64_t clock_offset;                           // seconds, the server clock against the token's create time
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];    // the rocketnet token as the harness builds it
+    uint8_t delta[ROCKETNET_CONNECT_TOKEN_BYTES];    // structured: token xor baseline
+    int raw_bytes;                                  // raw: how many input bytes the token holds
+    unsigned touched;                               // structured: bit per field class changed
+};
+
+static uint8_t g_corpus_base[ROCKETNET_CONNECT_TOKEN_BYTES];
+
+// the fuzz harness's baseline, minted to the differential server's test keys:
+// the same field values, so every offset lands in the same field
+static int corpus_build_base()
+{
+    struct rocketnet_signed_connect_data_t sf;
+    struct rocketnet_connect_token_private_t pf;
+    memset( &sf, 0, sizeof(sf) );
+    memset( &pf, 0, sizeof(pf) );
+    sf.version = ROCKETNET_WIRE_VERSION;
+    sf.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+    sf.create_timestamp = ROCKETNET_TEST_CREATE_TS;
+    sf.expire_timestamp = ROCKETNET_TEST_CREATE_TS + CORPUS_BASE_WINDOW_SECONDS;
+    sf.timeout_seconds = 10;
+    sf.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+    encode_ipv4_token_address( sf.ipv4_address, 203, 0, 113, 10, 40000 );
+    memcpy( sf.server_public_key, rocketnet_test_server_public_key, ROCKETNET_KEY_BYTES );
+    pf.client_id = 1;
+    for ( int i = 0; i < ROCKETNET_KEY_BYTES; i++ )
+    {
+        pf.client_to_server_key[i] = (uint8_t) ( 0x10 + i );
+        pf.server_to_client_key[i] = (uint8_t) ( 0x50 + i );
+    }
+    for ( int i = 0; i < ROCKETNET_USER_DATA_BYTES; i++ )
+        pf.user_data[i] = (uint8_t) i;
+    return rocketnet_write_connect_token( &sf, &pf, rocketnet_test_backend_secret_key, g_corpus_base );
+}
+
+static int corpus_read( const char * path, struct corpus_case_t * c )
+{
+    memset( c, 0, sizeof(*c) );
+    const char * slash = strrchr( path, '/' );
+    snprintf( c->name, sizeof(c->name), "%s", slash ? slash + 1 : path );
+
+    FILE * f = fopen( path, "rb" );
+    if ( !f )
+        return 0;
+    uint8_t data[4096];
+    const size_t size = fread( data, 1, sizeof(data), f );
+    fclose( f );
+    if ( size < 2 )
+        return 0;
+
+    c->raw = data[0] & 1;
+    c->clock_offset = (int64_t) (int8_t) data[1] * 60;
+    const uint8_t * body = data + 2;
+    size_t body_size = size - 2;
+
+    if ( c->raw )
+    {
+        if ( body_size > ROCKETNET_CONNECT_TOKEN_BYTES )
+            body_size = ROCKETNET_CONNECT_TOKEN_BYTES;
+        memcpy( c->token, body, body_size );
+        c->raw_bytes = (int) body_size;
+        return 1;
+    }
+
+    memcpy( c->token, g_corpus_base, sizeof(c->token) );
+    for ( size_t offset = 0; offset + 3 <= body_size; offset += 3 )
+    {
+        const int position = (int) ( ( (size_t) body[offset] | ( (size_t) body[offset+1] << 8 ) ) % ROCKETNET_CONNECT_TOKEN_BYTES );
+        c->token[position] ^= body[offset+2];
+    }
+    for ( int i = 0; i < ROCKETNET_CONNECT_TOKEN_BYTES; i++ )
+    {
+        c->delta[i] = (uint8_t) ( c->token[i] ^ g_corpus_base[i] );
+        if ( c->delta[i] )
+            c->touched |= 1u << token_field( i );
+    }
+    return 1;
+}
+
+static int corpus_comparable( const struct corpus_case_t * c )
+{
+    for ( int field = 0; field < FIELD_COUNT; field++ )
+        if ( ( c->touched & ( 1u << field ) ) && !g_field_comparable[field] )
+            return 0;
+    return 1;
+}
+
+static void corpus_describe( const struct corpus_case_t * c, char * out, size_t out_size )
+{
+    char fields[160] = "";
+    if ( c->raw )
+        snprintf( fields, sizeof(fields), "raw" );
+    else if ( !c->touched )
+        snprintf( fields, sizeof(fields), "untouched" );
+    else
+    {
+        for ( int field = 0; field < FIELD_COUNT; field++ )
+        {
+            if ( !( c->touched & ( 1u << field ) ) )
+                continue;
+            const size_t used = strlen( fields );
+            snprintf( fields + used, sizeof(fields) - used, "%s%s", used ? "+" : "", g_field_names[field] );
+        }
+    }
+    snprintf( out, out_size, "%s,clock%+lldm", fields, (long long) ( c->clock_offset / 60 ) );
+}
+
+static struct decision_t rocketnet_decide_corpus( const struct corpus_case_t * c )
+{
+    struct decision_t d;
+    memset( &d, 0, sizeof(d) );
+    const uint64_t now = (uint64_t) ( (int64_t) ROCKETNET_TEST_CREATE_TS + c->clock_offset );
+
+    struct rocketnet_server_protocol_t server;
+    struct rocketnet_counters_t counters;
+    rocketnet_server_setup( &server, &counters, now );
+
+    struct rocketnet_connect_token_t ct;
+    rocketnet_read_connect_token( &ct, c->token );
+    rocketnet_admit_request( &server, &counters, ct.signed_connect_data, ct.signature, now, &d );
+
+    rocketnet_server_teardown( &server );
+    return d;
+}
+
+#if defined( ROCKETNET_DIFFERENTIAL_NETCODE_DIR )
+
+// the netcode 1.02 request: type, 13 bytes of version info, protocol id,
+// expire timestamp, 24-byte nonce, then the 1024-byte encrypted private
+// token whose last 16 bytes are its MAC
+enum
+{
+    NC_REQUEST_VERSION = 1,
+    NC_REQUEST_PROTOCOL = 14,
+    NC_REQUEST_EXPIRE = 22,
+    NC_REQUEST_PRIVATE = 54,
+    NC_REQUEST_BYTES = 1078,
+    NC_REQUEST_MAC = NC_REQUEST_BYTES - NETCODE_MAC_BYTES,
+    // in the public token, after version, protocol, create, expire, nonce,
+    // private data, timeout, the server count and one IPv4 entry (7 bytes)
+    NC_TOKEN_CLIENT_KEYS = 13 + 8 + 8 + 8 + 24 + 1024 + 4 + 4 + 7
+};
+
+static int netcode_decide_corpus( const struct corpus_case_t * c, char * reason, size_t reason_size )
+{
+    uint8_t private_key[NETCODE_KEY_BYTES];
+    uint8_t token[NETCODE_CONNECT_TOKEN_BYTES];
+    uint8_t request[NC_PIPE_BYTES];
+    int request_bytes = 0;
+    struct netcode_address_t from;
+
+    nc_private_key( private_key );
+    struct netcode_server_t * server = nc_open_server( NC_SERVER_ADDRESS, 8, NC_PROTOCOL_ID, private_key );
+    struct netcode_client_t * client = nc_open_client( NC_CLIENT_ADDRESS );
+
+    int64_t expire_seconds = CORPUS_BASE_WINDOW_SECONDS - c->clock_offset;
+    if ( expire_seconds < 0 )
+        expire_seconds = 0;
+
+    if ( !server || !client || !nc_mint( token, NC_SERVER_ADDRESS, (int) expire_seconds, 10, 1, NC_PROTOCOL_ID, private_key ) )
+    {
+        if ( client )
+            netcode_client_destroy( client );
+        if ( server )
+            netcode_server_destroy( server );
+        snprintf( reason, reason_size, "refuse:mint" );
+        return 0;
+    }
+
+    if ( !c->raw )
+        for ( int i = ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES; i < ROCKETNET_CONNECT_TOKEN_BYTES; i++ )
+            token[NC_TOKEN_CLIENT_KEYS + ( i - ( ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES ) )] ^= c->delta[i];
+
+    netcode_client_connect( client, token );
+    if ( netcode_client_state( client ) != NETCODE_CLIENT_STATE_SENDING_CONNECTION_REQUEST ||
+         !nc_capture_request( client, request, &request_bytes ) || request_bytes != NC_REQUEST_BYTES ||
+         !nc_parse( &from, NC_CLIENT_ADDRESS ) )
+    {
+        netcode_client_destroy( client );
+        netcode_server_destroy( server );
+        snprintf( reason, reason_size, "refuse:mint" );
+        return 0;
+    }
+    netcode_client_destroy( client );
+
+    if ( c->raw )
+    {
+        memset( request + 1, 0, NC_REQUEST_BYTES - 1 );
+        memcpy( request + 1, c->token, (size_t) ( c->raw_bytes < NC_REQUEST_BYTES - 1 ? c->raw_bytes : NC_REQUEST_BYTES - 1 ) );
+    }
+    else
+    {
+        for ( int i = 0; i < ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES; i++ )
+        {
+            if ( !c->delta[i] )
+                continue;
+            switch ( token_field( i ) )
+            {
+                case FIELD_VERSION:   request[NC_REQUEST_VERSION + i] ^= c->delta[i]; break;
+                case FIELD_PROTOCOL:  request[NC_REQUEST_PROTOCOL + ( i - ROCKETNET_SIGNED_OFFSET_PROTOCOL_ID )] ^= c->delta[i]; break;
+                case FIELD_EXPIRE:    request[NC_REQUEST_EXPIRE + ( i - ROCKETNET_SIGNED_OFFSET_EXPIRE )] ^= c->delta[i]; break;
+                case FIELD_SEALED:    request[NC_REQUEST_PRIVATE + ( i - ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK )] ^= c->delta[i]; break;
+                case FIELD_SIGNATURE: request[NC_REQUEST_MAC + ( i - ROCKETNET_SIGNED_CONNECT_DATA_BYTES ) % NETCODE_MAC_BYTES] ^= c->delta[i]; break;
+                default: break;     // not comparable; the caller never asks
+            }
+        }
+    }
+
+    nc_feed( server, &from, request, request_bytes );
+    nc_classify( reason, reason_size );
+    netcode_server_destroy( server );
+    return strncmp( reason, "accept", 6 ) == 0;
+}
+
+#endif
+
+// the corpus reference: file name, then the netcode 1.02 decision the live
+// run recorded for it
+struct corpus_reference_t
+{
+    char name[128];
+    char decision[64];
+};
+
+static struct corpus_reference_t g_corpus_reference[256];
+static int g_corpus_reference_count = 0;
+
+static void corpus_read_reference( const char * path )
+{
+    FILE * f = fopen( path, "rb" );
+    if ( !f )
+        return;
+    char line[512];
+    while ( fgets( line, sizeof(line), f ) && g_corpus_reference_count < 256 )
+    {
+        if ( line[0] == '#' || line[0] == '\n' || line[0] == '\r' )
+            continue;
+        line[strcspn( line, "\r\n" )] = 0;
+        char * tab = strchr( line, '\t' );
+        if ( !tab )
+            continue;
+        *tab++ = 0;
+        char * tab2 = strchr( tab, '\t' );
+        const char * decision = tab2 ? tab2 + 1 : tab;
+        struct corpus_reference_t * r = &g_corpus_reference[g_corpus_reference_count++];
+        snprintf( r->name, sizeof(r->name), "%s", line );
+        snprintf( r->decision, sizeof(r->decision), "%s", decision );
+    }
+    fclose( f );
+}
+
+static const char * corpus_reference_for( const char * name )
+{
+    for ( int i = 0; i < g_corpus_reference_count; i++ )
+        if ( strcmp( g_corpus_reference[i].name, name ) == 0 )
+            return g_corpus_reference[i].decision;
+    return NULL;
+}
+
+static int run_corpus( const char * reference_path, int count, const char ** paths )
+{
+    if ( !corpus_build_base() )
+    {
+        fprintf( stderr, "could not mint the corpus baseline token\n" );
+        return 1;
+    }
+    corpus_read_reference( reference_path );
+
+    int weaker = 0;
+    printf( "# corpus\tfields\tnetcode\trocketnet\tverdict\n" );
+    for ( int i = 0; i < count; i++ )
+    {
+        static struct corpus_case_t c;
+        if ( !corpus_read( paths[i], &c ) )
+        {
+            printf( "%s\t-\t-\t-\tunreadable\n", c.name );
+            continue;
+        }
+
+        char fields[192];
+        corpus_describe( &c, fields, sizeof(fields) );
+        const struct decision_t rn = rocketnet_decide_corpus( &c );
+        char rocketnet[72];
+        if ( rn.accept )
+            strcpy( rocketnet, "accept" );
+        else
+            snprintf( rocketnet, sizeof(rocketnet), "refuse:%s", rn.reason );
+
+        if ( !corpus_comparable( &c ) )
+        {
+            printf( "%s\t%s\tnot-comparable\t%s\tnot-comparable\n", c.name, fields, rocketnet );
+            continue;
+        }
+
+        const char * reference = corpus_reference_for( c.name );
+        const char * netcode = reference;
+#if defined( ROCKETNET_DIFFERENTIAL_NETCODE_DIR )
+        static char live[64];
+        netcode_decide_corpus( &c, live, sizeof(live) );
+        if ( reference && strcmp( reference, live ) != 0 )
+            fprintf( stderr, "live netcode disagrees with the corpus reference on %s (%s, reference %s)\n", c.name, live, reference );
+        netcode = live;
+#endif
+        if ( !netcode )
+        {
+            printf( "%s\t%s\tneeds-NETCODE_DIR\t%s\tnot-run\n", c.name, fields, rocketnet );
+            continue;
+        }
+        const char * v = verdict( &rn, netcode );
+        if ( strcmp( v, "rocketnet-weaker" ) == 0 )
+            weaker++;
+        printf( "%s\t%s\t%s\t%s\t%s\n", c.name, fields, netcode, rocketnet, v );
+    }
+    if ( weaker )
+        fprintf( stderr, "FINDING: %d corpus case(s) where netcode 1.02 refuses and rocketnet admits\n", weaker );
+    return 0;
+}
+
+
 // --- transport --------------------------------------------------------------
 
 static int parse_case_table( const char * path )
@@ -810,21 +1235,18 @@ static void free_case_table()
     }
 }
 
-static const char * verdict( const struct decision_t * rocketnet, const char * netcode )
-{
-    int netcode_accept = strncmp( netcode, "accept", 6 ) == 0;
-    if ( rocketnet->accept == netcode_accept )
-        return "agree";
-    if ( !netcode_accept && rocketnet->accept )
-        return "rocketnet-weaker";
-    return "rocketnet-stricter";
-}
 
 int main( int argc, const char ** argv )
 {
     const char * cases_path = "tools/differential/cases.tsv";
     if ( argc > 1 )
         cases_path = argv[1];
+
+    // netcode_decisions <cases.tsv> [--corpus <corpus_cases.tsv> <corpus file>...]
+    int corpus_at = -1;
+    for ( int i = 2; i + 1 < argc; i++ )
+        if ( strcmp( argv[i], "--corpus" ) == 0 )
+            corpus_at = i;
 
     rocketnet_quiet( true );
 
@@ -872,9 +1294,16 @@ int main( int argc, const char ** argv )
                 verdict( &rn, netcode ) );
     }
 
+    int status = 0;
+    if ( corpus_at > 0 )
+    {
+        printf( "\n" );
+        status = run_corpus( argv[corpus_at + 1], argc - corpus_at - 2, argv + corpus_at + 2 );
+    }
+
     free_case_table();
 #if defined( ROCKETNET_DIFFERENTIAL_NETCODE_DIR )
     netcode_term();
 #endif
-    return 0;
+    return status;
 }

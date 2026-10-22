@@ -34,6 +34,7 @@
 // rocketnet_allocation_refused (sdk/rocketnet.cpp:378), and the open reads
 // that count (sdk/rocketnet_driver.cpp:126), the same path these cases walk.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "test/portable_crt.h"
 
@@ -188,7 +189,8 @@ static void * transport_oom_server_create( void * context, const rocketnet_serve
 { return transport_oom_create( context ); }
 static void * transport_oom_client_create( void * context, const rocketnet_client_transport_io_config_t *, rocketnet_address_t * )
 { return transport_oom_create( context ); }
-static bool transport_oom_stop( void * ) { return true; }
+static void transport_oom_stop( void * ) {}
+static bool transport_oom_stopped( void * ) { return true; }
 static void transport_oom_send_batch( void *, const rocketnet_platform_send_t *, int ) {}
 static int transport_oom_receive_batch( void *, rocketnet_address_t *, uint8_t *, int, int *, int ) { return 0; }
 static void transport_oom_send( void *, const rocketnet_address_t *, const uint8_t *, int ) {}
@@ -202,7 +204,7 @@ static void test_transport_open_reports_out_of_memory()
     rocketnet_server_transport_io_operations_t server_operations = {};
     server_operations.create = transport_oom_server_create;
     server_operations.destroy = transport_oom_destroy;
-    server_operations.stop = transport_oom_stop;
+    server_operations.stop = transport_oom_stop; server_operations.stopped = transport_oom_stopped;
     server_operations.send_batch = transport_oom_send_batch;
     server_operations.receive_batch = transport_oom_receive_batch;
 
@@ -231,7 +233,7 @@ static void test_transport_open_reports_out_of_memory()
         const bool server_opened = rocketnet_server_transport_io_open( &server_operations, &state, &server_config, &bind, &server );
         check( server_opened == ( k > TRANSPORT_OOM_BLOCKS ) );
         check( status == ( k > TRANSPORT_OOM_BLOCKS ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_OUT_OF_MEMORY ) );
-        rocketnet_server_transport_io_close( &server );
+        rn_test_server_io_stop_and_close( &server );
         check( state.live == 0 );
 
         status = ROCKETNET_STATUS_OK;
@@ -310,7 +312,7 @@ static int transport_oom_walk_server( transport_oom_allocator_t * state, const c
         if ( server )
         {
             check( status == ROCKETNET_STATUS_OK );
-            rocketnet_server_transport_destroy( server );
+            rn_test_server_transport_stop_and_destroy( server );
             state->fail_at = 0;
             check( state->live == 0 );
             check( rocketnet_loopback_endpoints_live() == 0 );
@@ -366,7 +368,7 @@ static int transport_oom_walk_client( transport_oom_allocator_t * state, const u
         if ( client )
         {
             check( status == ROCKETNET_STATUS_OK );
-            rocketnet_client_transport_destroy( client );
+            rn_test_client_transport_stop_and_destroy( client );
             state->fail_at = 0;
             check( state->live == 0 );
             check( rocketnet_loopback_endpoints_live() == 0 );

@@ -26,6 +26,7 @@
 // capacity, sdk/rocketnet_packet_lease.h:37). The server assigns the sequence
 // after lease insertion, so that refusal also leaves no gap.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "sdk/rocketnet_connect_token.h"
 #include "sdk/rocketnet_base64.h"
@@ -276,8 +277,8 @@ static bool sequence_burn_pair_setup( struct sequence_burn_pair_t * pair )
 
 static void sequence_burn_pair_teardown( struct sequence_burn_pair_t * pair )
 {
-    rocketnet_client_transport_destroy( pair->client );
-    rocketnet_server_transport_destroy( pair->server );
+    rn_test_client_transport_stop_and_destroy( pair->client );
+    rn_test_server_transport_stop_and_destroy( pair->server );
 }
 
 // the measures of one run, read on the burning side (the sender) and on its
@@ -403,6 +404,7 @@ static void sequence_burn_round( struct sequence_burn_pair_t * pair, int side, i
 
     rocketnet_server_transport_send_packets( pair->server );
     rocketnet_client_transport_send_packets( pair->client );
+    rocketnet_unit_check( rocketnet_server_transport_stats_worker_step_for_test( pair->server ) );
 }
 
 static void sequence_burn_run( int side, int kind, bool burn, const int * control_counts, struct sequence_burn_measures_t * m )
@@ -425,7 +427,9 @@ static void sequence_burn_run( int side, int kind, bool burn, const int * contro
     }
     rocketnet_unit_check( connected );
 
-    for ( int round = 0; round < BURN_ROUNDS + BURN_SETTLE_ROUNDS; round++ )
+    // One final no-payload frame publishes the snapshot completed after the
+    // last settling frame. Every intermediate stats batch is stepped below.
+    for ( int round = 0; round <= BURN_ROUNDS + BURN_SETTLE_ROUNDS; round++ )
         sequence_burn_round( &pair, side, kind, burn, round, control_counts, m );
 
     const struct rocketnet_counters_t * sender = sequence_burn_counters( &pair, side );
@@ -513,6 +517,7 @@ static void sequence_burn_compare( int side, int kind, const char * name )
         rocketnet_unit_check( m->receiver_delivered == (uint64_t) m->real_sent );
         rocketnet_unit_check( m->receiver_already == 0 );
         rocketnet_unit_check( m->receiver_did_not_open == 0 );
+        rocketnet_unit_check( m->server_rtt > 0.0f );
     }
 
     // rtt and the sender's loss (sent and never acked) are the control's
@@ -808,8 +813,8 @@ static bool sequence_burn_message_pair_setup( struct sequence_burn_message_pair_
 
 static void sequence_burn_message_pair_teardown( struct sequence_burn_message_pair_t * pair )
 {
-    rocketnet_message_client_destroy( pair->client );
-    rocketnet_message_server_destroy( pair->server );
+    rn_test_message_client_stop_and_destroy( pair->client );
+    rn_test_message_server_stop_and_destroy( pair->server );
 }
 
 static uint32_t sequence_burn_message_send( struct sequence_burn_message_pair_t * pair, int side, const uint8_t * data, int bytes )

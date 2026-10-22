@@ -65,15 +65,19 @@ struct rocketnet_server_transport_io_operations_t
     // resource. A successful discovering transport writes its actual bind address.
     void * (*create)( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind );
     void (*destroy)( void * transport );
-    // Main-thread stop/poll is idempotent. False requires another poll, without
-    // requiring any particular update cadence. destroy also handles a transport
-    // that was created but never updated/stopped and waits for owned I/O.
-    bool (*stop)( void * transport );
+    // Main-thread request and completion check are idempotent and never wait
+    // for workers. stopped may service a bounded batch of ready completions.
+    // destroy requires stopped=true, then synchronously joins and frees.
+    void (*stop)( void * transport );
+    bool (*stopped)( void * transport );
 
     // Staged path: start/finish/abort may run on concurrent fill threads.
     // Join them before receive, flush, stop or destroy. Each frame has one
     // producer. start returns a FRAME_STRIDE root, wire bytes at WIRE_OFFSET.
     // finish only seals the frame; flush does not promise reusable storage.
+    // start/finish/abort/flush also stage the stop-time disconnect burst:
+    // custom backends must not wait on workers, queue capacity or blocking I/O
+    // in these callbacks. Refuse/drop or retain work for a later worker pass.
     // start returns NULL with the id ROCKETNET_TRANSPORT_PACKET_UNREACHABLE when
     // the transport has no link-layer destination for the address (the
     // transport counts SEND_NO_LINK_ADDRESS); any other NULL is a full ring.
@@ -87,6 +91,10 @@ struct rocketnet_server_transport_io_operations_t
 
     // Buffered path: borrow caller storage only for this synchronous call.
     // A transport that retains buffers must use the staged path instead.
+    // Ordinary batches may serialize with a receive worker. Shutdown uses
+    // send_batch_shutdown when provided; that callback must return without
+    // waiting for a worker or mutex, dropping on contention if necessary.
+    // Without it, send_batch must also meet the shutdown requirement.
     void (*send_batch)( void *, const rocketnet_platform_send_t *, int );
     int (*receive_batch)( void *, rocketnet_address_t *, uint8_t *, int, int *, int );
     // optional; a transport with a kernel prefilter writes
@@ -108,6 +116,7 @@ struct rocketnet_server_transport_io_operations_t
     // failed send call, cumulative for the transport's life; the transport
     // surfaces it as SEND_FAILED when its counters are read.
     uint64_t (*send_failures)( void * transport );
+    void (*send_batch_shutdown)( void *, const rocketnet_platform_send_t *, int );
 };
 
 // the start_packet id of a refusal for want of a link-layer destination
@@ -143,7 +152,8 @@ struct rocketnet_client_transport_io_operations_t
     // socket's readiness is ignored. Returns true when woken or readable.
     bool (*wait)( void * transport, bool readable, double timeout_seconds );
     // optional, with wait; any thread. Sets the level-triggered wake, so a
-    // wait in progress or the next wait returns at once.
+    // wait in progress or the next wait returns at once. Called by shutdown
+    // requests, so custom wake callbacks must never wait for a worker/lock.
     void (*wake)( void * transport );
     // optional; any thread. The datagrams the transport's sends dropped on a
     // failed send call, cumulative for the transport's life; the transport
@@ -210,7 +220,8 @@ bool rocketnet_server_transport_io_open( const rocketnet_server_transport_io_ope
     void * context, const rocketnet_server_transport_io_config_t * config,
     rocketnet_address_t * bind, rocketnet_server_transport_io_t * transport );
 void rocketnet_server_transport_io_close( rocketnet_server_transport_io_t * transport );
-bool rocketnet_server_transport_io_stop( rocketnet_server_transport_io_t * transport );
+void rocketnet_server_transport_io_stop( rocketnet_server_transport_io_t * transport );
+bool rocketnet_server_transport_io_stopped( const rocketnet_server_transport_io_t * transport );
 bool rocketnet_client_transport_io_open( const rocketnet_client_transport_io_operations_t * operations,
     void * context, const rocketnet_client_transport_io_config_t * config,
     rocketnet_address_t * bind, rocketnet_client_transport_io_t * transport );

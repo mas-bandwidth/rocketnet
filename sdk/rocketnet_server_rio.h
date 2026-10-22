@@ -22,8 +22,9 @@
 // commit, and switches the fill phase to the other phase once that phase has
 // no outstanding send. Receive: every slice is posted at create;
 // receive_packets copies each completion into the fill bank of two receive
-// banks, re-posts the slice, then swaps the banks. Destroy closes the socket
-// and drains both completion queues before the region is freed.
+// banks, re-posts the slice, then swaps the banks. Stop commits deferred sends
+// and closes the socket; stopped drains both completion queues before destroy
+// frees the registered region.
 // tla/RNRioDriver.tla models the design; the functions that implement a
 // model action cite it.
 //
@@ -83,9 +84,8 @@ void rocketnet_server_rio_counters( rocketnet_server_rio_t * rio, uint64_t * cou
 // not yet dequeued
 int rocketnet_server_rio_pending( rocketnet_server_rio_t * rio );
 uint64_t rocketnet_server_rio_allocation_bytes();
-// regions destroy has leaked, process wide: a destroy whose drain did not
-// account for every posted request by its deadline leaks the registered
-// region rather than free it under the kernel. Zero when every destroy drained.
+// Historical diagnostic retained for internal consumers. Pending shutdowns
+// now retain their caller-owned handle until completion rather than leaking.
 uint64_t rocketnet_server_rio_leaked_regions();
 
 #if defined(ROCKETNET_RIO_TESTS)

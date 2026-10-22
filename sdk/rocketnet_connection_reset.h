@@ -55,6 +55,8 @@ struct rn_message_object_t;
 #define ROCKETNET_CLIENT_TRANSPORT_CONNECTION_FIELDS( X ) \
     X( RESET, packet_leases ) X( KEEP, context ) X( KEEP, bound_port ) X( KEEP, transport ) \
     X( KEEP, io ) X( KEEP, thread ) X( KEEP, mutex ) X( KEEP, quit ) \
+    X( KEEP, stop_requested ) X( KEEP, stopped ) X( KEEP, stop_burst ) \
+    X( KEEP, stop_burst_count ) X( KEEP, stop_burst_pending ) X( KEEP, stop_burst_bytes ) X( KEEP, stop_address ) \
     X( KEEP, receive_buffer_index ) X( RESET, received_packets ) X( KEEP, receive_buffer ) \
     X( KEEP, time ) X( KEEP, frame ) X( KEEP, last_state ) X( KEEP, config ) \
     X( KEEP, max_payload_bytes ) X( KEEP, send_arena ) X( KEEP, reassembly ) \
@@ -65,14 +67,17 @@ struct rn_message_object_t;
     X( RESET, packet_loss_tracker ) X( RESET, jitter_tracker )
 
 #define ROCKETNET_ENCRYPTION_MAPPING_CONNECTION_FIELDS( X ) \
-    X( RESET, keys ) X( RESET, connection_salt ) X( RESET, session_nonce ) \
+    X( KEEP, control ) X( RESET, keys ) X( RESET, connection_salt ) X( RESET, session_nonce ) \
     X( RESET, server_ephemeral_public_key ) X( RESET, client_ephemeral_public_key ) \
     X( RESET, challenge_packet ) X( RESET, client_id ) X( RESET, user_data ) \
-    X( RESET, token_identifier ) X( RESET, token_expire_timestamp ) X( RESET, timeout_seconds ) \
-    X( RESET, established ) X( RESET, client_index ) X( RESET, handshake_deadline ) \
-    X( RESET, last_receive_time ) X( RESET, last_send_time ) X( RESET, last_keep_alive_send_time ) \
+    X( RESET, token_identifier ) X( RESET, token_expire_timestamp ) \
+    X( RESET, last_send_time ) X( RESET, last_keep_alive_send_time ) \
     X( RESET, send_sequence_handshake ) X( RESET, send_sequence_session ) X( RESET, send_fragment_payload_id ) \
     X( RESET, replay_handshake ) X( RESET, replay_session ) X( RESET, integrity_failures )
+
+#define ROCKETNET_ENCRYPTION_MAPPING_CONTROL_CONNECTION_FIELDS( X ) \
+    X( RESET, handshake_deadline ) X( RESET, last_receive_time ) \
+    X( RESET, timeout_seconds ) X( RESET, client_index ) X( RESET, established )
 
 #define ROCKETNET_ENDPOINT_CONNECTION_FIELDS( X ) \
     X( KEEP, region ) X( RESET, ordered ) X( RESET, unreliable_builder ) X( RESET, budget ) \
@@ -88,8 +93,11 @@ struct rn_message_object_t;
     X( RESET, packet_records ) X( RESET, receipt_count ) X( RESET, receipt_serials )
 
 #define ROCKETNET_MESSAGE_CONNECTION_FIELDS( X ) \
-    X( RESET, connection_id ) X( RESET, state ) X( KEEP, disconnect_reason ) \
-    X( KEEP, views ) X( KEEP, cursors ) X( RESET, held )
+    X( KEEP, hot ) X( KEEP, disconnect_reason )
+
+#define ROCKETNET_MESSAGE_CONNECTION_HOT_FIELDS( X ) \
+    X( RESET, connection_id ) X( KEEP, views ) X( KEEP, cursors ) \
+    X( RESET, held ) X( RESET, state )
 
 /*
     Reset order is part of the contract:

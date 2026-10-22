@@ -7,6 +7,7 @@
 // The loopback transport carries packets in memory; callers provide every
 // update time from 1000.0, and no test sleeps or opens a socket.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "sdk/rocketnet_connect_token.h"
 #include "sdk/rocketnet_base64.h"
@@ -136,8 +137,8 @@ static void public_step_pair_create( public_step_pair_t * pair, const public_ste
 
 static void public_step_pair_destroy( public_step_pair_t * pair )
 {
-    rocketnet_client_destroy( pair->client );
-    rocketnet_server_destroy( pair->server );
+    rn_test_client_stop_and_destroy( pair->client );
+    rn_test_server_stop_and_destroy( pair->server );
 }
 
 // RNClientIo CallerStep: update and send_packets execute the non-blocking I/O
@@ -360,8 +361,8 @@ static void test_public_step_driven_client_loss_100_drops_everything()
     const uint64_t packets_received = rn_client_stats_of( client ).packets_received;
     check( packets_received == 0 );
 
-    rocketnet_client_destroy( client );
-    rocketnet_server_destroy( server );
+    rn_test_client_stop_and_destroy( client );
+    rn_test_server_stop_and_destroy( server );
     rocketnet_public_link_simulator_test_development( 0 );
 }
 REGISTER_UNIT_TEST( test_public_step_driven_client_loss_100_drops_everything );

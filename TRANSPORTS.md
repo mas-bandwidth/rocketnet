@@ -160,12 +160,14 @@ and `rocketnet_client_transport_create_ex`
 (sdk/rocketnet_client_transport.cpp:882) destroy what they built and return
 NULL with `ROCKETNET_STATUS_OUT_OF_MEMORY`.
 
-Server stop is an idempotent stop/poll callback: false means work remains; true
-allows the transport to report stopped. It must not wait for outstanding I/O
-inside update. Destroy handles partial setup and a created instance that never
-received an update, and drains/joins its owned operations before releasing
-their storage. GSO/XDP preserve their existing stop/destruction behavior; IOCP
-uses its cancellation and completion-drain implementation.
+Server shutdown uses separate idempotent `stop` and `stopped` callbacks.
+Stop requests shutdown and returns; stopped checks completion and returns false
+while workers or kernel operations still own resources. Neither waits for a
+worker, joins it, or frees storage. Destroy asserts completion, then synchronously
+joins and releases resources. The client and server transport wrappers use the
+same stop/stopped/destroy order. Keep backend and callback contexts alive through
+destroy. A stuck operation leaves completion false; timeout is never permission
+to reclaim or detach memory that an operation still owns.
 
 Clients use create/destroy/send/receive callbacks. The existing transport
 receive thread and buffers remain shared infrastructure. Receive can run
@@ -204,12 +206,15 @@ and `:3573`):
 `SCHED_RR` at `sched_get_priority_min( SCHED_RR )` on Linux and macOS,
 `THREAD_PRIORITY_TIME_CRITICAL` on Windows.
 
-| Transport | Threads it creates | What the library sets |
+| Transport | Network threads it creates | What the library sets |
 |---|---|---|
 | GSO (Linux) | one worker per queue (`sdk/rocketnet_server_gso_linux.cpp:769`) | `SCHED_RR`, minimum priority, after each create |
 | XDP (Linux) | one thread per queue (`sdk/rocketnet_server_socket_linux.cpp:2568-2577`) | on itself at thread start: pinned to cpu `num_os_cpus + queue` with `pthread_setaffinity_np`, then `SCHED_RR` at the minimum priority on `pthread_self()` |
 | IOCP (Windows) | one worker per completion thread (`sdk/rocketnet_server_iocp_windows.cpp:568`) | `THREAD_PRIORITY_TIME_CRITICAL`, after each create |
 | io_uring, RIO, portable socket | none | nothing |
+
+Every server also runs one background stats worker. It uses a socket-free wake
+and does not receive the network-thread priority override described above.
 
 `rocketnet_thread_priority( false )` turns the priority calls off for
 threads created after it; the XDP thread's pin to its queue's cpu always runs.
@@ -297,7 +302,8 @@ went to a closed port.
 
 `io_uring` (`sdk/rocketnet_server_uring_linux.cpp`, `sdk/rocketnet_server_uring.h`)
 is a staged Linux server transport with one io_uring per transport, used only on the
-main thread, and no worker threads. An `SO_REUSEPORT` socket group, bound the
+main thread, with no I/O worker threads. The server still has its separate
+background stats worker. An `SO_REUSEPORT` socket group, bound the
 way the GSO transport binds its group, shards receives across queues. Each queue
 has a provided buffer ring and one multishot `RECVMSG`, so the kernel fills
 receive buffers with no syscall per datagram; `send_packets` submits one
@@ -325,9 +331,11 @@ unconvertible source, receives ended for want of buffers, multishot
 re-arms, calls that left completions for the next call (`REAP_DEFERRED`), and
 send calls that returned with sends still owned by the kernel
 (`SEND_DEFERRED`), and receive completions that named no provided buffer
-(`RECEIVE_DROPPED_NO_BUFFER`). A destroy that gives up waiting for outstanding completions leaks the
-kernel-visible memory rather than freeing it and counts it in
-`rocketnet_server_uring_leaked_bytes()` and `rocketnet_server_uring_leaked_transports()`.
+(`RECEIVE_DROPPED_NO_BUFFER`). Stop requests cancellation, and stopped remains
+false until outstanding completions have relinquished their storage. Destroy
+requires stopped and no longer uses a timed wait followed by leaked storage as
+normal cleanup. Existing leak counters remain diagnostic compatibility surfaces;
+completion, not a timeout, authorizes reclamation.
 The send staging, the two receive banks, the per-call completion budget and
 destroy are modelled in `tla/RNUringDriver.tla`.
 

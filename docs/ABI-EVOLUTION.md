@@ -13,6 +13,18 @@ and bumps the major version.
 
 The v1.0.0-preview-1 API is provisional. It may change after feedback.
 
+### Receipt reads after preview-1
+
+`rocketnet_client_receipts` and `rocketnet_server_receipts` now return the
+number of available outcomes, rather than the number copied. Their signatures
+and receipt layout are unchanged, but callers must iterate over at most
+`min(returned_count, capacity)` entries. A NULL output with zero capacity
+queries the count. If it exceeds capacity, read again into a larger buffer
+before the next update. Reads do not consume outcomes. Ring overflow still
+drops the oldest outcome and increments `receipts_dropped`; the returned count
+includes only retained outcomes. Rebuild preview-1 callers with this contract
+before linking to the updated library.
+
 ## 1. The Rule
 
 1. **Each public config struct carries its own size.** The first field of

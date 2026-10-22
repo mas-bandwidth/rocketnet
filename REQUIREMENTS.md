@@ -9,8 +9,9 @@ in `sdk/rocketnet.h`; no C++ type crosses it.
 - Messages are opaque byte buffers. Serialization and game simulation belong
   to the caller.
 - Public calls perform bounded work. Create and the main frame calls are
-  intended to be unnoticeable in a game profiler. The client's disconnect and
-  destroy stop its I/O thread and wait for it, bounded.
+  intended to be unnoticeable in a game profiler. Client disconnect and server stop request shutdown without waiting for workers.
+  Their completion queries must return promptly; destroy requires completion
+  and synchronously joins and frees. A stuck worker leaves completion pending.
 - Ordinary memory, whether allocated at create or during a documented runtime
   lifecycle, uses the caller allocator. Capacity and failure are bounded and
   reported; no component may hide an allocation outside those hooks.

@@ -14,6 +14,7 @@
     drops the senders counted.
 */
 
+#include "../test/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_platform.h"
@@ -71,6 +72,12 @@ static void posix_check_impl( bool condition, const char * text, const char * fi
 // (sdk/rocketnet_server_transport.cpp:2774-2786)
 
 void * rocketnet_server_transport_io_name_for_testing( struct rocketnet_server_transport_t * server_transport );
+
+// the portable server transport sends on its own TX worker
+// (sdk/rocketnet_driver_builtin.cpp): send_packets copies the update into a
+// bank and returns before any send call is made
+
+bool rocketnet_portable_tx_test_drained( void * transport );
 
 // forcing the gso plain tiers: every following gso create probes neither
 // UDP_SEGMENT nor UDP_GRO, and each pair proves it got the plain tiers
@@ -402,8 +409,8 @@ static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char 
 
 static void posix_pair_destroy( struct posix_pair_t * pair )
 {
-    rocketnet_client_transport_destroy( pair->client );
-    rocketnet_server_transport_destroy( pair->server );
+    rn_native_client_transport_stop_and_destroy( pair->client );
+    rn_native_server_transport_stop_and_destroy( pair->server );
 }
 
 // ---------------------------------------------------
@@ -997,6 +1004,26 @@ void rocketnet_test_posix_platform_send_seam()
 // ENOBUFS, then EAGAIN, keeps its pump and its connection, counts what it
 // dropped, and its traffic resumes on the next update
 
+// the portable server's send calls happen on its TX worker after
+// send_packets returns, so an injected failure covers an update only if it
+// is held until the worker has sent every bank that update published.
+// msgx sends inside send_packets and needs no wait
+
+static void posix_server_sends_drained( struct posix_pair_t * pair )
+{
+    if ( strcmp( rocketnet_server_transport_io_name( pair->server ), "portable" ) != 0 )
+        return;
+    void * transport = rocketnet_server_transport_io_name_for_testing( pair->server );
+    bool drained = rocketnet_portable_tx_test_drained( transport );
+    const double deadline = rocketnet_platform_time() + 5.0;
+    while ( !drained && rocketnet_platform_time() < deadline )
+    {
+        rocketnet_platform_sleep( 0.0005 );
+        drained = rocketnet_portable_tx_test_drained( transport );
+    }
+    posix_check( drained );
+}
+
 static void posix_transport_send_seam_cell( int ipv6, const char * server_transport_io, const char * server_pump )
 {
     struct posix_pair_t pair;
@@ -1006,6 +1033,10 @@ static void posix_transport_send_seam_cell( int ipv6, const char * server_transp
     int tag = 0;
     for ( int e = 0; e < 2; e++ )
     {
+        // nothing an earlier update sent may meet the injected failure
+
+        posix_server_sends_drained( &pair );
+
         const uint64_t failures_before = rocketnet_platform_socket_send_failures( pair.server_socket );
         const uint64_t transport_failed_before = rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_FAILED];
 
@@ -1022,6 +1053,7 @@ static void posix_transport_send_seam_cell( int ipv6, const char * server_transp
         }
         rocketnet_platform_socket_fail_next_sends( pair.server_socket, 1000, errors[e] );
         rocketnet_server_transport_send_packets( pair.server );
+        posix_server_sends_drained( &pair );
         rocketnet_platform_socket_fail_next_sends( pair.server_socket, 0, 0 );
 
         const uint64_t dropped = rocketnet_platform_socket_send_failures( pair.server_socket ) - failures_before;
@@ -1738,12 +1770,12 @@ static void posix_xdp_teardown()
 {
     if ( posix_xdp_client )
     {
-        rocketnet_client_transport_destroy( posix_xdp_client );
+        rn_native_client_transport_stop_and_destroy( posix_xdp_client );
         posix_xdp_client = NULL;
     }
     if ( posix_xdp_server )
     {
-        rocketnet_server_transport_destroy( posix_xdp_server );
+        rn_native_server_transport_stop_and_destroy( posix_xdp_server );
         posix_xdp_server = NULL;
     }
     if ( posix_xdp_made )
@@ -2186,7 +2218,13 @@ static void posix_xdp_weather( int ipv6 )
     if ( !posix_xdp_equal( &final_counts, &expect ) )
         posix_xdp_print( "final", &final_counts, &expect );
     posix_check( posix_xdp_equal( &final_counts, &expect ) );
-    posix_check( final_counts.too_large == start.too_large );
+    // the receive ceiling is the send budget, 1452 bytes for both families
+    // (c613a6a8): IPv4 garbage runs to a whole 1472-byte datagram, so its
+    // sizes above the ceiling count too_large; IPv6 garbage stops at it
+    if ( max_whole > ROCKETNET_RECEIVE_CEILING )
+        posix_check( final_counts.too_large > start.too_large );
+    else
+        posix_check( final_counts.too_large == start.too_large );
     posix_check( final_counts.invalid_type == start.invalid_type );
     if ( frag_creates != expect_fragments )
         printf( "%s: the far stack made %llu fragments, the case expects %llu\n", case_name, (unsigned long long) frag_creates, (unsigned long long) expect_fragments );

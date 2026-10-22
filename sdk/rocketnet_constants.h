@@ -20,17 +20,17 @@
 // internal constants; these asserts hold them to the derivation.
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PACKET_BYTES == ROCKETNET_RECEIVE_CEILING,
-                         "the public packet size is the receive ceiling: the IPv4 UDP payload of the link MTU" );
+                         "the receive packet size is the common send and receive ceiling" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES == ROCKETNET_SEND_BUDGET,
                          "the public IPv6 packet size is the send budget: the IPv6 UDP payload of the link MTU" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SEND_BUDGET <= ROCKETNET_RECEIVE_CEILING,
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SEND_BUDGET == ROCKETNET_RECEIVE_CEILING,
                          "a sender's largest packet is one every receiver accepts" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ==
                          ( ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES ) / 8 * 8,
                          "the payload capacity is the send budget less the overhead and the minimum ack block, rounded down to eight" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PAYLOAD_BYTES ==
-                         ROCKETNET_RECEIVE_CEILING - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES,
-                         "the receive payload is the receive ceiling less the overhead and the minimum ack block" );
+                         ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,
+                         "the receive payload bound matches the sender capacity" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1,
                          "the SINGLE message is the payload capacity less its form byte" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES +
@@ -52,7 +52,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
 
 #if ROCKETNET_XDP
 
-#define ROCKETNET_XDP_NUM_BUFFERS                                            2
+#define ROCKETNET_XDP_NUM_BUFFERS                                            3
 #define ROCKETNET_XDP_NUM_FRAMES                                         65536
 #define ROCKETNET_XDP_SEND_QUEUE_SIZE                             ( 1024 * 4 )
 #define ROCKETNET_XDP_RECV_QUEUE_SIZE                             ( 4096 * 4 )
@@ -104,7 +104,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * 
 
 #define ROCKETNET_FRAME_WIRE_OFFSET                             15
 #define ROCKETNET_FRAME_PAYLOAD_OFFSET                          ( ROCKETNET_FRAME_WIRE_OFFSET + ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES + ROCKETNET_ACK_BLOCK_MIN_BYTES )     // 32
-#define ROCKETNET_FRAME_STRIDE                                  ( ( ROCKETNET_FRAME_WIRE_OFFSET + ROCKETNET_RECEIVE_CEILING + 15 ) / 16 * 16 )                                              // 1488
+#define ROCKETNET_FRAME_STRIDE                                  ( ( ROCKETNET_FRAME_WIRE_OFFSET + ROCKETNET_RECEIVE_CEILING + 15 ) / 16 * 16 )                                              // 1472
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_PAYLOAD_OFFSET % 16 == 0, "the payload root is 16-aligned inside a 16-aligned frame" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_STRIDE % 16 == 0, "every frame slot root is 16-aligned" );
@@ -180,10 +180,9 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE == ROCK
 // Retained for historical benchmark comparisons; it does not cap live resends.
 #define ROCKETNET_MESSAGE_RESEND_INTERVAL_MS                              100
 
-// the per-client statistics recompute runs round-robin, a sixth of the
-// slots per update, every slot covered -- the reference's amortization
-
-#define ROCKETNET_CLIENT_STATS_UPDATE_PHASES                              6
+// Bound per-client ACK statistics publication to this many slot visits per
+// server update. Free slots consume a visit but never touch cold endpoints.
+#define ROCKETNET_CLIENT_STATS_SLOTS_PER_UPDATE                           20
 
 #define ROCKETNET_PACKET_LOSS_TRACKER_HISTORY                             1024
 #define ROCKETNET_PACKET_LOSS_TRACKER_SAFETY                                30

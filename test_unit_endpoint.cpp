@@ -642,6 +642,119 @@ static void test_endpoint_uncapped_large_sequenced_skips_the_bucket()
     rn_arena_destroy( arena );
 }
 
+// A transport can run out of frame capacity after one packet, without asking
+// next_packet_bytes for the zero that normally closes the write pass. New
+// updates still refill the bucket, offer reliable work first, and drop an
+// unreliable record only when that update's remaining budget cannot pay it.
+static void test_endpoint_capacity_cut_starts_new_write_pass()
+{
+    rocketnet_message_config_t config;
+    ep_config( &config );
+    rocketnet_counters_t counters = {};
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena != NULL );
+    rn_endpoint_config_t endpoint_config = {};
+    endpoint_config.config = &config;
+    endpoint_config.send_kbps = 64;
+    endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+    rn_endpoint_t endpoint;
+    rn_endpoint_init( &endpoint, rn_arena_region( arena, 0 ), &endpoint_config );
+    rn_endpoint_reset( &endpoint, 1000.0 );
+
+    for ( int i = 0; i < 2; i++ )
+    {
+        uint8_t * message = rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 1000, endpoint_config.max_payload_bytes );
+        check( message != NULL );
+        if ( message )
+        {
+            memset( message, 0x50 + i, 1000 );
+            check( rn_endpoint_finish( &endpoint, 1000, 0 ) != 0 );
+        }
+    }
+
+    uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    rn_endpoint_begin_update( &endpoint );
+    check( rn_endpoint_next_packet_bytes( &endpoint, 1000.0 ) > 0 );
+    const int first = rn_endpoint_write_packet( &endpoint, frame, sizeof( frame ), 1, 1000.0 );
+    check( first > 0 );
+    if ( first > 0 )
+        rn_endpoint_packet_sent( &endpoint, 1, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, first ), 1000.0 );
+    check( endpoint.unreliable_count == 1 );
+    check( endpoint.write_phase == RN_ENDPOINT_WRITE_UNRELIABLE );
+
+    uint8_t * reliable = rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_RELIABLE, 1000, endpoint_config.max_payload_bytes );
+    check( reliable != NULL );
+    if ( reliable )
+    {
+        memset( reliable, 0x7a, 1000 );
+        check( rn_endpoint_finish( &endpoint, 1000, 0 ) != 0 );
+    }
+    rn_endpoint_begin_update( &endpoint );
+    check( rn_endpoint_next_packet_bytes( &endpoint, 1000.25 ) > 0 );
+    check( endpoint.packet_kind == RN_ENDPOINT_PACKET_ORDERED );
+    check( endpoint.budget.last_time == 1000.25 );
+    const int second = rn_endpoint_write_packet( &endpoint, frame, sizeof( frame ), 2, 1000.25 );
+    check( second > 0 );
+    if ( second > 0 )
+        rn_endpoint_packet_sent( &endpoint, 2, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, second ), 1000.25 );
+    check( endpoint.written == 1 );
+    check( rn_endpoint_next_packet_bytes( &endpoint, 1000.25 ) > 0 );
+    check( rn_endpoint_write_packet( &endpoint, frame, sizeof( frame ), 3, 1000.25 ) == 0 );
+    check( endpoint.unreliable_count == 0 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET] == 1 );
+
+    rn_arena_destroy( arena );
+}
+
+// A reliable block keeps its unsent chunks across the same capacity cut.
+static void test_endpoint_reliable_continues_after_capacity_cut()
+{
+    rocketnet_message_config_t config;
+    ep_config( &config );
+    config.packets_per_update = 1;
+    rocketnet_counters_t counters = {};
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena != NULL );
+    rn_endpoint_config_t endpoint_config = {};
+    endpoint_config.config = &config;
+    endpoint_config.send_kbps = 64;
+    endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+    rn_endpoint_t endpoint;
+    rn_endpoint_init( &endpoint, rn_arena_region( arena, 0 ), &endpoint_config );
+    rn_endpoint_reset( &endpoint, 1000.0 );
+
+    uint8_t * message = rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_RELIABLE, 3000, endpoint_config.max_payload_bytes );
+    check( message != NULL );
+    if ( message )
+    {
+        memset( message, 0x5a, 3000 );
+        check( rn_endpoint_finish( &endpoint, 3000, 0 ) != 0 );
+    }
+    uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    rn_endpoint_begin_update( &endpoint );
+    check( rn_endpoint_next_packet_bytes( &endpoint, 1000.0 ) > 0 );
+    const int first = rn_endpoint_write_packet( &endpoint, frame, sizeof( frame ), 1, 1000.0 );
+    check( first > 0 );
+    if ( first > 0 )
+        rn_endpoint_packet_sent( &endpoint, 1, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, first ), 1000.0 );
+    check( endpoint.write_phase == RN_ENDPOINT_WRITE_RELIABLE );
+
+    rn_endpoint_begin_update( &endpoint );
+    check( rn_endpoint_next_packet_bytes( &endpoint, 1000.25 ) > 0 );
+    check( endpoint.packet_kind == RN_ENDPOINT_PACKET_ORDERED );
+    const int second = rn_endpoint_write_packet( &endpoint, frame, sizeof( frame ), 2, 1000.25 );
+    check( second > 0 );
+    if ( second > 0 )
+        rn_endpoint_packet_sent( &endpoint, 2, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, second ), 1000.25 );
+    check( endpoint.budget.last_time == 1000.25 );
+    check( endpoint.written == 1 );
+    check( rn_endpoint_next_packet_bytes( &endpoint, 1000.25 ) == 0 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET] == 0 );
+    rn_arena_destroy( arena );
+}
+
 REGISTER_UNIT_TEST( test_endpoint_back_to_back_over_lossy_array );
 REGISTER_UNIT_TEST( test_endpoint_uncapped_large_sequenced_skips_the_bucket );
 REGISTER_UNIT_TEST( test_endpoint_never_allocates_or_reads_a_clock );
+REGISTER_UNIT_TEST( test_endpoint_capacity_cut_starts_new_write_pass );
+REGISTER_UNIT_TEST( test_endpoint_reliable_continues_after_capacity_cut );

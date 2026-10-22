@@ -24,6 +24,7 @@
 // delay is the adaptive resend delay, and the peer's ack arrives by 3*dt, so both update
 // orders assert zero resends.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "test/portable_crt.h"
 
@@ -258,8 +259,8 @@ static void loopback_rtt_run( int side, struct loopback_rtt_measures_t * m )
                 loopback_rtt_seam.packets, loopback_rtt_seam.samples, loopback_rtt_seam.sample_min, loopback_rtt_seam.sample_max,
                 m->srtt, m->resend_delay, (unsigned long long) m->resent, (unsigned long long) m->duplicate );
 
-    rocketnet_message_client_destroy( pair.client );
-    rocketnet_message_server_destroy( pair.server );
+    rn_test_message_client_stop_and_destroy( pair.client );
+    rn_test_message_server_stop_and_destroy( pair.server );
 }
 
 static void loopback_rtt_check( int side )
