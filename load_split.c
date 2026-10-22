@@ -1000,6 +1000,7 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
     if ( !ensure_fd_limit(count, &fd_limit) ) goto cleanup;
 #endif
     if ( rocketnet_init(NULL, NULL, NULL) != ROCKETNET_STATUS_OK ) goto cleanup;
+    { char diag_np[8]; if ( rocketnet_test_getenv( "LOAD_SPLIT_NO_PRIORITY", diag_np, sizeof( diag_np ) ) ) { rocketnet_thread_priority(false); fprintf(stderr, "diag: client thread priority off\n"); } }
     api_started = 1;
     fds_post_init = count_open_fds();
     threads_post_init = count_threads();
