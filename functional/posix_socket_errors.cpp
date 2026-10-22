@@ -1426,11 +1426,16 @@ static void posix_linux_dropped_flush( struct posix_pair_t * pair, void (*fail)(
     fail( pair, 1000 );
     posix_linux_bounded_flush( pair, gso_dropped, uring_dropped );
     // the GSO transport sends on its transmit worker: hold the injected
-    // failure until the worker has taken and dropped the flushed bank
+    // failure until the worker has taken and dropped the flushed bank. A
+    // try-publish can retain the producer while the previous bank is still in
+    // flight, so retry the ordinary send boundary while waiting for its drop.
     const double drop_deadline = rocketnet_platform_time() + 5.0;
     while ( posix_native_counter( pair->native, pair->transport, gso_dropped, uring_dropped ) - dropped_before < 8 &&
             rocketnet_platform_time() < drop_deadline )
+    {
+        rocketnet_server_transport_send_packets( pair->server );
         rocketnet_platform_sleep( 0.001 );
+    }
     fail( pair, 0 );
 
     const uint64_t sent = posix_native_counter( pair->native, pair->transport, gso_sent, uring_sent ) - sent_before;
