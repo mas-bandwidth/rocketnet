@@ -23,20 +23,28 @@ ASSUME Endpoint \in {"clientio", "receive", "client", "server"}
 ASSUME NumWorkers \in Nat \ {0} /\ MaxGenerations \in Nat \ {0}
 ASSUME StuckWorker \in 0..NumWorkers
 ASSUME Defect \in {"none", "requestwait", "requestcomplete", "freeearly",
-                  "reuseearly", "ackbeforewipe", "repeatcallback"}
+                  "reuseearly", "ackbeforewipe", "repeatcallback", "simqueue"}
 Workers == 1..NumWorkers
 Generations == 1..MaxGenerations
 Rings == {0, 1}
 HasRings == Endpoint = "clientio"
 HasKeys == Endpoint \in {"clientio", "client"}
+(* The client transport without the I/O ring core (the legacy worker, and
+   every client with a link simulator) carries the redundant disconnect
+   burst in its stop_burst: sealed and loss-rolled by the caller at the
+   request, sent by the worker before it acknowledges quiescence. Defect
+   "simqueue" restores the pre-fix path: the burst parked in the caller's
+   link-simulator queue, which nothing drains once stop is requested. *)
+HasBurst == Endpoint = "client"
+BurstStates == {"none", "pending", "held", "sent", "lost"}
 Phases == {"stopped", "running", "stopping", "restarting", "destroying", "freed"}
 WorkerStates == {"idle", "working", "quiescent", "exited", "joined"}
 RingStates == {"empty", "filling", "handedoff", "sending", "sent"}
 CallStates == {"idle", "entered", "returned"}
 VARIABLES phase, generation, worker, keys, ring, ioRing, request, poll,
-          pollValue, callbacks, contextLive, badReuse
+          pollValue, callbacks, contextLive, badReuse, burst
 vars == <<phase, generation, worker, keys, ring, ioRing, request, poll,
-          pollValue, callbacks, contextLive, badReuse>>
+          pollValue, callbacks, contextLive, badReuse, burst>>
 IdleCaller == request # "entered" /\ poll # "entered"
 Quiescent == \A w \in Workers : worker[w] \in {"idle", "quiescent", "exited", "joined"}
 Joined == \A w \in Workers : worker[w] \in {"idle", "joined"}
@@ -51,6 +59,7 @@ Init ==
     /\ request = "idle" /\ poll = "idle" /\ pollValue = FALSE
     /\ callbacks = [g \in Generations |-> 0]
     /\ contextLive = TRUE /\ badReuse = FALSE
+    /\ burst = "none"
 
 (* Freshly created, never-started endpoints already report completion.
    Restart's synchronous finalization joins the prior generation first. *)
@@ -59,7 +68,7 @@ BeginRestart ==
     /\ phase = "stopped" \/ (Defect = "reuseearly" /\ phase = "stopping")
     /\ phase' = "restarting"
     /\ badReuse' = (badReuse \/ ~Quiescent)
-    /\ UNCHANGED <<generation, worker, keys, ring, ioRing, request, poll,
+    /\ UNCHANGED <<burst, generation, worker, keys, ring, ioRing, request, poll,
                     pollValue, callbacks, contextLive>>
 Start ==
     /\ IdleCaller /\ generation < MaxGenerations
@@ -90,18 +99,18 @@ RepeatStop ==
     /\ request' = "entered"
     /\ callbacks' = IF Defect = "repeatcallback" /\ generation > 0
                      THEN [callbacks EXCEPT ![generation] = 2] ELSE callbacks
-    /\ UNCHANGED <<phase, generation, worker, keys, ring, ioRing, poll,
+    /\ UNCHANGED <<burst, phase, generation, worker, keys, ring, ioRing, poll,
                     pollValue, contextLive, badReuse>>
 RequestReturn ==
     /\ request = "entered"
     /\ Defect # "requestwait" \/ Quiescent
     /\ request' = "returned"
-    /\ UNCHANGED <<phase, generation, worker, keys, ring, ioRing, poll,
+    /\ UNCHANGED <<burst, phase, generation, worker, keys, ring, ioRing, poll,
                     pollValue, callbacks, contextLive, badReuse>>
 BeginPoll ==
     /\ IdleCaller /\ phase \in {"stopping", "stopped"}
     /\ poll' = "entered"
-    /\ UNCHANGED <<phase, generation, worker, keys, ring, ioRing, request,
+    /\ UNCHANGED <<burst, phase, generation, worker, keys, ring, ioRing, request,
                     pollValue, callbacks, contextLive, badReuse>>
 PollReturn ==
     /\ poll = "entered"
@@ -109,7 +118,7 @@ PollReturn ==
        /\ pollValue' = result
        /\ phase' = IF result THEN "stopped" ELSE phase
     /\ poll' = "returned"
-    /\ UNCHANGED <<generation, worker, keys, ring, ioRing, request,
+    /\ UNCHANGED <<burst, generation, worker, keys, ring, ioRing, request,
                     callbacks, contextLive, badReuse>>
 
 (* A stuck worker has no finish/quiesce/exit action. No fair backend return
@@ -118,46 +127,68 @@ FinishRing ==
     /\ HasRings /\ StuckWorker # 1 /\ worker[1] = "working"
     /\ ioRing \in Rings /\ ring[ioRing] = "sending"
     /\ ring' = [ring EXCEPT ![ioRing] = "sent"] /\ ioRing' = -1
-    /\ UNCHANGED <<phase, generation, worker, keys, request, poll,
+    /\ UNCHANGED <<burst, phase, generation, worker, keys, request, poll,
                     pollValue, callbacks, contextLive, badReuse>>
 TakeRing(r) ==
     /\ HasRings /\ StuckWorker # 1 /\ worker[1] = "working"
     /\ ioRing = -1 /\ ring[r] = "handedoff"
     /\ ring' = [ring EXCEPT ![r] = "sending"] /\ ioRing' = r
-    /\ UNCHANGED <<phase, generation, worker, keys, request, poll,
+    /\ UNCHANGED <<burst, phase, generation, worker, keys, request, poll,
                     pollValue, callbacks, contextLive, badReuse>>
 WorkerQuiesce(w) ==
     /\ phase = "stopping" /\ w # StuckWorker /\ worker[w] = "working"
     /\ ~HasRings \/ w # 1 \/ (NoRingOwner /\ ioRing = -1)
     /\ keys' = IF Defect = "ackbeforewipe" THEN keys ELSE [keys EXCEPT ![w] = FALSE]
     /\ worker' = [worker EXCEPT ![w] = "quiescent"]
-    /\ UNCHANGED <<phase, generation, ring, ioRing, request, poll,
+    /\ UNCHANGED <<burst, phase, generation, ring, ioRing, request, poll,
                     pollValue, callbacks, contextLive, badReuse>>
 WorkerExit(w) ==
     /\ worker[w] = "quiescent"
     /\ worker' = [worker EXCEPT ![w] = "exited"]
-    /\ UNCHANGED <<phase, generation, keys, ring, ioRing, request, poll,
+    /\ UNCHANGED <<burst, phase, generation, keys, ring, ioRing, request, poll,
                     pollValue, callbacks, contextLive, badReuse>>
 Join(w) ==
     /\ phase \in {"destroying", "restarting"} /\ worker[w] = "exited"
     /\ worker' = [worker EXCEPT ![w] = "joined"]
-    /\ UNCHANGED <<phase, generation, keys, ring, ioRing, request, poll,
+    /\ UNCHANGED <<burst, phase, generation, keys, ring, ioRing, request, poll,
                     pollValue, callbacks, contextLive, badReuse>>
 DestroyBegin ==
     /\ IdleCaller
     /\ phase = "stopped" \/ (Defect = "freeearly" /\ phase = "stopping")
     /\ phase' = "destroying"
-    /\ UNCHANGED <<generation, worker, keys, ring, ioRing, request, poll,
+    /\ UNCHANGED <<burst, generation, worker, keys, ring, ioRing, request, poll,
                     pollValue, callbacks, contextLive, badReuse>>
 Free ==
     /\ phase = "destroying" /\ (Joined \/ Defect = "freeearly")
     /\ phase' = "freed" /\ contextLive' = FALSE
-    /\ UNCHANGED <<generation, worker, keys, ring, ioRing, request, poll,
+    /\ UNCHANGED <<burst, generation, worker, keys, ring, ioRing, request, poll,
                     pollValue, callbacks, badReuse>>
 Done == phase = "freed" /\ UNCHANGED vars
-Next == Start \/ BeginRestart \/ RequestStop \/ RepeatStop \/ RequestReturn
+
+(* The disconnect burst. The request seals it and the caller rolls the
+   link simulator's loss for each copy (rocketnet_network_simulator_drops),
+   so it is pending for the worker or lost by policy; with "simqueue" it is
+   held in the caller's simulator queue instead. The worker sends a pending
+   burst; it acknowledges quiescence only after. *)
+StartB == Start /\ burst' = "none"
+RequestStopB ==
+    /\ RequestStop
+    /\ IF ~HasBurst THEN UNCHANGED burst
+       ELSE IF Defect = "simqueue" THEN burst' = "held"
+       ELSE burst' \in {"pending", "lost"}
+FlushBurst ==
+    /\ HasBurst /\ StuckWorker # 1 /\ worker[1] = "working" /\ burst = "pending"
+    /\ burst' = "sent"
+    /\ UNCHANGED <<phase, generation, worker, keys, ring, ioRing, request, poll,
+                    pollValue, callbacks, contextLive, badReuse>>
+WorkerQuiesceB(w) ==
+    /\ WorkerQuiesce(w)
+    /\ ~HasBurst \/ w # 1 \/ burst # "pending"
+
+Next == StartB \/ BeginRestart \/ RequestStopB \/ RepeatStop \/ RequestReturn
         \/ BeginPoll \/ PollReturn \/ FinishRing \/ (\E r \in Rings : TakeRing(r))
-        \/ (\E w \in Workers : WorkerQuiesce(w) \/ WorkerExit(w) \/ Join(w))
+        \/ FlushBurst
+        \/ (\E w \in Workers : WorkerQuiesceB(w) \/ WorkerExit(w) \/ Join(w))
         \/ DestroyBegin \/ Free \/ Done
 Spec == Init /\ [][Next]_vars
 (* Caller return fairness concerns only caller execution, not I/O progress.
@@ -166,7 +197,8 @@ Spec == Init /\ [][Next]_vars
 FairSpec == Spec
     /\ WF_vars(RequestReturn) /\ WF_vars(PollReturn) /\ SF_vars(BeginPoll)
     /\ WF_vars(FinishRing) /\ (\A r \in Rings : WF_vars(TakeRing(r)))
-    /\ (\A w \in Workers : WF_vars(WorkerQuiesce(w)) /\ WF_vars(WorkerExit(w)) /\ WF_vars(Join(w)))
+    /\ WF_vars(FlushBurst)
+    /\ (\A w \in Workers : WF_vars(WorkerQuiesceB(w)) /\ WF_vars(WorkerExit(w)) /\ WF_vars(Join(w)))
     /\ WF_vars(Free)
 TypeOK ==
     /\ phase \in Phases /\ generation \in 0..MaxGenerations
@@ -174,7 +206,12 @@ TypeOK ==
     /\ ring \in [Rings -> RingStates] /\ ioRing \in {-1, 0, 1}
     /\ request \in CallStates /\ poll \in CallStates /\ pollValue \in BOOLEAN
     /\ callbacks \in [Generations -> 0..2] /\ contextLive \in BOOLEAN /\ badReuse \in BOOLEAN
+    /\ burst \in BurstStates
 CompletionMeansQuiescent == pollValue => Quiescent /\ NoWorkerKeys /\ NoRingOwner
+(* A completed disconnect left nothing behind: its burst is on the wire or
+   lost by the loss policy, never pending or parked in a queue nobody
+   drains. *)
+BurstLeftAtCompletion == pollValue => burst \notin {"pending", "held"}
 FreedOnlyAfterJoin == phase = "freed" => Joined /\ NoWorkerKeys /\ NoRingOwner
 RetainedUntilQuiescent == ~contextLive => Quiescent
 NoReuseBeforeComplete == ~badReuse

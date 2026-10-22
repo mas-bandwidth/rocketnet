@@ -2332,13 +2332,24 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
     client_transport->client_stats.bytes_sent += wire_bytes;
     if ( client_transport->link_simulator )
     {
-        // Simulator queues are owned by the caller. Preserve configured loss,
-        // latency and reorder; enqueue here, never bypass it on the worker.
+        // The burst leaves at once, never through the simulator's queue: the
+        // public disconnect requests stop straight after this, and nothing
+        // drains that queue once stop is requested, so a burst held there by
+        // the simulated latency never left and the server waited for its
+        // timeout. The simulator's loss policy still decides each packet,
+        // here on the caller's thread, which owns the simulator; the worker
+        // only sends the packets that survive (tla/RNClientIoShutdown.tla
+        // BurstLeftAtCompletion).
+        int kept = 0;
         for ( int i = 0; i < burst_count; ++i )
-            rocketnet_client_link_send( client_transport, &server_address,
-                burst + i * ROCKETNET_SEND_BUDGET, burst_bytes );
-        rocketnet_client_link_flush( client_transport );
-        return;
+        {
+            if ( rocketnet_network_simulator_drops( client_transport->link_simulator ) )
+                continue;
+            if ( kept != i )
+                memcpy( burst + kept * ROCKETNET_SEND_BUDGET, burst + i * ROCKETNET_SEND_BUDGET, (size_t) burst_bytes );
+            kept++;
+        }
+        burst_count = kept;
     }
     client_transport->stop_address = server_address;
     client_transport->stop_burst_count = burst_count;

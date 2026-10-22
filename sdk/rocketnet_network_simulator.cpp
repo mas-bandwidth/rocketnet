@@ -779,6 +779,17 @@ void rocketnet_network_simulator_flush_window( struct rocketnet_network_simulato
     simulator->window_count = 0;
 }
 
+bool rocketnet_network_simulator_drops( struct rocketnet_network_simulator_t * simulator )
+{
+    rocketnet_assert( simulator );
+
+    simulator->send_count++;
+    if ( simulator->drop_every_nth >= 2 && ( simulator->send_count % (uint64_t) simulator->drop_every_nth ) == 0 )
+        return true;
+
+    return rocketnet_simulator_random_float( simulator ) * 100.0 < (double) simulator->packet_loss_percent;
+}
+
 void rocketnet_network_simulator_send( struct rocketnet_network_simulator_t * simulator,
                                        const struct rocketnet_address_t * from,
                                        const struct rocketnet_address_t * to,
@@ -792,11 +803,7 @@ void rocketnet_network_simulator_send( struct rocketnet_network_simulator_t * si
     rocketnet_assert( packet_data );
     rocketnet_assert( packet_bytes > 0 && packet_bytes <= ROCKETNET_RECEIVE_CEILING );
 
-    simulator->send_count++;
-    if ( simulator->drop_every_nth >= 2 && ( simulator->send_count % (uint64_t) simulator->drop_every_nth ) == 0 )
-        return;
-
-    if ( rocketnet_simulator_random_float( simulator ) * 100.0 < (double) simulator->packet_loss_percent )
+    if ( rocketnet_network_simulator_drops( simulator ) )
         return;
 
     double delivery_time = current_time + simulator->latency + rocketnet_simulator_random_float( simulator ) * simulator->jitter;

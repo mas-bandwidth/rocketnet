@@ -48,6 +48,8 @@ static uint32_t read_u32( const uint8_t * p )
 #define MAX_SOAK_CLIENTS ROCKETNET_MAX_CLIENTS
 #define BATCH_CLIENTS 250
 #define MAX_TICKS 7200
+#define TOKEN_TIMEOUT_SECONDS 10
+#define DISCONNECT_WAVE_CLIENTS 50
 
 // MSVC deprecates fopen, so this uses fopen_s there
 static FILE * soak_fopen( const char * path, const char * mode ) {
@@ -146,6 +148,15 @@ static bool soak_check_msg( const uint8_t * data, int len, uint64_t seed, uint64
     return true;
 }
 
+// a frame loop at 60 Hz: the simulated clock never runs ahead of the wall
+// clock, so the transport's I/O threads get real time to carry each frame's
+// packets. A frame that already took longer than its 1/60 s waits for nothing
+static void soak_pace( double sim_time, double sim_start, double wall_start ) {
+    const double ahead = ( sim_time - sim_start ) - ( rocketnet_time() - wall_start );
+    if ( ahead > 0.0 )
+        rocketnet_sleep( ahead );
+}
+
 static int cmp_double( const void * a, const void * b ) {
     double da = *(const double *) a, db = *(const double *) b;
     return ( da > db ) - ( da < db );
@@ -223,7 +234,7 @@ int main( int argc, char ** argv ) {
         char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
         const time_t token_time = time( NULL );
         CHECK( token_time != (time_t) -1 );
-        CHECK( rocketnet_create_dev_connect_token( addr, NULL, server_public_key, 30, 10, c + 1, EXAMPLE_PROTOCOL_ID, (uint64_t) token_time, NULL, token ) == ROCKETNET_STATUS_OK );
+        CHECK( rocketnet_create_dev_connect_token( addr, NULL, server_public_key, 30, TOKEN_TIMEOUT_SECONDS, c + 1, EXAMPLE_PROTOCOL_ID, (uint64_t) token_time, NULL, token ) == ROCKETNET_STATUS_OK );
         enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
         clients[c] = rocketnet_client_create( NULL, &c_cfg, &create_status_2 );
         if ( clients[c] )
@@ -236,13 +247,15 @@ int main( int argc, char ** argv ) {
         }
         CHECK( clients[c] != NULL );
     }
-    double sim_time = 1000.0;
+    const double sim_start = 1000.0, wall_start = rocketnet_time();
+    double sim_time = sim_start;
     for ( int step = 0; step < 300; step++ ) {
         int all_conn = ( rocketnet_server_num_connected_clients( server ) == num_clients );
         for ( int c = 0; all_conn && c < num_clients; c++ )
             if ( rocketnet_client_state( clients[c] ) != ROCKETNET_CLIENT_STATE_CONNECTED ) all_conn = 0;
         if ( all_conn ) break;
         sim_time += 1.0 / 60.0;
+        soak_pace( sim_time, sim_start, wall_start );
         for ( int base = 0; base < num_clients; base += BATCH_CLIENTS ) {
             int end = base + BATCH_CLIENTS < num_clients ? base + BATCH_CLIENTS : num_clients;
             for ( int c = base; c < end; c++ ) {
@@ -268,6 +281,7 @@ int main( int argc, char ** argv ) {
     bool injected = false;
     for ( int tick = 0; tick < soak_ticks + drain_ticks; tick++ ) {
         sim_time += 1.0 / 60.0;
+        soak_pace( sim_time, sim_start, wall_start );
         double tick_cli_us = 0.0, tick_srv_us = 0.0;
         for ( int base = 0; base < num_clients; base += BATCH_CLIENTS ) {
             int end = base + BATCH_CLIENTS < num_clients ? base + BATCH_CLIENTS : num_clients;
@@ -371,12 +385,18 @@ int main( int argc, char ** argv ) {
     CHECK( srv_stats.messages_dropped_over_budget == 0 );
     CHECK( srv_stats.api_misuses == 0 );
     CHECK( sent_rel > 0 && recv_rel == sent_rel && acked_total == sent_rel && recv_seq > 0 && corrupt == 0 && gaps == 0 );
-    for ( int c = 0; c < num_clients; c++ )
-        rocketnet_client_disconnect( clients[c] );
+    // every client leaves by its redundant disconnect packets, never by the
+    // server timing it out: the bound is half the token's timeout. Clients
+    // disconnect in waves of DISCONNECT_WAVE_CLIENTS a frame, so each wave's
+    // bursts fit the server's receive queue beside the traffic of the clients
+    // still connected; a thousand bursts in one instant overflow it
     const double shutdown_started = rocketnet_time();
     const double shutdown_sim_start = sim_time;
-    int disconnected = 0;
-    while ( rocketnet_time() - shutdown_started < 10.0 ) {
+    int disconnected = 0, disconnect_next = 0;
+    while ( rocketnet_time() - shutdown_started < TOKEN_TIMEOUT_SECONDS / 2.0 ) {
+        const int wave_end = disconnect_next + DISCONNECT_WAVE_CLIENTS < num_clients ? disconnect_next + DISCONNECT_WAVE_CLIENTS : num_clients;
+        for ( ; disconnect_next < wave_end; disconnect_next++ )
+            rocketnet_client_disconnect( clients[disconnect_next] );
         disconnected = 1;
         sim_time = shutdown_sim_start + ( rocketnet_time() - shutdown_started );
         for ( int c = 0; c < num_clients; c++ ) {

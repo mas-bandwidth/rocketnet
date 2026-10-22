@@ -65,6 +65,12 @@ bool rocketnet_network_simulator_patterns_active( const struct rocketnet_network
 // Emits the held window reversed, whole; a no-op with nothing held.
 void rocketnet_network_simulator_flush_window( struct rocketnet_network_simulator_t * simulator );
 
+// Rolls the loss policy alone for one packet sent outside the queue: counts
+// the send, applies the every-nth drop and the loss percent, and returns true
+// when the packet is lost. send rolls exactly this first.
+
+bool rocketnet_network_simulator_drops( struct rocketnet_network_simulator_t * simulator );
+
 // Sends a packet into the wire. Loss is rolled here; delivery time is
 // current_time + latency + random jitter; a duplicate may follow with its
 // own delivery time. A full queue drops the packet -- the wire is lossy by

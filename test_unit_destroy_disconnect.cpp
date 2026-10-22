@@ -715,3 +715,42 @@ static void test_transport_disconnect_preserves_simulator_loss()
     rocketnet_public_link_simulator_test_development( 0 );
 }
 REGISTER_UNIT_TEST( test_transport_disconnect_preserves_simulator_loss );
+
+// The public disconnect requests stop at once, and nothing drains the link
+// simulator's queue after stop. A burst parked there behind the simulated
+// latency never left, and the server held the slot until its timeout: the
+// example soak's mass disconnect. The burst is fired at once, the
+// simulator's loss deciding each packet, and the server frees the slot on
+// receipt.
+static void test_public_disconnect_with_simulator_latency_sends_burst()
+{
+    destroy_disconnect_env_guard_t env_guard;
+    rocketnet_public_link_simulator_test_development( 1 );
+    destroy_disconnect_keys_t keys;
+    destroy_disconnect_make_keys( &keys );
+    double now = 1000.0;
+    rocketnet_server_t * server = destroy_disconnect_server_create( &keys, now );
+    rocketnet_client_t * client = destroy_disconnect_client_create( &keys, rocketnet_server_port( server ), 0xE403ULL, false, true );
+    const int slot = destroy_disconnect_connect_client( server, client, &now );
+    const uint64_t * counters = destroy_disconnect_server_counters( server );
+    const uint64_t received = counters[ROCKETNET_COUNTER_DISCONNECT_RECEIVED];
+    const uint64_t accepted = counters[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED];
+    const uint64_t timed_out = counters[ROCKETNET_COUNTER_CLIENT_TIMED_OUT];
+
+    rocketnet_client_disconnect( client );
+    for ( int i = 0; i < 10 && !rocketnet_client_disconnected( client ); i++ )
+    {
+        now += 0.01;
+        rocketnet_client_update( client, now );
+    }
+    check( rocketnet_client_disconnected( client ) );
+    rocketnet_server_update( server, now );
+    check( counters[ROCKETNET_COUNTER_DISCONNECT_RECEIVED] - received == ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS );
+    check( counters[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED] - accepted == 1 );
+    check( counters[ROCKETNET_COUNTER_CLIENT_TIMED_OUT] == timed_out );
+    check( !rocketnet_server_client_connected( server, slot ) );
+    rn_test_client_stop_and_destroy( client );
+    rn_test_server_stop_and_destroy( server );
+    rocketnet_public_link_simulator_test_development( 0 );
+}
+REGISTER_UNIT_TEST( test_public_disconnect_with_simulator_latency_sends_burst );

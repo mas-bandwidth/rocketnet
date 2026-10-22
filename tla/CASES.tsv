@@ -271,3 +271,4 @@ MCRNClientIoShutdownBrokenFreeBeforeComplete.cfg	MCRNClientIoShutdown.tla	invari
 MCRNClientIoShutdownBrokenReuseBeforeComplete.cfg	MCRNClientIoShutdown.tla	invariant	NoReuseBeforeComplete	check	shutdownownership	required	-
 MCRNClientIoShutdownBrokenAckBeforeWipe.cfg	MCRNClientIoShutdown.tla	invariant	CompletionMeansQuiescent	check	shutdownownership	required	-
 MCRNClientIoShutdownBrokenRepeatCallback.cfg	MCRNClientIoShutdown.tla	invariant	CallbackOnce	check	shutdownownership	required	-
+MCClientSessionShutdownBrokenSimQueue.cfg	MCRNClientIoShutdown.tla	invariant	BurstLeftAtCompletion	check	shutdownownership	required	-
