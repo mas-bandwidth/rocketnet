@@ -22,10 +22,12 @@ static inline int split_startup_receive( struct split_startup_t * startup, int k
     return 0;
 }
 
-/* The answer owed now. */
+/* The answer owed now. The client transport hands payloads from before it
+ * reports CONNECTED, and a send before CONNECTED is dropped at start (never
+ * queued), so an answer waits until the client is connected. */
 static inline int split_startup_due( const struct split_startup_t * startup, int client_connected )
 {
-    (void) client_connected;
+    if ( !client_connected ) return SPLIT_STARTUP_SEND_NONE;
     if ( startup->arm_received && !startup->armed ) return SPLIT_STARTUP_SEND_ACK;
     if ( startup->go_received && !startup->go ) return SPLIT_STARTUP_SEND_GO_ACK;
     return SPLIT_STARTUP_SEND_NONE;

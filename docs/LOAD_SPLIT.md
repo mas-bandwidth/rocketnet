@@ -73,6 +73,10 @@ its clients. These deadlines fail visibly on late setup. After connection,
 the server sends 32-byte run-ID-bound ARM, waits up to 10 seconds for all
 ACKs, sends GO and waits up to 10 seconds for all GO ACKs, then sends RUN.
 RUN shares the reliable-ordered channel with later server-to-client data.
+A client answers ARM and GO only once it reports CONNECTED: its transport
+hands payloads from before then, and a send before CONNECTED is dropped, so
+an ARM that arrives in that window is answered at the first update after it
+connects (`tools/load_split_startup.h`, `tools/test_load_split_startup.c`).
 Clients begin their own full monotonic traffic window after receiving RUN;
 machine UTC clocks are only reported for correlation, never used to shorten
 the duration. Each role then runs exactly the requested traffic duration and
