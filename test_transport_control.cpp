@@ -135,7 +135,7 @@ static uint8_t * start_packet(void * p, const rocketnet_address_t * to, uint64_t
         return f->lease_frames + (size_t) f->lease_starts++ * ROCKETNET_FRAME_STRIDE;
     }
     if (f->used == f->capacity) return NULL;
-    f->reserved_to = *to; *id = f->used;
+    f->reserved_to = *to; *id = (uint64_t) f->used;
     return f->frame;
 }
 static void finish_packet(void * p, uint64_t, uint8_t * frame, int)
@@ -208,8 +208,8 @@ static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketn
         CHECK(index >= 0);
         auto * mapping = rocketnet_encryption_map_entry(server->protocol.encryption_map, index);
         uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
-        CHECK(rocketnet_client_slots_assign(server->protocol.client_slots, i + 1, index, user_data) == i);
-        mapping->control->client_index = i; mapping->client_id = i + 1; mapping->control->established = 1;
+        CHECK(rocketnet_client_slots_assign(server->protocol.client_slots, (uint64_t) i + 1, index, user_data) == i);
+        mapping->control->client_index = i; mapping->client_id = (uint64_t) i + 1; mapping->control->established = 1;
         mapping->control->timeout_seconds = 1000;
         // Synthetic connections have test keys; this fixture does not
         // model authentication. It exercises the real update/send scheduler.
