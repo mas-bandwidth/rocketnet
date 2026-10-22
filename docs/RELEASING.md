@@ -80,9 +80,10 @@ Tag only a `main` commit whose required runs are green. Those runs are:
 - **Release Check**'s `version-consistency` job on the pull request that carries
   the release version, and on the tag push itself.
 
-The nightly and soak workflows are watches, not release gates; the MSan leg is
-advisory. The release commit must also be the commit the tag points at, not a
-later merge.
+The nightly discovery and soak workflows are watches, not release gates, except
+for the bounded `nightly.yml` threaded-transport TSAN run listed above, which is
+required despite its schedule. The MSan leg is advisory. The release commit must
+also be the commit the tag points at, not a later merge.
 
 ## Cutting the release
 
