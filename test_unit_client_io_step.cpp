@@ -342,6 +342,61 @@ static void test_client_io_step_waits_only_when_idle()
 }
 REGISTER_UNIT_TEST( test_client_io_step_waits_only_when_idle );
 
+// An idle I/O thread is woken by its socket or its wake, never by a clock: the
+// wait's timeout guards a lost wake and is not a polling cadence. Each idle
+// blocked step may wake the thread at most 20 times a second. At a 1 ms guard,
+// 1000 same-host clients woke 340,000 times a second, held 70% of a 64-thread
+// host with up to 570 threads ready, and starved client I/O threads and the
+// server's IOCP completion worker for up to 12.7 s, so clients timed out.
+static void test_client_io_step_idle_wait_is_a_guard_not_a_cadence()
+{
+    rocketnet_fake_client_transport_io_t fake = {};
+    rocketnet_client_transport_io_t transport = {};
+    client_io_step_test_open( &fake, &rocketnet_fake_client_operations_io, &transport );
+
+    uint8_t ring0[ROCKETNET_FRAME_STRIDE] = {};
+    uint8_t ring1[ROCKETNET_FRAME_STRIDE] = {};
+    int counts0[1] = { 0 };
+    int counts1[1] = { 0 };
+
+    rocketnet_client_io_ring_view_t view0 = {};
+    view0.data = ring0;
+    view0.frame_stride = ROCKETNET_FRAME_STRIDE;
+    view0.wire_offset = ROCKETNET_FRAME_WIRE_OFFSET;
+    view0.wire_bytes = (const uint8_t *) counts0;
+    view0.wire_bytes_stride = sizeof( int );
+
+    rocketnet_client_io_ring_view_t view1 = {};
+    view1.data = ring1;
+    view1.frame_stride = ROCKETNET_FRAME_STRIDE;
+    view1.wire_offset = ROCKETNET_FRAME_WIRE_OFFSET;
+    view1.wire_bytes = (const uint8_t *) counts1;
+    view1.wire_bytes_stride = sizeof( int );
+
+    rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] =
+    {
+        new rocketnet_client_receive_buffer_t, new rocketnet_client_receive_buffer_t
+    };
+    client_io_step_test_clock_t clock = { 1000.0 };
+    rocketnet_client_io_t io = {};
+    rocketnet_client_io_init( &io, &transport, &view0, &view1, buffers, client_io_step_test_time, &clock );
+
+    for ( int i = 0; i < 3; i++ )
+    {
+        rocketnet_unit_check( rocketnet_client_io_step( &io, true ) == ROCKETNET_CLIENT_IO_IDLE );
+        rocketnet_unit_check( fake.wait_calls == i + 1 );
+        rocketnet_unit_check( fake.last_wait_readable );
+        rocketnet_unit_check( fake.last_wait_timeout > 0.0 );
+        rocketnet_unit_check( 1.0 / fake.last_wait_timeout <= 20.0 );
+        clock.now += fake.last_wait_timeout;
+    }
+
+    rocketnet_client_transport_io_close( &transport );
+    delete buffers[0];
+    delete buffers[1];
+}
+REGISTER_UNIT_TEST( test_client_io_step_idle_wait_is_a_guard_not_a_cadence );
+
 // A full I/O buffer with update holding the other: the next step leaves the
 // datagram in the fake, waits with readable false, and does not wake; the
 // return at the end of the next update wakes the I/O thread exactly once, and
