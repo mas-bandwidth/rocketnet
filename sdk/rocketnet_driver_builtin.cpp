@@ -260,6 +260,22 @@ static uint64_t portable_send_failures( void * transport )
 }
 static uint64_t portable_socket_send_failures( void * transport )
 { return rocketnet_platform_socket_send_failures( (rocketnet_platform_socket_t*) transport ); }
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+// development library only. Sends leave the main thread when the worker takes
+// a published bank, so a functional case that injects socket send errors
+// waits for this before it clears the injection: true when nothing is
+// unpublished and every published bank has been sent and returned free.
+bool rocketnet_portable_tx_test_drained( void * transport )
+{
+    portable_server_t * server = (portable_server_t*) transport;
+    if ( server->bank[server->producer].count != 0 )
+        return false;
+    rocketnet_platform_mutex_acquire( &server->mutex );
+    const bool drained = server->free_count == PORTABLE_TX_BANKS - 1;
+    rocketnet_platform_mutex_release( &server->mutex );
+    return drained;
+}
+#endif
 #if defined(ROCKETNET_PORTABLE_TX_TEST_HOOKS)
 // No socket or worker: each path is forced at an exact ownership transition.
 bool rocketnet_portable_tx_test_handoff()
