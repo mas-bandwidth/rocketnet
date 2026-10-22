@@ -3,8 +3,10 @@
 Low-level client/server UDP transport library.
 
 Main frame calls aim for less than 100 microseconds in Release builds. This
-target is not yet established under a 1000-client load. Create may take longer. Client disconnect and destroy wait for the
-I/O thread to exit, with no promised time bound.
+target is not yet established under a 1000-client load. Create may take longer. Client disconnect and server stop request shutdown
+without waiting for I/O workers. Poll `rocketnet_client_disconnected` or
+`rocketnet_server_stopped`, then call synchronous destroy to join and free.
+Keep each object and its callback/allocator context alive until destroy returns.
 
 ## Quick start
 
@@ -37,6 +39,9 @@ int main( void )
     if ( !client || status != ROCKETNET_STATUS_OK )
         return 1;
 
+    /* Never connected or started: both completion queries are already true. */
+    if ( !rocketnet_client_disconnected( client ) || !rocketnet_server_stopped( server ) )
+        return 1;
     rocketnet_client_destroy( client );
     rocketnet_server_destroy( server );
     return rocketnet_term() == ROCKETNET_STATUS_OK ? 0 : 1;

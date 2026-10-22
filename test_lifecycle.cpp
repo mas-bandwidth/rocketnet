@@ -1,4 +1,5 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. AGPL-3.0. */
+#include "test/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "test/portable_crt.h"
 #include "rocketnet_connect_token.h"
@@ -431,11 +432,11 @@ static void check_component_create_sweeps( allocator_state & state )
 {
     const int baseline = state.live;
 
-    // 1. rocketnet_encryption_map_create: 6 allocations (fail N=1..6, succeed N=7).
+    // 1. rocketnet_encryption_map_create: 7 allocations (fail N=1..7, succeed N=8).
     check( sweep_component_create<rocketnet_encryption_map_t>(
         state,
         [&]() { return rocketnet_encryption_map_create( &state, 16 ); },
-        []( rocketnet_encryption_map_t * m ) { rocketnet_encryption_map_destroy( m ); } ) == 6 );
+        []( rocketnet_encryption_map_t * m ) { rocketnet_encryption_map_destroy( m ); } ) == 7 );
 
     // 2. rocketnet_used_token_history_create: 17 allocations (fail N=1..17, succeed N=18).
     //    the history holder plus two independent eight-allocation tables, the
@@ -589,6 +590,15 @@ static void make_valid_token( uint8_t * token )
 
 static void check_server_memory_budget( allocator_state & state )
 {
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    const char * transport = "gso";
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    const char * transport = "msgx";
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    const char * transport = "iocp";
+#else
+#error "server memory budget lifecycle test needs a production server transport"
+#endif
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_default_config( &config );
     // non-development keys and filter: a production build (ROCKETNET_DEV=0)
@@ -599,8 +609,17 @@ static void check_server_memory_budget( allocator_state & state )
     memset( config.server_secret_key, 0xCD, 32 );
     memset( config.backend_public_key, 0xEF, 32 );
     config.protocol_id = 1;
-    snprintf( config.transport, sizeof( config.transport ), "%s", "portable" );
-    const uint64_t plan = rocketnet_server_transport_required_memory( &config, "portable" );
+    snprintf( config.transport, sizeof( config.transport ), "%s", transport );
+    // The plan below is the production transport's, so the create must run
+    // that transport. CI runs this binary with ROCKETNET_SERVER_TRANSPORT=portable,
+    // and the env layer displaces the struct's transport: the production
+    // library then refuses the portable pin, which made the budget refusal
+    // pass for the wrong reason and the budget success fail. Hold the env
+    // pin aside for this check and put it back afterwards.
+    char pinned_transport[64];
+    const bool transport_pinned = rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", pinned_transport, sizeof( pinned_transport ) ) != 0;
+    unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
+    const uint64_t plan = rocketnet_server_transport_required_memory( &config, transport );
     check( plan > 0 );
 
     char budget[64];
@@ -617,8 +636,10 @@ static void check_server_memory_budget( allocator_state & state )
     setenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", budget, 1 );
     rocketnet_server_transport_t * server = rocketnet_server_transport_create( &state, "127.0.0.1:0", &config );
     check( server != NULL );
-    rocketnet_server_transport_destroy( server );
+    rn_native_server_transport_stop_and_destroy( server );
     unsetenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" );
+    if ( transport_pinned )
+        setenv( "ROCKETNET_SERVER_TRANSPORT", pinned_transport, 1 );
 }
 
 static void check_client_memory_budget( allocator_state & state )
@@ -647,7 +668,7 @@ static void check_client_memory_budget( allocator_state & state )
     setenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES", budget, 1 );
     rocketnet_client_transport_t * client = rocketnet_client_transport_create( &state, token, &config, 0.0 );
     check( client != NULL );
-    rocketnet_client_transport_destroy( client );
+    rn_native_client_transport_stop_and_destroy( client );
     unsetenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES" );
 }
 

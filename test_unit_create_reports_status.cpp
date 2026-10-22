@@ -18,6 +18,7 @@
 // does. The explicit budget range case temporarily clears the two budget
 // variables and restores them.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "test/portable_crt.h"
 
@@ -109,13 +110,13 @@ static void test_create_reports_status_success()
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
     check( client != NULL );
     check( status == ROCKETNET_STATUS_OK );
-    rocketnet_client_destroy( client );
+    rn_test_client_stop_and_destroy( client );
 
     status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
     check( server != NULL );
     check( status == ROCKETNET_STATUS_OK );
-    rocketnet_server_destroy( server );
+    rn_test_server_stop_and_destroy( server );
 }
 REGISTER_UNIT_TEST( test_create_reports_status_success );
 
@@ -232,7 +233,7 @@ static void test_create_reports_status_config_not_initialized()
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
     check( client != NULL );
     check( status == ROCKETNET_STATUS_OK );
-    rocketnet_client_destroy( client );
+    rn_test_client_stop_and_destroy( client );
 }
 REGISTER_UNIT_TEST( test_create_reports_status_config_not_initialized );
 
@@ -290,7 +291,7 @@ static void test_create_reports_status_config_refusals()
     struct rocketnet_client_t * unlimited_client = rocketnet_client_create( NULL, &client_config, &status );
     check( unlimited_client != NULL );
     check( status == ROCKETNET_STATUS_OK );
-    rocketnet_client_destroy( unlimited_client );
+    rn_test_client_stop_and_destroy( unlimited_client );
 
     // four clients, as every server here: a full 1000-client server plans
     // 13 GB and touches about 1.5 GB of it at create
@@ -301,7 +302,7 @@ static void test_create_reports_status_config_refusals()
     struct rocketnet_server_t * unlimited_server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
     check( unlimited_server != NULL );
     check( status == ROCKETNET_STATUS_OK );
-    rocketnet_server_destroy( unlimited_server );
+    rn_test_server_stop_and_destroy( unlimited_server );
 
     // a negative rate is refused as an invalid argument; 0 is the default rate
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
@@ -314,7 +315,7 @@ static void test_create_reports_status_config_refusals()
     struct rocketnet_client_t * default_rate_client = rocketnet_client_create( NULL, &client_config, &status );
     check( default_rate_client != NULL );
     check( status == ROCKETNET_STATUS_OK );
-    rocketnet_client_destroy( default_rate_client );
+    rn_test_client_stop_and_destroy( default_rate_client );
 
     create_status_dev_server_config( &server_config );
     server_config.max_clients = 4;
@@ -365,7 +366,7 @@ static void test_create_reports_status_config_refusals()
     struct rocketnet_client_t * budget_client = rocketnet_client_create( NULL, &client_config, &status );
     check( budget_client != NULL );
     check( status == ROCKETNET_STATUS_OK );
-    rocketnet_client_destroy( budget_client );
+    rn_test_client_stop_and_destroy( budget_client );
 
     // a malformed environment override: CONFIG_ENV_INVALID, client and server
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
@@ -420,7 +421,7 @@ static void test_create_reports_status_out_of_memory()
         if ( client )
         {
             check( status == ROCKETNET_STATUS_OK );
-            rocketnet_client_destroy( client );
+            rn_test_client_stop_and_destroy( client );
             check( state.live == 0 );
             break;
         }
@@ -438,7 +439,7 @@ static void test_create_reports_status_out_of_memory()
         if ( server )
         {
             check( status == ROCKETNET_STATUS_OK );
-            rocketnet_server_destroy( server );
+            rn_test_server_stop_and_destroy( server );
             check( state.live == 0 );
             break;
         }
@@ -465,10 +466,10 @@ static void test_create_reports_status_null_status()
 
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
     check( client != NULL );
-    rocketnet_client_destroy( client );
+    rn_test_client_stop_and_destroy( client );
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
     check( server != NULL );
-    rocketnet_server_destroy( server );
+    rn_test_server_stop_and_destroy( server );
 
     client_config.num_channels = 0;
     check( rocketnet_client_create( NULL, &client_config, NULL ) == NULL );
@@ -491,7 +492,7 @@ static void test_create_reports_status_null_config_macro()
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, NULL, &status );
     check( client != NULL );
     check( status == ROCKETNET_STATUS_OK );
-    rocketnet_client_destroy( client );
+    rn_test_client_stop_and_destroy( client );
 
     check( rocketnet_client_required_memory( NULL ) > 0 );
     check( rocketnet_server_required_memory( NULL ) > 0 );

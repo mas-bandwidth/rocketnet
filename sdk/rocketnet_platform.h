@@ -595,7 +595,8 @@ int rocketnet_platform_socket_receive_packets_mmsg( struct rocketnet_platform_so
 // and returns true when woken or readable; with readable false the socket's
 // readiness is ignored, so a full receive buffer waits on the wake alone. set may run on any thread; a set made while no wait
 // runs makes the next wait return at once. Platforms that define
-// ROCKETNET_PLATFORM_HAS_WAKE implement it; elsewhere create returns NULL.
+// ROCKETNET_PLATFORM_HAS_WAKE implement socket-backed waits. BSD supports
+// event-only pipe wakes without changing its socket-backed client path.
 // Linux builds the eventfd wake; macOS and iOS build the kqueue wake
 // (docs/CLIENT-IO.md "The wake"), so the msgx
 // client runs on the I/O thread there. Windows builds the event wake,
@@ -605,26 +606,33 @@ int rocketnet_platform_socket_receive_packets_mmsg( struct rocketnet_platform_so
 #if ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined(__linux__) ) || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #define ROCKETNET_PLATFORM_HAS_WAKE 1
 #endif
+#if defined(ROCKETNET_PLATFORM_HAS_WAKE) || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
+#define ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE 1
+#endif
 /**
- * @brief Opaque level-triggered wake object associated with a socket.
+ * @brief Opaque reusable level-triggered wake object, optionally associated with a socket.
  *
  * Create it with wake_create and release it with wake_destroy. The socket must
- * outlive the wake object.
+ * outlive the wake object when provided.
  */
 struct rocketnet_platform_wake_t;
 /**
- * @brief Creates a wake object associated with a live socket.
+ * @brief Creates a wake object, optionally associated with a live socket.
  *
  * @param context Allocator context; NULL uses the default allocator.
- * @param socket Live socket that remains open until the wake is destroyed.
+ * @param socket Optional live socket that remains open until the wake is destroyed.
+ * Pass NULL for an event-only wake. BSD supports this event-only form but
+ * continues to refuse socket-backed wakes.
  * @return Owned wake object, or NULL if this platform does not implement wakes
  * or allocation/native wake creation fails.
  */
 struct rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, struct rocketnet_platform_socket_t * socket );
+/** @brief Allocator bytes reserved by one wake object; zero when wakes are unavailable. */
+uint64_t rocketnet_platform_wake_allocation_bytes( void );
 /**
  * @brief Destroys a wake object and releases its native wake handle.
  *
- * Destroy it before destroying its associated socket.
+ * Destroy it before destroying its associated socket, if any.
  * @param wake Caller-owned wake; must be non-NULL.
  * @return None.
  */
@@ -634,7 +642,8 @@ void rocketnet_platform_wake_destroy( struct rocketnet_platform_wake_t * wake );
  *
  * @param wake Live wake object; must be non-NULL.
  * @param readable When true, socket readability also releases the wait; when
- * false, only a wake signal or timeout does.
+ * false, only a wake signal or timeout does. With an event-only wake,
+ * readable=true returns false immediately without consuming a pending signal.
  * @param timeout_seconds Timeout in seconds. Non-positive values do not wait
  * on POSIX; Windows converts the value for its native wait API. Avoid values
  * outside the range supported by the target OS.
@@ -868,6 +877,9 @@ void rocketnet_platform_mutex_destroy( struct rocketnet_platform_mutex_t * mutex
  * @return None.
  */
 void rocketnet_platform_mutex_acquire( struct rocketnet_platform_mutex_t * mutex );
+
+// Acquires only when immediately available; never waits for the owner.
+bool rocketnet_platform_mutex_try_acquire( struct rocketnet_platform_mutex_t * mutex );
 
 /**
  * @brief Unlocks a mutex held by the calling thread.

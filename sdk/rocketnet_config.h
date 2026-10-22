@@ -221,15 +221,18 @@ struct rocketnet_transport_ladder_t
 
 bool rocketnet_transport_ladder_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_ladder_t * ladder );
 
+// An explicit portable server pin is unavailable in production. Share this
+// create-time policy between the public config check and transport start.
+bool rocketnet_server_portable_pin_refused( const char * value );
+
 // the per-platform, per-endpoint availability tables, in recommended
 // order -- the single table "auto" expands from:
 //
-//               server                            client
-//   linux       xdp, gso, io_uring, portable      portable
-//   macOS       msgx, portable                    msgx, portable
-//   iOS         portable                          portable
-//   windows     portable, iocp, rio               portable
-//   BSDs        portable                          portable
+//               production server          development server             client
+//   linux       xdp, gso, io_uring        xdp, gso, io_uring, portable   portable
+//   macOS       msgx                      msgx, portable                 msgx, portable
+//   windows     iocp, rio                 portable, iocp, rio            portable
+//   iOS/BSDs    loopback pin only         portable                       portable
 //
 // (the staged linux transports are server-side machinery; the client is the
 // platform socket everywhere, with the darwin batch pump where granted)

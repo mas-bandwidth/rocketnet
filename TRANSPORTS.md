@@ -160,12 +160,14 @@ and `rocketnet_client_transport_create_ex`
 (sdk/rocketnet_client_transport.cpp:882) destroy what they built and return
 NULL with `ROCKETNET_STATUS_OUT_OF_MEMORY`.
 
-Server stop is an idempotent stop/poll callback: false means work remains; true
-allows the transport to report stopped. It must not wait for outstanding I/O
-inside update. Destroy handles partial setup and a created instance that never
-received an update, and drains/joins its owned operations before releasing
-their storage. GSO/XDP preserve their existing stop/destruction behavior; IOCP
-uses its cancellation and completion-drain implementation.
+Server shutdown uses separate idempotent `stop` and `stopped` callbacks.
+Stop requests shutdown and returns; stopped checks completion and returns false
+while workers or kernel operations still own resources. Neither waits for a
+worker, joins it, or frees storage. Destroy asserts completion, then synchronously
+joins and releases resources. The client and server transport wrappers use the
+same stop/stopped/destroy order. Keep backend and callback contexts alive through
+destroy. A stuck operation leaves completion false; timeout is never permission
+to reclaim or detach memory that an operation still owns.
 
 Clients use create/destroy/send/receive callbacks. The existing transport
 receive thread and buffers remain shared infrastructure. Receive can run
@@ -202,12 +204,15 @@ and `:3573`):
 `SCHED_RR` at `sched_get_priority_min( SCHED_RR )` on Linux and macOS,
 `THREAD_PRIORITY_TIME_CRITICAL` on Windows.
 
-| Transport | Threads it creates | What the library sets |
+| Transport | Network threads it creates | What the library sets |
 |---|---|---|
 | GSO (Linux) | one worker per queue (`sdk/rocketnet_server_gso_linux.cpp:769`) | `SCHED_RR`, minimum priority, after each create |
 | XDP (Linux) | one thread per queue (`sdk/rocketnet_server_socket_linux.cpp:2568-2577`) | on itself at thread start: pinned to cpu `num_os_cpus + queue` with `pthread_setaffinity_np`, then `SCHED_RR` at the minimum priority on `pthread_self()` |
 | IOCP (Windows) | one worker per completion thread (`sdk/rocketnet_server_iocp_windows.cpp:568`) | `THREAD_PRIORITY_TIME_CRITICAL`, after each create |
 | io_uring, RIO, portable socket | none | nothing |
+
+Every server also runs one background stats worker. It uses a socket-free wake
+and does not receive the network-thread priority override described above.
 
 `rocketnet_thread_priority( false )` turns the priority calls off for
 threads created after it; the XDP thread's pin to its queue's cpu always runs.
@@ -295,7 +300,8 @@ went to a closed port.
 
 `io_uring` (`sdk/rocketnet_server_uring_linux.cpp`, `sdk/rocketnet_server_uring.h`)
 is a staged Linux server transport with one io_uring per transport, used only on the
-main thread, and no worker threads. An `SO_REUSEPORT` socket group, bound the
+main thread, with no I/O worker threads. The server still has its separate
+background stats worker. An `SO_REUSEPORT` socket group, bound the
 way the GSO transport binds its group, shards receives across queues. Each queue
 has a provided buffer ring and one multishot `RECVMSG`, so the kernel fills
 receive buffers with no syscall per datagram; `send_packets` submits one
@@ -323,9 +329,11 @@ unconvertible source, receives ended for want of buffers, multishot
 re-arms, calls that left completions for the next call (`REAP_DEFERRED`), and
 send calls that returned with sends still owned by the kernel
 (`SEND_DEFERRED`), and receive completions that named no provided buffer
-(`RECEIVE_DROPPED_NO_BUFFER`). A destroy that gives up waiting for outstanding completions leaks the
-kernel-visible memory rather than freeing it and counts it in
-`rocketnet_server_uring_leaked_bytes()` and `rocketnet_server_uring_leaked_transports()`.
+(`RECEIVE_DROPPED_NO_BUFFER`). Stop requests cancellation, and stopped remains
+false until outstanding completions have relinquished their storage. Destroy
+requires stopped and no longer uses a timed wait followed by leaked storage as
+normal cleanup. Existing leak counters remain diagnostic compatibility surfaces;
+completion, not a timeout, authorizes reclamation.
 The send staging, the two receive banks, the per-call completion budget and
 destroy are modelled in `tla/RNUringDriver.tla`.
 
@@ -347,8 +355,8 @@ families. The IPv6 destination is `public_address_ipv6` in
 RocketNet assumes a 1500-byte MTU path and never sends a datagram the network
 must fragment, so an IP fragment addressed to the server is hostile or
 misconfigured. The first fragment of a datagram to the server's port (the one
-that carries the UDP header: IPv4 with more-fragments set and offset 0, ihl 5,
-protocol UDP; IPv6 whose next header is the fragment header (44) at offset 0
+that carries the UDP header: IPv4 with more-fragments set and offset 0,
+protocol UDP, the UDP header after any options; IPv6 whose next header is the fragment header (44) at offset 0
 with more-fragments set and UDP behind it), whose UDP header is in the frame
 and names the configured port and address, is dropped and increments
 `ROCKETNET_SERVER_XDP_COUNTER_DROPPED_FIRST_FRAGMENT` (surfaced as
@@ -362,14 +370,30 @@ fragment the kernel can never reassemble the datagram, so the rest wait in
 the reassembly queue and are dropped cheaply at its reassembly timeout, and
 other services' fragmented traffic is untouched. Both checks run before the
 size, epoch, filter and replay checks for both families, so a fragment is never
-counted as any other drop. An IPv6 frame
-whose next header is any other extension header (hop-by-hop 0, routing 43,
-destination options 60, AH 51 or ESP 50) passes to the kernel stack through
-one named branch and increments
-`ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION`. The program never walks
-an extension chain and never drops one. Every other non-UDP next header,
-ICMPv6 (neighbor discovery) above all, passes uncounted, as non-UDP IPv4
-does.
+counted as any other drop. A non-first fragment carries no UDP header, so
+nothing in it names a port, and the program cannot tell one for the server
+from one for another service.
+
+RocketNet never sends IPv4 options or IPv6 extension headers, and in XDP mode
+no kernel socket listens on the server's port, so a datagram for the server
+behind either has nowhere to go but the kernel's error path. An IPv4 datagram
+with options (ihl 6 to 15) whose UDP header, after the options, names the
+configured port and address is dropped and increments
+`ROCKETNET_SERVER_XDP_COUNTER_DROPPED_IP_OPTIONS_OR_EXTENSION` (surfaced as
+`XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION`); with options to any other port
+or address it passes uncounted. An IPv6 frame whose next header is another
+extension header (hop-by-hop 0, routing 43, destination options 60, AH 51 or
+ESP 50) has its chain walked for at most four headers (hop-by-hop, routing,
+destination options and AH by their length fields, a first fragment header
+by its 8 bytes). When the walk reaches a UDP header in the frame that names
+the configured port and address, the frame is dropped and increments the
+same counter, before the size, epoch, filter and replay checks. Every other
+extension-header frame passes to the kernel stack and increments
+`ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION`: to another port or
+address, behind ESP (never opened), behind a non-first fragment header, a
+chain longer than the walk, or cut by the frame end. Every other non-UDP next
+header, ICMPv6 (neighbor discovery) above all, passes uncounted, as non-UDP
+IPv4 does.
 
 The AF_XDP transport serves IPv4 and IPv6 end to end. A server serves one
 family, or both when `rocketnet_server_create` is given an IPv4 and an IPv6
@@ -387,7 +411,10 @@ and an IPv6 reply carries the UDP checksum computed in software. Create and
 the pre-flight find the interface carrying each address over `AF_INET` or
 `AF_INET6` and refuse an IPv6 link-local address (fe80::/10) by name. Each
 family's gateway MAC comes from that family's default route and neighbour
-table; `ROCKETNET_GATEWAY_ETHERNET_ADDRESS` overrides both.
+table, read at create through rtnetlink (`sdk/rocketnet_gateway_netlink.h`: an
+`RTM_GETROUTE` dump for the default route's gateway on the interface, then an
+`RTM_GETNEIGH` dump for that gateway's link-layer address; no process is
+started). `ROCKETNET_GATEWAY_ETHERNET_ADDRESS` overrides both.
 
 A NULL `ipv4_address` or `ipv6_address` leaves that family unserved. An
 address not of its family, on another port, or that does not parse is one
@@ -515,10 +542,18 @@ embeds the object's bytes in `build/generated/rocketnet_server_xdp.h` as
 with `bpf_object__open_mem` and hands the object to libxdp with
 `xdp_program__from_bpf_obj`: the server host needs no compiler, `make`, kernel
 headers, temporary directory or child process. `test_xdp_filter` loads the same
-`server_xdp.o`. A configure without such a clang says
-`XDP off: no clang with the BPF target was found, so server_xdp.o is not built and the xdp server transport refuses at create`,
-embeds a zero-length object, and the `xdp` create refuses with
-`could not load server_xdp program: this build has no server_xdp.o (XDP disabled or no clang with the BPF target at configure time)`.
+`server_xdp.o`. The build is tolerant: XDP is built only with a clang that has
+the BPF target, libbpf and libxdp, and `-DROCKETNET_XDP=ON` (the default).
+Short of any of them the configure says why (`XDP off: no clang with the BPF
+target was found, so XDP is compiled out of this build`, `XDP off: libbpf or
+libxdp was not found, so XDP is compiled out of this build` or `XDP off:
+ROCKETNET_XDP=OFF; the xdp transport is unavailable; BPF/libxdp are not
+required`) and the whole XDP transport is
+compiled out (`ROCKETNET_XDP=0`): no embedded object, no XDP or netlink
+gateway code in the library, and no libbpf or libxdp link
+(`tools/check_xdp_compiled_out.py --absent` checks the built library). A
+transport list naming `xdp` refuses it at create with
+`ROCKETNET_STATUS_TRANSPORT_NOT_BUILT`, and `auto` starts at the next rung.
 macOS and Windows do not build the object.
 
 `cmake/XdpSources.cmake` lists the object's inputs: CMake recompiles the object
@@ -561,8 +596,8 @@ but return each datagram's original length, up to 65535 bytes. A larger byte
 count does not grant access to bytes beyond that buffer. Client batch
 compaction copies only the stored prefix; the prefilter counts oversized
 reports without reading that prefix. The buffered server counts oversized
-reports before invoking an application admission callback, so that callback
-never sees a claimed length beyond its available storage. Negative lengths,
+reports before the protocol reads a packet, so the protocol never sees a
+claimed length beyond its available storage. Negative lengths,
 lengths beyond 65535, and returned packet counts outside the requested range
 remain transport faults. A zero byte count in a batch is a received empty
 datagram; zero from a single-packet receive means drained.

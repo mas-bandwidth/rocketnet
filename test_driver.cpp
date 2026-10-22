@@ -1,4 +1,5 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
+#include "test/native_shutdown.h"
 #include "rocketnet_driver.h"
 #include "rocketnet_config.h"
 #include "rocketnet_xdp_limits.h"
@@ -11,7 +12,7 @@
 
 #include "route_checks.h"
 
-struct lifecycle_t { bool fail; int creates; int destroys; int stops; };
+struct lifecycle_t { bool fail; int creates; int destroys; int stops; int polls; };
 static void * create( void * context, const rocketnet_server_transport_io_config_t *, rocketnet_address_t * bind )
 {
     lifecycle_t * state = (lifecycle_t*) context;
@@ -20,7 +21,8 @@ static void * create( void * context, const rocketnet_server_transport_io_config
     return state->fail ? NULL : context;
 }
 static void destroy( void * instance ) { ++((lifecycle_t*) instance)->destroys; }
-static bool stop( void * instance ) { return ++((lifecycle_t*) instance)->stops >= 3; }
+static void stop( void * instance ) { ++((lifecycle_t*) instance)->stops; }
+static bool stopped( void * instance ) { return ++((lifecycle_t*) instance)->polls >= 3; }
 static void send( void *, const rocketnet_platform_send_t *, int ) {}
 static int receive( void *, rocketnet_address_t *, uint8_t *, int, int *, int ) { return 0; }
 
@@ -30,6 +32,7 @@ static void test_transport_lifecycle()
     operations.create = create;
     operations.destroy = destroy;
     operations.stop = stop;
+    operations.stopped = stopped;
     operations.send_batch = send;
     operations.receive_batch = receive;
     rocketnet_server_transport_io_t transport = {};
@@ -65,13 +68,16 @@ static void test_transport_lifecycle()
     CHECK(transport.instance == &state && bind.port == 12345);
     CHECK(!rocketnet_server_transport_io_open(&operations, &state, &setup, &bind, &transport));
     CHECK(state.creates == 2); // An existing instance is never overwritten.
-    CHECK(!rocketnet_server_transport_io_stop(&transport));
-    CHECK(!rocketnet_server_transport_io_stop(&transport));
-    CHECK(rocketnet_server_transport_io_stop(&transport));
+    rocketnet_server_transport_io_stop(&transport);
+    CHECK(state.stops == 1 && state.polls == 0);
+    CHECK(!rocketnet_server_transport_io_stopped(&transport));
+    CHECK(!rocketnet_server_transport_io_stopped(&transport));
+    CHECK(rocketnet_server_transport_io_stopped(&transport));
     rocketnet_server_transport_io_close(&transport);
     rocketnet_server_transport_io_close(&transport);
     CHECK(state.destroys == 1 && !transport.instance && !transport.operations);
-    CHECK(rocketnet_server_transport_io_stop(&transport));
+    rocketnet_server_transport_io_stop(&transport);
+    CHECK(rocketnet_server_transport_io_stopped(&transport));
     printf("test_transport_lifecycle\n");
 }
 
@@ -108,19 +114,44 @@ static void test_transport_registry()
         CHECK(definition->backend && definition->backend->server);
         if (i) CHECK(rocketnet_transport_definition(servers[i-1])->server_preference <= definition->server_preference);
     }
+    // The production library linked by test_transport omits the portable
+    // server from availability; development gives it rank 30. Read the linked
+    // registry so these exact lists also cover a development-linked fixture.
+    const bool portable_server = rocketnet_transport_definition(ROCKETNET_TRANSPORT_PORTABLE)->server_preference != 0;
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     if (rocketnet_transport_definition(ROCKETNET_TRANSPORT_IO_URING)->backend) // built with liburing
-        CHECK(count == 5 && servers[0] == ROCKETNET_TRANSPORT_XDP && servers[1] == ROCKETNET_TRANSPORT_GSO &&
-              servers[2] == ROCKETNET_TRANSPORT_IO_URING && servers[3] == ROCKETNET_TRANSPORT_PORTABLE && servers[4] == ROCKETNET_TRANSPORT_LOOPBACK);
+    {
+        if (portable_server)
+            CHECK(count == 5 && servers[0] == ROCKETNET_TRANSPORT_XDP && servers[1] == ROCKETNET_TRANSPORT_GSO &&
+                  servers[2] == ROCKETNET_TRANSPORT_IO_URING && servers[3] == ROCKETNET_TRANSPORT_PORTABLE && servers[4] == ROCKETNET_TRANSPORT_LOOPBACK);
+        else
+            CHECK(count == 4 && servers[0] == ROCKETNET_TRANSPORT_XDP && servers[1] == ROCKETNET_TRANSPORT_GSO &&
+                  servers[2] == ROCKETNET_TRANSPORT_IO_URING && servers[3] == ROCKETNET_TRANSPORT_LOOPBACK);
+    }
     else
-        CHECK(count == 4 && servers[0] == ROCKETNET_TRANSPORT_XDP && servers[1] == ROCKETNET_TRANSPORT_GSO && servers[2] == ROCKETNET_TRANSPORT_PORTABLE && servers[3] == ROCKETNET_TRANSPORT_LOOPBACK);
+    {
+        if (portable_server)
+            CHECK(count == 4 && servers[0] == ROCKETNET_TRANSPORT_XDP && servers[1] == ROCKETNET_TRANSPORT_GSO && servers[2] == ROCKETNET_TRANSPORT_PORTABLE && servers[3] == ROCKETNET_TRANSPORT_LOOPBACK);
+        else
+            CHECK(count == 3 && servers[0] == ROCKETNET_TRANSPORT_XDP && servers[1] == ROCKETNET_TRANSPORT_GSO && servers[2] == ROCKETNET_TRANSPORT_LOOPBACK);
+    }
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-    CHECK(count == 3 && servers[0] == ROCKETNET_TRANSPORT_MSGX && servers[1] == ROCKETNET_TRANSPORT_PORTABLE && servers[2] == ROCKETNET_TRANSPORT_LOOPBACK);
+    if (portable_server)
+        CHECK(count == 3 && servers[0] == ROCKETNET_TRANSPORT_MSGX && servers[1] == ROCKETNET_TRANSPORT_PORTABLE && servers[2] == ROCKETNET_TRANSPORT_LOOPBACK);
+    else
+        CHECK(count == 2 && servers[0] == ROCKETNET_TRANSPORT_MSGX && servers[1] == ROCKETNET_TRANSPORT_LOOPBACK);
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    CHECK(count == 4 && servers[0] == ROCKETNET_TRANSPORT_PORTABLE && servers[1] == ROCKETNET_TRANSPORT_IOCP &&
-          servers[2] == ROCKETNET_TRANSPORT_RIO && servers[3] == ROCKETNET_TRANSPORT_LOOPBACK);
+    if (portable_server)
+        CHECK(count == 4 && servers[0] == ROCKETNET_TRANSPORT_PORTABLE && servers[1] == ROCKETNET_TRANSPORT_IOCP &&
+              servers[2] == ROCKETNET_TRANSPORT_RIO && servers[3] == ROCKETNET_TRANSPORT_LOOPBACK);
+    else
+        CHECK(count == 3 && servers[0] == ROCKETNET_TRANSPORT_IOCP && servers[1] == ROCKETNET_TRANSPORT_RIO &&
+              servers[2] == ROCKETNET_TRANSPORT_LOOPBACK);
 #else
-    CHECK(count == 2 && servers[0] == ROCKETNET_TRANSPORT_PORTABLE && servers[1] == ROCKETNET_TRANSPORT_LOOPBACK);
+    if (portable_server)
+        CHECK(count == 2 && servers[0] == ROCKETNET_TRANSPORT_PORTABLE && servers[1] == ROCKETNET_TRANSPORT_LOOPBACK);
+    else
+        CHECK(count == 1 && servers[0] == ROCKETNET_TRANSPORT_LOOPBACK);
 #endif
     const int * clients = rocketnet_client_transport_io_availability(&count);
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
@@ -218,7 +249,8 @@ static void test_buffered_transport()
     }
     CHECK(received == sizeof(data) && memcmp(packets[0], data, sizeof(data)) == 0);
     CHECK(rocketnet_address_equal(from, &server_address));
-    CHECK(rocketnet_server_transport_io_stop(&server));
+    rocketnet_server_transport_io_stop(&server);
+    rn_native_server_io_wait_stopped(&server);
     rocketnet_client_transport_io_close(&client);
     rocketnet_server_transport_io_close(&server);
     printf("test_buffered_transport\n");

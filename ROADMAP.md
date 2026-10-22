@@ -20,7 +20,7 @@ The secure connect of standard/TRANSPORT.md: netcode 1.02 rebuilt on public keys
 | Per-connection keys with forward secrecy, secrets wiped on every exit | ✅ | ✅ | ✅ |
 | Sealed packets with every refusal proven | ✅ | ✅ | ✅ |
 | Used-token history and one token, one live connection | ✅ | ✅ | ✅ |
-| Admission hook drops a packet before any verify | ✅ | ✅ | ✅ |
+| Admission hook: removed 2026-10-21, it was never in the public API | — | — | — |
 | Cheap refusals before crypto: a full server refuses before keypair work | ✅ | ✅ | ✅ |
 | Bounded handshake work per update | ✅ | ✅ | ✅ |
 | Configurable half-open handshake deadline | ✅ | ✅ | ✅ |
@@ -123,7 +123,7 @@ The message layer of standard/MESSAGES.md: channels, priorities, budgets and one
 
 ## Transports
 
-The server transports below the connection layer, one column each, in the order the automatic ladder ranks them: xdp, gso, io_uring and portable on Linux, msgx and portable on macOS, portable, iocp and rio on Windows. The per-endpoint ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT select one at runtime; loopback is pin-only.
+The server transports below the connection layer, one column each, in the order the automatic ladder ranks them: xdp, gso, io_uring and portable on Linux, msgx and portable on macOS, portable, iocp and rio on Windows. The portable server rung is development-only; portable client I/O remains available in production. The per-endpoint ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT select one at runtime; loopback is pin-only.
 
 AF_XDP serves IPv4 and IPv6 end to end (8a35a14): a server serves the family of its public address, and the ladder offers xdp for either. Its IPv6 cell is ❌ because no CI step runs AF_XDP end to end (it needs root and a VM guest); the msgx and iocp IPv6 cells are ❌ until the CI transport family matrix runs green on them.
 
@@ -429,13 +429,12 @@ What v1.0.0-preview-1 does not yet meet, one row per issue: what it is today, an
 | The acknowledgement statistics sweep scans thousands of records per update. The final deliverable keeps those statistics up to date as acks arrive. | ❌ | ❌ | ❌ |
 | Every main call is meant to take under 0.1 ms in Release under load; this is not yet measured at 1000 clients. The final deliverable measures every main call at 1000 clients on each platform and holds the result in a gate. | ❌ | ❌ | ❌ |
 | Each unreliable message is sent as its own packet; small unreliable messages are not packed together. The final deliverable packs small messages into shared packets and keeps in-place writes for large ones. | ❌ | ❌ | ❌ |
-| Client disconnect and destroy stop the client's I/O thread and wait for it to exit. The wait is bounded: the thread checks for stop at least once a millisecond, and each hand-off wait gives up after 2 seconds; but a transport stuck inside a send holds the thread past those bounds, the header promises no shutdown time, and shutdown reads the time callback on the caller's thread. The final deliverable makes neither call block: disconnect sends its disconnect packets directly on the socket from the caller's thread, as netcode's client disconnect sends its burst of disconnect packets, and both disconnect and destroy return without waiting on the I/O thread. | ❌ | ❌ | ❌ |
+| Client disconnect and server stop request shutdown without waiting for workers; client disconnected and server stopped check completion without joining or freeing. Both client and server transports follow stop, stopped, destroy. Destroy asserts completion and synchronously joins and frees; a stalled worker leaves completion false and storage alive. This request/completion contract is the final-deliverable decision approved on 2026-10-21; implementation and qualification remain pending. | ❌ | ❌ | ❌ |
 | On macOS, a portable-transport client connecting over IPv4 to a server that serves both IPv4 and IPv6 on one port failed to connect once, intermittently: observed once in a sharded functional run, not reproduced on rerun, and test_transport_dual_stack_ipv4_client passed in the full run at b0a8a2e3. The final deliverable finds the cause and proves every family combination on macOS by repeated functional runs. | — | ❌ | — |
 | On macOS, the full functional suite runs past CI's 120-second limit; it passes when run outside CI (all 142 cases at b0a8a2e3, about 6 m 38 s). The final deliverable runs the whole suite on macOS inside the limit. | — | ❌ | — |
 | Some functional tests measure operating-system behaviour rather than RocketNet: test_macos_client_timing_default_qos, test_macos_client_timing_taskpolicy_background, the test_thread_priority_timing cases and test_thread_priority_windows_readback. The final deliverable removes them or rewrites them to test only RocketNet's own code. | ❌ | ❌ | ❌ |
 | The macOS client timing functional test carries a branch that lowers the game thread's priority, which no case uses since its last caller was removed. The final deliverable removes the branch with the cases above. | — | ❌ | — |
 | The Windows Debug, AddressSanitizer and Application Verifier runs passed before the last v1.0.0-preview-1 API changes and have not been repeated on the released API. The final deliverable repeats all three on the released API, on every Windows transport. | — | — | ❌ |
-| On Linux, XDP gateway discovery runs external commands when the server starts. This is acceptable at start; the final deliverable reads the gateway through netlink instead. | ❌ | — | — |
 | Client connect and server start still allocate: the client's transport, socket and I/O thread at each connect, and the server's transport and its tables at each start. The final deliverable builds them at create, so nothing allocates after create. | ❌ | ❌ | ❌ |
 | A few allocations do not go through the caller's allocator: AF_XDP packet memory, io_uring rings, the RIO registered region, thread stacks, interface discovery and the C library's output buffer. The final deliverable routes them through the caller's allocator where the operating system allows, and reports the rest by size. | ❌ | ❌ | ❌ |
 | The memory plan reports what create needs, but not yet what connect, reconnect, start and stop need. The final deliverable extends the plan to the whole session, so one block sized from the plan alone never runs out. | ❌ | ❌ | ❌ |

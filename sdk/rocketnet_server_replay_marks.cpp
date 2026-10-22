@@ -190,7 +190,7 @@ bool rocketnet_server_replay_marks_reset_witness_for_test()
     if ( index == 0 )
     {
         rocketnet_encryption_mapping_t * entry = rocketnet_encryption_map_entry( map, mapping );
-        entry->client_index = index;
+        entry->control->client_index = index;
         entry->replay_session.highest_opened = 0xA5A5;
     }
     int forgets = 0;

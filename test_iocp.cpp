@@ -1,4 +1,5 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. */
+#include "test/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_server_iocp.h"
@@ -63,7 +64,7 @@ static void test_create_cleanup()
     CHECK(transport && bind.port != 0);
     const int count = allocations.load();
     wait_stopped(transport);
-    rocketnet_server_iocp_destroy(transport);
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
     CHECK(live_allocations.load() == baseline);
 
     DWORD handle_baseline;
@@ -176,7 +177,7 @@ static void test_completion_owns_frames()
     }
     rocketnet_server_iocp_send_packets(transport);
     wait_stopped(transport);
-    rocketnet_server_iocp_destroy(transport);
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
     rocketnet_platform_socket_destroy(peer);
     printf("test_iocp_transport_completion_owns_frames\n");
 }
@@ -189,7 +190,7 @@ static void test_uso_run_owns_frames()
     if ( !(rocketnet_server_iocp_features(transport) & ROCKETNET_IOCP_FEATURE_USO) )
     {
         wait_stopped(transport);
-        rocketnet_server_iocp_destroy(transport);
+        rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
         return;
     }
     rocketnet_address_t peer_address = address("127.0.0.1:0");
@@ -245,7 +246,7 @@ static void test_uso_run_owns_frames()
     CHECK(pending.empty());
     rocketnet_server_iocp_send_packets(transport);
     wait_stopped(transport);
-    rocketnet_server_iocp_destroy(transport);
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
     rocketnet_platform_socket_destroy(peer);
     printf("test_iocp_transport_uso_run_owns_frames\n");
 }
@@ -324,9 +325,8 @@ static void test_datagrams_and_producers()
         ++count;
     }
     CHECK(count == 256);
-    // Force stop to join the same mutex used by completion/repost. The stop
-    // thread sets stopping while the publication locks are held here; only
-    // releasing them can let cancellation proceed. No scheduler warm-up sleep.
+    // Pause completion work. Stop must return while a worker is paused, but
+    // completion stays false until the worker can drain cancellation.
     rocketnet_server_iocp_test_hold_completions(transport, true);
     std::atomic<bool> sending{true};
     std::thread incoming([&]() {
@@ -339,10 +339,11 @@ static void test_datagrams_and_producers()
         stop_returned.store(true);
     });
     const double stop_deadline = rocketnet_platform_time() + 5.0;
-    while (!rocketnet_server_iocp_test_stopping(transport) && rocketnet_platform_time() < stop_deadline)
+    while (!stop_returned.load() && rocketnet_platform_time() < stop_deadline)
         rocketnet_platform_sleep(0.001);
+    CHECK(stop_returned.load());
     CHECK(rocketnet_server_iocp_test_stopping(transport));
-    CHECK(!stop_returned.load());
+    CHECK(!rocketnet_server_iocp_stopped(transport));
     rocketnet_server_iocp_test_hold_completions(transport, false);
     stopping.join();
     CHECK(stop_returned.load());
@@ -352,9 +353,97 @@ static void test_datagrams_and_producers()
     uint64_t stopped_id;
     CHECK(!rocketnet_server_iocp_start_packet(transport, &peer_address, &stopped_id));
     rocketnet_server_iocp_stop(transport);
-    rocketnet_server_iocp_destroy(transport);
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
     rocketnet_platform_socket_destroy(peer);
     printf("test_iocp_transport_datagrams_and_producers\n");
+}
+
+static void test_receive_publication_never_waits()
+{
+    rocketnet_address_t bind = address("127.0.0.1:0");
+    rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create(NULL, &bind, 1);
+    CHECK(transport);
+    rocketnet_address_t peer_address = address("127.0.0.1:0");
+    rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create(NULL, &peer_address,
+        ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 4 * 1024 * 1024, 4 * 1024 * 1024);
+    CHECK(peer);
+    const uint8_t marker = 0x5a;
+    rocketnet_platform_socket_send_packet(peer, &bind, &marker, 1);
+    uint8_t * view = NULL;
+    const double view_deadline = rocketnet_platform_time() + 5.0;
+    while (!view && rocketnet_platform_time() < view_deadline)
+    {
+        rocketnet_server_iocp_receive_packets(transport);
+        rocketnet_server_socket_process_packets_t * batch = rocketnet_server_iocp_process_packets(transport);
+        if (batch->num_packets == 1)
+        {
+            CHECK(batch->packet_bytes[0] == 1 && batch->packet_data[0][0] == marker);
+            view = batch->packet_data[0];
+        }
+        rocketnet_platform_sleep(0.001);
+    }
+    CHECK(view);
+    std::atomic<bool> held{false};
+    std::atomic<bool> release_lock{false};
+    std::atomic<bool> receive_returned{false};
+    std::thread holder([&]() {
+        rocketnet_server_iocp_test_hold_publication(transport, true);
+        held.store(true);
+        while (!release_lock.load()) rocketnet_platform_sleep(0.001);
+        rocketnet_server_iocp_test_hold_publication(transport, false);
+    });
+    const double hold_deadline = rocketnet_platform_time() + 5.0;
+    while (!held.load() && rocketnet_platform_time() < hold_deadline)
+        rocketnet_platform_sleep(0.001);
+    CHECK(held.load());
+    std::thread receiver([&]() {
+        rocketnet_server_iocp_receive_packets(transport);
+        receive_returned.store(true);
+    });
+    const double return_deadline = rocketnet_platform_time() + 1.0;
+    while (!receive_returned.load() && rocketnet_platform_time() < return_deadline)
+        rocketnet_platform_sleep(0.001);
+    const bool returned_before_release = receive_returned.load();
+    release_lock.store(true);
+    receiver.join();
+    holder.join();
+    CHECK(returned_before_release);
+    CHECK(rocketnet_server_iocp_process_packets(transport)->num_packets == 0);
+    CHECK(view[0] == marker);
+    CHECK(rocketnet_server_iocp_test_receive_view_published(transport, view));
+    wait_stopped(transport);
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+    rocketnet_platform_socket_destroy(peer);
+    printf("test_iocp_transport_receive_publication_never_waits\n");
+}
+
+static void test_receive_ready_banks_fifo()
+{
+    rocketnet_address_t bind = address("127.0.0.1:0");
+    rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create(NULL, &bind, 1);
+    CHECK(transport && bind.port);
+    rocketnet_address_t peer_address = address("127.0.0.1:0");
+    rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create(NULL, &peer_address,
+        ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 4 * 1024 * 1024, 4 * 1024 * 1024);
+    CHECK(peer);
+    for ( int marker = 1; marker <= 2; ++marker )
+    {
+        const uint8_t payload = (uint8_t) marker;
+        rocketnet_platform_socket_send_packet(peer, &bind, &payload, 1);
+        const double deadline = rocketnet_platform_time() + 5.0;
+        while (rocketnet_server_iocp_test_ready_banks(transport, 0) < marker && rocketnet_platform_time() < deadline)
+            rocketnet_platform_sleep(0.001);
+        CHECK(rocketnet_server_iocp_test_ready_banks(transport, 0) == marker);
+    }
+    rocketnet_server_iocp_receive_packets(transport);
+    rocketnet_server_socket_process_packets_t * batch = rocketnet_server_iocp_process_packets(transport);
+    CHECK(batch->num_packets == 2);
+    for ( int i = 0; i < 2; ++i )
+        CHECK(batch->packet_bytes[i] == 1 && batch->packet_data[i][0] == i + 1);
+    wait_stopped(transport);
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+    rocketnet_platform_socket_destroy(peer);
+    printf("test_iocp_transport_receive_ready_banks_fifo\n");
 }
 
 static void test_receive_boundaries()
@@ -392,7 +481,7 @@ static void test_receive_boundaries()
     CHECK(received == 1 && counters[ROCKETNET_IOCP_RECEIVE_DROPPED] == 2);
     CHECK(rocketnet_server_iocp_pending(transport) == ROCKETNET_IOCP_RECEIVES_PER_WORKER);
     wait_stopped(transport); // Cancellation with idle, outstanding receives too.
-    rocketnet_server_iocp_destroy(transport);
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
     closesocket(peer);
     printf("test_iocp_transport_receive_boundaries\n");
 }
@@ -563,7 +652,7 @@ static void iocp_exchange( rocketnet_server_iocp_t * transport, const rocketnet_
 static void iocp_finish( rocketnet_server_iocp_t * transport, rocketnet_platform_socket_t * peer )
 {
     wait_stopped(transport);
-    rocketnet_server_iocp_destroy(transport);
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
     rocketnet_platform_socket_destroy(peer);
 }
 
@@ -778,7 +867,7 @@ static void iocp_destroy_watched( rocketnet_server_iocp_t * transport, double * 
 {
     case_watchdog_t watchdog( "rocketnet_server_iocp_destroy", 10.0 );
     const double start = rocketnet_platform_time();
-    rocketnet_server_iocp_destroy(transport);
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
     const double elapsed = rocketnet_platform_time() - start;
     if ( elapsed > *slowest ) *slowest = elapsed;
 }
@@ -901,7 +990,7 @@ static rocketnet_server_rio_t * rio_open( rocketnet_address_t * bind )
 
 static void rio_finish( rocketnet_server_rio_t * rio, rocketnet_platform_socket_t * peer )
 {
-    rocketnet_server_rio_destroy(rio);
+    rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
     CHECK(rocketnet_server_rio_leaked_regions() == 0);
     rocketnet_platform_socket_destroy(peer);
 }
@@ -1102,13 +1191,40 @@ static void test_rio_destroy_commits_deferred_sends()
     CHECK(rocketnet_server_rio_pending(rio) == ROCKETNET_RIO_RECEIVES + 10);
 
     const double start = rocketnet_platform_time();
-    rocketnet_server_rio_destroy(rio);
+    rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
     const double elapsed = rocketnet_platform_time() - start;
     CHECK(rocketnet_server_rio_leaked_regions() == 0);
     CHECK(elapsed < 1.0);
     fault_peer_receive(peer, round, 10);
     rocketnet_platform_socket_destroy(peer);
     printf("test_rio_transport_destroy_commits_deferred_sends\n");
+}
+
+// A stop-time commit refusal must leave the request queue usable. Each
+// completion check makes one more nonwaiting commit attempt before closing
+// the socket and retiring the registered storage.
+static void test_rio_stop_retries_refused_deferred_commit()
+{
+    CHECK(rocketnet_server_rio_available());
+    rocketnet_address_t bind;
+    rocketnet_server_rio_t * rio = rio_open(&bind);
+    rocketnet_address_t peer_address;
+    rocketnet_platform_socket_t * peer = fault_peer(&peer_address);
+
+    rocketnet_server_rio_test_fail_next(rio, ROCKETNET_RIO_TEST_FAULT_COMMIT, 3, WSAENOBUFS);
+    rio_stage(rio, &peer_address, ++fault_round & 0xFF, 10);
+    rocketnet_server_rio_send_packets(rio);
+    CHECK(rocketnet_server_rio_test_faults_left(rio, ROCKETNET_RIO_TEST_FAULT_COMMIT) == 2);
+    rocketnet_server_rio_stop(rio);
+    CHECK(rocketnet_server_rio_test_faults_left(rio, ROCKETNET_RIO_TEST_FAULT_COMMIT) == 1);
+    CHECK(!rocketnet_server_rio_stopped(rio));
+    CHECK(rocketnet_server_rio_test_faults_left(rio, ROCKETNET_RIO_TEST_FAULT_COMMIT) == 0);
+    CHECK(rocketnet_server_rio_pending(rio) >= 10);
+
+    rn_native_backend_stop_and_destroy(rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy);
+    CHECK(rocketnet_server_rio_leaked_regions() == 0);
+    rocketnet_platform_socket_destroy(peer);
+    printf("test_rio_transport_stop_retries_refused_deferred_commit\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -1183,7 +1299,6 @@ static void test_windows_port_exclusive()
 {
     const char * binds[] = { "0.0.0.0:0", "[::]:0" };
     const char * targets[] = { "127.0.0.1:0", "[::1]:0" };
-    const char * transports[] = { "portable", "iocp", "rio" };
     for ( int b = 0; b < 2; ++b )
     {
         for ( int d = 0; d < 3; ++d )
@@ -1204,8 +1319,8 @@ static void test_windows_port_exclusive()
             (void) stolen;
             closesocket(thief);
             if ( portable ) rocketnet_platform_socket_destroy(portable);
-            if ( iocp ) { wait_stopped(iocp); rocketnet_server_iocp_destroy(iocp); }
-            if ( rio ) { rocketnet_server_rio_destroy(rio); CHECK(rocketnet_server_rio_leaked_regions() == 0); }
+            if ( iocp ) { wait_stopped(iocp); rn_native_backend_stop_and_destroy( iocp, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy ); }
+            if ( rio ) { rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy ); CHECK(rocketnet_server_rio_leaked_regions() == 0); }
             CHECK(!bound);
         }
     }
@@ -1270,6 +1385,7 @@ static const fault_case_t fault_cases[] = {
     { "test_rio_transport_request_queue_full", test_rio_request_queue_full },
     { "test_rio_transport_send_post_fails", test_rio_send_post_fails },
     { "test_rio_transport_destroy_commits_deferred_sends", test_rio_destroy_commits_deferred_sends },
+    { "test_rio_transport_stop_retries_refused_deferred_commit", test_rio_stop_retries_refused_deferred_commit },
     { "test_windows_port_exclusive", test_windows_port_exclusive },
     { "test_windows_send_failures_counted", test_windows_send_failures_counted },
 };
@@ -1285,6 +1401,8 @@ int main( int argc, char ** argv )
         test_completion_owns_frames();
         test_uso_run_owns_frames();
         test_datagrams_and_producers();
+        test_receive_publication_never_waits();
+        test_receive_ready_banks_fifo();
         test_receive_boundaries();
         for ( const fault_case_t & c : fault_cases ) c.run();
     }

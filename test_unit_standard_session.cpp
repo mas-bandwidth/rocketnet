@@ -50,10 +50,10 @@ static void rocketnet_session_server_setup( struct rocketnet_session_server_t * 
     rocketnet_unit_check( test->mapping_index >= 0 );
 
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, test->mapping_index );
-    mapping->established = 1;
-    mapping->client_index = 0;
-    mapping->timeout_seconds = 10;
-    mapping->last_receive_time = 1000.0;
+    mapping->control->established = 1;
+    mapping->control->client_index = 0;
+    mapping->control->timeout_seconds = 10;
+    mapping->control->last_receive_time = 1000.0;
     mapping->last_send_time = 1000.0;
     mapping->last_keep_alive_send_time = 1000.0;
     mapping->send_sequence_session = 1;

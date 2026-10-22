@@ -119,7 +119,6 @@ static void test_server_reassembled_batch_holds_legitimate_load()
     server.advertised_ipv4 = server_address;
     memcpy( server.cookie_key, rocketnet_test_cookie_key, 32 );
     server.cookie_lifetime_seconds = 3;
-    server.max_token_lifetime_seconds = 600;
     server.handshake_deadline_seconds = 5.0;
     server.encryption_map = rocketnet_encryption_map_create( NULL, SRB_NUM_CLIENTS * 2 );
     server.used_token_history = rocketnet_used_token_history_create( NULL, SRB_NUM_CLIENTS * 8 );

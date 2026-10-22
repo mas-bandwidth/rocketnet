@@ -72,10 +72,8 @@ static void half_open_server_setup( struct half_open_server_t * test, double han
     check( rocketnet_address_parse( &server->advertised_ipv4, "203.0.113.10:40000" ) );
     memcpy( server->cookie_key, rocketnet_test_cookie_key, 32 );
     server->cookie_lifetime_seconds = 3;
-    server->max_token_lifetime_seconds = 0;
     server->handshake_deadline_seconds = handshake_deadline_seconds;
     server->max_timeout_seconds = 0;
-    server->allow_negative_timeout = 0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     server->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
     server->client_slots = rocketnet_client_slots_create( NULL, 4 );
@@ -146,9 +144,9 @@ static void half_open_idle_timeout_removes_and_refreshes()
     int index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
     check( index != -1 );
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, index );
-    check( mapping->established == 0 );
-    check( mapping->handshake_deadline == 1060.0 );
-    check( mapping->last_receive_time == 1000.0 );
+    check( mapping->control->established == 0 );
+    check( mapping->control->handshake_deadline == 1060.0 );
+    check( mapping->control->last_receive_time == 1000.0 );
 
     // one second inside the idle timeout: the mapping lives
     rocketnet_server_protocol_update( &test.server, 1001.0 );
@@ -158,8 +156,8 @@ static void half_open_idle_timeout_removes_and_refreshes()
     // mapping survives a point past the original idle deadline
     check( half_open_send_request( &test, request, 1005.0 ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     mapping = rocketnet_encryption_map_entry( test.server.encryption_map, index );
-    check( mapping->last_receive_time == 1005.0 );
-    check( mapping->handshake_deadline == 1060.0 );
+    check( mapping->control->last_receive_time == 1005.0 );
+    check( mapping->control->handshake_deadline == 1060.0 );
 
     rocketnet_server_protocol_update( &test.server, 1014.5 );
     check( rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) == index );
@@ -185,7 +183,7 @@ static void half_open_handshake_deadline_wins_when_earlier()
 
     int index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
     check( index != -1 );
-    check( rocketnet_encryption_map_entry( test.server.encryption_map, index )->handshake_deadline == 1001.0 );
+    check( rocketnet_encryption_map_entry( test.server.encryption_map, index )->control->handshake_deadline == 1001.0 );
 
     // the handshake deadline fires first, so its own counter names the removal
     rocketnet_server_protocol_update( &test.server, 1001.5 );

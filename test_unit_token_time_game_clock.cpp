@@ -9,6 +9,7 @@
 // zero the check reads the wall clock as before. Time is an argument starting
 // at 1000.0; no socket, no sleep and no real clock.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 
 #include "rocketnet_internal.h"
@@ -84,7 +85,7 @@ static int token_time_game_client_create( uint64_t create, uint64_t expire, uint
     struct rocketnet_client_transport_t * transport = rocketnet_client_transport_create_ex( NULL, token_data, &config, time, &status );
     if ( transport )
     {
-        rocketnet_client_transport_destroy( transport );
+        rn_test_client_transport_stop_and_destroy( transport );
         return ROCKETNET_STATUS_OK;
     }
     return status;
@@ -102,7 +103,6 @@ static void token_time_game_server_setup( struct token_time_game_server_t * t )
     check( rocketnet_address_parse( &server->advertised_ipv4, "203.0.113.10:40000" ) );
     memcpy( server->cookie_key, rocketnet_test_cookie_key, 32 );
     server->cookie_lifetime_seconds = 3;
-    server->max_token_lifetime_seconds = 0;
     server->handshake_deadline_seconds = 5.0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 4 );
     server->used_token_history = rocketnet_used_token_history_create( NULL, 8 );

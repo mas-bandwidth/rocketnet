@@ -57,10 +57,8 @@ static void request_ladder_server_setup( struct request_ladder_server_t * test )
     check( rocketnet_address_parse( &server->advertised_ipv4, "203.0.113.10:40000" ) );
     memcpy( server->cookie_key, rocketnet_test_cookie_key, 32 );
     server->cookie_lifetime_seconds = 3;
-    server->max_token_lifetime_seconds = 600;
     server->handshake_deadline_seconds = 5.0;
     server->max_timeout_seconds = 0;
-    server->allow_negative_timeout = 0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     server->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
     server->client_slots = rocketnet_client_slots_create( NULL, 4 );
@@ -152,7 +150,7 @@ static void test_request_ladder_wrong_salt_does_not_refresh_half_open()
     const int index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
     check( index != -1 );
     const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, index );
-    check( mapping->last_receive_time == 1000.0 );
+    check( mapping->control->last_receive_time == 1000.0 );
 
     // another salt from the same address: the stored challenge goes back, the idle clock stays
     uint8_t other_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
@@ -163,11 +161,11 @@ static void test_request_ladder_wrong_salt_does_not_refresh_half_open()
     check( request_ladder_process( &test, other_request, ROCKETNET_TEST_CREATE_TS, 1003.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     check( response_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_CHALLENGE_RESENT] == resent_before + 1 );
-    check( mapping->last_receive_time == 1000.0 );
+    check( mapping->control->last_receive_time == 1000.0 );
 
     // the matching salt refreshes it
     check( request_ladder_process( &test, request, ROCKETNET_TEST_CREATE_TS, 1004.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
-    check( mapping->last_receive_time == 1004.0 );
+    check( mapping->control->last_receive_time == 1004.0 );
 
     request_ladder_server_teardown( &test );
 }

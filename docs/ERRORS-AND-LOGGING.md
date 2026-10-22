@@ -77,7 +77,7 @@ them.
 Status codes follow these rules:
 
 1. `ROCKETNET_STATUS_OK = 0` is the sole success value.
-2. Every failure code is negative, dense from `-1` to `-29`. `status < 0`
+2. Every failure code is negative, dense from `-1` to `-30`. `status < 0`
    means the call failed.
 3. There is no count value. `rocketnet_status_name` maps each code by value.
    It returns a static ASCII identifier, for example `"INVALID_CONNECT_TOKEN"`,
@@ -124,10 +124,11 @@ enum rocketnet_status_t
     ROCKETNET_STATUS_FLOW_ID_RESERVED                   = -25,
     ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED     = -26,
     ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED             = -27,
+    ROCKETNET_STATUS_TRANSPORT_NOT_BUILT                = -28,
 
     // production builds (ROCKETNET_DEV=0) refuse the development values
-    ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION   = -28,
-    ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION    = -29
+    ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION   = -29,
+    ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION    = -30
 };
 ```
 
@@ -142,7 +143,7 @@ out-parameter, and log one `ERROR` line with the reason: `NOT_INITIALIZED`,
 `INVALID_ADDRESS` (server) or `OUT_OF_MEMORY`. Client connect and server start
 return the token and transport codes: `CLIENT_NOT_DISCONNECTED`,
 `INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, `SERVER_NOT_STOPPED`,
-`TRANSPORT_LADDER_EXHAUSTED`, `TRANSPORT_FAMILIES_UNSUPPORTED`, `MISSING_KEYS`,
+`TRANSPORT_LADDER_EXHAUSTED`, `TRANSPORT_FAMILIES_UNSUPPORTED`, `TRANSPORT_NOT_BUILT`, `MISSING_KEYS`,
 `TRANSPORT_PORT_ZERO_UNSUPPORTED`, `MUTEX_CREATE_FAILED`,
 `THREAD_CREATE_FAILED` and `TIMER_CREATE_FAILED`.
 `ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED` is -26: a transport returns it
@@ -153,9 +154,15 @@ candidate that opened refused for that reason.
 default_config call, is refused with it before any other check
 (`docs/ABI-EVOLUTION.md`). Its string is `CONFIG_NOT_INITIALIZED`
 (`rocketnet_status_name` in `sdk/rocketnet.cpp`).
-`ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION` is -28: a production build
+`ROCKETNET_STATUS_TRANSPORT_NOT_BUILT` is -28: start returns it
+when every candidate that opened refused because it is compiled out of this
+build, the `xdp` server transport in a Linux build configured with
+`ROCKETNET_XDP=OFF` or without a clang that has the BPF target, libbpf or
+libxdp (`docs/LINUX.md`). Its string is
+`TRANSPORT_NOT_BUILT`.
+`ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION` is -29: a production build
 (`ROCKETNET_DEV=0`) refuses the published test packet filter at client and
-server create. `ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION` is -29, the
+server create. `ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION` is -30, the
 last code: a production client refuses, at connect, a token sealed to the
 published development server key.
 

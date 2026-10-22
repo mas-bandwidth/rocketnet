@@ -12,12 +12,16 @@
 //
 // Every case runs in memory, with no clock, sockets or network.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "test/fake_client_driver.h"
 
 #include "rocketnet.h"
 #include "rocketnet_client_io.h"
 #include "rocketnet_connect_token.h"
+#include "sdk/rocketnet_driver_loopback.h"
+#include "sdk/rocketnet_memory.h"
+#include "test/suite_runner.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -114,7 +118,7 @@ static void client_create_and_expect_warn( const uint8_t * server_key, int expec
     }
     stop_capture();
 
-    rocketnet_client_transport_destroy( transport );
+    rn_test_client_transport_stop_and_destroy( transport );
     check( fake->destroy_calls == 1 );
     delete fake;
 }
@@ -137,6 +141,40 @@ static int test_unset_environment( const char * name )
 #endif
 }
 
+static void dev_warning_server_config( rocketnet_server_transport_config_t * config )
+{
+    rocketnet_server_transport_dev_config( config );
+    config->max_clients = ROCKETNET_MAX_CLIENTS;
+    snprintf( config->transport, sizeof(config->transport), "%s", "loopback" );
+}
+
+// Development creates a full-capacity server before checking the warning.
+// The portable plan covers common protocol and stats storage, including both
+// delta buffers per slot, plus the portable TX I/O banks. Add the loopback
+// queue; the portable I/O-storage term is a small conservative allowance
+// because loopback has no built-in plan row.
+// Allow 32 MiB for the process and native runtime, as the other full-capacity
+// loopback case does. Release refuses the dev key before creating a server.
+static long dev_warning_rss_bound_mb()
+{
+#if ROCKETNET_DEV
+    rocketnet_server_transport_config_t config;
+    dev_warning_server_config( &config );
+    rocketnet_server_memory_plan_t plan;
+    if ( !rocketnet_server_transport_memory_plan( &config, "portable", plan ) )
+        return 0;
+    uint64_t planned = plan.total_bytes;
+    const uint64_t endpoint = rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) + rocketnet_allocation_overhead();
+    if ( !rocketnet_memory_add( planned, 1, endpoint ) )
+        return 0;
+    return suite_rss_bound_mb( planned, 32 );
+#else
+    return 0; // keep the suite-wide bound when create refuses before allocation
+#endif
+}
+
+SUITE_CASE_RSS_BOUND( test_dev_keys_warn_on_every_start, dev_warning_rss_bound_mb );
+
 static void test_dev_keys_warn_on_every_start()
 {
     // the server, development keys: a warning on create, and in a production
@@ -148,8 +186,7 @@ static void test_dev_keys_warn_on_every_start()
     // the unit suite stays free of any real socket bind.
     {
         struct rocketnet_server_transport_config_t config;
-        rocketnet_server_transport_dev_config( &config );
-        snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+        dev_warning_server_config( &config );
         int status = -1;
         start_capture();
         void * srv = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status );
@@ -162,7 +199,7 @@ static void test_dev_keys_warn_on_every_start()
         check( status == ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION );
 #else
         if ( srv )
-            rocketnet_server_transport_destroy( (struct rocketnet_server_transport_t *) srv );
+            rn_test_server_transport_stop_and_destroy( (struct rocketnet_server_transport_t *) srv );
 #endif
     }
 

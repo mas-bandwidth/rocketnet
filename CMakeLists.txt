@@ -41,6 +41,7 @@ option(ROCKETNET_HARDEN "Enable hardening flags for release builds" ON)
 option(ROCKETNET_BUILD_TESTS "Build the native tests and ABI fixtures" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_BUILD_EXAMPLES "Build the client/server examples" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_BUILD_TOOLS "Build keygen and soak tools" ${ROCKETNET_TOP_LEVEL})
+option(ROCKETNET_XDP "Build the Linux XDP transport and embed its BPF program" ON)
 option(ROCKETNET_IO_URING "Build the io_uring server transport against liburing when it is found (Linux)" ON)
 option(ROCKETNET_SANITIZE_ADDRESS "Build every target with AddressSanitizer" OFF)
 # ROCKETNET_DEV (sdk/rocketnet.h): ON, the default, builds rocketnet,
@@ -54,6 +55,18 @@ if(ROCKETNET_SANITIZE_ADDRESS)
     if(MSVC)
         add_compile_options(/fsanitize=address /Zi)
         add_link_options(/DEBUG /INCREMENTAL:NO)
+        if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
+            # clang-cl links through lld-link, which, unlike cl's link step,
+            # adds no AddressSanitizer runtime: name the dynamic runtime and
+            # its thunk from clang's own resource directory
+            execute_process(COMMAND "${CMAKE_C_COMPILER}" -print-resource-dir
+                OUTPUT_VARIABLE ROCKETNET_CLANG_RESOURCE_DIR OUTPUT_STRIP_TRAILING_WHITESPACE)
+            set(ROCKETNET_ASAN_RUNTIME_DIR "${ROCKETNET_CLANG_RESOURCE_DIR}/lib/windows")
+            add_link_options("${ROCKETNET_ASAN_RUNTIME_DIR}/clang_rt.asan_dynamic-x86_64.lib"
+                             "${ROCKETNET_ASAN_RUNTIME_DIR}/clang_rt.asan_dynamic_runtime_thunk-x86_64.lib")
+        else()
+            get_filename_component(ROCKETNET_ASAN_RUNTIME_DIR "${CMAKE_C_COMPILER}" DIRECTORY)
+        endif()
     else()
         add_compile_options(-fsanitize=address)
         add_link_options(-fsanitize=address)
@@ -78,13 +91,20 @@ if(ROCKETNET_TOP_LEVEL)
     endif()
 endif()
 if(ROCKETNET_SANITIZE_ADDRESS AND MSVC AND DEFINED CMAKE_RUNTIME_OUTPUT_DIRECTORY)
-    get_filename_component(ROCKETNET_MSVC_BIN_DIR "${CMAKE_C_COMPILER}" DIRECTORY)
-    if(EXISTS "${ROCKETNET_MSVC_BIN_DIR}/clang_rt.asan_dynamic-x86_64.dll")
+    # executables land in bin/<config>/ under a multi-config generator and in
+    # bin/ under a single-config one (Ninja); the runtime goes beside them
+    get_property(ROCKETNET_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+    if(ROCKETNET_MULTI_CONFIG)
+        set(ROCKETNET_ASAN_RUNTIME_DEST "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>")
+    else()
+        set(ROCKETNET_ASAN_RUNTIME_DEST "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+    endif()
+    if(EXISTS "${ROCKETNET_ASAN_RUNTIME_DIR}/clang_rt.asan_dynamic-x86_64.dll")
         add_custom_target(rocketnet_asan_runtime ALL
-            COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${ROCKETNET_ASAN_RUNTIME_DEST}"
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${ROCKETNET_MSVC_BIN_DIR}/clang_rt.asan_dynamic-x86_64.dll"
-                "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/clang_rt.asan_dynamic-x86_64.dll"
+                "${ROCKETNET_ASAN_RUNTIME_DIR}/clang_rt.asan_dynamic-x86_64.dll"
+                "${ROCKETNET_ASAN_RUNTIME_DEST}/clang_rt.asan_dynamic-x86_64.dll"
             VERBATIM)
     endif()
 endif()
@@ -167,6 +187,9 @@ function(rocketnet_use_sodium target)
     if(ROCKETNET_USE_SYSTEM_SODIUM)
         target_link_libraries(${target} PRIVATE RocketNet::Sodium)
     else()
+        # Only this build owns the privately prefixed RNG state in sodium.c.
+        # The lifecycle source must never close an application's system sodium.
+        target_compile_definitions(${target} PRIVATE ROCKETNET_BUNDLED_SODIUM=1)
         target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/sodium")
     endif()
 endfunction()
@@ -177,11 +200,18 @@ endfunction()
 include(cmake/XdpSources.cmake)
 set(ROCKETNET_XDP_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/rocketnet_server_xdp.h")
 set(ROCKETNET_XDP_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/generated/server_xdp.o")
-option(ROCKETNET_XDP "Compile and embed the Linux XDP program" ON)
+#
+# The build is tolerant: ROCKETNET_XDP=ON builds XDP only where a clang with
+# the BPF target, libbpf and libxdp are all found (libbpf and libxdp are
+# optional here, cmake/RocketNetDependencies.cmake). Short of any of them
+# ROCKETNET_XDP turns OFF for this build, exactly as if configured OFF: no
+# embedded program, no XDP code in the library, no libbpf or libxdp link, and
+# a transport list naming xdp refuses it with TRANSPORT_NOT_BUILT.
 set(ROCKETNET_BPF_CLANG "")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    find_program(ROCKETNET_XXD xxd REQUIRED)
-    find_program(ROCKETNET_CLANG clang)
+    if(ROCKETNET_XDP)
+        find_program(ROCKETNET_CLANG clang)
+    endif()
     if(ROCKETNET_XDP AND ROCKETNET_CLANG)
         execute_process(COMMAND "${ROCKETNET_CLANG}" -print-targets
             OUTPUT_VARIABLE ROCKETNET_CLANG_TARGETS ERROR_QUIET)
@@ -189,13 +219,23 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             set(ROCKETNET_BPF_CLANG "${ROCKETNET_CLANG}")
         endif()
     endif()
+    if(NOT ROCKETNET_XDP)
+        message(STATUS "XDP off: ROCKETNET_XDP=OFF; the xdp transport is unavailable; BPF/libxdp are not required")
+    elseif(NOT ROCKETNET_BPF_CLANG)
+        message(STATUS "XDP off: no clang with the BPF target was found, so XDP is compiled out of this build")
+        set(ROCKETNET_XDP OFF)
+    elseif(NOT TARGET RocketNet::Bpf OR NOT TARGET RocketNet::Xdp)
+        message(STATUS "XDP off: libbpf or libxdp was not found, so XDP is compiled out of this build")
+        set(ROCKETNET_XDP OFF)
+    endif()
+endif()
+# One value for every target in the tree: the library, the unit suite, the
+# functional suite and the tools agree on whether the XDP transport exists.
+add_compile_definitions($<$<PLATFORM_ID:Linux>:ROCKETNET_XDP=$<BOOL:${ROCKETNET_XDP}>>)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_XDP)
+    find_program(ROCKETNET_XXD xxd REQUIRED)
     execute_process(COMMAND "${CMAKE_C_COMPILER}" -dumpmachine
         OUTPUT_VARIABLE ROCKETNET_MULTIARCH OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-    if(NOT ROCKETNET_XDP)
-        message(STATUS "XDP off: ROCKETNET_XDP=OFF; no server_xdp.o is embedded")
-    elseif(NOT ROCKETNET_BPF_CLANG)
-        message(STATUS "XDP off: no clang with the BPF target was found, so server_xdp.o is not built and the xdp server transport refuses at create")
-    endif()
     file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/xdp-build-settings.txt"
         CONTENT "${ROCKETNET_BPF_CLANG}\n${ROCKETNET_MULTIARCH}\n")
     add_custom_command(OUTPUT "${ROCKETNET_XDP_HEADER}"
@@ -237,6 +277,7 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet_encryption_map.cpp
     sdk/rocketnet_fragment.cpp
     sdk/rocketnet_frame_sync.cpp
+    sdk/rocketnet_gateway_netlink_linux.cpp
     sdk/rocketnet_hash.cpp
     sdk/rocketnet_keys.cpp
     sdk/rocketnet_message.cpp
@@ -311,7 +352,7 @@ if(ROCKETNET_BUILD_TESTS)
     # ROCKETNET_TEST_SEAMS (sdk/rocketnet_test_seams.h) is PUBLIC so the suite's
     # own sources see the seams this library carries.
     target_compile_definitions(rocketnet_test_hooks PUBLIC ROCKETNET_TEST_SEAMS=1)
-    target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1 ROCKETNET_RECEIVE_TEST_HOOKS=1)
+    target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_ACK_STATS_TEST_HOOKS=1 ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1 ROCKETNET_RECEIVE_TEST_HOOKS=1 ROCKETNET_PORTABLE_TX_TEST_HOOKS=1)
     set(rocketnet_test_hook_targets rocketnet_test_hooks)
 endif()
 add_library(RocketNet::rocketnet ALIAS rocketnet)
@@ -419,7 +460,10 @@ foreach(target rocketnet rocketnet_dev rocketnet_shared rocketnet_shared_dev ${r
     if(APPLE)
         target_link_libraries(${target} PRIVATE "-framework CoreFoundation" "-framework SystemConfiguration")
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        target_link_libraries(${target} PRIVATE RocketNet::Bpf RocketNet::Xdp)
+        target_compile_definitions(${target} PRIVATE ROCKETNET_XDP=$<BOOL:${ROCKETNET_XDP}>)
+        if(ROCKETNET_XDP)
+            target_link_libraries(${target} PRIVATE RocketNet::Bpf RocketNet::Xdp)
+        endif()
         if(TARGET RocketNet::Uring)
             target_link_libraries(${target} PRIVATE RocketNet::Uring)
             target_compile_definitions(${target} PRIVATE ROCKETNET_IO_URING=1)
@@ -466,6 +510,22 @@ if(ROCKETNET_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 if(ROCKETNET_BUILD_TESTS)
+    # oss-fuzz/build.sh is the one build path that does not go through this
+    # file, so the -ffp-contract=off floor has to be pinned there separately:
+    # this holds every $CC/$CXX compile line in it to the flag. A build target,
+    # not a ctest: the unit binary's target name "test" is reserved once CTest
+    # is enabled. ci.yml runs the same script beside tools/check_fp_contract.sh.
+    add_custom_target(oss_fuzz_fp_contract
+        COMMAND ${CMAKE_COMMAND}
+            -DROCKETNET_OSS_FUZZ_BUILD_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/oss-fuzz/build.sh
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_oss_fuzz_fp_contract.cmake
+        VERBATIM)
+    # A real C translation unit must link the internal token helpers used by
+    # client.c and soak.c against their C++ implementation.
+    add_executable(test_internal_c tools/internal_c/main.c)
+    set_target_properties(test_internal_c PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+    target_link_libraries(test_internal_c PRIVATE rocketnet_dev)
+    rocketnet_warning_floor(test_internal_c)
     add_executable(test_sodium test_sodium.c)
     target_link_libraries(test_sodium PRIVATE rocketnet)
     rocketnet_use_sodium(test_sodium)
@@ -498,7 +558,9 @@ if(ROCKETNET_BUILD_TESTS)
     set(ROCKETNET_UNIT_TRANSPORT_RESULTS_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_driver_results_checked.cpp")
     list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_TRANSPORT_RESULTS_SOURCE}")
     add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} test.cpp test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
-    target_compile_definitions(test PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_XDP_STAGING_TEST_HOOKS=1 ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1 ROCKETNET_RECEIVE_TEST_HOOKS=1)
+    target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_ACK_COST_TEST_HOOKS=1 ROCKETNET_LOOPBACK_TEST_HOOKS=1)
+    target_compile_definitions(test PRIVATE ROCKETNET_ACK_COST_TEST_HOOKS=1 ROCKETNET_LOOPBACK_TEST_HOOKS=1)
+    target_compile_definitions(test PRIVATE ROCKETNET_ACK_STATS_TEST_HOOKS=1 ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_XDP_STAGING_TEST_HOOKS=1 ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1 ROCKETNET_RECEIVE_TEST_HOOKS=1)
     if(TARGET RocketNet::Uring)
         # the io_uring seam cases are built only where the driver is
         target_compile_definitions(test PRIVATE ROCKETNET_IO_URING=1)
@@ -549,6 +611,7 @@ if(ROCKETNET_BUILD_TESTS)
     add_dependencies(test_wide rocketnet_xdp_header)
     target_compile_definitions(test_wide PRIVATE ROCKETNET_MAX_CHANNELS=512
         ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_TEST_SEAMS=1
+        ROCKETNET_STATS_MANUAL_TEST_HOOKS=1
         $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
     target_include_directories(test_wide PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/sdk"
@@ -562,7 +625,9 @@ if(ROCKETNET_BUILD_TESTS)
     if(APPLE)
         target_link_libraries(test_wide PRIVATE "-framework CoreFoundation" "-framework SystemConfiguration")
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        target_link_libraries(test_wide PRIVATE RocketNet::Bpf RocketNet::Xdp)
+        if(ROCKETNET_XDP)
+            target_link_libraries(test_wide PRIVATE RocketNet::Bpf RocketNet::Xdp)
+        endif()
         if(TARGET RocketNet::Uring)
             target_link_libraries(test_wide PRIVATE RocketNet::Uring)
             target_compile_definitions(test_wide PRIVATE ROCKETNET_IO_URING=1)
@@ -624,13 +689,18 @@ if(ROCKETNET_BUILD_TESTS)
     # probes the release library; the connect-token vectors load the dev
     # library's token writer through test_dev_connect_token_timeout_is_the_named_constant.
     add_dependencies(test rocketnet_shared rocketnet_shared_dev)
-    # Both development-library probes dlopen this absolute build path, so the
-    # unit suite passes from any working directory, not only bin/.
+    add_dependencies(test_wide rocketnet_shared)
+    # Probe the exact shared targets built for this configuration, so the unit
+    # suite passes when the output directory or working directory changes.
+    # sdk/rocketnet_tests.cpp is compiled by these two targets, not by test.
+    target_compile_definitions(rocketnet_test_support PRIVATE
+        "ROCKETNET_RELEASE_LIBRARY_PATH=\"$<TARGET_FILE:rocketnet_shared>\"")
+    target_compile_definitions(test_wide PRIVATE
+        "ROCKETNET_RELEASE_LIBRARY_PATH=\"$<TARGET_FILE:rocketnet_shared>\"")
     target_compile_definitions(test PRIVATE
         "ROCKETNET_DEV_LIBRARY_PATH=\"$<TARGET_FILE:rocketnet_shared_dev>\"")
-    # The release-library probe (sdk/rocketnet_tests.cpp) falls back to the
-    # bare soname when its rooted name misses; the executable's RUNPATH lets
-    # that fallback resolve from any working directory.
+    # Keep the shared target directory in the executable's RUNPATH for other
+    # runtime loads that use a bare soname.
     set_property(TARGET test APPEND PROPERTY BUILD_RPATH "$<TARGET_FILE_DIR:rocketnet_shared>")
     # Functional-tier binaries (BUILDING.md, "Test binaries and their tiers"):
     # test_lifecycle, test_transport, test_serialize, test_transport_control,
@@ -660,8 +730,8 @@ if(ROCKETNET_BUILD_TESTS)
     target_link_libraries(test_transport_control PRIVATE rocketnet_dev)
     rocketnet_use_sodium(test_transport_control)
     rocketnet_warning_floor(test_transport_control)
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        add_executable(test_xdp test_xdp.cpp sdk/rocketnet_server_socket_linux.cpp
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_XDP)
+        add_executable(test_xdp test_xdp.cpp sdk/rocketnet_server_socket_linux.cpp sdk/rocketnet_gateway_netlink_linux.cpp
             sdk/rocketnet.cpp sdk/rocketnet_platform.cpp sdk/rocketnet_address.cpp sdk/rocketnet_hash.cpp ${ROCKETNET_SODIUM_SOURCE})
         add_dependencies(test_xdp rocketnet_xdp_header)
         target_compile_definitions(test_xdp PRIVATE ROCKETNET_XDP_TESTS
@@ -720,8 +790,6 @@ if(ROCKETNET_BUILD_TESTS)
         functional/rocketnet_functional_tests.cpp
         functional/platform_primitives.cpp
         functional/server_receive_backlog.cpp
-        functional/thread_priority_timing.cpp
-        functional/macos_client_timing.cpp
         functional/lifecycle_driver.cpp
         functional/cpp_transports.cpp
         functional/live_matrix.cpp
@@ -736,7 +804,10 @@ if(ROCKETNET_BUILD_TESTS)
     target_compile_definitions(functional PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
     target_compile_features(functional PRIVATE cxx_std_11)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        add_dependencies(functional test_xdp test_serialize test_transport_control)
+        add_dependencies(functional test_serialize test_transport_control)
+        if(ROCKETNET_XDP)
+            add_dependencies(functional test_xdp)
+        endif()
     elseif(APPLE)
         add_dependencies(functional test_msgx test_serialize test_transport_control)
     elseif(WIN32)
@@ -748,6 +819,7 @@ endif()
 if(ROCKETNET_BUILD_TOOLS)
     add_executable(soak soak.c)
     add_executable(load load.c)
+    add_executable(load_split load_split.c)
     add_executable(soak_sim soak_sim.cpp)
     # The deterministic simulation harness (docs/DST.md): one seed drives N
     # clients and a server over the in-memory wire, no socket and no clock.
@@ -762,7 +834,7 @@ if(ROCKETNET_BUILD_TOOLS)
     add_executable(instruction_count bench/instruction_count.cpp)
     add_executable(lease_cost bench/lease_cost.cpp)
     target_link_libraries(keygen PRIVATE rocketnet)
-    foreach(tool soak load soak_sim transport_memory transport_fill client_main_thread_cost instruction_count lease_cost)
+    foreach(tool soak load load_split soak_sim transport_memory transport_fill client_main_thread_cost instruction_count lease_cost)
         target_link_libraries(${tool} PRIVATE rocketnet_dev)
     endforeach()
     target_compile_features(instruction_count PRIVATE cxx_std_11)
@@ -783,8 +855,21 @@ if(ROCKETNET_BUILD_TOOLS)
     # corpora replay on platforms with no libFuzzer runtime. Built against
     # the development library with the same includes as the NDEBUG fuzz
     # build in ci.yml.
-    foreach(harness rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured)
-        add_executable(fuzz_replay_${harness} fuzz/replay_main.cpp fuzz/${harness}.cpp)
+    #
+    # The pair harnesses (fuzz/rocketnet_fuzz_pair.h: the server and client
+    # transports' real receive loops and the scripted session over the
+    # loopback transport) compile sdk/rocketnet_server_transport.cpp and
+    # sdk/rocketnet_driver_loopback.cpp into the harness, as the unit suite's
+    # loopback case does, so the harness object goes first on the link line:
+    # lld-link loads an archive member as soon as an earlier object
+    # references one of its symbols (see ROCKETNET_UNIT_TRANSPORT_SOURCE).
+    set(ROCKETNET_FUZZ_PAIR_HARNESSES rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session)
+    foreach(harness rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config ${ROCKETNET_FUZZ_PAIR_HARNESSES})
+        if(harness IN_LIST ROCKETNET_FUZZ_PAIR_HARNESSES)
+            add_executable(fuzz_replay_${harness} fuzz/${harness}.cpp fuzz/replay_main.cpp)
+        else()
+            add_executable(fuzz_replay_${harness} fuzz/replay_main.cpp fuzz/${harness}.cpp)
+        endif()
         target_compile_definitions(fuzz_replay_${harness} PRIVATE ROCKETNET_DEV=1)
         target_compile_features(fuzz_replay_${harness} PRIVATE cxx_std_17)
         target_include_directories(fuzz_replay_${harness} PRIVATE

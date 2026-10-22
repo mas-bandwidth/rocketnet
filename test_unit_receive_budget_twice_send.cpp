@@ -230,6 +230,10 @@ static void test_io_uring_transport_receive_budget_twice_send_reap_no_overflow()
     rocketnet_server_uring_counters( uring, counters );
     check( counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_OVERFLOW] == 0 );
 
+    rocketnet_server_uring_stop( uring );
+    bool stopped = false;
+    for ( int i = 0; i < 64 && !stopped; ++i ) stopped = rocketnet_server_uring_stopped( uring );
+    check( stopped );
     rocketnet_server_uring_destroy( uring );
     free( fake );
 }

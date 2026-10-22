@@ -5,13 +5,22 @@
 The XDP submodel composes with the existing transport model below. `XdpStart`
 represents a send that still has packet-slot capacity; the separate
 `FailedSend` transport action continues to model packet-capacity exhaustion.
-`NoRefusedSend` forbids refusal caused solely by handing both physical
-buffers to a lagging worker. It does not claim infinite packet storage.
+`NoRefusedSend` forbids refusal caused solely by handing every physical
+buffer to a lagging worker. It does not claim infinite packet storage.
 
-`Publish` models `rocketnet_send_handoff_t::publish` and
-`rocketnet_server_socket_send_packets`: when one generation is queued,
-publication retains the filling generation. `WorkerRetire` models the worker
-copy completing and `rocketnet_send_handoff_t::retire` freeing its storage.
+Since f2063bf7 the XDP socket stages through
+`rocketnet_xdp_buffer_exchange_t` over `ROCKETNET_XDP_NUM_BUFFERS` (3)
+buffers, and the model's `XdpBuffers` constant is that count (3 in every
+committed configuration). One buffer is always the producer; `xdpQueue`
+counts published buffers not yet recycled, ready or claimed. `Publish`
+models `rocketnet_xdp_buffer_exchange_t::publish` and
+`rocketnet_server_socket_send_packets`: when no replacement is free
+(`xdpQueue = XdpBuffers - 1`), publication retains the producer.
+`WorkerRetire` models the worker's final copy and `recycle` returning the
+buffer to the free ring; `claim` moves a buffer from ready to claimed without
+changing either count and is folded into it. `rocketnet_send_handoff_t`
+(`sdk/rocketnet_send_handoff.h`) is the earlier two-generation form, now used
+only by `test_unit_xdp_send_staging.cpp` and `test_lifecycle.cpp`.
 `rocketnet_server_transport_send_packets` retries XDP publication even when
 `send_staged == send_flushed`; `RetryFlushPublishes` checks that a subsequent
 flush publishes retained work after retirement. `XdpStagedEventuallyPublished`
@@ -26,11 +35,12 @@ measured records. The frame and burst instance sizes remain unchanged.
 ### Reversed no-refusal witness
 
 `MCRNDriverSendStagingBrokenRefusesSend.cfg` selects `SpecBrokenRefuses`, whose
-publish action is `PublishWith(FALSE)`. TLC rejects exactly `NoRefusedSend` at
-depth 6: initial state; start stages
-one generation; publish queues it; start stages the second; publish queues
-that too and leaves `xdpFilling = FALSE`; the next start sets
-`xdpRefused = TRUE`. No worker retirement occurs in this trace.
+publish action is `PublishWith(FALSE)`, which publishes the producer itself
+when no replacement is free. TLC must reject exactly `NoRefusedSend`: start and
+publish repeat until every buffer is queued, the last publish leaves
+`xdpFilling = FALSE`, and the next start sets `xdpRefused = TRUE`. No worker
+retirement occurs in that trace. (With two buffers the trace was depth 6; the
+three-buffer records and trace are owed: see RUNS.tsv.)
 
 Checked against the code by hand: in the pre-reopen implementation, restoring
 unconditional publication in `rocketnet_send_handoff_t::publish` permits both

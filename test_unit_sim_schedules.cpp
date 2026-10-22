@@ -445,8 +445,8 @@ static void test_sim_schedule_same_tick_slot_reuse()
     m_a->send_sequence_session = 1;
     int slot_a = rocketnet_client_slots_assign( server.client_slots, 0xA000, map_a, user_data );
     rocketnet_unit_check( slot_a == 0 );
-    m_a->client_index = slot_a;
-    m_a->established = 1;
+    m_a->control->client_index = slot_a;
+    m_a->control->established = 1;
 
     // A's stale payload and ack, sealed under A's session key
     uint8_t a_payload_plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + 4];
@@ -486,8 +486,8 @@ static void test_sim_schedule_same_tick_slot_reuse()
     m_b->send_sequence_session = 1;
     int slot_b = rocketnet_client_slots_assign( server.client_slots, 0xB000, map_b, user_data );
     rocketnet_unit_check( slot_b == 0 );
-    m_b->client_index = slot_b;
-    m_b->established = 1;
+    m_b->control->client_index = slot_b;
+    m_b->control->established = 1;
 
     // B's payload, sealed under B's session key
     uint8_t b_payload_plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + 4];

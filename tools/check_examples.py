@@ -17,12 +17,15 @@ HEADER = ROOT / "sdk" / "rocketnet.h"
 ALLOWED_HEADERS = {
     "rocketnet.h",
     "dev_keys.h",
+    "shutdown.h",
     "stdio.h",
+    "time.h",
     "stdlib.h",
     "string.h",
     "stdint.h",
     "stdbool.h",
     "inttypes.h",
+    "time.h",       # a development token is stamped now, as a backend stamps it
 }
 
 INCLUDE = re.compile(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]', re.M)

@@ -8,6 +8,7 @@
 // through rocketnet_client_transport_io_open, wake is level-triggered and cleared by
 // wait, and receive_batch drains in order with per-packet stride layout.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "test/fake_client_driver.h"
 #include "test/portable_crt.h"
@@ -320,7 +321,7 @@ static void test_fake_client_disconnect_burst_keeps_server_address()
 
     // destroy without stepping: it waits ring A out, hands ring B off and
     // the core sends both before it exits
-    rocketnet_client_transport_destroy( client );
+    rn_test_client_transport_stop_and_destroy( client );
     const int sent = fake_disconnect_record.count - sent_before_disconnect;
     rocketnet_unit_check( sent == 1 + ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS );
     for ( int i = sent_before_disconnect; i < fake_disconnect_record.count; i++ )
@@ -332,7 +333,7 @@ static void test_fake_client_disconnect_burst_keeps_server_address()
         time += 0.01;
         rocketnet_server_transport_update( server, time );
     }
-    rocketnet_server_transport_destroy( server );
+    rn_test_server_transport_stop_and_destroy( server );
 }
 
 REGISTER_UNIT_TEST( test_fake_client_disconnect_burst_keeps_server_address );

@@ -16,6 +16,7 @@
     transport is pinned and the interface reports the in-tree transport (section 9).
 */
 
+#include "test/native_shutdown.h"
 #include "rocketnet.h"
 #include "rocketnet_layers.h"
 #include "rocketnet_platform.h"
@@ -979,7 +980,7 @@ int main( int argc, char ** argv )
         struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create( NULL, 60.0 );
         if ( !frame_sync )
         {
-            rocketnet_message_server_destroy( server );
+            rn_native_message_server_stop_and_destroy( server );
             rocketnet_term();
             return 1;
         }
@@ -1019,7 +1020,7 @@ int main( int argc, char ** argv )
         struct server_client_t * clients = calloc( (size_t) max_clients, sizeof( *clients ) );
         if ( !clients )
         {
-            rocketnet_message_server_destroy( server );
+            rn_native_message_server_stop_and_destroy( server );
             rocketnet_term();
             return 1;
         }
@@ -1063,7 +1064,7 @@ int main( int argc, char ** argv )
     printf( "\nserver stopping\n" );
     results_event( "stopping" );
     set_status( status_path, "stopping" );
-    rocketnet_message_server_destroy( server );
+    rn_native_message_server_stop_and_destroy( server );
 
     rocketnet_term();
 

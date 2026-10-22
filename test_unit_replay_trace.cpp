@@ -331,7 +331,7 @@ static void test_slotless_packet_never_moves_the_session_window()
     int mapping_index = rocketnet_encryption_map_add( server.encryption_map, &client_address, 1000.0 );
     rocketnet_unit_check( mapping_index != -1 );
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server.encryption_map, mapping_index );
-    rocketnet_unit_check( mapping->client_index == -1 );
+    rocketnet_unit_check( mapping->control->client_index == -1 );
 
     // the lost-response race the standard names: a mapping with session keys
     // but no slot yet. set the keys directly, as the challenge step would.

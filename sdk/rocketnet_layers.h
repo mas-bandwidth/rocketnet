@@ -26,11 +26,10 @@ extern "C" {
 #define ROCKETNET_CLIENT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, reliable_message_timeout_ms ) + sizeof( int ), sizeof( void * ) )
 #define ROCKETNET_SERVER_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, reliable_message_timeout_ms ) + sizeof( int ), sizeof( void * ) )
 
-/// The receive bounds: a receiver accepts what one 1500-MTU IPv4 datagram
-/// carries, 1472 bytes, and its payload, 1439 bytes, wider than the send side
-/// (ROCKETNET_RECEIVE_PACKET_BYTES, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES). Internal.
-#define ROCKETNET_RECEIVE_PACKET_BYTES                     ( 1500 - 20 - 8 )
-#define ROCKETNET_RECEIVE_PAYLOAD_BYTES                    1439    // 1472 - 26 - 7
+/// Receive bounds match the sender's datagram and unfragmented payload limits.
+/// Internal; fragments retain their separate, unrounded stride bound.
+#define ROCKETNET_RECEIVE_PACKET_BYTES                     ROCKETNET_MAX_PACKET_BYTES
+#define ROCKETNET_RECEIVE_PAYLOAD_BYTES                    ROCKETNET_MAX_PACKET_PAYLOAD_BYTES
 
 /// The defaults the public header states as numbers in each field's comment.
 #define ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES                16384
@@ -121,12 +120,6 @@ bool rocketnet_get_thread_priority( void );
 #define ROCKETNET_SERVER_TRANSPORT_STOPPING                             1
 /** @brief Server transport state after shutdown completes. */
 #define ROCKETNET_SERVER_TRANSPORT_STOPPED                              2
-
-// what an admission callback returns (rocketnet_server_admission_callback_t)
-/** @brief Admission callback result that allows an unmapped source packet to proceed. */
-#define ROCKETNET_SERVER_ADMISSION_ADMIT                                0
-/** @brief Admission callback result that drops an unmapped source packet. */
-#define ROCKETNET_SERVER_ADMISSION_DROP                                 1
 
 /** @brief Maximum number of explanatory exclusions in a host-memory estimate. */
 #define ROCKETNET_HOST_MEMORY_MAX_EXCLUSIONS                            8
@@ -317,7 +310,7 @@ struct rocketnet_client_transport_config_t
     /** @brief Per-title 4-byte packet filter; peers with a different value cannot connect. */
     uint8_t packet_filter[4];
     /** @brief Largest sent and reassembled payload in bytes; zero selects the default, otherwise ROCKETNET_MAX_PACKET_PAYLOAD_BYTES through 361728. */
-    int max_payload_bytes;                          // ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. 305,408; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
+    int max_payload_bytes;                          // ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
     /** @brief Concurrent fragmented payloads per connection; zero selects the default, otherwise 1 through 256. */
     int max_fragmented_messages;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
     /** @brief Ordered transport candidate list; defaults to auto. */
@@ -427,12 +420,18 @@ struct rocketnet_client_transport_t * rocketnet_client_transport_create_ex( void
  */
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_sized( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, size_t config_bytes, double time );
 
-// a NULL client_transport is a counted no-op.
-/** @brief Release a client transport and its owned resources.
- * @param client_transport [in] Transport returned by a create function; NULL is a counted no-op.
- * @return Nothing. Disconnect and update to drain the connection before destroying when graceful remote shutdown is required.
+/** @brief Request transport shutdown without waiting for worker completion.
+ * Call disconnect first to stage a graceful disconnect burst. No producers may
+ * access send storage after stop. A caller-stepped transport progresses shutdown
+ * through update; a threaded transport progresses on its worker.
  */
-void rocketnet_client_transport_destroy( struct rocketnet_client_transport_t * client_transport );      // disconnect and pump a few updates first
+void rocketnet_client_transport_stop( struct rocketnet_client_transport_t * client_transport );
+/** @brief Check worker quiescence without joining or freeing resources. */
+bool rocketnet_client_transport_stopped( const struct rocketnet_client_transport_t * client_transport );
+/** @brief Join completed workers and release transport resources synchronously.
+ * Requires stopped to be true. Premature calls assert and retain the object.
+ */
+void rocketnet_client_transport_destroy( struct rocketnet_client_transport_t * client_transport );
 
 // a NULL client_transport is a counted no-op.
 /** @brief Advance client networking and publish the next receive and acknowledgement batches.
@@ -676,24 +675,12 @@ int rocketnet_client_transport_acked_packets( struct rocketnet_client_transport_
 //                   server transport
 // -----------------------------------------
 
-// The admission gate: a callback the application installs on a server
-// transport, consulted for every received packet whose source has no
-// encryption mapping -- traffic that has not cleared the connect handshake --
-// before it reaches the protocol's process step. Return
-// ROCKETNET_SERVER_ADMISSION_ADMIT to process the packet, or
-// ROCKETNET_SERVER_ADMISSION_DROP to drop it before any crypto work runs.
-// A mapped source (an in-flight handshake or an established connection)
-// bypasses the gate: it has already cleared the connect ladder, and this gate
-// is about admission, not session policing. The callback runs synchronously
-// inside rocketnet_server_transport_update, on the thread that calls update,
-// and must be fast.
-
-// The packet source an admission callback reads: type is ROCKETNET_ADDRESS_IPV4
+// A packet source: type is ROCKETNET_ADDRESS_IPV4
 // or ROCKETNET_ADDRESS_IPV6; an IPv4 address is data.ipv4[0..3] in dotted
 // order (a.b.c.d), an IPv6 address is data.ipv6[0..7], the eight groups in
 // host byte order; port is in host byte order.
 
-/** @brief Internet endpoint used by the admission callback and address helpers.
+/** @brief Internet endpoint used by the transports and address helpers.
  * @details IPv4 bytes are in network order; IPv6 groups and the port are in host order. Callers synchronize concurrent access to a shared object.
  */
 struct rocketnet_address_t
@@ -705,9 +692,6 @@ struct rocketnet_address_t
     /** @brief ROCKETNET_ADDRESS_NONE, ROCKETNET_ADDRESS_IPV4, or ROCKETNET_ADDRESS_IPV6. */
     uint8_t type;
 };
-
-/** @brief Filters packets from sources without an encryption mapping. @param context Application context supplied at registration. @param from Borrowed source address, valid during the callback. @param packet_data Borrowed packet bytes, valid during the callback. @param packet_bytes Packet length in bytes. @return ROCKETNET_SERVER_ADMISSION_ADMIT or ROCKETNET_SERVER_ADMISSION_DROP. Runs synchronously inside rocketnet_server_transport_update on the caller's thread, before any protocol or crypto work, for unmapped sources only, and must be fast. */
-typedef int (*rocketnet_server_admission_callback_t)( void * context, const struct rocketnet_address_t * from, const uint8_t * packet_data, int packet_bytes );
 
 // The server is configured explicitly. rocketnet_server_transport_default_config gives
 // the shape with no keys -- create refuses it until keys are supplied
@@ -728,7 +712,7 @@ typedef int (*rocketnet_server_admission_callback_t)( void * context, const stru
 // reassembles, and the per-client reassembly slot count. zero means the
 // defaults. budget arithmetic, all spent once at create, approximately --
 // slot records ride along: the reassembly arena is max_clients x slots x
-// (max payload + 1433 staging) per the standard; the delivered mirror of
+// (max payload + 1413 staging) per the standard; the delivered mirror of
 // slots x max payload per client -- the per-update home of completed
 // payloads; and the ack endpoints' fragment aggregate rings, about 48KB per
 // client slot.
@@ -765,7 +749,7 @@ struct rocketnet_server_transport_config_t
     /** @brief Cores reserved for the operating system by XDP; zero selects the transport default, otherwise 1 through 256. */
     int num_os_cpus;                                // 1 .. 256; 0 is the transport default
     /** @brief Largest sent and reassembled payload in bytes; zero selects the default, otherwise ROCKETNET_MAX_PACKET_PAYLOAD_BYTES through 361728. */
-    int max_payload_bytes;                          // ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. 305,408; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
+    int max_payload_bytes;                          // ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
     /** @brief Concurrent fragmented payloads per client; zero selects the default, otherwise 1 through 256. */
     int max_fragmented_messages;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
     /** @brief Ordered transport candidate list; defaults to auto. */
@@ -823,7 +807,7 @@ void rocketnet_server_transport_dev_config( struct rocketnet_server_transport_co
 /** @brief Measure SDK allocator bytes for one server transport transport.
  * @param[in] config Numeric server settings to measure, or NULL for defaults. Environment overrides are not applied.
  * @param[in] transport One concrete built-in transport name; `auto` and candidate lists are not plans.
- * @return The planned SDK allocator bytes, including XDP UMEM where applicable, or 0 for invalid geometry, overflow, an unknown/custom transport, or a transport not built for this platform.
+ * @return The planned request bytes (SDK allocator plus XDP UMEM or RIO registered storage where applicable), or 0 for invalid geometry, overflow, an unknown/custom transport, or a transport not built for this platform.
  * @details This is allocation-free and does not validate keys, inspect environment overrides, probe sockets, or enforce a host memory budget. It excludes OS stacks, kernel/libbpf/libxdp resources, libc bookkeeping, and application memory. It measures one transport candidate; the result is not a reservation or grant.
  */
 uint64_t rocketnet_server_transport_required_memory( const struct rocketnet_server_transport_config_t * config, const char * transport );
@@ -831,13 +815,14 @@ uint64_t rocketnet_server_transport_required_memory( const struct rocketnet_serv
 // Allocation-free whole-host memory estimate for one built-in transport name: the
 // required_memory plan plus the kernel-facing memory the transport requests. Each
 // component is a request, never a grant: allocator_bytes is the SDK allocator
-// plan (required_memory minus UMEM); umem_bytes is XDP UMEM, the frame memory,
+// plan (required_memory minus UMEM and RIO registered storage); umem_bytes is XDP UMEM, the frame memory,
 // equal to the plan's; the socket buffer fields sum the SO_SNDBUF and SO_RCVBUF
 // sizes asked of every socket the transport opens; xdp_ring_bytes is the AF_XDP
 // RX and TX descriptor rings asked of every XDP socket; thread_stack_bytes is
 // worker_threads x thread_stack_bytes_per_thread, the stack each transport thread
 // is created with (the platform default: the transport passes no stack size), as
-// reserved address space. total_bytes is the sum of the six byte components
+// reserved address space. registered_region_bytes is the RIO VirtualAlloc
+// request, outside the SDK allocator. total_bytes is the sum of the seven byte components
 // and is at least required_memory. exclusions names, in static strings, what
 // the library cannot know and does not count. Same config and transport rules as
 // required_memory: NULL config means defaults; false (and a zeroed estimate)
@@ -852,6 +837,8 @@ struct rocketnet_host_memory_estimate_t
     uint64_t allocator_bytes;
     /** @brief Requested XDP UMEM bytes. */
     uint64_t umem_bytes;
+    /** @brief Requested RIO VirtualAlloc registered-region bytes. */
+    uint64_t registered_region_bytes;
     /** @brief Sum of requested socket send-buffer bytes. */
     uint64_t socket_send_buffer_bytes;
     /** @brief Sum of requested socket receive-buffer bytes. */
@@ -879,7 +866,7 @@ struct rocketnet_host_memory_estimate_t
  * @param[in] transport One concrete built-in transport name; NULL or an unsupported transport makes the call fail.
  * @param[out] estimate Receives the estimate; NULL is counted misuse and returns false. On failure the struct remains zeroed.
  * @return true with a populated estimate, or false when the transport/config has no valid plan, arithmetic overflows, or estimate is NULL.
- * @details This allocation-free estimate separates SDK allocator bytes, UMEM, requested socket buffers or XDP rings, and worker stack address space. They are requests, not grants. Exclusions point to static strings whose storage remains valid for the process lifetime. This is not a host RAM limit.
+ * @details This allocation-free estimate separates SDK allocator bytes, UMEM, RIO registered storage, requested socket buffers or XDP rings, and worker stack address space. They are requests, not grants. Exclusions point to static strings whose storage remains valid for the process lifetime. This is not a host RAM limit.
  */
 bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_server_transport_config_t * config, const char * transport, struct rocketnet_host_memory_estimate_t * estimate );
 
@@ -905,7 +892,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
  * @param config [in] Optional full server configuration; NULL selects defaults, which require application keys.
  * @param time [in] Finite monotonic initial time in seconds.
  * @param status [out] Optional status destination; receives OK or the specific refusal code.
- * @return A caller-owned server transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, MISSING_KEYS, INVALID_PROTOCOL_ID, DEV_KEYS_IN_PRODUCTION, INVALID_TRANSPORT_LIST, INVALID_ADDRESS, TRANSPORT_PORT_ZERO_UNSUPPORTED, TRANSPORT_FAMILIES_UNSUPPORTED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, or MUTEX_CREATE_FAILED. TRANSPORT_FAMILIES_UNSUPPORTED is the status when every candidate that opened refused because it cannot serve both named families. A transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate; nothing the create allocated stays live. Correct the reported cause before retrying. Every failure logs an error line except two: when a simulated loss, latency, jitter, or duplicate setting is non-zero, a failed link-simulator allocation (OUT_OF_MEMORY) or a failed link-simulator mutex creation (MUTEX_CREATE_FAILED) returns without logging.
+ * @return A caller-owned server transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, MISSING_KEYS, INVALID_PROTOCOL_ID, DEV_KEYS_IN_PRODUCTION, TEST_PACKET_FILTER_IN_PRODUCTION, INVALID_TRANSPORT_LIST, INVALID_ADDRESS, TRANSPORT_PORT_ZERO_UNSUPPORTED, TRANSPORT_FAMILIES_UNSUPPORTED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, MUTEX_CREATE_FAILED, or THREAD_CREATE_FAILED. The ACK stats worker is created before success is returned; its allocation or thread refusal has no synchronous update fallback. TRANSPORT_FAMILIES_UNSUPPORTED is the status when every candidate that opened refused because it cannot serve both named families. A transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate; nothing the create allocated stays live. Correct the reported cause before retrying. Every failure logs an error line except two: when a simulated loss, latency, jitter, or duplicate setting is non-zero, a failed link-simulator allocation (OUT_OF_MEMORY) or a failed link-simulator mutex creation (MUTEX_CREATE_FAILED) returns without logging.
  * @code
  * // context, address, config, status, time, and dt are supplied by the game.
  * rocketnet_init( NULL, NULL, NULL );
@@ -933,16 +920,17 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_sized( v
 // a NULL server_transport is a counted no-op.
 /** @brief Release a stopped server transport and its owned resources.
  * @param server_transport [in] Transport returned by a create function; NULL is a counted no-op.
- * @return Nothing. Call stop, then update until state is STOPPED before destroying.
+ * @return Nothing. Call stop, then poll stopped before destroying.
  */
 void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * server_transport );      // stop and wait for stopped first
 
 // a NULL server_transport is a counted no-op.
 /** @brief Request an orderly server stop.
  * @param server_transport [in,out] Created server transport; NULL is a counted no-op.
- * @return Nothing. Call update until the state becomes STOPPED, then destroy.
+ * @return Nothing. Poll stopped until true, then destroy.
  */
 void rocketnet_server_transport_stop( struct rocketnet_server_transport_t * server_transport );
+bool rocketnet_server_transport_stopped( const struct rocketnet_server_transport_t * server_transport );
 
 // a NULL server_transport is a counted no-op that returns 0.
 /** @brief Read the server lifecycle state.
@@ -1019,19 +1007,6 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
 // Unit tests only: supplies token-validation Unix time so update reads no wall clock.
 void rocketnet_server_transport_set_test_timestamp( struct rocketnet_server_transport_t * server_transport, uint64_t timestamp );
-
-// The admission gate, set per transport (see the callback type above). NULL
-// callback -- the default -- admits every source: the connect ladder alone
-// decides. May be set or cleared at any time between updates.
-
-// a NULL server_transport is a counted no-op.
-/** @brief Install or clear the callback that gates packets from unmapped sources.
- * @param server_transport [in,out] Created server transport; NULL is a counted no-op.
- * @param callback [in] Callback, or NULL to admit every source through this gate.
- * @param context [in] Opaque application pointer passed to callback; may be NULL. The caller retains ownership.
- * @return Nothing. The callback runs synchronously inside rocketnet_server_transport_update on the caller's thread, before any protocol or crypto work, for unmapped sources only, and must be fast. Set the callback on the main thread between updates.
- */
-void rocketnet_server_transport_set_admission_callback( struct rocketnet_server_transport_t * server_transport, rocketnet_server_admission_callback_t callback, void * context );
 
 // The payloads delivered by the last update, valid until the next update.
 // Iterated by index so the storage behind them stays the library's own --
@@ -1343,9 +1318,9 @@ void rocketnet_server_transport_stats( struct rocketnet_server_transport_t * ser
 // Per-client connection quality, per slot: rtt and jitter in milliseconds,
 // packet loss as the percentage of this end's sent packets never
 // acknowledged, and the trailing bandwidth sent, received and acknowledged.
-// Fed by the ack blocks every session packet carries; recomputed round-robin,
-// a sixth of the slots per update, every slot covered, so the per-update
-// cost is flat at any client count. The cumulative totals count every wire
+// Fed by the ack blocks every session packet carries; recomputed by modulo
+// phase, at most 20 configured slots visited per update, every slot covered
+// once per phase cycle. The cumulative totals count every wire
 // datagram and byte over the slot's current connection, zeroed when a new
 // connection takes the slot.
 
@@ -1413,6 +1388,19 @@ void rocketnet_server_transport_set_create_send_capacity_for_test( int packets )
 int rocketnet_server_transport_send_capacity( const struct rocketnet_server_transport_t * server_transport );
 /** @brief Returns the payload frames that may still start this update. */
 int rocketnet_server_transport_send_capacity_available( const struct rocketnet_server_transport_t * server_transport );
+
+#if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS)
+struct rocketnet_ack_endpoint_t;
+// Deterministic internal seam: the next create uses an inline stats worker.
+// step computes one submitted immutable batch; only a later update publishes.
+void rocketnet_server_transport_set_stats_worker_manual_for_test( bool enabled );
+bool rocketnet_server_transport_stats_worker_step_for_test( struct rocketnet_server_transport_t * server_transport );
+bool rocketnet_server_transport_stats_worker_status_for_test( const struct rocketnet_server_transport_t * server_transport,
+    uint64_t * submitted, uint64_t * completed, uint64_t * published, uint64_t * busy_skips );
+void rocketnet_server_transport_fail_stats_worker_thread_for_test( void );
+struct rocketnet_ack_endpoint_t * rocketnet_server_transport_stats_endpoint_for_test(
+    struct rocketnet_server_transport_t * server_transport, int client_index );
+#endif
 
 // -----------------------------------------
 //                         frame sync
@@ -1513,7 +1501,7 @@ struct rocketnet_message_config_t
     /** @brief Receive ring bytes; WIRE, multiple of 16 from 4096 through 1<<20, default 262144. */
     int receive_message_buffer_bytes;             // WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
     /** @brief Maximum message bytes; WIRE, at most receive_message_buffer_bytes and from ROCKETNET_MESSAGE_SINGLE_BYTES through 1<<20, default 262144. */
-    int max_message_bytes;              // WIRE, <= receive_message_buffer_bytes; ROCKETNET_MESSAGE_SINGLE_BYTES .. 1 << 20; default 262144
+    int max_message_bytes;              // WIRE, <= receive_message_buffer_bytes; ROCKETNET_MESSAGE_SINGLE_BYTES .. ROCKETNET_MAX_MESSAGE_BYTES; default 262144
     /** @brief Per-connection queued payload bytes; 12288 through 1<<28, default 800000. */
     int send_message_buffer_bytes;              // 12288 .. 1 << 28; default 800000
     /** @brief Queued message count; 16 through 1<<20, default 1024. */
@@ -1765,7 +1753,9 @@ int rocketnet_message_client_receive_messages( struct rocketnet_message_client_t
 int rocketnet_message_client_receive_channel( struct rocketnet_message_client_t * client, int channel, const uint8_t ** data, int * bytes );
 
 // Copies this update's receipt list into out, up to capacity entries; returns
-// the copied count. Repeated calls see the same list until the next update.
+// the available count. NULL out with zero capacity queries without copying.
+// Repeated calls see the same list until the next update. Negative capacity
+// or NULL out with positive capacity returns zero.
 int rocketnet_message_client_receipts( struct rocketnet_message_client_t * client, struct rocketnet_message_receipt_t * out, int capacity );
 
 // a NULL client or data is a counted no-op; a pointer that is not a held view is a counted misuse.

@@ -78,10 +78,9 @@ static inline int rocketnet_wire_header_bytes( int address_type )
     return 0;
 }
 
-// the receive ceiling: fixed for every receiver, whatever its send budget --
-// anything one 1500-MTU IPv4 datagram can carry, 1472 bytes
+// The receive ceiling matches the send budget for both address families.
 
-#define ROCKETNET_RECEIVE_CEILING               ( ROCKETNET_LINK_MTU_BYTES - ROCKETNET_IPV4_HEADER_BYTES - ROCKETNET_UDP_HEADER_BYTES )
+#define ROCKETNET_RECEIVE_CEILING               ROCKETNET_SEND_BUDGET
 
 // the send budget: a sender never emits a packet larger than this. It is the
 // smaller family's packet, the IPv6 UDP payload of a 1500-byte MTU, 1452
@@ -124,9 +123,9 @@ static inline int rocketnet_wire_header_bytes( int address_type )
 
 #ifdef __cplusplus
 #define ROCKETNET_WIRE_STATIC_ASSERT( condition, message ) static_assert( condition, message )
-#elif defined( __GNUC__ ) || defined( __clang__ )
+#elif defined( __STDC_VERSION__ ) && __STDC_VERSION__ >= 201112L
 #define ROCKETNET_WIRE_STATIC_ASSERT( condition, message ) _Static_assert( condition, message )
-#else // MSVC C has no _Static_assert before /std:c11: a negative array size refuses the build
+#else // Before C11, a negative array size refuses the build without language extensions.
 #define ROCKETNET_WIRE_STATIC_ASSERT_JOIN2( a, b ) a##b
 #define ROCKETNET_WIRE_STATIC_ASSERT_JOIN( a, b ) ROCKETNET_WIRE_STATIC_ASSERT_JOIN2( a, b )
 #define ROCKETNET_WIRE_STATIC_ASSERT( condition, message ) typedef char ROCKETNET_WIRE_STATIC_ASSERT_JOIN( rocketnet_wire_static_assert_, __LINE__ )[( condition ) ? 1 : -1]
@@ -188,9 +187,9 @@ static_assert( sizeof(struct rocketnet_server_xdp_config_t) == 32, "the XDP conf
 static_assert( __builtin_offsetof( struct rocketnet_server_xdp_config_t, pad ) == 11, "the XDP config pad follows the epoch" );
 static_assert( __builtin_offsetof( struct rocketnet_server_xdp_config_t, public_address_ipv6 ) == 16, "the XDP config IPv6 destination is 4-byte aligned" );
 #elif defined( __GNUC__ ) || defined( __clang__ ) // C: __builtin_offsetof is a GNU form; MSVC C checks none of this
-_Static_assert( sizeof(struct rocketnet_server_xdp_config_t) == 32, "the XDP config map value is 32 bytes" );
-_Static_assert( __builtin_offsetof( struct rocketnet_server_xdp_config_t, pad ) == 11, "the XDP config pad follows the epoch" );
-_Static_assert( __builtin_offsetof( struct rocketnet_server_xdp_config_t, public_address_ipv6 ) == 16, "the XDP config IPv6 destination is 4-byte aligned" );
+ROCKETNET_WIRE_STATIC_ASSERT( sizeof(struct rocketnet_server_xdp_config_t) == 32, "the XDP config map value is 32 bytes" );
+ROCKETNET_WIRE_STATIC_ASSERT( __builtin_offsetof( struct rocketnet_server_xdp_config_t, pad ) == 11, "the XDP config pad follows the epoch" );
+ROCKETNET_WIRE_STATIC_ASSERT( __builtin_offsetof( struct rocketnet_server_xdp_config_t, public_address_ipv6 ) == 16, "the XDP config IPv6 destination is 4-byte aligned" );
 #endif // #ifdef __cplusplus
 
 // The kernel replay map's key and value, in the same shared-wire discipline
@@ -220,25 +219,25 @@ static_assert( __builtin_offsetof( struct rocketnet_server_xdp_replay_key_t, por
 static_assert( __builtin_offsetof( struct rocketnet_server_xdp_replay_key_t, address ) == 4, "the XDP replay address is at offset 4" );
 static_assert( sizeof(struct rocketnet_server_xdp_replay_value_t) == 8, "the XDP replay value is 8 bytes" );
 #elif defined( __GNUC__ ) || defined( __clang__ ) // C: __builtin_offsetof is a GNU form; MSVC C checks none of this
-_Static_assert( sizeof(struct rocketnet_server_xdp_replay_key_t) == 20, "the XDP replay key is 20 bytes" );
-_Static_assert( __builtin_offsetof( struct rocketnet_server_xdp_replay_key_t, port ) == 2, "the XDP replay port is at offset 2" );
-_Static_assert( __builtin_offsetof( struct rocketnet_server_xdp_replay_key_t, address ) == 4, "the XDP replay address is at offset 4" );
-_Static_assert( sizeof(struct rocketnet_server_xdp_replay_value_t) == 8, "the XDP replay value is 8 bytes" );
+ROCKETNET_WIRE_STATIC_ASSERT( sizeof(struct rocketnet_server_xdp_replay_key_t) == 20, "the XDP replay key is 20 bytes" );
+ROCKETNET_WIRE_STATIC_ASSERT( __builtin_offsetof( struct rocketnet_server_xdp_replay_key_t, port ) == 2, "the XDP replay port is at offset 2" );
+ROCKETNET_WIRE_STATIC_ASSERT( __builtin_offsetof( struct rocketnet_server_xdp_replay_key_t, address ) == 4, "the XDP replay address is at offset 4" );
+ROCKETNET_WIRE_STATIC_ASSERT( sizeof(struct rocketnet_server_xdp_replay_value_t) == 8, "the XDP replay value is 8 bytes" );
 #endif // #ifdef __cplusplus
 
 // The kernel filter's counters, incremented in the XDP program per verdict
 // and read back by userspace -- the same counter discipline as the rest of
 // the library, running through the kernel. The map is per-CPU; userspace
 // sums across CPUs. For packets on the server's port,
-// received == redirected + the eight drop reasons. DROPPED_REPLAYED counts
+// received == redirected + the nine drop reasons. DROPPED_REPLAYED counts
 // the session packets dropped because their sequence is
 // ROCKETNET_XDP_REPLAY_WINDOW or more behind the replay map's high-water for
 // their source address and port. PASSED_IPV6_EXTENSION
 // counts the IPv6 frames the program hands to the kernel stack because their
-// next header is an extension header (hop-by-hop, routing, fragment,
-// destination options, AH, ESP): the program never walks that chain, so it
-// cannot say whether such a frame was for this server, and it counts them on
-// any port. RocketNet assumes a 1500-byte MTU path, so an IP fragment for
+// next header is an extension header (hop-by-hop, routing, destination
+// options, AH, ESP) and the walk of the chain did not reach UDP to this
+// server (another port, ESP, a non-first fragment, a chain past the walk's
+// bound, or the frame end), on any port. RocketNet assumes a 1500-byte MTU path, so an IP fragment for
 // the server is hostile or misconfigured. DROPPED_FIRST_FRAGMENT counts the
 // first fragments the program drops: IPv4 with more-fragments set and
 // offset 0 (ihl 5, protocol UDP), or IPv6 whose next header is a fragment
@@ -254,6 +253,13 @@ _Static_assert( sizeof(struct rocketnet_server_xdp_replay_value_t) == 8, "the XD
 // DROPPED_NO_SOCKET counts the packets that passed every check but whose
 // receive queue has no AF_XDP socket in the XSKMAP (bpf_redirect_map
 // refuses the empty slot and the program drops the packet).
+// DROPPED_IP_OPTIONS_OR_EXTENSION counts the datagrams to the configured
+// address and port that the program drops because IPv4 options (ihl 6 to
+// 15) or IPv6 extension headers sit between the IP header and UDP: RocketNet
+// never sends either, and in XDP mode no kernel socket listens on the port.
+// The program walks an IPv6 extension chain a bounded number of headers to
+// find the UDP header; an extension-header frame it does not drop is counted
+// in PASSED_IPV6_EXTENSION as before, on any port.
 
 #define ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED                 0
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL          1
@@ -266,7 +272,8 @@ _Static_assert( sizeof(struct rocketnet_server_xdp_replay_value_t) == 8, "the XD
 #define ROCKETNET_SERVER_XDP_COUNTER_PASSED_FRAGMENT            8
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_FIRST_FRAGMENT     9
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_NO_SOCKET          10
-#define ROCKETNET_SERVER_XDP_NUM_COUNTERS                       11
+#define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_IP_OPTIONS_OR_EXTENSION 11
+#define ROCKETNET_SERVER_XDP_NUM_COUNTERS                       12
 
 struct rocketnet_server_xdp_stats_t
 {

@@ -528,7 +528,7 @@ static inline void rocketnet_channel_endpoint_update( void * transport, double t
                 if ( mapping_index != -1 )
                 {
                     const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( h->server.encryption_map, mapping_index );
-                    if ( mapping->client_index != -1 )
+                    if ( mapping->control->client_index != -1 )
                         rocketnet_channel_capture_session( time, "server", packet, bytes, h->server.protocol_id, mapping->connection_salt,
                                                            mapping->keys.session_client_to_server, mapping->replay_session.highest_opened,
                                                            mapping->send_sequence_session - 1 );
@@ -887,10 +887,8 @@ static inline int rocketnet_channel_harness_create_with_config( rocketnet_channe
     memcpy( server->cookie_key, rocketnet_test_cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
     server->advertised_ipv4 = h->server_addr;
     server->cookie_lifetime_seconds = 3;
-    server->max_token_lifetime_seconds = 600;
     server->handshake_deadline_seconds = 5.0;
     server->max_timeout_seconds = 0;
-    server->allow_negative_timeout = 0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     server->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
     server->client_slots = rocketnet_client_slots_create( NULL, 4 );

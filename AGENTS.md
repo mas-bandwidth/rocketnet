@@ -34,9 +34,10 @@ RocketNet is a low-level, connection-oriented client/server UDP transport and me
 
 - **Frame-time target:** Main frame calls aim for less than 100 microseconds
   per call in Release builds. This target is not yet established under a
-  1000-client load. Create may take longer. Client
-  disconnect and destroy wait for the I/O thread to exit, with no promised
-  time bound. Long soak, load and profiling runs remain part of hardening.
+  1000-client load. Create may take longer. Client disconnect and server stop
+  request shutdown without waiting for workers. Poll client disconnected or
+  server stopped before synchronous destroy joins and frees resources. Long
+  soak, load and profiling runs remain part of hardening.
 
 - **One public header:** [sdk/rocketnet.h](sdk/rocketnet.h). Include it directly from C or C++ (`#include "rocketnet.h"`); the header provides its own `extern "C"` guards when compiled as C++.
 - **One link library:** `RocketNet::rocketnet` (or the `rocketnet` CMake target when embedded via `add_subdirectory`).
@@ -117,7 +118,7 @@ A RocketNet integration follows a strict lifecycle and per-frame call order:
    - **Step 3 — Simulate:** Run the game simulation for the frame.
    - **Step 4 — Queue outgoing messages:** Reserve space in place with `rocketnet_client_start_message` / `rocketnet_server_start_message`, write the message bytes directly into the returned pointer, and commit with `rocketnet_client_finish_message` / `rocketnet_server_finish_message` (or cancel with `rocketnet_client_abort_message` / `rocketnet_server_abort_message`). To send one message to every connected client, loop over the slots with `rocketnet_server_client_connected` and start and finish a message for each.
    - **Step 5 — Send packets last:** Call `rocketnet_client_send_packets(client)` and `rocketnet_server_send_packets(server)` **last** so every message queued during the frame goes out on the wire in the same frame instead of waiting until the next tick.
-4. **Disconnect, destroy, and terminate:** Call `rocketnet_client_disconnect` (or `rocketnet_server_disconnect_client`), destroy every client and server with `rocketnet_client_destroy` and `rocketnet_server_destroy`, and call `rocketnet_term()`.
+4. **Request shutdown, check completion, then destroy:** Call `rocketnet_client_disconnect` and `rocketnet_server_stop`. Keep your event loop running and poll `rocketnet_client_disconnected` and `rocketnet_server_stopped`. Only after the corresponding query returns true may `rocketnet_client_destroy` or `rocketnet_server_destroy` synchronously join and free the object. Destroy asserts this precondition. Keep allocator and callback contexts alive through destroy, then call `rocketnet_term()` after every object has been freed. Stop/disconnect and their queries do not wait for workers; a stuck worker leaves completion false. A newly created object that has never run is already complete.
 
 ### Compilable loopback integration example
 
@@ -229,8 +230,21 @@ int main( void )
     result = client_received_reply ? 0 : 1;
 
 cleanup:
-    rocketnet_client_destroy( client );
-    rocketnet_server_destroy( server );
+    /* Command-line exit cleanup; a game would poll once per frame instead. */
+    if ( client ) rocketnet_client_disconnect( client );
+    if ( server ) rocketnet_server_stop( server );
+    {
+        const double deadline = rocketnet_time() + 10.0;
+        while ( ( client && !rocketnet_client_disconnected( client ) ) ||
+                ( server && !rocketnet_server_stopped( server ) ) )
+        {
+            if ( rocketnet_time() >= deadline )
+                return 1; /* Fail without freeing storage still owned by I/O. */
+            rocketnet_sleep( 0.001 );
+        }
+    }
+    if ( client ) rocketnet_client_destroy( client );
+    if ( server ) rocketnet_server_destroy( server );
     if ( rocketnet_term() != ROCKETNET_STATUS_OK )
         return 1;
     return result;
@@ -244,11 +258,11 @@ cleanup:
 
 Both `rocketnet_client_config_t` and `rocketnet_server_config_t` expose a `transport` field (overridable in the environment via `ROCKETNET_CLIENT_TRANSPORT` and `ROCKETNET_SERVER_TRANSPORT`).
 
-- **Ordered candidate list:** `transport` accepts a comma-separated list of transport names tried left-to-right at client connect and server start (for example, `"xdp,gso,portable"`). The first candidate that initializes on the host wins. A single name pins that transport and fails loudly if unavailable.
+- **Ordered candidate list:** `transport` accepts a comma-separated list of transport names tried left-to-right at client connect and server start (for example, `"xdp,gso,io_uring"`). The first candidate that initializes on the host wins. A single name pins that transport and fails loudly if unavailable. The portable server is development-only; an explicit portable server pin refuses in production.
 - **`"auto"` (the default when `transport` is `NULL` or `""`):** Selects the platform's recommended preference order:
-  - **Linux server:** tries `"xdp"`, `"gso"`, `"io_uring"`, `"portable"`.
-  - **macOS server and client:** tries `"msgx"`, `"portable"`.
-  - **Windows server:** tries `"portable"`, `"iocp"`, `"rio"`.
+  - **Linux server:** production tries `"xdp"`, `"gso"`, `"io_uring"`; development also tries `"portable"` last.
+  - **macOS server:** production tries `"msgx"`; development then tries `"portable"`. The macOS client tries `"msgx"`, `"portable"` in either build.
+  - **Windows server:** production tries `"iocp"`, `"rio"`; development tries `"portable"` first.
   - **Linux and Windows client:** uses `"portable"`.
 - **No-root high-performance Linux server path:** When running without root or `CAP_BPF` / `CAP_NET_ADMIN`, `"xdp"` is skipped and `"gso"` (UDP `UDP_SEGMENT` / `UDP_GRO` coalescing with `sendmmsg` / `recvmmsg` worker threads) or `"io_uring"` (asynchronous batched ring I/O) provides high-throughput multi-queue UDP without kernel privileges.
 - **AF_XDP (`"xdp"`):** Kernel-bypass eBPF/AF_XDP server dataplane on Linux when root (or `CAP_BPF` and `CAP_NET_ADMIN`) and NIC support are present.
@@ -364,19 +378,20 @@ failure. See [standard/TRANSPORT.md](standard/TRANSPORT.md) for the wire format.
 RocketNet refuses invalid configuration rather than clamping it. Check returned status codes, pointers and serials. Only the misuse cases listed in `sdk/rocketnet.h` increment `api_misuses`; a refusal is not automatically misuse.
 
 - **Status codes (`enum rocketnet_status_t` and `rocketnet_status_name`):**
-  - `ROCKETNET_STATUS_OK` (`0`): operation succeeded. Every failure is negative, from `-1` to `-29`, so `status < 0` means the call failed.
+  - `ROCKETNET_STATUS_OK` (`0`): operation succeeded. Every failure is negative, from `-1` to `-30`, so `status < 0` means the call failed.
   - `ROCKETNET_STATUS_ALREADY_INITIALIZED`, `ROCKETNET_STATUS_NOT_INITIALIZED`, `ROCKETNET_STATUS_LIVE_ALLOCATIONS`, `ROCKETNET_STATUS_PLATFORM_INIT_FAILED`, `ROCKETNET_STATUS_CRYPTO_INIT_FAILED`: lifecycle and allocator state codes for `rocketnet_init` and `rocketnet_term`.
   - `ROCKETNET_STATUS_INVALID_ARGUMENT`, `ROCKETNET_STATUS_CONFIG_ENV_INVALID`, `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`, `ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED`, `ROCKETNET_STATUS_MISSING_KEYS`, `ROCKETNET_STATUS_INVALID_PROTOCOL_ID`, `ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION`, `ROCKETNET_STATUS_INVALID_ADDRESS`, `ROCKETNET_STATUS_INVALID_TRANSPORT_LIST`: argument and configuration refusals, written to the status out-parameter of `rocketnet_client_create` and `rocketnet_server_create` (create is the one check of a config) or returned by the call that refuses.
   - `ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED` (`-27`): a config whose `config_bytes` is `0` or too small, one that skipped `rocketnet_client_default_config` or `rocketnet_server_default_config`.
   - `ROCKETNET_STATUS_INVALID_CONNECT_TOKEN`, `ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED`: client connect-token pre-send checks.
-  - `ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION` (`-28`), `ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION` (`-29`): a production build (`ROCKETNET_DEV=0`) refuses the published test packet filter at client and server create, and a connect token sealed to the published development server key at client connect.
   - `ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED`, `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED`, `ROCKETNET_STATUS_OUT_OF_MEMORY`, `ROCKETNET_STATUS_MUTEX_CREATE_FAILED`, `ROCKETNET_STATUS_THREAD_CREATE_FAILED`, `ROCKETNET_STATUS_TIMER_CREATE_FAILED`: transport candidate ladder and OS resource failures.
   - `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`, `ROCKETNET_STATUS_SERVER_NOT_STOPPED`, `ROCKETNET_STATUS_FLOW_ID_RESERVED`, `ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED`: lifecycle and destination refusals from `rocketnet_client_connect`, `rocketnet_server_start`, and server sends.
+  - `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT` (`-28`): `rocketnet_server_start` with a transport list whose every opened candidate is compiled out of this build, the `xdp` transport in a Linux build configured with `ROCKETNET_XDP=OFF` or without a BPF-capable clang, libbpf or libxdp.
+  - `ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION` (`-29`), `ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION` (`-30`): a production build (`ROCKETNET_DEV=0`) refuses the published test packet filter at client and server create, and a connect token sealed to the published development server key at client connect.
 - **`NULL` and `0` returns as refused calls:** Functions returning pointers (`rocketnet_client_create`, `rocketnet_server_create`, `rocketnet_client_start_message`, `rocketnet_server_start_message`) return `NULL` when refused. Functions returning counts, booleans, or receipt serials (`rocketnet_client_finish_message`, `rocketnet_server_finish_message`, `rocketnet_client_receipts`, `rocketnet_server_receipts`) return `0` when refused. `rocketnet_client_receive_messages` and `rocketnet_server_receive_messages` return `NULL` when no batch is left. `rocketnet_client_set_send_kbps` and `rocketnet_server_set_send_kbps` return `enum rocketnet_status_t` like the lifecycle calls: `0` is `ROCKETNET_STATUS_OK` (the new rate took), and a refusal is a negative status (`ROCKETNET_STATUS_INVALID_ARGUMENT` for a negative rate, a NULL handle or a server index outside `0 .. max_clients - 1`); a rate of `0` sets the default rate. On a connection that is not CONNECTED the call returns `ROCKETNET_STATUS_OK` and changes nothing. API misuse that the library records increments a process-wide count, read from the `api_misuses` field of `struct rocketnet_client_stats_t` or `struct rocketnet_server_stats_t`; the API misuse comment under Lifecycle and logging in sdk/rocketnet.h is the full list. It includes a `NULL` handle passed to a call, a server start message to an index at or past `max_clients`, a destination id with `ROCKETNET_FLOW_ID_BIT` set, an in-place start left open across `update` or `send_packets`, and lifecycle or allocator misuse (a create before `rocketnet_init`, a repeated server start, an init with only one allocator function, an unusable update time). A send on a connection that is not CONNECTED (a client in any state but `ROCKETNET_CLIENT_STATE_CONNECTED`, a server index below `max_clients` with no CONNECTED client, a stopped server) is a normal drop, not misuse: it is counted in the `messages_dropped_not_connected` field of the client or server stats. A second `start`, an out-of-range channel or an oversized message is counted in the library's internal send-refusal counters instead, not in `api_misuses`; a bad `bytes_written` is refused with `0` and aborts the pending start, so a later start is never blocked.
 - **Update returns nothing:** `rocketnet_client_update` and `rocketnet_server_update` return `void`; what an update did is read from `rocketnet_client_state`, the server's per-client calls and the stats calls.
 - **Client states (`enum rocketnet_client_state_t`, `rocketnet_client_state`, `rocketnet_client_state_name`):**
   - Progress states: `ROCKETNET_CLIENT_STATE_DISCONNECTED` (`0`), `ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE` (`1`), `ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST` (`2`), `ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE` (`3`), `ROCKETNET_CLIENT_STATE_CONNECTED` (`4`).
-  - Negative states, one for each way an attempt or a connection ends, kept until `rocketnet_client_disconnect`: `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED` (`-12`): the connection's send descriptors (`send_queue_messages`) or send buffer (`send_message_buffer_bytes`) ran out of room for a send that could not be dropped; `ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH` (`-11`): wire-checked channel configuration fields (`num_channels`, `reliable_messages_in_flight`, `receive_message_buffer_bytes`, `max_message_bytes`) differed between client and server; `ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION` (`-10`): the server sent a malformed message record or violated window or ring bounds; `ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT` (`-9`): a reliable message went unacknowledged past `reliable_message_timeout_ms`; `ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED` (`-8`): the client accepted the server's disconnect packet (the server called `rocketnet_server_disconnect_client`, `rocketnet_server_stop` or `rocketnet_server_destroy`); `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED` (`-7`), `ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN` (`-6`), `ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT` (`-5`), `ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT` (`-4`), `ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT` (`-3`), `ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT` (`-2`), `ROCKETNET_CLIENT_STATE_CONNECTION_DENIED` (`-1`). `rocketnet_client_connect` is accepted from `ROCKETNET_CLIENT_STATE_DISCONNECTED` and from the connection-ended states `-8` to `-12`, which it ends first.
+  - Negative states, one for each way an attempt or a connection ends, kept until `rocketnet_client_disconnect`: `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED` (`-12`): the connection's send descriptors (`send_queue_messages`) or send buffer (`send_message_buffer_bytes`) ran out of room for a send that could not be dropped; `ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH` (`-11`): wire-checked channel configuration fields (`num_channels`, `reliable_messages_in_flight`, `receive_message_buffer_bytes`, `max_message_bytes`) differed between client and server; `ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION` (`-10`): the server sent a malformed message record or violated window or ring bounds; `ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT` (`-9`): a reliable message went unacknowledged past `reliable_message_timeout_ms`; `ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED` (`-8`): the client accepted the server's disconnect packet (the server called `rocketnet_server_disconnect_client`, `rocketnet_server_stop` or `rocketnet_server_destroy`); `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED` (`-7`), `ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN` (`-6`), `ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT` (`-5`), `ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT` (`-4`), `ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT` (`-3`), `ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT` (`-2`), `ROCKETNET_CLIENT_STATE_CONNECTION_DENIED` (`-1`). `rocketnet_client_connect` is accepted from `ROCKETNET_CLIENT_STATE_DISCONNECTED` and from the connection-ended states `-8` to `-12`, after its previous shutdown completes; pending shutdown returns `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`.
   - A NULL client reads as `ROCKETNET_CLIENT_STATE_DISCONNECTED`, and the call counts as misuse.
 - **Server disconnect reasons (`rocketnet_server_disconnect_reason`, `rocketnet_disconnect_reason_name`):** why a server's client slot's connection ended, kept until the slot's next connection.
   - `ROCKETNET_DISCONNECT_REASON_NONE` (`0`): no connection has ended, or the connection is up.
@@ -395,7 +410,7 @@ RocketNet refuses invalid configuration rather than clamping it. Check returned 
 ## Threading rules
 
 - **Main-thread ownership:** A `rocketnet_client_t` or `rocketnet_server_t` instance is owned by one caller thread for its frame loop. Run `rocketnet_client_update` / `rocketnet_server_update`, `rocketnet_client_receive_messages` / `rocketnet_server_receive_messages`, `rocketnet_client_start_message` / `rocketnet_server_start_message`, `rocketnet_client_finish_message` / `rocketnet_server_finish_message`, `rocketnet_client_abort_message` / `rocketnet_server_abort_message`, `rocketnet_client_send_packets` / `rocketnet_server_send_packets`, `rocketnet_client_receipts` / `rocketnet_server_receipts`, and `rocketnet_client_disconnect` / `rocketnet_server_disconnect_client` sequentially on that owning thread—never concurrently on the same object.
-- **What the network thread does:** Socket transports run background I/O threads that pull UDP datagrams off the NIC, decrypt and authenticate packets off the main thread, and drain staged outgoing batches when `rocketnet_client_send_packets` / `rocketnet_server_send_packets` flushes them. The caller thread never touches locks during message reads or writes; handoff happens inside `update` and `send_packets`.
+- **Background I/O and shared protocol work:** Client I/O workers, where supported, receive UDP datagrams and may pre-open and authenticate eligible encrypted records; `rocketnet_client_update` consumes those records and advances client protocol state. Server I/O varies by transport. On platforms with event-only wake, the portable server seals packets on the caller, copies borrowed send frames into one of three owned TX banks outside the lock, and try-publishes bank indices to its send worker. Portable RX syscalls and shared protocol processing—including decrypt/authentication and packet sealing—remain on the caller. This does not change `msgx` or client behavior; do not infer that all server socket I/O runs off-thread. For the required cross-thread bulk handoff design, see [the buffer handoff decision](api/BUFFER-HANDOFF-DECISION-20261021.md). Keep buffer ownership explicit; copying, scanning, resetting, codec work, and socket I/O stay outside handoff locks.
 
 ---
 

@@ -214,7 +214,7 @@ const char * rocketnet_status_name( enum rocketnet_status_t status )
         case ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED:          return "MEMORY_BUDGET_EXCEEDED";
         case ROCKETNET_STATUS_MISSING_KEYS:                    return "MISSING_KEYS";
         case ROCKETNET_STATUS_INVALID_PROTOCOL_ID:             return "INVALID_PROTOCOL_ID";
-        case ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION:             return "DEV_KEYS_IN_PRODUCTION";
+        case ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION:          return "DEV_KEYS_IN_PRODUCTION";
         case ROCKETNET_STATUS_INVALID_ADDRESS:                 return "INVALID_ADDRESS";
         case ROCKETNET_STATUS_INVALID_TRANSPORT_LIST:          return "INVALID_TRANSPORT_LIST";
         case ROCKETNET_STATUS_INVALID_CONNECT_TOKEN:           return "INVALID_CONNECT_TOKEN";
@@ -230,6 +230,7 @@ const char * rocketnet_status_name( enum rocketnet_status_t status )
         case ROCKETNET_STATUS_FLOW_ID_RESERVED:                return "FLOW_ID_RESERVED";
         case ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED:  return "TRANSPORT_FAMILIES_UNSUPPORTED";
         case ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED:          return "CONFIG_NOT_INITIALIZED";
+        case ROCKETNET_STATUS_TRANSPORT_NOT_BUILT:             return "TRANSPORT_NOT_BUILT";
         case ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION: return "TEST_PACKET_FILTER_IN_PRODUCTION";
         case ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION: return "DEV_CONNECT_TOKEN_IN_PRODUCTION";
         default:
@@ -775,6 +776,16 @@ int rocketnet_term_ex()
         rocketnet_error( "destroy all objects and allocations before terminating rocketnet" );
         return ROCKETNET_STATUS_LIVE_ALLOCATIONS;
     }
+    // macOS's bundled sysrandom keeps /dev/urandom open after sodium_init.
+    // The caller must quiesce all library calls before term, and the private
+    // bundled copy belongs to this SDK. A system libsodium may be shared with
+    // the application, so never close its process-global RNG here.
+#if defined(ROCKETNET_BUNDLED_SODIUM) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    // sodium_init is one-time, so a later empty init/term cycle has no open
+    // RNG descriptor and randombytes_close returns -1 for that valid case.
+    // The strict process resource gate detects a real close failure.
+    (void) randombytes_close();
+#endif
     rocketnet_platform_term();
     rocketnet_global_context = NULL;
     std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );

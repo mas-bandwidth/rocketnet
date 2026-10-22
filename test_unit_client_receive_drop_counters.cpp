@@ -18,6 +18,7 @@
 // from the driver itself (sdk/rocketnet_client_transport.cpp:1570-1571); that
 // receive keeps every datagram too, so the same counters count the same drops.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "test/fake_client_driver.h"
 
@@ -195,7 +196,7 @@ static void drop_counters_run( bool batch )
     // a refusal
     check( rocketnet_counter_class( ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
 
-    rocketnet_client_transport_destroy( transport );
+    rn_test_client_transport_stop_and_destroy( transport );
     delete driver;
 }
 
@@ -245,7 +246,7 @@ static void test_client_receive_counts_prefilter_drops_without_io_core()
     check( drop_counters_value( transport, ROCKETNET_COUNTER_PREFILTER_TOO_LARGE ) - large_before == 4 );
     check( drop_counters_value( transport, ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE ) == 1 );
 
-    rocketnet_client_transport_destroy( transport );
+    rn_test_client_transport_stop_and_destroy( transport );
     delete driver;
     rocketnet_public_link_simulator_test_development( 0 );
 }
@@ -278,7 +279,7 @@ static void test_client_receive_foreign_source_not_counted_after_disconnect()
     rocketnet_client_transport_update( transport, clock.now );
     check( drop_counters_value( transport, ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE ) == 0 );
 
-    rocketnet_client_transport_destroy( transport );
+    rn_test_client_transport_stop_and_destroy( transport );
     delete driver;
 }
 

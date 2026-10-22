@@ -28,6 +28,7 @@
     other platforms register no cells of their own here.
 */
 
+#include "../test/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_layers.h"
@@ -156,14 +157,14 @@ static void posix_hk_server_stop_and_destroy( struct rocketnet_server_transport_
         rocketnet_server_transport_send_packets( server );
     }
     rocketnet_counters_assert_conserved( rocketnet_server_transport_counters( server ) );
-    rocketnet_server_transport_destroy( server );
+    rn_native_server_transport_stop_and_destroy( server );
 }
 
 static void posix_hk_client_disconnect_and_destroy( struct rocketnet_client_transport_t * client )
 {
     rocketnet_client_transport_disconnect( client );
     rocketnet_counters_assert_conserved( rocketnet_client_transport_counters( client ) );
-    rocketnet_client_transport_destroy( client );
+    rn_native_client_transport_stop_and_destroy( client );
 }
 
 // one tracked in-process client: its slot, what it sent and received, and

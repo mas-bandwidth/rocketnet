@@ -13,6 +13,11 @@
 #include "rocketnet_wire.h"
 #include "rocketnet_test_seams.h"
 
+// The SDK's C tools use these internal token helpers as well as its C++ code.
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 // The connect token, per STANDARD.md. All layouts are packed little-endian at
 // the exact offsets the standard states; the byte sizes here are the wire
 // format and never change independently of it.
@@ -328,5 +333,9 @@ enum rocketnet_status_t rocketnet_write_production_connect_token( const uint8_t 
 // dev config carries. Public programs use rocketnet_create_dev_connect_token.
 enum rocketnet_status_t rocketnet_write_test_connect_token( const char * server_address_string, uint64_t client_id, uint64_t current_timestamp, uint8_t * connect_token, size_t connect_token_bytes );
 #endif // #if ROCKETNET_DEV
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // #ifndef ROCKETNET_CONNECT_TOKEN_H
