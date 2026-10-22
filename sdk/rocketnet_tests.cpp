@@ -261,15 +261,15 @@ void rocketnet_test_update_time_clamp()
 
     bool clamped = false;
 
-    rocketnet_check( rocketnet_clamp_update_time( last_good, NAN, &clamped ) == last_good );
+    rocketnet_check( rocketnet_clamp_update_time( last_good, (double) NAN, &clamped ) == last_good );
     rocketnet_check( clamped );
 
     clamped = false;
-    rocketnet_check( rocketnet_clamp_update_time( last_good, INFINITY, &clamped ) == last_good );
+    rocketnet_check( rocketnet_clamp_update_time( last_good, (double) INFINITY, &clamped ) == last_good );
     rocketnet_check( clamped );
 
     clamped = false;
-    rocketnet_check( rocketnet_clamp_update_time( last_good, -INFINITY, &clamped ) == last_good );
+    rocketnet_check( rocketnet_clamp_update_time( last_good, (double) -INFINITY, &clamped ) == last_good );
     rocketnet_check( clamped );
 
     clamped = false;
@@ -559,16 +559,16 @@ void rocketnet_test_base64()
     {
         char text[14]; memset(text, 0x5a, sizeof(text));
         const int chars = (int) strlen(vectors[length]);
-        rocketnet_check(rocketnet_base64_encode_data(source, length, text, chars + 1) == chars);
+        rocketnet_check(rocketnet_base64_encode_data(source, (size_t) length, text, (size_t) chars + 1) == chars);
         rocketnet_check(strcmp(text, vectors[length]) == 0 && text[chars + 1] == 0x5a);
-        if (chars > 0) rocketnet_check(rocketnet_base64_encode_data(source, length, text, chars) == -1);
+        if (chars > 0) rocketnet_check(rocketnet_base64_encode_data(source, (size_t) length, text, (size_t) chars) == -1);
         uint8_t output[9]; memset(output, 0xa5, sizeof(output));
-        rocketnet_check(rocketnet_base64_decode_data(vectors[length], output, length ? length : 1) == length);
-        rocketnet_check(memcmp(output, source, length) == 0 && output[length] == 0xa5);
+        rocketnet_check(rocketnet_base64_decode_data(vectors[length], output, (size_t) ( length ? length : 1 )) == length);
+        rocketnet_check(memcmp(output, source, (size_t) length) == 0 && output[length] == 0xa5);
         if (length > 1)
         {
             memset(output, 0xa5, sizeof(output));
-            rocketnet_check(rocketnet_base64_decode_data(vectors[length], output, length - 1) == 0);
+            rocketnet_check(rocketnet_base64_decode_data(vectors[length], output, (size_t) ( length - 1 )) == 0);
             for (int i = 0; i < 9; ++i) rocketnet_check(output[i] == 0xa5);
         }
     }
@@ -1382,7 +1382,7 @@ void rocketnet_test_crypto_key_derivation()
 
         uint8_t sealed[64];
         unsigned long long sealed_length = 0;
-        rocketnet_check( crypto_aead_chacha20poly1305_ietf_encrypt( sealed, &sealed_length, vectors[i].plaintext, vectors[i].plaintext_bytes, vectors[i].ad, vectors[i].ad_bytes, NULL, nonce, vectors[i].key ) == 0 );
+        rocketnet_check( crypto_aead_chacha20poly1305_ietf_encrypt( sealed, &sealed_length, vectors[i].plaintext, (unsigned long long) vectors[i].plaintext_bytes, vectors[i].ad, (unsigned long long) vectors[i].ad_bytes, NULL, nonce, vectors[i].key ) == 0 );
         rocketnet_check( (int) sealed_length == vectors[i].expected_bytes );
         rocketnet_check( memcmp( sealed, vectors[i].expected, sealed_length ) == 0 );
     }
@@ -1788,7 +1788,7 @@ void rocketnet_test_sealed_packets()
         rocketnet_check( bytes == cases[i].expected_wire_bytes );
 
         int sealed_offset = ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES + ( cases[i].session_nonce ? ROCKETNET_SESSION_NONCE_BYTES : 0 );
-        rocketnet_check( memcmp( packet + sealed_offset, cases[i].expected_sealed, cases[i].data_bytes + ROCKETNET_PACKET_TAG_BYTES ) == 0 );
+        rocketnet_check( memcmp( packet + sealed_offset, cases[i].expected_sealed, (size_t) ( cases[i].data_bytes + ROCKETNET_PACKET_TAG_BYTES ) ) == 0 );
 
         // and it opens: right data, right length, and the clear nonce comes
         // back on the types that carry one
@@ -1800,7 +1800,7 @@ void rocketnet_test_sealed_packets()
                                                          cases[i].client_ephemeral, cases[i].key );
         rocketnet_check( opened_bytes == cases[i].data_bytes );
         if ( cases[i].data_bytes > 0 )
-            rocketnet_check( memcmp( opened, cases[i].data, cases[i].data_bytes ) == 0 );
+            rocketnet_check( memcmp( opened, cases[i].data, (size_t) cases[i].data_bytes ) == 0 );
         if ( cases[i].session_nonce )
             rocketnet_check( memcmp( session_nonce_out, rocketnet_test_session_nonce, ROCKETNET_SESSION_NONCE_BYTES ) == 0 );
     }
@@ -2831,7 +2831,7 @@ void rocketnet_test_cookie_bounds_signature_verifies()
             snprintf( address_string, sizeof(address_string), "198.51.100.%d:56789", 100 + i );
             rocketnet_check( rocketnet_address_parse( &test.client_address, address_string ) );
             addresses[i] = test.client_address;
-            rocketnet_test_build_request( requests[i], 0x5555666677778888ULL + (uint64_t) i, rocketnet_test_salt );
+            rocketnet_test_build_request( requests[i], UINT64_C( 0x5555666677778888 ) + (uint64_t) i, rocketnet_test_salt );
             rocketnet_test_pass_cookie_gate( &test, requests[i] );
         }
 
@@ -2882,7 +2882,7 @@ void rocketnet_test_cookie_bounds_signature_verifies()
             snprintf( address_string, sizeof(address_string), "198.51.100.%d:56789", 100 + i );
             rocketnet_check( rocketnet_address_parse( &test.client_address, address_string ) );
             addresses[i] = test.client_address;
-            rocketnet_test_build_request( requests[i], 0x3333444455556666ULL + (uint64_t) i, rocketnet_test_salt );
+            rocketnet_test_build_request( requests[i], UINT64_C( 0x3333444455556666 ) + (uint64_t) i, rocketnet_test_salt );
             rocketnet_test_pass_cookie_gate( &test, requests[i] );
         }
 
@@ -3243,7 +3243,7 @@ void rocketnet_test_request_path_slots_and_denial()
         uint8_t fill_salt[8];
         memcpy( fill_salt, rocketnet_test_salt, 8 );
         fill_salt[0] = (uint8_t) i;
-        rocketnet_test_build_request( fill_request, 0x6000000000000000ULL + (uint64_t) i, fill_salt );
+        rocketnet_test_build_request( fill_request, UINT64_C( 0x6000000000000000 ) + (uint64_t) i, fill_salt );
         rocketnet_test_pass_cookie_gate( &test, fill_request );
         rocketnet_check( rocketnet_test_process( &test, fill_request, sizeof(fill_request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     }
@@ -3340,7 +3340,7 @@ void rocketnet_test_one_token_many_addresses_refused_cheaply()
         uint8_t fill_salt[8];
         memcpy( fill_salt, rocketnet_test_salt, 8 );
         fill_salt[0] = (uint8_t) ( i + 1 );
-        rocketnet_test_build_request( fill_request, 0x9200000000000000ULL + (uint64_t) i, fill_salt );
+        rocketnet_test_build_request( fill_request, UINT64_C( 0x9200000000000000 ) + (uint64_t) i, fill_salt );
         rocketnet_test_pass_cookie_gate( &test, fill_request );
         rocketnet_check( rocketnet_test_process( &test, fill_request, sizeof(fill_request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     }
@@ -3924,17 +3924,17 @@ void rocketnet_test_client_slots()
     slots = rocketnet_client_slots_create( NULL, 64 );
     rocketnet_check( slots );
     for ( int i = 0; i < 64; i++ )
-        rocketnet_check( rocketnet_client_slots_assign( slots, 0xABCD0000ULL + (uint64_t) i, i, user_data ) == i );
+        rocketnet_check( rocketnet_client_slots_assign( slots, UINT64_C( 0xABCD0000 ) + (uint64_t) i, i, user_data ) == i );
     for ( int i = 0; i < 64; i++ )
-        rocketnet_check( rocketnet_client_slots_find( slots, 0xABCD0000ULL + (uint64_t) i ) == i );
+        rocketnet_check( rocketnet_client_slots_find( slots, UINT64_C( 0xABCD0000 ) + (uint64_t) i ) == i );
     for ( int i = 0; i < 64; i += 2 )
         rocketnet_client_slots_release( slots, i );
     for ( int i = 0; i < 64; i++ )
     {
         if ( i % 2 == 0 )
-            rocketnet_check( rocketnet_client_slots_find( slots, 0xABCD0000ULL + (uint64_t) i ) == -1 );
+            rocketnet_check( rocketnet_client_slots_find( slots, UINT64_C( 0xABCD0000 ) + (uint64_t) i ) == -1 );
         else
-            rocketnet_check( rocketnet_client_slots_find( slots, 0xABCD0000ULL + (uint64_t) i ) == i );
+            rocketnet_check( rocketnet_client_slots_find( slots, UINT64_C( 0xABCD0000 ) + (uint64_t) i ) == i );
     }
     rocketnet_check( rocketnet_client_slots_num_connected( slots ) == 32 );
     rocketnet_client_slots_destroy( slots );
@@ -3958,7 +3958,7 @@ void rocketnet_test_client_slots_free_list()
 
     // a fresh table pops 0, 1, 2 and so on in order
     for ( int i = 0; i < 8; i++ )
-        rocketnet_check( rocketnet_client_slots_assign( slots, 0x9000000000000000ULL + (uint64_t) i, i, user_data ) == i );
+        rocketnet_check( rocketnet_client_slots_assign( slots, UINT64_C( 0x9000000000000000 ) + (uint64_t) i, i, user_data ) == i );
     rocketnet_check( rocketnet_client_slots_num_free( slots ) == 0 );
 
     // a full table pops nothing and returns -1
@@ -3988,7 +3988,7 @@ void rocketnet_test_client_slots_free_list()
         else if ( i == 5 )
             rocketnet_check( rocketnet_client_slots_find( slots, 0x900000000000000AULL ) == 5 );
         else
-            rocketnet_check( rocketnet_client_slots_find( slots, 0x9000000000000000ULL + (uint64_t) i ) == i );
+            rocketnet_check( rocketnet_client_slots_find( slots, UINT64_C( 0x9000000000000000 ) + (uint64_t) i ) == i );
     }
 
     rocketnet_client_slots_destroy( slots );
@@ -4878,7 +4878,7 @@ void rocketnet_test_client_keep_alive_invalid_index_has_no_effect()
         rocketnet_client_protocol_init( &client, &client_counters );
 
         uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
-        rocketnet_test_mint_token( token_data, 0x4A9E00ULL + (uint64_t) variant,
+        rocketnet_test_mint_token( token_data, UINT64_C( 0x4A9E00 ) + (uint64_t) variant,
                                    ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
         rocketnet_check( rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
 
@@ -5400,7 +5400,7 @@ void rocketnet_test_client_server_loss_walk()
         rocketnet_client_protocol_init( &client, &client_counters );
 
         uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
-        rocketnet_test_mint_token( token_data, 0xA0000ULL + (uint64_t) i, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+        rocketnet_test_mint_token( token_data, UINT64_C( 0xA0000 ) + (uint64_t) i, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
         rocketnet_check( rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
 
         rocketnet_check( rocketnet_test_pump( &test, &client, drop_types[i], 5.0 ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
@@ -6370,7 +6370,7 @@ void rocketnet_test_swarm()
         rocketnet_check( rocketnet_address_parse( &addresses[i], address_string ) );
         rocketnet_client_protocol_init( &clients[i], &client_counters );
         uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
-        rocketnet_test_mint_token( token_data, 0x50000000ULL + (uint64_t) i, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+        rocketnet_test_mint_token( token_data, UINT64_C( 0x50000000 ) + (uint64_t) i, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
         rocketnet_check( rocketnet_client_protocol_connect( &clients[i], token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
     }
 
@@ -6939,7 +6939,7 @@ void rocketnet_test_value_tracker()
         rocketnet_value_tracker_calculate( &tracker, &min_value, &max_value, &avg_value );
         rocketnet_check( min_value == 0.0f );
         rocketnet_check( max_value == 9.0f );
-        rocketnet_check( fabs( 4.5f - avg_value ) < 0.1f );
+        rocketnet_check( fabsf( 4.5f - avg_value ) < 0.1f );
         rocketnet_value_tracker_calculate( &tracker, &min_value, &max_value, &avg_value );
         rocketnet_check( min_value == 0.0f );
         rocketnet_check( max_value == 0.0f );
@@ -7233,7 +7233,7 @@ void rocketnet_test_jitter_tracker()
         t = i * dt;
         if ( (i%3) == 0 )
         {
-            t += 0.01f;
+            t += (double) 0.01f;
         }
         if ( (i%5) == 0 )
         {
@@ -7241,7 +7241,7 @@ void rocketnet_test_jitter_tracker()
         }
         if ( (i%6) == 0 )
         {
-            t -= 0.1f;
+            t -= (double) 0.1f;
         }
         rocketnet_jitter_tracker_packet_received( &tracker, sequence, t );
         sequence++;
@@ -8936,7 +8936,7 @@ void rocketnet_test_ack_block_build()
         for ( int n = 0; n < 400; n++ )
         {
             rocketnet_replay_advance( &replay, s );
-            s += 1 + ( rocketnet_random_uint8() % 3 );       // skips leave holes
+            s += (uint64_t) ( 1 + rocketnet_random_uint8() % 3 );       // skips leave holes
         }
         int capacity = ROCKETNET_ACK_BLOCK_MIN_BYTES + 4 * ( rocketnet_random_uint8() % 64 );
         int built_bytes = rocketnet_ack_block_build( built, capacity, &replay );
@@ -9844,7 +9844,7 @@ void rocketnet_test_ack_asymmetric_rate()
             if (direction == 0)
             {
                 rocketnet_check(rocketnet_client_protocol_start_payload(&client, &sequence));
-                bytes = rocketnet_client_protocol_seal_payload_frame(&client, sequence, 100000 + i, frame, 4, time);
+                bytes = rocketnet_client_protocol_seal_payload_frame(&client, sequence, (uint64_t) ( 100000 + i ), frame, 4, time);
                 rocketnet_check(bytes > 0);
                 rocketnet_check(rocketnet_server_protocol_process_packet(&test.server, &test.client_address,
                     frame, bytes, ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
@@ -9854,7 +9854,7 @@ void rocketnet_test_ack_asymmetric_rate()
             {
                 rocketnet_address_t to;
                 rocketnet_check(rocketnet_server_protocol_start_payload(&test.server, 0, &to, &sequence));
-                bytes = rocketnet_server_protocol_seal_payload_frame(&test.server, 0, sequence, 200000 + i, frame, 4, time);
+                bytes = rocketnet_server_protocol_seal_payload_frame(&test.server, 0, sequence, (uint64_t) ( 200000 + i ), frame, 4, time);
                 rocketnet_check(bytes > 0);
                 rocketnet_check(rocketnet_client_protocol_process_packet(&client, frame, bytes, time, payload, sizeof(payload), &payload_bytes));
             }
@@ -12405,7 +12405,7 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
 
             default:
             {
-                rocketnet_check( !"unknown config field kind" );
+                rocketnet_check( false && "unknown config field kind" );
             }
             break;
         }
@@ -13679,15 +13679,15 @@ static void rocketnet_test_config_bytes_exact_fields( const char * name, void * 
             uint8_t bytes[257];
             for ( int j = 0; j < (int) sizeof(bytes); ++j ) bytes[j] = (uint8_t) ( j * 13 + 7 );
             char encoded[512];
-            rocketnet_check( rocketnet_base64_encode_data( bytes, field->size + delta, encoded, sizeof(encoded) ) > 0 );
+            rocketnet_check( rocketnet_base64_encode_data( bytes, (size_t) ( field->size + delta ), encoded, sizeof(encoded) ) > 0 );
             setenv( env_name, encoded, 1 );
             uint8_t * destination = (uint8_t*) config + field->offset;
             uint8_t before[256];
-            memset( before, 0xA5, field->size );
-            memcpy( destination, before, field->size );
+            memset( before, 0xA5, (size_t) field->size );
+            memcpy( destination, before, (size_t) field->size );
             const bool accepted = rocketnet_config_apply_env( name, config, field, 1 );
             rocketnet_check( accepted == ( delta == 0 ) );
-            rocketnet_check( memcmp( destination, accepted ? bytes : before, field->size ) == 0 );
+            rocketnet_check( memcmp( destination, accepted ? bytes : before, (size_t) field->size ) == 0 );
         }
         rocketnet_test_env_restore( &guard );
     }
@@ -13777,8 +13777,15 @@ void rocketnet_test_log_level_refuses_out_of_range()
     // value outside that range leaves the level in force rather than
     // storing it, so a caller cannot silence the library by accident
 
+    // -1 is what a C caller can pass; it is copied in, since a C++ cast of a
+    // value outside the enum's range of values is unspecified
+
+    const int minus_one = -1;
+    enum rocketnet_log_level_t below_none;
+    memcpy( &below_none, &minus_one, sizeof( below_none ) );
+
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
-    rocketnet_log_level( (enum rocketnet_log_level_t) -1 );
+    rocketnet_log_level( below_none );
     rocketnet_check( rocketnet_log_level_current() == ROCKETNET_LOG_LEVEL_INFO );
     rocketnet_log_level( (enum rocketnet_log_level_t) 6 );
     rocketnet_check( rocketnet_log_level_current() == ROCKETNET_LOG_LEVEL_INFO );
