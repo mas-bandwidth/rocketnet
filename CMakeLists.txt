@@ -144,14 +144,18 @@ endif()
 # builds carries it, the vendored sodium source included (sodium/NOTES.md):
 # a customer compiles these sources inside their game with their own warning
 # flags, so the tree ships with no warning at the floor and the floor fails
-# the build. ROCKETNET_STRICT_WARNINGS adds the strict set a game is likely
-# to use (not yet clean: a known issue in ROADMAP.md); ROCKETNET_WARNINGS_AS_ERRORS=OFF
-# keeps the warnings and drops only the failure, for a compiler newer than
-# the ones the tree is checked on.
+# the build. ROCKETNET_STRICT_WARNINGS, on by default, adds the strict set a
+# game is likely to use (conversion, sign, shadow, cast-qual, format=2, undef,
+# double-promotion), so it fails the build too; clang-cl takes the same set
+# beside /W4. ROCKETNET_WARNINGS_AS_ERRORS=OFF keeps the warnings and drops
+# only the failure, for a compiler newer than the ones the tree is checked on.
 option(ROCKETNET_WARNINGS_AS_ERRORS "Fail the build on any compiler warning" ON)
-option(ROCKETNET_STRICT_WARNINGS "Add the strict warning set (conversion, shadow, sign, format, undef)" OFF)
+option(ROCKETNET_STRICT_WARNINGS "Add the strict warning set (conversion, shadow, sign, format, undef)" ON)
 if(MSVC)
     add_compile_options(/W4)
+    if(ROCKETNET_STRICT_WARNINGS AND CMAKE_C_COMPILER_ID STREQUAL "Clang")
+        add_compile_options(-Wshadow -Wconversion -Wsign-conversion -Wcast-qual -Wformat=2 -Wundef -Wdouble-promotion)
+    endif()
     if(ROCKETNET_WARNINGS_AS_ERRORS)
         add_compile_options(/WX)
     endif()
