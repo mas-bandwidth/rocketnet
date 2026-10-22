@@ -36,9 +36,10 @@ for transport in transports:
         assert observed['peak_allocator_bytes'] <= plan['planned_bytes'], (
             transport, profile, 'planned_bytes', plan['planned_bytes'],
             'peak_allocator_bytes', observed['peak_allocator_bytes'])
-        # Every server owns one stats worker. Portable TX and the one-queue
-        # GSO/IOCP profiles each add one I/O worker; wakes add no socket.
-        assert plan['worker_threads'] == (2 if transport in ('portable', 'gso', 'iocp') else 1)
+        # Every server owns one stats worker. Portable/msgx have separate RX
+        # and TX workers; one-queue GSO/IOCP add a TX worker to their RX worker.
+        # Wakes add no socket. The native planner must include every worker.
+        assert plan['worker_threads'] == 3
         assert plan['sockets'] == 1
         # Startup shims can be freed before this observation, even for
         # portable. The native probe bounds that difference by its planned
@@ -60,12 +61,16 @@ for transport in transports:
 large, = run(1000, 305408, 256, 'portable', 0, '--plan-only')
 assert large['reassembly_bytes'] > 512 * 1024**2
 if sys.platform.startswith('linux'):
+    uring, = run(1, 1416, 1, 'io_uring', 1, '--plan-only')
+    assert uring['worker_threads'] == 2  # one ring owner plus one stats worker
     xdp, = run(1000, 1416, 1, 'xdp', 7, '--plan-only')
     # UMEM is rocketnet_xdp_umem_bytes in the SDK. Do not restate the product here.
     assert xdp['umem_bytes'] > 0
     assert xdp['worker_threads'] == 8  # seven queue workers plus one stats worker
     assert xdp['sockets'] == 7
 if sys.platform == 'win32':
+    rio_plan, = run(1, 1416, 1, 'rio', 0, '--plan-only')
+    assert rio_plan['worker_threads'] == 2  # one RIO owner plus one stats worker
     rio, = run(1, 1416, 1, 'rio', 0, '--session-plan-only')
     assert rio['active_rio_registered_region_bytes'] > 0
     assert rio['active_xdp_umem_bytes'] == 0

@@ -1,5 +1,22 @@
 # RNUringDriver: the io_uring server driver
 
+## Scope after the worker handoff redesign
+
+`RNUringDriver.tla` models the earlier caller-driven submission/completion loop
+and its two receive banks. The runtime implementation now gives one background
+worker ownership of the ring, uses queued TX banks and published RX banks, and
+makes caller stop/query operations request/status checks. The model and the
+recorded TLC runs below have not been extended to this worker architecture.
+They do not prove the new bank queues, mutex ownership exchanges, worker
+wake/progress, or stop/join ordering.
+
+No-reuse-before-completion, stable receive views, bounded completion service and
+re-arm progress remain required properties. New runtime ownership and fault
+tests cover the added worker paths; a revised model/refinement and fresh TLC
+runs would be needed to claim formal coverage. The design and action mapping
+below describe the earlier model, not the current worker schedule.
+
+
 `RNUringDriver.tla` models the io_uring server driver
 (`sdk/rocketnet_server_uring_linux.cpp`) **before the code exists**. It
 follows THE DESIGN of card `rocketnet-io-uring-driver-core`. Once that card
