@@ -260,6 +260,15 @@ static uint64_t portable_send_failures( void * transport )
 }
 static uint64_t portable_socket_send_failures( void * transport )
 { return rocketnet_platform_socket_send_failures( (rocketnet_platform_socket_t*) transport ); }
+#if ROCKETNET_DEVELOPMENT
+// development library only: the platform socket under a portable server
+// transport, whose instance is the TX adapter (portable_server_t), not the
+// socket (rocketnet_server_transport_platform_socket_for_testing)
+rocketnet_platform_socket_t * rocketnet_portable_server_socket_for_testing( void * transport )
+{
+    return transport ? ( (portable_server_t*) transport )->socket : NULL;
+}
+#endif
 #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 // development library only. Sends leave the main thread when the worker takes
 // a published bank, so a functional case that injects socket send errors

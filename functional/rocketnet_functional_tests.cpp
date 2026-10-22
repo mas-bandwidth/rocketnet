@@ -6227,7 +6227,15 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_check( rocketnet_write_test_connect_token( server_address, 0xA2A2ULL, rocketnet_functional_token_timestamp( server_config.game_clock_epoch, rocketnet_platform_time() ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, NULL, rocketnet_platform_time() );
+    // the client runs its I/O step in its own update and send_packets
+    // (step_driven). On its I/O thread, a host loaded enough to starve that
+    // thread let the fill ring take a payload per pass until it was full, and
+    // the start that found it full counted SEND_RING_FULL: the clean-run
+    // check then failed on the host's scheduling, not on P2.
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    client_config.step_driven = 1;
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, &client_config, rocketnet_platform_time() );
     rocketnet_check( client );
 
     double start = rocketnet_platform_time();

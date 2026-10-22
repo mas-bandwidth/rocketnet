@@ -2107,13 +2107,20 @@ const char * rocketnet_server_transport_io_name( struct rocketnet_server_transpo
 #if ROCKETNET_DEVELOPMENT
 
 // the development seam the ICMP-error functional cases read the live pump
-// and the socket through (TRANSPORTS.md, ICMP errors): the portable and msgx
-// transports' instance is the platform socket itself
+// and the socket through (TRANSPORTS.md, ICMP errors): the msgx transport's
+// instance is the platform socket itself, the portable transport's owns it
+
+struct rocketnet_platform_socket_t * rocketnet_portable_server_socket_for_testing( void * transport );
 
 struct rocketnet_platform_socket_t * rocketnet_server_transport_platform_socket_for_testing( struct rocketnet_server_transport_t * server_transport )
 {
     rocketnet_assert( server_transport );
-    if ( server_transport->transport == ROCKETNET_TRANSPORT_PORTABLE || server_transport->transport == ROCKETNET_TRANSPORT_MSGX )
+    // the portable transport's instance is its TX adapter, which owns the
+    // socket; read as the socket itself, its pump was whatever bytes the
+    // adapter held there, and the ICMP cases' pump checks failed at random
+    if ( server_transport->transport == ROCKETNET_TRANSPORT_PORTABLE )
+        return rocketnet_portable_server_socket_for_testing( server_transport->io.instance );
+    if ( server_transport->transport == ROCKETNET_TRANSPORT_MSGX )
         return (struct rocketnet_platform_socket_t*) server_transport->io.instance;
     return NULL;
 }
