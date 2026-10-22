@@ -47,6 +47,7 @@ static uint32_t read_u32( const uint8_t * p )
 
 #define MAX_SOAK_CLIENTS ROCKETNET_MAX_CLIENTS
 #define BATCH_CLIENTS 250
+#define DISCONNECT_BATCH_CLIENTS 64
 #define MAX_TICKS 7200
 
 // MSVC deprecates fopen, so this uses fopen_s there
@@ -371,18 +372,31 @@ int main( int argc, char ** argv ) {
     CHECK( srv_stats.messages_dropped_over_budget == 0 );
     CHECK( srv_stats.api_misuses == 0 );
     CHECK( sent_rel > 0 && recv_rel == sent_rel && acked_total == sent_rel && recv_seq > 0 && corrupt == 0 && gaps == 0 );
-    for ( int c = 0; c < num_clients; c++ )
-        rocketnet_client_disconnect( clients[c] );
+    // Clients disconnect in batches, each once the batch before it has left
+    // and the server has read it. Each client sends a redundant burst of
+    // datagrams, and the server's loopback endpoint queues 2048 datagrams
+    // between updates (TRANSPORTS.md): every client leaving between two
+    // server updates overflows it, and the clients whose bursts are dropped
+    // end only on timeout. At most two batches' bursts are queued at once.
     const double shutdown_started = rocketnet_time();
     const double shutdown_sim_start = sim_time;
-    int disconnected = 0;
+    int disconnected = 0, next_disconnect = 0, batch_left = 1;
     while ( rocketnet_time() - shutdown_started < 10.0 ) {
+        if ( batch_left && next_disconnect < num_clients ) {
+            const int end = next_disconnect + DISCONNECT_BATCH_CLIENTS < num_clients ? next_disconnect + DISCONNECT_BATCH_CLIENTS : num_clients;
+            for ( int c = next_disconnect; c < end; c++ )
+                rocketnet_client_disconnect( clients[c] );
+            next_disconnect = end;
+        }
         disconnected = 1;
+        batch_left = 1;
         sim_time = shutdown_sim_start + ( rocketnet_time() - shutdown_started );
         for ( int c = 0; c < num_clients; c++ ) {
             rocketnet_client_update( clients[c], sim_time );
-            if ( !rocketnet_client_disconnected( clients[c] ) )
+            if ( c >= next_disconnect || !rocketnet_client_disconnected( clients[c] ) ) {
                 disconnected = 0;
+                if ( c < next_disconnect ) batch_left = 0;
+            }
         }
         // Local completion does not prove that the server received a burst.
         // Keep processing frames until both sides have finished disconnecting.
