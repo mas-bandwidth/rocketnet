@@ -466,6 +466,25 @@ static bool posix_cell_runs( const char * name, const posix_cell_t * cell )
     return true;
 }
 
+// whether a cell before cell_index that runs here has the same server (or
+// client) transport: a case that makes only servers (or only clients) runs
+// each transport once
+static bool posix_earlier_cell_has_server( const char * name, int cell_index )
+{
+    for ( int i = 0; i < cell_index; i++ )
+        if ( posix_cell_runs( name, &posix_cells[i] ) && strcmp( posix_cells[i].server_transport_io, posix_cells[cell_index].server_transport_io ) == 0 )
+            return true;
+    return false;
+}
+
+static bool posix_earlier_cell_has_client( const char * name, int cell_index )
+{
+    for ( int i = 0; i < cell_index; i++ )
+        if ( posix_cell_runs( name, &posix_cells[i] ) && strcmp( posix_cells[i].client_transport_io, posix_cells[cell_index].client_transport_io ) == 0 )
+            return true;
+    return false;
+}
+
 // a 1000-count loop runs 100 times on the xdp cell
 static int posix_count( const posix_cell_t * cell, int count )
 {
@@ -776,6 +795,17 @@ void rocketnet_test_posix_init_term_1000()
         posix_env_guard_t server_guard, client_guard;
         posix_cell_begin( cell, &server_guard, &client_guard );
 
+        // one cycle before the baseline. The suite's worker initialised
+        // rocketnet before the case, and on macOS that first init's sodium_init
+        // opened /dev/urandom; term closes it (rocketnet_term_ex, the bundled
+        // RNG) and an init after a term opens it again only when random bytes
+        // are next drawn. Read before the warm-up, the baseline held that
+        // descriptor and every run failed fds 4 -> 3. After it, the baseline
+        // is the state every later cycle returns to, and a descriptor or
+        // thread left per cycle still moves the count.
+        posix_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+        posix_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+
         const posix_resource_counts_t before = posix_stable_counts();
         const double start = posix_now_seconds();
         const int count = posix_count( cell, 1000 );
@@ -789,6 +819,11 @@ void rocketnet_test_posix_init_term_1000()
 
         posix_cell_end( &server_guard, &client_guard );
         posix_case_result( case_name, cell, &before, &after, seconds );
+
+        // init and term create no transport, so every cell runs the same
+        // loop: the first cell that runs is the case. (Each Linux case
+        // selects one cell; on macOS the other three cells repeated it.)
+        break;
     }
 }
 
@@ -801,6 +836,10 @@ void rocketnet_test_posix_server_create_destroy_1000()
     {
         const posix_cell_t * cell = &posix_cells[cell_index];
         if ( !posix_cell_runs( case_name, cell ) )
+            continue;
+        // no client is made here, so a cell whose server transport an
+        // earlier cell already cycled would repeat it exactly
+        if ( posix_earlier_cell_has_server( case_name, cell_index ) )
             continue;
         posix_env_guard_t server_guard, client_guard;
         posix_cell_begin( cell, &server_guard, &client_guard );
@@ -856,6 +895,10 @@ void rocketnet_test_posix_client_create_destroy_1000()
     {
         const posix_cell_t * cell = &posix_cells[cell_index];
         if ( !posix_cell_runs( case_name, cell ) )
+            continue;
+        // no server is made here, so a cell whose client transport an
+        // earlier cell already cycled would repeat it exactly
+        if ( posix_earlier_cell_has_client( case_name, cell_index ) )
             continue;
         posix_env_guard_t server_guard, client_guard;
         posix_cell_begin( cell, &server_guard, &client_guard );
@@ -999,6 +1042,17 @@ void rocketnet_test_posix_server_restart_same_port_100()
     }
 }
 
+// The server the connect/disconnect cycles share. It records every connect
+// token it accepts in its used-token history (max_clients *
+// ROCKETNET_USED_TOKEN_HISTORY_RATIO entries) until the token's handshake
+// deadline passes, about 5 s on; a full history refuses the next request
+// (CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING). With 8 slots the history held
+// 64 tokens, so every 65th connect waited ~4.8 s for the oldest to lapse:
+// fifteen waits, 72 s of a pair's 76 s on macOS, each within 0.2 s of the
+// 5 s connect deadline. 128 slots hold 1024 tokens, every token of the
+// 1000 cycles, and one client is connected at a time either way.
+#define POSIX_CONNECT_CYCLE_MAX_CLIENTS 128
+
 void rocketnet_test_posix_connect_disconnect_1000()
 {
     const char * case_name = "test_posix_connect_disconnect_1000";
@@ -1014,7 +1068,7 @@ void rocketnet_test_posix_connect_disconnect_1000()
 
         const posix_resource_counts_t before = posix_stable_counts();
 
-        rocketnet_server_transport_t * server = posix_server_create( cell, posix_bind_address( cell ), 8 );
+        rocketnet_server_transport_t * server = posix_server_create( cell, posix_bind_address( cell ), POSIX_CONNECT_CYCLE_MAX_CLIENTS );
         char server_address[64];
         posix_server_address( cell, server, server_address, sizeof( server_address ) );
 
@@ -1203,10 +1257,12 @@ POSIX_LINUX_CELL_CASES( posix_destroy_under_traffic_100 )
 #endif // #if defined(__linux__)
 
 #if defined(__APPLE__)
-// Keep all four 1000-cycle pairs, with the same resource assertions and the
-// same per-test watchdog. Each registered case runs exactly one pair.
-#define POSIX_MAC_CONNECT_CASE( server_io, client_io )                             \
-void rocketnet_test_posix_connect_disconnect_1000_##server_io##_##client_io()      \
+// Keep all four pairs of the connect/disconnect and destroy-under-traffic
+// cases, with the same resource assertions and the same per-test watchdog.
+// Each registered case runs exactly one pair, so the four pairs run as four
+// processes in parallel instead of one after another in one process.
+#define POSIX_MAC_PAIR_CASE( case_name, server_io, client_io )                    \
+void rocketnet_test_##case_name##_##server_io##_##client_io()                      \
 {                                                                                  \
     posix_only_server_transport_io = #server_io;                                   \
     posix_only_client_transport_io = #client_io;                                   \
@@ -1217,16 +1273,21 @@ void rocketnet_test_posix_connect_disconnect_1000_##server_io##_##client_io()   
         printf( "macOS POSIX lifecycle filter excludes or duplicates %s/%s\n",   \
                 #server_io, #client_io );                                           \
     posix_check( selected == 1 );                                                   \
-    rocketnet_test_posix_connect_disconnect_1000();                                \
+    rocketnet_test_##case_name();                                                  \
     posix_only_client_transport_io = NULL;                                         \
     posix_only_server_transport_io = NULL;                                         \
 }
 
-POSIX_MAC_CONNECT_CASE( portable, portable )
-POSIX_MAC_CONNECT_CASE( portable, msgx )
-POSIX_MAC_CONNECT_CASE( msgx, portable )
-POSIX_MAC_CONNECT_CASE( msgx, msgx )
-#undef POSIX_MAC_CONNECT_CASE
+#define POSIX_MAC_PAIR_CASES( case_name )                                          \
+    POSIX_MAC_PAIR_CASE( case_name, portable, portable )                           \
+    POSIX_MAC_PAIR_CASE( case_name, portable, msgx )                               \
+    POSIX_MAC_PAIR_CASE( case_name, msgx, portable )                               \
+    POSIX_MAC_PAIR_CASE( case_name, msgx, msgx )
+
+POSIX_MAC_PAIR_CASES( posix_connect_disconnect_1000 )
+POSIX_MAC_PAIR_CASES( posix_destroy_under_traffic_100 )
+#undef POSIX_MAC_PAIR_CASES
+#undef POSIX_MAC_PAIR_CASE
 #endif
 
 #endif // #if !defined(_WIN32)

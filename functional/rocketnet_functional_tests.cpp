@@ -8223,6 +8223,10 @@ extern void rocketnet_test_posix_connect_disconnect_1000_portable_portable();
 extern void rocketnet_test_posix_connect_disconnect_1000_portable_msgx();
 extern void rocketnet_test_posix_connect_disconnect_1000_msgx_portable();
 extern void rocketnet_test_posix_connect_disconnect_1000_msgx_msgx();
+extern void rocketnet_test_posix_destroy_under_traffic_100_portable_portable();
+extern void rocketnet_test_posix_destroy_under_traffic_100_portable_msgx();
+extern void rocketnet_test_posix_destroy_under_traffic_100_msgx_portable();
+extern void rocketnet_test_posix_destroy_under_traffic_100_msgx_msgx();
 #endif
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 // one case per Linux server cell
@@ -8695,7 +8699,10 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_posix_connect_disconnect_1000_portable_msgx", rocketnet_test_posix_connect_disconnect_1000_portable_msgx, NULL },
     { "test_posix_connect_disconnect_1000_msgx_portable", rocketnet_test_posix_connect_disconnect_1000_msgx_portable, NULL },
     { "test_posix_connect_disconnect_1000_msgx_msgx", rocketnet_test_posix_connect_disconnect_1000_msgx_msgx, NULL },
-    { "test_posix_destroy_under_traffic_100", rocketnet_test_posix_destroy_under_traffic_100, NULL },
+    { "test_posix_destroy_under_traffic_100_portable_portable", rocketnet_test_posix_destroy_under_traffic_100_portable_portable, NULL },
+    { "test_posix_destroy_under_traffic_100_portable_msgx", rocketnet_test_posix_destroy_under_traffic_100_portable_msgx, NULL },
+    { "test_posix_destroy_under_traffic_100_msgx_portable", rocketnet_test_posix_destroy_under_traffic_100_msgx_portable, NULL },
+    { "test_posix_destroy_under_traffic_100_msgx_msgx", rocketnet_test_posix_destroy_under_traffic_100_msgx_msgx, NULL },
 #endif
     { "test_transport_disconnect_delivery", rocketnet_test_transport_disconnect_delivery, NULL },
     { "test_transport_reconnect_churn", rocketnet_test_transport_reconnect_churn, NULL },

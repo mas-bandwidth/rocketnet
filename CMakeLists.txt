@@ -151,12 +151,16 @@ if(NOT ROCKETNET_USE_SYSTEM_SODIUM)
     set(ROCKETNET_SODIUM_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/sodium/sodium.c")
     # the vendor has no configure step, so sodium_memzero (sodium/sodium.c:176)
     # falls to its volatile byte loop unless a HAVE_ macro names the platform
-    # wipe; glibc and musl have explicit_bzero, the wipe libsodium's own
-    # configure picks there. The byte loop spends ~125 ms on the 56 MB server
-    # transport that rocketnet_server_transport_destroy wipes through
-    # rocketnet_clear_and_free (sdk/rocketnet.cpp:488).
+    # wipe; glibc and musl have explicit_bzero and Darwin has memset_s, the
+    # wipes libsodium's own configure picks there. The byte loop spends
+    # ~125 ms on the 56 MB server transport that
+    # rocketnet_server_transport_destroy wipes through rocketnet_clear_and_free
+    # (sdk/rocketnet.cpp:548), and on macOS it was two thirds of every client
+    # transport destroy.
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         set_property(SOURCE "${ROCKETNET_SODIUM_SOURCE}" APPEND PROPERTY COMPILE_DEFINITIONS HAVE_EXPLICIT_BZERO=1)
+    elseif(APPLE)
+        set_property(SOURCE "${ROCKETNET_SODIUM_SOURCE}" APPEND PROPERTY COMPILE_DEFINITIONS HAVE_MEMSET_S=1)
     endif()
 endif()
 function(rocketnet_use_sodium target)
