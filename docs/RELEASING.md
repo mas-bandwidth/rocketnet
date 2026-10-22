@@ -72,6 +72,11 @@ commit and the comparison of its relevant inputs with the release candidate.
 Keep failures, incomplete runs and accepted limitations explicit. Manual
 results must not be described as successful GitHub CI runs.
 
+The preview-2 release owner also authorized cutting this preview with unresolved
+findings and unfinished experiments recorded as known issues for preview-3.
+These are not reported as passing qualification. Experiments and further fixes
+resume after publication.
+
 Before tagging, reconcile the qualification record with the merged `main`
 commit and verify the version, wire-change and tag consistency checks directly.
 The tag still names that exact commit and must never be moved.
