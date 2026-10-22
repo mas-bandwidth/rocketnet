@@ -40,6 +40,7 @@
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_client_slots.h"
 #include "rocketnet_token_tables.h"
+#include "rocketnet_connect_token.h"
 #include "rocketnet_keys.h"
 #include "rocketnet_protocol.h"
 #include "rocketnet_address.h"
@@ -866,12 +867,14 @@ static void test_token_create_skew_enforced_without_lifetime_cap()
 // rocketnet_verify_signed_connect_data; tla/ReceiveOrder.tla,
 // ClaimOnlyAfterSignature). A request whose signature fails touches nothing
 // in the claim table, so it cannot disturb a live claim either: here the
-// first address's valid request holds the claim (and is denied, the server
-// being full), a forged-signature request from that same address follows,
-// and the captured valid request from a second address must still be refused
-// at the claim rung, with no signature work. Before the split the forged
-// request wrote the claim and its failed signature released it, freeing the
-// token for the second address.
+// first address holds a live claim on the token (written directly: only a
+// request that reaches its challenge keeps a claim, and such an address then
+// has a mapping that answers its requests before the claim rung), a
+// forged-signature request from that same address follows, and the captured
+// valid request from a second address must still be refused at the claim
+// rung, with no signature work. Before the split the forged request wrote the
+// claim and its failed signature released it, freeing the token for the
+// second address.
 // ---------------------------------------------------------------------------
 
 static int rocketnet_handshake_request_past_cookie( struct rocketnet_handshake_server_t * test,
@@ -895,18 +898,18 @@ static void test_claim_written_only_after_signature_verifies()
     struct rocketnet_handshake_server_t test;
     rocketnet_handshake_server_setup( &test );
 
-    // a full server: every slot held by some other client id
-    uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
-    for ( int i = 0; i < 4; i++ )
-        rocketnet_unit_check( rocketnet_client_slots_assign( test.server.client_slots, 0x7000ULL + (uint64_t) i, i, user_data ) == i );
-
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     rocketnet_handshake_build_request( request, 0xC1A1ULL, rocketnet_test_salt );
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
 
-    // the first address's valid request claims the token, then is denied
-    rocketnet_unit_check( rocketnet_handshake_request_past_cookie( &test, &test.client_address, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_DENIED );
+    // the first address holds a live claim on the token
+    const uint8_t * signed_data = request + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES +
+                                  ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES;
+    uint8_t identifier[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    rocketnet_connect_token_identifier( identifier, signed_data );
+    rocketnet_unit_check( rocketnet_used_token_history_claim_record( test.server.used_token_history, identifier, &test.client_address,
+                                                                     100.0 + test.server.handshake_deadline_seconds, 100.0 ) );
 
     // the same request from the same address with its signature corrupted
     uint8_t forged[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];

@@ -273,7 +273,7 @@ REGISTER_UNIT_TEST( test_standard_handshake_server_vectors );
 static void handshake_refusal_releases_claim( int refusal )
 {
     struct handshake_server_t test;
-    handshake_server_setup( &test, 600 );
+    handshake_server_setup( &test );
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     handshake_server_build_request( request, "198.51.100.7:56789",
                                     ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 3 );
