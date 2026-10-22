@@ -370,9 +370,15 @@ static void * portable_create( void * context, const rocketnet_server_transport_
 #endif
 }
 static void portable_destroy( void * transport ) { portable_server_cleanup( (portable_server_t*) transport ); }
+#if !defined( ROCKETNET_PLATFORM_HAS_WAKE )
+// The synchronous portable client below is the only user of the bare socket.
 static void portable_socket_destroy( void * transport ) { rocketnet_platform_socket_destroy( (rocketnet_platform_socket_t*) transport ); }
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && !ROCKETNET_XDP
+// The disabled xdp transport below is the only synchronous server transport.
 static void synchronous_stop( void * ) {}
 static bool synchronous_stopped( void * ) { return true; }
+#endif
 static void portable_send( void * transport, const rocketnet_platform_send_t * packets, int count )
 {
     portable_server_t * server = (portable_server_t*) transport;
@@ -458,8 +464,10 @@ static uint64_t portable_send_failures( void * transport )
     portable_server_t * server = (portable_server_t*) transport;
     return rocketnet_platform_socket_send_failures( server->socket ) + server->dropped.load( std::memory_order_relaxed );
 }
+#if !defined( ROCKETNET_PLATFORM_HAS_WAKE )
 static uint64_t portable_socket_send_failures( void * transport )
 { return rocketnet_platform_socket_send_failures( (rocketnet_platform_socket_t*) transport ); }
+#endif
 #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 // development library only. Sends leave the main thread when the worker takes
 // a published bank, so a functional case that injects socket send errors
