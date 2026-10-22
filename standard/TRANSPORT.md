@@ -752,7 +752,7 @@ Everything the server checks is gathered into one fixed buffer of the `signed co
 | protocol id | 4 | 8 | u64 | the title; MUST equal the receiving server's configured protocol id | any |
 | create timestamp | 12 | 8 | u64 | unix time the token was created | any |
 | expire timestamp | 20 | 8 | u64 | unix time the token expires | any |
-| timeout seconds | 28 | 4 | i32 | the connection timeout in seconds; a negative value disables the timeout (development only); zero is invalid | `-2147483648..2147483647` |
+| timeout seconds | 28 | 4 | i32 | the connection timeout in seconds; zero and negative values are invalid and are refused at both ends | `-2147483648..2147483647` |
 | address flags | 32 | 1 | u8 | bit 0 set means an IPv4 address is present, bit 1 an IPv6 address; bits 2 to 7 MUST be zero; at least one address MUST be present | `0x01`, `0x02`, `0x03` |
 | ipv4 address | 33 | 6 | bytes[6] | four octets then the port little-endian; zero when bit 0 is clear | any |
 | ipv6 address | 39 | 18 | bytes[18] | eight uint16 groups little-endian then the port little-endian; zero when bit 1 is clear | any |
@@ -2101,13 +2101,16 @@ a row marked server or client applies only at that end.
     session nonce sits between the sequence and the sealed data; a client
     MUST derive handshake keys into temporary storage and MUST commit them
     only after the open succeeds.
-12. A receiver MUST open the sealed data with the key for the type and the
+12. A server MUST reject a session packet whose mapping has no assigned
+    slot as `NOT_CONNECTED`, before decryption. The packet is not opened, so
+    the drop says nothing of its authenticity: it MUST NOT increment the
+    integrity-failure count or a `DID_NOT_OPEN` counter. The connection
+    response is not a session packet and is not gated here.
+13. A receiver MUST open the sealed data with the key for the type and the
     associated data of [t9 Packet protection](#t9). A packet that does not
     open, or whose expected handshake plaintext size is not exact, is
     `DID_NOT_OPEN`; this check alone increments the integrity-failure count
     that [t14 Replay protection](#t14) bounds.
-13. A server MUST reject a session packet whose mapping has no assigned
-    slot as `NOT_CONNECTED`, after the open and before marking the sequence.
 14. For the session types, a receiver MUST mark the sequence received and
     then advance the most recent sequence.
 15. For session types, a receiver MUST read and validate the ack block at
@@ -2141,8 +2144,8 @@ a row marked server or client applies only at that end.
 | 8 | server mapping | before decryption | `NO_MAPPING` |
 | 9 | sequence reconstruction | before decryption | `ZERO_SEQUENCE` |
 | 10 | replay already received | before decryption | `ALREADY_RECEIVED` |
-| 12 | sealed open and expected handshake plaintext size | decryption | `DID_NOT_OPEN` |
-| 13 | server slot gate | after decryption, before the replay mark | `NOT_CONNECTED` |
+| 12 | server slot gate | before decryption | `NOT_CONNECTED` |
+| 13 | sealed open and expected handshake plaintext size | decryption | `DID_NOT_OPEN` |
 | 15 | session ack block | after decryption | `BAD_ACK_BLOCK` |
 | 16 | session opened size less the ack block | after decryption | `WRONG_OPENED_SIZE` |
 | 17 | client keep-alive index and slot count | after decryption, before ack application | `CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE` |
@@ -2411,7 +2414,7 @@ a0 8f 69 ab 93 03 a4 d2 ec a3 b0 d7 eb 0e af 4b
 The client is in exactly one of the states of the table below. A state number is signed: a negative state is how the last attempt or connection ended, and a non-negative state is a state the client acts in.
 
 1. A client MUST be created in disconnected (0) and MUST hold no connect token at creation. A connect token MUST be accepted only in disconnected (0). In every other state, a connect token MUST be ignored and the state MUST NOT change.
-2. A connect token accepted in disconnected (0) MUST be checked before any packet is sent. The token is invalid when its address flags name no family or set any bit above the two family flags, when its create timestamp is later than its expire timestamp, or when its version is not the version of [t3 Constants and registries](#t3). An invalid token MUST put the client in invalid connect token (-6). A token whose expire timestamp is not later than the current time MUST put the client in connect token expired (-7). Neither check sends a packet.
+2. A connect token accepted in disconnected (0) MUST be checked before any packet is sent. The token is invalid when its address flags name no family or set any bit above the two family flags, when its create timestamp is later than its expire timestamp, when its timeout seconds is zero or negative, or when its version is not the version of [t3 Constants and registries](#t3). An invalid token MUST put the client in invalid connect token (-6). A token whose expire timestamp is not later than the current time MUST put the client in connect token expired (-7). Neither check sends a packet.
 3. An accepted token MUST select one server address for the whole attempt: the IPv6 address when its flag is set and the client's host can open an IPv6 socket; otherwise the IPv4 address when its flag is set; otherwise the IPv6 address. A host that cannot open a socket of the selected family MUST NOT send to it.
 4. An attempt MUST begin with a fresh connection salt and a fresh ephemeral keypair. The handshake and session sending sequences MUST start at one and MUST NOT be reset within the attempt.
 5. The client MUST enter requesting cookie (1), sending connection request (2), sending connection response (3) and connected (4) in that order, each at most once per attempt.
@@ -2665,7 +2668,7 @@ The server turns a connection request into an encryption mapping, and a connecti
 3. A server MUST then ignore a request from a source address that is already connected, counting `CONNECTION_REQUEST_ALREADY_CONNECTED`. A request from a source address that holds a mapping without a connected slot MUST be answered with that mapping's stored connection challenge packet, byte-identical, regardless of the request's connection salt, counting `CONNECTION_REQUEST_CHALLENGE_RESENT`, and it MUST NOT create a second mapping or derive new keys for that address. Only a request whose connection salt matches the mapping's refreshes the mapping's half-open idle deadline ([t17 Timing and defaults](#t17) rule 4).
 4. A server MUST then ignore a request whose version is not the protocol version, and then one whose protocol id is not the server's.
 5. A server MUST then refuse a token whose expire timestamp is not later than the server's current time, counting `CONNECTION_REQUEST_TOKEN_EXPIRED`. It MUST also refuse a token whose create timestamp is more than the creation skew after the server's current time, counting `CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE`, independently of the maximum token lifetime. When the configured maximum token lifetime is positive, it MUST refuse a token whose lifetime exceeds that maximum, counting `CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG`. Such a token MUST NOT be answered.
-6. A server MUST then ignore a request whose timeout is zero or negative without permission, then one whose address flags name no family or set a bit above bit 1, then one whose token address of the family the request arrived on (a v4-mapped source is IPv4) is not one this server serves, the token's other-family address unread, and then one whose server public key is not this server's. It MUST NOT answer a request that rules 2, 4, 5 or 6 refuse.
+6. A server MUST then ignore a request whose timeout is zero or negative, then one whose address flags name no family or set a bit above bit 1, then one whose token address of the family the request arrived on (a v4-mapped source is IPv4) is not one this server serves, the token's other-family address unread, and then one whose server public key is not this server's. It MUST NOT answer a request that rules 2, 4, 5 or 6 refuse.
 7. A server MUST require a valid return cookie before any asymmetric work, and MUST answer a request without one, with a forged one, or with an expired one with a fresh connection cookie packet.
 8. A server MUST refuse, unanswered, a request whose cookie is valid when the per-update handshake work budget is spent, counting `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`.
 9. A server MUST refuse, unanswered, a request whose token identifier is bound to a different source address, and a request whose token identifier carries a live request claim held by a different source address, counting `CONNECTION_REQUEST_TOKEN_ALREADY_USED`. The first valid request records the claim for its source address before any signature, seal or keypair work; the claim ends at the handshake deadline or when a response binds the token ([t17 Timing and defaults](#t17) item 13). A server MUST also refuse, unanswered, a request that finds no free encryption mapping slot before the signature, seal and keypair rungs run, counting `CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING` and `MAPPING_TABLE_FULL`. Once the failed-signature budget of the current window is spent, a server MUST refuse a request from a source with a recorded failure in that window, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`. A source with no recorded failure in the window is not refused by that budget ([t17 Timing and defaults](#t17) item 12).
@@ -3028,11 +3031,12 @@ An established connection times out at either end when no packet has been
 accepted from the peer for the connection timeout interval.
 
 The interval is the token's `timeout seconds` field ([t6 Connect token](#t6)).
-The server MUST refuse a connection request whose timeout is zero, MUST
-refuse a negative timeout unless a development mode explicitly permits one,
-and MUST clamp a positive timeout to the `server max_timeout_seconds` row of
-[t2.3 Configuration surface](#t2.3). A positive timeout is the interval; a
-negative timeout disables the timeout.
+The server MUST refuse a connection request whose timeout is zero or
+negative, and MUST clamp a positive timeout to the `server max_timeout_seconds`
+row of [t2.3 Configuration surface](#t2.3). A client MUST refuse a token whose
+timeout is zero or negative before it sends any packet
+([t11 Handshake: client](#t11)). A positive timeout is the interval; no
+timeout value disables it.
 
 A server whose connection times out MUST reset its slot
 ([t13.4 Slot reset](#t13.4)) and MUST destroy the connection's encryption
@@ -3120,8 +3124,8 @@ A receiver MUST apply the replay window to the five session packet types:
 connection keep-alive, connection payload, connection disconnect, connection
 ack and connection payload fragment. Handshake packet types are outside the
 window. A server MUST NOT move the window of a session packet whose source
-address has no assigned client slot: it opens the packet, ignores it, and does
-not mark it.
+address has no assigned client slot: it ignores the packet before decryption,
+as [t10 Receive processing](#t10) step 12 states, and does not mark it.
 
 Each endpoint MUST count, per connection and across all of that connection's
 keys, every sealed packet that fails to open, and MUST disconnect the
@@ -3609,9 +3613,9 @@ an input ([t1.4 Conventions](#t1.4)).
 6. An endpoint MUST end an established connection when the connection timeout
    has elapsed with no packet received from the peer. The connection timeout is
    the timeout seconds field of the connect token
-   ([t6 Connect token](#t6)); a connection whose timeout is negative, which
-   only a development mode permits, does not time out, and a request whose
-   timeout is zero is refused ([t13.2 Timeout](#t13.2)).
+   ([t6 Connect token](#t6)); a token whose timeout is zero or negative is
+   refused at both ends, so every connection times out
+   ([t13.2 Timeout](#t13.2)).
 7. A server MUST accept a connection cookie for the cookie lifetime of
    [t3 Constants and registries](#t3). After the cookie key rotates, the server
    MUST accept a cookie minted under the previous key for one cookie key

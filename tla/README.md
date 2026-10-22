@@ -95,7 +95,7 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 |---|---:|---|
 | `link` | 11 | All historical Link configurations |
 | `clientconnection` | 21 | All historical connection configurations, including nine debt cases |
-| `replaywindow` | 2 | Existing control and long-skip `WindowIsTruth` witness |
+| `replaywindow` | 4 | Control, mid-scale bench control, the long-skip `WindowIsTruth` witness and the open-before-gate `NoOpenBeforeConnect` witness |
 | `rnsendstore` | 1 | Existing committed control |
 | `rnring` | 5 | Existing committed control and four invariant witnesses |
 | `rnsendspans` | 3 | Send-span ring control and two invariant witnesses |

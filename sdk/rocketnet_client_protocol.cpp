@@ -172,11 +172,15 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
     rocketnet_read_connect_token( &client->token, connect_token );
     rocketnet_read_signed_connect_data( &client->signed_fields, client->token.signed_connect_data );
 
-    // the pre-send token checks, from the standard
+    // the pre-send token checks, from the standard (TRANSPORT.md t11 rule 2).
+    // a timeout of zero or below is invalid at both ends: the server ignores
+    // such a request, and a client that accepted the token would never time
+    // out (the deadline check below reads only a positive timeout)
 
     uint8_t flags = client->signed_fields.address_flags;
     if ( flags == 0 || ( flags & ~( ROCKETNET_ADDRESS_FLAG_IPV4 | ROCKETNET_ADDRESS_FLAG_IPV6 ) ) != 0 ||
          client->signed_fields.create_timestamp > client->signed_fields.expire_timestamp ||
+         client->signed_fields.timeout_seconds <= 0 ||
          client->signed_fields.version != ROCKETNET_WIRE_VERSION )
     {
         rocketnet_debug( "client connect failed. invalid connect token" );

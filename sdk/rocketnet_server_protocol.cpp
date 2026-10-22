@@ -396,7 +396,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     {
         const uint8_t * p = signed_connect_data + ROCKETNET_SIGNED_OFFSET_TIMEOUT;
         timeout_seconds = (int32_t) rocketnet_read_uint32( &p );
-        if ( timeout_seconds == 0 || ( timeout_seconds < 0 && !server->allow_negative_timeout ) )
+        if ( timeout_seconds <= 0 )
         {
             rocketnet_debug( "server ignored connection request. invalid timeout" );
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TIMEOUT_INVALID]++;
@@ -1080,6 +1080,28 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
+    // the slot gate, before any decryption, per TRANSPORT.md t10 step 12: a
+    // session packet for a mapping with no assigned slot (a half-open
+    // connection) is ignored unopened. The server acts on no session packet
+    // before the slot exists, so an open here was only ever spent on a
+    // packet dropped either way: a client that gives up in sending
+    // connection response sends its disconnect burst to a mapping that dies
+    // at its own deadline, and a lost response is repaired by the client's
+    // retransmission, never by its session traffic. The drop is
+    // NOT_CONNECTED, which says only that the mapping holds no slot: the
+    // packet was never opened, so it is counted neither forged nor authentic,
+    // it touches neither DID_NOT_OPEN nor the integrity-failure count, and
+    // the session window never moves (tla/ReplayWindow.tla
+    // NoAdvanceBeforeConnect and NoOpenBeforeConnect). The response is the
+    // one sealed type a slotless mapping exists to receive, so it passes.
+
+    if ( session_phase && mapping->control->client_index == -1 )
+    {
+        rocketnet_spam( "server ignored sealed packet. not connected" );
+        counters[type_counters->not_connected]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
     // type 3 binds the client ephemeral into its associated data; the
     // session types carry the minimal 21 bytes
 
@@ -1132,22 +1154,9 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         return rocketnet_server_process_connection_response( server, mapping_index, current_timestamp, current_time, response_packet, response_bytes );
     }
 
-    // session types: the slot gate runs before the replay-window mark, per
-    // STANDARD.md _Reading packets_ -- a session packet whose mapping has no
-    // assigned slot is ignored after the open and before the mark -- and
-    // _Processing session packets at the server_. The NoAdvanceBeforeConnect
-    // invariant of tla/ReplayWindow.tla: the session window of a mapping
-    // without a slot never moves.
-
-    // session traffic for a mapping with no slot is a lost-response race or
-    // an injection; the retransmitted response repairs the former
-
-    if ( mapping->control->client_index == -1 )
-    {
-        rocketnet_spam( "server ignored sealed packet. not connected" );
-        counters[type_counters->not_connected]++;
-        return ROCKETNET_SERVER_PROCESS_IGNORED;
-    }
+    // session types: the mapping holds a slot (the gate above), so the
+    // sequence is marked now, after the open (tla/ReplayWindow.tla
+    // NoAdvanceBeforeConnect).
 
     rocketnet_replay_advance( replay, sequence );
 

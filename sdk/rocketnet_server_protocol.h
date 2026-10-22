@@ -57,7 +57,6 @@ struct rocketnet_server_protocol_t
 
     double handshake_deadline_seconds;                      // default 5
     int32_t max_timeout_seconds;                            // clamp; <= 0 means no clamp
-    int allow_negative_timeout;                             // dev only
 
     struct rocketnet_encryption_map_t * encryption_map;
     struct rocketnet_used_token_history_t * used_token_history;

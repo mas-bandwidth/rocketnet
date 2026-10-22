@@ -8,7 +8,6 @@
 #define ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS      3
 #define ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS      60
 #define ROCKETNET_DEFAULT_MAX_TOKEN_LIFETIME_SECONDS   0
-#define ROCKETNET_DEFAULT_ALLOW_NEGATIVE_TIMEOUT       0
 
 static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS,
                "cookie rotation period must exceed cookie lifetime so a cookie never outlives both keys" );
@@ -282,11 +281,6 @@ struct rocketnet_server_transport_t
     int state;
     rocketnet_address_t bind_address;
     rocketnet_address_t public_address;
-
-    // the admission gate: consulted before process_packet for a source with
-    // no encryption mapping. NULL admits every source (the default).
-    rocketnet_server_admission_callback_t admission_callback;
-    void * admission_context;
 
     // the granted transport (ROCKETNET_TRANSPORT_*), decided by the ladder at
     // create and constant for the transport's life -- the runtime fork
@@ -1908,7 +1902,6 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     protocol->max_token_lifetime_seconds = ROCKETNET_DEFAULT_MAX_TOKEN_LIFETIME_SECONDS;
     protocol->handshake_deadline_seconds = config->handshake_deadline_seconds;
     protocol->max_timeout_seconds = config->max_timeout_seconds;
-    protocol->allow_negative_timeout = ROCKETNET_DEFAULT_ALLOW_NEGATIVE_TIMEOUT;
 
     protocol->encryption_map = rocketnet_encryption_map_create( context, max_clients * ROCKETNET_ENCRYPTION_MAP_RATIO );
     protocol->used_token_history = rocketnet_used_token_history_create( context, max_clients * ROCKETNET_USED_TOKEN_HISTORY_RATIO );
@@ -2316,32 +2309,6 @@ int rocketnet_server_transport_test_update_client_stats( const rocketnet_client_
 }
 #endif
 
-// The admission gate, consulted by the receive loops before a packet is
-// handed to the protocol. A source with a mapping has already cleared the
-// connect ladder and bypasses the gate; a callback that says DROP stops an
-// unmapped packet before any protocol work -- and any crypto -- runs. The
-// test drives this directly to pin the drop-before-verify contract.
-int rocketnet_server_transport_admission( const struct rocketnet_server_protocol_t * protocol,
-                                          rocketnet_server_admission_callback_t callback,
-                                          void * context,
-                                          const struct rocketnet_address_t * from,
-                                          const uint8_t * packet_data,
-                                          int packet_bytes )
-{
-    if ( !callback || rocketnet_encryption_map_find( protocol->encryption_map, from ) != -1 )
-        return ROCKETNET_SERVER_ADMISSION_ADMIT;
-    return callback( context, from, packet_data, packet_bytes );
-}
-
-void rocketnet_server_transport_set_admission_callback( struct rocketnet_server_transport_t * server_transport, rocketnet_server_admission_callback_t callback, void * context )
-{
-    if ( !rocketnet_api_null_guard( server_transport ) )
-        return;
-    rocketnet_assert( server_transport );
-    server_transport->admission_callback = callback;
-    server_transport->admission_context = context;
-}
-
 void rocketnet_server_transport_set_test_timestamp( struct rocketnet_server_transport_t * server_transport, uint64_t timestamp )
 {
     rocketnet_assert( server_transport );
@@ -2411,12 +2378,6 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
         const int wire_client_before = rocketnet_server_wire_client_index( server_transport, &received->from[i] );
         rocketnet_server_wire_totals_add_received( server_transport, wire_client_before, &received->from[i], received->packet_bytes[i] );
-
-        // the admission gate: an unmapped source goes through the application's
-        // callback before any send frame is reserved or protocol work runs, so
-        // a drop costs no crypto and no staging
-        if ( rocketnet_server_transport_admission( &server_transport->protocol, server_transport->admission_callback, server_transport->admission_context, &received->from[i], received->packet_data[i], received->packet_bytes[i] ) == ROCKETNET_SERVER_ADMISSION_DROP )
-            continue;
 
         uint8_t * payload = server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE ?
             server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_RECEIVE_PAYLOAD_BYTES : NULL;
@@ -2561,20 +2522,14 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             rocketnet_server_wire_totals_add_received( server_transport, wire_client_before, &from, packet_bytes );
 
             // A truncated datagram retains its original length for accounting,
-            // but the admission callback may read every byte it is given. Reject
-            // an oversize report before handing it that shorter stored prefix.
+            // but only the shorter prefix is stored. Reject an oversize report
+            // before the protocol reads that stored prefix as the whole packet.
             if ( packet_bytes > ROCKETNET_RECEIVE_CEILING )
             {
                 server_transport->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED]++;
                 server_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE]++;
                 continue;
             }
-
-            // the admission gate: an unmapped source goes through the application's
-            // callback before any send frame is reserved or protocol work runs, so
-            // a drop costs no crypto and no staging
-            if ( rocketnet_server_transport_admission( &server_transport->protocol, server_transport->admission_callback, server_transport->admission_context, &from, receive_frame, packet_bytes ) == ROCKETNET_SERVER_ADMISSION_DROP )
-                continue;
 
             uint8_t * payload = server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE ?
                 server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_RECEIVE_PAYLOAD_BYTES : NULL;
