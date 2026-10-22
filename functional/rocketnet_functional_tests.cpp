@@ -1904,7 +1904,7 @@ void rocketnet_test_transport_update_time_clamped()
     rocketnet_test_update_time_clamped_asserts = 0;
     rocketnet_assert_function( rocketnet_test_update_time_clamped_assert_hook );
 
-    rocketnet_server_transport_update( server, NAN );
+    rocketnet_server_transport_update( server, (double) NAN );
 
     rocketnet_assert_function( NULL );
 
@@ -2658,7 +2658,7 @@ void rocketnet_test_transport_acks_and_client_stats()
     for ( int i = 0; i < 8; i++ )
     {
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-        rocketnet_check( rocketnet_write_test_connect_token( server_address, 0x77000ULL + (uint64_t) i, rocketnet_functional_token_timestamp( server_config.game_clock_epoch, rocketnet_platform_time() ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+        rocketnet_check( rocketnet_write_test_connect_token( server_address, UINT64_C( 0x77000 ) + (uint64_t) i, rocketnet_functional_token_timestamp( server_config.game_clock_epoch, rocketnet_platform_time() ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
         clients[i] = rocketnet_client_transport_create( NULL, token, NULL, rocketnet_platform_time() );
         rocketnet_check( clients[i] );
     }
@@ -3563,7 +3563,7 @@ void rocketnet_test_server_handshake_deadline_from_config()
         rocketnet_client_protocol_update( &client, now, packet, &packet_bytes );
         rocketnet_check( packet_bytes > 0 );
         rocketnet_platform_socket_send_packet( peer, &client.server_address, packet, packet_bytes );
-        const uint64_t expected = retry == 0 ? 1 : retry;
+        const uint64_t expected = retry == 0 ? 1 : (uint64_t) retry;
         const int counter = retry == 0 ? ROCKETNET_COUNTER_MAPPING_CREATED : ROCKETNET_COUNTER_CONNECTION_REQUEST_CHALLENGE_RESENT;
         const double wait_start = rocketnet_platform_time();
         while ( rocketnet_server_transport_counters( server )->values[counter] < expected && rocketnet_platform_time() - wait_start < 5.0 )
@@ -3655,7 +3655,7 @@ void rocketnet_test_public_client_server_queries()
             rocketnet_check( out != NULL );
             memcpy( out, payload, sizeof( payload ) );
             rocketnet_check( rocketnet_client_finish_message( client, (int) sizeof( payload ) ) != 0 );
-            out = rocketnet_server_start_message( server, rocketnet_client_index( client ), 0, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, (int) sizeof( payload ) );
+            out = rocketnet_server_start_message( server, (uint64_t) rocketnet_client_index( client ), 0, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, (int) sizeof( payload ) );
             rocketnet_check( out != NULL );
             memcpy( out, payload, sizeof( payload ) );
             rocketnet_check( rocketnet_server_finish_message( server, (int) sizeof( payload ) ) != 0 );
@@ -7846,7 +7846,7 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
     if ( !capture_tool_present )
     {
         rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: FAILED: tcpdump is not installed, so no capture judges the wire", case_name );
-        rocketnet_check( !"tcpdump is not installed" );
+        rocketnet_check( capture_tool_present && "tcpdump is not installed" );
     }
 }
 
@@ -8339,8 +8339,8 @@ static void wire_bytes_per_family_exchange( const char * public_address, const c
     const uint64_t client_acks = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_ACK_RECEIVED] - server_ack_before;
     const uint64_t server_acks = rocketnet_client_transport_counters( client )->values[ROCKETNET_COUNTER_CLIENT_ACK_RECEIVED] - client_ack_before;
     const uint64_t headers = (uint64_t) payload_count * (uint64_t) ip_udp_header_bytes;
-    client_wire += client_acks * ( ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES + ip_udp_header_bytes );
-    server_wire += server_acks * ( ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES + ip_udp_header_bytes );
+    client_wire += client_acks * (uint64_t) ( ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES + ip_udp_header_bytes );
+    server_wire += server_acks * (uint64_t) ( ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES + ip_udp_header_bytes );
     rocketnet_check( client_after.packets_sent - client_before.packets_sent == (uint64_t) payload_count + client_acks );
     rocketnet_check( client_after.packets_received - client_before.packets_received == (uint64_t) payload_count + server_acks );
     rocketnet_check( server_after.packets_sent - server_before.packets_sent == (uint64_t) payload_count + server_acks );
