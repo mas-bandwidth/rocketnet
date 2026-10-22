@@ -117,6 +117,9 @@ int rocketnet_server_rio_test_faults_left( rocketnet_server_rio_t * rio, int fau
 // receive slices whose re-post was refused and that wait for the worker's
 // next pass to re-post them
 int rocketnet_server_rio_test_retry_receives( rocketnet_server_rio_t * rio );
+// no handed phase waits for the I/O worker and no posted phase has a send
+// outstanding (takes the transport mutex: test thread only)
+bool rocketnet_server_rio_test_send_idle( rocketnet_server_rio_t * rio );
 #endif
 
 #if defined(_WIN32)

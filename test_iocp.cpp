@@ -977,11 +977,13 @@ static void rio_stage( rocketnet_server_rio_t * rio, const rocketnet_address_t *
     }
 }
 
-// flushes until no send is outstanding and every receive slice is posted
+// flushes until the worker has taken every handed phase, no send is
+// outstanding and every receive slice is posted
 static void rio_settle( rocketnet_server_rio_t * rio )
 {
     const double deadline = rocketnet_platform_time() + 5.0;
-    while ( ( rocketnet_server_rio_pending(rio) != ROCKETNET_RIO_RECEIVES || rocketnet_server_rio_test_retry_receives(rio) != 0 ) &&
+    while ( ( rocketnet_server_rio_pending(rio) != ROCKETNET_RIO_RECEIVES || rocketnet_server_rio_test_retry_receives(rio) != 0 ||
+              !rocketnet_server_rio_test_send_idle(rio) ) &&
             rocketnet_platform_time() < deadline )
     {
         rocketnet_server_rio_send_packets(rio);
@@ -990,6 +992,7 @@ static void rio_settle( rocketnet_server_rio_t * rio )
     }
     CHECK(rocketnet_server_rio_pending(rio) == ROCKETNET_RIO_RECEIVES);
     CHECK(rocketnet_server_rio_test_retry_receives(rio) == 0);
+    CHECK(rocketnet_server_rio_test_send_idle(rio));
 }
 
 // every slot of both phases reserves: no phase is held by a send that never
