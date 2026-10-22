@@ -3,6 +3,7 @@
 // transport open helpers with the backend's operations; no transport, no thread,
 // no sleep, no clock.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "test/suite_runner.h"
 
@@ -58,8 +59,8 @@ static void test_loopback_transport_io_binds_and_discovers_a_port()
     rocketnet_unit_check( c.port != 0 );
     rocketnet_unit_check( c.port != a.port );
 
-    rocketnet_server_transport_io_close( &sa );
-    rocketnet_server_transport_io_close( &sc );
+    rn_test_server_io_stop_and_close( &sa );
+    rn_test_server_io_stop_and_close( &sc );
     printf( "test_loopback_transport_io_binds_and_discovers_a_port\n" );
 }
 
@@ -109,7 +110,7 @@ static void test_loopback_transport_io_exchanges_both_ways()
 
     rocketnet_unit_check( client.operations->receive( client.instance, &from, buf, 64 ) == 0 );
 
-    rocketnet_server_transport_io_close( &server );
+    rn_test_server_io_stop_and_close( &server );
     rocketnet_client_transport_io_close( &client );
     printf( "test_loopback_transport_io_exchanges_both_ways\n" );
 }
@@ -176,7 +177,7 @@ static void test_loopback_transport_io_dual_stack_serves_ipv4_and_ipv6()
     rocketnet_unit_check( reply_bytes == (int) sizeof( data6 ) && memcmp( reply, data6, sizeof( data6 ) ) == 0 );
     rocketnet_unit_check( rocketnet_address_equal( &reply_from, &to6 ) );
 
-    rocketnet_server_transport_io_close( &server );
+    rn_test_server_io_stop_and_close( &server );
     rocketnet_client_transport_io_close( &client4 );
     rocketnet_client_transport_io_close( &client6 );
     printf( "test_loopback_transport_io_dual_stack_serves_ipv4_and_ipv6\n" );
@@ -233,7 +234,7 @@ static void test_loopback_transport_io_full_queue_drops_and_counts()
     int bytes = 0;
     rocketnet_unit_check( server.operations->receive_batch( server.instance, &from, buf, 4, &bytes, 1 ) == 0 );
 
-    rocketnet_server_transport_io_close( &server );
+    rn_test_server_io_stop_and_close( &server );
     rocketnet_client_transport_io_close( &client );
     printf( "test_loopback_transport_io_full_queue_drops_and_counts\n" );
 }
@@ -348,7 +349,7 @@ static void test_loopback_transport_io_runtime_does_not_allocate()
     rocketnet_unit_check( g_loopback_allocation_calls == allocation_calls_after_create );
     rocketnet_unit_check( g_loopback_live_bytes - live_before == 2 * server_create_bytes );
 
-    rocketnet_server_transport_io_close( &server );
+    rn_test_server_io_stop_and_close( &server );
     rocketnet_client_transport_io_close( &client );
     rocketnet_unit_check( g_loopback_live_bytes == live_before );
 
@@ -379,7 +380,7 @@ static void test_loopback_transport_io_destroy_frees_the_port()
     rocketnet_client_transport_io_t client = {};
     rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address, &client ) );
 
-    rocketnet_server_transport_io_close( &server );
+    rn_test_server_io_stop_and_close( &server );
     rocketnet_unit_check( rocketnet_loopback_endpoints_live() == live_before + 1 );
 
     uint8_t data[4] = { 1, 2, 3, 4 };
@@ -395,7 +396,7 @@ static void test_loopback_transport_io_destroy_frees_the_port()
     rocketnet_unit_check( rocketnet_server_transport_io_open( backend->server, NULL, &server_setup, &again, &server2 ) );
     rocketnet_unit_check( again.port == port );
 
-    rocketnet_server_transport_io_close( &server2 );
+    rn_test_server_io_stop_and_close( &server2 );
     rocketnet_client_transport_io_close( &client );
     rocketnet_unit_check( rocketnet_loopback_endpoints_live() == live_before );
     printf( "test_loopback_transport_io_destroy_frees_the_port\n" );
@@ -425,7 +426,8 @@ struct wire_totals_staged_fixture_t
 };
 
 static void wt_staged_destroy(void *) {}
-static bool wt_staged_stop(void *) { return true; }
+static void wt_staged_stop( void * ) {}
+static bool wt_staged_stopped( void * ) { return true; }
 static void wt_staged_send_batch(void *, const rocketnet_platform_send_t *, int) {}
 static int wt_staged_receive_batch(void * p, rocketnet_address_t * from, uint8_t * data, int stride, int * bytes, int capacity)
 {
@@ -476,10 +478,10 @@ static void test_wire_totals_staged_finish_counts_exactly()
     rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
     if ( !server ) printf( "create_ex status=%d\n", create_status );
     rocketnet_unit_check( server );
-    rocketnet_server_transport_io_close( &server->io );
+    rn_test_server_io_stop_and_close( &server->io );
     memset( &operations, 0, sizeof(operations) );
     operations.destroy = wt_staged_destroy;
-    operations.stop = wt_staged_stop;
+    operations.stop = wt_staged_stop; operations.stopped = wt_staged_stopped;
     operations.send_batch = wt_staged_send_batch;
     operations.receive_batch = wt_staged_receive_batch;
     operations.flags = ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE;
@@ -501,10 +503,10 @@ static void test_wire_totals_staged_finish_counts_exactly()
         struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->protocol.encryption_map, index );
         uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
         rocketnet_unit_check( rocketnet_client_slots_assign( server->protocol.client_slots, i + 1, index, user_data ) == i );
-        mapping->client_index = i;
+        mapping->control->client_index = i;
         mapping->client_id = i + 1;
-        mapping->established = 1;
-        mapping->timeout_seconds = 1000;
+        mapping->control->established = 1;
+        mapping->control->timeout_seconds = 1000;
         memset( &mapping->keys, i + 1, sizeof(mapping->keys) );
         server->protocol.acks->endpoints[i].rtt_history[0] = 17.0f;
     }
@@ -538,7 +540,7 @@ static void test_wire_totals_staged_finish_counts_exactly()
     rocketnet_unit_check( cstats.packets_sent == (uint64_t) N );
     rocketnet_unit_check( cstats.bytes_sent == total_wire + (uint64_t) N * overhead );
 
-    rocketnet_server_transport_destroy( server );
+    rn_test_server_transport_stop_and_destroy( server );
     printf( "test_wire_totals_staged_finish_counts_exactly\n" );
 }
 
@@ -554,7 +556,8 @@ struct empty_datagram_fixture_t
 };
 
 static void empty_datagram_destroy(void *) {}
-static bool empty_datagram_stop(void *) { return true; }
+static void empty_datagram_stop( void * ) {}
+static bool empty_datagram_stopped( void * ) { return true; }
 static void empty_datagram_send_batch(void *, const rocketnet_platform_send_t *, int) {}
 static int empty_datagram_receive_batch(void * p, rocketnet_address_t * from, uint8_t * data, int stride, int * bytes, int capacity)
 {
@@ -596,11 +599,11 @@ static void test_server_counts_zero_length_datagram_as_too_short()
     int create_status = -1;
     rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
     rocketnet_unit_check( server );
-    rocketnet_server_transport_io_close( &server->io );
+    rn_test_server_io_stop_and_close( &server->io );
     rocketnet_server_transport_io_operations_t operations;
     memset( &operations, 0, sizeof(operations) );
     operations.destroy = empty_datagram_destroy;
-    operations.stop = empty_datagram_stop;
+    operations.stop = empty_datagram_stop; operations.stopped = empty_datagram_stopped;
     operations.send_batch = empty_datagram_send_batch;
     operations.receive_batch = empty_datagram_receive_batch;
     operations.receive = empty_datagram_receive;
@@ -619,7 +622,7 @@ static void test_server_counts_zero_length_datagram_as_too_short()
     rocketnet_unit_check( rocketnet_counter_value( counters, ROCKETNET_COUNTER_PREFILTER_TOO_SHORT ) - short_before == 4 );
     rocketnet_unit_check( rocketnet_counter_value( counters, ROCKETNET_COUNTER_PREFILTER_TOO_LARGE ) - large_before == 1 );
 
-    rocketnet_server_transport_destroy( server );
+    rn_test_server_transport_stop_and_destroy( server );
     printf( "test_server_counts_zero_length_datagram_as_too_short\n" );
 }
 
@@ -721,7 +724,7 @@ static void test_loopback_transport_io_holds_max_clients_plus_server()
 
     for ( int i = 0; i < ROCKETNET_MAX_CLIENTS; ++i )
         rocketnet_client_transport_io_close( &clients[i] );
-    rocketnet_server_transport_io_close( &server );
+    rn_test_server_io_stop_and_close( &server );
     rocketnet_unit_check( rocketnet_loopback_endpoints_live() == live_before );
 
     free( batch );
@@ -894,8 +897,8 @@ static void test_pending_wire_totals_expire_and_reuse_slots()
     rocketnet_unit_check( rocketnet_server_transport_is_client_connected( server, 0 ) );
     rocketnet_unit_check( server->client_wire_totals[0].packets_received > 0 );
 
-    rocketnet_client_transport_destroy( client );
-    rocketnet_server_transport_destroy( server );
+    rn_test_client_transport_stop_and_destroy( client );
+    rn_test_server_transport_stop_and_destroy( server );
     printf( "test_pending_wire_totals_expire_and_reuse_slots\n" );
 }
 
@@ -929,7 +932,7 @@ static void test_loopback_transport_server_batch_drops_packet_larger_than_stride
     rocketnet_unit_check( server.operations->receive_batch( server.instance, &from, data, sizeof(data), &bytes, 1 ) == 1 );
     rocketnet_unit_check( bytes == (int) sizeof(valid) );
     rocketnet_unit_check( memcmp( data, valid, sizeof(valid) ) == 0 );
-    rocketnet_server_transport_io_close( &server );
+    rn_test_server_io_stop_and_close( &server );
     rocketnet_client_transport_io_close( &client );
     printf( "test_loopback_transport_server_batch_drops_packet_larger_than_stride\n" );
 }

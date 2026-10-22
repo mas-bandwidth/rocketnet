@@ -38,6 +38,17 @@
 // the disconnect reasons (enum rocketnet_disconnect_reason_t)
 #include "rocketnet.h"
 
+#if defined(ROCKETNET_ACK_COST_TEST_HOOKS)
+// Present only in the unit-test library; counts actual work, not ACK calls.
+struct rn_ack_cost_t
+{
+    uint64_t predecessor_visits;
+    uint64_t completed_numbers;
+};
+void rn_window_ack_cost_reset();
+rn_ack_cost_t rn_window_ack_cost_read();
+#endif
+
 #if ROCKETNET_DEVELOPMENT
 
 // The resend gap record (development builds only; a release build has neither
@@ -190,6 +201,8 @@ void rn_window_ack_receipt_begin_update( rn_window_ack_t * ack );
 void rn_window_ack_receipt_end_update( rn_window_ack_t * ack );
 void rn_window_ack_receipt_sweep( rn_window_ack_t * ack, double now );
 void rn_window_ack_receipt_emit_loss( rn_window_ack_t * ack, uint32_t serial );
+// Returns the available count and copies at most capacity entries. NULL out
+// with zero capacity is a count query; invalid arguments return zero.
 int rn_window_ack_receipts( const rn_window_ack_t * ack, rocketnet_message_receipt_t * out, int capacity );
 
 // Processes one acked transport sequence `packet_id` at time `now`

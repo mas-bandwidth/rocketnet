@@ -1,5 +1,11 @@
 # RNClientReceiveQuit
 
+**Shutdown scope:** This model retains its earlier synchronous shutdown
+abstraction and exact historical evidence. The approved request/completion API
+is separately modeled in [RNClientIoShutdown](README-RNClientIoShutdown.md).
+That additive ownership model is not a proved refinement of this one; existing
+data-path/session checks do not establish the new shutdown implementation.
+
 The client receive thread's quit-and-wake handshake with destroy, as
 rocketnet-client-destroy-joins-receive-thread built it (the fix for a macOS
 hang in destroy: the receive thread's 1 ms wait sometimes never timed out,

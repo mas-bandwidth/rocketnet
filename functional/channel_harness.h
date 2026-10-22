@@ -528,7 +528,7 @@ static inline void rocketnet_channel_endpoint_update( void * transport, double t
                 if ( mapping_index != -1 )
                 {
                     const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( h->server.encryption_map, mapping_index );
-                    if ( mapping->client_index != -1 )
+                    if ( mapping->control->client_index != -1 )
                         rocketnet_channel_capture_session( time, "server", packet, bytes, h->server.protocol_id, mapping->connection_salt,
                                                            mapping->keys.session_client_to_server, mapping->replay_session.highest_opened,
                                                            mapping->send_sequence_session - 1 );

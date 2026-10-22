@@ -93,6 +93,7 @@ void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * s
 uint64_t rocketnet_server_socket_replay_commit_failures( struct rocketnet_server_socket_t * server_socket );
 
 void rocketnet_server_socket_stop( struct rocketnet_server_socket_t * server_socket );
+bool rocketnet_server_socket_stopped( struct rocketnet_server_socket_t * server_socket );
 
 int rocketnet_server_socket_state( struct rocketnet_server_socket_t * server_socket );
 

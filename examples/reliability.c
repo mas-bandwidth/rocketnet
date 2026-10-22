@@ -4,23 +4,21 @@
 
     Reliability: send a numbered run of messages in every reliability mode
     RocketNet offers (one channel per mode) over the loopback transport with
-    simulated packet loss, latency, and jitter, print what arrived and in what
-    order, and check each mode's delivery, ordering, and receipt guarantees.
+    deliberate packet loss, simulated latency, and jitter. Print arrival order
+    and check each mode's delivery, ordering, and receipt guarantees.
     Run it from the repository root: ./bin/example_reliability
 */
 
+#include "shutdown.h"
 #include "rocketnet.h"
 #include "dev_keys.h"
 
 // the published development backend key, from rocketnet.h (development builds)
 static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
 #include <stdio.h>
+#include <time.h>
 #include <stdint.h>
 #include <string.h>
-
-// This example uses the send names the header at this base declares (start,
-// finish, receive, release, send_packets); a later lifecycle rename makes
-// them *_start_message and friends.
 
 #define CHECK( cond ) do { if ( !( cond ) ) { printf( "FAIL: %s\n", #cond ); goto cleanup; } } while ( 0 )
 #define NUM_MODES 8
@@ -56,31 +54,33 @@ int main( void ) {
     server_config.transport = "loopback"; server_config.num_channels = NUM_MODES;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
-    // the development network simulator: 20 ms latency, 35 ms jitter, 25% loss
+    // Keep the simulator active from startup; loss is selected per send below.
     if ( server )
-        rocketnet_server_network_simulator( server, 20, 35, 25, 0 );
+        rocketnet_server_network_simulator( server, 20, 35, 0, 0 );
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
-        rocketnet_server_destroy( server );
+        rn_cli_server_stop_and_destroy( server );
         server = NULL;
     }
     CHECK( server != NULL );
 
     CHECK( rocketnet_server_ipv4_address( server, server_address, sizeof( server_address ) ) );
     rocketnet_server_public_key( server, server_public_key );
-    CHECK( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, 4102444800ull, NULL, connect_token ) == ROCKETNET_STATUS_OK );
+    const time_t token_time = time( NULL );
+    CHECK( token_time != (time_t) -1 );
+    CHECK( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, (uint64_t) token_time, NULL, connect_token ) == ROCKETNET_STATUS_OK );
 
     CHECK( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
     client_config.transport = "loopback"; client_config.num_channels = NUM_MODES;
     enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
     client = rocketnet_client_create( NULL, &client_config, &create_status_2 );
     if ( client )
-        rocketnet_client_network_simulator( client, 20, 35, 25, 0 );
+        rocketnet_client_network_simulator( client, 20, 35, 0, 0 );
     if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
-        rocketnet_client_destroy( client );
+        rn_cli_client_stop_and_destroy( client );
         client = NULL;
     }
     CHECK( client != NULL );
@@ -128,7 +128,7 @@ int main( void ) {
         (void) data; (void) bytes; (void) sender;
         struct rocketnet_receipt_t receipts[32];
         const int n_rec = slot >= 0 ? rocketnet_server_receipts( server, slot, receipts, 32 ) : 0;
-        for ( int r = 0; r < n_rec; r++ )
+        for ( int r = 0; r < n_rec && r < 32; r++ )
             for ( int m = 5; m < NUM_MODES; m++ )
                 for ( int i = 0; i < NUM_MSGS; i++ )
                     if ( stats[m].serials[i] == receipts[r].serial )
@@ -136,12 +136,18 @@ int main( void ) {
 
         // (3) run the game simulation for the frame
         // (4) queue this frame's outgoing messages with start and finish
+        // Drop the first send of each mode, then allow every later send and
+        // retry through. A random loss percentage cannot promise any loss
+        // in a run of only eight messages. Keep this setting through (5),
+        // since unreliable messages can leave at finish and reliable at send.
+        rocketnet_server_network_simulator( server, 20, 35, 0, 0 );
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
              slot >= 0 && rocketnet_server_client_connected( server, slot ) )
         {
             if ( sent < NUM_MODES * NUM_MSGS )
             {
                 const int m = sent / NUM_MSGS, seq = sent % NUM_MSGS + 1;
+                if ( seq == 1 ) rocketnet_server_network_simulator( server, 20, 35, 100, 0 );
                 uint8_t * out = rocketnet_server_start_message( server, (uint64_t) slot, m, modes[m], 2 );
                 CHECK( out != NULL );
                 out[0] = (uint8_t) m; out[1] = (uint8_t) seq;
@@ -171,19 +177,20 @@ int main( void ) {
         printf( "%-24s sent=%d arrived=%d order=[%s] gaps=%d duplicates=%d receipts=%d/%d\n",
                 names[m], NUM_MSGS, s->arrived, ord, gaps, s->dups, s->acked, s->lost );
         CHECK( s->dups == 0 );
-        if ( m == 0 || m == 5 ) CHECK( s->arrived < NUM_MSGS );
+        if ( m == 0 || m == 5 ) CHECK( s->arrived == NUM_MSGS - 1 && !s->seen[1] );
         if ( m == 1 || m == 4 ) CHECK( s->monotonic && s->arrived > 0 );
+        if ( m == 4 ) CHECK( max_seq == NUM_MSGS );
         if ( m == 2 || m == 3 || m == 6 || m == 7 ) CHECK( s->arrived == NUM_MSGS && gaps == 0 );
         if ( m == 3 || m == 7 ) CHECK( s->strict );
         if ( m >= 5 ) CHECK( s->acked + s->lost == NUM_MSGS && s->acked == s->arrived );
     }
     result = 0;
 cleanup:
-    rocketnet_client_destroy( client );
-    rocketnet_server_destroy( server );
+    rn_cli_client_stop_and_destroy( client );
+    rn_cli_server_stop_and_destroy( server );
     rocketnet_term();
-    // destroy ends a live connection and logs it, so PASS is printed after
-    // the cleanup to stay the last line
+    // CLI cleanup helpers wait for shutdown completion before destroy.
+    // PASS is printed afterward so it stays the last line
     if ( result == 0 )
         printf( "PASS\n" );
     return result;

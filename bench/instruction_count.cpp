@@ -24,6 +24,7 @@
 */
 
 #define ROCKETNET_DEVELOPMENT 1
+#include "../test/native_shutdown.h"
 #include "rocketnet.h"
 #include "rocketnet_driver_loopback.h"
 #include "rocketnet_internal.h"
@@ -274,8 +275,8 @@ void run_client_frame(bool setup_only)
 
     CHECK(received == (uint64_t)(CLIENT_FRAME_WARMUP + measured_frames) * CLIENT_FRAME_PACKETS);
 
-    rocketnet_client_transport_destroy(client);
-    rocketnet_server_transport_destroy(server);
+    rn_native_client_transport_stop_and_destroy(client);
+    rn_native_server_transport_stop_and_destroy(server);
     rocketnet_term();
 
     printf("instruction_count region=client_frame units=%d mode=%s compiler_id=%s build_type=%s\n",
@@ -410,8 +411,8 @@ void run_server_tick(bool setup_only)
               (SERVER_TICK_CLIENTS * SERVER_TICK_PACKETS_PER_CLIENT));
 
     for (int c = 0; c < SERVER_TICK_CLIENTS; ++c)
-        rocketnet_client_transport_destroy(clients[c]);
-    rocketnet_server_transport_destroy(server);
+        rn_native_client_transport_stop_and_destroy(clients[c]);
+    rn_native_server_transport_stop_and_destroy(server);
     rocketnet_term();
 
     printf("instruction_count region=server_tick units=%d mode=%s compiler_id=%s build_type=%s\n",

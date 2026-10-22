@@ -18,7 +18,8 @@
 // runs, closes that.
 //
 // It is a windowed global cap on failed verifies plus a per-source table that
-// remembers which sources have already failed this window. Once the global cap
+// remembers which host addresses have already failed this window (ports
+// are excluded, so changing ports cannot reset a host's failure history). Once the global cap
 // is spent, a request is refused before the verify only if its source is in
 // the table with a recorded failure this window. A source with no recorded
 // failure is always verified, even when the table is full, so forging sources

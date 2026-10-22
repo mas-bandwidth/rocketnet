@@ -124,8 +124,56 @@ struct rocketnet_received_packet_record_t
 static_assert( ROCKETNET_SENT_PACKET_BUFFER_SIZE % 64 == 0,
                "the sent ring must be a multiple of 64 for the bitmaps" );
 
+// Server statistics observe only these fields. The live ACK endpoint remains
+// the protocol authority; a worker merges dirty projections into its own
+// history and never reads an endpoint concurrently with the update/fill paths.
+struct rocketnet_ack_stats_sent_t
+{
+    uint64_t sequence;
+    double send_time;
+    uint32_t wire_bytes;
+    uint8_t acked;
+    uint8_t pad[3];
+};
+
+struct rocketnet_ack_stats_received_t
+{
+    uint64_t sequence;
+    double receive_time;
+    uint32_t wire_bytes;
+    uint32_t pad;
+};
+
+static_assert( sizeof(rocketnet_ack_stats_sent_t) == 24, "stats sent projection size" );
+static_assert( sizeof(rocketnet_ack_stats_received_t) == 24, "stats received projection size" );
+
+struct rocketnet_ack_stats_history_t
+{
+    uint64_t highest_sent;
+    uint64_t highest_received;
+    rocketnet_ack_stats_sent_t sent[ROCKETNET_SENT_PACKET_BUFFER_SIZE];
+    rocketnet_ack_stats_received_t received[ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE];
+    float rtt_history[ROCKETNET_RTT_HISTORY_SIZE];
+};
+
+#define ROCKETNET_RECEIVED_STATS_DIRTY_WORDS ( ( ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE + 63 ) / 64 )
+#define ROCKETNET_RTT_STATS_DIRTY_WORDS ( ( ROCKETNET_RTT_HISTORY_SIZE + 63 ) / 64 )
+
+struct rocketnet_ack_stats_delta_t
+{
+    rocketnet_ack_stats_history_t values;
+    uint64_t sent_dirty[ROCKETNET_SENT_BITMAP_WORDS];
+    uint64_t received_dirty[ROCKETNET_RECEIVED_STATS_DIRTY_WORDS];
+    uint64_t rtt_dirty[ROCKETNET_RTT_STATS_DIRTY_WORDS];
+    uint64_t generation;
+    uint8_t reset;
+};
+
 struct rocketnet_ack_endpoint_t
 {
+    // NULL for clients. The server binds this pointer
+    // after endpoint initialization and preserves it across slot reset.
+    rocketnet_ack_stats_delta_t * stats_delta;
     uint64_t sent_lock;                         // guards sent-record reservation and publication
     // highest_sequence folds under fill-phase threads with an atomic max;
     // ack_debt increments on the update thread alone and resets from fill
@@ -138,7 +186,7 @@ struct rocketnet_ack_endpoint_t
     uint64_t ack_debt;                          // eliciting packets received since the last block sent
 
     // published per-connection statistics, recomputed by update_stats --
-    // amortized round-robin across slots on the server, every update on the
+    // amortized round-robin across slots on the server, on each stats read on the
     // client. rtt and jitter in milliseconds, loss as a percentage.
     float rtt;
     float jitter;
@@ -270,12 +318,23 @@ int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endp
                                           uint64_t * batch_full_counter );
 
 // The per-connection statistics recompute, the reference's shape: rtt
-// is the minimum over the rtt history, jitter the mean deviation from it,
+// is the minimum over positive rtt history, jitter their mean deviation from it,
 // packet loss the unacked fraction of the sent window's older half -- the
-// newer half is excluded because its acks are still in flight -- and the
-// bandwidth numbers integrate the same windows.
+// newest half-window is excluded even during warmup; no eligible sends
+// publishes zero. The window is sequence-based, without time expiry. The
+// bandwidth numbers retain their original cohorts, including during warmup.
 
 void rocketnet_ack_endpoint_update_stats( struct rocketnet_ack_endpoint_t * endpoint );
+
+// Shared six-field result for direct worker-history calculation. The caller
+// owns the history exclusively while computing; this function never mutates it.
+struct rocketnet_ack_stats_result_t
+{
+    float rtt, jitter, packet_loss, sent_kbps, received_kbps, acked_kbps;
+};
+
+void rocketnet_ack_stats_history_compute( const rocketnet_ack_stats_history_t * history,
+                                        rocketnet_ack_stats_result_t * result );
 
 // -----------------------------------------
 //                    the server's acks

@@ -12,6 +12,7 @@
 // unreliable message per tick for 60 s of test time at 10 Hz, and the
 // reliable echoes must arrive in order at every client without a disconnect.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "sdk/rocketnet_connect_token.h"
 #include "sdk/rocketnet_base64.h"
@@ -140,8 +141,8 @@ static void fair_world_create( fair_world_t * world, int num_clients, int capaci
 static void fair_world_destroy( fair_world_t * world )
 {
     for ( int i = 0; i < world->num_clients; i++ )
-        rocketnet_client_destroy( world->clients[i] );
-    rocketnet_server_destroy( world->server );
+        rn_test_client_stop_and_destroy( world->clients[i] );
+    rn_test_server_stop_and_destroy( world->server );
 }
 
 static void fair_token( fair_world_t * world, uint64_t client_id, char * token_string )
@@ -524,7 +525,7 @@ static void test_server_send_capacity_default_covers_clients()
     struct rocketnet_server_transport_t * transport = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config );
     check( transport != NULL );
     check( rocketnet_server_transport_send_capacity( transport ) >= config.max_clients );
-    rocketnet_server_transport_destroy( transport );
+    rn_test_server_transport_stop_and_destroy( transport );
 }
 
 REGISTER_UNIT_TEST( test_server_send_capacity_default_covers_clients );

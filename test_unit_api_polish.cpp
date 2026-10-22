@@ -21,6 +21,7 @@
 //   8. memory and buffer sizes are size_t; create takes the config alone
 //   9. a NULL client's state is ROCKETNET_CLIENT_STATE_DISCONNECTED, counted as misuse
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 
 #include "rocketnet.h"
@@ -119,7 +120,7 @@ static void test_api_polish_status_returns()
     rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &create_status );
     check( client != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
-    rocketnet_client_destroy( client );
+    rn_test_client_stop_and_destroy( client );
     client_config.num_channels = 0;
     create_status = ROCKETNET_TEST_STATUS_UNSET;
     check( rocketnet_client_create( NULL, &client_config, &create_status ) == NULL );
@@ -129,11 +130,12 @@ static void test_api_polish_status_returns()
     check( rocketnet_client_default_config_internal( &client_config ) == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
     struct rocketnet_server_config_t server_config;
     api_polish_dev_server_config( &server_config );
+    server_config.max_clients = 1; // This case checks status codes, not server capacity.
     create_status = ROCKETNET_TEST_STATUS_UNSET;
     rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
     check( server != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
-    rocketnet_server_destroy( server );
+    rn_test_server_stop_and_destroy( server );
 }
 REGISTER_UNIT_TEST( test_api_polish_status_returns );
 
@@ -501,11 +503,12 @@ static void test_api_polish_client_index_is_minus_one_until_connected()
 
     // disconnected again: -1
     rocketnet_client_disconnect( client );
+    rn_test_client_wait_disconnected( client );
     check( rocketnet_client_index( client ) == -1 );
     check( g_polish_asserts == 0 );
 
-    rocketnet_client_destroy( client );
-    rocketnet_server_destroy( server );
+    rn_test_client_stop_and_destroy( client );
+    rn_test_server_stop_and_destroy( server );
     rocketnet_assert_function( NULL );
     rocketnet_quiet( false );
 }
@@ -530,7 +533,7 @@ static void test_api_polish_server_abort_message_without_start_is_a_no_op()
     check( rocketnet_api_misuse_count() == before );
     rocketnet_assert_function( NULL );
 
-    rocketnet_server_destroy( server );
+    rn_test_server_stop_and_destroy( server );
 }
 REGISTER_UNIT_TEST( test_api_polish_server_abort_message_without_start_is_a_no_op );
 

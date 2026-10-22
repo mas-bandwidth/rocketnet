@@ -761,8 +761,8 @@ static void test_keep_alive_clock_counts_only_keep_alives()
 
 // ---------------------------------------------------------------------------
 // Create-skew refusal: a connect token created more than five seconds in the
-// future is refused as CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE, and only
-// while max_token_lifetime_seconds > 0
+// future is refused as CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE, whether
+// or not max_token_lifetime_seconds imposes a lifetime cap
 // (sdk/rocketnet_server_protocol.cpp,
 // rocketnet_server_protocol_process_connection_request)
 // ---------------------------------------------------------------------------
@@ -816,7 +816,7 @@ static void test_token_created_within_skew_passes_the_rung()
     rocketnet_handshake_server_teardown( &test );
 }
 
-static void test_token_create_skew_unchecked_without_lifetime_cap()
+static void test_token_create_skew_enforced_without_lifetime_cap()
 {
     struct rocketnet_handshake_server_t test;
     rocketnet_handshake_server_setup( &test );
@@ -827,15 +827,34 @@ static void test_token_create_skew_unchecked_without_lifetime_cap()
                                                    ROCKETNET_TEST_CREATE_TS + 6 );
 
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
-    int response_bytes = 0;
-    uint64_t before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED];
+    int response_bytes = -1;
+    const struct rocketnet_counters_t before = test.counters;
 
     int result = rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
                                                                         request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
                                                                         ROCKETNET_TEST_CREATE_TS, 1000.0,
                                                                         response, &response_bytes );
+    rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_unit_check( response_bytes == 0 );
+    rocketnet_counters_expect( &before, &test.counters,
+                               { { ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED, 1 },
+                                 { ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE, 1 } } );
+    rocketnet_unit_check( rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) == -1 );
+
+    // The boundary remains admissible with the cap disabled: this is a
+    // creation-skew refusal, not a blanket refusal of uncapped tokens.
+    rocketnet_handshake_build_request_with_create( request, 0x5A0CULL, rocketnet_test_salt,
+                                                   ROCKETNET_TEST_CREATE_TS + 5 );
+    const struct rocketnet_counters_t after_refusal = test.counters;
+    result = rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
+                                                                     request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                     ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                                     response, &response_bytes );
     rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
-    rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == before );
+    rocketnet_unit_check( response_bytes == ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES );
+    rocketnet_counters_expect( &after_refusal, &test.counters,
+                               { { ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED, 1 },
+                                 { ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE, 1 } } );
 
     rocketnet_handshake_server_teardown( &test );
 }
@@ -843,7 +862,7 @@ static void test_token_create_skew_unchecked_without_lifetime_cap()
 REGISTER_UNIT_TEST( test_client_ephemeral_erased_outside_handshake );
 REGISTER_UNIT_TEST( test_token_created_past_skew_is_refused );
 REGISTER_UNIT_TEST( test_token_created_within_skew_passes_the_rung );
-REGISTER_UNIT_TEST( test_token_create_skew_unchecked_without_lifetime_cap );
+REGISTER_UNIT_TEST( test_token_create_skew_enforced_without_lifetime_cap );
 REGISTER_UNIT_TEST( test_disconnect_absorbs_terminal_state );
 REGISTER_UNIT_TEST( test_one_connection_per_token_after_history_flush );
 REGISTER_UNIT_TEST( test_server_repeats_keep_alive_while_idle );

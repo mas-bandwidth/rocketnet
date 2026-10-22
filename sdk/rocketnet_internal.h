@@ -19,9 +19,13 @@
 #include "rocketnet_testing.h"
 #include "rocketnet_layers.h"
 
+#ifndef ROCKETNET_XDP
 #ifdef __linux__
 #define ROCKETNET_XDP 1
-#endif // #ifdef __linux__
+#else
+#define ROCKETNET_XDP 0
+#endif
+#endif
 
 // a compile-time assert that also builds in C compilers without C11 mode
 
@@ -36,7 +40,7 @@
     typedef char ROCKETNET_STATIC_ASSERT_JOIN( rocketnet_static_assert_, __LINE__ )[(condition) ? 1 : -1]
 #endif
 
-ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES <= ROCKETNET_RECEIVE_PACKET_BYTES, "the IPv6 packet is the smaller of the two families" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES == ROCKETNET_RECEIVE_PACKET_BYTES, "send and receive packet bounds match" );
 
 // -----------------------------------------
 //          status-returning lifecycle forms
@@ -375,8 +379,8 @@ inline void rocketnet_endian_fix( uint64_t * value )
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES % 8 == 0, "the payload capacity is a multiple of eight" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES < ROCKETNET_MAX_PACKET_BYTES, "the payload capacity fits the send budget" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PAYLOAD_BYTES - ROCKETNET_MAX_PACKET_PAYLOAD_BYTES >=
-                         ROCKETNET_RECEIVE_PACKET_BYTES - ROCKETNET_MAX_PACKET_BYTES, "the receive payload is the capacity plus the family difference and the rounding" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PAYLOAD_BYTES == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,
+                         "send and receive payload bounds match" );
 
 // -----------------------------------------
 //                  transport config tables
@@ -546,7 +550,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
     INT_FIELD( num_channels,               32,      1, ROCKETNET_MAX_CHANNELS, 0 )   /* WIRE */                            \
     INT_FIELD( reliable_messages_in_flight,          1024,     64, 1 << 20,                0 )   /* WIRE, power of two */              \
     INT_FIELD( receive_message_buffer_bytes,     262144,   4096, 1 << 20,                0 )   /* WIRE, multiple of 16 */            \
-    INT_FIELD( max_message_bytes,      262144,   ROCKETNET_MESSAGE_SINGLE_BYTES, 1 << 20, 0 )   /* WIRE, <= receive_message_buffer_bytes */     \
+    INT_FIELD( max_message_bytes,      262144,   ROCKETNET_MESSAGE_SINGLE_BYTES, ROCKETNET_MAX_MESSAGE_BYTES, 0 )   /* WIRE, <= receive_message_buffer_bytes */     \
     INT_FIELD( send_message_buffer_bytes,      800000,  12288, 1 << 28,                0 )                                         \
     INT_FIELD( send_queue_messages,      1024,     16, 1 << 20,                0 )                                         \
     INT_FIELD( packets_in_flight,         256,     16, 1 << 16,                0 )                                         \
@@ -597,5 +601,10 @@ void rocketnet_platform_set_network_lookups_for_testing( const struct rocketnet_
 // the duration rocketnet_sleep passes to the platform: 0 for a negative, zero
 // or NaN request, ROCKETNET_SLEEP_MAX_SECONDS for a longer or infinite one
 double rocketnet_sleep_clamp( double seconds );
+
+// Internal final-burst operations for public server_stop. They preserve the
+// normal transport API while selecting a nonwaiting backend send on shutdown.
+void rocketnet_server_transport_disconnect_client_shutdown( struct rocketnet_server_transport_t * transport, int client_index );
+void rocketnet_server_transport_send_packets_shutdown( struct rocketnet_server_transport_t * transport );
 
 #endif // #ifndef ROCKETNET_INTERNAL_H

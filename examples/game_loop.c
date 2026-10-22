@@ -16,6 +16,7 @@
     [--clients <1..1000>] [--seconds <1..3600>] [--wrong-order]
 */
 
+#include "shutdown.h"
 #include "rocketnet.h"
 #include "dev_keys.h"
 
@@ -23,6 +24,7 @@
 static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
 
 #include <stdio.h>
+#include <time.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
@@ -122,7 +124,7 @@ int main( int argc, char ** argv )
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
-        rocketnet_server_destroy( server );
+        rn_cli_server_stop_and_destroy( server );
         server = NULL;
     }
     if ( !server ) { printf( "FAIL: server create\n" ); goto cleanup; }
@@ -137,9 +139,11 @@ int main( int argc, char ** argv )
     client_config.transport = "loopback";
     for ( int i = 0; i < num_clients; i++ )
     {
-        char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];       // a development token stamped far ahead, as in hello
+        char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];       // a development token stamped with current Unix time
         enum rocketnet_status_t client_status = ROCKETNET_STATUS_OK;
-        if ( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, (uint64_t) i, EXAMPLE_PROTOCOL_ID, 4102444800ull, NULL, token ) != ROCKETNET_STATUS_OK ||
+        const time_t token_time = time( NULL );
+        if ( token_time == (time_t) -1 ) { printf( "FAIL: token clock\n" ); goto cleanup; }
+        if ( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, (uint64_t) i, EXAMPLE_PROTOCOL_ID, (uint64_t) token_time, NULL, token ) != ROCKETNET_STATUS_OK ||
              !( clients[i] = rocketnet_client_create( NULL, &client_config, &client_status ) ) ||
              rocketnet_client_connect( clients[i], token ) != ROCKETNET_STATUS_OK )
             { printf( "FAIL: client %d create: %s\n", i, rocketnet_status_name( client_status ) ); goto cleanup; }
@@ -228,12 +232,12 @@ int main( int argc, char ** argv )
     else result = 0;
 
 cleanup:
-    for ( int i = 0; i < num_clients; i++ ) rocketnet_client_destroy( clients[i] );
-    rocketnet_server_destroy( server );
+    for ( int i = 0; i < num_clients; i++ ) rn_cli_client_stop_and_destroy( clients[i] );
+    rn_cli_server_stop_and_destroy( server );
     rocketnet_term();
     free( clients );
-    // destroy ends a live connection and logs it, so PASS is printed after
-    // the cleanup to stay the last line
+    // CLI cleanup helpers wait for shutdown completion before destroy.
+    // PASS is printed afterward so it stays the last line
     if ( result == 0 )
         printf( "PASS\n" );
     return result;

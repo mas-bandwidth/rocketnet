@@ -10,6 +10,7 @@
                               [--pause] [--self-test-corrupt]
 */
 
+#include "shutdown.h"
 #include "rocketnet.h"
 #include "dev_keys.h"
 
@@ -20,6 +21,7 @@ static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] 
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <time.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -45,7 +47,7 @@ static uint32_t read_u32( const uint8_t * p )
 
 #define MAX_SOAK_CLIENTS ROCKETNET_MAX_CLIENTS
 #define BATCH_CLIENTS 250
-#define DISCONNECT_BATCH 64
+#define DISCONNECT_BATCH_CLIENTS 64
 #define MAX_TICKS 7200
 
 // MSVC deprecates fopen, so this uses fopen_s there
@@ -210,7 +212,7 @@ int main( int argc, char ** argv ) {
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
-        rocketnet_server_destroy( server );
+        rn_cli_server_stop_and_destroy( server );
         server = NULL;
     }
     CHECK( server != NULL );
@@ -220,7 +222,9 @@ int main( int argc, char ** argv ) {
     rocketnet_server_public_key( server, server_public_key );
     for ( uint64_t c = 0; c < (uint64_t) num_clients; c++ ) {
         char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
-        CHECK( rocketnet_create_dev_connect_token( addr, NULL, server_public_key, 30, 10, c + 1, EXAMPLE_PROTOCOL_ID, 4102444800ULL, NULL, token ) == ROCKETNET_STATUS_OK );
+        const time_t token_time = time( NULL );
+        CHECK( token_time != (time_t) -1 );
+        CHECK( rocketnet_create_dev_connect_token( addr, NULL, server_public_key, 30, 10, c + 1, EXAMPLE_PROTOCOL_ID, (uint64_t) token_time, NULL, token ) == ROCKETNET_STATUS_OK );
         enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
         clients[c] = rocketnet_client_create( NULL, &c_cfg, &create_status_2 );
         if ( clients[c] )
@@ -228,18 +232,24 @@ int main( int argc, char ** argv ) {
         if ( !clients[c] ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
         if ( clients[c] && rocketnet_client_connect( clients[c], token ) != ROCKETNET_STATUS_OK )
         {
-            rocketnet_client_destroy( clients[c] );
+            rn_cli_client_stop_and_destroy( clients[c] );
             clients[c] = NULL;
         }
         CHECK( clients[c] != NULL );
     }
+    // the handshake crosses the client and server worker threads, which need
+    // real time to run: frames with no real time between them can finish
+    // before a reply arrives. The connect is bounded by real time, like the
+    // shutdown below, and the game clock follows it.
     double sim_time = 1000.0;
-    for ( int step = 0; step < 300; step++ ) {
+    const double connect_started = rocketnet_time();
+    const double connect_sim_start = sim_time;
+    while ( rocketnet_time() - connect_started < 10.0 ) {
         int all_conn = ( rocketnet_server_num_connected_clients( server ) == num_clients );
         for ( int c = 0; all_conn && c < num_clients; c++ )
             if ( rocketnet_client_state( clients[c] ) != ROCKETNET_CLIENT_STATE_CONNECTED ) all_conn = 0;
         if ( all_conn ) break;
-        sim_time += 1.0 / 60.0;
+        sim_time = connect_sim_start + ( rocketnet_time() - connect_started );
         for ( int base = 0; base < num_clients; base += BATCH_CLIENTS ) {
             int end = base + BATCH_CLIENTS < num_clients ? base + BATCH_CLIENTS : num_clients;
             for ( int c = base; c < end; c++ ) {
@@ -249,6 +259,7 @@ int main( int argc, char ** argv ) {
             rocketnet_server_update( server, sim_time );
             rocketnet_server_send_packets( server ); // send last so this frame's messages leave this frame
         }
+        rocketnet_sleep( 0.001 );
     }
     for ( int c = 0; c < num_clients; c++ )
         CHECK( rocketnet_client_state( clients[c] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
@@ -286,7 +297,8 @@ int main( int argc, char ** argv ) {
                 }
                 struct rocketnet_receipt_t recs[16];
                 int nrec = rocketnet_client_receipts( clients[c], recs, 16 );
-                for ( int r = 0; r < nrec; r++ ) if ( recs[r].status == ROCKETNET_RECEIPT_STATUS_ACKED ) c2s[c].acked_events++;
+                CHECK( nrec <= 16 );
+                for ( int r = 0; r < nrec && r < 16; r++ ) if ( recs[r].status == ROCKETNET_RECEIPT_STATUS_ACKED ) c2s[c].acked_events++;
                 // (3) simulate & (4) queue this frame's outgoing messages
                 if ( tick < soak_ticks && ( ( c + tick ) % stride == 0 ) ) {
                     uint8_t * p0 = rocketnet_client_start_message( clients[c], 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, 48 );
@@ -327,7 +339,8 @@ int main( int argc, char ** argv ) {
                 const int client_idx = rocketnet_client_index( clients[c] );
                 struct rocketnet_receipt_t recs[16];
                 int nrec = rocketnet_server_receipts( server, client_idx, recs, 16 );
-                for ( int r = 0; r < nrec; r++ ) if ( recs[r].status == ROCKETNET_RECEIPT_STATUS_ACKED ) s2c[c].acked_events++;
+                CHECK( nrec <= 16 );
+                for ( int r = 0; r < nrec && r < 16; r++ ) if ( recs[r].status == ROCKETNET_RECEIPT_STATUS_ACKED ) s2c[c].acked_events++;
                 // (3) simulate & (4) server queue outgoing messages
                 if ( tick < soak_ticks && ( ( c + tick ) % stride == 0 ) ) {
                     uint8_t * p0 = rocketnet_server_start_message( server, (uint64_t) client_idx, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, 48 );
@@ -349,6 +362,10 @@ int main( int argc, char ** argv ) {
             tick_srv_us += ( rocketnet_time() - s0 ) * 1e6;
         }
         if ( tick < soak_ticks ) { cli_us[tick] = tick_cli_us; srv_us[tick] = tick_srv_us; }
+        // the drain frames let real time pass, so what the worker threads
+        // still hold arrives (a few clients run the soak frames in well
+        // under a millisecond)
+        else rocketnet_sleep( 0.001 );
     }
     g_alloc.steady = false;
     uint64_t acked_total = 0;
@@ -366,21 +383,44 @@ int main( int argc, char ** argv ) {
     CHECK( srv_stats.messages_dropped_over_budget == 0 );
     CHECK( srv_stats.api_misuses == 0 );
     CHECK( sent_rel > 0 && recv_rel == sent_rel && acked_total == sent_rel && recv_seq > 0 && corrupt == 0 && gaps == 0 );
-    for ( int pass = 0; pass < 2 && rocketnet_server_num_connected_clients( server ) > 0; pass++ ) {
-        for ( int base = 0; base < num_clients; base += DISCONNECT_BATCH ) {
-            int end = base + DISCONNECT_BATCH < num_clients ? base + DISCONNECT_BATCH : num_clients;
-            for ( int c = base; c < end; c++ ) {
+    // Clients disconnect in batches, each once the batch before it has left
+    // and the server has read it. Each client sends a redundant burst of
+    // datagrams, and the server's loopback endpoint queues 2048 datagrams
+    // between updates (TRANSPORTS.md): every client leaving between two
+    // server updates overflows it, and the clients whose bursts are dropped
+    // end only on timeout. At most two batches' bursts are queued at once.
+    const double shutdown_started = rocketnet_time();
+    const double shutdown_sim_start = sim_time;
+    int disconnected = 0, next_disconnect = 0, batch_left = 1;
+    while ( rocketnet_time() - shutdown_started < 10.0 ) {
+        if ( batch_left && next_disconnect < num_clients ) {
+            const int end = next_disconnect + DISCONNECT_BATCH_CLIENTS < num_clients ? next_disconnect + DISCONNECT_BATCH_CLIENTS : num_clients;
+            for ( int c = next_disconnect; c < end; c++ )
                 rocketnet_client_disconnect( clients[c] );
-                rocketnet_client_send_packets( clients[c] ); // send last so this frame's messages leave this frame
-            }
-            sim_time += 1.0 / 60.0;
-            rocketnet_server_update( server, sim_time );
-            rocketnet_server_send_packets( server ); // send last so this frame's messages leave this frame
+            next_disconnect = end;
         }
+        disconnected = 1;
+        batch_left = 1;
+        sim_time = shutdown_sim_start + ( rocketnet_time() - shutdown_started );
+        for ( int c = 0; c < num_clients; c++ ) {
+            rocketnet_client_update( clients[c], sim_time );
+            if ( c >= next_disconnect || !rocketnet_client_disconnected( clients[c] ) ) {
+                disconnected = 0;
+                if ( c < next_disconnect ) batch_left = 0;
+            }
+        }
+        // Local completion does not prove that the server received a burst.
+        // Keep processing frames until both sides have finished disconnecting.
+        rocketnet_server_update( server, sim_time );
+        rocketnet_server_send_packets( server );
+        if ( disconnected && rocketnet_server_num_connected_clients( server ) == 0 )
+            break;
+        rocketnet_sleep( 0.001 );
     }
+    CHECK( disconnected );
     CHECK( rocketnet_server_num_connected_clients( server ) == 0 );
-    for ( int c = 0; c < num_clients; c++ ) { rocketnet_client_destroy( clients[c] ); clients[c] = NULL; }
-    rocketnet_server_destroy( server ); server = NULL;
+    for ( int c = 0; c < num_clients; c++ ) { rn_cli_client_stop_and_destroy( clients[c] ); clients[c] = NULL; }
+    rn_cli_server_stop_and_destroy( server ); server = NULL;
     rocketnet_term(); inited = false;
     CHECK( g_alloc.live_allocs == 0 && g_alloc.live_bytes == 0 );
     qsort( srv_us, (size_t) soak_ticks, sizeof( double ), cmp_double );
@@ -406,8 +446,8 @@ int main( int argc, char ** argv ) {
     exit_code = 0;
 
 cleanup:
-    if ( clients ) for ( int c = 0; c < num_clients; c++ ) if ( clients[c] ) rocketnet_client_destroy( clients[c] );
-    if ( server ) rocketnet_server_destroy( server );
+    if ( clients ) for ( int c = 0; c < num_clients; c++ ) if ( clients[c] ) rn_cli_client_stop_and_destroy( clients[c] );
+    if ( server ) rn_cli_server_stop_and_destroy( server );
     if ( inited ) rocketnet_term();
     free( index_client ); free( clients ); free( c2s ); free( s2c ); free( srv_us ); free( cli_us );
     // PASS after the cleanup, so it stays the last line

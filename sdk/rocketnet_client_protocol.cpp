@@ -811,7 +811,8 @@ static int rocketnet_client_session_after_open( struct rocketnet_client_protocol
     // the opened size, less the block, must match the type
 
     int type_data_bytes = opened_bytes - block_bytes;
-    if ( expected_type_data_bytes >= 0 ? type_data_bytes != expected_type_data_bytes : type_data_bytes < -expected_type_data_bytes )
+    if ( ( expected_type_data_bytes >= 0 ? type_data_bytes != expected_type_data_bytes : type_data_bytes < -expected_type_data_bytes ) ||
+         ( packet_type == ROCKETNET_CONNECTION_PAYLOAD_PACKET && type_data_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ) )
     {
         rocketnet_spam( "client ignored session packet. wrong opened size" );
         counters[type_counters->wrong_opened_size]++;
