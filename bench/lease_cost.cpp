@@ -176,7 +176,7 @@ int main(int argc, char ** argv)
                         CHECK(view == payload && capacity >= payload_bytes);
                         ++local_accessed;
                     }
-                memset(payload, 0x5a, payload_bytes);
+                memset(payload, 0x5a, size_t(payload_bytes));
                 if (plant)
                     for (int j = 0; j < 4096; ++j) plant_state = plant_state * 1664525 + 1013904223;
                 if (finish)
@@ -219,8 +219,8 @@ int main(int argc, char ** argv)
             }
         }
     }
-    CHECK(committed.load() == (finish ? uint64_t(batches + 100) * batch_size : 0));
-    CHECK(accessed.load() == (access ? uint64_t(batches + 100) * batch_size * 8 : 0));
+    CHECK(committed.load() == (finish ? uint64_t(batches + 100) * uint64_t(batch_size) : 0));
+    CHECK(accessed.load() == (access ? uint64_t(batches + 100) * uint64_t(batch_size) * 8 : 0));
     CHECK(!finish || received > 0);
     rn_native_client_transport_stop_and_destroy(client);
     rn_native_server_transport_stop_and_destroy(server);
