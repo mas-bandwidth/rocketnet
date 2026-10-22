@@ -216,7 +216,7 @@ static void test_server_admits_sequential_fresh_tokens_past_twice_max_clients()
         snprintf( address, sizeof(address), "198.51.100.%d:56789", 10 + cycle );
         tc_client_init( &c, address );
         uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
-        tc_mint_token( token_data, 0x3000ULL + (uint64_t) cycle );
+        tc_mint_token( token_data, UINT64_C( 0x3000 ) + (uint64_t) cycle );
         check( rocketnet_client_protocol_connect( &c.client, token_data, t.time, TC_NOW ) );
 
         const int state = tc_drive( &t, &c, TC_NOW );

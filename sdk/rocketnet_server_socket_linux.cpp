@@ -76,6 +76,7 @@ struct alignas(64) rocketnet_server_socket_send_packet_info_t
     rocketnet_address_t to;
     size_t packet_bytes;
     uint8_t destination_mac[ETH_ALEN];  // chosen at start by the reply-MAC rule
+    bool mac_learned;                   // destination_mac is the peer's learned MAC
 };
 
 // IMPORTANT: The 4096 byte padding walls in these structs are load-bearing. Each field
@@ -128,10 +129,10 @@ template<int N> struct rocketnet_xdp_buffer_exchange_t
 {
     static_assert( N >= 3, "producer, consumer and spare XDP buffers" );
     int producer = 0;
-    int free_index[N] = {};
+    int free_index[(size_t) N] = {};
     int free_head = 0;
     int free_count = N - 1;
-    int ready_index[N] = {};
+    int ready_index[(size_t) N] = {};
     int ready_head = 0;
     int ready_count = 0;
 
@@ -1670,7 +1671,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
     // initialize server xdp sockets (one socket per-NIC queue)
 
-    server_socket->socket = (rocketnet_server_xdp_socket_t*) rocketnet_malloc( server_socket->context, num_queues * sizeof(rocketnet_server_xdp_socket_t) );
+    server_socket->socket = (rocketnet_server_xdp_socket_t*) rocketnet_malloc( server_socket->context, (size_t) num_queues * sizeof(rocketnet_server_xdp_socket_t) );
     if ( server_socket->socket == NULL )
     {
         rocketnet_error( "server could not allocate sockets" );
@@ -1711,7 +1712,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
         const int buffer_size = ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
 
-        if ( posix_memalign( &socket->buffer, getpagesize(), buffer_size ) ) 
+        if ( posix_memalign( &socket->buffer, (size_t) getpagesize(), (size_t) buffer_size ) ) 
         {
             rocketnet_allocation_refused();
             rocketnet_error( "server could not allocate buffer" );
@@ -1742,7 +1743,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             struct xsk_socket_config xsk_config;
             rocketnet_xdp_socket_config( &xsk_config, ROCKETNET_XDP_RECV_QUEUE_SIZE, ROCKETNET_XDP_SEND_QUEUE_SIZE, zero_copy );
 
-            result = xsk_socket__create( &socket->xsk, interface_name, queue, socket->umem, &socket->receive_queue, &socket->send_queue, &xsk_config );
+            result = xsk_socket__create( &socket->xsk, interface_name, (__u32) queue, socket->umem, &socket->receive_queue, &socket->send_queue, &xsk_config );
             if ( result == 0 )
                 break;
 
@@ -1777,8 +1778,8 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
         // configure the xdp socket to receive packets from the xdp program
 
-        __u32 key = queue;
-        __u32 value = xsk_socket__fd( socket->xsk );
+        __u32 key = (__u32) queue;
+        __u32 value = (__u32) xsk_socket__fd( socket->xsk );
 
         if ( bpf_map_update_elem( server_socket->socket_map_fd, &key, &value, BPF_ANY ) < 0 ) 
         {
@@ -1806,7 +1807,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
         for ( int j = 0; j < ROCKETNET_XDP_NUM_FRAMES / 2; j++ )
         {
-            socket->send_frames[j] = j * ROCKETNET_XDP_FRAME_SIZE;
+            socket->send_frames[j] = (uint64_t) ( j * ROCKETNET_XDP_FRAME_SIZE );
         }
 
         socket->num_free_send_frames = ROCKETNET_XDP_NUM_FRAMES / 2;
@@ -1819,7 +1820,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
         for ( int j = 0; j < ROCKETNET_XDP_NUM_FRAMES / 2; j++ )
         {
-            socket->receive_frames[j] = ( ROCKETNET_XDP_NUM_FRAMES / 2 + j ) * ROCKETNET_XDP_FRAME_SIZE;
+            socket->receive_frames[j] = (uint64_t) ( ( ROCKETNET_XDP_NUM_FRAMES / 2 + j ) * ROCKETNET_XDP_FRAME_SIZE );
         }
 
         socket->num_free_receive_frames = ROCKETNET_XDP_NUM_FRAMES / 2;
@@ -1829,7 +1830,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             rocketnet_assert( ROCKETNET_XDP_FILL_QUEUE_SIZE <= ROCKETNET_XDP_RECV_QUEUE_SIZE );
 
             uint32_t index;
-            int result = xsk_ring_prod__reserve( &socket->fill_queue, ROCKETNET_XDP_FILL_QUEUE_SIZE, &index );
+            result = (int) xsk_ring_prod__reserve( &socket->fill_queue, ROCKETNET_XDP_FILL_QUEUE_SIZE, &index );
             if ( result != ROCKETNET_XDP_FILL_QUEUE_SIZE )
             {
                 rocketnet_error( "server failed to populate fill queue: %d", result );
@@ -1851,7 +1852,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
             for ( int i = 0; i < ROCKETNET_XDP_FILL_QUEUE_SIZE; i++ ) 
             {
-                uint64_t * frame = (uint64_t*) xsk_ring_prod__fill_addr( &socket->fill_queue, index + i );
+                uint64_t * frame = (uint64_t*) xsk_ring_prod__fill_addr( &socket->fill_queue, index + (uint32_t) i );
                 rocketnet_assert( frame );
                 *frame = frames[i];
             }
@@ -2112,6 +2113,9 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
     send_buffer->packet_info[packet_index].to = *to;
     send_buffer->packet_info[packet_index].packet_bytes = 0;
     memcpy( send_buffer->packet_info[packet_index].destination_mac, destination_mac, ETH_ALEN );
+    const uintptr_t learned_begin = (uintptr_t) &server_socket->reply_macs.entries[0];
+    const uintptr_t learned_end = (uintptr_t) &server_socket->reply_macs.entries[ROCKETNET_XDP_REPLY_MAC_ENTRIES];
+    send_buffer->packet_info[packet_index].mac_learned = (uintptr_t) destination_mac >= learned_begin && (uintptr_t) destination_mac < learned_end;
 
     return send_buffer->packet_data[packet_index];
 }
@@ -2161,7 +2165,7 @@ void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * s
     rocketnet_assert( packet_bytes > 0 );
     rocketnet_assert( packet_bytes <= ROCKETNET_RECEIVE_CEILING );
 
-    const int queue = packet_id % server_socket->num_queues;
+    const int queue = (int) ( packet_id % (uint64_t) server_socket->num_queues );
 
     rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
 
@@ -2182,18 +2186,39 @@ void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * s
     if ( packet_index < 0 || packet_index >= ROCKETNET_XDP_SEND_QUEUE_SIZE )
         return;
 
+    // a packet started before its peer's MAC was learned took the gateway
+    // (or the answered frame's MAC). The reply to a client's first
+    // authenticated packet is that case: the transport reserves it before
+    // the packet opens, and the open learns the MAC before this commit.
+    // Taking the learned MAC here sends it the way the same update's
+    // payloads go; through the gateway it arrived after them (the router's
+    // hairpin, ~200 us on hulk), and the client was handed payloads before
+    // the keep-alive that connects it. The table is written only by update,
+    // never during a fill.
+
+    rocketnet_server_socket_send_packet_info_t * info = &send_buffer->packet_info[packet_index];
+    if ( !info->mac_learned )
+    {
+        const struct rocketnet_xdp_reply_mac_entry_t * entry = rocketnet_xdp_reply_macs_find( &server_socket->reply_macs, &info->to );
+        if ( entry )
+        {
+            memcpy( info->destination_mac, entry->mac, ETH_ALEN );
+            info->mac_learned = true;
+        }
+    }
+
     // the packet is complete wire bytes as the protocol wrote them; nothing
     // is prepended here -- the xdp thread adds the ethernet, ip and udp
     // headers when it copies the packet into its umem frame
 
-    send_buffer->packet_info[packet_index].packet_bytes = packet_bytes;
+    info->packet_bytes = (size_t) packet_bytes;
 }
 
 void rocketnet_server_socket_abort_packet( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, uint8_t * packet_data )
 {
     rocketnet_assert( server_socket );
 
-    const int queue = packet_id % server_socket->num_queues;
+    const int queue = (int) ( packet_id % (uint64_t) server_socket->num_queues );
 
     rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
 
@@ -2494,6 +2519,82 @@ bool rocketnet_server_socket_test_inactive_flow()
     return valid;
 }
 
+// The reply that answers a client's first authenticated packet (the
+// keep-alive that connects it) is reserved before that packet opens, so no
+// MAC is learned yet and the rule picks the gateway; the open then learns
+// the client's MAC, and finish takes it. Without that, on a LAN with a
+// gateway the keep-alive took the router's hairpin and arrived ~200 us after
+// the payloads sent to the learned MAC in the same update (hulk, 10-22).
+bool rocketnet_server_socket_test_reply_mac_refreshed_at_finish()
+{
+    void * server_storage = rocketnet_malloc( NULL, sizeof(rocketnet_server_socket_t) );
+    void * socket_storage = rocketnet_malloc( NULL, sizeof(rocketnet_server_xdp_socket_t) );
+    if ( !server_storage || !socket_storage )
+    {
+        rocketnet_free( NULL, socket_storage );
+        rocketnet_free( NULL, server_storage );
+        return false;
+    }
+    auto * server = new (server_storage) rocketnet_server_socket_t();
+    auto * socket = new (socket_storage) rocketnet_server_xdp_socket_t();
+    server->num_queues = 1;
+    server->socket = socket;
+    socket->send_flow_index.store( socket->send_handoff.producer );
+    static const uint8_t gateway_mac[ETH_ALEN] = { 0x02, 0, 0, 0, 0, 2 };
+    static const uint8_t client_mac[ETH_ALEN] = { 0x02, 0, 0, 0, 0, 0x4e };
+    rocketnet_xdp_reply_macs_reset( &server->reply_macs, gateway_mac );
+    rocketnet_address_t to = {};
+    to.type = ROCKETNET_ADDRESS_IPV4;
+    to.data.ipv4[0] = 192;
+    to.data.ipv4[1] = 168;
+    to.data.ipv4[2] = 1;
+    to.data.ipv4[3] = 78;
+    to.port = 36800;
+
+    bool valid = true;
+    rocketnet_server_socket_send_buffer_t * send_buffer = &socket->send_buffer[socket->send_flow_index.load()];
+
+    // reserved before the client's MAC is learned: the gateway, for now
+    uint64_t reply_id = 0;
+    uint8_t * reply = rocketnet_server_socket_start_packet( server, &to, &reply_id );
+    valid &= reply != NULL;
+    valid &= reply && memcmp( send_buffer->packet_info[0].destination_mac, gateway_mac, ETH_ALEN ) == 0;
+
+    // the packet it answers opens and teaches the client's MAC
+    rocketnet_xdp_reply_macs_learn( &server->reply_macs, &to, client_mac );
+
+    // a payload staged after: the learned MAC
+    uint64_t payload_id = 0;
+    uint8_t * payload = rocketnet_server_socket_start_packet( server, &to, &payload_id );
+    valid &= payload != NULL;
+
+    if ( reply && payload )
+    {
+        rocketnet_server_socket_finish_packet( server, reply_id, reply, 41 );
+        rocketnet_server_socket_finish_packet( server, payload_id, payload, 68 );
+        valid &= memcmp( send_buffer->packet_info[0].destination_mac, client_mac, ETH_ALEN ) == 0;
+        valid &= memcmp( send_buffer->packet_info[1].destination_mac, client_mac, ETH_ALEN ) == 0;
+    }
+
+    // a reply to an address never learned keeps the gateway
+    rocketnet_address_t stranger = to;
+    stranger.port = 36801;
+    uint64_t stranger_id = 0;
+    uint8_t * stranger_reply = rocketnet_server_socket_start_packet( server, &stranger, &stranger_id );
+    valid &= stranger_reply != NULL;
+    if ( stranger_reply )
+    {
+        rocketnet_server_socket_finish_packet( server, stranger_id, stranger_reply, 38 );
+        valid &= memcmp( send_buffer->packet_info[2].destination_mac, gateway_mac, ETH_ALEN ) == 0;
+    }
+
+    socket->~rocketnet_server_xdp_socket_t();
+    server->~rocketnet_server_socket_t();
+    rocketnet_free( NULL, socket_storage );
+    rocketnet_free( NULL, server_storage );
+    return valid;
+}
+
 // Exercise the replay writer's pending buffer and its commit failure path
 // without a map or a kernel resource: replay_map_fd -1 refuses every syscall.
 bool rocketnet_server_socket_test_replay_marks()
@@ -2582,13 +2683,13 @@ static void pin_thread_to_cpu( int cpu )
         return;
     }
 
-    int num_cpus = sysconf( _SC_NPROCESSORS_ONLN );
+    int num_cpus = (int) sysconf( _SC_NPROCESSORS_ONLN );
     rocketnet_assert( cpu < num_cpus );
     (void) num_cpus; // read only by the assert above
 
     cpu_set_t cpuset;
     CPU_ZERO( &cpuset );
-    CPU_SET( cpu, &cpuset );
+    CPU_SET( (size_t) cpu, &cpuset );
 
     pthread_t current_thread = pthread_self();    
 
@@ -2733,7 +2834,7 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
             uint8_t * eth = receive_buffer->eth[i];
             rocketnet_address_t from = receive_buffer->from[i];
             uint8_t * packet_data = receive_buffer->packet_data[i];
-            const int packet_bytes = receive_buffer->packet_bytes[i];
+            const int packet_bytes = (int) receive_buffer->packet_bytes[i];
 
             rocketnet_assert( packet_bytes >= ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
             rocketnet_server_socket_process_staged_packet( server_socket, eth, &from, packet_data, packet_bytes );
@@ -2874,15 +2975,15 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
                 const int address_type = socket->serves_both ? -1 : socket->server_address.type;
                 if ( rocketnet_xdp_frame_receive( packet_data, (size_t) desc->len, address_type, &from, &payload_data, &payload_bytes, &socket->receive_drops ) )
                 {
-                    const int index = receive_buffer->num_packets;
+                    const int index = (int) receive_buffer->num_packets;
 
                     receive_buffer->from[index] = from;
 
                     memcpy( receive_buffer->eth[index], packet_data + ETH_ALEN, ETH_ALEN );      // the ethernet source
 
-                    memcpy( receive_buffer->packet_data[index], payload_data, payload_bytes );
+                    memcpy( receive_buffer->packet_data[index], payload_data, (size_t) payload_bytes );
 
-                    receive_buffer->packet_bytes[index] = payload_bytes;
+                    receive_buffer->packet_bytes[index] = (size_t) payload_bytes;
 
                     receive_buffer->num_packets++;
                 }
@@ -2926,7 +3027,7 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
         {
             for ( int i = 0; i < (int) num_completed; i++ )
             {
-                uint64_t frame = *xsk_ring_cons__comp_addr( &socket->complete_queue, complete_index + i );
+                uint64_t frame = *xsk_ring_cons__comp_addr( &socket->complete_queue, complete_index + (uint32_t) i );
                 free_send_frame( socket, frame );
             }
 
@@ -2951,15 +3052,15 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
                 // IMPORTANT: clamp num packets because it's an atomic increment across multiple threads so it can go over max if unlucky
 
-                int num_packets = send_buffer->num_packets;
+                int num_staged_packets = send_buffer->num_packets;
 
-                if ( num_packets > ROCKETNET_XDP_SEND_QUEUE_SIZE )
+                if ( num_staged_packets > ROCKETNET_XDP_SEND_QUEUE_SIZE )
                 {
-                    num_packets = ROCKETNET_XDP_SEND_QUEUE_SIZE;
+                    num_staged_packets = ROCKETNET_XDP_SEND_QUEUE_SIZE;
                 }
 
-                rocketnet_assert( num_packets >= 0 );
-                rocketnet_assert( num_packets <= ROCKETNET_XDP_SEND_QUEUE_SIZE );
+                rocketnet_assert( num_staged_packets >= 0 );
+                rocketnet_assert( num_staged_packets <= ROCKETNET_XDP_SEND_QUEUE_SIZE );
 
                 // grab a batch of non-zero byte packets from the send buffer
 
@@ -2968,7 +3069,7 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
                 rocketnet_assert( start_index >= 0 );
                 rocketnet_assert( start_index <= ROCKETNET_XDP_SEND_QUEUE_SIZE );
 
-                for ( int i = start_index; i < num_packets; i++ )
+                for ( int i = start_index; i < num_staged_packets; i++ )
                 {
                     if ( num_batch_packets >= ROCKETNET_XDP_SEND_BATCH_SIZE )
                         break;
@@ -3033,7 +3134,7 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
                 // UMEM now owns every copied packet. Only after the final copy
                 // may this worker reset and return staging to the free ring
                 // (tla/RNDriverSendStaging.tla WorkerRetire).
-                if ( send_buffer->packet_start_index == num_packets )
+                if ( send_buffer->packet_start_index == num_staged_packets )
                 {
                     send_buffer->num_packets.store( 0, std::memory_order_relaxed );
                     send_buffer->packet_start_index = 0;
@@ -3052,7 +3153,7 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
             // reserve entries in the send queue
 
             uint32_t send_queue_index;
-            int send_packets = xsk_ring_prod__reserve( &socket->send_queue, num_batch_packets, &send_queue_index );
+            int send_packets = (int) xsk_ring_prod__reserve( &socket->send_queue, (uint32_t) num_batch_packets, &send_queue_index );
 
             // All-or-zero: zero keeps the batch intact for retry.
             if ( send_packets == num_batch_packets )
@@ -3061,14 +3162,14 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
                 for ( int i = 0; i < send_packets; i++ )
                 {
-                    struct xdp_desc * __restrict__ desc = xsk_ring_prod__tx_desc( &socket->send_queue, send_queue_index + i );
+                    struct xdp_desc * __restrict__ desc = xsk_ring_prod__tx_desc( &socket->send_queue, send_queue_index + (uint32_t) i );
                     desc->addr = batch_frames[i];
-                    desc->len = batch_packet_bytes[i];
+                    desc->len = (__u32) batch_packet_bytes[i];
                 }
 
                 // submit send queue to transport
 
-                xsk_ring_prod__submit( &socket->send_queue, send_packets );
+                xsk_ring_prod__submit( &socket->send_queue, (uint32_t) send_packets );
 
                 // batch has been sent
 

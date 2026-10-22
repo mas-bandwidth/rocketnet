@@ -499,7 +499,7 @@ void rocketnet_frame_sync_wait( struct rocketnet_frame_sync_t * frame_sync )
     if ( drops > 0 )
     {
         frame_sync->dropped_frames += (uint64_t) drops;
-        rocketnet_debug( "frame sync: dropped %d frame%s (%.2fms late)", drops, drops == 1 ? "" : "s", frame_sync->wakeup_error_ns / 1000000.0 );
+        rocketnet_debug( "frame sync: dropped %d frame%s (%.2fms late)", drops, drops == 1 ? "" : "s", (double) frame_sync->wakeup_error_ns / 1000000.0 );
     }
 
     frame_sync->frame++;
@@ -517,6 +517,6 @@ void rocketnet_frame_sync_stats( struct rocketnet_frame_sync_t * frame_sync, str
     stats->dropped_frames = frame_sync->dropped_frames;
     stats->priority_held = frame_sync->priority_held;
     stats->spinning = frame_sync->spinning;
-    stats->guard_seconds = rocketnet_frame_sync_guard_ns( frame_sync->guard_ewma_ns, frame_sync->guard_cap_ns ) / 1000000000.0;
-    stats->wakeup_error_seconds = frame_sync->wakeup_error_ns / 1000000000.0;
+    stats->guard_seconds = (double) rocketnet_frame_sync_guard_ns( frame_sync->guard_ewma_ns, frame_sync->guard_cap_ns ) / 1000000000.0;
+    stats->wakeup_error_seconds = (double) frame_sync->wakeup_error_ns / 1000000000.0;
 }

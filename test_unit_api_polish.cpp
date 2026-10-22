@@ -280,6 +280,15 @@ static void api_polish_log_capture( void * context, rocketnet_log_level_t level,
     g_polish_message[n] = '\0';
 }
 
+// a level a C caller could pass that is outside the enum; copied in, since a
+// C++ cast of a value outside the enum's range is unspecified
+static rocketnet_log_level_t api_polish_raw_log_level( int raw )
+{
+    rocketnet_log_level_t level;
+    memcpy( &level, &raw, sizeof( level ) );
+    return level;
+}
+
 static void test_api_polish_log_callback_receives_a_message()
 {
     const rocketnet_log_level_t saved = rocketnet_log_level_current();
@@ -295,7 +304,7 @@ static void test_api_polish_log_callback_receives_a_message()
     check( strcmp( g_polish_message, "polish 9" ) == 0 );
 
     // a level outside the enum is ignored; the one in force stays
-    rocketnet_log_level( (rocketnet_log_level_t) 9 );
+    rocketnet_log_level( api_polish_raw_log_level( 9 ) );
     check( rocketnet_log_level_current() == ROCKETNET_LOG_LEVEL_INFO );
     rocketnet_log_level( saved );
 }
@@ -319,7 +328,7 @@ static void test_api_polish_lookups_say_unknown()
     check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_NONE ), "NONE" ) == 0 );
     check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_WARN ), "WARN" ) == 0 );
     check( strcmp( rocketnet_log_level_name( (rocketnet_log_level_t) 6 ), "UNKNOWN" ) == 0 );
-    check( strcmp( rocketnet_log_level_name( (rocketnet_log_level_t) -1 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_log_level_name( api_polish_raw_log_level( -1 ) ), "UNKNOWN" ) == 0 );
 
     check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_CONNECTED ), "CONNECTED" ) == 0 );
     check( strcmp( rocketnet_client_state_name( (rocketnet_client_state_t) 5 ), "UNKNOWN" ) == 0 );

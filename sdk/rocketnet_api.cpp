@@ -1103,9 +1103,9 @@ void rocketnet_client_stats( const struct rocketnet_client_t * client, struct ro
             counts[i] += connection[i];
         if ( client->connection )
         {
-            stats->rtt_ms = transport_stats.rtt;
-            stats->jitter_ms = transport_stats.jitter;
-            stats->packet_loss_percent = transport_stats.packet_loss;
+            stats->rtt_ms = (double) transport_stats.rtt;
+            stats->jitter_ms = (double) transport_stats.jitter;
+            stats->packet_loss_percent = (double) transport_stats.packet_loss;
             stats->packets_sent_per_second = transport_stats.packets_sent_per_second;
             stats->packets_received_per_second = transport_stats.packets_received_per_second;
             stats->bandwidth_sent_kbps = transport_stats.bandwidth_sent_kbps;
@@ -1998,8 +1998,8 @@ void rocketnet_server_stats( const struct rocketnet_server_t * server, struct ro
     {
         stats->packets_sent_per_second = (double) transport_stats.packets_sent_per_second;
         stats->packets_received_per_second = (double) transport_stats.packets_received_per_second;
-        stats->bandwidth_sent_kbps = transport_stats.bandwidth_sent_kbps;
-        stats->bandwidth_received_kbps = transport_stats.bandwidth_received_kbps;
+        stats->bandwidth_sent_kbps = (double) transport_stats.bandwidth_sent_kbps;
+        stats->bandwidth_received_kbps = (double) transport_stats.bandwidth_received_kbps;
     }
     stats->packets_sent = counts[RN_SERVER_PACKETS_SENT];
     stats->packets_received = counts[RN_SERVER_PACKETS_RECEIVED];
@@ -2038,19 +2038,19 @@ void rocketnet_server_client_stats( const struct rocketnet_server_t * server, in
     stats->packets_received = transport_stats.packets_received;
     stats->bytes_sent = transport_stats.bytes_sent;
     stats->bytes_received = transport_stats.bytes_received;
-    stats->rtt_ms = transport_stats.rtt;
-    stats->jitter_ms = transport_stats.jitter;
-    stats->packet_loss_percent = transport_stats.packet_loss;
-    stats->bandwidth_sent_kbps = transport_stats.bandwidth_sent_kbps;
-    stats->bandwidth_received_kbps = transport_stats.bandwidth_received_kbps;
-    stats->bandwidth_acked_kbps = transport_stats.bandwidth_acked_kbps;
+    stats->rtt_ms = (double) transport_stats.rtt;
+    stats->jitter_ms = (double) transport_stats.jitter;
+    stats->packet_loss_percent = (double) transport_stats.packet_loss;
+    stats->bandwidth_sent_kbps = (double) transport_stats.bandwidth_sent_kbps;
+    stats->bandwidth_received_kbps = (double) transport_stats.bandwidth_received_kbps;
+    stats->bandwidth_acked_kbps = (double) transport_stats.bandwidth_acked_kbps;
 }
 
 // ---------------------------------------------------------------------------
 // The development network simulator: a development library's calls, and a
 // unit-test build's (the test hooks switch the development posture on).
 
-#if ROCKETNET_DEV || ROCKETNET_LINK_SIMULATOR_TEST_HOOKS
+#if ROCKETNET_DEV || defined(ROCKETNET_LINK_SIMULATOR_TEST_HOOKS)
 
 static bool rn_network_simulator_valid( const char * who, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent )
 {
@@ -2099,4 +2099,4 @@ void rocketnet_server_network_simulator( struct rocketnet_server_t * server, int
         (void) rocketnet_server_transport_network_simulator( transport, latency_ms, jitter_ms, packet_loss_percent, duplicate_percent );
 }
 
-#endif // ROCKETNET_DEV || ROCKETNET_LINK_SIMULATOR_TEST_HOOKS
+#endif // ROCKETNET_DEV || defined(ROCKETNET_LINK_SIMULATOR_TEST_HOOKS)

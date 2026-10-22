@@ -227,7 +227,7 @@ static void rn_sent_index_insert( rn_region_t * region, uint64_t packet_id, uint
         }
         slot = ( slot + 1 ) % cap;
     }
-    rocketnet_assert( !"sent_index 2P table exhausted" );
+    rocketnet_assert( false && "sent_index 2P table exhausted" );
 }
 
 static void rn_sent_index_remove_at( rn_region_t * region, uint32_t slot )

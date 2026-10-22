@@ -205,7 +205,7 @@ static void test_public_step_driven_client_delivers_both_ways()
             {
                 data = batch->data[i];
                 bytes = batch->bytes[i];
-                sender = batch->client_index[i];
+                sender = (uint64_t) batch->client_index[i];
                 check( sender == 0 );
                 check( at_server < 2 && bytes == 4 && memcmp( data, client_messages[at_server], 4 ) == 0 );
                 at_server++;

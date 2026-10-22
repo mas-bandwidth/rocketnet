@@ -155,12 +155,12 @@ static void stats_world_destroy( stats_world_t * world )
 static void stats_check_six( const rocketnet_server_client_stats_t & actual,
                              const rocketnet_ack_endpoint_t & expected )
 {
-    check(fabs(actual.rtt_ms - expected.rtt) < 0.001);
-    check(fabs(actual.jitter_ms - expected.jitter) < 0.001);
-    check(fabs(actual.packet_loss_percent - expected.packet_loss) < 0.001);
-    check(fabs(actual.bandwidth_sent_kbps - expected.bandwidth_sent_kbps) < 0.001);
-    check(fabs(actual.bandwidth_received_kbps - expected.bandwidth_received_kbps) < 0.001);
-    check(fabs(actual.bandwidth_acked_kbps - expected.bandwidth_acked_kbps) < 0.001);
+    check(fabs(actual.rtt_ms - (double) expected.rtt) < 0.001);
+    check(fabs(actual.jitter_ms - (double) expected.jitter) < 0.001);
+    check(fabs(actual.packet_loss_percent - (double) expected.packet_loss) < 0.001);
+    check(fabs(actual.bandwidth_sent_kbps - (double) expected.bandwidth_sent_kbps) < 0.001);
+    check(fabs(actual.bandwidth_received_kbps - (double) expected.bandwidth_received_kbps) < 0.001);
+    check(fabs(actual.bandwidth_acked_kbps - (double) expected.bandwidth_acked_kbps) < 0.001);
 }
 
 static void stats_check_unchanged( const rocketnet_server_client_stats_t & actual,
@@ -243,7 +243,7 @@ static void test_server_stats_worker_publishes_only_on_next_update()
     world.time += 0.02;
     stats_step_and_update(&world);
     rocketnet_ack_endpoint_t * expected = stats_reference(endpoint);
-    check(fabs(expected->rtt - 7.0f) < 0.001 && expected->bandwidth_received_kbps > 0.0f);
+    check(fabsf(expected->rtt - 7.0f) < 0.001f && expected->bandwidth_received_kbps > 0.0f);
     const rocketnet_server_client_stats_t prior = rn_server_client_stats_of(world.server, world.slots[0]);
     check(rocketnet_server_transport_stats_worker_step_for_test(transport));
     stats_check_unchanged(rn_server_client_stats_of(world.server, world.slots[0]), prior);
@@ -418,7 +418,7 @@ static void test_server_stats_worker_coalesces_wrapped_history_and_late_ack()
     check(stats_ack_one(endpoint, late_sequence, late_time) == 1);
     check(stats_ack_one(endpoint, late_sequence, late_time + 9.0) == 0);
     // The duplicate must neither resample RTT nor re-ACK another record.
-    check(fabs(endpoint->rtt_history[late_sequence % ROCKETNET_RTT_HISTORY_SIZE] - 11.0) < 0.001);
+    check(fabsf(endpoint->rtt_history[late_sequence % ROCKETNET_RTT_HISTORY_SIZE] - 11.0f) < 0.001f);
     check(memcmp(active, sealed_copy, sizeof(*active)) == 0);
     rocketnet_ack_endpoint_t * after_ack = stats_reference(endpoint);
     check(after_ack->packet_loss < before_ack->packet_loss);

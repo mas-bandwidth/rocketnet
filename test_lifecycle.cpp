@@ -267,7 +267,7 @@ static void check_stats_cadence()
         check(total == (uint64_t)updates);
         for (int i = 0; i < 10000; ++i)
         {
-            index = rocketnet_stats_window_advance(buckets, index, (uint64_t)updates + i + 1, 0.9);
+            index = rocketnet_stats_window_advance(buckets, index, (uint64_t)updates + (uint64_t)i + 1, 0.9);
             buckets[index].packets++;
         }
         total = 0;
@@ -293,7 +293,7 @@ static void check_frame_conservation()
         submitted[index] = frame;
         ++written;
     };
-    auto submit = [&](uint32_t count) { check(written == (int)count); published += count; };
+    auto submit = [&](uint32_t count) { check(written == (int)count); published += (int)count; };
     // the refusing reserve reads its zero through a volatile, so the optimiser
     // cannot prove flush's code after the refusal unreachable (MSVC C4702)
     volatile uint32_t refused = 0;

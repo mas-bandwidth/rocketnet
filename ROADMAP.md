@@ -237,6 +237,7 @@ Many channels and many connections, measured.
 | About 1000 real connections with channels on, at game-like load | ❌ | ❌ | ❌ |
 | Socket-level swarm with Go orchestration against real transports | ❌ | ❌ | ❌ |
 | Multi-day soaks past 2^32 packets on one connection | ❌ | ❌ | ❌ |
+| Windows client overlapped send (WSASendTo + completion on the I/O thread) (later) | — | — | ❌ |
 | The load harness runs nightly on Linux, macOS and Windows (later) | ❌ | ❌ | ❌ |
 | LAN throughput and 1000 clients, one server per transport: the design (later) | ❌ | — | — |
 | LAN bench runner: the client load modes and the merge (later) | ❌ | ❌ | ❌ |
@@ -244,7 +245,7 @@ Many channels and many connections, measured.
 | LAN bench runner: the orchestration (later) | ❌ | ❌ | ❌ |
 | Profile pass 1, measurement: soak across the matrix, the raw numbers committed (later) | ❌ | ❌ | ❌ |
 | Profile pass 1, report: where the time goes, and what to cut first (later) | ❌ | ❌ | ❌ |
-| complete | 20% | 14% | 14% |
+| complete | 20% | 14% | 13% |
 
 [Source data](docs/roadmap.sexp)
 

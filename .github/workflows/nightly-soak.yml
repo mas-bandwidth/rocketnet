@@ -27,7 +27,7 @@ jobs:
         os:
           # the fleet's org runners (ci.yml build-and-test's note)
           - ubuntu-latest
-    runs-on: ${{ matrix.os == 'ubuntu-latest' && fromJSON('["self-hosted","Linux","X64","fleet","long"]') || matrix.os }}
+    runs-on: [self-hosted, Linux, X64, fleet, long]
     timeout-minutes: 90
     steps:
 
