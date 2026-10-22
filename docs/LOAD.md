@@ -157,8 +157,14 @@ final statistics, and general teardown calls are not timed.
 
 On Windows, the periodic resource sample keeps the cheap process handle count
 but does not repeat the global Toolhelp thread census inside the timed loop.
-Exact thread counts remain at pre-init, post-init, pre-term and post-term for
-the strict resource-baseline check. The reported `threads_peak` is the maximum
+The resource-baseline verdict is a census at pre-init, post-init, pre-term
+and post-term after one warm cycle (init, a one-client loopback server, one
+client, term; `load_census.h`): no thread or handle may survive post-init to
+pre-term or pre-init to post-term, by identity. Windows process thread pool
+workers (start routine in ntdll) and their handles belong to the operating
+system and are reported as `os_pool_threads`, never counted. The raw counts
+are still reported (`resource_baseline_schema=census_v1`); on Windows they
+move with the operating system and are not the verdict. The reported `threads_peak` is the maximum
 **observed at boundaries**: post-init, after setup, after connect, after the
 traffic-and-drain loop, and pre-term. It is not a continuous thread peak;
 `threads_peak_scope` names that sampling policy. A thread census at the
