@@ -51,7 +51,9 @@ The function computes its bound from the SDK memory plan for the exact config
 the case uses, then adds a stated process margin with `suite_rss_bound_mb`.
 Without `ROCKETNET_TEST_MAX_CASE_RSS_MB`, the runner uses that declared bound
 for the named case and the suite-wide bound for every other case. A positive
-environment override still applies uniformly. Sanitizer builds continue to
+environment override replaces the suite-wide bound and lifts a declared bound
+under it, but never lowers a declared bound: a Windows Debug job's override
+does not take a full-table case below its plan. Sanitizer builds continue to
 report without enforcing a bound unless the environment sets one. A declared
 plan of zero falls back to the suite-wide bound, so a refused memory plan
 cannot silently disable the check.
