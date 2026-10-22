@@ -1,6 +1,14 @@
 # RocketNet v1.0.0-preview-2
 
-Changes compared with the `v1.0.0-preview-1` tag. Published tag `v1.0.0-preview-2` names main commit `c1a63ac978c0389f97e2d37e9ab61c8139191e34`, whose source tree matches candidate `a76d641a`. Preview-2 uses the recorded manual qualification in [the qualification index](QUALIFICATION-v1.0.0-preview-2.md). See [TESTING.md](../TESTING.md) for the detailed evidence tables.
+Changes compared with the `v1.0.0-preview-1` tag. This corrected preview-2
+recut includes the move of root-level test sources into `tests/`, the Windows
+resource-path repair, Darwin functional-suite flood isolation and the native
+byte-order io_uring unit fixture repair. It supersedes the earlier preview-2
+publications at `c1a63ac9` and `2f88961a` under the release owner's explicit
+recut authorization. The final commit and native Linux, macOS and Windows
+unit/functional results are recorded in the [GitHub release](https://github.com/mas-bandwidth/rocketnet/releases/tag/v1.0.0-preview-2).
+See [the qualification index](QUALIFICATION-v1.0.0-preview-2.md) and
+[TESTING.md](../TESTING.md) for the recorded evidence and its original scope.
 
 RocketNet provides encrypted client/server UDP connections and eight message
 delivery modes through a C API. Your application supplies message bytes and
@@ -173,19 +181,19 @@ See [BUILDING.md](../BUILDING.md), [TRANSPORTS.md](../TRANSPORTS.md) and
   The c9 full soak completed its portable, GSO, GSO-plain and io_uring
   1000-client cells with non-timing PASS, then was killed during the AF_XDP
   cell; the full soak is incomplete, with no OOM cause claimed. The macOS
-  Debug socket case reproduced under system-wide packet-drop pressure, but the
-  diagnostic does not attribute those drops to RocketNet. The big-endian
-  full-system fixture retains an endian mismatch and emulation completion
-  timeouts. Mac fuzz, Windows manual Debug/toolchain/examples/soak/frame-budget
-  coverage, and the remaining macOS and Windows LAN rows are deferred. io_uring suite-concurrency and runner memlock provisioning work is also deferred. Earlier passes and
+  flood-isolation repair and big-endian unit-fixture repair are included in
+  this recut. Separate big-endian full-system emulation completion failures
+  remain unclassified; completion deadlines are unchanged. Mac fuzz, Windows
+  manual Debug/toolchain/examples/soak/frame-budget coverage, and the remaining macOS and Windows LAN rows are deferred. io_uring suite-concurrency and runner memlock provisioning work is also deferred. Earlier passes and
   failures retain their original commit and scope.
 
 The [testing tables](../TESTING.md), [qualification index](QUALIFICATION-v1.0.0-preview-2.md), and [roadmap](../ROADMAP.md) record the tested heads and preview-3 work.
 
 ## Deferred to preview-3
 
-The uniform client buffer handoff, secrets-only destroy, and macOS
-receive-under-flood investigation are deferred to preview-3. The existing
+The uniform client buffer handoff and secrets-only destroy are deferred to
+preview-3. Darwin functional-suite flood isolation is included in this recut;
+its existing workload and assertions are unchanged. The existing
 worker handoffs described above do not include that later uniform-client
 change. None of these deferred changes is a preview-2 fix or qualification
 result.
