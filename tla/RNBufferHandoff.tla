@@ -143,7 +143,9 @@ Consume(t) ==
 (* main's try-lock: it takes a free mutex or skips this frame; with       *)
 (* MainBlocks it waits for a held one                                     *)
 (* the consumer exchanges only once it has finished with its buffer      *)
-Finished(t) == t = Consumer => ( cheld = NONE \/ content[cheld] = << >> \/ ( t = "worker" /\ ReleaseBeforeSent ) )
+\* (IF, not \/: TLC branches on a disjunction inside an action)
+Done(b) == IF b = NONE THEN TRUE ELSE content[b] = << >>
+Finished(t) == IF t # Consumer THEN TRUE ELSE ( Done(cheld) \/ ( t = "worker" /\ ReleaseBeforeSent ) )
 
 MainTryLock ==
     /\ pc["main"] = "run"
@@ -263,7 +265,7 @@ WorkerExit ==
     /\ ~exited /\ quit
     /\ asleep' = FALSE
     /\ IF Direction = "send"
-       THEN /\ cheld = NONE \/ content[cheld] = << >>
+       THEN /\ Done(cheld)
             /\ ready = << >>
             /\ consumed' = IF final # NONE /\ ~DropFinal THEN consumed \o content[final] ELSE consumed
             /\ content' = IF final # NONE THEN [ content EXCEPT ![final] = << >> ] ELSE content
