@@ -80,9 +80,7 @@ static inline enum split_start_step_t split_start_client_step( const struct spli
 static inline void split_shard_start_begin( struct split_shard_start_t * start, double connected_time,
                                             double connect_window_s, double reliable_timeout_s )
 {
-    (void) connect_window_s;
-    (void) reliable_timeout_s;
-    start->deadline = connected_time + SPLIT_START_DEADLINE_S;
+    start->deadline = connected_time + connect_window_s + 2.0 * SPLIT_START_DEADLINE_S + reliable_timeout_s;
 }
 
 /* A client that leaves the connected state ends the wait at once: the server
