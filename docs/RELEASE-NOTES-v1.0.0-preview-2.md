@@ -3,7 +3,9 @@
 Changes compared with the `v1.0.0-preview-1` tag. This corrected preview-2
 recut includes the move of root-level test sources into `tests/`, the Windows
 resource-path repair, Darwin functional-suite flood isolation and the native
-byte-order io_uring unit fixture repair. It supersedes the earlier preview-2
+byte-order io_uring unit fixture repair. It also repairs the ordinary server
+send boundary so GSO and io_uring retry deferred work without requiring a
+new message. It supersedes the earlier preview-2
 publications at `c1a63ac9` and `2f88961a` under the release owner's explicit
 recut authorization. The final commit and native Linux, macOS and Windows
 unit/functional results are recorded in the [GitHub release](https://github.com/mas-bandwidth/rocketnet/releases/tag/v1.0.0-preview-2).
@@ -114,6 +116,12 @@ receive and handshake acceptance in preview-2:
   queued for later updates.
 - The client I/O idle wait is a guard that can be interrupted by work, rather
   than a fixed send cadence.
+- Later server send calls retry retained GSO batches and pending io_uring
+  work even when no new message was queued. The native flush remains
+  nonblocking; background scheduling and budget delays under load remain
+  part of the scalability tradeoff. Functional send-error checks now wait
+  for final counters through that ordinary boundary, keeping the existing
+  assertions and deadlines.
 - Server pre-authentication processing checks packet shape and cheap rejection
   conditions before expensive work; token claims follow signature verification.
   Tokens created more than five seconds ahead of the server clock are refused.

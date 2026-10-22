@@ -14,7 +14,8 @@ The first recut named `2f88961a0b42713b832478df257d30e15c0944e6`, adding
 the qualification documents and moving root-level test sources into `tests/`.
 The corrected recut also includes the Windows resource-path fix from
 `0c45746304893b384cb85a664bd05093e70683da` and the narrow functional and
-unit fixture repairs described below. The final commit and native suite
+unit fixture repairs described below, plus the GSO/io_uring send-boundary
+retry repair from `d7f26728`. The final commit and native suite
 results are recorded in the [published release notes](https://github.com/mas-bandwidth/rocketnet/releases/tag/v1.0.0-preview-2).
 
 The owner explicitly authorized replacing this preview tag and requires native
@@ -62,12 +63,17 @@ portable, 1,146 for GSO and 1,846 for io_uring. These do not meet the
 100-microsecond target. XDP was detached after the recorded privileged runs.
 The evidence establishes copy mode, not zero-copy or line-rate throughput.
 
-## Known issues and unfinished qualification
+## Recut repairs and remaining qualification
 
 - **XDP with 1,000 Windows clients:** eight connections reached the reliable
   message timeout during startup. The exact cause is unresolved. The passing
   Linux-client ladder and portable-server control do not qualify this failing
   combination.
+- **GSO/io_uring send retry repaired for this recut:** ordinary server send
+  calls retry retained native work even without a new message. This keeps
+  the native flush nonblocking. Functional error-injection checks settle
+  earlier sends and observe completion through the ordinary send boundary,
+  rather than bypassing it with direct native flushes.
 - **macOS flood isolation repaired for this recut:** exact-delivery functional
   cases lost packets while the eight-thread destroy-under-traffic flood ran
   concurrently. The repair gives that existing flood its own Darwin suite
