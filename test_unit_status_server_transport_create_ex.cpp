@@ -14,6 +14,7 @@
 // budget instead; the port-zero refusal (S12) also occurs before open.
 
 #include "test/unit_shutdown.h"
+#include "test/plan_rss.h"
 #include "test_unit_registry.h"
 #include "test/portable_crt.h"
 
@@ -171,7 +172,7 @@ static void test_server_transport_create_ex_reports_every_status()
 
     // init with the fault-injecting allocator's state as the context
     status = -1;
-    check( rocketnet_init_ex( &state, allocate, release, &status ) );
+    check( rocketnet_init_ex( &state, plan_rss_chain( allocate, release ), plan_rss_free, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 
     // S2: an invalid environment value refuses apply_env

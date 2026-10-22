@@ -256,9 +256,13 @@ jobs:
           ./bin/fuzz_replay_rocketnet_fuzz_connect_token fuzz/corpus_connect_token/*
           ./bin/fuzz_replay_rocketnet_fuzz_receive_structured fuzz/corpus_receive_structured/*
 
-      - name: Run unit tests
-        if: contains(matrix.leg, 'b')
-        run: ./bin/test
+      # The unit suite runs once, under hostile ambient config: the checker
+      # (tools/check_test_environment.py) runs ./bin/test with every config
+      # variable set to a hostile value, fails on any failing case, and checks
+      # the netcode output shape and that every registered name printed. Each
+      # case clears the config variables before it runs (test.cpp's worker), so
+      # this one run covers what a plain ./bin/test run did; the plain run that
+      # stood before it repeated the whole suite (28 s on the macOS runner).
 
       # The unit suite opens no socket: ./bin/test runs under strace and the
       # check fails, naming the first opener, on any socket() call
@@ -274,7 +278,7 @@ jobs:
         if: contains(matrix.leg, 'b')
         run: python3 tools/check_unit_purity.py .
 
-      - name: Ambient config isolation and passing output
+      - name: Run unit tests (ambient config isolation and passing output)
         if: contains(matrix.leg, 'b')
         run: python3 tools/check_test_environment.py ./bin/test
 
@@ -282,15 +286,10 @@ jobs:
         if: contains(matrix.leg, 'b')
         run: ./bin/functional
 
-      - name: Run functional suite (portable rung pinned by env)
-        if: contains(matrix.leg, 'b')
-        env:
-          ROCKETNET_SERVER_TRANSPORT: portable
-          ROCKETNET_CLIENT_TRANSPORT: portable
-        run: |
-          set -o pipefail
-          ./bin/functional | tee functional-pinned.log
-          grep -qx 'test_transport_env_pin_is_honoured' functional-pinned.log
+      # The whole functional suite with the portable rung pinned by env runs
+      # nightly (nightly.yml): portable is the development fallback, not a
+      # production transport. Per commit, the transport family matrix below
+      # still pins portable on every socket case and proves the pin honoured.
 
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard

@@ -7,6 +7,7 @@
 // worker thread allocations across non-step-driven and step-driven modes.
 
 #include "test/unit_shutdown.h"
+#include "test/plan_rss.h"
 #include "test_unit_registry.h"
 
 #include "rocketnet_internal.h"
@@ -95,7 +96,7 @@ static void test_client_memory_plan_non_step_driven()
     plan_counting_allocator_t state = { 0, 0 };
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     int status = -1;
-    check( rocketnet_init_ex( &state, plan_alloc, plan_free, &status ) );
+    check( rocketnet_init_ex( &state, plan_rss_chain( plan_alloc, plan_free ), plan_rss_free, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 
     // rocketnet_init_ex runs platform discovery through this context before
@@ -139,7 +140,7 @@ static void test_client_memory_plan_step_driven()
     plan_counting_allocator_t state = { 0, 0 };
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     int status = -1;
-    check( rocketnet_init_ex( &state, plan_alloc, plan_free, &status ) );
+    check( rocketnet_init_ex( &state, plan_rss_chain( plan_alloc, plan_free ), plan_rss_free, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 
     // rocketnet_init_ex runs platform discovery through this context before

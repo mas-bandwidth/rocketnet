@@ -6,6 +6,7 @@
 #include "rocketnet_internal.h"
 #include "test/portable_crt.h"
 #include "test/suite_runner.h"
+#include "test/plan_rss.h"
 #include "test_unit_registry.h"
 
 #include <stdint.h>
@@ -119,7 +120,11 @@ static int rocketnet_unit_worker( const char * name )
 
     rocketnet_platform_set_network_lookups_for_testing( &rocketnet_unit_fake_network_lookups );
 
-    if ( rocketnet_init( NULL, malloc_function, free_function ) != ROCKETNET_STATUS_OK )
+    // the SDK allocates through the plan counter, a case's own hooks chained
+    // under it, and the process is held to the plan's peak plus a fixed slack
+    // (test/plan_rss.h)
+    plan_rss_set_inner( malloc_function, free_function );
+    if ( rocketnet_init( NULL, plan_rss_malloc, plan_rss_free ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;
@@ -148,6 +153,8 @@ static int rocketnet_unit_worker( const char * name )
         result = rocketnet_unit_tests_run_named( name );
     if ( result == 2 )
         result = rocketnet_unit_run_named( name );
+    if ( result == 0 )
+        result = plan_rss_check( name );
     rocketnet_term();
     fflush( stdout );
     return result;

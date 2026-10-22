@@ -308,6 +308,11 @@ static void posix_pair_check_connected( struct posix_pair_t * pair )
     posix_check( strcmp( rocketnet_platform_socket_pump( pair->client_socket ), pair->client_pump ) == 0 );
 }
 
+// the next pair's client runs its I/O step in its own update and
+// send_packets (client config step_driven), so a send_packets call returns
+// with the datagram on the wire
+static bool posix_pair_client_step_driven = false;
+
 static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char * server_transport_io, const char * client_transport_io,
                                const char * server_pump, const char * client_pump )
 {
@@ -372,6 +377,7 @@ static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
     snprintf( client_config.transport, sizeof(client_config.transport), "%s", client_transport_io );
+    client_config.step_driven = posix_pair_client_step_driven ? 1 : 0;
 
     num_before = posix_snapshot( before );
     pair->client = rocketnet_client_transport_create( NULL, token, &client_config, rocketnet_platform_time() );
@@ -524,8 +530,17 @@ static const struct rocketnet_counters_t * posix_pair_counters( struct posix_pai
 static void posix_weather_cell( int ipv6, int at_server, const char * server_transport_io, const char * client_transport_io,
                                 const char * server_pump, const char * client_pump )
 {
+    // at the server the client is only the valid traffic's sender. Its I/O
+    // thread sent the round's valid datagram whenever it next ran, so on a
+    // loaded host the datagram could land after the round's updates had
+    // begun, and the bounded update count measured the client's scheduling
+    // instead of the server's drain (round 0 still short after 3 updates,
+    // valid 0/1). A step-driven client sends it inside send_packets, so the
+    // whole round is queued before the first update, as the bound assumes.
     struct posix_pair_t pair;
+    posix_pair_client_step_driven = at_server;
     posix_pair_create( &pair, ipv6, server_transport_io, client_transport_io, server_pump, client_pump );
+    posix_pair_client_step_driven = false;
     posix_weather_native = at_server ? pair.native : POSIX_NATIVE_NONE;
     posix_weather_transport = at_server ? pair.transport : NULL;
 

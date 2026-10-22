@@ -2,6 +2,7 @@
 // Compile the actual transport here to seed protocol state and substitute a
 // deterministic transport. The local stats hook keeps worker progress explicit.
 #include "test/native_shutdown.h"
+#include "test/plan_rss.h"
 #include "sdk/rocketnet_server_protocol.h"
 #include "sdk/rocketnet_replay.h"
 #include "sdk/rocketnet_fragment.h"
@@ -683,7 +684,7 @@ static void test_staged_link_address_hooks()
 int main(int argc, char ** argv)
 {
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
-    CHECK(rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK);
+    CHECK(rocketnet_init( NULL, plan_rss_malloc, plan_rss_free ) == ROCKETNET_STATUS_OK);
     rocketnet_forbid_xdp_commit();
     if (argc == 2)
     {
@@ -691,7 +692,7 @@ int main(int argc, char ** argv)
         else if (strcmp(argv[1], "disconnect-burst-staged") == 0) test_disconnect_burst_next_send(true);
         else CHECK(false);
         rocketnet_term();
-        return 0;
+        return plan_rss_check("test_transport_control");
     }
     CHECK(argc == 1);
     test_buffered_control_pressure();
@@ -706,4 +707,5 @@ int main(int argc, char ** argv)
     test_entries_carry_connection_id(true);
     test_staged_link_address_hooks();
     rocketnet_term();
+    return plan_rss_check("test_transport_control");
 }

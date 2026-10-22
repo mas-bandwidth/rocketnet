@@ -32,20 +32,36 @@ or not.
 
 ## Peak memory per case
 
-Both runners record each case process's peak resident set (`wait4`
-`ru_maxrss` on POSIX, normalised from kilobytes on Linux and bytes on macOS;
+Every case process is held to its plan (`test/plan_rss.h`). The SDK
+allocates every byte through the allocator `rocketnet_init` is given, and
+it allocates exactly its memory plan (`tools/check_memory.py` checks the
+plans against allocator observations). Each suite process passes
+`plan_rss_malloc` and `plan_rss_free`, which count the bytes the SDK holds
+and keep the peak. A case that passes an allocator of its own chains it
+under the counter: `rocketnet_init( context, plan_rss_chain( my_malloc,
+my_free ), plan_rss_free )` (the counter passes the case's allocator the
+exact sizes the SDK asks for). When the case ends, the process's peak
+resident set must be at most the plan's peak plus `PLAN_RSS_SLACK_MB`, a
+fixed allowance for what no plan counts (the executable, the runtimes,
+stacks and the test's own bookkeeping). Otherwise the case fails with
+`check failed: <case> peak_rss_mb=<n> bound_mb=<b> (plan peak <bytes> + <slack> MiB slack)`.
+Memory the SDK does not account for, or a leak outside the SDK, fails
+whatever size of server the case legitimately builds. Blocks of 1 MiB or
+more are mapped from the OS and unmapped when freed. Otherwise the C
+allocator's cache of freed large blocks would make a process that builds a
+300-client server and then a 1000-client one peak at the sum of both.
+
+Both runners record each case's peak resident set (`wait4` `ru_maxrss` on
+POSIX, normalised from kilobytes on Linux and bytes on macOS;
 `PeakWorkingSetSize` on Windows). With `ROCKETNET_TEST_REPORT=1` both
 runners print, after the results, a `slowest cases:` block and a `peak rss:`
-block of the ten largest (`suite_print_report`). A case whose peak is over the
-bound fails the suite with `check failed: <case> peak_rss_mb=<n> bound_mb=<b>`. The bound is
-`ROCKETNET_TEST_MAX_CASE_RSS_MB`, 698 MiB in `test/suite_runner.h` (the larger
-of 256 MiB and 1.5 times the largest measured case, never over 1 GiB); the
-environment variable of the same name overrides it with a positive value. A sanitizer build
-prints the peaks and enforces no bound unless that variable sets one, because
-sanitizer shadow memory is not the case's own footprint.
+block of the ten largest (`suite_print_report`). `ROCKETNET_TEST_MAX_CASE_RSS_MB`,
+when set, replaces the plan bound with one bound the runner applies to every
+case. A sanitizer build checks no bound unless that variable sets one,
+because sanitizer shadow memory is not the case's own footprint.
 
-A case that intentionally constructs a full-capacity server can declare a
-larger case-specific bound beside its registration:
+A case can also declare a bound of its own beside its registration, which
+the runner enforces as well:
 
 ```cpp
 static long my_case_rss_bound_mb()
@@ -57,9 +73,6 @@ SUITE_CASE_RSS_BOUND( my_case, my_case_rss_bound_mb );
 
 The function computes its bound from the SDK memory plan for the exact config
 the case uses, then adds a stated process margin with `suite_rss_bound_mb`.
-Without `ROCKETNET_TEST_MAX_CASE_RSS_MB`, the runner uses that declared bound
-for the named case and the suite-wide bound for every other case. A positive
-environment override still applies uniformly. Sanitizer builds continue to
-report without enforcing a bound unless the environment sets one. A declared
-plan of zero falls back to the suite-wide bound, so a refused memory plan
-cannot silently disable the check.
+A positive `ROCKETNET_TEST_MAX_CASE_RSS_MB` replaces it, as it replaces the
+plan bound. A declared plan of zero declares no bound; the case's own plan
+bound still applies.

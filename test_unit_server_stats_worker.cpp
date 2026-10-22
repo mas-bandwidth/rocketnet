@@ -3,6 +3,7 @@
 // Transport updates and publication still run through the public server.
 
 #include "test/unit_shutdown.h"
+#include "test/plan_rss.h"
 #include "test_unit_registry.h"
 #include "test/portable_crt.h"
 #include "sdk/rocketnet.h"
@@ -512,7 +513,7 @@ static void test_server_stats_worker_start_failure_cleans_allocations()
     stats_allocator_t state = {0, 0, 0};
     check(rocketnet_allocator_ex(stats_allocate, stats_release) == ROCKETNET_STATUS_OK);
     int status = -1;
-    check(rocketnet_init_ex(&state, stats_allocate, stats_release, &status));
+    check(rocketnet_init_ex( &state, plan_rss_chain( stats_allocate, stats_release ), plan_rss_free, &status));
     check(status == ROCKETNET_STATUS_OK);
     rocketnet_server_transport_config_t config;
     stats_transport_config(&config);

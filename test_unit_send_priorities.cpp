@@ -15,6 +15,7 @@
 #include <string.h>
 
 #include "test_unit_registry.h"
+#include "test/plan_rss.h"
 
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_allocator.h"
@@ -344,7 +345,7 @@ static void test_send_priorities_no_allocation_after_create()
     // refused after init, so the test terminates it, installs the counting
     // allocator, and initialises again
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_init( NULL, priorities_malloc, priorities_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL, plan_rss_chain( priorities_malloc, priorities_free ), plan_rss_free ) == ROCKETNET_STATUS_OK );
 
     priorities_allocs = 0;
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &priorities_counters );

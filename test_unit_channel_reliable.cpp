@@ -7,6 +7,7 @@
 #include <stdlib.h>
 
 #include "test_unit_registry.h"
+#include "test/plan_rss.h"
 #include "sdk/rocketnet_allocator.h"
 #include "sdk/rocketnet_channel.h"
 #include "sdk/rocketnet_message.h"
@@ -287,7 +288,7 @@ static void reliable_counted_free( void * context, void * memory )
 static void test_reliable_no_allocation_after_create()
 {
     rocketnet_term();
-    check( rocketnet_init( NULL, reliable_counted_malloc, reliable_counted_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, plan_rss_chain( reliable_counted_malloc, reliable_counted_free ), plan_rss_free ) == ROCKETNET_STATUS_OK );
 
     rocketnet_message_config_t config;
     reliable_test_config( &config );

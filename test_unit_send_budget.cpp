@@ -8,6 +8,7 @@
 // simulated clock, nothing sleeps, nothing opens a socket.
 
 #include "test_unit_registry.h"
+#include "test/plan_rss.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_send_budget.h"
@@ -583,7 +584,7 @@ static void counting_free( void * context, void * p )
 static void test_send_budget_no_allocation_after_create()
 {
     rocketnet_term();
-    check( rocketnet_init( NULL, counting_malloc, counting_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, plan_rss_chain( counting_malloc, counting_free ), plan_rss_free ) == ROCKETNET_STATUS_OK );
 
     rocketnet_send_budget_t budgets[4];
     check( rocketnet_send_budget_init( &budgets[0], ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 ) );

@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "test_unit_registry.h"
+#include "test/plan_rss.h"
 
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_address.h"
@@ -1584,7 +1585,7 @@ static void cm_free( void * context, void * p )
 static void cm_install()
 {
     rocketnet_term();
-    check( rocketnet_init( NULL, cm_malloc, cm_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, plan_rss_chain( cm_malloc, cm_free ), plan_rss_free ) == ROCKETNET_STATUS_OK );
 }
 
 static void cm_restore()

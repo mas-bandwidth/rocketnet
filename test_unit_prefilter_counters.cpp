@@ -9,6 +9,7 @@
 // no transport, no transport, no kernel.
 
 #include "test_unit_registry.h"
+#include "test/plan_rss.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_counters.h"
@@ -167,7 +168,7 @@ static void pcapng_free( void * context, void * p )
 static void pcapng_allocator_install()
 {
     rocketnet_term();
-    check( rocketnet_init( NULL, pcapng_malloc, pcapng_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, plan_rss_chain( pcapng_malloc, pcapng_free ), plan_rss_free ) == ROCKETNET_STATUS_OK );
     pcapng_live_bytes = 0;
     pcapng_peak_bytes = 0;
 }

@@ -10,6 +10,7 @@
 */
 
 #include "test/native_shutdown.h"
+#include "test/plan_rss.h"
 #include "serialize.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
@@ -31,7 +32,7 @@ do                                                                              
 
 int main()
 {
-    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, plan_rss_malloc, plan_rss_free ) == ROCKETNET_STATUS_OK );
     rocketnet_forbid_xdp_commit();
 
     struct rocketnet_server_transport_config_t server_config;
@@ -157,5 +158,5 @@ int main()
 
     printf( "serialize surface OK\n" );
 
-    return 0;
+    return plan_rss_check( "test_serialize" );
 }

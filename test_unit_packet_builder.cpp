@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "test_unit_registry.h"
+#include "test/plan_rss.h"
 
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_allocator.h"
@@ -224,7 +225,7 @@ static void test_builder_obeys_budget_and_class_order()
 static void test_packet_builder_no_allocation_after_create()
 {
     rocketnet_term();                                           // the allocator is replaced only before init
-    rocketnet_unit_check( rocketnet_init( NULL, builder_malloc, builder_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL, plan_rss_chain( builder_malloc, builder_free ), plan_rss_free ) == ROCKETNET_STATUS_OK );
 
     builder_allocs = 0;
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );

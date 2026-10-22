@@ -47,6 +47,7 @@
 #include "rocketnet_ack.h"
 #include "rocketnet_read_write.h"
 #include "../test/pcapng.h"
+#include "../test/plan_rss.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -829,9 +830,13 @@ static inline int rocketnet_channel_harness_create_with_config( rocketnet_channe
     rocketnet_channel_capture_begin();
     rocketnet_term();
     rocketnet_channel_allocator_calls = 0;
-    if ( rocketnet_init( NULL, rocketnet_channel_counting_malloc, rocketnet_channel_counting_free ) != ROCKETNET_STATUS_OK )
+    // chained under the plan counter, so the process's memory bound still
+    // sees every byte the SDK holds (test/plan_rss.h)
+    plan_rss_set_inner( rocketnet_channel_counting_malloc, rocketnet_channel_counting_free );
+    if ( rocketnet_init( NULL, plan_rss_malloc, plan_rss_free ) != ROCKETNET_STATUS_OK )
     {
-        rocketnet_init( NULL, NULL, NULL );
+        plan_rss_set_inner( NULL, NULL );
+        rocketnet_init( NULL, plan_rss_malloc, plan_rss_free );
         return 0;
     }
     h->counting_allocator_installed = 1;
@@ -1086,7 +1091,8 @@ static inline void rocketnet_channel_harness_destroy( rocketnet_channel_harness_
     if ( h->counting_allocator_installed )
     {
         rocketnet_term();
-        rocketnet_init( NULL, NULL, NULL );
+        plan_rss_set_inner( NULL, NULL );
+        rocketnet_init( NULL, plan_rss_malloc, plan_rss_free );
     }
     rocketnet_channel_seed_state().live = 0;
     rocketnet_channel_capture_flush();

@@ -21,6 +21,7 @@
 //     past the token's timeout ends the attempt in -(state + 1).
 
 #include "test/unit_shutdown.h"
+#include "test/plan_rss.h"
 #include "test_unit_registry.h"
 #include "sdk/rocketnet_connect_token.h"
 #include "sdk/rocketnet_base64.h"
@@ -207,7 +208,7 @@ static void test_client_connect_thread_create_failed_reached()
     reached_allocator_t state = { 0, 0, 0 };
 
     check( rocketnet_term() == ROCKETNET_STATUS_OK );
-    check( rocketnet_init( &state, reached_allocate, reached_release ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( &state, plan_rss_chain( reached_allocate, reached_release ), plan_rss_free ) == ROCKETNET_STATUS_OK );
     rocketnet_quiet( 1 );
 
     reached_identity_t identity;

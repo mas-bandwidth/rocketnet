@@ -15,6 +15,7 @@
 // argument: nothing sleeps, nothing opens a socket.
 
 #include "test/unit_shutdown.h"
+#include "test/plan_rss.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1687,7 +1688,7 @@ static void mo_free( void * context, void * p )
 static void test_message_objects_no_allocation_after_create()
 {
     rocketnet_term();
-    check( rocketnet_init( NULL, mo_malloc, mo_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, plan_rss_chain( mo_malloc, mo_free ), plan_rss_free ) == ROCKETNET_STATUS_OK );
 
     {
         rocketnet_message_config_t config;

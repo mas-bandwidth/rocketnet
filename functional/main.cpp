@@ -10,6 +10,7 @@
 #include "rocketnet_internal.h"
 #include "../test/suite_runner.h"
 #include "../test/portable_crt.h"
+#include "../test/plan_rss.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,14 +45,18 @@ static int rocketnet_functional_worker( const char * name )
 
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
-    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
+    // the SDK allocates through the plan counter, and the process is held to
+    // the plan's peak plus a fixed slack (test/plan_rss.h)
+    if ( rocketnet_init( NULL, plan_rss_malloc, plan_rss_free ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;
     }
 
     rocketnet_functional_prepare();
-    const int result = rocketnet_functional_run_named( name );
+    int result = rocketnet_functional_run_named( name );
+    if ( result == 0 )
+        result = plan_rss_check( name );
     rocketnet_term();
     fflush( stdout );
     return result;

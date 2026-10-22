@@ -42,6 +42,13 @@
 #                           (functional/rocketnet_functional_tests.cpp).
 #                           ci.yml's macOS rows run one representative of
 #                           each; ROCKETNET_TEST_NIGHTLY=1 adds the rest.
+#
+#   functional suite, portable pinned
+#                           the whole functional suite with the portable rung
+#                           pinned by env, on macOS and on Linux (clang).
+#                           Portable is the development fallback, not a
+#                           production transport; ci.yml's transport family
+#                           matrix still pins it on every socket case.
 
 name: nightly
 
@@ -99,6 +106,18 @@ jobs:
         timeout-minutes: 20
         run: ./bin/functional
 
+      # moved from ci.yml's per-commit Linux rows: portable is the development
+      # fallback, not a production transport
+      - name: Functional suite with the portable rung pinned by env (clang)
+        timeout-minutes: 20
+        env:
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
+        run: |
+          set -o pipefail
+          ./bin/functional | tee functional-pinned.log
+          grep -qx 'test_transport_env_pin_is_honoured' functional-pinned.log
+
   # THE MACOS FUNCTIONAL NIGHTLY TIER: the whole functional suite, the
   # nightly-tier cases included (ROCKETNET_TEST_NIGHTLY=1), on the fleet's
   # Apple-silicon runner. The cases this adds are the portable-server
@@ -133,6 +152,18 @@ jobs:
           ROCKETNET_TEST_NIGHTLY: 1
           ROCKETNET_TEST_REPORT: 1
         run: ./bin/functional
+
+      # moved from ci.yml's per-commit rows: portable is the development
+      # fallback, not a production transport
+      - name: Functional suite with the portable rung pinned by env
+        timeout-minutes: 10
+        env:
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
+        run: |
+          set -o pipefail
+          ./bin/functional | tee functional-pinned.log
+          grep -qx 'test_transport_env_pin_is_honoured' functional-pinned.log
 
   # The windows Debug row, lifted from ci.yml's build-and-test-windows on
   # 2026-09-13, step for step. The doctrine it carries (#81's baseline): the

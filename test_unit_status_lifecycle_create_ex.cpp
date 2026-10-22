@@ -18,6 +18,7 @@
 //     Layer 4 work owned by the transport cards, not this card's surface.
 
 #include "test_unit_registry.h"
+#include "test/plan_rss.h"
 
 #include "rocketnet_internal.h"
 
@@ -196,7 +197,7 @@ static void test_lifecycle_ex_reports_every_status()
 
     // init with the fault-injecting allocator in context
     status = -1;
-    check( rocketnet_init_ex( &state, allocate, release, &status ) );
+    check( rocketnet_init_ex( &state, plan_rss_chain( allocate, release ), plan_rss_free, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 
     // allocator after init is ALREADY_INITIALIZED

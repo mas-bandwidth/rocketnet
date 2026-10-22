@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "test_unit_registry.h"
+#include "test/plan_rss.h"
 #include "sdk/rocketnet_channel.h"
 #include "sdk/rocketnet_message_object.h"
 
@@ -431,7 +432,7 @@ static void rs_counted_free( void *, void * memory )
 static void test_reliable_sequenced_no_allocation_after_create()
 {
     rocketnet_term();
-    check( rocketnet_init( NULL, rs_counted_malloc, rs_counted_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, plan_rss_chain( rs_counted_malloc, rs_counted_free ), plan_rss_free ) == ROCKETNET_STATUS_OK );
     rs_node_t sender, receiver;
     rs_init( &sender );
     rs_init( &receiver );

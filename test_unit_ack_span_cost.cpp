@@ -4,6 +4,7 @@
 */
 
 #include "test_unit_registry.h"
+#include "test/plan_rss.h"
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_allocator.h"
 #include "sdk/rocketnet_message.h"
@@ -128,7 +129,7 @@ static void ack_span_cost_case( uint32_t count, int order )
 static void ack_span_cost_size( uint32_t count )
 {
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_init( NULL, ack_cost_malloc, ack_cost_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL, plan_rss_chain( ack_cost_malloc, ack_cost_free ), plan_rss_free ) == ROCKETNET_STATUS_OK );
     for ( int order = 0; order < 3; order++ )
         ack_span_cost_case( count, order );
     rocketnet_term();

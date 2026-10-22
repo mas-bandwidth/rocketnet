@@ -1,5 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. */
 #include "test/native_shutdown.h"
+#include "test/plan_rss.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_server_iocp.h"
@@ -1395,7 +1396,8 @@ static const fault_case_t fault_cases[] = {
 int main( int argc, char ** argv )
 {
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
-    CHECK(rocketnet_init( NULL, allocate, release ) == ROCKETNET_STATUS_OK);
+    plan_rss_set_inner( allocate, release );
+    CHECK(rocketnet_init( NULL, plan_rss_malloc, plan_rss_free ) == ROCKETNET_STATUS_OK);
     if ( argc < 2 )
     {
         test_create_cleanup();
@@ -1416,5 +1418,5 @@ int main( int argc, char ** argv )
     }
     rocketnet_term();
     CHECK(live_allocations.load() == 0);
-    return 0;
+    return plan_rss_check( "test_iocp" );
 }

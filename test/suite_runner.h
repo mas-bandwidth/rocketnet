@@ -7,12 +7,13 @@
     "*** ALL TESTS PASSED ***". A failing test prints its own output (its
     check line) and the suite exits 1 at once. A test over 120s is killed and
     fails (a Debug or sanitizer build scales the 120s: test/time_scale.h). A
-    test whose peak resident set (wait4 ru_maxrss on POSIX,
-    PeakWorkingSetSize on Windows) is over its bound fails
-    (ROCKETNET_TEST_MAX_CASE_RSS_MB, overridable by that environment variable;
-    a sanitizer build does not enforce it unless the variable sets one). A case
-    whose subject is a full-capacity server declares its own bound with
-    SUITE_CASE_RSS_BOUND. Every registered name is test_ lowercase snake_case,
+    case process holds its own peak resident set to its plan: the bytes the
+    SDK held at its peak plus a fixed slack (test/plan_rss.h), and fails
+    itself past it. The runner records each case's peak resident set (wait4
+    ru_maxrss on POSIX, PeakWorkingSetSize on Windows) and enforces a bound of
+    its own only when ROCKETNET_TEST_MAX_CASE_RSS_MB sets one for every case or
+    a case declares one with SUITE_CASE_RSS_BOUND; a sanitizer build enforces
+    none unless the variable sets one. Every registered name is test_ lowercase snake_case,
     or the suite fails before running anything. ROCKETNET_TEST_REPORT=1 prints
     the slowest cases and the peak resident sets after the results.
 */
@@ -54,12 +55,11 @@
 extern char **environ;
 #endif
 
-// The largest peak resident set one case process may reach, in MiB: the larger
-// of 256 and 1.5 times the largest case measured on a Linux Release build
-// (465 MiB, test_gso_transport_server_io_pin, 2026-10-19), so 698; never over 1024.
-// A case over it fails the suite. The environment variable of the same name
-// overrides it with a positive value.
-#define ROCKETNET_TEST_MAX_CASE_RSS_MB 698
+// There is no suite-wide fixed bound on a case's peak resident set: each case
+// process holds itself to its own plan (test/plan_rss.h, the SDK's planned
+// bytes plus a fixed slack) and fails itself. The parent enforces a bound only
+// when ROCKETNET_TEST_MAX_CASE_RSS_MB sets one for every case, or when a case
+// declares one with SUITE_CASE_RSS_BOUND.
 
 // Whether the environment variable is set (to a value of at most 4095 bytes).
 inline bool suite_env_is_set( const char * name )
@@ -93,8 +93,7 @@ struct suite_result
     std::string output;
 };
 
-// The bound in MiB, or 0 when it is not enforced (a sanitizer build with no
-// environment override: sanitizer shadow memory is not the case's footprint).
+// The environment's bound for every case in MiB, or 0 when none is set.
 inline long suite_max_case_rss_mb()
 {
     char env[256];
@@ -104,11 +103,7 @@ inline long suite_max_case_rss_mb()
         if ( requested > 0 )
             return requested;
     }
-#if defined(ROCKETNET_FUNCTIONAL_SANITIZED)
     return 0;
-#else
-    return ROCKETNET_TEST_MAX_CASE_RSS_MB;
-#endif
 }
 
 // A case whose subject is a full-capacity server allocates its designed
@@ -161,23 +156,27 @@ inline long suite_rss_bound_mb( uint64_t planned_bytes, long margin_mb )
     return (long) ( ( planned_bytes + mib - 1 ) / mib ) + margin_mb;
 }
 
-// The bound for one case: the environment override when set, else none in a
-// sanitizer build, else the bound the case declares, else the suite-wide one.
-// A declared bound of 0 (a refused plan) keeps the suite-wide bound.
+// The parent's bound for one case: the environment override when set, else
+// none in a sanitizer build, else the bound the case declares, else none (the
+// case process holds itself to its plan: test/plan_rss.h). 0 is no bound.
 inline long suite_case_rss_mb( const std::string & name )
 {
     const long bound = suite_max_case_rss_mb();
-    if ( bound <= 0 || suite_env_is_set( "ROCKETNET_TEST_MAX_CASE_RSS_MB" ) )
+    if ( bound > 0 )
         return bound;
+#if defined(ROCKETNET_FUNCTIONAL_SANITIZED)
+    return 0;
+#else
     for ( suite_case_rss_bound_t * entry = *suite_case_rss_bound_head(); entry != NULL; entry = entry->next )
     {
         if ( name == entry->name )
         {
             const long declared = entry->bound_mb();
-            return declared > 0 ? declared : bound;
+            return declared > 0 ? declared : 0;
         }
     }
-    return bound;
+    return 0;
+#endif
 }
 
 // Fails a finished case whose peak is over the bound, naming both.

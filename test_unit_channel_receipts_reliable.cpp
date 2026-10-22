@@ -7,6 +7,7 @@
 // once, after every distinct number is transport-acked, and never as LOSS.
 
 #include "test_unit_registry.h"
+#include "test/plan_rss.h"
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_allocator.h"
 #include "sdk/rocketnet_channel.h"
@@ -267,7 +268,7 @@ static void reliable_receipt_free( void *, void * pointer )
 static void test_no_allocation_after_create_reliable_receipts()
 {
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_init( NULL, reliable_receipt_malloc, reliable_receipt_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL, plan_rss_chain( reliable_receipt_malloc, reliable_receipt_free ), plan_rss_free ) == ROCKETNET_STATUS_OK );
 
     reliable_receipt_fixture_t f;
     uint64_t after_create = 0;

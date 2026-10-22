@@ -1,5 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #include "rocketnet_internal.h"
+#include "test/plan_rss.h"
 #include "rocketnet_server_socket.h"
 #include "rocketnet_constants.h"
 #include "rocketnet_wire.h"
@@ -12,7 +13,7 @@ bool rocketnet_server_socket_test_send_failures_without_mutex();
 int main()
 {
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
-    if (rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK) return 1;
+    if (rocketnet_init( NULL, plan_rss_malloc, plan_rss_free ) != ROCKETNET_STATUS_OK) return 1;
     rocketnet_server_socket_forbid_commit();
     const bool passed = rocketnet_server_socket_test_buffer_exchange();
     const bool replay_passed = rocketnet_server_socket_test_replay_marks();
@@ -49,5 +50,5 @@ int main()
         return 1;
     }
     printf("test_xdp_transport_frame_holds_receive_ceiling\n");
-    return 0;
+    return plan_rss_check("test_xdp");
 }

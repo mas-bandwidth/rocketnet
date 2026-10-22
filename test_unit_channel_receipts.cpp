@@ -6,6 +6,7 @@
 // RNReceipts Send: all three receipt types are accepted by the send mask.
 
 #include "test_unit_registry.h"
+#include "test/plan_rss.h"
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_allocator.h"
 #include "sdk/rocketnet_channel.h"
@@ -412,7 +413,7 @@ static void receipt_free( void *, void * pointer )
 static void test_receipts_no_allocation_after_create()
 {
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_init( NULL, receipt_malloc, receipt_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL, plan_rss_chain( receipt_malloc, receipt_free ), plan_rss_free ) == ROCKETNET_STATUS_OK );
     receipt_fixture_t f;
     receipt_fixture_init( &f );
     const uint64_t snapshot = receipt_allocations;

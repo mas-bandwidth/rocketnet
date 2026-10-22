@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "test_unit_registry.h"
+#include "test/plan_rss.h"
 
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_allocator.h"
@@ -592,7 +593,7 @@ static void mcr_free( void * context, void * p )
 static void test_message_client_create_refuses_budget_and_config()
 {
     rocketnet_term();
-    check( rocketnet_init( NULL, mcr_malloc, mcr_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, plan_rss_chain( mcr_malloc, mcr_free ), plan_rss_free ) == ROCKETNET_STATUS_OK );
 
     // a config whose required memory is zero: num_channels = 0 fails
     // rocketnet_message_validate_config (1..ROCKETNET_MAX_CHANNELS), so
@@ -628,7 +629,7 @@ static void test_message_client_create_refuses_budget_and_config()
 static void test_message_server_create_refuses_budget_and_config()
 {
     rocketnet_term();
-    check( rocketnet_init( NULL, mcr_malloc, mcr_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, plan_rss_chain( mcr_malloc, mcr_free ), plan_rss_free ) == ROCKETNET_STATUS_OK );
 
     rocketnet_message_config_t bad;
     rocketnet_message_default_config( &bad );

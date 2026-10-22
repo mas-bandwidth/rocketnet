@@ -10,6 +10,7 @@
 #include <stdlib.h>
 
 #include "test_unit_registry.h"
+#include "test/plan_rss.h"
 #include "sdk/rocketnet_allocator.h"
 #include "sdk/rocketnet_channel.h"
 #include "sdk/rocketnet_counters.h"
@@ -280,7 +281,7 @@ static void sequenced_counting_free( void * context, void * memory )
 static void test_sequenced_no_allocation_after_create()
 {
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_init( NULL, sequenced_counting_malloc, sequenced_counting_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL, plan_rss_chain( sequenced_counting_malloc, sequenced_counting_free ), plan_rss_free ) == ROCKETNET_STATUS_OK );
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &sequenced_counters );
     rocketnet_unit_check( arena != NULL );
     rn_region_t * region = rn_arena_region( arena, 0 );

@@ -28,6 +28,7 @@
 //     fail.
 
 #include "test_unit_registry.h"
+#include "test/plan_rss.h"
 #include "test/portable_crt.h"
 
 #include "rocketnet_internal.h"
@@ -160,7 +161,7 @@ static void test_client_transport_create_ex_reports_every_status()
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     check_create_status( ROCKETNET_STATUS_NOT_INITIALIZED, token, NULL, &state, &status );
 
-    check( rocketnet_init_ex( &state, allocate, release, &status ) );
+    check( rocketnet_init_ex( &state, plan_rss_chain( allocate, release ), plan_rss_free, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 
     // C2: an invalid environment overlay refuses at the env apply

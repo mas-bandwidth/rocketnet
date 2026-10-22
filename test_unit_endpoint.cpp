@@ -30,6 +30,7 @@
 #include <vector>
 
 #include "test_unit_registry.h"
+#include "test/plan_rss.h"
 
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_allocator.h"
@@ -506,7 +507,7 @@ static void ep_free( void * context, void * p )
 static void test_endpoint_never_allocates_or_reads_a_clock()
 {
     rocketnet_term();
-    check( rocketnet_init( NULL, ep_malloc, ep_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, plan_rss_chain( ep_malloc, ep_free ), plan_rss_free ) == ROCKETNET_STATUS_OK );
 
     rocketnet_message_config_t config;
     ep_config( &config );

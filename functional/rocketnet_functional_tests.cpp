@@ -6262,45 +6262,36 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
 
     int sent_client = 0, sent_server = 0, acked_client = 0, acked_server = 0;
 
-    // eight payloads each way per update: one per update paced the loop by
-    // its 0.5 ms sleep, ten thousand sleeps, 7-8 s on macOS. Every payload
-    // is still its own packet id joined back to its sequence, and a batch of
-    // several is the case P2 is about.
-    const int per_update = 8;
-
     start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 90.0 && ( sent_client < total || sent_server < total ) )
     {
-        for ( int burst = 0; burst < per_update; burst++ )
+        if ( sent_client < total )
         {
-            if ( sent_client < total )
+            struct rocketnet_packet_context_t ctx;
+            uint8_t * frame = rocketnet_client_transport_start_packet( client, 32, &ctx );
+            if ( frame )
             {
-                struct rocketnet_packet_context_t ctx;
-                uint8_t * frame = rocketnet_client_transport_start_packet( client, 32, &ctx );
-                if ( frame )
+                const int sequence = sent_client + 1;
+                memcpy( frame + ctx.payload_index, &sequence, sizeof(sequence) );
+                if ( rocketnet_client_transport_finish_packet( client, &ctx, sizeof(sequence) ) > 0 )
                 {
-                    const int sequence = sent_client + 1;
-                    memcpy( frame + ctx.payload_index, &sequence, sizeof(sequence) );
-                    if ( rocketnet_client_transport_finish_packet( client, &ctx, sizeof(sequence) ) > 0 )
-                    {
-                        client_id_to_sequence[ctx.packet_id] = sequence;
-                        sent_client++;
-                    }
+                    client_id_to_sequence[ctx.packet_id] = sequence;
+                    sent_client++;
                 }
             }
-            if ( sent_server < total )
+        }
+        if ( sent_server < total )
+        {
+            struct rocketnet_packet_context_t ctx;
+            uint8_t * frame = rocketnet_server_transport_start_packet( server, client_index, 32, &ctx );
+            if ( frame )
             {
-                struct rocketnet_packet_context_t ctx;
-                uint8_t * frame = rocketnet_server_transport_start_packet( server, client_index, 32, &ctx );
-                if ( frame )
+                const int sequence = sent_server + 1;
+                memcpy( frame + ctx.payload_index, &sequence, sizeof(sequence) );
+                if ( rocketnet_server_transport_finish_packet( server, &ctx, sizeof(sequence) ) > 0 )
                 {
-                    const int sequence = sent_server + 1;
-                    memcpy( frame + ctx.payload_index, &sequence, sizeof(sequence) );
-                    if ( rocketnet_server_transport_finish_packet( server, &ctx, sizeof(sequence) ) > 0 )
-                    {
-                        server_id_to_sequence[ctx.packet_id] = sequence;
-                        sent_server++;
-                    }
+                    server_id_to_sequence[ctx.packet_id] = sequence;
+                    sent_server++;
                 }
             }
         }

@@ -31,6 +31,7 @@
 // prints a key: the checks compare bytes and report only true or false.
 
 #include "test/unit_shutdown.h"
+#include "test/plan_rss.h"
 #include "test_unit_registry.h"
 
 #include "sdk/rocketnet.h"
@@ -375,7 +376,7 @@ static void secrets_wiped_pair_exchange( secrets_wiped_pair_t * pair )
 static void test_secrets_wiped_destroy_owned_blocks()
 {
     rocketnet_term();
-    check( rocketnet_init( NULL, secrets_wiped_malloc, secrets_wiped_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, plan_rss_chain( secrets_wiped_malloc, secrets_wiped_free ), plan_rss_free ) == ROCKETNET_STATUS_OK );
     std::map<void *, size_t> sizes;
     secrets_wiped_sizes = &sizes;
 
@@ -420,7 +421,7 @@ static void secrets_wiped_plant_in_arena( rn_arena_t * arena )
 static void test_secrets_wiped_arena_destroy_owned()
 {
     rocketnet_term();
-    check( rocketnet_init( NULL, secrets_wiped_malloc, secrets_wiped_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, plan_rss_chain( secrets_wiped_malloc, secrets_wiped_free ), plan_rss_free ) == ROCKETNET_STATUS_OK );
     std::map<void *, size_t> sizes;
     secrets_wiped_sizes = &sizes;
 

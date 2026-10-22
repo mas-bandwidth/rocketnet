@@ -17,6 +17,7 @@
 #include "rocketnet_server_socket.h"
 #endif
 #include "../test/portable_crt.h"
+#include "../test/plan_rss.h"
 
 #include <atomic>
 #include <stddef.h>
@@ -72,7 +73,10 @@ void rocketnet_test_lifecycle_transport()
 
     allocator_state state;
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
-    check( rocketnet_init( &state, allocate, release ) == ROCKETNET_STATUS_OK );
+    // the failing allocator is chained under the plan counter, so the
+    // process's memory bound still sees every byte the SDK holds
+    plan_rss_set_inner( allocate, release );
+    check( rocketnet_init( &state, plan_rss_malloc, plan_rss_free ) == ROCKETNET_STATUS_OK );
     rocketnet_forbid_xdp_commit();
     const int baseline = state.live;
 

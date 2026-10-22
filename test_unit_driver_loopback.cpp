@@ -4,6 +4,7 @@
 // no sleep, no clock.
 
 #include "test/unit_shutdown.h"
+#include "test/plan_rss.h"
 #include "test_unit_registry.h"
 #include "test/suite_runner.h"
 
@@ -279,7 +280,7 @@ static void loopback_count_free( void * context, void * memory )
 static void test_loopback_transport_io_runtime_does_not_allocate()
 {
     rocketnet_unit_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
-    rocketnet_unit_check( rocketnet_init( NULL, loopback_count_malloc, loopback_count_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL, plan_rss_chain( loopback_count_malloc, loopback_count_free ), plan_rss_free ) == ROCKETNET_STATUS_OK );
 
     const size_t overhead = (size_t) rocketnet_allocation_overhead();
     const size_t live_before = g_loopback_live_bytes;

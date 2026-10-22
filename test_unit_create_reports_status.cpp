@@ -19,6 +19,7 @@
 // variables and restores them.
 
 #include "test/unit_shutdown.h"
+#include "test/plan_rss.h"
 #include "test_unit_registry.h"
 #include "test/portable_crt.h"
 
@@ -400,7 +401,7 @@ static void test_create_reports_status_out_of_memory()
     memset( &state, 0, sizeof( state ) );
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     int init_status = -1;
-    check( rocketnet_init_ex( &state, create_status_allocate, create_status_release, &init_status ) );
+    check( rocketnet_init_ex( &state, plan_rss_chain( create_status_allocate, create_status_release ), plan_rss_free, &init_status ) );
     check( init_status == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_config_t client_config;

@@ -35,6 +35,7 @@
 // that count (sdk/rocketnet_driver.cpp:126), the same path these cases walk.
 
 #include "test/unit_shutdown.h"
+#include "test/plan_rss.h"
 #include "test_unit_registry.h"
 #include "test/portable_crt.h"
 
@@ -128,7 +129,7 @@ static void transport_oom_begin( transport_oom_allocator_t * state )
     memset( state, 0, sizeof(*state) );
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     int status = -1;
-    check( rocketnet_init_ex( state, transport_oom_allocate, transport_oom_release, &status ) );
+    check( rocketnet_init_ex( state, plan_rss_chain( transport_oom_allocate, transport_oom_release ), plan_rss_free, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 }
 
@@ -541,7 +542,7 @@ static void test_platform_init_survives_a_refusing_allocator()
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     state.refuse_through = TRANSPORT_OOM_GIVE_WAY;
     int status = -1;
-    const bool initialized = rocketnet_init_ex( &state, transport_oom_allocate, transport_oom_release, &status );
+    const bool initialized = rocketnet_init_ex( &state, plan_rss_chain( transport_oom_allocate, transport_oom_release ), plan_rss_free, &status );
     const int asked = state.calls;
     state.refuse_through = 0;
     check( initialized );
