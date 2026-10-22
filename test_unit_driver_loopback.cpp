@@ -1043,8 +1043,12 @@ struct shape_junk_staged_t
     rocketnet_server_socket_process_packets_t batch;
     rocketnet_address_t connected;
     int start_packet_calls;
-    alignas( 16 ) uint8_t frame[ROCKETNET_FRAME_STRIDE];
+    uint8_t * frame;                // shape_junk_staged_frame
 };
+
+// start_packet hands back a 16-byte aligned FRAME_STRIDE root. Kept out of
+// the fixture struct: an alignas member there pads the struct (MSVC C4324).
+alignas( 16 ) static uint8_t shape_junk_staged_frame[ROCKETNET_FRAME_STRIDE];
 
 static rocketnet_server_socket_process_packets_t * shape_junk_staged_receive( void * p )
 {
@@ -1070,6 +1074,7 @@ static void test_server_shape_check_first_on_the_staged_loop()
 
     static struct shape_junk_staged_t fx;
     memset( &fx, 0, sizeof(fx) );
+    fx.frame = shape_junk_staged_frame;
     rocketnet_server_transport_io_operations_t operations;
     memset( &operations, 0, sizeof(operations) );
     operations.destroy = wt_staged_destroy;
