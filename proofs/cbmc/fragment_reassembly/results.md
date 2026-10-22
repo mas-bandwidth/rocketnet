@@ -73,14 +73,24 @@ other check in CBMC_FLAGS has an ESBMC counterpart in the list above.
 
 ## Results
 
-The gate ran on a 16-core Linux bench, with ESBMC 8.5.0 and Bitwuzla 0.9.0
-(Z3 4.13.3 for the header harness).
+The gate ran on a 16-core Linux bench (hetzner2, 2026-10-22), with ESBMC
+8.5.0: Boolector for the process and sizing harnesses, Z3 4.13.3 for the
+header harness. The whole target took 70 s, with a peak resident set of
+256 MiB, inside the 16 GB limit.
 
 | harness | properties | unwind | bound proved | time |
 |---|---|---|---|---|
-| harness_header_and_plan | 81 of 81 | 16 | full: every 6-byte header, every `int` payload size | 17 s |
-| harness_process_fragment | 562 of 562 | 33, memset 64 | fragments at the full bound; `max_payload_bytes` 1..40 only, below every deployed maximum (at least 1416); one connection, one slot | 31 s |
-| harness_memory_sizing | 50 of 50 | 16 | every argument the transports pass, not every `int` | 6 s |
+| harness_header_and_plan | 87 of 87 | 16 | full: every 6-byte header, every `int` payload size | 16 s |
+| harness_process_fragment | 568 of 568 | 33, memset 64 | fragments at the full bound; `max_payload_bytes` 1..40 only, below every deployed maximum (at least 1416); one connection, one slot | 47 s |
+| harness_memory_sizing | 56 of 56 | 16 | every argument the transports pass, not every `int` | 7 s |
+
+Until c613a6a8 the process and sizing harnesses ran on Bitwuzla 0.9.0 (31 s
+and 6 s). That commit set `ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES` to 1413
+(it was 1433) and changed no code under proof, no unwind and no harness
+bound; from it on, Bitwuzla runs out of the 16 GB limit on both (the
+sizing harness grew past 100 GB with no limit), and Boolector proves both.
+The reversed witness below (the arena one byte short) still fails under
+Boolector.
 
 No property failed in any harness. No defect was found at BASE.
 
