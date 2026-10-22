@@ -6,7 +6,7 @@
 #include "rocketnet_base64.h"
 #include <string.h>
 
-static const unsigned char base64_table_encode[65] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+static const char base64_table_encode[65] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 int rocketnet_base64_encode_data( const uint8_t * input, size_t input_length, char * output, size_t output_size )
 {   
