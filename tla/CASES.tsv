@@ -293,3 +293,7 @@ MCRNLazyPoolBrokenKeepFresh.cfg	MCRNLazyPool.tla	invariant	Refines	check	rnlazyp
 MCRNWrittenRing.cfg	MCRNWrittenRing.tla	pass	-	check	rnwrittenring	required	-
 MCRNWrittenRingBrokenNoGuard.cfg	MCRNWrittenRing.tla	invariant	NoUnwrittenRead	check	rnwrittenring	required	-
 MCRNWrittenRingBrokenKeepBits.cfg	MCRNWrittenRing.tla	invariant	BitsMatchWrites	check	rnwrittenring	required	-
+MCRNDestroyWipe.cfg	MCRNDestroyWipe.tla	pass	-	check	rndestroywipe	required	-
+MCRNDestroyWipeBrokenWholeBlock.cfg	MCRNDestroyWipe.tla	invariant	ShutdownPeakWithinRun	check	rndestroywipe	required	-
+MCRNDestroyWipeBrokenNoRemoveWipe.cfg	MCRNDestroyWipe.tla	invariant	NoSecretOutsideLive	check	rndestroywipe	required	-
+MCRNDestroyWipeBrokenSkipLive.cfg	MCRNDestroyWipe.tla	invariant	SecretsZeroAtFree	check	rndestroywipe	required	-

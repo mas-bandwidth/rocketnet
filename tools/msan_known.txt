@@ -29,9 +29,9 @@ memcmp (bin/test)
 # origin: Uninitialized value was created by an allocation of 'buffer' in the stack frame
 # origin: rocketnet_test_random_bytes() sdk/rocketnet_tests.cpp:889:5
 
-rocketnet_random_float sdk/rocketnet.cpp:576:5
+rocketnet_random_float sdk/rocketnet.cpp:568:5
 # origin: Uninitialized value was stored to memory at
-# origin: rocketnet_random_float sdk/rocketnet.cpp:575:12
+# origin: rocketnet_random_float sdk/rocketnet.cpp:567:12
 # origin: rocketnet_test_random_float() sdk/rocketnet_tests.cpp:1047:23
 # origin: rocketnet_unit_run_named(char const*) sdk/rocketnet_tests.cpp:12956:9
 # origin: rocketnet_unit_worker(char const*) test.cpp:86:18
@@ -49,9 +49,9 @@ load64_be sodium/sodium.h:1464:5
 # origin: rocketnet_sodium_crypto_hash_sha512 sodium/sodium.c:22090:5
 # origin: rocketnet_sodium_crypto_sign_ed25519_seed_keypair sodium/sodium.c:28863:5
 
-rocketnet_random_uint32 sdk/rocketnet.cpp:590:5
+rocketnet_random_uint32 sdk/rocketnet.cpp:582:5
 # origin: Uninitialized value was created by an allocation of 'value' in the stack frame
-# origin: rocketnet_random_uint32 sdk/rocketnet.cpp:588:5
+# origin: rocketnet_random_uint32 sdk/rocketnet.cpp:580:5
 
 std::_Rb_tree_node_base* std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_M_copy<false, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node>(std::_Rb_tree_node<unsigned long>*, std::_Rb_tree_node_base*, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node&) include/c++/bits/stl_tree.h:2552:10
 # origin: Uninitialized value was created by a heap allocation
@@ -120,15 +120,9 @@ rocketnet_sodium_blake2b_final sodium/sodium.c:21104:5
 # explicit_bzero is reported). The config decode staging is wiped that way
 # and then copied by the secret-wipe hook; bytes the base64 decode never
 # wrote stay poisoned although they are zero.
-secrets_wiped_all_zero(unsigned char const*, int) test_unit_secrets_wiped.cpp:66:14
-secrets_wiped_all_zero(unsigned char const*, int) test_unit_secrets_wiped.cpp:66:23
-# origin: secrets_wiped_staging_seen test_unit_secrets_wiped.cpp:489:5 <- rocketnet_config_apply_env_value sdk/rocketnet_config.cpp:583:13
-
-# A whole-block scan. test_secrets_wiped_arena_destroy_in_block counts the
-# planted message across every byte of the caller block it handed the arena,
-# including bytes the arena never wrote (origin: the test's own malloc).
-secrets_wiped_pattern_count(unsigned char const*, unsigned long) test_unit_secrets_wiped.cpp:200:37
-# origin: malloc <- test_secrets_wiped_arena_destroy_in_block() test_unit_secrets_wiped.cpp:454:33
+secrets_wiped_all_zero(unsigned char const*, int) test_unit_secrets_wiped.cpp:69:14
+secrets_wiped_all_zero(unsigned char const*, int) test_unit_secrets_wiped.cpp:69:23
+# origin: secrets_wiped_staging_seen test_unit_secrets_wiped.cpp:626:5 <- rocketnet_config_apply_env_value sdk/rocketnet_config.cpp:583:13
 
 # Uninstrumented libstdc++ tree navigation (the class above): the counting
 # allocator's std::map<void*, size_t> (test_unit_secrets_wiped.cpp) and a
