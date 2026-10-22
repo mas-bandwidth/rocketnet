@@ -34,17 +34,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # The pinned runner's go.mod says go 1.26.6: that is a minimum, not an exact version (tlacheck records no Go
+          # version in any fingerprint), so any Go at or above 1.26.6 builds it; the fleet declares its own patch.
           if ! command -v go >/dev/null 2>&1; then
-            echo "TOOL-MISSING go 1.26.6 (missing) on $RUNNER_NAME"
+            echo "TOOL-MISSING go >= 1.26.6 (missing) on $RUNNER_NAME"
             exit 1
           fi
           got="$(go version)"
           echo "$got"
-          case "$got" in
-            *go1.26.6*)
-              ;;
-            *) echo "TOOL-MISSING go 1.26.6 $got on $RUNNER_NAME"; exit 1 ;;
-          esac
+          minor="$(echo "$got" | sed -n 's/.* go1\.\([0-9][0-9]*\)\.\([0-9][0-9]*\)[ -].*/\1/p')"
+          patch="$(echo "$got" | sed -n 's/.* go1\.\([0-9][0-9]*\)\.\([0-9][0-9]*\)[ -].*/\2/p')"
+          if [ -z "$minor" ] || [ "$minor" -lt 26 ] || { [ "$minor" -eq 26 ] && [ "$patch" -lt 6 ]; }; then
+            echo "TOOL-MISSING go >= 1.26.6 $got on $RUNNER_NAME"; exit 1
+          fi
       - name: Build the pinned public runner and check records
         shell: bash
         env:

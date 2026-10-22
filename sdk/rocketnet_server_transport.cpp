@@ -439,6 +439,9 @@ void rocketnet_server_transport_fail_stats_worker_thread_for_test()
 {
     rocketnet_server_stats_fail_thread_next = true;
 }
+#endif
+
+#if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS) || defined(ROCKETNET_STATS_MANUAL_TEST_HOOKS)
 bool rocketnet_server_transport_stats_worker_step_for_test( rocketnet_server_transport_t * server )
 {
     return server && server->stats_worker && server->stats_worker->manual &&
@@ -457,6 +460,9 @@ bool rocketnet_server_transport_stats_worker_status_for_test( const rocketnet_se
     if ( busy_skips ) *busy_skips = worker->busy_skips;
     return true;
 }
+#endif
+
+#if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS)
 rocketnet_ack_endpoint_t * rocketnet_server_transport_stats_endpoint_for_test(
     rocketnet_server_transport_t * server, int slot )
 {
