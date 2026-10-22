@@ -36,6 +36,7 @@ struct split_client_t
     double next_due;
     uint32_t next_combo;
     int connected, armed, go, running, finish, confirmed;
+    double diag_last_rx, diag_last_payload; uint64_t diag_rx, diag_payloads; int diag_reported;
 };
 
 struct split_server_client_t
@@ -793,6 +794,28 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
             result.traffic_complete = result.traffic_seconds >= (double) duration;
         }
         LOAD_TIMED_VOID(&timing, LOAD_TIMING_SERVER_UPDATE, rocketnet_server_update(server, now));
+        {
+            static double diag_next = 0.0; static uint64_t * diag_rx = NULL; static uint64_t * diag_tx = NULL; static double * diag_rx_t = NULL; static double * diag_tx_t = NULL; static int * diag_rep = NULL;
+            if ( !diag_rx ) { diag_rx = (uint64_t*) calloc((size_t) total, 8); diag_tx = (uint64_t*) calloc((size_t) total, 8); diag_rx_t = (double*) calloc((size_t) total, 8); diag_tx_t = (double*) calloc((size_t) total, 8); diag_rep = (int*) calloc((size_t) total, sizeof(int)); }
+            if ( now >= diag_next )
+            {
+                diag_next = now + 0.25;
+                for ( int i = 0; i < total; ++i )
+                {
+                    struct rocketnet_server_client_stats_t ds;
+                    const int conn = rocketnet_server_client_connected(server, clients[i].slot);
+                    rocketnet_server_client_stats(server, clients[i].slot, &ds);
+                    if ( ds.packets_received != diag_rx[i] ) { diag_rx[i] = ds.packets_received; diag_rx_t[i] = now; }
+                    if ( ds.packets_sent != diag_tx[i] ) { diag_tx[i] = ds.packets_sent; diag_tx_t[i] = now; }
+                    if ( diag_rx_t[i] > 0.0 && ( now - diag_rx_t[i] > 2.0 || now - diag_tx_t[i] > 2.0 || !conn ) && diag_rep[i] < 3 && in_traffic )
+                    {
+                        diag_rep[i]++;
+                        fprintf(stderr, "server_client_diag: t=%.3f client=%d slot=%d connected=%d sent=%llu rx=%llu since_rx=%.3f since_tx=%.3f rtt=%.1f loss=%.1f\n",
+                            now, i, clients[i].slot, conn, (unsigned long long) ds.packets_sent, (unsigned long long) ds.packets_received, now - diag_rx_t[i], now - diag_tx_t[i], ds.rtt_ms, ds.packet_loss_percent);
+                    }
+                }
+            }
+        }
         /* An update may itself cross the drain deadline. Do not let its
          * newly published batch repair delivery after the fixed window. */
         if ( rocketnet_time() >= drain_end ) result.barrier_active = 1;
@@ -1148,6 +1171,19 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
             while ( (batch = rocketnet_client_receive_messages(peer->api)) != NULL )
                 split_client_runtime_batch(&result, peer, (uint32_t) (first + local), run_id, batch);
             const enum rocketnet_client_state_t state = rocketnet_client_state(peer->api);
+            {
+                struct rocketnet_client_stats_t ds; rocketnet_client_stats(peer->api, &ds);
+                const double dnow = rocketnet_time();
+                if ( ds.packets_received != peer->diag_rx ) { peer->diag_rx = ds.packets_received; peer->diag_last_rx = dnow; }
+                if ( ds.payloads_received != peer->diag_payloads ) { peer->diag_payloads = ds.payloads_received; peer->diag_last_payload = dnow; }
+                if ( state != ROCKETNET_CLIENT_STATE_CONNECTED && !peer->diag_reported )
+                {
+                    peer->diag_reported = 1;
+                    fprintf(stderr, "client_diag: t=%.3f client=%u state=%d sent=%llu rx=%llu payloads=%llu since_rx=%.3f since_payload=%.3f resent=%llu\n",
+                        dnow, (unsigned) (first + local), (int) state, (unsigned long long) ds.packets_sent, (unsigned long long) ds.packets_received,
+                        (unsigned long long) ds.payloads_received, dnow - peer->diag_last_rx, dnow - peer->diag_last_payload, (unsigned long long) ds.messages_resent);
+                }
+            }
             if ( state != ROCKETNET_CLIENT_STATE_CONNECTED )
                 result.unexpected_disconnects++;
             /* A client update can cross a due slot. The same fresh clock
