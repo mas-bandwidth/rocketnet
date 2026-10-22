@@ -5,9 +5,9 @@
 
 // The io_uring completion codec (sdk/rocketnet_uring_codec.h): pure byte
 // codec, no sockets, no ring, no wall clock; the header body exists only on
-// Linux with IORING_RECV_MULTISHOT uapi. Every buffer is written byte by byte
-// in this file, never by the code under test. The cases are built only where
-// the header body is.
+// Linux with IORING_RECV_MULTISHOT uapi. Every native-endian kernel header
+// field is written by this file, never by the code under test. The cases are
+// built only where the header body is.
 
 #include <stdio.h>
 #include <string.h>
@@ -30,12 +30,9 @@
 #endif
 
 #if ROCKETNET_URING_CODEC_ACTIVE
-static void put_u32_le( uint8_t * b, uint32_t v )
+static void put_u32_native( uint8_t * b, uint32_t v )
 {
-    b[0] = (uint8_t) ( v & 0xFF );
-    b[1] = (uint8_t) ( ( v >> 8 ) & 0xFF );
-    b[2] = (uint8_t) ( ( v >> 16 ) & 0xFF );
-    b[3] = (uint8_t) ( ( v >> 24 ) & 0xFF );
+    memcpy( b, &v, sizeof( v ) );
 }
 
 static void test_io_uring_transport_codec_tag_round_trips()
@@ -74,10 +71,10 @@ static void test_io_uring_transport_codec_recvmsg_parses_name_and_payload()
     // controllen 0, and a 64-byte payload.
     uint8_t buf[208];
     memset( buf, 0xA5, sizeof( buf ) );
-    put_u32_le( buf + 0, 16 );
-    put_u32_le( buf + 4, 0 );
-    put_u32_le( buf + 8, 64 );
-    put_u32_le( buf + 12, 0 );
+    put_u32_native( buf + 0, 16 );
+    put_u32_native( buf + 4, 0 );
+    put_u32_native( buf + 8, 64 );
+    put_u32_native( buf + 12, 0 );
     struct sockaddr_in in4;
     memset( &in4, 0, sizeof( in4 ) );
     in4.sin_family = AF_INET;
@@ -104,10 +101,10 @@ static void test_io_uring_transport_codec_recvmsg_parses_name_and_payload()
 
     // the same with an IPv6 name.
     memset( buf, 0xA5, sizeof( buf ) );
-    put_u32_le( buf + 0, 28 );
-    put_u32_le( buf + 4, 0 );
-    put_u32_le( buf + 8, 64 );
-    put_u32_le( buf + 12, 0 );
+    put_u32_native( buf + 0, 28 );
+    put_u32_native( buf + 4, 0 );
+    put_u32_native( buf + 8, 64 );
+    put_u32_native( buf + 12, 0 );
     struct sockaddr_in6 in6;
     memset( &in6, 0, sizeof( in6 ) );
     in6.sin6_family = AF_INET6;
@@ -147,20 +144,20 @@ static void test_io_uring_transport_codec_recvmsg_refuses_truncation_and_short_b
     // name truncated: buffer is big enough but out->namelen (16) > msg_namelen (8).
     uint8_t buf[64];
     memset( buf, 0, sizeof( buf ) );
-    put_u32_le( buf + 0, 16 );
-    put_u32_le( buf + 4, 0 );
-    put_u32_le( buf + 8, 0 );
-    put_u32_le( buf + 12, 0 );
+    put_u32_native( buf + 0, 16 );
+    put_u32_native( buf + 4, 0 );
+    put_u32_native( buf + 8, 0 );
+    put_u32_native( buf + 12, 0 );
     rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
         buf, (int) sizeof( buf ), 8, 0,
         &name, &name_bytes, &payload, &payload_bytes ) == ROCKETNET_URING_RECV_NAME_TRUNCATED );
 
     // payload truncated via MSG_TRUNC.
     memset( buf, 0, sizeof( buf ) );
-    put_u32_le( buf + 0, 0 );
-    put_u32_le( buf + 4, 0 );
-    put_u32_le( buf + 8, 0 );
-    put_u32_le( buf + 12, (uint32_t) MSG_TRUNC );
+    put_u32_native( buf + 0, 0 );
+    put_u32_native( buf + 4, 0 );
+    put_u32_native( buf + 8, 0 );
+    put_u32_native( buf + 12, (uint32_t) MSG_TRUNC );
     rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
         buf, (int) sizeof( buf ), 8, 0,
         &name, &name_bytes, &payload, &payload_bytes ) == ROCKETNET_URING_RECV_PAYLOAD_TRUNCATED );
@@ -168,10 +165,10 @@ static void test_io_uring_transport_codec_recvmsg_refuses_truncation_and_short_b
     // payload truncated: payloadlen exceeds the bytes left in the buffer (100
     // > 64-16-8=40).
     memset( buf, 0, sizeof( buf ) );
-    put_u32_le( buf + 0, 0 );
-    put_u32_le( buf + 4, 0 );
-    put_u32_le( buf + 8, 100 );
-    put_u32_le( buf + 12, 0 );
+    put_u32_native( buf + 0, 0 );
+    put_u32_native( buf + 4, 0 );
+    put_u32_native( buf + 8, 100 );
+    put_u32_native( buf + 12, 0 );
     rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
         buf, (int) sizeof( buf ), 8, 0,
         &name, &name_bytes, &payload, &payload_bytes ) == ROCKETNET_URING_RECV_PAYLOAD_TRUNCATED );
@@ -197,10 +194,10 @@ static void test_io_uring_transport_codec_recvmsg_refuses_negative_lengths()
     // a negative msg_controllen must be refused before any arithmetic uses it
     uint8_t buf[64];
     memset( buf, 0, sizeof( buf ) );
-    put_u32_le( buf + 0, 16 );
-    put_u32_le( buf + 4, 0 );
-    put_u32_le( buf + 8, 0 );
-    put_u32_le( buf + 12, 0 );
+    put_u32_native( buf + 0, 16 );
+    put_u32_native( buf + 4, 0 );
+    put_u32_native( buf + 8, 0 );
+    put_u32_native( buf + 12, 0 );
     rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
         buf, (int) sizeof( buf ), 32, -8,
         &name, &name_bytes, &payload, &payload_bytes ) == ROCKETNET_URING_RECV_SHORT_BUFFER );
