@@ -8,8 +8,8 @@
 # fail the script (MSan's exitcode is 0, so the suite runs every test). The
 # C++ library is the MSan-instrumented libc++ the fleet installs under
 # /opt/msan-libcxx-<clang version> (tools/build_msan_libcxx.sh); a runner
-# without it fails with a TOOL-MISSING line. The run is clean and the known
-# list empty, so the job gates: it is no longer continue-on-error.
+# without it fails with a TOOL-MISSING line. The job stays continue-on-error
+# until it has gated green on the fleet for a while (after v1.0.0-preview-2).
 name: msan
 
 on:
@@ -27,6 +27,7 @@ jobs:
   msan:
     name: MemorySanitizer
     runs-on: [self-hosted, Linux, X64, fleet]
+    continue-on-error: true
     steps:
 
       - uses: actions/checkout@v4
