@@ -16,11 +16,13 @@
 // sdk/rocketnet_server_socket_linux.cpp). It sizes the fill and
 // completion rings explicitly: libxdp 1.4.2's xsk_umem__create returns
 // -EINVAL for a zeroed config's zero ring sizes, so the server never starts
-// there without them. The fill ring asks for XSK_RING_PROD__DEFAULT_NUM_DESCS
-// (2048) entries and the completion ring for XSK_RING_CONS__DEFAULT_NUM_DESCS
-// (2048), both from xdp/xsk.h. The server reserves ROCKETNET_XDP_FILL_QUEUE_SIZE
-// fill entries at start (sdk/rocketnet_server_socket_linux.cpp); the
-// static assert below keeps the fill ring at least that large.
+// there without them. The fill ring asks for ROCKETNET_XDP_FILL_RING_SIZE
+// entries, twice the ROCKETNET_XDP_FILL_FRAMES receive frames the server puts
+// on it at start (sdk/rocketnet_server_socket_linux.cpp): the kernel publishes
+// the fill ring's consumer index only when its cached batch is used up, so the
+// worker needs a free slot beyond that batch for every frame it hands back
+// (rocketnet_constants.h, tla/RNXdpReceiveRing.tla). The completion ring asks
+// for XSK_RING_CONS__DEFAULT_NUM_DESCS (2048) entries, from xdp/xsk.h.
 
 #ifndef ROCKETNET_XDP_SOCKET_CONFIG_H
 #define ROCKETNET_XDP_SOCKET_CONFIG_H
@@ -45,12 +47,12 @@ static inline void rocketnet_xdp_socket_config( struct xsk_socket_config * confi
 static inline void rocketnet_xdp_umem_config( struct xsk_umem_config * config )
 {
     memset( config, 0, sizeof(*config) );
-    config->fill_size = XSK_RING_PROD__DEFAULT_NUM_DESCS;
+    config->fill_size = ROCKETNET_XDP_FILL_RING_SIZE;
     config->comp_size = XSK_RING_CONS__DEFAULT_NUM_DESCS;
     config->frame_size = ROCKETNET_XDP_FRAME_SIZE;
     config->frame_headroom = 0;
 }
 
-ROCKETNET_STATIC_ASSERT( XSK_RING_PROD__DEFAULT_NUM_DESCS >= ROCKETNET_XDP_FILL_QUEUE_SIZE, "the fill ring holds the fill entries the server reserves at start" );
+ROCKETNET_STATIC_ASSERT( ( ROCKETNET_XDP_FILL_RING_SIZE & ( ROCKETNET_XDP_FILL_RING_SIZE - 1 ) ) == 0, "the kernel takes only power of two ring sizes" );
 
 #endif // #ifndef ROCKETNET_XDP_SOCKET_CONFIG_H

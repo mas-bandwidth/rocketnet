@@ -545,7 +545,7 @@ if(ROCKETNET_BUILD_TESTS)
     # Isolated parity oracle only: never installed or linked into the SDK.
     add_library(rocketnet_sodium_oracle SHARED EXCLUDE_FROM_ALL sodium/sodium.c)
     set_target_properties(rocketnet_sodium_oracle PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
-    add_library(rocketnet_test_support STATIC sdk/rocketnet_tests.cpp)
+    add_library(rocketnet_test_support STATIC sdk/rocketnet_tests.cpp test/c_caller.c)
     target_link_libraries(rocketnet_test_support PUBLIC rocketnet_test_hooks)
     rocketnet_use_sodium(rocketnet_test_support)
     rocketnet_warning_floor(rocketnet_sodium_oracle)
@@ -619,7 +619,7 @@ if(ROCKETNET_BUILD_TESTS)
     # (the promotion rule: oversize unreliable sends promote to their reliable twin).
     add_executable(test_wide
         test.cpp test_channels.cpp test_unit_unreliable_promotion.cpp test_unit_channel_violation_counters.cpp
-        sdk/rocketnet_tests.cpp ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
+        sdk/rocketnet_tests.cpp test/c_caller.c ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
     add_dependencies(test_wide rocketnet_xdp_header)
     target_compile_definitions(test_wide PRIVATE ROCKETNET_MAX_CHANNELS=512
         ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_TEST_SEAMS=1

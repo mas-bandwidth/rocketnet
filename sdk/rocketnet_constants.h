@@ -56,7 +56,8 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
 #define ROCKETNET_XDP_NUM_FRAMES                                         65536
 #define ROCKETNET_XDP_SEND_QUEUE_SIZE                             ( 1024 * 4 )
 #define ROCKETNET_XDP_RECV_QUEUE_SIZE                             ( 4096 * 4 )
-#define ROCKETNET_XDP_FILL_QUEUE_SIZE                                     2048
+#define ROCKETNET_XDP_FILL_FRAMES                                 ( 4096 * 4 )
+#define ROCKETNET_XDP_FILL_RING_SIZE         ( 2 * ROCKETNET_XDP_FILL_FRAMES )
 #define ROCKETNET_XDP_SEND_BATCH_SIZE                                       32
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_FRAME_SIZE >= ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES +
@@ -67,6 +68,24 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_FRAME_SIZE == 4096,
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_RECV_QUEUE_SIZE >= 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE,
                          "receive budget twice send: XDP receive queue holds at least twice the send queue" );
+
+// The fill ring holds twice the receive frames the server puts on it. The
+// kernel reads the fill ring through a cached batch and publishes its consumer
+// index only when that batch is used up (xskq_cons_peek_addr_unchecked,
+// net/xdp/xsk_queue.h), so a frame it took stays in a fill ring slot until
+// then. With a ring of exactly the frames, the worker cannot hand back a frame
+// until the kernel has used its whole batch, and the kernel then finds the fill
+// ring empty and drops ("rx fill ring empty"). Twice the frames always has a
+// slot for every frame the worker holds (tla/RNXdpReceiveRing.tla,
+// PendingReturnedEachPass). The frames fit the RX ring and the worker's
+// pending return, so neither can overflow while every frame is out.
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_FILL_RING_SIZE >= 2 * ROCKETNET_XDP_FILL_FRAMES,
+                         "the fill ring has a slot for every receive frame beyond the kernel's unpublished batch" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_FILL_FRAMES <= ROCKETNET_XDP_RECV_QUEUE_SIZE,
+                         "every receive frame fits the RX ring and the worker's pending return at once" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_FILL_FRAMES <= ROCKETNET_XDP_NUM_FRAMES / 2,
+                         "the receive frames come from the receive half of the UMEM" );
 
 #endif // #if ROCKETNET_XDP
 
