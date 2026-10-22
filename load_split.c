@@ -351,6 +351,23 @@ static void split_receive_c2s( struct split_result_t * result, struct split_serv
     }
 }
 
+/* One message of a received batch as a batch of one. The batch struct holds
+ * ROCKETNET_RECEIVE_BATCH_MESSAGES entries (about 1.5 MB), so it is never
+ * copied onto the stack: a Windows main thread has a 1 MB stack, and the
+ * copy overflowed it on the first server message (exit 0xC00000FD). The
+ * shard is single-threaded, so one static batch serves every call. */
+static const struct rocketnet_message_batch_t * split_batch_entry( const struct rocketnet_message_batch_t * batch, int j )
+{
+    static struct rocketnet_message_batch_t one;
+    one.num_messages = 1;
+    one.client_index[0] = batch->client_index[j];
+    one.channel[0] = batch->channel[j];
+    one.reliability[0] = batch->reliability[j];
+    one.bytes[0] = batch->bytes[j];
+    one.data[0] = batch->data[j];
+    return &one;
+}
+
 static void split_receive_s2c( struct split_result_t * result, struct split_client_t * client,
                                uint32_t global_client, uint64_t run_id,
                                const struct rocketnet_message_batch_t * batch )
@@ -393,13 +410,7 @@ static void split_client_startup_batch( struct split_result_t * result, struct s
         const uint32_t magic = batch->data[j] && batch->bytes[j] >= 4 ? read_u32_le(batch->data[j]) : 0;
         if ( magic == LOAD_MAGIC_SV_TO_CLIENT && peer->running )
         {
-            struct rocketnet_message_batch_t one = *batch;
-            one.num_messages = 1;
-            one.data[0] = batch->data[j];
-            one.bytes[0] = batch->bytes[j];
-            one.channel[0] = batch->channel[j];
-            one.client_index[0] = batch->client_index[j];
-            split_receive_s2c(result, peer, global, run_id, &one);
+            split_receive_s2c(result, peer, global, run_id, split_batch_entry(batch, j));
             continue;
         }
         if ( !split_verify_message(batch->data[j], batch->bytes[j], magic, run_id, &message) ||
@@ -445,13 +456,7 @@ static void split_client_runtime_batch( struct split_result_t * result, struct s
             else result->protocol_errors++;
             continue;
         }
-        struct rocketnet_message_batch_t one = *batch;
-        one.num_messages = 1;
-        one.data[0] = batch->data[j];
-        one.bytes[0] = batch->bytes[j];
-        one.channel[0] = batch->channel[j];
-        one.client_index[0] = batch->client_index[j];
-        split_receive_s2c(result, peer, global, run_id, &one);
+        split_receive_s2c(result, peer, global, run_id, split_batch_entry(batch, j));
     }
 }
 
