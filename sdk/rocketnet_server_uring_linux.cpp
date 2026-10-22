@@ -896,17 +896,24 @@ void rocketnet_server_uring_test_resume_stop( struct rocketnet_server_uring_t * 
 
 struct rocketnet_server_uring_t * rocketnet_server_uring_test_create_fake( int num_queues )
 {
+    // through the SDK allocator, as the real create allocates, so a test
+    // process's memory counts it (test/plan_rss.h)
     if ( num_queues <= 0 )
         return NULL;
-    struct rocketnet_server_uring_t * uring = new (std::nothrow) rocketnet_server_uring_t();
-    if ( !uring )
+    void * uring_memory = rocketnet_malloc( NULL, sizeof( struct rocketnet_server_uring_t ) );
+    if ( !uring_memory )
         return NULL;
-    uring->queues = new (std::nothrow) rocketnet_server_uring_queue_t[num_queues]();
-    if ( !uring->queues )
+    struct rocketnet_server_uring_t * uring = new ( uring_memory ) rocketnet_server_uring_t();
+    void * queues_memory = rocketnet_malloc( NULL, sizeof( struct rocketnet_server_uring_queue_t ) * (size_t) num_queues );
+    if ( !queues_memory )
     {
-        delete uring;
+        uring->~rocketnet_server_uring_t();
+        rocketnet_free( NULL, uring_memory );
         return NULL;
     }
+    uring->queues = (struct rocketnet_server_uring_queue_t*) queues_memory;
+    for ( int i = 0; i < num_queues; i++ )
+        new ( &uring->queues[i] ) rocketnet_server_uring_queue_t();
     uring->num_queues = num_queues;
     uring->test_no_ring = true;
     return uring;
@@ -914,8 +921,11 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_test_create_fake( int n
 
 void rocketnet_server_uring_test_destroy_fake( struct rocketnet_server_uring_t * uring )
 {
-    delete[] uring->queues;
-    delete uring;
+    for ( int i = 0; i < uring->num_queues; i++ )
+        uring->queues[i].~rocketnet_server_uring_queue_t();
+    rocketnet_free( NULL, uring->queues );
+    uring->~rocketnet_server_uring_t();
+    rocketnet_free( NULL, uring );
 }
 
 void rocketnet_server_uring_test_set_arm_failures( struct rocketnet_server_uring_t * uring, int count )

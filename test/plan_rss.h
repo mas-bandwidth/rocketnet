@@ -64,10 +64,11 @@ typedef void ( *plan_rss_free_function_t )( void * context, void * p );
 // resident set at once, and the peak resident set follows the plan's peak.
 #define PLAN_RSS_MAP_BYTES ( 1024 * 1024 )
 
-// Measured on 2026-10-21 (macOS arm64 and Linux x64, Release): the largest
-// unplanned remainder of any functional or unit case was 48 MiB
-// (test_loopback_transport_live_message_matrix, whose message matrix keeps
-// its own expected-payload tables), every other case under 40 MiB.
+// Measured on 2026-10-21, Release, every case of both suites with the
+// nightly tier: the largest remainder over the plan's peak was 48 MiB on macOS
+// arm64 (unit test_user_block_is_used_and_nothing_else; functional at most
+// 32 MiB, test_lifecycle_transport) and 44 MiB on Linux x64 (unit; functional
+// at most 14 MiB). 64 MiB keeps 16 MiB over the largest.
 #define PLAN_RSS_SLACK_MB 64
 
 // the counted allocation's header: the bytes the SDK asked for and, for a
