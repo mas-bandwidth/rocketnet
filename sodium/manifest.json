@@ -74,7 +74,8 @@
       "blake2b_IV"
     ],
     "crypto_generichash/blake2b/ref/blake2b-compress-avx2.c": [
-      "blake2b_IV"
+      "blake2b_IV",
+      "d"
     ]
   },
   "local_macro_headers": [
