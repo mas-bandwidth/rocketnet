@@ -22,7 +22,8 @@
  * on the server, the first sequence a packet sent after RUN was queued can
  * carry: a largest acknowledged sequence at or past it says the client
  * acknowledged a packet sent after RUN was queued (RUN's own or a later one;
- * reliable_unacked says whether RUN is still outstanding). A client line has
+ * reliable_unacked is the total ordered window still outstanding and cannot
+ * identify RUN specifically). A client line has
  * no sequence mark and prints acked_past_run=na.
  *
  * A connection that ends less than one interval after it connected is never
@@ -42,7 +43,7 @@
 #include <string.h>
 
 #define SPLIT_CAPTURE_INTERVAL_S 1.0
-#define SPLIT_CAPTURE_LINE_BYTES 1024
+#define SPLIT_CAPTURE_LINE_BYTES 1536
 
 /* The counters every capture names, zero or not: the delivery and refusal
  * evidence the start barrier failure is decided by. */
@@ -176,13 +177,15 @@ static inline int split_capture_format( char * buffer, size_t bytes, const struc
     const int run_marked = capture->entries[index].run_sequence > 0;
     return snprintf( buffer, bytes,
         "split_capture: role=%s run_id=%016" PRIx64 " client=%d why=%s state_now=%d sample_age_s=%.3f state=%d connected=%d"
+        " server_slot=%s%d remote_endpoint=%s"
         " packets_sent=%" PRIu64 " packets_received=%" PRIu64 " messages_resent=%s%" PRIu64
         " last_receive_age_s=%.3f received_sequence=%" PRIu64 " sent_sequence=%" PRIu64 " acked_sequence=%" PRIu64
         " keep_alive_acked=%d run_age_s=%.3f run_sequence=%" PRIu64 " acked_past_run=%s"
         " reliable_unacked=%" PRIu64 " resend_queued=%" PRIu64 " oldest_unacked_age_s=%.3f"
         " srtt_ms=%.3f resend_delay_ms=%.3f window_stalled=%d budget_reliable_waiting=%d budget_tokens=%.1f",
         capture->role, capture->run_id, capture->first + index, why, state_now, split_capture_age( now, sample->time ),
-        sample->state, d->connected, sample->packets_sent, sample->packets_received,
+        sample->state, d->connected, d->server_mapping_known ? "" : "na:", d->server_slot,
+        d->server_mapping_known ? d->remote_endpoint : "na", sample->packets_sent, sample->packets_received,
         sample->resends_known ? "" : "na:", sample->messages_resent,
         d->connected ? d->last_receive_age_seconds : -1.0,
         d->highest_received_sequence, d->highest_sent_sequence, d->largest_acked_sequence,

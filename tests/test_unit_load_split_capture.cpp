@@ -65,6 +65,9 @@ static int capture_fake_sample( void * context, int index, double now, struct sp
     out->delivery.connected = fake->connected[index];
     if ( fake->connected[index] )
     {
+        out->delivery.server_mapping_known = 1;
+        out->delivery.server_slot = index + 20;
+        snprintf( out->delivery.remote_endpoint, sizeof( out->delivery.remote_endpoint ), "192.0.2.9:%d", 40000 + index );
         out->delivery.highest_received_sequence = fake->received_sequence[index];
         out->delivery.highest_sent_sequence = 500;
         out->delivery.largest_acked_sequence = fake->acked_sequence[index];
@@ -198,6 +201,7 @@ static void test_load_split_capture_prints_the_last_connected_sample_at_a_kick()
     check( capture_count( &fake, "split_capture: ", "why=kick" ) == 1 );
     check( capture_count( &fake, "split_capture: ", "client=8 ", "why=kick", "received_sequence=77 " ) == 1 );
     check( capture_count( &fake, "split_capture: ", "why=kick", "sample_age_s=1.000 ", "last_receive_age_s=0.500 " ) == 1 );
+    check( capture_count( &fake, "split_capture: ", "why=kick", "server_slot=21 ", "remote_endpoint=192.0.2.9:40001 " ) == 1 );
     char state_now[48];
     snprintf( state_now, sizeof( state_now ), "state_now=%d ", (int) ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT );
     check( capture_count( &fake, "split_capture: ", "why=kick", state_now ) == 1 );
@@ -391,6 +395,7 @@ static void test_load_split_capture_sdk_reads_both_ends()
     rocketnet_server_delivery_capture( pair.server, 0, &server_side );
     rocketnet_client_delivery_capture( pair.client, &client_side );
     check( !server_side.connected && server_side.highest_sent_sequence == 0 );
+    check( !server_side.server_mapping_known && !server_side.remote_endpoint[0] );
     check( !client_side.connected && client_side.highest_sent_sequence == 0 );
 
     for ( int i = 0; i < 400 && ( rocketnet_client_state( pair.client ) != ROCKETNET_CLIENT_STATE_CONNECTED ||
@@ -407,6 +412,8 @@ static void test_load_split_capture_sdk_reads_both_ends()
     rocketnet_server_send_packets( pair.server );
     rocketnet_server_delivery_capture( pair.server, 0, &server_side );
     check( server_side.connected );
+    check( server_side.server_mapping_known && server_side.server_slot == 0 );
+    check( strncmp( server_side.remote_endpoint, "127.0.0.1:", 10 ) == 0 );
     check( server_side.reliable_unacked == 1 );
     const uint64_t sent_with_message = server_side.highest_sent_sequence;
     check( sent_with_message > 0 );
@@ -428,9 +435,9 @@ static void test_load_split_capture_sdk_reads_both_ends()
 
     // a slot out of range and NULL arguments read as not connected
     rocketnet_server_delivery_capture( pair.server, 5, &server_side );
-    check( !server_side.connected );
+    check( !server_side.connected && !server_side.server_mapping_known && !server_side.remote_endpoint[0] );
     rocketnet_server_delivery_capture( NULL, 0, &server_side );
-    check( !server_side.connected );
+    check( !server_side.connected && !server_side.server_mapping_known && !server_side.remote_endpoint[0] );
 
     // the counter blocks are the ones the endpoint counts in
     check( rocketnet_server_transport_counter_block( pair.server ) != NULL );

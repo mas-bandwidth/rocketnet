@@ -105,8 +105,13 @@ the send budget. RUN is marked when the server queues it, with the first
 sequence any packet sent after it can carry, and when each client receives
 it. On the server a largest acknowledged sequence at or past the mark prints
 `acked_past_run=yes`: the client acknowledged a packet sent after RUN was
-queued (RUN's own or a later one; `reliable_unacked` says whether RUN is
-still outstanding). Client lines print `acked_past_run=na`.
+queued (RUN's own or a later one). `reliable_unacked` is the total outstanding
+ordered window; a nonzero count cannot identify RUN specifically. Client
+lines print `acked_past_run=na`. Server lines also retain `server_slot` and
+`remote_endpoint` (numeric address and UDP port) from the connected mapping,
+so a logical client can be correlated after its slot has been reset. These
+fields are marked unavailable on client lines and never-connected entries.
+XDP queue assignment and ring drops still require the per-XSK OS evidence.
 A connection found ended between two samples prints its last connected
 sample at once as a `split_capture:` line with `why=kick` (the SDK resets the
 slot when it ends it), followed by its own counters on a client shard and
@@ -118,7 +123,9 @@ run every connection prints one `split_capture:` line (`why=end` live,
 `end_ended` or `end_never`), then `split_counter:` lines: a named set of
 delivery and refusal counters always, every other counter when nonzero,
 and, on a client shard, each client's nonzero named counters from its last
-connected sample. The merger ignores both prefixes.
+connected sample. The merger ignores both prefixes. Detailed output is
+synchronous: the first detected kick predates that output, but printing may
+affect the timing of subsequent disconnects in the same run.
 Clients begin their own full monotonic traffic window after receiving RUN;
 machine UTC clocks are only reported for correlation, never used to shorten
 the duration. Each role then runs exactly the requested traffic duration and

@@ -3631,6 +3631,9 @@ void rocketnet_server_transport_delivery_capture( struct rocketnet_server_transp
     const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( protocol->encryption_map, mapping_index );
     const struct rocketnet_ack_endpoint_t * endpoint = &protocol->acks->endpoints[client_index];
     capture->connected = 1;
+    capture->server_mapping_known = 1;
+    capture->server_slot = client_index;
+    rocketnet_address_to_string( rocketnet_encryption_map_address( protocol->encryption_map, mapping_index ), capture->remote_endpoint );
     capture->last_receive_age_seconds = mapping->control && mapping->control->last_receive_time > 0.0 ?
                                         server_transport->time - mapping->control->last_receive_time : -1.0;
     capture->highest_received_sequence = mapping->replay_session.highest_opened;

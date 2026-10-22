@@ -1985,6 +1985,9 @@ static inline struct rocketnet_server_client_stats_t rn_server_client_stats_of( 
 struct rocketnet_delivery_capture_t
 {
     int connected;
+    int server_mapping_known;              // server slot and remote endpoint are populated
+    int server_slot;
+    char remote_endpoint[ROCKETNET_MAX_ADDRESS_STRING_LENGTH]; // numeric address and UDP port
     int keep_alive_acked;                   // the other end has acknowledged one of this end's keep-alives
     double last_receive_age_seconds;        // since the last accepted session packet; -1 never
     uint64_t highest_received_sequence;

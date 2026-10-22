@@ -894,7 +894,8 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
         /* RUN's mark: the first sequence any packet sent to a client after RUN
          * is queued can carry, so it holds whether RUN leaves on this flush or
          * later. An acknowledgement at or past it is of a packet sent after RUN
-         * was queued: RUN's own, or a later one (reliable_unacked says which). */
+         * was queued: RUN's own, or a later one. The total reliable_unacked
+         * window cannot identify whether RUN itself remains outstanding. */
         const double run_queued = rocketnet_time();
         for ( int i = 0; i < total; ++i )
         {
