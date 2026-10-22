@@ -283,3 +283,11 @@ MCRNClientIoLiveCommittedB.cfg	MCRNClientIoLiveness.tla	pass	-	check	rnclientio	
 MCRNClientIoLiveFilled.cfg	MCRNClientIo.tla	pass	-	check	rnclientio	required	-
 MCRNClientIoLiveArrivedBeforeLast.cfg	MCRNClientIoLiveness.tla	pass	-	check	rnclientio	required	-
 MCRNClientIoLiveArrivedLast.cfg	MCRNClientIoLiveness.tla	pass	-	check	rnclientio	required	-
+MCRNBufferHandoffSend.cfg	MCRNBufferHandoff.tla	pass	-	check	rnbufferhandoff	required	-
+MCRNBufferHandoffReceive.cfg	MCRNBufferHandoff.tla	pass	-	check	rnbufferhandoff	required	-
+MCRNBufferHandoffBrokenMainBlocks.cfg	MCRNBufferHandoff.tla	invariant	MainNeverWaits	check	rnbufferhandoff	required	-
+MCRNBufferHandoffBrokenWorkUnderLock.cfg	MCRNBufferHandoff.tla	invariant	NoWorkUnderLock	check	rnbufferhandoff	required	-
+MCRNBufferHandoffBrokenWriteAfterPublish.cfg	MCRNBufferHandoff.tla	invariant	ViewStable	check	rnbufferhandoff	required	-
+MCRNBufferHandoffBrokenSkipWake.cfg	MCRNBufferHandoff.tla	temporal	ArrivedDelivered	check	rnbufferhandoff	required	-
+MCRNBufferHandoffBrokenReleaseBeforeSent.cfg	MCRNBufferHandoff.tla	invariant	FreeIsEmpty	check	rnbufferhandoff	required	-
+MCRNBufferHandoffBrokenDropFinal.cfg	MCRNBufferHandoff.tla	invariant	ExitSentAll	check	rnbufferhandoff	required	-
