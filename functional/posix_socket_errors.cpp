@@ -1997,6 +1997,7 @@ static void posix_xdp_weather( int ipv6 )
     static uint8_t buffer[65507];
     uint64_t random_state = 0x9e3779b97f4a7c15ULL ^ (uint64_t) ( ipv6 * 2 + 1 ) ^ 0x5844ULL;
     int garbage_sent = 0;
+    uint64_t garbage_too_large = 0;
     int valid_sent = 0;
     int valid_seen = 0;
     uint64_t frag_creates = 0;
@@ -2065,6 +2066,8 @@ static void posix_xdp_weather( int ipv6 )
                 buffer[i] = (uint8_t) posix_next_random( &random_state );
             posix_send_datagram( sender, &to, to_bytes, buffer, bytes, NULL );
             posix_xdp_classify( buffer, bytes, &expect );
+            if ( bytes > ROCKETNET_RECEIVE_CEILING )
+                garbage_too_large++;
             garbage_sent++;
         }
 
@@ -2122,7 +2125,15 @@ static void posix_xdp_weather( int ipv6 )
     if ( !posix_xdp_equal( &final_counts, &expect ) )
         posix_xdp_print( "final", &final_counts, &expect );
     posix_check( posix_xdp_equal( &final_counts, &expect ) );
-    posix_check( final_counts.too_large == start.too_large );
+    // the receive ceiling is the send budget, the IPv6 UDP payload of the
+    // link: a whole IPv4 datagram can be up to 20 bytes larger, and the
+    // filter drops those counted TOO_LARGE. every other datagram that fits
+    // the link is never too large
+
+    const int ceiling_slack = max_whole - ROCKETNET_RECEIVE_CEILING;
+    posix_check( ceiling_slack == ( ipv6 ? 0 : 20 ) );
+    posix_check( ( garbage_too_large > 0 ) == ( ceiling_slack > 0 ) );
+    posix_check( final_counts.too_large - start.too_large == garbage_too_large );
     posix_check( final_counts.invalid_type == start.invalid_type );
     if ( frag_creates != expect_fragments )
         printf( "%s: the far stack made %llu fragments, the case expects %llu\n", case_name, (unsigned long long) frag_creates, (unsigned long long) expect_fragments );
