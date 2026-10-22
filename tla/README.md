@@ -113,6 +113,7 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnclientreceivequit` | 5 | The client receive thread's quit-and-wake handshake with destroy: controls for linux, macOS and Windows (two invariants, one action property, one liveness property) and two witnesses: the wake sent before quit (`WokenSeesQuit`) and a wait with no timeout and no wake (`DestroyCompletes`) |
 | `rnserversendfair` | 4 | The server send pass under a payload-frame cap: controls at N=3/K=1 and N=5/K=2 (bounded service within ceil(N/K) updates) and two reversed witnesses: the pass starts at index 0 every update (`MCRNServerSendFairBrokenFromZero.cfg`) and the first client consumes the cap (`MCRNServerSendFairBrokenInPlace.cfg`), both violating `FairService` |
 | `sendhandoff` | 3 | Send handoff generations: the control and reversed witnesses for reopening the front and accepting a stale pointer below the published base |
+| `splitstart` | 4 | The load_split start barrier (docs/LOAD_SPLIT.md): the one-deadline shard rule as control, and reversed witnesses for the per-phase rule it replaced and the deadline without the reliable timeout term (`ServerIsTheAuthority`) and for a completed start (`NotAllRunning`) |
 
 The 50-case plan covers every root configuration. Other experiments described
 in the model READMEs remain historical; this migration does not claim fresh
