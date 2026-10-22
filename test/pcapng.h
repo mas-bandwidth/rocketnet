@@ -232,7 +232,7 @@ inline void rocketnet_pcapng_ipv4_udp_frame( std::vector<uint8_t> & out,
     };
     out.insert( out.end(), header, header + 20 );
     uint32_t sum = 0;
-    for ( int i = 0; i < 20; i += 2 )
+    for ( size_t i = 0; i < 20; i += 2 )
         sum += ( (uint32_t) out[i] << 8 ) | out[i + 1];
     while ( sum >> 16 )
         sum = ( sum & 0xFFFF ) + ( sum >> 16 );
