@@ -271,3 +271,11 @@ MCRNClientIoShutdownBrokenFreeBeforeComplete.cfg	MCRNClientIoShutdown.tla	invari
 MCRNClientIoShutdownBrokenReuseBeforeComplete.cfg	MCRNClientIoShutdown.tla	invariant	NoReuseBeforeComplete	check	shutdownownership	required	-
 MCRNClientIoShutdownBrokenAckBeforeWipe.cfg	MCRNClientIoShutdown.tla	invariant	CompletionMeansQuiescent	check	shutdownownership	required	-
 MCRNClientIoShutdownBrokenRepeatCallback.cfg	MCRNClientIoShutdown.tla	invariant	CallbackOnce	check	shutdownownership	required	-
+MCRNBufferHandoffSend.cfg	MCRNBufferHandoff.tla	pass	-	check	rnbufferhandoff	required	-
+MCRNBufferHandoffReceive.cfg	MCRNBufferHandoff.tla	pass	-	check	rnbufferhandoff	required	-
+MCRNBufferHandoffBrokenMainBlocks.cfg	MCRNBufferHandoff.tla	invariant	MainNeverWaits	check	rnbufferhandoff	required	-
+MCRNBufferHandoffBrokenWorkUnderLock.cfg	MCRNBufferHandoff.tla	invariant	NoWorkUnderLock	check	rnbufferhandoff	required	-
+MCRNBufferHandoffBrokenWriteAfterPublish.cfg	MCRNBufferHandoff.tla	invariant	ViewStable	check	rnbufferhandoff	required	-
+MCRNBufferHandoffBrokenSkipWake.cfg	MCRNBufferHandoff.tla	temporal	ArrivedDelivered	check	rnbufferhandoff	required	-
+MCRNBufferHandoffBrokenReleaseBeforeSent.cfg	MCRNBufferHandoff.tla	invariant	FreeIsEmpty	check	rnbufferhandoff	required	-
+MCRNBufferHandoffBrokenDropFinal.cfg	MCRNBufferHandoff.tla	invariant	ExitSentAll	check	rnbufferhandoff	required	-
