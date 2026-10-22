@@ -28,9 +28,10 @@
     the process must end the cell exactly as it started it.
 
     On Linux the server cells are portable, gso, io_uring and xdp, each with
-    the portable client. The io_uring cell is not in the suite on a kernel
-    whose kernel.io_uring_disabled is not 0. The xdp cell needs root, a
-    network namespace and a veth pair, so it is in the suite only as root
+    the portable client. The io_uring cell is in the suite only when the build
+    has its backend and the kernel accepts the ring features it needs. The xdp
+    cell needs root, a network namespace and a veth pair, so it is in the suite
+    only as root
     inside a virtme-ng guest (or as root with ROCKETNET_TEST_XDP_VETH=1). Its server binds the near end of the pair on a fixed port,
     its clients open their sockets in the far end's namespace, and its
     1000-count loops run 100 times, since every create attaches to the pair.
@@ -64,6 +65,9 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_platform.h"
+#if defined(__linux__)
+#include "rocketnet_server_uring.h"
+#endif
 
 #if !defined(_WIN32)
 
@@ -428,18 +432,13 @@ static void posix_xdp_setup()
 
 #endif // #if defined(__linux__) && ROCKETNET_XDP
 
-// io_uring is offered when kernel.io_uring_disabled reads 0, or the file is
-// absent on a kernel older than the switch
+// The lifecycle cell asks for io_uring exactly, so offer it only when this
+// build has the backend and the kernel accepts the ring, opcodes and provided
+// buffer ring that the transport needs.
 static bool posix_io_uring_offered()
 {
 #if defined(__linux__)
-    FILE * file = fopen( "/proc/sys/kernel/io_uring_disabled", "r" );
-    if ( !file )
-        return true;
-    int disabled = 0;
-    const bool read = fscanf( file, "%d", &disabled ) == 1;
-    fclose( file );
-    return !read || disabled == 0;
+    return rocketnet_server_uring_available();
 #else
     return false;
 #endif
