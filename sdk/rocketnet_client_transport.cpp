@@ -1,6 +1,5 @@
 #include <new>
 #include "rocketnet_packet_lease.h"
-#include "rocketnet_stats_window.h"
 /*
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
@@ -121,13 +120,14 @@ struct rocketnet_client_received_packets_t
 // per-second numbers summing only buckets younger than one second. the two
 // fields past the reference set carry receive-side packet loss: session
 // packets accepted, and losses the tracker detected, in the same window.
+// Each bucket's time and frame live in their own arrays, indexed by bucket:
+// the per-update scan reads only those to find the buckets inside the last
+// second, and touches the counters of those buckets alone.
 
 #define ROCKETNET_NUM_CLIENT_STATS_FRAMES 256
 
-struct alignas(64) rocketnet_client_stats_frame_t
+struct rocketnet_client_stats_frame_t
 {
-    double time;
-    uint64_t frame;
     uint64_t packets_sent;
     uint64_t packets_received;
     uint64_t bytes_sent;
@@ -162,7 +162,6 @@ struct rocketnet_client_legacy_receive_state_t
     /* fill payload_ring[client_io.send_fill]. The BASE path never hands */                                          \
     /* off, so it fills ring 0 only. */                                                                              \
     X( payload_ring, struct rocketnet_client_payload_ring_t payload_ring[ROCKETNET_CLIENT_IO_NUM_RINGS] )            \
-    X( stats_frames, struct rocketnet_client_stats_frame_t stats_frames[ROCKETNET_NUM_CLIENT_STATS_FRAMES] )         \
     X( context, void * context )                                                                                     \
     X( bound_port, uint16_t bound_port )                                                                             \
     X( transport, int transport ) /* the granted transport (ROCKETNET_TRANSPORT_*), decided by the ladder at create */           \
@@ -208,6 +207,9 @@ struct rocketnet_client_legacy_receive_state_t
     X( counters, struct rocketnet_counters_t counters )                                                              \
     X( protocol, struct rocketnet_client_protocol_t protocol )                                                       \
     X( client_stats, struct rocketnet_client_transport_stats_t client_stats )                                        \
+    X( stats_frame_time, double stats_frame_time[ROCKETNET_NUM_CLIENT_STATS_FRAMES] )                                \
+    X( stats_frame_number, uint64_t stats_frame_number[ROCKETNET_NUM_CLIENT_STATS_FRAMES] )                          \
+    X( stats_frames, struct rocketnet_client_stats_frame_t stats_frames[ROCKETNET_NUM_CLIENT_STATS_FRAMES] )         \
     X( current_stats_index, int current_stats_index )                                                                \
     X( packet_loss_tracker, struct rocketnet_packet_loss_tracker_t packet_loss_tracker )                             \
     X( jitter_tracker, struct rocketnet_jitter_tracker_t jitter_tracker )
@@ -1553,6 +1555,23 @@ static rocketnet_client_receive_buffer_t * rocketnet_client_update_expose_legacy
     return state->held >= 0 ? &client_transport->receive_buffer[state->held] : NULL;
 }
 
+// rocketnet_stats_window_advance over the client's per-bucket arrays: the
+// same elapsed-time rule, a fresh bucket zeroed in each array
+
+static int rocketnet_client_stats_window_advance( rocketnet_client_transport_t * client_transport, double time )
+{
+    int index = client_transport->current_stats_index;
+    if ( !client_transport->stats_frame_number[index] || time < client_transport->stats_frame_time[index] ||
+         time - client_transport->stats_frame_time[index] >= 1.0 / double( ROCKETNET_NUM_CLIENT_STATS_FRAMES - 1 ) )
+    {
+        index = ( index + 1 ) % ROCKETNET_NUM_CLIENT_STATS_FRAMES;
+        client_transport->stats_frames[index] = rocketnet_client_stats_frame_t{};
+        client_transport->stats_frame_number[index] = client_transport->frame;
+        client_transport->stats_frame_time[index] = time;
+    }
+    return index;
+}
+
 // process the previous stats frames into published per-second numbers, then
 // advance the bucket when due, then run the loss tracker's bounded sweep.
 // rtt and jitter live in the protocol and the jitter tracker and are read by
@@ -1573,7 +1592,7 @@ static void rocketnet_client_update_stats( rocketnet_client_transport_t * client
         for ( int i = 0; i < ROCKETNET_NUM_CLIENT_STATS_FRAMES; i++ )
         {
             // IMPORTANT: only sum the last second worth of stats frames, we want "packets sent per-second, bandwidth sent per-second etc..."
-            if ( client_transport->stats_frames[i].frame == 0 || client_transport->stats_frames[i].time + 1.0 < time )
+            if ( client_transport->stats_frame_number[i] == 0 || client_transport->stats_frame_time[i] + 1.0 < time )
                 continue;
 
             total_packets_sent += client_transport->stats_frames[i].packets_sent;
@@ -1599,9 +1618,7 @@ static void rocketnet_client_update_stats( rocketnet_client_transport_t * client
     // setup next stats frame
     {
         client_transport->frame++;
-        client_transport->current_stats_index = rocketnet_stats_window_advance(
-            client_transport->stats_frames, client_transport->current_stats_index,
-            client_transport->frame, time);
+        client_transport->current_stats_index = rocketnet_client_stats_window_advance( client_transport, time );
         const int stats_index = client_transport->current_stats_index;
 
         // the loss tracker's sweep is bounded by its safety margin and runs
