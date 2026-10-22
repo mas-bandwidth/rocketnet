@@ -7,18 +7,28 @@ GitHub CI is not a deliverable or publication gate for this preview.
 
 ## Source provenance
 
-The published tag `v1.0.0-preview-2` points to main commit
+The original publication named main commit
 `c1a63ac978c0389f97e2d37e9ab61c8139191e34`, whose complete source tree
-is identical to candidate `a76d641ad64768e239528cd1c6bfdf37a0caaa41`.
-This qualification index was finalized after publication; it records the
-existing results and does not change the released source or tag.
+matches candidate `a76d641ad64768e239528cd1c6bfdf37a0caaa41`.
+The first recut named `2f88961a0b42713b832478df257d30e15c0944e6`, adding
+the qualification documents and moving root-level test sources into `tests/`.
+The corrected recut also includes the Windows resource-path fix from
+`0c45746304893b384cb85a664bd05093e70683da` and the narrow functional and
+unit fixture repairs described below, plus the GSO/io_uring send-boundary
+retry repair from `d7f26728`. The final commit and native suite
+results are recorded in the [published release notes](https://github.com/mas-bandwidth/rocketnet/releases/tag/v1.0.0-preview-2).
+
+The owner explicitly authorized replacing this preview tag and requires native
+unit and functional suites to pass on Linux, macOS and Windows at the final
+commit. Recorded manual runs satisfy that requirement; CI infrastructure is
+not a deliverable. Earlier receipts below retain their original scope.
 
 The runtime candidate was `ba09993ba30e1c93c55d8d2f0bdf42baedd9ee0a`.
 Commit `a76d641ad64768e239528cd1c6bfdf37a0caaa41` restores the earlier CI
 configuration and records the manual qualification policy; it changes no SDK
-or test implementation. The final release documentation does not change those
-inputs. Results below retain their original tested commits. They are not
-blanket passes for every platform or configuration.
+or test implementation. The original publication documentation did not change
+those inputs; subsequent recut changes are recorded separately here. Results
+below retain their original tested commits. They are not blanket passes for every platform or configuration.
 
 The SDK runtime is unchanged from `c9db35ff19dc17f0bc3801a1527fd5175260d022`
 through the runtime candidate. Later repairs affect existing test checks,
@@ -53,23 +63,31 @@ portable, 1,146 for GSO and 1,846 for io_uring. These do not meet the
 100-microsecond target. XDP was detached after the recorded privileged runs.
 The evidence establishes copy mode, not zero-copy or line-rate throughput.
 
-## Known issues and unfinished qualification
+## Recut repairs and remaining qualification
 
 - **XDP with 1,000 Windows clients:** eight connections reached the reliable
   message timeout during startup. The exact cause is unresolved. The passing
   Linux-client ladder and portable-server control do not qualify this failing
   combination.
-- **macOS Debug suite interference:** exact-delivery checks lost packets while
-  the existing eight-thread destroy-under-traffic flood ran concurrently.
-  Quiet checks passed and the focused concurrent run reproduced the failure
-  while kernel drop counters rose. An isolated grouping repair is deferred;
-  it is not part of this release.
-- **s390x full-system tests:** the io_uring codec test fixture writes native UAPI
-  fields in little-endian order. The SDK parser follows the native UAPI layout.
-  The fixture repair is deferred. Other full-system connection and handoff
-  completion checks failed during a run with late external host overlap;
-  quiet causal replays remain unfinished. Existing qemu-user jobs build the
-  unit binary but run only the wire and sodium checks.
+- **GSO/io_uring send retry repaired for this recut:** ordinary server send
+  calls retry retained native work even without a new message. This keeps
+  the native flush nonblocking. Functional error-injection checks settle
+  earlier sends and observe completion through the ordinary send boundary,
+  rather than bypassing it with direct native flushes.
+- **macOS flood isolation repaired for this recut:** exact-delivery functional
+  cases lost packets while the eight-thread destroy-under-traffic flood ran
+  concurrently. The repair gives that existing flood its own Darwin suite
+  group without changing workload, assertions or deadlines. Full Debug auto
+  and portable-pinned runs passed at `afdc49b5` in 269 and 270 seconds while
+  kernel drop counters still rose; that patch is included in this recut.
+- **s390x fixture repaired; timing findings remain:** the io_uring codec unit
+  fixture now writes native UAPI fields in native byte order. Native Linux
+  Release passed; verified big-endian S/390 Debug and Release each failed the
+  original assertion on the base and passed with `1b91edbf`. The SDK parser
+  is unchanged. Separate full-system connection and handoff completion
+  failures during late external host overlap remain unclassified; no
+  completion deadline was changed. Existing qemu-user jobs build the unit
+  binary but run only the wire and sodium checks.
 - **Full Linux soak:** completed non-timing cells preceded a process kill in
   the XDP cell. The full run is incomplete; no kernel receipt establishes the
   cause of that kill. Separately, the known 1,000-client shutdown memory spike

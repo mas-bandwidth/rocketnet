@@ -10,19 +10,19 @@
     The live XDP fleet run (docs/LIVE-XDP.md): `--matrix` runs the message
     matrix instead of the payload echo. The server sends its own
     sequence-derived stream to each client and verifies what it receives,
-    using test/live_verify.h (sections 3 to 5). It runs at the max_clients
+    using tests/live_verify.h (sections 3 to 5). It runs at the max_clients
     the run sets, dumps counters and resident memory each minute, exits when
     its controlling ssh or stdin closes, and refuses to start when the XDP
     transport is pinned and the interface reports the in-tree transport (section 9).
 */
 
-#include "test/native_shutdown.h"
+#include "tests/native_shutdown.h"
 #include "rocketnet.h"
 #include "rocketnet_layers.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_counters.h"
-#include "test/live_verify.h"
-#include "test/portable_crt.h"
+#include "tests/live_verify.h"
+#include "tests/portable_crt.h"
 
 #include <stdio.h>
 #include <signal.h>

@@ -22,7 +22,7 @@
 #include "rocketnet_packet_loss_tracker.h"
 #include "rocketnet_out_of_order_tracker.h"
 #include "rocketnet_jitter_tracker.h"
-#include "../test/rocketnet_value_tracker.h"
+#include "../tests/rocketnet_value_tracker.h"
 #include "rocketnet_test_vectors.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_protocol.h"
@@ -72,7 +72,7 @@
 #include <thread>
 #include <vector>
 
-#include "../test/suite_runner.h"
+#include "../tests/suite_runner.h"
 
 // the request path's cookie mac generations, on this thread since it
 // started: defined in rocketnet_server_protocol.cpp, read here as the
@@ -232,7 +232,7 @@ do                                                                              
 
 // the exact-delta helper and the conservation assert, checked by this suite
 #define ROCKETNET_COUNTERS_CHECK rocketnet_check
-#include "../test/counters_expect.h"
+#include "../tests/counters_expect.h"
 
 // the clamp is a pure function: a non-finite time or a step backwards is the
 // last good time, counted and (in a debug build) asserted; a forward step
@@ -13790,7 +13790,7 @@ void rocketnet_test_log_level_refuses_out_of_range()
     // value outside that range leaves the level in force rather than
     // storing it, so a caller cannot silence the library by accident
 
-    // -1 is what a C caller can pass, so it is passed from C (test/c_caller.c):
+    // -1 is what a C caller can pass, so it is passed from C (tests/c_caller.c):
     // in C++ a value outside the enum's range of values cannot be formed
 
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );

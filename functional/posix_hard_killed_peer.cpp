@@ -29,7 +29,7 @@
     other platforms register no cells of their own here.
 */
 
-#include "../test/native_shutdown.h"
+#include "../tests/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_layers.h"
@@ -68,7 +68,7 @@ static void posix_hard_killed_check( bool condition, const char * expression, co
     exit( 1 );
 }
 #define posix_hard_killed_require( condition ) posix_hard_killed_check( (condition), #condition, __FUNCTION__, __LINE__ )
-#include "../test/counters_expect.h"
+#include "../tests/counters_expect.h"
 
 // The server's update interval and the original receive-gap reference: one
 // interval plus 50 ms. Keep reporting it for comparison, but do not make it a
@@ -888,7 +888,7 @@ const char * rocketnet_posix_hard_killed_peer_test_name( int index )
     return posix_hk_names[index];
 }
 
-// the suite group (test/suite_runner.h, group_of) of a case name: the cell
+// the suite group (tests/suite_runner.h, group_of) of a case name: the cell
 // cases measure receive gaps and handshake times against the wall clock, so
 // they run as group 1, after every other case and the sibling executables
 // (group 0) have finished, never beside the loopback load those make; they

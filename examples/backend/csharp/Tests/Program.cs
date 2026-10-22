@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 
     Unit tests: no sockets, no real time. The known answers are the C
-    library's own, test/connect_token_vectors.json, minted by
+    library's own, tests/connect_token_vectors.json, minted by
     rocketnet_write_connect_token_deterministic; this backend must write
     every one of them byte for byte.
 
@@ -45,14 +45,14 @@ static class Tests
 
     static string VectorsPath()
     {
-        // walk up from the working directory to the repository's test/connect_token_vectors.json
+        // walk up from the working directory to the repository's tests/connect_token_vectors.json
         for ( DirectoryInfo? directory = new DirectoryInfo( Directory.GetCurrentDirectory() ); directory != null; directory = directory.Parent )
         {
-            string path = Path.Combine( directory.FullName, "test", "connect_token_vectors.json" );
+            string path = Path.Combine( directory.FullName, "tests", "connect_token_vectors.json" );
             if ( File.Exists( path ) )
                 return path;
         }
-        throw new TestFailure( "test/connect_token_vectors.json not found above the working directory" );
+        throw new TestFailure( "tests/connect_token_vectors.json not found above the working directory" );
     }
 
     static List<JsonElement> LoadVectors()

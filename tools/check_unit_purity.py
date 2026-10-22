@@ -7,7 +7,7 @@ naming file and line, on any call that would force a real platform primitive:
 a sleep, a wall-clock read, a thread start, a hostname resolution, the C
 library's time() or a std::thread.
 
-The scanned files are every test_unit_*.cpp at the repository root and
+The scanned files are every tests/test_unit_*.cpp and
 sdk/rocketnet_tests.cpp (the unit-registered cases live there). Comments are
 stripped before matching, and linker-wrap symbol declarations
 (__real_/__wrap_rocketnet_platform_time) are not calls.
@@ -57,9 +57,10 @@ def scan_lines(lines, prefix):
 def main():
     root = sys.argv[1] if len(sys.argv) > 1 else os.getcwd()
     files = []
-    for entry in sorted(os.listdir(root)):
+    tests_dir = os.path.join(root, "tests")
+    for entry in sorted(os.listdir(tests_dir)):
         if entry.startswith("test_unit_") and entry.endswith(".cpp"):
-            files.append(os.path.join(root, entry))
+            files.append(os.path.join(tests_dir, entry))
     sdk_tests = os.path.join(root, "sdk", "rocketnet_tests.cpp")
     if os.path.exists(sdk_tests):
         files.append(sdk_tests)

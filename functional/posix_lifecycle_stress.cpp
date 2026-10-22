@@ -60,7 +60,7 @@
     an IPv4 server binds an IPv4 socket (sdk/rocketnet_client_transport.cpp:796).
 */
 
-#include "../test/native_shutdown.h"
+#include "../tests/native_shutdown.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"

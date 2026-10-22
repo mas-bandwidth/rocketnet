@@ -8,8 +8,8 @@
     through the state machines and the in-memory simulator.
 */
 
-#include "../test/native_shutdown.h"
-#include "../test/time_scale.h"
+#include "../tests/native_shutdown.h"
+#include "../tests/time_scale.h"
 #include "rocketnet_internal.h"
 
 // The shared harness carries one call with the retired create-time argument.
@@ -41,7 +41,7 @@ extern std::atomic<unsigned long long> g_client_ack_stats_count;
 // A macro, so a failure names the test that ended the transport.
 
 #define ROCKETNET_COUNTERS_CHECK rocketnet_check
-#include "../test/counters_expect.h"
+#include "../tests/counters_expect.h"
 
 // The clean-run rule rides along: every refusal reads 0 on a run that injects
 // no fault. A test that provokes a refusal on purpose ends with the _EXCEPT
@@ -5053,7 +5053,7 @@ void rocketnet_test_server_transport_io_pin_msgx()
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
 #include "rocketnet_driver.h"
-#include "../test/suite_runner.h"
+#include "../tests/suite_runner.h"
 
 // test_transport_all_skipped_uses_auto, and on Linux
 // test_server_transport_io_ladder_fall, create the development config's

@@ -29,7 +29,7 @@
 */
 
 #define ROCKETNET_DEV 1
-#include "../test/native_shutdown.h"
+#include "../tests/native_shutdown.h"
 #include "rocketnet.h"
 #include "rocketnet_driver_loopback.h"
 #include "rocketnet_internal.h"

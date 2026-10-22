@@ -14,7 +14,7 @@
     drops the senders counted.
 */
 
-#include "../test/native_shutdown.h"
+#include "../tests/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_platform.h"
@@ -1397,6 +1397,41 @@ static void posix_linux_bounded_flush( struct posix_pair_t * pair, int gso_dropp
     rocketnet_platform_thread_destroy( thread );
 }
 
+// the native server's send path holds no work: nothing staged, nothing
+// published and untaken, nothing in flight. The gso transport sends on its TX
+// worker and counts a bank's sends and drops before it returns the bank; the
+// io_uring transport counts each send when its CQE is reaped. Either way the
+// send counters are final only once this answers true.
+
+static bool posix_linux_send_idle( struct posix_pair_t * pair )
+{
+    if ( pair->native == POSIX_NATIVE_GSO )
+        return rocketnet_server_gso_test_send_idle( (struct rocketnet_server_gso_t*) pair->transport );
+    if ( pair->native == POSIX_NATIVE_URING )
+        return rocketnet_server_uring_test_send_idle( (struct rocketnet_server_uring_t*) pair->transport );
+    return true;
+}
+
+// bring the server's send path to quiescence through the ordinary send
+// boundary: the transport's send_packets re-runs the gso and io_uring flush
+// even with no new commit (sdk/rocketnet_server_transport.cpp), so a gso bank
+// retained on a contended or full handoff is published, and io_uring sends
+// owed their CQEs are reaped and the index reset. Nothing new is staged while
+// the path settles.
+
+static void posix_linux_wait_send_idle( struct posix_pair_t * pair, const char * what )
+{
+    const double deadline = rocketnet_platform_time() + 5.0;
+    while ( !posix_linux_send_idle( pair ) && rocketnet_platform_time() < deadline )
+    {
+        rocketnet_server_transport_send_packets( pair->server );
+        rocketnet_platform_sleep( 0.001 );
+    }
+    if ( !posix_linux_send_idle( pair ) )
+        printf( "%s: the server send path did not go idle within 5 seconds\n", what );
+    posix_check( posix_linux_send_idle( pair ) );
+}
+
 // a flush whose every send fails: eight payloads staged, none sent, each
 // dropped one counted, and none of them reaches the client
 
@@ -1408,13 +1443,20 @@ static void posix_linux_dropped_flush( struct posix_pair_t * pair, void (*fail)(
     const int uring_sent = ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT;
     const int uring_dropped = ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED;
 
-    // drain the update's own sends first, so the failing flush holds ours
+    // drain the update's own sends, and every earlier flush's (the previous
+    // cell's traffic can reach the client before the gso worker has counted
+    // it), so the counters read below are final and the failing flush holds
+    // only ours
     posix_pair_update( pair );
+    posix_linux_wait_send_idle( pair, "before the failing flush" );
 
     const uint64_t sent_before = posix_native_counter( pair->native, pair->transport, gso_sent, uring_sent );
     const uint64_t dropped_before = posix_native_counter( pair->native, pair->transport, gso_dropped, uring_dropped );
     const uint64_t transport_failed_before = rocketnet_server_transport_counters( pair->server )->values[ROCKETNET_COUNTER_SEND_FAILED];
 
+    // the failure is armed before anything is staged: every send from here
+    // until the path is idle again fails, and only ours are staged
+    fail( pair, 1000 );
     for ( int i = 0; i < 8; i++ )
     {
         struct rocketnet_packet_context_t context;
@@ -1423,19 +1465,10 @@ static void posix_linux_dropped_flush( struct posix_pair_t * pair, void (*fail)(
         memset( frame + context.payload_index, 0xdd, 16 );
         posix_check( rocketnet_server_transport_finish_packet( pair->server, &context, 16 ) > 0 );
     }
-    fail( pair, 1000 );
     posix_linux_bounded_flush( pair, gso_dropped, uring_dropped );
-    // the GSO transport sends on its transmit worker: hold the injected
-    // failure until the worker has taken and dropped the flushed bank. A
-    // try-publish can retain the producer while the previous bank is still in
-    // flight, so retry the ordinary send boundary while waiting for its drop.
-    const double drop_deadline = rocketnet_platform_time() + 5.0;
-    while ( posix_native_counter( pair->native, pair->transport, gso_dropped, uring_dropped ) - dropped_before < 8 &&
-            rocketnet_platform_time() < drop_deadline )
-    {
-        rocketnet_server_transport_send_packets( pair->server );
-        rocketnet_platform_sleep( 0.001 );
-    }
+    // hold the injected failure until the flushed bank is published, taken
+    // and dropped, and the path is idle again
+    posix_linux_wait_send_idle( pair, "after the failing flush" );
     fail( pair, 0 );
 
     const uint64_t sent = posix_native_counter( pair->native, pair->transport, gso_sent, uring_sent ) - sent_before;
