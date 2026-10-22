@@ -125,6 +125,10 @@ void rocketnet_client_slots_destroy( struct rocketnet_client_slots_t * slots )
     rocketnet_free( slots->context, slots->mapping_index );
     rocketnet_free( slots->context, slots->confirmed );
     rocketnet_free( slots->context, slots->free_stack );
+    // the connect tokens' user data can carry the game's secrets: wiped
+    // whole, which touches no new page (create zeroed it)
+    if ( slots->user_data )
+        sodium_memzero( slots->user_data, (size_t) ROCKETNET_USER_DATA_BYTES * (size_t) slots->max_clients );
     rocketnet_free( slots->context, slots->user_data );
     rocketnet_free( slots->context, slots );
 }
@@ -289,7 +293,7 @@ void rocketnet_client_slots_release( struct rocketnet_client_slots_t * slots, in
     slots->confirmed[client_index] = 0;
     slots->client_id[client_index] = 0;
     slots->mapping_index[client_index] = -1;
-    memset( slots->user_data + (size_t) client_index * ROCKETNET_USER_DATA_BYTES, 0, ROCKETNET_USER_DATA_BYTES );
+    sodium_memzero( slots->user_data + (size_t) client_index * ROCKETNET_USER_DATA_BYTES, ROCKETNET_USER_DATA_BYTES );
 
     // the free list takes the index back: pushed on disconnect, popped on
     // the next connect, so the slot is immediately available for reuse and

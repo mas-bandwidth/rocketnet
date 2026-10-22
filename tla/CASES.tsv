@@ -297,3 +297,5 @@ MCRNDestroyWipe.cfg	MCRNDestroyWipe.tla	pass	-	check	rndestroywipe	required	-
 MCRNDestroyWipeBrokenWholeBlock.cfg	MCRNDestroyWipe.tla	invariant	ShutdownPeakWithinRun	check	rndestroywipe	required	-
 MCRNDestroyWipeBrokenNoRemoveWipe.cfg	MCRNDestroyWipe.tla	invariant	NoSecretOutsideLive	check	rndestroywipe	required	-
 MCRNDestroyWipeBrokenSkipLive.cfg	MCRNDestroyWipe.tla	invariant	SecretsZeroAtFree	check	rndestroywipe	required	-
+MCRNDestroyWipeBrokenNoReleaseWipe.cfg	MCRNDestroyWipe.tla	invariant	NoSecretOutsideLive	check	rndestroywipe	required	-
+MCRNDestroyWipeBrokenNoSlotsDestroyWipe.cfg	MCRNDestroyWipe.tla	invariant	SecretsZeroAtFree	check	rndestroywipe	required	-

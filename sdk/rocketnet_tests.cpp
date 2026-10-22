@@ -2223,11 +2223,12 @@ void rocketnet_test_encryption_map()
     rocketnet_check( rocketnet_encryption_map_add( map, &address_d, 100.0 ) != -1 );
     rocketnet_check( rocketnet_encryption_map_add( map, &address_e, 100.0 ) == -1 );
 
-    // remove zeroes the key material (the session keys and nonce, the
-    // mapping's only secrets) and frees the slot for reuse; the rest of the
-    // entry is unreachable until an add writes it whole
+    // remove zeroes the secrets (the session keys and nonce, and the connect
+    // token's user data) and frees the slot for reuse; the rest of the entry
+    // is unreachable until an add writes it whole
     memset( &mapping->keys, 0xAB, sizeof(mapping->keys) );
     memset( mapping->session_nonce, 0xAB, sizeof(mapping->session_nonce) );
+    memset( mapping->user_data, 0xAB, sizeof(mapping->user_data) );
     rocketnet_encryption_mapping_control_t * control = mapping->control;
     control->last_receive_time = 42.0;
     rocketnet_encryption_map_remove( map, index_a );
@@ -2238,6 +2239,8 @@ void rocketnet_test_encryption_map()
         rocketnet_check( raw[i] == 0 );
     for ( int i = 0; i < (int) sizeof(mapping->session_nonce); i++ )
         rocketnet_check( mapping->session_nonce[i] == 0 );
+    for ( int i = 0; i < (int) sizeof(mapping->user_data); i++ )
+        rocketnet_check( mapping->user_data[i] == 0 );
     const int index_reused = rocketnet_encryption_map_add( map, &address_e, 100.0 );
     rocketnet_check( index_reused == index_a );
     rocketnet_check( control->last_receive_time == 0.0 );
