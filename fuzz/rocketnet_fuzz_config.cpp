@@ -85,7 +85,14 @@ static void fuzz_setenv( const char * name, const char * value )
 #if defined(_WIN32)
     _putenv_s( name, value );
 #else
-    setenv( name, value, 1 );
+    // putenv over one buffer the harness owns, not setenv: glibc's setenv
+    // keeps every NAME=value string it ever made until the process exits, so
+    // millions of distinct fuzz values grew the heap to libFuzzer's rss limit.
+    // fuzz_overlay unsets the variable before the next set, so one buffer
+    // serves every input.
+    static char entry[128 + 1 + 5001];
+    snprintf( entry, sizeof( entry ), "%s=%s", name, value );
+    putenv( entry );
 #endif
 }
 
