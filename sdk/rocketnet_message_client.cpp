@@ -238,6 +238,15 @@ struct rocketnet_client_transport_t * rocketnet_message_client_transport( struct
     return client->object.link.destroy == rn_client_link_destroy ? (rocketnet_client_transport_t *) client->object.link.transport : NULL;
 }
 
+#if ROCKETNET_DEV
+void rocketnet_message_client_delivery_capture( struct rocketnet_message_client_t * client, struct rocketnet_delivery_capture_t * capture )
+{
+    if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( capture ) )
+        return;
+    rn_message_object_delivery_capture( &client->object, 0, capture );
+}
+#endif // #if ROCKETNET_DEV
+
 int rocketnet_message_client_state( struct rocketnet_message_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )

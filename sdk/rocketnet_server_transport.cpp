@@ -3601,6 +3601,35 @@ void rocketnet_server_transport_client_stats( struct rocketnet_server_transport_
     }
 }
 
+#if ROCKETNET_DEV
+// The transport's half of the delivery capture (rocketnet_layers.h): plain
+// copies of the slot's mapping and ack endpoint, on the main thread outside
+// update/fill. A slot with no connected client or no mapping leaves the
+// capture untouched, so it reads as not connected.
+void rocketnet_server_transport_delivery_capture( struct rocketnet_server_transport_t * server_transport, int client_index, struct rocketnet_delivery_capture_t * capture )
+{
+    if ( !rocketnet_api_null_guard( server_transport ) || !rocketnet_api_null_guard( capture ) )
+        return;
+    struct rocketnet_server_protocol_t * protocol = &server_transport->protocol;
+    if ( !protocol->acks || client_index < 0 || client_index >= protocol->acks->max_clients )
+        return;
+    if ( !rocketnet_client_slots_connected( protocol->client_slots, client_index ) )
+        return;
+    const int mapping_index = rocketnet_client_slots_mapping_index( protocol->client_slots, client_index );
+    if ( mapping_index < 0 )
+        return;
+    const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( protocol->encryption_map, mapping_index );
+    const struct rocketnet_ack_endpoint_t * endpoint = &protocol->acks->endpoints[client_index];
+    capture->connected = 1;
+    capture->last_receive_age_seconds = mapping->control && mapping->control->last_receive_time > 0.0 ?
+                                        server_transport->time - mapping->control->last_receive_time : -1.0;
+    capture->highest_received_sequence = mapping->replay_session.highest_opened;
+    capture->highest_sent_sequence = mapping->send_sequence_session > 0 ? mapping->send_sequence_session - 1 : 0;
+    capture->largest_acked_sequence = endpoint->largest_acked_sequence;
+    capture->keep_alive_acked = endpoint->keep_alive_acked ? 1 : 0;
+}
+#endif // #if ROCKETNET_DEV
+
 #endif // ROCKETNET_CONFORMANCE_DEFAULTS_ONLY
 
 #if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS) && !defined(ROCKETNET_CONFORMANCE_DEFAULTS_ONLY)
