@@ -156,19 +156,30 @@ static void windows_connreset_child_start( windows_connreset_child_t * child, co
     wchar_t command[MAX_PATH + 64];
     _snwprintf_s( command, MAX_PATH + 64, _TRUNCATE, L"\"%s\" --run test_windows_connreset_child_client", path );
 
+    // the child is created inside the job (PROC_THREAD_ATTRIBUTE_JOB_LIST), so
+    // there is no moment it exists outside it: created suspended and assigned
+    // afterwards, a parent ended in between left it suspended forever
+    SIZE_T attribute_bytes = 0;
+    InitializeProcThreadAttributeList( NULL, 1, 0, &attribute_bytes );
+    windows_connreset_require( attribute_bytes > 0 && attribute_bytes <= 256 );
+    alignas( 16 ) uint8_t attribute_storage[256];
+    LPPROC_THREAD_ATTRIBUTE_LIST attributes = (LPPROC_THREAD_ATTRIBUTE_LIST) attribute_storage;
+    windows_connreset_require( InitializeProcThreadAttributeList( attributes, 1, 0, &attribute_bytes ) );
+    windows_connreset_require( UpdateProcThreadAttribute( attributes, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST, &child->job, sizeof( child->job ), NULL, NULL ) );
+
     windows_connreset_require( _putenv_s( WINDOWS_CONNRESET_CHILD_ENV, server_address ) == 0 );
-    STARTUPINFOW startup;
+    STARTUPINFOEXW startup;
     memset( &startup, 0, sizeof( startup ) );
-    startup.cb = sizeof( startup );
+    startup.StartupInfo.cb = sizeof( startup );
+    startup.lpAttributeList = attributes;
     PROCESS_INFORMATION info;
     memset( &info, 0, sizeof( info ) );
-    const BOOL created = CreateProcessW( path, command, NULL, NULL, FALSE, CREATE_NO_WINDOW | CREATE_SUSPENDED, NULL, NULL, &startup, &info );
+    const BOOL created = CreateProcessW( path, command, NULL, NULL, FALSE, CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT, NULL, NULL, &startup.StartupInfo, &info );
     _putenv_s( WINDOWS_CONNRESET_CHILD_ENV, "" );
+    DeleteProcThreadAttributeList( attributes );
     windows_connreset_require( created );
     if ( after_create )
         after_create( info.dwProcessId );
-    windows_connreset_require( AssignProcessToJobObject( child->job, info.hProcess ) );
-    ResumeThread( info.hThread );
     CloseHandle( info.hThread );
     child->process = info.hProcess;
 }
