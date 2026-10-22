@@ -370,7 +370,7 @@ static int loopback_server_receive_batch( void * transport, rocketnet_address_t 
         }
         from[received] = packet->from;
         bytes[received] = packet->bytes;
-        memcpy( data + (size_t) received * stride, packet->data, (size_t) packet->bytes );
+        memcpy( data + (size_t) received * (size_t) stride, packet->data, (size_t) packet->bytes );
         ++ep->head;
         --ep->count;
         ++received;
