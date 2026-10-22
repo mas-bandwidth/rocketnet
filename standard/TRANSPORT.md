@@ -2464,7 +2464,7 @@ The response of step 4 MUST be retransmitted byte for byte; a later challenge MU
 <a id="t11.3"></a>
 ### t11.3. Session processing before connected
 
-A session packet opens under the session keys from sending connection response (3) on. Every opened session packet MUST refresh the last-received time and MUST have its ack block applied. A keep-alive received in sending connection response (3) MUST store the client index and the slot count it carries and MUST move the client to connected (4). A payload received in sending connection response (3) MUST be delivered to the application. A disconnect received in sending connection response (3) MUST release the connection state and MUST move the client to disconnected (0). An application message the client sends before connected (4) is dropped and counted, as [RN-2 m1.5 Sending on a connection that is not connected](MESSAGES.md#m1.5) states.
+A session packet opens under the session keys from sending connection response (3) on. Every opened session packet MUST refresh the last-received time and MUST have its ack block applied. A keep-alive received in sending connection response (3) MUST store the client index and the slot count it carries and MUST move the client to connected (4). A payload or a fragment received in sending connection response (3) MUST be ignored and counted as the type's `WRONG_STATE`, before it is opened: the application is handed payloads only once connected (4), so its reply can be sent. The keep-alive that connects the client can arrive after the server's first payloads; the server's resend carries a reliable message again after it. A disconnect received in sending connection response (3) MUST release the connection state and MUST move the client to disconnected (0). An application message the client sends before connected (4) is dropped and counted, as [RN-2 m1.5 Sending on a connection that is not connected](MESSAGES.md#m1.5) states.
 
 | State | Event | Guard | Action | Next state |
 |---|---|---|---|---|
@@ -2493,7 +2493,7 @@ A session packet opens under the session keys from sending connection response (
 | sending connection request (2) | total deadline | token lifetime elapsed | | connect token expired (-7) |
 | sending connection response (3) | update, send due | | send the stored response byte for byte | sending connection response (3) |
 | sending connection response (3) | keep-alive | opens | store the client index and the slot count | connected (4) |
-| sending connection response (3) | payload | opens | deliver the payload | sending connection response (3) |
+| sending connection response (3) | payload or fragment | | refuse as WRONG_STATE | sending connection response (3) |
 | sending connection response (3) | denied | size correct, opens | release the connection state | connection denied (-1) |
 | sending connection response (3) | denied | size wrong | refuse as WRONG_SIZE | sending connection response (3) |
 | sending connection response (3) | denied | sequence zero or does not open | refuse; an unopened packet counts an integrity failure | sending connection response (3) |

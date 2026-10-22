@@ -1144,3 +1144,52 @@ static void test_session_end_races_move_only_expected_counters()
 
 REGISTER_UNIT_TEST( test_session_end_races_move_only_expected_counters );
 
+
+// netcode.io's client: a payload is processed only once connected. The
+// server's first payloads to a newly connected client can beat the
+// keep-alive that connects it (the xdp server sent CONFIG and ARM ahead of
+// it in 4 of 5 runs); delivered in sending connection response, the
+// application replied before connected, and the reply was refused as
+// SEND_NOT_CONNECTED and lost. A payload or fragment there is ignored,
+// counted WRONG_STATE, and the server's reliable resend carries it after
+// the keep-alive. The standalone ack keeps its carve-out.
+static void test_client_ignores_payloads_before_connected()
+{
+    static struct rcr_pair_t pair;
+    uint8_t plaintext[256];
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+
+    rcr_pair_setup( &pair, RCR_STAGE_HALF_OPEN );
+    check( pair.client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+
+    int bytes = rcr_seal( &pair, 0, ROCKETNET_CONNECTION_PAYLOAD_PACKET, pair.next_sequence++, plaintext,
+                          rcr_plaintext_valid( ROCKETNET_CONNECTION_PAYLOAD_PACKET, plaintext ), NULL, packet );
+    check( !rcr_to_client( &pair, packet, bytes ) );
+    bytes = rcr_seal( &pair, 0, ROCKETNET_CONNECTION_FRAGMENT_PACKET, pair.next_sequence++, plaintext,
+                      rcr_plaintext_valid( ROCKETNET_CONNECTION_FRAGMENT_PACKET, plaintext ), NULL, packet );
+    check( !rcr_to_client( &pair, packet, bytes ) );
+    check( pair.client_counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_WRONG_STATE] == 1 );
+    check( pair.client_counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_DELIVERED] == 0 );
+    check( pair.client_counters.values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_STATE] == 1 );
+
+    bytes = rcr_seal( &pair, 0, ROCKETNET_CONNECTION_ACK_PACKET, pair.next_sequence++, plaintext,
+                      rcr_plaintext_valid( ROCKETNET_CONNECTION_ACK_PACKET, plaintext ), NULL, packet );
+    check( rcr_to_client( &pair, packet, bytes ) );
+    check( pair.client_counters.values[ROCKETNET_COUNTER_CLIENT_ACK_ACCEPTED] == 1 );
+    check( pair.client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+
+    bytes = rcr_seal( &pair, 0, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, pair.next_sequence++, plaintext,
+                      rcr_plaintext_valid( ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, plaintext ), NULL, packet );
+    check( rcr_to_client( &pair, packet, bytes ) );
+    check( pair.client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
+    bytes = rcr_seal( &pair, 0, ROCKETNET_CONNECTION_PAYLOAD_PACKET, pair.next_sequence++, plaintext,
+                      rcr_plaintext_valid( ROCKETNET_CONNECTION_PAYLOAD_PACKET, plaintext ), NULL, packet );
+    check( rcr_to_client( &pair, packet, bytes ) );
+    check( pair.client_counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_DELIVERED] == 1 );
+    check( pair.client_counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_WRONG_STATE] == 1 );
+
+    rcr_pair_teardown( &pair );
+}
+
+REGISTER_UNIT_TEST( test_client_ignores_payloads_before_connected );
