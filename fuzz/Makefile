@@ -2,7 +2,7 @@
 # library. Two of the three targets mint a connect token with the published
 # development backend secret key (rocketnet_dev_backend_secret_key), which is
 # compiled out of the release library, so they must link the development
-# archive and see ROCKETNET_DEVELOPMENT=1. ci.yml's fuzz-smoke covers
+# archive and see ROCKETNET_DEV=1. ci.yml's fuzz-smoke covers
 # rocketnet_fuzz against the release library; fuzz-nightly.yml drives these
 # four here.
 #
@@ -23,7 +23,7 @@
 # make ROCKETNET_FUZZ_CXX="$$HOME/sdk/llvm/bin/clang++".
 CXX      := $(if $(ROCKETNET_FUZZ_CXX),$(ROCKETNET_FUZZ_CXX),clang++)
 SANITIZE ?= -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
-FLAGS     = -g -O1 -std=c++17 -ffp-contract=off -DROCKETNET_DEVELOPMENT=1 -I../sodium -I../sdk -I../test
+FLAGS     = -g -O1 -std=c++17 -ffp-contract=off -DROCKETNET_DEV=1 -I../sodium -I../sdk -I../test
 BUILD    ?= ../build
 LIB       = $(BUILD)/librocketnet_dev.a
 UNAME_S  := $(shell uname -s)

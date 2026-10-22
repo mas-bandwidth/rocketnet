@@ -11,6 +11,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "rocketnet_address.h"
+#include "rocketnet_test_seams.h"
 
 // An in-memory wire for tests: latency, jitter, packet loss and duplicates
 // under mocked time, so connection logic is tested with no sockets and no
@@ -32,6 +33,8 @@
 // claim up.
 
 struct rocketnet_network_simulator_t;
+
+#if ROCKETNET_TEST_SEAMS
 
 struct rocketnet_network_simulator_t * rocketnet_network_simulator_create( void * context,
                                                                            int capacity,
@@ -136,5 +139,24 @@ void rocketnet_network_simulator_audit( struct rocketnet_network_simulator_t * s
 // legs and is the receipt.
 
 void rocketnet_network_simulator_inject_index_fault( struct rocketnet_network_simulator_t * simulator );
+
+
+#else // #if ROCKETNET_TEST_SEAMS
+
+// A production library has no network simulator: the transports' link
+// simulator is refused at config validation before create, so the pointer is
+// always NULL there, and these inline stubs let the transport code compile
+// unchanged while the simulator itself compiles out.
+
+static inline struct rocketnet_network_simulator_t * rocketnet_network_simulator_create( void *, int, uint64_t ) { return NULL; }
+static inline void rocketnet_network_simulator_destroy( struct rocketnet_network_simulator_t * ) {}
+static inline void rocketnet_network_simulator_config( struct rocketnet_network_simulator_t *, double, double, float, float ) {}
+static inline bool rocketnet_network_simulator_patterns( struct rocketnet_network_simulator_t *, int, int ) { return false; }
+static inline bool rocketnet_network_simulator_patterns_active( const struct rocketnet_network_simulator_t * ) { return false; }
+static inline void rocketnet_network_simulator_flush_window( struct rocketnet_network_simulator_t * ) {}
+static inline void rocketnet_network_simulator_send( struct rocketnet_network_simulator_t *, const struct rocketnet_address_t *, const struct rocketnet_address_t *, const uint8_t *, int, double ) {}
+static inline int rocketnet_network_simulator_receive_any( struct rocketnet_network_simulator_t *, double, struct rocketnet_address_t *, struct rocketnet_address_t *, uint8_t * ) { return 0; }
+
+#endif // #if ROCKETNET_TEST_SEAMS
 
 #endif // #ifndef ROCKETNET_NETWORK_SIMULATOR_H

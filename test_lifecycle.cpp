@@ -476,10 +476,13 @@ static void check_component_create_sweeps( allocator_state & state )
         []( rocketnet_server_acks_t * a ) { rocketnet_server_acks_destroy( a ); } ) == 4 );
 
     // 8. rocketnet_network_simulator_create: 12 allocations (fail N=1..12, succeed N=13).
+    // A production build (ROCKETNET_DEV=0) has no simulator (sdk/rocketnet_test_seams.h).
+#if ROCKETNET_TEST_SEAMS
     check( sweep_component_create<rocketnet_network_simulator_t>(
         state,
         [&]() { return rocketnet_network_simulator_create( &state, 64, 1 ); },
         []( rocketnet_network_simulator_t * s ) { rocketnet_network_simulator_destroy( s ); } ) == 12 );
+#endif // #if ROCKETNET_TEST_SEAMS
 
     // 9. rn_arena_create (sdk/rocketnet_allocator.h): 1 allocation (fail N=1, succeed N=2).
     // Refused configs and region counts allocate nothing; in-region carve/send/store allocate nothing.
@@ -574,7 +577,9 @@ static void make_valid_token( uint8_t * token )
     signed_fields.ipv4_address[1] = 0;
     signed_fields.ipv4_address[2] = 0;
     signed_fields.ipv4_address[3] = 1;
-    memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
+    // not the published development server key, which a production build
+    // (ROCKETNET_DEV=0) refuses at connect
+    memset( signed_fields.server_public_key, 0x43, 32 );
     private_fields.client_id = 1;
     private_fields.protocol_id = 1;
     private_fields.expire_timestamp = signed_fields.expire_timestamp;
@@ -596,8 +601,10 @@ static void check_server_memory_budget( allocator_state & state )
 #endif
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_default_config( &config );
-    // non-development keys: the create path only refuses the published
-    // development keys in a release build, so any other non-zero keys pass
+    // non-development keys and filter: a production build (ROCKETNET_DEV=0)
+    // refuses the published development keys and test packet filter, so any
+    // other values pass
+    memset( config.packet_filter, 0x5A, sizeof( config.packet_filter ) );
     memset( config.server_public_key, 0xAB, 32 );
     memset( config.server_secret_key, 0xCD, 32 );
     memset( config.backend_public_key, 0xEF, 32 );
@@ -639,6 +646,8 @@ static void check_client_memory_budget( allocator_state & state )
 {
     rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
+    // not the published test packet filter, which a production build refuses
+    memset( config.packet_filter, 0x5A, sizeof( config.packet_filter ) );
     const uint64_t plan = rocketnet_client_transport_required_memory( &config, "portable" );
     check( plan > 0 );
 

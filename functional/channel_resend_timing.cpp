@@ -61,7 +61,7 @@
 
 #include <math.h>
 
-#if !ROCKETNET_DEVELOPMENT
+#if !ROCKETNET_DEV
 #error "channel_resend_timing.cpp reads the resend gap record, which only development builds have"
 #endif
 

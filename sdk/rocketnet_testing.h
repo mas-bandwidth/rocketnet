@@ -40,10 +40,10 @@ struct rocketnet_client_t * rocketnet_client_create_testing( void * context,
 // the development network simulator calls, declared here for the unit
 // suite's production-posture build, whose test hooks carry them
 
-#if !ROCKETNET_DEVELOPMENT
+#if !ROCKETNET_DEV
 void rocketnet_client_network_simulator( struct rocketnet_client_t * client, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
 void rocketnet_server_network_simulator( struct rocketnet_server_t * server, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
-#endif // !ROCKETNET_DEVELOPMENT
+#endif // !ROCKETNET_DEV
 
 #ifdef __cplusplus
 }
