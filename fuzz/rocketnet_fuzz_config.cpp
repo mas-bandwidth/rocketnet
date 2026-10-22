@@ -59,6 +59,20 @@
 #include <stdlib.h>
 #include <string.h>
 
+// under AddressSanitizer the harness can read the live heap, so it checks
+// that an input leaves the heap as it found it (fuzz_overlay below)
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define ROCKETNET_FUZZ_HEAP_CHECK 1
+#endif
+#endif
+#if !defined(ROCKETNET_FUZZ_HEAP_CHECK) && defined(__SANITIZE_ADDRESS__)
+#define ROCKETNET_FUZZ_HEAP_CHECK 1
+#endif
+#if defined(ROCKETNET_FUZZ_HEAP_CHECK)
+#include <sanitizer/allocator_interface.h>
+#endif
+
 static void rocketnet_fuzz_require( bool condition, const char * property )
 {
     if ( condition ) return;
@@ -432,6 +446,11 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
                                 "the defaults validate" );
     }
 
+    // the first variable set moves environ onto the heap, once per process;
+    // do it here so the per-input heap check sees only what an input leaves
+    fuzz_setenv( "ROCKETNET_FUZZ_ENVIRON_WARM", "1" );
+    fuzz_unsetenv( "ROCKETNET_FUZZ_ENVIRON_WARM" );
+
     const char * seed_dir = getenv( "ROCKETNET_FUZZ_SEED_DIR" );
     if ( seed_dir != NULL && seed_dir[0] != '\0' )
         fuzz_write_seeds( seed_dir, getenv( "ROCKETNET_FUZZ_SEED_FROM" ) );
@@ -448,7 +467,14 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
         value[n++] = (char) data[i];
     value[n] = '\0';
 
+#if defined(ROCKETNET_FUZZ_HEAP_CHECK)
+    const size_t heap_before = __sanitizer_get_current_allocated_bytes();
+#endif
     fuzz_overlay( data[0] % FUZZ_NUM_TABLES, data[1], data[2], value );
+#if defined(ROCKETNET_FUZZ_HEAP_CHECK)
+    rocketnet_fuzz_require( __sanitizer_get_current_allocated_bytes() <= heap_before,
+                            "an overlay leaves the heap as it found it" );
+#endif
     if ( data[2] & 2 )
         fuzz_check_ladder( value );
     return 0;
