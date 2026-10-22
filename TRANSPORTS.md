@@ -179,9 +179,11 @@ work. Client fast-path I/O is not required by this interface.
 
 A UDP send to a peer that died hard comes back as ICMP port or host
 unreachable. A BSD stack reports such an error to the next receive or send on a
-connected socket as ECONNREFUSED, EHOSTUNREACH or ENETUNREACH. The portable and
-msgx sockets are never connected, so on macOS the kernel does not route these
-errors to them. The receive arms still treat ECONNREFUSED, EHOSTUNREACH,
+connected socket as ECONNREFUSED, EHOSTUNREACH or ENETUNREACH. A client's
+portable or msgx socket is connected to its one server
+(`rocketnet_platform_socket_connect`, so the kernel drops datagrams from any
+other source), and the kernel routes these errors to it; server sockets are
+never connected. The receive arms still treat ECONNREFUSED, EHOSTUNREACH,
 ENETUNREACH, EHOSTDOWN, ENETDOWN, ENOBUFS and EINTR as weather
 (`rocketnet_platform_receive_weather` in `sdk/rocketnet_platform.cpp`): the
 portable arm (`rocketnet_platform_socket_receive_packet`) and the msgx arm

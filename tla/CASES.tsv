@@ -53,6 +53,8 @@ MCRNWindowBrokenHalfRange.cfg	MCRNWindow.tla	invariant	WireNumberReconstructs	ch
 MCRNWindowBrokenHoldOrdered.cfg	MCRNWindow.tla	invariant	OrderedDeliveredInOrder	check	rnwindow	required	-
 MCRNWindowBrokenDropDuplicates.cfg	MCRNWindow.tla	invariant	DeliveredOnce	check	rnwindow	required	-
 MCClientConnectionBrokenEarlyFragment.cfg	MCClientConnection.tla	invariant	FragmentOnlyWhenConnected	ignore-terminal	clientconnection	required	-
+MCClientConnectionCookieTrust.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	required	-
+MCClientConnectionBrokenCookieRefreshes.cfg	MCClientConnection.tla	action	OnlyAuthenticatedRefreshes	ignore-terminal	clientconnection	required	-
 MCReceiveOrder.cfg	MCReceiveOrder.tla	pass	-	check	receiveorder	required	-
 MCReceiveOrderBrokenSlotsAfterKeypair.cfg	MCReceiveOrder.tla	invariant	CheapRefusalsFirst	check	receiveorder	required	-
 MCReceiveOrderBrokenAdmittedAfterVerify.cfg	MCReceiveOrder.tla	invariant	CheapRefusalsFirst	check	receiveorder	required	-

@@ -1389,14 +1389,19 @@ int rocketnet_server_transport_send_capacity( const struct rocketnet_server_tran
 /** @brief Returns the payload frames that may still start this update. */
 int rocketnet_server_transport_send_capacity_available( const struct rocketnet_server_transport_t * server_transport );
 
-#if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS)
-struct rocketnet_ack_endpoint_t;
-// Deterministic internal seam: the next create uses an inline stats worker.
-// step computes one submitted immutable batch; only a later update publishes.
-void rocketnet_server_transport_set_stats_worker_manual_for_test( bool enabled );
+#if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS) || defined(ROCKETNET_STATS_MANUAL_TEST_HOOKS)
+// Deterministic internal seam: step computes one submitted immutable batch of
+// an inline stats worker; only a later update publishes. A build with
+// ROCKETNET_STATS_MANUAL_TEST_HOOKS creates every server's worker inline.
 bool rocketnet_server_transport_stats_worker_step_for_test( struct rocketnet_server_transport_t * server_transport );
 bool rocketnet_server_transport_stats_worker_status_for_test( const struct rocketnet_server_transport_t * server_transport,
     uint64_t * submitted, uint64_t * completed, uint64_t * published, uint64_t * busy_skips );
+#endif
+
+#if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS)
+struct rocketnet_ack_endpoint_t;
+// The next create uses an inline stats worker (true) or the native one (false).
+void rocketnet_server_transport_set_stats_worker_manual_for_test( bool enabled );
 void rocketnet_server_transport_fail_stats_worker_thread_for_test( void );
 struct rocketnet_ack_endpoint_t * rocketnet_server_transport_stats_endpoint_for_test(
     struct rocketnet_server_transport_t * server_transport, int client_index );

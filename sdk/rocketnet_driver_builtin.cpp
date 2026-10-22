@@ -495,11 +495,15 @@ static void portable_io_client_wake( void * transport )
 { struct portable_io_client_t * client = (struct portable_io_client_t*) transport; rocketnet_platform_wake_set( client->wake ); }
 static uint64_t portable_io_client_send_failures( void * transport )
 { struct portable_io_client_t * client = (struct portable_io_client_t*) transport; return rocketnet_platform_socket_send_failures( client->socket ); }
+// the client trusts only the server: the socket is connected to it, so the
+// kernel drops datagrams from any other source (TRANSPORT.md t11)
+static bool portable_io_client_connect( void * transport, const rocketnet_address_t * server_address )
+{ struct portable_io_client_t * client = (struct portable_io_client_t*) transport; return rocketnet_platform_socket_connect( client->socket, server_address ); }
 static const rocketnet_client_transport_io_operations_t portable_client_operations =
 {
     portable_io_client_create, portable_io_client_destroy, portable_io_client_send, portable_io_client_receive,
     portable_io_client_send_batch, portable_io_client_receive_batch, portable_io_client_wait, portable_io_client_wake,
-    portable_io_client_send_failures
+    portable_io_client_send_failures, portable_io_client_connect
 };
 #else // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 static void * portable_client_create( void * context, const rocketnet_client_transport_io_config_t * config, rocketnet_address_t * bind )
@@ -514,6 +518,10 @@ static void portable_client_send_batch( void * transport, const rocketnet_platfo
 static int portable_client_receive_batch( void * transport, rocketnet_address_t * from, uint8_t * data, int stride, int * bytes, int count )
 { return rocketnet_platform_socket_receive_packets_mmsg( (rocketnet_platform_socket_t*) transport, from, data, stride, bytes, count ); }
 #endif
+// the client trusts only the server: the socket is connected to it, so the
+// kernel drops datagrams from any other source (TRANSPORT.md t11)
+static bool portable_client_connect( void * transport, const rocketnet_address_t * server_address )
+{ return rocketnet_platform_socket_connect( (rocketnet_platform_socket_t*) transport, server_address ); }
 static const rocketnet_client_transport_io_operations_t portable_client_operations =
 { portable_client_create, portable_socket_destroy, portable_client_send, portable_client_receive,
 #if defined(__linux__)
@@ -521,7 +529,7 @@ static const rocketnet_client_transport_io_operations_t portable_client_operatio
 #else
   NULL, NULL,
 #endif
-  NULL, NULL, portable_socket_send_failures
+  NULL, NULL, portable_socket_send_failures, portable_client_connect
 };
 #endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 extern const rocketnet_transport_backend_t rocketnet_portable_transport = { &portable_server_operations, &portable_client_operations };

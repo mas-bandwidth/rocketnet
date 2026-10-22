@@ -1058,7 +1058,8 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
                 []( void *, rocketnet_address_t *, uint8_t *, int, int *, int ) -> int { return 0; },
                 []( void *, bool, double ) -> bool { return false; },
                 []( void * ) {},
-                []( void * ) -> uint64_t { return 0; }
+                []( void * ) -> uint64_t { return 0; },
+                NULL
             };
             client_transport->io.operations = &seam_transport_ops;
             client_transport->io.instance = seam_client;
@@ -1075,7 +1076,19 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
                 ( definition && definition->backend ? definition->backend->client : NULL );
             if ( rocketnet_client_transport_io_open( operations, step_driven_operations ? step_driven_transport_context : client_transport->context,
                     &transport_config, &bind_address, &client_transport->io ) )
-                granted_transport = candidate;
+            {
+                // the client trusts only the server (TRANSPORT.md t11): a
+                // transport with a socket connects it to the server the token
+                // selected, before anything is sent or received, so the
+                // kernel drops datagrams from any other source. the source
+                // check in rocketnet_client_process_packet stays behind it.
+                // a connect the kernel refuses is a refusal and falls.
+                const rocketnet_client_transport_io_operations_t * opened = client_transport->io.operations;
+                if ( opened->connect && !opened->connect( client_transport->io.instance, &client_transport->protocol.server_address ) )
+                    rocketnet_client_transport_io_close( &client_transport->io );
+                else
+                    granted_transport = candidate;
+            }
 
             // a rung that failed for want of memory is not a refusal: the create
             // ends with OUT_OF_MEMORY and never falls to the next candidate
