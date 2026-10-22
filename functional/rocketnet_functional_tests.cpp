@@ -7341,6 +7341,8 @@ void rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv6()
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
 
 #include "rocketnet_server_socket.h"
+#include "rocketnet_memory.h"
+#include "../test/plan_rss.h"
 #include <signal.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
@@ -7595,6 +7597,12 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
     rocketnet_check( server );
     rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), "xdp" ) == 0 );
 
+    // the server's UMEM is in its plan but outside the allocator: counted
+    // here so the case's process is held to the whole plan (test/plan_rss.h)
+    const uint64_t umem_bytes = rocketnet_xdp_umem_bytes( server_config.num_xdp_queues );
+    rocketnet_check( umem_bytes > 0 );
+    plan_rss_count_outside_allocator( umem_bytes );
+
     // the client: portable, its socket opened inside the far end's namespace
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
@@ -7819,6 +7827,7 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
     }
     rn_native_server_transport_stop_and_destroy( server );
     rocketnet_xdp_veth_server = NULL;
+    plan_rss_uncount_outside_allocator( umem_bytes );
 
     rocketnet_xdp_veth_teardown();
 

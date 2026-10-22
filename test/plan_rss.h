@@ -219,6 +219,22 @@ inline void plan_rss_free( void * context, void * p )
         free( header );
 }
 
+// planned bytes the SDK takes from the OS outside the allocator: the AF_XDP
+// UMEM (rocketnet_xdp_umem_bytes), page aligned and registered with the
+// kernel, is counted in rocketnet_server_socket_memory_required but allocated
+// with posix_memalign (sdk/rocketnet_server_socket_linux.cpp). A case that
+// creates such a server counts the planned bytes here after the create and
+// uncounts them after the destroy, so its process is held to the whole plan
+inline void plan_rss_count_outside_allocator( uint64_t bytes )
+{
+    plan_rss_count( (size_t) bytes );
+}
+
+inline void plan_rss_uncount_outside_allocator( uint64_t bytes )
+{
+    plan_rss_live().fetch_sub( bytes );
+}
+
 // a case's own allocator chained under the counter, for rocketnet_init:
 // rocketnet_init( context, plan_rss_chain( my_malloc, my_free ), plan_rss_free )
 inline plan_rss_malloc_function_t plan_rss_chain( plan_rss_malloc_function_t malloc_function, plan_rss_free_function_t free_function )

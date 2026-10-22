@@ -165,6 +165,7 @@ inline long suite_case_rss_mb( const std::string & name )
     if ( bound > 0 )
         return bound;
 #if defined(ROCKETNET_FUNCTIONAL_SANITIZED)
+    (void) name;
     return 0;
 #else
     for ( suite_case_rss_bound_t * entry = *suite_case_rss_bound_head(); entry != NULL; entry = entry->next )
