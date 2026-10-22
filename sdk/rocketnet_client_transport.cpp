@@ -2565,6 +2565,7 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
     }
 }
 
+#if ROCKETNET_TEST_SEAMS
 void rocketnet_client_transport_step_legacy_for_test( rocketnet_client_transport_t * client_transport, double time )
 {
     rocketnet_assert( client_transport && client_transport->step_driven &&
@@ -2596,6 +2597,7 @@ const rocketnet_client_receive_buffer_t * rocketnet_client_transport_legacy_rece
     if ( free_count ) *free_count = state->free_count;
     return state->held >= 0 ? &client_transport->receive_buffer[state->held] : NULL;
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
 static void rocketnet_client_thread_function( void * data )
 {

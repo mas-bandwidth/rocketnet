@@ -32,8 +32,8 @@
 /// ROCKETNET_DEV_BACKEND_PUBLIC_KEY, and accept the published development
 /// keys, the test packet filter and a portable server pin. Production builds
 /// define ROCKETNET_DEV 0 (CMake: -DROCKETNET_DEV=OFF), which compiles all of
-/// that out and refuses the development keys, development tokens, test
-/// packet filter and portable server pin at create.
+/// that out and refuses at create the development keys and tokens, the
+/// test packet filter and a portable server pin.
 
 #if !defined( ROCKETNET_DEV )
 #define ROCKETNET_DEV 1
@@ -1648,7 +1648,8 @@ static inline enum rocketnet_status_t rocketnet_server_default_config( struct ro
 /// Returns the memory needed by create for this config and max_clients.
 /// Applies the same environment overrides as create.
 /// NULL config selects defaults. Invalid config returns 0, including a
-/// production server pin of portable. A named transport memory estimate is
+/// production server pin of portable and, in a production build, the
+/// defaults' test filter. A named transport memory estimate is
 /// diagnostic and does not grant that transport at create or start.
 
 ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet_server_config_t * config );
