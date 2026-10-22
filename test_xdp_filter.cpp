@@ -263,7 +263,7 @@ static void print_log_tail( int lines )
     printf( "verifier log tail:\n%.*s\n", (int) ( end - start ), verifier_log + start );
 }
 
-static int print_libbpf( enum libbpf_print_level level, const char * format, va_list args )
+__attribute__(( format( printf, 2, 0 ) )) static int print_libbpf( enum libbpf_print_level level, const char * format, va_list args )
 {
     if ( level == LIBBPF_DEBUG )
         return 0;
@@ -1246,7 +1246,7 @@ static double onlink_now()
 {
     struct timespec ts;
     clock_gettime( CLOCK_MONOTONIC, &ts );
-    return ts.tv_sec + ts.tv_nsec / 1e9;
+    return (double) ts.tv_sec + (double) ts.tv_nsec / 1e9;
 }
 
 // stdin_fd is the read end of a pipe the case holds open: server.c quits when
@@ -1496,10 +1496,10 @@ static bool xdp_on_link_reply_reaches_the_peer( filter_t * )
             continue;
         if ( frame[12] != 0x08 || frame[13] != 0x00 || frame[23] != IP_UDP )
             continue;
-        static const uint8_t server_ipv4[4] = { 10, 77, 1, 1 };
+        static const uint8_t onlink_server_ipv4[4] = { 10, 77, 1, 1 };
         const int ihl = ( frame[14] & 0x0F ) * 4;
         const uint16_t source_port = (uint16_t) ( ( frame[14 + ihl] << 8 ) | frame[14 + ihl + 1] );
-        if ( memcmp( frame + 26, server_ipv4, 4 ) != 0 || source_port != 40000 )
+        if ( memcmp( frame + 26, onlink_server_ipv4, 4 ) != 0 || source_port != 40000 )
             continue;
         if ( memcmp( frame, peer_mac, 6 ) == 0 )
         {

@@ -101,7 +101,7 @@ bool parse_string( const std::string & s, size_t & i, std::string & out )
                     if ( i + 4 > s.size() )
                         return false;
                     int value = 0;
-                    for ( int k = 0; k < 4; k++ )
+                    for ( size_t k = 0; k < 4; k++ )
                     {
                         int v;
                         if ( !hex_digit( s[i + k], v ) )
@@ -428,10 +428,10 @@ inline bool wycheproof_load( const char * file_name,
     if ( !groups_node || groups_node->type != wyj::NODE_ARR )
         return false;
 
-    int num_groups = (int) groups_node->arr.size();
+    const size_t num_groups = groups_node->arr.size();
     int total = 0;
     (void) total;
-    for ( int gi = 0; gi < num_groups; gi++ )
+    for ( size_t gi = 0; gi < num_groups; gi++ )
     {
         const wyj::node_t & g = groups_node->arr[gi];
         if ( g.type != wyj::NODE_OBJ )
@@ -455,7 +455,7 @@ inline bool wycheproof_load( const char * file_name,
         }
     }
 
-    *number_of_groups = num_groups;
+    *number_of_groups = (int) num_groups;
     const wyj::node_t * nt = wyj::find_member( root, "numberOfTests" );
     if ( nt && nt->type == wyj::NODE_INT )
         *number_of_tests = std::atoi( nt->text.c_str() );

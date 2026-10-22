@@ -96,7 +96,7 @@ static int bounds_receive( const uint8_t * umem, uint64_t addr, uint32_t len, st
     int payload_bytes = 0;
     if ( !rocketnet_xdp_frame_receive( packet_data, (size_t) len, ROCKETNET_ADDRESS_IPV4, &from, &payload, &payload_bytes, drops ) )
         return -1;
-    memcpy( slot, payload, payload_bytes );
+    memcpy( slot, payload, (size_t) payload_bytes );
     return payload_bytes;
 }
 
