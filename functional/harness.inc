@@ -123,6 +123,13 @@ static void rocketnet_test_log_ring_dump()
     rocketnet_test_log_ring_lines = 0;
 }
 
+// the ring for a check outside this file (functional/posix_lifecycle_stress.cpp),
+// so its failure shows the library's error lines too
+void rocketnet_functional_log_ring_dump()
+{
+    rocketnet_test_log_ring_dump();
+}
+
 static void rocketnet_check_handler( const char * condition, const char * function, const char * file, int line )
 {
     rocketnet_test_log_ring_dump();

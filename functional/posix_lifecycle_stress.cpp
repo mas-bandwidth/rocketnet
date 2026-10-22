@@ -110,11 +110,15 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double
 #include "rocketnet_server_socket.h"
 #endif
 
+// defined in functional/harness.inc: prints the library's captured log lines
+void rocketnet_functional_log_ring_dump();
+
 #define posix_check( condition )                                                                                      \
 do                                                                                                              \
 {                                                                                                               \
     if ( !( condition ) )                                                                                       \
     {                                                                                                           \
+        rocketnet_functional_log_ring_dump();                                                                   \
         printf( "posix lifecycle stress check failed: %s:%d: %s\n", __FILE__, __LINE__, #condition );           \
         fflush( stdout );                                                                                       \
         exit( 1 );                                                                                              \
