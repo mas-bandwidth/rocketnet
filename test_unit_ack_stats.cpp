@@ -187,7 +187,7 @@ static void test_ack_stats_direct_history_uint64_high_water()
     endpoint->rtt_history[2] = 40.0f;
     const uint64_t sent_base = UINT64_MAX - ROCKETNET_SENT_PACKET_BUFFER_SIZE + 1;
     const uint64_t sent_offsets[] = { 0, 2, ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2 - 1 };
-    for ( int i = 0; i < 3; ++i )
+    for ( uint32_t i = 0; i < 3; ++i )
     {
         const uint64_t sequence = sent_base + sent_offsets[i];
         auto & record = endpoint->sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
@@ -208,7 +208,7 @@ static void test_ack_stats_direct_history_uint64_high_water()
     newest.wire_bytes = 10000;
 
     const uint64_t received_base = UINT64_MAX - ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE + 1;
-    for ( int i = 0; i < 2; ++i )
+    for ( uint32_t i = 0; i < 2; ++i )
     {
         const uint64_t sequence = received_base + 2 * i;
         auto & record = endpoint->received[sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE];

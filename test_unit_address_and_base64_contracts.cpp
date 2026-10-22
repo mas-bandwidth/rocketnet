@@ -201,9 +201,9 @@ static void test_wycheproof_files_load_and_count()
     rocketnet_unit_check( num_groups == 10 );
     static const char * chacha_fields[] = { "key", "iv", "aad", "msg", "ct", "tag" };
     int chacha_valid = 0, chacha_invalid = 0, chacha_acceptable = 0;
-    for ( int i = 0; i < num_tests; i++ )
+    for ( size_t i = 0; i < tests.size(); i++ )
     {
-        rocketnet_unit_check( tests[i].tc_id == i + 1 );
+        rocketnet_unit_check( tests[i].tc_id == (int) i + 1 );
         if ( tests[i].result == "valid" ) chacha_valid++;
         else if ( tests[i].result == "invalid" ) chacha_invalid++;
         else if ( tests[i].result == "acceptable" ) chacha_acceptable++;
@@ -224,9 +224,9 @@ static void test_wycheproof_files_load_and_count()
     rocketnet_unit_check( num_tests == 518 );
     static const char * x25519_fields[] = { "public", "private", "shared" };
     int x25519_valid = 0, x25519_invalid = 0, x25519_acceptable = 0;
-    for ( int i = 0; i < num_tests; i++ )
+    for ( size_t i = 0; i < tests.size(); i++ )
     {
-        rocketnet_unit_check( tests[i].tc_id == i + 1 );
+        rocketnet_unit_check( tests[i].tc_id == (int) i + 1 );
         if ( tests[i].result == "valid" ) x25519_valid++;
         else if ( tests[i].result == "invalid" ) x25519_invalid++;
         else if ( tests[i].result == "acceptable" ) x25519_acceptable++;
@@ -247,9 +247,9 @@ static void test_wycheproof_files_load_and_count()
     rocketnet_unit_check( num_tests == 151 );
     rocketnet_unit_check( num_groups == 78 );
     int ed25519_valid = 0, ed25519_invalid = 0, ed25519_acceptable = 0;
-    for ( int i = 0; i < num_tests; i++ )
+    for ( size_t i = 0; i < tests.size(); i++ )
     {
-        rocketnet_unit_check( tests[i].tc_id == i + 1 );
+        rocketnet_unit_check( tests[i].tc_id == (int) i + 1 );
         if ( tests[i].result == "valid" ) ed25519_valid++;
         else if ( tests[i].result == "invalid" ) ed25519_invalid++;
         else if ( tests[i].result == "acceptable" ) ed25519_acceptable++;
