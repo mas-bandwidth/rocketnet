@@ -15,7 +15,7 @@ inputs and recorded result for each required group.
 | fragmentation | `RNBlocks`, `FragmentsAndAcks` | exact reconstruction, bounded slots and ACK coupling |
 | receipts | `RNReceipts` | at most one terminal receipt for a receipt-bearing send |
 | endpoint reset | `RNSlots`, `ClientSession` | no state or payload crosses a connection generation |
-| client I/O | `RNClientIo`, `RNClientIoDecrypt` | exclusive buffer ownership, replay before admission and one retirement |
+| client I/O | `RNBufferHandoff`, `RNClientIo`, `RNClientIoDecrypt` | exclusive buffer ownership, index-only exchanges under a mutex the game thread never waits on, replay before admission and one retirement |
 | handoff | `SendHandoff` | bounded queues, reopen after refusal and no lost owned frame |
 
 Model constants must stay small enough for exhaustive checking while retaining
