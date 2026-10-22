@@ -32,6 +32,8 @@
 
 #include <unordered_map>
 #include <atomic>
+#include <string>
+#include <vector>
 
 extern std::atomic<unsigned long long> g_client_ack_stats_count;
 
@@ -6260,36 +6262,45 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
 
     int sent_client = 0, sent_server = 0, acked_client = 0, acked_server = 0;
 
+    // eight payloads each way per update: one per update paced the loop by
+    // its 0.5 ms sleep, ten thousand sleeps, 7-8 s on macOS. Every payload
+    // is still its own packet id joined back to its sequence, and a batch of
+    // several is the case P2 is about.
+    const int per_update = 8;
+
     start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 90.0 && ( sent_client < total || sent_server < total ) )
     {
-        if ( sent_client < total )
+        for ( int burst = 0; burst < per_update; burst++ )
         {
-            struct rocketnet_packet_context_t ctx;
-            uint8_t * frame = rocketnet_client_transport_start_packet( client, 32, &ctx );
-            if ( frame )
+            if ( sent_client < total )
             {
-                const int sequence = sent_client + 1;
-                memcpy( frame + ctx.payload_index, &sequence, sizeof(sequence) );
-                if ( rocketnet_client_transport_finish_packet( client, &ctx, sizeof(sequence) ) > 0 )
+                struct rocketnet_packet_context_t ctx;
+                uint8_t * frame = rocketnet_client_transport_start_packet( client, 32, &ctx );
+                if ( frame )
                 {
-                    client_id_to_sequence[ctx.packet_id] = sequence;
-                    sent_client++;
+                    const int sequence = sent_client + 1;
+                    memcpy( frame + ctx.payload_index, &sequence, sizeof(sequence) );
+                    if ( rocketnet_client_transport_finish_packet( client, &ctx, sizeof(sequence) ) > 0 )
+                    {
+                        client_id_to_sequence[ctx.packet_id] = sequence;
+                        sent_client++;
+                    }
                 }
             }
-        }
-        if ( sent_server < total )
-        {
-            struct rocketnet_packet_context_t ctx;
-            uint8_t * frame = rocketnet_server_transport_start_packet( server, client_index, 32, &ctx );
-            if ( frame )
+            if ( sent_server < total )
             {
-                const int sequence = sent_server + 1;
-                memcpy( frame + ctx.payload_index, &sequence, sizeof(sequence) );
-                if ( rocketnet_server_transport_finish_packet( server, &ctx, sizeof(sequence) ) > 0 )
+                struct rocketnet_packet_context_t ctx;
+                uint8_t * frame = rocketnet_server_transport_start_packet( server, client_index, 32, &ctx );
+                if ( frame )
                 {
-                    server_id_to_sequence[ctx.packet_id] = sequence;
-                    sent_server++;
+                    const int sequence = sent_server + 1;
+                    memcpy( frame + ctx.payload_index, &sequence, sizeof(sequence) );
+                    if ( rocketnet_server_transport_finish_packet( server, &ctx, sizeof(sequence) ) > 0 )
+                    {
+                        server_id_to_sequence[ctx.packet_id] = sequence;
+                        sent_server++;
+                    }
                 }
             }
         }
@@ -8947,16 +8958,89 @@ static int rocketnet_functional_static_test_count()
     return count;
 }
 
-int rocketnet_functional_test_count()
+// THE NIGHTLY TIER. A case named here is in the suite only with
+// ROCKETNET_TEST_NIGHTLY=1 (the nightly workflow sets it); per-commit CI runs
+// the rest, which keeps one representative of each area named here, so every
+// area is still covered on every commit. `--run <case>` runs any case,
+// nightly or not. Only cases whose length is their design (a real timeout
+// waited out, a thousand real-socket cycles) belong here, never a case that is
+// slow by accident; the macOS suite was 102 s before this tier and the fixes
+// beside it.
+static const char * const rocketnet_functional_nightly_cases[] =
 {
-    return rocketnet_functional_static_test_count() + rocketnet_posix_hard_killed_peer_test_count();
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    // each waits out the real 10 s token timeout of a hard-killed client
+    // (12 s a case); the four msgx server cells, the production pump, stay
+    // per commit and the portable fallback server's four run nightly
+    "test_posix_hard_killed_client_portable_ipv4_client_portable",
+    "test_posix_hard_killed_client_portable_ipv4_client_msgx",
+    "test_posix_hard_killed_client_portable_ipv6_client_portable",
+    "test_posix_hard_killed_client_portable_ipv6_client_msgx",
+    // a thousand real connect/disconnect cycles (4-11 s a pair); msgx/msgx
+    // stays per commit
+    "test_posix_connect_disconnect_1000_portable_portable",
+    "test_posix_connect_disconnect_1000_portable_msgx",
+    "test_posix_connect_disconnect_1000_msgx_portable",
+    // a hundred servers destroyed under eight sending clients (9 s a pair);
+    // msgx/msgx stays per commit
+    "test_posix_destroy_under_traffic_100_portable_portable",
+    "test_posix_destroy_under_traffic_100_portable_msgx",
+    "test_posix_destroy_under_traffic_100_msgx_portable",
+#endif
+    NULL,
+};
+
+static bool rocketnet_functional_nightly_case( const char * name )
+{
+    for ( int i = 0; rocketnet_functional_nightly_cases[i] != NULL; i++ )
+        if ( strcmp( rocketnet_functional_nightly_cases[i], name ) == 0 )
+            return true;
+    return false;
 }
 
-const char * rocketnet_functional_test_name( int index )
+static bool rocketnet_functional_nightly_run()
+{
+    char value[16];
+    return rocketnet_test_getenv( "ROCKETNET_TEST_NIGHTLY", value, sizeof( value ) ) && strcmp( value, "1" ) == 0;
+}
+
+static const char * rocketnet_functional_any_test_name( int index )
 {
     if ( index >= rocketnet_functional_static_test_count() )
         return rocketnet_posix_hard_killed_peer_test_name( index - rocketnet_functional_static_test_count() );
     return rocketnet_functional_tests[rocketnet_functional_here[index]].name;
+}
+
+// the cases of this run, in suite order: every case that runs on this host,
+// less the nightly tier unless this is the nightly run. Names are copied: the
+// generated names share buffers.
+static std::vector<std::string> & rocketnet_functional_run_list()
+{
+    static std::vector<std::string> list;
+    static bool built = false;
+    if ( !built )
+    {
+        built = true;
+        const bool nightly = rocketnet_functional_nightly_run();
+        const int count = rocketnet_functional_static_test_count() + rocketnet_posix_hard_killed_peer_test_count();
+        for ( int i = 0; i < count; i++ )
+        {
+            const char * name = rocketnet_functional_any_test_name( i );
+            if ( nightly || !rocketnet_functional_nightly_case( name ) )
+                list.push_back( name );
+        }
+    }
+    return list;
+}
+
+int rocketnet_functional_test_count()
+{
+    return (int) rocketnet_functional_run_list().size();
+}
+
+const char * rocketnet_functional_test_name( int index )
+{
+    return rocketnet_functional_run_list()[(size_t) index].c_str();
 }
 
 int rocketnet_functional_run_named( const char * name )

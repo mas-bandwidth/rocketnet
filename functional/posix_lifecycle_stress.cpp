@@ -37,7 +37,9 @@
     ROCKETNET_POSIX_LIFECYCLE_CELLS, a comma list of server transport names, runs
     only those cells. On Linux every case is registered once per server cell
     (posix_<case>_<cell>), so each run covers one cell. On macOS the 1000-cycle
-    connect/disconnect case is registered once per exact server/client pair.
+    connect/disconnect case and the destroy-under-traffic case are registered
+    once per exact server/client pair; the cases that make only servers (or
+    only clients, or neither) run each transport once.
 
     A connect waits on the client's send rate: the client sends at most once
     per 1/send_rate, 10 per second (sdk/rocketnet_client_protocol.cpp:88 and
