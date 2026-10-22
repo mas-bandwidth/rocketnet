@@ -392,3 +392,33 @@ static void test_server_admits_a_token_again_after_its_connection_closes()
 }
 
 REGISTER_UNIT_TEST( test_server_admits_a_token_again_after_its_connection_closes );
+
+// A retransmitted response proves the same handshake, not fresh session
+// activity. It cannot postpone the connected slot's idle timeout.
+static void test_response_replay_does_not_refresh_connected_slot()
+{
+    struct tc_server_t t;
+    tc_server_setup( &t, 1, 8 );
+    struct tc_client_t c;
+    tc_client_init( &c, "198.51.100.7:56789" );
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    tc_mint_token( token, 9001 );
+    check( rocketnet_client_protocol_connect( &c.client, token, t.time, TC_NOW ) );
+    check( tc_drive( &t, &c, TC_NOW ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    const int index = rocketnet_encryption_map_find( t.server.encryption_map, &c.address );
+    check( index >= 0 );
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( t.server.encryption_map, index );
+    const double received = mapping->control->last_receive_time;
+    uint8_t response[ROCKETNET_RECEIVE_CEILING], payload[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0, payload_bytes = 0, client_index = -1;
+    check( rocketnet_server_protocol_process_packet( &t.server, &c.address,
+        c.client.stored_response, ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES, TC_NOW,
+        received + 1.0, response, &response_bytes, payload, &payload_bytes, &client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( mapping->control->last_receive_time == received );
+    rocketnet_server_protocol_update( &t.server, received + mapping->control->timeout_seconds );
+    check( rocketnet_client_slots_num_connected( t.server.client_slots ) == 0 );
+    tc_client_destroy( &c );
+    tc_server_teardown( &t );
+}
+
+REGISTER_UNIT_TEST( test_response_replay_does_not_refresh_connected_slot );

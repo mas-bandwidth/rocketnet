@@ -6,6 +6,7 @@ rocketnet_client_create
 rocketnet_client_default_config_internal
 rocketnet_client_destroy
 rocketnet_client_disconnect
+rocketnet_client_disconnected
 rocketnet_client_finish_message
 rocketnet_client_index
 rocketnet_client_receipts
@@ -52,6 +53,7 @@ rocketnet_server_start
 rocketnet_server_start_message
 rocketnet_server_stats
 rocketnet_server_stop
+rocketnet_server_stopped
 rocketnet_server_transport_name
 rocketnet_server_update
 rocketnet_sleep

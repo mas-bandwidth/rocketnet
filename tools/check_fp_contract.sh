@@ -8,6 +8,9 @@
 #
 # server_xdp/Makefile is exempt: `clang ... -target bpf -c server_xdp.c`
 # compiles a BPF object, which has no floating point at all.
+#
+# `<compiler> --version` with no other argument is a version query, not a
+# compilation, and is skipped.
 set -u
 
 files="Makefile bench/Makefile .github/workflows/ci.yml .github/workflows/fuzz-nightly.yml .github/workflows/nightly.yml .github/workflows/nightly-soak.yml .github/workflows/release-check.yml"
@@ -56,6 +59,15 @@ for f in $files; do
             -D*) buf=""; continue ;;
         esac
         if is_compiler "$cmd"; then
+            # `clang --version` (alone, optionally piped) prints the version and
+            # compiles nothing, so it has no floor to carry. Only the exact
+            # two-word form is exempt: any further argument is a compile line.
+            first="${line%%[|;&]*}"
+            read -r -a words <<< "$first"
+            if [ "${#words[@]}" -eq 2 ] && [ "${words[1]}" = "--version" ]; then
+                buf=""
+                continue
+            fi
             if ! has_floor "$buf"; then
                 echo "$f:$lineno: compiler invocation missing -ffp-contract=off or /fp:precise: $buf"
                 bad=1

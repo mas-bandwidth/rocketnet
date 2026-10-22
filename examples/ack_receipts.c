@@ -9,12 +9,14 @@
     knows which snapshot the receiver actually got. Run: ./bin/example_ack_receipts.
 */
 
+#include "shutdown.h"
 #include "rocketnet.h"
 #include "dev_keys.h"
 
 // the published development backend key, from rocketnet.h (development builds)
 static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
 #include <stdio.h>
+#include <time.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -69,14 +71,16 @@ int main( void )
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
-        rocketnet_server_destroy( server );
+        rn_cli_server_stop_and_destroy( server );
         server = NULL;
     }
     CHECK( server != NULL );
 
     CHECK( rocketnet_server_ipv4_address( server, server_address, sizeof( server_address ) ) );
     rocketnet_server_public_key( server, server_public_key );
-    CHECK( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, 4102444800ull, NULL, connect_token ) == ROCKETNET_STATUS_OK );
+    const time_t token_time = time( NULL );
+    CHECK( token_time != (time_t) -1 );
+    CHECK( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, (uint64_t) token_time, NULL, connect_token ) == ROCKETNET_STATUS_OK );
 
     CHECK( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
     client_config.transport = "loopback";
@@ -88,7 +92,7 @@ int main( void )
     if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
-        rocketnet_client_destroy( client );
+        rn_cli_client_stop_and_destroy( client );
         client = NULL;
     }
     CHECK( client != NULL );
@@ -130,7 +134,8 @@ int main( void )
         (void) data; (void) bytes; (void) sender;
         struct rocketnet_receipt_t receipts[32];
         const int count = rocketnet_client_receipts( client, receipts, 32 );
-        for ( int r = 0; r < count; r++ )
+        CHECK( count <= 32 );
+        for ( int r = 0; r < count && r < 32; r++ )
         {
             int idx = -1;
             for ( int i = 0; i < sent; i++ )
@@ -190,10 +195,10 @@ int main( void )
     result = 0;
 
 cleanup:
-    // destroy ends a live connection and logs it, so PASS is printed after
-    // the cleanup to stay the last line
-    rocketnet_client_destroy( client );
-    rocketnet_server_destroy( server );
+    // CLI cleanup helpers wait for shutdown completion before destroy.
+    // PASS is printed afterward so it stays the last line
+    rn_cli_client_stop_and_destroy( client );
+    rn_cli_server_stop_and_destroy( server );
     rocketnet_term();
     if ( result == 0 )
         printf( "PASS\n" );

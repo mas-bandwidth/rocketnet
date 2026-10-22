@@ -8,6 +8,7 @@
 // pins itself, applies the suite's prepare step, builds a loopback pair
 // and expects CONNECTED. The environment it changed is restored on exit.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "sdk/rocketnet_connect_token.h"
 #include "sdk/rocketnet_base64.h"
@@ -121,8 +122,8 @@ static void test_unit_transport_pins_ignored()
     }
     rocketnet_unit_check( connected );
 
-    rocketnet_client_transport_destroy( client );
-    rocketnet_server_transport_destroy( server );
+    rn_test_client_transport_stop_and_destroy( client );
+    rn_test_server_transport_stop_and_destroy( server );
     rocketnet_public_link_simulator_test_development( 0 );
 
     if ( had_server )

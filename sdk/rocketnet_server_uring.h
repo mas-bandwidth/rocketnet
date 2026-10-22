@@ -111,22 +111,24 @@ uint64_t rocketnet_server_uring_allocation_bytes( int queues );
 
 struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context, struct rocketnet_address_t * bind_address, int num_queues );
 
-// destroy cancels every multishot receive and waits, bounded, for every
-// outstanding completion (the sends a send_packets left included) before
-// freeing. a destroy that gives up waiting
-// closes the ring and the sockets but leaks the memory the kernel may still
-// write, and counts it here: bytes, and transports so leaked, since the start.
+// Stop requests cancellation; stopped services a bounded batch of currently
+// ready completions and returns false while the kernel still owns any buffer.
+// A pending object remains owned by the caller. Destroy never abandons it.
 
+void rocketnet_server_uring_stop( struct rocketnet_server_uring_t * uring );
+bool rocketnet_server_uring_stopped( struct rocketnet_server_uring_t * uring );
+
+// Requires stopped completion. Frees synchronously.
 void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring );
 
 uint64_t rocketnet_server_uring_leaked_bytes();
 
 uint64_t rocketnet_server_uring_leaked_transports();
 
-// for tests: one completion that never arrives, so the next destroy counts
-// its rounds (without waiting) and takes the give-up path
+// Test seam: hold completion pending until test_resume_stop releases it.
 
 void rocketnet_server_uring_test_stall_destroy( struct rocketnet_server_uring_t * uring );
+void rocketnet_server_uring_test_resume_stop( struct rocketnet_server_uring_t * uring );
 
 #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 // development library only. fail_receive cancels the queue's multishot
@@ -175,9 +177,8 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void * con
 
 // the no-kernel-ring seam of the re-arm cases: a fake transport with queues and
 // no ring, whose receive_packets runs only the re-arm loop and whose next
-// count arm calls find no submission entry. destroy_wait_rounds runs the
-// end condition destroy's wait uses (rocketnet_server_uring_destroy_wait_over)
-// with every round completing or every round silent, stopped by guard.
+// count arm calls find no submission entry. wait_calls records attempted
+// blocking waits for deterministic nonwaiting-shutdown regressions.
 
 struct rocketnet_server_uring_t * rocketnet_server_uring_test_create_fake( int num_queues );
 void rocketnet_server_uring_test_destroy_fake( struct rocketnet_server_uring_t * uring );
@@ -185,7 +186,7 @@ void rocketnet_server_uring_test_set_arm_failures( struct rocketnet_server_uring
 void rocketnet_server_uring_test_multishot_ends( struct rocketnet_server_uring_t * uring, int queue_index, bool arm_finds_no_sqe );
 bool rocketnet_server_uring_test_queue_armed( struct rocketnet_server_uring_t * uring, int queue_index );
 uint64_t rocketnet_server_uring_test_counter( struct rocketnet_server_uring_t * uring, int counter );
-int rocketnet_server_uring_test_destroy_wait_rounds( bool always_completes, int guard );
+int rocketnet_server_uring_test_wait_calls( struct rocketnet_server_uring_t * uring );
 #endif
 
 int rocketnet_server_uring_num_queues( struct rocketnet_server_uring_t * uring );
@@ -196,7 +197,7 @@ void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, u
 // abort may run on any number of game threads strictly between one
 // send_packets call and the next; send_packets runs on the main thread,
 // submits the staged slots, reaps at most ROCKETNET_URING_SEND_BUDGET
-// completions after at most one wait of a millisecond, and returns. a send
+// currently available completions without waiting, and returns. a send
 // without its completion keeps its slot, and the reservation index, until a
 // later call reaps it (SEND_DEFERRED counts each call that returns so).
 // the frame handed back is a ROCKETNET_FRAME_STRIDE slot: wire

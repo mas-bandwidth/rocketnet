@@ -3,6 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "test/fake_client_driver.h"
 #include "test/portable_crt.h"
@@ -10,6 +11,7 @@
 #include "sdk/rocketnet_internal.h"
 #include "sdk/rocketnet_client_io.h"
 #include "sdk/rocketnet_counters.h"
+#include "sdk/rocketnet_config.h"
 #include "sdk/rocketnet_driver.h"
 #include "sdk/rocketnet_driver_loopback.h"
 #include "sdk/rocketnet_layers.h"
@@ -149,18 +151,24 @@ static void destroy_disconnect_mint_token( const destroy_disconnect_keys_t * key
         1000, 1030, 10, NULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 }
 
-static rocketnet_client_t * destroy_disconnect_client_create( const destroy_disconnect_keys_t * keys, uint16_t port, uint64_t client_id )
+static double destroy_disconnect_fixed_clock( void * ) { return 1000.0; }
+
+static rocketnet_client_t * destroy_disconnect_client_create( const destroy_disconnect_keys_t * keys, uint16_t port, uint64_t client_id,
+                                                              bool io_core = true, bool simulator = false )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     destroy_disconnect_mint_token( keys, port, client_id, token );
 
     rocketnet_client_transport_config_t config;
-    rocketnet_client_transport_default_config( &config );
+    rocketnet_client_transport_default_config_current( &config );
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
-    config.step_driven = 1;
+    config.step_driven = io_core ? 1 : 0;
+    config.time_callback = destroy_disconnect_fixed_clock;
+    config.game_clock_epoch = 1000;
+    config.simulated_latency_ms = simulator ? 1 : 0;
 
-    rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_at_timestamp(
-        NULL, token, &config, 0.0, 1000, rocketnet_loopback_transport.client, NULL );
+    rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_current(
+        NULL, token, &config, 0.0, rocketnet_loopback_transport.client, NULL );
     check( transport != NULL );
 
     rn_message_link_t link;
@@ -182,6 +190,11 @@ static int destroy_disconnect_connect_client( rocketnet_server_t * server, rocke
     for ( int i = 0; i < 200; i++ )
     {
         *time += 0.01;
+        rocketnet_client_transport_t * transport = rocketnet_message_client_transport( rocketnet_client_message_client( client ) );
+        // The legacy fixture suppresses its native worker. Explicitly run its
+        // receive iteration; public update only drives the configured I/O core.
+        if ( !rocketnet_client_transport_client_io( transport ) )
+            rocketnet_client_transport_step_legacy_for_test( transport, *time );
         rocketnet_client_update( client, *time );
         rocketnet_client_send_packets( client );
         rocketnet_server_update( server, *time );
@@ -281,14 +294,14 @@ static uint64_t destroy_disconnect_drain( void * endpoint, uint64_t * dropped )
     return count;
 }
 
-// DONE-WHEN (2): destroying a connected client sends the same redundant
+// DONE-WHEN (2): disconnecting a connected client before destroy sends the same redundant
 // disconnect packets that rocketnet_client_disconnect sends (the same count
 // and encryption), before its sockets close, and the server frees that
 // client's slot on receipt, not on timeout: a loopback case with time as an
 // argument starting at 1000.0 asserts the server's slot is free within one
 // server update after the client's destroy, and the timed-out counter does not
 // move.
-static void test_destroy_connected_client_sends_disconnect()
+static void test_disconnect_then_destroy_connected_client_sends_disconnect()
 {
     destroy_disconnect_env_guard_t env_guard;
     rocketnet_quiet( 1 );
@@ -308,6 +321,7 @@ static void test_destroy_connected_client_sends_disconnect()
     const uint64_t explicit_timeout_before = sc_explicit[ROCKETNET_COUNTER_CLIENT_TIMED_OUT];
 
     rocketnet_client_disconnect( client_explicit );
+    rn_test_client_wait_disconnected( client_explicit );
     rocketnet_server_update( server_explicit, time_explicit );
     check( !rocketnet_server_client_connected( server_explicit, slot_explicit ) );
 
@@ -319,10 +333,10 @@ static void test_destroy_connected_client_sends_disconnect()
     check( explicit_disc_ok_delta == 1 );
     check( sc_explicit[ROCKETNET_COUNTER_CLIENT_TIMED_OUT] == explicit_timeout_before );
 
-    rocketnet_client_destroy( client_explicit );
-    rocketnet_server_destroy( server_explicit );
+    rn_test_client_stop_and_destroy( client_explicit );
+    rn_test_server_stop_and_destroy( server_explicit );
 
-    // Destroyed connected client: rocketnet_client_destroy without prior disconnect.
+    // Connected client: request disconnect, complete it, then destroy.
     double time = 1000.0;
     rocketnet_server_t * server = destroy_disconnect_server_create( &keys, time );
     rocketnet_client_t * client = destroy_disconnect_client_create( &keys, rocketnet_server_port( server ), 0xC102ULL );
@@ -336,7 +350,7 @@ static void test_destroy_connected_client_sends_disconnect()
     const uint64_t disc_open_fail_before = sc[ROCKETNET_COUNTER_DISCONNECT_DID_NOT_OPEN];
     const uint64_t timeout_before = sc[ROCKETNET_COUNTER_CLIENT_TIMED_OUT];
 
-    rocketnet_client_destroy( client );
+    rn_test_client_stop_and_destroy( client );
 
     // One server update after the client's destroy frees the slot on receipt
     // of the sealed disconnect burst, with zero open failures and no timeout.
@@ -354,17 +368,17 @@ static void test_destroy_connected_client_sends_disconnect()
     check( disc_rx_delta == explicit_disc_rx_delta );
     check( disc_ok_delta == explicit_disc_ok_delta );
 
-    rocketnet_server_destroy( server );
+    rn_test_server_stop_and_destroy( server );
 }
 
-REGISTER_UNIT_TEST( test_destroy_connected_client_sends_disconnect );
+REGISTER_UNIT_TEST( test_disconnect_then_destroy_connected_client_sends_disconnect );
 
 // DONE-WHEN (3): destroying a server with connected clients sends each
 // connected client the server's disconnect packets before the transport
 // closes, and each client reaches its disconnected state with the
 // server-disconnect reason within one client update: a loopback case asserts
 // it for at least two clients.
-static void test_destroy_server_sends_disconnect_to_every_connected_client()
+static void test_stop_then_destroy_server_sends_disconnect_to_every_connected_client()
 {
     destroy_disconnect_env_guard_t env_guard;
     rocketnet_quiet( 1 );
@@ -403,7 +417,7 @@ static void test_destroy_server_sends_disconnect_to_every_connected_client()
         client_disc_ok_before[i] = cc[ROCKETNET_COUNTER_CLIENT_DISCONNECT_ACCEPTED];
     }
 
-    rocketnet_server_destroy( server );
+    rn_test_server_stop_and_destroy( server );
 
     for ( int i = 0; i < NUM_CLIENTS; i++ )
     {
@@ -420,10 +434,10 @@ static void test_destroy_server_sends_disconnect_to_every_connected_client()
     }
 
     for ( int i = 0; i < NUM_CLIENTS; i++ )
-        rocketnet_client_destroy( clients[i] );
+        rn_test_client_stop_and_destroy( clients[i] );
 }
 
-REGISTER_UNIT_TEST( test_destroy_server_sends_disconnect_to_every_connected_client );
+REGISTER_UNIT_TEST( test_stop_then_destroy_server_sends_disconnect_to_every_connected_client );
 
 // Steps a public client against a loopback server until the client reaches
 // no handshake target: destroy at once, before any handshake state
@@ -464,16 +478,16 @@ static void destroy_disconnect_public_client_destroy_sends_nothing( const destro
     rocketnet_server_update( server, time );
     const uint64_t rx_before = rn_server_stats_of( server ).packets_received;
 
-    rocketnet_client_destroy( client );
+    rn_test_client_stop_and_destroy( client );
     rocketnet_server_update( server, time );
     check( rn_server_stats_of( server ).packets_received == rx_before );
 
-    rocketnet_server_destroy( server );
+    rn_test_server_stop_and_destroy( server );
 }
 
 // DONE-WHEN (4): destroying a client or server with no live connection sends
 // nothing (a case counts datagrams handed to the fake transport: zero).
-static void test_destroy_without_live_connection_sends_nothing()
+static void test_shutdown_without_live_connection_sends_nothing()
 {
     destroy_disconnect_env_guard_t env_guard;
     rocketnet_quiet( 1 );
@@ -498,7 +512,7 @@ static void test_destroy_without_live_connection_sends_nothing()
         check( transport != NULL );
         check( fake.num_sent == 0 );
 
-        rocketnet_client_transport_destroy( transport );
+        rn_test_client_transport_stop_and_destroy( transport );
         check( fake.destroy_calls == 1 );
         check( fake.num_sent == 0 );
         check( fake.send_calls == 0 );
@@ -518,14 +532,14 @@ static void test_destroy_without_live_connection_sends_nothing()
         check( transport != NULL );
         check( fake.num_sent == 0 );
 
-        rocketnet_client_transport_destroy( transport );
+        rn_test_client_transport_stop_and_destroy( transport );
         check( fake.destroy_calls == 1 );
         check( fake.num_sent == 0 );
         check( fake.send_calls == 0 );
         check( fake.send_batch_calls == 0 );
     }
 
-    // Public clients destroyed with rocketnet_client_destroy and no live
+    // Public clients destroyed with rocketnet_client_destroy after shutdown completion and no live
     // connection: right after create, while requesting a cookie, and while
     // sending the connection request. Before the session keys exist there is
     // nothing to seal, so the server receives nothing across the destroy.
@@ -552,9 +566,9 @@ static void test_destroy_without_live_connection_sends_nothing()
         check( rn_server_stats_of( server ).packets_sent == 0 );
         check( destroy_disconnect_drain( endpoint, &dropped ) == 0 );
 
-        rocketnet_server_destroy( server );
+        rn_test_server_stop_and_destroy( server );
         check( destroy_disconnect_drain( endpoint, &dropped ) == 0 );
-        rocketnet_client_destroy( bystander );
+        rn_test_client_stop_and_destroy( bystander );
     }
 
     // Server with zero connected clients and one client mid-handshake: the
@@ -586,9 +600,9 @@ static void test_destroy_without_live_connection_sends_nothing()
         check( rn_server_stats_of( server ).packets_sent > 0 );
         destroy_disconnect_drain( endpoint, &dropped );
 
-        rocketnet_server_destroy( server );
+        rn_test_server_stop_and_destroy( server );
         check( destroy_disconnect_drain( endpoint, &dropped ) == 0 );
-        rocketnet_client_destroy( client );
+        rn_test_client_stop_and_destroy( client );
     }
 
     // Server after all clients disconnected: one client disconnects itself
@@ -612,6 +626,7 @@ static void test_destroy_without_live_connection_sends_nothing()
         check( rocketnet_server_num_connected_clients( server ) == NUM_CLIENTS );
 
         rocketnet_client_disconnect( clients[0] );
+        rn_test_client_wait_disconnected( clients[0] );
         rocketnet_server_disconnect_client( server, slots[1] );
         rocketnet_server_send_packets( server );
         time += 0.01;
@@ -629,13 +644,120 @@ static void test_destroy_without_live_connection_sends_nothing()
         for ( int i = 0; i < NUM_CLIENTS; i++ )
             destroy_disconnect_drain( endpoints[i], &dropped[i] );
 
-        rocketnet_server_destroy( server );
+        rn_test_server_stop_and_destroy( server );
         for ( int i = 0; i < NUM_CLIENTS; i++ )
         {
             check( destroy_disconnect_drain( endpoints[i], &dropped[i] ) == 0 );
-            rocketnet_client_destroy( clients[i] );
+            rn_test_client_stop_and_destroy( clients[i] );
         }
     }
 }
 
-REGISTER_UNIT_TEST( test_destroy_without_live_connection_sends_nothing );
+REGISTER_UNIT_TEST( test_shutdown_without_live_connection_sends_nothing );
+
+// A repeated protocol disconnect must retain the first sealed burst even
+// before full transport stop. The legacy worker is stepped explicitly here.
+static void test_transport_disconnect_twice_delivers_original_burst()
+{
+    destroy_disconnect_env_guard_t env_guard;
+    destroy_disconnect_keys_t keys;
+    destroy_disconnect_make_keys( &keys );
+    double now = 1000.0;
+    rocketnet_server_t * server = destroy_disconnect_server_create( &keys, now );
+    rocketnet_client_t * client = destroy_disconnect_client_create( &keys, rocketnet_server_port( server ), 0xE401ULL, false );
+    const int slot = destroy_disconnect_connect_client( server, client, &now );
+    rocketnet_client_transport_t * transport = rocketnet_message_client_transport( rocketnet_client_message_client( client ) );
+    const uint64_t * counters = destroy_disconnect_server_counters( server );
+    const uint64_t received = counters[ROCKETNET_COUNTER_DISCONNECT_RECEIVED];
+    const uint64_t accepted = counters[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED];
+    const uint64_t timed_out = counters[ROCKETNET_COUNTER_CLIENT_TIMED_OUT];
+
+    rocketnet_client_transport_disconnect( transport );
+    rocketnet_client_transport_disconnect( transport );
+    check( !rocketnet_client_transport_stopped( transport ) );
+    rocketnet_client_update( client, now );
+    rocketnet_server_update( server, now );
+    check( counters[ROCKETNET_COUNTER_DISCONNECT_RECEIVED] - received == ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS );
+    check( counters[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED] - accepted == 1 );
+    check( counters[ROCKETNET_COUNTER_CLIENT_TIMED_OUT] == timed_out );
+    check( !rocketnet_server_client_connected( server, slot ) );
+    rn_test_client_stop_and_destroy( client );
+    rn_test_server_stop_and_destroy( server );
+}
+REGISTER_UNIT_TEST( test_transport_disconnect_twice_delivers_original_burst );
+
+// Disconnect is still outgoing traffic: an already allocated simulator's
+// 100-percent loss policy applies to the burst, including repeated requests.
+static void test_transport_disconnect_preserves_simulator_loss()
+{
+    destroy_disconnect_env_guard_t env_guard;
+    rocketnet_public_link_simulator_test_development( 1 );
+    destroy_disconnect_keys_t keys;
+    destroy_disconnect_make_keys( &keys );
+    double now = 1000.0;
+    rocketnet_server_t * server = destroy_disconnect_server_create( &keys, now );
+    rocketnet_client_t * client = destroy_disconnect_client_create( &keys, rocketnet_server_port( server ), 0xE402ULL, false, true );
+    const int slot = destroy_disconnect_connect_client( server, client, &now );
+    rocketnet_client_transport_t * transport = rocketnet_message_client_transport( rocketnet_client_message_client( client ) );
+    check( rocketnet_client_transport_network_simulator( transport, 0, 0, 100, 0 ) );
+    const uint64_t * counters = destroy_disconnect_server_counters( server );
+    const uint64_t received = counters[ROCKETNET_COUNTER_DISCONNECT_RECEIVED];
+    rocketnet_client_transport_disconnect( transport );
+    rocketnet_client_transport_disconnect( transport );
+    check( !rocketnet_client_transport_stopped( transport ) );
+    now += 0.01;
+    rocketnet_client_update( client, now );
+    rocketnet_server_update( server, now );
+    check( counters[ROCKETNET_COUNTER_DISCONNECT_RECEIVED] == received );
+    check( rocketnet_server_client_connected( server, slot ) );
+    rn_test_client_stop_and_destroy( client );
+    rn_test_server_stop_and_destroy( server );
+    rocketnet_public_link_simulator_test_development( 0 );
+}
+REGISTER_UNIT_TEST( test_transport_disconnect_preserves_simulator_loss );
+
+// The public disconnect requests stop right after sealing the burst. With a
+// link simulator the burst is staged in the simulator's queue, which only the
+// caller's thread drains, and a stopping update never drains it: stop must
+// send what the simulator holds, or every burst stays queued and the server
+// frees the slot only on timeout. Shutdown updates hold the clock fixed, so
+// a latency must not keep the burst back either (tla/RNClientLinkStop.tla).
+static void test_client_disconnect_sends_burst_staged_in_link_simulator()
+{
+    destroy_disconnect_env_guard_t env_guard;
+    rocketnet_quiet( 1 );
+    rocketnet_public_link_simulator_test_development( 1 );
+    destroy_disconnect_keys_t keys;
+    destroy_disconnect_make_keys( &keys );
+
+    const int latency_ms[] = { 0, 50 };
+    for ( int i = 0; i < 2; i++ )
+    {
+        double now = 1000.0;
+        rocketnet_server_t * server = destroy_disconnect_server_create( &keys, now );
+        rocketnet_client_t * client = destroy_disconnect_client_create( &keys, rocketnet_server_port( server ), 0xE410ULL + (uint64_t) i, false, true );
+        const int slot = destroy_disconnect_connect_client( server, client, &now );
+        rocketnet_client_transport_t * transport = rocketnet_message_client_transport( rocketnet_client_message_client( client ) );
+        check( rocketnet_client_transport_network_simulator( transport, latency_ms[i], 0, 0, 0 ) );
+
+        const uint64_t * counters = destroy_disconnect_server_counters( server );
+        const uint64_t received = counters[ROCKETNET_COUNTER_DISCONNECT_RECEIVED];
+        const uint64_t accepted = counters[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED];
+        const uint64_t timed_out = counters[ROCKETNET_COUNTER_CLIENT_TIMED_OUT];
+
+        rocketnet_client_disconnect( client );
+        rn_test_client_wait_disconnected( client );
+        rocketnet_server_update( server, now );
+
+        check( counters[ROCKETNET_COUNTER_DISCONNECT_RECEIVED] - received == ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS );
+        check( counters[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED] - accepted == 1 );
+        check( counters[ROCKETNET_COUNTER_CLIENT_TIMED_OUT] == timed_out );
+        check( !rocketnet_server_client_connected( server, slot ) );
+        check( rocketnet_server_num_connected_clients( server ) == 0 );
+
+        rn_test_client_stop_and_destroy( client );
+        rn_test_server_stop_and_destroy( server );
+    }
+    rocketnet_public_link_simulator_test_development( 0 );
+}
+REGISTER_UNIT_TEST( test_client_disconnect_sends_burst_staged_in_link_simulator );

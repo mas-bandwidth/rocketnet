@@ -1230,14 +1230,14 @@ static void test_xdp_transport_host_too_large_drops()
     const int families[2] = { 4, 6 };
     for ( int f = 0; f < 2; f++ )
     {
-        // the receive ceiling is 1472, one 1500-MTU IPv4 datagram's payload,
+        // the receive ceiling is 1452, one 1500-MTU IPv6 datagram's payload,
         // for both families
 
-        xdp_host_row_t ceiling = xdp_host_row( "a payload packet at the ceiling, 1472 bytes", families[f] );
-        ceiling.frame.payload_bytes = 1472;
+        xdp_host_row_t ceiling = xdp_host_row( "a payload packet at the ceiling, 1452 bytes", families[f] );
+        ceiling.frame.payload_bytes = 1452;
         rows.push_back( ceiling );
 
-        const int sizes[2] = { 1473, 2000 };
+        const int sizes[2] = { 1453, 2000 };
         for ( int i = 0; i < 2; i++ )
         {
             xdp_host_row_t row = xdp_host_row( "a payload packet above the ceiling", families[f] );
@@ -1352,7 +1352,7 @@ static void test_xdp_transport_host_invalid_type_drops()
 
 static void test_xdp_transport_host_type_and_size_sweep_matches_the_standard()
 {
-    const int ceiling = 1472;   // 1500 - 20 - 8
+    const int ceiling = 1452;   // 1500 - 40 - 8
 
     struct inbound_t { int type; int min_bytes; int max_bytes; };
     const inbound_t standard[] = {
@@ -1436,11 +1436,11 @@ static void test_xdp_transport_host_type_and_size_sweep_matches_the_standard()
         }
     }
 
-    // 2 families x 256 types x 1474 sizes, and the accepted set is exactly
-    // the table's: 2 x ( 1 + 1 + 1432 + 1439 + 1440 + 1440 + 1433 )
+    // 2 families x 256 types x 1454 sizes, and the accepted set is exactly
+    // the table's: 2 x ( 1 + 1 + 1412 + 1419 + 1420 + 1420 + 1413 )
 
     rocketnet_unit_check( runs == 2L * 256 * ( ceiling + 2 ) );
-    rocketnet_unit_check( redirects == 2L * ( 1 + 1 + 1432 + 1439 + 1440 + 1440 + 1433 ) );
+    rocketnet_unit_check( redirects == 2L * ( 1 + 1 + 1412 + 1419 + 1420 + 1420 + 1413 ) );
 }
 
 // ---------------------------------------------------------------------------
@@ -1754,7 +1754,7 @@ static void test_xdp_transport_host_udp_length_drops()
 // same count when num_xdp_queues is zero or negative. The xdp branch of
 // rocketnet_builtin_server_memory_plan exists on Linux only.
 
-#if defined(__linux__)
+#if ROCKETNET_XDP
 
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_memory.h"
@@ -1777,7 +1777,7 @@ static void test_xdp_transport_queue_default_matches_memory_plan()
     rocketnet_unit_check( plan.sockets == 3 );
 }
 
-#endif // #if defined(__linux__)
+#endif // #if ROCKETNET_XDP
 
 #if ROCKETNET_XDP_FILTER_HOST && defined(__linux__)
 REGISTER_UNIT_TEST( test_xdp_transport_host_ipv4_rocketnet_packet_redirects );
@@ -1813,6 +1813,6 @@ REGISTER_UNIT_TEST( test_xdp_transport_host_replay_never_writes_the_map );
 REGISTER_UNIT_TEST( test_xdp_transport_host_udp_length_drops );
 #endif // #if ROCKETNET_XDP_FILTER_HOST && defined(__linux__)
 
-#if defined(__linux__)
+#if ROCKETNET_XDP
 REGISTER_UNIT_TEST( test_xdp_transport_queue_default_matches_memory_plan );
-#endif // #if defined(__linux__)
+#endif // #if ROCKETNET_XDP

@@ -27,22 +27,38 @@ cd "$(dirname "$0")/.."
 build_dir=build-msan
 msan_exitcode=86
 flags="-fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer"
-link_flags="-Wl,--allow-multiple-definition"
 
 # The unit suite defines its own global operator new/delete (test_channels.cpp)
 # to arm the allocation-failure trap; the MSan C++ runtime ships replacements
-# too. Allow the duplicate so the instrumented in-tree operator wins; malloc is
-# still intercepted and poisoned by the MSan runtime, so shadow tracking holds.
+# too, and the driver links it ahead of the suite's objects, so with the
+# duplicate allowed the runtime's operator new wins and the trap never fires
+# (test_channels_allocator_trap_witness fails). -fno-sanitize-link-c++-runtime
+# would leave it out, but clang 18 (the fleet runner's clang) links the C++
+# runtime anyway under that flag. So the driver links no sanitizer runtime and
+# the executable link names the MSan runtime itself, exactly as the driver
+# would (whole archive, its exported-symbol list, its system libraries), minus
+# the C++ part. The in-tree operator is then the only one; it calls malloc,
+# which the MSan runtime still intercepts and poisons, so shadow tracking
+# holds. These are link-step flags, so they go on the executable link line
+# only: on a compile line clang reports them unused, and the tree's -Werror
+# fails the build.
 abs_build="$PWD/$build_dir"
 if [ -n "${RUN_MSAN_TEST_BIN:-}" ]; then
     test_bin=$RUN_MSAN_TEST_BIN
 else
+    msan_runtime=$(clang++ -print-file-name="libclang_rt.msan-$(uname -m).a")
+    if [ ! -f "$msan_runtime" ] || [ ! -f "$msan_runtime.syms" ]; then
+        echo "MSan: runtime libclang_rt.msan-$(uname -m).a not found by clang++ -print-file-name"
+        exit 1
+    fi
+    link_flags="-fno-sanitize-link-runtime -Wl,--whole-archive $msan_runtime -Wl,--no-whole-archive -Wl,--dynamic-list=$msan_runtime.syms -lm -lpthread -lrt -ldl -lresolv"
+
     cmake -S . -B "$build_dir" \
         -DCMAKE_BUILD_TYPE=Debug \
         -DCMAKE_C_COMPILER=clang \
         -DCMAKE_CXX_COMPILER=clang++ \
         -DCMAKE_C_FLAGS="$flags" \
-        -DCMAKE_CXX_FLAGS="$flags $link_flags" \
+        -DCMAKE_CXX_FLAGS="$flags" \
         -DCMAKE_EXE_LINKER_FLAGS="$flags $link_flags" \
         -DCMAKE_SHARED_LINKER_FLAGS="$flags" \
         -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$abs_build/bin" \

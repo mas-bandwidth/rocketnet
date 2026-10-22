@@ -1,9 +1,12 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Compile the actual transport here to seed protocol state and substitute a
-// deterministic transport. No test hook or additional export enters the SDK.
+// deterministic transport. The local stats hook keeps worker progress explicit.
+#include "test/native_shutdown.h"
 #include "sdk/rocketnet_server_protocol.h"
 #include "sdk/rocketnet_replay.h"
 #include "sdk/rocketnet_fragment.h"
+// This target compiles the transport into its own deterministic fixture.
+#define ROCKETNET_XDP_STAGING_TEST_HOOKS 1
 static bool fail_seal;
 static int checked_seals;
 static bool check_arena_copy;
@@ -13,6 +16,7 @@ static int controlled_seal(rocketnet_server_protocol_t * server, int client_inde
 #define rocketnet_server_protocol_seal_payload_frame controlled_seal
 #include "sdk/rocketnet_server_transport.cpp"
 #undef rocketnet_server_protocol_seal_payload_frame
+#undef ROCKETNET_XDP_STAGING_TEST_HOOKS
 
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "control check failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); exit(1); } } while (0)
 
@@ -30,6 +34,12 @@ static int controlled_seal(rocketnet_server_protocol_t * server, int client_inde
     return rocketnet_server_protocol_seal_payload_frame(server, client_index, sequence, packet_id, wire, bytes, time);
 }
 
+// The fake staged frame must satisfy the public packet lease's 16-byte
+// alignment contract. Its intentional struct padding triggers MSVC C4324.
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable:4324)
+#endif
 struct control_fixture_t
 {
     rocketnet_address_t request_address;
@@ -38,6 +48,7 @@ struct control_fixture_t
     int responses;
     int payloads;
     int aborts;
+    int start_calls;
     int disconnects;
     int pending_disconnects;
     bool staged;
@@ -48,7 +59,7 @@ struct control_fixture_t
     uint8_t * lease_frames;
     int lease_starts;
     rocketnet_address_t reserved_to;
-    uint8_t frame[ROCKETNET_FRAME_STRIDE];
+    alignas(16) uint8_t frame[ROCKETNET_FRAME_STRIDE];
     rocketnet_server_socket_process_packets_t received;
     int feed_count;
     rocketnet_address_t feed_from[4];
@@ -58,6 +69,9 @@ struct control_fixture_t
     int accepted[4];
     int num_accepted;
 };
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
 static void record(control_fixture_t * f, const rocketnet_address_t * to, const uint8_t * packet)
 {
@@ -75,7 +89,8 @@ static void record(control_fixture_t * f, const rocketnet_address_t * to, const 
     else CHECK(false);
 }
 static void fixture_destroy(void *) {}
-static bool fixture_stop(void *) { return true; }
+static void fixture_stop( void * ) {}
+static bool fixture_stopped( void * ) { return true; }
 static void send_batch(void * p, const rocketnet_platform_send_t * sends, int count)
 {
     CHECK(count > 0 && count <= ROCKETNET_SERVER_MAX_SEND_PACKETS);
@@ -110,6 +125,7 @@ static int receive_batch(void * p, rocketnet_address_t * from, uint8_t * data, i
 static uint8_t * start_packet(void * p, const rocketnet_address_t * to, uint64_t * id)
 {
     auto * f = (control_fixture_t*)p;
+    ++f->start_calls;
     if (f->unreachable) { *id = ROCKETNET_TRANSPORT_PACKET_UNREACHABLE; return NULL; }
     if (f->lease_frames)
     {
@@ -168,12 +184,14 @@ static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketn
     config.max_clients = clients;
     config.max_payload_bytes = payload_limit;
     config.max_fragmented_messages = 1;
-    snprintf(config.transport, sizeof(config.transport), "%s", "portable");
+    // The real adapter is closed immediately below; all behavior under test
+    // runs through the deterministic buffered or staged fixture operations.
+    snprintf(config.transport, sizeof(config.transport), "%s", "loopback");
     auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
     CHECK(server);
-    rocketnet_server_transport_io_close(&server->io);
+    rn_native_server_io_stop_and_close(&server->io);
     *operations = {};
-    operations->destroy = fixture_destroy; operations->stop = fixture_stop;
+    operations->destroy = fixture_destroy; operations->stop = fixture_stop; operations->stopped = fixture_stopped;
     operations->send_batch = send_batch; operations->receive_batch = receive_batch;
     if (staged)
     {
@@ -191,12 +209,11 @@ static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketn
         auto * mapping = rocketnet_encryption_map_entry(server->protocol.encryption_map, index);
         uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
         CHECK(rocketnet_client_slots_assign(server->protocol.client_slots, i + 1, index, user_data) == i);
-        mapping->client_index = i; mapping->client_id = i + 1; mapping->established = 1;
-        mapping->timeout_seconds = 1000;
+        mapping->control->client_index = i; mapping->client_id = i + 1; mapping->control->established = 1;
+        mapping->control->timeout_seconds = 1000;
         // Synthetic connections have test keys; this fixture does not
         // model authentication. It exercises the real update/send scheduler.
         memset(&mapping->keys, i + 1, sizeof(mapping->keys));
-        server->protocol.acks->endpoints[i].rtt_history[0] = 17.0f;
     }
     CHECK(rocketnet_address_parse(&f->request_address, "127.0.0.1:20000"));
     int pending = rocketnet_encryption_map_add(server->protocol.encryption_map, &f->request_address, 100.0);
@@ -208,14 +225,57 @@ static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketn
     return server;
 }
 
+static void seed_stats_connection_ids(rocketnet_server_transport_t * server, int clients)
+{
+    // The fixture assigns slots directly. Production assigns these generation
+    // ids at connect; async stats only publishes a still-matching generation.
+    for (int i = 0; i < clients; ++i)
+        server->protocol.connection_ids[i] = ++server->protocol.next_connection_id;
+}
+
+static void seed_stats_rtt_samples(rocketnet_server_transport_t * server, int clients)
+{
+    // Generate the sample through the ACK producer so both the live endpoint
+    // and its active stats delta see the same 17 ms observation.
+    rocketnet_ack_block_t block = {};
+    block.first_range_length = 1;
+    for (int i = 0; i < clients; ++i)
+    {
+        auto * mapping = rocketnet_encryption_map_entry(server->protocol.encryption_map,
+            rocketnet_client_slots_mapping_index(server->protocol.client_slots, i));
+        CHECK(mapping);
+        // Account for the synthetic send so maintenance uses the next wire sequence.
+        const uint64_t sequence = mapping->send_sequence_session++;
+        block.largest = sequence;
+        auto * endpoint = &server->protocol.acks->endpoints[i];
+        CHECK(rocketnet_ack_endpoint_record_sent_classified(endpoint, sequence, 100, 0, 0, 0, 0.0)
+            == ROCKETNET_ACK_SENT_RECORDED);
+        uint64_t acked_ids[1] = {};
+        uint64_t unknown = 0, batch_full = 0;
+        int acked_count = 0;
+        CHECK(rocketnet_ack_endpoint_process_block(endpoint, &block, 0.017,
+            acked_ids, 1, &acked_count, &unknown, &batch_full) == 1);
+        CHECK(acked_count == 0 && unknown == 0 && batch_full == 0);
+        CHECK(endpoint->rtt_history[sequence % ROCKETNET_RTT_HISTORY_SIZE] == 17.0f);
+    }
+}
+
 static void test_buffered_control_pressure(int clients = 300)
 {
     auto * f = new control_fixture_t();
     rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_set_stats_worker_manual_for_test(true);
     auto * server = make_server(f, &operations, clients, false);
+    seed_stats_connection_ids(server, clients);
+    seed_stats_rtt_samples(server, clients);
     f->requests = ROCKETNET_SERVER_MAX_RECEIVE_PACKETS;
+    // Publication still follows the transport's modulo phases. Exercise
+    // every configured slot before checking the high slots' RTT; keep the
+    // response and ACK/keep-alive checks on every individual update.
+    const int stats_phases = ( clients + ROCKETNET_CLIENT_STATS_SLOTS_PER_UPDATE - 1 ) /
+                             ROCKETNET_CLIENT_STATS_SLOTS_PER_UPDATE;
     const double begin = rocketnet_time();
-    for (int step = 0; step < 6; ++step)
+    for (int step = 0; step <= stats_phases; ++step)
     {
         double now = 1.0 + step;
         // Half the clients owe standalone ACKs while their keep-alive clock
@@ -232,10 +292,20 @@ static void test_buffered_control_pressure(int clients = 300)
         CHECK(f->responses == (step + 1) * f->requests);
         for (int i = 0; i < clients; ++i)
             CHECK((i % 2 ? f->acks[i] : f->keep_alives[i]) == step + 1);
+        // Snapshot N is computed after update N and published by update N+1.
+        // The last update above publishes the final modulo phase while still
+        // exercising the same response and control assertions as every frame.
+        if (step < stats_phases)
+            CHECK(rocketnet_server_transport_stats_worker_step_for_test(server));
     }
+    uint64_t submitted = 0, completed = 0, published = 0, busy_skips = 0;
+    CHECK(rocketnet_server_transport_stats_worker_status_for_test(server,
+        &submitted, &completed, &published, &busy_skips));
+    CHECK(submitted == (uint64_t) stats_phases + 1 && completed == (uint64_t) stats_phases);
+    CHECK(published == (uint64_t) clients && busy_skips == 0);
     const double elapsed_ms = (rocketnet_time() - begin) * 1000.0;
     for (int i = 0; i < clients; ++i) CHECK(server->protocol.acks->endpoints[i].rtt == 17.0f);
-    rocketnet_server_transport_destroy(server); delete f;
+    rn_native_server_transport_stop_and_destroy(server); delete f;
     (void) elapsed_ms;
     printf("test_buffered_control_pressure_%d_clients\n", clients);
 }
@@ -258,7 +328,7 @@ static void test_disconnect_burst_next_send(bool staged)
     CHECK(f->disconnects == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS);
     CHECK(server->stats_frames[stats_index].packets_sent == before + ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS);
 
-    rocketnet_server_transport_destroy(server); delete f;
+    rn_native_server_transport_stop_and_destroy(server); delete f;
     printf("test_disconnect_burst_next_send_%s\n", staged ? "staged" : "portable");
 }
 
@@ -266,16 +336,84 @@ static void test_staged_control_fairness()
 {
     auto * f = new control_fixture_t(); f->capacity = 2;
     rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_set_stats_worker_manual_for_test(true);
     auto * server = make_server(f, &operations, 12, true);
+    seed_stats_connection_ids(server, 12);
+    seed_stats_rtt_samples(server, 12);
     // Every slot remains due, but only two frames are available per update.
-    for (int step = 0; step < 6; ++step) rocketnet_server_transport_update(server, 1.0 + step);
+    for (int step = 0; step < 6; ++step)
+    {
+        rocketnet_server_transport_update(server, 1.0 + step);
+        CHECK(rocketnet_server_transport_stats_worker_step_for_test(server));
+    }
     for (int i = 0; i < 12; ++i)
     {
         CHECK(f->keep_alives[i] == 1);
         CHECK(server->protocol.acks->endpoints[i].rtt == 17.0f);
     }
-    rocketnet_server_transport_destroy(server); delete f;
+    rn_native_server_transport_stop_and_destroy(server); delete f;
     printf("test_staged_control_fairness\n");
+}
+
+static void test_staged_idle_maintenance_preflight()
+{
+    // A connected but idle slot should not touch staged frame ownership.
+    // The boundary, the pre-ACK keep-alive clock, the post-ACK send clock,
+    // and ACK debt each still request exactly one frame when due.
+    auto * f = new control_fixture_t(); f->capacity = 16;
+    rocketnet_server_transport_io_operations_t operations;
+    auto * server = make_server(f, &operations, 1, true);
+    server->protocol.send_rate = 1.0;
+    auto * mapping = rocketnet_encryption_map_entry(server->protocol.encryption_map,
+        rocketnet_client_slots_mapping_index(server->protocol.client_slots, 0));
+    mapping->control->last_receive_time = 1000.0;
+    mapping->last_keep_alive_send_time = 1000.0;
+    mapping->last_send_time = 1000.0;
+
+    rocketnet_server_transport_update(server, 1000.0);
+    rocketnet_server_transport_update(server, 1000.5);
+    CHECK(f->start_calls == 0 && f->aborts == 0);
+
+    // Before any keep-alive is acknowledged, ordinary traffic does not
+    // suppress the keep-alive at the exact one-second boundary.
+    mapping->last_send_time = 1000.75;
+    rocketnet_server_transport_update(server, 1001.0);
+    CHECK(f->start_calls == 1 && f->keep_alives[0] == 1 && f->acks[0] == 0);
+
+    // Once acknowledged, any send stamps the clock used for suppression.
+    server->protocol.acks->endpoints[0].keep_alive_acked = 1;
+    mapping->last_send_time = 1001.0;
+    rocketnet_server_transport_update(server, 1001.5);
+    CHECK(f->start_calls == 1 && f->aborts == 0);
+    rocketnet_server_transport_update(server, 1002.0);
+    CHECK(f->start_calls == 2 && f->keep_alives[0] == 2);
+
+    // A single owed ACK is due before the next paced keep-alive.
+    server->protocol.acks->endpoints[0].ack_debt = 1;
+    rocketnet_server_transport_update(server, 1002.25);
+    CHECK(f->start_calls == 3 && f->acks[0] == 1);
+    CHECK(server->protocol.acks->endpoints[0].ack_debt == 0);
+
+    // When both are due, the existing writer keeps keep-alive priority and
+    // its ACK block clears the debt without a second reservation.
+    server->protocol.acks->endpoints[0].ack_debt = 1;
+    rocketnet_server_transport_update(server, 1003.25);
+    CHECK(f->start_calls == 4 && f->keep_alives[0] == 3 && f->acks[0] == 1);
+    CHECK(server->protocol.acks->endpoints[0].ack_debt == 0 && f->aborts == 0);
+
+    // The slot API permits a connected slot with no mapping. The preflight
+    // must still count that broken state, without indexing
+    // an address at -1 or reserving a staged frame.
+    rocketnet_client_slots_release(server->protocol.client_slots, 0);
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
+    CHECK(rocketnet_client_slots_assign(server->protocol.client_slots, 9, -1, user_data) == 0);
+    const uint64_t missing_before = server->protocol.counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING];
+    rocketnet_server_transport_update(server, 1003.5);
+    CHECK(server->protocol.counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING] == missing_before + 1);
+    CHECK(f->start_calls == 4);
+
+    rn_native_server_transport_stop_and_destroy(server); delete f;
+    printf("test_staged_idle_maintenance_preflight\n");
 }
 
 static void test_single_frame_arena()
@@ -310,7 +448,7 @@ static void test_single_frame_arena()
         }
         CHECK(checked_seals == 2);
         check_arena_copy = false; fail_seal = false;
-        rocketnet_server_transport_destroy(server); delete f;
+        rn_native_server_transport_stop_and_destroy(server); delete f;
     }
     printf("test_single_frame_arena_seal_and_abort\n");
 }
@@ -335,7 +473,7 @@ static void test_staged_lease_table_full()
     CHECK(!rocketnet_server_transport_start_packet(server, 0, 64, &refused));
     CHECK(server->protocol.counters->values[ROCKETNET_COUNTER_SEND_LEASE_FULL] == 1);
     CHECK(f->aborts == 1);
-    rocketnet_server_transport_destroy(server);
+    rn_native_server_transport_stop_and_destroy(server);
     rocketnet_free(NULL, f->lease_frames);
     delete f;
     printf("test_staged_lease_table_full\n");
@@ -366,7 +504,7 @@ static void test_entries_carry_connection_id(bool staged)
         protocol->connection_ids[i] = ++protocol->next_connection_id;
         auto * mapping = rocketnet_encryption_map_entry(protocol->encryption_map,
             rocketnet_client_slots_mapping_index(protocol->client_slots, i));
-        mapping->last_receive_time = time;
+        mapping->control->last_receive_time = time;
     }
     CHECK(rocketnet_server_transport_client_connection_id(server, 0) == 1);
     CHECK(rocketnet_server_transport_client_connection_id(server, 1) == 2);
@@ -482,7 +620,7 @@ static void test_entries_carry_connection_id(bool staged)
         CHECK(connection_id[0] == rocketnet_server_transport_client_connection_id(server, c));
     }
 
-    rocketnet_server_transport_destroy(server); delete f;
+    rn_native_server_transport_stop_and_destroy(server); delete f;
     printf("test_entries_carry_connection_id_%s\n", staged ? "staged" : "portable");
 }
 
@@ -506,7 +644,7 @@ static void test_staged_link_address_hooks()
     protocol->connection_ids[0] = ++protocol->next_connection_id;
     auto * mapping = rocketnet_encryption_map_entry(protocol->encryption_map,
         rocketnet_client_slots_mapping_index(protocol->client_slots, 0));
-    mapping->last_receive_time = time;
+    mapping->control->last_receive_time = time;
 
     CHECK(rocketnet_address_parse(&f->feed_from[0], "127.0.0.1:3000"));
     memset(f->feed_data[0], 0x5A, 64);
@@ -538,7 +676,7 @@ static void test_staged_link_address_hooks()
     CHECK(protocol->counters->values[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full);
     CHECK(f->keep_alives[0] == keep_alives && f->acks[0] == acks && f->payloads == payloads);
 
-    rocketnet_server_transport_destroy(server); delete f;
+    rn_native_server_transport_stop_and_destroy(server); delete f;
     printf("test_staged_link_address_hooks\n");
 }
 
@@ -561,6 +699,7 @@ int main(int argc, char ** argv)
     test_disconnect_burst_next_send(false);
     test_disconnect_burst_next_send(true);
     test_staged_control_fairness();
+    test_staged_idle_maintenance_preflight();
     test_single_frame_arena();
     test_staged_lease_table_full();
     test_entries_carry_connection_id(false);
