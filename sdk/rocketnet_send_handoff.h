@@ -11,8 +11,8 @@
 // it hands back the newest generation, never the front.
 template<int NumBuffers> struct rocketnet_send_handoff_t
 {
-    bool free[NumBuffers];
-    int queued[NumBuffers];
+    bool free[size_t(NumBuffers)];
+    int queued[size_t(NumBuffers)];
     int head = 0;
     int count = 0;
     int filling = -1;

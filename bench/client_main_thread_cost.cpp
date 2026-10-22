@@ -74,9 +74,9 @@ int main(int argc, char ** argv)
     std::vector<double> send_us;
     std::vector<double> update_us;
     std::vector<double> total_us;
-    send_us.reserve(frames);
-    update_us.reserve(frames);
-    total_us.reserve(frames);
+    send_us.reserve(size_t(frames));
+    update_us.reserve(size_t(frames));
+    total_us.reserve(size_t(frames));
     uint64_t received = 0;
     uint8_t scratch[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
 

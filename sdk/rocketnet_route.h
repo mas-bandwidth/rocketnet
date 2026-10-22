@@ -68,6 +68,23 @@ static inline bool better_match( const rocketnet_ifforward4_t * a, const rocketn
 #include <sys/socket.h>
 #include <linux/rtnetlink.h>
 
+// The const-correct spellings of NLMSG_DATA, RTM_RTA, RTA_NEXT and RTA_DATA:
+// the same offsets, without the macros' casts through char *, which drop the
+// const of a borrowed message. RTA_NEXT's stride is RTA_ALIGN( rta_len ),
+// at most 0xFFFF + 3, so it fits an int; RTA_OK has already checked rta_len
+// against the bytes that remain before this is called.
+static inline const uint8_t * rocketnet_route_attribute_data( const struct rtattr * attribute )
+{
+    return (const uint8_t*) attribute + RTA_LENGTH(0);
+}
+
+static inline const struct rtattr * rocketnet_route_attribute_next( const struct rtattr * attribute, int * remaining )
+{
+    const int stride = (int) RTA_ALIGN( attribute->rta_len );
+    *remaining -= stride;
+    return (const struct rtattr*) ( (const uint8_t*) attribute + stride );
+}
+
 /**
  * @brief Parses one supported main-table IPv4 unicast route message.
  *
@@ -86,7 +103,7 @@ static inline bool parse_kernel_route( const struct nlmsghdr * msg_ptr, rocketne
 {
     if ( msg_ptr->nlmsg_len < NLMSG_LENGTH(sizeof(rtmsg)) || msg_ptr->nlmsg_type != RTM_NEWROUTE )
         return false;
-    const struct rtmsg * route_entry = (const struct rtmsg*) NLMSG_DATA(msg_ptr);
+    const struct rtmsg * route_entry = (const struct rtmsg*) ( (const uint8_t*) msg_ptr + NLMSG_HDRLEN );
     if ( route_entry->rtm_family != AF_INET || route_entry->rtm_dst_len > 32 || route_entry->rtm_type != RTN_UNICAST )
         return false;
 
@@ -95,30 +112,33 @@ static inline bool parse_kernel_route( const struct nlmsghdr * msg_ptr, rocketne
     result.forward_mask = prefix == 0 ? 0 : (0xffffffffu << (32 - prefix));
     uint32_t table = route_entry->rtm_table;
     bool has_destination = prefix == 0;
-    int remaining = RTM_PAYLOAD(msg_ptr);
-    for ( const struct rtattr * attribute = (const struct rtattr*) RTM_RTA(route_entry);
-          RTA_OK(attribute, remaining); attribute = RTA_NEXT(attribute, remaining) )
+    // RTM_PAYLOAD: the length check above keeps this at least zero, and a
+    // length past INT_MAX goes negative, which RTA_OK refuses and the
+    // remaining != 0 check below rejects.
+    int remaining = (int) ( msg_ptr->nlmsg_len - NLMSG_SPACE(sizeof(rtmsg)) );
+    for ( const struct rtattr * attribute = (const struct rtattr*) ( (const uint8_t*) route_entry + NLMSG_ALIGN(sizeof(rtmsg)) );
+          RTA_OK(attribute, remaining); attribute = rocketnet_route_attribute_next( attribute, &remaining ) )
     {
         switch ( attribute->rta_type )
         {
             case RTA_DST:
                 if ( RTA_PAYLOAD(attribute) != 4 ) return false;
-                result.forward_dest = rocketnet_route_ip((const uint8_t*) RTA_DATA(attribute));
+                result.forward_dest = rocketnet_route_ip( rocketnet_route_attribute_data( attribute ) );
                 has_destination = true;
                 break;
             case RTA_OIF:
                 if ( RTA_PAYLOAD(attribute) != 4 ) return false;
-                memcpy(&result.if_index, RTA_DATA(attribute), 4);
+                memcpy(&result.if_index, rocketnet_route_attribute_data( attribute ), 4);
                 break;
             case RTA_PRIORITY:
                 // RTA_METRICS is a nested attribute set, not route priority.
                 // https://www.kernel.org/doc/html/latest/netlink/specs/rt-route.html
                 if ( RTA_PAYLOAD(attribute) != 4 ) return false;
-                memcpy(&result.forward_metric, RTA_DATA(attribute), 4);
+                memcpy(&result.forward_metric, rocketnet_route_attribute_data( attribute ), 4);
                 break;
             case RTA_TABLE:
                 if ( RTA_PAYLOAD(attribute) != 4 ) return false;
-                memcpy(&table, RTA_DATA(attribute), 4);
+                memcpy(&table, rocketnet_route_attribute_data( attribute ), 4);
                 break;
         }
     }

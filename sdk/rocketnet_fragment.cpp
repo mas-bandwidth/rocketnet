@@ -341,7 +341,7 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
     }
 
     struct rocketnet_reassembly_slot_t * slot = &set->slots[connection_index * set->num_slots + (int) ( payload_id % (uint32_t) set->num_slots )];
-    uint8_t * slot_payload = set->arena + ( (size_t) connection_index * set->num_slots + (size_t) ( payload_id % (uint32_t) set->num_slots ) ) * set->slot_arena_bytes;
+    uint8_t * slot_payload = set->arena + ( (size_t) connection_index * (size_t) set->num_slots + (size_t) ( payload_id % (uint32_t) set->num_slots ) ) * set->slot_arena_bytes;
     uint8_t * slot_staging = slot_payload + set->max_payload_bytes;
 
     // the stale test, STANDARD.md _Fragmentation_, against two references.
@@ -526,12 +526,12 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
             slot->fragment_stride = stride;
             if ( slot->final_staged )
             {
-                memcpy( slot_payload + (size_t) stride * ( slot->fragment_count - 1 ), slot_staging, (size_t) slot->final_bytes );
+                memcpy( slot_payload + (size_t) stride * (size_t) ( slot->fragment_count - 1 ), slot_staging, (size_t) slot->final_bytes );
                 slot->final_staged = 0;
             }
         }
 
-        memcpy( slot_payload + (size_t) slot->fragment_stride * fragment_index, fragment_data, (size_t) fragment_bytes );
+        memcpy( slot_payload + (size_t) slot->fragment_stride * (size_t) fragment_index, fragment_data, (size_t) fragment_bytes );
     }
     else
     {
@@ -539,7 +539,7 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
 
         if ( slot->fragment_stride != 0 )
         {
-            memcpy( slot_payload + (size_t) slot->fragment_stride * ( slot->fragment_count - 1 ), fragment_data, (size_t) fragment_bytes );
+            memcpy( slot_payload + (size_t) slot->fragment_stride * (size_t) ( slot->fragment_count - 1 ), fragment_data, (size_t) fragment_bytes );
         }
         else
         {
