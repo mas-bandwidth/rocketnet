@@ -4828,10 +4828,10 @@ void rocketnet_test_server_keep_alive_pacing()
 
 void rocketnet_test_client_payload_before_first_keep_alive()
 {
-    // a payload racing ahead of the first keep-alive is delivered, not
-    // dropped: the session keys are born at the challenge, so nothing about
-    // payload bytes needs the client index -- the reason this protocol has
-    // no keep-alive prefixing for unconfirmed clients
+    // a payload racing ahead of the first keep-alive is ignored, as
+    // netcode.io's client does: delivered, it let the application reply on
+    // a connection that could not yet send. The keep-alive still connects
+    // the client, and the payloads after it are delivered
 
     struct rocketnet_test_server_t test;
     rocketnet_test_server_setup( &test );
@@ -4876,14 +4876,16 @@ void rocketnet_test_client_payload_before_first_keep_alive()
                                                       payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
     // the first keep-alive is dropped here, deliberately
 
-    // the server sends a payload to the still-unconfirmed client: delivered
+    // the server sends a payload to the still-unconfirmed client: ignored,
+    // counted wrong state
     const uint8_t early_data[5] = { 0xE, 0xA, 0x12, 0x1, 0x9 };
     int bytes = rocketnet_server_protocol_write_payload( &test.server, 0, early_data, sizeof(early_data), 102.2, packet );
     rocketnet_check( bytes > 0 );
     rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
-    rocketnet_check( rocketnet_client_protocol_process_packet( &client, packet, bytes, 102.2, payload, sizeof(payload), &payload_bytes ) );
-    rocketnet_check( payload_bytes == (int) sizeof(early_data) );
-    rocketnet_check( memcmp( payload, early_data, sizeof(early_data) ) == 0 );
+    payload_bytes = 0;
+    rocketnet_check( !rocketnet_client_protocol_process_packet( &client, packet, bytes, 102.2, payload, sizeof(payload), &payload_bytes ) );
+    rocketnet_check( payload_bytes == 0 );
+    rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_WRONG_STATE] == 1 );
     rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
 
     // and the periodic keep-alive still carries the index and connects it
@@ -4892,6 +4894,13 @@ void rocketnet_test_client_payload_before_first_keep_alive()
     rocketnet_check( rocketnet_client_protocol_process_packet( &client, packet, bytes, 102.3, payload, sizeof(payload), &payload_bytes ) );
     rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     rocketnet_check( client.client_index == 0 );
+
+    // connected, the next payload is delivered
+    bytes = rocketnet_server_protocol_write_payload( &test.server, 0, early_data, sizeof(early_data), 102.4, packet );
+    rocketnet_check( bytes > 0 );
+    rocketnet_check( rocketnet_client_protocol_process_packet( &client, packet, bytes, 102.4, payload, sizeof(payload), &payload_bytes ) );
+    rocketnet_check( payload_bytes == (int) sizeof(early_data) );
+    rocketnet_check( memcmp( payload, early_data, sizeof(early_data) ) == 0 );
 
     rocketnet_test_server_teardown( &test );
     rocketnet_counters_assert_conserved( &client_counters );
@@ -5113,9 +5122,12 @@ void rocketnet_test_keep_alive_unestablished_under_payload_traffic()
             if ( !rocketnet_client_slots_confirmed( test.server.client_slots, 0 ) )
                 payloads_sent_while_unestablished++;
             int connected_before = ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
-            if ( rocketnet_client_protocol_process_packet( &client, response, stream_bytes, time, payload, sizeof(payload), &payload_bytes ) &&
-                 payload_bytes > 0 && !connected_before )
+            // before connected the client ignores the payload, as
+            // netcode.io's client does, counted wrong state
+            const int delivered = rocketnet_client_protocol_process_packet( &client, response, stream_bytes, time, payload, sizeof(payload), &payload_bytes );
+            if ( !connected_before )
             {
+                rocketnet_check( !delivered );
                 payloads_received_while_unestablished++;
             }
 
@@ -5153,6 +5165,7 @@ void rocketnet_test_keep_alive_unestablished_under_payload_traffic()
 
     rocketnet_check( payloads_sent_while_unestablished >= 5 );
     rocketnet_check( payloads_received_while_unestablished >= 5 );
+    rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_WRONG_STATE] == (uint64_t) payloads_received_while_unestablished );
     rocketnet_check( (double) payloads_sent_while_unestablished * tick >= connected_time - establishment_time - 2.0 * tick );
 
     rocketnet_test_server_teardown( &test );
@@ -5237,12 +5250,13 @@ void rocketnet_test_keep_alive_pacing_survives_early_ack()
                 payloads_sent_while_unestablished++;
             rocketnet_client_protocol_process_packet( &client, response, stream_bytes, time, payload, sizeof(payload), &payload_bytes );
 
-            // the conformant standalone ack, sealed from _sending connection
-            // response_, sent once as soon as the client has something to
-            // acknowledge. this is the packet _Acks_ asks for.
+            // the standalone ack, sealed from _sending connection response_
+            // and sent once. The client now ignores payloads there (as
+            // netcode.io's client), so it accrues no debt to send it for,
+            // but the packet stays legal, and the server's pacing must
+            // survive it all the same.
 
-            if ( !early_ack_sent && client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE &&
-                 client.ack.ack_debt > 0 )
+            if ( !early_ack_sent && client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
             {
                 uint8_t block[ROCKETNET_ACK_BLOCK_MAX_BYTES];
                 int block_bytes = rocketnet_ack_block_build( block, ROCKETNET_ACK_BLOCK_MAX_BYTES, &client.replay_session );
