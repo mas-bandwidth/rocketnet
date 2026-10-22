@@ -76,6 +76,7 @@ struct alignas(64) rocketnet_server_socket_send_packet_info_t
     rocketnet_address_t to;
     size_t packet_bytes;
     uint8_t destination_mac[ETH_ALEN];  // chosen at start by the reply-MAC rule
+    bool mac_learned;                   // destination_mac is the peer's learned MAC
 };
 
 // IMPORTANT: The 4096 byte padding walls in these structs are load-bearing. Each field
@@ -2112,6 +2113,9 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
     send_buffer->packet_info[packet_index].to = *to;
     send_buffer->packet_info[packet_index].packet_bytes = 0;
     memcpy( send_buffer->packet_info[packet_index].destination_mac, destination_mac, ETH_ALEN );
+    const uintptr_t learned_begin = (uintptr_t) &server_socket->reply_macs.entries[0];
+    const uintptr_t learned_end = (uintptr_t) &server_socket->reply_macs.entries[ROCKETNET_XDP_REPLY_MAC_ENTRIES];
+    send_buffer->packet_info[packet_index].mac_learned = (uintptr_t) destination_mac >= learned_begin && (uintptr_t) destination_mac < learned_end;
 
     return send_buffer->packet_data[packet_index];
 }
@@ -2182,11 +2186,32 @@ void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * s
     if ( packet_index < 0 || packet_index >= ROCKETNET_XDP_SEND_QUEUE_SIZE )
         return;
 
+    // a packet started before its peer's MAC was learned took the gateway
+    // (or the answered frame's MAC). The reply to a client's first
+    // authenticated packet is that case: the transport reserves it before
+    // the packet opens, and the open learns the MAC before this commit.
+    // Taking the learned MAC here sends it the way the same update's
+    // payloads go; through the gateway it arrived after them (the router's
+    // hairpin, ~200 us on hulk), and the client was handed payloads before
+    // the keep-alive that connects it. The table is written only by update,
+    // never during a fill.
+
+    rocketnet_server_socket_send_packet_info_t * info = &send_buffer->packet_info[packet_index];
+    if ( !info->mac_learned )
+    {
+        const struct rocketnet_xdp_reply_mac_entry_t * entry = rocketnet_xdp_reply_macs_find( &server_socket->reply_macs, &info->to );
+        if ( entry )
+        {
+            memcpy( info->destination_mac, entry->mac, ETH_ALEN );
+            info->mac_learned = true;
+        }
+    }
+
     // the packet is complete wire bytes as the protocol wrote them; nothing
     // is prepended here -- the xdp thread adds the ethernet, ip and udp
     // headers when it copies the packet into its umem frame
 
-    send_buffer->packet_info[packet_index].packet_bytes = packet_bytes;
+    info->packet_bytes = packet_bytes;
 }
 
 void rocketnet_server_socket_abort_packet( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, uint8_t * packet_data )
@@ -2485,6 +2510,82 @@ bool rocketnet_server_socket_test_inactive_flow()
     {
         valid &= socket->send_buffer[i].packet_info[0].packet_bytes == size_t( 40 + i );
         valid &= socket->send_buffer[i].num_packets.load() == 0;
+    }
+
+    socket->~rocketnet_server_xdp_socket_t();
+    server->~rocketnet_server_socket_t();
+    rocketnet_free( NULL, socket_storage );
+    rocketnet_free( NULL, server_storage );
+    return valid;
+}
+
+// The reply that answers a client's first authenticated packet (the
+// keep-alive that connects it) is reserved before that packet opens, so no
+// MAC is learned yet and the rule picks the gateway; the open then learns
+// the client's MAC, and finish takes it. Without that, on a LAN with a
+// gateway the keep-alive took the router's hairpin and arrived ~200 us after
+// the payloads sent to the learned MAC in the same update (hulk, 10-22).
+bool rocketnet_server_socket_test_reply_mac_refreshed_at_finish()
+{
+    void * server_storage = rocketnet_malloc( NULL, sizeof(rocketnet_server_socket_t) );
+    void * socket_storage = rocketnet_malloc( NULL, sizeof(rocketnet_server_xdp_socket_t) );
+    if ( !server_storage || !socket_storage )
+    {
+        rocketnet_free( NULL, socket_storage );
+        rocketnet_free( NULL, server_storage );
+        return false;
+    }
+    auto * server = new (server_storage) rocketnet_server_socket_t();
+    auto * socket = new (socket_storage) rocketnet_server_xdp_socket_t();
+    server->num_queues = 1;
+    server->socket = socket;
+    socket->send_flow_index.store( socket->send_handoff.producer );
+    static const uint8_t gateway_mac[ETH_ALEN] = { 0x02, 0, 0, 0, 0, 2 };
+    static const uint8_t client_mac[ETH_ALEN] = { 0x02, 0, 0, 0, 0, 0x4e };
+    rocketnet_xdp_reply_macs_reset( &server->reply_macs, gateway_mac );
+    rocketnet_address_t to = {};
+    to.type = ROCKETNET_ADDRESS_IPV4;
+    to.data.ipv4[0] = 192;
+    to.data.ipv4[1] = 168;
+    to.data.ipv4[2] = 1;
+    to.data.ipv4[3] = 78;
+    to.port = 36800;
+
+    bool valid = true;
+    rocketnet_server_socket_send_buffer_t * send_buffer = &socket->send_buffer[socket->send_flow_index.load()];
+
+    // reserved before the client's MAC is learned: the gateway, for now
+    uint64_t reply_id = 0;
+    uint8_t * reply = rocketnet_server_socket_start_packet( server, &to, &reply_id );
+    valid &= reply != NULL;
+    valid &= reply && memcmp( send_buffer->packet_info[0].destination_mac, gateway_mac, ETH_ALEN ) == 0;
+
+    // the packet it answers opens and teaches the client's MAC
+    rocketnet_xdp_reply_macs_learn( &server->reply_macs, &to, client_mac );
+
+    // a payload staged after: the learned MAC
+    uint64_t payload_id = 0;
+    uint8_t * payload = rocketnet_server_socket_start_packet( server, &to, &payload_id );
+    valid &= payload != NULL;
+
+    if ( reply && payload )
+    {
+        rocketnet_server_socket_finish_packet( server, reply_id, reply, 41 );
+        rocketnet_server_socket_finish_packet( server, payload_id, payload, 68 );
+        valid &= memcmp( send_buffer->packet_info[0].destination_mac, client_mac, ETH_ALEN ) == 0;
+        valid &= memcmp( send_buffer->packet_info[1].destination_mac, client_mac, ETH_ALEN ) == 0;
+    }
+
+    // a reply to an address never learned keeps the gateway
+    rocketnet_address_t stranger = to;
+    stranger.port = 36801;
+    uint64_t stranger_id = 0;
+    uint8_t * stranger_reply = rocketnet_server_socket_start_packet( server, &stranger, &stranger_id );
+    valid &= stranger_reply != NULL;
+    if ( stranger_reply )
+    {
+        rocketnet_server_socket_finish_packet( server, stranger_id, stranger_reply, 38 );
+        valid &= memcmp( send_buffer->packet_info[2].destination_mac, gateway_mac, ETH_ALEN ) == 0;
     }
 
     socket->~rocketnet_server_xdp_socket_t();
