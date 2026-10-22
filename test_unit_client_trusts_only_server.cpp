@@ -24,6 +24,7 @@
 // Time is an argument; the clock starts at 1000.0 and nothing here sleeps,
 // opens a socket or reads a clock.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "test/fake_client_driver.h"
 
@@ -218,7 +219,7 @@ static void test_client_transport_connects_socket_to_server()
         check( rocketnet_address_equal( &fake->sent[i].address, &server ) );
     check( fake->connect_calls == 1 );
 
-    rocketnet_client_transport_destroy( transport );
+    rn_test_client_transport_stop_and_destroy( transport );
     check( fake->destroy_calls == 1 );
     delete fake;
 }
