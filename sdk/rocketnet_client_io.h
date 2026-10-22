@@ -37,7 +37,7 @@ void rocketnet_client_io_wipe( void * data, size_t bytes );
 // test's thread.
 
 #define ROCKETNET_CLIENT_IO_BATCH 64
-#define ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS 0.001   // a guard, never a cadence
+#define ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS 0.050   // a guard, never a cadence
 #define ROCKETNET_CLIENT_IO_NUM_BUFFERS 2      // two receive buffers, no third (the design's receive path)
 
 enum { ROCKETNET_CLIENT_IO_IDLE = 0, ROCKETNET_CLIENT_IO_WORKED = 1, ROCKETNET_CLIENT_IO_EXITED = 2 };
