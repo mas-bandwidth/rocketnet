@@ -251,7 +251,7 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
                          measurement.delivered == rocketnet_ordered_message_count;
     const int within_budget = measurement.completion_seconds <= rocketnet_ordered_multiple * measurement.lower_bound_seconds;
     const int no_overflow = rocketnet_channel_harness_overflows( &h ) == 0;
-    const int no_allocations = rocketnet_channel_allocator_calls == h.allocation_snapshot;
+    const int no_allocations = rocketnet_channel_allocator_calls == h.allocations_after_create;
 
     if ( !complete || !within_budget || !no_overflow || !no_allocations )
     {

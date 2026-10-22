@@ -2599,7 +2599,7 @@ void rocketnet_client_transport_step_legacy_for_test( rocketnet_client_transport
 // The step-driven fixture has no concurrent worker. Expose ownership and the
 // held view so its regression can check backpressure and buffer reuse without
 // depending on scheduler timing or private layout offsets.
-const rocketnet_client_receive_buffer_t * rocketnet_client_transport_legacy_receive_snapshot_for_test(
+const rocketnet_client_receive_buffer_t * rocketnet_client_transport_legacy_receive_state_for_test(
     const rocketnet_client_transport_t * client_transport, int * fill, int * ready_count, int * free_count )
 {
     rocketnet_assert( client_transport && client_transport->step_driven && !client_transport->thread &&

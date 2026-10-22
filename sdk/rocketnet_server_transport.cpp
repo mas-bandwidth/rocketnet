@@ -2272,7 +2272,7 @@ static void rocketnet_server_stats_publish_and_submit( rocketnet_server_transpor
 
 #if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS)
 // Historical pure fixture only; the production path below submits immutable
-// snapshots to the worker and applies them on a later update.
+// copies of the stats to the worker and applies them on a later update.
 int rocketnet_server_transport_test_update_client_stats( const rocketnet_client_slots_t * slots,
                                                         rocketnet_server_acks_t * acks )
 {

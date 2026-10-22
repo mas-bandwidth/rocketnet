@@ -108,7 +108,7 @@ struct reliable_receipt_fixture_t
 
 static uint64_t reliable_receipt_allocations;
 
-static void reliable_fixture_create( reliable_receipt_fixture_t * f, int type, int bytes, uint64_t * allocation_snapshot = NULL )
+static void reliable_fixture_create( reliable_receipt_fixture_t * f, int type, int bytes, uint64_t * allocations_after_create = NULL )
 {
     memset( f, 0, sizeof( *f ) );
     rocketnet_message_config_t config;
@@ -121,8 +121,8 @@ static void reliable_fixture_create( reliable_receipt_fixture_t * f, int type, i
     f->client = (rocketnet_message_client_t *) rn_message_object_create( NULL, &link, 0, 1, &config, NULL, 0,
                                                                           ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 );
     rocketnet_unit_check( f->client != NULL );
-    if ( allocation_snapshot )
-        *allocation_snapshot = reliable_receipt_allocations;
+    if ( allocations_after_create )
+        *allocations_after_create = reliable_receipt_allocations;
     rocketnet_unit_check( rocketnet_message_client_update( f->client, 1.0 ) == ROCKETNET_UPDATE_OK );
     rocketnet_message_client_send_packets( f->client );                            // the connection's CONFIG goes first and is acked (CHANNELS.md 10.3)
     f->transport.ack_packet = f->transport.sent_packets[0];

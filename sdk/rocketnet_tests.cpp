@@ -2383,8 +2383,8 @@ static void rocketnet_test_build_request( uint8_t * request, uint64_t client_id,
                                                token.signed_connect_data, token.signature );
 }
 
-// runs a request and returns the result; before is a snapshot for asserting
-// exactly which counters moved
+// runs a request and returns the result; before is the counters read before
+// it, for asserting exactly which counters moved
 
 static int rocketnet_test_process( struct rocketnet_test_server_t * test, const uint8_t * request, int request_bytes,
                                    uint8_t * response, int * response_bytes )
@@ -11291,8 +11291,8 @@ void rocketnet_test_fragment_receive_refusals()
     rocketnet_test_fragment_pair_teardown( &pair );
 }
 
-// snapshot of a reassembly set's mutable state, for byte-identity checks
-static int rocketnet_test_reassembly_snapshot( struct rocketnet_reassembly_set_t * set, uint8_t * out )
+// copy of a reassembly set's mutable state, for byte-identity checks
+static int rocketnet_test_reassembly_state( struct rocketnet_reassembly_set_t * set, uint8_t * out )
 {
     uint8_t * p = out;
     int slots_bytes = set->num_connections * set->num_slots * (int) sizeof( struct rocketnet_reassembly_slot_t );
@@ -11308,7 +11308,7 @@ static int rocketnet_test_reassembly_snapshot( struct rocketnet_reassembly_set_t
 
 // a set's payload staging (the slot arena and the delivered buffers) is
 // written only as fragments arrive, so its bytes start indeterminate; zeroed
-// first, a snapshot of it compares defined bytes, and any write shows
+// first, a copy of it compares defined bytes, and any write shows
 static void rocketnet_test_reassembly_zero_staging( struct rocketnet_reassembly_set_t * set )
 {
     memset( set->arena, 0, (size_t) set->num_connections * (size_t) set->num_slots * set->slot_arena_bytes );
@@ -11379,7 +11379,7 @@ void rocketnet_test_fragment_before_connected_touches_no_reassembly()
 
     const uint64_t * client_counters = pair.client_counters.values;
     rocketnet_test_reassembly_zero_staging( pair.client.reassembly );
-    int snap = rocketnet_test_reassembly_snapshot( pair.client.reassembly, before );
+    int state_bytes = rocketnet_test_reassembly_state( pair.client.reassembly, before );
     uint64_t wrong_state_before = client_counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_STATE];
     uint64_t received_before = client_counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_RECEIVED];
     uint8_t out_payload[ROCKETNET_RECEIVE_CEILING];
@@ -11388,8 +11388,8 @@ void rocketnet_test_fragment_before_connected_touches_no_reassembly()
                                                                out_payload, sizeof(out_payload), &out_payload_bytes ) == 0 );
     rocketnet_check( client_counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_STATE] == wrong_state_before + 1 );
     rocketnet_check( client_counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_RECEIVED] == received_before + 1 );
-    rocketnet_check( rocketnet_test_reassembly_snapshot( pair.client.reassembly, after ) == snap );
-    rocketnet_check( memcmp( before, after, (size_t) snap ) == 0 );
+    rocketnet_check( rocketnet_test_reassembly_state( pair.client.reassembly, after ) == state_bytes );
+    rocketnet_check( memcmp( before, after, (size_t) state_bytes ) == 0 );
 
     rocketnet_test_fragment_pair_teardown( &pair );
 
@@ -11423,7 +11423,7 @@ void rocketnet_test_fragment_before_connected_touches_no_reassembly()
 
     const uint64_t * server_counters = pair.test.counters.values;
     rocketnet_test_reassembly_zero_staging( pair.test.server.reassembly );
-    snap = rocketnet_test_reassembly_snapshot( pair.test.server.reassembly, before );
+    state_bytes = rocketnet_test_reassembly_state( pair.test.server.reassembly, before );
     uint64_t not_connected_before = server_counters[ROCKETNET_COUNTER_FRAGMENT_NOT_CONNECTED];
     // a valid sealed fragment under the client's live session keys
     static uint8_t plaintext[2048];
@@ -11443,8 +11443,8 @@ void rocketnet_test_fragment_before_connected_touches_no_reassembly()
     rocketnet_check( sealed > 0 );
     rocketnet_check( rocketnet_test_fragment_deliver_to_server( &pair, packet, sealed ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     rocketnet_check( server_counters[ROCKETNET_COUNTER_FRAGMENT_NOT_CONNECTED] == not_connected_before + 1 );
-    rocketnet_check( rocketnet_test_reassembly_snapshot( pair.test.server.reassembly, after ) == snap );
-    rocketnet_check( memcmp( before, after, (size_t) snap ) == 0 );
+    rocketnet_check( rocketnet_test_reassembly_state( pair.test.server.reassembly, after ) == state_bytes );
+    rocketnet_check( memcmp( before, after, (size_t) state_bytes ) == 0 );
 
     rocketnet_test_fragment_pair_teardown( &pair );
 }

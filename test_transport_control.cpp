@@ -292,7 +292,7 @@ static void test_buffered_control_pressure(int clients = 300)
         CHECK(f->responses == (step + 1) * f->requests);
         for (int i = 0; i < clients; ++i)
             CHECK((i % 2 ? f->acks[i] : f->keep_alives[i]) == step + 1);
-        // Snapshot N is computed after update N and published by update N+1.
+        // Stats batch N is computed after update N and published by update N+1.
         // The last update above publishes the final modulo phase while still
         // exercising the same response and control assertions as every frame.
         if (step < stats_phases)

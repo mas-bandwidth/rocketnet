@@ -4297,7 +4297,7 @@ A multithreaded implementation keeps a counter block per execution context,
 padded and aligned so that no two contexts share a cache line, and sums the
 blocks at readout. In a kernel dataplane the context is a CPU; in userspace
 it is a thread. Counters are monotonic and never reset, so a rate is derived
-by differencing two snapshots and a zero still means that the event never
+by differencing two reads and a zero still means that the event never
 happened. See [t18 Error handling and counters](#t18).
 
 

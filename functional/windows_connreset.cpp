@@ -44,9 +44,9 @@
 #define WINDOWS_CONNRESET_LIVE_CLIENTS 3
 #define WINDOWS_CONNRESET_PAYLOAD_BYTES 32
 // packets a server sends each client per tick in the hard-killed case: a
-// snapshot split across a few packets, so the dead client draws several ICMP
-// reports per tick, as a game server's traffic does
-#define WINDOWS_CONNRESET_SNAPSHOT_PACKETS 4
+// tick's game state split across a few packets, so the dead client draws
+// several ICMP reports per tick, as a game server's traffic does
+#define WINDOWS_CONNRESET_PACKETS_PER_TICK 4
 
 static void windows_connreset_check( bool condition, const char * expression, int line )
 {
@@ -479,7 +479,7 @@ static const char * windows_connreset_label( const windows_connreset_transport_t
 // three live clients see no receive gap past one update interval plus 50 ms,
 // the dead client times out by the normal timeout and frees its slot, and a
 // fifth client then connects within its handshake time. The server sends
-// every client a snapshot of WINDOWS_CONNRESET_SNAPSHOT_PACKETS packets a tick.
+// every client WINDOWS_CONNRESET_PACKETS_PER_TICK packets a tick.
 static void windows_connreset_hard_killed_client( const windows_connreset_transport_t * transport )
 {
     const uint64_t resets_before = rocketnet_platform_receive_resets();
@@ -491,7 +491,7 @@ static void windows_connreset_hard_killed_client( const windows_connreset_transp
     double next = killed;
     while ( rocketnet_server_transport_is_client_connected( session.server, session.child_index ) )
     {
-        windows_connreset_tick( &session, WINDOWS_CONNRESET_SNAPSHOT_PACKETS, 0 );
+        windows_connreset_tick( &session, WINDOWS_CONNRESET_PACKETS_PER_TICK, 0 );
         windows_connreset_require( rocketnet_platform_time() - killed < ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS + 5.0 );
         next += WINDOWS_CONNRESET_TICK;
         windows_connreset_sleep_to( next );
@@ -514,7 +514,7 @@ static void windows_connreset_hard_killed_client( const windows_connreset_transp
     const double fifth_start = rocketnet_platform_time();
     while ( rocketnet_client_transport_state( fifth ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
     {
-        windows_connreset_tick( &session, WINDOWS_CONNRESET_SNAPSHOT_PACKETS, 0 );
+        windows_connreset_tick( &session, WINDOWS_CONNRESET_PACKETS_PER_TICK, 0 );
         windows_connreset_client_tick( fifth, rocketnet_platform_time(), session.sequence, true, NULL, NULL );
         windows_connreset_require( rocketnet_client_transport_state( fifth ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
         windows_connreset_require( rocketnet_platform_time() - fifth_start < 5.0 );
