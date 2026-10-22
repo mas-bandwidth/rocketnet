@@ -39,8 +39,21 @@ The secure connect of standard/TRANSPORT.md: netcode 1.02 rebuilt on public keys
 | Expired-token refusals counted apart, one counter per cause | ✅ | ✅ | ✅ |
 | Connect-token create and expire checks can read the game clock | ✅ | ✅ | ✅ |
 | A backend keypair can be derived from a seed through rocketnet.h | ✅ | ✅ | ✅ |
+| Attack-surface reduction: a half-finished connection's client slot is checked before its session packet is decrypted | ❌ | ❌ | ❌ |
+| Attack-surface reduction: both sides refuse a connect token with timeout <= 0, and the server's dead allow_negative_timeout is deleted | ❌ | ❌ | ❌ |
+| Attack-surface reduction: the XDP filter drops IPv4-options, IPv6 extension-header and later-fragment frames to our port | ❌ | — | — |
+| Attack-surface reduction: the pending-wire table is deleted, so an unauthenticated sender holds no state | ❌ | ❌ | ❌ |
+| Attack-surface reduction: a stateless shape check (prefilter, wire type and size) runs before any per-datagram work | ❌ | ❌ | ❌ |
+| Attack-surface reduction: the token claim is written only after the signature verifies | ❌ | ❌ | ❌ |
+| Attack-surface reduction: a token created in the future is always refused, and the lifetime cap that has no setting is deleted | ❌ | ❌ | ❌ |
+| ROCKETNET_DEVELOPMENT is renamed ROCKETNET_DEV, default 1; a production build sets ROCKETNET_DEV=0 | ❌ | ❌ | ❌ |
+| With ROCKETNET_DEV=0, test and development code is compiled out: the network simulator, the test seams, the development config and the development server secret key | ❌ | ❌ | ❌ |
+| With ROCKETNET_DEV=0, both sides refuse the published test packet filter, and the client refuses tokens sealed with the development keys | ❌ | ❌ | ❌ |
+| AGENTS.md has a Before production section: what a production build sets and refuses | ❌ | — | — |
+| The client trusts only the server: the idle timer and the RTT sample come only from the authenticated challenge, never the clear-salt cookie, and the client socket is connected | ❌ | ❌ | ❌ |
+| The portable server transport is unavailable at ROCKETNET_DEV=0; clients are unchanged | ❌ | ❌ | ❌ |
 | Session layer: identity auth with a backend, rolling magic, keyed filter value (later) | ❌ | ❌ | ❌ |
-| complete | 96% | 96% | 96% |
+| complete | 65% | 68% | 68% |
 
 [Source data](docs/roadmap.sexp)
 
@@ -129,6 +142,8 @@ AF_XDP serves IPv4 and IPv6 end to end (8a35a14): a server serves the family of 
 
 — is a transport the feature does not apply to: xdp bypasses the kernel's UDP stack, loopback is in-process, and a row that names one transport's own mechanism is — for the others.
 
+portable is a fallback, not a production transport, on the client and the server (Glenn, 2026-10-21: "now on both client and server we can ignore the portable transport because it is not a production transport. Don't make it slow for no reason, but don't over optimize or worry too much about it."). The production performance targets are for the native transports; the portable column still records what portable does.
+
 | feature | xdp | msgx | gso | io_uring | portable | iocp | rio | loopback |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | Server transport | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
@@ -181,6 +196,20 @@ One server per transport on a LAN, measured: a row per server platform, a cell p
 | 1000 clients over a LAN, a macOS server (later) | — | ❌ | — | — | ❌ | — | — | — |
 | 1000 clients over a LAN, a Windows server (later) | — | — | — | — | ❌ | ❌ | ❌ | — |
 | complete | 0% | 0% | 0% | 0% | 0% | 0% | 0% | — |
+
+[Source data](docs/roadmap.sexp)
+
+## Native client transports (later)
+
+The simplest native transport on the client on every OS: one connected UDP socket per client, batched calls, existing code. Glenn, 2026-10-21: "There is no reason for us to be portable on the client, portable is meant as a fallback there too." and "I don't want anything hardcore like AF_XDP for example, but the simplest stuff... i'd like that." The native client ranks above portable, and portable ranks last, as the fallback, on every OS. Stella's deliverable has landed (PR #437).
+
+| feature | Linux | macOS | Windows |
+|---|:---:|:---:|:---:|
+| Linux: the gso transport gets a client side (sendmmsg and recvmmsg) | ❌ | — | — |
+| macOS: the msgx client, ranked above portable | — | ❌ | — |
+| Windows: the iocp transport gets a client side (simpler than RIO) | — | — | ❌ |
+| portable is the client fallback on every OS, ranked last | ❌ | ❌ | ❌ |
+| complete | 0% | 0% | 0% |
 
 [Source data](docs/roadmap.sexp)
 
@@ -279,6 +308,16 @@ How RocketNet is checked: unit tests without sockets or real time, functional te
 | Deterministic simulation, layer 2: the fault injectors (reorder, delay, clock skew, crash and restart), built from their model (later) | ❌ | ❌ | ❌ |
 | Deterministic simulation, layer 4: per-push shards, the nightly campaign, and the planted-bug proof (later) | ❌ | ❌ | ❌ |
 | The simulator and reset tests catch the bugs they exist to catch (later) | ❌ | ❌ | ❌ |
+| Fuzzing everything: dual-mode libFuzzer targets that also build as plain replay programs, as in yojimbo, netcode and reliable | ❌ | ❌ | ❌ |
+| Fuzzing: the real receive loops, server (rocketnet_server_transport_update) and client, fed the corpora | ❌ | ❌ | ❌ |
+| Fuzzing: every target under the sanitizers, MSan included | ❌ | — | — |
+| Fuzzing: a dictionary and a per-type seed generator for each target | ❌ | — | — |
+| Fuzzing: targets past the AEAD, fed packets that decrypt | ❌ | ❌ | ❌ |
+| Fuzzing: stateful and scripted targets that drive a connection through its states | ❌ | ❌ | ❌ |
+| Fuzzing: round-trip invariants on every reader and writer pair | ❌ | ❌ | ❌ |
+| Fuzzing: differential targets against netcode | ❌ | ❌ | ❌ |
+| Fuzzing: a smoke run per PR and a nightly campaign on the fleet runners, with a coverage report | ❌ | ❌ | ❌ |
+| Fuzzing: OSS-Fuzz project files, prepared and not submitted | ❌ | — | — |
 | CBMC proofs of bounded readers and fragment bounds | ✅ | — | — |
 | TLA+ models: connection, security, replay, channels, window, scheduler, slots, receipts | ✅ | — | — |
 | TLA+ model of transport fragments and acks | ✅ | — | — |
@@ -293,7 +332,7 @@ How RocketNet is checked: unit tests without sockets or real time, functional te
 | The proof tools and Frama-Clang prerequisites in place before the Frama-Clang trial (later) | ❌ | — | — |
 | Frama-Clang trial: can WP prove rocketnet_ack_block_read from the C++ source? (later) | ❌ | — | — |
 | The MSan known-findings list matches every toolchain the runners use (later) | ❌ | — | — |
-| complete | 63% | 53% | 53% |
+| complete | 50% | 38% | 38% |
 
 [Source data](docs/roadmap.sexp)
 
@@ -307,7 +346,8 @@ Where RocketNet builds and passes. Every push runs the unit and functional suite
 | Shared export list compared | ✅ | ✅ | ✅ |
 | Nightly soak | ✅ | ❌ | ❌ |
 | The library is callable from a shared library and a static library, from C and C++ | ✅ | ✅ | ✅ |
-| complete | 100% | 50% | 50% |
+| Linux: with no BPF-capable clang, XDP is compiled out entirely and selecting it refuses cleanly; the build stays tolerant | ❌ | — | — |
+| complete | 80% | 50% | 50% |
 
 [Source data](docs/roadmap.sexp)
 
@@ -395,6 +435,7 @@ What a game team needs to run its own connect-token backend: its own keypairs, t
 | Key generator: a rocketnet_keygen tool, built with the SDK, writing a fresh Ed25519 signing keypair and the token encryption key for production | ❌ | ❌ | ❌ |
 | Keys documentation: a KEYS.md guide to generating keypairs, where each key lives, rotation, and rocketnet_write_production_connect_token | ❌ | — | — |
 | Example backends in Go and C#: a minimal HTTP backend in each that authenticates a player (stub), mints a connect token with the production keys for a chosen server address, and returns it for rocketnet_client_connect | ❌ | ❌ | ❌ |
+| Client example: fetches a connect token from the example backend and connects with it | ❌ | ❌ | ❌ |
 | complete | 0% | 0% | 0% |
 
 [Source data](docs/roadmap.sexp)
