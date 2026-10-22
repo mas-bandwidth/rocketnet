@@ -230,6 +230,32 @@ static inline void rocketnet_ack_set_bit( uint64_t * bits, uint64_t slot )
     bits[slot >> 6] |= 1ull << ( slot & 63 );
 }
 
+static bool rocketnet_sent_record_state_equal( const rocketnet_sent_packet_record_t * a, const rocketnet_sent_packet_record_t * b )
+{
+    return a->sequence == b->sequence &&
+           a->packet_id == b->packet_id &&
+           a->aggregate_id == b->aggregate_id &&
+           a->send_time == b->send_time &&
+           a->wire_bytes == b->wire_bytes &&
+           a->acked == b->acked &&
+           a->has_packet_id == b->has_packet_id &&
+           a->was_keep_alive == b->was_keep_alive;
+}
+
+static bool rocketnet_received_record_state_equal( const rocketnet_received_packet_record_t * a, const rocketnet_received_packet_record_t * b )
+{
+    return a->sequence == b->sequence &&
+           a->receive_time == b->receive_time &&
+           a->wire_bytes == b->wire_bytes;
+}
+
+static bool rocketnet_aggregate_state_equal( const rocketnet_packet_aggregate_t * a, const rocketnet_packet_aggregate_t * b )
+{
+    return a->id == b->id &&
+           a->packet_id == b->packet_id &&
+           a->remaining == b->remaining;
+}
+
 bool rocketnet_ack_endpoint_state_equal( const struct rocketnet_ack_endpoint_t * a, const struct rocketnet_ack_endpoint_t * b )
 {
     rocketnet_assert( a && b );
@@ -238,13 +264,13 @@ bool rocketnet_ack_endpoint_state_equal( const struct rocketnet_ack_endpoint_t *
     if ( memcmp( a->rtt_history, b->rtt_history, sizeof(a->rtt_history) ) != 0 )
         return false;
     for ( uint64_t i = 0; i < ROCKETNET_SENT_PACKET_BUFFER_SIZE; i++ )
-        if ( rocketnet_ack_bit( a->sent_written, i ) && memcmp( &a->sent[i], &b->sent[i], sizeof(a->sent[i]) ) != 0 )
+        if ( rocketnet_ack_bit( a->sent_written, i ) && !rocketnet_sent_record_state_equal( &a->sent[i], &b->sent[i] ) )
             return false;
     for ( uint64_t i = 0; i < ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE; i++ )
-        if ( rocketnet_ack_bit( a->received_written, i ) && memcmp( &a->received[i], &b->received[i], sizeof(a->received[i]) ) != 0 )
+        if ( rocketnet_ack_bit( a->received_written, i ) && !rocketnet_received_record_state_equal( &a->received[i], &b->received[i] ) )
             return false;
     for ( uint64_t i = 0; i < ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE; i++ )
-        if ( rocketnet_ack_bit( a->aggregates_written, i ) && memcmp( &a->aggregates[i], &b->aggregates[i], sizeof(a->aggregates[i]) ) != 0 )
+        if ( rocketnet_ack_bit( a->aggregates_written, i ) && !rocketnet_aggregate_state_equal( &a->aggregates[i], &b->aggregates[i] ) )
             return false;
     return true;
 }
