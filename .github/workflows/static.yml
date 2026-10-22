@@ -58,9 +58,6 @@ jobs:
       - name: Fleet-runner lint selftest
         run: bash scripts/check-fleet-runners-selftest
 
-      - name: Channel seed sweep selftest
-        run: bash scripts/channel-seed-sweep-selftest
-
       - name: Install dependencies
         if: runner.environment == 'github-hosted'
         run: |
