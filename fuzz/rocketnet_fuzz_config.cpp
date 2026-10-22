@@ -58,6 +58,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../test/portable_crt.h"
 
 static void rocketnet_fuzz_require( bool condition, const char * property )
 {
@@ -278,7 +279,7 @@ static void fuzz_write_seed( const char * dir, const char * name, int table, int
 {
     char path[1024];
     snprintf( path, sizeof( path ), "%s/%s", dir, name );
-    FILE * file = fopen( path, "wb" );
+    FILE * file = rocketnet_test_fopen( path, "wb" );
     if ( !file )
         abort();
     const uint8_t head[3] = { (uint8_t) table, (uint8_t) field, mode };
@@ -380,7 +381,7 @@ static void fuzz_write_seeds( const char * dir, const char * from )
     {
         char path[1024];
         snprintf( path, sizeof( path ), "%s/%s", from, committed[c] );
-        FILE * file = fopen( path, "rb" );
+        FILE * file = rocketnet_test_fopen( path, "rb" );
         if ( !file )
             continue;
         char value[1024];

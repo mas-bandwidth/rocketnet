@@ -1037,6 +1037,12 @@ static rocketnet_server_transport_t * shape_junk_server_create()
     return server;
 }
 
+// The staged frame must satisfy the packet lease's 16-byte alignment
+// contract; the padding in front of it triggers MSVC C4324.
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable:4324)
+#endif
 struct shape_junk_staged_t
 {
     struct shape_junk_t junk;
@@ -1045,6 +1051,9 @@ struct shape_junk_staged_t
     int start_packet_calls;
     alignas( 16 ) uint8_t frame[ROCKETNET_FRAME_STRIDE];
 };
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
 static rocketnet_server_socket_process_packets_t * shape_junk_staged_receive( void * p )
 {

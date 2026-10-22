@@ -47,6 +47,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sodium.h>
+#include "../test/portable_crt.h"
 
 static void rocketnet_fuzz_require( bool condition, const char * property )
 {
@@ -452,7 +453,7 @@ static void fuzz_write_seed( const char * dir, const char * name, uint8_t select
 {
     char path[1024];
     snprintf( path, sizeof( path ), "%s/%s", dir, name );
-    FILE * f = fopen( path, "wb" );
+    FILE * f = rocketnet_test_fopen( path, "wb" );
     if ( !f )
         abort();
     fwrite( &selector, 1, 1, f );
