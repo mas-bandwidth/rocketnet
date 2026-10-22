@@ -118,7 +118,7 @@ jobs:
     name: frame budget (${{ matrix.ref }} / windows-2025 portable report-only)
     # DISABLED: no Windows fleet runner registered for this repository; owed: the Windows fleet machine
     if: false
-    runs-on: windows-2025
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     timeout-minutes: 10
     strategy:
       fail-fast: false
