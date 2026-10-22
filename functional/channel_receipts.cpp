@@ -154,6 +154,16 @@ void promoted_receipts_over_lossy_reliable_blocks()
     }
 
     const double started = h.now;
+    // Exercise the promoted reliable-block resend path deterministically.
+    // Random loss alone can spare every message packet for a seed, so drop one
+    // packet from the client's first flight and deliver the rest.
+    rocketnet_channel_harness_set_wire( &h, ROCKETNET_CHANNEL_WIRE_HOLD_PAYLOADS, ROCKETNET_CHANNEL_WIRE_PASS );
+    receipt_check( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) );
+    receipt_check( h.held_count > 0 );
+    for ( int i = 1; i < h.held_count; i++ )
+        receipt_check( rocketnet_channel_harness_deliver_held( &h, &i, 1 ) == 1 );
+    rocketnet_channel_harness_clear_held( &h );
+    rocketnet_channel_harness_set_wire( &h, ROCKETNET_CHANNEL_WIRE_PASS, ROCKETNET_CHANNEL_WIRE_PASS );
     for ( int step = 0; step < 60 * 30; step++ )
     {
         receipt_check( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) );
