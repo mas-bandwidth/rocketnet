@@ -66,8 +66,11 @@ Tag only a `main` commit whose required runs are green. Those runs are:
 - **CI** ([.github/workflows/ci.yml](../.github/workflows/ci.yml)): the full
   `build-and-test` matrix on Ubuntu and macOS in Debug and Release, the Windows
   Release matrix, `asan + ubsan`, `fuzz smoke` and its NDEBUG variant, big-endian
-  s390x, `standard conformance`, `tsan`, `pinned libsodium`, and the platform
-  selftests.
+  s390x, `standard conformance`, `tsan (loopback soak)`, `pinned libsodium`,
+  and the platform selftests.
+- **nightly** ([.github/workflows/nightly.yml](../.github/workflows/nightly.yml)):
+  `tsan (threaded transport)`, the unit and functional suites under tsan, on the
+  tagged commit (run it with workflow_dispatch on `main` before the tag).
 - **static analysis**
   ([.github/workflows/static.yml](../.github/workflows/static.yml)): `gcc -fanalyzer`.
 - **TLC records** ([.github/workflows/tlc.yml](../.github/workflows/tlc.yml)): the
