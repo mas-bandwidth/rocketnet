@@ -101,12 +101,19 @@ received, its resends where the side keeps them per connection (clients
 only), the age of its last accepted receive, the highest session sequence
 received, sent and acknowledged, the reliable window (unacknowledged
 numbers, the resend queue and the age of the oldest), the RTT estimate and
-the send budget. RUN is marked when the server sends it, with the highest
-sequence sent once it is flushed, and when each client receives it; a
-largest acknowledged sequence at or past the mark prints `acked_past_run=yes`.
+the send budget. RUN is marked when the server queues it, with the first
+sequence any packet sent after it can carry, and when each client receives
+it. On the server a largest acknowledged sequence at or past the mark prints
+`acked_past_run=yes`: the client acknowledged a packet sent after RUN was
+queued (RUN's own or a later one; `reliable_unacked` says whether RUN is
+still outstanding). Client lines print `acked_past_run=na`.
 A connection found ended between two samples prints its last connected
 sample at once as a `split_capture:` line with `why=kick` (the SDK resets the
-slot when it ends it), followed by the side's counters. At the end of the
+slot when it ends it), followed by its own counters on a client shard and
+the side's totals. The server stops sampling in its confirmation grace,
+where confirmed shards disconnect on purpose. A connection that ends less
+than a second after it connected is never sampled connected and prints only
+`end_never`. At the end of the
 run every connection prints one `split_capture:` line (`why=end` live,
 `end_ended` or `end_never`), then `split_counter:` lines: a named set of
 delivery and refusal counters always, every other counter when nonzero,

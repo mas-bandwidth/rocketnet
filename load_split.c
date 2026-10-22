@@ -627,12 +627,17 @@ static int split_server_capture_sample( void * context, int index, double now, s
     return 1;
 }
 
+static uint64_t split_capture_block_value( const struct rocketnet_counters_t * block, int counter )
+{
+    return block ? rocketnet_counter_value(block, counter) : 0;
+}
+
 static uint64_t split_server_capture_counter( void * context, int index, int counter )
 {
     const struct split_server_capture_context_t * bound = (const struct split_server_capture_context_t *) context;
     if ( index >= 0 ) return 0;
-    return rocketnet_counter_value(rocketnet_server_transport_counter_block(bound->server), counter) +
-           rocketnet_counter_value(rocketnet_server_message_counter_block(bound->server), counter);
+    return split_capture_block_value(rocketnet_server_transport_counter_block(bound->server), counter) +
+           split_capture_block_value(rocketnet_server_message_counter_block(bound->server), counter);
 }
 
 struct split_client_capture_context_t
@@ -660,8 +665,9 @@ static int split_client_capture_sample( void * context, int index, double now, s
 
 static uint64_t split_client_capture_one( struct rocketnet_client_t * api, int counter )
 {
-    return api ? rocketnet_counter_value(rocketnet_client_transport_counter_block(api), counter) +
-                 rocketnet_counter_value(rocketnet_client_message_counter_block(api), counter) : 0;
+    if ( !api ) return 0;
+    return split_capture_block_value(rocketnet_client_transport_counter_block(api), counter) +
+           split_capture_block_value(rocketnet_client_message_counter_block(api), counter);
 }
 
 static uint64_t split_client_capture_counter( void * context, int index, int counter )
@@ -806,10 +812,16 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
     if ( !clients || !capture_entries ) goto cleanup;
     for ( int i = 0; i < total; ++i ) clients[i].slot = -1;
     {
+        struct split_capture_source_t source;
+        struct split_capture_emit_t emit;
         capture_context.server = server;
         capture_context.clients = clients;
-        const struct split_capture_source_t source = { &capture_context, split_server_capture_sample, split_server_capture_counter, 0 };
-        const struct split_capture_emit_t emit = { NULL, split_capture_print_line };
+        source.context = &capture_context;
+        source.sample = split_server_capture_sample;
+        source.counter = split_server_capture_counter;
+        source.counters_per_connection = 0;
+        emit.context = NULL;
+        emit.line = split_capture_print_line;
         split_capture_init(&capture, "server", run_id, 0, total, capture_entries, &source, &emit);
     }
 
@@ -878,6 +890,19 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
         clients[i].wire_start.sent = stats.bytes_sent;
         clients[i].wire_start.received = stats.bytes_received;
     }
+    {
+        /* RUN's mark: the first sequence any packet sent to a client after RUN
+         * is queued can carry, so it holds whether RUN leaves on this flush or
+         * later. An acknowledgement at or past it is of a packet sent after RUN
+         * was queued: RUN's own, or a later one (reliable_unacked says which). */
+        const double run_queued = rocketnet_time();
+        for ( int i = 0; i < total; ++i )
+        {
+            struct rocketnet_delivery_capture_t delivery;
+            rocketnet_server_delivery_capture(server, clients[i].slot, &delivery);
+            split_capture_mark_run(&capture, i, run_queued, delivery.highest_sent_sequence + 1);
+        }
+    }
     /* RUN and all subsequent S2C traffic share an ordered channel. A client
      * cannot consume traffic before its RUN even if clocks or network lag. */
     for ( int i = 0; i < total; ++i )
@@ -887,17 +912,6 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
                                 ROCKETNET_RELIABILITY_RELIABLE_ORDERED) )
         { result.offer_refusals++; goto cleanup; }
     rocketnet_server_send_packets(server);
-    {
-        /* RUN's mark: the highest sequence sent to each client once RUN is
-         * flushed; an acknowledgement at or past it is one of RUN or later */
-        const double run_sent = rocketnet_time();
-        for ( int i = 0; i < total; ++i )
-        {
-            struct rocketnet_delivery_capture_t delivery;
-            rocketnet_server_delivery_capture(server, clients[i].slot, &delivery);
-            split_capture_mark_run(&capture, i, run_sent, delivery.highest_sent_sequence);
-        }
-    }
     result.startup_complete = 1;
     result.start_seconds = rocketnet_time() - arm_start;
     const double traffic_start = rocketnet_time();
@@ -1058,7 +1072,8 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
         while ( (batch = rocketnet_server_receive_messages(server)) != NULL )
             split_receive_c2s(&result, clients, total, run_id, batch, server);
         rocketnet_server_send_packets(server);
-        split_capture_tick(&capture, rocketnet_time());
+        /* no capture tick: confirmed shards disconnect on purpose here, and
+         * those are not kicks */
         rocketnet_sleep(0.001);
     }
     result.barrier_seconds = rocketnet_time() - barrier_start;
@@ -1180,10 +1195,16 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
     capture_entries = (struct split_capture_entry_t *) calloc((size_t) count, sizeof(*capture_entries));
     if ( !clients || !capture_entries ) goto cleanup;
     {
+        struct split_capture_source_t source;
+        struct split_capture_emit_t emit;
         capture_context.clients = clients;
         capture_context.count = count;
-        const struct split_capture_source_t source = { &capture_context, split_client_capture_sample, split_client_capture_counter, 1 };
-        const struct split_capture_emit_t emit = { NULL, split_capture_print_line };
+        source.context = &capture_context;
+        source.sample = split_client_capture_sample;
+        source.counter = split_client_capture_counter;
+        source.counters_per_connection = 1;
+        emit.context = NULL;
+        emit.line = split_capture_print_line;
         split_capture_init(&capture, "client-shard", run_id, first, count, capture_entries, &source, &emit);
     }
     const uint64_t token_now = (uint64_t) time(NULL);

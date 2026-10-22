@@ -9,6 +9,11 @@
 // transport. Callers supply every time from 1000.0; nothing sleeps or opens
 // a socket.
 
+#include "sdk/rocketnet.h"
+
+// The capture reads the development library only (ROCKETNET_DEV).
+#if ROCKETNET_DEV
+
 #include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "sdk/rocketnet.h"
@@ -214,7 +219,7 @@ static void test_load_split_capture_prints_the_last_connected_sample_at_a_kick()
 
 static void test_load_split_capture_marks_acks_past_run()
 {
-    // RUN's mark is the highest sequence sent once RUN was flushed: an
+    // RUN's mark is the first sequence sent after RUN was queued: an
     // acknowledgement at or past it is yes, below it no, no mark na
     static capture_fake_t fake;
     capture_fake_init( &fake );
@@ -262,6 +267,27 @@ static void test_load_split_capture_end_names_every_connection()
         check( capture_line_well_formed( fake.lines[i] ) );
 }
 
+static void test_load_split_capture_kick_prints_only_the_kicked_connection_counters()
+{
+    // a client shard keeps a block per connection: a kick inside the run
+    // prints the side totals and the kicked connection's own counters, never
+    // every connection's, so the tick that finds it stays small
+    static capture_fake_t fake;
+    capture_fake_init( &fake );
+    struct split_capture_entry_t entries[CAPTURE_CONNECTIONS];
+    struct split_capture_t capture;
+    capture_start( &capture, entries, &fake, "client-shard", 1 );
+    for ( int i = 0; i < CAPTURE_CONNECTIONS; i++ )
+        fake.own[i][ROCKETNET_COUNTER_CLIENT_PAYLOAD_DELIVERED] = 10 + (uint64_t) i;
+    check( split_capture_tick( &capture, 1000.0 ) == 0 );
+    fake.connected[2] = 0;
+    check( split_capture_tick( &capture, 1001.0 ) == 1 );
+    check( capture_count( &fake, "split_counter: ", "client=9 ", "name=CLIENT_PAYLOAD_DELIVERED ", "value=12" ) == 1 );
+    check( capture_count( &fake, "split_counter: ", "client=7 " ) == 0 );
+    check( capture_count( &fake, "split_counter: ", "client=8 " ) == 0 );
+    check( capture_count( &fake, "split_counter: ", "client=all " ) == SPLIT_CAPTURE_NUM_NAMED );
+}
+
 static void test_load_split_capture_named_counters_are_distinct()
 {
     for ( int i = 0; i < SPLIT_CAPTURE_NUM_NAMED; i++ )
@@ -277,6 +303,7 @@ REGISTER_UNIT_TEST( test_load_split_capture_samples_once_per_interval );
 REGISTER_UNIT_TEST( test_load_split_capture_prints_the_last_connected_sample_at_a_kick );
 REGISTER_UNIT_TEST( test_load_split_capture_marks_acks_past_run );
 REGISTER_UNIT_TEST( test_load_split_capture_end_names_every_connection );
+REGISTER_UNIT_TEST( test_load_split_capture_kick_prints_only_the_kicked_connection_counters );
 REGISTER_UNIT_TEST( test_load_split_capture_named_counters_are_distinct );
 
 // ---------------------------------------------------------------
@@ -418,3 +445,5 @@ static void test_load_split_capture_sdk_reads_both_ends()
 }
 
 REGISTER_UNIT_TEST( test_load_split_capture_sdk_reads_both_ends );
+
+#endif // #if ROCKETNET_DEV

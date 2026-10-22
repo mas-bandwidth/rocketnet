@@ -18,10 +18,15 @@
  * and on a side with one counter block per connection the named set per
  * connection when nonzero.
  *
- * The run mark is the time RUN was sent (server) or received (client) and,
- * on the server, the highest sequence sent once RUN was flushed: a largest
- * acknowledged sequence at or past it says the client acknowledged a packet
- * at or after RUN.
+ * The run mark is the time RUN was queued (server) or received (client) and,
+ * on the server, the first sequence a packet sent after RUN was queued can
+ * carry: a largest acknowledged sequence at or past it says the client
+ * acknowledged a packet sent after RUN was queued (RUN's own or a later one;
+ * reliable_unacked says whether RUN is still outstanding). A client line has
+ * no sequence mark and prints acked_past_run=na.
+ *
+ * A connection that ends less than one interval after it connected is never
+ * sampled connected: it prints only end_never, with no kick line.
  *
  * Pure over a source and an emitter the caller supplies: no clock, socket or
  * allocation; time is an argument. load_split.c binds the source to the SDK,
@@ -97,7 +102,7 @@ struct split_capture_entry_t
     int ended;                                  /* a later sample found it not connected */
     uint64_t named[SPLIT_CAPTURE_NUM_NAMED];     /* the connection's own named counters at the last connected sample (one block per connection) */
     double run_time;                            /* RUN sent or received; 0 when not yet */
-    uint64_t run_sequence;                      /* server: highest sent sequence once RUN was flushed */
+    uint64_t run_sequence;                      /* server: the first sequence sent after RUN was queued; 0 on a client */
 };
 
 struct split_capture_source_t
@@ -232,8 +237,10 @@ static inline void split_capture_keep( struct split_capture_t * capture, int ind
 }
 
 /* The side's counters: the named set always, then every other nonzero one;
- * with one block per connection, also each connection's nonzero named set. */
-static inline void split_capture_counters( struct split_capture_t * capture )
+ * with one block per connection and with_connections, also each
+ * connection's nonzero named set (the end only: a kick prints the kicked
+ * connection's own, so a tick inside the run stays small). */
+static inline void split_capture_counters( struct split_capture_t * capture, int with_connections )
 {
     for ( int i = 0; i < SPLIT_CAPTURE_NUM_NAMED; ++i )
         split_capture_emit_counter( capture, -1, split_capture_named_counters[i],
@@ -245,7 +252,7 @@ static inline void split_capture_counters( struct split_capture_t * capture )
         const uint64_t value = capture->source.counter( capture->source.context, -1, counter );
         if ( value ) split_capture_emit_counter( capture, -1, counter, value );
     }
-    if ( !capture->source.counters_per_connection ) return;
+    if ( !with_connections || !capture->source.counters_per_connection ) return;
     for ( int index = 0; index < capture->count; ++index )
         split_capture_connection_counters( capture, index );
 }
@@ -279,12 +286,12 @@ static inline int split_capture_tick( struct split_capture_t * capture, double n
             split_capture_connection_counters( capture, index );
         }
     }
-    if ( kicks ) split_capture_counters( capture );
+    if ( kicks ) split_capture_counters( capture, 0 );
     return kicks;
 }
 
-/* RUN's mark for one connection: when it was sent or received and, on the
- * server, the highest sequence sent once it was flushed (0 on a client). */
+/* RUN's mark for one connection: when it was queued or received and, on the
+ * server, the first sequence sent after it was queued (0 on a client). */
 static inline void split_capture_mark_run( struct split_capture_t * capture, int index, double time, uint64_t sequence )
 {
     if ( index < 0 || index >= capture->count ) return;
@@ -310,7 +317,7 @@ static inline void split_capture_end( struct split_capture_t * capture, double n
         else
             split_capture_emit_entry( capture, index, entry->seen_connected ? "end_ended" : "end_never", now, sample.state, &entry->last );
     }
-    split_capture_counters( capture );
+    split_capture_counters( capture, 1 );
 }
 
 #endif
