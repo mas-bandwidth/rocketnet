@@ -2153,7 +2153,13 @@ static void posix_xdp_weather( int ipv6 )
     if ( !posix_xdp_equal( &final_counts, &expect ) )
         posix_xdp_print( "final", &final_counts, &expect );
     posix_check( posix_xdp_equal( &final_counts, &expect ) );
-    posix_check( final_counts.too_large == start.too_large );
+    // the receive ceiling is the send budget, 1452 bytes for both families
+    // (c613a6a8): IPv4 garbage runs to a whole 1472-byte datagram, so its
+    // sizes above the ceiling count too_large; IPv6 garbage stops at it
+    if ( max_whole > ROCKETNET_RECEIVE_CEILING )
+        posix_check( final_counts.too_large > start.too_large );
+    else
+        posix_check( final_counts.too_large == start.too_large );
     posix_check( final_counts.invalid_type == start.invalid_type );
     if ( frag_creates != expect_fragments )
         printf( "%s: the far stack made %llu fragments, the case expects %llu\n", case_name, (unsigned long long) frag_creates, (unsigned long long) expect_fragments );
