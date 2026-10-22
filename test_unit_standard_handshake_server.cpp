@@ -316,7 +316,7 @@ static void handshake_refusal_releases_claim( int refusal )
             break;
         case 2:
             for ( int i = 0; i < 4; ++i )
-                check( rocketnet_client_slots_assign( test.server.client_slots, 100 + i, -1, user_data ) >= 0 );
+                check( rocketnet_client_slots_assign( test.server.client_slots, (uint64_t) ( 100 + i ), -1, user_data ) >= 0 );
             counter = ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS;
             expected = ROCKETNET_SERVER_PROCESS_SEND_DENIED;
             break;

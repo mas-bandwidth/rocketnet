@@ -502,9 +502,9 @@ static void test_wire_totals_staged_finish_counts_exactly()
         rocketnet_unit_check( index >= 0 );
         struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->protocol.encryption_map, index );
         uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
-        rocketnet_unit_check( rocketnet_client_slots_assign( server->protocol.client_slots, i + 1, index, user_data ) == i );
+        rocketnet_unit_check( rocketnet_client_slots_assign( server->protocol.client_slots, (uint64_t) ( i + 1 ), index, user_data ) == i );
         mapping->control->client_index = i;
-        mapping->client_id = i + 1;
+        mapping->client_id = (uint64_t) ( i + 1 );
         mapping->control->established = 1;
         mapping->control->timeout_seconds = 1000;
         memset( &mapping->keys, i + 1, sizeof(mapping->keys) );
@@ -827,7 +827,7 @@ static int pending_wire_scan_receive_batch( void *, rocketnet_address_t * from, 
         from[i].data.ipv4[3] = (uint8_t) source;
         from[i].port = (uint16_t) ( 1000 + source );
         bytes[i] = 1;
-        data[(size_t) i * stride] = 0;
+        data[(size_t) i * (size_t) stride] = 0;
     }
     return received;
 }

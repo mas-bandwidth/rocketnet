@@ -223,8 +223,8 @@ static int ctv_unhex( const std::string & text, uint8_t * bytes, int count )
         return 0;
     for ( int i = 0; i < count; i++ )
     {
-        int hi = ctv_unhex_digit( text[2*i] );
-        int lo = ctv_unhex_digit( text[2*i+1] );
+        int hi = ctv_unhex_digit( text[(size_t) ( 2*i )] );
+        int lo = ctv_unhex_digit( text[(size_t) ( 2*i+1 )] );
         if ( hi < 0 || lo < 0 )
             return 0;
         bytes[i] = (uint8_t) ( ( hi << 4 ) | lo );

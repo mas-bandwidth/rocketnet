@@ -48,7 +48,7 @@ int main( void )
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     uint32_t serials[NUM_UPDATES];
-    uint32_t outcomes[NUM_UPDATES];
+    enum rocketnet_receipt_status_t outcomes[NUM_UPDATES];
     int sent = 0;
     int resolved = 0;
     int acked = 0;
