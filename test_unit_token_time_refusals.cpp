@@ -3,11 +3,12 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The three token-time refusals on the connection request path are three
-// distinct counters: an expired token, a token created more than five seconds
-// in the future, and a token whose lifetime exceeds the server's maximum are
-// each their own reason (STANDARD.md, Counters: refusal reasons are never
-// merged; Processing Connection Requests, the request order). The server is
+// The two token-time refusals on the connection request path are two
+// distinct counters: an expired token and a token created more than five
+// seconds in the future are each their own reason (STANDARD.md, Counters:
+// refusal reasons are never merged; Processing Connection Requests, the
+// request order). There is no maximum token lifetime: a long-lived token is
+// answered. The fixture is the production configuration. The server is
 // driven with time as an argument from 1000.0: no sockets, no network and no
 // real clock.
 
@@ -37,10 +38,9 @@
 #include "test/counters_expect.h"
 
 // the test clock starts at 1000.0; the token timestamps are the same clock in
-// whole seconds, and the server's maximum lifetime is 600 seconds
+// whole seconds
 #define TOKEN_TIME_NOW              1000ULL
 #define TOKEN_TIME_NOW_SECONDS      1000.0
-#define TOKEN_TIME_MAX_LIFETIME     600
 
 struct token_time_server_t
 {
@@ -89,7 +89,6 @@ static void token_time_setup( struct token_time_server_t * t )
     check( rocketnet_address_parse( &server->advertised_ipv4, "203.0.113.10:40000" ) );
     memcpy( server->cookie_key, rocketnet_test_cookie_key, 32 );
     server->cookie_lifetime_seconds = 3;
-    server->max_token_lifetime_seconds = TOKEN_TIME_MAX_LIFETIME;
     server->handshake_deadline_seconds = 5.0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 4 );
     server->used_token_history = rocketnet_used_token_history_create( NULL, 8 );
@@ -184,21 +183,15 @@ static void test_token_time_refusals_are_distinct()
     token_time_refuse( &t, TOKEN_TIME_NOW - 100, TOKEN_TIME_NOW,
                        ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED );
 
-    // create more than five seconds ahead: the skew, not expiry or lifetime;
-    // exactly five seconds ahead is inside the allowance
+    // create more than five seconds ahead: the skew, not expiry; exactly five
+    // seconds ahead is inside the allowance
     token_time_refuse( &t, TOKEN_TIME_NOW + 6, TOKEN_TIME_NOW + 10,
                        ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE );
 
-    // lifetime above the server's maximum: not expiry or skew; exactly the
-    // maximum is allowed
-    token_time_refuse( &t, TOKEN_TIME_NOW, TOKEN_TIME_NOW + TOKEN_TIME_MAX_LIFETIME + 1,
-                       ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG );
-
-    // the accepted side of each boundary: expire now+1, create now+5, and a
-    // lifetime of exactly the maximum, each answering with a cookie
+    // the accepted side of each boundary: expire now+1 and create now+5, each
+    // answering with a cookie
     token_time_accept( &t, TOKEN_TIME_NOW - 100, TOKEN_TIME_NOW + 1 );
     token_time_accept( &t, TOKEN_TIME_NOW + 5, TOKEN_TIME_NOW + 10 );
-    token_time_accept( &t, TOKEN_TIME_NOW, TOKEN_TIME_NOW + TOKEN_TIME_MAX_LIFETIME );
 
     token_time_teardown( &t );
 }
@@ -222,24 +215,26 @@ static void test_token_created_at_the_skew_limit_is_accepted()
     token_time_teardown( &t );
 }
 
-static void test_token_lifetime_at_the_maximum_is_accepted()
+// no maximum token lifetime: a token valid for 2^40 seconds is answered, and
+// the retired CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG stays zero
+static void test_token_with_a_long_lifetime_is_accepted()
 {
     struct token_time_server_t t;
     token_time_setup( &t );
-    token_time_accept( &t, TOKEN_TIME_NOW, TOKEN_TIME_NOW + TOKEN_TIME_MAX_LIFETIME );
+    token_time_accept( &t, TOKEN_TIME_NOW, TOKEN_TIME_NOW + ( 1ULL << 40 ) );
+    check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG] == 0 );
     token_time_teardown( &t );
 }
 
 REGISTER_UNIT_TEST( test_token_time_refusals_are_distinct );
 REGISTER_UNIT_TEST( test_token_expiring_one_second_ahead_is_accepted );
 REGISTER_UNIT_TEST( test_token_created_at_the_skew_limit_is_accepted );
-REGISTER_UNIT_TEST( test_token_lifetime_at_the_maximum_is_accepted );
+REGISTER_UNIT_TEST( test_token_with_a_long_lifetime_is_accepted );
 
 static void test_token_future_creation_without_lifetime_limit()
 {
     struct token_time_server_t t;
     token_time_setup( &t );
-    t.server.max_token_lifetime_seconds = 0;
     token_time_refuse( &t, TOKEN_TIME_NOW + 6, TOKEN_TIME_NOW + 10,
                        ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE );
     token_time_accept( &t, TOKEN_TIME_NOW + 5, TOKEN_TIME_NOW + 10000 );

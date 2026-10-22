@@ -15,7 +15,7 @@
 // THE WIRE SEAM. This header compiles sdk/rocketnet_server_transport.cpp into
 // the harness, as test_transport_control.cpp and test_unit_driver_loopback.cpp
 // do, so it can stand two shims in the server's io operations -- the same seam
-// test_pending_wire_totals_expire_and_reuse_slots swaps its receive_batch into:
+// test_server_connects_after_junk_from_many_sources swaps its receive_batch into:
 //
 //   receive_batch: the server receives exactly the datagrams the harness put
 //     on its deliver list for this update, each with the source address the

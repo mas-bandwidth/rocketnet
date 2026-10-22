@@ -887,7 +887,6 @@ static inline int rocketnet_channel_harness_create_with_config( rocketnet_channe
     memcpy( server->cookie_key, rocketnet_test_cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
     server->advertised_ipv4 = h->server_addr;
     server->cookie_lifetime_seconds = 3;
-    server->max_token_lifetime_seconds = 600;
     server->handshake_deadline_seconds = 5.0;
     server->max_timeout_seconds = 0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );

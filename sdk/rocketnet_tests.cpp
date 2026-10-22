@@ -2330,7 +2330,6 @@ static void rocketnet_test_server_setup( struct rocketnet_test_server_t * test )
     rocketnet_check( rocketnet_address_parse( &server->advertised_ipv4, "203.0.113.10:40000" ) );
     memcpy( server->cookie_key, rocketnet_test_cookie_key, 32 );
     server->cookie_lifetime_seconds = 3;
-    server->max_token_lifetime_seconds = 600;
     server->handshake_deadline_seconds = 5.0;
     server->max_timeout_seconds = 0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
@@ -3738,14 +3737,6 @@ void rocketnet_test_handshake_work_budget_per_update()
     // request must still be processed.
     struct rocketnet_test_server_t other;
     rocketnet_test_server_setup( &other );
-
-    // the budget requests make 16000 distinct tokens by stepping each one's
-    // create timestamp back a second, so their lifetimes run past the test
-    // server's 600-second token-lifetime bound. that bound is pinned by
-    // test_token_lifetime_bounded; here it is lifted so every request reaches
-    // the budget, which is what this test measures.
-    test.server.max_token_lifetime_seconds = 0;
-    other.server.max_token_lifetime_seconds = 0;
 
     const int num_requests = 16000;
     const int budget = ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE;
@@ -14515,47 +14506,6 @@ static void rocketnet_test_protocol_id_zero_refused( void )
     rocketnet_check( server == NULL );
 }
 
-void rocketnet_test_token_lifetime_bounded()
-{
-    struct rocketnet_test_server_t test;
-    rocketnet_test_server_setup( &test );
-
-    // Build a token with unlimited lifetime: create at normal time, expire at UINT64_MAX
-    struct rocketnet_signed_connect_data_t signed_fields;
-    struct rocketnet_connect_token_private_t private_fields;
-    rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
-
-    // Override expire to be UINT64_MAX, which exceeds any reasonable max_token_lifetime
-    signed_fields.expire_timestamp = UINT64_MAX;
-    private_fields.expire_timestamp = UINT64_MAX;
-
-    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
-
-    struct rocketnet_connect_token_t token;
-    rocketnet_read_connect_token( &token, token_data );
-
-    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
-    rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt,
-                                               rocketnet_test_client_eph_public,
-                                               token.signed_connect_data, token.signature );
-
-    // the lifetime bound is read off the signed fields before the cookie gate,
-    // so first contact is refused outright: the token lifetime (UINT64_MAX -
-    // create) exceeds max_token_lifetime_seconds, and no cookie is ever sent
-    uint8_t response[ROCKETNET_RECEIVE_CEILING];
-    int response_bytes = 0;
-    int result = rocketnet_test_process( &test, request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, response, &response_bytes );
-
-    // After the fix: the token is refused for exceeding the max lifetime, with
-    // its own counter (the refusal reasons are never merged)
-    rocketnet_check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
-    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG] == 1 );
-
-    rocketnet_test_server_teardown( &test );
-}
-
 void rocketnet_test_token_timeout_clamped()
 {
     struct rocketnet_test_server_t test;
@@ -14800,7 +14750,6 @@ void rocketnet_test_public_dev_connect_token_round_trip();
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
     { "test_protocol_id_zero_refused", rocketnet_test_protocol_id_zero_refused },
-    { "test_token_lifetime_bounded", rocketnet_test_token_lifetime_bounded },
     { "test_token_timeout_clamped", rocketnet_test_token_timeout_clamped },
     { "test_suite_environment", rocketnet_test_suite_environment },
     { "test_update_time_clamp", rocketnet_test_update_time_clamp },

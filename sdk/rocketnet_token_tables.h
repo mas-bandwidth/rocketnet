@@ -65,9 +65,19 @@ int rocketnet_used_token_history_claim_check( const struct rocketnet_used_token_
                                               const struct rocketnet_address_t * address,
                                               double current_time );
 
+// whether claim_record would succeed now, without writing anything: the
+// claim rung refuses on capacity with this, read-only, before the signature,
+// and the claim itself is written only once the signature verifies, so an
+// unauthenticated request leaves nothing in the claim table.
+
+int rocketnet_used_token_history_claim_can_record( const struct rocketnet_used_token_history_t * history,
+                                                   const uint8_t * token_identifier,
+                                                   double current_time );
+
 // records the request claim for this token until the handshake deadline,
-// before any signature, seal or keypair work. returns 0 when the claim table
-// has no free or expired slot; a live claim is never replaced or evicted.
+// after the signature verifies and before any seal or keypair work. returns 0
+// when the claim table has no free or expired slot; a live claim is never
+// replaced or evicted.
 
 int rocketnet_used_token_history_claim_record( struct rocketnet_used_token_history_t * history,
                                                const uint8_t * token_identifier,
@@ -75,8 +85,8 @@ int rocketnet_used_token_history_claim_record( struct rocketnet_used_token_histo
                                                double deadline,
                                                double current_time );
 
-// releases this address's claim when a request past the claim fails the
-// signature; a request that proves nothing holds nothing.
+// releases this address's claim when a request that holds one is refused
+// before its mapping is added.
 
 void rocketnet_used_token_history_claim_release( struct rocketnet_used_token_history_t * history,
                                                  const uint8_t * token_identifier,

@@ -7929,19 +7929,21 @@ static bool wire_totals_drain( struct rocketnet_client_transport_t * client, str
     return false;
 }
 
-// the slot-scoped drain: for a later connection into an already-used slot,
-// the server's lifetime totals are larger than this client's, so convergence
-// is judged against the slot's current-connection totals instead.
+// the drain for a later connection: the server's lifetime totals are larger
+// than this client's, so convergence is judged on the server's totals since
+// the baseline taken before this client existed.
 
-static bool wire_totals_drain_slot( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server, double * time )
+static bool wire_totals_drain_since( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server,
+                                     const wire_totals_t * server_before, double * time )
 {
     for ( int i = 0; i < 5000; i++ )
     {
         wire_totals_pump( client, server, time, 1 );
-        wire_totals_t c, slot;
+        wire_totals_t c, s;
         wire_totals_client( client, &c );
-        wire_totals_slot( server, 0, &slot );
-        if ( slot.packets_sent == c.packets_received && slot.packets_received == c.packets_sent )
+        wire_totals_server( server, &s );
+        if ( s.packets_sent - server_before->packets_sent == c.packets_received &&
+             s.packets_received - server_before->packets_received == c.packets_sent )
             return true;
     }
     return false;
@@ -8028,6 +8030,20 @@ void wire_totals_count_every_packet_and_byte()
     rocketnet_check( client_totals.packets_sent > 0 );
     rocketnet_check( client_totals.packets_received > 0 );
 
+    // a slot's totals start at its assignment: the handshake before it counts
+    // in the whole-server totals only (the server keeps no per-source totals
+    // for traffic it has not authenticated). settle, then take the handshake
+    // share, which is fixed from here on.
+    rocketnet_check( wire_totals_drain( client, server, &time ) );
+    wire_totals_server( server, &server_totals );
+    wire_totals_slot( server, 0, &slot_totals );
+    const wire_totals_t handshake = { server_totals.packets_sent - slot_totals.packets_sent,
+                                      server_totals.packets_received - slot_totals.packets_received,
+                                      server_totals.bytes_sent - slot_totals.bytes_sent,
+                                      server_totals.bytes_received - slot_totals.bytes_received };
+    rocketnet_check( handshake.packets_received > 0 && handshake.packets_sent > 0 );
+    rocketnet_check( handshake.bytes_received > 0 && handshake.bytes_sent > 0 );
+
     wire_totals_send_payloads( client, server, &time );
     rocketnet_check( wire_totals_drain( client, server, &time ) );
     wire_totals_client( client, &client_totals );
@@ -8038,12 +8054,10 @@ void wire_totals_count_every_packet_and_byte()
     rocketnet_check( client_totals.bytes_sent == server_totals.bytes_received );
     rocketnet_check( server_totals.packets_sent == client_totals.packets_received );
     rocketnet_check( server_totals.bytes_sent == client_totals.bytes_received );
-    rocketnet_check( client_totals.packets_sent == slot_totals.packets_received );
-    rocketnet_check( client_totals.bytes_sent == slot_totals.bytes_received );
-    rocketnet_check( server_totals.packets_sent == slot_totals.packets_sent );
-    rocketnet_check( server_totals.bytes_sent == slot_totals.bytes_sent );
-    rocketnet_check( server_totals.packets_received == slot_totals.packets_received );
-    rocketnet_check( server_totals.bytes_received == slot_totals.bytes_received );
+    rocketnet_check( server_totals.packets_sent == slot_totals.packets_sent + handshake.packets_sent );
+    rocketnet_check( server_totals.bytes_sent == slot_totals.bytes_sent + handshake.bytes_sent );
+    rocketnet_check( server_totals.packets_received == slot_totals.packets_received + handshake.packets_received );
+    rocketnet_check( server_totals.bytes_received == slot_totals.bytes_received + handshake.bytes_received );
 
     const uint64_t packets_before_disconnect = client_totals.packets_sent;
     rocketnet_client_transport_disconnect( client );
@@ -8102,20 +8116,25 @@ void wire_totals_reset_per_connection_not_per_server()
     rocketnet_check( free_slot.bytes_sent == 0 );
     rocketnet_check( free_slot.bytes_received == 0 );
 
+    wire_totals_t before_second;
+    wire_totals_server( server, &before_second );
     struct rocketnet_client_transport_t * second = wire_totals_client_create( address, 0x5703ULL, time );
     rocketnet_check( second != NULL );
     rocketnet_check( wire_totals_connect( second, server, &time ) );
-    rocketnet_check( wire_totals_drain_slot( second, server, &time ) );
+    rocketnet_check( wire_totals_drain_since( second, server, &before_second, &time ) );
 
     wire_totals_t second_slot, second_server, second_client;
     wire_totals_slot( server, 0, &second_slot );
     wire_totals_server( server, &second_server );
     wire_totals_client( second, &second_client );
 
-    rocketnet_check( second_slot.packets_sent == second_client.packets_received );
-    rocketnet_check( second_slot.packets_received == second_client.packets_sent );
-    rocketnet_check( second_slot.bytes_sent == second_client.bytes_received );
-    rocketnet_check( second_slot.bytes_received == second_client.bytes_sent );
+    // the reused slot holds this connection's traffic since its assignment and
+    // nothing of the first connection's: it is above zero and below this
+    // client's own totals by exactly the handshake before the assignment
+    rocketnet_check( second_slot.packets_sent > 0 && second_slot.packets_sent < second_client.packets_received );
+    rocketnet_check( second_slot.packets_received > 0 && second_slot.packets_received < second_client.packets_sent );
+    rocketnet_check( second_slot.bytes_sent > 0 && second_slot.bytes_sent < second_client.bytes_received );
+    rocketnet_check( second_slot.bytes_received > 0 && second_slot.bytes_received < second_client.bytes_sent );
     rocketnet_check( second_server.packets_sent > first_server.packets_sent );
     rocketnet_check( second_server.packets_received > first_server.packets_received );
 
