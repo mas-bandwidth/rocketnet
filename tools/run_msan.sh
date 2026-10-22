@@ -18,15 +18,31 @@
 # reason, or the run stops without a test fail line. A finding is the top
 # frame of a MemorySanitizer warning. Its origin trace is printed with it.
 #
+# The C++ standard library is the MSan-instrumented libc++ for the active
+# clang, /opt/msan-libcxx-<clang++ -dumpversion>, built by
+# tools/build_msan_libcxx.sh (rowan-tools fleet/msan-libcxx.yml puts it on
+# every Linux runner host). The system libstdc++ is not instrumented: its
+# compiled tree rebalance and string growth write memory the shadow never
+# sees, and every later read of it is reported. A host without the library
+# for its clang fails with a TOOL-MISSING line naming the script.
+# RUN_MSAN_LIBCXX names another prefix holding that build.
+#
 # RUN_MSAN_TEST_BIN names a binary to run as the suite instead of configuring
-# and building build-msan/bin/test; it exists for the gate's own tests.
+# and building build-msan/bin/test, and RUN_MSAN_KNOWN_FILE a known list to
+# judge it by instead of tools/msan_known.txt; both exist for the gate's own
+# tests.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 build_dir=build-msan
 msan_exitcode=86
-flags="-fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer"
+# -O1, as MemorySanitizer's own documentation configures it: at -O0 every
+# libc++ element operation is an out-of-line call that pays for its origin
+# bookkeeping, and the suite's byte vectors made one case run 534 s on vision
+# (the whole gate is 103 s at -O1). MSan reports an uninitialised value where
+# it is used, a use the optimizer keeps; the build stays Debug, asserts on.
+flags="-O1 -fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer"
 
 # The unit suite defines its own global operator new/delete (test_channels.cpp)
 # to arm the allocation-failure trap; the MSan C++ runtime ships replacements
@@ -53,14 +69,31 @@ else
     fi
     link_flags="-fno-sanitize-link-runtime -Wl,--whole-archive $msan_runtime -Wl,--no-whole-archive -Wl,--dynamic-list=$msan_runtime.syms -lm -lpthread -lrt -ldl -lresolv"
 
+    clang_version=$(clang++ -dumpversion)
+    libcxx=${RUN_MSAN_LIBCXX:-/opt/msan-libcxx-$clang_version}
+    if [ ! -f "$libcxx/lib/libc++.so" ] || [ ! -f "$libcxx/include/c++/v1/__config_site" ]; then
+        echo "TOOL-MISSING msan-libcxx $clang_version (no MSan-instrumented libc++ in $libcxx; bash tools/build_msan_libcxx.sh) on ${RUNNER_NAME:-$(hostname)}"
+        exit 1
+    fi
+    # libc++'s own headers on the compile line, and its shared library in
+    # place of libstdc++ on the link lines of the suite and of the SDK's
+    # shared libraries (the suite loads the development one), found at run
+    # time by rpath. The suite's own operator new still wins: the executable
+    # defines it, as it did over libstdc++. -stdlib goes on the link lines
+    # only, where clang uses it (on a compile line under -nostdinc++ it is
+    # unused, and -Werror refuses an unused argument).
+    cxx_flags="$flags -nostdinc++ -isystem $libcxx/include/c++/v1"
+    libcxx_link="-stdlib=libc++ -L$libcxx/lib -Wl,-rpath,$libcxx/lib"
+    link_flags="$link_flags $libcxx_link"
+
     cmake -S . -B "$build_dir" \
         -DCMAKE_BUILD_TYPE=Debug \
         -DCMAKE_C_COMPILER=clang \
         -DCMAKE_CXX_COMPILER=clang++ \
         -DCMAKE_C_FLAGS="$flags" \
-        -DCMAKE_CXX_FLAGS="$flags" \
+        -DCMAKE_CXX_FLAGS="$cxx_flags" \
         -DCMAKE_EXE_LINKER_FLAGS="$flags $link_flags" \
-        -DCMAKE_SHARED_LINKER_FLAGS="$flags" \
+        -DCMAKE_SHARED_LINKER_FLAGS="$flags $libcxx_link" \
         -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$abs_build/bin" \
         -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$abs_build/lib" \
         -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY="$abs_build/lib"
@@ -73,7 +106,7 @@ msan_tmp=$(mktemp -d "${TMPDIR:-${RUNNER_TEMP:-/tmp}}/rocketnet-msan.XXXXXX")
 trap 'rm -rf "$msan_tmp"' EXIT
 log="$msan_tmp/msan.log"
 reports="$msan_tmp/msan-reports"
-known_file=tools/msan_known.txt
+known_file=${RUN_MSAN_KNOWN_FILE:-tools/msan_known.txt}
 mkdir -p "$reports"
 
 # Per-process logs keep each origin trace with its warning. The suite runner

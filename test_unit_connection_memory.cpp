@@ -156,7 +156,16 @@ static void test_memory_isolation_between_slots()
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
 
-    rn_arena_t * arena = rn_arena_create( NULL, NULL, 2, &counters );
+    // the arena lives in a zeroed block of the test's own, so the byte
+    // compare of B below reads only defined bytes: a region's memory is
+    // written as it is used, and bytes nothing wrote have no value to compare
+
+    const uint64_t arena_bytes = rn_arena_required_bytes( NULL, 2 );
+    check( arena_bytes > 0 );
+    uint8_t * raw = (uint8_t*) calloc( 1, (size_t) arena_bytes + ROCKETNET_ALLOCATION_ALIGNMENT );
+    check( raw );
+    uint8_t * block = (uint8_t*) ( ( (uintptr_t) raw + ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) ) & ~(uintptr_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) );
+    rn_arena_t * arena = rn_arena_create_in_block( block, arena_bytes, NULL, 2, &counters );
     check( arena );
     rn_region_t * a = rn_arena_region( arena, 0 );
     rn_region_t * b = rn_arena_region( arena, 1 );
@@ -200,6 +209,7 @@ static void test_memory_isolation_between_slots()
 
     free( b_memory );
     rn_arena_destroy( arena );
+    free( raw );
 }
 
 // RNConnectionMemory Exhaust and Kick: exhaustion is sticky with the reason
