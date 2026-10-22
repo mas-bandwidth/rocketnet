@@ -92,8 +92,10 @@ int main( int argc, char ** argv )
     {
         long iterations = 200000;
         unsigned int seed = 0x1234567u;
-        const char * iterations_text = getenv( "FUZZ_ITERS" );
-        const char * seed_text = getenv( "FUZZ_SEED" );
+        char iterations_buffer[64];
+        char seed_buffer[64];
+        const char * iterations_text = rocketnet_test_getenv( "FUZZ_ITERS", iterations_buffer, sizeof( iterations_buffer ) ) ? iterations_buffer : NULL;
+        const char * seed_text = rocketnet_test_getenv( "FUZZ_SEED", seed_buffer, sizeof( seed_buffer ) ) ? seed_buffer : NULL;
         if ( iterations_text )
             iterations = atol( iterations_text );
         if ( seed_text )
