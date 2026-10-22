@@ -14843,16 +14843,17 @@ void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     // The socket requests and transport stacks scale with the configured
-    // queue count; the stats worker contributes one additional fixed stack.
+    // queue count; the GSO transmit worker and the stats worker contribute
+    // one additional fixed stack each.
     {
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_default_config( &config );
         config.num_xdp_queues = 8;
         struct rocketnet_host_memory_estimate_t estimate;
         rocketnet_check( rocketnet_server_transport_host_memory_estimate( &config, "gso", &estimate ) );
-        rocketnet_check( estimate.sockets == 8 && estimate.worker_threads == 9 );
+        rocketnet_check( estimate.sockets == 8 && estimate.worker_threads == 10 );
         rocketnet_check( estimate.socket_send_buffer_bytes == 8ull * ROCKETNET_SOCKET_SEND_BUFFER_SIZE );
-        rocketnet_check( estimate.thread_stack_bytes == 9ull * estimate.thread_stack_bytes_per_thread );
+        rocketnet_check( estimate.thread_stack_bytes == 10ull * estimate.thread_stack_bytes_per_thread );
         rocketnet_check( estimate.total_bytes == rocketnet_test_host_memory_sum( estimate ) );
     }
 #endif
