@@ -175,16 +175,19 @@ static inline int split_capture_format( char * buffer, size_t bytes, const struc
     const struct split_capture_entry_t * entry = &capture->entries[index];
     const struct rocketnet_delivery_capture_t * d = &sample->delivery;
     const int run_marked = capture->entries[index].run_sequence > 0;
+    char server_slot[24];
+    if ( d->server_mapping_known ) snprintf( server_slot, sizeof( server_slot ), "%d", d->server_slot );
+    else snprintf( server_slot, sizeof( server_slot ), "na" );
     return snprintf( buffer, bytes,
         "split_capture: role=%s run_id=%016" PRIx64 " client=%d why=%s state_now=%d sample_age_s=%.3f state=%d connected=%d"
-        " server_slot=%s%d remote_endpoint=%s"
+        " server_slot=%s remote_endpoint=%s"
         " packets_sent=%" PRIu64 " packets_received=%" PRIu64 " messages_resent=%s%" PRIu64
         " last_receive_age_s=%.3f received_sequence=%" PRIu64 " sent_sequence=%" PRIu64 " acked_sequence=%" PRIu64
         " keep_alive_acked=%d run_age_s=%.3f run_sequence=%" PRIu64 " acked_past_run=%s"
         " reliable_unacked=%" PRIu64 " resend_queued=%" PRIu64 " oldest_unacked_age_s=%.3f"
         " srtt_ms=%.3f resend_delay_ms=%.3f window_stalled=%d budget_reliable_waiting=%d budget_tokens=%.1f",
         capture->role, capture->run_id, capture->first + index, why, state_now, split_capture_age( now, sample->time ),
-        sample->state, d->connected, d->server_mapping_known ? "" : "na:", d->server_slot,
+        sample->state, d->connected, server_slot,
         d->server_mapping_known ? d->remote_endpoint : "na", sample->packets_sent, sample->packets_received,
         sample->resends_known ? "" : "na:", sample->messages_resent,
         d->connected ? d->last_receive_age_seconds : -1.0,

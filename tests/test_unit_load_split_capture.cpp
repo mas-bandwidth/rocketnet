@@ -263,6 +263,7 @@ static void test_load_split_capture_end_names_every_connection()
     check( capture_count( &fake, "split_capture: ", "client=7 ", "why=end ", "received_sequence=41 " ) == 1 );
     check( capture_count( &fake, "split_capture: ", "client=8 ", "why=end_ended ", "received_sequence=40 " ) == 1 );
     check( capture_count( &fake, "split_capture: ", "client=9 ", "why=end_never " ) == 1 );
+    check( capture_count( &fake, "split_capture: ", "why=end_never ", "server_slot=na ", "remote_endpoint=na " ) == 1 );
     check( capture_count( &fake, "split_counter: ", "client=8 ", "name=CLIENT_PAYLOAD_ALREADY_RECEIVED ", "value=4" ) == 1 );
     check( capture_count( &fake, "split_counter: ", "client=7 " ) == 0 );
     check( capture_count( &fake, "split_counter: ", "client=all " ) == SPLIT_CAPTURE_NUM_NAMED );
