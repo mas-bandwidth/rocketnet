@@ -22,6 +22,14 @@ captured and dropped when it passes; set `ROCKETNET_TEST_VERBOSE=1` to skip
 the capture and watch the log live. A test that a platform does not build is
 not registered there, so it is neither run nor printed.
 
+`./bin/functional` has a nightly tier: the cases named in
+`rocketnet_functional_nightly_cases` (`functional/rocketnet_functional_tests.cpp`)
+run only with `ROCKETNET_TEST_NIGHTLY=1`, which the nightly workflow sets.
+They are cases whose length is their design, such as a real token timeout
+waited out or a thousand real-socket cycles, and each area keeps one
+representative in the per-commit suite. `--run <case>` runs any case, nightly
+or not.
+
 ## Peak memory per case
 
 Both runners record each case process's peak resident set (`wait4`

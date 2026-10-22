@@ -33,6 +33,15 @@
 #                           build-and-test rows build both suites with the
 #                           default compiler (gcc); this job builds and runs
 #                           them with clang in Debug.
+#
+#   macos / Release functional nightly tier
+#                           the functional cases whose length is their
+#                           design (a real 10 s token timeout waited out, a
+#                           thousand real-socket connect cycles), named in
+#                           rocketnet_functional_nightly_cases
+#                           (functional/rocketnet_functional_tests.cpp).
+#                           ci.yml's macOS rows run one representative of
+#                           each; ROCKETNET_TEST_NIGHTLY=1 adds the rest.
 
 name: nightly
 
@@ -88,6 +97,41 @@ jobs:
 
       - name: Functional suite (clang)
         timeout-minutes: 20
+        run: ./bin/functional
+
+  # THE MACOS FUNCTIONAL NIGHTLY TIER: the whole functional suite, the
+  # nightly-tier cases included (ROCKETNET_TEST_NIGHTLY=1), on the fleet's
+  # Apple-silicon runner. The cases this adds are the portable-server
+  # hard-killed cells, which each wait out the real 10 s token timeout, and
+  # three of the four transport pairs of the 1000-cycle connect/disconnect and
+  # the destroy-under-traffic cases; the fourth pair (msgx/msgx) and the msgx
+  # hard-killed cells run on every commit in ci.yml. Measured on mini-m5-1
+  # (2026-10-21): the per-commit suite 19 s, the nightly suite 67 s.
+
+  macos-functional-nightly:
+    name: macos / Release functional nightly tier
+    runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-macos-functional-${{ matrix.ref }}
+      cancel-in-progress: true
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Build (Release, through the Makefile)
+        run: make
+
+      - name: Functional suite with the nightly tier
+        timeout-minutes: 10
+        env:
+          ROCKETNET_TEST_NIGHTLY: 1
+          ROCKETNET_TEST_REPORT: 1
         run: ./bin/functional
 
   # The windows Debug row, lifted from ci.yml's build-and-test-windows on
