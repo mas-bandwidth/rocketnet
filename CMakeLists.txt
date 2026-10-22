@@ -49,6 +49,18 @@ if(ROCKETNET_SANITIZE_ADDRESS)
     if(MSVC)
         add_compile_options(/fsanitize=address /Zi)
         add_link_options(/DEBUG /INCREMENTAL:NO)
+        if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
+            # clang-cl links through lld-link, which, unlike cl's link step,
+            # adds no AddressSanitizer runtime: name the dynamic runtime and
+            # its thunk from clang's own resource directory
+            execute_process(COMMAND "${CMAKE_C_COMPILER}" -print-resource-dir
+                OUTPUT_VARIABLE ROCKETNET_CLANG_RESOURCE_DIR OUTPUT_STRIP_TRAILING_WHITESPACE)
+            set(ROCKETNET_ASAN_RUNTIME_DIR "${ROCKETNET_CLANG_RESOURCE_DIR}/lib/windows")
+            add_link_options("${ROCKETNET_ASAN_RUNTIME_DIR}/clang_rt.asan_dynamic-x86_64.lib"
+                             "${ROCKETNET_ASAN_RUNTIME_DIR}/clang_rt.asan_dynamic_runtime_thunk-x86_64.lib")
+        else()
+            get_filename_component(ROCKETNET_ASAN_RUNTIME_DIR "${CMAKE_C_COMPILER}" DIRECTORY)
+        endif()
     else()
         add_compile_options(-fsanitize=address)
         add_link_options(-fsanitize=address)
@@ -73,13 +85,20 @@ if(ROCKETNET_TOP_LEVEL)
     endif()
 endif()
 if(ROCKETNET_SANITIZE_ADDRESS AND MSVC AND DEFINED CMAKE_RUNTIME_OUTPUT_DIRECTORY)
-    get_filename_component(ROCKETNET_MSVC_BIN_DIR "${CMAKE_C_COMPILER}" DIRECTORY)
-    if(EXISTS "${ROCKETNET_MSVC_BIN_DIR}/clang_rt.asan_dynamic-x86_64.dll")
+    # executables land in bin/<config>/ under a multi-config generator and in
+    # bin/ under a single-config one (Ninja); the runtime goes beside them
+    get_property(ROCKETNET_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+    if(ROCKETNET_MULTI_CONFIG)
+        set(ROCKETNET_ASAN_RUNTIME_DEST "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>")
+    else()
+        set(ROCKETNET_ASAN_RUNTIME_DEST "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+    endif()
+    if(EXISTS "${ROCKETNET_ASAN_RUNTIME_DIR}/clang_rt.asan_dynamic-x86_64.dll")
         add_custom_target(rocketnet_asan_runtime ALL
-            COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${ROCKETNET_ASAN_RUNTIME_DEST}"
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${ROCKETNET_MSVC_BIN_DIR}/clang_rt.asan_dynamic-x86_64.dll"
-                "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/clang_rt.asan_dynamic-x86_64.dll"
+                "${ROCKETNET_ASAN_RUNTIME_DIR}/clang_rt.asan_dynamic-x86_64.dll"
+                "${ROCKETNET_ASAN_RUNTIME_DEST}/clang_rt.asan_dynamic-x86_64.dll"
             VERBATIM)
     endif()
 endif()

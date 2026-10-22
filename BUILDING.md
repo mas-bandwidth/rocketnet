@@ -253,7 +253,9 @@ Windows (`cmake -B build -A x64 -DROCKETNET_SANITIZE_ADDRESS=ON`, then
 `cmake --build build --config Release --parallel 4`), the build copies the MSVC
 AddressSanitizer runtime (`clang_rt.asan_dynamic-x86_64.dll`, beside `cl.exe`)
 into `bin\<config>\` so `bin\Release\test.exe`, `bin\Release\test_lifecycle.exe`,
-`bin\Release\test_iocp.exe` and `bin\Release\functional.exe` run directly.
+`bin\Release\test_iocp.exe` and `bin\Release\functional.exe` run directly. With clang-cl
+(`cmake -B build -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=MinSizeRel -DROCKETNET_SANITIZE_ADDRESS=ON`)
+the build links clang's own dynamic runtime and copies its DLL beside the executables in `bin\`.
 
 `py -3 tools\windows\appverif_run.py -- bin\Debug\test_iocp.exe` runs one
 executable under the Application Verifier Basics layers (Handles, Heaps, Locks,
@@ -261,7 +263,10 @@ Memory, TLS, Threadpool and Leak) with every stop logged and no debugger
 attached (a stop ends the run once it is logged), exports the verifier log of
 every process it starts with that image name (the suite runners start one child
 per case), and exits non-zero naming each stop's layer, stop code and top frames; it disables
-verification for the executable again on every exit path. It needs Application Verifier for x64 from
+verification for the executable again on every exit path. Verifier settings and logs are keyed by
+image name across the whole machine, so it runs a copy of the executable beside it under a name of
+its own (`test_iocp_appverif_<pid>.exe`), which keeps another `test_iocp.exe` on the host (a CI
+leg, another build) out of the run's logs, and removes the copy afterwards. It needs Application Verifier for x64 from
 the Windows SDK and an elevated prompt, and runs a Debug build so the frames
 carry symbols; arguments after the executable and the environment
 (`ROCKETNET_SERVER_TRANSPORT` and the rest) pass through to it, and `--xml <file>` keeps the exported logs.
