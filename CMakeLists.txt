@@ -140,7 +140,6 @@ else()
     endif()
 endif()
 add_compile_definitions(
-    $<$<PLATFORM_ID:Linux>:ROCKETNET_XDP=$<BOOL:${ROCKETNET_XDP}>>
     ROCKETNET_HISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS}
     ROCKETNET_REASSEMBLY_MEMORY_MIB=${ROCKETNET_REASSEMBLY_MEMORY_MIB}
     ROCKETNET_XDP_MEMORY_MIB=${ROCKETNET_XDP_MEMORY_MIB})
@@ -176,10 +175,16 @@ endfunction()
 include(cmake/XdpSources.cmake)
 set(ROCKETNET_XDP_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/rocketnet_server_xdp.h")
 set(ROCKETNET_XDP_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/generated/server_xdp.o")
+#
+# The build is tolerant: ROCKETNET_XDP=ON builds XDP only where a clang with
+# the BPF target, libbpf and libxdp are all found (libbpf and libxdp are
+# optional here, cmake/RocketNetDependencies.cmake). Short of any of them
+# ROCKETNET_XDP turns OFF for this build, exactly as if configured OFF: no
+# embedded program, no XDP code in the library, no libbpf or libxdp link, and
+# a transport list naming xdp refuses it with TRANSPORT_NOT_BUILT.
 set(ROCKETNET_BPF_CLANG "")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     if(ROCKETNET_XDP)
-        find_program(ROCKETNET_XXD xxd REQUIRED)
         find_program(ROCKETNET_CLANG clang)
     endif()
     if(ROCKETNET_XDP AND ROCKETNET_CLANG)
@@ -189,13 +194,23 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             set(ROCKETNET_BPF_CLANG "${ROCKETNET_CLANG}")
         endif()
     endif()
-    execute_process(COMMAND "${CMAKE_C_COMPILER}" -dumpmachine
-        OUTPUT_VARIABLE ROCKETNET_MULTIARCH OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
     if(NOT ROCKETNET_XDP)
         message(STATUS "XDP off: ROCKETNET_XDP=OFF; the xdp transport is unavailable; BPF/libxdp are not required")
     elseif(NOT ROCKETNET_BPF_CLANG)
-        message(STATUS "XDP off: no clang with the BPF target was found, so server_xdp.o is not built and the xdp server transport refuses at create")
+        message(STATUS "XDP off: no clang with the BPF target was found, so XDP is compiled out of this build")
+        set(ROCKETNET_XDP OFF)
+    elseif(NOT TARGET RocketNet::Bpf OR NOT TARGET RocketNet::Xdp)
+        message(STATUS "XDP off: libbpf or libxdp was not found, so XDP is compiled out of this build")
+        set(ROCKETNET_XDP OFF)
     endif()
+endif()
+# One value for every target in the tree: the library, the unit suite, the
+# functional suite and the tools agree on whether the XDP transport exists.
+add_compile_definitions($<$<PLATFORM_ID:Linux>:ROCKETNET_XDP=$<BOOL:${ROCKETNET_XDP}>>)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_XDP)
+    find_program(ROCKETNET_XXD xxd REQUIRED)
+    execute_process(COMMAND "${CMAKE_C_COMPILER}" -dumpmachine
+        OUTPUT_VARIABLE ROCKETNET_MULTIARCH OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
     file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/xdp-build-settings.txt"
         CONTENT "${ROCKETNET_BPF_CLANG}\n${ROCKETNET_MULTIARCH}\n")
     add_custom_command(OUTPUT "${ROCKETNET_XDP_HEADER}"

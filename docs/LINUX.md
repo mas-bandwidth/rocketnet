@@ -26,14 +26,18 @@ The XDP program is compiled at build time, never on the server host.
 with a clang that has the BPF target, against the kernel UAPI headers
 (`linux-libc-dev`, which `build-essential` pulls in) and libbpf's
 `bpf/bpf_helpers.h`, and embeds the object's bytes in the library;
-`rocketnet_server_socket_create` opens them with `bpf_object__open_mem`. A
-configure that finds no such clang prints
-`XDP off: no clang with the BPF target was found, so server_xdp.o is not built and the xdp server transport refuses at create`,
-and that build's `xdp` transport refuses at create with
-`could not load server_xdp program: this build has no server_xdp.o (XDP disabled or no clang with the BPF target at configure time)`,
-so `auto` falls to the next rung. `-DROCKETNET_XDP=OFF` explicitly selects
-the same disabled-object path. The server host needs no compiler, no
-`make`, no kernel headers and no temporary directory to start `xdp`.
+`rocketnet_server_socket_create` opens them with `bpf_object__open_mem`. The
+build is tolerant, for a deployment that never runs XDP (a host without root,
+such as AWS GameLift): a configure that finds no such clang, or no libbpf or
+libxdp, prints `XDP off: no clang with the BPF target was found, so XDP is
+compiled out of this build` (or `XDP off: libbpf or libxdp was not found, so
+XDP is compiled out of this build`) and compiles the whole XDP
+transport out, with no embedded object, no XDP or netlink gateway code in the
+library and no libbpf or libxdp link. `-DROCKETNET_XDP=OFF` compiles it out on
+purpose. In that build a transport list naming `xdp` refuses it at create with
+`ROCKETNET_STATUS_TRANSPORT_NOT_BUILT`, and `auto` falls to the next rung. The
+server host needs no compiler, no `make`, no kernel headers and no temporary
+directory to start `xdp`.
 
 `make` is the front door. It configures `build/` as **Release** and runs the
 child make with `-j` set to the processor count capped at 8; `make JOBS=<n>`

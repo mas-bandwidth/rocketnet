@@ -542,10 +542,18 @@ embeds the object's bytes in `build/generated/rocketnet_server_xdp.h` as
 with `bpf_object__open_mem` and hands the object to libxdp with
 `xdp_program__from_bpf_obj`: the server host needs no compiler, `make`, kernel
 headers, temporary directory or child process. `test_xdp_filter` loads the same
-`server_xdp.o`. A configure without such a clang says
-`XDP off: no clang with the BPF target was found, so server_xdp.o is not built and the xdp server transport refuses at create`,
-embeds a zero-length object, and the `xdp` create refuses with
-`could not load server_xdp program: this build has no server_xdp.o (XDP disabled or no clang with the BPF target at configure time)`.
+`server_xdp.o`. The build is tolerant: XDP is built only with a clang that has
+the BPF target, libbpf and libxdp, and `-DROCKETNET_XDP=ON` (the default).
+Short of any of them the configure says why (`XDP off: no clang with the BPF
+target was found, so XDP is compiled out of this build`, `XDP off: libbpf or
+libxdp was not found, so XDP is compiled out of this build` or `XDP off:
+ROCKETNET_XDP=OFF; the xdp transport is unavailable; BPF/libxdp are not
+required`) and the whole XDP transport is
+compiled out (`ROCKETNET_XDP=0`): no embedded object, no XDP or netlink
+gateway code in the library, and no libbpf or libxdp link
+(`tools/check_xdp_compiled_out.py --absent` checks the built library). A
+transport list naming `xdp` refuses it at create with
+`ROCKETNET_STATUS_TRANSPORT_NOT_BUILT`, and `auto` starts at the next rung.
 macOS and Windows do not build the object.
 
 `cmake/XdpSources.cmake` lists the object's inputs: CMake recompiles the object

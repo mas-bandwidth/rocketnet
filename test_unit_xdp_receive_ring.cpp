@@ -15,8 +15,9 @@
 
 #include "test_unit_registry.h"
 
-// the AF_XDP code is Linux only, so its tests are built there only
-#if defined(__linux__)
+// the AF_XDP code is Linux only and compiled out of a build without XDP, so
+// its tests are built only where it is
+#if defined(__linux__) && ROCKETNET_XDP
 
 void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consumed,
     void (*cancel)( void * ring, uint32_t count ),
@@ -212,4 +213,4 @@ REGISTER_UNIT_TEST( test_xdp_transport_receive_ring_returns_descriptors_the_stag
 REGISTER_UNIT_TEST( test_xdp_transport_receive_ring_full_staging_returns_every_descriptor );
 REGISTER_UNIT_TEST( test_xdp_transport_receive_ring_conserves_frames_and_never_stalls );
 
-#endif // #if defined(__linux__)
+#endif // #if defined(__linux__) && ROCKETNET_XDP

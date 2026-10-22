@@ -6,6 +6,8 @@
 
 #include "rocketnet_internal.h"
 
+#if ROCKETNET_XDP
+
 // Finish one AF_XDP RX pass after peeking num_packets descriptors and
 // consuming num_consumed of them while the staging buffer had room: cancel the
 // peeked descriptors not consumed before releasing num_consumed (modelled in
@@ -20,8 +22,6 @@ void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consu
         cancel( ring, num_packets - num_consumed );
     release( ring, num_consumed );
 }
-
-#if ROCKETNET_XDP
 
 #include "rocketnet_server_socket.h"
 #include "rocketnet_constants.h"
@@ -1520,13 +1520,6 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     // temporary directory and no child process on the server host.
 
     rocketnet_info( "loading server_xdp..." );
-
-    if ( rocketnet_server_xdp_o_len == 0 )
-    {
-        rocketnet_error( "could not load server_xdp program: this build has no server_xdp.o (XDP disabled or no clang with the BPF target at configure time)" );
-        rocketnet_server_socket_abort_create( server_socket );
-        return NULL;
-    }
 
     {
         // the open opts carry this instance's pin root, so LIBBPF_PIN_BY_NAME
