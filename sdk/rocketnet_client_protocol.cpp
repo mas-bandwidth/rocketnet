@@ -704,6 +704,24 @@ static int rocketnet_client_session_after_open( struct rocketnet_client_protocol
                                                 int * out_type_data_offset,
                                                 rocketnet_client_type_data_validator_t type_data_validator );
 
+// The state rung of every session type, as netcode.io's client: a keep-alive,
+// disconnect or standalone ack is processed from sending connection response
+// on, where the session keys are born; a payload or a fragment only once
+// connected. The keep-alive that connects the client can arrive after the
+// server's first payloads, and a payload delivered before connected let the
+// application reply on a connection that could not yet send. The server's
+// resend carries a reliable message again after the keep-alive
+// (tla/ClientConnection.tla PayloadBeforeKeepAlive).
+
+static bool rocketnet_client_session_state_accepts( const struct rocketnet_client_protocol_t * client, uint8_t packet_type )
+{
+    if ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+        return true;
+    if ( client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
+        return false;
+    return packet_type != ROCKETNET_CONNECTION_PAYLOAD_PACKET && packet_type != ROCKETNET_CONNECTION_FRAGMENT_PACKET;
+}
+
 // tla/ClientConnection.tla ClientRecvSession
 static int rocketnet_client_open_session_packet( struct rocketnet_client_protocol_t * client,
                                                  uint8_t packet_type,
@@ -734,8 +752,7 @@ static int rocketnet_client_open_session_packet( struct rocketnet_client_protoco
     // session traffic exists only from sending connection response on: the
     // keys that open it are born at the challenge
 
-    if ( client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE &&
-         client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+    if ( !rocketnet_client_session_state_accepts( client, packet_type ) )
     {
         rocketnet_spam( "client ignored session packet. wrong state" );
         counters[type_counters->wrong_state]++;
@@ -904,8 +921,7 @@ static int rocketnet_client_consume_session_record( struct rocketnet_client_prot
         return -1;
     }
 
-    if ( client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE &&
-         client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+    if ( !rocketnet_client_session_state_accepts( client, packet_type ) )
     {
         rocketnet_spam( "client ignored session packet. wrong state" );
         counters[type_counters->wrong_state]++;
@@ -1088,11 +1104,8 @@ static int rocketnet_client_process_payload( struct rocketnet_client_protocol_t 
         ROCKETNET_COUNTER_CLIENT_PAYLOAD_DID_NOT_OPEN, ROCKETNET_COUNTER_CLIENT_PAYLOAD_BAD_ACK_BLOCK,
         ROCKETNET_COUNTER_CLIENT_PAYLOAD_WRONG_OPENED_SIZE };
 
-    // payloads are accepted from sending connection response on, exactly
-    // like every session type: the keys that open them are born at the
-    // challenge, and nothing about delivering bytes needs the client index.
-    // this is why the protocol has no keep-alive prefixing for unconfirmed
-    // clients -- there is no window in which a payload cannot be understood.
+    // payloads are processed only once connected, as netcode.io's client:
+    // see rocketnet_client_session_state_accepts
 
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
     int type_data_offset = 0;
