@@ -1221,6 +1221,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
             { &client_transport->receive_buffer[0], &client_transport->receive_buffer[1] };
         rocketnet_client_io_init( &client_transport->client_io, &client_transport->io, &views[0], &views[1], buffers,
                                   client_transport->time_callback, client_transport->context );
+        client_transport->client_io.diag_port = bind_address.port;
         client_transport->client_io.prefilter_too_large =
             &client_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE];
 

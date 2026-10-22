@@ -111,7 +111,7 @@ struct rocketnet_client_io_t
     struct rocketnet_client_io_open_t open;
     uint64_t transport_faults;                     // a receive count or byte count this step refused
     uint64_t * prefilter_too_large;             // optional: counts PREFILTER_TOO_LARGE for a datagram rejected by the byte-count check
-    uint64_t diag_steps, diag_rings, diag_sent, diag_received, diag_full, diag_empty; double diag_last_rx, diag_last_ring; int diag_reported;
+    uint64_t diag_steps, diag_rings, diag_sent, diag_received, diag_full, diag_empty; double diag_last_rx, diag_last_ring, diag_next_summary; int diag_reported; int diag_port;
 };
 
 // RNClientIo initial; main thread. Takes the two ring views and the two
@@ -135,7 +135,7 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
         io->buffer[i]->num_packets = 0;
     }
     io->fill_slots = 0;
-    io->diag_steps = io->diag_rings = io->diag_sent = io->diag_received = io->diag_full = io->diag_empty = 0; io->diag_last_rx = 0.0; io->diag_last_ring = 0.0; io->diag_reported = 0;
+    io->diag_steps = io->diag_rings = io->diag_sent = io->diag_received = io->diag_full = io->diag_empty = 0; io->diag_last_rx = 0.0; io->diag_last_ring = 0.0; io->diag_reported = 0; io->diag_next_summary = 0.0; io->diag_port = 0;
     io->time = time;
     io->time_context = time_context;
     io->guard_timeout_seconds = ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS;
@@ -366,11 +366,18 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
         if ( ( gap > 2.0 && io->diag_reported == 0 ) || ( gap > 6.0 && io->diag_reported == 1 ) )
         {
             io->diag_reported++;
-            fprintf( stderr, "client_io_diag: t=%.3f io=%p gap=%.3f steps=%llu rings=%llu since_ring=%.3f sent=%llu received=%llu full=%llu empty=%llu fill_slots=%d fill=%d\n",
-                dnow, (void*) io, gap, (unsigned long long) io->diag_steps, (unsigned long long) io->diag_rings, dnow - io->diag_last_ring,
+            fprintf( stderr, "client_io_diag: t=%.3f port=%d gap=%.3f steps=%llu rings=%llu since_ring=%.3f sent=%llu received=%llu full=%llu empty=%llu fill_slots=%d fill=%d\n",
+                dnow, io->diag_port, gap, (unsigned long long) io->diag_steps, (unsigned long long) io->diag_rings, dnow - io->diag_last_ring,
                 (unsigned long long) io->diag_sent, (unsigned long long) io->diag_received, (unsigned long long) io->diag_full, (unsigned long long) io->diag_empty,
                 io->fill_slots, (int) io->receive.fill );
             fflush( stderr );
+        }
+        if ( dnow >= io->diag_next_summary )
+        {
+            io->diag_next_summary = dnow + 2.0;
+            fprintf( stderr, "client_io_sum: t=%.3f port=%d steps=%llu rings=%llu received=%llu full=%llu since_rx=%.3f since_ring=%.3f\n",
+                dnow, io->diag_port, (unsigned long long) io->diag_steps, (unsigned long long) io->diag_rings, (unsigned long long) io->diag_received,
+                (unsigned long long) io->diag_full, gap, dnow - io->diag_last_ring );
         }
     }
 
