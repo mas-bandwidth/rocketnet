@@ -53,6 +53,19 @@ inline std::wstring rocketnet_test_wide_path( const std::string & path )
     std::replace( wide.begin(), wide.end(), L'/', L'\\' );
     if ( wide.compare( 0, 4, L"\\\\?\\" ) == 0 )
         return wide;
+#if defined(_WIN32)
+    // a \\?\ path is taken literally: ".." and relative paths are not resolved,
+    // so resolve to the full path first
+    const DWORD length = GetFullPathNameW( wide.c_str(), 0, NULL, NULL );
+    if ( length == 0 )
+        return L"";
+    std::wstring full( (size_t) length, L'\0' );
+    const DWORD written = GetFullPathNameW( wide.c_str(), length, &full[0], NULL );
+    if ( written == 0 || written >= length )
+        return L"";
+    full.resize( (size_t) written );
+    wide = full;
+#endif
     if ( wide.compare( 0, 2, L"\\\\" ) == 0 )
         return L"\\\\?\\UNC" + wide.substr( 1 );
     return L"\\\\?\\" + wide;
