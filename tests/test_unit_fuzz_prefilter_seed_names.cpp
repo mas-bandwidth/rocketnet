@@ -47,10 +47,15 @@ static const prefilter_seed_t prefilter_seeds[] =
 
 static std::string prefilter_seed_path( const char * name )
 {
+    // this source is tests/<file>: the repository root is its directory's parent.
+    // No "..": the Windows long-path prefix (tests/resource_file.h) turns off
+    // ".." resolution, so the root is cut from the path itself.
     std::string source = __FILE__;
     size_t slash = source.find_last_of( "/\\" );
-    std::string root = ( slash == std::string::npos ) ? std::string( "." ) : source.substr( 0, slash );
-    return root + "/../fuzz/corpus/" + name;
+    std::string tests = ( slash == std::string::npos ) ? std::string( "." ) : source.substr( 0, slash );
+    slash = tests.find_last_of( "/\\" );
+    std::string root = ( slash != std::string::npos ) ? tests.substr( 0, slash ) : ( tests == "." ? std::string( ".." ) : std::string( "." ) );
+    return root + "/fuzz/corpus/" + name;
 }
 
 static void test_fuzz_prefilter_seed_names_match_outcomes()
