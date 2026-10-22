@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet_server_replay_marks.h"
+#include "rocketnet_test_seams.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connection_reset.h"
 
@@ -145,7 +146,7 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
     }
 }
 
-
+#if ROCKETNET_TEST_SEAMS
 static void rocketnet_replay_witness_forget( void * context, const rocketnet_address_t * )
 {
     (*(int *) context)++;
@@ -166,7 +167,9 @@ bool rocketnet_server_replay_marks_inventory_matches_for_test( char * failure, s
                                               sizeof(rocketnet_server_replay_slot_mark_t),
                                               alignof(rocketnet_server_replay_slot_mark_t), failure, failure_bytes );
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
+#if ROCKETNET_TEST_SEAMS
 bool rocketnet_server_replay_marks_reset_witness_for_test()
 {
     rocketnet_server_replay_marks_t * marks = rocketnet_server_replay_marks_create( NULL, 1 );
@@ -206,3 +209,4 @@ bool rocketnet_server_replay_marks_reset_witness_for_test()
     rocketnet_encryption_map_destroy( map );
     return clean;
 }
+#endif // #if ROCKETNET_TEST_SEAMS

@@ -2,7 +2,7 @@
 """Check that sdk/rocketnet.h is a clean, self-contained, plain-C public header.
 
 (a) the header alone compiles as C99, C11 and C++11, pedantic, warnings as
-    errors, plain and with ROCKETNET_SHARED and ROCKETNET_DEVELOPMENT defined;
+    errors, plain and with ROCKETNET_SHARED and ROCKETNET_DEV defined;
 (b) every #include names only stdint.h, stddef.h or stdbool.h;
 (c) every function and data declaration carries ROCKETNET_EXPORT and sits
     inside the one extern "C" block, and no inline (the two default_config
@@ -67,7 +67,7 @@ def compile_alone(compiler_c, compiler_cxx):
         ("C++11", compiler_cxx, ["-std=c++11", "-pedantic", "-Wall", "-Wextra", "-Werror", "-fsyntax-only", "-x", "c++"]),
     ]
     variants = [("", []), (" with ROCKETNET_SHARED", ["-DROCKETNET_SHARED"]),
-                (" with ROCKETNET_DEVELOPMENT=1", ["-DROCKETNET_DEVELOPMENT=1"])]
+                (" with ROCKETNET_DEV=1", ["-DROCKETNET_DEV=1"])]
     # a translation unit that includes the header, so its static inline
     # default_config calls are an included header's, as in every program
     unit_directory = tempfile.mkdtemp(prefix="rocketnet-header-alone-")
@@ -96,7 +96,7 @@ def compile_alone_cl():
         ("C++14 (cl /std:c++14)", ["/std:c++14", "/permissive-"], "/Tp"),
     ]
     variants = [("", []), (" with ROCKETNET_SHARED", ["/DROCKETNET_SHARED"]),
-                (" with ROCKETNET_DEVELOPMENT=1", ["/DROCKETNET_DEVELOPMENT=1"])]
+                (" with ROCKETNET_DEV=1", ["/DROCKETNET_DEV=1"])]
     for name, flags, source_flag in languages:
         for suffix, defines in variants:
             unit_directory = tempfile.mkdtemp(prefix="rocketnet-header-alone-")

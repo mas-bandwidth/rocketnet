@@ -4,7 +4,7 @@
 */
 
 // The api-polish follow-ups, pinned: the quiet switch is Next SDK named
-// (rocketnet_quiet), the last status code is TRANSPORT_NOT_BUILT at -28,
+// (rocketnet_quiet), the last status code is DEV_CONNECT_TOKEN_IN_PRODUCTION at -30,
 // and the WARN level's name is "warn", matching its
 // enum as every other level name does. The assert callback has one way in,
 // rocketnet_assert_function; the internal pointer it writes is
@@ -22,7 +22,7 @@
 #define check rocketnet_unit_check
 
 static_assert( std::is_same<decltype( &rocketnet_quiet ), void (*)( bool )>::value, "Next SDK naming: rocketnet_quiet( bool )" );
-static_assert( ROCKETNET_STATUS_TRANSPORT_NOT_BUILT == -28, "the failures are dense down to the last code" );
+static_assert( ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION == -30, "the failures are dense down to the last code" );
 
 static int api_polish_followups_count = 0;
 
@@ -56,9 +56,9 @@ static void test_api_polish_followups()
     rocketnet_log_function( NULL, NULL );
     rocketnet_log_level( saved );
 
-    // the last code is TRANSPORT_NOT_BUILT, and one past it is no code
-    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -28 ), "TRANSPORT_NOT_BUILT" ) == 0 );
-    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -29 ), "UNKNOWN" ) == 0 );
+    // the last code is DEV_CONNECT_TOKEN_IN_PRODUCTION, and one past it is no code
+    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -30 ), "DEV_CONNECT_TOKEN_IN_PRODUCTION" ) == 0 );
+    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -31 ), "UNKNOWN" ) == 0 );
 
     // every level name matches its enum: WARN is "warn"
     check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_NONE ), "NONE" ) == 0 );

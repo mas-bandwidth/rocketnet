@@ -1,5 +1,6 @@
 #include <new>
 #include "rocketnet_packet_lease.h"
+#include "rocketnet_test_seams.h"
 #include "rocketnet_stats_window.h"
 /*
     RocketNet. Copyright 2026 Más Bandwidth LLC.
@@ -223,6 +224,7 @@ struct rocketnet_client_transport_t
 #undef ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS_DECLARE
 };
 
+#if ROCKETNET_TEST_SEAMS
 bool rocketnet_client_transport_inventory_matches_for_test( char * failure, size_t failure_bytes )
 {
 #define TRANSPORT_MEMBER( field, declaration ) ROCKETNET_RESET_MEMBER( rocketnet_client_transport_t, field, -1 ),
@@ -236,7 +238,9 @@ bool rocketnet_client_transport_inventory_matches_for_test( char * failure, size
                                               sizeof(rocketnet_client_transport_t), alignof(rocketnet_client_transport_t),
                                               failure, failure_bytes );
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
+#if ROCKETNET_TEST_SEAMS
 static bool rocketnet_all_zero( const void * data, size_t bytes )
 {
     const uint8_t * p = (const uint8_t *) data;
@@ -245,7 +249,9 @@ static bool rocketnet_all_zero( const void * data, size_t bytes )
             return false;
     return true;
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
+#if ROCKETNET_TEST_SEAMS
 bool rocketnet_client_transport_reset_witness_for_test( struct rocketnet_client_transport_t * client )
 {
     if ( !client || client->io_thread )
@@ -289,14 +295,18 @@ bool rocketnet_client_transport_reset_witness_for_test( struct rocketnet_client_
            memcmp( &client->packet_loss_tracker, &fresh_loss, sizeof(fresh_loss) ) == 0 &&
            memcmp( &client->jitter_tracker, &fresh_jitter, sizeof(fresh_jitter) ) == 0;
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
+#if ROCKETNET_TEST_SEAMS
 void rocketnet_client_transport_mark_connection_state_for_test( struct rocketnet_client_transport_t * client )
 {
     rocketnet_assert( client );
     // a value only the stats read, so the marked connection runs on unchanged
     client->jitter_tracker.jitter = 0.25;
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
+#if ROCKETNET_TEST_SEAMS
 bool rocketnet_client_transport_connection_state_clean_for_test( struct rocketnet_client_transport_t * client,
                                                                  char * failure, size_t failure_bytes )
 {
@@ -332,6 +342,7 @@ bool rocketnet_client_transport_connection_state_clean_for_test( struct rocketne
         snprintf( failure, failure_bytes, "rocketnet_client_transport_t.%s: not reset when the connection ended", member );
     return member == NULL;
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
 // Every refusal reaches here before a worker is successfully created. No
 // thread owns transport storage, so failed construction is already quiescent.
@@ -564,10 +575,12 @@ struct rocketnet_thread_shim_layout_t
 // Test seam for socket-free, thread-free client memory plan unit testing.
 static bool rocketnet_client_memory_plan_seam_enabled = false;
 
+#if ROCKETNET_TEST_SEAMS
 void rocketnet_client_transport_set_memory_plan_seam_for_test( bool enable )
 {
     rocketnet_client_memory_plan_seam_enabled = enable;
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
 static bool rocketnet_client_transport_memory_plan( const rocketnet_client_transport_config_t * config,
     const char * transport, rocketnet_client_memory_plan_t & plan )
@@ -653,6 +666,7 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven( vo
     return rocketnet_client_transport_create_internal( context, connect_token, config, time, NULL, operations, transport_context, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR, 0 );
 }
 
+#if ROCKETNET_TEST_SEAMS
 rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_at_timestamp( void * context, const uint8_t * connect_token,
     const struct rocketnet_client_transport_config_t * config, double time, uint64_t current_timestamp,
     const rocketnet_client_transport_io_operations_t * operations, void * transport_context )
@@ -662,6 +676,7 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_at_
     return rocketnet_client_transport_create_internal( context, connect_token, config, time, NULL, operations, transport_context,
                                                        ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR, current_timestamp );
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_current( void * context, const uint8_t * connect_token,
     const struct rocketnet_client_transport_config_t * config, double time,
@@ -744,6 +759,13 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     {
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+        return NULL;
+    }
+
+    if ( rocketnet_config_packet_filter_refused( "client", effective_config.packet_filter ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION;
         return NULL;
     }
 
@@ -919,8 +941,19 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     // implementation must warn on every start that uses them, at each end that
     // can tell. The client can tell only from a token sealed to the fixed test
     // server key; a public server's key is its own, so the server warns.
+    // A production build (ROCKETNET_DEV=0) refuses such a token outright.
     if ( memcmp( client_transport->protocol.signed_fields.server_public_key, rocketnet_dev_server_public_key, ROCKETNET_KEY_BYTES ) == 0 )
+    {
         rocketnet_warn( "development keys are public and not for production" );
+        if ( rocketnet_development_values_refused() )
+        {
+            rocketnet_error( "connect token sealed to the development server key in a production build (ROCKETNET_DEV=0); refusing to connect" );
+            rocketnet_client_transport_abort_create( client_transport );
+            if ( status )
+                *status = ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION;
+            return NULL;
+        }
+    }
 
     // the socket binds after the token parse so the bind family can follow
     // the server and the host's IPv6 capability. A token naming both
@@ -2387,10 +2420,12 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
 
 // test seam: the port the client socket is bound to, so a functional test
 // sends datagrams at it
+#if ROCKETNET_TEST_SEAMS
 uint16_t rocketnet_client_transport_test_bound_port( rocketnet_client_transport_t * client_transport )
 {
     return client_transport ? client_transport->bound_port : 0;
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
 const struct rocketnet_counters_t * rocketnet_client_transport_counters( rocketnet_client_transport_t * client_transport )
 {
@@ -2543,6 +2578,7 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
     }
 }
 
+#if ROCKETNET_TEST_SEAMS
 void rocketnet_client_transport_step_legacy_for_test( rocketnet_client_transport_t * client_transport, double time )
 {
     rocketnet_assert( client_transport && client_transport->step_driven &&
@@ -2574,6 +2610,7 @@ const rocketnet_client_receive_buffer_t * rocketnet_client_transport_legacy_rece
     if ( free_count ) *free_count = state->free_count;
     return state->held >= 0 ? &client_transport->receive_buffer[state->held] : NULL;
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
 static void rocketnet_client_thread_function( void * data )
 {
@@ -2595,6 +2632,7 @@ static void rocketnet_client_thread_function( void * data )
 // the link simulator when one is running (a client with a link simulator has
 // no network thread, so the caller's thread owns it); false when none runs,
 // and the settings then take effect at the next connect.
+#if ROCKETNET_TEST_SEAMS
 bool rocketnet_client_transport_network_simulator( struct rocketnet_client_transport_t * client_transport, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent )
 {
     rocketnet_assert( client_transport );
@@ -2607,3 +2645,4 @@ bool rocketnet_client_transport_network_simulator( struct rocketnet_client_trans
     rocketnet_network_simulator_config( client_transport->link_simulator, latency_ms / 1000.0, jitter_ms / 1000.0, (float) packet_loss_percent, (float) duplicate_percent );
     return true;
 }
+#endif // #if ROCKETNET_TEST_SEAMS

@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet_memory.h"
+#include "rocketnet_test_seams.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_server_uring.h"
 
@@ -877,6 +878,7 @@ void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t * u
 
 #endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 
+#if ROCKETNET_TEST_SEAMS
 void rocketnet_server_uring_test_stall_destroy( struct rocketnet_server_uring_t * uring )
 {
     rocketnet_assert( uring );
@@ -888,6 +890,7 @@ void rocketnet_server_uring_test_resume_stop( struct rocketnet_server_uring_t * 
     rocketnet_assert( uring );
     uring->test_stall_destroy = false;
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
 #if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
 
@@ -1612,12 +1615,14 @@ uint64_t rocketnet_server_uring_leaked_transports()
     return 0;
 }
 
+#if ROCKETNET_TEST_SEAMS
 void rocketnet_server_uring_test_resume_stop( struct rocketnet_server_uring_t * ) {}
 
 void rocketnet_server_uring_test_stall_destroy( struct rocketnet_server_uring_t * uring )
 {
     (void) uring;
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
 int rocketnet_server_uring_num_queues( struct rocketnet_server_uring_t * uring )
 {

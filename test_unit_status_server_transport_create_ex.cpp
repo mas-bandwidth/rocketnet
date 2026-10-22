@@ -25,7 +25,7 @@
 #include <string.h>
 
 // Windows has no setenv or unsetenv: the same shim as functional/harness.inc
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && !ROCKETNET_DEVELOPMENT
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && !ROCKETNET_DEV
 static int setenv( const char * name, const char * value, int overwrite )
 {
     size_t length = 0;
@@ -43,7 +43,7 @@ static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
 // by design, so a CI leg pinned by ROCKETNET_SERVER_TRANSPORT would otherwise
 // never reach the struct's list
 
-#if !ROCKETNET_DEVELOPMENT
+#if !ROCKETNET_DEV
 struct env_pin_saved
 {
     bool was_set;
@@ -273,13 +273,13 @@ static void test_server_transport_create_ex_reports_every_status()
         check( status == ROCKETNET_STATUS_INVALID_ADDRESS );
     }
 
-    // S11: development keys in a release build are refused
+    // S11: development keys in a production build (ROCKETNET_DEV=0) are refused
     {
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_dev_config( &config );
         status = -1;
         check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
-        check( status == ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE );
+        check( status == ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION );
     }
 
     // S12: a port-zero address refused by a non-discovering transport (XDP) is
@@ -343,4 +343,4 @@ static void test_server_transport_create_ex_reports_every_status()
 }
 
 REGISTER_UNIT_TEST( test_server_transport_create_ex_reports_every_status );
-#endif // !ROCKETNET_DEVELOPMENT: a development build accepts what this checks is refused
+#endif // !ROCKETNET_DEV: a development build accepts what this checks is refused

@@ -13,6 +13,7 @@
 // create, as they always have.
 
 #include "rocketnet_internal.h"
+#include "rocketnet_test_seams.h"
 #include "rocketnet_config.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_message_object.h"
@@ -164,7 +165,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FILTER_VALUE_BYTES == ROCKETNET_PACKET_FILTER
 // The development network simulator's environment form, read at create in a
 // development library only: ROCKETNET_DEV_CLIENT_LATENCY_MS and the rest; an
 // unset or empty variable leaves the field, a bad value refuses the create.
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
 // one variable: found is rocketnet_platform_getenv's answer (1 set, 0 unset,
 // -1 too long) and text its value
 static bool rn_dev_env_int( const char * name, int found, const char * text, int min_value, int max_value, int * value )
@@ -181,11 +182,11 @@ static bool rn_dev_env_int( const char * name, int found, const char * text, int
     *value = (int) parsed;
     return true;
 }
-#endif // ROCKETNET_DEVELOPMENT
+#endif // ROCKETNET_DEV
 
 template <typename transport_config_t> static bool rn_dev_simulator_env( const char * side, transport_config_t * transport )
 {
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
     char text[64];
     if ( side[0] == 'c' )
         return rn_dev_env_int( "ROCKETNET_DEV_CLIENT_LATENCY_MS", rocketnet_platform_getenv( "ROCKETNET_DEV_CLIENT_LATENCY_MS", text, sizeof( text ) ), text, 0, 60000, &transport->simulated_latency_ms ) &&
@@ -554,6 +555,8 @@ static enum rocketnet_status_t rn_client_config_valid( const struct rocketnet_cl
         return ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
     if ( !rocketnet_config_validate_public_link_simulator( "client", transport, fields, num_fields, rocketnet_public_link_simulator_development() ) )
         return ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+    if ( rocketnet_config_packet_filter_refused( "client", transport->packet_filter ) )
+        return ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION;
     const int requested_payload = transport->max_payload_bytes > 0 ? transport->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
     const int requested_slots = transport->max_fragmented_messages > 0 ? transport->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     if ( !rocketnet_reassembly_memory_allowed( 1, requested_slots, requested_payload, rocketnet_client_reassembly_delivered_capacity( requested_slots ) ) )
@@ -664,12 +667,7 @@ static struct rocketnet_client_t * rn_client_create_current( void * context, con
     return client;
 }
 
-struct rocketnet_client_t * rocketnet_client_create( void * context, const struct rocketnet_client_config_t * config, enum rocketnet_status_t * status )
-{
-    return rocketnet_client_create_testing( context, config, NULL, status );
-}
-
-struct rocketnet_client_t * rocketnet_client_create_testing( void * context, const struct rocketnet_client_config_t * config, const struct rocketnet_client_testing_t * testing, enum rocketnet_status_t * status )
+static struct rocketnet_client_t * rn_client_create( void * context, const struct rocketnet_client_config_t * config, const struct rocketnet_client_testing_t * testing, enum rocketnet_status_t * status )
 {
     if ( status )
         *status = ROCKETNET_STATUS_OK;
@@ -684,6 +682,18 @@ struct rocketnet_client_t * rocketnet_client_create_testing( void * context, con
     }
     return rn_client_create_current( context, read, testing, NULL, 0, status );
 }
+
+struct rocketnet_client_t * rocketnet_client_create( void * context, const struct rocketnet_client_config_t * config, enum rocketnet_status_t * status )
+{
+    return rn_client_create( context, config, NULL, status );
+}
+
+#if ROCKETNET_TEST_SEAMS
+struct rocketnet_client_t * rocketnet_client_create_testing( void * context, const struct rocketnet_client_config_t * config, const struct rocketnet_client_testing_t * testing, enum rocketnet_status_t * status )
+{
+    return rn_client_create( context, config, testing, status );
+}
+#endif // #if ROCKETNET_TEST_SEAMS
 
 static void rn_client_connection_counts( struct rocketnet_message_client_t * message_client, uint64_t counts[RN_CLIENT_COUNT], struct rocketnet_client_transport_stats_t * transport_stats );
 
@@ -1305,6 +1315,8 @@ static enum rocketnet_status_t rn_server_config_valid( const struct rocketnet_se
         return ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
     if ( !rocketnet_config_validate_public_link_simulator( "server", transport, fields, num_fields, rocketnet_public_link_simulator_development() ) )
         return ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+    if ( rocketnet_config_packet_filter_refused( "server", transport->packet_filter ) )
+        return ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION;
     const int requested_payload = transport->max_payload_bytes > 0 ? transport->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
     const int requested_slots = transport->max_fragmented_messages > 0 ? transport->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     const int requested_clients = transport->max_clients > 0 ? transport->max_clients : ROCKETNET_MAX_CLIENTS;
@@ -2038,7 +2050,7 @@ void rocketnet_server_client_stats( const struct rocketnet_server_t * server, in
 // The development network simulator: a development library's calls, and a
 // unit-test build's (the test hooks switch the development posture on).
 
-#if ROCKETNET_DEVELOPMENT || defined(ROCKETNET_LINK_SIMULATOR_TEST_HOOKS)
+#if ROCKETNET_DEV || defined(ROCKETNET_LINK_SIMULATOR_TEST_HOOKS)
 
 static bool rn_network_simulator_valid( const char * who, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent )
 {
@@ -2087,4 +2099,4 @@ void rocketnet_server_network_simulator( struct rocketnet_server_t * server, int
         (void) rocketnet_server_transport_network_simulator( transport, latency_ms, jitter_ms, packet_loss_percent, duplicate_percent );
 }
 
-#endif // ROCKETNET_DEVELOPMENT || defined(ROCKETNET_LINK_SIMULATOR_TEST_HOOKS)
+#endif // ROCKETNET_DEV || defined(ROCKETNET_LINK_SIMULATOR_TEST_HOOKS)
