@@ -71,6 +71,9 @@
 #if !defined(ROCKETNET_FUZZ_HEAP_CHECK) && defined(__SANITIZE_ADDRESS__)
 #define ROCKETNET_FUZZ_HEAP_CHECK 1
 #endif
+#if defined(ROCKETNET_FUZZ_HEAP_CHECK) && defined(_WIN32)
+#undef ROCKETNET_FUZZ_HEAP_CHECK  // the check is for the POSIX environ; MSVC's ASan headers differ
+#endif
 #if defined(ROCKETNET_FUZZ_HEAP_CHECK)
 #include <sanitizer/allocator_interface.h>
 #endif
