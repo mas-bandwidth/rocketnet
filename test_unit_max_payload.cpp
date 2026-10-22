@@ -602,7 +602,7 @@ static void test_client_drops_reserved_and_wrong_direction_types()
         check( !rocketnet_client_protocol_process_packet( &pair.client, packet, 64, pair.time,
                                                            out, (int) sizeof(out), &out_bytes ) );
         check( client_all_counters_sum( &pair.client_counters ) == before + 2 );
-        check( pair.client_counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == packets_before + 1 + i );
+        check( pair.client_counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == packets_before + 1 + (uint64_t) i );
         check( pair.client_counters.values[ROCKETNET_COUNTER_RESERVED_TYPE] == (uint64_t) ( i + 1 ) );
     }
 
@@ -619,7 +619,7 @@ static void test_client_drops_reserved_and_wrong_direction_types()
         check( !rocketnet_client_protocol_process_packet( &pair.client, packet, 64, pair.time,
                                                            out, (int) sizeof(out), &out_bytes ) );
         check( client_all_counters_sum( &pair.client_counters ) == before + 2 );
-        check( pair.client_counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == packets_before + 4 + i );
+        check( pair.client_counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == packets_before + 4 + (uint64_t) i );
         check( pair.client_counters.values[ROCKETNET_COUNTER_WRONG_DIRECTION] == (uint64_t) ( i + 1 ) );
     }
 

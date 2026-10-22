@@ -32,7 +32,7 @@ static void rocketnet_derive_key( uint8_t * out,
     rocketnet_assert( input_bytes + 8 <= (int) sizeof(buffer) );
     memcpy( buffer, input, (size_t) input_bytes );
     memcpy( buffer + input_bytes, context, 8 );
-    crypto_generichash( out, 32, buffer, (size_t) ( input_bytes + 8 ), token_key, 32 );
+    crypto_generichash( out, 32, buffer, (unsigned long long) ( input_bytes + 8 ), token_key, 32 );
     sodium_memzero( buffer, sizeof(buffer) );
 }
 

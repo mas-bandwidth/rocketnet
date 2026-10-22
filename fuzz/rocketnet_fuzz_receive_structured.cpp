@@ -205,7 +205,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
             {
                 if ( packet_bytes <= ROCKETNET_RECEIVE_CEILING )
                 {
-                    memcpy( last_c2s, packet, packet_bytes );
+                    memcpy( last_c2s, packet, (size_t) packet_bytes );
                     last_c2s_bytes = packet_bytes;
                 }
                 rocketnet_network_simulator_send( simulator, &client_address, &server_address, packet, packet_bytes, time );
@@ -261,7 +261,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
         if ( ( action & 0x30 ) == 0x20 && last_c2s_bytes > ROCKETNET_PREFILTER_BYTES + 4 )
         {
             uint8_t corrupt[ROCKETNET_RECEIVE_CEILING];
-            memcpy( corrupt, last_c2s, last_c2s_bytes );
+            memcpy( corrupt, last_c2s, (size_t) last_c2s_bytes );
             const int flips = 1 + ( fuzz_u8( &r ) % 4 );
             for ( int f = 0; f < flips; f++ )
             {

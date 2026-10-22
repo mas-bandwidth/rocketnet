@@ -157,7 +157,7 @@ static void test_server_disconnect_sets_server_disconnected_reason()
         server_disconnected_now = time;
         rocketnet_server_t * server = server_disconnected_server_create( &identity );
         rocketnet_client_t * client = server_disconnected_client_create();
-        const int index = server_disconnected_connect( &identity, server, client, 0x5D00ULL + (uint64_t) h, 300,
+        const int index = server_disconnected_connect( &identity, server, client, 0x5D00 + (uint64_t) h, 300,
                                                        ROCKETNET_CLIENT_STATE_DISCONNECTED, &time );
 
         if ( how == SERVER_DISCONNECTED_BY_DISCONNECT_CLIENT )
@@ -190,7 +190,7 @@ static void test_server_disconnect_sets_server_disconnected_reason()
             check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
         else if ( how == SERVER_DISCONNECTED_BY_STOP_THEN_DESTROY )
             server = server_disconnected_server_create( &identity );
-        server_disconnected_connect( &identity, server, client, 0x5D10ULL + (uint64_t) h, 300,
+        server_disconnected_connect( &identity, server, client, 0x5D10 + (uint64_t) h, 300,
                                      ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED, &time );
 
         rn_test_client_stop_and_destroy( client );
@@ -391,10 +391,11 @@ static void server_disconnect_now_case( bool all )
     const int other_index = all ? server_disconnected_connect( &identity, server, other, 0x5F10ULL, 300,
                                                                ROCKETNET_CLIENT_STATE_DISCONNECTED, &time ) : index;
     check( rocketnet_server_num_connected_clients( server ) == ( all ? 2 : 1 ) );
+    check( index >= 0 && other_index >= 0 );
 
     // an in-place start, open when the disconnect comes
     rn_message_object_t * object = &rocketnet_server_message_server( server )->object;
-    check( rocketnet_server_start_message( server, index, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 16 ) != NULL );
+    check( rocketnet_server_start_message( server, (uint64_t) index, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 16 ) != NULL );
     check( object->in_place == 1 );
     check( object->pending_connection == (int) index );
     const uint64_t drops = rn_server_stats_of( server ).messages_dropped_not_connected;
@@ -413,9 +414,9 @@ static void server_disconnect_now_case( bool all )
     server_disconnect_now_check( object->in_place == 0 );
     server_disconnect_now_check( object->pending_connection == -1 );
     server_disconnect_now_check( rocketnet_server_finish_message( server, 16 ) == 0 );
-    server_disconnect_now_check( rocketnet_server_start_message( server, index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 16 ) == NULL );
+    server_disconnect_now_check( rocketnet_server_start_message( server, (uint64_t) index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 16 ) == NULL );
     server_disconnect_now_check( rn_server_stats_of( server ).messages_dropped_not_connected == drops + 1 );
-    server_disconnect_now_check( rocketnet_server_start_message( server, other_index, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 16 ) == NULL );
+    server_disconnect_now_check( rocketnet_server_start_message( server, (uint64_t) other_index, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 16 ) == NULL );
     server_disconnect_now_check( rn_server_stats_of( server ).messages_dropped_not_connected == drops + 2 );
     check( server_disconnect_now_failures == 0 );
 

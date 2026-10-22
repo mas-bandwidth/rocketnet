@@ -35,7 +35,7 @@ static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] 
 #define RELIABLE_COUNT          40
 #define MESSAGE_BYTES           200
 
-static int send_burst( struct rocketnet_client_t * client, int channel, int reliability, int count )
+static int send_burst( struct rocketnet_client_t * client, int channel, enum rocketnet_reliability_t reliability, int count )
 {
     for ( int i = 0; i < count; i++ )
     {

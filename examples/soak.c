@@ -90,7 +90,7 @@ struct soak_peer_t {
 };
 
 static uint8_t soak_byte( uint64_t seed, uint64_t client_idx, uint32_t kind, uint32_t seq, int i ) {
-    uint64_t x = seed ^ ( client_idx * 0x9e3779b185ebca87ULL ) ^
+    uint64_t x = seed ^ ( client_idx * UINT64_C( 0x9e3779b185ebca87 ) ) ^
                  ( (uint64_t) kind << 40 ) ^ ( (uint64_t) seq << 16 ) ^ (uint64_t) i;
     return (uint8_t) ( ( x ^ ( x >> 17 ) ^ ( x >> 33 ) ) & 0xffu );
 }

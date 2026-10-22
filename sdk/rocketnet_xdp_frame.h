@@ -47,12 +47,12 @@ static inline uint16_t rocketnet_xdp_frame_checksum( const uint8_t * data, size_
     uint32_t sum = 0;
     while ( bytes >= 2 )
     {
-        sum += ( (uint16_t) data[0] << 8 ) | data[1];
+        sum += ( (uint32_t) data[0] << 8 ) | data[1];
         data += 2;
         bytes -= 2;
     }
     if ( bytes )
-        sum += ( (uint16_t) data[0] << 8 );
+        sum += ( (uint32_t) data[0] << 8 );
     while ( sum >> 16 )
         sum = ( sum & 0xFFFF ) + ( sum >> 16 );
     return (uint16_t) ~sum;
@@ -69,20 +69,20 @@ static inline uint16_t rocketnet_xdp_frame_ipv6_udp_checksum(
     int i;
 
     for ( i = 0; i < 16; i += 2 )
-        sum += ( (uint16_t) src[i] << 8 ) | src[i + 1];
+        sum += ( (uint32_t) src[i] << 8 ) | src[i + 1];
     for ( i = 0; i < 16; i += 2 )
-        sum += ( (uint16_t) dst[i] << 8 ) | dst[i + 1];
+        sum += ( (uint32_t) dst[i] << 8 ) | dst[i + 1];
     sum += (uint16_t) ( udp_length >> 16 );
     sum += (uint16_t) ( udp_length & 0xFFFF );
     sum += 0x0011; // three zero bytes then next header 17
 
     for ( i = 0; i < 8; i += 2 )
-        sum += ( (uint16_t) udp_header[i] << 8 ) | udp_header[i + 1];
+        sum += ( (uint32_t) udp_header[i] << 8 ) | udp_header[i + 1];
 
     for ( i = 0; i + 1 < payload_bytes; i += 2 )
-        sum += ( (uint16_t) udp_header[8 + i] << 8 ) | udp_header[9 + i];
+        sum += ( (uint32_t) udp_header[8 + i] << 8 ) | udp_header[9 + i];
     if ( payload_bytes & 1 )
-        sum += ( (uint16_t) udp_header[8 + payload_bytes - 1] << 8 );
+        sum += ( (uint32_t) udp_header[8 + payload_bytes - 1] << 8 );
 
     while ( sum >> 16 )
         sum = ( sum & 0xFFFF ) + ( sum >> 16 );
@@ -190,7 +190,7 @@ static inline int rocketnet_xdp_frame_build(
         f[payload_index - 2] = 0;
         f[payload_index - 1] = 0;
         uint16_t udp_check = rocketnet_xdp_frame_ipv6_udp_checksum(
-            f + 22, f + 38, ROCKETNET_UDP_HEADER_BYTES + payload_bytes,
+            f + 22, f + 38, (uint32_t) ( ROCKETNET_UDP_HEADER_BYTES + payload_bytes ),
             f + payload_index - 8, payload_bytes );
         rocketnet_xdp_frame_write_be16( f + payload_index - 2, udp_check );
     }
@@ -230,7 +230,7 @@ static inline bool rocketnet_xdp_frame_parse(
     if ( f[0] == 0xFF && f[1] == 0xFF )
         return false;
 
-    uint16_t ethertype = ( (uint16_t) f[12] << 8 ) | f[13];
+    uint16_t ethertype = (uint16_t) ( ( f[12] << 8 ) | f[13] );
     memset( out_from, 0, sizeof( *out_from ) );
 
     if ( ethertype == ROCKETNET_ETHERTYPE_IP )
@@ -243,7 +243,7 @@ static inline bool rocketnet_xdp_frame_parse(
         if ( frame_bytes < (size_t) header_bytes )
             return false;
 
-        const uint16_t udp_len = ( (uint16_t) f[header_bytes - 4] << 8 ) | f[header_bytes - 3];
+        const uint16_t udp_len = (uint16_t) ( ( f[header_bytes - 4] << 8 ) | f[header_bytes - 3] );
         if ( udp_len < ROCKETNET_UDP_HEADER_BYTES )
             return false;
 
@@ -252,7 +252,7 @@ static inline bool rocketnet_xdp_frame_parse(
         out_from->data.ipv4[1] = f[27];
         out_from->data.ipv4[2] = f[28];
         out_from->data.ipv4[3] = f[29];
-        out_from->port = ( (uint16_t) f[header_bytes - 8] << 8 ) | f[header_bytes - 7];
+        out_from->port = (uint16_t) ( ( f[header_bytes - 8] << 8 ) | f[header_bytes - 7] );
     }
     else if ( ethertype == ROCKETNET_ETHERTYPE_IPV6 )
     {
@@ -266,14 +266,14 @@ static inline bool rocketnet_xdp_frame_parse(
         if ( frame_bytes < (size_t) header_bytes )
             return false;
 
-        const uint16_t udp_len = ( (uint16_t) f[header_bytes - 4] << 8 ) | f[header_bytes - 3];
+        const uint16_t udp_len = (uint16_t) ( ( f[header_bytes - 4] << 8 ) | f[header_bytes - 3] );
         if ( udp_len < ROCKETNET_UDP_HEADER_BYTES )
             return false;
 
         out_from->type = ROCKETNET_ADDRESS_IPV6;
         for ( int i = 0; i < 8; ++i )
-            out_from->data.ipv6[i] = ( (uint16_t) f[22 + 2 * i] << 8 ) | f[23 + 2 * i];
-        out_from->port = ( (uint16_t) f[header_bytes - 8] << 8 ) | f[header_bytes - 7];
+            out_from->data.ipv6[i] = (uint16_t) ( ( f[22 + 2 * i] << 8 ) | f[23 + 2 * i] );
+        out_from->port = (uint16_t) ( ( f[header_bytes - 8] << 8 ) | f[header_bytes - 7] );
     }
     else
     {
@@ -286,8 +286,8 @@ static inline bool rocketnet_xdp_frame_parse(
     // bytes past the UDP length (link-layer padding) are not payload; a UDP
     // length past the frame end is refused, as server_xdp_udp drops it
 
-    const uint16_t udp_len = ( (uint16_t) f[header_bytes - 4] << 8 ) | f[header_bytes - 3];
-    payload_bytes = (int) ( frame_bytes - header_bytes );
+    const uint16_t udp_len = (uint16_t) ( ( f[header_bytes - 4] << 8 ) | f[header_bytes - 3] );
+    payload_bytes = (int) ( frame_bytes - (size_t) header_bytes );
     if ( (int) udp_len - ROCKETNET_UDP_HEADER_BYTES > payload_bytes )
         return false;
     payload_bytes = (int) udp_len - ROCKETNET_UDP_HEADER_BYTES;
@@ -354,7 +354,7 @@ static inline bool rocketnet_xdp_frame_receive(
         return false;
     }
 
-    const uint16_t ethertype = ( (uint16_t) f[12] << 8 ) | f[13];
+    const uint16_t ethertype = (uint16_t) ( ( f[12] << 8 ) | f[13] );
 
     int family;
     if ( ethertype == ROCKETNET_ETHERTYPE_IP )
@@ -548,7 +548,7 @@ static inline struct rocketnet_xdp_reply_mac_entry_t * rocketnet_xdp_reply_macs_
     const uint32_t slot = rocketnet_xdp_reply_macs_slot( address );
     for ( int i = 0; i < ROCKETNET_XDP_REPLY_MAC_PROBES; ++i )
     {
-        struct rocketnet_xdp_reply_mac_entry_t * entry = &table->entries[( slot + i ) & ( ROCKETNET_XDP_REPLY_MAC_ENTRIES - 1 )];
+        struct rocketnet_xdp_reply_mac_entry_t * entry = &table->entries[( slot + (uint32_t) i ) & ( ROCKETNET_XDP_REPLY_MAC_ENTRIES - 1 )];
         if ( entry->state == ROCKETNET_XDP_REPLY_MAC_EMPTY )
             return NULL;
         if ( entry->state == ROCKETNET_XDP_REPLY_MAC_LIVE && rocketnet_address_equal( &entry->address, address ) )
@@ -576,7 +576,7 @@ static inline void rocketnet_xdp_reply_macs_learn( struct rocketnet_xdp_reply_ma
         struct rocketnet_xdp_reply_mac_entry_t * oldest = NULL;
         for ( int i = 0; i < ROCKETNET_XDP_REPLY_MAC_PROBES; ++i )
         {
-            struct rocketnet_xdp_reply_mac_entry_t * candidate = &table->entries[( slot + i ) & ( ROCKETNET_XDP_REPLY_MAC_ENTRIES - 1 )];
+            struct rocketnet_xdp_reply_mac_entry_t * candidate = &table->entries[( slot + (uint32_t) i ) & ( ROCKETNET_XDP_REPLY_MAC_ENTRIES - 1 )];
             if ( candidate->state != ROCKETNET_XDP_REPLY_MAC_LIVE )
             {
                 entry = candidate;
