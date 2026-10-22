@@ -8493,6 +8493,8 @@ extern void windows_connreset_send_to_closed_port_rio_ipv6();
 extern void windows_client_connreset_server_gone_ipv4();
 extern void windows_client_connreset_server_gone_ipv6();
 extern void windows_connreset_child_client();
+extern void windows_connreset_child_parent();
+extern void windows_connreset_child_dies_with_its_parent();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 // A destroyed client's receive thread always exits: destroy stores quit and
@@ -9065,6 +9067,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_windows_client_connreset_server_gone_ipv4", windows_client_connreset_server_gone_ipv4, NULL },
     { "test_windows_client_connreset_server_gone_ipv6", windows_client_connreset_server_gone_ipv6, NULL },
     { "test_windows_connreset_child_client", windows_connreset_child_client, NULL },
+    { "test_windows_connreset_child_parent", windows_connreset_child_parent, NULL },
+    { "test_windows_connreset_child_dies_with_its_parent", windows_connreset_child_dies_with_its_parent, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 };
 
