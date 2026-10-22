@@ -147,6 +147,53 @@ static bool soak_check_msg( const uint8_t * data, int len, uint64_t seed, uint64
     return true;
 }
 
+// the peak resident set so far, in bytes: VmHWM from /proc/self/status on
+// Linux, 0 elsewhere (the shutdown check below then has nothing to compare)
+static uint64_t soak_peak_rss_bytes( void ) {
+    uint64_t kb = 0;
+#if defined( __linux__ )
+    FILE * f = soak_fopen( "/proc/self/status", "r" );
+    char line[256];
+    if ( f ) {
+        while ( fgets( line, sizeof( line ), f ) )
+            if ( strncmp( line, "VmHWM:", 6 ) == 0 ) kb = (uint64_t) strtoull( line + 6, NULL, 10 );
+        fclose( f );
+    }
+#endif
+    return kb * 1024;
+}
+
+// The lifecycle's cost, timed by phase: create, start, connect, and the
+// shutdown, which must never need more memory than the run did.
+struct soak_lifecycle_t {
+    double server_create_ms, server_start_ms, clients_create_ms;
+    double clients_destroy_ms, server_stop_ms, server_destroy_ms;
+    uint64_t running_peak_rss, shutdown_peak_rss;
+    bool shut_down;
+};
+static struct soak_lifecycle_t g_life;
+
+// every client stopped and destroyed, then the server stopped, then destroyed
+static void soak_shutdown( struct rocketnet_client_t ** clients, int num_clients, struct rocketnet_server_t * server ) {
+    g_life.running_peak_rss = soak_peak_rss_bytes();
+    double t0 = rocketnet_time();
+    if ( clients ) for ( int c = 0; c < num_clients; c++ ) if ( clients[c] ) { rn_cli_client_stop_and_destroy( clients[c] ); clients[c] = NULL; }
+    double t1 = rocketnet_time();
+    if ( server ) { rocketnet_server_stop( server ); rn_cli_server_wait_stopped( server ); }
+    double t2 = rocketnet_time();
+    if ( server ) rocketnet_server_destroy( server );
+    double t3 = rocketnet_time();
+    g_life.clients_destroy_ms = ( t1 - t0 ) * 1000.0;
+    g_life.server_stop_ms = ( t2 - t1 ) * 1000.0;
+    g_life.server_destroy_ms = ( t3 - t2 ) * 1000.0;
+    g_life.shutdown_peak_rss = soak_peak_rss_bytes();
+    g_life.shut_down = true;
+    printf( "lifecycle: server_create_ms=%.3f server_start_ms=%.3f clients_create_ms=%.3f clients_destroy_ms=%.3f server_stop_ms=%.3f server_destroy_ms=%.3f running_peak_rss=%" PRIu64 " shutdown_peak_rss=%" PRIu64 "\n",
+            g_life.server_create_ms, g_life.server_start_ms, g_life.clients_create_ms, g_life.clients_destroy_ms, g_life.server_stop_ms, g_life.server_destroy_ms,
+            g_life.running_peak_rss, g_life.shutdown_peak_rss );
+    fflush( stdout );
+}
+
 static int cmp_double( const void * a, const void * b ) {
     double da = *(const double *) a, db = *(const double *) b;
     return ( da > db ) - ( da < db );
@@ -205,12 +252,17 @@ int main( int argc, char ** argv ) {
     s_cfg.sequenced_messages_held = c_cfg.sequenced_messages_held = 8;
     s_cfg.message_resend_delay_min_ms = c_cfg.message_resend_delay_min_ms = s_cfg.message_resend_delay_initial_ms = c_cfg.message_resend_delay_initial_ms = 200; s_cfg.message_resend_delay_max_ms = c_cfg.message_resend_delay_max_ms = 500;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    double phase_start = rocketnet_time();
     server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &s_cfg, &create_status );
+    g_life.server_create_ms = ( rocketnet_time() - phase_start ) * 1000.0;
     // the development network simulator: lose 1% of every packet both ways
     if ( server )
         rocketnet_server_network_simulator( server, 0, 0, 1, 0 );
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
-    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    phase_start = rocketnet_time();
+    const enum rocketnet_status_t start_status = server ? rocketnet_server_start( server ) : ROCKETNET_STATUS_OK;
+    g_life.server_start_ms = ( rocketnet_time() - phase_start ) * 1000.0;
+    if ( server && start_status != ROCKETNET_STATUS_OK )
     {
         rn_cli_server_stop_and_destroy( server );
         server = NULL;
@@ -220,6 +272,7 @@ int main( int argc, char ** argv ) {
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     CHECK( rocketnet_server_ipv4_address( server, addr, sizeof( addr ) ) );
     rocketnet_server_public_key( server, server_public_key );
+    phase_start = rocketnet_time();
     for ( uint64_t c = 0; c < (uint64_t) num_clients; c++ ) {
         char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
         const time_t token_time = time( NULL );
@@ -237,6 +290,7 @@ int main( int argc, char ** argv ) {
         }
         CHECK( clients[c] != NULL );
     }
+    g_life.clients_create_ms = ( rocketnet_time() - phase_start ) * 1000.0;
     // the handshake crosses the client and server worker threads, which need
     // real time to run: frames with no real time between them can finish
     // before a reply arrives. The connect is bounded by real time, like the
@@ -419,9 +473,10 @@ int main( int argc, char ** argv ) {
     }
     CHECK( disconnected );
     CHECK( rocketnet_server_num_connected_clients( server ) == 0 );
-    for ( int c = 0; c < num_clients; c++ ) { rn_cli_client_stop_and_destroy( clients[c] ); clients[c] = NULL; }
-    rn_cli_server_stop_and_destroy( server ); server = NULL;
+    soak_shutdown( clients, num_clients, server ); server = NULL;
     rocketnet_term(); inited = false;
+    // destroy never needs more memory than the run did (Linux: VmHWM)
+    CHECK( g_life.shutdown_peak_rss <= g_life.running_peak_rss );
     CHECK( g_alloc.live_allocs == 0 && g_alloc.live_bytes == 0 );
     qsort( srv_us, (size_t) soak_ticks, sizeof( double ), cmp_double );
     qsort( cli_us, (size_t) soak_ticks, sizeof( double ), cmp_double );
@@ -431,13 +486,17 @@ int main( int argc, char ** argv ) {
     CHECK( fp != NULL );
     const char * m_names[] = { "sent_reliable", "recv_reliable", "acked_reliable", "sent_sequenced", "recv_sequenced", "corrupt", "seq_gaps", "peak_bytes",
                                "server_tick_us_p50", "server_tick_us_p99", "server_tick_us_max", "client_frame_us_p50", "client_frame_us_p99", "client_frame_us_max",
-                               "client_per_peer_us_p50", "client_per_peer_us_p99", "server_pkts_per_s_tx", "server_pkts_per_s_rx", "server_bytes_per_s_tx", "server_bytes_per_s_rx", "allocs_per_tick" };
+                               "client_per_peer_us_p50", "client_per_peer_us_p99", "server_pkts_per_s_tx", "server_pkts_per_s_rx", "server_bytes_per_s_tx", "server_bytes_per_s_rx", "allocs_per_tick",
+                               "server_create_ms", "server_start_ms", "clients_create_ms", "clients_destroy_ms", "server_stop_ms", "server_destroy_ms", "running_peak_rss", "shutdown_peak_rss" };
     double m_vals[] = { (double) sent_rel, (double) recv_rel, (double) acked_total, (double) sent_seq, (double) recv_seq, (double) corrupt, (double) gaps, (double) g_alloc.peak_bytes,
                         srv_p50, srv_p99, srv_max, cli_p50, cli_p99, cli_max, cli_p50 / num_clients, cli_p99 / num_clients,
-                        (double) srv_pkts_tx / seconds, (double) srv_pkts_rx / seconds, (double) srv_bytes_tx / seconds, (double) srv_bytes_rx / seconds, (double) g_alloc.steady_allocs / soak_ticks };
+                        (double) srv_pkts_tx / seconds, (double) srv_pkts_rx / seconds, (double) srv_bytes_tx / seconds, (double) srv_bytes_rx / seconds, (double) g_alloc.steady_allocs / soak_ticks,
+                        g_life.server_create_ms, g_life.server_start_ms, g_life.clients_create_ms, g_life.clients_destroy_ms, g_life.server_stop_ms, g_life.server_destroy_ms,
+                        (double) g_life.running_peak_rss, (double) g_life.shutdown_peak_rss };
     fprintf( fp, "clients\tseconds\tseed\ttransport\tbuild\tmetric\tvalue\n" );
-    for ( int m = 0; m < 21; m++ )
-        fprintf( fp, m < 8 ? "%d\t%d\t%" PRIu64 "\t%s\tRelease\t%s\t%.0f\n" : "%d\t%d\t%" PRIu64 "\t%s\tRelease\t%s\t%.2f\n", num_clients, seconds, seed, transport_name, m_names[m], m_vals[m] );
+    const int num_metrics = (int) ( sizeof( m_vals ) / sizeof( m_vals[0] ) );
+    for ( int m = 0; m < num_metrics; m++ )
+        fprintf( fp, m < 8 || m >= num_metrics - 2 ? "%d\t%d\t%" PRIu64 "\t%s\tRelease\t%s\t%.0f\n" : "%d\t%d\t%" PRIu64 "\t%s\tRelease\t%s\t%.2f\n", num_clients, seconds, seed, transport_name, m_names[m], m_vals[m] );
     fclose( fp );
     printf( "soak: clients=%d seconds=%d seed=%" PRIu64 " transport=%s rel=%" PRIu64 "/%" PRIu64 " seq=%" PRIu64 "/%" PRIu64 " srv_p50=%.1fus srv_p99=%.1fus cli_peer_p50=%.2fus cli_peer_p99=%.2fus (budget 100us) allocs/tick=%.2f peak_bytes=%" PRIu64 "\n",
             num_clients, seconds, seed, transport_name, recv_rel, sent_rel, recv_seq, sent_seq,
@@ -446,8 +505,7 @@ int main( int argc, char ** argv ) {
     exit_code = 0;
 
 cleanup:
-    if ( clients ) for ( int c = 0; c < num_clients; c++ ) if ( clients[c] ) rn_cli_client_stop_and_destroy( clients[c] );
-    if ( server ) rn_cli_server_stop_and_destroy( server );
+    if ( !g_life.shut_down ) soak_shutdown( clients, num_clients, server );
     if ( inited ) rocketnet_term();
     free( index_client ); free( clients ); free( c2s ); free( s2c ); free( srv_us ); free( cli_us );
     // PASS after the cleanup, so it stays the last line
