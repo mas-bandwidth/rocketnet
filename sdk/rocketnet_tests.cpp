@@ -13766,6 +13766,8 @@ void rocketnet_test_config_override_logging()
 
 void rocketnet_log_level_override_apply( const char * value );
 
+extern "C" void rocketnet_test_c_caller_log_level( int level );
+
 void rocketnet_test_log_level_refuses_out_of_range()
 {
     // the level this test found, restored at the end: moving the level must
@@ -13777,17 +13779,13 @@ void rocketnet_test_log_level_refuses_out_of_range()
     // value outside that range leaves the level in force rather than
     // storing it, so a caller cannot silence the library by accident
 
-    // -1 is what a C caller can pass; it is copied in, since a C++ cast of a
-    // value outside the enum's range of values is unspecified
-
-    const int minus_one = -1;
-    enum rocketnet_log_level_t below_none;
-    memcpy( &below_none, &minus_one, sizeof( below_none ) );
+    // -1 is what a C caller can pass, so it is passed from C (test/c_caller.c):
+    // in C++ a value outside the enum's range of values cannot be formed
 
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
-    rocketnet_log_level( below_none );
+    rocketnet_test_c_caller_log_level( -1 );
     rocketnet_check( rocketnet_log_level_current() == ROCKETNET_LOG_LEVEL_INFO );
-    rocketnet_log_level( (enum rocketnet_log_level_t) 6 );
+    rocketnet_test_c_caller_log_level( 6 );
     rocketnet_check( rocketnet_log_level_current() == ROCKETNET_LOG_LEVEL_INFO );
 
     // every defined level round-trips

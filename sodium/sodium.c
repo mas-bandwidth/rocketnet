@@ -24187,7 +24187,7 @@ crypto_scalarmult_curve25519_ref10(unsigned char *q,
 
     swap = 0;
     for (pos = 254; pos >= 0; --pos) {
-        b = t[pos / 8] >> (pos & 7);
+        b = (unsigned int) (t[pos / 8] >> (pos & 7));
         b &= 1;
         swap ^= b;
         fe25519_cswap(x2, x3, swap);

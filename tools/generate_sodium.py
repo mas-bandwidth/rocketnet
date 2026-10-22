@@ -241,6 +241,10 @@ UPSTREAM_CONVERSIONS = {
         (None, r'BLAKE2B_COMPRESS_V1\(a, b, block, S->t\[0\], S->t\[1\], S->f\[0\], S->f\[1\]\)',
          'BLAKE2B_COMPRESS_V1(a, b, block, (int64_t) S->t[0], (int64_t) S->t[1], (int64_t) S->f[0], (int64_t) S->f[1])', 1),
     ],
+    'crypto_scalarmult/curve25519/ref10/x25519_ref10.c': [
+        # One bit of the clamped scalar byte: the promoted int is 0 or 1.
+        ('crypto_scalarmult_curve25519_ref10(', r'^(\s+)b = (t\[pos / 8\] >> \(pos & 7\));$', r'\1b = (unsigned int) (\2);', 1),
+    ],
     'crypto_stream/salsa20/stream_salsa20.c': [
         (None, r'^#if HAVE_AMD64_ASM$', '#if defined(HAVE_AMD64_ASM) && HAVE_AMD64_ASM', 1),
     ],
