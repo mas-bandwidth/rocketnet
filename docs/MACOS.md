@@ -119,10 +119,14 @@ pause is the re-probe (`rocketnet_msgx_send_weather`, `rocketnet_msgx_pause`,
 paused while another batches. `rocketnet_platform_socket_pump` reports the live
 pump, so a paused socket reads as `portable`.
 
-**portable** is the per-packet `sendto` / `recvmsg` loop
+**portable** uses per-packet `sendto` / `recvmsg` calls
 (`rocketnet_platform_socket_send_packet` and
 `rocketnet_platform_socket_receive_packet` in the macOS section of
-`sdk/rocketnet_platform.cpp`).
+`sdk/rocketnet_platform.cpp`). For the portable server, the caller copies
+borrowed, sealed send frames into one of three owned TX banks outside the lock;
+a try-lock publishes bank indices to the send worker, which makes the
+per-packet send calls. Receive syscalls and shared protocol work remain on the caller.
+This does not change the `msgx` pump or portable client path.
 
 ### Pinning a transport
 
@@ -201,12 +205,11 @@ that waits in frame sync, put back to the standard policy afterwards
 `rocketnet_frame_sync_elevate_priority` returns before that call when
 `rocketnet_platform_thread_priority_enabled` is false.
 
-The functional case `test_thread_priority_timing_receive_gaps`
-(`functional/thread_priority_timing.cpp`, `priority_timing_run`) reads the I/O
-thread's scheduling and QoS class from inside the thread and checks both: the
-class is never `QOS_CLASS_USER_INTERACTIVE`, on or off, and with the switch on
-the thread reads back `SCHED_RR` at `sched_get_priority_min( SCHED_RR )` or the
-create counted a refusal.
+The deterministic cases in `test_unit_thread_priority.cpp` verify the client
+and server priority requests, the off switch, and refusal counting and logging
+through a fake platform call table. The functional scheduler readback and
+App Nap timing cases have been retired: OS scheduling and process throttling
+are outside RocketNet's control.
 
 A game that wants the client's I/O on a thread it owns sets
 `ROCKETNET_CLIENT_STEP_DRIVEN=1`: the

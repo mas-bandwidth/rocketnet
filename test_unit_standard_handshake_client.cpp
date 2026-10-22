@@ -240,6 +240,19 @@ static int standard_handshake_client_generate( const char * id, uint8_t * out, i
                                                                     payload, sizeof( payload ), &payload_bytes ) == 1 );
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
 
+    // A delayed cookie with this attempt's salt but an arbitrary MAC cannot
+    // rewind the authenticated challenge or alter its stored response.
+    uint8_t stored_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
+    memcpy( stored_response, client.stored_response, sizeof(stored_response) );
+    const double received = client.last_receive_time;
+    cookie[sizeof(cookie) - 1] ^= 1;
+    rocketnet_unit_check( !rocketnet_client_protocol_process_packet( &client, cookie, sizeof(cookie), 1000.26,
+                                                                     payload, sizeof(payload), &payload_bytes ) );
+    rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+    rocketnet_unit_check( client.last_receive_time == received );
+    rocketnet_unit_check( memcmp( stored_response, client.stored_response, sizeof(stored_response) ) == 0 );
+    rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_STATE] == 1 );
+
     // state 3: the response is the stored bytes, sent at the scheduled rate
     rocketnet_client_protocol_update( &client, 1000.31, out + written, &packet_bytes );
     rocketnet_unit_check( packet_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );

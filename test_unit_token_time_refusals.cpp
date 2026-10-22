@@ -226,20 +226,19 @@ static void test_token_with_a_long_lifetime_is_accepted()
     token_time_teardown( &t );
 }
 
-// a token created past the skew is refused by the production configuration,
-// with no lifetime limit configured anywhere (the check was once skipped
-// unless a lifetime limit was set, and no production path ever set one)
-static void test_token_created_in_future_refused_by_production_config()
-{
-    struct token_time_server_t t;
-    token_time_setup( &t );
-    token_time_refuse( &t, TOKEN_TIME_NOW + 6, TOKEN_TIME_NOW + ( 1ULL << 40 ),
-                       ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE );
-    token_time_teardown( &t );
-}
-
 REGISTER_UNIT_TEST( test_token_time_refusals_are_distinct );
 REGISTER_UNIT_TEST( test_token_expiring_one_second_ahead_is_accepted );
 REGISTER_UNIT_TEST( test_token_created_at_the_skew_limit_is_accepted );
 REGISTER_UNIT_TEST( test_token_with_a_long_lifetime_is_accepted );
-REGISTER_UNIT_TEST( test_token_created_in_future_refused_by_production_config );
+
+static void test_token_future_creation_without_lifetime_limit()
+{
+    struct token_time_server_t t;
+    token_time_setup( &t );
+    token_time_refuse( &t, TOKEN_TIME_NOW + 6, TOKEN_TIME_NOW + 10,
+                       ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE );
+    token_time_accept( &t, TOKEN_TIME_NOW + 5, TOKEN_TIME_NOW + 10000 );
+    token_time_teardown( &t );
+}
+
+REGISTER_UNIT_TEST( test_token_future_creation_without_lifetime_limit );

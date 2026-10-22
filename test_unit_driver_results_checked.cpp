@@ -4,6 +4,7 @@
 // wall clock. The clock argument is 1000.0. This file is compiled into the
 // loopback translation unit, which includes the server transport.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "test/fake_client_driver.h"
 
@@ -372,7 +373,8 @@ struct transport_results_server_lie_t
 };
 
 static void transport_results_server_destroy( void * ) {}
-static bool transport_results_server_stop( void * ) { return true; }
+static void transport_results_server_stop( void * ) {}
+static bool transport_results_server_stopped( void * ) { return true; }
 static void transport_results_server_send_batch( void *, const rocketnet_platform_send_t *, int ) {}
 
 static int transport_results_server_receive_batch( void * transport, rocketnet_address_t * from, uint8_t * data, int stride, int * bytes, int capacity )
@@ -435,10 +437,10 @@ static rocketnet_server_transport_t * transport_results_make_server( transport_r
     if ( !server )
         printf( "create_ex status=%d\n", create_status );
     rocketnet_unit_check( server );
-    rocketnet_server_transport_io_close( &server->io );
+    rn_test_server_io_stop_and_close( &server->io );
     memset( operations, 0, sizeof( *operations ) );
     operations->destroy = transport_results_server_destroy;
-    operations->stop = transport_results_server_stop;
+    operations->stop = transport_results_server_stop; operations->stopped = transport_results_server_stopped;
     operations->send_batch = transport_results_server_send_batch;
     operations->receive_batch = transport_results_server_receive_batch;
     server->io.instance = lie;
@@ -487,7 +489,7 @@ static void test_transport_results_server_receive_checks_counts()
     rocketnet_unit_check( server->transport_faults == faults_after_over + 2 );
     rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == received_before + 1 );
 
-    rocketnet_server_transport_destroy( server );
+    rn_test_server_transport_stop_and_destroy( server );
     printf( "test_transport_results_server_receive_checks_counts\n" );
 }
 REGISTER_UNIT_TEST( test_transport_results_server_receive_checks_counts );
@@ -504,7 +506,7 @@ static void test_transport_results_server_truncated_datagram_refused()
     rocketnet_unit_check( server->transport_faults == 0 );
     rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == before + 1 );
     rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == received_before + 1 );
-    rocketnet_server_transport_destroy( server );
+    rn_test_server_transport_stop_and_destroy( server );
 }
 REGISTER_UNIT_TEST( test_transport_results_server_truncated_datagram_refused );
 
@@ -556,7 +558,7 @@ static void test_loopback_transport_io_results_matches_destination_or_wildcard()
     rocketnet_unit_check( bytes == (int) sizeof( data ) );
     rocketnet_unit_check( memcmp( buf, data, sizeof( data ) ) == 0 );
 
-    rocketnet_server_transport_io_close( &server );
+    rn_test_server_io_stop_and_close( &server );
     rocketnet_client_transport_io_close( &client );
 
     rocketnet_unit_check( rocketnet_address_parse( &server_address, "0.0.0.0:0" ) );
@@ -569,7 +571,7 @@ static void test_loopback_transport_io_results_matches_destination_or_wildcard()
     rocketnet_unit_check( bytes == (int) sizeof( data ) );
     rocketnet_unit_check( memcmp( buf, data, sizeof( data ) ) == 0 );
 
-    rocketnet_server_transport_io_close( &server );
+    rn_test_server_io_stop_and_close( &server );
     rocketnet_client_transport_io_close( &client );
     printf( "test_loopback_transport_io_results_matches_destination_or_wildcard\n" );
 }

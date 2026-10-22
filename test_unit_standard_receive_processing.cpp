@@ -64,7 +64,7 @@ static const rn_standard_vector_t standard_receive_processing_table[] =
         "00000000000000000000000000000000000000000000000000000000000000000000000000000000"
         "00000000000000000000000000000000000000000000000000000000000000000000000000000000"
         "00000000000000000000000000000000000000000000000000000000000000000000000000000000"
-        "000000000000000000000000000000000000000000000000000000000000000000" ),
+        "00000000000000000000000000" ),
     RN_STANDARD_VECTOR( "t10.prefilter-wrong-epoch", "0501b7590100" ),
     RN_STANDARD_VECTOR( "t10.prefilter-wrong-value", "050000000000" ),
     RN_STANDARD_VECTOR( "t10.reserved-type", "0a00b7590100" ),
@@ -351,7 +351,7 @@ static void standard_server_setup( struct standard_server_t * fixture, bool add_
         struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( fixture->server.encryption_map, index );
         memcpy( mapping->keys.session_client_to_server, standard_client_to_server_key, ROCKETNET_KEY_BYTES );
         memcpy( mapping->connection_salt, standard_salt, ROCKETNET_CONNECTION_SALT_BYTES );
-        mapping->client_index = connected ? 0 : -1;
+        mapping->control->client_index = connected ? 0 : -1;
     }
 }
 

@@ -28,8 +28,8 @@
 // action it implements.
 //
 // The message objects (sdk/rocketnet_message_object.h) hold one endpoint per
-// connection: rn_message_connection_t is an rn_endpoint_t plus the object's own
-// per-slot state (the slot binding and the receive views). The objects keep the
+// connection: rn_message_connection_t is an rn_endpoint_t that points to the
+// object's compact per-slot state (the slot binding and receive views). The objects keep the
 // transport link, the slots machine and the update order.
 
 #define RN_ENDPOINT_WRITE_IDLE              0   // no write pass open

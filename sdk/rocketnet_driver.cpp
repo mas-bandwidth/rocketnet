@@ -143,7 +143,7 @@ bool rocketnet_server_transport_io_open( const rocketnet_server_transport_io_ope
     void * context, const rocketnet_server_transport_io_config_t * config,
     rocketnet_address_t * bind, rocketnet_server_transport_io_t * transport )
 {
-    if ( !transport || transport->instance || !config || !bind || !ops || !ops->create || !ops->destroy || !ops->stop ) return false;
+    if ( !transport || transport->instance || !config || !bind || !ops || !ops->create || !ops->destroy || !ops->stop || !ops->stopped ) return false;
     const bool staged = ( ops->flags & ROCKETNET_TRANSPORT_STAGED ) != 0;
     if ( staged ? !( ops->start_packet && ops->finish_packet && ops->abort_packet && ops->flush && ops->receive )
                 : !( ops->send_batch && ops->receive_batch ) ) return false;
@@ -166,13 +166,24 @@ bool rocketnet_server_transport_io_open( const rocketnet_server_transport_io_ope
 
 void rocketnet_server_transport_io_close( rocketnet_server_transport_io_t * transport )
 {
-    if ( transport->instance ) transport->operations->destroy( transport->instance );
+    if ( transport->instance )
+    {
+        const bool stopped = transport->operations->stopped( transport->instance );
+        rocketnet_assert( stopped );
+        if ( !stopped ) return;
+        transport->operations->destroy( transport->instance );
+    }
     *transport = {};
 }
 
-bool rocketnet_server_transport_io_stop( rocketnet_server_transport_io_t * transport )
+void rocketnet_server_transport_io_stop( rocketnet_server_transport_io_t * transport )
 {
-    return !transport->instance || transport->operations->stop( transport->instance );
+    if ( transport->instance ) transport->operations->stop( transport->instance );
+}
+
+bool rocketnet_server_transport_io_stopped( const rocketnet_server_transport_io_t * transport )
+{
+    return !transport->instance || transport->operations->stopped( transport->instance );
 }
 
 bool rocketnet_client_transport_io_open( const rocketnet_client_transport_io_operations_t * ops,

@@ -49,6 +49,7 @@ uint64_t rocketnet_platform_thread_allocation_bytes();
 uint64_t rocketnet_server_gso_allocation_bytes(int queues);
 uint64_t rocketnet_server_iocp_allocation_bytes(int workers);
 uint64_t rocketnet_server_xdp_allocation_bytes(int queues);
+uint64_t rocketnet_server_rio_registered_region_bytes();
 // UMEM bytes for a queue count. Plan and the XDP preflight share this; do not restate the product.
 uint64_t rocketnet_xdp_umem_bytes(int queues);
 
@@ -56,12 +57,13 @@ struct rocketnet_server_transport_config_t;
 struct rocketnet_server_memory_plan_t
 {
     uint64_t transport_bytes, protocol_bytes, reassembly_bytes, send_arena_bytes;
-    uint64_t transport_io_bytes, umem_bytes, total_bytes;
+    uint64_t transport_io_bytes, umem_bytes, registered_region_bytes, total_bytes;
     int worker_threads, sockets;
 };
 bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_config_t * config,
     const char * transport, rocketnet_server_memory_plan_t & plan);
-// Native built-in adapter resource policy; fills only transport/UMEM/worker/socket fields.
+// Native built-in adapter resource policy; fills transport, UMEM, RIO registered
+// region, worker and socket fields.
 // the xdp transport's queue count when num_xdp_queues is zero or negative; the
 // xdp create and rocketnet_builtin_server_memory_plan both take it
 #ifndef ROCKETNET_XDP_DEFAULT_QUEUES

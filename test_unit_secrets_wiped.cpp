@@ -30,6 +30,7 @@
 // packets in memory, so no case opens a socket or reads a clock. No case
 // prints a key: the checks compare bytes and report only true or false.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 
 #include "sdk/rocketnet.h"
@@ -385,8 +386,8 @@ static void test_secrets_wiped_destroy_owned_blocks()
     secrets_wiped_watched_frees = 0;
     secrets_wiped_watched_pattern = 0;
 
-    rocketnet_client_destroy( pair.client );
-    rocketnet_server_destroy( pair.server );
+    rn_test_client_stop_and_destroy( pair.client );
+    rn_test_server_stop_and_destroy( pair.server );
 
     const int watched_frees = secrets_wiped_watched_frees;
     const int watched_pattern = secrets_wiped_watched_pattern;

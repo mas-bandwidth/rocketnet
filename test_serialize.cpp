@@ -9,6 +9,7 @@
     over frames acquired and received through the C transport API.
 */
 
+#include "test/native_shutdown.h"
 #include "serialize.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
@@ -150,8 +151,8 @@ int main()
     }
     check( verified );
 
-    rocketnet_client_transport_destroy( client );
-    rocketnet_server_transport_destroy( server );
+    rn_native_client_transport_stop_and_destroy( client );
+    rn_native_server_transport_stop_and_destroy( server );
     rocketnet_term();
 
     printf( "serialize surface OK\n" );

@@ -32,10 +32,10 @@
 // fragment header. The stride is chosen against the minimum block, so a
 // current block with ranges truncates there; the stride never shrinks to
 // make room. The receive-side maximum is the same arithmetic against the
-// fixed receive ceiling, and sizes each reassembly slot's staging buffer.
+// matching receive ceiling, and sizes each reassembly slot's staging buffer.
 
 #define ROCKETNET_MAX_FRAGMENT_BYTES            ( ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES - ROCKETNET_FRAGMENT_HEADER_BYTES )            // 1413
-#define ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES    ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES - ROCKETNET_FRAGMENT_HEADER_BYTES )        // 1433
+#define ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES    ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES - ROCKETNET_FRAGMENT_HEADER_BYTES )        // 1413
 
 // the largest payload the sender can fragment: 256 fragments at the full
 // stride. a deployment's configured maximum payload must fit under it.

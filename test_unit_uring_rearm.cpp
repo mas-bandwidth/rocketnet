@@ -3,12 +3,8 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The io_uring re-arm and destroy-bound cases. Both run through the transport's
-// development-only seam: a fake transport with queues but no kernel ring, whose
-// arm calls can be told to find no submission entry, and the end condition
-// of destroy's wait loop (rocketnet_server_uring_destroy_wait_over) run with
-// every round completing or every round silent. No socket, no ring, no wall
-// clock.
+// io_uring re-arm tests use a fake transport without sockets, a kernel ring,
+// or wall clock. Request/completion shutdown is covered by uring_reap_budget.
 
 #include <stdio.h>
 
@@ -61,23 +57,6 @@ static void test_io_uring_transport_rearm_retries_a_failed_arm()
     rocketnet_server_uring_test_destroy_fake( uring );
 }
 
-// red first: when every round yields a CQE no round is silent, so destroy's
-// empty-round count never moves and the wait would never end without the total
-// round bound. The case runs rocketnet_server_uring_destroy_wait_over, the end
-// condition rocketnet_server_uring_destroy's wait loop uses; the case's own
-// guard stops a wait that does not end.
-
-static void test_io_uring_transport_destroy_wait_is_bounded()
-{
-    const int completions_rounds = rocketnet_server_uring_test_destroy_wait_rounds( true, 1000 );
-    rocketnet_unit_check( completions_rounds == 64 );
-
-    // with no completions the older silent-round bound still ends the wait
-    const int silent_rounds = rocketnet_server_uring_test_destroy_wait_rounds( false, 1000 );
-    rocketnet_unit_check( silent_rounds == 5 );
-}
-
 REGISTER_UNIT_TEST( test_io_uring_transport_rearm_retries_a_failed_arm );
-REGISTER_UNIT_TEST( test_io_uring_transport_destroy_wait_is_bounded );
 
 #endif // #if ROCKETNET_URING_REARM_TEST

@@ -3,8 +3,9 @@
 How a game's debug overlay reads connection quality: a server and a client in
 one process over the in-memory `loopback` transport. The client connects,
 exchanges a little traffic, then prints the client's and the server's state and
-counters. Each stats call copies the current value of every counter and stat into a
-struct the caller owns, and the program reads the fields from that struct.
+counters. Each stats call fills a caller-owned struct. Client quality stats are
+computed synchronously; the server per-client call copies its latest published
+ACK-derived quality values without waiting for their background calculation.
 
 ## What it shows
 
@@ -57,6 +58,47 @@ never negative, and bytes sent are above zero after the traffic exchange. `PASS`
 means the client connected, traffic flowed both ways, and the disconnect was
 seen on both ends. The informational log lines before the output come from the
 library and are not part of the check.
+
+Both endpoints use the same ACK-based connection-quality definitions. Client
+loss estimates its outgoing packets to the server; a server slot estimates
+its outgoing packets to that client. The values need not match on asymmetric
+paths. This is an unacknowledged-packet estimate, not a message failure rate:
+delayed or lost returning ACKs can affect it, and later ACKs can reduce it.
+
+Loss excludes the newest half of the sequence-history window, including during
+startup, and ignores sequence positions never recorded as sent. With the default
+4096-position history, no sends are eligible until the highest sent sequence
+exceeds 2048. Zero therefore also means that there are no eligible samples.
+Jitter is the mean excess of retained positive first-ACK round-trip samples over
+their minimum, in milliseconds. It includes peer ACK scheduling and caller
+update cadence. Zero-time samples are excluded from both the minimum and mean.
+These histories do not expire with elapsed time; reconnect resets them. Client
+stats recompute on read. Each server update first applies at most 20 results
+from one previously completed batch, then submits a batch that visits at most
+20 configured slots in one modulo phase and hands off delta buffers for
+connected slots. Results from a newly submitted batch can be published no
+earlier than a later update. A background worker folds the deltas into its
+rolling ACK history and computes the server-slot statistics; the caller's
+server-slot stats call only copies the most recently published values. If the
+worker is busy, update does not wait. Submission requires a free job bank, a
+spare delta buffer for every selected connected slot, and an immediately
+available exchange mutex. Otherwise update defers the phase without advancing
+the submitted-job ordinal; deltas keep coalescing in producer buffers and the
+same phase is retried later. The ordinal cycles through
+`ceil(max_clients / 20)` phases, so every phase is revisited without starvation.
+At 1,000 configured slots, a full set of phases takes 50 successfully submitted
+batches, and worker lag can make published values older still. Results carry
+the connection ID and are applied only while the slot still has that
+connection; a reset clears the published values and rejects stale results from
+a prior connection. Preallocated delta buffers keep the rolling ACK history
+with the worker without a full-history copy on the update path. This makes no
+100-us update-time guarantee.
+
+The final API changes the client's previous receive-direction, one-second loss
+estimate and smoothed arrival-gap jitter to these shared definitions. Existing
+dashboard directions and alert thresholds must be reviewed; historical values
+are not directly comparable. Field names, units, struct layouts and the wire
+format are unchanged.
 
 ## Public calls it uses
 

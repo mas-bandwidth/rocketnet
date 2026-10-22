@@ -817,6 +817,48 @@ static void test_token_created_within_skew_passes_the_rung()
     rocketnet_handshake_server_teardown( &test );
 }
 
+static void test_token_create_skew_enforced_without_lifetime_cap()
+{
+    struct rocketnet_handshake_server_t test;
+    rocketnet_handshake_server_setup( &test );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    rocketnet_handshake_build_request_with_create( request, 0x5A0CULL, rocketnet_test_salt,
+                                                   ROCKETNET_TEST_CREATE_TS + 6 );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = -1;
+    const struct rocketnet_counters_t before = test.counters;
+
+    int result = rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
+                                                                        request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                        ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                                        response, &response_bytes );
+    rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_unit_check( response_bytes == 0 );
+    rocketnet_counters_expect( &before, &test.counters,
+                               { { ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED, 1 },
+                                 { ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE, 1 } } );
+    rocketnet_unit_check( rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) == -1 );
+
+    // The boundary remains admissible: this is a creation-skew refusal, not
+    // a blanket refusal of long-lived tokens.
+    rocketnet_handshake_build_request_with_create( request, 0x5A0CULL, rocketnet_test_salt,
+                                                   ROCKETNET_TEST_CREATE_TS + 5 );
+    const struct rocketnet_counters_t after_refusal = test.counters;
+    result = rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
+                                                                     request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                     ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                                     response, &response_bytes );
+    rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    rocketnet_unit_check( response_bytes == ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES );
+    rocketnet_counters_expect( &after_refusal, &test.counters,
+                               { { ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED, 1 },
+                                 { ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE, 1 } } );
+
+    rocketnet_handshake_server_teardown( &test );
+}
+
 // ---------------------------------------------------------------------------
 // The claim is written only after the signature verifies
 // (sdk/rocketnet_server_protocol.cpp, rocketnet_used_token_history_claim_can_record
@@ -890,6 +932,7 @@ REGISTER_UNIT_TEST( test_client_ephemeral_erased_outside_handshake );
 REGISTER_UNIT_TEST( test_claim_written_only_after_signature_verifies );
 REGISTER_UNIT_TEST( test_token_created_past_skew_is_refused );
 REGISTER_UNIT_TEST( test_token_created_within_skew_passes_the_rung );
+REGISTER_UNIT_TEST( test_token_create_skew_enforced_without_lifetime_cap );
 REGISTER_UNIT_TEST( test_disconnect_absorbs_terminal_state );
 REGISTER_UNIT_TEST( test_one_connection_per_token_after_history_flush );
 REGISTER_UNIT_TEST( test_server_repeats_keep_alive_while_idle );

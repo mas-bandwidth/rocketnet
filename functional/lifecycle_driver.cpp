@@ -7,6 +7,7 @@
     test_lifecycle.cpp, which is part of the unit suite.
 */
 
+#include "../test/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_platform.h"
@@ -116,7 +117,7 @@ void rocketnet_test_lifecycle_transport()
         if ( client )
         {
             check( (uintptr_t)client % ROCKETNET_ALLOCATION_ALIGNMENT == 0 );
-            rocketnet_client_transport_destroy( client );
+            rn_native_client_transport_stop_and_destroy( client );
             client_success = failure;
         }
         check( state.live == baseline );
@@ -138,7 +139,7 @@ void rocketnet_test_lifecycle_transport()
         if ( server )
         {
             check( (uintptr_t)server % ROCKETNET_ALLOCATION_ALIGNMENT == 0 );
-            rocketnet_server_transport_destroy( server );
+            rn_native_server_transport_stop_and_destroy( server );
             server_success = failure;
         }
         check( state.live == baseline );

@@ -44,4 +44,11 @@ static void test_xdp_transport_send_staging_reflushes_without_commit()
 }
 REGISTER_UNIT_TEST(test_xdp_transport_send_staging_reflushes_without_commit);
 
+int rocketnet_server_transport_test_staged_simulator_flush();
+static void test_xdp_transport_send_packets_flushes_simulator_window()
+{
+    rocketnet_unit_check(rocketnet_server_transport_test_staged_simulator_flush() == 1);
+}
+REGISTER_UNIT_TEST(test_xdp_transport_send_packets_flushes_simulator_window);
+
 #endif // #if defined(__linux__)

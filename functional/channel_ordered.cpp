@@ -261,7 +261,7 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
         const rn_message_object_t * sender = client_to_server ? &h.message_client->object : &h.message_server->object;
         const int connection = client_to_server ? 0 : h.client_slot;
         printf( "ordered_state next_to_send=%d sender_state=%d sender_disconnect_reason=%d memory_exhausted=%llu send_store_full=%llu\n",
-                next_to_send, sender->connections[connection].state, sender->connections[connection].disconnect_reason,
+                next_to_send, sender->hot_connections[connection].state, sender->connections[connection].disconnect_reason,
                 (unsigned long long) sender->counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED],
                 (unsigned long long) sender->counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] );
         rocketnet_ordered_print_measurement( name, &measurement, client_to_server, reason );

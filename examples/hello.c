@@ -12,6 +12,7 @@
     Run it from the repository root: ./bin/example_hello
 */
 
+#include "shutdown.h"
 #include "rocketnet.h"
 #include "dev_keys.h"
 
@@ -19,9 +20,9 @@
 static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
 
 #include <stdio.h>
+#include <time.h>
 #include <stdint.h>
 #include <string.h>
-#include <time.h>
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
@@ -143,7 +144,7 @@ int main( void )
     if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
-        rocketnet_server_destroy( server );
+        rn_cli_server_stop_and_destroy( server );
         server = NULL;
     }
     CHECK( server != NULL );
@@ -160,18 +161,19 @@ int main( void )
     for ( int round = 1; round <= 2; round++ )
     {
         // the token names the server and carries the keys; a production client
-        // gets one from a backend. This development token is stamped with the
-        // current time, as a real backend stamps it, and expires thirty seconds
-        // later; the server refuses a token created in its future.
+        // gets one from a backend. Stamp the current Unix time, matching the
+        // default token-validation clock; this token expires thirty seconds later.
 
-        CHECK( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, (uint64_t) round, EXAMPLE_PROTOCOL_ID, (uint64_t) time( NULL ), NULL, connect_token ) == ROCKETNET_STATUS_OK );
+        const time_t token_time = time( NULL );
+        CHECK( token_time != (time_t) -1 );
+        CHECK( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, (uint64_t) round, EXAMPLE_PROTOCOL_ID, (uint64_t) token_time, NULL, connect_token ) == ROCKETNET_STATUS_OK );
 
         enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
         client = rocketnet_client_create( NULL, &client_config, &create_status_2 );
         if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
         if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
         {
-            rocketnet_client_destroy( client );
+            rn_cli_client_stop_and_destroy( client );
             client = NULL;
         }
         CHECK( client != NULL );
@@ -180,7 +182,7 @@ int main( void )
         CHECK( run_frames( server, client, round == 1 ? "hello from the client" : NULL, &received, &time_base ) == 1 );
 
         rocketnet_client_disconnect( client );
-        rocketnet_client_destroy( client );
+        rn_cli_client_stop_and_destroy( client );
         client = NULL;
     }
 
@@ -188,11 +190,11 @@ int main( void )
 
 cleanup:
     // destroy on NULL is a no-op, as free(NULL) is
-    rocketnet_client_destroy( client );
-    rocketnet_server_destroy( server );
+    rn_cli_client_stop_and_destroy( client );
+    rn_cli_server_stop_and_destroy( server );
     rocketnet_term();
-    // destroy ends a live connection and logs it, so PASS is printed after
-    // the cleanup to stay the last line
+    // CLI cleanup helpers wait for shutdown completion before destroy.
+    // PASS is printed afterward so it stays the last line
     if ( result == 0 )
         printf( "PASS\n" );
     return result;

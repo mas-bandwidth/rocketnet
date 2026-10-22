@@ -188,6 +188,16 @@ int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_p
                                               double current_time,
                                               uint8_t * out_packet );
 
+// Read-only preflight for the update sweep. True when the keep-alive or
+// standalone ACK writer may need a frame; the writers retain priority and
+// all packet/state changes. Also leaves a missing mapping for the transport's diagnostic.
+int rocketnet_server_protocol_maintenance_due( const struct rocketnet_server_protocol_t * server,
+                                                int client_index, double current_time );
+
+// Records the same missing-mapping diagnostic as the protocol writers when
+// the transport cannot look up an address for an internally allowed -1 slot.
+void rocketnet_server_protocol_note_missing_mapping( struct rocketnet_server_protocol_t * server );
+
 #define ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS 10
 
 // The deliberate server-side disconnect of one connected client: fills the

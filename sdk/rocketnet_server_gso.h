@@ -117,6 +117,10 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCK
 
 struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags );
 
+void rocketnet_server_gso_stop( struct rocketnet_server_gso_t * gso );
+bool rocketnet_server_gso_stopped( struct rocketnet_server_gso_t * gso );
+
+// Requires stopped completion. Joins and frees synchronously.
 void rocketnet_server_gso_destroy( struct rocketnet_server_gso_t * gso );
 
 int rocketnet_server_gso_num_queues( struct rocketnet_server_gso_t * gso );
@@ -158,6 +162,8 @@ struct rocketnet_server_socket_process_packets_t * rocketnet_server_gso_process_
 void rocketnet_server_gso_test_force_create_flags( int flags );
 void rocketnet_server_gso_test_fail_receives( struct rocketnet_server_gso_t * gso, int count, int error );
 void rocketnet_server_gso_test_fail_sends( struct rocketnet_server_gso_t * gso, int count, int error );
+// Observe publication without consuming it; returns false on lock contention.
+bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gso, int queue_index );
 #endif
 
 #endif // #ifndef ROCKETNET_SERVER_GSO_H

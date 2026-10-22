@@ -54,6 +54,8 @@ int rocketnet_signature_verify_budget_allow( struct rocketnet_signature_verify_b
                                              uint64_t current_timestamp )
 {
     rocketnet_signature_verify_budget_decay( budget, current_timestamp );
+    struct rocketnet_address_t host = *source;
+    host.port = 0;
 
     // the global budget is not spent: everyone verifies.
     if ( budget->failure_count < ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET )
@@ -69,7 +71,7 @@ int rocketnet_signature_verify_budget_allow( struct rocketnet_signature_verify_b
     for ( int i = 0; i < ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS; i++ )
     {
         if ( budget->sources[i].fail_count > 0 &&
-             rocketnet_address_equal( &budget->sources[i].address, source ) )
+             rocketnet_address_equal( &budget->sources[i].address, &host ) )
             return 0;
     }
 
@@ -81,13 +83,15 @@ void rocketnet_signature_verify_budget_record_failure( struct rocketnet_signatur
                                                        uint64_t current_timestamp )
 {
     rocketnet_signature_verify_budget_decay( budget, current_timestamp );
+    struct rocketnet_address_t host = *source;
+    host.port = 0;
 
     budget->failure_count++;
 
     for ( int i = 0; i < ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS; i++ )
     {
         if ( budget->sources[i].fail_count > 0 &&
-             rocketnet_address_equal( &budget->sources[i].address, source ) )
+             rocketnet_address_equal( &budget->sources[i].address, &host ) )
         {
             budget->sources[i].fail_count++;
             return;
@@ -103,7 +107,7 @@ void rocketnet_signature_verify_budget_record_failure( struct rocketnet_signatur
     {
         if ( budget->sources[i].fail_count == 0 )
         {
-            budget->sources[i].address = *source;
+            budget->sources[i].address = host;
             budget->sources[i].fail_count = 1;
             return;
         }
@@ -300,7 +304,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         if ( existing != -1 )
         {
             struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, existing );
-            if ( mapping->client_index != -1 )
+            if ( mapping->control->client_index != -1 )
             {
                 rocketnet_debug( "server ignored connection request. a client is already connected from this address" );
                 counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_ALREADY_CONNECTED]++;
@@ -309,7 +313,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
             // standard/TRANSPORT.md t12 rule 3: a mapping answers every request from its address with its stored challenge, whatever the request's salt.
             // t12 rule 3 and t17 rule 4: only a request whose salt matches the mapping's refreshes the half-open idle deadline.
             if ( sodium_memcmp( connection_salt, mapping->connection_salt, ROCKETNET_CONNECTION_SALT_BYTES ) == 0 )
-                mapping->last_receive_time = current_time;
+                mapping->control->last_receive_time = current_time;
             memcpy( response_packet, mapping->challenge_packet, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
             *response_bytes = ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES;
             rocketnet_debug( "server resent stored connection challenge" );
@@ -366,13 +370,11 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         }
 
         // a token created more than the 5-second skew allowance after the
-        // server's clock is refused, always: a server token clock behind the
-        // backend's (a wrong or wrapped game clock epoch) refuses loudly
-        // instead of admitting tokens the backend's clock has expired.
-        if ( token_create_timestamp > current_timestamp + 5 )
+        // server's clock is refused, always: there is no maximum lifetime.
+        // Subtract only after ordering so the allowance cannot wrap at UINT64_MAX.
+        if ( token_create_timestamp > current_timestamp && token_create_timestamp - current_timestamp > 5 )
         {
             rocketnet_debug( "server ignored connection request. connect token created in future" );
-            // one counter per refusal reason (STANDARD.md, Counters).
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE]++;
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         }
@@ -594,6 +596,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     struct rocketnet_connect_token_private_t private_data;
     if ( !rocketnet_open_connect_token_private( &private_data, signed_connect_data, server->server_public_key, server->server_secret_key ) )
     {
+        rocketnet_used_token_history_claim_release( server->used_token_history, token_identifier, from );
         rocketnet_debug( "server ignored connection request. could not open sealed private block" );
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;
@@ -609,6 +612,11 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
                                                           current_time, response_packet, response_bytes );
 
     sodium_memzero( &private_data, sizeof(private_data) );
+
+    // Only a live mapping retains the request claim. Every refusal, including
+    // a sealed denial, releases it immediately instead of waiting for expiry.
+    if ( result != ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE )
+        rocketnet_used_token_history_claim_release( server->used_token_history, token_identifier, from );
 
     return result;
 }
@@ -735,8 +743,8 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         memcpy( mapping->user_data, private_data->user_data, ROCKETNET_USER_DATA_BYTES );
         memcpy( mapping->token_identifier, token_identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES );
         mapping->token_expire_timestamp = token_expire_timestamp;
-        mapping->timeout_seconds = timeout_seconds;
-        mapping->last_receive_time = current_time;
+        mapping->control->timeout_seconds = timeout_seconds;
+        mapping->control->last_receive_time = current_time;
         mapping->last_send_time = current_time;
         mapping->last_keep_alive_send_time = current_time;
 
@@ -807,7 +815,7 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
                                              mapping->token_expire_timestamp, current_timestamp );
     }
 
-    if ( mapping->client_index != -1 )
+    if ( mapping->control->client_index != -1 )
     {
         rocketnet_spam( "server ignored connection response. client is already connected" );
         counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_ALREADY_CONNECTED]++;
@@ -857,8 +865,8 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
     rocketnet_assert( client_index != -1 );     // num_free was checked above
     rocketnet_server_connection_id_assigned( server, client_index );
 
-    mapping->client_index = client_index;
-    mapping->established = 1;
+    mapping->control->client_index = client_index;
+    mapping->control->established = 1;
 
     mapping->last_send_time = current_time;
 
@@ -910,7 +918,7 @@ static void rocketnet_server_integrity_failure( struct rocketnet_server_protocol
     if ( mapping->integrity_failures < ROCKETNET_INTEGRITY_LIMIT )
         return;
 
-    int client_index = mapping->client_index;
+    int client_index = mapping->control->client_index;
     rocketnet_debug( "server removed encryption mapping. integrity limit reached (client %d)", client_index );
     if ( client_index != -1 )
     {
@@ -1090,7 +1098,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     // NoAdvanceBeforeConnect and NoOpenBeforeConnect). The response is the
     // one sealed type a slotless mapping exists to receive, so it passes.
 
-    if ( session_phase && mapping->client_index == -1 )
+    if ( session_phase && mapping->control->client_index == -1 )
     {
         rocketnet_spam( "server ignored sealed packet. not connected" );
         counters[type_counters->not_connected]++;
@@ -1141,7 +1149,10 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         if ( sequence > replay->highest_opened )
             replay->highest_opened = sequence;
 
-        mapping->last_receive_time = current_time;
+        // A response retransmission is not fresh session activity. Only a
+        // half-open mapping may refresh its idle clock from a response.
+        if ( mapping->control->client_index == -1 )
+            mapping->control->last_receive_time = current_time;
 
         return rocketnet_server_process_connection_response( server, mapping_index, current_timestamp, current_time, response_packet, response_bytes );
     }
@@ -1152,7 +1163,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
 
     rocketnet_replay_advance( replay, sequence );
 
-    int client_index = mapping->client_index;
+    int client_index = mapping->control->client_index;
 
     // the ack block at the front of the opened data, validated on the
     // reconstructed 64-bit largest against this end's own highest sent
@@ -1174,7 +1185,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     int type_data_bytes = opened_bytes - block_bytes;
 
     if ( ( packet_type == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET && type_data_bytes != 8 ) ||
-         ( packet_type == ROCKETNET_CONNECTION_PAYLOAD_PACKET && type_data_bytes < 1 ) ||
+         ( packet_type == ROCKETNET_CONNECTION_PAYLOAD_PACKET && ( type_data_bytes < 1 || type_data_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ) ) ||
          ( packet_type == ROCKETNET_CONNECTION_DISCONNECT_PACKET && type_data_bytes != 0 ) ||
          ( packet_type == ROCKETNET_CONNECTION_ACK_PACKET && type_data_bytes != 0 ) ||
          ( packet_type == ROCKETNET_CONNECTION_FRAGMENT_PACKET && type_data_bytes < ROCKETNET_FRAGMENT_HEADER_BYTES + 1 ) )
@@ -1192,7 +1203,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     // never elicits: that exemption is what makes the ack conversation
     // terminate.
 
-    mapping->last_receive_time = current_time;
+    mapping->control->last_receive_time = current_time;
 
     if ( !rocketnet_client_slots_confirmed( server->client_slots, client_index ) )
         rocketnet_client_slots_confirm( server->client_slots, client_index );
@@ -1456,18 +1467,18 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
     int iterator = -1;
     while ( rocketnet_encryption_map_next( server->encryption_map, &iterator ) )
     {
-        const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, iterator );
+        const struct rocketnet_encryption_mapping_control_t * control = rocketnet_encryption_map_control( server->encryption_map, iterator );
 
-        if ( !mapping->established )
+        if ( !control->established )
         {
             // STANDARD.md _Half-open state_: the earlier of the idle and handshake deadlines removes the mapping.
-            if ( current_time >= mapping->handshake_deadline )
+            if ( current_time >= control->handshake_deadline )
             {
                 rocketnet_debug( "server removed encryption mapping. handshake deadline expired" );
                 rocketnet_encryption_map_remove( server->encryption_map, iterator );
                 counters[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED]++;
             }
-            else if ( current_time >= mapping->last_receive_time + ROCKETNET_HALF_OPEN_IDLE_TIMEOUT_SECONDS )
+            else if ( current_time >= control->last_receive_time + ROCKETNET_HALF_OPEN_IDLE_TIMEOUT_SECONDS )
             {
                 rocketnet_debug( "server removed encryption mapping. half-open idle timeout" );
                 rocketnet_encryption_map_remove( server->encryption_map, iterator );
@@ -1476,9 +1487,9 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
             continue;
         }
 
-        if ( mapping->timeout_seconds > 0 && current_time >= mapping->last_receive_time + mapping->timeout_seconds )
+        if ( control->timeout_seconds > 0 && current_time >= control->last_receive_time + control->timeout_seconds )
         {
-            int client_index = mapping->client_index;
+            int client_index = control->client_index;
             rocketnet_debug( "client %d timed out", client_index );
             if ( client_index != -1 )
             {
@@ -1490,6 +1501,11 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
             counters[ROCKETNET_COUNTER_CLIENT_TIMED_OUT]++;
         }
     }
+}
+
+void rocketnet_server_protocol_note_missing_mapping( struct rocketnet_server_protocol_t * server )
+{
+    server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING]++;
 }
 
 static struct rocketnet_encryption_mapping_t * rocketnet_server_connected_mapping( struct rocketnet_server_protocol_t * server,
@@ -1515,7 +1531,7 @@ static struct rocketnet_encryption_mapping_t * rocketnet_server_connected_mappin
         // receiving keep-alives and times out -- a silent failure needs a
         // name, or the first person to hit it has nothing to look at.
 
-        server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING]++;
+        rocketnet_server_protocol_note_missing_mapping( server );
         return NULL;
     }
 
@@ -1669,6 +1685,17 @@ int rocketnet_server_protocol_write_ack_if_due( struct rocketnet_server_protocol
     return bytes;
 }
 
+static int rocketnet_server_keep_alive_due( const struct rocketnet_server_protocol_t * server,
+                                             const struct rocketnet_encryption_mapping_t * mapping,
+                                             int client_index, double current_time )
+{
+    const double send_rate = server->send_rate > 0.0 ? server->send_rate : 10.0;
+    const int acknowledged = server->acks && client_index >= 0
+                             ? (int) server->acks->endpoints[client_index].keep_alive_acked : 0;
+    const double last = acknowledged ? mapping->last_send_time : mapping->last_keep_alive_send_time;
+    return !( current_time - last < 1.0 / send_rate );
+}
+
 // tla/ServerConnection.tla ServerKeepAlive
 int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_protocol_t * server,
                                               int client_index,
@@ -1734,21 +1761,29 @@ int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_p
     // it cannot be produced by anyone else for it and no other client's
     // pacing is affected.
 
-    double send_rate = server->send_rate > 0.0 ? server->send_rate : 10.0;
-
-    // no ack bookkeeping means the claim can never be observed; fall back to
-    // the unsuppressed clock, which is the safe direction
-
-    int acknowledged = server->acks && client_index >= 0
-                        ? (int) server->acks->endpoints[client_index].keep_alive_acked
-                        : 0;
-
-    double last = acknowledged ? mapping->last_send_time : mapping->last_keep_alive_send_time;
-
-    if ( current_time - last < 1.0 / send_rate )
+    // Without ack bookkeeping the helper uses the unsuppressed clock.
+    if ( !rocketnet_server_keep_alive_due( server, mapping, client_index, current_time ) )
         return 0;
 
     return rocketnet_server_write_keep_alive( server, client_index, current_time, out_packet );
+}
+
+int rocketnet_server_protocol_maintenance_due( const struct rocketnet_server_protocol_t * server,
+                                                int client_index, double current_time )
+{
+    rocketnet_assert( server );
+    if ( !rocketnet_client_slots_connected( server->client_slots, client_index ) )
+        return 0;
+
+    const int mapping_index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
+    // Let the transport record a connected slot missing its mapping.
+    // The preflight itself must not change counters or connection state.
+    if ( mapping_index < 0 )
+        return 1;
+
+    const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, mapping_index );
+    return rocketnet_server_keep_alive_due( server, mapping, client_index, current_time ) ||
+           ( server->acks && server->acks->endpoints[client_index].ack_debt != 0 );
 }
 
 // The fill-phase pair behind the acquire/commit send surface. Any number of

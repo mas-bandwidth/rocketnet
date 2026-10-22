@@ -268,3 +268,60 @@ static void test_standard_handshake_server_vectors()
 }
 
 REGISTER_UNIT_TEST( test_standard_handshake_server_vectors );
+
+// Refusals after a token claim must not reserve a token with no mapping.
+static void handshake_refusal_releases_claim( int refusal )
+{
+    struct handshake_server_t test;
+    handshake_server_setup( &test, 600 );
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    handshake_server_build_request( request, "198.51.100.7:56789",
+                                    ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 3 );
+    const uint8_t * signed_data = request + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES +
+                                  ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES;
+    uint8_t identifier[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    rocketnet_connect_token_identifier( identifier, signed_data );
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = { 0 };
+    int counter = 0;
+    int expected = ROCKETNET_SERVER_PROCESS_IGNORED;
+    switch ( refusal )
+    {
+        case 0:
+            memset( test.server.server_secret_key, 0, ROCKETNET_KEY_BYTES );
+            counter = ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK;
+            break;
+        case 1:
+            check( rocketnet_client_slots_assign( test.server.client_slots, ROCKETNET_TEST_CLIENT_ID, -1, user_data ) >= 0 );
+            counter = ROCKETNET_COUNTER_CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED;
+            break;
+        case 2:
+            for ( int i = 0; i < 4; ++i )
+                check( rocketnet_client_slots_assign( test.server.client_slots, 100 + i, -1, user_data ) >= 0 );
+            counter = ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS;
+            expected = ROCKETNET_SERVER_PROCESS_SEND_DENIED;
+            break;
+        default:
+            memset( request + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES + ROCKETNET_CONNECTION_SALT_BYTES,
+                    0, ROCKETNET_KEY_BYTES );
+            counter = ROCKETNET_COUNTER_CONNECTION_REQUEST_SMALL_ORDER_KEY;
+            break;
+    }
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    check( handshake_server_process( &test, request, response, &response_bytes ) == expected );
+    check( test.counters.values[counter] == 1 );
+    check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 0 );
+    struct rocketnet_address_t other;
+    check( rocketnet_address_parse( &other, "198.51.100.8:56789" ) );
+    check( rocketnet_used_token_history_claim_check( test.server.used_token_history, identifier, &other, 1000.0 ) );
+    handshake_server_teardown( &test );
+}
+
+static void test_claim_released_after_private_open_refusal() { handshake_refusal_releases_claim( 0 ); }
+static void test_claim_released_after_client_id_refusal() { handshake_refusal_releases_claim( 1 ); }
+static void test_claim_released_after_full_server_refusal() { handshake_refusal_releases_claim( 2 ); }
+static void test_claim_released_after_small_order_refusal() { handshake_refusal_releases_claim( 3 ); }
+REGISTER_UNIT_TEST( test_claim_released_after_private_open_refusal );
+REGISTER_UNIT_TEST( test_claim_released_after_client_id_refusal );
+REGISTER_UNIT_TEST( test_claim_released_after_full_server_refusal );
+REGISTER_UNIT_TEST( test_claim_released_after_small_order_refusal );

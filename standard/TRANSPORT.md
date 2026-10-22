@@ -333,12 +333,12 @@ Registry rules:
 | fragment header | `6` | bytes | size | [t16 Fragmentation and reassembly](#t16) |
 | fragments per payload maximum | `256` | fragments | size | [t16 Fragmentation and reassembly](#t16) |
 | link MTU | `1500` | bytes | size | [t8 Packet formats](#t8) |
-| receive ceiling | `1472` | bytes | size | [t10 Receive processing](#t10) |
-| maximum packet size limit | `1472` | bytes | size | [t8 Packet formats](#t8) |
+| receive ceiling | `1452` | bytes | size | [t10 Receive processing](#t10) |
+| maximum packet size limit | `1452` | bytes | size | [t8 Packet formats](#t8) |
 | payload capacity | `1416` | bytes | size | [t8 Packet formats](#t8) |
-| received payload maximum | `1439` | bytes | size | [t10 Receive processing](#t10) |
+| received payload maximum | `1416` | bytes | size | [t10 Receive processing](#t10) |
 | fragment stride | `1413` | bytes | size | [t16 Fragmentation and reassembly](#t16) |
-| received fragment stride maximum | `1433` | bytes | size | [t16 Fragmentation and reassembly](#t16) |
+| received fragment stride maximum | `1413` | bytes | size | [t16 Fragmentation and reassembly](#t16) |
 | maximum packet size | `1452` | bytes | protocol value | [t8 Packet formats](#t8) |
 | replay window depth minimum | `4096` | sequences | size | [t14 Replay protection](#t14) |
 | replay window depth maximum | `32768` | sequences | size | [t14 Replay protection](#t14) |
@@ -586,7 +586,7 @@ packet length: 5
 packet type: 5
 filter epoch: 0
 filter value: the embedded test filter value
-packet length: 1473
+packet length: 1453
 05 00 b7 59 01 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
@@ -677,9 +677,7 @@ packet length: 1473
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-00
+00 00 00 00 00 00 00 00 00 00 00 00 00
 ```
 
 ```vector t5.reject-epoch
@@ -1446,7 +1444,7 @@ The payload packet is a session packet. Its sealed plaintext is the ack block fo
 | filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
 | sequence | 6 | 4 | u32 | the sender's session sequence | nonzero |
 | ack block | 10 | 7 to 1027 | bytes[n] | the ack block of [t15 Acknowledgement](#t15), sealed | a well-formed block |
-| payload data | 10 plus the ack block size | 1 to the send budget less 26 and the ack block size | bytes[n] | one payload of the message layer | at least 1 byte |
+| payload data | 10 plus the ack block size | 1 to the smaller of the payload capacity and the send budget less 26 and the ack block size | bytes[n] | one payload of the message layer | at least 1 byte |
 | AEAD tag | 16 plus the ack block size and the payload size | 16 | bytes[16] | the tag over the ack block and the payload | any |
 
 <a id="t8.7"></a>
@@ -2172,8 +2170,13 @@ types, and the response padding are:
 | maximum client slot count | `1000` | slots | limit | [t3 Constants and registries](#t3) |
 
 A session packet's total wire size is its minimum or larger, up to the
-receive ceiling. The payload's opened data holds at least one payload byte
-after the ack block.
+receive ceiling, which equals the send budget. After the ack block, a
+connection payload packet MUST hold at least one byte and MUST NOT exceed
+the received payload maximum of [t3 Constants and registries](#t3). A
+receiver MUST refuse a payload outside that range as the type's
+`WRONG_OPENED_SIZE`, before timeout refresh or ack processing. The fragment
+stride has its own maximum and is not reduced by the payload capacity's
+rounding.
 
 The vectors below name one malformed packet per refusal and the counter it
 fires. Each packet begins with the prefilter header of type, epoch and the
@@ -2308,9 +2311,7 @@ counter: PREFILTER_TOO_LARGE
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-00
+00 00 00 00 00 00 00 00 00 00 00 00 00
 ```
 
 ```vector t10.client-wrong-direction
@@ -2675,7 +2676,7 @@ The server turns a connection request into an encryption mapping, and a connecti
 11. A server MUST deny, with a connection denied packet sealed under the handshake server-to-client key, a request that finds no free slot, and MUST NOT create a mapping for it.
 12. A server MUST generate a fresh session nonce and ephemeral keypair for each mapping, MUST derive the connection keys, MUST erase the ephemeral secret, and MUST store the connection challenge in the mapping so that a repeat is byte-identical.
 13. A connection response MUST be processed only after it has opened under the mapping's handshake client-to-server key. A server MUST bind the token identifier to the source address at that point, MUST ignore a response when the source address or the client id already holds a slot, MUST deny one that finds no free slot, and otherwise MUST assign a slot, mark the client unconfirmed, and send the first keep-alive.
-14. A mapping without a connected slot MUST be removed at its handshake deadline, which is fixed at creation and is never refreshed, or at the half-open idle deadline, which a request carrying the mapping's connection salt or a response that opens under the mapping's handshake key refreshes; whichever comes first. A connected slot MUST be removed at its idle timeout. A server MUST count these removals apart.
+14. A mapping without a connected slot MUST be removed at its handshake deadline, which is fixed at creation and is never refreshed, or at the half-open idle deadline, which a request carrying the mapping's connection salt or a response that opens under the mapping's handshake key refreshes; whichever comes first. A connected slot MUST be removed at its idle timeout. A retransmitted connection response MUST NOT refresh a connected slot's receive time. A server MUST count these removals apart.
 
 An application message the server sends to a slot that is not connected is dropped and counted, as [RN-2 m1.5 Sending on a connection that is not connected](MESSAGES.md#m1.5) states.
 
@@ -3584,7 +3585,8 @@ an input ([t1.4 Conventions](#t1.4)).
     does, a request past the budget MUST be refused with no reply and counted
     as a refusal, and the budget MUST be reset at the start of each update.
 12. A server MUST apply the failed-signature budget before the signature
-    verification. A request from a source that has already
+    verification. This budget MUST identify a source by its host address,
+    excluding its port. A request from a source that has already
     failed in the current failed-signature window MUST be refused before the
     verification runs and counted as a refusal. The budget MUST NOT refuse a
     request from a source with no recorded failure in the window, even when
@@ -3595,8 +3597,9 @@ an input ([t1.4 Conventions](#t1.4)).
      different source address, and one that finds no free
      encryption mapping slot, before any signature, seal or keypair work. The
      first valid request for a token records its claim for the source address;
-     the claim ends at the handshake deadline or when a response binds the
-     token. A full mapping table refuses with no reply and is counted as a
+     the claim ends at the handshake deadline, when a response binds the
+     token, or immediately when processing the request refuses it without
+     retaining a mapping. A full mapping table refuses with no reply and is counted as a
      refusal. The request-claim table and the response-binding table are
      independent capacities: claim pressure cannot consume or evict a still
      live response binding.

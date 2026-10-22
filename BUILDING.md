@@ -8,7 +8,7 @@ archive contains no test suite. Review intentional ABI changes in the list as
 part of the same change. The major version names SDK calling/layout
 compatibility, separately from the wire version; see the ABI rules below.
 
-Deploying a server on Linux: [docs/LINUX.md](docs/LINUX.md) covers the build, the `xdp -> gso -> io_uring -> portable` transport ladder and pinning, what `gso`, `io_uring` and `xdp` need from the host, socket errors and ICMP, the fd and memlock limits for 1000 clients, containers, and how to verify a host.
+Deploying a server on Linux: [docs/LINUX.md](docs/LINUX.md) covers the build, the production `xdp -> gso -> io_uring` transport ladder and pinning, what `gso`, `io_uring` and `xdp` need from the host, socket errors and ICMP, the fd and memlock limits for 1000 clients, containers, and how to verify a host. Development builds add portable last.
 
 rocketnet builds on Linux and macOS with CMake 3.20 or later, and on Windows with
 CMake 4.2 or later (the Windows block below says why). On Linux the build is
@@ -291,6 +291,23 @@ compiler. The generated header lives in each build tree, so concurrent
 configurations do not rewrite the checkout. macOS and Windows do not build the
 object.
 
+### Building Linux without XDP
+
+XDP remains enabled by default. Set `-DROCKETNET_XDP=OFF` to build without
+BPF/libxdp development headers or libraries, BPF clang, or `xxd`:
+
+    cmake -S . -B build-no-xdp -DROCKETNET_XDP=OFF -DCMAKE_BUILD_TYPE=Release
+    cmake --build build-no-xdp --parallel 4
+
+The `xdp` rung reports that it was disabled at build time and refuses create.
+A pin of `xdp` fails; automatic selection continues with `gso`, `io_uring`
+(when built), then `portable` in development builds only. The installed CMake package also omits the
+BPF/libxdp dependencies. Native `test_xdp` and `test_xdp_filter` targets are
+not built; the host-C filter and portable frame-codec unit tests still run.
+Configure with `-DROCKETNET_XDP=ON` to restore the native backend and its
+dependencies. Missing BPF/libxdp development files remain a configure error
+when XDP is enabled.
+
 ## Pinned sodium
 
 The default build uses the committed `sodium/sodium.c` and `sodium/sodium.h`
@@ -443,7 +460,8 @@ of the public client and server API.
 
 The internal transport plan, allocated at start, includes the transport, protocol tables and ACK history, reassembly and
 its delivered mirror, send arena, native transport queues and SDK worker allocations,
-plus the SDK allocator's ownership/alignment overhead. XDP UMEM is counted
+including two background stats job banks, per-slot delta buffers and worker-owned
+history, and the socket-free wake, plus the SDK allocator's ownership/alignment overhead. XDP UMEM is counted
 separately and included in the total. Worker startup shims are included even if
 some have already been freed by the time create returns. OS thread stacks, kernel
 socket/ring storage, libbpf/libxdp allocations, libc bookkeeping, loader and
@@ -471,53 +489,62 @@ sdk/rocketnet_xdp_socket_config.h), libbpf/libxdp and the XDP program's maps, th
 submission, completion and provided buffer rings, thread guard pages
 and TLS, kernel page tables, loader memory, libc bookkeeping outside the SDK
 allocator, and application memory. Stacks count reserved address space, not
-resident pages. With default configuration and an 8 MiB default stack, on Linux:
+resident pages. Every server adds one background stats worker to its transport's
+I/O workers. Its wake uses a native event or pipe, so it adds no UDP socket or
+socket-buffer reservation. The current default Linux worker topology is:
 
-| transport | required_memory | sockets | socket buffers | XDP rings | threads x stack | estimate total |
-| --- | --- | --- | --- | --- | --- | --- |
-| portable | 688,206,108 | 1 | 2,000,000 | 0 | 0 | 690,206,108 |
-| gso | 830,413,923 | 4 | 8,000,000 | 0 | 4 x 8 MiB | 871,968,355 |
-| io_uring | 799,247,707 | 4 | 8,000,000 | 0 | 0 | 807,247,707 |
-| xdp | 4,473,629,517 (UMEM 1,879,048,192) | 7 | 0 | 3,670,016 | 7 x 8 MiB | 4,536,019,789 |
+| transport | sockets | I/O workers | stats workers | total stacks |
+| --- | --- | --- | --- | --- |
+| portable (development server) | 1 | 1 | 1 | 2 |
+| gso | 4 | 4 | 1 | 5 |
+| io_uring | 4 | 0 | 1 | 1 |
+| xdp | 7 | 7 | 1 | 8 |
+
+Multiply the total stacks by the host's default stack reserve. Use the probe
+below for byte totals from the exact build and configured geometry; allocator
+sizes also depend on platform layout and compile-time limits.
 
 Build tools normally, then use the resource probe:
 
 ```
-./bin/transport_memory 1000 1192 16 portable 0 --plan-only
-./bin/transport_memory 1000 1192 16 portable 0
+./bin/transport_memory 1000 1416 16 portable 0 --plan-only
+# A live portable server probe requires a development build.
+# Linux live GSO probe:
+./bin/transport_memory 1000 1416 16 gso 0
+# Host requests, including stack reserves, without creating the server:
+./bin/transport_memory 1000 1416 16 gso 0 --session-plan-only
 # Linux only; this prints geometry without attaching XDP or allocating UMEM:
-./bin/transport_memory 1000 1192 1 xdp 7 --plan-only
+./bin/transport_memory 1000 1416 1 xdp 7 --plan-only
 python3 tools/check_memory.py
 ```
 
 Arguments are clients, maximum payload bytes, reassembly slots, concrete transport
 and queue/worker count (zero selects that transport's default). `--plan-only` emits
 a component breakdown, worker/socket counts and an explicit unknown OS/application
-cost, then exits before initialization. Without it, the probe creates a loopback
-server, compares independent allocator live/peak observations against the plan,
+cost, then exits before initialization. `--session-plan-only` reports the public
+server block plus its active transport's SDK allocations and host requests,
+including socket buffers and thread stack reserves, without creating a server.
+It requires no `ROCKETNET_SERVER_` or `ROCKETNET_DEV_SERVER_` environment overrides.
+Without either option, the probe creates a loopback server, compares independent allocator live/peak observations against the plan,
 reports process peak RSS separately and checks that destruction frees every SDK
 allocation. Clear deployment `ROCKETNET_*` overrides when profiling a specific
 argument set: real create still obeys those overrides and a mismatch fails loudly.
 RSS and requested allocator bytes measure different things; untouched allocations
 may not yet be resident. The probe never commits an XDP attachment.
 
-On the shared test machine, Release portable plans matched all 40 live allocations:
+Record the exact build, geometry and output when reporting byte totals. A live
+measurement may be below the constructor plan because worker startup shims are
+freed as their threads begin; the plan includes all of them. This does not relax
+the requirement that destruction frees every SDK allocation. Large legal numeric
+reassembly geometries can be planned without allocating them, while component
+budgets can still refuse creation.
 
-| Clients | Payload bytes | Reassembly slots | Planned/observed allocator bytes |
-| ---: | ---: | ---: | ---: |
-| 1 | 1192 | 1 | 32,609,307 |
-| 2 | 1192 | 1 | 32,937,054 |
-| 1000 | 1192 | 1 | 360,028,560 |
-| 1000 | 1192 | 16 | 417,433,560 |
-| 1000 | 4096 | 16 | 510,407,896 |
-
-These are target-specific constructor measurements, not deployment limits. The
-maximum legal numeric reassembly geometry plans roughly 146 GiB and can be queried
-without allocating it; the default reassembly component budget refuses its create.
-`test_transport_control` also exercises six maintenance passes over 1000 mixed
-ACK/keepalive clients while the buffered transport accepts only 256 controls per send
-batch. Its elapsed time is a diagnostic for that synthetic workload, not a packet
-rate or a frame/send/ACK cadence requirement.
+`test_transport_control` exercises one complete 20-slot stats modulo cycle plus
+a publication update over 1000 mixed ACK/keepalive clients: 51 updates and 50
+manual worker steps at that client count. The buffered transport accepts only
+256 controls per send batch, and the test retains per-update control assertions.
+Its elapsed time is a diagnostic for that synthetic workload, not a packet rate
+or a frame/send/ACK cadence requirement.
 
 ## Runtime environment inventory
 
@@ -597,17 +624,20 @@ list in both directions against the SDK reads and the public header.
 ## Server transports
 
 Transport selection is runtime: one build carries every transport its
-platform has. Linux servers have xdp (privileged), gso (SO_REUSEPORT +
-sendmmsg/recvmmsg + UDP GSO/GRO, non-root), io_uring and portable. macOS has
-msgx and portable. Windows servers have portable, iocp and rio. loopback is on
-every platform and is selected only by name. The transport walks an ordered candidate
+platform has. Linux production servers have xdp (privileged), gso (SO_REUSEPORT +
+sendmmsg/recvmmsg + UDP GSO/GRO, non-root) and io_uring; macOS production
+servers have msgx; Windows production servers have iocp and rio. The portable
+server is available only in development builds; its client side remains
+available on every platform. Loopback is on every platform and is selected
+only by name. The transport walks an ordered candidate
 list at create. The list rides the config's transport field or the
 per-endpoint `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
 environment variables (precedence: default < struct < env):
 
     ./bin/functional                                # auto: the platform's recommended ladder
-                                                #   (linux: xdp,gso,io_uring,portable — falls on refusal)
+                                                #   (production linux: xdp,gso,io_uring — falls on refusal)
     ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional
+                                                #   portable server requires a development build
                                                 # a one-element list is a pin: that transport
                                                 #   or loud failure, never a silent fall
     ROCKETNET_SERVER_TRANSPORT=gso,portable ./bin/functional  # exactly these, exactly this order
@@ -616,14 +646,17 @@ Names known but absent on a platform — or not applicable to an endpoint, like
 `gso` for a client — are skipped with a log line, so one fleet-wide value deploys
 everywhere; a list whose every name is skipped falls to that endpoint's own auto
 order, loudly, rather than bricking an endpoint the value was not addressing.
+An explicit server pin of `portable` in a production build refuses with
+`ROCKETNET_STATUS_INVALID_TRANSPORT_LIST` instead of falling to auto.
 Unknown names refuse loudly at create. The granted transport is reported by
 the transport name query on each client and server, and the create log line. Queue-count bounds are per transport, refused loudly and never
 clamped: the xdp transport takes any `num_xdp_queues` from 1, the gso transport refuses
 past its 32-queue geometry. The GSO transport still probes UDP_SEGMENT and UDP_GRO at
 create and degrades to plain sendmmsg/recvmmsg batching where a kernel lacks them —
 that degradation is internal to the transport, below the ladder; likewise the Darwin
-batch pump's live-refusal pause. Select the portable pump through
-`ROCKETNET_SERVER_TRANSPORT=portable` and `ROCKETNET_CLIENT_TRANSPORT=portable`.
+batch pump's live-refusal pause. Select the portable server in a development
+build with `ROCKETNET_SERVER_TRANSPORT=portable`; select the client's portable
+side with `ROCKETNET_CLIENT_TRANSPORT=portable` in either build.
 Run `./bin/functional`
 against each rung. The unit
 suite, `./bin/test`, does not start a transport, so a transport pin does not change
@@ -658,8 +691,8 @@ buffer, and 2048 send frames across all workers. These are resource bounds,
 not timing or packet-rate requirements. A send frame still owned by the OS is
 unavailable to the next fill, even after an application flush.
 
-Windows `auto` tries portable, then iocp, then rio. iocp is granted by auto only
-when portable refuses. Windows CI runs both configurations, plus
+Windows production server `auto` tries iocp, then rio; development builds
+try portable first. Windows CI runs both configurations, plus
 completion-lifetime, allocation-failure and shutdown tests with IOCP selected.
 Compilation and loopback correctness do not establish NIC
 line-rate performance; that requires measurements on suitable Windows hardware.

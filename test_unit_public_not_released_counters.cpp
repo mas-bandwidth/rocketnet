@@ -14,6 +14,7 @@
 // (the client transport is created step-driven), and time is only ever an
 // argument, starting at 1000.0.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "sdk/rocketnet_connect_token.h"
 #include "sdk/rocketnet_base64.h"
@@ -194,8 +195,8 @@ static uint64_t public_not_released_server_count( struct public_not_released_pai
 
 static void public_not_released_pair_teardown( struct public_not_released_pair_t * pair )
 {
-    rocketnet_client_destroy( pair->client );
-    rocketnet_server_destroy( pair->server );
+    rn_test_client_stop_and_destroy( pair->client );
+    rn_test_server_stop_and_destroy( pair->server );
 }
 
 static void public_not_released_pump( struct public_not_released_pair_t * pair )

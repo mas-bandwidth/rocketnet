@@ -9,6 +9,7 @@
 // zero the check reads the wall clock as before. Time is an argument starting
 // at 1000.0; no socket, no sleep and no real clock.
 
+#include "test/unit_shutdown.h"
 #include "test_unit_registry.h"
 
 #include "rocketnet_internal.h"
@@ -84,7 +85,7 @@ static int token_time_game_client_create( uint64_t create, uint64_t expire, uint
     struct rocketnet_client_transport_t * transport = rocketnet_client_transport_create_ex( NULL, token_data, &config, time, &status );
     if ( transport )
     {
-        rocketnet_client_transport_destroy( transport );
+        rn_test_client_transport_stop_and_destroy( transport );
         return ROCKETNET_STATUS_OK;
     }
     return status;

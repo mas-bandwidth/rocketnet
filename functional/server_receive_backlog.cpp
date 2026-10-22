@@ -3,6 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
+#include "../test/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_driver_loopback.h"
@@ -26,6 +27,8 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double
 #else
 #include <unistd.h>
 #endif
+
+uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time );
 
 static void server_receive_backlog_check( bool condition, const char * expression, int line )
 {
@@ -151,6 +154,9 @@ void rocketnet_test_server_receive_keeps_up_with_max_clients()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = max_clients;
+    // Token validity uses the same synthetic clock at both endpoints. The
+    // token helper takes creation time, not a distant expiration timestamp.
+    server_config.game_clock_epoch = 1700000000ULL;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
 
     int status = -1;
@@ -163,6 +169,7 @@ void rocketnet_test_server_receive_keeps_up_with_max_clients()
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
+    client_config.game_clock_epoch = server_config.game_clock_epoch;
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
 
     std::vector<struct rocketnet_client_transport_t*> clients;
@@ -320,10 +327,10 @@ void rocketnet_test_server_receive_keeps_up_with_max_clients()
     fflush( stdout );
 
     for ( size_t i = 0; i < clients.size(); ++i )
-        rocketnet_client_transport_destroy( clients[i] );
+        rn_native_client_transport_stop_and_destroy( clients[i] );
     rocketnet_server_transport_stop( server );
     rocketnet_server_transport_update( server, time );
-    rocketnet_server_transport_destroy( server );
+    rn_native_server_transport_stop_and_destroy( server );
 
     server_receive_backlog_require( !failed );
 }
