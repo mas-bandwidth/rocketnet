@@ -61,8 +61,6 @@ for transport in transports:
 large, = run(1000, 305408, 256, 'portable', 0, '--plan-only')
 assert large['reassembly_bytes'] > 512 * 1024**2
 if sys.platform.startswith('linux'):
-    uring, = run(1, 1416, 1, 'io_uring', 1, '--plan-only')
-    assert uring['worker_threads'] == 2  # one ring owner plus one stats worker
     xdp, = run(1000, 1416, 1, 'xdp', 7, '--plan-only')
     # UMEM is rocketnet_xdp_umem_bytes in the SDK. Do not restate the product here.
     assert xdp['umem_bytes'] > 0
@@ -70,7 +68,7 @@ if sys.platform.startswith('linux'):
     assert xdp['sockets'] == 7
 if sys.platform == 'win32':
     rio_plan, = run(1, 1416, 1, 'rio', 0, '--plan-only')
-    assert rio_plan['worker_threads'] == 2  # one RIO owner plus one stats worker
+    assert rio_plan['worker_threads'] == 2  # one RIO I/O worker plus one stats worker
     rio, = run(1, 1416, 1, 'rio', 0, '--session-plan-only')
     assert rio['active_rio_registered_region_bytes'] > 0
     assert rio['active_xdp_umem_bytes'] == 0

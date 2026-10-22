@@ -3188,7 +3188,7 @@ const char * rocketnet_platform_socket_pump( rocketnet_platform_socket_t * socke
 // thread, so msgx_down_until is only loaded and stored atomically (relaxed:
 // it orders nothing else).
 
-#if defined(ROCKETNET_PORTABLE_TX_TEST_HOOKS)
+#if defined(ROCKETNET_MSGX_TEST_HOOKS)
 static thread_local void (*rocketnet_msgx_before_expiry_clear)( rocketnet_platform_socket_t * ) = NULL;
 #endif
 
@@ -3201,7 +3201,7 @@ static bool rocketnet_msgx_active( rocketnet_platform_socket_t * socket )
     {
         if ( rocketnet_platform_time() < down_until )
             return false;
-#if defined(ROCKETNET_PORTABLE_TX_TEST_HOOKS)
+#if defined(ROCKETNET_MSGX_TEST_HOOKS)
         if ( rocketnet_msgx_before_expiry_clear ) rocketnet_msgx_before_expiry_clear( socket );
 #endif
         // TX and RX may re-probe concurrently. Clear only the expired value
@@ -3217,7 +3217,7 @@ static bool rocketnet_msgx_active( rocketnet_platform_socket_t * socket )
     return true;
 }
 
-#if defined(ROCKETNET_PORTABLE_TX_TEST_HOOKS)
+#if defined(ROCKETNET_MSGX_TEST_HOOKS)
 bool rocketnet_msgx_test_pause_expiry_race()
 {
     rocketnet_platform_socket_t socket = {};

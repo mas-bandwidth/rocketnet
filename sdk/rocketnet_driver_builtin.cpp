@@ -159,9 +159,17 @@ static void portable_tx_worker( void * arg )
 }
 #endif
 
-// Worker publishes a completed receive bank only when it can take another.
-// Without a free bank it retains the complete FIFO tail and stops draining the
-// socket. Queue indices alone change while locked; packet storage is exclusive.
+// The RX handoff (tla/RNPortableRx.tla). The worker owns one producer bank
+// and reads the socket into it only when it is empty; it publishes a filled
+// producer onto the ready FIFO in exchange for a free bank. Main owns at most
+// one consumer bank and a cursor, and returns the consumer only when it is
+// completely copied. Only queue indices change under rx_mutex: the socket
+// read, the copies and the producer reset run outside it, and main only ever
+// tries the mutex.
+
+// RNPortableRx WLock and WSwap: true when the producer is empty or was
+// queued for a free bank. Without a free bank the worker keeps its full
+// producer (HoldOnFull) and stops reading the socket.
 static bool portable_rx_publish( portable_server_t * server )
 {
     if ( server->rx_bank[server->rx_producer].count == 0 ) return true;
@@ -178,10 +186,15 @@ static bool portable_rx_publish( portable_server_t * server )
     server->rx_ready_index[( server->rx_ready_head + server->rx_ready_count ) % PORTABLE_RX_BANKS] = old;
     server->rx_ready_count++;
     rocketnet_platform_mutex_release( &server->rx_mutex );
-    server->rx_bank[server->rx_producer].count = 0;
+    server->rx_bank[server->rx_producer].count = 0; // RNPortableRx WReset
     return true;
 }
 
+// RNPortableRx MTry, MSwap and MWake: true while main owns a consumer with
+// datagrams left to copy. A completely copied consumer is returned and the
+// oldest ready bank taken under one try; a failed try keeps the consumer and
+// its cursor. Main wakes the worker only when it returns a bank to an empty
+// free FIFO: only then can the worker be waiting for one (WakeOnReturn).
 static bool portable_rx_acquire( portable_server_t * server )
 {
     if ( server->rx_consumer >= 0 && server->rx_cursor < server->rx_bank[server->rx_consumer].count )
@@ -190,8 +203,8 @@ static bool portable_rx_acquire( portable_server_t * server )
     if ( server->force_rx_acquire_busy ) return false;
 #endif
     if ( !rocketnet_platform_mutex_try_acquire( &server->rx_mutex ) ) return false;
-    const bool returned = server->rx_consumer >= 0;
-    if ( returned )
+    const bool freed = server->rx_consumer >= 0 && server->rx_free_count == 0;
+    if ( server->rx_consumer >= 0 )
     {
         server->rx_free_index[( server->rx_free_head + server->rx_free_count ) % PORTABLE_RX_BANKS] = server->rx_consumer;
         server->rx_free_count++;
@@ -205,36 +218,63 @@ static bool portable_rx_acquire( portable_server_t * server )
     }
     rocketnet_platform_mutex_release( &server->rx_mutex );
     server->rx_cursor = 0;
-    if ( returned ) rocketnet_platform_wake_set( server->rx_wake );
+    if ( freed ) rocketnet_platform_wake_set( server->rx_wake );
     return server->rx_consumer >= 0;
+}
+
+enum portable_rx_step_t
+{
+    PORTABLE_RX_EXIT,
+    PORTABLE_RX_AGAIN,
+    PORTABLE_RX_WAIT_FULL,
+    PORTABLE_RX_WAIT_IDLE,
+};
+
+// One pass of the RX worker loop, without its waits (RNPortableRx WTop,
+// publish and WRead). Quit is read at the top of every pass, so a stop that
+// sets quit before its wake (QuitBeforeWake) always ends the worker.
+static portable_rx_step_t portable_rx_step( portable_server_t * server )
+{
+    if ( server->quit.load( std::memory_order_acquire ) )
+        return PORTABLE_RX_EXIT;
+    if ( !portable_rx_publish( server ) )
+    {
+#if defined(ROCKETNET_PORTABLE_TX_TEST_HOOKS)
+        server->test_rx_full_waits.fetch_add( 1, std::memory_order_relaxed );
+#endif
+        return PORTABLE_RX_WAIT_FULL;
+    }
+    portable_rx_bank_t * bank = &server->rx_bank[server->rx_producer];
+    bank->count = rocketnet_platform_socket_receive_packets( server->socket,
+        bank->from, &bank->data[0][0], ROCKETNET_RECEIVE_CEILING, bank->bytes, PORTABLE_RX_CAPACITY );
+    if ( bank->count < 0 ) bank->count = 0;
+    return bank->count > 0 ? PORTABLE_RX_AGAIN : PORTABLE_RX_WAIT_IDLE;
 }
 
 #if defined(ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE)
 static void portable_rx_worker( void * arg )
 {
     portable_server_t * server = (portable_server_t*) arg;
-    while ( !server->quit.load( std::memory_order_acquire ) )
+    for ( ;; )
     {
-        if ( !portable_rx_publish( server ) )
+        const portable_rx_step_t step = portable_rx_step( server );
+        if ( step == PORTABLE_RX_EXIT ) break;
+        if ( step == PORTABLE_RX_WAIT_FULL )
         {
-#if defined(ROCKETNET_PORTABLE_TX_TEST_HOOKS)
-            server->test_rx_full_waits.fetch_add( 1, std::memory_order_relaxed );
-#endif
-            // Full banks: readability cannot help. A returned bank or stop
-            // signals this wake; the bounded timeout also tolerates lost hints.
+            // Full banks: readability cannot help. A bank returned to an empty
+            // free FIFO or stop signals this wake; the bounded timeout also
+            // tolerates a lost hint.
             rocketnet_platform_wake_wait( server->rx_wake, false, 0.1 );
-            continue;
         }
-        portable_rx_bank_t * bank = &server->rx_bank[server->rx_producer];
-        bank->count = rocketnet_platform_socket_receive_packets( server->socket,
-            bank->from, &bank->data[0][0], ROCKETNET_RECEIVE_CEILING, bank->bytes, PORTABLE_RX_CAPACITY );
-        if ( bank->count > 0 ) continue;
+        else if ( step == PORTABLE_RX_WAIT_IDLE )
+        {
 #if defined(ROCKETNET_PLATFORM_HAS_WAKE)
-        rocketnet_platform_wake_wait( server->rx_wake, true, 0.1 );
+            rocketnet_platform_wake_wait( server->rx_wake, true, 0.1 );
 #else
-        // BSD has event-only wakes; preserve its supported portable transport.
-        rocketnet_platform_wake_wait( server->rx_wake, false, 0.001 );
+            // BSD has event-only wakes; preserve its supported portable transport.
+            rocketnet_platform_wake_wait( server->rx_wake, false, 0.001 );
 #endif
+        }
     }
     server->rx_exited.store( true, std::memory_order_release );
 }
@@ -644,44 +684,58 @@ bool rocketnet_portable_rx_test_handoff()
 #endif
 }
 
-bool rocketnet_portable_rx_test_stop_and_cleanup()
+// The worker pass, stepped on this thread with no socket reads reached and
+// no clock: a full FIFO holds the producer (WAIT_FULL, nothing overwritten);
+// main copying its consumer out returns it to the empty free FIFO and signals
+// the wake; the next pass publishes the held producer; stop sets quit before
+// its wake, so the pass after a stop exits however the wait ended.
+bool rocketnet_portable_rx_test_worker_steps()
 {
 #if !defined(ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE)
     return true;
 #else
-    // Production cleanup must also stop/join an already-running TX worker
-    // when the subsequent RX thread creation fails.
-    portable_server_t * partial = portable_rx_test_owner();
-    if ( !partial ) return false;
-    partial->skip_socket_send = true;
-    partial->thread = rocketnet_platform_thread_create( NULL, portable_tx_worker, partial );
-    if ( !partial->thread ) { portable_server_cleanup( partial ); return false; }
-    portable_server_cleanup( partial );
-
     portable_server_t * server = portable_rx_test_owner();
     if ( !server ) return false;
-    server->skip_socket_send = true;
+    // Bank 0 is main's partly copied consumer, bank 1 is ready, bank 2 is
+    // the worker's full producer and nothing is free.
+    server->rx_consumer = 0;
+    server->rx_cursor = 0;
+    server->rx_bank[0].count = 1;
+    server->rx_bank[0].from[0].port = 10;
+    server->rx_bank[0].bytes[0] = 4;
+    server->rx_ready_index[0] = 1;
+    server->rx_ready_head = 0;
+    server->rx_ready_count = 1;
+    server->rx_bank[1].count = 1;
+    server->rx_bank[1].from[0].port = 11;
+    server->rx_bank[1].bytes[0] = 4;
     server->rx_producer = 2;
     server->rx_bank[2].count = 1;
-    server->rx_ready_index[0] = 0;
-    server->rx_ready_index[1] = 1;
-    server->rx_ready_count = 2;
+    server->rx_bank[2].from[0].port = 12;
+    server->rx_bank[2].bytes[0] = 4;
     server->rx_free_count = 0;
-    server->thread = rocketnet_platform_thread_create( NULL, portable_tx_worker, server );
-    server->rx_thread = rocketnet_platform_thread_create( NULL, portable_rx_worker, server );
-    if ( !server->thread || !server->rx_thread ) { portable_server_cleanup( server ); return false; }
-    const double deadline = rocketnet_platform_time() + 2.0;
-    while ( server->test_rx_full_waits.load( std::memory_order_relaxed ) == 0 && rocketnet_platform_time() < deadline )
-        rocketnet_platform_sleep( 0.001 );
-    bool valid = server->test_rx_full_waits.load( std::memory_order_relaxed ) > 0;
+    bool valid = portable_rx_step( server ) == PORTABLE_RX_WAIT_FULL &&
+        server->rx_producer == 2 && server->rx_bank[2].count == 1 && server->rx_bank[2].from[0].port == 12;
+    // A pending wake would end the full wait at once; there is none yet.
+    valid &= !rocketnet_platform_wake_wait( server->rx_wake, false, 0.0 );
+    rocketnet_address_t from[2] = {};
+    int bytes[2] = {};
+    uint8_t data[2][8] = {};
+    // Copying the consumer and the ready bank returns bank 0 to the empty free
+    // FIFO (the wake) and takes bank 1; bank 1 is returned in turn.
+    valid &= portable_receive( server, from, &data[0][0], 8, bytes, 2 ) == 2 && from[0].port == 10 && from[1].port == 11;
+    valid &= rocketnet_platform_wake_wait( server->rx_wake, false, 0.0 );
+    valid &= portable_receive( server, from, &data[0][0], 8, bytes, 1 ) == 0 &&
+        server->rx_consumer == -1 && server->rx_free_count == 2;
+    // A bank returned to a non-empty free FIFO needs no wake.
+    valid &= !rocketnet_platform_wake_wait( server->rx_wake, false, 0.0 );
+    // The held producer is published now, and main receives it.
+    valid &= portable_rx_publish( server ) && server->rx_ready_count == 1 && server->rx_bank[server->rx_producer].count == 0;
+    valid &= portable_receive( server, from, &data[0][0], 8, bytes, 2 ) == 1 && from[0].port == 12;
+    // Stop: quit, then the wake. Both waits end and the next pass exits.
     portable_stop( server );
-    rocketnet_platform_thread_join( server->thread );
-    rocketnet_platform_thread_join( server->rx_thread );
-    valid &= portable_stopped( server ) && server->rx_producer == 2 && server->rx_bank[2].count == 1;
-    rocketnet_platform_thread_destroy( server->thread );
-    rocketnet_platform_thread_destroy( server->rx_thread );
-    server->thread = NULL;
-    server->rx_thread = NULL;
+    valid &= server->quit.load() && rocketnet_platform_wake_wait( server->rx_wake, false, 0.0 );
+    valid &= portable_rx_step( server ) == PORTABLE_RX_EXIT;
     portable_server_cleanup( server );
     return valid;
 #endif
