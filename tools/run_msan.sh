@@ -33,6 +33,8 @@ link_flags="-Wl,--allow-multiple-definition"
 # to arm the allocation-failure trap; the MSan C++ runtime ships replacements
 # too. Allow the duplicate so the instrumented in-tree operator wins; malloc is
 # still intercepted and poisoned by the MSan runtime, so shadow tracking holds.
+# The flag is a linker input, so it goes on the executable link line only: on a
+# compile line clang reports it unused, and the tree's -Werror fails the build.
 abs_build="$PWD/$build_dir"
 if [ -n "${RUN_MSAN_TEST_BIN:-}" ]; then
     test_bin=$RUN_MSAN_TEST_BIN
@@ -42,7 +44,7 @@ else
         -DCMAKE_C_COMPILER=clang \
         -DCMAKE_CXX_COMPILER=clang++ \
         -DCMAKE_C_FLAGS="$flags" \
-        -DCMAKE_CXX_FLAGS="$flags $link_flags" \
+        -DCMAKE_CXX_FLAGS="$flags" \
         -DCMAKE_EXE_LINKER_FLAGS="$flags $link_flags" \
         -DCMAKE_SHARED_LINKER_FLAGS="$flags" \
         -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$abs_build/bin" \
