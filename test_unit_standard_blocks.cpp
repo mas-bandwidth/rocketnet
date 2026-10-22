@@ -130,7 +130,7 @@ static int standard_blocks_split( const char * id, uint8_t * out, int capacity )
     else
         return -1;
 
-    const uint32_t bytes = index == 2 ? 100 : (int) ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    const int bytes = index == 2 ? 100 : (int) ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     standard_blocks_fill( bytes );
     const rn_send_number_t * slot = &numbers[( first + index ) % region.window];
     const uint32_t ring = (uint32_t) ( ( slot->ring_start % region.ring_bytes ) / 16 );

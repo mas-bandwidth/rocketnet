@@ -22,8 +22,8 @@ static void test_sleep_clamp_bounds_negative_nan_and_huge()
 {
     check( rocketnet_sleep_clamp( -1.0 ) == 0.0 );
     check( rocketnet_sleep_clamp( -DBL_MAX ) == 0.0 );
-    check( rocketnet_sleep_clamp( -INFINITY ) == 0.0 );
-    check( rocketnet_sleep_clamp( NAN ) == 0.0 );
+    check( rocketnet_sleep_clamp( -(double) INFINITY ) == 0.0 );
+    check( rocketnet_sleep_clamp( (double) NAN ) == 0.0 );
     check( rocketnet_sleep_clamp( 0.0 ) == 0.0 );
 
     check( rocketnet_sleep_clamp( 0.001 ) == 0.001 );
@@ -33,15 +33,15 @@ static void test_sleep_clamp_bounds_negative_nan_and_huge()
     check( rocketnet_sleep_clamp( ROCKETNET_SLEEP_MAX_SECONDS + 1.0 ) == ROCKETNET_SLEEP_MAX_SECONDS );
     check( rocketnet_sleep_clamp( 1.0e300 ) == ROCKETNET_SLEEP_MAX_SECONDS );
     check( rocketnet_sleep_clamp( DBL_MAX ) == ROCKETNET_SLEEP_MAX_SECONDS );
-    check( rocketnet_sleep_clamp( INFINITY ) == ROCKETNET_SLEEP_MAX_SECONDS );
+    check( rocketnet_sleep_clamp( (double) INFINITY ) == ROCKETNET_SLEEP_MAX_SECONDS );
 
     // the longest clamped request still fits the platform's int microseconds
     check( ROCKETNET_SLEEP_MAX_SECONDS * 1000000.0 < 2147483647.0 );
 
     // a refused request returns at once rather than reaching the platform
     rocketnet_sleep( -1.0 );
-    rocketnet_sleep( NAN );
-    rocketnet_sleep( -INFINITY );
+    rocketnet_sleep( (double) NAN );
+    rocketnet_sleep( -(double) INFINITY );
 }
 
 REGISTER_UNIT_TEST( test_sleep_clamp_bounds_negative_nan_and_huge );

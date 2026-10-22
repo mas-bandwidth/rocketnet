@@ -548,12 +548,12 @@ static void test_config_env_every_name_read_is_documented()
     check( documented.size() == building.size() );
     for ( size_t i = 0; i < documented.size(); i++ )
     {
-        check( !env_names_contains( std::vector<std::string>( documented.begin(), documented.begin() + i ), documented[i].c_str() ) );
+        check( !env_names_contains( std::vector<std::string>( documented.data(), documented.data() + i ), documented[i].c_str() ) );
         check( env_names_contains( building, documented[i].c_str() ) );
     }
     for ( size_t i = 0; i < building.size(); i++ )
     {
-        check( !env_names_contains( std::vector<std::string>( building.begin(), building.begin() + i ), building[i].c_str() ) );
+        check( !env_names_contains( std::vector<std::string>( building.data(), building.data() + i ), building[i].c_str() ) );
         check( env_names_contains( documented, building[i].c_str() ) );
     }
     for ( size_t i = 0; i < reads.size(); i++ )

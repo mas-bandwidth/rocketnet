@@ -261,10 +261,11 @@ static void lifecycle_exchange( lifecycle_world_t * world, int client, uint8_t t
 {
     rocketnet_client_t * c = world->clients[client];
     const int index = rocketnet_client_index( c );
+    check( index >= 0 );
     for ( int i = 0; i < want; i++ )
     {
         lifecycle_client_send( c, tag, (uint8_t) i );
-        lifecycle_server_send( world->server, index, tag, (uint8_t) i );
+        lifecycle_server_send( world->server, (uint64_t) index, tag, (uint8_t) i );
     }
     int at_server = 0, at_client = 0;
     for ( int step = 0; step < 400 && ( at_server < want || at_client < want ); step++ )
@@ -280,7 +281,7 @@ static void lifecycle_exchange( lifecycle_world_t * world, int client, uint8_t t
             {
                 data = batch->data[i];
                 bytes = batch->bytes[i];
-                sender = batch->client_index[i];
+                sender = (uint64_t) batch->client_index[i];
                 check( sender == (uint64_t) index );
                 check( bytes == 2 && data[0] == tag && data[1] == (uint8_t) at_server );
 
@@ -940,10 +941,11 @@ static void test_connection_reset_client_reconnect_delivers()
 
     // mid-transfer: queue messages both ways, let one update run, then end it
     const int index = rocketnet_client_index( client );
+    check( index >= 0 );
     for ( int i = 0; i < 8; i++ )
     {
         lifecycle_client_send( client, 0x5F, (uint8_t) i );
-        lifecycle_server_send( world.server, index, 0x5F, (uint8_t) i );
+        lifecycle_server_send( world.server, (uint64_t) index, 0x5F, (uint8_t) i );
     }
     lifecycle_pump( &world );
     uint64_t sender = 0;
@@ -952,7 +954,7 @@ static void test_connection_reset_client_reconnect_delivers()
     {
         for ( int i = 0; i < batch->num_messages; i++ )
         {
-            sender = batch->client_index[i];
+            sender = (uint64_t) batch->client_index[i];
             check( sender == (uint64_t) index );
         }
     }
@@ -989,7 +991,9 @@ static void test_server_destination_flow_id_refused()
     lifecycle_world_t world;
     lifecycle_world_create( &world, 2, 1 );
     lifecycle_connect( &world, 0, 0x1A01 );
-    const uint64_t flow = ROCKETNET_FLOW_ID_BIT | rocketnet_client_index( world.clients[0] );
+    const int flow_index = rocketnet_client_index( world.clients[0] );
+    check( flow_index >= 0 );
+    const uint64_t flow = (uint64_t) ROCKETNET_FLOW_ID_BIT | (uint64_t) flow_index;
 
     // the flow refusal names FLOW_ID_RESERVED; an index merely out of range
     // (no flow bit) is refused without it
@@ -1417,7 +1421,8 @@ static void rq_drain( lifecycle_world_t * world, rq_run_t * run )
             const bool carries = type == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED || type == ROCKETNET_RELIABILITY_RELIABLE_ORDERED ||
                                  type == ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED || type == ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT;
             check( received->bytes[i] == 4 && received->channel[i] == ( carries ? received->data[i][2] : 0 ) );
-            rq_record( &run->at_server, received->client_index[i], received->data[i], received->bytes[i] );
+            check( received->client_index[i] >= 0 );
+            rq_record( &run->at_server, (uint64_t) received->client_index[i], received->data[i], received->bytes[i] );
         }
     }
 
