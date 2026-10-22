@@ -712,7 +712,11 @@ static inline void rocketnet_fuzz_snapshot_restore( struct rocketnet_fuzz_pair_t
 // coverage: the one-time create, connect and snapshot run before any input
 // and would count as covered code no input drove, so the profile counters
 // are zeroed once the snapshots are taken (tools/fuzz_coverage.sh sets it).
-#if defined( __clang__ ) && !defined( _WIN32 )
+// On macOS an undefined weak reference still fails the link (ld64 resolves
+// it at link time), so the counters' reset is looked up when it is wanted.
+#if defined( __clang__ ) && defined( __APPLE__ )
+#include <dlfcn.h>
+#elif defined( __clang__ ) && !defined( _WIN32 )
 extern "C" void __llvm_profile_reset_counters( void ) __attribute__(( weak ));
 #endif
 
@@ -720,8 +724,15 @@ static inline void rocketnet_fuzz_coverage_reset_after_setup()
 {
 #if defined( __clang__ ) && !defined( _WIN32 )
     char value[8];
-    if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_COVERAGE_INPUTS_ONLY", value, sizeof( value ) ) && value[0] == '1' && __llvm_profile_reset_counters )
-        __llvm_profile_reset_counters();
+    if ( !rocketnet_test_getenv( "ROCKETNET_FUZZ_COVERAGE_INPUTS_ONLY", value, sizeof( value ) ) || value[0] != '1' )
+        return;
+#if defined( __APPLE__ )
+    void (*reset)( void ) = (void (*)( void )) dlsym( RTLD_DEFAULT, "__llvm_profile_reset_counters" );
+#else
+    void (*reset)( void ) = __llvm_profile_reset_counters;
+#endif
+    if ( reset )
+        reset();
 #endif
 }
 
