@@ -250,7 +250,8 @@ def end_to_end(name, command, server_binary, client_binary, keys, production):
         if production:
             for role, output in (("client", client.stdout), ("server", server_out)):
                 if f"backend_{role}: mode=production transport=portable" not in output.splitlines():
-                    return fail(label, f"{role} did not confirm production portable mode")
+                    observed = [line for line in output.splitlines() if line.startswith(f"backend_{role}:")]
+                    return fail(label, f"{role} did not confirm production portable mode: {observed}")
         print(f"backend_{name}: fresh_keys=true server_registered_http=true token_from_http=true "
               f"production_required={str(production).lower()} portable_echo=true")
         return True

@@ -71,13 +71,14 @@ int main( int argc, char ** argv )
     client = rocketnet_client_create( NULL, &config, &create_status );
     if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     CHECK( client != NULL );
-    printf( "backend_client: mode=%s transport=%s\n", ROCKETNET_DEV ? "development" : "production", rocketnet_client_transport_name( client ) );
 
     // connect checks the token before the first packet: a string that does
     // not parse, or one already expired, is refused here
     const enum rocketnet_status_t connect_status = rocketnet_client_connect( client, connect_token );
     if ( connect_status != ROCKETNET_STATUS_OK ) printf( "connect refused: %s\n", rocketnet_status_name( connect_status ) );
     CHECK( connect_status == ROCKETNET_STATUS_OK );
+    CHECK( rocketnet_client_transport_name( client ) != NULL );
+    printf( "backend_client: mode=%s transport=%s\n", ROCKETNET_DEV ? "development" : "production", rocketnet_client_transport_name( client ) );
 
     const double start = rocketnet_time();
 
