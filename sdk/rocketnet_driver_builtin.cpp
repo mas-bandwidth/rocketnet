@@ -21,11 +21,21 @@ static void * portable_socket_create( void * context, const char * name, rocketn
 static const int PORTABLE_TX_BANKS = 3;
 static const int PORTABLE_TX_CAPACITY = ROCKETNET_SERVER_MAX_SEND_PACKETS;
 static const int PORTABLE_RX_BANKS = 3;
-// An RX bank is one swap, not one update: main drains every ready bank within
-// its per-update budget and the worker refills each returned bank, so a bank
-// holds one datagram per client, the TX bank's size. A bank sized to the whole
-// update budget (16 per client) put 70 MB in every portable server.
-static const int PORTABLE_RX_CAPACITY = ROCKETNET_MAX_CLIENTS;
+// An RX bank holds one update's receive budget for the configured clients
+// (16 per client), so main can take a full update from one bank and the worker
+// can fill the next meanwhile. The banks are one allocation sized at create
+// from max_clients: a 4-client server does not carry the 70 MB a 1000-client
+// server needs.
+static int portable_rx_capacity( const rocketnet_server_transport_config_t * config )
+{
+    const int max_clients = config && config->max_clients > 0 ? config->max_clients : ROCKETNET_MAX_CLIENTS;
+    return ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * max_clients;
+}
+static uint64_t portable_rx_storage_bytes( int capacity )
+{
+    return (uint64_t) PORTABLE_RX_BANKS * (uint64_t) capacity *
+        ( sizeof( rocketnet_address_t ) + sizeof( int ) + ROCKETNET_RECEIVE_CEILING );
+}
 struct portable_tx_bank_t
 {
     int count = 0;
@@ -37,9 +47,9 @@ struct portable_tx_bank_t
 struct portable_rx_bank_t
 {
     int count = 0;
-    rocketnet_address_t from[PORTABLE_RX_CAPACITY];
-    int bytes[PORTABLE_RX_CAPACITY];
-    uint8_t data[PORTABLE_RX_CAPACITY][ROCKETNET_RECEIVE_CEILING];
+    rocketnet_address_t * from = NULL;                  // rx_capacity entries in rx_storage
+    int * bytes = NULL;
+    uint8_t (*data)[ROCKETNET_RECEIVE_CEILING] = NULL;
 };
 struct portable_server_t
 {
@@ -82,8 +92,39 @@ struct portable_server_t
     int rx_ready_index[PORTABLE_RX_BANKS] = {};
     int rx_ready_head = 0;
     int rx_ready_count = 0;
+    int rx_capacity = 0;
+    uint8_t * rx_storage = NULL; // the three banks' arrays, one allocation
     portable_rx_bank_t rx_bank[PORTABLE_RX_BANKS];
 };
+
+// Points the three banks into one allocation of capacity datagrams each:
+// the data arrays first (aligned as the allocation is), then the addresses,
+// then the byte counts.
+static bool portable_rx_storage_create( portable_server_t * server, int capacity )
+{
+    const uint64_t bytes = portable_rx_storage_bytes( capacity );
+    if ( capacity <= 0 || bytes > (uint64_t) SIZE_MAX ) return false;
+    server->rx_storage = (uint8_t*) rocketnet_malloc( server->context, (size_t) bytes );
+    if ( !server->rx_storage ) return false;
+    server->rx_capacity = capacity;
+    uint8_t * p = server->rx_storage;
+    for ( int i = 0; i < PORTABLE_RX_BANKS; ++i )
+    {
+        server->rx_bank[i].data = (uint8_t (*)[ROCKETNET_RECEIVE_CEILING]) p;
+        p += (size_t) capacity * ROCKETNET_RECEIVE_CEILING;
+    }
+    for ( int i = 0; i < PORTABLE_RX_BANKS; ++i )
+    {
+        server->rx_bank[i].from = (rocketnet_address_t*) p;
+        p += (size_t) capacity * sizeof( rocketnet_address_t );
+    }
+    for ( int i = 0; i < PORTABLE_RX_BANKS; ++i )
+    {
+        server->rx_bank[i].bytes = (int*) p;
+        p += (size_t) capacity * sizeof( int );
+    }
+    return true;
+}
 
 // The only shared ownership transition. No copy, allocation or socket call
 // occurs with the mutex held. A failed try retains the main-owned producer.
@@ -250,7 +291,7 @@ static portable_rx_step_t portable_rx_step( portable_server_t * server )
     }
     portable_rx_bank_t * bank = &server->rx_bank[server->rx_producer];
     bank->count = rocketnet_platform_socket_receive_packets( server->socket,
-        bank->from, &bank->data[0][0], ROCKETNET_RECEIVE_CEILING, bank->bytes, PORTABLE_RX_CAPACITY );
+        bank->from, &bank->data[0][0], ROCKETNET_RECEIVE_CEILING, bank->bytes, server->rx_capacity );
     if ( bank->count < 0 ) bank->count = 0;
     return bank->count > 0 ? PORTABLE_RX_AGAIN : PORTABLE_RX_WAIT_IDLE;
 }
@@ -306,6 +347,8 @@ static void portable_server_cleanup( portable_server_t * server )
     if ( server->mutex.ok ) rocketnet_platform_mutex_destroy( &server->mutex );
     if ( server->socket ) rocketnet_platform_socket_destroy( server->socket );
     void * context = server->context;
+    if ( server->rx_storage )
+        rocketnet_clear_and_free( context, server->rx_storage, (size_t) portable_rx_storage_bytes( server->rx_capacity ) );
     server->~portable_server_t();
     rocketnet_clear_and_free( context, server, sizeof( portable_server_t ) );
 }
@@ -332,6 +375,11 @@ static void * portable_create( void * context, const rocketnet_server_transport_
     if ( !server ) return NULL;
     new (server) portable_server_t();
     server->context = context;
+    if ( !portable_rx_storage_create( server, portable_rx_capacity( config->transport ) ) )
+    {
+        portable_server_cleanup( server );
+        return NULL;
+    }
     server->socket = (rocketnet_platform_socket_t*) portable_socket_create( context, config->name, bind );
     if ( !server->socket )
     {
@@ -613,7 +661,8 @@ static portable_server_t * portable_rx_test_owner()
     void * storage = rocketnet_malloc( NULL, sizeof( portable_server_t ) );
     if ( !storage ) return NULL;
     portable_server_t * server = new (storage) portable_server_t();
-    if ( !rocketnet_platform_mutex_create( &server->mutex ) ||
+    if ( !portable_rx_storage_create( server, 1024 ) ||
+         !rocketnet_platform_mutex_create( &server->mutex ) ||
          !rocketnet_platform_mutex_create( &server->rx_mutex ) )
     {
         portable_server_cleanup( server );
@@ -684,10 +733,10 @@ bool rocketnet_portable_rx_test_handoff()
     memset( data, 0xcc, sizeof(data) );
     valid &= portable_receive( server, from, &data[0][0], 8, bytes, 1 ) == 1 &&
         bytes[0] == ROCKETNET_RECEIVE_CEILING + 1 && data[0][7] == 0x5a && data[1][0] == 0xcc;
-    fill( server->rx_bank[server->rx_producer], PORTABLE_RX_CAPACITY, 1000 );
+    fill( server->rx_bank[server->rx_producer], server->rx_capacity, 1000 );
     valid &= portable_rx_publish( server );
     valid &= portable_receive( server, from, &data[0][0], 8, bytes, 1 ) == 1 &&
-        server->rx_cursor == 1 && server->rx_bank[server->rx_consumer].count == PORTABLE_RX_CAPACITY;
+        server->rx_cursor == 1 && server->rx_bank[server->rx_consumer].count == server->rx_capacity;
     portable_stop( server );
     valid &= portable_receive( server, from, &data[0][0], 8, bytes, 1 ) == 0 &&
         server->rx_cursor == 1; // stop cannot recycle an exposed tail
@@ -1136,7 +1185,7 @@ void rocketnet_forbid_xdp_commit()
 bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_config_t * config,
     const char * transport, rocketnet_server_memory_plan_t & plan)
 {
-    (void) config; // read only by the Linux and Windows transports below
+    (void) config; // max_clients sizes the portable RX banks; also read by the Linux and Windows transports below
     if (strcmp(transport, "portable") == 0
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
         || strcmp(transport, "msgx") == 0
@@ -1146,7 +1195,8 @@ bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_confi
 #if !defined(ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE)
         return false;
 #else
-        uint64_t bytes = rocketnet_memory_allocations({sizeof(portable_server_t)});
+        uint64_t bytes = rocketnet_memory_allocations({sizeof(portable_server_t),
+            portable_rx_storage_bytes( portable_rx_capacity( config ) )});
         if ( !bytes || !rocketnet_memory_add( bytes, 1, rocketnet_platform_socket_allocation_bytes() ) ||
              !rocketnet_memory_add( bytes, 2, rocketnet_platform_wake_allocation_bytes() ) ||
              !rocketnet_memory_add( bytes, 2, rocketnet_platform_thread_allocation_bytes() ) )
