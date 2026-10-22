@@ -948,7 +948,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         if ( rocketnet_development_values_refused() )
         {
             rocketnet_error( "connect token sealed to the development server key in a production build (ROCKETNET_DEV=0); refusing to connect" );
-            rocketnet_client_transport_destroy( client_transport );
+            rocketnet_client_transport_abort_create( client_transport );
             if ( status )
                 *status = ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION;
             return NULL;
