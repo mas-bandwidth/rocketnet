@@ -228,10 +228,10 @@ void rn_send_store_init( rn_send_store_t * store, uint8_t * memory, uint64_t byt
         rocketnet_assert( cls->num_chunks < RN_LINK_END );
         cls->data = memory + (uint64_t) c * third;
         cls->link = (uint32_t*) ( cls->data + (uint64_t) cls->num_chunks * cls->chunk_bytes );
-        for ( uint32_t i = 0; i < cls->num_chunks; i++ )
-            cls->link[i] = i + 1 < cls->num_chunks ? i + 1 : RN_LINK_END;
-        cls->free_head = cls->num_chunks > 0 ? 0 : RN_LINK_END;
+        // tla/RNLazyPool.tla Reset: nothing taken, no link written
+        cls->free_head = RN_LINK_END;
         cls->free_count = cls->num_chunks;
+        cls->fresh = 0;
     }
 }
 
@@ -247,10 +247,10 @@ static void rn_send_store_init_counts( rn_send_store_t * store, uint8_t * memory
         cls->num_chunks = counts[c];
         cls->data = memory + offset;
         cls->link = (uint32_t*) ( cls->data + (uint64_t) cls->num_chunks * cls->chunk_bytes );
-        for ( uint32_t i = 0; i < cls->num_chunks; i++ )
-            cls->link[i] = i + 1 < cls->num_chunks ? i + 1 : RN_LINK_END;
-        cls->free_head = cls->num_chunks ? 0 : RN_LINK_END;
+        // tla/RNLazyPool.tla Reset: nothing taken, no link written
+        cls->free_head = RN_LINK_END;
         cls->free_count = cls->num_chunks;
+        cls->fresh = 0;
         offset += rn_align64( (uint64_t) cls->num_chunks * ( cls->chunk_bytes + sizeof(uint32_t) ) );
     }
 }
@@ -274,10 +274,21 @@ uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes )
     uint32_t previous = RN_LINK_END;
     for ( uint32_t n = 0; n < needed; n++ )
     {
-        const uint32_t i = cls->free_head;
-        rocketnet_assert( i < cls->num_chunks );
-        rocketnet_assert( ( cls->link[i] & RN_LINK_IN_USE ) == 0 );
-        cls->free_head = cls->link[i];
+        // tla/RNLazyPool.tla Take: the free list first, then the first chunk
+        // never taken
+        uint32_t i;
+        if ( cls->free_head != RN_LINK_END )
+        {
+            i = cls->free_head;
+            rocketnet_assert( i < cls->fresh );
+            rocketnet_assert( ( cls->link[i] & RN_LINK_IN_USE ) == 0 );
+            cls->free_head = cls->link[i];
+        }
+        else
+        {
+            i = cls->fresh++;
+            rocketnet_assert( i < cls->num_chunks );
+        }
         cls->link[i] = RN_LINK_IN_USE | RN_LINK_END;
         if ( previous == RN_LINK_END )
         {
@@ -306,7 +317,7 @@ bool rn_send_store_free_checked( rn_send_store_t * store, uint32_t handle )
         return false;
     rn_store_class_t * cls = &store->classes[c];
     uint32_t i = handle & RN_LINK_INDEX;
-    if ( i >= cls->num_chunks )
+    if ( i >= cls->fresh )                  // never taken: its link is unwritten, and it is not held
         return false;
 
     // only a chain's head, still allocated, frees (CHANNELS section 4):
@@ -367,7 +378,7 @@ uint32_t rn_send_store_chunk_next( const rn_send_store_t * store, uint32_t handl
         return RN_CHUNK_NONE;
     const rn_store_class_t * cls = &store->classes[c];
     const uint32_t i = handle & RN_LINK_INDEX;
-    if ( i >= cls->num_chunks )
+    if ( i >= cls->fresh )                  // never taken: its link is unwritten
         return RN_CHUNK_NONE;
     const uint32_t next = cls->link[i] & RN_LINK_INDEX;
     return next == RN_LINK_END ? RN_CHUNK_NONE : ( ( (uint32_t) c << 30 ) | next );
@@ -465,14 +476,14 @@ void rn_region_carve( rn_region_t * region )
     memset( region->received_bits, 0, region->window / 8 );
     memset( region->held_index, 0, sizeof(rn_held_entry_t) * region->held_entries );
 
-    // the send descriptor pool: an intrusive LIFO free list through next
-    memset( region->send_descriptors, 0, sizeof(rn_send_descriptor_t) * region->queue );
-    for ( uint32_t d = 0; d < region->queue; d++ )
-        region->send_descriptors[d].next = d + 1 < region->queue ? d + 1 : RN_DESCRIPTOR_NONE;
-    region->descriptors_free_head = region->queue > 0 ? 0 : RN_DESCRIPTOR_NONE;
+    // the send descriptor pool: an intrusive LIFO free list through next,
+    // lazy (tla/RNLazyPool.tla Reset): nothing taken, no descriptor written.
+    // A take initializes its descriptor whole.
+    region->descriptors_free_head = RN_DESCRIPTOR_NONE;
     region->descriptors_free = region->queue;
+    region->descriptors_fresh = 0;
 
-    // the store's free lists, rethreaded in place
+    // the store's free lists, emptied in place (lazy, as the descriptors)
     uint32_t store_chunks[RN_STORE_NUM_CLASSES];
     for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
         store_chunks[c] = region->store.classes[c].num_chunks;
@@ -548,6 +559,29 @@ int rn_connection_memory_decide( const rn_region_t * region )
     return region->exhausted ? ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED : ROCKETNET_DISCONNECT_REASON_NONE;
 }
 
+// tla/RNLazyPool.tla Take: a descriptor off the free list, or the first one
+// never taken since the carve. The caller checked descriptors_free and
+// initializes the descriptor whole.
+static uint32_t rn_region_descriptor_take( rn_region_t * region )
+{
+    rocketnet_assert( region->descriptors_free > 0 );
+    uint32_t d;
+    if ( region->descriptors_free_head != RN_DESCRIPTOR_NONE )
+    {
+        d = region->descriptors_free_head;
+        rocketnet_assert( d < region->descriptors_fresh );
+        rocketnet_assert( !region->send_descriptors[d].in_use );
+        region->descriptors_free_head = region->send_descriptors[d].next;
+    }
+    else
+    {
+        d = region->descriptors_fresh++;
+        rocketnet_assert( d < region->queue );
+    }
+    region->descriptors_free--;
+    return d;
+}
+
 uint32_t rn_region_send_alloc( rn_region_t * region, int bytes )
 {
     // tla/RNConnectionMemory.tla, Use (room found) or Exhaust (none)
@@ -590,13 +624,8 @@ uint32_t rn_region_send_alloc( rn_region_t * region, int bytes )
         return RN_DESCRIPTOR_NONE;
     }
 
-    const uint32_t d = region->descriptors_free_head;
-    rocketnet_assert( d < region->queue );
+    const uint32_t d = rn_region_descriptor_take( region );
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-    rocketnet_assert( !descriptor->in_use );
-    region->descriptors_free_head = descriptor->next;
-    region->descriptors_free--;
-
     memset( descriptor, 0, sizeof(*descriptor) );
     descriptor->chunk = chunk;
     descriptor->bytes = (uint32_t) bytes;
@@ -758,13 +787,8 @@ uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes )
         return RN_DESCRIPTOR_NONE;
     }
 
-    const uint32_t d = region->descriptors_free_head;
-    rocketnet_assert( d < region->queue );
+    const uint32_t d = rn_region_descriptor_take( region );
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-    rocketnet_assert( !descriptor->in_use );
-    region->descriptors_free_head = descriptor->next;
-    region->descriptors_free--;
-
     memset( descriptor, 0, sizeof(*descriptor) );
     descriptor->chunk = RN_CHUNK_NONE;
     descriptor->bytes = (uint32_t) bytes;
@@ -781,7 +805,7 @@ const uint8_t * rn_region_send_data( const rn_region_t * region, uint32_t d, uin
     rocketnet_assert( region );
     if ( out_bytes )
         *out_bytes = 0;
-    if ( d >= region->queue )
+    if ( d >= region->descriptors_fresh )   // never taken since the carve: not in use, and unwritten
         return NULL;
     const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
     if ( !descriptor->in_use )
@@ -815,7 +839,7 @@ const uint8_t * rn_region_send_data( const rn_region_t * region, uint32_t d, uin
 uint8_t * rn_region_send_write_pointer( rn_region_t * region, uint32_t d )
 {
     rocketnet_assert( region );
-    if ( d >= region->queue || !region->send_descriptors[d].in_use )
+    if ( d >= region->descriptors_fresh || !region->send_descriptors[d].in_use )
         return NULL;
     const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
     if ( descriptor->flags & RN_SEND_FLAG_SPAN )
@@ -831,10 +855,12 @@ void rn_region_send_free( rn_region_t * region, uint32_t d )
     // ack or an abort between Exhaust and Kick), it only returns room, and
     // both allocators refuse to take it again until rn_region_reset
     rocketnet_assert( region );
-    rocketnet_assert( d < region->queue );
+    rocketnet_assert( d < region->descriptors_fresh );
+    if ( d >= region->descriptors_fresh )
+        return;
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
     rocketnet_assert( descriptor->in_use );
-    if ( d >= region->queue || !descriptor->in_use )
+    if ( !descriptor->in_use )
         return;
     if ( descriptor->flags & RN_SEND_FLAG_SPAN )
         rn_span_unlink( region, d );
@@ -851,8 +877,8 @@ void rn_region_send_free_fragment( rn_region_t * region, uint32_t d, uint32_t ch
 {
     // tla/RNConnectionMemory.tla, Release (one fragment's room)
     rocketnet_assert( region );
-    rocketnet_assert( d < region->queue );
-    if ( d >= region->queue )
+    rocketnet_assert( d < region->descriptors_fresh );
+    if ( d >= region->descriptors_fresh )
         return;
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
     rocketnet_assert( descriptor->in_use );

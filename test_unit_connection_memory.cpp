@@ -107,7 +107,10 @@ static bool cm_bookkeeping_equal( const rn_region_t * a, const rn_region_t * b )
         return false;
     if ( rn_connection_memory_decide( a ) != rn_connection_memory_decide( b ) )
         return false;
-    if ( a->descriptors_free_head != b->descriptors_free_head || a->descriptors_free != b->descriptors_free )
+    // the pools are lazy (tla/RNLazyPool.tla): their state is the free list,
+    // the free count and the watermark; the bytes of a descriptor or chunk
+    // link at or past the watermark are not state and are not compared
+    if ( a->descriptors_free_head != b->descriptors_free_head || a->descriptors_free != b->descriptors_free || a->descriptors_fresh != b->descriptors_fresh )
         return false;
     if ( memcmp( a->channel_send, b->channel_send, sizeof(rn_channel_send_t) * a->num_channels ) != 0 ) return false;
     if ( memcmp( a->channel_receive, b->channel_receive, sizeof(rn_channel_receive_t) * a->num_channels ) != 0 ) return false;
@@ -115,7 +118,7 @@ static bool cm_bookkeeping_equal( const rn_region_t * a, const rn_region_t * b )
     if ( memcmp( a->receive_descriptors, b->receive_descriptors, sizeof(rn_receive_descriptor_t) * a->window ) != 0 ) return false;
     if ( memcmp( a->received_bits, b->received_bits, a->window / 8 ) != 0 ) return false;
     if ( memcmp( a->held_index, b->held_index, sizeof(rn_held_entry_t) * a->held_entries ) != 0 ) return false;
-    if ( memcmp( a->send_descriptors, b->send_descriptors, sizeof(rn_send_descriptor_t) * a->queue ) != 0 ) return false;
+    if ( memcmp( a->send_descriptors, b->send_descriptors, sizeof(rn_send_descriptor_t) * a->descriptors_fresh ) != 0 ) return false;
     if ( memcmp( a->sent_packets, b->sent_packets, sizeof(rn_sent_packet_t) * a->packets ) != 0 ) return false;
     if ( memcmp( a->sent_index, b->sent_index, sizeof(rn_sent_index_t) * a->sent_index_entries ) != 0 ) return false;
     if ( memcmp( a->sent_refs, b->sent_refs, sizeof(uint32_t) * a->sent_ref_entries ) != 0 ) return false;
@@ -133,9 +136,9 @@ static bool cm_bookkeeping_equal( const rn_region_t * a, const rn_region_t * b )
     {
         const rn_store_class_t * x = &a->store.classes[c];
         const rn_store_class_t * y = &b->store.classes[c];
-        if ( x->num_chunks != y->num_chunks || x->free_head != y->free_head || x->free_count != y->free_count || x->chunk_bytes != y->chunk_bytes )
+        if ( x->num_chunks != y->num_chunks || x->free_head != y->free_head || x->free_count != y->free_count || x->chunk_bytes != y->chunk_bytes || x->fresh != y->fresh )
             return false;
-        if ( memcmp( x->link, y->link, sizeof(uint32_t) * x->num_chunks ) != 0 )
+        if ( memcmp( x->link, y->link, sizeof(uint32_t) * x->fresh ) != 0 )
             return false;
         // the class's place in its region, the same offset in both
         if ( x->data - a->store_memory != y->data - b->store_memory )

@@ -287,3 +287,6 @@ MCRNClientIoLiveCommittedB.cfg	MCRNClientIoLiveness.tla	pass	-	check	rnclientio	
 MCRNClientIoLiveFilled.cfg	MCRNClientIo.tla	pass	-	check	rnclientio	required	-
 MCRNClientIoLiveArrivedBeforeLast.cfg	MCRNClientIoLiveness.tla	pass	-	check	rnclientio	required	-
 MCRNClientIoLiveArrivedLast.cfg	MCRNClientIoLiveness.tla	pass	-	check	rnclientio	required	-
+MCRNLazyPool.cfg	MCRNLazyPool.tla	pass	-	check	rnlazypool	required	-
+MCRNLazyPoolBrokenNoGuard.cfg	MCRNLazyPool.tla	invariant	InUseExact	check	rnlazypool	required	-
+MCRNLazyPoolBrokenKeepFresh.cfg	MCRNLazyPool.tla	invariant	Refines	check	rnlazypool	required	-

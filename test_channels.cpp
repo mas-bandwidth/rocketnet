@@ -1678,7 +1678,9 @@ static void rn_soak_check_accounting( const rn_region_t * region )
 
     uint32_t used[RN_STORE_NUM_CLASSES] = { 0, 0, 0 };
     uint32_t descriptors_used = 0;
-    for ( uint32_t d = 0; d < region->queue; d++ )
+    // a descriptor at or past the lazy pool's watermark was never taken
+    // (tla/RNLazyPool.tla): not in use, and its bytes are not state
+    for ( uint32_t d = 0; d < region->descriptors_fresh; d++ )
     {
         const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
         if ( !descriptor->in_use )
