@@ -1,6 +1,6 @@
 @PACKAGE_INIT@
 # the release label: RocketNet_VERSION is the numeric 1.0.0 find_package
-# compares; the string carries the prerelease (v1.0.0-preview-1), equal to the
+# compares; the string carries the full prerelease label, equal to the
 # installed header's ROCKETNET_VERSION_FULL
 set(RocketNet_VERSION_STRING "@ROCKETNET_VERSION_STRING@")
 set(RocketNet_VERSION_PRERELEASE "@ROCKETNET_VERSION_PRERELEASE@")
