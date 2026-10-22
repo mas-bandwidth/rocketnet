@@ -557,7 +557,7 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
     posix_counters_read( posix_pair_counters( &pair, at_server ), &expect );
 
     static uint8_t buffer[65507];
-    uint64_t random_state = 0x9e3779b97f4a7c15ULL ^ (uint64_t) ( ipv6 * 2 + at_server );
+    uint64_t random_state = UINT64_C( 0x9e3779b97f4a7c15 ) ^ (uint64_t) ( ipv6 * 2 + at_server );
     int garbage_sent = 0;
     int valid_sent = 0;
     int valid_seen = 0;
@@ -1264,7 +1264,7 @@ void rocketnet_test_posix_send_burst()
             memcpy( bytes, &sender_index, sizeof(sender_index) );
             memcpy( bytes + sizeof(sender_index), &sequence, sizeof(sequence) );
             for ( int i = (int) ( sizeof(sender_index) + sizeof(sequence) ); i < POSIX_BURST_BYTES; i++ )
-                bytes[i] = (uint8_t) ( sender_index + sequence + i );
+                bytes[i] = (uint8_t) ( sender_index + sequence + (uint32_t) i );
             sends[sequence].to = &destination;
             sends[sequence].packet_data = bytes;
             sends[sequence].packet_bytes = POSIX_BURST_BYTES;
@@ -2091,7 +2091,7 @@ static void posix_xdp_weather( int ipv6 )
     const struct posix_xdp_expect_t start = expect;
 
     static uint8_t buffer[65507];
-    uint64_t random_state = 0x9e3779b97f4a7c15ULL ^ (uint64_t) ( ipv6 * 2 + 1 ) ^ 0x5844ULL;
+    uint64_t random_state = UINT64_C( 0x9e3779b97f4a7c15 ) ^ (uint64_t) ( ipv6 * 2 + 1 ) ^ UINT64_C( 0x5844 );
     int garbage_sent = 0;
     int valid_sent = 0;
     int valid_seen = 0;
