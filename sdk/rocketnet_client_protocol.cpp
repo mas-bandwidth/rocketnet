@@ -172,11 +172,15 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
     rocketnet_read_connect_token( &client->token, connect_token );
     rocketnet_read_signed_connect_data( &client->signed_fields, client->token.signed_connect_data );
 
-    // the pre-send token checks, from the standard
+    // the pre-send token checks, from the standard (TRANSPORT.md t11 rule 2).
+    // a timeout of zero or below is invalid at both ends: the server ignores
+    // such a request, and a client that accepted the token would never time
+    // out (the deadline check below reads only a positive timeout)
 
     uint8_t flags = client->signed_fields.address_flags;
     if ( flags == 0 || ( flags & ~( ROCKETNET_ADDRESS_FLAG_IPV4 | ROCKETNET_ADDRESS_FLAG_IPV6 ) ) != 0 ||
          client->signed_fields.create_timestamp > client->signed_fields.expire_timestamp ||
+         client->signed_fields.timeout_seconds <= 0 ||
          client->signed_fields.version != ROCKETNET_WIRE_VERSION )
     {
         rocketnet_debug( "client connect failed. invalid connect token" );
@@ -382,8 +386,7 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
 // tla/ClientConnection.tla ClientRecvCookie
 static int rocketnet_client_process_cookie( struct rocketnet_client_protocol_t * client,
                                             const uint8_t * packet_data,
-                                            int packet_bytes,
-                                            double current_time )
+                                            int packet_bytes )
 {
     uint64_t * counters = client->counters->values;
 
@@ -418,17 +421,26 @@ static int rocketnet_client_process_cookie( struct rocketnet_client_protocol_t *
     // store the last 24 bytes -- expire and mac -- and carry them in every
     // subsequent request. a fresh cookie replaces a stale one. nothing is
     // sent because this arrived; the next scheduled request carries it.
+    //
+    // the client trusts only the server: the salt rides in the clear, so
+    // anyone who sees the request can echo it. a cookie therefore never
+    // refreshes the receive time and never gives a round-trip sample; both
+    // come only from the challenge and later packets that open under the
+    // attempt's keys (STANDARD t11.1).
 
     memcpy( client->return_cookie, packet_data + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES, ROCKETNET_COOKIE_FIELD_BYTES );
     client->has_cookie = 1;
-    client->last_receive_time = current_time;
 
     counters[ROCKETNET_COUNTER_CLIENT_COOKIE_STORED]++;
     rocketnet_debug( "client stored cookie" );
 
+    // leaving requesting cookie disarms the round-trip stamp without a
+    // sample, so the challenge samples from the first request of sending
+    // connection request, never from the first request of the attempt
+
     if ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE )
     {
-        rocketnet_client_rtt_sample( client, current_time );
+        client->state_first_send_time = -1.0;
         rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
     }
 
@@ -1298,7 +1310,7 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
     switch ( packet_type )
     {
         case ROCKETNET_CONNECTION_COOKIE_PACKET:
-            return rocketnet_client_process_cookie( client, packet_data, packet_bytes, current_time );
+            return rocketnet_client_process_cookie( client, packet_data, packet_bytes );
         case ROCKETNET_CONNECTION_CHALLENGE_PACKET:
             return rocketnet_client_process_challenge( client, packet_data, packet_bytes, current_time );
         case ROCKETNET_CONNECTION_DENIED_PACKET:

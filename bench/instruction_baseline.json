@@ -2,19 +2,19 @@
   "compiler_id": "GNU-15.2.0",
   "valgrind_version": "valgrind-3.26.0",
   "build_type": "Release",
-  "commit": "790a1c2265a14833e5b1131e7842a40ef2a0c466",
-  "reason": "client_frame +2.58% (700044->718092 Ir, +18048 Ir) from correctness changes 90431735 per-connection-reset (+896 Ir, +0.13%), 39d2b7fc wire-bytes-per-family (+8768 Ir, +1.25%), and 61c89055 loopback-dual-stack (+8192 Ir, +1.17%, crosses 2%; plus 252550ee +384 Ir and 8cddddad -192 Ir); server_tick -7.72% (106576152->98347160 Ir, -8228992 Ir) from 16bdb2dc HAVE_EXPLICIT_BZERO=1 on sodium/sodium.c",
+  "commit": "78b0d06a",
+  "reason": "client_frame +9.73% (718092->787980 Ir) and server_tick +16.04% (98347160->114119350 Ir), measured by CI on the gcc 15.2 runner at the final-deliverable landing. Most of it landed on main before this line, unbaselined: client_frame 718092->780172 between main first-parent commits 7b53fc81 and c82c895d (likely c82c895d driver-results-checked, client_io.h and loopback), server_tick 99.0M->120.5M between a8f71497 and 716f082e (likely 7828c0be loopback-rtt-and-spurious-resends); main b6091dff measured 778892 / 120.48M. Stella's final-deliverable line adds +9088 Ir to client_frame (+142 Ir per frame: shutdown request/completion and client I/O handoff guards) and removes 6.36M Ir from server_tick (background ACK stats). Correctness first per Glenn 2026-10-21; per-call timing is reported, not chased, in the final deliverable.",
   "threshold_pct": 2.0,
   "regions": {
     "client_frame": {
-      "ir": 718092,
+      "ir": 787980,
       "units": 64,
-      "per_unit": 11220.19
+      "per_unit": 12312.19
     },
     "server_tick": {
-      "ir": 98347160,
+      "ir": 114119350,
       "units": 64,
-      "per_unit": 1536674.38
+      "per_unit": 1783114.84
     }
   }
 }

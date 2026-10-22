@@ -19,12 +19,17 @@
         framing, and rocketnet_server_transport_send_packets over 64 measured
         ticks after 16 warm-up ticks.
 
+    The server's ack stats worker runs inline (rocketnet_dev_stats_manual):
+    the bench steps it outside the counted window after every server update,
+    so each measured tick publishes the previous batch and submits the next,
+    as a worker that keeps up does, and no thread runs inside the window.
+
     Usage:
       ./bin/instruction_count <client_frame|server_tick> [setup]
 */
 
 #define ROCKETNET_DEVELOPMENT 1
-#include "../test/unit_shutdown.h"
+#include "../test/native_shutdown.h"
 #include "rocketnet.h"
 #include "rocketnet_driver_loopback.h"
 #include "rocketnet_internal.h"
@@ -275,8 +280,8 @@ void run_client_frame(bool setup_only)
 
     CHECK(received == (uint64_t)(CLIENT_FRAME_WARMUP + measured_frames) * CLIENT_FRAME_PACKETS);
 
-    rn_test_client_transport_stop_and_destroy(client);
-    rn_test_server_transport_stop_and_destroy(server);
+    rn_native_client_transport_stop_and_destroy(client);
+    rn_native_server_transport_stop_and_destroy(server);
     rocketnet_term();
 
     printf("instruction_count region=client_frame units=%d mode=%s compiler_id=%s build_type=%s\n",
@@ -284,6 +289,25 @@ void run_client_frame(bool setup_only)
            ROCKETNET_HAVE_CACHEGRIND_CLIENT_REQUESTS ? "client_requests" : "subtract_setup",
            ROCKETNET_COMPILER_ID,
            ROCKETNET_BUILD_TYPE);
+}
+
+#if !defined(ROCKETNET_STATS_MANUAL_TEST_HOOKS)
+#error "instruction_count links rocketnet_dev_stats_manual: the stats worker must step inline"
+#endif
+
+// Completes every submitted stats batch on the calling thread, outside the
+// counted window, and fails if an update found the worker behind.
+void drain_stats_worker(rocketnet_server_transport_t * server)
+{
+    while (rocketnet_server_transport_stats_worker_step_for_test(server))
+    {
+    }
+    uint64_t submitted = 0;
+    uint64_t completed = 0;
+    uint64_t busy_skips = 0;
+    CHECK(rocketnet_server_transport_stats_worker_status_for_test(server, &submitted, &completed, NULL, &busy_skips));
+    CHECK(completed == submitted);
+    CHECK(busy_skips == 0);
 }
 
 void run_server_tick(bool setup_only)
@@ -328,6 +352,7 @@ void run_server_tick(bool setup_only)
             rocketnet_client_transport_update(clients[c], g_sim_time);
         rocketnet_server_transport_update(server, g_sim_time);
         rocketnet_server_transport_send_packets(server);
+        drain_stats_worker(server);
         if (rocketnet_server_transport_num_connected_clients(server) == SERVER_TICK_CLIENTS)
         {
             bool all_connected = true;
@@ -393,6 +418,8 @@ void run_server_tick(bool setup_only)
         if (tick >= 0)
             CACHEGRIND_STOP_INSTRUMENTATION;
 
+        drain_stats_worker(server);
+
         CHECK(num_payloads == SERVER_TICK_CLIENTS * SERVER_TICK_PACKETS_PER_CLIENT);
         total_server_received += (uint64_t)num_payloads;
 
@@ -410,9 +437,15 @@ void run_server_tick(bool setup_only)
           (uint64_t)(SERVER_TICK_WARMUP + measured_ticks) *
               (SERVER_TICK_CLIENTS * SERVER_TICK_PACKETS_PER_CLIENT));
 
+    // the measured ticks published stats: the window holds the worker's
+    // hand-off, not an idle path
+    uint64_t published = 0;
+    CHECK(rocketnet_server_transport_stats_worker_status_for_test(server, NULL, NULL, &published, NULL));
+    CHECK(published > 0);
+
     for (int c = 0; c < SERVER_TICK_CLIENTS; ++c)
-        rn_test_client_transport_stop_and_destroy(clients[c]);
-    rn_test_server_transport_stop_and_destroy(server);
+        rn_native_client_transport_stop_and_destroy(clients[c]);
+    rn_native_server_transport_stop_and_destroy(server);
     rocketnet_term();
 
     printf("instruction_count region=server_tick units=%d mode=%s compiler_id=%s build_type=%s\n",

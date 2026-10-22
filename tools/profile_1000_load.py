@@ -175,10 +175,26 @@ def validate_resource_baseline(fields):
             if start < 0 or end < 0 or start != end:
                 raise ValueError(f"{kind} did not return to baseline")
         return "legacy_start_end"
-    if schema != "phase_pairs_v1":
-        raise ValueError("resource phase fields require phase_pairs_v1 schema")
+    # census_v1 (load_census.h): after one warm cycle no thread or handle may
+    # survive a phase pair, by identity; the counts are reported and move
+    # with the operating system's own thread pool. phase_counts_v1 (a
+    # platform without a census) and the historical phase_pairs_v1 require
+    # the counts to return to both phase baselines.
+    if schema not in ("census_v1", "phase_counts_v1", "phase_pairs_v1"):
+        raise ValueError("resource phase fields require a census_v1, phase_counts_v1 or phase_pairs_v1 schema")
     if fields.get("resource_baseline") != "PASS" or fields.get("term_status_code") != "0":
         raise ValueError("resource baseline or term status failed")
+    if schema == "census_v1":
+        if fields.get("warm_cycle") != "1":
+            raise ValueError("census receipt requires the warm cycle")
+        for name in ("survivor_threads_operational", "survivor_handles_operational",
+                     "survivor_threads_total", "survivor_handles_total"):
+            try:
+                survivors = int(fields[name])
+            except (KeyError, ValueError) as error:
+                raise ValueError(f"{name} missing or invalid") from error
+            if survivors != 0:
+                raise ValueError(f"{name}: resource survived its phase")
     for kind in ("fds", "threads"):
         try:
             values = {phase: int(fields[f"{kind}_{phase}"]) for phase in phase_names}
@@ -190,7 +206,8 @@ def validate_resource_baseline(fields):
             raise ValueError(f"{kind} phase counts must be nonnegative")
         if start != values["post_init"] or end != values["post_term"]:
             raise ValueError(f"{kind} legacy fields disagree with phase counts")
-        if values["post_init"] != values["pre_term"] or values["pre_init"] != values["post_term"]:
+        if schema != "census_v1" and (values["post_init"] != values["pre_term"] or
+                                      values["pre_init"] != values["post_term"]):
             raise ValueError(f"{kind} did not return to both phase baselines")
     return schema
 

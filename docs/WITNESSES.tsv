@@ -38,7 +38,7 @@ standard_line	rule	tla_invariant	code_function	test	tier
 2343	client's packet sequence number MUST NOT be reset within an attempt	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_protocol_connect	sdk/rocketnet_tests.cpp:test_client_server_connect	unit
 2388	MUST.	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_protocol_connect	-	none
 2487	protocol MUST preserve this by construction	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_protocol_process_packet	-	none
-2553	Address validation always comes before asymmetric work	-	sdk/rocketnet_server_protocol.cpp:rocketnet_signature_verify_budget_allow	sdk/rocketnet_tests.cpp:test_admission_hook_drops_before_verify	unit
+2553	Address validation always comes before asymmetric work	-	sdk/rocketnet_server_protocol.cpp:rocketnet_signature_verify_budget_allow	sdk/rocketnet_tests.cpp:test_request_path_cookie_gate	unit
 2647	implementations MUST use the 16-byte output	-	sdk/rocketnet_protocol.cpp:rocketnet_generate_cookie_mac	sdk/rocketnet_tests.cpp:test_cookie_bounds_signature_verifies	unit
 2653	Comparisons MUST be constant time	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_process_opened_request	-	none
 2749	The handshake deadline MUST NOT be the token's	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_check_deadlines	sdk/rocketnet_tests.cpp:test_client_timeout_paths	unit

@@ -47,6 +47,7 @@ static uint32_t read_u32( const uint8_t * p )
 
 #define MAX_SOAK_CLIENTS ROCKETNET_MAX_CLIENTS
 #define BATCH_CLIENTS 250
+#define DISCONNECT_BATCH_CLIENTS 64
 #define MAX_TICKS 7200
 
 // MSVC deprecates fopen, so this uses fopen_s there
@@ -236,13 +237,19 @@ int main( int argc, char ** argv ) {
         }
         CHECK( clients[c] != NULL );
     }
+    // the handshake crosses the client and server worker threads, which need
+    // real time to run: frames with no real time between them can finish
+    // before a reply arrives. The connect is bounded by real time, like the
+    // shutdown below, and the game clock follows it.
     double sim_time = 1000.0;
-    for ( int step = 0; step < 300; step++ ) {
+    const double connect_started = rocketnet_time();
+    const double connect_sim_start = sim_time;
+    while ( rocketnet_time() - connect_started < 10.0 ) {
         int all_conn = ( rocketnet_server_num_connected_clients( server ) == num_clients );
         for ( int c = 0; all_conn && c < num_clients; c++ )
             if ( rocketnet_client_state( clients[c] ) != ROCKETNET_CLIENT_STATE_CONNECTED ) all_conn = 0;
         if ( all_conn ) break;
-        sim_time += 1.0 / 60.0;
+        sim_time = connect_sim_start + ( rocketnet_time() - connect_started );
         for ( int base = 0; base < num_clients; base += BATCH_CLIENTS ) {
             int end = base + BATCH_CLIENTS < num_clients ? base + BATCH_CLIENTS : num_clients;
             for ( int c = base; c < end; c++ ) {
@@ -252,6 +259,7 @@ int main( int argc, char ** argv ) {
             rocketnet_server_update( server, sim_time );
             rocketnet_server_send_packets( server ); // send last so this frame's messages leave this frame
         }
+        rocketnet_sleep( 0.001 );
     }
     for ( int c = 0; c < num_clients; c++ )
         CHECK( rocketnet_client_state( clients[c] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
@@ -354,6 +362,10 @@ int main( int argc, char ** argv ) {
             tick_srv_us += ( rocketnet_time() - s0 ) * 1e6;
         }
         if ( tick < soak_ticks ) { cli_us[tick] = tick_cli_us; srv_us[tick] = tick_srv_us; }
+        // the drain frames let real time pass, so what the worker threads
+        // still hold arrives (a few clients run the soak frames in well
+        // under a millisecond)
+        else rocketnet_sleep( 0.001 );
     }
     g_alloc.steady = false;
     uint64_t acked_total = 0;
@@ -371,18 +383,31 @@ int main( int argc, char ** argv ) {
     CHECK( srv_stats.messages_dropped_over_budget == 0 );
     CHECK( srv_stats.api_misuses == 0 );
     CHECK( sent_rel > 0 && recv_rel == sent_rel && acked_total == sent_rel && recv_seq > 0 && corrupt == 0 && gaps == 0 );
-    for ( int c = 0; c < num_clients; c++ )
-        rocketnet_client_disconnect( clients[c] );
+    // Clients disconnect in batches, each once the batch before it has left
+    // and the server has read it. Each client sends a redundant burst of
+    // datagrams, and the server's loopback endpoint queues 2048 datagrams
+    // between updates (TRANSPORTS.md): every client leaving between two
+    // server updates overflows it, and the clients whose bursts are dropped
+    // end only on timeout. At most two batches' bursts are queued at once.
     const double shutdown_started = rocketnet_time();
     const double shutdown_sim_start = sim_time;
-    int disconnected = 0;
+    int disconnected = 0, next_disconnect = 0, batch_left = 1;
     while ( rocketnet_time() - shutdown_started < 10.0 ) {
+        if ( batch_left && next_disconnect < num_clients ) {
+            const int end = next_disconnect + DISCONNECT_BATCH_CLIENTS < num_clients ? next_disconnect + DISCONNECT_BATCH_CLIENTS : num_clients;
+            for ( int c = next_disconnect; c < end; c++ )
+                rocketnet_client_disconnect( clients[c] );
+            next_disconnect = end;
+        }
         disconnected = 1;
+        batch_left = 1;
         sim_time = shutdown_sim_start + ( rocketnet_time() - shutdown_started );
         for ( int c = 0; c < num_clients; c++ ) {
             rocketnet_client_update( clients[c], sim_time );
-            if ( !rocketnet_client_disconnected( clients[c] ) )
+            if ( c >= next_disconnect || !rocketnet_client_disconnected( clients[c] ) ) {
                 disconnected = 0;
+                if ( c < next_disconnect ) batch_left = 0;
+            }
         }
         // Local completion does not prove that the server received a burst.
         // Keep processing frames until both sides have finished disconnecting.

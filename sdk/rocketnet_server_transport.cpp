@@ -7,8 +7,6 @@
 #define ROCKETNET_DEFAULT_HANDSHAKE_DEADLINE_SECONDS   5.0
 #define ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS      3
 #define ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS      60
-#define ROCKETNET_DEFAULT_MAX_TOKEN_LIFETIME_SECONDS   0
-#define ROCKETNET_DEFAULT_ALLOW_NEGATIVE_TIMEOUT       0
 
 static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS,
                "cookie rotation period must exceed cookie lifetime so a cookie never outlives both keys" );
@@ -70,7 +68,7 @@ int rocketnet_server_protocol_process_packet_capacity( struct rocketnet_server_p
 #include <stdlib.h>
 #include <time.h>
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_XDP
 #include <linux/if_xdp.h>
 #endif
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
@@ -189,9 +187,9 @@ struct alignas(64) rocketnet_server_stats_frame_t
 static_assert( sizeof(rocketnet_server_stats_frame_t) == 64, "one server stats frame per cache line" );
 
 // cumulative wire totals, per server lifetime and per connection slot. a
-// datagram that arrives or leaves before its slot is assigned is held here by
-// address and folded into the slot at assignment, so the whole-server totals
-// and the sum over the slots agree.
+// datagram that arrives or leaves before its slot is assigned counts in the
+// whole-server totals only: the server keeps no per-source state for traffic
+// it has not authenticated, so a slot's totals start at its assignment.
 
 struct rocketnet_server_wire_totals_t
 {
@@ -199,16 +197,6 @@ struct rocketnet_server_wire_totals_t
     uint64_t packets_received;
     uint64_t bytes_sent;
     uint64_t bytes_received;
-};
-
-enum { ROCKETNET_SERVER_PENDING_WIRE_TOTALS = 256 };
-
-struct rocketnet_server_pending_wire_totals_t
-{
-    rocketnet_address_t address;
-    struct rocketnet_server_wire_totals_t totals;
-    double first_seen_time;
-    bool used;
 };
 
 // the payload batch from the last update -- capacity ROCKETNET_MAX_PAYLOADS_PER_UPDATE
@@ -283,11 +271,6 @@ struct rocketnet_server_transport_t
     rocketnet_address_t bind_address;
     rocketnet_address_t public_address;
 
-    // the admission gate: consulted before process_packet for a source with
-    // no encryption mapping. NULL admits every source (the default).
-    rocketnet_server_admission_callback_t admission_callback;
-    void * admission_context;
-
     // the granted transport (ROCKETNET_TRANSPORT_*), decided by the ladder at
     // create and constant for the transport's life -- the runtime fork
     // every seam function below branches on, one predictable branch
@@ -343,7 +326,6 @@ struct rocketnet_server_transport_t
     int current_stats_index;
     struct rocketnet_server_wire_totals_t * client_wire_totals;         // one per client slot
     int client_wire_totals_capacity;
-    struct rocketnet_server_pending_wire_totals_t pending_wire_totals[ROCKETNET_SERVER_PENDING_WIRE_TOTALS];
     int maintenance_next_client;                       // first unserved slot after staged backpressure
 
     volatile uint64_t send_staged;                      // bumped by every producer; fills use the atomic add
@@ -457,6 +439,9 @@ void rocketnet_server_transport_fail_stats_worker_thread_for_test()
 {
     rocketnet_server_stats_fail_thread_next = true;
 }
+#endif
+
+#if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS) || defined(ROCKETNET_STATS_MANUAL_TEST_HOOKS)
 bool rocketnet_server_transport_stats_worker_step_for_test( rocketnet_server_transport_t * server )
 {
     return server && server->stats_worker && server->stats_worker->manual &&
@@ -475,6 +460,9 @@ bool rocketnet_server_transport_stats_worker_status_for_test( const rocketnet_se
     if ( busy_skips ) *busy_skips = worker->busy_skips;
     return true;
 }
+#endif
+
+#if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS)
 rocketnet_ack_endpoint_t * rocketnet_server_transport_stats_endpoint_for_test(
     rocketnet_server_transport_t * server, int slot )
 {
@@ -636,43 +624,6 @@ bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_tra
     return member == NULL;
 }
 
-static struct rocketnet_server_pending_wire_totals_t * rocketnet_server_pending_wire_find(
-    struct rocketnet_server_transport_t * server_transport, const rocketnet_address_t * address, bool create )
-{
-    for ( int i = 0; i < ROCKETNET_SERVER_PENDING_WIRE_TOTALS; i++ )
-    {
-        struct rocketnet_server_pending_wire_totals_t * pending = &server_transport->pending_wire_totals[i];
-        if ( pending->used && rocketnet_address_equal( &pending->address, address ) )
-            return pending;
-    }
-    if ( !create )
-        return NULL;
-    for ( int i = 0; i < ROCKETNET_SERVER_PENDING_WIRE_TOTALS; i++ )
-    {
-        struct rocketnet_server_pending_wire_totals_t * pending = &server_transport->pending_wire_totals[i];
-        if ( !pending->used )
-        {
-            memset( pending, 0, sizeof( *pending ) );
-            pending->address = *address;
-            pending->first_seen_time = server_transport->time;
-            pending->used = true;
-            return pending;
-        }
-    }
-    return NULL;
-}
-
-static void rocketnet_server_pending_wire_expire( struct rocketnet_server_transport_t * server_transport, double time )
-{
-    const double deadline = server_transport->protocol.handshake_deadline_seconds;
-    for ( int i = 0; i < ROCKETNET_SERVER_PENDING_WIRE_TOTALS; i++ )
-    {
-        struct rocketnet_server_pending_wire_totals_t * pending = &server_transport->pending_wire_totals[i];
-        if ( pending->used && time - pending->first_seen_time >= deadline )
-            pending->used = false;
-    }
-}
-
 static void rocketnet_server_wire_totals_add_sent( struct rocketnet_server_transport_t * server_transport,
                                                    int client_index, const rocketnet_address_t * address,
                                                    int packet_bytes )
@@ -685,13 +636,6 @@ static void rocketnet_server_wire_totals_add_sent( struct rocketnet_server_trans
         struct rocketnet_server_wire_totals_t * totals = &server_transport->client_wire_totals[client_index];
         totals->packets_sent++;
         totals->bytes_sent += wire_bytes;
-        return;
-    }
-    struct rocketnet_server_pending_wire_totals_t * pending = rocketnet_server_pending_wire_find( server_transport, address, true );
-    if ( pending )
-    {
-        pending->totals.packets_sent++;
-        pending->totals.bytes_sent += wire_bytes;
     }
 }
 
@@ -699,9 +643,8 @@ static void rocketnet_server_wire_totals_add_sent( struct rocketnet_server_trans
 // and the per-client sent totals with relaxed atomics, as the fill-phase
 // atomics in rocketnet_platform.h do for stats_pending_packets_sent and
 // stats_pending_bytes_sent: each counter is meaningful alone and nothing is
-// ordered behind it. The pending-by-address table is main-thread only, so a
-// producer whose client_index is out of range drops the count rather than
-// touch it.
+// ordered behind it. A producer whose client_index is out of range counts in
+// the whole-server totals only, as the main-thread path does.
 
 static void rocketnet_server_wire_totals_add_sent_atomic( struct rocketnet_server_transport_t * server_transport,
                                                           int client_index, int address_type, int packet_bytes )
@@ -729,13 +672,6 @@ static void rocketnet_server_wire_totals_add_received( struct rocketnet_server_t
         struct rocketnet_server_wire_totals_t * totals = &server_transport->client_wire_totals[client_index];
         totals->packets_received++;
         totals->bytes_received += wire_bytes;
-        return;
-    }
-    struct rocketnet_server_pending_wire_totals_t * pending = rocketnet_server_pending_wire_find( server_transport, address, true );
-    if ( pending )
-    {
-        pending->totals.packets_received++;
-        pending->totals.bytes_received += wire_bytes;
     }
 }
 
@@ -748,21 +684,24 @@ static int rocketnet_server_wire_client_index( struct rocketnet_server_transport
     return rocketnet_encryption_map_control( server_transport->protocol.encryption_map, mapping_index )->client_index;
 }
 
-static void rocketnet_server_wire_totals_assign( struct rocketnet_server_transport_t * server_transport,
-                                                 int client_index, const rocketnet_address_t * address )
+// The shape check, stateless and first for every datagram: the prefilter
+// header (size, epoch, filter value), then the server-inbound type and size
+// rule the kernel filter applies (ROCKETNET_WIRE_SERVER_PACKET_VALID). A
+// datagram that fails it is refused by the protocol on its first rungs, with
+// no response and no table read, so it gets no mapping lookup and no send
+// frame; the protocol still runs on it, so every refusal counter is the same.
+
+static bool rocketnet_server_packet_shape_valid( const struct rocketnet_server_protocol_t * protocol,
+                                                 const uint8_t * packet_data, int packet_bytes )
+{
+    const int packet_type = rocketnet_prefilter_check( packet_data, packet_bytes, protocol->packet_filter );
+    return packet_type >= 0 && ROCKETNET_WIRE_SERVER_PACKET_VALID( packet_type, packet_bytes );
+}
+
+static void rocketnet_server_wire_totals_assign( struct rocketnet_server_transport_t * server_transport, int client_index )
 {
     rocketnet_assert( client_index >= 0 && client_index < server_transport->client_wire_totals_capacity );
-    struct rocketnet_server_wire_totals_t * totals = &server_transport->client_wire_totals[client_index];
-    memset( totals, 0, sizeof( *totals ) );
-    struct rocketnet_server_pending_wire_totals_t * pending = rocketnet_server_pending_wire_find( server_transport, address, false );
-    if ( pending )
-    {
-        totals->packets_sent += pending->totals.packets_sent;
-        totals->packets_received += pending->totals.packets_received;
-        totals->bytes_sent += pending->totals.bytes_sent;
-        totals->bytes_received += pending->totals.bytes_received;
-        pending->used = false;
-    }
+    memset( &server_transport->client_wire_totals[client_index], 0, sizeof( struct rocketnet_server_wire_totals_t ) );
 }
 
 // Dispatch is immutable for the transport lifetime. Transports own their native
@@ -1613,10 +1552,12 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     bool port_zero_refused_seen[ROCKETNET_NUM_TRANSPORTS];
     memset( port_zero_refused_seen, 0, sizeof(port_zero_refused_seen) );
 
-    // Opens only, not port-zero skips. TRANSPORT_FAMILIES_UNSUPPORTED is the
-    // start status when every open refused for that reason.
+    // Opens only, not port-zero skips. TRANSPORT_FAMILIES_UNSUPPORTED and
+    // TRANSPORT_NOT_BUILT are the start status when every open refused for
+    // that reason.
     int open_refusals = 0;
     int families_unsupported_refusals = 0;
+    int not_built_refusals = 0;
 
     for ( int i = 0; i < ladder.num_candidates && granted_transport < 0; i++ )
     {
@@ -1709,6 +1650,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
                 open_refusals++;
                 if ( transport_status == ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED )
                     families_unsupported_refusals++;
+                if ( transport_status == ROCKETNET_STATUS_TRANSPORT_NOT_BUILT )
+                    not_built_refusals++;
             }
         }
 
@@ -1770,6 +1713,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
                 *status = ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED;
             else if ( open_refusals > 0 && families_unsupported_refusals == open_refusals )
                 *status = ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED;
+            else if ( open_refusals > 0 && not_built_refusals == open_refusals )
+                *status = ROCKETNET_STATUS_TRANSPORT_NOT_BUILT;
             else
                 *status = ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED;
         }
@@ -1899,10 +1844,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     protocol->cookie_rotation_seconds = ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS;
     protocol->cookie_key_rotation_time = server_transport->time + (double) protocol->cookie_rotation_seconds;
     protocol->previous_cookie_key_expire_time = 0.0;
-    protocol->max_token_lifetime_seconds = ROCKETNET_DEFAULT_MAX_TOKEN_LIFETIME_SECONDS;
     protocol->handshake_deadline_seconds = config->handshake_deadline_seconds;
     protocol->max_timeout_seconds = config->max_timeout_seconds;
-    protocol->allow_negative_timeout = ROCKETNET_DEFAULT_ALLOW_NEGATIVE_TIMEOUT;
 
     protocol->encryption_map = rocketnet_encryption_map_create( context, max_clients * ROCKETNET_ENCRYPTION_MAP_RATIO );
     protocol->used_token_history = rocketnet_used_token_history_create( context, max_clients * ROCKETNET_USED_TOKEN_HISTORY_RATIO );
@@ -2110,7 +2053,7 @@ const char * rocketnet_server_transport_io_name( struct rocketnet_server_transpo
 // and the socket through (TRANSPORTS.md, ICMP errors): the msgx transport's
 // instance is the platform socket itself, the portable transport's owns it
 
-struct rocketnet_platform_socket_t * rocketnet_portable_server_socket_for_testing( void * transport );
+struct rocketnet_platform_socket_t * rocketnet_portable_server_test_socket( void * transport );
 
 struct rocketnet_platform_socket_t * rocketnet_server_transport_platform_socket_for_testing( struct rocketnet_server_transport_t * server_transport )
 {
@@ -2119,7 +2062,7 @@ struct rocketnet_platform_socket_t * rocketnet_server_transport_platform_socket_
     // socket; read as the socket itself, its pump was whatever bytes the
     // adapter held there, and the ICMP cases' pump checks failed at random
     if ( server_transport->transport == ROCKETNET_TRANSPORT_PORTABLE )
-        return rocketnet_portable_server_socket_for_testing( server_transport->io.instance );
+        return rocketnet_portable_server_test_socket( server_transport->io.instance );
     if ( server_transport->transport == ROCKETNET_TRANSPORT_MSGX )
         return (struct rocketnet_platform_socket_t*) server_transport->io.instance;
     return NULL;
@@ -2317,32 +2260,6 @@ int rocketnet_server_transport_test_update_client_stats( const rocketnet_client_
 }
 #endif
 
-// The admission gate, consulted by the receive loops before a packet is
-// handed to the protocol. A source with a mapping has already cleared the
-// connect ladder and bypasses the gate; a callback that says DROP stops an
-// unmapped packet before any protocol work -- and any crypto -- runs. The
-// test drives this directly to pin the drop-before-verify contract.
-int rocketnet_server_transport_admission( const struct rocketnet_server_protocol_t * protocol,
-                                          rocketnet_server_admission_callback_t callback,
-                                          void * context,
-                                          const struct rocketnet_address_t * from,
-                                          const uint8_t * packet_data,
-                                          int packet_bytes )
-{
-    if ( !callback || rocketnet_encryption_map_find( protocol->encryption_map, from ) != -1 )
-        return ROCKETNET_SERVER_ADMISSION_ADMIT;
-    return callback( context, from, packet_data, packet_bytes );
-}
-
-void rocketnet_server_transport_set_admission_callback( struct rocketnet_server_transport_t * server_transport, rocketnet_server_admission_callback_t callback, void * context )
-{
-    if ( !rocketnet_api_null_guard( server_transport ) )
-        return;
-    rocketnet_assert( server_transport );
-    server_transport->admission_callback = callback;
-    server_transport->admission_context = context;
-}
-
 void rocketnet_server_transport_set_test_timestamp( struct rocketnet_server_transport_t * server_transport, uint64_t timestamp )
 {
     rocketnet_assert( server_transport );
@@ -2375,7 +2292,6 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     server_transport->packet_leases.reset();
 
     server_transport->time = time;
-    rocketnet_server_pending_wire_expire( server_transport, time );
     rocketnet_server_link_drain( server_transport );
 
     rocketnet_server_update_stats( server_transport, time );
@@ -2410,14 +2326,9 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         server_transport->stats_frames[stats_index].packets_received++;
         server_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( received->packet_bytes[i] + rocketnet_wire_header_bytes( received->from[i].type ) );
 
-        const int wire_client_before = rocketnet_server_wire_client_index( server_transport, &received->from[i] );
+        const bool shape_valid = rocketnet_server_packet_shape_valid( &server_transport->protocol, received->packet_data[i], received->packet_bytes[i] );
+        const int wire_client_before = shape_valid ? rocketnet_server_wire_client_index( server_transport, &received->from[i] ) : -1;
         rocketnet_server_wire_totals_add_received( server_transport, wire_client_before, &received->from[i], received->packet_bytes[i] );
-
-        // the admission gate: an unmapped source goes through the application's
-        // callback before any send frame is reserved or protocol work runs, so
-        // a drop costs no crypto and no staging
-        if ( rocketnet_server_transport_admission( &server_transport->protocol, server_transport->admission_callback, server_transport->admission_context, &received->from[i], received->packet_data[i], received->packet_bytes[i] ) == ROCKETNET_SERVER_ADMISSION_DROP )
-            continue;
 
         uint8_t * payload = server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE ?
             server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_RECEIVE_PAYLOAD_BYTES : NULL;
@@ -2427,7 +2338,8 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         int payload_client_index = -1;
 
         struct rocketnet_server_frame_t frame;
-        uint8_t * response = rocketnet_server_reserve_send_frame( server_transport, &received->from[i], &frame );
+        frame.data = NULL;
+        uint8_t * response = shape_valid ? rocketnet_server_reserve_send_frame( server_transport, &received->from[i], &frame ) : NULL;
         uint8_t response_overflow[ROCKETNET_RECEIVE_CEILING];
         int response_bytes = 0;
 
@@ -2449,12 +2361,14 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         if ( ( outcome == ROCKETNET_SERVER_PROCESS_ACCEPTED || outcome == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE ) && server_transport->io.operations->peer_accepted )
             server_transport->io.operations->peer_accepted( server_transport->io.instance, i );
 
+        rocketnet_assert( shape_valid || ( response_bytes == 0 && payload_bytes == 0 ) );
+
         int wire_client_after = wire_client_before;
-        if ( wire_client_before < 0 )
+        if ( wire_client_before < 0 && shape_valid )
         {
             wire_client_after = rocketnet_server_wire_client_index( server_transport, &received->from[i] );
             if ( wire_client_after >= 0 )
-                rocketnet_server_wire_totals_assign( server_transport, wire_client_after, &received->from[i] );
+                rocketnet_server_wire_totals_assign( server_transport, wire_client_after );
         }
         frame.client_index = wire_client_after;
 
@@ -2558,24 +2472,20 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             server_transport->stats_frames[stats_index].packets_received++;
             server_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( packet_bytes + rocketnet_wire_header_bytes( from.type ) );
 
-            const int wire_client_before = rocketnet_server_wire_client_index( server_transport, &from );
-            rocketnet_server_wire_totals_add_received( server_transport, wire_client_before, &from, packet_bytes );
-
             // A truncated datagram retains its original length for accounting,
-            // but the admission callback may read every byte it is given. Reject
-            // an oversize report before handing it that shorter stored prefix.
+            // but only the shorter prefix is stored. Reject an oversize report
+            // before the protocol reads that stored prefix as the whole packet.
             if ( packet_bytes > ROCKETNET_RECEIVE_CEILING )
             {
+                rocketnet_server_wire_totals_add_received( server_transport, -1, &from, packet_bytes );
                 server_transport->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED]++;
                 server_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE]++;
                 continue;
             }
 
-            // the admission gate: an unmapped source goes through the application's
-            // callback before any send frame is reserved or protocol work runs, so
-            // a drop costs no crypto and no staging
-            if ( rocketnet_server_transport_admission( &server_transport->protocol, server_transport->admission_callback, server_transport->admission_context, &from, receive_frame, packet_bytes ) == ROCKETNET_SERVER_ADMISSION_DROP )
-                continue;
+            const bool shape_valid = rocketnet_server_packet_shape_valid( &server_transport->protocol, receive_frame, packet_bytes );
+            const int wire_client_before = shape_valid ? rocketnet_server_wire_client_index( server_transport, &from ) : -1;
+            rocketnet_server_wire_totals_add_received( server_transport, wire_client_before, &from, packet_bytes );
 
             uint8_t * payload = server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE ?
                 server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_RECEIVE_PAYLOAD_BYTES : NULL;
@@ -2585,7 +2495,8 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             int payload_client_index = -1;
 
             struct rocketnet_server_frame_t frame;
-            uint8_t * response = rocketnet_server_reserve_send_frame( server_transport, &from, &frame );
+            frame.data = NULL;
+            uint8_t * response = shape_valid ? rocketnet_server_reserve_send_frame( server_transport, &from, &frame ) : NULL;
             uint8_t response_overflow[ROCKETNET_RECEIVE_CEILING];
             int response_bytes = 0;
 
@@ -2599,12 +2510,14 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
                                              payload ? ROCKETNET_RECEIVE_PAYLOAD_BYTES : (int) sizeof(payload_overflow),
                                              &payload_bytes, &payload_client_index );
 
+            rocketnet_assert( shape_valid || ( response_bytes == 0 && payload_bytes == 0 ) );
+
             int wire_client_after = wire_client_before;
-            if ( wire_client_before < 0 )
+            if ( wire_client_before < 0 && shape_valid )
             {
                 wire_client_after = rocketnet_server_wire_client_index( server_transport, &from );
                 if ( wire_client_after >= 0 )
-                    rocketnet_server_wire_totals_assign( server_transport, wire_client_after, &from );
+                    rocketnet_server_wire_totals_assign( server_transport, wire_client_after );
             }
             frame.client_index = wire_client_after;
 

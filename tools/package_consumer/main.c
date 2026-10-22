@@ -158,7 +158,7 @@ int main( void )
     CHECK( rocketnet_version() == ROCKETNET_VERSION );
     CHECK( ROCKETNET_VERSION == ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH );
 
-    for ( int i = ROCKETNET_STATUS_OK; i >= ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED; i-- )
+    for ( int i = ROCKETNET_STATUS_OK; i >= ROCKETNET_STATUS_TRANSPORT_NOT_BUILT; i-- )
         CHECK( rocketnet_status_name( (enum rocketnet_status_t) i ) != NULL );
     CHECK( strcmp( rocketnet_status_name( ROCKETNET_STATUS_OK ), "OK" ) == 0 );
     CHECK( strcmp( rocketnet_status_name( ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED ), "CONFIG_NOT_INITIALIZED" ) == 0 );
@@ -254,9 +254,8 @@ int main( void )
     CHECK( server_config.config_bytes == sizeof( server_config ) );
     server_config.protocol_id = PROTOCOL_ID;
     server_config.max_clients = 2;
-    // the platform's production ladder (NULL): a production library refuses a
-    // portable server, the development fallback (c7c638e7)
-    server_config.transport = NULL;
+    // no server transport pin: a production library refuses the portable
+    // server, so the default auto order grants a native transport
     memcpy( server_config.backend_public_key, backend_public_key, sizeof( server_config.backend_public_key ) );
     CHECK( rocketnet_server_required_memory( &server_config ) > 0 );
 

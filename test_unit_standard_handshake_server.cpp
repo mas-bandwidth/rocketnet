@@ -94,7 +94,7 @@ static void handshake_server_build_request( uint8_t * request,
     memcpy( cookie, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES );
 }
 
-static void handshake_server_setup( struct handshake_server_t * test, int max_token_lifetime_seconds )
+static void handshake_server_setup( struct handshake_server_t * test )
 {
     memset( test, 0, sizeof(*test) );
 
@@ -107,10 +107,8 @@ static void handshake_server_setup( struct handshake_server_t * test, int max_to
     check( rocketnet_address_parse( &server->advertised_ipv4, "203.0.113.10:40000" ) );
     memcpy( server->cookie_key, rocketnet_test_cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
     server->cookie_lifetime_seconds = 3;
-    server->max_token_lifetime_seconds = max_token_lifetime_seconds;
     server->handshake_deadline_seconds = 5;
     server->max_timeout_seconds = 0;
-    server->allow_negative_timeout = 0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     server->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
     server->client_slots = rocketnet_client_slots_create( NULL, 4 );
@@ -144,7 +142,7 @@ static int handshake_server_generate( const char * id, uint8_t * out, int capaci
     if ( strcmp( id, "t12.cookie" ) == 0 )
     {
         struct handshake_server_t test;
-        handshake_server_setup( &test, 0 );
+        handshake_server_setup( &test );
         uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
         handshake_server_build_request( request, "198.51.100.7:56789",
                                         ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 3 );
@@ -161,7 +159,7 @@ static int handshake_server_generate( const char * id, uint8_t * out, int capaci
     if ( strcmp( id, "t12.stale-cookie" ) == 0 )
     {
         struct handshake_server_t test;
-        handshake_server_setup( &test, 0 );
+        handshake_server_setup( &test );
         check( rocketnet_address_parse( &test.client_address, "203.0.113.44:40001" ) );
         uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
         handshake_server_build_request( request, "203.0.113.44:40001",
@@ -223,13 +221,6 @@ static int handshake_server_generate( const char * id, uint8_t * out, int capaci
         return ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES;
     }
 
-    if ( strcmp( id, "t12.token-lifetime-too-long" ) == 0 )
-    {
-        handshake_server_build_request( out, "198.51.100.7:56789",
-                                        ROCKETNET_TEST_CREATE_TS - 100, ROCKETNET_TEST_CREATE_TS + 700, 3 );
-        return ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES;
-    }
-
     if ( strcmp( id, "t12.token-expired" ) == 0 )
     {
         handshake_server_build_request( out, "198.51.100.7:56789",
@@ -247,7 +238,6 @@ static const rn_standard_vector_t standard_handshake_server_table[] =
     RN_STANDARD_VECTOR( "t12.challenge", "0200b7590100010000004e4f4e4345303031686fb709435ff00e1ac260eeeafbb29120201086c8276255d7d387c39232947b3da13ddd6856b09415f3086c59f76f88" ),
     RN_STANDARD_VECTOR( "t12.keep-alive", "0400b759010001000000d248d810b069788627a0513c6dbcea6d282c391bb9288efb4c5dba9c70724b" ),
     RN_STANDARD_VECTOR( "t12.token-created-in-future", "0000b759010003f9ac68000000000fb2b28f32dbd6c9eb364f577486f3e953414c54303030313a553d74792d727efa9b9a4cde3da1ad93f1a2d0c09cb639b1a3c0fda14cbe24931a7c4e887766554433221106f9ac68000000002cfaac68000000000a00000001cb00710a409c0000000000000000000000000000000000003d2490889d374c296fab1d5770cb71476a06f74ef2f2540cf2215f7614f4801c34e42d4af5ef94a07a3a84201b889d4cd1a743cb27b11b6a10438a8feb8e5847d5da889783414a57bb78b01146db8f9a3f0cbdb60f45eecbe38ea0a72cec1b6b42e34afd6efb436d00345c404c4de3925786d259cc06b1239e259ca8eb137f9349191a211ca7f01704ae96ddd52c86e16934789b7c3a0774d088e03528a4afa2dac5aa04d241805930ca24ff62b9417c1eb7f36248717557ad340a1a2111eb1f6b5b71abab8f6044450e18005898b6886f8baa2de5bf461ee4f9b32638732e4f4d9ea83761dea2a173c2e74f1383bb450926b3cd3889ef3b4dd3d84fb85aad0a12e5a77be701402d5207057841e35889d99f824309bf6b60e2403c771653beac7b23680070faf4a9195e3169fb4dd83691b77e19bfa6510342216a0349391e2e9cc7c968b016637d9f8ae49c24528a357542aec01ef8324a946af6acd6156b9c177f06cf3b829bfce60ec009d5792d162e6d9b58852d11b4df6c623a1d393ae315c246ed696057f4f8d7b918af57431a7ec50cdd40aa72bfed55c0cf4aa8c9188bd94c0563fe96fecc32277abfcc8bfb18d6e3dbbeb2b58465f35711e62e91411c4d8076ed827432f33d0cf73ba881af00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000119eb3025cab63a665635d30d7735c6f889ee21ceb7d8c7e1e9f53f226e85fb492ed6bd343f85192b391d2feff819eea88f4026eba4bcfa8f01cb7a1abc47409" ),
-    RN_STANDARD_VECTOR( "t12.token-lifetime-too-long", "0000b759010003f9ac68000000000fb2b28f32dbd6c9eb364f577486f3e953414c54303030313a553d74792d727efa9b9a4cde3da1ad93f1a2d0c09cb639b1a3c0fda14cbe24931a7c4e88776655443322119cf8ac6800000000bcfbac68000000000a00000001cb00710a409c0000000000000000000000000000000000003d2490889d374c296fab1d5770cb71476a06f74ef2f2540cf2215f7614f4801c34e42d4af5ef94a07a3a84201b889d4cd1a743cb27b11b6a10438a8feb8e5847ccfbb6a754908b0ce8c7d845f49133be3f0cbdb60f45eecbe38ea0a72cec1b6bd2e24afd6efb436d00345c404c4de3925786d259cc06b1239e259ca8eb137f9349191a211ca7f01704ae96ddd52c86e16934789b7c3a0774d088e03528a4afa2dac5aa04d241805930ca24ff62b9417c1eb7f36248717557ad340a1a2111eb1f6b5b71abab8f6044450e18005898b6886f8baa2de5bf461ee4f9b32638732e4f4d9ea83761dea2a173c2e74f1383bb450926b3cd3889ef3b4dd3d84fb85aad0a12e5a77be701402d5207057841e35889d99f824309bf6b60e2403c771653beac7b23680070faf4a9195e3169fb4dd83691b77e19bfa6510342216a0349391e2e9cc7c968b016637d9f8ae49c24528a357542aec01ef8324a946af6acd6156b9c177f06cf3b829bfce60ec009d5792d162e6d9b58852d11b4df6c623a1d393ae315c246ed696057f4f8d7b918af57431a7ec50cdd40aa72bfed55c0cf4aa8c9188bd94c0563fe96fecc32277abfcc8bfb18d6e3dbbeb2b58465f35711e62e91411c4d8076ed827432f33d0cf73ba881af000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006ea4ba259d89d70d3cbd351f4dbf008389dd5de90f7a6ee401a63c3220d03ed622ec66a63edfa2934aef1db09d03065e5cf55a57f84ea7ba39b1550496f2aa05" ),
     RN_STANDARD_VECTOR( "t12.token-expired", "0000b759010003f9ac68000000000fb2b28f32dbd6c9eb364f577486f3e953414c54303030313a553d74792d727efa9b9a4cde3da1ad93f1a2d0c09cb639b1a3c0fda14cbe24931a7c4e88776655443322119cf8ac6800000000cef8ac68000000000a00000001cb00710a409c0000000000000000000000000000000000003d2490889d374c296fab1d5770cb71476a06f74ef2f2540cf2215f7614f4801c34e42d4af5ef94a07a3a84201b889d4cd1a743cb27b11b6a10438a8feb8e584708dfebb386fe9d3282325914c792005b3f0cbdb60f45eecbe38ea0a72cec1b6ba0e14afd6efb436d00345c404c4de3925786d259cc06b1239e259ca8eb137f9349191a211ca7f01704ae96ddd52c86e16934789b7c3a0774d088e03528a4afa2dac5aa04d241805930ca24ff62b9417c1eb7f36248717557ad340a1a2111eb1f6b5b71abab8f6044450e18005898b6886f8baa2de5bf461ee4f9b32638732e4f4d9ea83761dea2a173c2e74f1383bb450926b3cd3889ef3b4dd3d84fb85aad0a12e5a77be701402d5207057841e35889d99f824309bf6b60e2403c771653beac7b23680070faf4a9195e3169fb4dd83691b77e19bfa6510342216a0349391e2e9cc7c968b016637d9f8ae49c24528a357542aec01ef8324a946af6acd6156b9c177f06cf3b829bfce60ec009d5792d162e6d9b58852d11b4df6c623a1d393ae315c246ed696057f4f8d7b918af57431a7ec50cdd40aa72bfed55c0cf4aa8c9188bd94c0563fe96fecc32277abfcc8bfb18d6e3dbbeb2b58465f35711e62e91411c4d8076ed827432f33d0cf73ba881af00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000b289102eed08cc04faf63db4bcfe50bd70e8ef8980a3759f79f55d90ef7c76822564c401681b65ff3781c6cb4d2be96e69dadc39959dd67f85eaf8242b069d06" ),
 };
 
@@ -258,23 +248,13 @@ static void standard_handshake_server_token_refusals()
 
     {
         struct handshake_server_t test;
-        handshake_server_setup( &test, 600 );
+        handshake_server_setup( &test );
         uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
         handshake_server_build_request( request, "198.51.100.7:56789",
                                         ROCKETNET_TEST_CREATE_TS + 6, ROCKETNET_TEST_CREATE_TS + 300, 3 );
         check( handshake_server_process( &test, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
         check( response_bytes == 0 );
-        handshake_server_teardown( &test );
-    }
-
-    {
-        struct handshake_server_t test;
-        handshake_server_setup( &test, 600 );
-        uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
-        handshake_server_build_request( request, "198.51.100.7:56789",
-                                        ROCKETNET_TEST_CREATE_TS - 100, ROCKETNET_TEST_CREATE_TS + 700, 3 );
-        check( handshake_server_process( &test, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-        check( response_bytes == 0 );
+        check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE] == 1 );
         handshake_server_teardown( &test );
     }
 }
@@ -293,7 +273,7 @@ REGISTER_UNIT_TEST( test_standard_handshake_server_vectors );
 static void handshake_refusal_releases_claim( int refusal )
 {
     struct handshake_server_t test;
-    handshake_server_setup( &test, 600 );
+    handshake_server_setup( &test );
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     handshake_server_build_request( request, "198.51.100.7:56789",
                                     ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 3 );

@@ -127,6 +127,7 @@ struct spec_t
     uint16_t source_port;                       // the client's UDP source port
     uint16_t ipv4_frag_off;                     // IPv4 flags and fragment offset (RFC 791); 0 = a whole datagram
     int ipv6_fragment_field;                    // the fragment header's offset << 3 | M; -1 = 0x0001 (offset 0, more fragments)
+    int ipv4_ihl;                               // IPv4 header words, 5 to 15; the options are zero bytes
 };
 
 static spec_t spec_default( bool ipv6 )
@@ -146,6 +147,7 @@ static spec_t spec_default( bool ipv6 )
     spec.source_port = client_port;
     spec.ipv4_frag_off = 0;
     spec.ipv6_fragment_field = -1;
+    spec.ipv4_ihl = 5;
     return spec;
 }
 
@@ -175,14 +177,15 @@ static void build_frame( frame_t * frame, const spec_t & spec )
     if ( !spec.ipv6 )
     {
         const uint8_t * destination = spec.destination_address ? spec.destination_address : server_ipv4;
-        p[0] = 0x45;                            // version 4, ihl 5
-        put16( p + 2, (uint16_t) ( ROCKETNET_IPV4_HEADER_BYTES + udp_bytes ) );
+        const int header_bytes = spec.ipv4_ihl * 4;
+        p[0] = (uint8_t) ( 0x40 | spec.ipv4_ihl );  // version 4, ihl
+        put16( p + 2, (uint16_t) ( header_bytes + udp_bytes ) );
         put16( p + 6, spec.ipv4_frag_off );
         p[8] = 64;                              // ttl
         p[9] = IP_UDP;
         memcpy( p + 12, client_ipv4, 4 );
         memcpy( p + 16, destination, 4 );
-        p += ROCKETNET_IPV4_HEADER_BYTES;
+        p += header_bytes;                      // options past byte 20 stay zero: end of options list
     }
     else
     {
@@ -492,30 +495,88 @@ static bool ipv6_rocketnet_packet_redirects( filter_t * filter )
     return ok;
 }
 
-// RFC 8200 section 4: each of these follows the fixed header. The filter does
-// not walk the chain: the frame goes to the kernel stack, counted by name.
+// RFC 8200 section 4: each of these follows the fixed header, as one 8-byte
+// header naming UDP next. The filter walks hop-by-hop, routing, destination
+// options and AH: a datagram to the server behind one drops counted
+// DROPPED_IP_OPTIONS_OR_EXTENSION, before any size check; to another port it
+// passes counted PASSED_IPV6_EXTENSION. ESP is never opened: it passes
+// counted on any port.
 
-static bool ipv6_extension_header_passes( filter_t * filter )
+static bool ipv6_extension_headers( filter_t * filter )
 {
-    static const int headers[] = { IPV6_HOP_BY_HOP, IPV6_ROUTING, IPV6_DESTINATION_OPTIONS, IPV6_AH, IPV6_ESP };
-    static const char * names[] = { "hop-by-hop", "routing", "destination options", "AH", "ESP" };
+    static const int headers[] = { IPV6_HOP_BY_HOP, IPV6_ROUTING, IPV6_DESTINATION_OPTIONS, IPV6_AH };
+    static const char * names[] = { "hop-by-hop", "routing", "destination options", "AH" };
+    const int dropped = ROCKETNET_SERVER_XDP_COUNTER_DROPPED_IP_OPTIONS_OR_EXTENSION;
+    const int passed = ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION;
     bool ok = write_config( filter, NULL, server_ipv6 );
+    char label[96];
     for ( int i = 0; i < (int) ( sizeof(headers) / sizeof(headers[0]) ); i++ )
     {
         spec_t spec = spec_default( true );
         spec.next_header = headers[i];
-        char label[64];
-        snprintf( label, sizeof(label), "ipv6 %s header", names[i] );
-        ok &= run_frame( filter, label, spec, XDP_PASS, ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION );
+        snprintf( label, sizeof(label), "ipv6 %s header to the server", names[i] );
+        ok &= run_frame( filter, label, spec, XDP_DROP, dropped );
+
+        spec.packet_bytes = ROCKETNET_RECEIVE_CEILING + 1;
+        snprintf( label, sizeof(label), "ipv6 %s header to the server, oversize packet behind it", names[i] );
+        ok &= run_frame( filter, label, spec, XDP_DROP, dropped );
+
+        spec_t other = spec_default( true );
+        other.next_header = headers[i];
+        other.destination_port = 53;
+        snprintf( label, sizeof(label), "ipv6 %s header to another port", names[i] );
+        ok &= run_frame( filter, label, other, XDP_PASS, passed );
     }
 
-    // an extension header in front of a packet that would be dropped is still
-    // passed, not dropped: the filter never opens it
+    spec_t esp = spec_default( true );
+    esp.next_header = IPV6_ESP;
+    ok &= run_frame( filter, "ipv6 ESP header, UDP-looking bytes to the server's port", esp, XDP_PASS, passed );
 
-    spec_t spec = spec_default( true );
-    spec.next_header = IPV6_HOP_BY_HOP;
-    spec.packet_bytes = ROCKETNET_RECEIVE_CEILING + 1;
-    ok &= run_frame( filter, "ipv6 hop-by-hop header, oversize packet behind it", spec, XDP_PASS, ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION );
+    spec_t plain = spec_default( true );
+    ok &= run_frame( filter, "ipv6 the same packet without an extension header", plain, XDP_REDIRECT, ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
+    return ok;
+}
+
+// IPv4 options (ihl 6 to 15): a datagram to the server behind them drops
+// counted DROPPED_IP_OPTIONS_OR_EXTENSION; to another port or address it
+// passes uncounted; a first fragment with options to the server drops
+// counted DROPPED_FIRST_FRAGMENT, and a middle fragment with options passes
+// counted PASSED_FRAGMENT.
+
+static bool ipv4_options( filter_t * filter )
+{
+    const int dropped = ROCKETNET_SERVER_XDP_COUNTER_DROPPED_IP_OPTIONS_OR_EXTENSION;
+    bool ok = write_config( filter, server_ipv4, NULL );
+    char label[96];
+    for ( int ihl = 6; ihl <= 15; ihl++ )
+    {
+        spec_t spec = spec_default( false );
+        spec.ipv4_ihl = ihl;
+        snprintf( label, sizeof(label), "ipv4 options (ihl %d) to the server", ihl );
+        ok &= run_frame( filter, label, spec, XDP_DROP, dropped );
+
+        spec.destination_port = 53;
+        snprintf( label, sizeof(label), "ipv4 options (ihl %d) to another port", ihl );
+        ok &= run_frame( filter, label, spec, XDP_PASS, NO_COUNTER );
+    }
+
+    spec_t address = spec_default( false );
+    address.ipv4_ihl = 6;
+    address.destination_address = other_ipv4;
+    ok &= run_frame( filter, "ipv4 options to another address", address, XDP_PASS, NO_COUNTER );
+
+    spec_t first = spec_default( false );
+    first.ipv4_ihl = 15;
+    first.packet_bytes = 100;
+    first.ipv4_frag_off = 0x2000;
+    ok &= run_frame( filter, "ipv4 first fragment with options to the server", first, XDP_DROP, ROCKETNET_SERVER_XDP_COUNTER_DROPPED_FIRST_FRAGMENT );
+
+    spec_t middle = first;
+    middle.ipv4_frag_off = 0x2000 | 185;
+    ok &= run_frame( filter, "ipv4 middle fragment with options to the server's port", middle, XDP_PASS, ROCKETNET_SERVER_XDP_COUNTER_PASSED_FRAGMENT );
+
+    spec_t plain = spec_default( false );
+    ok &= run_frame( filter, "ipv4 the same packet without options", plain, XDP_REDIRECT, ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
     return ok;
 }
 
@@ -1747,7 +1808,8 @@ static const case_t cases[] =
 {
     { "ipv4_rocketnet_packet_redirects", ipv4_rocketnet_packet_redirects },
     { "ipv6_rocketnet_packet_redirects", ipv6_rocketnet_packet_redirects },
-    { "ipv6_extension_header_passes", ipv6_extension_header_passes },
+    { "ipv6_extension_headers", ipv6_extension_headers },
+    { "ipv4_options", ipv4_options },
     { "ipv4_fragments", ipv4_fragments },
     { "ipv6_fragments", ipv6_fragments },
     { "ipv6_wrong_address_passes", ipv6_wrong_address_passes },

@@ -365,10 +365,19 @@ jobs:
             exit 1
           fi
 
+      # GitHub expressions have no replace(): the artifact name's ref slug ('/' -> '-') is made here
+      - name: Artifact name for the ref
+        id: refslug
+        if: failure()
+        shell: bash
+        env:
+          REF: ${{ matrix.ref }}
+        run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
+
       - name: Upload the soak log
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: sanitized-soak-log-${{ replace(matrix.ref, '/', '-') }}
+          name: sanitized-soak-log-${{ steps.refslug.outputs.slug }}
           path: soak_sim.log
           if-no-files-found: ignore

@@ -715,3 +715,49 @@ static void test_transport_disconnect_preserves_simulator_loss()
     rocketnet_public_link_simulator_test_development( 0 );
 }
 REGISTER_UNIT_TEST( test_transport_disconnect_preserves_simulator_loss );
+
+// The public disconnect requests stop right after sealing the burst. With a
+// link simulator the burst is staged in the simulator's queue, which only the
+// caller's thread drains, and a stopping update never drains it: stop must
+// send what the simulator holds, or every burst stays queued and the server
+// frees the slot only on timeout. Shutdown updates hold the clock fixed, so
+// a latency must not keep the burst back either (tla/RNClientLinkStop.tla).
+static void test_client_disconnect_sends_burst_staged_in_link_simulator()
+{
+    destroy_disconnect_env_guard_t env_guard;
+    rocketnet_quiet( 1 );
+    rocketnet_public_link_simulator_test_development( 1 );
+    destroy_disconnect_keys_t keys;
+    destroy_disconnect_make_keys( &keys );
+
+    const int latency_ms[] = { 0, 50 };
+    for ( int i = 0; i < 2; i++ )
+    {
+        double now = 1000.0;
+        rocketnet_server_t * server = destroy_disconnect_server_create( &keys, now );
+        rocketnet_client_t * client = destroy_disconnect_client_create( &keys, rocketnet_server_port( server ), 0xE410ULL + (uint64_t) i, false, true );
+        const int slot = destroy_disconnect_connect_client( server, client, &now );
+        rocketnet_client_transport_t * transport = rocketnet_message_client_transport( rocketnet_client_message_client( client ) );
+        check( rocketnet_client_transport_network_simulator( transport, latency_ms[i], 0, 0, 0 ) );
+
+        const uint64_t * counters = destroy_disconnect_server_counters( server );
+        const uint64_t received = counters[ROCKETNET_COUNTER_DISCONNECT_RECEIVED];
+        const uint64_t accepted = counters[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED];
+        const uint64_t timed_out = counters[ROCKETNET_COUNTER_CLIENT_TIMED_OUT];
+
+        rocketnet_client_disconnect( client );
+        rn_test_client_wait_disconnected( client );
+        rocketnet_server_update( server, now );
+
+        check( counters[ROCKETNET_COUNTER_DISCONNECT_RECEIVED] - received == ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS );
+        check( counters[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED] - accepted == 1 );
+        check( counters[ROCKETNET_COUNTER_CLIENT_TIMED_OUT] == timed_out );
+        check( !rocketnet_server_client_connected( server, slot ) );
+        check( rocketnet_server_num_connected_clients( server ) == 0 );
+
+        rn_test_client_stop_and_destroy( client );
+        rn_test_server_stop_and_destroy( server );
+    }
+    rocketnet_public_link_simulator_test_development( 0 );
+}
+REGISTER_UNIT_TEST( test_client_disconnect_sends_burst_staged_in_link_simulator );

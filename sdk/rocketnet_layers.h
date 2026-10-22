@@ -121,12 +121,6 @@ bool rocketnet_get_thread_priority( void );
 /** @brief Server transport state after shutdown completes. */
 #define ROCKETNET_SERVER_TRANSPORT_STOPPED                              2
 
-// what an admission callback returns (rocketnet_server_admission_callback_t)
-/** @brief Admission callback result that allows an unmapped source packet to proceed. */
-#define ROCKETNET_SERVER_ADMISSION_ADMIT                                0
-/** @brief Admission callback result that drops an unmapped source packet. */
-#define ROCKETNET_SERVER_ADMISSION_DROP                                 1
-
 /** @brief Maximum number of explanatory exclusions in a host-memory estimate. */
 #define ROCKETNET_HOST_MEMORY_MAX_EXCLUSIONS                            8
 
@@ -681,24 +675,12 @@ int rocketnet_client_transport_acked_packets( struct rocketnet_client_transport_
 //                   server transport
 // -----------------------------------------
 
-// The admission gate: a callback the application installs on a server
-// transport, consulted for every received packet whose source has no
-// encryption mapping -- traffic that has not cleared the connect handshake --
-// before it reaches the protocol's process step. Return
-// ROCKETNET_SERVER_ADMISSION_ADMIT to process the packet, or
-// ROCKETNET_SERVER_ADMISSION_DROP to drop it before any crypto work runs.
-// A mapped source (an in-flight handshake or an established connection)
-// bypasses the gate: it has already cleared the connect ladder, and this gate
-// is about admission, not session policing. The callback runs synchronously
-// inside rocketnet_server_transport_update, on the thread that calls update,
-// and must be fast.
-
-// The packet source an admission callback reads: type is ROCKETNET_ADDRESS_IPV4
+// A packet source: type is ROCKETNET_ADDRESS_IPV4
 // or ROCKETNET_ADDRESS_IPV6; an IPv4 address is data.ipv4[0..3] in dotted
 // order (a.b.c.d), an IPv6 address is data.ipv6[0..7], the eight groups in
 // host byte order; port is in host byte order.
 
-/** @brief Internet endpoint used by the admission callback and address helpers.
+/** @brief Internet endpoint used by the transports and address helpers.
  * @details IPv4 bytes are in network order; IPv6 groups and the port are in host order. Callers synchronize concurrent access to a shared object.
  */
 struct rocketnet_address_t
@@ -710,9 +692,6 @@ struct rocketnet_address_t
     /** @brief ROCKETNET_ADDRESS_NONE, ROCKETNET_ADDRESS_IPV4, or ROCKETNET_ADDRESS_IPV6. */
     uint8_t type;
 };
-
-/** @brief Filters packets from sources without an encryption mapping. @param context Application context supplied at registration. @param from Borrowed source address, valid during the callback. @param packet_data Borrowed packet bytes, valid during the callback. @param packet_bytes Packet length in bytes. @return ROCKETNET_SERVER_ADMISSION_ADMIT or ROCKETNET_SERVER_ADMISSION_DROP. Runs synchronously inside rocketnet_server_transport_update on the caller's thread, before any protocol or crypto work, for unmapped sources only, and must be fast. */
-typedef int (*rocketnet_server_admission_callback_t)( void * context, const struct rocketnet_address_t * from, const uint8_t * packet_data, int packet_bytes );
 
 // The server is configured explicitly. rocketnet_server_transport_default_config gives
 // the shape with no keys -- create refuses it until keys are supplied
@@ -1028,19 +1007,6 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
 // Unit tests only: supplies token-validation Unix time so update reads no wall clock.
 void rocketnet_server_transport_set_test_timestamp( struct rocketnet_server_transport_t * server_transport, uint64_t timestamp );
-
-// The admission gate, set per transport (see the callback type above). NULL
-// callback -- the default -- admits every source: the connect ladder alone
-// decides. May be set or cleared at any time between updates.
-
-// a NULL server_transport is a counted no-op.
-/** @brief Install or clear the callback that gates packets from unmapped sources.
- * @param server_transport [in,out] Created server transport; NULL is a counted no-op.
- * @param callback [in] Callback, or NULL to admit every source through this gate.
- * @param context [in] Opaque application pointer passed to callback; may be NULL. The caller retains ownership.
- * @return Nothing. The callback runs synchronously inside rocketnet_server_transport_update on the caller's thread, before any protocol or crypto work, for unmapped sources only, and must be fast. Set the callback on the main thread between updates.
- */
-void rocketnet_server_transport_set_admission_callback( struct rocketnet_server_transport_t * server_transport, rocketnet_server_admission_callback_t callback, void * context );
 
 // The payloads delivered by the last update, valid until the next update.
 // Iterated by index so the storage behind them stays the library's own --
@@ -1423,15 +1389,20 @@ int rocketnet_server_transport_send_capacity( const struct rocketnet_server_tran
 /** @brief Returns the payload frames that may still start this update. */
 int rocketnet_server_transport_send_capacity_available( const struct rocketnet_server_transport_t * server_transport );
 
-#if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS)
-struct rocketnet_ack_endpoint_t;
-// Deterministic internal seam: the next create uses an inline stats worker.
-// step computes one submitted immutable batch; only a later update publishes.
-void rocketnet_server_transport_set_stats_worker_manual_for_test( bool enabled );
+#if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS) || defined(ROCKETNET_STATS_MANUAL_TEST_HOOKS)
+// Deterministic internal seam: step computes one submitted immutable batch of
+// an inline stats worker; only a later update publishes. A build with
+// ROCKETNET_STATS_MANUAL_TEST_HOOKS creates every server's worker inline.
 bool rocketnet_server_transport_stats_worker_step_for_test( struct rocketnet_server_transport_t * server_transport );
 bool rocketnet_server_transport_stats_worker_status_for_test( const struct rocketnet_server_transport_t * server_transport,
     uint64_t * submitted, uint64_t * completed, uint64_t * published, uint64_t * busy_skips );
-void rocketnet_server_transport_fail_stats_worker_thread_for_test();
+#endif
+
+#if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS)
+struct rocketnet_ack_endpoint_t;
+// The next create uses an inline stats worker (true) or the native one (false).
+void rocketnet_server_transport_set_stats_worker_manual_for_test( bool enabled );
+void rocketnet_server_transport_fail_stats_worker_thread_for_test( void );
 struct rocketnet_ack_endpoint_t * rocketnet_server_transport_stats_endpoint_for_test(
     struct rocketnet_server_transport_t * server_transport, int client_index );
 #endif

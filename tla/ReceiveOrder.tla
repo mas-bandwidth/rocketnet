@@ -15,11 +15,16 @@
 (* not first, and the token claim removed) break it or the one-mapping     *)
 (* rule, each replayed against the code by hand in README-ReceiveOrder.md. *)
 (*                                                                         *)
-(* The claim rung records the first request's address for its token and    *)
-(* refuses a second address until the handshake deadline; the capacity     *)
+(* The claim is split in two.  ClaimCheck, the claim rung, is read-only:   *)
+(* it refuses a second address while another holds the token's claim (and  *)
+(* a full claim table).  ClaimWrite records the request's address for its  *)
+(* token only as the request passes the signature rung, so a request that  *)
+(* proves nothing writes nothing: ClaimOnlyAfterSignature.  The capacity   *)
 (* rung refuses a full mapping table.  OneLiveMappingPerToken is the       *)
-(* consequence: a token holds at most one live half-open mapping.  The     *)
-(* claim expires with the mapping on the Deadline step.                    *)
+(* consequence of check and write together: a token holds at most one     *)
+(* live half-open mapping.  The claim expires with the mapping on the      *)
+(* Deadline step.  The witness ClaimBeforeSignature writes at the check    *)
+(* rung, the code before the split, and breaks ClaimOnlyAfterSignature.    *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -71,11 +76,19 @@ None == "none"
 MapCap == 2
 ClaimAtRequest == TRUE
 
+\* the rung whose passing writes the claim: the signature, so the write
+\* follows a verified signature (sdk/rocketnet_server_protocol.cpp,
+\* rocketnet_used_token_history_claim_record after
+\* rocketnet_verify_signed_connect_data)
+ClaimWriteRung == "signature"
+
 VARIABLES pos, fault, spent, spentKp, outcome, refusedRung,
-          spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken, claims, maps
+          spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken, claims, maps,
+          claimWritten, verified
 
 vars == <<pos, fault, spent, spentKp, outcome, refusedRung,
-          spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken, claims, maps>>
+          spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken, claims, maps,
+          claimWritten, verified>>
 
 MapCount == Cardinality({ a \in Addrs : maps[a] /= None })
 MapFull == MapCount >= MapCap
@@ -104,6 +117,8 @@ TypeOK ==
     /\ reqToken \in Tokens
     /\ claims \in [Tokens -> Addrs \cup {None}]
     /\ maps \in [Addrs -> Tokens \cup {None}]
+    /\ claimWritten \in BOOLEAN
+    /\ verified \in BOOLEAN
 
 Init ==
     /\ pos = MinPos
@@ -118,6 +133,8 @@ Init ==
     /\ reqToken \in Tokens
     /\ claims = [t \in Tokens |-> None]
     /\ maps = [a \in Addrs |-> None]
+    /\ claimWritten = FALSE
+    /\ verified = FALSE
 
 RefuseStep ==
     /\ outcome = "pending"
@@ -128,7 +145,8 @@ RefuseStep ==
     /\ spentAtRefusal' = spent
     /\ spentKpAtRefusal' = spentKp
     /\ pos' = MaxPos + 1
-    /\ UNCHANGED <<fault, spent, spentKp, reqAddr, reqToken, claims, maps>>
+    /\ UNCHANGED <<fault, spent, spentKp, reqAddr, reqToken, claims, maps,
+                   claimWritten, verified>>
 
 AdvanceStep ==
     /\ outcome = "pending"
@@ -137,8 +155,12 @@ AdvanceStep ==
     /\ pos' = NextPos(pos)
     /\ spent' = (spent \/ (RungAt(pos) \in CryptoRungs))
     /\ spentKp' = (spentKp \/ (RungAt(pos) = "keypair"))
-    /\ claims' = IF RungAt(pos) = "claim" /\ ClaimAtRequest /\ claims[reqToken] = None
+    \* ClaimCheck is the claim rung's refusal above; ClaimWrite is this
+    \* write, on passing ClaimWriteRung
+    /\ claims' = IF RungAt(pos) = ClaimWriteRung /\ ClaimAtRequest /\ claims[reqToken] = None
                   THEN [claims EXCEPT ![reqToken] = reqAddr] ELSE claims
+    /\ claimWritten' = (claimWritten \/ (RungAt(pos) = ClaimWriteRung /\ ClaimAtRequest))
+    /\ verified' = (verified \/ RungAt(pos) = "signature")
     /\ UNCHANGED <<fault, outcome, refusedRung, spentAtRefusal,
                    spentKpAtRefusal, reqAddr, reqToken, maps>>
 
@@ -148,7 +170,8 @@ AcceptStep ==
     /\ outcome' = "accepted"
     /\ maps' = [a \in Addrs |-> IF a = reqAddr THEN reqToken ELSE maps[a]]
     /\ UNCHANGED <<pos, fault, spent, spentKp, refusedRung,
-                   spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken, claims>>
+                   spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken, claims,
+                   claimWritten, verified>>
 
 Next == RefuseStep \/ AdvanceStep \/ AcceptStep
 
@@ -163,5 +186,10 @@ CheapRefusalsFirst ==
 \* refuses a second address while the first mapping lives, and the mapping
 \* leaves only on its handshake deadline.
 OneLiveMappingPerToken == \A t \in Tokens : Cardinality({ a \in Addrs : maps[a] = t }) <= 1
+
+\* a request writes the claim table only once its signature has verified:
+\* a request refused at or above the signature rung leaves no claim behind
+\* and never held one.
+ClaimOnlyAfterSignature == claimWritten => verified
 
 =============================================================================

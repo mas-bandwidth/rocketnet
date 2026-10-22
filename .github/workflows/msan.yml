@@ -11,7 +11,14 @@ name: msan
 
 on:
   push:
+    # main only: a feature branch runs msan once, for its PR, not twice
+    # (push and pull_request refs are different concurrency groups).
+    branches: [ main ]
   pull_request:
+
+concurrency:
+  group: msan-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   msan:

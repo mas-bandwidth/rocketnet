@@ -84,13 +84,21 @@ and the deployment target.
 ## The macOS transports
 
 The transport registry has two rows that build on macOS: `portable` (every
-platform, server rank 30, client rank 30) and `msgx` (macOS, server rank 10,
-client rank 10); lower ranks win (`sdk/rocketnet_drivers.inc`, lines 5 and 8).
-So `auto` asks for `msgx` first on both endpoints and falls to `portable` when
-`msgx` refuses. The `loopback` row is pin-only, an in-memory transport for
-tests (`sdk/rocketnet_drivers.inc`, line 10). Both socket transports use the
-same operation tables (`sdk/rocketnet_driver_builtin.cpp`,
-`rocketnet_msgx_transport`); what differs is the pump under the socket.
+platform; server rank 30 only in development builds and unavailable in
+production, client rank 30 in either; the `PORTABLE` registry entry in
+`sdk/rocketnet_drivers.inc`)
+and `msgx` (macOS, server and client rank 10; the `MSGX` registry entry);
+lower ranks win. Server `auto` asks for `msgx` first and falls to `portable`
+only in a development build. In production, `msgx` is the macOS server
+transport; portable remains
+available to clients if `msgx` refuses. The `loopback` row is pin-only, an
+in-memory transport for tests (the `LOOPBACK` registry entry). The backends
+share `portable_client_operations`, but use distinct server operation tables:
+`portable_server_operations` stages sends into owned TX banks and a worker,
+while `msgx_server_operations` calls the platform socket's batch operations.
+On macOS those platform calls use the Darwin `sendmsg_x` and `recvmsg_x` pump.
+These definitions are in `sdk/rocketnet_driver_builtin.cpp` and
+`sdk/rocketnet_platform.cpp`.
 
 **msgx** is the darwin batch pump over `sendmsg_x` and `recvmsg_x`
 (`sdk/rocketnet_platform.cpp`, the block that opens "The darwin batch pump").
@@ -238,8 +246,12 @@ the library does about it: **pending.**
 
 ## Socket errors and ICMP
 
-The SDK never calls `connect` on a UDP socket; every send names its destination
-(`sdk/rocketnet_platform.cpp`, no `connect(` in the file). A failed `sendto`
+A client's socket is connected to its server
+(`rocketnet_platform_socket_connect`, TRANSPORT.md t11: the client trusts only
+the server), so the kernel drops datagrams from any other source, its sends
+name no destination, and an ICMP error for the server reaches its receive,
+which skips it as weather. A server socket is never connected, and every send
+names its destination. A failed `sendto`
 is logged at debug level and the packet is dropped
 (`rocketnet_platform_socket_send_packet`). A failed `recvmsg` returns 0, which
 ends that drain; an error other than `EAGAIN` or `EINTR` is logged at debug

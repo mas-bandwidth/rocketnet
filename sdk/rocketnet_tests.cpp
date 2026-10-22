@@ -2330,10 +2330,8 @@ static void rocketnet_test_server_setup( struct rocketnet_test_server_t * test )
     rocketnet_check( rocketnet_address_parse( &server->advertised_ipv4, "203.0.113.10:40000" ) );
     memcpy( server->cookie_key, rocketnet_test_cookie_key, 32 );
     server->cookie_lifetime_seconds = 3;
-    server->max_token_lifetime_seconds = 600;
     server->handshake_deadline_seconds = 5.0;
     server->max_timeout_seconds = 0;
-    server->allow_negative_timeout = 0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     server->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
     server->client_slots = rocketnet_client_slots_create( NULL, 4 );
@@ -2619,7 +2617,7 @@ void rocketnet_test_request_path_refusals()
         rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED );
     }
 
-    // zero timeout is invalid; negative refused unless configured
+    // a zero timeout and a negative one are both invalid
     memcpy( request, good_request, sizeof(request) );
     memset( request + signed_offset + ROCKETNET_SIGNED_OFFSET_TIMEOUT, 0, 4 );
     before = test.counters;
@@ -3643,10 +3641,7 @@ void rocketnet_test_request_path_config_branches()
         rocketnet_check( rocketnet_encryption_map_entry( test.server.encryption_map, index )->control->timeout_seconds == 30 );
     }
 
-    // a negative timeout is accepted when explicitly configured, refused
-    // otherwise (the refusal is already tested); and the accept carries the
-    // negative value through so timeouts are disabled downstream
-    test.server.allow_negative_timeout = 1;
+    // a negative timeout is refused: there is no switch that accepts it
     rocketnet_check( rocketnet_address_parse( &test.client_address, "198.51.100.61:56789" ) );
     {
         struct rocketnet_signed_connect_data_t signed_fields;
@@ -3658,11 +3653,8 @@ void rocketnet_test_request_path_config_branches()
         struct rocketnet_connect_token_t token;
         rocketnet_read_connect_token( &token, token_data );
         rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt, rocketnet_test_client_eph_public, token.signed_connect_data, token.signature );
-        rocketnet_test_pass_cookie_gate( &test, request );
-        rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
-        int index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
-        rocketnet_check( index != -1 );
-        rocketnet_check( rocketnet_encryption_map_entry( test.server.encryption_map, index )->control->timeout_seconds == -1 );
+        rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_check( rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) == -1 );
     }
 
     // the previous cookie key: a cookie minted under the old key is accepted
@@ -3746,14 +3738,6 @@ void rocketnet_test_handshake_work_budget_per_update()
     struct rocketnet_test_server_t other;
     rocketnet_test_server_setup( &other );
 
-    // the budget requests make 16000 distinct tokens by stepping each one's
-    // create timestamp back a second, so their lifetimes run past the test
-    // server's 600-second token-lifetime bound. that bound is pinned by
-    // test_token_lifetime_bounded; here it is lifted so every request reaches
-    // the budget, which is what this test measures.
-    test.server.max_token_lifetime_seconds = 0;
-    other.server.max_token_lifetime_seconds = 0;
-
     const int num_requests = 16000;
     const int budget = ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE;
 
@@ -3795,76 +3779,6 @@ void rocketnet_test_handshake_work_budget_per_update()
     }
 
     rocketnet_test_server_teardown( &other );
-    rocketnet_test_server_teardown( &test );
-}
-
-// the transport's admission gate, defined in rocketnet_server_transport.cpp:
-// consulted before process_packet for a source with no encryption mapping.
-
-int rocketnet_server_transport_admission( const struct rocketnet_server_protocol_t * protocol,
-                                          rocketnet_server_admission_callback_t callback,
-                                          void * context,
-                                          const struct rocketnet_address_t * from,
-                                          const uint8_t * packet_data,
-                                          int packet_bytes );
-
-static int rocketnet_test_admission_drop( void * context, const struct rocketnet_address_t * from, const uint8_t * packet_data, int packet_bytes )
-{
-    (void) context; (void) from; (void) packet_data; (void) packet_bytes;
-    return ROCKETNET_SERVER_ADMISSION_DROP;
-}
-
-void rocketnet_test_admission_hook_drops_before_verify()
-{
-    struct rocketnet_test_server_t test;
-    rocketnet_test_server_setup( &test );
-
-    // a cookie-valid request whose signature is corrupt: admitted, it reaches
-    // the signature verify and is refused there; dropped, it never does.
-    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
-    rocketnet_test_build_request( request, 0xAD111777ULL, rocketnet_test_salt );
-    rocketnet_test_pass_cookie_gate( &test, request );
-
-    const int signed_offset = ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES + ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES;
-    const int signature_offset = signed_offset + ROCKETNET_SIGNED_CONNECT_DATA_BYTES;
-    request[signature_offset] ^= 1;
-
-    uint8_t response[ROCKETNET_RECEIVE_CEILING];
-    int response_bytes = 0;
-
-    // a drop callback on an unmapped source returns DROP, and the transport
-    // skips process_packet on it -- the verify never runs, so the counter
-    // that would record a failed verify is unchanged
-    rocketnet_check( rocketnet_server_transport_admission( &test.server, rocketnet_test_admission_drop, NULL,
-                                                           &test.client_address, request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES ) == ROCKETNET_SERVER_ADMISSION_DROP );
-    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] == 0 );
-
-    // the same packet, admitted -- no callback -- reaches the verify, and the
-    // corrupt signature is refused and counted: the drop above genuinely
-    // prevented the verify rather than the request being refused earlier
-    rocketnet_check( rocketnet_server_transport_admission( &test.server, NULL, NULL,
-                                                           &test.client_address, request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES ) == ROCKETNET_SERVER_ADMISSION_ADMIT );
-    rocketnet_check( rocketnet_test_process( &test, request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] == 1 );
-
-    // the gate is "for unmapped sources" only: a source with a mapping has
-    // already cleared the connect ladder and bypasses even a drop callback
-    {
-        struct rocketnet_test_server_t mapped;
-        rocketnet_test_server_setup( &mapped );
-
-        uint8_t valid[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
-        rocketnet_test_build_request( valid, 0xAD222888ULL, rocketnet_test_salt );
-        rocketnet_test_pass_cookie_gate( &mapped, valid );
-        rocketnet_check( rocketnet_test_process( &mapped, valid, sizeof(valid), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
-        rocketnet_check( rocketnet_encryption_map_find( mapped.server.encryption_map, &mapped.client_address ) != -1 );
-
-        rocketnet_check( rocketnet_server_transport_admission( &mapped.server, rocketnet_test_admission_drop, NULL,
-                                                               &mapped.client_address, valid, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES ) == ROCKETNET_SERVER_ADMISSION_ADMIT );
-
-        rocketnet_test_server_teardown( &mapped );
-    }
-
     rocketnet_test_server_teardown( &test );
 }
 
@@ -5548,8 +5462,9 @@ void rocketnet_test_client_terminal_states_wipe_secrets()
         switch ( scenario )
         {
             case 0:
-                // (a) the total connect deadline passes mid-handshake
-                rocketnet_test_mint_token( token_data, 1, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_CREATE_TS + 5, -1 );
+                // (a) the total connect deadline passes mid-handshake; the
+                // timeout is valid and longer than the token's lifetime
+                rocketnet_test_mint_token( token_data, 1, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_CREATE_TS + 5, 60 );
                 rocketnet_check( rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
                 for ( double time = 100.0; time < 107.0; time += 0.05 )
                     rocketnet_client_protocol_update( &client, time, packet, &packet_bytes );
@@ -5708,11 +5623,11 @@ void rocketnet_test_client_timeout_paths()
         rocketnet_counters_assert_conserved( &client_counters );
     }
 
-    // the total connect deadline: per-state timers disabled by a negative
-    // timeout, and the whole handshake still dies once the token's lifetime
+    // the total connect deadline: a per-state timeout longer than the
+    // token's lifetime, and the whole handshake still dies once the lifetime
     // elapses -- connect or be discarded, and no amount of nothing extends it
     rocketnet_client_protocol_init( &client, &counters );
-    rocketnet_test_mint_token( token_data, 1, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_CREATE_TS + 5, -1 );
+    rocketnet_test_mint_token( token_data, 1, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_CREATE_TS + 5, 60 );
     rocketnet_check( rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
     for ( double time = 100.0; time < 107.0; time += 0.05 )
         rocketnet_client_protocol_update( &client, time, packet, &packet_bytes );
@@ -6791,10 +6706,11 @@ void rocketnet_test_transport_payload_capacity()
 
 void rocketnet_test_client_rtt_handshake()
 {
-    // the handshake's three round trips under three different imposed
-    // delays, on mocked time: each is sampled first-send-to-first-answer,
-    // the estimate keeps the minimum, and traffic after the handshake never
-    // moves it
+    // the handshake's round trips under different imposed delays, on mocked
+    // time: the cookie is in the clear and is never a sample (TRANSPORT.md
+    // t11.1); the challenge and the first keep-alive are each sampled
+    // first-send-to-first-answer, the estimate keeps the minimum, and
+    // traffic after the handshake never moves it
 
     struct rocketnet_test_server_t test;
     rocketnet_test_server_setup( &test );
@@ -6818,7 +6734,7 @@ void rocketnet_test_client_rtt_handshake()
     int payload_client_index = -1;
 
     // cookie round trip: the request goes out at 100.0 and its answer is
-    // delivered 50ms later
+    // delivered 50ms later. no sample: the cookie's salt is in the clear
 
     rocketnet_client_protocol_update( &client, 100.0, packet, &packet_bytes );
     rocketnet_check( packet_bytes > 0 );
@@ -6828,9 +6744,11 @@ void rocketnet_test_client_rtt_handshake()
                                                       payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
     rocketnet_check( rocketnet_client_protocol_process_packet( &client, response, response_bytes, 100.05, payload, sizeof(payload), &payload_bytes ) );
     rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
-    rocketnet_check( fabs( client.rtt_estimate - 0.05 ) < 1e-9 );
+    rocketnet_check( client.rtt_estimate == 0.0 );
 
-    // challenge round trip at 30ms: the minimum moves down
+    // challenge round trip at 30ms, from the first request of sending
+    // connection request at 100.2 (never from the attempt's first request at
+    // 100.0): the first sample
 
     rocketnet_client_protocol_update( &client, 100.2, packet, &packet_bytes );
     rocketnet_check( packet_bytes > 0 );
@@ -7769,7 +7687,6 @@ static const char * rocketnet_test_layer_exports[] =
     "rocketnet_server_transport_io_name",
     "rocketnet_forbid_xdp_commit",
     "rocketnet_server_transport_update",
-    "rocketnet_server_transport_set_admission_callback",
     "rocketnet_server_transport_num_payloads",
     "rocketnet_server_transport_payload",
     "rocketnet_server_transport_payloads",
@@ -7907,7 +7824,6 @@ static const char * rocketnet_test_layer_null_case_exports[] =
     "rocketnet_server_transport_port",
     "rocketnet_server_transport_io_name",
     "rocketnet_server_transport_update",
-    "rocketnet_server_transport_set_admission_callback",
     "rocketnet_server_transport_num_payloads",
     "rocketnet_server_transport_payload",
     "rocketnet_server_transport_payloads",
@@ -8417,10 +8333,6 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
 
     before = rocketnet_api_misuse_count();
     rocketnet_server_transport_client_stats( NULL, 0, NULL );
-    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
-
-    before = rocketnet_api_misuse_count();
-    rocketnet_server_transport_set_admission_callback( NULL, NULL, NULL );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();
@@ -14597,47 +14509,6 @@ static void rocketnet_test_protocol_id_zero_refused( void )
     rocketnet_check( server == NULL );
 }
 
-void rocketnet_test_token_lifetime_bounded()
-{
-    struct rocketnet_test_server_t test;
-    rocketnet_test_server_setup( &test );
-
-    // Build a token with unlimited lifetime: create at normal time, expire at UINT64_MAX
-    struct rocketnet_signed_connect_data_t signed_fields;
-    struct rocketnet_connect_token_private_t private_fields;
-    rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
-
-    // Override expire to be UINT64_MAX, which exceeds any reasonable max_token_lifetime
-    signed_fields.expire_timestamp = UINT64_MAX;
-    private_fields.expire_timestamp = UINT64_MAX;
-
-    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
-
-    struct rocketnet_connect_token_t token;
-    rocketnet_read_connect_token( &token, token_data );
-
-    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
-    rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt,
-                                               rocketnet_test_client_eph_public,
-                                               token.signed_connect_data, token.signature );
-
-    // the lifetime bound is read off the signed fields before the cookie gate,
-    // so first contact is refused outright: the token lifetime (UINT64_MAX -
-    // create) exceeds max_token_lifetime_seconds, and no cookie is ever sent
-    uint8_t response[ROCKETNET_RECEIVE_CEILING];
-    int response_bytes = 0;
-    int result = rocketnet_test_process( &test, request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, response, &response_bytes );
-
-    // After the fix: the token is refused for exceeding the max lifetime, with
-    // its own counter (the refusal reasons are never merged)
-    rocketnet_check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
-    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG] == 1 );
-
-    rocketnet_test_server_teardown( &test );
-}
-
 void rocketnet_test_token_timeout_clamped()
 {
     struct rocketnet_test_server_t test;
@@ -14882,7 +14753,6 @@ void rocketnet_test_public_dev_connect_token_round_trip();
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
     { "test_protocol_id_zero_refused", rocketnet_test_protocol_id_zero_refused },
-    { "test_token_lifetime_bounded", rocketnet_test_token_lifetime_bounded },
     { "test_token_timeout_clamped", rocketnet_test_token_timeout_clamped },
     { "test_suite_environment", rocketnet_test_suite_environment },
     { "test_update_time_clamp", rocketnet_test_update_time_clamp },
@@ -14982,7 +14852,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_request_path_ordering", rocketnet_test_request_path_ordering },
     { "test_request_path_uncovered_rungs", rocketnet_test_request_path_uncovered_rungs },
     { "test_handshake_work_budget_per_update", rocketnet_test_handshake_work_budget_per_update },
-    { "test_admission_hook_drops_before_verify", rocketnet_test_admission_hook_drops_before_verify },
     { "test_request_path_config_branches", rocketnet_test_request_path_config_branches },
     { "test_replay_protection", rocketnet_test_replay_protection },
     { "test_replay_long_skip_clears_whole_window", rocketnet_test_replay_long_skip_clears_whole_window },

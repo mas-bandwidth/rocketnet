@@ -603,17 +603,15 @@ static void check_server_memory_budget( allocator_state & state )
     memset( config.backend_public_key, 0xEF, 32 );
     config.protocol_id = 1;
     snprintf( config.transport, sizeof( config.transport ), "%s", transport );
-
-    // the case names its production transport, so a server transport pin in
-    // the environment (CI pins ROCKETNET_SERVER_TRANSPORT=portable for this
-    // binary) is lifted for the creates below and restored after them, as
-    // posix_pair_create does (functional/posix_socket_errors.cpp). under the
-    // pin the ladder would try portable, which a production build refuses
-    // before the budget is consulted, so neither create would test the budget
-    char saved_transport[64];
-    const bool pinned = rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", saved_transport, sizeof( saved_transport ) ) != 0;
+    // The plan below is the production transport's, so the create must run
+    // that transport. CI runs this binary with ROCKETNET_SERVER_TRANSPORT=portable,
+    // and the env layer displaces the struct's transport: the production
+    // library then refuses the portable pin, which made the budget refusal
+    // pass for the wrong reason and the budget success fail. Hold the env
+    // pin aside for this check and put it back afterwards.
+    char pinned_transport[64];
+    const bool transport_pinned = rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", pinned_transport, sizeof( pinned_transport ) ) != 0;
     unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
-
     const uint64_t plan = rocketnet_server_transport_required_memory( &config, transport );
     check( plan > 0 );
 
@@ -633,9 +631,8 @@ static void check_server_memory_budget( allocator_state & state )
     check( server != NULL );
     rn_native_server_transport_stop_and_destroy( server );
     unsetenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" );
-
-    if ( pinned )
-        setenv( "ROCKETNET_SERVER_TRANSPORT", saved_transport, 1 );
+    if ( transport_pinned )
+        setenv( "ROCKETNET_SERVER_TRANSPORT", pinned_transport, 1 );
 }
 
 static void check_client_memory_budget( allocator_state & state )

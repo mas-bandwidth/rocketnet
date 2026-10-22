@@ -203,12 +203,47 @@ static posix_resource_counts_t posix_read_counts()
     return counts;
 }
 
+// ThreadSanitizer starts one background thread of its own (__tsan::BackgroundThread,
+// libsanitizer tsan_rtl.cpp) at the process's first pthread_create and never
+// stops it. When the first thread a case creates is a transport's worker (the
+// portable server's TX worker), that runtime thread appears inside the cycle
+// and reads as a leak (threads 1 -> 2, the TSan CI leg only; the same case
+// passes in a plain build). Create and join one thread before the first
+// baseline in a TSan build, so the runtime's thread is in every before count.
+// A transport thread that is really left behind still moves the count.
+#if defined(__SANITIZE_THREAD__)
+#define POSIX_THREAD_SANITIZER 1
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define POSIX_THREAD_SANITIZER 1
+#endif
+#endif
+
+static void posix_sanitizer_threads_start()
+{
+#if defined(POSIX_THREAD_SANITIZER)
+    static bool started = false;
+    if ( started )
+        return;
+    const int threads_before = posix_threads();
+    std::thread thread( [] {} );
+    thread.join();
+    started = true;
+    // the joined thread leaves the task list only when the kernel reaps it
+    // (see posix_settled_counts): wait until the list holds the threads from
+    // before plus at most the runtime's one, so no baseline counts it
+    for ( int attempt = 0; attempt < 10000 && posix_threads() > threads_before + 1; attempt++ )
+        rocketnet_platform_sleep( 0.001 );
+#endif
+}
+
 // The receive and I/O threads are joined inside destroy, so the count settles
 // as soon as the last destroy returns. Give the kernel a short window to reap
 // a thread it has already been told to join, then compare two equal reads: a
 // real leak is stable at the higher count and still fails.
 static posix_resource_counts_t posix_stable_counts()
 {
+    posix_sanitizer_threads_start();
     posix_resource_counts_t previous = posix_read_counts();
     for ( int attempt = 0; attempt < 200; attempt++ )
     {
@@ -797,17 +832,12 @@ void rocketnet_test_posix_init_term_1000()
         posix_env_guard_t server_guard, client_guard;
         posix_cell_begin( cell, &server_guard, &client_guard );
 
-        // one cycle before the baseline. The suite's worker initialised
-        // rocketnet before the case, and on macOS that first init's sodium_init
-        // opened /dev/urandom; term closes it (rocketnet_term_ex, the bundled
-        // RNG) and an init after a term opens it again only when random bytes
-        // are next drawn. Read before the warm-up, the baseline held that
-        // descriptor and every run failed fds 4 -> 3. After it, the baseline
-        // is the state every later cycle returns to, and a descriptor or
-        // thread left per cycle still moves the count.
+        // term closes the bundled sodium random source on macOS (dfd1a54b) and
+        // sodium reopens it at its next draw, not at init: one cycle first, so
+        // the baseline is the state every cycle below ends in (inited, nothing
+        // drawn yet), and a descriptor that is really left open still shows
         posix_check( rocketnet_term() == ROCKETNET_STATUS_OK );
         posix_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
-
         const posix_resource_counts_t before = posix_stable_counts();
         const double start = posix_now_seconds();
         const int count = posix_count( cell, 1000 );

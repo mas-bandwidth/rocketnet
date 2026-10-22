@@ -116,7 +116,7 @@ static const struct ctv_input_t ctv_inputs[] =
         rocketnet_test_token_vector_ephemeral_secret[1],
     },
     // both families, 10.0.0.1:1 and [2001:db8::1]:65535, all-ones user data,
-    // a negative timeout (no timeout) to pin the int32 encoding
+    // a negative timeout, which both ends refuse, to pin the int32 encoding
     {
         "dual_stack_negative_timeout",
         0x8000000000000001ULL, 0x0000000000000001ULL,

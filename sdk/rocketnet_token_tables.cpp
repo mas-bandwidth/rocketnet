@@ -409,8 +409,31 @@ int rocketnet_used_token_history_claim_record( struct rocketnet_used_token_histo
     return 1;
 }
 
-// releases this address's claim, when a request past the claim fails the
-// signature: a request that proves nothing holds nothing.
+// whether claim_record would return 1 now, without writing: the identifier
+// is already in the table (a live claim for this address -- claim_check has
+// refused any other -- or an expired entry to reuse), the free list has a
+// slot, or some entry's claim has expired. These are exactly the cases in
+// which claim_record finds or selects a slot.
+
+int rocketnet_used_token_history_claim_can_record( const struct rocketnet_used_token_history_t * history,
+                                                   const uint8_t * token_identifier,
+                                                   double current_time )
+{
+    const struct rocketnet_token_table_t * table = history->claims;
+    if ( rocketnet_token_table_find_any( table, token_identifier ) != -1 )
+        return 1;
+    if ( table->free_head != -1 )
+        return 1;
+    for ( int i = 0; i < table->capacity; i++ )
+    {
+        if ( table->claim_deadline[i] <= current_time )
+            return 1;
+    }
+    return 0;
+}
+
+// releases this address's claim, when a request that holds one is refused
+// before its mapping is added.
 
 void rocketnet_used_token_history_claim_release( struct rocketnet_used_token_history_t * history,
                                                  const uint8_t * token_identifier,

@@ -20,7 +20,7 @@ The secure connect of standard/TRANSPORT.md: netcode 1.02 rebuilt on public keys
 | Per-connection keys with forward secrecy, secrets wiped on every exit | ✅ | ✅ | ✅ |
 | Sealed packets with every refusal proven | ✅ | ✅ | ✅ |
 | Used-token history and one token, one live connection | ✅ | ✅ | ✅ |
-| Admission hook drops a packet before any verify | ✅ | ✅ | ✅ |
+| Admission hook: removed 2026-10-21, it was never in the public API | — | — | — |
 | Cheap refusals before crypto: a full server refuses before keypair work | ✅ | ✅ | ✅ |
 | Bounded handshake work per update | ✅ | ✅ | ✅ |
 | Configurable half-open handshake deadline | ✅ | ✅ | ✅ |
@@ -435,7 +435,6 @@ What v1.0.0-preview-1 does not yet meet, one row per issue: what it is today, an
 | Some functional tests measure operating-system behaviour rather than RocketNet: test_macos_client_timing_default_qos, test_macos_client_timing_taskpolicy_background, the test_thread_priority_timing cases and test_thread_priority_windows_readback. The final deliverable removes them or rewrites them to test only RocketNet's own code. | ❌ | ❌ | ❌ |
 | The macOS client timing functional test carries a branch that lowers the game thread's priority, which no case uses since its last caller was removed. The final deliverable removes the branch with the cases above. | — | ❌ | — |
 | The Windows Debug, AddressSanitizer and Application Verifier runs passed before the last v1.0.0-preview-1 API changes and have not been repeated on the released API. The final deliverable repeats all three on the released API, on every Windows transport. | — | — | ❌ |
-| On Linux, XDP gateway discovery runs external commands when the server starts. This is acceptable at start; the final deliverable reads the gateway through netlink instead. | ❌ | — | — |
 | Client connect and server start still allocate: the client's transport, socket and I/O thread at each connect, and the server's transport and its tables at each start. The final deliverable builds them at create, so nothing allocates after create. | ❌ | ❌ | ❌ |
 | A few allocations do not go through the caller's allocator: AF_XDP packet memory, io_uring rings, the RIO registered region, thread stacks, interface discovery and the C library's output buffer. The final deliverable routes them through the caller's allocator where the operating system allows, and reports the rest by size. | ❌ | ❌ | ❌ |
 | The memory plan reports what create needs, but not yet what connect, reconnect, start and stop need. The final deliverable extends the plan to the whole session, so one block sized from the plan alone never runs out. | ❌ | ❌ | ❌ |

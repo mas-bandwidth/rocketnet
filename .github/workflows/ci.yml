@@ -215,7 +215,9 @@ jobs:
 
       - name: Check the floating-point floor on every compiler invocation
         if: runner.os == 'Linux'
-        run: bash tools/check_fp_contract.sh
+        run: |
+          bash tools/check_fp_contract.sh
+          cmake -DROCKETNET_OSS_FUZZ_BUILD_SCRIPT=oss-fuzz/build.sh -P tools/check_oss_fuzz_fp_contract.cmake
 
       - name: Check every child make has a bounded -j
         if: runner.os == 'Linux'
@@ -441,6 +443,10 @@ jobs:
         if: runner.os == 'Linux'
         run: python3 tools/test_run_msan.py
 
+      - name: Test the Application Verifier runner's image name
+        if: runner.os == 'Linux'
+        run: python3 tools/test_appverif_run.py
+
       # rocketnet.h alone: plain C99/C11/C++11, standard includes only, one
       # extern "C" block, and a C and a C++ client and server built from only
       # the header and the prebuilt static library (seconds)
@@ -470,6 +476,24 @@ jobs:
             echo "undersized history was accepted"
             exit 1
           fi
+
+      # the build is tolerant: a Linux build without a BPF-capable clang,
+      # libbpf or libxdp, or with ROCKETNET_XDP=OFF, compiles the XDP
+      # transport out. The library then carries no XDP code and no libbpf or
+      # libxdp link, and a transport list naming xdp refuses it with
+      # TRANSPORT_NOT_BUILT; the default build keeps all of it.
+      - name: Build without XDP; XDP is compiled out and a pin of it refuses
+        if: runner.os == 'Linux' && matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
+        run: |
+          python3 tools/test_check_xdp_compiled_out.py
+          python3 tools/check_xdp_compiled_out.py --present bin/librocketnet.so build/librocketnet.a
+          cmake -S . -B build-no-xdp -DCMAKE_BUILD_TYPE=Release -DROCKETNET_XDP=OFF -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF \
+            -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-no-xdp/bin" -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$PWD/build-no-xdp/bin"
+          cmake --build build-no-xdp --target rocketnet rocketnet_shared test --parallel
+          python3 tools/check_xdp_compiled_out.py --absent build-no-xdp/bin/librocketnet.so build-no-xdp/librocketnet.a
+          for case in test_xdp_compiled_out_pin_refuses_not_built test_xdp_compiled_out_list_takes_the_next_candidate test_xdp_compiled_out_has_no_memory_plan; do
+            ./build-no-xdp/bin/test --run "$case"
+          done
 
       - name: Install and relocate the SDK; run C/C++ static/shared consumers
         if: contains(matrix.leg, 'a')
@@ -933,6 +957,61 @@ jobs:
         run: |
           cd tools/happy_path
           go run happy_path.go
+
+  # THE BACKEND EXAMPLES: the Go and C# backends in examples/backend/ that mint
+  # connect tokens, as yojimbo's matcher does. Their unit tests mint every token
+  # in test/connect_token_vectors.json from its fixed inputs and compare byte for
+  # byte, so a change to the token format that the vectors record and the
+  # backends do not follow goes red here. No sockets and no real time, so no C
+  # build: each leg is a toolchain and seconds of tests, its own job with NO
+  # needs, beside build-and-test. The end-to-end run (server, backend, client
+  # over loopback) is the functional tier, in nightly-examples.yml. Linux only:
+  # the backends are portable code and the token bytes are the same everywhere.
+
+  backend-examples:
+    name: backend example / ${{ matrix.backend }}
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 3
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [go, csharp]
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+      DOTNET_NOLOGO: 1
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Check the fleet's toolchain is on PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+          # examples/backend/go/go.mod says go 1.26; the C# projects target net10.0 (the fleet pins go 1.26 and .NET SDK 10)
+          if [ "${{ matrix.backend }}" = "go" ]; then
+            if ! command -v go >/dev/null 2>&1; then echo "TOOL-MISSING go >= 1.26 (missing) on $RUNNER_NAME"; exit 1; fi
+            got="$(go version)"; echo "$got"
+            minor="$(echo "$got" | sed -n 's/.* go1\.\([0-9][0-9]*\).*/\1/p')"
+            if [ -z "$minor" ] || [ "$minor" -lt 26 ]; then echo "TOOL-MISSING go >= 1.26 $got on $RUNNER_NAME"; exit 1; fi
+          else
+            if ! command -v dotnet >/dev/null 2>&1; then echo "TOOL-MISSING dotnet SDK 10 (missing) on $RUNNER_NAME"; exit 1; fi
+            if ! dotnet --list-sdks | grep -q '^10\.'; then echo "TOOL-MISSING dotnet SDK 10 ($(dotnet --list-sdks | tr '\n' ' ')) on $RUNNER_NAME"; exit 1; fi
+          fi
+
+      - name: Unit tests (Go)
+        if: matrix.backend == 'go'
+        working-directory: examples/backend/go
+        run: |
+          test -z "$(gofmt -l .)" || { gofmt -l .; echo "gofmt: the files above are not formatted"; exit 1; }
+          go vet ./...
+          go test -count=1 ./...
+
+      - name: Build the backend and run its unit tests (C#)
+        if: matrix.backend == 'csharp'
+        working-directory: examples/backend/csharp
+        run: |
+          dotnet build Backend -c Release
+          dotnet run --project Tests -c Release
 
   # asan + ubsan over the whole suite, per commit, exactly as serialize runs
   # it: the transport allocates arenas at create, hands out interior pointers
