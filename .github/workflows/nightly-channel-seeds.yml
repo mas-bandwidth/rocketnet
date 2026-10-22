@@ -57,10 +57,19 @@ jobs:
           set -o pipefail
           scripts/channel-seed-sweep --all --seeds 1-2000 --timeout 120 | tee channel-seed-sweep.log
 
+      # GitHub expressions have no replace(): the artifact name's ref slug ('/' -> '-') is made here
+      - name: Artifact name for the ref
+        id: refslug
+        if: failure()
+        shell: bash
+        env:
+          REF: ${{ matrix.ref }}
+        run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
+
       - name: Upload the sweep log
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: channel-seed-sweep-log-${{ replace(matrix.ref, '/', '-') }}
+          name: channel-seed-sweep-log-${{ steps.refslug.outputs.slug }}
           path: channel-seed-sweep.log
           if-no-files-found: ignore

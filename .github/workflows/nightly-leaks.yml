@@ -98,11 +98,20 @@ jobs:
           set -o pipefail
           ./bin/functional 2>&1 | tee functional.log
 
+      # GitHub expressions have no replace(): the artifact name's ref slug ('/' -> '-') is made here
+      - name: Artifact name for the ref
+        id: refslug
+        if: failure()
+        shell: bash
+        env:
+          REF: ${{ matrix.ref }}
+        run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
+
       - name: Upload leak logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: nightly-leaks-logs-${{ replace(matrix.ref, '/', '-') }}
+          name: nightly-leaks-logs-${{ steps.refslug.outputs.slug }}
           path: |
             test.log
             test_portable.log

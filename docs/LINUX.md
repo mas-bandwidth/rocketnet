@@ -26,14 +26,18 @@ The XDP program is compiled at build time, never on the server host.
 with a clang that has the BPF target, against the kernel UAPI headers
 (`linux-libc-dev`, which `build-essential` pulls in) and libbpf's
 `bpf/bpf_helpers.h`, and embeds the object's bytes in the library;
-`rocketnet_server_socket_create` opens them with `bpf_object__open_mem`. A
-configure that finds no such clang prints
-`XDP off: no clang with the BPF target was found, so server_xdp.o is not built and the xdp server transport refuses at create`,
-and that build's `xdp` transport refuses at create with
-`could not load server_xdp program: this build has no server_xdp.o (XDP disabled or no clang with the BPF target at configure time)`,
-so `auto` falls to the next rung. `-DROCKETNET_XDP=OFF` explicitly selects
-the same disabled-object path. The server host needs no compiler, no
-`make`, no kernel headers and no temporary directory to start `xdp`.
+`rocketnet_server_socket_create` opens them with `bpf_object__open_mem`. The
+build is tolerant, for a deployment that never runs XDP (a host without root,
+such as AWS GameLift): a configure that finds no such clang, or no libbpf or
+libxdp, prints `XDP off: no clang with the BPF target was found, so XDP is
+compiled out of this build` (or `XDP off: libbpf or libxdp was not found, so
+XDP is compiled out of this build`) and compiles the whole XDP
+transport out, with no embedded object, no XDP or netlink gateway code in the
+library and no libbpf or libxdp link. `-DROCKETNET_XDP=OFF` compiles it out on
+purpose. In that build a transport list naming `xdp` refuses it at create with
+`ROCKETNET_STATUS_TRANSPORT_NOT_BUILT`, and `auto` falls to the next rung. The
+server host needs no compiler, no `make`, no kernel headers and no temporary
+directory to start `xdp`.
 
 `make` is the front door. It configures `build/` as **Release** and runs the
 child make with `-j` set to the processor count capped at 8; `make JOBS=<n>`
@@ -308,7 +312,7 @@ vng --run "$HOME/vm-kernels/vmlinuz-$(uname -r)" --memory 1536M --cpus 3 --appen
 `test_xdp_filter` judges the BPF program with the kernel's verifier and
 `BPF_PROG_TEST_RUN` (`TRANSPORTS.md:256-261`), on the same `server_xdp.o` the
 library embeds. In a 1536M guest with two isolated CPUs and no clang on
-`PATH`, all 17 cases print `ok`, including `xdp_on_link_reply_reaches_the_peer`
+`PATH`, all 18 cases print `ok`, including `xdp_on_link_reply_reaches_the_peer`
 and `xdp_create_fails_part_way_tears_down`.
 
 ## 7. Socket errors and ICMP
@@ -316,14 +320,18 @@ and `xdp_create_fails_part_way_tears_down`.
 Linux reports an ICMP error (port unreachable, host unreachable) to a UDP
 socket only when the socket is connected or has `IP_RECVERR` set (Linux
 `net/ipv4/udp.c` and `net/ipv6/udp.c`, `__udp4_lib_err` and
-`__udp6_lib_err`). rocketnet's sockets are never connected and never set
-`IP_RECVERR`: they are created at `sdk/rocketnet_platform.cpp:310`,
+`__udp6_lib_err`). rocketnet's server sockets are never connected and never
+set `IP_RECVERR`: they are created at `sdk/rocketnet_platform.cpp:310`,
 `sdk/rocketnet_server_gso_linux.cpp:276` and
 `sdk/rocketnet_server_uring_linux.cpp:203`, and send with `sendto`,
-`sendmmsg` or `SENDMSG` to an address per packet
-(`sdk/rocketnet_platform.cpp:526`, `:540`, `:817`). So a dead or unreachable
-peer produces no error on the receive path of `portable`, `gso` or
-`io_uring`. On `xdp`, ICMP is not UDP, so the XDP program passes it to the
+`sendmmsg` or `SENDMSG` to an address per packet. So a dead or unreachable
+peer produces no error on a server's receive path on `portable`, `gso` or
+`io_uring`. A client's portable socket is connected to its one server
+(`rocketnet_platform_socket_connect`, TRANSPORT.md t11: the client trusts only
+the server), so the kernel drops datagrams from any other source and does
+report an ICMP error for the server to the client's next receive; the
+portable receive arms skip it as weather (`rocketnet_platform_receive_weather`)
+and keep draining. On `xdp`, ICMP is not UDP, so the XDP program passes it to the
 kernel stack (`TRANSPORTS.md:216-218`). This command shows the kernel rule on
 the host:
 
@@ -345,7 +353,9 @@ It prints `unconnected no error reported` then `connected ECONNREFUSED`.
 What each path does with the errors it can see:
 
 - **portable** (server and client): a failed `recvfrom` or `recvmmsg` ends that
-  drain and is logged at debug, except `EAGAIN` and `EINTR`
+  drain and is logged at debug, except `EAGAIN` (the queue is empty) and the
+  weather errnos `ECONNREFUSED`, `EHOSTUNREACH`, `ENETUNREACH`, `EHOSTDOWN`,
+  `ENETDOWN`, `ENOBUFS` and `EINTR`, which are skipped
   (`sdk/rocketnet_platform.cpp:584-593`, `:938-949`); a failed `sendto` is
   logged at debug and the packet is dropped (`:526-546`); a `sendmmsg` refused
   with `EAGAIN`, `EWOULDBLOCK` or `ENOBUFS` drops the rest of the batch, and

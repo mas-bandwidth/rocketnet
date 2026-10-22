@@ -15,7 +15,7 @@
 // THE WIRE SEAM. This header compiles sdk/rocketnet_server_transport.cpp into
 // the harness, as test_transport_control.cpp and test_unit_driver_loopback.cpp
 // do, so it can stand two shims in the server's io operations -- the same seam
-// test_pending_wire_totals_expire_and_reuse_slots swaps its receive_batch into:
+// test_server_connects_after_junk_from_many_sources swaps its receive_batch into:
 //
 //   receive_batch: the server receives exactly the datagrams the harness put
 //     on its deliver list for this update, each with the source address the
@@ -712,15 +712,19 @@ static inline void rocketnet_fuzz_snapshot_restore( struct rocketnet_fuzz_pair_t
 // coverage: the one-time create, connect and snapshot run before any input
 // and would count as covered code no input drove, so the profile counters
 // are zeroed once the snapshots are taken (tools/fuzz_coverage.sh sets it).
-#if defined( __clang__ ) && !defined( _WIN32 )
-extern "C" void __llvm_profile_reset_counters( void ) __attribute__(( weak ));
+// Only the coverage build (tools/fuzz_coverage.sh, which defines
+// ROCKETNET_FUZZ_COVERAGE_BUILD) links the profile runtime. Every other build
+// names no profile symbol: a weak undefined reference links on Linux but not
+// with the macOS linker.
+#if defined( ROCKETNET_FUZZ_COVERAGE_BUILD )
+extern "C" void __llvm_profile_reset_counters( void );
 #endif
 
 static inline void rocketnet_fuzz_coverage_reset_after_setup()
 {
-#if defined( __clang__ ) && !defined( _WIN32 )
+#if defined( ROCKETNET_FUZZ_COVERAGE_BUILD )
     char value[8];
-    if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_COVERAGE_INPUTS_ONLY", value, sizeof( value ) ) && value[0] == '1' && __llvm_profile_reset_counters )
+    if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_COVERAGE_INPUTS_ONLY", value, sizeof( value ) ) && value[0] == '1' )
         __llvm_profile_reset_counters();
 #endif
 }

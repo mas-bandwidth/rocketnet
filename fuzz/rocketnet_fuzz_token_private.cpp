@@ -64,6 +64,8 @@
 #include <string.h>
 #include <sodium.h>
 
+#include "../test/portable_crt.h"
+
 static void rocketnet_fuzz_require( bool condition, const char * property )
 {
     if ( condition ) return;
@@ -177,7 +179,6 @@ static void fuzz_server_create( struct fuzz_server_t * server )
     for ( int i = 0; i < ROCKETNET_COOKIE_KEY_BYTES; i++ )
         p->cookie_key[i] = (uint8_t) ( 0xC0 + i );
     p->cookie_lifetime_seconds = 3;
-    p->max_token_lifetime_seconds = 600;
     p->handshake_deadline_seconds = 5.0;
     p->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     p->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
@@ -355,8 +356,9 @@ static void fuzz_raw_signed( const uint8_t * data, size_t size )
 static void fuzz_write_seed( const char * dir, const char * name, uint8_t selector, const uint8_t * a, size_t a_bytes, const uint8_t * b, size_t b_bytes )
 {
     char path[1024];
-    snprintf( path, sizeof( path ), "%s/%s", dir, name );
-    FILE * f = fopen( path, "wb" );
+    if ( snprintf( path, sizeof( path ), "%s/%s", dir, name ) >= (int) sizeof( path ) )
+        abort(); // a truncated path would write some other file
+    FILE * f = rocketnet_test_fopen( path, "wb" );
     if ( !f )
         abort();
     fwrite( &selector, 1, 1, f );
@@ -413,10 +415,10 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
     if ( sodium_init() < 0 )
         abort();
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
-    const char * verbose = getenv( "ROCKETNET_FUZZ_VERBOSE" );
-    fuzz_verbose = verbose != NULL && verbose[0] == '1';
-    const char * seed_dir = getenv( "ROCKETNET_FUZZ_SEED_DIR" );
-    if ( seed_dir != NULL && seed_dir[0] != '\0' )
+    char verbose[8];
+    fuzz_verbose = rocketnet_test_getenv( "ROCKETNET_FUZZ_VERBOSE", verbose, sizeof( verbose ) ) && verbose[0] == '1';
+    char seed_dir[1024];
+    if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_DIR", seed_dir, sizeof( seed_dir ) ) && seed_dir[0] != '\0' )
         fuzz_write_seeds( seed_dir );
     return 0;
 }

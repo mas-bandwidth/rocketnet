@@ -123,7 +123,8 @@ enum rocketnet_status_t
     ROCKETNET_STATUS_SERVER_NOT_STOPPED                 = -24,
     ROCKETNET_STATUS_FLOW_ID_RESERVED                   = -25,
     ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED     = -26,
-    ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED             = -27
+    ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED             = -27,
+    ROCKETNET_STATUS_TRANSPORT_NOT_BUILT                = -28
 };
 ```
 
@@ -138,17 +139,23 @@ out-parameter, and log one `ERROR` line with the reason: `NOT_INITIALIZED`,
 `INVALID_ADDRESS` (server) or `OUT_OF_MEMORY`. Client connect and server start
 return the token and transport codes: `CLIENT_NOT_DISCONNECTED`,
 `INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, `SERVER_NOT_STOPPED`,
-`TRANSPORT_LADDER_EXHAUSTED`, `TRANSPORT_FAMILIES_UNSUPPORTED`, `MISSING_KEYS`,
+`TRANSPORT_LADDER_EXHAUSTED`, `TRANSPORT_FAMILIES_UNSUPPORTED`, `TRANSPORT_NOT_BUILT`, `MISSING_KEYS`,
 `TRANSPORT_PORT_ZERO_UNSUPPORTED`, `MUTEX_CREATE_FAILED`,
 `THREAD_CREATE_FAILED` and `TIMER_CREATE_FAILED`.
 `ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED` is -26: a transport returns it
 when it cannot serve both named families, and start returns it when every
 candidate that opened refused for that reason.
-`ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED` is -27, the last code: a config whose
+`ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED` is -27: a config whose
 `config_bytes` is 0 or smaller than the field itself, one that skipped its
 default_config call, is refused with it before any other check
 (`docs/ABI-EVOLUTION.md`). Its string is `CONFIG_NOT_INITIALIZED`
 (`rocketnet_status_name` in `sdk/rocketnet.cpp`).
+`ROCKETNET_STATUS_TRANSPORT_NOT_BUILT` is -28, the last code: start returns it
+when every candidate that opened refused because it is compiled out of this
+build, the `xdp` server transport in a Linux build configured with
+`ROCKETNET_XDP=OFF` or without a clang that has the BPF target, libbpf or
+libxdp (`docs/LINUX.md`). Its string is
+`TRANSPORT_NOT_BUILT`.
 
 ### 2.2 Reporting
 

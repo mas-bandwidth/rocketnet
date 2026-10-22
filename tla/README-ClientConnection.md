@@ -81,6 +81,7 @@ Safety, checked under every loss pattern with no fairness:
 | `TimeoutPairing` | a timeout from waiting state N lands in -(N+1) (S:2074-2077) |
 | `TimeoutHonoured`, `DeadlineHonoured` | the idle timeout and the total deadline fire when due |
 | `NoSendOnArrival` | no receive sends (S:2178-2182) |
+| `OnlyAuthenticatedRefreshes` | the client trusts only the server: in states 1 and 2 of one attempt nothing restarts the receive clock; a cookie's salt is in the clear, so only the challenge and the session packets after it reset it (TRANSPORT.md t11 rule 8, t11.1) |
 | `TypeOK` | types, including both links' |
 
 Liveness, under the fairness described below:
@@ -407,3 +408,35 @@ original parameters and is not a completed proof.
 | 31 | `MCClientConnectionF8Terminal.cfg` | pass |
 | 32 | `MCClientConnectionObsKeys.cfg` | invariant / KeysErasedWhenDown |
 | 33 | `MCClientConnectionBrokenDeniedKeepsKeys.cfg` | invariant / KeysErasedWhenDown |
+
+### 2026-10-21: the cookie restarts nothing (OnlyAuthenticatedRefreshes)
+
+`ClientRecvCookie` no longer sets `cSinceRecv' = 0`, matching
+`rocketnet_client_process_cookie`, which no longer writes
+`last_receive_time` (and no longer takes the round-trip sample). The action
+property `OnlyAuthenticatedRefreshes` says that within one attempt, while
+the client is in states 1 or 2, `cSinceRecv` never goes down.
+`MCClientConnectionCookieTrust.cfg` checks it with a responsive server and
+the idle timeout on (Timeout 3), with `SafetyInvariants`, `TimeoutPairing`
+and `StepsForwardOrFails`: pass, 28,946 distinct states.
+`MCClientConnectionBrokenCookieRefreshes.cfg` is the reversed witness: the
+pre-fix cookie (`ClientRecvCookieRefreshes`, only in `SpecCookieRefreshes`).
+TLC exits 13 with `OnlyAuthenticatedRefreshes` violated in 6 states: connect
+(`cSinceRecv` 0), the request, the server's cookie, one tick (`cSinceRecv`
+1), then the cookie delivered, `cstate` 1 -> 2 and `cSinceRecv` 0. Checked
+against the code by hand: `rocketnet_client_protocol_connect` sets
+`last_receive_time` to the connect time, and the old cookie path set it again
+to the cookie's arrival time, which is what
+`test_client_cookie_does_not_refresh_idle_timer` catches on the old code.
+
+The whole `clientconnection` group was re-measured on captain (Linux, pinned
+jar, `/opt/tla/tlacheck`, one shard per case, 110 s each). Every declared
+outcome holds. Three bench debt cases that timed out before now finish
+inside the budget, because a cookie no longer resets the clock and the state
+space shrank: `SFirst` (2,234 distinct), `SFirstkind` (12,162) and `SDelay`
+(2,196). The other six debt cases still exit 124. The records in
+`tla/RUNS.tsv` were written again on amd-1 (Linux, pinned jar, one shard per
+case, `mode = bounded`, 110 s) when the branch was brought onto main 0f44ecd8,
+and joined with `tlacheck merge --keep tla/RUNS.tsv`: every required case
+reaches its declared result, `CookieTrust` passes and
+`BrokenCookieRefreshes` reaches `OnlyAuthenticatedRefreshes`.

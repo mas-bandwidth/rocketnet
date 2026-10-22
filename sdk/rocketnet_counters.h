@@ -823,7 +823,9 @@
     /* the indices are the contract. */ \
     /** @brief ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE: Counts requests refused because the token creation time is in the future. Unit: occurrences. Class: refusal; family: CONNECTION_REQUEST_RECEIVED. */ \
     X( CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
-    /** @brief ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG: Counts requests refused because the token lifetime exceeds its limit. Unit: occurrences. Class: refusal; family: CONNECTION_REQUEST_RECEIVED. */ \
+    /* retired with the maximum token lifetime, which was never configurable */ \
+    /* and always zero (no limit): keeps its index, always zero. */ \
+    /** @brief ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG: Counts retired counter slot; it stays zero now that no maximum token lifetime exists. Unit: occurrences. Class: refusal; family: CONNECTION_REQUEST_RECEIVED. */ \
     X( CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
     \
     /* A send the transport refused for want of a link-layer destination: the */ \
@@ -939,7 +941,15 @@
     /* counted (sdk/rocketnet_client_transport.cpp:1296-1301). REFUSAL. */ \
     /* appended: indices are the contract. */ \
     /** @brief ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE: Counts datagrams the client drops because their source is not the server it dialed, while the connection attempt holds that server's address; one count per datagram. Unit: datagrams. Class: refusal; family: none. */ \
-    X( CLIENT_RECEIVE_FOREIGN_SOURCE, REFUSAL, NONE )
+    X( CLIENT_RECEIVE_FOREIGN_SOURCE, REFUSAL, NONE ) \
+    \
+    /* The kernel prefilter's DROPPED_IP_OPTIONS_OR_EXTENSION */ \
+    /* (sdk/rocketnet_wire.h): a datagram to the server's address and port */ \
+    /* behind IPv4 options or IPv6 extension headers, dropped in XDP: */ \
+    /* RocketNet never sends either, and in XDP mode no kernel socket */ \
+    /* listens on the port. REFUSAL. appended: indices are the contract. */ \
+    /** @brief ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION: Counts datagrams to the server address and port that the kernel prefilter dropped because IPv4 options or IPv6 extension headers sat in front of UDP. Unit: occurrences. Class: refusal; family: none. */ \
+    X( XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION, REFUSAL, NONE )
 
 /**
  * @brief Integer indices for the cumulative protocol counters.

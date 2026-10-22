@@ -91,11 +91,20 @@ else
     done
 fi
 
-COVFLAGS="-fprofile-instr-generate -fcoverage-mapping"
+# ROCKETNET_FUZZ_COVERAGE_BUILD lets the pair harnesses call the profile
+# runtime (they zero the counters after their one-time setup); no other build
+# references it
+COVFLAGS="-fprofile-instr-generate -fcoverage-mapping -DROCKETNET_FUZZ_COVERAGE_BUILD=1"
 # continuous mode (%c) on Linux needs the counters relocated at run time;
 # without it the runtime cannot map them and writes an empty profile
 if [ "$(uname -s)" = "Linux" ]; then
     COVFLAGS="$COVFLAGS -mllvm -runtime-counter-relocation"
+fi
+# a build directory configured with other flags would build without the
+# define or the relocation flag and report wrong numbers; refuse it
+if [ -f "$BUILD/CMakeCache.txt" ] && ! grep -q '^CMAKE_CXX_FLAGS:.*-DROCKETNET_FUZZ_COVERAGE_BUILD=1' "$BUILD/CMakeCache.txt"; then
+    echo "fuzz_coverage: $BUILD was configured without the current coverage flags; delete it and rerun" >&2
+    exit 1
 fi
 if [ ! -f "$BUILD/CMakeCache.txt" ]; then
     GENERATOR=()

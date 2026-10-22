@@ -66,7 +66,7 @@ the implementation defines no unpublished packet type	carried by the t5 packet-t
 # ---- known divergences (known_divergences.tsv, removed) ----
 timing.send_rate	transport.tsv: send rate
 timing.cookie_lifetime	transport.tsv: cookie lifetime
-config.max_token_lifetime_seconds	t12.tsv: maximum token lifetime
+config.max_token_lifetime_seconds	deleted with the maximum token lifetime (never configurable; no limit)
 config.allow_negative_timeout	no pin; the newer config table has no such field (see report)
 sizing.encryption_map	no pin; prose sizing rule in RN-1 t3 (see report)
 #
@@ -74,7 +74,7 @@ sizing.encryption_map	no pin; prose sizing rule in RN-1 t3 (see report)
 server send_rate field	transport.tsv: send rate
 server handshake_deadline_seconds field	transport.tsv: server handshake_deadline_seconds
 server cookie_lifetime_seconds field	transport.tsv: cookie lifetime
-server max_token_lifetime_seconds field	t12.tsv: maximum token lifetime
+server max_token_lifetime_seconds field	deleted with the maximum token lifetime (never configurable; no limit)
 server allow_negative_timeout field	no pin; the newer config table has no such field (see report)
 #
 # ---- the timing table (check_standard.py) ----

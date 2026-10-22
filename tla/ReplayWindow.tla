@@ -44,6 +44,15 @@
 (* A second ghost, processed, records what a slot actually processed: the  *)
 (* harm the gate guards against is the ack block naming a packet nothing   *)
 (* processed, and AckReportsOnlyProcessed says it never does.              *)
+(*                                                                         *)
+(* A third rule places the gate before the open (asr pass 1 F4, 2026-10-21; *)
+(* TRANSPORT.md t10 step 12).  The server acts on no session packet for a  *)
+(* mapping without a slot, so it must not spend an AEAD open on one: the   *)
+(* ghost openedPending records an open attempted on a pending mapping, by  *)
+(* a genuine packet (Receive) or by one that does not open (Forge), and    *)
+(* NoOpenBeforeConnect says it never happens.  GateBeforeOpen = FALSE is   *)
+(* the order before the fix (sdk/rocketnet_server_protocol.cpp: the open,  *)
+(* then the slot check), and TLC must reject it.                           *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -53,8 +62,10 @@ CONSTANTS
     ClearedWords,      \* words the long-skip branch clears; the rule: Words.
                        \* today's code: 4 (sdk/rocketnet_replay.cpp:56-59)
     MaxSeq,            \* the highest sequence this instance explores
-    GateBeforeAdvance  \* BOOLEAN: the server checks the slot before it
+    GateBeforeAdvance, \* BOOLEAN: the server checks the slot before it
                        \* advances (the rule) or after (today's code)
+    GateBeforeOpen     \* BOOLEAN: the server checks the slot before the
+                       \* AEAD open (the rule) or after it (before the fix)
 
 W == Words * WordBits  \* ROCKETNET_REPLAY_WINDOW_BITS (sdk/rocketnet_replay.h:26)
 
@@ -63,15 +74,17 @@ ASSUME /\ Words \in Nat \ {0}
        /\ ClearedWords \in 0..Words
        /\ MaxSeq \in Nat /\ MaxSeq >= W
        /\ GateBeforeAdvance \in BOOLEAN
+       /\ GateBeforeOpen \in BOOLEAN
 
 VARIABLES
     highest,    \* highest_opened: the high-water mark, 0 before any open
     window,     \* [0..W-1 -> BOOLEAN]: the ring bit for each sequence mod W
     received,   \* ghost: the sequences that opened and are still in range
     processed,  \* ghost: those of them a slot processed (not ignored)
-    connected   \* the mapping holds a slot (client_index != -1)
+    connected,  \* the mapping holds a slot (client_index != -1)
+    openedPending \* ghost: an open was attempted while connected was FALSE
 
-vars == <<highest, window, received, processed, connected>>
+vars == <<highest, window, received, processed, connected, openedPending>>
 
 Seqs == 1..MaxSeq
 
@@ -145,6 +158,7 @@ Init ==
     /\ received = {}
     /\ processed = {}
     /\ connected = FALSE                    \* client_index is -1 until the response
+    /\ openedPending = FALSE
 
 (***************************************************************************)
 (* The operations and the outside events.                                  *)
@@ -159,15 +173,33 @@ Init ==
 \* checked first and a packet on a pending mapping leaves the window alone.
 \* The client (sdk/rocketnet_client_protocol.cpp:689, :713) is the same pair
 \* on a window that is always connected.
+\* The packet is opened only when the slot gate lets it through: always on
+\* a mapping with a slot, and on a pending one only when the gate follows
+\* the open (GateBeforeOpen = FALSE).  A packet that is never opened never
+\* reaches the advance, whatever GateBeforeAdvance says.
+Opens == connected \/ ~GateBeforeOpen
+
 Receive(s) ==
     /\ s \in Seqs
     /\ ~AlreadyReceived(s)
-    /\ IF connected \/ ~GateBeforeAdvance
+    /\ IF connected \/ (Opens /\ ~GateBeforeAdvance)
          THEN Advance(s)
          ELSE UNCHANGED <<highest, window, received>>
     /\ processed' = {t \in (IF connected THEN processed \cup {s} ELSE processed) :
                         t + W > highest'}
+    /\ openedPending' = (openedPending \/ (Opens /\ ~connected))
     /\ UNCHANGED connected
+
+\* A sealed packet with sequence s that does not open (forged, or sealed
+\* under other keys).  It passes the checks before the open; the open, if
+\* the gate lets it run, fails, and nothing about the window changes.  The
+\* integrity-failure count it would add is not modelled; openedPending is
+\* the open being attempted at all.
+Forge(s) ==
+    /\ s \in Seqs
+    /\ ~AlreadyReceived(s)
+    /\ openedPending' = (openedPending \/ (Opens /\ ~connected))
+    /\ UNCHANGED <<highest, window, received, processed, connected>>
 
 \* The connection response opens and the mapping takes a slot
 \* (sdk/rocketnet_server_protocol.cpp:710-713).  Once only; a mapping that
@@ -175,10 +207,11 @@ Receive(s) ==
 Connect ==
     /\ ~connected
     /\ connected' = TRUE
-    /\ UNCHANGED <<highest, window, received, processed>>
+    /\ UNCHANGED <<highest, window, received, processed, openedPending>>
 
 Next ==
     \/ \E s \in Seqs : Receive(s)
+    \/ \E s \in Seqs : Forge(s)
     \/ Connect
 
 Spec == Init /\ [][Next]_vars
@@ -194,6 +227,7 @@ TypeOK ==
     /\ received \subseteq Seqs
     /\ processed \subseteq received
     /\ connected \in BOOLEAN
+    /\ openedPending \in BOOLEAN
 
 \* The window is the truth inside the retained range: a bit is set exactly
 \* for the sequences that opened.  This is the rule behind F1: a long skip
@@ -236,6 +270,11 @@ NoAdvanceBeforeConnect ==
 \* to the peer as received although nothing processed it.
 AckReportsOnlyProcessed ==
     \A s \in Seqs : AckReports(s) => s \in processed
+
+\* F4 (asr pass 1, 2026-10-21): no AEAD open is ever attempted on a mapping
+\* without a slot -- the slot gate runs before decryption.
+NoOpenBeforeConnect ==
+    ~openedPending
 
 \* The high-water mark never goes backwards, and a slot is never given up.
 Monotone ==

@@ -253,7 +253,9 @@ Windows (`cmake -B build -A x64 -DROCKETNET_SANITIZE_ADDRESS=ON`, then
 `cmake --build build --config Release --parallel 4`), the build copies the MSVC
 AddressSanitizer runtime (`clang_rt.asan_dynamic-x86_64.dll`, beside `cl.exe`)
 into `bin\<config>\` so `bin\Release\test.exe`, `bin\Release\test_lifecycle.exe`,
-`bin\Release\test_iocp.exe` and `bin\Release\functional.exe` run directly.
+`bin\Release\test_iocp.exe` and `bin\Release\functional.exe` run directly. With clang-cl
+(`cmake -B build -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=MinSizeRel -DROCKETNET_SANITIZE_ADDRESS=ON`)
+the build links clang's own dynamic runtime and copies its DLL beside the executables in `bin\`.
 
 `py -3 tools\windows\appverif_run.py -- bin\Debug\test_iocp.exe` runs one
 executable under the Application Verifier Basics layers (Handles, Heaps, Locks,
@@ -261,7 +263,10 @@ Memory, TLS, Threadpool and Leak) with every stop logged and no debugger
 attached (a stop ends the run once it is logged), exports the verifier log of
 every process it starts with that image name (the suite runners start one child
 per case), and exits non-zero naming each stop's layer, stop code and top frames; it disables
-verification for the executable again on every exit path. It needs Application Verifier for x64 from
+verification for the executable again on every exit path. Verifier settings and logs are keyed by
+image name across the whole machine, so it runs a copy of the executable beside it under a name of
+its own (`test_iocp_appverif_<pid>.exe`), which keeps another `test_iocp.exe` on the host (a CI
+leg, another build) out of the run's logs, and removes the copy afterwards. It needs Application Verifier for x64 from
 the Windows SDK and an elevated prompt, and runs a Debug build so the frames
 carry symbols; arguments after the executable and the environment
 (`ROCKETNET_SERVER_TRANSPORT` and the rest) pass through to it, and `--xml <file>` keeps the exported logs.
@@ -287,7 +292,10 @@ networks remote clients connect from.
 
 The build compiles `server_xdp/server_xdp.c` to `server_xdp.o` with a clang that
 has the BPF target. It embeds the bytes in the library. The server host needs no
-compiler. The generated header lives in each build tree, so concurrent
+compiler. Without such a clang, without libbpf or libxdp, or with
+`-DROCKETNET_XDP=OFF`, the build still succeeds with the XDP transport compiled
+out: the library carries no XDP code and links neither library, and a
+transport list naming `xdp` refuses with `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT`. The generated header lives in each build tree, so concurrent
 configurations do not rewrite the checkout. macOS and Windows do not build the
 object.
 
@@ -299,14 +307,16 @@ BPF/libxdp development headers or libraries, BPF clang, or `xxd`:
     cmake -S . -B build-no-xdp -DROCKETNET_XDP=OFF -DCMAKE_BUILD_TYPE=Release
     cmake --build build-no-xdp --parallel 4
 
-The `xdp` rung reports that it was disabled at build time and refuses create.
-A pin of `xdp` fails; automatic selection continues with `gso`, `io_uring`
+The `xdp` rung reports that it was disabled at build time and refuses create
+with `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT`. A pin of `xdp` fails; automatic selection continues with `gso`, `io_uring`
 (when built), then `portable` in development builds only. The installed CMake package also omits the
 BPF/libxdp dependencies. Native `test_xdp` and `test_xdp_filter` targets are
 not built; the host-C filter and portable frame-codec unit tests still run.
-Configure with `-DROCKETNET_XDP=ON` to restore the native backend and its
-dependencies. Missing BPF/libxdp development files remain a configure error
-when XDP is enabled.
+Configure with `-DROCKETNET_XDP=ON` (the default) to restore the native
+backend and its dependencies. With it on, a configure that finds no clang with
+the BPF target, or no libbpf or libxdp development files, is not an error: it
+says why and builds exactly as `-DROCKETNET_XDP=OFF` does
+(`tools/check_xdp_compiled_out.py --absent` checks the built library).
 
 ## Pinned sodium
 

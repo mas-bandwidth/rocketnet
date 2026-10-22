@@ -53,11 +53,9 @@ struct rocketnet_server_protocol_t
     int cookie_rotation_seconds;                            // default 60; 0 means no rotation
     double cookie_key_rotation_time;                        // when the current key is next replaced
     double previous_cookie_key_expire_time;                 // when the previous key stops being accepted
-    int max_token_lifetime_seconds;                         // 0 means no limit
 
     double handshake_deadline_seconds;                      // default 5
     int32_t max_timeout_seconds;                            // clamp; <= 0 means no clamp
-    int allow_negative_timeout;                             // dev only
 
     struct rocketnet_encryption_map_t * encryption_map;
     struct rocketnet_used_token_history_t * used_token_history;

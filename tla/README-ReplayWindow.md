@@ -88,6 +88,7 @@ is no liveness property here; the connection models above it carry those.
 | `HighestIsReceived` | the assert at `sdk/rocketnet_ack.cpp:94` | the high-water mark is itself marked |
 | `NoAdvanceBeforeConnect` | STANDARD.md _Reading packets_, the slot gate before the mark (OV-34; the standard's rule, its PR pending) | the session window of a mapping without a slot never moves |
 | `AckReportsOnlyProcessed` | the harm behind OV-34, named by the STANDARD change | the ack block names only packets a slot processed |
+| `NoOpenBeforeConnect` | TRANSPORT.md t10 step 12, the slot gate before decryption (asr pass 1 F4, approved 2026-10-21) | no AEAD open is attempted for a session packet, genuine (`Receive`) or forged (`Forge`), on a mapping without a slot |
 | `Monotone` (action property) | | the mark never goes backwards; a slot is never given up |
 
 `GenuineIsAccepted` and `AckReportsOnlyReceived` follow from `WindowIsTruth`; they are
@@ -119,8 +120,8 @@ On a Linux bench with the TLA+ tools (`tla2tools.jar`, TLC 2.19 or later), from
 java -cp /path/to/tla2tools.jar tlc2.TLC -workers 4 -cleanup -config MCReplayWindow.cfg MCReplayWindow
 ```
 
-`MCReplayWindow.cfg` is the committed run: the rule on both counts (`ClearedWords = 6`,
-`GateBeforeAdvance = TRUE`), checking every invariant above and `Monotone`. It finishes
+`MCReplayWindow.cfg` is the committed run: the rule on every count (`ClearedWords = 6`,
+`GateBeforeAdvance = TRUE`, `GateBeforeOpen = TRUE`), checking every invariant above and `Monotone`. It finishes
 in a few seconds: 958,503 states, 53,249 distinct, depth 16.
 
 The reversed witnesses are the same file with one constant changed to what the code
@@ -134,6 +135,18 @@ does today and `INVARIANTS` cut to the one rule under test, so TLC names that ru
 | w-longskip-ack | `ClearedWords = 4` | `AckReportsOnlyReceived` | **fails**: 5 states, same shape |
 | w-gate | `GateBeforeAdvance = FALSE` | `NoAdvanceBeforeConnect` | **fails**: 2-state trace below |
 | w-gate-processed | `GateBeforeAdvance = FALSE` | `AckReportsOnlyProcessed` | **fails**: the same 2 states |
+| open-before-gate (`MCReplayWindowBrokenOpenBeforeGate.cfg`) | `GateBeforeOpen = FALSE` | `NoOpenBeforeConnect` | **fails**: 2 states, below |
+
+The open-before-gate witness is the order before 2026-10-21: the slot check
+after the AEAD open. TLC's trace is the initial state, then one `Receive` on
+the pending mapping that sets `openedPending`. Replayed against the code by
+hand at b6091dff: `rocketnet_server_process_sealed_packet` finds the mapping
+(`client_index == -1`), reconstructs a nonzero sequence, passes the
+already-received check on the unmoved window, calls `rocketnet_open_sealed_packet`
+and only then returns NOT_CONNECTED. `test_server_half_open_session_packet_dropped_unopened`
+fails there on the AEAD-open tally. With the gate before the open, `Forge`
+and a pending `Receive` change nothing, so the committed run's distinct
+state count is unchanged (53,249) and only the generated count grows.
 
 For example:
 
@@ -246,6 +259,20 @@ MCReplayWindow	MCReplayWindow.cfg with ClearedWords 4; checks AckReportsOnlyRece
 MCReplayWindow	MCReplayWindow.cfg with GateBeforeAdvance FALSE; checks NoAdvanceBeforeConnect (reversed witness, OV-34)	2	2	fail as expected (OV-34): Invariant NoAdvanceBeforeConnect is violated, 2-state trace	hetzner2	2026-10-13
 MCReplayWindow	MCReplayWindow.cfg with GateBeforeAdvance FALSE; checks AckReportsOnlyProcessed (reversed witness, OV-34, the harm)	2	2	fail as expected (OV-34): Invariant AckReportsOnlyProcessed is violated, 2-state trace	hetzner2	2026-10-13
 ```
+
+### 2026-10-21: GateBeforeOpen and NoOpenBeforeConnect
+
+This change edits `ReplayWindow.tla`, so all four `replaywindow` cases were
+re-measured. The records in `tla/RUNS.tsv` were written by `tlacheck run` on
+amd-1 (Linux, pinned jar, one shard per case, `mode = bounded`, 110 s budget)
+when the branch was brought onto main 0f44ecd8, and joined with
+`tlacheck merge --keep tla/RUNS.tsv`: `MCReplayWindow.cfg` passes (1,917,003
+generated / 53,249 distinct), both reversed witnesses reach their declared
+invariant (`WindowIsTruth`, `NoOpenBeforeConnect`), and the mid case is
+recorded as its bounded run, which ends at the budget as the bench row
+declares (see below). An earlier captain measurement of the mid case under a
+1500 s manual budget passed: 69,206,063 generated / 3,145,729 distinct states
+in 303.298 s, exit 0.
 
 ## Mid-scale instance
 

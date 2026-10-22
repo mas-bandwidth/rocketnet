@@ -1299,7 +1299,6 @@ static void test_windows_port_exclusive()
 {
     const char * binds[] = { "0.0.0.0:0", "[::]:0" };
     const char * targets[] = { "127.0.0.1:0", "[::1]:0" };
-    const char * transports[] = { "portable", "iocp", "rio" };
     for ( int b = 0; b < 2; ++b )
     {
         for ( int d = 0; d < 3; ++d )

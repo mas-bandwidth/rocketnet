@@ -444,6 +444,10 @@ jobs:
         if: runner.os == 'Linux'
         run: python3 tools/test_run_msan.py
 
+      - name: Test the Application Verifier runner's image name
+        if: runner.os == 'Linux'
+        run: python3 tools/test_appverif_run.py
+
       # rocketnet.h alone: plain C99/C11/C++11, standard includes only, one
       # extern "C" block, and a C and a C++ client and server built from only
       # the header and the prebuilt static library (seconds)
@@ -473,6 +477,24 @@ jobs:
             echo "undersized history was accepted"
             exit 1
           fi
+
+      # the build is tolerant: a Linux build without a BPF-capable clang,
+      # libbpf or libxdp, or with ROCKETNET_XDP=OFF, compiles the XDP
+      # transport out. The library then carries no XDP code and no libbpf or
+      # libxdp link, and a transport list naming xdp refuses it with
+      # TRANSPORT_NOT_BUILT; the default build keeps all of it.
+      - name: Build without XDP; XDP is compiled out and a pin of it refuses
+        if: runner.os == 'Linux' && matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
+        run: |
+          python3 tools/test_check_xdp_compiled_out.py
+          python3 tools/check_xdp_compiled_out.py --present bin/librocketnet.so build/librocketnet.a
+          cmake -S . -B build-no-xdp -DCMAKE_BUILD_TYPE=Release -DROCKETNET_XDP=OFF -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF \
+            -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-no-xdp/bin" -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$PWD/build-no-xdp/bin"
+          cmake --build build-no-xdp --target rocketnet rocketnet_shared test --parallel
+          python3 tools/check_xdp_compiled_out.py --absent build-no-xdp/bin/librocketnet.so build-no-xdp/librocketnet.a
+          for case in test_xdp_compiled_out_pin_refuses_not_built test_xdp_compiled_out_list_takes_the_next_candidate test_xdp_compiled_out_has_no_memory_plan; do
+            ./build-no-xdp/bin/test --run "$case"
+          done
 
       - name: Install and relocate the SDK; run C/C++ static/shared consumers
         if: contains(matrix.leg, 'a')
