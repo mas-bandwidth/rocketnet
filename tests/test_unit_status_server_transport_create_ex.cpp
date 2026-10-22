@@ -228,16 +228,18 @@ static void test_server_transport_create_ex_reports_every_status()
     }
     check( unsetenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" ) == 0 );
 
-    // A production server cannot explicitly select the portable rung. This
-    // policy refusal precedes backend open and cannot fall through to auto.
+    // A production portable pin reaches its own memory plan. A one-byte
+    // budget refuses before any socket opens, preserving unit purity.
+    check( setenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", "1", 1 ) == 0 );
     {
         struct rocketnet_server_transport_config_t config;
         production_config( &config );
         snprintf( config.transport, sizeof( config.transport ), "%s", "portable" );
         status = -1;
         check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
-        check( status == ROCKETNET_STATUS_INVALID_TRANSPORT_LIST );
+        check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
     }
+    check( unsetenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" ) == 0 );
 
     // S6: a keyless config (the default shape) is refused
     status = -1;

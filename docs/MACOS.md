@@ -215,7 +215,7 @@ that waits in frame sync, put back to the standard policy afterwards
 `rocketnet_frame_sync_elevate_priority` returns before that call when
 `rocketnet_platform_thread_priority_enabled` is false.
 
-Each msgx or development portable server has two socket workers, one for
+Each msgx or portable server has two socket workers, one for
 receive and one for transmit. They use default `pthread_create` attributes and
 do not receive the client thread's `SCHED_RR` priority request. Every server
 also has the separate background stats worker described in [BUILDING.md,

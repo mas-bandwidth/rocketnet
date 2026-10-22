@@ -258,11 +258,11 @@ cleanup:
 
 Both `rocketnet_client_config_t` and `rocketnet_server_config_t` expose a `transport` field (overridable in the environment via `ROCKETNET_CLIENT_TRANSPORT` and `ROCKETNET_SERVER_TRANSPORT`).
 
-- **Ordered candidate list:** `transport` accepts a comma-separated list of transport names tried left-to-right at client connect and server start (for example, `"xdp,gso,io_uring"`). The first candidate that initializes on the host wins. A single name pins that transport and fails loudly if unavailable. The portable server is development-only; an explicit portable server pin refuses in production.
+- **Ordered candidate list:** `transport` accepts a comma-separated list of transport names tried left-to-right at client connect and server start (for example, `"xdp,gso,io_uring"`). The first candidate that initializes on the host wins. A single name pins that transport and fails loudly if unavailable. The portable server is available in both builds; production ranks it after native server transports.
 - **`"auto"` (the default when `transport` is `NULL` or `""`):** Selects the platform's recommended preference order:
-  - **Linux server:** production tries `"xdp"`, `"gso"`, `"io_uring"`; development also tries `"portable"` last.
-  - **macOS server:** production tries `"msgx"`; development then tries `"portable"`. The macOS client tries `"msgx"`, `"portable"` in either build.
-  - **Windows server:** production tries `"iocp"`, `"rio"`; development tries `"portable"` first.
+  - **Linux server:** both builds try `"xdp"`, `"gso"`, `"io_uring"`, then `"portable"`.
+  - **macOS server:** both builds try `"msgx"`, then `"portable"`. The macOS client tries `"msgx"`, `"portable"` in either build.
+  - **Windows server:** production tries `"iocp"`, `"rio"`, then `"portable"`; development tries `"portable"` first.
   - **Linux and Windows client:** uses `"portable"`.
 - **No-root high-performance Linux server path:** When running without root or `CAP_BPF` / `CAP_NET_ADMIN`, `"xdp"` is skipped and `"gso"` (UDP `UDP_SEGMENT` / `UDP_GRO` coalescing with `sendmmsg` / `recvmmsg` worker threads) or `"io_uring"` (asynchronous batched ring I/O) provides high-throughput multi-queue UDP without kernel privileges.
 - **AF_XDP (`"xdp"`):** Kernel-bypass eBPF/AF_XDP server dataplane on Linux when root (or `CAP_BPF` and `CAP_NET_ADMIN`) and NIC support are present.

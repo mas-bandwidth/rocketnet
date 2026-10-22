@@ -452,20 +452,7 @@ static void test_sized_config_server_create_checks_the_config()
 
     // accepted
     SIZED_CONFIG_SERVER_CREATE( (void) 0, true );
-#if ROCKETNET_DEV
     SIZED_CONFIG_SERVER_CREATE( c.transport = "portable", true );
-#else
-    {
-        struct rocketnet_server_config_t c;
-        sized_config_dev_server_config( &c );
-        c.max_clients = 4;
-        c.transport = "portable";
-        enum rocketnet_status_t status = ROCKETNET_TEST_STATUS_UNSET;
-        check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &c, &status ) == NULL );
-        check( status == ROCKETNET_STATUS_INVALID_TRANSPORT_LIST );
-        check( rocketnet_server_required_memory( &c ) == 0 );
-    }
-#endif
     SIZED_CONFIG_SERVER_CREATE( c.max_timeout_seconds = 3600, true );
     SIZED_CONFIG_SERVER_CREATE( c.handshake_deadline_seconds = 60, true );
 

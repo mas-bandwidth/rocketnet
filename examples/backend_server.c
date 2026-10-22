@@ -157,6 +157,8 @@ int main( int argc, char ** argv )
     config.protocol_id = EXAMPLE_PROTOCOL_ID;
     config.max_clients = 1;
     config.transport = "portable";
+    const uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = EXAMPLE_BACKEND_PACKET_FILTER;
+    memcpy( config.packet_filter, packet_filter, sizeof( packet_filter ) );
 #if ROCKETNET_DEV
     memcpy( config.backend_public_key, dev_backend_public_key, sizeof( config.backend_public_key ) );
 #endif

@@ -30,10 +30,10 @@
 /// ROCKETNET_DEV is 1 by default: a development build. Development builds
 /// provide rocketnet_create_dev_connect_token and
 /// ROCKETNET_DEV_BACKEND_PUBLIC_KEY, and accept the published development
-/// keys, the test packet filter and a portable server pin. Production builds
+/// keys and the test packet filter. Production builds
 /// define ROCKETNET_DEV 0 (CMake: -DROCKETNET_DEV=OFF), which compiles all of
-/// that out and refuses at create the development keys and tokens, the
-/// test packet filter and a portable server pin.
+/// that out and refuses at create the development keys and tokens and the
+/// test packet filter. Portable clients and servers are available in both modes.
 
 #if !defined( ROCKETNET_DEV )
 #define ROCKETNET_DEV 1
@@ -1007,12 +1007,13 @@ ROCKETNET_EXPORT void rocketnet_sleep( double seconds );
 /// connect or server start. The first transport that starts wins. "auto" is
 /// the default, including NULL or an empty string. Development servers try
 /// xdp,gso,io_uring,portable on Linux; msgx,portable on macOS; and
-/// portable,iocp,rio on Windows. Production servers exclude portable and
-/// try xdp,gso,io_uring on Linux; msgx on macOS; and iocp,rio on Windows.
+/// portable,iocp,rio on Windows. Production servers try
+/// xdp,gso,io_uring,portable on Linux; msgx,portable on macOS; and
+/// iocp,rio,portable on Windows, keeping native server transports first.
 /// io_uring requires build support. macOS clients try msgx,portable; other
 /// clients try portable. Loopback is selected by name, never by auto. An
-/// explicit server pin of "portable" refuses in production. A one-name list
-/// otherwise selects only that transport.
+/// explicit server pin of "portable" is available in either build. A one-name
+/// list selects only that transport.
 /// Unsupported names are skipped with a log.
 /// Unknown names refuse the list and report valid names.
 ///
@@ -1647,9 +1648,8 @@ static inline enum rocketnet_status_t rocketnet_server_default_config( struct ro
 
 /// Returns the memory needed by create for this config and max_clients.
 /// Applies the same environment overrides as create.
-/// NULL config selects defaults. Invalid config returns 0, including a
-/// production server pin of portable and, in a production build, the
-/// defaults' test filter. A named transport memory estimate is
+/// NULL config selects defaults. Invalid config returns 0, including the
+/// defaults' test filter in a production build. A named transport memory estimate is
 /// diagnostic and does not grant that transport at create or start.
 
 ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet_server_config_t * config );

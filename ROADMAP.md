@@ -51,7 +51,7 @@ The secure connect of standard/TRANSPORT.md: netcode 1.02 rebuilt on public keys
 | With ROCKETNET_DEV=0, both sides refuse the published test packet filter, and the client refuses tokens sealed with the development keys | ❌ | ❌ | ❌ |
 | AGENTS.md has a Before production section: what a production build sets and refuses | ❌ | — | — |
 | The client trusts only the server: the idle timer and the RTT sample come only from the authenticated challenge, never the clear-salt cookie, and the client socket is connected | ❌ | ❌ | ❌ |
-| The portable server transport is unavailable at ROCKETNET_DEV=0; clients are unchanged | ❌ | ❌ | ❌ |
+| Portable server and client transports are available in production; native server transports remain preferred | ❌ | ❌ | ❌ |
 | Session layer: identity auth with a backend, rolling magic, keyed filter value (later) | ❌ | ❌ | ❌ |
 | complete | 65% | 68% | 68% |
 
@@ -136,13 +136,13 @@ The message layer of standard/MESSAGES.md: channels, priorities, budgets and one
 
 ## Transports
 
-The server transports below the connection layer, one column each, in the order the automatic ladder ranks them: xdp, gso, io_uring and portable on Linux, msgx and portable on macOS, portable, iocp and rio on Windows. The portable server rung is development-only; portable client I/O remains available in production. The per-endpoint ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT select one at runtime; loopback is pin-only.
+The server transports below the connection layer, one column each, in the order the automatic ladder ranks them: xdp, gso, io_uring and portable on Linux, msgx and portable on macOS, portable, iocp and rio on Windows. Portable server and client I/O are available in both builds. Production Windows servers rank iocp and rio ahead of portable. The per-endpoint ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT select one at runtime; loopback is pin-only.
 
 AF_XDP serves IPv4 and IPv6 end to end (8a35a14): a server serves the family of its public address, and the ladder offers xdp for either. Its IPv6 cell is ❌ because no CI step runs AF_XDP end to end (it needs root and a VM guest); the msgx and iocp IPv6 cells are ❌ until the CI transport family matrix runs green on them.
 
 — is a transport the feature does not apply to: xdp bypasses the kernel's UDP stack, loopback is in-process, and a row that names one transport's own mechanism is — for the others.
 
-portable is a fallback, not a production transport, on the client and the server (Glenn, 2026-10-21: "now on both client and server we can ignore the portable transport because it is not a production transport. Don't make it slow for no reason, but don't over optimize or worry too much about it."). The production performance targets are for the native transports; the portable column still records what portable does.
+Portable remains a fallback rather than a performance target. Glenn enabled it in production on 2026-10-22; his earlier performance guidance remains (2026-10-21: "now on both client and server we can ignore the portable transport because it is not a production transport. Don't make it slow for no reason, but don't over optimize or worry too much about it."). The production performance targets are for the native transports; the portable column still records what portable does.
 
 | feature | xdp | msgx | gso | io_uring | portable | iocp | rio | loopback |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|

@@ -76,7 +76,10 @@ cmake --build build-production --target example_backend_server example_backend_c
 
 Then run three programs in three terminals: the server, a backend, the client.
 The backend examples link the selected `rocketnet` build, so `ROCKETNET_DEV=OFF`
-uses the production library. Other examples that mint development tokens
+uses the production library. These two examples share the non-secret `RNBE`
+title packet filter, distinct from the SDK development filter. To use another
+filter, set matching `ROCKETNET_SERVER_PACKET_FILTER` and
+`ROCKETNET_CLIENT_PACKET_FILTER` base64 values. Other examples that mint development tokens
 continue to use the development library.
 
 1. The server. It makes its own keypair when it starts, and prints the address

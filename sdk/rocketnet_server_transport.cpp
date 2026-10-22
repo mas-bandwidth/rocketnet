@@ -1365,17 +1365,6 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         return NULL;
     }
 
-    // A production pin of the development-only portable server must refuse.
-    // The shared fleet-list parser normally skips an unavailable name and
-    // replaces an all-skipped list with auto, which would silently start a
-    // different server for this explicit single-transport request.
-    if ( rocketnet_server_portable_pin_refused( config->transport ) )
-    {
-        if ( status ) *status = ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
-        rocketnet_error( "portable server transport is unavailable in production builds" );
-        return NULL;
-    }
-
     // the transport candidate list parses before anything allocates: a typo
     // fails here, loudly, listing the valid names
 
