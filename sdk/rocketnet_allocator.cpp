@@ -354,15 +354,15 @@ uint8_t * rn_send_store_chunk_data( const rn_send_store_t * store, uint32_t hand
 
     // the same rule as rn_send_store_free_checked: a handle the store did not
     // issue -- a class at or past RN_STORE_NUM_CLASSES (class 3, which includes
-    // RN_CHUNK_NONE) or an index at or past the class's chunk count -- reads
-    // nothing. A refusal, not an assert, so a debug build answers alike.
+    // RN_CHUNK_NONE) or an index the store has not issued -- reads nothing. A
+    // refusal, not an assert, so a debug build answers alike.
 
     const int c = rn_send_store_chunk_class( handle );
     if ( c >= RN_STORE_NUM_CLASSES )
         return NULL;
     const rn_store_class_t * cls = &store->classes[c];
     const uint32_t i = handle & RN_LINK_INDEX;
-    if ( i >= cls->num_chunks )
+    if ( i >= cls->fresh )                 // never taken: its data is unwritten
         return NULL;
     return cls->data + (uint64_t) i * cls->chunk_bytes;
 }
