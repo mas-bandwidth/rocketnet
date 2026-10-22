@@ -70,6 +70,14 @@ int rocketnet_posix_hard_killed_peer_test_group( const char * name );
 // it is a group of its own, after every other case.
 static int rocketnet_functional_test_group( const char * name )
 {
+#if defined(__APPLE__)
+    // This case drives eight unpaced senders while destroying their server.
+    // On Darwin its flood can overflow the shared loopback input queue and
+    // drop packets belonging to unrelated exact-delivery cases. Keep the
+    // flood and every assertion intact, but run it apart from those cases.
+    if ( strcmp( name, "test_posix_destroy_under_traffic_100" ) == 0 )
+        return 3;
+#endif
     if ( strcmp( name, "test_loopback_transport_live_message_matrix" ) == 0 )
         return 2;
     return rocketnet_posix_hard_killed_peer_test_group( name );
