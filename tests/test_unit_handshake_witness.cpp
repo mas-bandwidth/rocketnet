@@ -761,7 +761,7 @@ static void test_keep_alive_clock_counts_only_keep_alives()
 }
 
 // ---------------------------------------------------------------------------
-// Create-skew refusal: a connect token created more than five seconds in the
+// Create-skew refusal: a connect token created more than thirty seconds in the
 // future is refused as CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE, always:
 // the fixture runs the production configuration, which has no token lifetime
 // limit and never had one
@@ -776,7 +776,7 @@ static void test_token_created_past_skew_is_refused()
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     rocketnet_handshake_build_request_with_create( request, 0x5A0CULL, rocketnet_test_salt,
-                                                   ROCKETNET_TEST_CREATE_TS + 6 );
+                                                   ROCKETNET_TEST_CREATE_TS + 31 );
 
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
@@ -801,7 +801,7 @@ static void test_token_created_within_skew_passes_the_rung()
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     rocketnet_handshake_build_request_with_create( request, 0x5A0CULL, rocketnet_test_salt,
-                                                   ROCKETNET_TEST_CREATE_TS + 5 );
+                                                   ROCKETNET_TEST_CREATE_TS + 30 );
 
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
@@ -825,7 +825,7 @@ static void test_token_create_skew_enforced_without_lifetime_cap()
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     rocketnet_handshake_build_request_with_create( request, 0x5A0CULL, rocketnet_test_salt,
-                                                   ROCKETNET_TEST_CREATE_TS + 6 );
+                                                   ROCKETNET_TEST_CREATE_TS + 31 );
 
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = -1;
@@ -845,7 +845,7 @@ static void test_token_create_skew_enforced_without_lifetime_cap()
     // The boundary remains admissible: this is a creation-skew refusal, not
     // a blanket refusal of long-lived tokens.
     rocketnet_handshake_build_request_with_create( request, 0x5A0CULL, rocketnet_test_salt,
-                                                   ROCKETNET_TEST_CREATE_TS + 5 );
+                                                   ROCKETNET_TEST_CREATE_TS + 30 );
     const struct rocketnet_counters_t after_refusal = test.counters;
     result = rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
                                                                      request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,

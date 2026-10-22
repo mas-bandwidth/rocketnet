@@ -4,7 +4,7 @@
 */
 
 // The two token-time refusals on the connection request path are two
-// distinct counters: an expired token and a token created more than five
+// distinct counters: an expired token and a token created more than thirty
 // seconds in the future are each their own reason (STANDARD.md, Counters:
 // refusal reasons are never merged; Processing Connection Requests, the
 // request order). There is no maximum token lifetime: a long-lived token is
@@ -130,7 +130,8 @@ static void token_time_build_request( uint8_t * request, uint64_t create, uint64
 // one request at the test clock, and the exact move it must make: the arrival
 // and its own refusal counter, and nothing else
 
-static void token_time_refuse( struct token_time_server_t * t, uint64_t create, uint64_t expire, int counter )
+static void token_time_refuse_at( struct token_time_server_t * t, uint64_t create, uint64_t expire,
+                                  uint64_t current_timestamp, int counter )
 {
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     token_time_build_request( request, create, expire );
@@ -140,7 +141,7 @@ static void token_time_refuse( struct token_time_server_t * t, uint64_t create, 
     int response_bytes = -1;
     const int result = rocketnet_server_protocol_process_connection_request( &t->server, &t->client_address,
                                                                              request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
-                                                                             TOKEN_TIME_NOW, TOKEN_TIME_NOW_SECONDS,
+                                                                             current_timestamp, TOKEN_TIME_NOW_SECONDS,
                                                                              response, &response_bytes );
 
     check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
@@ -150,10 +151,16 @@ static void token_time_refuse( struct token_time_server_t * t, uint64_t create, 
                                  { counter, 1 } } );
 }
 
+static void token_time_refuse( struct token_time_server_t * t, uint64_t create, uint64_t expire, int counter )
+{
+    token_time_refuse_at( t, create, expire, TOKEN_TIME_NOW, counter );
+}
+
 // the accept side of a boundary: the server answers with a cookie, so the move
 // is the arrival and the cookie issue, and no refusal counter
 
-static void token_time_accept( struct token_time_server_t * t, uint64_t create, uint64_t expire )
+static void token_time_accept_at( struct token_time_server_t * t, uint64_t create, uint64_t expire,
+                                  uint64_t current_timestamp )
 {
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     token_time_build_request( request, create, expire );
@@ -163,7 +170,7 @@ static void token_time_accept( struct token_time_server_t * t, uint64_t create, 
     int response_bytes = -1;
     const int result = rocketnet_server_protocol_process_connection_request( &t->server, &t->client_address,
                                                                              request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
-                                                                             TOKEN_TIME_NOW, TOKEN_TIME_NOW_SECONDS,
+                                                                             current_timestamp, TOKEN_TIME_NOW_SECONDS,
                                                                              response, &response_bytes );
 
     check( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
@@ -171,6 +178,11 @@ static void token_time_accept( struct token_time_server_t * t, uint64_t create, 
     rocketnet_counters_expect( &before, &t->counters,
                                { { ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED, 1 },
                                  { ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE, 1 } } );
+}
+
+static void token_time_accept( struct token_time_server_t * t, uint64_t create, uint64_t expire )
+{
+    token_time_accept_at( t, create, expire, TOKEN_TIME_NOW );
 }
 
 static void test_token_time_refusals_are_distinct()
@@ -183,15 +195,15 @@ static void test_token_time_refusals_are_distinct()
     token_time_refuse( &t, TOKEN_TIME_NOW - 100, TOKEN_TIME_NOW,
                        ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED );
 
-    // create more than five seconds ahead: the skew, not expiry; exactly five
+    // create more than thirty seconds ahead: the skew, not expiry; exactly thirty
     // seconds ahead is inside the allowance
-    token_time_refuse( &t, TOKEN_TIME_NOW + 6, TOKEN_TIME_NOW + 10,
+    token_time_refuse( &t, TOKEN_TIME_NOW + 31, TOKEN_TIME_NOW + 40,
                        ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE );
 
-    // the accepted side of each boundary: expire now+1 and create now+5, each
+    // the accepted side of each boundary: expire now+1 and create now+30, each
     // answering with a cookie
     token_time_accept( &t, TOKEN_TIME_NOW - 100, TOKEN_TIME_NOW + 1 );
-    token_time_accept( &t, TOKEN_TIME_NOW + 5, TOKEN_TIME_NOW + 10 );
+    token_time_accept( &t, TOKEN_TIME_NOW + 30, TOKEN_TIME_NOW + 40 );
 
     token_time_teardown( &t );
 }
@@ -211,7 +223,7 @@ static void test_token_created_at_the_skew_limit_is_accepted()
 {
     struct token_time_server_t t;
     token_time_setup( &t );
-    token_time_accept( &t, TOKEN_TIME_NOW + 5, TOKEN_TIME_NOW + 10 );
+    token_time_accept( &t, TOKEN_TIME_NOW + 30, TOKEN_TIME_NOW + 40 );
     token_time_teardown( &t );
 }
 
@@ -235,10 +247,24 @@ static void test_token_future_creation_without_lifetime_limit()
 {
     struct token_time_server_t t;
     token_time_setup( &t );
-    token_time_refuse( &t, TOKEN_TIME_NOW + 6, TOKEN_TIME_NOW + 10,
+    token_time_refuse( &t, TOKEN_TIME_NOW + 31, TOKEN_TIME_NOW + 40,
                        ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE );
-    token_time_accept( &t, TOKEN_TIME_NOW + 5, TOKEN_TIME_NOW + 10000 );
+    token_time_accept( &t, TOKEN_TIME_NOW + 30, TOKEN_TIME_NOW + 10000 );
     token_time_teardown( &t );
 }
 
 REGISTER_UNIT_TEST( test_token_future_creation_without_lifetime_limit );
+
+static void test_token_creation_skew_is_overflow_safe()
+{
+    struct token_time_server_t t;
+    token_time_setup( &t );
+    // Adding the allowance to this clock would wrap, but the ordered
+    // subtraction keeps a token 29 seconds ahead inside the allowance.
+    token_time_accept_at( &t, UINT64_MAX, UINT64_MAX, UINT64_MAX - 29 );
+    token_time_refuse_at( &t, UINT64_MAX, UINT64_MAX, UINT64_MAX - 31,
+                          ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE );
+    token_time_teardown( &t );
+}
+
+REGISTER_UNIT_TEST( test_token_creation_skew_is_overflow_safe );

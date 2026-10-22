@@ -2684,7 +2684,7 @@ The policy values of this section are below.
 
 | Name | Value | Unit |
 |---|---|---|
-| token creation skew | `5` | seconds |
+| token creation skew | `30` | seconds |
 | failed-signature source table | `64` | sources |
 
 The cookie lifetime, the cookie key rotation period and the used-token history
@@ -2768,14 +2768,14 @@ input: an empty receive replay state, so the ack block is the minimum
 
 ```vector t12.token-created-in-future
 input: the request of [t8 Packet formats](#t8)
-input: signed create timestamp 1756166406, expire 1756166700, server time 1756166400
+input: signed create timestamp 1756166431, expire 1756166700, server time 1756166400
 input: the return cookie is valid for the source and connection salt
 00 00 b7 59 01 00 03 f9 ac 68 00 00 00 00 0f b2
 b2 8f 32 db d6 c9 eb 36 4f 57 74 86 f3 e9 53 41
 4c 54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b
 9a 4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3
 c0 fd a1 4c be 24 93 1a 7c 4e 88 77 66 55 44 33
-22 11 06 f9 ac 68 00 00 00 00 2c fa ac 68 00 00
+22 11 1f f9 ac 68 00 00 00 00 2c fa ac 68 00 00
 00 00 0a 00 00 00 01 cb 00 71 0a 40 9c 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 3d
 24 90 88 9d 37 4c 29 6f ab 1d 57 70 cb 71 47 6a
@@ -2810,11 +2810,11 @@ d6 e3 db be b2 b5 84 65 f3 57 11 e6 2e 91 41 1c
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-00 00 00 00 00 00 11 9e b3 02 5c ab 63 a6 65 63
-5d 30 d7 73 5c 6f 88 9e e2 1c eb 7d 8c 7e 1e 9f
-53 f2 26 e8 5f b4 92 ed 6b d3 43 f8 51 92 b3 91
-d2 fe ff 81 9e ea 88 f4 02 6e ba 4b cf a8 f0 1c
-b7 a1 ab c4 74 09
+00 00 00 00 00 00 e1 60 8a e2 f7 0d 6b f4 d4 68
+ad 25 1e c3 c3 2a 00 78 ee 3d 48 7d 30 de 25 51
+5d 59 7d 32 da 40 e4 e0 b6 a1 c7 1c 45 35 4d ea
+bd 52 02 95 e5 2d d6 3e 4a 0e 4d 1a 13 b4 7d 87
+67 5d 4a b0 af 01
 ```
 
 ```vector t12.token-expired
