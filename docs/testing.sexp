@@ -37,30 +37,32 @@
 ; floating-point floor check; the Windows build was red. 4529ca2d landed the
 ; unit and functional suites green on Linux, macOS and Windows; the ci.yml run
 ; at b12fb5a1 had not finished when this was rechecked.
-; Preview-2 source was pinned at eaf420df45614fe1b0d8f1152b76b815d33cfdd2
-; on 2026-10-22. Rowan's exact-head RESULTS.md receipt is still pending, so
-; no preview-2 qualification row is green below.
+; Preview-2 release source is pinned at
+; a76d641ad64768e239528cd1c6bfdf37a0caaa41 on 2026-10-22. The runtime
+; inputs are identical to ba09993b; green rows name either an exact receipt or
+; the original tested commit plus a source-input comparison to this release.
 (:title "RocketNet v1.0.0-preview-2 testing"
  :all-cells-apply t
  :tables-only t
  :rows-name-source t
  :owed "a long run (soak, load, repeat, 1000 clients) that comes with the final deliverable."
- :text ("Preview-2 qualification is recorded first. The remaining tables preserve the preview-1 baseline and do not qualify preview-2. ✅ in a historical table means green for preview-1; ❌ in the preview-2 table means no exact-head receipt yet. Each preview-2 green must name the exact tested head, platform and tier.")
+ :text ("Preview-2 manual qualification is recorded first. The remaining tables preserve the preview-1 baseline and do not describe current preview-2 status. ✅ in a historical table means green for preview-1; ❌ in the preview-2 table records an accepted known issue deferred to preview-3. Each preview-2 green names the exact tested head, platform and tier; when a receipt carries by input equivalence, it also names the release comparison.")
  :areas
  ((:id "preview-2-qualification"
    :title "Preview-2 exact-head qualification"
-   :text "The release receipt must name the exact tested head, platform and tier. The source pin alone is not a test result."
+   :text "The release uses the bounded manual qualification recorded in docs/QUALIFICATION-v1.0.0-preview-2.md. A receipt names the tested head, platform and tier; input-equivalent evidence retains its literal tested head. Red rows are published preview-2 limits deferred to preview-3."
    :label "release gate"
    :columns release
    :rows
-   ((:feature "Source pin eaf420df45614fe1b0d8f1152b76b815d33cfdd2 is not an exact-head test receipt" :cells (n) :source "Rowan preview-2 RESULTS.md" :pending ((status "The final receipt is absent")))
-    (:feature "Unit tier at the exact preview-2 head and named platform" :cells (n) :source "Rowan preview-2 RESULTS.md" :pending ((status "No exact-head unit-tier receipt is available")))
-    (:feature "Functional tier at the exact preview-2 head and named platform" :cells (n) :source "Rowan preview-2 RESULTS.md" :pending ((status "No exact-head functional-tier receipt is available")))
-    (:feature "Sanitizer, soak and model tiers at the exact preview-2 head and named execution platform" :cells (n) :source "Rowan preview-2 RESULTS.md" :pending ((status "No exact-head sanitizer, soak or model-tier receipt is available")))
-    (:feature "Dedicated-server load qualification at the exact preview-2 head, named platform and allocated-host tier" :cells (n) :source "Rowan preview-2 RESULTS.md and docs/LOAD_SPLIT.md" :pending ((status "No final receipt is available. Historical preview-1 matrix evidence is context only, not preview-2 qualification")))
-    (:feature "Server update and send p99 at or below 100 microseconds at 1000 clients" :cells (n) :source "Rowan preview-2 RESULTS.md and tools/check_split_load.py" :pending ((status "Not qualified. A reported approximately 2 ms server p99 at 1000 clients is not independently evidenced in this checkout")))
-    (:feature "Windows native-server LAN qualification on a provisioned 10 GbE NIC" :cells (n) :source "Rowan preview-2 RESULTS.md" :pending ((status "Server LAN qualification is pending a provisioned 10 GbE NIC after raw UDP drops on the current Windows 1 GbE path. Same-host and client coverage do not qualify the Windows server LAN path")))
-    (:feature "AF_XDP live qualification identifies copy or zero-copy mode" :cells (n) :source "Rowan preview-2 RESULTS.md and BUILDING.md" :pending ((status "Current preview-2 XDP evidence is copy mode. The bind request test does not prove live zero-copy operation")))))
+   ((:feature "Reviewed runtime source pin a76d641ad64768e239528cd1c6bfdf37a0caaa41 and qualification index recorded" :cells (y) :source "docs/QUALIFICATION-v1.0.0-preview-2.md and preview-2 input audit" :evidence ((status "The recorded source tree is e08ea47a349b96a755312360e516ffe93ed8e526. Runtime inputs are identical to tested ba09993b; the later changes are workflow and documentation only")))
+    (:feature "Unit tier at the tested preview-2 heads and named platforms" :cells (y) :source "docs/QUALIFICATION-v1.0.0-preview-2.md" :evidence ((status "The manual qualification index records the accepted unit receipts and their tested heads")))
+    (:feature "Functional tier at the tested preview-2 heads and named platforms" :cells (n) :source "docs/QUALIFICATION-v1.0.0-preview-2.md and preview-2 qualification ledger" :pending ((status "Accepted preview-3 work: macOS Debug reproduced a socket receive-short condition under system-wide packet-drop pressure, and the big-endian full-system fixture has an endian mismatch plus emulation completion timeouts. The exact ba09993b channel sweep passed 60000 runs with zero failures")))
+    (:feature "Sanitizer and soak tiers at their recorded preview-2 heads and named execution platforms" :cells (n) :source "Preview-2 qualification ledger and input audit" :pending ((status "Accepted preview-3 work. The full unit and functional leak suite passed at exact 415e796d; the SDK, build configuration and sanitizer support inputs are unchanged at the release source, while later functional-oracle changes retain their own validation. Input-equivalent threaded TSan and sanitized-soak jobs passed at c9db35ff. The c9 full soak completed its portable, GSO, GSO-plain and io_uring 1000-client cells with non-timing PASS, then was killed during the AF_XDP cell; the full soak is incomplete. Remaining platform fuzz rows are deferred")))
+    (:feature "Required TLA cases for the release model inputs" :cells (y) :source "Preview-2 TLC qualification audit and input audit" :evidence ((status "The TLA tree is identical at b4c0a109 and runtime source a76d641a. All 287 required cases across 44 groups passed with pinned tool checksums and unchanged input hashes. Eighteen of 21 separate bench cases remain explicit bounded-timeout debt")))
+    (:feature "Dedicated-server load qualification at recorded preview-2 heads, named platforms and allocated-host tiers" :cells (n) :source "docs/LOAD_SPLIT.md and tools/check_split_load.py" :pending ((status "Partial input-equivalent evidence: at 415e796d, whose SDK and load-harness inputs are identical at runtime source a76d641a, AF_XDP copy-mode, portable, GSO and io_uring Linux servers with a Linux portable client passed non-timing correctness at 1, 10, 100, 500 and 1000 clients for 60 seconds per rung. On exact ba09993b, the Windows portable client passed all five portable-server rungs, but its AF_XDP 1000-client rung failed after reliable timeouts; macOS rows and the remaining Windows rows are deferred")))
+    (:feature "Server update and send p99 at or below 100 microseconds at 1000 clients" :cells (n) :source "tools/check_split_load.py" :pending ((status "Accepted preview-3 work. With a Linux portable client at 1000 clients, the upper-bound p99 was 2282 microseconds for AF_XDP copy mode, 935 for portable, 1146 for GSO and 1846 for io_uring. With a Windows portable client, the portable-server value was 1223 microseconds. These timing misses are reported separately from the non-timing correctness passes")))
+    (:feature "Windows native-server LAN qualification on a provisioned 10 GbE NIC" :cells (n) :source "Preview-2 qualification ledger" :pending ((status "Server LAN qualification is deferred until a provisioned 10 GbE NIC is available after raw UDP drops on the current Windows 1 GbE path. Same-host and client coverage do not qualify the Windows server LAN path")))
+    (:feature "AF_XDP live qualification identifies copy or zero-copy mode" :cells (y) :source "docs/LOAD_SPLIT.md and tools/check_split_load.py" :evidence ((status "Linux: 415e796d, with SDK and load-harness inputs identical at runtime source a76d641a, ran live AF_XDP in copy mode at 1, 10, 100, 500 and 1000 clients for 60 seconds per rung; non-timing correctness passed and XDP detached after every rung. This does not qualify zero-copy mode")))))
   (:id "platforms"
    :title "Historical preview-1 baseline: tests per platform"
    :text "Preview-1 tests that apply to every platform: one row per test, one column per platform. These green cells are not preview-2 qualification."

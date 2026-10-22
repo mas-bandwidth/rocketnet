@@ -17,7 +17,7 @@
 ; those platforms have a run.
 ;
 ; Recorded 2026-10-20 for v1.0.0-preview-1 at 330e951e; source facts rechecked
-; at eaf420df45614fe1b0d8f1152b76b815d33cfdd2 on 2026-10-22. A landed
+; at a76d641ad64768e239528cd1c6bfdf37a0caaa41 on 2026-10-22. A landed
 ; source change is kept distinct from an exact-head platform qualification.
 (:title "RocketNet roadmap"
  :text ("Every feature RocketNet has, and every one still to come, by area: a column per transport where a feature is per transport, and a column per platform where it is not. ✅ is done and tested there; ❌ is not done, or not yet proven there for v1.0.0-preview-1; — does not apply. Each table's complete row is the share of ✅ among the cells that apply. Items marked (later) come after v1.0.0-preview-1." "Known issues (addressed in the final deliverable) lists what v1.0.0-preview-1 does not yet meet, and how the final deliverable addresses each. Final deliverable: hardening and long testing lists the long runs that come with it.")
@@ -154,11 +154,12 @@
     (:feature "Kernel filter counters through the transport counter surface" :cells (y - - - - - - -) :evidence ((xdp "394dc9f the prefilter counter capability; 5d736db the xdp driver adapter; prefilter_counters_map_each_kernel_counter, prefilter_counters_are_assigned_not_added, prefilter_counters_xdp_driver_reports_them")) :note "the live per-CPU read through a committed XDP socket is exercised only on the dedicated XDP machine")
     (:feature "Kernel replay protection with a read-only high-water map" :cells (y - - - - - - -) :evidence ((xdp "bace052 tla/RNXdpReplay.tla; 7013a56 kernel rule and xdp_host_replay_never_writes_the_map, xdp_host_replay_drops_behind_the_window; 26f2fac socket writer; 22f87a9 transport walk; 4f1d2a9 xdp_host_replay_table_set_get_reset; 3e1fd05 replay_drops_behind_the_window, replay_never_writes_the_map, replay_key_layout_matches_header; 306bd2b standard/TRANSPORT.md or standard/MESSAGES.md sizing")))
     (:feature "The standard sizes the kernel replay map apart from the userspace replay window" :cells (y - - - - - - -) :evidence ((xdp "c1a6ff2; standard/TRANSPORT.md or standard/MESSAGES.md Replay window sizing (ROCKETNET_XDP_REPLAY_WINDOW)")))
-    (:feature "AF_XDP bind requests zero-copy" :cells (y - - - - - - -) :evidence ((xdp "6bb1361; xdp_socket_config_requests_zero_copy_at_bind")) :note "this proves the bind request, not the negotiated live mode. Current preview-2 evidence on the tested NIC is copy mode; zero-copy remains unqualified")
+    (:feature "AF_XDP bind requests zero-copy" :cells (y - - - - - - -) :evidence ((xdp "6bb1361; xdp_socket_config_requests_zero_copy_at_bind")) :note "this proves the bind request, not the negotiated live mode. 415e796d, with SDK and load-harness inputs identical at runtime source a76d641a, ran live in copy mode for 60-second correctness rungs at 1, 10, 100, 500 and 1000 clients; zero-copy remains unqualified")
     (:feature "Replies go to the peer's own MAC address on link, to the gateway otherwise" :cells (y - - - - - - -) :evidence ((xdp "f435279 landed, tested on Linux")))
     (:feature "AF_XDP on AWS GameLift fleets: the research" :cells (y - - - - - - -) :evidence ((xdp "6930277 docs/GAMELIFT.md")))
     (:feature "The live stress runner: the client stress mode and the merge" :cells (y - - - - - - -) :evidence ((xdp "211833e landed, tested on Linux")))
     (:feature "The live stress runner: the server stress mode" :cells (y - - - - - - -) :evidence ((xdp "1d4af4c landed, tested on Linux")))
+    (:feature "Preview-2 live AF_XDP copy-mode correctness at 1, 10, 100, 500 and 1000 clients" :cells (y - - - - - - -) :evidence ((xdp "415e796d, with SDK and load-harness inputs identical at runtime source a76d641a: non-timing correctness passed for 60 seconds at every rung and XDP detached after each run")) :note "timing is separate: upper-bound p99 was 39, 58, 497, 1003 and 2282 microseconds at 1, 10, 100, 500 and 1000 clients")
     (:feature "Packet blaster and simulated-client harnesses at line rate" :cells (n - - - - - - -) :note "its own rung: a packet blaster load to prove line rate, and simulated clients against the XDP server. The live XDP run is designed (docs/LIVE-XDP.md, tla/RNLiveFleetRun.tla, bb9b36e) and its runner scripts are in (51f0fae); the run itself is owed")
     (:feature "Ownership and retry paths regression-validated against the 10 Gbps baseline" :cells (n - - - - - - -) :note "the changed XDP ownership and retry paths, against a provisioned deployment; CI runs no privileged XDP traffic and test executables forbid privileged commit")
     (:feature "Privileged syscall-failure coverage in its own lab" :cells (n - - - - - - -) :note "targeted syscall-failure and frame-conservation tests cover different conditions from throughput tests")
@@ -168,7 +169,7 @@
    :text ("One server per transport on a LAN, measured: a row per server platform, a cell per transport that platform runs; — is a transport the platform does not run, and loopback is in-process.")
    :columns transports
    :rows
-   ((:feature "LAN throughput, a Linux server (later)" :cells (n - n n n - - -) :note "one cell per transport; each cell was its own item")
+   ((:feature "LAN throughput, a Linux server (later)" :cells (n - n n n - - -) :note "415e796d, with SDK and load-harness inputs identical at runtime source a76d641a, has non-timing correctness passes at 1, 10, 100, 500 and 1000 clients for AF_XDP copy-mode, GSO, io_uring and portable servers with a Linux portable client. Timing misses remain and these correctness ladders are not throughput qualification; other client-platform rows remain pending")
     (:feature "LAN throughput, a macOS server (later)" :cells (- n - - n - - -) :note "one cell per transport; each cell was its own item")
     (:feature "LAN throughput, a Windows server (later)" :cells (- - - - n n n -) :note "preview-2 server LAN qualification is pending a provisioned 10 GbE NIC after raw UDP drops on the current Windows 1 GbE path. Same-host and client coverage exist, but no portable, iocp or rio server LAN cell is qualified")
     (:feature "1000 clients over a LAN, a Linux server (later)" :cells (n - n n n - - -) :note "one cell per transport; each cell was its own item")
@@ -365,9 +366,23 @@
    :columns platforms
    :rows
    ((:feature "TLA+ invariants NoReceiveUnlessRunning and NoAdmitUnlessRunning on the server lifecycle, plus tests that a stopping or stopped server reads no packet and admits no client" :cells (n n n) :note "the query itself ships as rocketnet_server_running in v1.0.0-preview-1")))
+  (:id "preview-2-known-issues"
+   :title "Preview-2 known issues (deferred to preview-3)"
+   :text "Current limits accepted for the preview-2 cut. These rows describe preview-2; the historical preview-1 table below is retained only as history."
+   :label "known issue"
+   :columns platforms
+   :rows
+   ((:feature "AF_XDP copy mode with one Windows portable client passed through 500 clients, but the 1000-client start failed after eight server connections hit reliable timeouts. The same Windows client passed 1000 clients against the portable Linux server." :cells (n - n))
+    (:feature "The macOS Debug socket case reproduced a short receive while system-wide packet-drop counters surged under competing traffic. Quiet and focused repeats passed, so the correlation does not attribute the drops to RocketNet; a fix is not qualified." :cells (- n -))
+    (:feature "The big-endian full-system fixture has an endian mismatch, and emulated completion runs retain timeouts." :cells (n - -))
+    (:feature "The full soak completed the portable, GSO, GSO-plain and io_uring 1000-client cells with non-timing PASS, then was killed during the AF_XDP cell. The AF_XDP cell and full soak are incomplete; no OOM cause is claimed." :cells (n - -))
+    (:feature "Mac fuzz, Windows manual Debug/toolchain/examples/soak/frame-budget coverage, and some macOS and Windows LAN rows were not completed before the release cut." :cells (n n n))
+    (:feature "The 100-microsecond server-update p99 target is missed at larger client counts. Correctness passes are reported separately from timing failures." :cells (n n n))
+    (:feature "Windows native-server LAN qualification awaits the replacement test NIC; existing Windows client evidence does not qualify the server path." :cells (- - n))
+    (:feature "Live AF_XDP qualification used copy mode only. Zero-copy and line-rate performance are unqualified. io_uring suite-concurrency and runner memlock provisioning work is deferred." :cells (n - -))))
   (:id "known-issues"
-   :title "Known issues (addressed in the final deliverable)"
-   :text "What v1.0.0-preview-1 does not yet meet, one row per issue: what it is today, and how the final deliverable addresses it. Review these limits for your game before deployment. Each cell is ❌ until the final deliverable lands it there; — is a platform the issue does not apply to."
+   :title "Historical preview-1 known issues and plans"
+   :text "Historical preview-1 planning retained for context. Some fixes listed here landed before preview-2, so this table does not state current preview-2 status; use the preview-2 known-issues table above."
    :label "known issue"
    :columns platforms
    :rows
@@ -438,7 +453,7 @@
     (:feature "The fuzz targets build and run under libFuzzer on Windows" :cells (- - n) :note "planned for the final deliverable")
     (:feature "Create, destroy, connect, restart: a thousand times on Windows with nothing left behind" :cells (- - n) :note "planned for the final deliverable")
     (:feature "Windows nightlies: all jobs run, warnings gated, verifier script safe" :cells (- - n) :note "planned for the final deliverable")
-    (:feature "TLA ledger: every case finishes or says why; docs current" :cells (n n n) :note "planned for the final deliverable")
+    (:feature "TLA ledger: every case finishes or says why; docs current" :cells (y - -) :evidence ((Linux "Runtime source a76d641a has the same TLA tree as qualified b4c0a109: all 287 required cases across 44 groups passed with unchanged input hashes, no missing configurations and clean stale and ledger-merge checks. Eighteen of 21 separate bench cases retain explicit bounded-timeout results and are not counted as passes")))
     (:feature "Server send capacity is sized from the config, never a fixed 256" :cells (n n n) :note "planned for the final deliverable")
     (:feature "macOS: 1000 light clients on msgx and portable" :cells (- n -) :note "planned for the final deliverable")
     (:feature "Windows: 1000 light clients on portable, iocp and rio" :cells (- - n) :note "planned for the final deliverable")

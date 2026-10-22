@@ -1,8 +1,6 @@
 # RocketNet v1.0.0-preview-2
 
-Release candidate changes compared with the `v1.0.0-preview-1` tag. Final release testing and the release commit are pending;
-this document does not announce a published release. See [TESTING.md](../TESTING.md)
-for qualification and [the release procedure](RELEASING.md) for the cut.
+Changes compared with the `v1.0.0-preview-1` tag. Published tag `v1.0.0-preview-2` names main commit `c1a63ac978c0389f97e2d37e9ab61c8139191e34`, whose source tree matches candidate `a76d641a`. Preview-2 uses the recorded manual qualification in [the qualification index](QUALIFICATION-v1.0.0-preview-2.md). See [TESTING.md](../TESTING.md) for the detailed evidence tables.
 
 RocketNet provides encrypted client/server UDP connections and eight message
 delivery modes through a C API. Your application supplies message bytes and
@@ -23,6 +21,10 @@ Destroy asserts the completion precondition, then synchronously joins and
 frees resources. It has no promised wall-clock bound. A stuck worker leaves
 completion false; it does not permit early destruction. An endpoint that has
 never started or connected is already complete.
+
+Calling destroy too early asserts when assertions are enabled. With assertions
+disabled, it returns without freeing the endpoint; discarding that handle leaks
+the allocation. Preview-1 callers must adopt the completion checks above.
 
 Wait for server completion before restarting. A client retry from a terminal
 failure can return `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED` while the old
@@ -131,22 +133,59 @@ See [BUILDING.md](../BUILDING.md), [TRANSPORTS.md](../TRANSPORTS.md) and
   resources. The 1000-client example soak can spike in memory during shutdown
   and run out of memory on Linux. The secrets-only destroy change is deferred
   to preview-3; completion checks do not eliminate this shutdown cost.
-  Final-head platform sizing and lifecycle checks remain release gates.
-- Windows server LAN-load qualification is pending replacement test hardware
-  and a fresh run. Earlier loss measurements on the 1 GbE test NIC do not
-  qualify the updated software or the replacement NIC.
+  This sizing risk is separate from the interrupted AF_XDP soak below; no cause
+  is assigned to that interruption.
+- Windows server LAN-load qualification is deferred until replacement test
+  hardware is available and a fresh run. Earlier loss measurements on the
+  1 GbE test NIC do not qualify the updated software or the replacement NIC.
 - The current AF_XDP test environment uses copy mode. This is not evidence for
-  zero-copy operation or line-rate throughput on another host.
-- Final-head platform, sanitizer, soak and model results have not yet been
-  recorded for preview-2. Earlier passes and failures retain their original
-  commit and scope; none is a blanket preview-2 pass.
+  zero-copy operation or line-rate throughput on another host. At `415e796d`, whose
+  SDK and load-harness inputs are identical at runtime source `a76d641a`, 60-second
+  Linux AF_XDP copy-mode correctness rungs passed at 1, 10, 100, 500 and 1000
+  clients, with XDP detached after each rung. Their server-update p99 upper
+  bounds were 39, 58, 497, 1003 and 2282 microseconds respectively, so the
+  timing verdict failed from 100 clients onward.
+- The same input-equivalent ladder passed non-timing correctness at every rung
+  for portable, GSO and io_uring Linux servers with a Linux portable client.
+  At 1000 clients their server-update p99 upper bounds were 935, 1146 and 1846
+  microseconds respectively. On exact `ba09993b`, a Windows portable client
+  also passed every portable-server rung, including 1000 clients and 60,000
+  deliveries each way; its server-update p99 upper bound there was 1223
+  microseconds. The AF_XDP 1000-client Windows-client rung failed after eight
+  server connections hit reliable timeouts; lower rungs passed non-timing
+  correctness. These ladders are not throughput qualification.
+- The release TLA inputs are identical to the qualified `b4c0a109` tree.
+  All 287 required cases across 44 groups passed with pinned tool checksums
+  and unchanged input hashes. Eighteen separate bench cases remain explicit
+  bounded-timeout debt and are not reported as passes.
+- The exact `ba09993b` channel sweep passed all 60,000 runs. Fresh release-head
+  Linux examples and the frame-budget check passed; the latter reported a
+  16.49-microsecond p99 median against the 100-microsecond gate. The fresh
+  instruction comparison could not be made because the available toolchain
+  differed from its pinned baseline, so the older comparable receipt retains
+  its original scope.
+- The published manual qualification retains the tested head on every receipt.
+  Some platform, sanitizer, soak, fuzz and LAN rows remain preview-3 work. The
+  full unit and functional leak suite passed at `415e796d`; its SDK, build
+  configuration and sanitizer support inputs are unchanged at the release
+  source, while later functional-oracle changes retain their own validation.
+  Input-equivalent threaded TSan and sanitized-soak jobs passed at `c9db35ff`.
+  The c9 full soak completed its portable, GSO, GSO-plain and io_uring
+  1000-client cells with non-timing PASS, then was killed during the AF_XDP
+  cell; the full soak is incomplete, with no OOM cause claimed. The macOS
+  Debug socket case reproduced under system-wide packet-drop pressure, but the
+  diagnostic does not attribute those drops to RocketNet. The big-endian
+  full-system fixture retains an endian mismatch and emulation completion
+  timeouts. Mac fuzz, Windows manual Debug/toolchain/examples/soak/frame-budget
+  coverage, and the remaining macOS and Windows LAN rows are deferred. io_uring suite-concurrency and runner memlock provisioning work is also deferred. Earlier passes and
+  failures retain their original commit and scope.
 
-The [testing tables](../TESTING.md) and [roadmap](../ROADMAP.md) retain work
-still owed. The final qualification record will identify the tested release candidate.
+The [testing tables](../TESTING.md), [qualification index](QUALIFICATION-v1.0.0-preview-2.md), and [roadmap](../ROADMAP.md) record the tested heads and preview-3 work.
 
 ## Deferred to preview-3
 
-The uniform client buffer handoff, secrets-only destroy, and macOS CI
-restructuring are outside preview-2. The existing worker handoffs described
-above do not include that later uniform-client change. None of these deferred
-changes is a preview-2 fix or qualification result.
+The uniform client buffer handoff, secrets-only destroy, and macOS
+receive-under-flood investigation are deferred to preview-3. The existing
+worker handoffs described above do not include that later uniform-client
+change. None of these deferred changes is a preview-2 fix or qualification
+result.
