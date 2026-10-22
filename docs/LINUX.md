@@ -72,11 +72,10 @@ comes first in `auto`, zero means the endpoint does not have that transport
 | `xdp` | 10 | 0 | `sdk/rocketnet_drivers.inc:7` |
 | `gso` | 20 | 0 | `sdk/rocketnet_drivers.inc:6` |
 | `io_uring` | 25 | 0 | `sdk/rocketnet_drivers.inc:11` |
-| `portable` | development: 30; production: unavailable | 30 | `sdk/rocketnet_drivers.inc:5` |
+| `portable` | development: 30; production: 50 | 30 | `sdk/rocketnet_drivers.inc:5` |
 | `loopback` | pin only | pin only | `sdk/rocketnet_drivers.inc:10` |
 
-The production Linux server `auto` order is **xdp → gso → io_uring**;
-development builds add **portable** last. A build without liburing omits
+The Linux server `auto` order in both builds is **xdp → gso → io_uring → portable**. A build without liburing omits
 `io_uring` from the list. The portable client side remains available.
 `loopback` is in-process, never chosen by `auto`, and selected only by name
 (`TRANSPORTS.md:18-23`, `sdk/rocketnet_driver.h:13`). The Linux client has one
@@ -121,8 +120,7 @@ endpoint: `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
 `sdk/rocketnet_config.cpp:313-319`). The rules (`sdk/rocketnet_config.h:165-176`):
 
 - A one-element list is a pin: that transport or a loud failure, never a fall.
-- A production server pin of `portable` returns `INVALID_TRANSPORT_LIST` at
-  public create or low-level start, before the all-skipped auto rule.
+- A server pin of `portable` is available in both development and production.
 - A longer list is tried in exactly that order; nothing is appended.
 - A known name this platform or endpoint does not have (`gso` for a client) is
   skipped with `transport <name> is not available here. skipped`

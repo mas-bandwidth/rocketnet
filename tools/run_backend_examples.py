@@ -3,16 +3,20 @@
 
 For each backend in examples/backend/:
 
-1. Token check. The backend mints one token (--mint) for the
+1. Key generation. Each backend emits its own fresh signing keys with --keygen.
+   They are passed through the environment, never written to the receipt.
+
+2. Token check. The backend mints one token (--mint) for the
    development server key, and backend_check_token runs the C library's own
-   checks on it: signature against the development backend key, the sealed
+   checks on it: signature against the generated backend public key, the sealed
    block opened with the development server keypair, the inner fields
    consistent, and the public client's pre-send checks.
 
-2. End to end, over loopback. example_backend_server starts on a free UDP
+3. End to end, over loopback. example_backend_server starts on a free UDP
    port and writes backend.env (its address and public key); the backend
-   starts on a free TCP port with that environment; the token comes from
-   GET /match/<client id>; example_backend_client connects with it, sends a
+   starts on a free TCP port with an empty registry; the harness registers the
+   live server over HTTP; the token then comes from GET /match/<client id>;
+   example_backend_client connects with it, sends a
    message and receives the echo. Server and client must both exit 0 with
    PASS as their last line.
 
@@ -27,6 +31,7 @@ Every process gets a 60-second timeout; the whole run takes seconds.
 
 import argparse
 import base64
+import json
 import os
 import shutil
 import socket
@@ -34,6 +39,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -79,8 +85,8 @@ def free_port(kind):
 
 
 def backend_environment(extra):
-    # the backend reads only these; nothing ambient may change what it mints
-    env = {k: v for k, v in os.environ.items() if not k.startswith("ROCKETNET_BACKEND_")}
+    # No ambient RocketNet override may change transport, keys or token policy.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ROCKETNET_")}
     env.update(extra)
     return env
 
@@ -97,16 +103,39 @@ def build_backend(name, outdir):
     return ["dotnet", str(output / "rocketnet-backend.dll")]
 
 
-def check_token(name, command, check_binary):
+def generate_keys(name, command):
+    generated = subprocess.run(command + ["--keygen"], env=backend_environment({}),
+                               capture_output=True, text=True, timeout=TIMEOUT_SECONDS)
+    if generated.returncode != 0:
+        fail(f"backend_{name}_keygen", f"keygen exited {generated.returncode}")
+        return None
+    lines = generated.stdout.splitlines()
+    names = ("ROCKETNET_SERVER_BACKEND_PUBLIC_KEY", "ROCKETNET_BACKEND_PRIVATE_KEY")
+    try:
+        values = dict(line.split("=", 1) for line in lines)
+        if len(lines) != 2 or set(values) != set(names):
+            raise ValueError("expected two environment assignments")
+        public = base64.b64decode(values[names[0]], validate=True)
+        private = base64.b64decode(values[names[1]], validate=True)
+        if len(public) != 32 or len(private) != 64 or private[32:] != public:
+            raise ValueError("invalid Ed25519 keypair encoding")
+    except (ValueError, TypeError):
+        fail(f"backend_{name}_keygen", "invalid key output (contents omitted)")
+        return None
+    return values
+
+
+def check_token(name, command, check_binary, keys):
     label = f"backend_{name}_token"
     env = backend_environment({
         "ROCKETNET_BACKEND_SERVER_PUBLIC_KEY": base64.b64encode(DEV_SERVER_PUBLIC_KEY).decode(),
         "ROCKETNET_BACKEND_SERVER_ADDRESSES": "127.0.0.1:40000,[::1]:40000",
+        "ROCKETNET_BACKEND_PRIVATE_KEY": keys["ROCKETNET_BACKEND_PRIVATE_KEY"],
     })
     minted = subprocess.run(command + ["--mint", str(CLIENT_ID)], env=env, capture_output=True, text=True, timeout=TIMEOUT_SECONDS)
     if minted.returncode != 0:
         return fail(label, f"mint exited {minted.returncode}\n{minted.stdout}{minted.stderr}")
-    checked = subprocess.run([str(check_binary), str(CLIENT_ID), PROTOCOL_ID], input=minted.stdout,
+    checked = subprocess.run([str(check_binary), str(CLIENT_ID), PROTOCOL_ID, keys["ROCKETNET_SERVER_BACKEND_PUBLIC_KEY"]], input=minted.stdout,
                              capture_output=True, text=True, timeout=TIMEOUT_SECONDS)
     if checked.returncode != 0 or last_line(checked.stdout) != "PASS":
         return fail(label, f"backend_check_token exited {checked.returncode}\n{checked.stdout}{checked.stderr}")
@@ -154,12 +183,35 @@ def fetch_token(url):
         return None
 
 
-def end_to_end(name, command, server_binary, client_binary):
+def http_status(url):
+    try:
+        with urllib.request.urlopen(url, timeout=2) as response:
+            return response.status
+    except urllib.error.HTTPError as error:
+        return error.code
+    except OSError:
+        return None
+
+
+def register_server(url, values):
+    body = json.dumps({
+        "addresses": values["ROCKETNET_BACKEND_SERVER_ADDRESSES"].split(","),
+        "public_key": values["ROCKETNET_BACKEND_SERVER_PUBLIC_KEY"],
+    }).encode()
+    request = urllib.request.Request(url, data=body, method="PUT", headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=2) as response:
+            return response.status == 204
+    except OSError:
+        return False
+
+
+def end_to_end(name, command, server_binary, client_binary, keys, production):
     label = f"backend_{name}_end_to_end"
     workdir = Path(tempfile.mkdtemp(prefix=f"rocketnet_backend_{name}_"))
     server = backend = None
     try:
-        env = dict(os.environ)
+        env = backend_environment({"ROCKETNET_SERVER_BACKEND_PUBLIC_KEY": keys["ROCKETNET_SERVER_BACKEND_PUBLIC_KEY"]})
         env["ROCKETNET_EXAMPLE_PORT"] = str(free_port(socket.SOCK_DGRAM))
         server = subprocess.Popen([str(server_binary)], cwd=workdir, env=env,
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -169,14 +221,24 @@ def end_to_end(name, command, server_binary, client_binary):
             return fail(label, f"server wrote no backend.env\n{out}")
 
         port = free_port(socket.SOCK_STREAM)
-        backend = subprocess.Popen(command, cwd=workdir, env=backend_environment({**values, "ROCKETNET_BACKEND_PORT": str(port)}),
+        backend = subprocess.Popen(command, cwd=workdir, env=backend_environment({"ROCKETNET_BACKEND_PORT": str(port),
+                                       "ROCKETNET_BACKEND_PRIVATE_KEY": keys["ROCKETNET_BACKEND_PRIVATE_KEY"]}),
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        token = wait_for(lambda: fetch_token(f"http://127.0.0.1:{port}/match/{CLIENT_ID}"), backend, READY_SECONDS)
+        match_url = f"http://127.0.0.1:{port}/match/{CLIENT_ID}"
+        empty = wait_for(lambda: http_status(match_url) == 503, backend, READY_SECONDS)
+        if not empty:
+            out, _ = stop(backend)
+            return fail(label, f"backend did not report an empty server registry\n{out}")
+        registered = wait_for(lambda: register_server(f"http://127.0.0.1:{port}/servers/example", values), backend, READY_SECONDS)
+        if not registered:
+            out, _ = stop(backend)
+            return fail(label, f"backend did not register the live server\n{out}")
+        token = wait_for(lambda: fetch_token(match_url), backend, READY_SECONDS)
         if not token:
             out, _ = stop(backend)
             return fail(label, f"backend served no token\n{out}")
 
-        client = subprocess.run([str(client_binary), "--token", token], cwd=workdir, capture_output=True, text=True, timeout=TIMEOUT_SECONDS)
+        client = subprocess.run([str(client_binary), "--token", token], cwd=workdir, env=backend_environment({}), capture_output=True, text=True, timeout=TIMEOUT_SECONDS)
         if client.returncode != 0 or last_line(client.stdout) != "PASS":
             return fail(label, f"client exited {client.returncode}\n{client.stdout}{client.stderr}")
         try:
@@ -185,6 +247,13 @@ def end_to_end(name, command, server_binary, client_binary):
             return fail(label, "server did not exit after its client disconnected")
         if server.returncode != 0 or last_line(server_out) != "PASS":
             return fail(label, f"server exited {server.returncode}\n{server_out}")
+        if production:
+            for role, output in (("client", client.stdout), ("server", server_out)):
+                if f"backend_{role}: mode=production transport=portable" not in output.splitlines():
+                    observed = [line for line in output.splitlines() if line.startswith(f"backend_{role}:")]
+                    return fail(label, f"{role} did not confirm production portable mode: {observed}")
+        print(f"backend_{name}: fresh_keys=true server_registered_http=true token_from_http=true "
+              f"production_required={str(production).lower()} portable_echo=true")
         return True
     finally:
         for process in (backend, server):
@@ -198,6 +267,7 @@ def main():
     parser.add_argument("--build", default="build", help="build directory (default: build)")
     parser.add_argument("--config", default=None, help="Windows configuration, such as Release")
     parser.add_argument("--backend", action="append", choices=["go", "csharp"], help="run only this backend (repeatable)")
+    parser.add_argument("--production", action="store_true", help="require client and server to confirm ROCKETNET_DEV=0 and portable transport")
     args = parser.parse_args()
 
     build = Path(args.build)
@@ -214,10 +284,14 @@ def main():
     try:
         for name in args.backend or ["go", "csharp"]:
             command = build_backend(name, outdir)
-            if not check_token(name, command, binaries["backend_check_token"]):
+            keys = generate_keys(name, command)
+            if keys is None:
+                return 1
+            print(f"PASS backend_{name}_keygen")
+            if not check_token(name, command, binaries["backend_check_token"], keys):
                 return 1
             print(f"PASS backend_{name}_token")
-            if not end_to_end(name, command, binaries["example_backend_server"], binaries["example_backend_client"]):
+            if not end_to_end(name, command, binaries["example_backend_server"], binaries["example_backend_client"], keys, args.production):
                 return 1
             print(f"PASS backend_{name}_end_to_end")
     finally:

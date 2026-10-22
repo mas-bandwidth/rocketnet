@@ -8,7 +8,7 @@ archive contains no test suite. Review intentional ABI changes in the list as
 part of the same change. The major version names SDK calling/layout
 compatibility, separately from the wire version; see the ABI rules below.
 
-Deploying a server on Linux: [docs/LINUX.md](docs/LINUX.md) covers the build, the production `xdp -> gso -> io_uring` transport ladder and pinning, what `gso`, `io_uring` and `xdp` need from the host, socket errors and ICMP, the fd and memlock limits for 1000 clients, containers, and how to verify a host. Development builds add portable last.
+Deploying a server on Linux: [docs/LINUX.md](docs/LINUX.md) covers the build, the production `xdp -> gso -> io_uring -> portable` transport ladder and pinning, what `gso`, `io_uring` and `xdp` need from the host, socket errors and ICMP, the fd and memlock limits for 1000 clients, containers, and how to verify a host. Both builds offer portable as the final Linux fallback.
 
 rocketnet builds on Linux and macOS with CMake 3.20 or later, and on Windows with
 CMake 4.2 or later (the Windows block below says why). On Linux the build is
@@ -322,7 +322,7 @@ BPF/libxdp development headers or libraries, BPF clang, or `xxd`:
 
 The `xdp` rung reports that it was disabled at build time and refuses create
 with `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT`. A pin of `xdp` fails; automatic selection continues with `gso`, `io_uring`
-(when built), then `portable` in development builds only. The installed CMake package also omits the
+(when built), then `portable` in either build. The installed CMake package also omits the
 BPF/libxdp dependencies. Native `test_xdp` and `test_xdp_filter` targets are
 not built; the host-C filter and portable frame-codec unit tests still run.
 Configure with `-DROCKETNET_XDP=ON` (the default) to restore the native
@@ -559,16 +559,16 @@ socket-buffer reservation. The current default Linux worker topology is:
 
 | transport | sockets | I/O workers | stats workers | total stacks |
 | --- | --- | --- | --- | --- |
-| portable (development server) | 1 | 2 | 1 | 3 |
+| portable server | 1 | 2 | 1 | 3 |
 | gso | 4 | 5 | 1 | 6 |
 | io_uring | 4 | 0 | 1 | 1 |
 | xdp | 7 | 7 | 1 | 8 |
 
 The default Windows server topology is one socket and two I/O workers plus the
 stats worker for IOCP (one completion worker and one transmit worker), or one
-socket and one I/O worker plus the stats worker for RIO. A development portable
+socket and one I/O worker plus the stats worker for RIO. A portable
 server has the same two I/O workers as the Linux row. On macOS, msgx and the
-development portable server also have one receive worker, one transmit worker
+portable server also have one receive worker, one transmit worker
 and the stats worker. These server counts do not include client objects; each
 normal client adds its own one background network thread.
 
@@ -580,7 +580,7 @@ Build tools normally, then use the resource probe:
 
 ```
 ./bin/transport_memory 1000 1416 16 portable 0 --plan-only
-# A live portable server probe requires a development build.
+# A live portable server probe works in either build mode.
 # Linux live GSO probe:
 ./bin/transport_memory 1000 1416 16 gso 0
 # Host requests, including stack reserves, without creating the server:
@@ -698,18 +698,18 @@ list in both directions against the SDK reads and the public header.
 Transport selection is runtime: one build carries every transport its
 platform has. Linux production servers have xdp (privileged), gso (SO_REUSEPORT +
 sendmmsg/recvmmsg + UDP GSO/GRO, non-root) and io_uring; macOS production
-servers have msgx; Windows production servers have iocp and rio. The portable
-server is available only in development builds; its client side remains
-available on every platform. Loopback is on every platform and is selected
+servers have msgx; Windows production servers have iocp and rio. Portable
+servers and clients are also available on every platform. Production server
+auto selection ranks portable after the native transports. Loopback is on every platform and is selected
 only by name. The transport walks an ordered candidate
 list at create. The list rides the config's transport field or the
 per-endpoint `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
 environment variables (precedence: default < struct < env):
 
     ./bin/functional                                # auto: the platform's recommended ladder
-                                                #   (production linux: xdp,gso,io_uring — falls on refusal)
+                                                #   (production linux: xdp,gso,io_uring,portable — falls on refusal)
     ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional
-                                                #   portable server requires a development build
+                                                #   portable server is available in both build modes
                                                 # a one-element list is a pin: that transport
                                                 #   or loud failure, never a silent fall
     ROCKETNET_SERVER_TRANSPORT=gso,portable ./bin/functional  # exactly these, exactly this order
@@ -718,15 +718,14 @@ Names known but absent on a platform — or not applicable to an endpoint, like
 `gso` for a client — are skipped with a log line, so one fleet-wide value deploys
 everywhere; a list whose every name is skipped falls to that endpoint's own auto
 order, loudly, rather than bricking an endpoint the value was not addressing.
-An explicit server pin of `portable` in a production build refuses with
-`ROCKETNET_STATUS_INVALID_TRANSPORT_LIST` instead of falling to auto.
+An explicit server pin of `portable` selects only portable in either build.
 Unknown names refuse loudly at create. The granted transport is reported by
 the transport name query on each client and server, and the create log line. Queue-count bounds are per transport, refused loudly and never
 clamped: the xdp transport takes any `num_xdp_queues` from 1, the gso transport refuses
 past its 32-queue geometry. The GSO transport still probes UDP_SEGMENT and UDP_GRO at
 create and degrades to plain sendmmsg/recvmmsg batching where a kernel lacks them —
 that degradation is internal to the transport, below the ladder; likewise the Darwin
-batch pump's live-refusal pause. Select the portable server in a development
+batch pump's live-refusal pause. Select the portable server in either
 build with `ROCKETNET_SERVER_TRANSPORT=portable`; select the client's portable
 side with `ROCKETNET_CLIENT_TRANSPORT=portable` in either build.
 Run `./bin/functional`

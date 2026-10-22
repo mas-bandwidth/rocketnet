@@ -13478,65 +13478,22 @@ void rocketnet_test_portable_server_release_gate()
         portable_server |= servers[i] == ROCKETNET_TRANSPORT_PORTABLE;
     for ( int i = 0; i < client_count; ++i )
         portable_client |= clients[i] == ROCKETNET_TRANSPORT_PORTABLE;
-
-    // Production excludes only the portable server side of this driver.
-    rocketnet_check( portable_server == ( ROCKETNET_DEV != 0 ) );
-    rocketnet_check( portable_client );
+    rocketnet_check( portable_server && portable_client );
 
     struct rocketnet_transport_ladder_t ladder;
     rocketnet_check( rocketnet_transport_ladder_parse( "auto", servers, server_count, &ladder ) );
     bool portable_in_auto = false;
     for ( int i = 0; i < ladder.num_candidates; ++i )
         portable_in_auto |= ladder.candidates[i] == ROCKETNET_TRANSPORT_PORTABLE;
-    rocketnet_check( portable_in_auto == ( ROCKETNET_DEV != 0 ) );
-
+    rocketnet_check( portable_in_auto );
 #if !ROCKETNET_DEV
-    struct rocketnet_test_env_guard_t transport_env;
-    rocketnet_test_env_clear( &transport_env, "ROCKETNET_SERVER_TRANSPORT" );
-    struct rocketnet_server_transport_config_t config;
-    rocketnet_server_transport_default_config_current( &config );
-    memcpy( config.backend_public_key, rocketnet_test_backend_public_key, 32 );
-    memcpy( config.server_public_key, rocketnet_test_server_public_key, 32 );
-    memcpy( config.server_secret_key, rocketnet_test_server_secret_key, 32 );
-    config.protocol_id = 0x12345678;
-    snprintf( config.transport, sizeof( config.transport ), " portable " );
-    int status = ROCKETNET_STATUS_OK;
-    rocketnet_check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status ) == NULL );
-    rocketnet_check( status == ROCKETNET_STATUS_INVALID_TRANSPORT_LIST );
-
-    // The public resource probe and create use the same effective pin as
-    // low-level start. A diagnostic transport plan is a separate API.
-    struct rocketnet_server_config_t public_config;
-    rocketnet_check( rocketnet_server_default_config( &public_config ) == ROCKETNET_STATUS_OK );
-    public_config.max_clients = 1;
-    public_config.protocol_id = 0x12345678;
-    memcpy( public_config.backend_public_key, rocketnet_test_backend_public_key, 32 );
-    public_config.transport = " portable ";
-    rocketnet_check( rocketnet_server_required_memory( &public_config ) == 0 );
-    enum rocketnet_status_t public_status = ROCKETNET_STATUS_OK;
-    rocketnet_check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &public_config, &public_status ) == NULL );
-    rocketnet_check( public_status == ROCKETNET_STATUS_INVALID_TRANSPORT_LIST );
-
-    public_config.transport = "auto";
-    setenv( "ROCKETNET_SERVER_TRANSPORT", "portable", 1 );
-    rocketnet_check( rocketnet_server_required_memory( &public_config ) == 0 );
-    public_status = ROCKETNET_STATUS_OK;
-    rocketnet_check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &public_config, &public_status ) == NULL );
-    rocketnet_check( public_status == ROCKETNET_STATUS_INVALID_TRANSPORT_LIST );
-
-    unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
-    rocketnet_check( rocketnet_server_required_memory( &public_config ) > 0 );
-    struct rocketnet_server_t * public_server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &public_config, &public_status );
-    rocketnet_check( public_server && public_status == ROCKETNET_STATUS_OK );
-    setenv( "ROCKETNET_SERVER_TRANSPORT", "portable", 1 );
-    rocketnet_check( rocketnet_server_start( public_server ) == ROCKETNET_STATUS_INVALID_TRANSPORT_LIST );
-    rocketnet_check( rocketnet_server_stopped( public_server ) );
-    rocketnet_server_destroy( public_server );
-    rocketnet_test_env_restore( &transport_env );
+    // Native production server preferences remain ahead of the portable fallback.
+    rocketnet_check( ladder.num_candidates > 0 );
+    rocketnet_check( ladder.candidates[ladder.num_candidates - 1] == ROCKETNET_TRANSPORT_PORTABLE );
 #endif
+    rocketnet_check( rocketnet_transport_ladder_parse( " portable ", servers, server_count, &ladder ) );
+    rocketnet_check( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_PORTABLE );
 }
-
-
 
 // #109: a port-zero public address asks the KERNEL for a port, so it only
 // means anything to a transport that discovers what it was granted and hands

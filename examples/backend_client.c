@@ -20,6 +20,7 @@
 */
 
 #include "rocketnet.h"
+#include "dev_keys.h"
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -63,6 +64,8 @@ int main( int argc, char ** argv )
 
     rocketnet_client_default_config( &config );
     config.transport = "portable";
+    const uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = EXAMPLE_BACKEND_PACKET_FILTER;
+    memcpy( config.packet_filter, packet_filter, sizeof( packet_filter ) );
     config.state_change_callback = state_changed;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     client = rocketnet_client_create( NULL, &config, &create_status );
@@ -74,6 +77,8 @@ int main( int argc, char ** argv )
     const enum rocketnet_status_t connect_status = rocketnet_client_connect( client, connect_token );
     if ( connect_status != ROCKETNET_STATUS_OK ) printf( "connect refused: %s\n", rocketnet_status_name( connect_status ) );
     CHECK( connect_status == ROCKETNET_STATUS_OK );
+    CHECK( rocketnet_client_transport_name( client ) != NULL );
+    printf( "backend_client: mode=%s transport=%s\n", ROCKETNET_DEV ? "development" : "production", rocketnet_client_transport_name( client ) );
 
     const double start = rocketnet_time();
 

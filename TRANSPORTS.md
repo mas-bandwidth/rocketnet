@@ -334,7 +334,7 @@ and used when liburing is found). A build without it keeps the registry row with
 no platform: the row is absent from the availability lists and a pin of
 `io_uring` is skipped by the ladder. At run time `rocketnet_server_uring_available()`
 probes once that the kernel accepts the ring, the opcodes and the provided
-buffer ring. Its server rank is 25, after `gso` (20) and before `portable` (30)
+buffer ring. Its server rank is 25, after `gso` (20) and before `portable` (30 in development, 50 in production)
 in the Linux `auto` order; it has no client side.
 
 Its counters (`ROCKETNET_SERVER_URING_COUNTER_*`) are packets sent and received,

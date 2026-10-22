@@ -65,8 +65,8 @@ See [BUILDING.md](BUILDING.md). Binaries land in `bin/`, and on Windows in
 A default build is for development. Before deployment, configure CMake with
 `-DROCKETNET_DEV=OFF`, link the resulting production library, and supply your
 own backend keys and packet filter. Production builds refuse development
-credentials, the test packet filter and a portable **server** transport;
-portable clients remain available. Follow [Before production](AGENTS.md#before-production).
+credentials and the test packet filter. Portable clients and servers are
+available; production server auto selection prefers native transports. Follow [Before production](AGENTS.md#before-production).
 
 ## Preview status
 

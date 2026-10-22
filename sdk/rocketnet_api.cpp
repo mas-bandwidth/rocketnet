@@ -1325,17 +1325,12 @@ static enum rocketnet_status_t rn_server_config_valid( const struct rocketnet_se
             rocketnet_server_reassembly_delivered_bytes( requested_clients, requested_slots, requested_payload ) ) )
         return ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED;
     // Resolve the transport env override here as start will, so public
-    // create and required_memory reject the same production-only pin.
+    // create and required_memory validate the same candidate list.
     struct rocketnet_server_transport_config_t effective = *transport;
     for ( int i = 0; i < num_fields; ++i )
         if ( strcmp( fields[i].name, "transport" ) == 0 &&
              !rocketnet_config_apply_env( "server", &effective, &fields[i], 1 ) )
             return ROCKETNET_STATUS_CONFIG_ENV_INVALID;
-    if ( rocketnet_server_portable_pin_refused( effective.transport ) )
-    {
-        rocketnet_error( "portable server transport is unavailable in production builds" );
-        return ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
-    }
     int num_available = 0;
     const int * available = rocketnet_server_transport_io_availability( &num_available );
     struct rocketnet_transport_ladder_t ladder;
