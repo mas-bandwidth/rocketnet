@@ -712,15 +712,19 @@ static inline void rocketnet_fuzz_snapshot_restore( struct rocketnet_fuzz_pair_t
 // coverage: the one-time create, connect and snapshot run before any input
 // and would count as covered code no input drove, so the profile counters
 // are zeroed once the snapshots are taken (tools/fuzz_coverage.sh sets it).
-#if defined( __clang__ ) && !defined( _WIN32 )
-extern "C" void __llvm_profile_reset_counters( void ) __attribute__(( weak ));
+// Only the coverage build (tools/fuzz_coverage.sh, which defines
+// ROCKETNET_FUZZ_COVERAGE_BUILD) links the profile runtime. Every other build
+// names no profile symbol: a weak undefined reference links on Linux but not
+// with the macOS linker.
+#if defined( ROCKETNET_FUZZ_COVERAGE_BUILD )
+extern "C" void __llvm_profile_reset_counters( void );
 #endif
 
 static inline void rocketnet_fuzz_coverage_reset_after_setup()
 {
-#if defined( __clang__ ) && !defined( _WIN32 )
+#if defined( ROCKETNET_FUZZ_COVERAGE_BUILD )
     char value[8];
-    if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_COVERAGE_INPUTS_ONLY", value, sizeof( value ) ) && value[0] == '1' && __llvm_profile_reset_counters )
+    if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_COVERAGE_INPUTS_ONLY", value, sizeof( value ) ) && value[0] == '1' )
         __llvm_profile_reset_counters();
 #endif
 }
