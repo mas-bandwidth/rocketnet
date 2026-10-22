@@ -189,6 +189,10 @@ UPSTREAM_CONVERSIONS = {
         ('ristretto255_elligator(', r'fe25519_cmov\((\w+), (\w+), wasnt_square\)', r'fe25519_cmov(\1, \2, (unsigned int) wasnt_square)', 2),
         # The x86-64 asm leaves 0 or 1 in the signed char it returns as unsigned char.
         ('negative(', r'^    return b;$', '    return (unsigned char) b;', 1),
+        # The portable equal() and negative() (no inline asm: s390x, for one)
+        # return a 0/1 computed in uint32_t or int as unsigned char.
+        ('equal(', r'^    return (\(\(y >> 29\) \^ optblocker_u8\) >> 2);', r'    return (unsigned char) (\1);', 1),
+        ('negative(', r'^    return (\(\(x >> 5\) \^ optblocker_u8\) >> 2);', r'    return (unsigned char) (\1);', 1),
         # babs = |b| for b in -8..8, and equal() takes signed char.
         (None, r'(const unsigned char babs      = )(b - \(\(\(-bnegative\) & b\) \* \(\(signed char\) 1 << 1\)\));',
          r'\1(unsigned char) (\2);', 2),
