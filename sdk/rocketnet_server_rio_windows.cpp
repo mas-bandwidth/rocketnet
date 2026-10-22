@@ -26,8 +26,9 @@
 #include <stddef.h>
 #include <string.h>
 
-// The model: tla/RNRioDriver.tla. Each function that implements one of its
-// actions names it.
+// The model: tla/RNRioWorker.tla (the I/O worker, its bank and phase
+// handoffs and stop); tla/RNRioDriver.tla for the slot and slice rules it
+// keeps. Each function that implements an action names it.
 
 #define ROCKETNET_RIO_SEND_FRAMES ( 2 * ROCKETNET_RIO_SEND_QUEUE_SIZE )
 #define ROCKETNET_RIO_DEQUEUE_BATCH 256

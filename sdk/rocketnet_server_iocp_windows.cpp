@@ -1128,7 +1128,10 @@ void rocketnet_server_iocp_test_hold_tx_publication( rocketnet_server_iocp_t * i
 
 bool rocketnet_server_iocp_test_tx_idle( rocketnet_server_iocp_t * iocp )
 {
-    return iocp->test_pending_tx_banks.load( std::memory_order_acquire ) == 0;
+    // Idle: the producer is published (nothing staged) and every published
+    // bank is serviced.
+    return iocp->num_staged.load( std::memory_order_relaxed ) == 0 &&
+           iocp->test_pending_tx_banks.load( std::memory_order_acquire ) == 0;
 }
 
 int rocketnet_server_iocp_test_ready_tx_banks( rocketnet_server_iocp_t * iocp )
