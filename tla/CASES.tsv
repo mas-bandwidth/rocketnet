@@ -288,6 +288,10 @@ MCRNClientIoLiveCommittedB.cfg	MCRNClientIoLiveness.tla	pass	-	check	rnclientio	
 MCRNClientIoLiveFilled.cfg	MCRNClientIo.tla	pass	-	check	rnclientio	required	-
 MCRNClientIoLiveArrivedBeforeLast.cfg	MCRNClientIoLiveness.tla	pass	-	check	rnclientio	required	-
 MCRNClientIoLiveArrivedLast.cfg	MCRNClientIoLiveness.tla	pass	-	check	rnclientio	required	-
+MCSplitStart.cfg	MCSplitStart.tla	pass	-	ignore-terminal	splitstart	required	-
+MCSplitStartBrokenPerPhase.cfg	MCSplitStart.tla	invariant	ServerIsTheAuthority	ignore-terminal	splitstart	required	-
+MCSplitStartBrokenNoRun.cfg	MCSplitStart.tla	invariant	ServerIsTheAuthority	ignore-terminal	splitstart	required	-
+MCSplitStartCompletes.cfg	MCSplitStart.tla	invariant	NotAllRunning	ignore-terminal	splitstart	required	-
 MCRNPortableRx.cfg	MCRNPortableRx.tla	pass	-	check	rnportablerx	required	-
 MCRNPortableRxTwoBanks.cfg	MCRNPortableRx.tla	pass	-	check	rnportablerx	required	-
 MCRNPortableRxBrokenOverwrite.cfg	MCRNPortableRx.tla	invariant	ExactDelivery	check	rnportablerx	required	-

@@ -6,19 +6,20 @@
 #undef main
 #include "tools/load_split_schedule.h"
 #include "tools/load_split_startup.h"
+#include "tools/load_split_barrier.h"
 
 #define SPLIT_ARM_MAGIC 0x524E414Du
 #define SPLIT_ACK_MAGIC 0x524E414Bu
 #define SPLIT_GO_MAGIC 0x524E474Fu
 #define SPLIT_GO_ACK_MAGIC 0x524E4741u
 #define SPLIT_RUN_MAGIC 0x524E5255u
+
 #define SPLIT_DONE_MAGIC 0x524E444Eu
 #define SPLIT_DRAINED_MAGIC 0x524E4452u
 #define SPLIT_FINISH_MAGIC 0x524E464Eu
 #define SPLIT_FINISH_ACK_MAGIC 0x524E4641u
 #define SPLIT_CONFIRM_MAGIC 0x524E4643u
 #define SPLIT_CONTROL_CHANNEL 0
-#define SPLIT_START_DEADLINE_S 10.0
 #define SPLIT_BARRIER_DEADLINE_S 15.0
 #define SPLIT_CONFIRM_GRACE_S 3.0
 #define SPLIT_MAX_DURATION_S 3600
@@ -583,6 +584,106 @@ static int split_print_receipt( const char * role, uint64_t run_id, int total, i
     return pass;
 }
 
+/* A start that does not complete says where and why: the phase, the verdict,
+ * and how many clients it still waits for. Up to SPLIT_START_NAMED_CLIENTS of
+ * them follow with their transport counters, so a client whose path went
+ * silent is told apart from a shard that was slow to start. */
+static void split_print_start_failure( const char * role, uint64_t run_id, int first, int count,
+                                       const char * phase, const char * reason, int waiting, int disconnected )
+{
+    printf("split_start_failure: role=%s run_id=%016" PRIx64 " first=%d count=%d phase=%s reason=%s "
+           "waiting=%d disconnected=%d named_max=%d\n", role, run_id, first, count, phase, reason,
+           waiting, disconnected, SPLIT_START_NAMED_CLIENTS);
+}
+
+static int split_server_client_live( const struct rocketnet_server_t * server, const struct split_server_client_t * clients, int i )
+{
+    return clients[i].slot >= 0 && rocketnet_server_client_connected(server, clients[i].slot) &&
+        rocketnet_server_client_id(server, clients[i].slot) == (uint64_t) i + 1;
+}
+
+static void split_print_server_waiting( const struct rocketnet_server_t * server, const struct split_server_client_t * clients,
+                                        int total, uint64_t run_id, const char * phase, const char * reason,
+                                        int waiting, int disconnected, int (*done)( const struct split_server_client_t * client ) )
+{
+    split_print_start_failure("server", run_id, 0, total, phase, reason, waiting, disconnected);
+    int named = 0;
+    for ( int i = 0; i < total && named < SPLIT_START_NAMED_CLIENTS; ++i )
+    {
+        if ( done(&clients[i]) ) continue;
+        named++;
+        struct rocketnet_server_client_stats_t stats;
+        memset(&stats, 0, sizeof(stats));
+        const int live = split_server_client_live(server, clients, i);
+        if ( live ) rocketnet_server_client_stats(server, clients[i].slot, &stats);
+        printf("split_start_waiting: role=server run_id=%016" PRIx64 " client=%d phase=%s connected=%d "
+               "packets_sent=%" PRIu64 " packets_received=%" PRIu64 " rtt_ms=%.3f\n", run_id, i, phase, live,
+               stats.packets_sent, stats.packets_received, stats.rtt_ms);
+    }
+}
+
+static int split_server_connected_done( const struct split_server_client_t * client ) { return client->connected; }
+static int split_server_arm_done( const struct split_server_client_t * client ) { return client->arm_acked; }
+static int split_server_go_done( const struct split_server_client_t * client ) { return client->go_acked; }
+
+/* Send ARM or GO to every client and wait one server window for every
+ * acknowledgement. A client that disconnects before it answers ends the wait
+ * at once; either failure names the clients still owed. */
+static int split_server_start_phase( struct rocketnet_server_t * server, struct split_server_client_t * clients,
+                                     int total, uint64_t run_id, enum split_start_step_t phase,
+                                     struct split_result_t * result )
+{
+    const uint32_t send_magic = phase == SPLIT_START_STEP_ARM ? SPLIT_ARM_MAGIC : SPLIT_GO_MAGIC;
+    const uint32_t ack_magic = phase == SPLIT_START_STEP_ARM ? SPLIT_ACK_MAGIC : SPLIT_GO_ACK_MAGIC;
+    for ( int i = 0; i < total; ++i )
+        if ( !split_server_send(server, clients[i].slot, send_magic, (uint32_t) i, 0, 1, run_id,
+                                ROCKETNET_RELIABILITY_RELIABLE_ORDERED, SPLIT_CONTROL_CHANNEL) )
+        { result->offer_refusals++; return 0; }
+    rocketnet_server_send_packets(server);
+    const double phase_start = rocketnet_time();
+    enum split_start_verdict_t verdict = SPLIT_START_WAITING;
+    int acked = 0, disconnected = 0;
+    while ( !quit && verdict == SPLIT_START_WAITING )
+    {
+        rocketnet_server_update(server, rocketnet_time());
+        const struct rocketnet_message_batch_t * batch = NULL;
+        while ( (batch = rocketnet_server_receive_messages(server)) != NULL )
+            for ( int j = 0; j < batch->num_messages; ++j )
+            {
+                struct split_message_t message;
+                if ( !split_verify_message(batch->data[j], batch->bytes[j], ack_magic, run_id, &message) ||
+                     message.combo != 0 || message.seq != 1 || message.client >= (uint32_t) total ||
+                     batch->channel[j] != SPLIT_CONTROL_CHANNEL ||
+                     batch->client_index[j] < 0 || batch->client_index[j] >= total ||
+                     clients[message.client].slot != batch->client_index[j] ||
+                     rocketnet_server_client_id(server, batch->client_index[j]) != (uint64_t) message.client + 1 )
+                { result->protocol_errors++; continue; }
+                int * flag = phase == SPLIT_START_STEP_ARM ? &clients[message.client].arm_acked : &clients[message.client].go_acked;
+                if ( *flag ) { result->protocol_errors++; continue; }
+                *flag = 1;
+            }
+        acked = 0;
+        disconnected = 0;
+        for ( int i = 0; i < total; ++i )
+        {
+            const int done = phase == SPLIT_START_STEP_ARM ? clients[i].arm_acked : clients[i].go_acked;
+            acked += done;
+            if ( !done && !split_server_client_live(server, clients, i) ) disconnected++;
+        }
+        rocketnet_server_send_packets(server);
+        verdict = split_server_start_update(rocketnet_time(), phase_start, total, acked, disconnected);
+        if ( verdict == SPLIT_START_WAITING ) rocketnet_sleep(0.001);
+    }
+    if ( verdict != SPLIT_START_COMPLETE && !quit )
+    {
+        result->unexpected_disconnects += disconnected;
+        split_print_server_waiting(server, clients, total, run_id, split_start_step_name(phase),
+                                   split_start_verdict_name(verdict), total - acked, disconnected,
+                                   phase == SPLIT_START_STEP_ARM ? split_server_arm_done : split_server_go_done);
+    }
+    return verdict == SPLIT_START_COMPLETE && !result->protocol_errors && !quit;
+}
+
 static int split_server_run( int total, int duration, uint64_t run_id, const char * server_endpoint,
                              const char * ready_ipv4, double aggregate_limit_kbps )
 {
@@ -665,6 +766,9 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
         if ( now - ready_time >= 60.0 || (first_connected >= 0.0 && now - first_connected >= LOAD_CONNECT_DEADLINE_S) )
         {
             result.connect_seconds = first_connected < 0.0 ? now - ready_time : now - first_connected;
+            for ( int i = 0; i < total; ++i ) clients[i].connected = split_server_client_live(server, clients, i);
+            split_print_server_waiting(server, clients, total, run_id, "connect", "timed_out",
+                                       total - result.connected, 0, split_server_connected_done);
             goto cleanup;
         }
         rocketnet_sleep(0.001);
@@ -672,67 +776,9 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
     if ( !all_connected || quit ) goto cleanup;
 
     const double arm_start = rocketnet_time();
-    for ( int i = 0; i < total; ++i )
-        if ( !split_server_send(server, clients[i].slot, SPLIT_ARM_MAGIC,
-                                (uint32_t) i, 0, 1, run_id,
-                                ROCKETNET_RELIABILITY_RELIABLE_ORDERED, SPLIT_CONTROL_CHANNEL) )
-        { result.offer_refusals++; goto cleanup; }
-    rocketnet_server_send_packets(server);
-    int acked = 0;
-    while ( !quit && acked < total && rocketnet_time() - arm_start < SPLIT_START_DEADLINE_S )
-    {
-        rocketnet_server_update(server, rocketnet_time());
-        const struct rocketnet_message_batch_t * batch = NULL;
-        while ( (batch = rocketnet_server_receive_messages(server)) != NULL )
-            for ( int j = 0; j < batch->num_messages; ++j )
-            {
-                struct split_message_t message;
-                if ( !split_verify_message(batch->data[j], batch->bytes[j], SPLIT_ACK_MAGIC, run_id, &message) ||
-                     message.combo != 0 || message.seq != 1 || message.client >= (uint32_t) total ||
-                     batch->channel[j] != SPLIT_CONTROL_CHANNEL ||
-                     batch->client_index[j] < 0 || batch->client_index[j] >= total ||
-                     clients[message.client].slot != batch->client_index[j] ||
-                     rocketnet_server_client_id(server, batch->client_index[j]) != (uint64_t) message.client + 1 )
-                { result.protocol_errors++; continue; }
-                if ( clients[message.client].arm_acked ) { result.protocol_errors++; continue; }
-                clients[message.client].arm_acked = 1;
-                acked++;
-            }
-        rocketnet_server_send_packets(server);
-        rocketnet_sleep(0.001);
-    }
-    if ( acked != total || result.protocol_errors || quit ) goto cleanup;
-    for ( int i = 0; i < total; ++i )
-        if ( !split_server_send(server, clients[i].slot, SPLIT_GO_MAGIC,
-                                (uint32_t) i, 0, 1, run_id,
-                                ROCKETNET_RELIABILITY_RELIABLE_ORDERED, SPLIT_CONTROL_CHANNEL) )
-        { result.offer_refusals++; goto cleanup; }
-    rocketnet_server_send_packets(server);
-    const double go_start = rocketnet_time();
-    int go_acked = 0;
-    while ( !quit && go_acked < total && rocketnet_time() - go_start < SPLIT_START_DEADLINE_S )
-    {
-        rocketnet_server_update(server, rocketnet_time());
-        const struct rocketnet_message_batch_t * batch = NULL;
-        while ( (batch = rocketnet_server_receive_messages(server)) != NULL )
-            for ( int j = 0; j < batch->num_messages; ++j )
-            {
-                struct split_message_t message;
-                if ( !split_verify_message(batch->data[j], batch->bytes[j], SPLIT_GO_ACK_MAGIC, run_id, &message) ||
-                     message.combo != 0 || message.seq != 1 || message.client >= (uint32_t) total ||
-                     batch->channel[j] != SPLIT_CONTROL_CHANNEL ||
-                     batch->client_index[j] < 0 || batch->client_index[j] >= total ||
-                     clients[message.client].slot != batch->client_index[j] ||
-                     rocketnet_server_client_id(server, batch->client_index[j]) != (uint64_t) message.client + 1 )
-                { result.protocol_errors++; continue; }
-                if ( clients[message.client].go_acked ) { result.protocol_errors++; continue; }
-                clients[message.client].go_acked = 1;
-                go_acked++;
-            }
-        rocketnet_server_send_packets(server);
-        rocketnet_sleep(0.001);
-    }
-    if ( go_acked != total || result.protocol_errors || quit ) goto cleanup;
+    if ( !split_server_start_phase(server, clients, total, run_id, SPLIT_START_STEP_ARM, &result) ||
+         !split_server_start_phase(server, clients, total, run_id, SPLIT_START_STEP_GO, &result) )
+        goto cleanup;
     for ( int i = 0; i < total; ++i )
     {
         struct rocketnet_server_client_stats_t stats;
@@ -962,6 +1008,34 @@ cleanup:
     return pass ? 0 : 1;
 }
 
+/* connecting names the clients not yet connected; otherwise the start phase
+ * is the earliest step any local client has not passed. */
+static void split_print_shard_waiting( const struct split_client_t * clients, int first, int count, uint64_t run_id,
+                                       int connecting, const char * reason, int waiting, int disconnected )
+{
+    enum split_start_step_t phase = SPLIT_START_STEP_RUNNING;
+    for ( int i = 0; i < count; ++i )
+    {
+        const enum split_start_step_t step = split_start_client_step(&clients[i].startup);
+        if ( step < phase ) phase = step;
+    }
+    split_print_start_failure("client-shard", run_id, first, count,
+                              connecting ? "connect" : split_start_step_name(phase), reason, waiting, disconnected);
+    int named = 0;
+    for ( int i = 0; i < count && named < SPLIT_START_NAMED_CLIENTS; ++i )
+    {
+        if ( connecting ? clients[i].connected : clients[i].startup.running ) continue;
+        named++;
+        struct rocketnet_client_stats_t stats;
+        rocketnet_client_stats(clients[i].api, &stats);
+        printf("split_start_waiting: role=client-shard run_id=%016" PRIx64 " client=%d phase=%s state=%s "
+               "packets_sent=%" PRIu64 " packets_received=%" PRIu64 " messages_resent=%" PRIu64 "\n", run_id, first + i,
+               split_start_step_name(split_start_client_step(&clients[i].startup)),
+               rocketnet_client_state_name(rocketnet_client_state(clients[i].api)),
+               stats.packets_sent, stats.packets_received, stats.messages_resent);
+    }
+}
+
 static int split_client_run( int total, int duration, uint64_t run_id, int first, int count,
                              const char * address, const uint8_t key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES],
                              double aggregate_limit_kbps )
@@ -1040,52 +1114,31 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
         rocketnet_sleep(0.001);
     }
     result.connect_seconds = rocketnet_time() - connect_start;
+    if ( result.connected != count && !quit )
+    {
+        int refused = 0;
+        for ( int i = 0; i < count; ++i )
+            if ( (int) rocketnet_client_state(clients[i].api) < 0 ) refused++;
+        split_print_shard_waiting(clients, first, count, run_id, 1, "timed_out", count - result.connected, refused);
+    }
     if ( result.connected != count || result.connect_seconds > LOAD_CONNECT_DEADLINE_S || quit ) goto cleanup;
 
-    /* All shard clients must arm within ten seconds of local connection.
-     * RUN is emitted by the server only after every shard has acknowledged
-     * GO, so machine clock skew never shortens the traffic interval. */
+    /* One start wait for ARM, GO and RUN, bounded from the shard's own
+     * connection by every server window (tools/load_split_barrier.h,
+     * modelled in tla/SplitStart.tla): the shard that connects first waits
+     * for the last, and the server decides a start that fails. RUN is emitted only after every shard has
+     * acknowledged GO, so machine clock skew never shortens the traffic
+     * interval. */
+    struct split_shard_start_t start;
+    split_shard_start_begin(&start, rocketnet_time(), LOAD_CONNECT_DEADLINE_S,
+                            (double) config.reliable_message_timeout_ms / 1000.0);
     const double arm_start = rocketnet_time();
-    int armed = 0;
-    while ( !quit && armed < count && rocketnet_time() - arm_start < SPLIT_START_DEADLINE_S )
-    {
-        armed = 0;
-        for ( int i = 0; i < count; ++i )
-        {
-            rocketnet_client_update(clients[i].api, rocketnet_time());
-            const struct rocketnet_message_batch_t * batch = NULL;
-            while ( (batch = rocketnet_client_receive_messages(clients[i].api)) != NULL )
-                split_client_startup_batch(&result, &clients[i], (uint32_t) (first + i), run_id, batch);
-            split_client_startup_answer(&result, &clients[i], (uint32_t) (first + i), run_id);
-            armed += clients[i].startup.armed;
-            rocketnet_client_send_packets(clients[i].api);
-        }
-        rocketnet_sleep(0.001);
-    }
-    if ( armed != count || result.protocol_errors || result.offer_refusals || quit ) goto cleanup;
-    const double go_start = rocketnet_time();
-    int gone = 0;
-    while ( !quit && gone < count && rocketnet_time() - go_start < SPLIT_START_DEADLINE_S )
-    {
-        gone = 0;
-        for ( int i = 0; i < count; ++i )
-        {
-            rocketnet_client_update(clients[i].api, rocketnet_time());
-            const struct rocketnet_message_batch_t * batch = NULL;
-            while ( (batch = rocketnet_client_receive_messages(clients[i].api)) != NULL )
-                split_client_startup_batch(&result, &clients[i], (uint32_t) (first + i), run_id, batch);
-            split_client_startup_answer(&result, &clients[i], (uint32_t) (first + i), run_id);
-            gone += clients[i].startup.go;
-            rocketnet_client_send_packets(clients[i].api);
-        }
-        rocketnet_sleep(0.001);
-    }
-    if ( gone != count || result.protocol_errors || result.offer_refusals || quit ) goto cleanup;
-    const double run_wait_start = rocketnet_time();
-    int running = 0;
-    while ( !quit && running < count && rocketnet_time() - run_wait_start < SPLIT_START_DEADLINE_S )
+    enum split_start_verdict_t start_verdict = SPLIT_START_WAITING;
+    int running = 0, start_disconnected = 0;
+    while ( !quit && !result.protocol_errors && !result.offer_refusals && start_verdict == SPLIT_START_WAITING )
     {
         running = 0;
+        start_disconnected = 0;
         for ( int i = 0; i < count; ++i )
         {
             rocketnet_client_update(clients[i].api, rocketnet_time());
@@ -1094,11 +1147,19 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
                 split_client_startup_batch(&result, &clients[i], (uint32_t) (first + i), run_id, batch);
             split_client_startup_answer(&result, &clients[i], (uint32_t) (first + i), run_id);
             running += clients[i].startup.running;
+            if ( rocketnet_client_state(clients[i].api) != ROCKETNET_CLIENT_STATE_CONNECTED ) start_disconnected++;
             rocketnet_client_send_packets(clients[i].api);
         }
-        rocketnet_sleep(0.001);
+        start_verdict = split_shard_start_update(&start, rocketnet_time(), count, running, start_disconnected);
+        if ( start_verdict == SPLIT_START_WAITING ) rocketnet_sleep(0.001);
     }
-    if ( running != count || result.protocol_errors || quit ) goto cleanup;
+    if ( start_verdict != SPLIT_START_COMPLETE && start_verdict != SPLIT_START_WAITING && !quit )
+    {
+        result.unexpected_disconnects += start_disconnected;
+        split_print_shard_waiting(clients, first, count, run_id, 0, split_start_verdict_name(start_verdict),
+                                  count - running, start_disconnected);
+    }
+    if ( start_verdict != SPLIT_START_COMPLETE || result.protocol_errors || result.offer_refusals || quit ) goto cleanup;
     result.startup_complete = 1;
     result.start_seconds = rocketnet_time() - arm_start;
     const double traffic_start = rocketnet_time();

@@ -77,6 +77,22 @@ A client answers ARM and GO only once it reports CONNECTED: its transport
 hands payloads from before then, and a send before CONNECTED is dropped, so
 an ARM that arrives in that window is answered at the first update after it
 connects (`tools/load_split_startup.h`, `tools/test_load_split_startup.c`).
+Every start message is reliable ordered: a lost packet is the SDK's resend
+and costs delay inside these windows, never the message. The server is the
+one authority on the start windows. A client shard waits for ARM, GO and RUN
+against one deadline from its own connection: the server's 10-second
+population window, both 10-second start windows, and one client
+`reliable_message_timeout_ms` for RUN itself
+(`tools/load_split_barrier.h`, modelled in `tla/SplitStart.tla`). Shards
+finish setup at different times, and the first to connect waits for the
+last; its own clock never cuts short a start the server would complete.
+Either role ends the wait at once when a client it still waits for
+disconnects. A start that does not complete prints one `split_start_failure:`
+line naming the role, the shard's first client and count, the phase
+(`connect`, `arm`, `go` or `run`), the reason (`timed_out` or
+`disconnected`) and the number of clients still owed, followed by up to 32
+`split_start_waiting:` lines, one per owed client, with that client's state
+and packet counters.
 Clients begin their own full monotonic traffic window after receiving RUN;
 machine UTC clocks are only reported for correlation, never used to shorten
 the duration. Each role then runs exactly the requested traffic duration and
