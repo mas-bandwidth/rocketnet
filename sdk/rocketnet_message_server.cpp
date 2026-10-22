@@ -146,6 +146,33 @@ struct rn_message_connection_t * rn_message_object_connection( struct rn_message
     return &object->connections[index];
 }
 
+#if ROCKETNET_DEV
+void rn_message_object_delivery_capture( struct rn_message_object_t * object, int index, struct rocketnet_delivery_capture_t * capture )
+{
+    if ( !object || !capture || index < 0 || index >= object->num_connections )
+        return;
+    if ( object->hot_connections[index].state != RN_MESSAGE_CONNECTION_CONNECTED )
+        return;
+    const struct rn_ordered_t * ordered = &object->connections[index].ordered;
+    capture->reliable_unacked = ordered->send.next >= ordered->send.U ? ordered->send.next - ordered->send.U : 0;
+    capture->reliable_resend_queued = ordered->ack.resend_count;
+    capture->reliable_oldest_unacked_age_seconds = capture->reliable_unacked > 0 && ordered->ack.has_oldest ?
+                                                   object->time - ordered->ack.oldest_first_send : -1.0;
+    capture->srtt_seconds = ordered->ack.srtt;
+    capture->resend_delay_seconds = ordered->ack.resend_delay;
+    capture->window_stalled = ordered->send.stalled ? 1 : 0;
+    capture->budget_reliable_waiting = ordered->budget ? ordered->budget->reliable_waiting : 0;
+    capture->budget_tokens = ordered->budget ? ordered->budget->tokens : 0.0;
+}
+
+void rocketnet_message_server_delivery_capture( struct rocketnet_message_server_t * server, int client_index, struct rocketnet_delivery_capture_t * capture )
+{
+    if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( capture ) )
+        return;
+    rn_message_object_delivery_capture( &server->object, client_index, capture );
+}
+#endif // #if ROCKETNET_DEV
+
 // ---------------------------------------------------------------
 //                     create and destroy
 // ---------------------------------------------------------------

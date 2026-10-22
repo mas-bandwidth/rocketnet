@@ -2476,6 +2476,26 @@ const struct rocketnet_counters_t * rocketnet_client_transport_counters( rocketn
     return &client_transport->counters;
 }
 
+#if ROCKETNET_DEV
+// The transport's half of the delivery capture (rocketnet_layers.h): plain
+// copies of the protocol's receive window, send sequence and ack endpoint, on
+// the main thread outside update. Not connected leaves the capture untouched.
+void rocketnet_client_transport_delivery_capture( rocketnet_client_transport_t * client_transport, struct rocketnet_delivery_capture_t * capture )
+{
+    if ( !rocketnet_api_null_guard( client_transport ) || !rocketnet_api_null_guard( capture ) )
+        return;
+    const struct rocketnet_client_protocol_t * protocol = &client_transport->protocol;
+    if ( protocol->state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+        return;
+    capture->connected = 1;
+    capture->last_receive_age_seconds = protocol->last_receive_time > 0.0 ? client_transport->time - protocol->last_receive_time : -1.0;
+    capture->highest_received_sequence = protocol->replay_session.highest_opened;
+    capture->highest_sent_sequence = protocol->send_sequence_session > 0 ? protocol->send_sequence_session - 1 : 0;
+    capture->largest_acked_sequence = protocol->ack.largest_acked_sequence;
+    capture->keep_alive_acked = protocol->ack.keep_alive_acked ? 1 : 0;
+}
+#endif // #if ROCKETNET_DEV
+
 int rocketnet_client_transport_acked_packets( rocketnet_client_transport_t * client_transport, const uint64_t ** packet_ids )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )

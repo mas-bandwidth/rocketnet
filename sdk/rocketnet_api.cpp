@@ -2013,6 +2013,63 @@ void rocketnet_server_stats( const struct rocketnet_server_t * server, struct ro
     stats->messages_dropped_not_connected = counts[RN_SERVER_NOT_CONNECTED_DROPS];
 }
 
+#if ROCKETNET_DEV
+// The delivery capture and counter blocks of rocketnet_layers.h: development
+// builds only, for the load tools; not public API.
+void rocketnet_server_delivery_capture( struct rocketnet_server_t * server, int client_index, struct rocketnet_delivery_capture_t * capture )
+{
+    if ( !rocketnet_api_null_guard( capture ) )
+        return;
+    memset( capture, 0, sizeof( *capture ) );
+    if ( !rocketnet_api_null_guard( server ) )
+        return;
+    int slot;
+    if ( !rn_server_slot( server, client_index, &slot ) || !server->running )
+        return;
+    rocketnet_server_transport_delivery_capture( rn_server_transport( server ), slot, capture );
+    if ( capture->connected )
+        rocketnet_message_server_delivery_capture( server->running, slot, capture );
+}
+
+void rocketnet_client_delivery_capture( struct rocketnet_client_t * client, struct rocketnet_delivery_capture_t * capture )
+{
+    if ( !rocketnet_api_null_guard( capture ) )
+        return;
+    memset( capture, 0, sizeof( *capture ) );
+    if ( !rocketnet_api_null_guard( client ) || !client->connection )
+        return;
+    rocketnet_client_transport_delivery_capture( rocketnet_message_client_transport( client->connection ), capture );
+    if ( capture->connected )
+        rocketnet_message_client_delivery_capture( client->connection, capture );
+}
+
+const struct rocketnet_counters_t * rocketnet_server_transport_counter_block( struct rocketnet_server_t * server )
+{
+    struct rocketnet_message_server_t * held = rocketnet_server_message_server( server );
+    struct rocketnet_server_transport_t * transport = held ? rocketnet_message_server_transport( held ) : NULL;
+    return transport ? rocketnet_server_transport_counters( transport ) : NULL;
+}
+
+const struct rocketnet_counters_t * rocketnet_server_message_counter_block( struct rocketnet_server_t * server )
+{
+    struct rocketnet_message_server_t * held = rocketnet_server_message_server( server );
+    return held ? rocketnet_message_server_counters( held ) : NULL;
+}
+
+const struct rocketnet_counters_t * rocketnet_client_transport_counter_block( struct rocketnet_client_t * client )
+{
+    struct rocketnet_message_client_t * connection = client ? client->connection : NULL;
+    struct rocketnet_client_transport_t * transport = connection ? rocketnet_message_client_transport( connection ) : NULL;
+    return transport ? rocketnet_client_transport_counters( transport ) : NULL;
+}
+
+const struct rocketnet_counters_t * rocketnet_client_message_counter_block( struct rocketnet_client_t * client )
+{
+    struct rocketnet_message_client_t * connection = client ? client->connection : NULL;
+    return connection ? rocketnet_message_client_counters( connection ) : NULL;
+}
+#endif // #if ROCKETNET_DEV
+
 void rocketnet_server_client_stats( const struct rocketnet_server_t * server, int client_index, struct rocketnet_server_client_stats_t * stats )
 {
     if ( !rocketnet_api_null_guard( stats ) )

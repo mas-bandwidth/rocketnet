@@ -276,6 +276,13 @@ void rn_message_object_kick( struct rn_message_object_t * object, int index, int
 // The connection's state, for the unit suite.
 struct rn_message_connection_t * rn_message_object_connection( struct rn_message_object_t * object, int index );
 
+#if ROCKETNET_DEV
+// The message half of the delivery capture (rocketnet_layers.h) for one
+// connection: the ordered path's window, resend FIFOs, RTT estimate and send
+// budget. A connection that is not CONNECTED leaves the capture untouched.
+void rn_message_object_delivery_capture( struct rn_message_object_t * object, int index, struct rocketnet_delivery_capture_t * capture );
+#endif // #if ROCKETNET_DEV
+
 // The client and server links over the real transports.
 void rn_message_client_link( struct rn_message_link_t * link, struct rocketnet_client_transport_t * transport );
 void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_server_transport_t * transport );
