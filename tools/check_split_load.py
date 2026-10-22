@@ -69,6 +69,39 @@ def expected(fields, **values):
             raise ValueError(f"{key}: expected {value}, got {fields.get(key)}")
 
 
+def validate_resources(fields):
+    """Every thread and handle the role took is returned.
+
+    census_v1 (load_census.h): after one warm cycle, no thread or handle may
+    survive from post_init to pre_term or from pre_init to post_term, by
+    identity. Operating-system thread pool workers are reported in
+    os_pool_threads and never counted. Without a census the counts must
+    return to both phase baselines (phase_counts_v1). The counts are
+    reported either way.
+    """
+    for name in ("fds", "threads"):
+        for phase in ("pre_init", "post_init", "pre_term", "post_term"):
+            integer(fields, f"{name}_{phase}")
+    schema = fields.get("resource_baseline_schema")
+    if schema == "census_v1":
+        expected(fields, warm_cycle=1)
+        for name in ("survivor_threads_operational", "survivor_handles_operational",
+                     "survivor_threads_total", "survivor_handles_total"):
+            if integer(fields, name) != 0:
+                raise ValueError(f"{name}: resource survived its phase")
+        integer(fields, "os_pool_threads")
+        return
+    if schema != "phase_counts_v1":
+        raise ValueError(f"resource_baseline_schema: unknown {schema}")
+    for name in ("fds", "threads"):
+        pre_init = integer(fields, f"{name}_pre_init")
+        post_init = integer(fields, f"{name}_post_init")
+        pre_term = integer(fields, f"{name}_pre_term")
+        post_term = integer(fields, f"{name}_post_term")
+        if post_init != pre_term or pre_init != post_term:
+            raise ValueError(f"{name}: resource phase mismatch")
+
+
 def validate_receipt(fields, role, run_id, total, duration, limit):
     expected(fields, schema="split_v1", role=role, run_id=run_id, total=total,
              duration_target_s=duration, profile="default", payload_bytes=32,
@@ -110,13 +143,7 @@ def validate_receipt(fields, role, run_id, total, duration, limit):
         integer(fields, name, 1)
     if integer(fields, "traffic_end_utc_s") < integer(fields, "traffic_start_utc_s"):
         raise ValueError("local UTC timestamps reversed")
-    for name in ("fds", "threads"):
-        pre_init = integer(fields, f"{name}_pre_init")
-        post_init = integer(fields, f"{name}_post_init")
-        pre_term = integer(fields, f"{name}_pre_term")
-        post_term = integer(fields, f"{name}_post_term")
-        if post_init != pre_term or pre_init != post_term:
-            raise ValueError(f"{name}: resource phase mismatch")
+    validate_resources(fields)
     if integer(fields, "term_status_code") != 0:
         raise ValueError("SDK termination failed")
     offered = ("c2s_offered", "s2c_offered")

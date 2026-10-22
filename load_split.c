@@ -228,10 +228,13 @@ static void split_client_config( struct rocketnet_client_config_t * config )
 
 static int split_plan( const char * role, int total, int local )
 {
+    load_warm_cycle();
     const long fds_pre_init = count_open_fds(), threads_pre_init = count_threads();
+    LOAD_CENSUS(LOAD_PRE_INIT);
     const enum rocketnet_status_t init_status = rocketnet_init(NULL, NULL, NULL);
     if ( init_status != ROCKETNET_STATUS_OK ) return 1;
     const long fds_post_init = count_open_fds(), threads_post_init = count_threads();
+    LOAD_CENSUS(LOAD_POST_INIT);
     struct rocketnet_server_config_t server_config;
     struct rocketnet_client_config_t client_config;
     split_server_config(&server_config, total);
@@ -242,21 +245,27 @@ static int split_plan( const char * role, int total, int local )
         (client_bytes == 0 || (size_t) local <= SIZE_MAX / client_bytes);
     const size_t public_bytes = valid ? server_bytes + (size_t) local * client_bytes : 0;
     const long fds_pre_term = count_open_fds(), threads_pre_term = count_threads();
+    LOAD_CENSUS(LOAD_PRE_TERM);
     const enum rocketnet_status_t term_status = rocketnet_term();
     const long fds_post_term = count_open_fds(), threads_post_term = count_threads();
-    const int resources = fds_pre_init >= 0 && threads_pre_init >= 0 && fds_post_init >= 0 &&
-        threads_post_init >= 0 && fds_pre_term >= 0 && threads_pre_term >= 0 &&
-        fds_post_init == fds_pre_term && threads_post_init == threads_pre_term &&
-        fds_post_term == fds_pre_init && threads_post_term == threads_pre_init;
+    LOAD_CENSUS(LOAD_POST_TERM);
+    struct load_census_survivors_t operational, whole;
+    int census = 0;
+    const int resources = load_resource_verdict(role, fds_pre_init, fds_post_init, fds_pre_term, fds_post_term,
+                                                 threads_pre_init, threads_post_init, threads_pre_term, threads_post_term,
+                                                 &operational, &whole, &census);
     const int pass = valid && resources && term_status == ROCKETNET_STATUS_OK;
     printf("split_plan: role=%s total=%d local=%d server_public_required_bytes=%zu "
            "client_public_required_bytes=%zu total_public_required_bytes=%zu "
            "scope=create_only transport_memory=excluded native_resources=excluded "
            "fds_pre_init=%ld fds_post_init=%ld fds_pre_term=%ld fds_post_term=%ld "
            "threads_pre_init=%ld threads_post_init=%ld threads_pre_term=%ld threads_post_term=%ld "
-           "term_status_code=%d verdict=%s\n", role, total, local, server_bytes,
+           "resource_baseline_schema=%s warm_cycle=1 survivor_threads=%ld survivor_handles=%ld "
+           "os_pool_threads=%ld term_status_code=%d verdict=%s\n", role, total, local, server_bytes,
            client_bytes, public_bytes, fds_pre_init, fds_post_init, fds_pre_term, fds_post_term,
            threads_pre_init, threads_post_init, threads_pre_term, threads_post_term,
+           census ? "census_v1" : "phase_counts_v1", whole.threads + operational.threads,
+           whole.handles + operational.handles, whole.os_pool_threads,
            (int) term_status, pass ? "PASS" : "FAIL");
     return pass ? 0 : 1;
 }
@@ -503,10 +512,11 @@ static int split_print_receipt( const char * role, uint64_t run_id, int total, i
                                  long threads_pre_term, long threads_post_term,
                                  enum rocketnet_status_t term_status, const char * transport )
 {
-    const int resources = fds_pre_init >= 0 && fds_post_init >= 0 && fds_pre_term >= 0 && fds_post_term >= 0 &&
-        threads_pre_init >= 0 && threads_post_init >= 0 && threads_pre_term >= 0 && threads_post_term >= 0 &&
-        fds_post_init == fds_pre_term && fds_pre_init == fds_post_term &&
-        threads_post_init == threads_pre_term && threads_pre_init == threads_post_term &&
+    struct load_census_survivors_t operational, whole;
+    int census = 0;
+    const int resources = load_resource_verdict(role, fds_pre_init, fds_post_init, fds_pre_term, fds_post_term,
+                                                 threads_pre_init, threads_post_init, threads_pre_term, threads_post_term,
+                                                 &operational, &whole, &census) &&
         term_status == ROCKETNET_STATUS_OK;
     const int population = result->connected == count;
     const int correctness = result->startup_complete && result->traffic_complete && result->drain_complete &&
@@ -538,6 +548,9 @@ static int split_print_receipt( const char * role, uint64_t run_id, int total, i
            "workload_scope=traffic_plus_drain transport=%s profile=default payload_bytes=32 "
            "rate_target_hz=1 fds_pre_init=%ld fds_post_init=%ld fds_pre_term=%ld fds_post_term=%ld "
            "threads_pre_init=%ld threads_post_init=%ld threads_pre_term=%ld threads_post_term=%ld "
+           "resource_baseline_schema=%s warm_cycle=1 survivor_threads_operational=%ld "
+           "survivor_handles_operational=%ld survivor_threads_total=%ld survivor_handles_total=%ld "
+           "os_pool_threads=%ld "
            "term_status_code=%d resource_baseline=%s delivery_verdict=%s load_verdict=%s "
            "bandwidth_verdict=%s timing_verdict=%s timing_budget_us=100 "
            "timing_budget_basis=server_update_send_p99_upper verdict=%s\n",
@@ -556,6 +569,8 @@ static int split_print_receipt( const char * role, uint64_t run_id, int total, i
            result->aggregate_up_kbps, result->aggregate_down_kbps, aggregate_limit_kbps, duration,
            transport ? transport : "none", fds_pre_init, fds_post_init, fds_pre_term, fds_post_term,
            threads_pre_init, threads_post_init, threads_pre_term, threads_post_term,
+           census ? "census_v1" : "phase_counts_v1", operational.threads, operational.handles,
+           whole.threads, whole.handles, whole.os_pool_threads,
            (int) term_status, resources ? "PASS" : "FAIL", correctness ? "PASS" : "FAIL",
            result->load_complete ? "PASS" : "FAIL", bandwidth ? "PASS" : "FAIL",
            strcmp(role, "server") == 0 ? (timing ? "PASS" : "FAIL") : "NA",
@@ -573,7 +588,9 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
     struct load_timing_t timing = { 0 };
     char transport[32] = "none";
     int api_started = 0, timing_started = 0, pass = 0;
+    load_warm_cycle();
     const long fds_pre_init = count_open_fds(), threads_pre_init = count_threads();
+    LOAD_CENSUS(LOAD_PRE_INIT);
     long fds_post_init = -1, threads_post_init = -1, fds_pre_term = -1, threads_pre_term = -1;
     long fds_post_term = -1, threads_post_term = -1;
     enum rocketnet_status_t term_status = (enum rocketnet_status_t) -1;
@@ -588,6 +605,7 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
     api_started = 1;
     fds_post_init = count_open_fds();
     threads_post_init = count_threads();
+    LOAD_CENSUS(LOAD_POST_INIT);
     struct rocketnet_server_config_t config;
     split_server_config(&config, total);
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
@@ -904,9 +922,11 @@ cleanup:
     {
         fds_pre_term = count_open_fds();
         threads_pre_term = count_threads();
+        LOAD_CENSUS(LOAD_PRE_TERM);
         term_status = rocketnet_term();
         fds_post_term = count_open_fds();
         threads_post_term = count_threads();
+        LOAD_CENSUS(LOAD_POST_TERM);
     }
     if ( timing_started )
     {
@@ -946,7 +966,9 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
     struct split_client_t * clients = NULL;
     char transport[32] = "none";
     int api_started = 0, traffic_sampled = 0, pass = 0;
+    load_warm_cycle();
     const long fds_pre_init = count_open_fds(), threads_pre_init = count_threads();
+    LOAD_CENSUS(LOAD_PRE_INIT);
     long fds_post_init = -1, threads_post_init = -1, fds_pre_term = -1, threads_pre_term = -1;
     long fds_post_term = -1, threads_post_term = -1;
     enum rocketnet_status_t term_status = (enum rocketnet_status_t) -1;
@@ -958,6 +980,7 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
     api_started = 1;
     fds_post_init = count_open_fds();
     threads_post_init = count_threads();
+    LOAD_CENSUS(LOAD_POST_INIT);
     struct rocketnet_client_config_t config;
     split_client_config(&config);
     clients = (struct split_client_t *) calloc((size_t) count, sizeof(*clients));
@@ -1233,9 +1256,11 @@ cleanup:
     {
         fds_pre_term = count_open_fds();
         threads_pre_term = count_threads();
+        LOAD_CENSUS(LOAD_PRE_TERM);
         term_status = rocketnet_term();
         fds_post_term = count_open_fds();
         threads_post_term = count_threads();
+        LOAD_CENSUS(LOAD_POST_TERM);
     }
     pass = split_print_receipt("client-shard", run_id, total, first, count, duration,
                                aggregate_limit_kbps, &result, fds_pre_init, fds_post_init,

@@ -46,9 +46,12 @@ def receipt(role, first, count, total=2):
                 wire_scope="pre_run_to_traffic_end_conservative",
                 workload_scope="traffic_plus_drain", transport="portable",
                 profile="default", payload_bytes=32, rate_target_hz=1,
-                fds_pre_init=10, fds_post_init=11, fds_pre_term=11, fds_post_term=10,
-                threads_pre_init=2, threads_post_init=3,
-                threads_pre_term=3, threads_post_term=2,
+                fds_pre_init=97, fds_post_init=101, fds_pre_term=103, fds_post_term=99,
+                threads_pre_init=4, threads_post_init=4,
+                threads_pre_term=6, threads_post_term=6,
+                resource_baseline_schema="census_v1", warm_cycle=1,
+                survivor_threads_operational=0, survivor_handles_operational=0,
+                survivor_threads_total=0, survivor_handles_total=0, os_pool_threads=2,
                 term_status_code=0, resource_baseline="PASS", delivery_verdict="PASS",
                 load_verdict="PASS", bandwidth_verdict="PASS",
                 timing_verdict="PASS" if server else "NA", timing_budget_us=100,
@@ -210,10 +213,40 @@ class SplitReceiptTests(unittest.TestCase):
             self.check(server.replace("direction=c2s combo=0 sent=0 received=8",
                                       "direction=c2s combo=0 sent=0 received=0", 1), shards)
 
-    def test_resource_mismatch(self):
+    def test_census_accepts_operating_system_count_churn(self):
+        # captain 2026-10-22: counts 97/101/103/99 and 4/4/6/6 with every
+        # survivor an OS thread pool worker; the census, not the count, decides
         server, shards = fixture()
+        self.check(server, shards)
+
+    def test_census_survivor_handle_fails(self):
+        server, shards = fixture()
+        with self.assertRaisesRegex(ValueError, "survivor_handles_total: resource survived"):
+            self.check(server.replace("survivor_handles_total=0", "survivor_handles_total=1"), shards)
+
+    def test_census_survivor_thread_fails(self):
+        server, shards = fixture()
+        with self.assertRaisesRegex(ValueError, "survivor_threads_operational: resource survived"):
+            self.check(server, [shards[0].replace("survivor_threads_operational=0",
+                                                  "survivor_threads_operational=1"), shards[1]])
+
+    def test_census_requires_warm_cycle(self):
+        server, shards = fixture()
+        with self.assertRaisesRegex(ValueError, "warm_cycle"):
+            self.check(server.replace("warm_cycle=1", "warm_cycle=0"), shards)
+
+    def test_unknown_resource_schema_fails(self):
+        server, shards = fixture()
+        with self.assertRaisesRegex(ValueError, "resource_baseline_schema"):
+            self.check(server.replace("resource_baseline_schema=census_v1",
+                                      "resource_baseline_schema=guess"), shards)
+
+    def test_resource_mismatch(self):
+        # without a census the counts must return to both phase baselines
+        server, shards = fixture()
+        server = server.replace("resource_baseline_schema=census_v1", "resource_baseline_schema=phase_counts_v1")
         with self.assertRaisesRegex(ValueError, "resource phase mismatch"):
-            self.check(server.replace("fds_pre_term=11", "fds_pre_term=12"), shards)
+            self.check(server, shards)
 
     def test_missing_timing(self):
         server, shards = fixture()

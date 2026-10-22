@@ -28,9 +28,17 @@ the server host, or the local number of clients on a shard host. It excludes
 transport connect/start allocations, OS resources, and process overhead.
 Provision and document a separate native/transport reserve before deployment.
 Do not substitute the same-process `LOAD_PLAN_ONLY` total for these role
-specific plans. Both role runs later compare exact pre-init/post-init,
-pre-term/post-term handle and thread phase pairs and require successful
-`rocketnet_term`.
+specific plans. Both role runs, and both planners, first pay one warm cycle
+(init, a one-client loopback server, one client, term) so first-use
+operating-system retention falls outside the measured cycle. They then take a
+census of threads and handles by identity at pre-init, post-init, pre-term and
+post-term (`load_census.h`) and fail on any thread or handle that survives
+post-init to pre-term or pre-init to post-term, and on a failed
+`rocketnet_term`. Windows process thread pool workers (start routine in ntdll)
+and their handles belong to the operating system: they are reported as
+`os_pool_threads` and never counted. The raw counts are still reported; they
+move with the operating system on Windows and are not the verdict
+(`resource_baseline_schema=census_v1`).
 
 Generate a fresh nonzero 16-digit hexadecimal run ID. Start the dedicated
 server first, using its concrete client-reachable IPv4 endpoint. The first
@@ -157,7 +165,7 @@ python3 tools/check_split_load.py --server server.log \
 
 The merger requires exactly one readiness and final receipt per role, a
 complete nonoverlapping shard partition, matching run metadata,
-full monotonic windows, bounded completion, strict cleanup phase equality,
+full monotonic windows, bounded completion, no resource survivor in either phase pair,
 the exact target offer count, finite complete timing, byte caps, auditable
 host allocations, and every per-client stream count to match across roles. It
 rejects missing, duplicated or mixed-run records. A local PASS alone is not
