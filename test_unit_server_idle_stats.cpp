@@ -47,7 +47,7 @@ static void test_server_idle_stats_skips_free_endpoints()
         const int phases = ( capacity + ROCKETNET_CLIENT_STATS_SLOTS_PER_UPDATE - 1 ) /
                            ROCKETNET_CLIENT_STATS_SLOTS_PER_UPDATE;
         for ( int phase = 0; phase < phases; phase++ )
-            calls += f.phase( phase );
+            calls += f.phase( (uint64_t) phase );
         printf( "capacity=%d free endpoint stats calls=%d\n", capacity, calls );
         rocketnet_unit_check( calls == 0 );
         rocketnet_unit_check( f.acks->endpoints[capacity - 1].rtt == 0.0f );
@@ -78,7 +78,7 @@ static void test_server_idle_stats_preserves_phase_reset_and_reuse()
                        ROCKETNET_CLIENT_STATS_SLOTS_PER_UPDATE;
     for ( int phase = 1; phase <= phases; phase++ )
     {
-        const int visited = f.phase( phase );
+        const int visited = f.phase( (uint64_t) phase );
         rocketnet_unit_check( visited == ( phase == 1 || phase == 6 ? 1 : 0 ) );
         calls += visited;
         if ( phase < 6 )
