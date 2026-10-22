@@ -159,6 +159,14 @@ struct rocketnet_client_transport_io_operations_t
     // failed send call, cumulative for the transport's life; the transport
     // surfaces it as SEND_FAILED when its counters are read.
     uint64_t (*send_failures)( void * transport );
+    // optional; main thread, once, at create, before the first send or
+    // receive. Connects the transport's socket to the one server the connect
+    // token selected, so the kernel drops datagrams from any other source
+    // (the client trusts only the server, TRANSPORT.md t11); the transport
+    // then sends only to that server. False refuses the transport. NULL for
+    // a transport with no socket of its own to connect (loopback: one
+    // in-process router shared by every endpoint).
+    bool (*connect)( void * transport, const rocketnet_address_t * server_address );
 };
 
 struct rocketnet_transport_backend_t

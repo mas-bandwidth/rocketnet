@@ -2420,7 +2420,7 @@ The client is in exactly one of the states of the table below. A state number is
 5. The client MUST enter requesting cookie (1), sending connection request (2), sending connection response (3) and connected (4) in that order, each at most once per attempt.
 6. While the client is in requesting cookie (1), sending connection request (2) or sending connection response (3), it MUST abandon the attempt for connect token expired (-7) once the token's lifetime, the difference between its expire timestamp and its create timestamp, has elapsed since the attempt began. The check does not apply in connected (4).
 7. In requesting cookie (1), sending connection request (2) and sending connection response (3), the client MUST retransmit its current packet at the send rate of [t3 Constants and registries](#t3) until a packet advances it or a deadline ends the attempt. A client MUST NOT send a packet because a packet arrived.
-8. In a positive state below connected (4), a client that has received no packet for the token's timeout MUST move to the state whose number is one less than the negation of its current state: requesting cookie (1) to cookie request timed out (-2), sending connection request (2) to connection request timed out (-3), sending connection response (3) to connection response timed out (-4). In connected (4) the same silence MUST move the client to connection timed out (-5).
+8. In a positive state below connected (4), a client that has accepted no authenticated packet for the token's timeout MUST move to the state whose number is one less than the negation of its current state: requesting cookie (1) to cookie request timed out (-2), sending connection request (2) to connection request timed out (-3), sending connection response (3) to connection response timed out (-4). In connected (4) the same silence MUST move the client to connection timed out (-5). An authenticated packet is one that opens under the attempt's keys: a connection challenge or a session packet. The timeout runs from the attempt's start until the first one, and a connection cookie never restarts it ([t11.1 Cookie processing](#t11.1)).
 9. A negative state MUST persist until the client disconnects. A disconnect from any state MUST perform the per-connection reset of [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) and MUST return the client to disconnected (0). From disconnected (0) the client MAY connect again with a new token.
 
 The state numbers:
@@ -2443,7 +2443,7 @@ The state numbers:
 <a id="t11.1"></a>
 ### t11.1. Cookie processing
 
-A connection cookie packet MUST be processed in requesting cookie (1) and sending connection request (2) and MUST be ignored in every other state. A client MUST refuse a packet whose size is not the cookie packet size of [t8 Packet formats](#t8), and MUST ignore one whose echoed connection salt is not the attempt's salt. A client that accepts a cookie MUST store its last 24 bytes, replacing any cookie already stored, and MUST send nothing in response. In requesting cookie (1) the accepted cookie MUST move the client to sending connection request (2); in sending connection request (2) the state MUST NOT change.
+A connection cookie packet MUST be processed in requesting cookie (1) and sending connection request (2) and MUST be ignored in every other state. A client MUST refuse a packet whose size is not the cookie packet size of [t8 Packet formats](#t8), and MUST ignore one whose echoed connection salt is not the attempt's salt. A client that accepts a cookie MUST store its last 24 bytes, replacing any cookie already stored, and MUST send nothing in response. In requesting cookie (1) the accepted cookie MUST move the client to sending connection request (2); in sending connection request (2) the state MUST NOT change. The client trusts only the server: a cookie's salt rides in the clear, so anyone who sees the request can echo it, and an accepted cookie MUST NOT refresh the client's last-received time and MUST NOT be taken as a round-trip sample. Both come only from the connection challenge and the packets after it that open under the attempt's keys.
 
 <a id="t11.2"></a>
 ### t11.2. Challenge and denial processing order
@@ -2478,7 +2478,7 @@ A session packet opens under the session keys from sending connection response (
 | requesting cookie (1) | update, send due | | send request with a zero return cookie | requesting cookie (1) |
 | requesting cookie (1) | cookie | size correct, salt matches | store the last 24 bytes | sending connection request (2) |
 | requesting cookie (1) | cookie | size wrong or salt differs | ignore | requesting cookie (1) |
-| requesting cookie (1) | timeout | no packet received for the token timeout | | cookie request timed out (-2) |
+| requesting cookie (1) | timeout | no authenticated packet for the token timeout since the attempt began | | cookie request timed out (-2) |
 | requesting cookie (1) | total deadline | token lifetime elapsed | | connect token expired (-7) |
 | sending connection request (2) | update, send due | | send request with the stored cookie | sending connection request (2) |
 | sending connection request (2) | cookie | size correct, salt matches | replace the stored cookie | sending connection request (2) |
@@ -2489,7 +2489,7 @@ A session packet opens under the session keys from sending connection response (
 | sending connection request (2) | denied | size correct, opens | release the connection state | connection denied (-1) |
 | sending connection request (2) | denied | size wrong | refuse as WRONG_SIZE | sending connection request (2) |
 | sending connection request (2) | denied | sequence zero or does not open | refuse; an unopened packet counts an integrity failure | sending connection request (2) |
-| sending connection request (2) | timeout | no packet received for the token timeout | | connection request timed out (-3) |
+| sending connection request (2) | timeout | no authenticated packet for the token timeout since the attempt began (a cookie does not count) | | connection request timed out (-3) |
 | sending connection request (2) | total deadline | token lifetime elapsed | | connect token expired (-7) |
 | sending connection response (3) | update, send due | | send the stored response byte for byte | sending connection response (3) |
 | sending connection response (3) | keep-alive | opens | store the client index and the slot count | connected (4) |
@@ -2498,7 +2498,7 @@ A session packet opens under the session keys from sending connection response (
 | sending connection response (3) | denied | size wrong | refuse as WRONG_SIZE | sending connection response (3) |
 | sending connection response (3) | denied | sequence zero or does not open | refuse; an unopened packet counts an integrity failure | sending connection response (3) |
 | sending connection response (3) | disconnect | opens | release the connection state | disconnected (0) |
-| sending connection response (3) | timeout | no packet received for the token timeout | | connection response timed out (-4) |
+| sending connection response (3) | timeout | no authenticated packet for the token timeout | | connection response timed out (-4) |
 | sending connection response (3) | total deadline | token lifetime elapsed | | connect token expired (-7) |
 | connected (4) | update, send due | | send a keep-alive with the client index and the slot count | connected (4) |
 | connected (4) | session packet | opens | refresh the last-received time; deliver a payload; apply an ack block | connected (4) |
