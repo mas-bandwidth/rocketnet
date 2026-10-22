@@ -32,10 +32,10 @@
 
 template<int NumBuffers> struct rocketnet_buffer_handoff_t
 {
-    int free_index[NumBuffers];
+    int free_index[size_t(NumBuffers)];
     int free_head;
     int free_count;
-    int ready_index[NumBuffers];
+    int ready_index[size_t(NumBuffers)];
     int ready_head;
     int ready_count;
 
