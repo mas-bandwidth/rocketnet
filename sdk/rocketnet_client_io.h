@@ -110,7 +110,7 @@ struct rocketnet_client_io_t
     struct rocketnet_client_io_open_t open;
     uint64_t transport_faults;                     // a receive count or byte count this step refused
     uint64_t * prefilter_too_large;             // optional: counts PREFILTER_TOO_LARGE for a datagram rejected by the byte-count check
-    uint64_t diag_steps; double diag_last_step, diag_max_step_gap, diag_max_step_gap_at, diag_last_rx, diag_max_rx_gap, diag_max_rx_gap_at; int diag_port;
+    uint64_t diag_steps; double diag_last_step, diag_max_step_gap, diag_max_step_gap_at, diag_last_rx, diag_max_rx_gap, diag_max_rx_gap_at; int diag_port; double diag_sec_max[4], diag_sec_at[4]; double diag_t0;
 };
 
 // RNClientIo initial; main thread. Takes the two ring views and the two
@@ -134,7 +134,7 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
         io->buffer[i]->num_packets = 0;
     }
     io->fill_slots = 0;
-    io->diag_steps = 0; io->diag_last_step = io->diag_max_step_gap = io->diag_max_step_gap_at = io->diag_last_rx = io->diag_max_rx_gap = io->diag_max_rx_gap_at = 0.0; io->diag_port = 0;
+    io->diag_steps = 0; io->diag_last_step = io->diag_max_step_gap = io->diag_max_step_gap_at = io->diag_last_rx = io->diag_max_rx_gap = io->diag_max_rx_gap_at = 0.0; io->diag_port = 0; for ( int k = 0; k < 4; ++k ) { io->diag_sec_max[k] = 0.0; io->diag_sec_at[k] = 0.0; } io->diag_t0 = 0.0;
     io->time = time;
     io->time_context = time_context;
     io->guard_timeout_seconds = ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS;
@@ -366,6 +366,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     // 1. RNClientIo IoSend / IoFinishRing: send a handed-off ring. Slot i is
     // at data + i * frame_stride + wire_offset; a zero int byte count is an
     // aborted slot and stays unsent.
+    io->diag_t0 = io->time( io->time_context );
     const int ring = rocketnet_client_send_rings_take( &io->rings );
     if ( ring >= 0 )
     {
@@ -420,6 +421,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
         return ROCKETNET_CLIENT_IO_EXITED;
     }
 
+    { const double dt = io->time( io->time_context ); if ( dt - io->diag_t0 > io->diag_sec_max[0] ) { io->diag_sec_max[0] = dt - io->diag_t0; io->diag_sec_at[0] = dt; } io->diag_t0 = dt; }
     // 2. RNClientIo IoReceive: drain into the buffer the handshake gives the
     // I/O thread. Every received datagram becomes a record, a runt or an
     // oversize one too: the main thread's prefilter
@@ -526,6 +528,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
         }
     }
 
+    { const double dt = io->time( io->time_context ); if ( dt - io->diag_t0 > io->diag_sec_max[1] ) { io->diag_sec_max[1] = dt - io->diag_t0; io->diag_sec_at[1] = dt; } io->diag_t0 = dt; }
     // 3. RNClientIo IoPublish / IoOwe: publish the filled buffer when a Free
     // one is there to fill next; otherwise store the publish as owed and keep
     // the batch while the buffer has room. A publish is worked.
@@ -545,6 +548,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
         }
     }
 
+    { const double dt = io->time( io->time_context ); if ( dt - io->diag_t0 > io->diag_sec_max[2] ) { io->diag_sec_max[2] = dt - io->diag_t0; io->diag_sec_at[2] = dt; } io->diag_t0 = dt; }
     // 4. RNClientIo IoWait / waitReadable: wait only when nothing was done.
     // readable is true only while the I/O thread's buffer has room. With a
     // full buffer this waits on the wake alone: a wait that also returned on
@@ -558,6 +562,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
         io->transport->operations->wait( io->transport->instance, readable, io->guard_timeout_seconds );
     }
 
+    { const double dt = io->time( io->time_context ); if ( dt - io->diag_t0 > io->diag_sec_max[3] ) { io->diag_sec_max[3] = dt - io->diag_t0; io->diag_sec_at[3] = dt; } io->diag_t0 = dt; }
     return worked ? ROCKETNET_CLIENT_IO_WORKED : ROCKETNET_CLIENT_IO_IDLE;
 }
 
