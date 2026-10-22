@@ -602,7 +602,7 @@ static inline int rocketnet_dst_payload_build( uint8_t * buffer, int size, uint3
     buffer[12] = (uint8_t) ( epoch >> 16 );
     buffer[13] = (uint8_t) ( epoch >> 24 );
     for ( int i = 14; i < size; i++ )
-        buffer[i] = (uint8_t) ( ( i + sequence ) % 256 );
+        buffer[i] = (uint8_t) ( ( (uint32_t) i + sequence ) % 256 );
     return 1;
 }
 
@@ -622,7 +622,7 @@ static inline int rocketnet_dst_payload_verify( const uint8_t * buffer, int byte
         return 0;
     for ( int i = 14; i < bytes; i++ )
     {
-        if ( buffer[i] != (uint8_t) ( ( i + *sequence ) % 256 ) )
+        if ( buffer[i] != (uint8_t) ( ( (uint32_t) i + *sequence ) % 256 ) )
             return 0;
     }
     return 1;
@@ -704,7 +704,7 @@ static inline void rocketnet_dst_connect_client( rocketnet_dst_world_t * w, int 
         rocketnet_dst_fail( w, "message_object", "the restarted message object was refused" );
         return;
     }
-    const uint64_t client_id = client->generation * 256ULL + (uint64_t) index;
+    const uint64_t client_id = client->generation * 256 + (uint64_t) index;
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields.create_timestamp = w->unix_ts;
@@ -774,7 +774,7 @@ static inline void rocketnet_dst_send_one( rocketnet_dst_world_t * w, int index,
     if ( !rocketnet_dst_payload_build( payload, size, sequence, direction, type, channel,
                                        generation, w->server_incarnation, epoch ) )
         return;
-    int sent = 0;
+    uint32_t sent = 0;
     if ( direction == 0 )
         sent = rocketnet_message_client_send( client->message, channel, type, payload, size );
     else
@@ -782,7 +782,7 @@ static inline void rocketnet_dst_send_one( rocketnet_dst_world_t * w, int index,
     if ( sent )
     {
         const uint64_t identity = direction == 0
-            ? ( (uint64_t) generation * 256ULL + (uint64_t) index ) : (uint64_t) generation;
+            ? ( (uint64_t) generation * 256 + (uint64_t) index ) : (uint64_t) generation;
         rocketnet_dst_check_sent( &w->check, w->now, session, channel, type, sequence, generation,
                                   identity, epoch, size );
     }
@@ -816,7 +816,7 @@ static inline void rocketnet_dst_check_deliveries( rocketnet_dst_world_t * w, in
                                  ( (uint32_t) data[2] << 16 ) | ( (uint32_t) data[3] << 24 );
             for ( int i = 14; i < bytes; i++ )
             {
-                if ( data[i] != (uint8_t) ( ( i + seq ) % 256 ) )
+                if ( data[i] != (uint8_t) ( ( (uint32_t) i + seq ) % 256 ) )
                 {
                     mismatch = i;
                     break;
