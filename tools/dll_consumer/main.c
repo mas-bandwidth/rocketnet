@@ -16,8 +16,8 @@
 // once against the shared library and once against the static library. Real
 // sockets and the wall clock: a functional-tier program, never ./bin/test.
 
-#if !defined( ROCKETNET_DEVELOPMENT )
-#define ROCKETNET_DEVELOPMENT 1         // the development library: dev connect tokens
+#if !defined( ROCKETNET_DEV )
+#define ROCKETNET_DEV 1         // the development library: dev connect tokens
 #endif
 
 #include <rocketnet.h>
@@ -93,7 +93,7 @@ static void consumer_state_change( void * context, enum rocketnet_client_state_t
         saw_connected = 1;
 }
 
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
 
 static const char client_message[] = "hello from the client";
 static const char server_message[] = "hello from the server";
@@ -142,7 +142,7 @@ static int frame( struct rocketnet_server_t * server, struct rocketnet_client_t 
     return 0;
 }
 
-#endif // #if ROCKETNET_DEVELOPMENT
+#endif // #if ROCKETNET_DEV
 
 int main( void )
 {
@@ -151,7 +151,7 @@ int main( void )
     CHECK( rocketnet_version() == ROCKETNET_VERSION );
     CHECK( ROCKETNET_VERSION == ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH );
 
-    for ( int i = ROCKETNET_STATUS_OK; i >= ROCKETNET_STATUS_TRANSPORT_NOT_BUILT; i-- )
+    for ( int i = ROCKETNET_STATUS_OK; i >= ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION; i-- )
         CHECK( rocketnet_status_name( (enum rocketnet_status_t) i ) != NULL );
     CHECK( strcmp( rocketnet_status_name( ROCKETNET_STATUS_OK ), "OK" ) == 0 );
     CHECK( strcmp( rocketnet_status_name( ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED ), "CONFIG_NOT_INITIALIZED" ) == 0 );
@@ -184,12 +184,13 @@ int main( void )
     // from rocketnet_create_dev_connect_token); in a release library, which
     // refuses the development key, any other backend's key
 
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
     static const uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
 #else
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
     for ( int i = 0; i < ROCKETNET_BACKEND_PUBLIC_KEY_BYTES; i++ )
         backend_public_key[i] = (uint8_t) ( 0x51 + 3 * i );
+    static const uint8_t title_packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = { 0x5A, 0x5A, 0x5A, 0x5A };
 #endif
 
     // ---- configs: create is the one check. A NULL config is the defaults; a
@@ -199,12 +200,22 @@ int main( void )
 
     {
         enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+#if ROCKETNET_DEV
         struct rocketnet_client_t * null_client = rocketnet_client_create( NULL, NULL, &status );
         CHECK( null_client != NULL && status == ROCKETNET_STATUS_OK );
         rocketnet_client_destroy( null_client );
         struct rocketnet_server_t * null_server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, NULL, &status );
         CHECK( null_server != NULL && status == ROCKETNET_STATUS_OK );
         rocketnet_server_destroy( null_server );
+#else
+        // a production build refuses the defaults' published test packet filter
+        rocketnet_quiet( true );
+        CHECK( rocketnet_client_create( NULL, NULL, &status ) == NULL );
+        CHECK( status == ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION );
+        CHECK( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, NULL, &status ) == NULL );
+        CHECK( status == ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION );
+        rocketnet_quiet( false );
+#endif
         CHECK( rocketnet_client_required_memory( NULL ) > 0 );
         CHECK( rocketnet_server_required_memory( NULL ) > 0 );
 
@@ -249,6 +260,10 @@ int main( void )
     server_config.max_clients = 2;
     server_config.transport = "portable";
     memcpy( server_config.backend_public_key, backend_public_key, sizeof( server_config.backend_public_key ) );
+#if !ROCKETNET_DEV
+    // a production build needs the title's own packet filter
+    memcpy( server_config.packet_filter, title_packet_filter, sizeof( server_config.packet_filter ) );
+#endif
     CHECK( rocketnet_server_required_memory( &server_config ) > 0 );
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
@@ -283,7 +298,7 @@ int main( void )
         CHECK( ipv6_address[0] == '\0' );
     }
 
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
     // ---- a development connect token, a string, for this server's address
     // and public key
 
@@ -300,6 +315,9 @@ int main( void )
     CHECK( client_config.config_bytes == sizeof( client_config ) );
     client_config.transport = "portable";
     client_config.state_change_callback = consumer_state_change;
+#if !ROCKETNET_DEV
+    memcpy( client_config.packet_filter, title_packet_filter, sizeof( client_config.packet_filter ) );
+#endif
     CHECK( rocketnet_client_required_memory( &client_config ) > 0 );
 
     enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
@@ -315,7 +333,7 @@ int main( void )
     rocketnet_client_disconnect( client );
     CHECK( rocketnet_client_disconnected( client ) );
 
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
     CHECK( rocketnet_client_connect( client, connect_token ) == ROCKETNET_STATUS_OK );
     CHECK( strcmp( rocketnet_client_transport_name( client ), "portable" ) == 0 );
 
@@ -455,7 +473,7 @@ int main( void )
         CHECK( assertions == assertions_before || assertions == assertions_before + 2 );
     }
 
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
     // ---- the server ends the connection: the client's state says how, and
     // connect is accepted again from that ended state
 

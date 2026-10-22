@@ -29,8 +29,9 @@ endforeach()
 """
 PROBE_SOURCE = "#include \"rocketnet.h\"\nint main( void ) { return &rocketnet_time == 0; }\n"
 # Only what compiling rocketnet.h needs: ROCKETNET_SHARED selects the shared
-# library's import declaration (sdk/rocketnet.h:80-88).
-CONSUMER_DEFINITIONS = {"ROCKETNET_SHARED"}
+# library's import declaration, and ROCKETNET_DEV is the value the library was
+# built with, so the header the consumer compiles matches it (sdk/rocketnet.h).
+CONSUMER_DEFINITIONS = {"ROCKETNET_SHARED", "ROCKETNET_DEV"}
 FLOATING_POINT_OPTIONS = ("-ffp-contract", "/fp:")
 
 

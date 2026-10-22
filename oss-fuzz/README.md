@@ -7,7 +7,7 @@ submitted to OSS-Fuzz or any other external service**, and `primary_contact`
 in `project.yaml` is empty until Glenn fills it.
 
 The fuzz targets themselves live in [fuzz/](../fuzz); `build.sh` compiles
-the development library (ROCKETNET_DEVELOPMENT=1, the published development
+the development library (ROCKETNET_DEV=1, the published development
 keys the targets mint tokens with) from `sdk/` and the vendored `sodium/`,
 links every target present in `fuzz/`, zips each target's committed seed
 corpus to `<target>_seed_corpus.zip` and copies its dictionary

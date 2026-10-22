@@ -4,6 +4,8 @@ RocketNet is a low-level client/server UDP transport and message library for up
 to 1,000 connected players. The public surface is the C API in
 `sdk/rocketnet.h`; [AGENTS.md](AGENTS.md) is the integration guide and
 [STANDARD.md](STANDARD.md) points to the normative wire documents.
+A default build is a development build (`ROCKETNET_DEV` is 1); before any
+deploy, follow [AGENTS.md, "Before production"](AGENTS.md#before-production).
 
 ## Boundaries
 

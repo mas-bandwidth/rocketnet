@@ -1,7 +1,7 @@
 #!/bin/bash -eu
 # build script for OSS-Fuzz (https://github.com/google/oss-fuzz). PREPARED ONLY.
 #
-# The development library (ROCKETNET_DEVELOPMENT=1: the fuzz targets mint
+# The development library (ROCKETNET_DEV=1: the fuzz targets mint
 # tokens with the published development keys) is compiled from the sdk
 # sources and the vendored sodium, then each fuzz target links against it.
 # Every compile line carries -ffp-contract=off (tools/check_oss_fuzz_fp_contract.cmake
@@ -14,7 +14,7 @@ OBJ=$WORK/obj
 mkdir -p "$GEN" "$OBJ"
 printf 'static const unsigned char rocketnet_server_xdp_o[1] = { 0x00 };\nstatic const unsigned int rocketnet_server_xdp_o_len = 0;\n' > "$GEN/rocketnet_server_xdp.h"
 
-DEFS="-DROCKETNET_DEVELOPMENT=1 -DROCKETNET_SEND_ERROR_TEST_HOOKS=1 -DROCKETNET_HISTORY_PACKETS=4096"
+DEFS="-DROCKETNET_DEV=1 -DROCKETNET_SEND_ERROR_TEST_HOOKS=1 -DROCKETNET_HISTORY_PACKETS=4096"
 INCS="-Isdk -Isodium -Itest -I$GEN"
 
 $CC $CFLAGS -ffp-contract=off -w -Isodium -c sodium/sodium.c -o "$OBJ/sodium.o"

@@ -452,7 +452,7 @@ static void test_sized_config_server_create_checks_the_config()
 
     // accepted
     SIZED_CONFIG_SERVER_CREATE( (void) 0, true );
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
     SIZED_CONFIG_SERVER_CREATE( c.transport = "portable", true );
 #else
     {
@@ -786,7 +786,7 @@ static void test_network_simulator_applies_to_outgoing_packets()
     rocketnet_quiet( 1 );
     const bool development = rocketnet_public_link_simulator_development();
 
-#if !ROCKETNET_DEVELOPMENT
+#if !ROCKETNET_DEV
     // a production posture has no network simulator: the call is counted
     // misuse and changes nothing, so the pair connects under "100% loss"
     rocketnet_public_link_simulator_test_development( 0 );
@@ -795,7 +795,7 @@ static void test_network_simulator_applies_to_outgoing_packets()
         check( public_config_pair_connects( 100 ) );
         check( rocketnet_api_misuse_count() == misuse + 1 );
     }
-#endif // !ROCKETNET_DEVELOPMENT
+#endif // !ROCKETNET_DEV
 
     // a development posture honours it: the server's total loss keeps the
     // pair from connecting; none connects

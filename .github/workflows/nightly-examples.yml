@@ -125,7 +125,7 @@ jobs:
           set -euo pipefail
           cmake -S . -B build-universal \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=OFF
           cmake --build build-universal --config Release --clean-first --parallel 4
           lipo -info build-universal/librocketnet.a bin/librocketnet.dylib
           for arch in arm64 x86_64; do

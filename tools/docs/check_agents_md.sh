@@ -93,11 +93,11 @@ case "$MODE" in
         run_identifiers
         ;;
     example)
-        run_example "$AGENTS_MD" check_agents_md agents_md rocketnet_dev -DROCKETNET_DEVELOPMENT=1
+        run_example "$AGENTS_MD" check_agents_md agents_md rocketnet_dev -DROCKETNET_DEV=1
         ;;
     all)
         run_identifiers
-        run_example "$AGENTS_MD" check_agents_md agents_md rocketnet_dev -DROCKETNET_DEVELOPMENT=1
+        run_example "$AGENTS_MD" check_agents_md agents_md rocketnet_dev -DROCKETNET_DEV=1
         run_example "$README_MD" check_readme readme
         ;;
     *)

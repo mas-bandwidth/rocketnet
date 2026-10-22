@@ -149,9 +149,9 @@ REGISTER_UNIT_TEST( test_api_polish_status_returns );
 // names every refusal.
 typedef rocketnet_status_t ( *api_polish_dev_minter_t )( const char *, const char *, const uint8_t *, int, int, uint64_t, uint64_t, uint64_t, const uint8_t *, char * );
 
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
 static_assert( rn_same<decltype( &rocketnet_create_dev_connect_token ), api_polish_dev_minter_t>::value, "dev token minter signature" );
-#endif // #if ROCKETNET_DEVELOPMENT
+#endif // #if ROCKETNET_DEV
 
 // the development library keeps its own log state, apart from the sink the
 // suite installs in the archive it links, so the test captures the refusal
@@ -322,7 +322,7 @@ static void test_api_polish_lookups_say_unknown()
 {
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_OK ), "OK" ) == 0 );
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_FLOW_ID_RESERVED ), "FLOW_ID_RESERVED" ) == 0 );
-    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -29 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -31 ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_status_name( (rocketnet_status_t) 1 ), "UNKNOWN" ) == 0 );
 
     check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_NONE ), "NONE" ) == 0 );
@@ -373,7 +373,7 @@ static void test_api_polish_zero_receipt_and_dense_reasons()
     check( strcmp( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) 2 ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) 7 ), "UNKNOWN" ) == 0 );
 
-    for ( int status = (int) ROCKETNET_STATUS_OK; status >= (int) ROCKETNET_STATUS_TRANSPORT_NOT_BUILT; status-- )
+    for ( int status = (int) ROCKETNET_STATUS_OK; status >= (int) ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION; status-- )
     {
         const char * name = rocketnet_status_name( (enum rocketnet_status_t) status );
         check( name != NULL && strcmp( name, "UNKNOWN" ) != 0 );

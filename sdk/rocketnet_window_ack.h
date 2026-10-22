@@ -49,7 +49,7 @@ void rn_window_ack_cost_reset();
 rn_ack_cost_t rn_window_ack_cost_read();
 #endif
 
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
 
 // The resend gap record (development builds only; a release build has neither
 // the fields nor the code). For each delay class (0: single-packet records,
@@ -77,7 +77,7 @@ struct rn_resend_gaps_t
     double late_max[2];             // max over resends of gap - delay at the update before (<= one update by the rule)
 };
 
-#endif // #if ROCKETNET_DEVELOPMENT
+#endif // #if ROCKETNET_DEV
 
 struct rn_window_ack_t
 {
@@ -123,9 +123,9 @@ struct rn_window_ack_t
     uint64_t oldest_number;         // message number U whose first_send is cached below
     double oldest_first_send;       // first_send time of oldest_number
 
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
     rn_resend_gaps_t gaps;          // test-visible resend gap record; development builds only
-#endif // #if ROCKETNET_DEVELOPMENT
+#endif // #if ROCKETNET_DEV
 };
 
 // The first deviation equals the first RTT sample. Later deviation
@@ -257,11 +257,11 @@ uint32_t rn_window_ack_resend( rn_window_ack_t * ack, double now, uint64_t * io_
 // called once per update before the update's packets are written, with the
 // update's time, after its acks have moved the resend delay. It keeps this update's and
 // the previous update's class delays for rn_window_ack_commit's measure.
-#if ROCKETNET_DEVELOPMENT
+#if ROCKETNET_DEV
 void rn_window_ack_gaps_update( rn_window_ack_t * ack, double now );
-#else // #if ROCKETNET_DEVELOPMENT
+#else // #if ROCKETNET_DEV
 static inline void rn_window_ack_gaps_update( rn_window_ack_t *, double ) {}
-#endif // #if ROCKETNET_DEVELOPMENT
+#endif // #if ROCKETNET_DEV
 
 // Number of live (unacked, non-evicted) packet entries currently in the sent-packet map.
 uint32_t rn_window_ack_entries_in_flight( const rn_window_ack_t * ack );
