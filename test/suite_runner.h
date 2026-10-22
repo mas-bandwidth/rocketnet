@@ -6,7 +6,8 @@
     shape: one line per test, its name, in suite order, then
     "*** ALL TESTS PASSED ***". A failing test prints its own output (its
     check line) and the suite exits 1 at once. A test over 120s is killed and
-    fails (a Debug or sanitizer build scales the 120s: test/time_scale.h). A
+    fails (a Debug, sanitizer or explicitly emulated build scales the 120s:
+    test/time_scale.h). A
     test whose peak resident set (wait4 ru_maxrss on POSIX,
     PeakWorkingSetSize on Windows) is over its bound fails
     (ROCKETNET_TEST_MAX_CASE_RSS_MB, overridable by that environment variable;
@@ -613,7 +614,7 @@ inline int suite_main( int argc, char ** argv,
         return 1;
 
     const int jobs = suite_job_count();
-    const double limit_s = 120.0 * ROCKETNET_FUNCTIONAL_TIME_SCALE; // Release as written; Debug/sanitizer scaled (test/time_scale.h)
+    const double limit_s = 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE; // Native Release as written; Debug/sanitizer/emulation scaled (test/time_scale.h)
     struct running_t
     {
         size_t index;
@@ -846,7 +847,7 @@ inline int suite_main( int argc, char ** argv,
         return 1;
 
     const int jobs = suite_job_count();
-    const double limit_s = 120.0 * ROCKETNET_FUNCTIONAL_TIME_SCALE; // Release as written; Debug/sanitizer scaled (test/time_scale.h)
+    const double limit_s = 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE; // Native Release as written; Debug/sanitizer/emulation scaled (test/time_scale.h)
     struct running_t
     {
         size_t index;

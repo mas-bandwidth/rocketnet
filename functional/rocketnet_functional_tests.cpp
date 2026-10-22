@@ -9,6 +9,7 @@
 */
 
 #include "../test/native_shutdown.h"
+#include "../test/time_scale.h"
 #include "rocketnet_internal.h"
 
 // The shared harness carries one call with the retired create-time argument.
@@ -2665,7 +2666,7 @@ void rocketnet_test_transport_acks_and_client_stats()
 
     double start = rocketnet_platform_time();
     int all_connected = 0;
-    while ( rocketnet_platform_time() - start < 10.0 && !all_connected )
+    while ( rocketnet_platform_time() - start < 10.0 * ROCKETNET_TEST_CASE_TIME_SCALE && !all_connected )
     {
         for ( int i = 0; i < 8; i++ )
             rocketnet_client_transport_update( clients[i], rocketnet_platform_time() );
@@ -2718,7 +2719,7 @@ void rocketnet_test_transport_acks_and_client_stats()
     int server_saw_ack = 0;
     int client_saw_ack = 0;
     start = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - start < 10.0 && !( server_saw_ack && client_saw_ack ) )
+    while ( rocketnet_platform_time() - start < 10.0 * ROCKETNET_TEST_CASE_TIME_SCALE && !( server_saw_ack && client_saw_ack ) )
     {
         for ( int i = 0; i < 8; i++ )
             rocketnet_client_transport_update( clients[i], rocketnet_platform_time() );
