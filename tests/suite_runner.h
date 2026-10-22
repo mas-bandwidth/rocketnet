@@ -62,18 +62,6 @@ extern char **environ;
 // overrides it with a positive value.
 #define ROCKETNET_TEST_MAX_CASE_RSS_MB 698
 
-// A group_of value at or above SUITE_GROUP_ONE_AT_A_TIME runs alone, like
-// every group, and also one case at a time. The io_uring cases are such a
-// group: each io_uring server pins its rings against RLIMIT_MEMLOCK, which the
-// kernel sums per user across every process, so the suite's io_uring cases
-// fit a modest per-user budget only when they do not run side by side.
-#define SUITE_GROUP_ONE_AT_A_TIME 100
-
-inline int suite_group_jobs( int group, int jobs )
-{
-    return group >= SUITE_GROUP_ONE_AT_A_TIME ? 1 : jobs;
-}
-
 // Whether the environment variable is set (to a value of at most 4095 bytes).
 inline bool suite_env_is_set( const char * name )
 {
@@ -92,7 +80,38 @@ struct suite_case
     std::string name;
     std::string exec_path; // empty: re-exec this binary with --run name
     int group; // suite_main's group_of: cases of different groups never run at once
+    bool one_at_a_time; // group_of set SUITE_ONE_AT_A_TIME: no two such cases run at once
 };
+
+// OR'd into a group_of value: the case runs in its group as any case does,
+// but never beside another case so marked, while the rest of the group keeps
+// starting around it. The io_uring cases are marked: each io_uring server pins
+// its rings against RLIMIT_MEMLOCK, which the kernel sums per user across
+// every process, so side by side (eight cases a suite, more than one suite on
+// one user) they need more than a modest per-user limit.
+#define SUITE_ONE_AT_A_TIME 0x10000
+
+// The case to start next: the first not started, in order, of the running
+// group (any group when none runs), skipping a SUITE_ONE_AT_A_TIME case while
+// another runs. pending.size() when none can start now.
+template <typename running_t>
+inline size_t suite_next_case( const std::vector<suite_case> & pending, const std::vector<bool> & started, size_t next, const std::vector<running_t> & running )
+{
+    bool one_at_a_time_running = false;
+    for ( const running_t & child : running )
+        one_at_a_time_running = one_at_a_time_running || pending[child.index].one_at_a_time;
+    for ( size_t i = next; i < pending.size(); i++ )
+    {
+        if ( started[i] )
+            continue;
+        if ( !running.empty() && pending[i].group != running[0].group )
+            break;
+        if ( pending[i].one_at_a_time && one_at_a_time_running )
+            continue;
+        return i;
+    }
+    return pending.size();
+}
 
 struct suite_result
 {
@@ -478,11 +497,15 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
     // group_of (NULL: every case is group 0) keeps cases that measure wall
     // time apart from cases that load the host: the cases run in ascending
     // group order, and a case starts only while every running case is of its
-    // own group, so a group runs in parallel within itself and alone (one case
-    // at a time from SUITE_GROUP_ONE_AT_A_TIME). Within a group the cases run
-    // in layer order (suite_layer_of).
+    // own group, so a group runs in parallel within itself and alone. Within
+    // a group the cases run in layer order (suite_layer_of), except that a
+    // SUITE_ONE_AT_A_TIME case waits while another such case runs.
     for ( size_t i = 0; i < pending.size(); i++ )
-        pending[i].group = group_of ? group_of( pending[i].name.c_str() ) : 0;
+    {
+        const int value = group_of ? group_of( pending[i].name.c_str() ) : 0;
+        pending[i].group = value & ~SUITE_ONE_AT_A_TIME;
+        pending[i].one_at_a_time = ( value & SUITE_ONE_AT_A_TIME ) != 0;
+    }
     std::stable_sort( pending.begin(), pending.end(), []( const suite_case & a, const suite_case & b ) {
         if ( a.group != b.group )
             return a.group < b.group;
@@ -641,15 +664,21 @@ inline int suite_main( int argc, char ** argv,
     if ( capture )
         setenv( "ROCKETNET_TEST_SUITE_CAPTURE", "1", 1 );
     std::vector<running_t> running;
+    std::vector<bool> started( pending.size(), false );
     size_t next = 0;
     size_t printed = 0;
     bool passed = true;
 
     while ( passed && ( next < pending.size() || !running.empty() ) )
     {
-        while ( next < pending.size() && (int) running.size() < suite_group_jobs( pending[next].group, jobs ) && ( running.empty() || running[0].group == pending[next].group ) )
+        while ( (int) running.size() < jobs )
         {
-            const size_t index = next++;
+            const size_t index = suite_next_case( pending, started, next, running );
+            if ( index >= pending.size() )
+                break;
+            started[index] = true;
+            while ( next < pending.size() && started[next] )
+                next++;
             const suite_case & item = pending[index];
             suite_result & result = results[index];
             const std::string path = item.exec_path.empty() ? self : item.exec_path;
@@ -872,15 +901,21 @@ inline int suite_main( int argc, char ** argv,
     };
     const bool capture = !suite_env_is_set( "ROCKETNET_TEST_VERBOSE" );
     std::vector<running_t> running;
+    std::vector<bool> started( pending.size(), false );
     size_t next = 0;
     size_t printed = 0;
     bool passed = true;
 
     while ( passed && ( next < pending.size() || !running.empty() ) )
     {
-        while ( next < pending.size() && (int) running.size() < suite_group_jobs( pending[next].group, jobs ) && ( running.empty() || running[0].group == pending[next].group ) )
+        while ( (int) running.size() < jobs )
         {
-            const size_t index = next++;
+            const size_t index = suite_next_case( pending, started, next, running );
+            if ( index >= pending.size() )
+                break;
+            started[index] = true;
+            while ( next < pending.size() && started[next] )
+                next++;
             const suite_case & item = pending[index];
             suite_result & result = results[index];
             const std::string path = item.exec_path.empty() ? self : item.exec_path;
