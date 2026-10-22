@@ -53,8 +53,10 @@ back. Follow [Before production](../AGENTS.md#before-production).
 
 - Portable and Windows RIO server receive paths use bounded worker handoffs;
   portable server sends also use a worker. Receive-bank capacity follows the
-  configured client count. A background handoff can make a message or packet
-  available on a later update; it does not change the application's frame order.
+  configured client count. An extra server-to-client update from the background
+  handoff is expected. Client-to-server traffic also uses a bounded handoff;
+  there is no fixed public update-count guarantee in either direction.
+  This does not change the application's frame order.
   These changes do not establish the frame-time target.
 - The client I/O idle wait is a guard that can be interrupted by work, rather
   than a fixed send cadence.
@@ -82,7 +84,10 @@ See [BUILDING.md](../BUILDING.md), [TRANSPORTS.md](../TRANSPORTS.md) and
   client counts. Worker handoffs are not proof of a performance pass.
 - Large server configurations need substantial memory. Query required memory
   before create and leave room for transport, operating-system and application
-  resources. Final-head platform sizing and lifecycle checks remain release gates.
+  resources. The 1000-client example soak can spike in memory during shutdown
+  and run out of memory on Linux. The secrets-only destroy change is deferred
+  to preview-3; completion checks do not eliminate this shutdown cost.
+  Final-head platform sizing and lifecycle checks remain release gates.
 - Windows server LAN-load qualification is pending replacement test hardware
   and a fresh run. Earlier loss measurements on the 1 GbE test NIC do not
   qualify the updated software or the replacement NIC.
@@ -95,3 +100,10 @@ See [BUILDING.md](../BUILDING.md), [TRANSPORTS.md](../TRANSPORTS.md) and
 The [testing tables](../TESTING.md) and [roadmap](../ROADMAP.md) retain work
 still owed. Fixes under review and future merges are not included in this
 pinned source summary.
+
+## Deferred to preview-3
+
+The uniform client buffer handoff, secrets-only destroy, and macOS CI
+restructuring are outside preview-2. The existing worker handoffs described
+above do not include that later uniform-client change. None of these deferred
+changes is a preview-2 fix or qualification result.

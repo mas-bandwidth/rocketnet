@@ -4,7 +4,9 @@ Low-level client/server UDP transport library.
 
 Main frame calls aim for less than 100 microseconds in Release builds. Measured
 server calls exceed this budget at larger client counts; 1000-client performance
-is not qualified. Create may take longer. Client disconnect and server stop request shutdown
+is not qualified. Large configurations can also spike in memory during shutdown;
+the 1000-client example soak can run out of memory on Linux. Create may take longer.
+Client disconnect and server stop request shutdown
 without waiting for I/O workers. Poll `rocketnet_client_disconnected` or
 `rocketnet_server_stopped`, then call synchronous destroy to join and free.
 Keep each object and its callback/allocator context alive until destroy returns.
