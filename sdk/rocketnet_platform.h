@@ -908,9 +908,9 @@ struct rocketnet_platform_mutex_helper_t
     const char * file;
     int line;
     double start_time;
-    rocketnet_platform_mutex_helper_t( rocketnet_platform_mutex_t * mutex, const char * file, int line );
+    rocketnet_platform_mutex_helper_t( rocketnet_platform_mutex_t * held_mutex, const char * file, int line );
 #else // #if ROCKETNET_SPIKE_TRACKING
-    rocketnet_platform_mutex_helper_t( rocketnet_platform_mutex_t * mutex );
+    rocketnet_platform_mutex_helper_t( rocketnet_platform_mutex_t * held_mutex );
 #endif // #if ROCKETNET_SPIKE_TRACKING
     ~rocketnet_platform_mutex_helper_t();
 };
@@ -922,9 +922,9 @@ struct rocketnet_platform_mutex_helper_t
 #endif // #if ROCKETNET_SPIKE_TRACKING
 
 #if ROCKETNET_SPIKE_TRACKING
-inline rocketnet_platform_mutex_helper_t::rocketnet_platform_mutex_helper_t( rocketnet_platform_mutex_t * mutex, const char * file, int line ) : mutex(mutex), file(file), line(line), start_time(rocketnet_platform_time())
+inline rocketnet_platform_mutex_helper_t::rocketnet_platform_mutex_helper_t( rocketnet_platform_mutex_t * held_mutex, const char * file, int line ) : mutex(held_mutex), file(file), line(line), start_time(rocketnet_platform_time())
 #else // #if ROCKETNET_SPIKE_TRACKING
-inline rocketnet_platform_mutex_helper_t::rocketnet_platform_mutex_helper_t( rocketnet_platform_mutex_t * mutex ) : mutex(mutex)
+inline rocketnet_platform_mutex_helper_t::rocketnet_platform_mutex_helper_t( rocketnet_platform_mutex_t * held_mutex ) : mutex(held_mutex)
 #endif // #if ROCKETNET_SPIKE_TRACKING
 {
     rocketnet_assert( mutex );

@@ -569,7 +569,7 @@ bool rocketnet_platform_init()
         return false;
     timespec ts;
     clock_gettime( CLOCK_MONOTONIC_RAW, &ts );
-    time_start = ts.tv_sec + ( (double) ( ts.tv_nsec ) ) / 1000000000.0;
+    time_start = (double) ts.tv_sec + ( (double) ( ts.tv_nsec ) ) / 1000000000.0;
     const rocketnet_platform_network_lookups_t * lookups = rocketnet_platform_network_lookups_override.load( std::memory_order_acquire );
     connection_type = lookups ? lookups->connection_type() : get_connection_type();
     return true;
@@ -647,7 +647,7 @@ bool rocketnet_platform_inet_pton6( const char * address_string, uint16_t * addr
 
 bool rocketnet_platform_inet_ntop6( const uint16_t * address, char * address_string, size_t address_string_size )
 {
-    return inet_ntop( AF_INET6, (void*)address, address_string, socklen_t( address_string_size ) ) != NULL;
+    return inet_ntop( AF_INET6, (const void*)address, address_string, socklen_t( address_string_size ) ) != NULL;
 }
 
 bool rocketnet_platform_hostname_resolve( const char * hostname, const char * port, rocketnet_address_t * address )
@@ -711,7 +711,7 @@ double rocketnet_platform_time()
 {
     timespec ts;
     clock_gettime( CLOCK_MONOTONIC_RAW, &ts );
-    double current = ts.tv_sec + ( (double) ( ts.tv_nsec ) ) / 1000000000.0;
+    double current = (double) ts.tv_sec + ( (double) ( ts.tv_nsec ) ) / 1000000000.0;
     return current - time_start;
 }
 
@@ -1013,7 +1013,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
             ( (uint16_t*) &socket_address.sin6_addr ) [i] = rocketnet_platform_htons( to.data.ipv6[i] );
         }
         socket_address.sin6_port = rocketnet_platform_htons( to.port );
-        int result = int( sendto( socket->handle, (char*)( packet_data ), packet_bytes, 0, (sockaddr*)( &socket_address ), sizeof(sockaddr_in6) ) );
+        int result = int( sendto( socket->handle, (const char*)( packet_data ), (size_t) packet_bytes, 0, (sockaddr*)( &socket_address ), sizeof(sockaddr_in6) ) );
         if ( result < 0 )
         {
             char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
@@ -1028,7 +1028,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
         {
             sockaddr_in socket_address;
             rocketnet_platform_address_to_sockaddr_in( &to, &socket_address );
-            int result = int( sendto( socket->handle, (const char*)( packet_data ), packet_bytes, 0, (sockaddr*)( &socket_address ), sizeof(sockaddr_in) ) );
+            int result = int( sendto( socket->handle, (const char*)( packet_data ), (size_t) packet_bytes, 0, (sockaddr*)( &socket_address ), sizeof(sockaddr_in) ) );
             if ( result < 0 )
             {
                 char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
@@ -1084,7 +1084,7 @@ receive_again:
         }
 #endif // #if defined(ROCKETNET_RECEIVE_TEST_HOOKS)
 
-        result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, flags, (sockaddr*) &sockaddr_from, &from_length ) );
+        result = int( recvfrom( socket->handle, (char*) packet_data, (size_t) max_packet_size, flags, (sockaddr*) &sockaddr_from, &from_length ) );
 
         if ( result < 0 )
         {
@@ -1202,7 +1202,7 @@ bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readab
         nfds++;
     }
     const int timeout_ms = timeout_seconds > 0.0 ? (int) ceil( timeout_seconds * 1000.0 ) : 0;
-    const int poll_result = poll( fds, nfds, timeout_ms );
+    const int poll_result = poll( fds, (nfds_t) nfds, timeout_ms );
     if ( poll_result <= 0 )
         return false;
     for ( int i = 0; i < nfds; i++ )
@@ -1429,7 +1429,7 @@ void rocketnet_platform_socket_send_packets_mmsg( rocketnet_platform_socket_t * 
             if ( sockaddr_bytes != 0 )
             {
                 memset( &msg[count], 0, sizeof(msg[count]) );
-                iov[count].iov_base = (void*) send->packet_data;
+                iov[count].iov_base = const_cast<uint8_t*>( send->packet_data ); // the send only reads it
                 iov[count].iov_len = (size_t) send->packet_bytes;
                 msg[count].msg_hdr.msg_name = &addresses[count];
                 msg[count].msg_hdr.msg_namelen = sockaddr_bytes;
@@ -2080,7 +2080,7 @@ static int get_connection_type()
                 continue;
             }
 
-            uint32_t if_index = req.ifr_ifindex;
+            uint32_t if_index = (uint32_t) req.ifr_ifindex;
 
             // check for duplicates
             bool duplicate = false;
@@ -2165,7 +2165,7 @@ static int get_connection_type()
         req.hdr.nlmsg_type = RTM_GETROUTE;
         req.hdr.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP; 
         req.hdr.nlmsg_seq = 1;
-        req.hdr.nlmsg_pid = pid;
+        req.hdr.nlmsg_pid = (__u32) pid;
         req.gen.rtgen_family = AF_INET; 
 
         struct iovec io;
@@ -2429,7 +2429,7 @@ bool rocketnet_platform_inet_pton6( const char * address_string, uint16_t * addr
 
 bool rocketnet_platform_inet_ntop6( const uint16_t * address, char * address_string, size_t address_string_size )
 {
-    return inet_ntop( AF_INET6, (void*)address, address_string, socklen_t( address_string_size ) ) != NULL;
+    return inet_ntop( AF_INET6, (const void*)address, address_string, socklen_t( address_string_size ) ) != NULL;
 }
 
 // ---------------------------------------------------
@@ -2793,7 +2793,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
             ( (uint16_t*) &socket_address.sin6_addr ) [i] = rocketnet_platform_htons( to.data.ipv6[i] );
         }
         socket_address.sin6_port = rocketnet_platform_htons( to.port );
-        int result = int( sendto( socket->handle, (char*)( packet_data ), packet_bytes, 0, (sockaddr*)( &socket_address ), sizeof(sockaddr_in6) ) );
+        int result = int( sendto( socket->handle, (const char*)( packet_data ), (size_t) packet_bytes, 0, (sockaddr*)( &socket_address ), sizeof(sockaddr_in6) ) );
         if ( result < 0 )
         {
             char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
@@ -2810,7 +2810,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
         {
             sockaddr_in socket_address;
             rocketnet_platform_address_to_sockaddr_in( &to, &socket_address );
-            int result = int( sendto( socket->handle, (const char*)( packet_data ), packet_bytes, 0, (sockaddr*)( &socket_address ), sizeof(sockaddr_in) ) );
+            int result = int( sendto( socket->handle, (const char*)( packet_data ), (size_t) packet_bytes, 0, (sockaddr*)( &socket_address ), sizeof(sockaddr_in) ) );
             if ( result < 0 )
             {
                 char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
@@ -3177,7 +3177,7 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
             socklen_t sockaddr_bytes = rocketnet_msgx_fill_sockaddr( socket, send->to, &addresses[count] );
             if ( sockaddr_bytes != 0 )
             {
-                iov[count].iov_base = (void*) send->packet_data;
+                iov[count].iov_base = const_cast<uint8_t*>( send->packet_data ); // the send only reads it
                 iov[count].iov_len = (size_t) send->packet_bytes;
                 msg[count].msg_name = &addresses[count];
                 msg[count].msg_namelen = sockaddr_bytes;
@@ -4451,7 +4451,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
     if ( socket_type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING )
     {
         DWORD nonBlocking = 1;
-        if ( ioctlsocket( s->handle, FIONBIO, &nonBlocking ) != 0 )
+        if ( ioctlsocket( s->handle, (long) FIONBIO, &nonBlocking ) != 0 )
         {
             rocketnet_platform_socket_destroy( s );
             return NULL;
@@ -4545,7 +4545,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
             ( (uint16_t*) &socket_address.sin6_addr)[i] = rocketnet_platform_htons( to.data.ipv6[i] );
         }
         socket_address.sin6_port = rocketnet_platform_htons( to.port );
-        int result = sendto( socket->handle, (char*)(packet_data), packet_bytes, 0, (sockaddr*)(&socket_address), sizeof(sockaddr_in6) );
+        int result = sendto( socket->handle, (const char*)(packet_data), packet_bytes, 0, (sockaddr*)(&socket_address), sizeof(sockaddr_in6) );
         if ( result == SOCKET_ERROR )
             rocketnet_platform_windows_send_failed( socket, &to, WSAGetLastError() );
     }
@@ -4578,8 +4578,6 @@ static int rocketnet_platform_socket_receive_datagram( rocketnet_platform_socket
     rocketnet_assert( from );
     rocketnet_assert( packet_data );
     rocketnet_assert( max_packet_size > 0 );
-
-    typedef int socklen_t;
 
     sockaddr_storage sockaddr_from;
     socklen_t from_length;
