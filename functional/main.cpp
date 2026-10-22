@@ -68,6 +68,11 @@ int rocketnet_posix_hard_killed_peer_test_group( const char * name );
 // measures wall time is not measured against the rest of the suite. The live
 // message matrix holds a wall-clock pass bound (functional/live_matrix.cpp), so
 // it is a group of its own, after every other case.
+//
+// A case that creates io_uring servers (its name says io_uring or uring) is in
+// the one-at-a-time group: each server pins its rings against RLIMIT_MEMLOCK,
+// summed per user across processes, and side by side these cases (two suites
+// at once, eight cases each) need more than a modest per-user limit.
 static int rocketnet_functional_test_group( const char * name )
 {
 #if defined(__APPLE__)
@@ -78,6 +83,8 @@ static int rocketnet_functional_test_group( const char * name )
     if ( strcmp( name, "test_posix_destroy_under_traffic_100" ) == 0 )
         return 3;
 #endif
+    if ( strstr( name, "uring" ) != NULL )
+        return SUITE_GROUP_ONE_AT_A_TIME;
     if ( strcmp( name, "test_loopback_transport_live_message_matrix" ) == 0 )
         return 2;
     return rocketnet_posix_hard_killed_peer_test_group( name );

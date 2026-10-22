@@ -62,6 +62,18 @@ extern char **environ;
 // overrides it with a positive value.
 #define ROCKETNET_TEST_MAX_CASE_RSS_MB 698
 
+// A group_of value at or above SUITE_GROUP_ONE_AT_A_TIME runs alone, like
+// every group, and also one case at a time. The io_uring cases are such a
+// group: each io_uring server pins its rings against RLIMIT_MEMLOCK, which the
+// kernel sums per user across every process, so the suite's io_uring cases
+// fit a modest per-user budget only when they do not run side by side.
+#define SUITE_GROUP_ONE_AT_A_TIME 100
+
+inline int suite_group_jobs( int group, int jobs )
+{
+    return group >= SUITE_GROUP_ONE_AT_A_TIME ? 1 : jobs;
+}
+
 // Whether the environment variable is set (to a value of at most 4095 bytes).
 inline bool suite_env_is_set( const char * name )
 {
@@ -466,8 +478,9 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
     // group_of (NULL: every case is group 0) keeps cases that measure wall
     // time apart from cases that load the host: the cases run in ascending
     // group order, and a case starts only while every running case is of its
-    // own group, so a group runs in parallel within itself and alone. Within
-    // a group the cases run in layer order (suite_layer_of).
+    // own group, so a group runs in parallel within itself and alone (one case
+    // at a time from SUITE_GROUP_ONE_AT_A_TIME). Within a group the cases run
+    // in layer order (suite_layer_of).
     for ( size_t i = 0; i < pending.size(); i++ )
         pending[i].group = group_of ? group_of( pending[i].name.c_str() ) : 0;
     std::stable_sort( pending.begin(), pending.end(), []( const suite_case & a, const suite_case & b ) {
@@ -634,7 +647,7 @@ inline int suite_main( int argc, char ** argv,
 
     while ( passed && ( next < pending.size() || !running.empty() ) )
     {
-        while ( (int) running.size() < jobs && next < pending.size() && ( running.empty() || running[0].group == pending[next].group ) )
+        while ( next < pending.size() && (int) running.size() < suite_group_jobs( pending[next].group, jobs ) && ( running.empty() || running[0].group == pending[next].group ) )
         {
             const size_t index = next++;
             const suite_case & item = pending[index];
@@ -865,7 +878,7 @@ inline int suite_main( int argc, char ** argv,
 
     while ( passed && ( next < pending.size() || !running.empty() ) )
     {
-        while ( (int) running.size() < jobs && next < pending.size() && ( running.empty() || running[0].group == pending[next].group ) )
+        while ( next < pending.size() && (int) running.size() < suite_group_jobs( pending[next].group, jobs ) && ( running.empty() || running[0].group == pending[next].group ) )
         {
             const size_t index = next++;
             const suite_case & item = pending[index];

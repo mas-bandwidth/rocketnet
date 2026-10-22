@@ -1143,7 +1143,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
     const int init_result = io_uring_queue_init_params( ROCKETNET_URING_ENTRIES, &uring->ring, &params );
     if ( init_result < 0 )
     {
-        rocketnet_error( "io_uring transport: io_uring_queue_init_params failed: %s", strerror( -init_result ) );
+        rocketnet_error( "io_uring transport: io_uring_queue_init_params failed: %s (errno %d%s)", strerror( -init_result ), -init_result, -init_result == ENOMEM ? ", the ring is charged to RLIMIT_MEMLOCK, summed per user" : "" );
         rocketnet_server_uring_abort_create( uring );
         return NULL;
     }
@@ -1167,7 +1167,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
         queue->buf_ring = rocketnet_server_uring_setup_buf_ring( &uring->ring, ROCKETNET_URING_RECV_BUFFERS, i, &queue->buf_ring_inverted_resv, &error );
         if ( !queue->buf_ring )
         {
-            rocketnet_error( "io_uring transport: io_uring_setup_buf_ring failed for queue %d: %s", i, strerror( -error ) );
+            rocketnet_error( "io_uring transport: io_uring_setup_buf_ring failed for queue %d: %s (errno %d%s)", i, strerror( -error ), -error, -error == ENOMEM ? ", the buffer ring is charged to RLIMIT_MEMLOCK, summed per user" : "" );
             rocketnet_server_uring_abort_create( uring );
             return NULL;
         }
