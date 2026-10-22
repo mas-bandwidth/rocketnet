@@ -1037,13 +1037,15 @@ static rocketnet_server_transport_t * shape_junk_server_create()
     return server;
 }
 
+// the 16-aligned frame leads, so the compiler inserts no alignment padding
+// before it (MSVC C4324 at /WX)
 struct shape_junk_staged_t
 {
+    alignas( 16 ) uint8_t frame[ROCKETNET_FRAME_STRIDE];
     struct shape_junk_t junk;
     rocketnet_server_socket_process_packets_t batch;
     rocketnet_address_t connected;
     int start_packet_calls;
-    alignas( 16 ) uint8_t frame[ROCKETNET_FRAME_STRIDE];
 };
 
 static rocketnet_server_socket_process_packets_t * shape_junk_staged_receive( void * p )
